@@ -1,6 +1,6 @@
 ---
 name: architecture
-description: Reuse org catalog resources when deriving or enriching a component's design — deciding the component decomposition, filling a scaffolded design.json (language, dependencies, description, pinned skills), or resolving/reconsidering any dependency.
+description: "Reuse org catalog resources when deriving or enriching a component's design — deciding the component decomposition, filling a scaffolded design.json (language, dependencies, description, pinned skills), or resolving/reconsidering any dependency."
 metadata:
   aep:
     kind: platform
@@ -265,11 +265,14 @@ operations its contract actually exposes:
   the spec implies users sign in, declare it on BOTH the SPA and each protected
   service under the SAME dependency `name` — that shared name is what ties
   sign-in to token-carrying API calls. With no such dependency the SPA deploys
-  unable to sign in. `thunder-app` takes no `parameters`: `security-design`
-  authors the Thunder client on `security.json`, and the platform registers the
-  callback URI (`redirectUris` — platform-managed, never proposed here).
+  unable to sign in. `thunder-app` takes no `parameters` and **nothing about the
+  sign-in client is authored by hand**: its display name, its redirect URIs and
+  its scope list are all derived by the platform (the scopes from the permission
+  catalog `security-design` writes on `security.json`). A project with no web
+  application still declares the dependency on its API — the client is what the
+  console's Test tab and the validation agent sign in through.
   `thunder-authentication` owns the coding-time rule, and `security-design`
-  owns which roles sign in through it.
+  owns which roles sign in through it and what they may do.
 
 ### Resolving an `external` dependency
 

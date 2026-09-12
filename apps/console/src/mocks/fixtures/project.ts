@@ -1404,34 +1404,60 @@ sequenceDiagram
 `;
 
 // The security design (#665): ONE document, and the Security rail entry reads
-// it alone. The roles it declares are the ones `fixtures/roles.ts` reconciles
-// against — `Compliance Admin` exists on the directory, `Viewer` does not yet
-// ("New at Build") — so the panel's live half has something to disagree with.
+// it alone. v2 — a permission catalog the roles grant from. The roles it
+// declares are the ones `fixtures/roles.ts` reconciles against — `Compliance
+// Admin` exists on the directory, `Viewer` does not yet ("New at Build") — so
+// the panel's live half has something to disagree with. `Viewer` names no test
+// user, so the panel promises `test-viewer` and the live half agrees.
 const securityJson = `{
-  "version": 1,
-  "coldStartRole": "Compliance Admin",
-  "publicComponents": ["storefront"],
+  "version": 2,
+  "permissions": [
+    {
+      "resource": "orders",
+      "component": "orders-api",
+      "description": "Customer orders and the money moved against them",
+      "actions": [
+        { "handle": "read", "ownership": "own", "description": "See own orders" },
+        { "handle": "read-all", "ownership": "any", "description": "See every order" },
+        { "handle": "approve", "ownership": "any", "description": "Approve a submitted order" },
+        { "handle": "refund", "ownership": "any", "description": "Refund a paid order" }
+      ]
+    },
+    {
+      "resource": "catalog",
+      "component": "catalog-api",
+      "actions": [
+        { "handle": "read", "ownership": "any", "description": "Browse the product catalog" }
+      ]
+    }
+  ],
+  "groups": [
+    { "name": "Compliance", "description": "People who audit and approve orders" }
+  ],
   "roles": [
     {
       "name": "Compliance Admin",
       "description": "Approves and audits submitted claims.",
       "stories": [1, 2],
-      "grantedBy": "Platform IdP",
-      "permissions": [
-        { "component": "orders-api", "actions": ["approve", "refund"] },
-        { "component": "storefront", "screens": ["Orders", "Audit log"] }
-      ]
+      "grants": ["orders:read", "orders:read-all", "orders:approve", "orders:refund"],
+      "assignTo": ["Compliance"],
+      "assignableBy": ["Compliance Admin"]
     },
     {
       "name": "Viewer",
       "description": "Reads the catalog and their own order history.",
       "stories": [3],
-      "grantedBy": "Platform IdP",
-      "permissions": [{ "component": "catalog-api", "actions": ["read"] }]
+      "grants": ["catalog:read", "orders:read"],
+      "enrolment": "self-service"
     }
   ],
-  "testUsers": [{ "username": "test-compliance-admin", "role": "Compliance Admin" }],
-  "thunder": { "name": "demo-shop", "type": "browser" }
+  "screens": [
+    { "component": "storefront", "screen": "Catalog", "requires": "public" },
+    { "component": "storefront", "screen": "My account", "requires": null },
+    { "component": "storefront", "screen": "Orders", "requires": "orders:read" },
+    { "component": "storefront", "screen": "Audit log", "requires": "orders:read-all" }
+  ],
+  "testUsers": [{ "username": "test-compliance-admin", "roles": ["Compliance Admin"] }]
 }
 `;
 

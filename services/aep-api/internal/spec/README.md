@@ -208,6 +208,26 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
     disabled path does not reject every build. Membership is against the live catalog map, never
     a hardcoded type name (ADR-0007). Wiring derivation still treats an unknown type as "not
     derivable yet"; the membership pass is a separate gate before persist.
+- **A component `openapi.yaml` is judged against its two siblings, at save AND at build**
+  (`openapi_security_gate.go`). A component behind end-user sign-in declares the `oauth2` scheme and
+  the document default `security: [{oauth2: []}]`; each operation's `security` is absent, `[]`
+  (public), or ONE requirement object naming `oauth2` with at most one scope; every operation scope
+  and every `flows.*.scopes` key is a handle `specs/design/security.json` declares AND whose resource
+  THIS component owns; the five OIDC scopes (`openid profile email group ou`) are refused anywhere,
+  because one emitted as an API scope admits every signed-in account while looking guarded; an
+  `X-User-*` header parameter is `required: false` (the generated server binds parameters before the
+  auth middleware, so `required: true` answers 400 where the design promises 401) and a public
+  operation declares none at all. Code `INVALID_OPENAPI`, wording from the ONE vendored table
+  (`platform/securityspec/openapi-security-messages.json`) the agent's write gate renders from, so
+  the model never meets one rule in two wordings.
+  - **Protected is read off committed truth, never a type name**: `exposesAPI.auth =
+    end-user-required`, which design-save already derived from the CRT role marker (ADR-0007). No
+    cluster round-trip, and a new sign-in flavour needs no app-factory release. The agent's bundle
+    still keys on the literal `thunder-app` resourceType, so a renamed or aliased sign-in CRT is
+    protected here and unprotected there — recorded in the file header.
+  - **A missing sibling narrows the check, it never refuses.** No `design.json` → no security verdict
+    (the premise is unknowable); no `security.json` → the structural rules still run and only catalog
+    membership and ownership wait. The build gate is the backstop that sees every file at the tag.
 - The `/collab/validate` oracle recovers the acting org from VERIFIED claims and refuses any room whose
   `spec-<org>-` prefix mismatches — never a hint of whether the room exists. Platform-wide rules (tenant
   gate, secrets fence) → [../../README.md](../../README.md).

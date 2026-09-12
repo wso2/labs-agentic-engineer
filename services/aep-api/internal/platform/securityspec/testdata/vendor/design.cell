@@ -1,0 +1,5 @@
+cell "Vendor Portal" {
+  component vendor-webapp as "Vendor Portal" webapp
+  component orders-api as "Orders API" service
+  component payments-api as "Payments API" service
+}

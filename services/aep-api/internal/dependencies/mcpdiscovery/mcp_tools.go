@@ -162,6 +162,15 @@ type sliceProvenanceView struct {
 // for LLM context-window safety on top of the untouched network-level guard.
 const maxToolSpecBytes = 256 << 10
 
+// listGroupsDescription is the one description text behind both `list_groups`
+// and its deprecated alias `list_roles`: the two names must never drift into
+// describing the tool differently.
+const listGroupsDescription = "Lists the directory groups in this organization's environment directory. " +
+	"Use it before writing security.json roles[].assignTo: reuse an existing group name when the " +
+	"people who should hold the role already form a group; otherwise declare a new name in groups[] " +
+	"(it is created at build). memberCount is the number of users in the group today; projects is how " +
+	"many projects already bind a role to it; platformCreated says whether this platform created it."
+
 // mcpTools returns the read-only tool descriptors advertised by tools/list.
 func mcpTools() []mcpTool {
 	return []mcpTool{
@@ -218,15 +227,17 @@ func mcpTools() []mcpTool {
 			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
 		},
 		{
-			Name: "list_roles",
-			Description: "List the roles that already exist on the platform identity provider. " +
-				"Roles are SHARED across projects, so reuse a matching row's name verbatim instead " +
-				"of inventing a near-duplicate — take the row whose `description` matches the need, " +
-				"not the one whose name echoes the requirement's wording. Each row gives the role " +
-				"`name`, its `description`, `platformCreated` (true when this platform created it — " +
-				"only those can be given test users) and `memberCount`. Read-only: you never author " +
-				"these, and nothing you do creates one. The platform creates the roles your " +
-				"`specs/design/security.json` declares when the user clicks Build.",
+			Name:        "list_groups",
+			Description: listGroupsDescription,
+			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+		},
+		// Deprecated: remove in scopes phase 2. `list_roles` is the old name of
+		// `list_groups`, kept for one phase so a design turn running an older
+		// skill revision still gets its catalog instead of a tool-not-found. It
+		// dispatches to the same handler.
+		{
+			Name:        "list_roles",
+			Description: "Deprecated: use list_groups. " + listGroupsDescription,
 			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
 		},
 		{
@@ -415,19 +426,27 @@ func handleToolCall(w http.ResponseWriter, r *http.Request, h *mcpHandler, orgHa
 			return
 		}
 		writeToolText(w, req.ID, mustJSON(map[string]any{"resourceTypes": types}))
-	case "list_roles":
+	case "list_groups", "list_roles":
+		// The two names are ONE handler. `list_roles` is deprecated and its
+		// result keeps the old `roles` key so a turn on an older skill revision
+		// reads exactly what it read before.
+		// Deprecated: remove in scopes phase 2.
+		key := "groups"
+		if call.Name == "list_roles" {
+			key = "roles"
+		}
 		if h.roles == nil {
-			writeToolText(w, req.ID, mustJSON(map[string]any{"roles": []any{}}))
+			writeToolText(w, req.ID, mustJSON(map[string]any{key: []any{}}))
 			return
 		}
 		// orgHandle is the verified ocOrgId claim: the catalog belongs to that
 		// org's environment directory, and no tool argument may choose it.
-		roles, err := h.roles.ListRoleCatalog(r.Context(), orgHandle)
+		groups, err := h.roles.ListRoleCatalog(r.Context(), orgHandle)
 		if err != nil {
-			writeToolError(w, req.ID, fmt.Sprintf("list roles: %v", err))
+			writeToolError(w, req.ID, fmt.Sprintf("%s: %v", strings.ReplaceAll(call.Name, "_", " "), err))
 			return
 		}
-		writeToolText(w, req.ID, mustJSON(map[string]any{"roles": roles}))
+		writeToolText(w, req.ID, mustJSON(map[string]any{key: groups}))
 	case "get_remote_git_file_contents":
 		if h.remoteGit == nil {
 			writeToolError(w, req.ID, "remote git reader not configured")

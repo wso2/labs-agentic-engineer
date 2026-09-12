@@ -35,19 +35,24 @@ function role(name: string): Role {
     name,
     description: `What ${name} may do`,
     stories: [1],
-    grantedBy: "an administrator",
-    permissions: [{ component: "orders-api", actions: ["read"] }],
+    grants: ["orders:read"],
   };
 }
 
 function doc(over: Partial<SecurityDesign> = {}): SecurityDesign {
   return {
-    version: 1,
-    coldStartRole: null,
-    publicComponents: [],
+    version: 2,
+    permissions: [
+      {
+        resource: "orders",
+        component: "orders-api",
+        actions: [{ handle: "read", ownership: "own" }],
+      },
+    ],
+    groups: [],
     roles: [role("Admin"), role("Viewer")],
+    screens: [],
     testUsers: [],
-    thunder: { name: "orders-app", type: "browser" },
     ...over,
   };
 }
@@ -55,14 +60,62 @@ function doc(over: Partial<SecurityDesign> = {}): SecurityDesign {
 /** Fully populated document for parse and planUsers round-trip tests. */
 function richDoc(): SecurityDesign {
   return {
-    version: 1,
-    coldStartRole: "Viewer",
-    publicComponents: ["storefront-webapp", "docs-site"],
-    roles: [role("Admin"), role("Viewer")],
-    testUsers: [{ username: "test-admin", role: "Admin" }],
-    thunder: { name: "orders-app", type: "browser" },
+    version: 2,
+    permissions: [
+      {
+        resource: "orders",
+        component: "orders-api",
+        description: "Customer orders",
+        actions: [
+          { handle: "read", ownership: "own", description: "See own orders" },
+          { handle: "read-all", ownership: "any" },
+        ],
+      },
+    ],
+    groups: [{ name: "Staff", description: "Everyone on payroll" }],
+    roles: [
+      {
+        name: "Admin",
+        description: "What Admin may do",
+        stories: [1, 2],
+        grants: ["orders:read", "orders:read-all"],
+        assignTo: ["Staff"],
+        assignableBy: ["Admin"],
+      },
+      {
+        name: "Viewer",
+        description: "What Viewer may do",
+        stories: [3],
+        grants: ["orders:read"],
+        enrolment: "self-service",
+      },
+    ],
+    screens: [
+      { component: "storefront", screen: "Orders", requires: "orders:read" },
+      { component: "storefront", screen: "Catalog", requires: "public" },
+      { component: "storefront", screen: "My account", requires: null },
+    ],
+    testUsers: [{ username: "test-admin", roles: ["Admin", "Viewer"] }],
   };
 }
+
+/** A complete version-1 document — the previous schema, not a half-written one. */
+const V1_DOCUMENT = JSON.stringify({
+  version: 1,
+  coldStartRole: null,
+  publicComponents: [],
+  roles: [
+    {
+      name: "Admin",
+      description: "What Admin may do",
+      stories: [1],
+      grantedBy: "an administrator",
+      permissions: [{ component: "orders-api", actions: ["read"] }],
+    },
+  ],
+  testUsers: [{ username: "ada", role: "Admin" }],
+  thunder: { name: "orders-app", type: "browser" },
+});
 
 describe("parseSecurityDesign", () => {
   // A design with no sign-in legitimately has no security document. "Empty" is a
@@ -77,7 +130,7 @@ describe("parseSecurityDesign", () => {
   });
 
   it("reports malformed JSON as invalid", () => {
-    const parsed = parseSecurityDesign('{"version": 1,');
+    const parsed = parseSecurityDesign('{"version": 2,');
     expect(parsed.kind).toBe("invalid");
     if (parsed.kind !== "invalid") throw new Error("unreachable");
     expect(parsed.message).not.toBe("");
@@ -106,14 +159,27 @@ describe("parseSecurityDesign", () => {
     expect(parsed).toEqual({ kind: "empty" });
   });
 
+  // A v1 file is FINISHED — it is the previous schema, not a draft — so the
+  // panel has to say what happened rather than claim the document is empty.
+  it("refuses a version-1 document with the write gate's migration sentence", () => {
+    const parsed = parseSecurityDesign(V1_DOCUMENT);
+    expect(parsed.kind).toBe("invalid");
+    if (parsed.kind !== "invalid") throw new Error("unreachable");
+    expect(parsed.message).toContain("security.json v1 is not accepted");
+    expect(parsed.message).toContain("coldStartRole");
+    expect(parsed.message).toContain("permissions[]");
+    // The gate names the path it checked; the panel already does.
+    expect(parsed.message).not.toContain("specs/design/security.json");
+  });
+
   it("accepts a well-formed document and hands back the parsed shape", () => {
     const good = richDoc();
     const parsed = parseSecurityDesign(serializeSecurityDesign(good));
     expect(parsed).toEqual({ kind: "ok", doc: good });
   });
 
-  it("accepts thunder without scopes", () => {
-    const good = doc({ thunder: { name: "orders-app", type: "browser" } });
+  it("accepts a document with no groups, screens or test users", () => {
+    const good = doc();
     const parsed = parseSecurityDesign(serializeSecurityDesign(good));
     expect(parsed).toEqual({ kind: "ok", doc: good });
   });
@@ -123,9 +189,9 @@ describe("plannedUsersFor", () => {
   it("returns the authored users of a role, none of them supplied", () => {
     const d = doc({
       testUsers: [
-        { username: "ada", role: "Admin" },
-        { username: "grace", role: "Admin" },
-        { username: "vera", role: "Viewer" },
+        { username: "ada", roles: ["Admin"] },
+        { username: "grace", roles: ["Admin"] },
+        { username: "vera", roles: ["Viewer"] },
       ],
     });
     expect(plannedUsersFor(d, "Admin")).toEqual([
@@ -134,15 +200,71 @@ describe("plannedUsersFor", () => {
     ]);
   });
 
+  // v2's test user holds a LIST of roles, and the panel lists users inside role
+  // cards — so one account satisfies every role it names.
+  it("counts a user holding several roles under each of them", () => {
+    const d = doc({ testUsers: [{ username: "ada", roles: ["Admin", "Viewer"] }] });
+    expect(plannedUsersFor(d, "Admin")).toEqual([
+      { username: "ada", role: "Admin", supplied: false },
+    ]);
+    expect(plannedUsersFor(d, "Viewer")).toEqual([
+      { username: "ada", role: "Viewer", supplied: false },
+    ]);
+  });
+
   it("gives a role with no authored user exactly one supplied test-<slug>", () => {
-    const d = doc({ testUsers: [{ username: "ada", role: "Admin" }] });
+    const d = doc({ testUsers: [{ username: "ada", roles: ["Admin"] }] });
     expect(plannedUsersFor(d, "Viewer")).toEqual([
       { username: "test-viewer", role: "Viewer", supplied: true },
     ]);
   });
 
+  // `securityspec.Role.NeedsTestUser`: only an admin-enrolment USER role owes a
+  // login. Promising a `test-…` name for the other two would name an account
+  // the build never creates.
+  it("supplies no user for a service role", () => {
+    const d = doc({ roles: [role("Admin"), { ...role("Ledger Sync"), kind: "service" }] });
+
+    expect(plannedUsersFor(d, "Ledger Sync")).toEqual([]);
+    expect(planUsers(d)).toEqual([
+      { username: "test-admin", role: "Admin", supplied: true },
+    ]);
+  });
+
+  it("supplies no user for a self-service role", () => {
+    const d = doc({
+      roles: [role("Admin"), { ...role("Shopper"), enrolment: "self-service" }],
+    });
+
+    expect(plannedUsersFor(d, "Shopper")).toEqual([]);
+    expect(planUsers(d)).toEqual([
+      { username: "test-admin", role: "Admin", supplied: true },
+    ]);
+  });
+
+  // The ordinal is the DECLARED role's index on both sides, so a role that owes
+  // no login still consumes one — skipping it here would hand a colliding role
+  // a different suffix than the build creates.
+  it("counts skipped roles in the ordinal the collision suffix uses", () => {
+    const d = doc({
+      roles: [
+        { ...role("Ledger Sync"), kind: "service" },
+        role("Ops Support"),
+        role("Ops/Support"),
+      ],
+      testUsers: [{ username: "test-ops-support", roles: ["Ops Support"] }],
+    });
+
+    // `Ops/Support` is the THIRD declared role, so its disambiguated name is
+    // `-3` — the service role ahead of it still counts.
+    expect(planUsers(d).map((u) => u.username)).toEqual([
+      "test-ops-support",
+      "test-ops-support-3",
+    ]);
+  });
+
   it("matches a test user to its role case-insensitively", () => {
-    const d = doc({ testUsers: [{ username: "ada", role: "aDmIn" }] });
+    const d = doc({ testUsers: [{ username: "ada", roles: ["aDmIn"] }] });
     expect(plannedUsersFor(d, "Admin")).toEqual([
       { username: "ada", role: "Admin", supplied: false },
     ]);
@@ -193,7 +315,9 @@ describe("suppliedUsernameFor", () => {
  * would show a login that never appears.
  *
  * The expectations below are the OBSERVED output of the Go `securityspec.Plan`
- * for the same documents, transcribed. Change one side and this goes red.
+ * for the same documents, transcribed and restated on the v2 shape (only the
+ * test users' `role` → `roles` changed; the generator itself did not). Change
+ * one side and this goes red.
  */
 describe("suppliedUsernameFor agrees with the Go build's securityspec.supplyUsername", () => {
   // Two DISTINCT role names that slug identically. The schema's uniqueness rule
@@ -206,7 +330,6 @@ describe("suppliedUsernameFor agrees with the Go build's securityspec.supplyUser
     const d = doc({
       roles: [role("Ops Support"), role("Ops/Support")],
       testUsers: [],
-      coldStartRole: null,
     });
     expect(planUsers(d).map((u) => u.username)).toEqual([
       "test-ops-support",
@@ -217,13 +340,13 @@ describe("suppliedUsernameFor agrees with the Go build's securityspec.supplyUser
 
   it("suffixes the role ordinal when an authored user of ANOTHER role holds the natural name", () => {
     // Go: Plan → [{test-viewer Admin} {test-viewer-2 Viewer supplied}]
-    const d = doc({ testUsers: [{ username: "test-viewer", role: "Admin" }] });
+    const d = doc({ testUsers: [{ username: "test-viewer", roles: ["Admin"] }] });
     expect(suppliedUsernameFor(d, "Viewer")).toBe("test-viewer-2");
   });
 
   it("uses ordinal+1, so the first declared role suffixes -1 and not -0", () => {
     // Go: Plan → [{test-admin-1 Admin supplied} {test-admin Viewer}]
-    const d = doc({ testUsers: [{ username: "test-admin", role: "Viewer" }] });
+    const d = doc({ testUsers: [{ username: "test-admin", roles: ["Viewer"] }] });
     expect(suppliedUsernameFor(d, "Admin")).toBe("test-admin-1");
   });
 
@@ -241,7 +364,7 @@ describe("suppliedUsernameFor agrees with the Go build's securityspec.supplyUser
     // nothing is supplied at all.
     const d = doc({
       roles: [role("Admin")],
-      testUsers: [{ username: "alice", role: "admin" }],
+      testUsers: [{ username: "alice", roles: ["admin"] }],
     });
     expect(plannedUsersFor(d, "Admin")).toEqual([
       { username: "alice", role: "Admin", supplied: false },

@@ -115,6 +115,19 @@ func (s *artifactService) SaveSpec(ctx context.Context, orgID, projectID string,
 		"project", projectID, "repo", ref.OrgID+"/"+ref.ProjectID+"/"+ref.RepoSlug, "commit", commit,
 		"pinned", req.CommitSHA != "", "requirementsFiles", len(reqFiles), "designFiles", len(designFiles))
 
+	// Non-blocking first: the security design's coverage notices ("declared,
+	// used nowhere", "unreachable by any role", and the assignTo INFO note).
+	// They are emitted OUTSIDE the hard gate on purpose — they say nothing
+	// about whether the spec is buildable, and they must keep being produced
+	// while the gate is off. The CARRIER of these for the console is the apply
+	// path's ApplyResult.Warnings (files_service.go, securityDesignNotices);
+	// SaveSpec sees the same set at tag time and puts it on the record.
+	for _, w := range buildGateWarnings(designFiles) {
+		slog.InfoContext(ctx, "spec save: security design notice",
+			"project", projectID, "commit", commit,
+			"path", designPrefix+w.Path, "code", w.Code, "notice", w.Message)
+	}
+
 	// Hard gate: the whole spec must be buildable BEFORE any tag is cut.
 	if verr := validateSpecBundles(reqFiles, designFiles); verr != nil {
 		slog.WarnContext(ctx, "spec save: hard gate failed",
@@ -344,4 +357,3 @@ func (s *artifactService) specTreeUnchanged(ctx context.Context, ref sourcecontr
 	}
 	return specTreesEqual(headEntries, tagEntries), nil
 }
-

@@ -84,9 +84,11 @@ type RoleState struct {
 // TestUserState is one test account THIS project references, with the live
 // directory facts folded in.
 type TestUserState struct {
-	Username  string
-	RoleName  string
-	Supplied  bool
+	Username string
+	RoleName string
+	Supplied bool
+	// ColdStart is a v1 leftover carried for the wire contract and is always
+	// false — see TestUserRef.ColdStart in entities.go. Phase 2/5 removes it.
 	ColdStart bool
 	// Exists is presence on the directory. It is meaningless when the panel
 	// reports DirectoryAvailable false, which is exactly why that flag exists.
@@ -210,8 +212,8 @@ func (s *PanelService) View(ctx context.Context, orgID, projectID string) (Panel
 
 // rolesFromDirectory projects the shared catalog join into this package's panel
 // view type. The join itself lives in catalog.go and is the SAME one the
-// design-time `list_roles` tool reads, so the console and the design agent can
-// never disagree about which roles the platform created.
+// design-time `list_groups` tool reads, so the console and the design agent can
+// never disagree about which groups the platform created.
 func (s *PanelService) rolesFromDirectory(ctx context.Context, target Target) ([]RoleState, error) {
 	entries, err := readCatalog(ctx, target, s.store)
 	if err != nil {

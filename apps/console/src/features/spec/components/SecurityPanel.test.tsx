@@ -36,22 +36,47 @@ function role(name: string): SecurityDesign["roles"][number] {
     name,
     description: `What ${name} may do`,
     stories: [1],
-    grantedBy: "an administrator",
-    permissions: [{ component: "orders-api", actions: ["read"] }],
+    grants: ["orders:read"],
   };
 }
 
 function design(over: Partial<SecurityDesign> = {}): string {
   return serializeSecurityDesign({
-    version: 1,
-    coldStartRole: null,
-    publicComponents: [],
+    version: 2,
+    permissions: [
+      {
+        resource: "orders",
+        component: "orders-api",
+        actions: [
+          { handle: "read", ownership: "own", description: "See own orders" },
+        ],
+      },
+    ],
+    groups: [],
     roles: [role("Admin")],
+    screens: [],
     testUsers: [],
-    thunder: { name: "orders-app", type: "browser" },
     ...over,
   });
 }
+
+/** A complete version-1 document — the previous schema, not a half-written one. */
+const V1_DOCUMENT = JSON.stringify({
+  version: 1,
+  coldStartRole: null,
+  publicComponents: [],
+  roles: [
+    {
+      name: "Admin",
+      description: "What Admin may do",
+      stories: [1],
+      grantedBy: "an administrator",
+      permissions: [{ component: "orders-api", actions: ["read"] }],
+    },
+  ],
+  testUsers: [{ username: "ada", role: "Admin" }],
+  thunder: { name: "orders-app", type: "browser" },
+});
 
 function liveRole(
   name: string,
@@ -102,7 +127,7 @@ describe("SecurityPanel — one read-only page", () => {
 
   it("shows no Reveal / Rotate / Delete / Add / Hide controls", () => {
     setup({
-      securityJson: design({ testUsers: [{ username: "ada", role: "Admin" }] }),
+      securityJson: design({ testUsers: [{ username: "ada", roles: ["Admin"] }] }),
       live: live({ testUsers: [liveUser("ada")] }),
     });
 
@@ -171,65 +196,117 @@ describe("SecurityPanel — reading the document", () => {
   });
 
   it("shows a malformed document as an error with the Security prefix", () => {
-    setup({ securityJson: '{"version": 1,' });
+    setup({ securityJson: '{"version": 2,' });
 
     expect(
       screen.getByText(/Couldn't read the Security document:/i),
     ).toBeInTheDocument();
   });
 
-  it("renders thunder with platform-default scopes when scopes are omitted", () => {
-    setup();
+  // A project whose last design turn predates v2 has a complete v1 file. The
+  // panel must say so — not render it as an unfinished draft.
+  it("shows a version-1 document as an error naming what v2 removed", () => {
+    setup({ securityJson: V1_DOCUMENT });
 
-    expect(screen.getByText("orders-app")).toBeInTheDocument();
-    expect(screen.getByText("Type: browser")).toBeInTheDocument();
+    const alert = screen.getByText(/Couldn't read the Security document:/i);
+    expect(alert).toHaveTextContent(/v1 is not accepted/i);
+    expect(alert).toHaveTextContent(/coldStartRole/);
     expect(
-      screen.getByText(
-        "Scopes: platform default (openid profile email group ou)",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        /People sign in through this Thunder application\. The platform creates it at Build/,
-      ),
-    ).toBeInTheDocument();
+      screen.queryByRole("heading", { name: "Roles & users" }),
+    ).not.toBeInTheDocument();
   });
 
-  it("renders thunder scopes when the document sets them", () => {
+  it("renders the permission catalog with each handle and what rows it reaches", () => {
     setup({
       securityJson: design({
-        thunder: {
-          name: "orders-app",
-          type: "browser",
-          scopes: "openid profile email group ou",
-        },
+        permissions: [
+          {
+            resource: "orders",
+            component: "orders-api",
+            description: "Customer orders",
+            actions: [
+              { handle: "read", ownership: "own", description: "See own orders" },
+              { handle: "read-all", ownership: "any" },
+            ],
+          },
+        ],
+      }),
+    });
+
+    // Once in the catalog, once as the default role's grant.
+    expect(screen.getAllByText("orders:read")).toHaveLength(2);
+    expect(screen.getByText("orders:read-all")).toBeInTheDocument();
+    expect(screen.getByText("owned by orders-api")).toBeInTheDocument();
+    expect(screen.getByText("Customer orders")).toBeInTheDocument();
+    expect(screen.getByText("own rows")).toBeInTheDocument();
+    expect(screen.getByText("any row")).toBeInTheDocument();
+  });
+
+  it("lists the org groups the project introduces, and nothing when it introduces none", () => {
+    setup({
+      securityJson: design({
+        groups: [{ name: "Finance", description: "Approves what we pay for" }],
       }),
     });
 
     expect(
-      screen.getByText("Scopes: openid profile email group ou"),
+      screen.getByText(/Approves what we pay for/),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByText(
-        "Scopes: platform default (openid profile email group ou)",
-      ),
-    ).not.toBeInTheDocument();
+
+    cleanup();
+    setup();
+    expect(screen.queryByText("New org groups")).not.toBeInTheDocument();
   });
 
-  it("renders each role with description, Granted by, permissions, and usernames", () => {
+  it("renders each role with description, enrolment, grants, and usernames", () => {
     setup({
       securityJson: design({
-        roles: [role("Admin"), role("Viewer")],
-        testUsers: [{ username: "ada", role: "Admin" }],
+        roles: [
+          { ...role("Admin"), assignTo: ["Compliance"] },
+          { ...role("Viewer"), enrolment: "self-service" },
+        ],
+        testUsers: [{ username: "ada", roles: ["Admin"] }],
       }),
     });
 
     expect(screen.getByText("Admin")).toBeInTheDocument();
     expect(screen.getByText("Viewer")).toBeInTheDocument();
     expect(screen.getByText("What Admin may do")).toBeInTheDocument();
-    expect(screen.getAllByText(/Granted by an administrator/)).toHaveLength(2);
-    expect(screen.getAllByText("orders-api")).toHaveLength(2);
+    expect(
+      screen.getByText("Assigned to everyone in Compliance."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Self-service — the application assigns it when an account is created.",
+      ),
+    ).toBeInTheDocument();
+    // The grant, and the catalog's sentence for the handle it names.
+    expect(screen.getAllByText("orders:read")).toHaveLength(3);
+    expect(screen.getAllByText("See own orders")).toHaveLength(3);
     expect(screen.getByText("ada")).toBeInTheDocument();
+  });
+
+  it("marks a service role and says nobody is enrolled in it", () => {
+    setup({
+      securityJson: design({
+        roles: [{ ...role("Ledger Writer"), kind: "service" }],
+      }),
+    });
+
+    expect(screen.getByText("Service")).toBeInTheDocument();
+    expect(
+      screen.getByText("Held by a service, not by a person."),
+    ).toBeInTheDocument();
+  });
+
+  it("names the roles that may hand a role out", () => {
+    setup({
+      securityJson: design({
+        roles: [{ ...role("Admin"), assignableBy: ["Admin"] }],
+      }),
+    });
+
+    expect(screen.getByText("Handed out by Admin.")).toBeInTheDocument();
   });
 
   it("shows the Security heading and subtitle", () => {
@@ -238,33 +315,48 @@ describe("SecurityPanel — reading the document", () => {
     expect(screen.getByRole("heading", { name: "Security" })).toBeInTheDocument();
     expect(
       screen.getByText(
-        /Who can sign in, what each role may do, and the Thunder application that issues the session\./,
+        /What this project protects, what each role may do with it, and the accounts the validation agent signs in with\./,
       ),
     ).toBeInTheDocument();
   });
 });
 
-describe("SecurityPanel — a role against the shared directory", () => {
-  it('reads "Reused" for a role the platform already created', () => {
-    setup({ live: live({ roles: [liveRole("Admin")] }) });
+describe("SecurityPanel — a role's groups against the shared directory", () => {
+  // The live half is the directory's GROUP catalog. A project role is not an
+  // object on the directory — it reaches an app through the groups it is
+  // assigned to — so every chip is about one `assignTo` group, never about the
+  // role's own name.
+  function assigned(...groups: string[]): string {
+    return design({ roles: [{ ...role("Admin"), assignTo: groups }] });
+  }
 
-    expect(screen.getByText("Reused")).toBeInTheDocument();
-  });
-
-  it('reads "New at Build" for a role the directory does not have', () => {
-    setup({ live: live({ roles: [liveRole("Something Else")] }) });
-
-    expect(screen.getByText("New at Build")).toBeInTheDocument();
-  });
-
-  it('reads "Not ours" with the mock leave-alone tooltip', async () => {
+  it('reads "Reused" for an assignTo group the platform already created', () => {
     setup({
-      live: live({ roles: [liveRole("Admin", { platformCreated: false })] }),
+      securityJson: assigned("Administrators"),
+      live: live({ roles: [liveRole("Administrators")] }),
     });
 
-    const chip = screen.getByText("Not ours");
+    expect(screen.getByText("Administrators: Reused")).toBeInTheDocument();
+  });
+
+  it('reads "New at Build" for an assignTo group the directory does not have', () => {
+    setup({
+      securityJson: assigned("Administrators"),
+      live: live({ roles: [liveRole("Something Else")] }),
+    });
+
+    expect(screen.getByText("Administrators: New at Build")).toBeInTheDocument();
+  });
+
+  it('reads "Not ours" with the leave-alone tooltip', async () => {
+    setup({
+      securityJson: assigned("Administrators"),
+      live: live({ roles: [liveRole("Administrators", { platformCreated: false })] }),
+    });
+
+    const chip = screen.getByText("Administrators: Not ours");
     expect(chip).toBeInTheDocument();
-    expect(screen.queryByText("Reused")).not.toBeInTheDocument();
+    expect(screen.queryByText("Administrators: Reused")).not.toBeInTheDocument();
 
     fireEvent.mouseOver(chip);
     const tooltip = await screen.findByRole("tooltip");
@@ -274,32 +366,77 @@ describe("SecurityPanel — a role against the shared directory", () => {
     expect(tooltip.textContent).not.toMatch(/no test user is added/i);
   });
 
-  it("matches the design's role to the directory's case-insensitively", () => {
-    setup({ live: live({ roles: [liveRole("admin")] }) });
+  it("matches the design's group to the directory's case-insensitively", () => {
+    setup({
+      securityJson: assigned("Administrators"),
+      live: live({ roles: [liveRole("administrators")] }),
+    });
 
-    expect(screen.getByText("Reused")).toBeInTheDocument();
+    expect(screen.getByText("Administrators: Reused")).toBeInTheDocument();
+  });
+
+  it("gives one chip per assignTo group, each judged on its own", () => {
+    setup({
+      securityJson: assigned("Administrators", "Finance"),
+      live: live({ roles: [liveRole("Administrators")] }),
+    });
+
+    expect(screen.getByText("Administrators: Reused")).toBeInTheDocument();
+    expect(screen.getByText("Finance: New at Build")).toBeInTheDocument();
+  });
+
+  // The role's own name is NOT a directory object: a project role that happens
+  // to be spelled like an org group must not read as one already there.
+  it("never judges the role's own name against the group catalog", () => {
+    setup({
+      securityJson: assigned("Administrators"),
+      live: live({ roles: [liveRole("Admin"), liveRole("Administrators")] }),
+    });
+
+    expect(screen.queryByText("Admin: Reused")).not.toBeInTheDocument();
+    expect(screen.getByText("Administrators: Reused")).toBeInTheDocument();
+  });
+
+  it("shows no directory chip for a role with no assignTo", () => {
+    // A service role's principal is an application and a self-service role's
+    // accounts come from the app's registration flow: neither is assigned to a
+    // group, so there is nothing for the directory to already hold.
+    setup({
+      securityJson: design({
+        roles: [
+          { ...role("Ledger Sync"), kind: "service" },
+          { ...role("Shopper"), enrolment: "self-service" },
+        ],
+      }),
+      live: live({ roles: [liveRole("Ledger Sync"), liveRole("Shopper")] }),
+    });
+
+    for (const label of [/Reused/, /New at Build/, /Not ours/]) {
+      expect(screen.queryByText(label)).not.toBeInTheDocument();
+    }
   });
 
   it("omits live chips when the directory is unreachable — no IDP alert", () => {
     setup({
+      securityJson: assigned("Administrators"),
       live: live({
         directoryAvailable: false,
-        roles: [liveRole("Admin", { platformCreated: false })],
+        roles: [liveRole("Administrators", { platformCreated: false })],
       }),
     });
 
     expect(
       screen.queryByText(/identity provider could not be reached/i),
     ).not.toBeInTheDocument();
-    for (const label of ["Reused", "New at Build", "Not ours"]) {
+    for (const label of [/Reused/, /New at Build/, /Not ours/]) {
       expect(screen.queryByText(label)).not.toBeInTheDocument();
     }
   });
 
   it("omits live chips when live is missing", () => {
-    setup({ live: undefined });
+    setup({ securityJson: assigned("Administrators"), live: undefined });
 
-    for (const label of ["Reused", "New at Build", "Not ours"]) {
+    for (const label of [/Reused/, /New at Build/, /Not ours/]) {
       expect(screen.queryByText(label)).not.toBeInTheDocument();
     }
   });
@@ -311,9 +448,9 @@ describe("SecurityPanel — disposable accounts warning", () => {
       securityJson: design({
         roles: [role("Admin"), role("Viewer"), role("Auditor")],
         testUsers: [
-          { username: "ada", role: "Admin" },
-          { username: "grace", role: "Admin" },
-          { username: "linus", role: "Viewer" },
+          { username: "ada", roles: ["Admin"] },
+          { username: "grace", roles: ["Admin"] },
+          { username: "linus", roles: ["Viewer"] },
         ],
       }),
     });
@@ -356,16 +493,30 @@ describe("SecurityPanel — test users", () => {
 
   it("does not badge an authored user as platform-supplied", () => {
     setup({
-      securityJson: design({ testUsers: [{ username: "ada", role: "Admin" }] }),
+      securityJson: design({ testUsers: [{ username: "ada", roles: ["Admin"] }] }),
     });
 
     expect(screen.getByText("ada")).toBeInTheDocument();
     expect(screen.queryByText("Platform-supplied")).not.toBeInTheDocument();
   });
 
+  // One account, two roles: it satisfies both cards, so neither role gets a
+  // platform-supplied name.
+  it("shows an account holding several roles under each of them", () => {
+    setup({
+      securityJson: design({
+        roles: [role("Admin"), role("Viewer")],
+        testUsers: [{ username: "ada", roles: ["Admin", "Viewer"] }],
+      }),
+    });
+
+    expect(screen.getAllByText("ada")).toHaveLength(2);
+    expect(screen.queryByText("Platform-supplied")).not.toBeInTheDocument();
+  });
+
   it("does not show Name already taken or Created at Build chips", () => {
     setup({
-      securityJson: design({ testUsers: [{ username: "ada", role: "Admin" }] }),
+      securityJson: design({ testUsers: [{ username: "ada", roles: ["Admin"] }] }),
       live: live({
         testUsers: [
           liveUser("ada", { owned: false }),
@@ -379,26 +530,29 @@ describe("SecurityPanel — test users", () => {
   });
 });
 
-describe("SecurityPanel — the document's standing rules", () => {
-  it("names the role a freshly signed-in person holds", () => {
-    setup({ securityJson: design({ coldStartRole: "Admin" }) });
+describe("SecurityPanel — screens", () => {
+  it("shows what each screen takes to reach, including public and signed-in", () => {
+    setup({
+      securityJson: design({
+        screens: [
+          { component: "storefront", screen: "Orders", requires: "orders:read" },
+          { component: "storefront", screen: "Catalog", requires: "public" },
+          { component: "storefront", screen: "My account", requires: null },
+        ],
+      }),
+    });
 
+    expect(screen.getByText("Orders")).toBeInTheDocument();
+    expect(screen.getAllByText("orders:read")).toHaveLength(3);
     expect(
-      screen.getByText(/has just signed in and been granted nothing holds/i),
+      screen.getByText("Open to everyone, no sign-in"),
     ).toBeInTheDocument();
+    expect(screen.getByText("Any signed-in person")).toBeInTheDocument();
   });
 
-  it("says a person with no role reaches nothing when there is no cold-start role", () => {
-    setup({ securityJson: design({ coldStartRole: null }) });
+  it("omits the screens block for an API-only project", () => {
+    setup();
 
-    expect(screen.getByText(/reaches nothing/i)).toBeInTheDocument();
-  });
-
-  it("lists the components open without sign-in", () => {
-    setup({ securityJson: design({ publicComponents: ["docs-site"] }) });
-
-    expect(
-      screen.getByText(/Open to everyone, no sign-in: docs-site\./i),
-    ).toBeInTheDocument();
+    expect(screen.queryByText("Screens")).not.toBeInTheDocument();
   });
 });

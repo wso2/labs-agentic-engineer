@@ -1,0 +1,17 @@
+screen FrontDesk "The whole day, for the desk"
+  navbar "Clinic Desk"
+  sidebar "Front desk | Schedule -> Schedule | Records -> PatientRecords"
+  table "Time | Patient | Doctor"
+    row "09:30 | R. Perera | Dr Silva"
+
+screen Schedule "Who is on, and when"
+  navbar "Clinic Desk"
+  sidebar "Front desk -> FrontDesk | Schedule | Records -> PatientRecords"
+  table "Doctor | Mon | Tue"
+    row "Dr Silva | 09-17 | off"
+
+screen PatientRecords "Records of my own patients"
+  navbar "Clinic Desk"
+  sidebar "Front desk -> FrontDesk | Schedule -> Schedule | Records"
+  table "Patient | Last seen"
+    row "R. Perera | 2026-01-04"

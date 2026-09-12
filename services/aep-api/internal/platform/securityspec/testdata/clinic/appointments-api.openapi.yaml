@@ -1,0 +1,76 @@
+openapi: 3.0.3
+info:
+  title: Appointments API
+  version: "1.0.0"
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: https://idp.example/oauth2/authorize
+          tokenUrl: https://idp.example/oauth2/token
+          scopes:
+            appointments:read: See own appointments
+            appointments:read-all: See the whole day
+            appointments:book: Book an appointment
+            appointments:cancel: Cancel own appointment
+            appointments:manage: Move, check in, cancel any
+            schedule:read: See the clinic schedule
+            schedule:publish: Publish next week
+            records:read: Records of the caller's own patients
+security:
+  - oauth2: []
+paths:
+  /slots:
+    get:
+      operationId: freeSlots
+      security: []
+      responses:
+        "200": { description: ok }
+  /appointments:
+    get:
+      operationId: listAppointments
+      security: [{ oauth2: [appointments:read] }]
+      responses:
+        "200": { description: ok }
+    post:
+      operationId: bookAppointment
+      security: [{ oauth2: [appointments:book] }]
+      responses:
+        "201": { description: created }
+  /appointments/day:
+    get:
+      operationId: listDay
+      security: [{ oauth2: [appointments:read-all] }]
+      responses:
+        "200": { description: ok }
+  /appointments/{id}:
+    delete:
+      operationId: cancelAppointment
+      security: [{ oauth2: [appointments:cancel] }]
+      responses:
+        "204": { description: cancelled }
+    put:
+      operationId: manageAppointment
+      security: [{ oauth2: [appointments:manage] }]
+      responses:
+        "200": { description: ok }
+  /schedule:
+    get:
+      operationId: readSchedule
+      security: [{ oauth2: [schedule:read] }]
+      responses:
+        "200": { description: ok }
+  /schedule/publish:
+    post:
+      operationId: publishSchedule
+      security: [{ oauth2: [schedule:publish] }]
+      responses:
+        "202": { description: accepted }
+  /records:
+    get:
+      operationId: readRecords
+      security: [{ oauth2: [records:read] }]
+      responses:
+        "200": { description: ok }

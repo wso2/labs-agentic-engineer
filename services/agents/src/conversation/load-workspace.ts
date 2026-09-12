@@ -128,19 +128,48 @@ function isAdmittedSpecPath(path: string): boolean {
 }
 
 /**
+ * The project's security design — ONE design-level file, admitted by its EXACT
+ * path rather than by basename.
+ *
+ * It has to be in the snapshot for two reasons a later turn depends on: the
+ * agent that wrote it in turn N must be able to read it back in turn N+1
+ * (otherwise every subsequent read is `NO_SUCH_FILE`), and the openapi.yaml
+ * write gate reads the permission catalog OUT OF THE BUNDLE — with the file
+ * invisible, `catalogOwners()` returns null and the gate's catalog rules go
+ * deliberately lenient, so a stale scope handle in a later openapi.yaml edit is
+ * accepted.
+ *
+ * A basename match would be wrong: the contract is the single project-level
+ * catalog (`securityDesignJsonSchema` in `@aep/agent-stream` claims this path
+ * and no other), so a `specs/design/components/<c>/security.json` is not a
+ * second, per-component catalog — nothing reads it and nothing validates it.
+ * Admitting one would put an unvalidated file the agent can neither gate nor
+ * act on into every turn.
+ */
+const SECURITY_DESIGN_PATH = "specs/design/security.json";
+
+/**
  * The turn-snapshot filter — mirrors aep-api `agentfold.KeepInTurnSnapshot`:
  * keep agent-authored sources (`*.md`, `*.dsl`, `*.cell`, component
- * `design.json`, the acceptance oracle `validation-criteria.json`, the two
- * OpenAPI contract shapes above) and drop everything else (derived
- * `.excalidraw`/`*.gen.json` projections, code, arbitrary `*.yaml` such as
- * `workload.yaml`, …). `*.cell` is the project-level cell-diagram DSL
- * (design.cell) that drives the live architecture diagram.
- * validation-criteria.json is kept so a design regeneration can see the
- * existing oracle and preserve its covered flags instead of resetting them.
+ * `design.json`, the acceptance oracle `validation-criteria.json`, the project
+ * security design `specs/design/security.json`, the two OpenAPI contract shapes
+ * above) and drop everything else (derived `.excalidraw`/`*.gen.json`
+ * projections, code, arbitrary `*.yaml` such as `workload.yaml`, …). `*.cell`
+ * is the project-level cell-diagram DSL (design.cell) that drives the live
+ * architecture diagram. validation-criteria.json is kept so a design
+ * regeneration can see the existing oracle and preserve its covered flags
+ * instead of resetting them.
+ *
+ * The two filters are ONE rule implemented twice: a change here that is not
+ * made in `snapshot_filter.go` silently changes what a turn can read on one
+ * side only (the agents-side FileBundle and the Go fold then disagree about
+ * whether a path exists). `test/load-workspace.test.ts` and
+ * `snapshot_filter_test.go` pin the same fixed accept/reject table.
  */
 export function keepInTurnSnapshot(path: string): boolean {
   if (path.endsWith(".md") || path.endsWith(".dsl") || path.endsWith(".cell")) return true;
   if (isAdmittedSpecPath(path)) return true;
+  if (path === SECURITY_DESIGN_PATH) return true;
   if (isTextReferencePath(path)) return true;
   const base = basename(path);
   return base === "design.json" || base === "validation-criteria.json";

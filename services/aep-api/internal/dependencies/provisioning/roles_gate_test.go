@@ -248,7 +248,7 @@ func TestRolesGate_PublishesEveryLoginInItsOwnComment(t *testing.T) {
 		outcome: RolesEnsureOutcome{
 			Summary: "- Roles created: Trainer, Team Member",
 			Credentials: []RolesCredential{
-				{Username: "test-team-member", Password: "Aep1!alpha-beta_1", Role: "Team Member", ColdStart: true},
+				{Username: "test-team-member", Password: "Aep1!alpha-beta_1", Role: "Team Member"},
 				{Username: "test-trainer", Password: "Aep1!gamma-delta_2", Role: "Trainer"},
 			},
 		},
@@ -279,8 +279,8 @@ func TestRolesGate_PublishesEveryLoginInItsOwnComment(t *testing.T) {
 		t.Errorf("the published comment lacks the anchor the agent looks for:\n%s", comment)
 	}
 	for _, want := range []string{
-		"| `test-team-member` | `Aep1!alpha-beta_1` | Team Member | yes |",
-		"| `test-trainer` | `Aep1!gamma-delta_2` | Trainer | no |",
+		"| `test-team-member` | `Aep1!alpha-beta_1` | Team Member |",
+		"| `test-trainer` | `Aep1!gamma-delta_2` | Trainer |",
 	} {
 		if !strings.Contains(comment, want) {
 			t.Errorf("published comment is missing row\n  %s\ngot:\n%s", want, comment)

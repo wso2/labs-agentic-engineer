@@ -53,20 +53,33 @@ const CONTENT: Record<string, string> = {
     "# Approve an expense\n\nAn approver reviews a submitted expense and approves or refuses it.\n\n```mermaid\nsequenceDiagram\n    actor Approver\n    participant expense-portal\n    participant expense-api\n\n    Approver->>expense-portal: open the queue\n    expense-portal->>expense-api: list submitted expenses\n    Approver->>expense-portal: approve\n    expense-portal->>expense-api: approve expense\n    expense-api-->>expense-portal: approved\n```\n",
   [SECURITY]: JSON.stringify(
     {
-      version: 1,
-      coldStartRole: "approver",
-      publicComponents: [],
+      version: 2,
+      permissions: [
+        {
+          resource: "expenses",
+          component: "expense-api",
+          description: "Submitted expenses and their approval",
+          actions: [
+            { handle: "read", ownership: "own", description: "See own expenses" },
+            { handle: "submit", ownership: "own", description: "Submit an expense" },
+            { handle: "approve", ownership: "any", description: "Approve a submitted expense" },
+          ],
+        },
+      ],
+      groups: [{ name: "Finance", description: "Approves what the company pays for" }],
       roles: [
         {
           name: "approver",
           description: "Approves submitted expenses.",
           stories: [1],
-          grantedBy: "Platform IdP",
-          permissions: [{ component: "expense-api", actions: ["approve"] }],
+          grants: ["expenses:read", "expenses:approve"],
+          assignTo: ["Finance"],
         },
       ],
-      testUsers: [{ username: "test-approver", role: "approver" }],
-      thunder: { name: "expense-approval", type: "browser" },
+      screens: [
+        { component: "expense-portal", screen: "Queue", requires: "expenses:approve" },
+      ],
+      testUsers: [{ username: "test-approver", roles: ["approver"] }],
     },
     null,
     2,

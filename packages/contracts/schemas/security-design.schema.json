@@ -4,24 +4,83 @@
   "properties": {
     "version": {
       "type": "number",
-      "const": 1
+      "const": 2
     },
-    "coldStartRole": {
-      "anyOf": [
-        {
-          "type": "string",
-          "minLength": 1
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "publicComponents": {
+    "permissions": {
+      "minItems": 1,
       "type": "array",
       "items": {
-        "type": "string",
-        "minLength": 1
+        "type": "object",
+        "properties": {
+          "resource": {
+            "type": "string",
+            "minLength": 1
+          },
+          "component": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "actions": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "handle": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "ownership": {
+                  "type": "string",
+                  "enum": [
+                    "own",
+                    "any"
+                  ]
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "handle",
+                "ownership"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "resource",
+          "component",
+          "actions"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "groups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "name",
+          "description"
+        ],
+        "additionalProperties": false
       }
     },
     "roles": {
@@ -47,48 +106,83 @@
               "maximum": 9007199254740991
             }
           },
-          "grantedBy": {
-            "type": "string",
-            "minLength": 1
-          },
-          "permissions": {
+          "grants": {
             "minItems": 1,
             "type": "array",
             "items": {
-              "type": "object",
-              "properties": {
-                "component": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "actions": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                "screens": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                }
-              },
-              "required": [
-                "component"
-              ],
-              "additionalProperties": false
+              "type": "string",
+              "minLength": 1
             }
+          },
+          "assignTo": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "enrolment": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "self-service"
+            ]
+          },
+          "assignableBy": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "user",
+              "service"
+            ]
           }
         },
         "required": [
           "name",
           "description",
           "stories",
-          "grantedBy",
-          "permissions"
+          "grants"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "screens": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "component": {
+            "type": "string",
+            "minLength": 1
+          },
+          "screen": {
+            "type": "string",
+            "minLength": 1
+          },
+          "requires": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "component",
+          "screen",
+          "requires"
         ],
         "additionalProperties": false
       }
@@ -102,48 +196,30 @@
             "type": "string",
             "minLength": 1
           },
-          "role": {
-            "type": "string",
-            "minLength": 1
+          "roles": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         },
         "required": [
           "username",
-          "role"
+          "roles"
         ],
         "additionalProperties": false
       }
-    },
-    "thunder": {
-      "type": "object",
-      "properties": {
-        "name": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 100
-        },
-        "type": {
-          "type": "string",
-          "const": "browser"
-        },
-        "scopes": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "name",
-        "type"
-      ],
-      "additionalProperties": false
     }
   },
   "required": [
     "version",
-    "coldStartRole",
-    "publicComponents",
+    "permissions",
+    "groups",
     "roles",
-    "testUsers",
-    "thunder"
+    "screens",
+    "testUsers"
   ],
   "additionalProperties": false
 }

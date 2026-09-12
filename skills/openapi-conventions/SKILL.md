@@ -1,6 +1,6 @@
 ---
 name: openapi-conventions
-description: Use when creating or editing an openapi.yaml for a service component — designing endpoints, request/response schemas, errors, pagination, or security for a REST API.
+description: "Use when creating or editing an openapi.yaml for a service component — designing endpoints, request/response schemas, errors, pagination, or security for a REST API."
 metadata:
   aep:
     kind: platform
@@ -87,21 +87,69 @@ Filtering and searching are query parameters on the collection GET
 
 ## Security
 
-When the requirements mention login, roles, or per-user data, declare it:
+**This block is the gateway's configuration.** Deploy renders one gateway route
+per operation from it: the audience it pins and the single scope it requires.
+It is also what the service's scope middleware enforces. Get it right here and
+there is nothing else to configure anywhere.
+
+A component that depends on the sign-in resource type declares one scheme, one
+document-level default, and per-operation overrides:
 
 ```yaml
 components:
   securitySchemes:
-    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+    oauth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: /oauth2/authorize
+          tokenUrl: /oauth2/token
+          scopes:
+            claims:read: See own claims
+            claims:submit: Create and send a claim
 security:
-  - bearerAuth: []
+  - oauth2: []        # document default: any signed-in user
 ```
 
-On a service the gateway protects, the gateway sets `X-User-Id` from the
-validated token and a client never sends it. Define it once under
-`components/parameters`, then `$ref` it from every **path item's**
-`parameters` — path level, not per operation, so one reference covers every
-method on that path. A definition nothing references is not in the spec:
+Every scope key, here and on an operation, is a handle from
+`specs/design/security.json` — `<resource>:<action>` — for a resource THIS
+component owns. Never invent one.
+
+`openid`, `profile`, `email`, `group` and `ou` are **reserved** OIDC scopes that
+ride every access token, so one of them on an operation would admit every
+signed-in person in the organisation — silently, and wide open. The gate refuses
+all five as an operation scope and as a `flows.*.scopes` key.
+
+**Three states, and only three.** Each operation is exactly one of:
+
+| `security` on the operation | Means | Gateway | Service |
+|---|---|---|---|
+| absent (inherits the document default) | any signed-in user | token required | 401 without `X-User-Id` |
+| `security: []` | public | no token checked | reads no identity header |
+| `security: [{oauth2: ["<handle>"]}]` | that permission | scope enforced | 403 `insufficient_scope` |
+
+**Exactly one scope per operation.** No two-element list, no second scheme
+object, no `allOf`/`anyOf` question for the gateway and the service to answer
+differently. Where an operation's result widens for a more privileged caller
+(own rows vs every row), that is a *second handle read inside the handler*, not
+a second scope on the operation.
+
+`bearerAuth` is not used on this platform. A component with no sign-in
+dependency declares no security scheme at all.
+
+**Declare both injected headers `required: false`, even though the gateway
+always sets them.** A generated server binds parameters *before* the scope
+middleware runs, and its default error handler answers **400** for a missing
+required header — which makes the platform's "no `X-User-Id` on a protected
+operation → 401" rule unreachable and turns a gateway bypass into a confusing
+400. `api-management` owns that rule; this is the spelling that lets a service
+obey it.
+
+The gateway sets `X-User-Id` and `X-User-Scopes` from the validated token and a
+client never sends them. Define each once under `components/parameters`, then
+`$ref` them from every **protected** path item's `parameters` — path level, not
+per operation, so one reference covers every method on that path — and from no
+public one. A definition nothing references is not in the spec:
 
 ```yaml
 components:
@@ -109,14 +157,27 @@ components:
     UserId:
       name: X-User-Id
       in: header
-      required: true
-      description: caller identity injected by the gateway from the validated token
+      required: false      # see below - required:true makes the 401 rule unreachable
+      description: caller identity injected by the gateway from the validated token; clients never set it
+      schema: { type: string }
+    UserScopes:
+      name: X-User-Scopes
+      in: header
+      required: false
+      description: space-separated granted scopes, injected by the gateway; clients never set it
       schema: { type: string }
 paths:
   /expense-claims/{claimId}:
     parameters:
       - $ref: '#/components/parameters/ClaimId'
       - $ref: '#/components/parameters/UserId'
+      - $ref: '#/components/parameters/UserScopes'
+    post:
+      security:
+        - oauth2: [claims:submit]
+  /health:
+    get:
+      security: []
 ```
 
 **Never spec an auth endpoint.** No `/auth/login`, `/auth/register`,

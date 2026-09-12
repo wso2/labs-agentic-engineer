@@ -30,7 +30,6 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { Copy, Eye, EyeOff, X } from "@wso2/oxygen-ui-icons-react";
-import { StatusChip } from "../../../components/StatusChip";
 import type { PublishedTestUser } from "../lib/publishedTestUsers";
 
 /** The password's placeholder while it is hidden. Fixed width, monospace, so
@@ -45,8 +44,8 @@ function copyText(value: string): Promise<void> {
 }
 
 /**
- * One account: its username, its masked password with the two controls, the
- * role it holds, and whether it is the cold-start account.
+ * One account: its username, its masked password with the two controls, and the
+ * role it holds.
  *
  * The reveal state is per row and lives here, so opening one password does not
  * open the rest — the dialog can hold a dozen accounts and only the one asked
@@ -173,20 +172,6 @@ function TestUserRow({
       <ListingTable.Cell>
         <Typography variant="body2">{login.role}</Typography>
       </ListingTable.Cell>
-
-      <ListingTable.Cell>
-        {login.coldStart ? (
-          <Tooltip title="Served when a caller asks for credentials without naming a role">
-            <span>
-              <StatusChip label="Cold start" tone="info" appearance="soft" />
-            </span>
-          </Tooltip>
-        ) : (
-          <Typography variant="body2" color="text.secondary">
-            —
-          </Typography>
-        )}
-      </ListingTable.Cell>
     </ListingTable.Row>
   );
 }
@@ -235,7 +220,6 @@ export function TestUsersDialog({
                 <ListingTable.Cell>Username</ListingTable.Cell>
                 <ListingTable.Cell sx={{ width: 260 }}>Password</ListingTable.Cell>
                 <ListingTable.Cell sx={{ width: 180 }}>Role</ListingTable.Cell>
-                <ListingTable.Cell sx={{ width: 130 }}>Cold start</ListingTable.Cell>
               </ListingTable.Row>
             </ListingTable.Head>
             <ListingTable.Body>

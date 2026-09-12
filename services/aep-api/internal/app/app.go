@@ -1136,6 +1136,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		Roles:             rolesEnsurerOrNil(rolesEnsure),
 		Markers:           resourceTypeCatalog,
 		SecurityJSON:      securityJSONReader{art: artifactSvcGit},
+		ProjectNames:      projectDisplayNamer{client: projectClient},
 	})
 	// Assemble the dependencies domain (P8): the provisioning slice (7 ops over
 	// provisioningSvc) + the resource-type-discovery slice (ListPlatformResourceTypes

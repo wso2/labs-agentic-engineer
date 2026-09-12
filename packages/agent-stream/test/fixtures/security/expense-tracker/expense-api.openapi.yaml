@@ -1,0 +1,70 @@
+openapi: 3.0.3
+info:
+  title: Expense API
+  version: "1.0.0"
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      description: Tokens issued by the environment's identity provider for this project.
+      flows:
+        authorizationCode:
+          authorizationUrl: https://idp.example/oauth2/authorize
+          tokenUrl: https://idp.example/oauth2/token
+          scopes:
+            claims:read: See own claims
+            claims:read-all: See every claim
+            claims:submit: Create and send a claim
+            claims:approve: Approve a submitted claim
+            claims:reject: Reject a submitted claim
+            reports:read: Monthly totals
+            reports:export: Download CSV
+security:
+  - oauth2: []
+paths:
+  /health:
+    get:
+      operationId: health
+      security: []
+      responses:
+        "200": { description: ok }
+  /me:
+    get:
+      operationId: me
+      responses:
+        "200": { description: ok }
+  /claims:
+    get:
+      operationId: listClaims
+      security: [{ oauth2: [claims:read] }]
+      responses:
+        "200": { description: ok }
+    post:
+      operationId: submitClaim
+      security: [{ oauth2: [claims:submit] }]
+      responses:
+        "201": { description: created }
+  /claims/{claimId}/approve:
+    post:
+      operationId: approveClaim
+      security: [{ oauth2: [claims:approve] }]
+      responses:
+        "204": { description: approved }
+  /claims/{claimId}/reject:
+    post:
+      operationId: rejectClaim
+      security: [{ oauth2: [claims:reject] }]
+      responses:
+        "204": { description: rejected }
+  /reports:
+    get:
+      operationId: readReports
+      security: [{ oauth2: [reports:read] }]
+      responses:
+        "200": { description: ok }
+  /reports/export:
+    get:
+      operationId: exportReports
+      security: [{ oauth2: [reports:export] }]
+      responses:
+        "200": { description: ok }

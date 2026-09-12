@@ -20,9 +20,32 @@ import (
 	"context"
 	"strings"
 
+	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/securityspec"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
+
+// projectDisplayNamer resolves a project's display name for the end-user-auth
+// overlay, which uses it as the sign-in client's name. It reads OpenChoreo
+// directly rather than through the projects domain: the one fact needed is an
+// annotation the project client already returns, and routing a label lookup
+// through another domain's service would give provisioning a dependency on it.
+type projectDisplayNamer struct {
+	client interface {
+		GetProject(ctx context.Context, orgName, projectName string) (*gen.Project, error)
+	}
+}
+
+func (n projectDisplayNamer) ProjectDisplayName(ctx context.Context, orgID, projectID string) (string, error) {
+	project, err := n.client.GetProject(ctx, orgID, projectID)
+	if err != nil {
+		return "", err
+	}
+	if project == nil {
+		return "", nil
+	}
+	return project.DisplayName, nil
+}
 
 // securityJSONReader reads the project's security.json from the design bundle
 // for platform-resource provision overlay. Empty tag is HEAD (HTTP drawer);

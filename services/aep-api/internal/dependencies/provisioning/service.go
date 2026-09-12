@@ -83,6 +83,9 @@ type Service struct {
 	// markers is the CRT marker catalog the end-user-auth overlay keys on.
 	// Nil skips overlay.
 	markers ResourceMarkerCatalog
+	// projectNames resolves the project's display name for the overlay. Nil
+	// falls back to the project id.
+	projectNames ProjectNamer
 	// securityJSON reads security.json at HEAD (empty tag) or a spec tag.
 	// Nil skips overlay.
 	securityJSON SecurityJSONReader
@@ -134,6 +137,9 @@ type Deps struct {
 	// SecurityJSON reads security.json at HEAD (empty tag) or a spec tag.
 	// Nil skips overlay.
 	SecurityJSON SecurityJSONReader
+	// ProjectNames resolves the project's display name for the end-user-auth
+	// overlay. Nil falls back to the project id.
+	ProjectNames ProjectNamer
 }
 
 // NewService wires the provisioning service from its collaborator set.
@@ -158,6 +164,7 @@ func NewService(d Deps) *Service {
 		orgResourceDocs:   d.OrgResourceDocs,
 		markers:           d.Markers,
 		securityJSON:      d.SecurityJSON,
+		projectNames:      d.ProjectNames,
 	}
 }
 

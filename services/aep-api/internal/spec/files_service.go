@@ -485,10 +485,19 @@ func (s *service) Apply(ctx context.Context, orgID, projectID string, req ApplyR
 			for _, path := range sortedPaths(scaffolds) {
 				content := scaffolds[path]
 				tx.Write(path, []byte(content))
+				batchContent[path] = content
 				files = append(files, FileMeta{Path: path, SHA: blobSHA([]byte(content))})
 				warnings = append(warnings, Warning{Path: path, Message: "scaffolded from design.cell — enrich, don't author, the mechanical fields"})
 			}
 		}
+		// The security design's coverage notices. softValidate above judges ONE
+		// file at a time; these need the whole design bundle, which this is the
+		// first place to hold — the committed tree plus what this batch lands.
+		deleted := map[string]bool{}
+		for _, d := range req.Deletes {
+			deleted[d.Path] = true
+		}
+		warnings = append(warnings, securityDesignNotices(tx.Base(), current, batchContent, deleted)...)
 		return nil
 	}, sourcecontrol.CommitOpts{
 		Message:   applyMessage(req.Message),
@@ -545,6 +554,76 @@ func checkPreconditions(req ApplyRequest, current map[string]string) []Conflict 
 		}
 	}
 	return conflicts
+}
+
+// treeReader is the one thing securityDesignNotices needs of the committed
+// base tree: the content of a path it already knows exists.
+type treeReader interface {
+	Read(rel string) ([]byte, string, error)
+}
+
+// securityDesignNotices are the security design's non-blocking coverage notices
+// for the tree this apply LANDS. They are the soft-tier twin of the build
+// gate's hard rules: "declared, used nowhere", "unreachable by any role", and
+// the INFO note that an assignTo group is one the directory already holds.
+//
+// This is the apply path's seam for them (plan §5 decision 3) because it is the
+// earliest place that holds the WHOLE bundle: softValidate sees one file's
+// content, and a coverage fact is a statement about security.json read against
+// design.cell, the wireframes and the component specs together. Every one of
+// those files may be untouched by this batch, so the committed tree is read for
+// the ones the batch does not carry.
+//
+// It costs those reads, so it runs only when the batch touches specs/design/
+// AND the landed tree actually has a security.json — a project with no security
+// design pays nothing.
+func securityDesignNotices(base treeReader, current, batch map[string]string, deleted map[string]bool) []Warning {
+	touchesDesign := false
+	for path := range batch {
+		if strings.HasPrefix(path, designPrefix) {
+			touchesDesign = true
+			break
+		}
+	}
+	if !touchesDesign {
+		return nil
+	}
+	if _, inBatch := batch[securityspec.Path]; !inBatch {
+		if _, inTree := current[securityspec.Path]; !inTree || deleted[securityspec.Path] {
+			return nil
+		}
+	}
+
+	bundle := map[string]string{}
+	for path := range current {
+		rel, ok := strings.CutPrefix(path, designPrefix)
+		if !ok || rel == "" || !designBundleFilter(rel) || deleted[path] {
+			continue
+		}
+		if _, inBatch := batch[path]; inBatch {
+			continue // the batch's version is the one that lands
+		}
+		content, _, err := base.Read(path)
+		if err != nil {
+			continue // unreadable is the same as absent: the rule that needs it is skipped
+		}
+		bundle[rel] = string(content)
+	}
+	for path, content := range batch {
+		rel, ok := strings.CutPrefix(path, designPrefix)
+		if !ok || rel == "" || !designBundleFilter(rel) {
+			continue
+		}
+		bundle[rel] = content
+	}
+
+	// buildGateWarnings speaks bundle-relative paths; this channel is keyed by
+	// repo path, the same as every other Warning the apply returns.
+	notices := buildGateWarnings(bundle)
+	for i := range notices {
+		notices[i].Path = designPrefix + notices[i].Path
+	}
+	return notices
 }
 
 // softValidate returns non-blocking warnings for a written file (§8's soft tier

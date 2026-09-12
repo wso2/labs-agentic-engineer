@@ -70,6 +70,35 @@ const (
 	codeUnknownRoleStory = "UNKNOWN_ROLE_STORY"
 )
 
+// The security design's NON-BLOCKING codes. They ride Warning, which the
+// console renders beside a file, so they are spelled in the same error-code
+// vocabulary as everything above rather than as the message table's key —
+// the key names a SENTENCE, the code names a CHANNEL entry.
+const (
+	// codeSecurityHandleUsedNowhere — a catalog handle no operation and no
+	// screen requires.
+	codeSecurityHandleUsedNowhere = "SECURITY_HANDLE_USED_NOWHERE"
+	// codeSecurityHandleUnreachable — a handle an operation requires that no
+	// role grants.
+	codeSecurityHandleUnreachable = "SECURITY_HANDLE_UNREACHABLE"
+	// codeSecurityAssignToDirectoryChecked — INFO: a role delegates to a group
+	// the org directory already holds, so the platform creates nothing.
+	codeSecurityAssignToDirectoryChecked = "SECURITY_ASSIGN_TO_DIRECTORY_CHECKED"
+	// codeSecurityDesignNotice — the fallback for a non-blocking finding this
+	// file does not yet have a code for. A new securityspec rule reaches the
+	// channel with a readable message rather than being dropped; giving it its
+	// own code here is the follow-up.
+	codeSecurityDesignNotice = "SECURITY_DESIGN_NOTICE"
+)
+
+// securityNoticeCodes maps a securityspec message key to the Warning code that
+// carries it.
+var securityNoticeCodes = map[string]string{
+	securityspec.MsgHandleUsedNowhere:        codeSecurityHandleUsedNowhere,
+	securityspec.MsgHandleUnreachable:        codeSecurityHandleUnreachable,
+	securityspec.MsgAssignToDirectoryChecked: codeSecurityAssignToDirectoryChecked,
+}
+
 // scaffoldPlaceholderMarker is how the gate tells a scaffold that was never
 // enriched: the platform-authored description survives verbatim.
 const scaffoldPlaceholderMarker = "Scaffolded from design.cell"
@@ -119,6 +148,14 @@ func validateBuildGate(reqFiles, designFiles map[string]string) []FileValidation
 	}
 
 	errs = append(errs, validateRolesDocument(designFiles, prdStories)...)
+
+	// The openapi.yaml SECURITY gate over EVERY component (task 1.6). The save
+	// gate runs the same rules per file, but a save only ever holds the siblings
+	// of that one write, and the agent's own write gate cannot see security.json
+	// in a later turn's bundle at all — so this is the backstop where the whole
+	// tag is present by construction and every scope can be judged against the
+	// catalog that defines it.
+	errs = append(errs, openapiSecurityFindings(designFiles)...)
 
 	// Per-component completeness for deployable components.
 	for _, c := range facts.Components {
@@ -175,7 +212,9 @@ func validateBuildGate(reqFiles, designFiles map[string]string) []FileValidation
 	return errs
 }
 
-// validateRolesDocument checks the security design (roles, test users, thunder).
+// validateRolesDocument checks the security design: the permission catalog, the
+// roles that grant from it, the screens that require from it, and the test
+// users.
 //
 // Presence is keyed on END-USER SIGN-IN, read off committed truth rather than a
 // live catalog call: design-save already derives `exposesAPI.auth =
@@ -215,10 +254,25 @@ func validateRolesDocument(designFiles map[string]string, prdStories map[int]str
 		}}
 	}
 
+	// The referential rules that need MORE than security.json: a permission's
+	// component is a node of design.cell, a screen exists in its component's
+	// wireframes.dsl, and — the one that matters most — every role that reaches
+	// a screen is granted the scope of the operation that screen loads. Parse
+	// ran the document-only half already; only the gate holds the whole bundle,
+	// where every sibling file is present by construction.
+	var errs []FileValidationError
+	for _, finding := range securityspec.ReferenceFindings(doc, securityspec.DesignBundle(designFiles)) {
+		if finding.Severity != securityspec.SeverityError {
+			continue // warnings and info ride buildGateWarnings, never a refusal
+		}
+		errs = append(errs, FileValidationError{
+			Path: securityspec.BundleKey, Code: codeInvalidRolesDocument, Message: finding.Message,
+		})
+	}
+
 	// Every cited story is a real one. A role pointing at a story the PRD does
 	// not have means the design and the requirements have drifted, and the
 	// permissions it grants trace to nothing.
-	var errs []FileValidationError
 	for _, role := range doc.Roles {
 		for _, n := range role.Stories {
 			if _, ok := prdStories[n]; !ok {
@@ -231,6 +285,44 @@ func validateRolesDocument(designFiles map[string]string, prdStories map[int]str
 		}
 	}
 	return errs
+}
+
+// buildGateWarnings are the security design's NON-BLOCKING findings over a
+// whole design bundle — the two coverage warnings the design asks the Security
+// page to render inline ("declared, used nowhere", "unreachable by any role")
+// and the INFO note that a role's assignTo group is one the org directory
+// already holds. None of them refuses anything: the design may legitimately be
+// ahead of the code, and all three are the shape of a typo rather than proof of
+// one. The errors are the gate's business and are excluded here — one defect,
+// one message.
+//
+// They ride the existing soft-warning type rather than a new endpoint (plan §5
+// decision 3); the apply path attaches them to ApplyResult.Warnings, SaveSpec
+// logs them, and phase 5 gives the console a structured read.
+//
+// Paths are BUNDLE-relative (`security.json`), like every other row this file
+// produces; a caller whose channel speaks repo paths prefixes DesignDir.
+func buildGateWarnings(designFiles map[string]string) []Warning {
+	raw, present := designFiles[securityspec.BundleKey]
+	if !present || strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	doc, err := securityspec.Parse([]byte(raw))
+	if err != nil {
+		return nil // a document that does not parse is the gate's business, not a warning's
+	}
+	var out []Warning
+	for _, finding := range securityspec.ReferenceFindings(doc, securityspec.DesignBundle(designFiles)) {
+		if finding.Severity == securityspec.SeverityError {
+			continue
+		}
+		code, ok := securityNoticeCodes[finding.Key]
+		if !ok {
+			code = codeSecurityDesignNotice
+		}
+		out = append(out, Warning{Path: securityspec.BundleKey, Code: code, Message: finding.Message})
+	}
+	return out
 }
 
 // hasEndUserSignIn reports whether any component's design.json carries

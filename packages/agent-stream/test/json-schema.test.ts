@@ -38,7 +38,11 @@ import {
   SECURITY_DESIGN_SCHEMA_ARTIFACT,
   PLAN_TASK_SCHEMA_ARTIFACT,
   UPDATE_TASK_SCHEMA_ARTIFACT,
+  SECURITY_DESIGN_MESSAGES_ARTIFACT,
+  OPENAPI_SECURITY_MESSAGES_ARTIFACT,
 } from "../scripts/artifact-path.js";
+import { SECURITY_DESIGN_MESSAGES } from "../src/security-design-messages.js";
+import { OPENAPI_SECURITY_MESSAGES } from "../src/openapi-security-messages.js";
 
 // Every published artifact must equal a fresh render of its Zod schema; a stale
 // one means the schema changed without `pnpm --filter @aep/agent-stream gen`.
@@ -48,6 +52,18 @@ const artifacts: [string, string, () => Record<string, unknown>][] = [
   ["security-design.schema.json", SECURITY_DESIGN_SCHEMA_ARTIFACT, securityDesignJsonSchema],
   ["plan-task.schema.json", PLAN_TASK_SCHEMA_ARTIFACT, planTaskJsonSchema],
   ["update-task.schema.json", UPDATE_TASK_SCHEMA_ARTIFACT, updateTaskJsonSchema],
+  // The security-gate message catalog is vendored by the BFF, which formats the
+  // same templates so both gates say the same sentence about the same document.
+  [
+    "security-design-messages.json",
+    SECURITY_DESIGN_MESSAGES_ARTIFACT,
+    () => SECURITY_DESIGN_MESSAGES as unknown as Record<string, unknown>,
+  ],
+  [
+    "openapi-security-messages.json",
+    OPENAPI_SECURITY_MESSAGES_ARTIFACT,
+    () => OPENAPI_SECURITY_MESSAGES as unknown as Record<string, unknown>,
+  ],
 ];
 
 for (const [name, path, render] of artifacts) {
