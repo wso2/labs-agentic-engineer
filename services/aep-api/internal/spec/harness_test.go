@@ -236,3 +236,11 @@ func (r *rig) tag(name, msg string) {
 
 func (r *rig) tags() []string  { return r.remote.Tags(r.t) }
 func (r *rig) headSHA() string { return r.remote.HeadSHA(r.t) }
+
+// validComponentDesignJSON is a component design.json that satisfies the design
+// schema gate — the shared seed for every save/read test.
+func validComponentDesignJSON(name string) string {
+	return `{"name":"` + name + `","type":"service","version":"1.0.0","language":"go",` +
+		`"buildpack":"go","appPath":".","entrypoint":"main.go","exposure":"internet",` +
+		`"stories":[1],"dependencies":[],"description":"a service"}`
+}

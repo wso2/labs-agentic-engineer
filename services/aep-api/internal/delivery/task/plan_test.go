@@ -54,14 +54,11 @@ type planVersions struct {
 	scope   spec.BuildScope
 }
 
-func (p planVersions) ListRequirementsVersions(context.Context, string, string) ([]spec.RequirementsVersionInfo, error) {
-	return []spec.RequirementsVersionInfo{{Tag: p.specTag}}, nil
-}
-func (p planVersions) LatestSpecTag(context.Context, string, string) string {
-	return p.specTag
-}
-func (planVersions) GetRequirementsAtTag(context.Context, string, string, string) (map[string]string, error) {
-	return map[string]string{}, nil
+func (p planVersions) ListSpecVersionTags(context.Context, string, string) (*spec.TagList, error) {
+	if p.specTag == "" {
+		return &spec.TagList{}, nil
+	}
+	return &spec.TagList{Tags: []string{p.specTag}, Latest: p.specTag}, nil
 }
 
 // capturingTurn records the TurnRequest and replays a canned upstream stream

@@ -6,6 +6,5 @@
   "hasSpec": true,
   "hasDesign": true,
   "hasTasks": true,
-  "specStatus": "approved",
-  "designStatus": "approved"
+  "specStatus": "approved"
 }

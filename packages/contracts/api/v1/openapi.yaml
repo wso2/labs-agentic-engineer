@@ -919,13 +919,14 @@ paths:
         schema:
           description: Project name (DNS-label slug)
           type: string
-      - description: Spec version tag (`v<N>`), resolved to a milestone number through the run rows —
+      - description: Spec version tag — the name the user gave the version, resolved to a milestone number through the run rows —
           never by matching titles against GitHub.
         in: path
         name: tag
         required: true
         schema:
-          description: Spec version tag
+          description: Spec version tag — letters, digits, dot, dash and underscore.
+          pattern: ^[A-Za-z0-9._-]+$
           type: string
       responses:
         '200':
@@ -956,13 +957,14 @@ paths:
         schema:
           description: Project name (DNS-label slug)
           type: string
-      - description: Spec version tag (`v<N>`), resolved to a milestone number through the run rows —
+      - description: Spec version tag — the name the user gave the version, resolved to a milestone number through the run rows —
           never by matching titles against GitHub.
         in: path
         name: tag
         required: true
         schema:
-          description: Spec version tag
+          description: Spec version tag — letters, digits, dot, dash and underscore.
+          pattern: ^[A-Za-z0-9._-]+$
           type: string
       responses:
         '200':
@@ -1025,13 +1027,14 @@ paths:
         schema:
           description: Project name (DNS-label slug)
           type: string
-      - description: Spec version tag (`v<N>`), resolved to a milestone number through the run rows —
+      - description: Spec version tag — the name the user gave the version, resolved to a milestone number through the run rows —
           never by matching titles against GitHub.
         in: path
         name: tag
         required: true
         schema:
-          description: Spec version tag
+          description: Spec version tag — letters, digits, dot, dash and underscore.
+          pattern: ^[A-Za-z0-9._-]+$
           type: string
       requestBody:
         required: false
@@ -1073,12 +1076,13 @@ paths:
         schema:
           description: Project name (DNS-label slug)
           type: string
-      - description: Spec version tag (`v<N>`), resolved to a milestone number through the run rows.
+      - description: Spec version tag — the name the user gave the version, resolved to a milestone number through the run rows.
         in: path
         name: tag
         required: true
         schema:
-          description: Spec version tag
+          description: Spec version tag — letters, digits, dot, dash and underscore.
+          pattern: ^[A-Za-z0-9._-]+$
           type: string
       - description: Cycle id, as carried by RunCycleView.id on the run read.
         in: path
@@ -2569,14 +2573,14 @@ paths:
           - closed
           - all
           type: string
-      - description: Filter to the Tasks of one spec/build version tag (e.g. v3). The tag is resolved
+      - description: Filter to the Tasks of one spec/build version tag (e.g. m1). The tag is resolved
           to a milestone number through the platform's run rows and the filter is milestone
           MEMBERSHIP — never a title match against GitHub. Empty returns every version.
         explode: false
         in: query
         name: tag
         schema:
-          description: Filter to the Tasks of one spec/build version tag (e.g. v3), by milestone
+          description: Filter to the Tasks of one spec/build version tag (e.g. m1), by milestone
             membership. Empty returns every version.
           type: string
       - description: Include each issue's newest comments (defaults true). Honoured only on a
@@ -5804,9 +5808,6 @@ components:
           $ref: '#/components/schemas/BuildStage'
         deploy:
           $ref: '#/components/schemas/DeployStage'
-        designStatus:
-          description: '"", draft, approved'
-          type: string
         hasDesign:
           type: boolean
         hasSpec:
@@ -5841,7 +5842,6 @@ components:
       - hasDesign
       - hasTasks
       - specStatus
-      - designStatus
       - spec
       - build
       - deploy
@@ -7316,7 +7316,7 @@ components:
           description: Any spec file created; false renders the Generate-spec CTA.
           type: boolean
         version:
-          description: Latest v<N> spec tag; "" if never published.
+          description: The newest spec version's name; "" if never published.
           type: string
       required:
       - exists

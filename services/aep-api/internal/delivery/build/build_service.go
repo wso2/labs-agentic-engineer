@@ -16,7 +16,7 @@
 
 // Package build is the public build surface (contract: build-project /
 // list-project-builds / get-build-preflight). POST validates the whole spec,
-// cuts the single `v<N>` version tag, claims the version (supersede the
+// cuts the single version tag, claims the version (supersede the
 // previous milestone, mint this one, admit the run row that is the build
 // mutex) and returns the tag — the one button that turns an approved spec into a
 // delivery increment. Filling the milestone (gates, then the planning turn) is
@@ -304,7 +304,7 @@ func (s *Service) Run(ctx context.Context, orgID, projectID string, inputs []Bui
 	unchanged := res.Status == spec.SpecSaveUnchanged
 
 	// The milestone plan path (§5). Its synchronous half claims the version —
-	// supersede the previous milestone, mint `v<N>`, admit the run row that IS
+	// supersede the previous milestone, mint the version, admit the run row that IS
 	// the build mutex — and its detached half plans the Tasks into it.
 	if s.plan != nil {
 		// The tag's story scope (#369) decides the milestone's identity: one

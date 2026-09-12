@@ -151,11 +151,22 @@ func (s *PlanService) startPlanLocked(ctx context.Context, orgID, projectID stri
 		return nil, ErrProjectRepoNotFound
 	}
 
-	// Gate: a versioned (tagged) spec must exist (§6, build-first). The `v<N>`
-	// tag is cut by the build endpoint AFTER the whole-spec hard gate, so its
-	// presence certifies a buildable requirements+design pair.
-	reqVersions, err := s.versions.ListRequirementsVersions(ctx, orgID, projectID)
-	if err != nil || len(reqVersions) == 0 {
+	// Gate: a versioned (tagged) spec must exist (§6, build-first). The tag is
+	// cut by the build endpoint AFTER the whole-spec hard gate, so its presence
+	// certifies a buildable requirements+design pair.
+	//
+	// A version is whatever the user named it (ADR-0030), so membership is the
+	// tag's own annotation, never the shape of its name — this gate used to
+	// count `v<N>` matches and refused every named version outright.
+	//
+	// A read FAILURE is not an answer: reporting "build the project first" for
+	// a fetch that did not complete sends the reader to re-do the one thing
+	// they already did.
+	versions, err := s.versions.ListSpecVersionTags(ctx, orgID, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("list spec versions: %w", err)
+	}
+	if versions == nil || versions.Latest == "" {
 		return nil, ErrNoSpecVersion
 	}
 
@@ -187,7 +198,7 @@ func (s *PlanService) startPlanLocked(ctx context.Context, orgID, projectID stri
 	// stamps) need no new work. Best-effort: a scope-less snapshot
 	// degrades to the legacy plan-everything behavior.
 	scope := spec.BuildScope{}
-	if tag := s.versions.LatestSpecTag(ctx, orgID, projectID); tag != "" {
+	if tag := versions.Latest; tag != "" {
 		if sc, serr := s.versions.BuildScopeAtTag(ctx, orgID, projectID, tag); serr == nil {
 			scope = sc
 		} else {

@@ -16,7 +16,7 @@
 
 package spec
 
-// build_gate.go — the build-tag gate (spec-agent redesign #369). A `v<N>` tag
+// build_gate.go — the build-tag gate (spec-agent redesign #369). A version tag
 // names a buildable snapshot of the whole spec, so before the tag is cut the
 // platform verifies, mechanically:
 //

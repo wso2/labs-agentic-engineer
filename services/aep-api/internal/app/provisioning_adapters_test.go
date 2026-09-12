@@ -27,7 +27,7 @@ import (
 func TestSecurityJSONReader_SpecTagUsesGetDesignAtSpecTag(t *testing.T) {
 	var specTag, head bool
 	art := &artifactstest.FakeArtifactService{
-		GetDesignAtSpecTagFunc: func(_ context.Context, _, _, tag string) (map[string]string, error) {
+		GetDesignAtTagFunc: func(_ context.Context, _, _, tag string) (map[string]string, error) {
 			specTag = true
 			if tag != "v3" {
 				t.Fatalf("spec tag = %q, want v3", tag)

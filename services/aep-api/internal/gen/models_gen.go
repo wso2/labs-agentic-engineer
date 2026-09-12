@@ -2227,13 +2227,10 @@ type ProjectStatus struct {
 	Build BuildStage `json:"build"`
 
 	// Deploy Deploy-stage aggregate on ProjectStatus (#184) — what's live in dev and rollout progress.
-	Deploy DeployStage `json:"deploy"`
-
-	// DesignStatus "", draft, approved
-	DesignStatus string `json:"designStatus"`
-	HasDesign    bool   `json:"hasDesign"`
-	HasSpec      bool   `json:"hasSpec"`
-	HasTasks     bool   `json:"hasTasks"`
+	Deploy    DeployStage `json:"deploy"`
+	HasDesign bool        `json:"hasDesign"`
+	HasSpec   bool        `json:"hasSpec"`
+	HasTasks  bool        `json:"hasTasks"`
 
 	// Phase Repo and artifact rungs only: no-repo, repo-cloning, repo-error, prompt (no spec), spec (spec, no design), tasks (both). "tasks" is terminal — delivery state lives in the build and deploy aggregates, which is what a caller should render past the spec.
 	Phase string `json:"phase"`
@@ -2887,7 +2884,7 @@ type SpecStage struct {
 	// Exists Any spec file created; false renders the Generate-spec CTA.
 	Exists bool `json:"exists"`
 
-	// Version Latest v<N> spec tag; "" if never published.
+	// Version The newest spec version's name; "" if never published.
 	Version string `json:"version"`
 }
 
@@ -3440,7 +3437,7 @@ type ListTasksParams struct {
 	// State Which Tasks to return (default open)
 	State ListTasksParamsState `form:"state,omitempty" json:"state,omitempty"`
 
-	// Tag Filter to the Tasks of one spec/build version tag (e.g. v3). The tag is resolved to a milestone number through the platform's run rows and the filter is milestone MEMBERSHIP — never a title match against GitHub. Empty returns every version.
+	// Tag Filter to the Tasks of one spec/build version tag (e.g. m1). The tag is resolved to a milestone number through the platform's run rows and the filter is milestone MEMBERSHIP — never a title match against GitHub. Empty returns every version.
 	Tag string `form:"tag,omitempty" json:"tag,omitempty"`
 
 	// Comments Include each issue's newest comments (defaults true). Honoured only on a `tag`-scoped read — the comment fetch is anchored on the milestone, so a read spanning versions has no bounded set to ask for. Pass false to skip the GitHub round trip when the caller does not render them.

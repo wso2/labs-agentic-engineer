@@ -18,7 +18,6 @@ package spec
 
 import (
 	"context"
-	"errors"
 	"testing"
 )
 
@@ -48,33 +47,21 @@ func designFilesWithDeps(depsJSON string) map[string]string {
 }
 
 // readsFor wires a fake artifact service for the SaveAndProceed pre-gate read
-// (HEAD resolution) with the given design tree. SaveDesign is set to fail the
-// test — a proceed-gate that blocks must never reach the tag-cut.
+// (HEAD resolution) with the given design tree.
 func readsFor(t *testing.T, files map[string]string) *fakeArtifactSvc {
 	t.Helper()
 	return &fakeArtifactSvc{
 		ListDesignFilesFunc: func(context.Context, string, string) (map[string]string, error) {
 			return files, nil
 		},
-		SaveDesignFunc: func(context.Context, string, string, SaveRequest) (*DesignSaveResult, error) {
-			t.Error("proceed-gate should have blocked before SaveDesign (tag-cut) was reached")
-			return nil, errors.New("SaveDesign must not be called")
-		},
 	}
 }
 
-// happySave wires a fake that lets the tag-cut through: a resolved read, a
-// successful SaveDesign, and a version list.
+// happySave wires a fake that lets the tag-cut through: a resolved read.
 func happySave(files map[string]string) *fakeArtifactSvc {
 	return &fakeArtifactSvc{
 		ListDesignFilesFunc: func(context.Context, string, string) (map[string]string, error) {
 			return files, nil
-		},
-		SaveDesignFunc: func(context.Context, string, string, SaveRequest) (*DesignSaveResult, error) {
-			return &DesignSaveResult{Status: "approved", Tag: "v1-1", RequirementsVersion: 1, DesignRevision: 1}, nil
-		},
-		ListDesignVersionsFunc: func(context.Context, string, string) ([]DesignVersionInfo, error) {
-			return []DesignVersionInfo{{Tag: "v1-1", RequirementsVersion: 1, DesignRevision: 1}}, nil
 		},
 	}
 }

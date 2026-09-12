@@ -594,7 +594,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	if thunderAdminClient != nil {
 		directory := thunderDirectory{c: thunderAdminClient}
 		identityDirectory = directory
-		rolesEnsure = identity.NewEnsureService(directory, identityStore, identityDesignReader{art: artifactSvcGit})
+		rolesEnsure = identity.NewEnsureService(directory, identityStore, artifactSvcGit)
 		roleCatalogSvc = identity.NewCatalogService(directory, identityStore)
 		slog.Info("roles ensure wired — a build provisions the roles and test users specs/design/security.json declares")
 	} else {
