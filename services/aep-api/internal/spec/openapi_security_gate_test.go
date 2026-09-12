@@ -214,9 +214,21 @@ func TestOpenapiSecurity_SchemeWrongType(t *testing.T) {
 func TestOpenapiSecurity_MissingDocumentSecurity(t *testing.T) {
 	noDefault := mutate(t, p6Spec(t), "\nsecurity:\n  - oauth2: []\n", "\n")
 	problem := gate(t, noDefault, fullBundle(t))
-	assertContains(t, problem, "no document-level default")
+	assertContains(t, problem, "not the document-level default")
 	// The literal brace pair the model must write survives the slot formatter.
 	assertContains(t, problem, "security: [{oauth2: []}]")
+}
+
+// A default that NAMES a scope is refused. It reads as "every operation needs
+// this permission", but nothing enforces that: the projection hands every
+// operation inheriting the default a plain signed-in requirement, so the scope
+// is silently dropped and the operation ships open to any signed-in caller.
+func TestOpenapiSecurity_DocumentDefaultNamingAScopeIsRefused(t *testing.T) {
+	scoped := mutate(t, p6Spec(t), "\nsecurity:\n  - oauth2: []\n",
+		"\nsecurity:\n  - oauth2: [claims:read]\n")
+	problem := gate(t, scoped, fullBundle(t))
+	assertContains(t, problem, "not the document-level default")
+	assertContains(t, problem, "EMPTY scope list")
 }
 
 // -------------------------------------------------------------------------

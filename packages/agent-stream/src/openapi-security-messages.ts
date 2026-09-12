@@ -45,7 +45,7 @@ export const OPENAPI_SECURITY_MESSAGES = {
   scheme_wrong_type:
     "components.securitySchemes.oauth2 in {component} is declared as type: {type} — the scheme the platform's tokens are issued for is type: oauth2, and the gateway and the generated server are both rendered from it.",
   missing_document_security:
-    "{component} declares the oauth2 scheme but no document-level default. Add `security: [{oauth2: []}]` at the root of the document: it makes every operation signed-in unless the operation says otherwise, so an operation whose security block is forgotten fails closed instead of open.",
+    "{component} declares the oauth2 scheme but not the document-level default. The default must be exactly `security: [{oauth2: []}]` at the root of the document, with an EMPTY scope list: it makes every operation signed-in unless the operation says otherwise, so an operation whose security block is forgotten fails closed instead of open. A default that names a scope is refused too — an operation that inherits it is enforced as signed-in only, and the permission it appears to require is silently lost.",
 
   // --- a component with no sign-in dependency declares nothing -------------
   scheme_without_dependency:

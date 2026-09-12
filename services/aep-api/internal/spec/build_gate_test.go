@@ -469,3 +469,49 @@ func TestBuildGate_RolesDocumentValidatedEvenWithoutSignIn(t *testing.T) {
 		t.Fatalf("want %s, got %+v", codeUnknownRoleStory, errs)
 	}
 }
+
+// TestBuildGate_ReadAllWithoutReadRefusesTheTag — the reviewer's live-proof
+// question, pinned as a test.
+//
+// `X:read-all` widens the ROWS the read operation returns; it is not a
+// substitute for `X:read`, because scope matching at the gateway is a
+// whole-string compare. A role holding the "all" handle without the read one
+// therefore reaches a screen it cannot load — the app looks provisioned and
+// 403s in the user's face.
+//
+// The apply path reports it as a WARNING, which is that path's contract (§8's
+// soft tier: a write is never refused). This is the gate that must refuse, and
+// the test exists because "it warned at apply" was read once as "a tag could be
+// cut".
+func TestBuildGate_ReadAllWithoutReadRefusesTheTag(t *testing.T) {
+	files := signInDesignFiles()
+	files["security.json"] = `{"version":2,` +
+		`"permissions":[{"resource":"rounds","component":"lunch-api","actions":[` +
+		`{"handle":"read","ownership":"own"},{"handle":"read-all","ownership":"any"},` +
+		`{"handle":"join","ownership":"own"}]}],` +
+		`"groups":[{"name":"Lunch Members","description":"Everyone who orders lunch"}],` +
+		`"roles":[` +
+		`{"name":"Member","description":"Joins today's order.","stories":[1],` +
+		`"grants":["rounds:read","rounds:join"],"assignTo":["Lunch Members"]},` +
+		// The defect: the "all" handle with no `rounds:read` beside it.
+		`{"name":"Auditor","description":"Reads every round.","stories":[2],` +
+		`"grants":["rounds:read-all"],"assignTo":["Lunch Members"]}],` +
+		`"screens":[{"component":"lunch-web","screen":"home","requires":"rounds:read"}],` +
+		`"testUsers":[{"username":"test-member","roles":["Member"]},` +
+		`{"username":"test-auditor","roles":["Auditor"]}]}`
+
+	errs := gateErrors(t, files)
+	if !slices.Contains(codesOf(errs), codeInvalidRolesDocument) {
+		t.Fatalf("want %s — a tag must not be cut over this document, got %+v",
+			codeInvalidRolesDocument, errs)
+	}
+	var carried bool
+	for _, e := range errs {
+		if strings.Contains(e.Message, `"rounds:read-all"`) && strings.Contains(e.Message, `"rounds:read"`) {
+			carried = true
+		}
+	}
+	if !carried {
+		t.Fatalf("the refusal does not name both handles: %+v", errs)
+	}
+}

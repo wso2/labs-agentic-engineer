@@ -432,6 +432,13 @@ func flowScopes(root *yamlMap) []flowScope {
 
 // isDocumentSecurityDefault reports the document default the design fixes:
 // exactly `security: [ { oauth2: [] } ]`.
+//
+// The scope list must be EMPTY, not merely a list. A default naming a scope
+// reads as "everything needs this permission", but nothing enforces that: the
+// projection (OpenAPIOperations) hands every operation that declares no
+// security of its own a plain signed-in requirement, so the named scope is
+// silently dropped and the operation ships open to any signed-in caller. The
+// only safe default is the one that says exactly what is enforced.
 func isDocumentSecurityDefault(value any) bool {
 	list, ok := value.([]any)
 	if !ok || len(list) != 1 {
@@ -441,8 +448,8 @@ func isDocumentSecurityDefault(value any) bool {
 	if !ok || len(requirement.keys) != 1 || requirement.keys[0] != oauth2SchemeName {
 		return false
 	}
-	_, isList := requirement.byKey[oauth2SchemeName].([]any)
-	return isList
+	scopes, isList := requirement.byKey[oauth2SchemeName].([]any)
+	return isList && len(scopes) == 0
 }
 
 // isReservedOIDCScope reports whether scope is one of the five scopes that ride

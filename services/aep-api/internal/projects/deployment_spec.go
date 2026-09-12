@@ -61,6 +61,12 @@ type DesiredDeployment struct {
 	// otherwise a 401 with nothing in any log to explain it; the callers log
 	// it.
 	APIOperationsProblem string
+	// APIOperationsNotes are the rows the projection left OUT of a table it did
+	// render — today only HEAD and TRACE, which no gateway route can reach. The
+	// trait is still written from the contract; these say which declared
+	// operations are not in it, so a 404 for `HEAD /claims` has an explanation
+	// somewhere. Empty is the normal case.
+	APIOperationsNotes []string
 }
 
 // DeploymentInputs is every fact the projection needs, gathered by the caller.
@@ -117,6 +123,7 @@ type DeploymentInputs struct {
 // trait-shape write to avoid leaving a trait without its config.
 func DesiredDeploymentFor(in DeploymentInputs) DesiredDeployment {
 	apiEnabled := spec.ResolveAPISecurityEnabled(in.Component)
+	endUserSignIn := spec.ResolveEndUserSignIn(in.Component)
 
 	// The operation table is projected ONLY for a component behind end-user
 	// sign-in. A `service-required` API is called by a sibling with a token of
@@ -125,12 +132,14 @@ func DesiredDeploymentFor(in DeploymentInputs) DesiredDeployment {
 	// stays — which is what it has always had.
 	var operations []Operation
 	var operationsProblem string
-	if apiEnabled && spec.ResolveEndUserSignIn(in.Component) {
+	var operationsNotes []string
+	if apiEnabled && endUserSignIn {
 		projected, err := OperationsFromSpec([]byte(in.Component.OpenAPISpec))
 		if err != nil {
 			operationsProblem = err.Error()
 		} else {
-			operations = projected
+			operations = projected.Operations
+			operationsNotes = projected.Notes
 		}
 	}
 
@@ -147,7 +156,7 @@ func DesiredDeploymentFor(in DeploymentInputs) DesiredDeployment {
 		// Thunder binds it into the `aud`), not about the rows. Pinning it on a
 		// `service-required` API would reject the service tokens it lives on
 		// today, so it waits for phase 6 there.
-		Audience:   audienceFor(in, apiEnabled),
+		Audience:   audienceFor(in, apiEnabled, endUserSignIn),
 		Operations: operations,
 	})
 
@@ -182,6 +191,7 @@ func DesiredDeploymentFor(in DeploymentInputs) DesiredDeployment {
 	return DesiredDeployment{
 		Traits:               traits,
 		APIOperationsProblem: operationsProblem,
+		APIOperationsNotes:   operationsNotes,
 		Binding: openchoreo.ReleaseBindingDesired{
 			ComponentName: in.ComponentName,
 			Environment:   in.Environment,
@@ -205,8 +215,8 @@ func DesiredDeploymentFor(in DeploymentInputs) DesiredDeployment {
 // minted for any other one — including the platform's own. A `service-required`
 // API's callers present tokens whose audience phase 6 has not settled yet, and
 // pinning there would 401 every call it serves today.
-func audienceFor(in DeploymentInputs, apiEnabled bool) string {
-	if !apiEnabled || !spec.ResolveEndUserSignIn(in.Component) {
+func audienceFor(in DeploymentInputs, apiEnabled, endUserSignIn bool) string {
+	if !apiEnabled || !endUserSignIn {
 		return ""
 	}
 	return in.Audience
