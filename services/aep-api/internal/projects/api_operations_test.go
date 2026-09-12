@@ -50,7 +50,11 @@ import (
 // must satisfy. internal/projects → internal → aep-api → services → repo root.
 const (
 	fixtureRoot = "../platform/securityspec/testdata"
-	traitPath   = "../../../../deployments/manifests/api-platform/api-configuration-trait.yaml"
+	// Read across the module boundary rather than vendored: the trait yaml IS
+	// the schema the render must satisfy, and OpenChoreo prunes an undeclared
+	// parameter key silently — a copy of it here would keep passing after the
+	// real one changed. A broken path fails the test loudly instead.
+	traitPath = "../../../../deployments/manifests/api-platform/api-configuration-trait.yaml"
 )
 
 // useCases are the fixtures every cross-cutting assertion runs over: one spec
@@ -73,11 +77,16 @@ func fixtureSpec(t *testing.T, rel string) []byte {
 
 func mustOperations(t *testing.T, body []byte) []Operation {
 	t.Helper()
-	ops, err := OperationsFromSpec(body)
+	return mustProjection(t, body).Operations
+}
+
+func mustProjection(t *testing.T, body []byte) Projection {
+	t.Helper()
+	projected, err := OperationsFromSpec(body)
 	if err != nil {
 		t.Fatalf("OperationsFromSpec: %v", err)
 	}
-	return ops
+	return projected
 }
 
 // -------------------------------------------------------------------------
@@ -185,6 +194,96 @@ func TestOperationsFromSpec_NeverEmitsAnOIDCScope(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// HEAD and TRACE: skipped, not refused
+// -------------------------------------------------------------------------
+
+// TestOperationsFromSpec_SkipsHeadAndTrace — the reviewer's case. Both methods
+// are unreachable at the gateway whichever way they are handled, so refusing
+// over one bought nothing and cost the WHOLE table: the caller's only fallback
+// is the trait's `/*` default, under which the contract's public `GET /health`
+// starts answering 401. The row is dropped, every other row still renders, and
+// the omission is reported as a note.
+func TestOperationsFromSpec_SkipsHeadAndTrace(t *testing.T) {
+	for _, method := range []string{"head", "trace"} {
+		t.Run(method, func(t *testing.T) {
+			body := mutateSpec(t, "expense-tracker/expense-api.openapi.yaml",
+				"  /me:\n    get:\n      operationId: me\n",
+				"  /me:\n    "+method+":\n      operationId: meOther\n"+
+					"      responses:\n        \"200\": { description: ok }\n"+
+					"    get:\n      operationId: me\n")
+			projected := mustProjection(t, body)
+
+			// The public operation the `/*` fallback would have broken is still here.
+			var health *Operation
+			for i, op := range projected.Operations {
+				if op.Method == "GET" && op.Path == "/health" {
+					health = &projected.Operations[i]
+				}
+				if op.Method == strings.ToUpper(method) {
+					t.Errorf("%s row rendered into the table: %+v", method, op)
+				}
+			}
+			if health == nil || health.Requirement.Kind != RequirementPublic {
+				t.Fatalf("GET /health is missing or no longer public: %+v", health)
+			}
+			// /me keeps its own GET row and its synthesised preflight.
+			if len(projected.Notes) != 1 {
+				t.Fatalf("want exactly one note, got %v", projected.Notes)
+			}
+			if !strings.Contains(projected.Notes[0], strings.ToUpper(method)+" /me") {
+				t.Errorf("note does not name the skipped operation: %s", projected.Notes[0])
+			}
+		})
+	}
+}
+
+// TestOperationsFromSpec_SkippedPathGetsNoPreflight — a path whose ONLY
+// declared operation is skipped is absent from the table entirely. Synthesising
+// a preflight for it would open a gateway route the contract never asked to
+// serve.
+func TestOperationsFromSpec_SkippedPathGetsNoPreflight(t *testing.T) {
+	body := mutateSpec(t, "expense-tracker/expense-api.openapi.yaml",
+		"  /me:\n    get:", "  /me:\n    head:")
+	projected := mustProjection(t, body)
+	for _, op := range projected.Operations {
+		if op.Path == "/me" {
+			t.Errorf("/me is in the table with nothing to serve: %+v", op)
+		}
+	}
+	if len(projected.Notes) != 1 {
+		t.Fatalf("want exactly one note, got %v", projected.Notes)
+	}
+}
+
+// TestOperationsFromSpec_RefusesWhenEverythingIsSkipped — an EMPTY table 404s
+// every path, which is worse than the `/*` fallback a refusal keeps.
+func TestOperationsFromSpec_RefusesWhenEverythingIsSkipped(t *testing.T) {
+	const onlyHead = `openapi: 3.0.3
+info: { title: T, version: "1.0.0" }
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: https://idp.example/oauth2/authorize
+          tokenUrl: https://idp.example/oauth2/token
+          scopes: {}
+security:
+  - oauth2: []
+paths:
+  /me:
+    head:
+      operationId: meHead
+      responses:
+        "200": { description: ok }
+`
+	if _, err := OperationsFromSpec([]byte(onlyHead)); err == nil {
+		t.Fatal("want a refusal for a contract with nothing the gateway can serve, got none")
+	}
+}
+
+// -------------------------------------------------------------------------
 // Refusals
 // -------------------------------------------------------------------------
 
@@ -261,6 +360,17 @@ func TestOperationsFromSpec_RefusesWhatTheGateRefuses(t *testing.T) {
 			to:   "\n",
 			want: "declares no `security: [{oauth2: []}]` default",
 		},
+		{
+			// The default is what an operation with no `security` block
+			// INHERITS, and the projection hands it a plain signed-in
+			// requirement. A default naming a scope therefore renders every
+			// such operation as signed-in with no permission: it reads guarded
+			// and ships open. Refused at the document, never rendered.
+			name: "a document-level default that names a scope",
+			from: "\nsecurity:\n  - oauth2: []\n",
+			to:   "\nsecurity:\n  - oauth2: [claims:read]\n",
+			want: "EMPTY scope list",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -284,18 +394,6 @@ func TestOperationsFromSpec_RefusesWhatTheGatewayCannotBeTold(t *testing.T) {
 	cases := []struct {
 		name, from, to, want string
 	}{
-		{
-			name: "HEAD is not a measured method",
-			from: "  /me:\n    get:",
-			to:   "  /me:\n    head:",
-			want: "measured only for GET, POST, PUT, PATCH, DELETE and OPTIONS",
-		},
-		{
-			name: "TRACE is not a measured method",
-			from: "  /me:\n    get:",
-			to:   "  /me:\n    trace:",
-			want: "measured only for GET, POST, PUT, PATCH, DELETE and OPTIONS",
-		},
 		{
 			name: "a wildcard the contract never asked for",
 			from: "  /reports/export:",

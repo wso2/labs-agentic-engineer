@@ -6,3 +6,6 @@ github-app-private-key.pem
 data/
 .webhook-relay.pid
 .webhook-relay.log
+
+# Test-user logins for verify-scopes.sh — never committed.
+.creds/

@@ -286,6 +286,10 @@ func (s *DeploymentService) deployOne(ctx context.Context, orgID, projectID, com
 			"org", orgID, "project", projectID, "component", componentName,
 			"problem", desired.APIOperationsProblem)
 	}
+	for _, note := range desired.APIOperationsNotes {
+		slog.InfoContext(ctx, "deployment: operation left out of the gateway table",
+			"org", orgID, "project", projectID, "component", componentName, "note", note)
+	}
 	if err := s.components.ApplyReleaseBinding(ctx, orgID, projectID, desired.Binding); err != nil {
 		return outcome, fmt.Errorf("apply release binding: %w", permanentIfMissing(err))
 	}

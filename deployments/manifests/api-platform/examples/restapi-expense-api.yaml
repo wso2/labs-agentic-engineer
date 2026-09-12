@@ -1,0 +1,326 @@
+# Reference rendering of the `api-configuration` trait — NOT applied by anything.
+#
+# This is the RestApi the trait composes for the expense-tracker fixture
+# (services/aep-api/internal/platform/securityspec/testdata/expense-tracker/
+# expense-api.openapi.yaml), whose contract declares a public `/health`, a
+# signed-in-only `/me`, and six scope-guarded operations.
+#
+# ONE ARTIFACT, ONE TRUTH. The `operations` trait parameter below is not
+# written by hand: it is
+# services/aep-api/internal/projects/testdata/operations-expense-tracker.golden.yaml,
+# the golden the projection's own test renders, with the trait's CEL applied to
+# it. Re-render rather than hand-patch when either the golden or the trait
+# changes.
+#
+#   trait parameters (Component.spec.traits[].parameters — one value for every
+#   environment, projected from the component's OpenAPI contract by aep-api):
+#
+#     endpointName: http
+#     operations:  the golden, verbatim. Three shapes appear in it:
+#       - {method: GET, path: /health, public: true}
+#       - {method: GET, path: /me,
+#          policies: [{name: jwt-auth, version: v1}]}          ← NO `params`
+#       - {method: GET, path: /claims,
+#          policies: [{name: jwt-auth, version: v1,
+#                      params: {scopes: {anyOf: [claims:read]}}}]}
+#       plus one synthesised OPTIONS row per distinct path, carrying the same
+#       policy as its siblings (design note 5 in the trait).
+#
+#   traitEnvironmentConfigs (ReleaseBinding — one value per environment):
+#
+#     cors:    {enabled: true}
+#     jwtAuth:
+#       enabled:  true
+#       issuers:  ["http://default-idp.amp.localhost:8080"]
+#       audience: ["https://aep.wso2.com/orgs/default/projects/expense-tracker"]
+#
+# Three things to read off it:
+#   - `spec.policies` carries NO api-level `jwt-auth`: some operation declares
+#     `public: true` or its own `policies`, so the operations own their
+#     authentication (design note 9).
+#   - `/health` and `OPTIONS /health` carry no policy at all.
+#   - `GET /me` carries `jwt-auth` with issuer + audience and NO `scopes` key:
+#     "signed in, no particular permission". The trait PARAMETER for that row
+#     carries no `params` key either — an empty `scopes` object is a different
+#     request from no scope requirement, so neither side emits one.
+#
+# Kept as the offline check that the rendered shape is still admissible:
+#
+#   kubectl --context k3d-openchoreo apply --dry-run=server -n default-default \
+#     -f deployments/manifests/api-platform/examples/restapi-expense-api.yaml
+#
+# `apiVersion` is `gateway.api-platform.wso2.com/v1` — the RestApi CRD's served
+# AND storage version (v1alpha1 is still served, and is what the trait emitted
+# before this phase).
+---
+apiVersion: gateway.api-platform.wso2.com/v1
+kind: RestApi
+metadata:
+  labels:
+    gateway.api-platform.wso2.com/restapi-target: api-platform-default-default
+  name: example-expense-api-http
+  namespace: default-default
+spec:
+  context: /default-default-expense-api-http
+  displayName: default-default-expense-api-http
+  operations:
+  - method: GET
+    path: /health
+  - method: GET
+    path: /me
+    policies:
+    - name: jwt-auth
+      params:
+        audiences:
+        - https://aep.wso2.com/orgs/default/projects/expense-tracker
+        claimMappings:
+          groups: x-user-groups
+          ouHandle: x-user-ou
+          scope: x-user-scopes
+          sub: x-user-id
+          username: x-user-name
+        issuers:
+        - http://default-idp.amp.localhost:8080
+      version: v1
+  - method: GET
+    path: /claims
+    policies:
+    - name: jwt-auth
+      params:
+        audiences:
+        - https://aep.wso2.com/orgs/default/projects/expense-tracker
+        claimMappings:
+          groups: x-user-groups
+          ouHandle: x-user-ou
+          scope: x-user-scopes
+          sub: x-user-id
+          username: x-user-name
+        issuers:
+        - http://default-idp.amp.localhost:8080
+        scopes:
+          anyOf:
+          - claims:read
+      version: v1
+  - method: POST
+    path: /claims
+    policies:
+    - name: jwt-auth
+      params:
+        audiences:
+        - https://aep.wso2.com/orgs/default/projects/expense-tracker
+        claimMappings:
+          groups: x-user-groups
+          ouHandle: x-user-ou
+          scope: x-user-scopes
+          sub: x-user-id
+          username: x-user-name
+        issuers:
+        - http://default-idp.amp.localhost:8080
+        scopes:
+          anyOf:
+          - claims:submit
+      version: v1
+  - method: POST
+    path: /claims/{claimId}/approve
+    policies:
+    - name: jwt-auth
+      params:
+        audiences:
+        - https://aep.wso2.com/orgs/default/projects/expense-tracker
+        claimMappings:
+          groups: x-user-groups
+          ouHandle: x-user-ou
+          scope: x-user-scopes
+          sub: x-user-id
+          username: x-user-name
+        issuers:
+        - http://default-idp.amp.localhost:8080
+        scopes:
+          anyOf:
+          - claims:approve
+      version: v1
+  - method: POST
+    path: /claims/{claimId}/reject
+    policies:
+    - name: jwt-auth
+      params:
+        audiences:
+        - https://aep.wso2.com/orgs/default/projects/expense-tracker
+        claimMappings:
+          groups: x-user-groups
+          ouHandle: x-user-ou
+          scope: x-user-scopes
+          sub: x-user-id
+          username: x-user-name
+        issuers:
+        - http://default-idp.amp.localhost:8080
+        scopes:
+          anyOf:
+          - claims:reject
+      version: v1
+  - method: GET
+    path: /reports
+    policies:
+    - name: jwt-auth
+      params:
+        audiences:
+        - https://aep.wso2.com/orgs/default/projects/expense-tracker
+        claimMappings:
+          groups: x-user-groups
+          ouHandle: x-user-ou
+          scope: x-user-scopes
+          sub: x-user-id
+          username: x-user-name
+        issuers:
+        - http://default-idp.amp.localhost:8080
+        scopes:
+          anyOf:
+          - reports:read
+      version: v1
+  - method: GET
+    path: /reports/export
+    policies:
+    - name: jwt-auth
+      params:
+        audiences:
+        - https://aep.wso2.com/orgs/default/projects/expense-tracker
+        claimMappings:
+          groups: x-user-groups
+          ouHandle: x-user-ou
+          scope: x-user-scopes
+          sub: x-user-id
+          username: x-user-name
+        issuers:
+        - http://default-idp.amp.localhost:8080
+        scopes:
+          anyOf:
+          - reports:export
+      version: v1
+  - method: OPTIONS
+    path: /health
+  - method: OPTIONS
+    path: /me
+    policies:
+    - name: jwt-auth
+      params:
+        audiences:
+        - https://aep.wso2.com/orgs/default/projects/expense-tracker
+        claimMappings:
+          groups: x-user-groups
+          ouHandle: x-user-ou
+          scope: x-user-scopes
+          sub: x-user-id
+          username: x-user-name
+        issuers:
+        - http://default-idp.amp.localhost:8080
+      version: v1
+  - method: OPTIONS
+    path: /claims
+    policies:
+    - name: jwt-auth
+      params:
+        audiences:
+        - https://aep.wso2.com/orgs/default/projects/expense-tracker
+        claimMappings:
+          groups: x-user-groups
+          ouHandle: x-user-ou
+          scope: x-user-scopes
+          sub: x-user-id
+          username: x-user-name
+        issuers:
+        - http://default-idp.amp.localhost:8080
+        scopes:
+          anyOf:
+          - claims:read
+      version: v1
+  - method: OPTIONS
+    path: /claims/{claimId}/approve
+    policies:
+    - name: jwt-auth
+      params:
+        audiences:
+        - https://aep.wso2.com/orgs/default/projects/expense-tracker
+        claimMappings:
+          groups: x-user-groups
+          ouHandle: x-user-ou
+          scope: x-user-scopes
+          sub: x-user-id
+          username: x-user-name
+        issuers:
+        - http://default-idp.amp.localhost:8080
+        scopes:
+          anyOf:
+          - claims:approve
+      version: v1
+  - method: OPTIONS
+    path: /claims/{claimId}/reject
+    policies:
+    - name: jwt-auth
+      params:
+        audiences:
+        - https://aep.wso2.com/orgs/default/projects/expense-tracker
+        claimMappings:
+          groups: x-user-groups
+          ouHandle: x-user-ou
+          scope: x-user-scopes
+          sub: x-user-id
+          username: x-user-name
+        issuers:
+        - http://default-idp.amp.localhost:8080
+        scopes:
+          anyOf:
+          - claims:reject
+      version: v1
+  - method: OPTIONS
+    path: /reports
+    policies:
+    - name: jwt-auth
+      params:
+        audiences:
+        - https://aep.wso2.com/orgs/default/projects/expense-tracker
+        claimMappings:
+          groups: x-user-groups
+          ouHandle: x-user-ou
+          scope: x-user-scopes
+          sub: x-user-id
+          username: x-user-name
+        issuers:
+        - http://default-idp.amp.localhost:8080
+        scopes:
+          anyOf:
+          - reports:read
+      version: v1
+  - method: OPTIONS
+    path: /reports/export
+    policies:
+    - name: jwt-auth
+      params:
+        audiences:
+        - https://aep.wso2.com/orgs/default/projects/expense-tracker
+        claimMappings:
+          groups: x-user-groups
+          ouHandle: x-user-ou
+          scope: x-user-scopes
+          sub: x-user-id
+          username: x-user-name
+        issuers:
+        - http://default-idp.amp.localhost:8080
+        scopes:
+          anyOf:
+          - reports:export
+      version: v1
+  policies:
+  - name: cors
+    params:
+      allowCredentials: false
+      allowedHeaders:
+      - '*'
+      allowedMethods:
+      - '*'
+      allowedOrigins:
+      - '*'
+    version: v1
+  upstream:
+    main:
+      url: http://expense-api.default-default:9090
+  version: v1.0

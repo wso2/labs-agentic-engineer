@@ -1,6 +1,6 @@
 ---
 name: aep-validation
-description: Load when working a VALIDATION task dispatched by WSO2 Labs Agentic Engineer (the prompt says "validation task"; the issue is labelled `aep` + `validation`). The cwd is a clone of the project's repo on its default branch. You validate the deployed system against specs/validation/validation-criteria.json by authoring and running Playwright e2e tests, then open a PR containing the tests plus a validation report. This workflow REPLACES the implementation workflow in the `aep` skill; the auth model, git/gh conventions, and deny-list there still apply. The phase-specific discipline lives in this skill's `references/authoring.md` (explore + write specs) and `references/healing.md` (repair brittle specs); the `playwright-cli` companion skill carries the CLI mechanics.
+description: "Load when working a VALIDATION task dispatched by WSO2 Labs Agentic Engineer (the prompt says \"validation task\"; the issue is labelled `aep` + `validation`). The cwd is a clone of the project's repo on its default branch. You validate the deployed system against specs/validation/validation-criteria.json by authoring and running Playwright e2e tests, then open a PR containing the tests plus a validation report. This workflow REPLACES the implementation workflow in the `aep` skill; the auth model, git/gh conventions, and deny-list there still apply. The phase-specific discipline lives in this skill's `references/authoring.md` (explore + write specs) and `references/healing.md` (repair brittle specs); the `playwright-cli` companion skill carries the CLI mechanics."
 metadata:
   aep:
     kind: platform
@@ -162,7 +162,11 @@ yourself; the URL is not something you can work out from inside the cluster.
   identifier, which a token request must send as its `resource` parameter, and
   which is the audience the gateway checks — and one rule: *a new grant needs
   a fresh sign-in; a refresh narrows a token but never widens it*. If a call
-  401s for a scope the row lists, sign in again rather than refreshing.
+  401s for a scope the row lists, sign in again rather than refreshing. Signing
+  in through the app carries the `resource` for you; a token you request
+  yourself must send `resource=<that value>` on the authorize call, or the
+  audience is wrong and every API call 401s while sign-in itself looks perfectly
+  healthy.
 
   Read the table and the trailer, never the prose around them — a human may
   rewrite that at any time, and the marker is what the platform guarantees.
@@ -173,6 +177,31 @@ yourself; the URL is not something you can work out from inside the cluster.
   use the least-privileged row the criterion implies. Do not reuse one role's
   login to exercise another role's screens; that is the difference between
   judging a permission and judging a page.
+
+  **Judge the grants BEFORE you sign in.** Take each row's `Scopes` and walk the
+  criteria first: which criterion can this login reach, and which one does it
+  not hold the permission for? A criterion whose operation needs a handle the
+  row does not list cannot pass no matter how the app behaves — that is a design
+  finding, decided from the table, not something to discover by driving a
+  browser at it.
+
+  **What a refusal looks like, and what you may conclude from it.** When a login
+  lacks the permission an operation requires, the **service** answers **403**
+  with `insufficient_scope`; the **gateway** — which is what the deployed app
+  actually talks to — answers **401**, and it answers the same 401, with the
+  same body and no `WWW-Authenticate`, for every other token failure too (no
+  token, expired, wrong audience). So a 401 seen through the app does not tell
+  you WHY, and you must never report one as "missing permission" on its own.
+  Assert the user-visible outcome the criterion states — the Forbidden view, the
+  action that is not offered, the row that is not listed — and name the scope
+  you read from the table as the reason.
+
+  **Sign in FRESH after any grant change.** A refresh narrows but never widens:
+  a permission removed from a role disappears at the next silent renew, while a
+  permission ADDED never appears until a full new sign-in. So never carry a
+  stored session (`storageState`, a context left open) across a rebuild or a
+  roles change — sign the account in again, or you are judging the app on a
+  token that predates the grant.
 
   Export the pair in-session, per role, as you need it:
 

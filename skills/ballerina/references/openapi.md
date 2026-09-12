@@ -17,6 +17,10 @@ After `--mode service`:
 - The stub is the starting point: fill every empty resource body with Edit — an unfilled body is a compile error.
 - Change the generated `new (9090, config = {host: "localhost"})` to `new (9090)` — localhost binding leaves the deployed container unreachable while it looks healthy.
 - Delete the `bal new` scaffold's `main.bal` once the service exists.
+- **The contract's `security` block is dropped** — the generated resources carry
+  no scope information, and no flag changes that. If the contract declares
+  `security`, the operation→scope table and its drift guard are how it is
+  enforced: `SKILL.md`'s *Scope enforcement on a contract-backed service*.
 
 After `--mode client`:
 

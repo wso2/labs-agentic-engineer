@@ -195,6 +195,10 @@ func (s *componentService) EnsureComponent(ctx context.Context, orgName, project
 			"org", orgName, "project", projectName, "component", comp.Name,
 			"problem", desired.APIOperationsProblem)
 	}
+	for _, note := range desired.APIOperationsNotes {
+		slog.InfoContext(ctx, "ensure component: operation left out of the gateway table",
+			"org", orgName, "project", projectName, "component", comp.Name, "note", note)
+	}
 	desiredSpec := openchoreo.ComponentSpecDesired{
 		Traits:     desired.Traits,
 		AutoBuild:  false,

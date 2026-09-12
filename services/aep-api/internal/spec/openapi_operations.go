@@ -115,8 +115,10 @@ func OpenAPIOperations(content string) ([]OpenAPIOperation, error) {
 	// mean public, and the projection would render a wide-open operation from a
 	// document that never said so.
 	if !isDocumentSecurityDefault(root.byKey["security"]) {
-		return nil, errors.New("openapi: the document declares no `security: [{oauth2: []}]` default, " +
-			"so an operation that declares no security of its own cannot be read as signed-in")
+		return nil, errors.New("openapi: the document declares no `security: [{oauth2: []}]` default " +
+			"with an EMPTY scope list, so an operation that declares no security of its own cannot " +
+			"be read as signed-in — a default naming a scope would render every inheriting operation " +
+			"as signed-in with no permission, losing the scope silently")
 	}
 	// An OIDC scope advertised in the flows is refused even though the
 	// projection reads the flows for nothing: the document is then one edit away

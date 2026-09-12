@@ -236,13 +236,24 @@ function flowScopes(root: Record<string, unknown>): { scope: string; where: stri
   return out;
 }
 
-/** True for the document default the design fixes: exactly `security: [ { oauth2: [] } ]`. */
+/**
+ * True for the document default the design fixes: exactly
+ * `security: [ { oauth2: [] } ]`.
+ *
+ * The scope list must be EMPTY, not merely a list. A default naming a scope
+ * reads as "everything needs this permission", but nothing enforces it: an
+ * operation that declares no security of its own is projected onto the gateway
+ * as plain signed-in, so the named scope is silently dropped and the operation
+ * ships open to any signed-in caller.
+ */
 function isDocumentDefault(value: unknown): boolean {
   if (!Array.isArray(value) || value.length !== 1) return false;
   const requirement = asRecord(value[0]);
   if (!requirement) return false;
   const keys = Object.keys(requirement);
-  return keys.length === 1 && keys[0] === SCHEME && Array.isArray(requirement[SCHEME]);
+  if (keys.length !== 1 || keys[0] !== SCHEME) return false;
+  const scopes = requirement[SCHEME];
+  return Array.isArray(scopes) && scopes.length === 0;
 }
 
 // -------------------------------------------------------------------------
