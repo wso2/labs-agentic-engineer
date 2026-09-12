@@ -29,8 +29,26 @@ func ResolveAPISecurityEnabled(comp DesignComponent) bool {
 		return false
 	}
 	switch strings.ToLower(strings.TrimSpace(comp.ExposesAPI.Auth)) {
-	case "end-user-required", "service-required":
+	case authEndUserRequired, "service-required":
 		return true
 	}
 	return false
+}
+
+// ResolveEndUserSignIn is the narrower question the gateway projection asks:
+// does this component sit behind END-USER sign-in? It is the committed
+// consequence derive_auth.go stamps from the sign-in dependency, and the same
+// signal the openapi.yaml security gate judges the spec against — so the
+// operation table the projection renders and the document the gate accepted are
+// decided by one fact rather than two.
+//
+// `service-required` is deliberately NOT this: such a component is called by a
+// sibling service with a token of its own, its spec declares no per-operation
+// security, and projecting an operation table from it would replace a working
+// whole-API jwt-auth with rows nothing authored.
+func ResolveEndUserSignIn(comp DesignComponent) bool {
+	if comp.ExposesAPI == nil {
+		return false
+	}
+	return strings.ToLower(strings.TrimSpace(comp.ExposesAPI.Auth)) == authEndUserRequired
 }

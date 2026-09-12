@@ -225,6 +225,13 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
     cluster round-trip, and a new sign-in flavour needs no app-factory release. The agent's bundle
     still keys on the literal `thunder-app` resourceType, so a renamed or aliased sign-in CRT is
     protected here and unprotected there — recorded in the file header.
+  - **The gate and the gateway read the block ONCE** (`openapi_operations.go`). `OpenAPIOperations`
+    turns a protected spec into `(method, path, public | signedIn | scope)` for the deployment
+    projection (`projects.OperationsFromSpec`), and the gate's per-operation rules ARE that
+    function's structural half plus the two catalog rules. Two readings of `security` that can
+    disagree would be a silent authorization bug: the gate would pass a document the projection
+    then renders as something else, visible only as a 401 nobody can explain. Nothing else in
+    aep-api parses an OpenAPI `security` block.
   - **A missing sibling narrows the check, it never refuses.** No `design.json` → no security verdict
     (the premise is unknowable); no `security.json` → the structural rules still run and only catalog
     membership and ownership wait. The build gate is the backstop that sees every file at the tag.

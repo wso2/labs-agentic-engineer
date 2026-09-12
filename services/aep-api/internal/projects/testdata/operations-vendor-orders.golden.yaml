@@ -1,0 +1,109 @@
+operations:
+    - method: GET
+      path: /orders
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - orders:read
+          version: v1
+    - method: POST
+      path: /orders
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - orders:place
+          version: v1
+    - method: POST
+      path: /orders/{id}/confirm
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - orders:confirm
+          version: v1
+    - method: GET
+      path: /invoices
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - invoices:read
+          version: v1
+    - method: POST
+      path: /invoices
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - invoices:submit
+          version: v1
+    - method: GET
+      path: /invoices/all
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - invoices:read-all
+          version: v1
+    - method: POST
+      path: /invoices/{id}/approve
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - invoices:approve
+          version: v1
+    - method: OPTIONS
+      path: /orders
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - orders:read
+          version: v1
+    - method: OPTIONS
+      path: /orders/{id}/confirm
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - orders:confirm
+          version: v1
+    - method: OPTIONS
+      path: /invoices
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - invoices:read
+          version: v1
+    - method: OPTIONS
+      path: /invoices/all
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - invoices:read-all
+          version: v1
+    - method: OPTIONS
+      path: /invoices/{id}/approve
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - invoices:approve
+          version: v1

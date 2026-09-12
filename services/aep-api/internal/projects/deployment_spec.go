@@ -52,6 +52,15 @@ type DesiredDeployment struct {
 	Traits []openchoreo.ComponentTrait
 	// Binding is the ReleaseBinding — written post-build by the deploy stage.
 	Binding openchoreo.ReleaseBindingDesired
+	// APIOperationsProblem is why the component's OpenAPI contract could NOT be
+	// projected onto the gateway's operation table, when it could not. The
+	// projection then leaves the trait's `/*` default in place — every
+	// operation needs a token, none needs a permission — which is the
+	// pre-scopes behaviour and never wide open. It is carried out rather than
+	// swallowed because the symptom (a public health check answering 401) is
+	// otherwise a 401 with nothing in any log to explain it; the callers log
+	// it.
+	APIOperationsProblem string
 }
 
 // DeploymentInputs is every fact the projection needs, gathered by the caller.
@@ -70,6 +79,13 @@ type DeploymentInputs struct {
 	// Issuers pins JWT validation to an org's own IDP; empty trusts any
 	// cluster-configured keymanager.
 	Issuers []string
+	// Audience is the project's resource-server identifier — the `aud` of every
+	// token minted for this project, and therefore what the gateway checks to
+	// reject a token minted for ANY other resource server (the platform's own
+	// included). Deterministic from (org, project): see
+	// identity.ResourceServerIdentifier, which is the one authority for it.
+	// Empty skips the audience check, which is the pre-scopes behaviour.
+	Audience string
 	// EnvVars are the user's component config (the DB is their canonical
 	// record). Nil means "not managed by this write" — see
 	// openchoreo.ReleaseBindingDesired.
@@ -102,11 +118,38 @@ type DeploymentInputs struct {
 func DesiredDeploymentFor(in DeploymentInputs) DesiredDeployment {
 	apiEnabled := spec.ResolveAPISecurityEnabled(in.Component)
 
+	// The operation table is projected ONLY for a component behind end-user
+	// sign-in. A `service-required` API is called by a sibling with a token of
+	// its own and its contract declares no per-operation security, so there is
+	// nothing to project and the trait's `/*` default (one API-level jwt-auth)
+	// stays — which is what it has always had.
+	var operations []Operation
+	var operationsProblem string
+	if apiEnabled && spec.ResolveEndUserSignIn(in.Component) {
+		projected, err := OperationsFromSpec([]byte(in.Component.OpenAPISpec))
+		if err != nil {
+			operationsProblem = err.Error()
+		} else {
+			operations = projected
+		}
+	}
+
 	// CORS: omit allowedOrigins so the api-configuration trait schema default
 	// ["*"] applies. Do not set cors.enabled false — that would deny all
 	// origins, including curl-from-the-gateway clients.
-	traits, configs := DesiredAPIConfigurationTraitWithIssuers(
-		in.ComponentName, in.Component.EndpointName(), apiEnabled, in.Issuers)
+	traits, configs := DesiredAPIConfigurationTrait(APIConfigurationDesired{
+		ComponentName: in.ComponentName,
+		EndpointName:  in.Component.EndpointName(),
+		Enabled:       apiEnabled,
+		Issuers:       in.Issuers,
+		// Pinned for a sign-in component whatever the operation table does: the
+		// audience is a fact about the TOKEN (the SPA asks for this resource,
+		// Thunder binds it into the `aud`), not about the rows. Pinning it on a
+		// `service-required` API would reject the service tokens it lives on
+		// today, so it waits for phase 6 there.
+		Audience:   audienceFor(in, apiEnabled),
+		Operations: operations,
+	})
 
 	// Appended to the SAME slice/map: `spec.traits` is replaced wholesale on
 	// write, so emitting the alert rule separately would clobber the
@@ -137,7 +180,8 @@ func DesiredDeploymentFor(in DeploymentInputs) DesiredDeployment {
 	}
 
 	return DesiredDeployment{
-		Traits: traits,
+		Traits:               traits,
+		APIOperationsProblem: operationsProblem,
 		Binding: openchoreo.ReleaseBindingDesired{
 			ComponentName: in.ComponentName,
 			Environment:   in.Environment,
@@ -151,6 +195,21 @@ func DesiredDeploymentFor(in DeploymentInputs) DesiredDeployment {
 			Files:                   in.Files,
 		},
 	}
+}
+
+// audienceFor decides whether the project's resource-server identifier is
+// pinned as this component's accepted `aud`.
+//
+// Only for a managed API behind END-USER sign-in. Those are the tokens the SPA
+// mints against the project's resource server, so pinning rejects a token
+// minted for any other one — including the platform's own. A `service-required`
+// API's callers present tokens whose audience phase 6 has not settled yet, and
+// pinning there would 401 every call it serves today.
+func audienceFor(in DeploymentInputs, apiEnabled bool) string {
+	if !apiEnabled || !spec.ResolveEndUserSignIn(in.Component) {
+		return ""
+	}
+	return in.Audience
 }
 
 // liveTraitConfigs drops the instances whose parameters are empty and

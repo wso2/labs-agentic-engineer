@@ -268,14 +268,24 @@ func (s *DeploymentService) deployOne(ctx context.Context, orgID, projectID, com
 		Environment:   openchoreo.DevEnvironmentName,
 		ReleaseName:   releaseName,
 		Issuers:       issuers,
-		EnvVars:       s.envVarsFor(ctx, orgID, projectID, componentName),
-		Files:         s.filesFor(ctx, orgID, projectID, componentName),
+		// The project's resource-server identifier: what a token minted for
+		// THIS project carries as `aud`, and therefore what the gateway checks
+		// to reject one minted for any other.
+		Audience: ProjectAudience(orgID, projectID),
+		EnvVars:  s.envVarsFor(ctx, orgID, projectID, componentName),
+		Files:    s.filesFor(ctx, orgID, projectID, componentName),
 		// The org IS the OC namespace components are created in, and that
 		// namespace is a segment of every managed API's gateway context path.
 		ComponentNamespace:  orgID,
 		GatewayHostOverride: s.gatewayHostOverride,
 		ProtectedSiblings:   ProtectedSiblingsOf(design, *comp),
 	})
+	if desired.APIOperationsProblem != "" {
+		slog.WarnContext(ctx, "deployment: OpenAPI contract not projected onto gateway operations; "+
+			"the API keeps the trait's /* default (every operation needs a token, none needs a scope)",
+			"org", orgID, "project", projectID, "component", componentName,
+			"problem", desired.APIOperationsProblem)
+	}
 	if err := s.components.ApplyReleaseBinding(ctx, orgID, projectID, desired.Binding); err != nil {
 		return outcome, fmt.Errorf("apply release binding: %w", permanentIfMissing(err))
 	}

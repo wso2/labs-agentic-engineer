@@ -135,9 +135,15 @@ func keysOfAny[T any](m map[string]T) []string {
 	return out
 }
 
-// desiredAPIConfigurationTraitForTest is the no-issuers shape these table
-// tests exercise. Production (DesiredDeploymentFor) passes issuers when the
-// org has a BYO-IDP profile.
+// desiredAPIConfigurationTraitForTest is the no-issuers, no-audience,
+// no-operations shape these table tests exercise — a component with no sign-in
+// dependency, which keeps the trait's own `/*` default. Production
+// (DesiredDeploymentFor) passes issuers when the org has a BYO-IDP profile, and
+// an audience + an operation table when the component is behind sign-in.
 func desiredAPIConfigurationTraitForTest(componentName, endpointName string, enabled bool) ([]openchoreo.ComponentTrait, map[string]map[string]interface{}) {
-	return DesiredAPIConfigurationTraitWithIssuers(componentName, endpointName, enabled, nil)
+	return DesiredAPIConfigurationTrait(APIConfigurationDesired{
+		ComponentName: componentName,
+		EndpointName:  endpointName,
+		Enabled:       enabled,
+	})
 }
