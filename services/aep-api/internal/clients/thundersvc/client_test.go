@@ -20,12 +20,14 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 // thunderMock is a minimal in-memory Thunder admin API for exercising
@@ -57,6 +59,16 @@ type thunderMock struct {
 	// resolves.
 	systemRS  string
 	tokenForm url.Values // the last token request's form body
+
+	// mints counts token-endpoint calls; issued holds every token handed out,
+	// oldest first. expIn, when non-zero, stamps an `exp` claim that many
+	// seconds from now (negative = already expired). revoked names tokens the
+	// admin endpoints refuse with 401, the way ThunderID refuses an expired one.
+	mints     int
+	issued    []string
+	expIn     int64
+	revoked   map[string]bool
+	revokeAll bool // every token is refused: a Thunder that will not accept this client at all
 }
 
 // unsignedJWT builds a three-part token with these claims and a fake signature.
@@ -76,16 +88,31 @@ func unsignedJWT(t *testing.T, claims map[string]any) string {
 func (m *thunderMock) server(t *testing.T) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/oauth2/token":
+		if r.Method == http.MethodPost && r.URL.Path == "/oauth2/token" {
 			_ = r.ParseForm()
 			m.tokenForm = r.PostForm
-			claims := map[string]any{"iss": "mock", "aud": "urn:mock"}
+			m.mints++
+			claims := map[string]any{"iss": "mock", "aud": "urn:mock", "jti": fmt.Sprintf("t%d", m.mints)}
 			if m.systemRS == "" || r.PostForm.Get("resource") == m.systemRS {
 				claims["scope"] = "system"
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": unsignedJWT(t, claims), "expires_in": 3600})
-
+			if m.expIn != 0 {
+				claims["exp"] = time.Now().Unix() + m.expIn
+			}
+			tok := unsignedJWT(t, claims)
+			m.issued = append(m.issued, tok)
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": tok, "expires_in": 3600})
+			return
+		}
+		// Every admin endpoint below authenticates the bearer first. A revoked
+		// token is answered the way ThunderID answers an expired one: 401 with
+		// AUTH-4010, no hint of the cause.
+		if bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "); m.revokeAll || m.revoked[bearer] {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"code":"AUTH-4010","message":{"key":"error.auth.unauthorized","defaultValue":"Unauthorized"}}`))
+			return
+		}
+		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/applications":
 			var apps []map[string]any
 			if m.appID != "" {
