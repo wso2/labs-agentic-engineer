@@ -241,17 +241,17 @@ func (s *artifactService) LatestSpecTag(ctx context.Context, orgID, projectID st
 // specGateDisabled turns the whole-spec gate off — both the build-click gate and
 // ValidateSpecAtTag.
 //
-// It is here because the design agent does not reliably emit each component's
-// `stories`, and without them the gate fails every Build with UNCOVERED_STORY —
-// a spec the platform authored, refused by the platform. Disabling the gate is
-// the lesser harm while that holds: the cost is that a `v<N>` tag no longer
-// promises a buildable spec, so a build can now proceed on a spec the gate would
-// have refused, and a validation failure downstream may be missing coverage
-// rather than broken code.
+// It was set while the design agent did not reliably emit each component's
+// `stories`, which failed every Build with UNCOVERED_STORY. That reason is
+// gone: the design agent emits stories, and the security-design write and save
+// gates now reject an uncovered story at the point the file is written rather
+// than at the build click.
 //
-// Flip to false to re-arm it once the design agent's story emission is
-// dependable.
-const specGateDisabled = true
+// The flag stays as a kill switch: flip it back to true to let builds through
+// unvalidated if the gate ever starts refusing specs the platform itself
+// authored. The cost of that is what it always was — a `v<N>` tag no longer
+// promises a buildable spec.
+const specGateDisabled = false
 
 // validateSpecBundles is the shared whole-spec gate: the requirements main doc
 // must exist and the design bundle must pass the design hard gate. All
