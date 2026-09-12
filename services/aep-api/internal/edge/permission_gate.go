@@ -18,6 +18,7 @@ package edge
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 
 	"github.com/wso2/aep/aep-api/internal/authz"
@@ -53,6 +54,15 @@ var operationPermissions = map[string][]authz.Permission{
 	"CreateProject":        {authz.PermissionRequirementUpdate},
 	"DeleteProject":        {authz.PermissionRequirementUpdate},
 	"PutProjectReferences": {authz.PermissionRequirementUpdate},
+	// Matches the OcActionCatalog mapping backing OC's own project:view
+	// action — both grant on the same permission, so the BFF gate and OC's
+	// AuthzRole agree on who can view a project instead of the BFF allowing
+	// anyone through and OC silently narrowing it.
+	"GetProject": {authz.PermissionRequirementView},
+	// Same reasoning as GetProject — backs the console's projects grid and
+	// the header's project switcher, both of which read the same "which
+	// projects can I see" question.
+	"ListProjects": {authz.PermissionRequirementView},
 
 	// Build execution (write).
 	"BuildProject":                  {authz.PermissionBuild},
@@ -155,7 +165,6 @@ var permissionGateCarveOuts = map[string]struct{}{
 	"GetComponentOpenapi":           {},
 	"GetConfig":                     {},
 	"GetConversation":               {},
-	"GetProject":                    {},
 	"GetProjectDependencyReadiness": {},
 	"GetRcaAgentReport":             {},
 	"GetSkill":                      {},
@@ -170,7 +179,6 @@ var permissionGateCarveOuts = map[string]struct{}{
 	"ListPlatformResourceTypes":     {},
 	"ListProjectTags":               {},
 	"ListProjectUsage":              {},
-	"ListProjects":                  {},
 	"ListRcaAgentReports":           {},
 	"ListSkillUpdates":              {},
 	"ListSkills":                    {},
@@ -205,6 +213,7 @@ func permissionGate(f gen.StrictHandlerFunc, operationID string) gen.StrictHandl
 			held := auth.ClaimsFromContext(ctx).Permissions()
 			for _, perm := range required {
 				if !containsPermission(held, perm) {
+					logMissingPermission(ctx, operationID, held, []authz.Permission{perm})
 					return nil, errForbidden("missing required permission: " + string(perm))
 				}
 			}
@@ -216,11 +225,24 @@ func permissionGate(f gen.StrictHandlerFunc, operationID string) gen.StrictHandl
 	}
 	required := operationPermissions[operationID]
 	return func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error) {
-		if !hasAnyPermission(auth.ClaimsFromContext(ctx), required) {
+		claims := auth.ClaimsFromContext(ctx)
+		if !hasAnyPermission(claims, required) {
+			logMissingPermission(ctx, operationID, claims.Permissions(), required)
 			return nil, errForbidden("missing required permission")
 		}
 		return f(ctx, w, r, request)
 	}
+}
+
+// logMissingPermission logs the AE-permission-gate denial: the caller reached
+// operationID without holding any of required. This is the "request never
+// left the BFF" case — distinct from an OC-side rejection (logged separately
+// where the OC client surfaces ErrForbidden), so reading the logs tells you
+// whether the AE gate or the downstream OC call is where a permission
+// mismatch actually happened.
+func logMissingPermission(ctx context.Context, operationID string, held, required []authz.Permission) {
+	slog.WarnContext(ctx, "authz: request denied — caller missing required AE permission",
+		"operationID", operationID, "required", required, "held", held)
 }
 
 // hasAnyPermission reports whether claims holds at least one of required. An

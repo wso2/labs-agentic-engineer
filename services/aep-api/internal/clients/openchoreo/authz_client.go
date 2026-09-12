@@ -56,7 +56,7 @@ func (c *authZClient) GetAuthzRole(ctx context.Context, namespace string, name s
 		return authz.CreatedAuthzRole{}, fmt.Errorf("failed to get authz role %q: %w", name, err)
 	}
 	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
-		err := handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		err := handleErrorResponse(ctx, http.MethodGet, nsBase(namespace)+"/authzroles/"+name, resp.StatusCode(), ErrorResponses{
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
 			JSON404: resp.JSON404,
@@ -84,7 +84,7 @@ func (c *authZClient) UpdateAuthzRole(ctx context.Context, namespace string, nam
 		return authz.CreatedAuthzRole{}, fmt.Errorf("failed to update authz role %q: %w", name, err)
 	}
 	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
-		return authz.CreatedAuthzRole{}, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		return authz.CreatedAuthzRole{}, handleErrorResponse(ctx, http.MethodPut, nsBase(namespace)+"/authzroles/"+name, resp.StatusCode(), ErrorResponses{
 			JSON400: resp.JSON400,
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
@@ -109,7 +109,7 @@ func (c *authZClient) CreateAuthzRole(ctx context.Context, namespace string, nam
 		return authz.CreatedAuthzRole{}, fmt.Errorf("failed to create authz role %q: %w", name, err)
 	}
 	if resp.StatusCode() != http.StatusCreated || resp.JSON201 == nil {
-		err := handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		err := handleErrorResponse(ctx, http.MethodPost, nsBase(namespace)+"/authzroles", resp.StatusCode(), ErrorResponses{
 			JSON400: resp.JSON400,
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
@@ -134,7 +134,7 @@ func (c *authZClient) GetAuthzRoleBinding(ctx context.Context, namespace string,
 		return authz.CreatedAuthzRoleBinding{}, fmt.Errorf("failed to get authz role binding %q: %w", bindingName, err)
 	}
 	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
-		err := handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		err := handleErrorResponse(ctx, http.MethodGet, nsBase(namespace)+"/authzrolebindings/"+bindingName, resp.StatusCode(), ErrorResponses{
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
 			JSON404: resp.JSON404,
@@ -166,7 +166,7 @@ func (c *authZClient) CreateAuthzRoleBinding(ctx context.Context, namespace stri
 		return authz.CreatedAuthzRoleBinding{}, fmt.Errorf("failed to create authz role binding %q: %w", bindingName, err)
 	}
 	if resp.StatusCode() != http.StatusCreated || resp.JSON201 == nil {
-		err := handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		err := handleErrorResponse(ctx, http.MethodPost, nsBase(namespace)+"/authzrolebindings", resp.StatusCode(), ErrorResponses{
 			JSON400: resp.JSON400,
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
@@ -207,7 +207,7 @@ func (c *authZClient) DeleteAuthzRole(ctx context.Context, namespace string, nam
 		return fmt.Errorf("failed to delete authz role %q: %w", name, err)
 	}
 	if resp.StatusCode() != http.StatusOK {
-		return handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		return handleErrorResponse(ctx, http.MethodDelete, nsBase(namespace)+"/authzroles/"+name, resp.StatusCode(), ErrorResponses{
 			JSON400: resp.JSON400,
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
@@ -225,7 +225,7 @@ func (c *authZClient) DeleteAuthzRoleBinding(ctx context.Context, namespace stri
 		return fmt.Errorf("failed to delete authz role binding %q: %w", bindingName, err)
 	}
 	if resp.StatusCode() != http.StatusOK {
-		err := handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		err := handleErrorResponse(ctx, http.MethodDelete, nsBase(namespace)+"/authzrolebindings/"+bindingName, resp.StatusCode(), ErrorResponses{
 			JSON400: resp.JSON400,
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,

@@ -17,6 +17,7 @@
 package openchoreo
 
 import (
+	"context"
 	"errors"
 	"strconv"
 	"strings"
@@ -51,7 +52,7 @@ func TestHandleErrorResponse_TypedFieldWrapsSentinelAndMessage(t *testing.T) {
 			t.Parallel()
 			// statusCode is deliberately 0 here — the typed field, not the
 			// numeric code, drives classification on this branch.
-			err := handleErrorResponse(0, c.errs)
+			err := handleErrorResponse(context.Background(), "GET", "/test", 0, c.errs)
 			if !errors.Is(err, c.sentinel) {
 				t.Fatalf("errors.Is(%v, %v) = false; want the matching sentinel", err, c.sentinel)
 			}
@@ -66,7 +67,7 @@ func TestHandleErrorResponse_TypedFieldWrapsSentinelAndMessage(t *testing.T) {
 // switch checks the populated body first.
 func TestHandleErrorResponse_TypedFieldBeatsStatusCode(t *testing.T) {
 	t.Parallel()
-	err := handleErrorResponse(500, ErrorResponses{JSON400: &gen.ErrorResponse{Error: "bad input"}})
+	err := handleErrorResponse(context.Background(), "GET", "/test", 500, ErrorResponses{JSON400: &gen.ErrorResponse{Error: "bad input"}})
 	if !errors.Is(err, ErrBadRequest) {
 		t.Fatalf("typed JSON400 must classify as ErrBadRequest even with statusCode 500; got %v", err)
 	}
@@ -94,7 +95,7 @@ func TestHandleErrorResponse_BareStatusFallThrough(t *testing.T) {
 		t.Run("status-"+strconv.Itoa(c.status), func(t *testing.T) {
 			t.Parallel()
 			// No typed fields populated → synthesize from the bare status.
-			err := handleErrorResponse(c.status, ErrorResponses{})
+			err := handleErrorResponse(context.Background(), "GET", "/test", c.status, ErrorResponses{})
 			if !errors.Is(err, c.sentinel) {
 				t.Fatalf("bare status %d: errors.Is(%v, sentinel) = false", c.status, err)
 			}
@@ -104,7 +105,7 @@ func TestHandleErrorResponse_BareStatusFallThrough(t *testing.T) {
 
 func TestHandleErrorResponse_UnexpectedStatusIsUnclassified(t *testing.T) {
 	t.Parallel()
-	err := handleErrorResponse(418, ErrorResponses{})
+	err := handleErrorResponse(context.Background(), "GET", "/test", 418, ErrorResponses{})
 	for _, s := range []error{ErrBadRequest, ErrUnauthorized, ErrForbidden, ErrNotFound, ErrConflict, ErrInternalServerError} {
 		if errors.Is(err, s) {
 			t.Fatalf("unexpected status 418 must not match sentinel %v", s)

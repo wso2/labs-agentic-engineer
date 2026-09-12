@@ -68,9 +68,11 @@ function formatCreatedAt(createdAt?: string): string | null {
 function ProjectCard({
   project,
   onDelete,
+  canOpen,
 }: {
   project: Project;
   onDelete: (project: Project) => void;
+  canOpen: boolean;
 }) {
   const navigate = useNavigate();
   const created = formatCreatedAt(project.createdAt);
@@ -81,7 +83,16 @@ function ProjectCard({
   return (
     <Card variant="outlined" sx={{ height: "100%", position: "relative" }}>
       <CardActionArea
-        sx={{ height: "100%", alignItems: "stretch" }}
+        disabled={!canOpen}
+        sx={{
+          height: "100%",
+          alignItems: "stretch",
+          // CardActionArea's disabled state only strips pointer events —
+          // it never dims the card content (Typography sets its own
+          // explicit colors), so without this a "disabled" card looks
+          // identical to an enabled one.
+          opacity: canOpen ? 1 : 0.5,
+        }}
         onClick={() =>
           void navigate({
             to: "/projects/$projectName",
@@ -162,6 +173,7 @@ const GRID_ROWS_PER_PAGE = 3;
 
 export function ProjectsList() {
   const hasRequirementUpdate = useHasPermission("ae:requirement-update");
+  const hasRequirementView = useHasPermission("ae:requirement-view");
   const [search, setSearch] = useState("");
   // The project awaiting delete confirmation; one dialog serves the grid.
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
@@ -203,7 +215,13 @@ export function ProjectsList() {
           })}
       />
 
-      {!hasRequirementUpdate && (
+      {!hasRequirementView && (
+        <Alert severity="warning" sx={{ mb: 3 }}>
+          You don't have permission to open a project.
+        </Alert>
+      )}
+
+      {hasRequirementView && !hasRequirementUpdate && (
         <Alert severity="warning" sx={{ mb: 3 }}>
           You don't have permission to create a new project.
         </Alert>
@@ -257,7 +275,11 @@ export function ProjectsList() {
               <Grid container spacing={3}>
                 {items.map((project) => (
                   <Grid key={project.name} size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
-                    <ProjectCard project={project} onDelete={setDeleteTarget} />
+                    <ProjectCard
+                      project={project}
+                      onDelete={setDeleteTarget}
+                      canOpen={hasRequirementView}
+                    />
                   </Grid>
                 ))}
               </Grid>
