@@ -759,7 +759,7 @@ func (c *client) doRequest(ctx context.Context, token, method, path string, in, 
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		return fmt.Errorf("thunder %s %s: %w", method, redactPath(path), err)
 	}

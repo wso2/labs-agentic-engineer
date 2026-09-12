@@ -188,10 +188,17 @@ type client struct {
 	systemAud  string
 	httpClient *http.Client
 
-	mu          sync.RWMutex
-	cachedToken string
-	tokenExpiry time.Time
-	tokenSfg    singleflight.Group
+	// now is the clock the token cache reads. It is the WALL clock on purpose:
+	// the cache compares Unix seconds, never time.Time values, because Go's
+	// time.Before prefers the monotonic reading and a VM paused with a sleeping
+	// laptop stops that clock while the wall clock, and Thunder's `exp`, move
+	// on. Tests substitute it.
+	now func() time.Time
+
+	mu              sync.RWMutex
+	cachedToken     string
+	tokenExpiryUnix int64 // wall-clock second after which the cache stops trusting cachedToken
+	tokenSfg        singleflight.Group
 
 	// Default OU id, looked up once on first EnsurePublisherApp call
 	// and cached. Thunder's UI nests every org under a root OU
@@ -220,6 +227,7 @@ func New(cfg Config) Client {
 		systemSec:  cfg.ClientSecret,
 		systemAud:  cfg.SystemResourceIdentifier,
 		httpClient: hc,
+		now:        time.Now,
 	}
 }
 
@@ -249,37 +257,24 @@ func SystemResourceIdentifier(issuer string) string {
 // Fast path: RLock + cache hit. Slow path: singleflight dedupe so
 // concurrent callers share one round-trip.
 func (c *client) getSystemToken(ctx context.Context) (string, error) {
-	c.mu.RLock()
-	if c.cachedToken != "" && time.Now().Before(c.tokenExpiry) {
-		token := c.cachedToken
-		c.mu.RUnlock()
+	if token, ok := c.cachedSystemToken(); ok {
 		return token, nil
 	}
-	c.mu.RUnlock()
 
 	result, err, _ := c.tokenSfg.Do("system-token", func() (any, error) {
-		c.mu.RLock()
-		if c.cachedToken != "" && time.Now().Before(c.tokenExpiry) {
-			token := c.cachedToken
-			c.mu.RUnlock()
+		if token, ok := c.cachedSystemToken(); ok {
 			return token, nil
 		}
-		c.mu.RUnlock()
 
-		token, expiresIn, err := c.fetchSystemToken(ctx)
+		token, expiresAt, err := c.fetchSystemToken(ctx)
 		if err != nil {
 			return nil, err
 		}
 		c.mu.Lock()
 		c.cachedToken = token
-		const skew = 30
-		if expiresIn > skew {
-			c.tokenExpiry = time.Now().Add(time.Duration(expiresIn-skew) * time.Second)
-		} else if expiresIn > 0 {
-			c.tokenExpiry = time.Now().Add(time.Duration(expiresIn) * time.Second)
-		} else {
-			c.tokenExpiry = time.Now().Add(time.Minute)
-		}
+		// Refresh ahead of the issuer's deadline so a token is never presented
+		// in its final seconds; a token already inside the skew is not reused.
+		c.tokenExpiryUnix = expiresAt - tokenRefreshSkewSeconds
 		c.mu.Unlock()
 		return token, nil
 	})
@@ -289,7 +284,104 @@ func (c *client) getSystemToken(ctx context.Context) (string, error) {
 	return result.(string), nil
 }
 
-func (c *client) fetchSystemToken(ctx context.Context) (string, int, error) {
+// tokenRefreshSkewSeconds is how far ahead of a token's expiry the cache stops
+// handing it out.
+const tokenRefreshSkewSeconds = 30
+
+// cachedSystemToken returns the cached token when the wall clock says it is
+// still good.
+func (c *client) cachedSystemToken() (string, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.cachedToken == "" || c.now().Unix() >= c.tokenExpiryUnix {
+		return "", false
+	}
+	return c.cachedToken, true
+}
+
+// invalidateSystemToken drops stale from the cache if it is what the cache
+// holds. A token minted after stale was handed out is left alone: the caller
+// that got a 401 with the older token should now pick up the newer one rather
+// than force a third mint.
+func (c *client) invalidateSystemToken(stale string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.cachedToken == stale {
+		c.cachedToken = ""
+		c.tokenExpiryUnix = 0
+	}
+}
+
+// do sends an admin request that carries the system token, and answers a 401
+// by evicting that token, minting once, and repeating the request. Thunder
+// says 401 for a token it no longer accepts and nothing else (an expired one
+// looks exactly like a forged one), so the only sensible reaction is to try
+// with a token it has just issued. One retry: if the fresh token is refused
+// too, the 401 is the answer and it is returned as such.
+//
+// The token endpoint itself must not go through here (its request carries no
+// bearer, and a 401 there means bad client credentials).
+func (c *client) do(req *http.Request) (*http.Response, error) {
+	resp, err := c.httpClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusUnauthorized {
+		return resp, err
+	}
+	auth := req.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") || auth == "Bearer " {
+		return resp, nil // not a bearer request; nothing to refresh
+	}
+	stale := strings.TrimPrefix(auth, "Bearer ")
+	retry, rerr := c.retryWithFreshToken(req, stale)
+	if rerr != nil {
+		// The retry could not be attempted at all (no token, or a body that
+		// cannot be replayed). The original 401 is still the truthful answer.
+		slog.WarnContext(req.Context(), "thundersvc: admin call answered 401 and a retry with a fresh token was not possible",
+			"method", req.Method, "path", req.URL.Path, "error", rerr)
+		return resp, nil
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	return retry, nil
+}
+
+// retryWithFreshToken re-sends req once with a token minted after stale was
+// refused. Bodies are replayed through GetBody, which net/http sets for every
+// in-memory reader this client uses.
+func (c *client) retryWithFreshToken(req *http.Request, stale string) (*http.Response, error) {
+	c.invalidateSystemToken(stale)
+	fresh, err := c.getSystemToken(req.Context())
+	if err != nil {
+		return nil, err
+	}
+	again := req.Clone(req.Context())
+	if req.Body != nil && req.Body != http.NoBody {
+		if req.GetBody == nil {
+			return nil, fmt.Errorf("request body cannot be replayed")
+		}
+		body, err := req.GetBody()
+		if err != nil {
+			return nil, fmt.Errorf("replay request body: %w", err)
+		}
+		again.Body = body
+	}
+	again.Header.Set("Authorization", "Bearer "+fresh)
+	resp, err := c.httpClient.Do(again)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		// Thunder refused a token it issued a moment ago: do not keep it.
+		c.invalidateSystemToken(fresh)
+	}
+	return resp, nil
+}
+
+// fetchSystemToken mints a system token and reports the wall-clock second the
+// issuer says it expires: the JWT's own `exp` claim when readable, else now
+// plus `expires_in`, else now plus a minute. The claim is preferred because it
+// is the issuer's statement rather than a copy that has to be re-anchored to
+// the receiver's clock.
+func (c *client) fetchSystemToken(ctx context.Context) (string, int64, error) {
 	// The system client is registered with
 	// `tokenEndpointAuthMethod: client_secret_post` (see
 	// single-cluster/thunder-resources/81-aep-system-client.yaml), so
@@ -337,7 +429,14 @@ func (c *client) fetchSystemToken(ctx context.Context) (string, int, error) {
 	if err := assertSystemScope(result.AccessToken, c.systemAud); err != nil {
 		return "", 0, err
 	}
-	return result.AccessToken, result.ExpiresIn, nil
+	if exp, ok := tokenExpiry(result.AccessToken); ok {
+		return result.AccessToken, exp, nil
+	}
+	now := c.now().Unix()
+	if result.ExpiresIn > 0 {
+		return result.AccessToken, now + int64(result.ExpiresIn), nil
+	}
+	return result.AccessToken, now + 60, nil
 }
 
 // assertSystemScope refuses a token that does not carry the `system` scope.
@@ -366,18 +465,10 @@ func assertSystemScope(token, resource string) error {
 // is false when the token is not a JWT or its payload is not JSON; an absent
 // claim is a readable answer (no scopes), not an unreadable token.
 func tokenScopes(token string) ([]string, bool) {
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return nil, false
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
-	if err != nil {
-		return nil, false
-	}
 	var claims struct {
 		Scope any `json:"scope"`
 	}
-	if err := json.Unmarshal(payload, &claims); err != nil {
+	if !tokenClaims(token, &claims) {
 		return nil, false
 	}
 	switch v := claims.Scope.(type) {
@@ -397,6 +488,32 @@ func tokenScopes(token string) ([]string, bool) {
 	return nil, false
 }
 
+// tokenExpiry reads the `exp` claim of a JWT, unverified for the same reason
+// tokenScopes is. ok is false for an opaque token or an absent claim.
+func tokenExpiry(token string) (int64, bool) {
+	var claims struct {
+		Exp int64 `json:"exp"`
+	}
+	if !tokenClaims(token, &claims) || claims.Exp <= 0 {
+		return 0, false
+	}
+	return claims.Exp, true
+}
+
+// tokenClaims decodes a JWT's payload into out without verifying it. false
+// when the token is not a three-part JWT or its payload is not JSON.
+func tokenClaims(token string, out any) bool {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
+	if err != nil {
+		return false
+	}
+	return json.Unmarshal(payload, out) == nil
+}
+
 // -- OU resolution --------------------------------------------------------
 
 // getDefaultOUID returns Thunder's default organisation-unit id,
@@ -414,7 +531,7 @@ func (c *client) getDefaultOUID(ctx context.Context, token string) (string, erro
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		return "", fmt.Errorf("thunder get default OU: %w", err)
 	}
@@ -459,7 +576,7 @@ func (c *client) ouExists(ctx context.Context, token, ouID string) (bool, error)
 		return false, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		return false, fmt.Errorf("thunder get OU %s: %w", ouID, err)
 	}
@@ -632,7 +749,7 @@ func (c *client) ensurePublisherTokenClaims(ctx context.Context, token, appID st
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		return fmt.Errorf("thunder put app: %w", err)
 	}
@@ -742,7 +859,7 @@ func (c *client) getAppByID(ctx context.Context, token, appID string) (map[strin
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		return nil, fmt.Errorf("thunder get app: %w", err)
 	}
@@ -795,7 +912,7 @@ func (c *client) listAppsPage(ctx context.Context, token string, offset, limit i
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		return nil, fmt.Errorf("thunder list apps: %w", err)
 	}
@@ -831,7 +948,7 @@ func (c *client) deleteApp(ctx context.Context, token, appID string) (bool, erro
 		return false, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		return false, fmt.Errorf("thunder delete app: %w", err)
 	}
@@ -904,7 +1021,7 @@ func (c *client) createApp(ctx context.Context, token, appName, ouID string) (st
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		return "", "", fmt.Errorf("thunder create app: %w", err)
 	}
@@ -951,7 +1068,7 @@ func (c *client) regenerateSecret(ctx context.Context, token, appID string) (str
 		return "", err
 	}
 	getReq.Header.Set("Authorization", "Bearer "+token)
-	getResp, err := c.httpClient.Do(getReq)
+	getResp, err := c.do(getReq)
 	if err != nil {
 		return "", fmt.Errorf("thunder get app for secret regeneration: %w", err)
 	}
@@ -982,7 +1099,7 @@ func (c *client) regenerateSecret(ctx context.Context, token, appID string) (str
 	putReq.Header.Set("Authorization", "Bearer "+token)
 	putReq.Header.Set("Content-Type", "application/json")
 
-	putResp, err := c.httpClient.Do(putReq)
+	putResp, err := c.do(putReq)
 	if err != nil {
 		return "", fmt.Errorf("thunder put app for secret regeneration: %w", err)
 	}
