@@ -560,67 +560,28 @@ func checkProtectedComponent(
 
 // checkOperationSecurity accepts absent, `[]`, or ONE requirement object naming
 // oauth2 with at most one scope (decision B1).
+//
+// The structural half is operationRequirement (openapi_operations.go) — the
+// SAME classifier the gateway projection reads the block with, so a document
+// this gate passes cannot be projected as something else. What is left here is
+// the catalog half, which needs security.json: the two rules about the handle
+// an operation names, rather than about the shape it names it in.
 func checkOperationSecurity(component string, op specOperationNode, owners map[string]string) string {
-	raw, declared := op.Op.get("security")
-	if !declared {
+	requirement, problem := operationRequirement(op, signedInRequirement)
+	if problem != "" {
+		return problem
+	}
+	if requirement.Kind != RequirementScope || owners == nil {
 		return ""
 	}
-	security, isList := raw.([]any)
-	if !isList {
-		return securityspec.Msg(securityspec.MsgOperationSecurityNotAList, "method", op.Method, "path", op.Path)
-	}
-	if len(security) == 0 {
-		return "" // public
-	}
-	if len(security) > 1 {
-		return securityspec.Msg(securityspec.MsgOperationMultipleRequirements, "method", op.Method, "path", op.Path)
-	}
-
-	requirement, isMap := security[0].(*yamlMap)
-	if !isMap {
-		return securityspec.Msg(securityspec.MsgOperationSecurityNotAList, "method", op.Method, "path", op.Path)
-	}
-	// Two schemes in ONE object mean "both", which the gateway cannot express
-	// and the generated server does not read — the same disagreement as two
-	// objects.
-	if len(requirement.keys) != 1 {
-		return securityspec.Msg(securityspec.MsgOperationMultipleRequirements, "method", op.Method, "path", op.Path)
-	}
-	name := requirement.keys[0]
-	if name != oauth2SchemeName {
-		return securityspec.Msg(securityspec.MsgOperationUnknownScheme,
-			"method", op.Method, "path", op.Path, "scheme", name)
-	}
-
-	scopes, isList := requirement.byKey[name].([]any)
-	if !isList {
-		return securityspec.Msg(securityspec.MsgOperationSecurityNotAList, "method", op.Method, "path", op.Path)
-	}
-	if len(scopes) > 1 {
-		return securityspec.Msg(securityspec.MsgOperationMultipleScopes, "method", op.Method, "path", op.Path)
-	}
-	if len(scopes) == 0 {
-		return "" // the document default, spelled out
-	}
-	scope, isString := scopes[0].(string)
-	if !isString {
-		return securityspec.Msg(securityspec.MsgOperationSecurityNotAList, "method", op.Method, "path", op.Path)
-	}
-	if isReservedOIDCScope(scope) {
-		return securityspec.Msg(securityspec.MsgReservedOIDCScope,
-			"scope", scope, "where", "the security of "+op.Method+" "+op.Path)
-	}
-	if owners == nil {
-		return ""
-	}
-	owner, inCatalog := owners[scope]
+	owner, inCatalog := owners[requirement.Scope]
 	if !inCatalog {
 		return securityspec.Msg(securityspec.MsgScopeNotInCatalog,
-			"method", op.Method, "path", op.Path, "scope", scope)
+			"method", op.Method, "path", op.Path, "scope", requirement.Scope)
 	}
 	if owner != component {
 		return securityspec.Msg(securityspec.MsgScopeNotOwned,
-			"method", op.Method, "path", op.Path, "scope", scope, "owner", owner)
+			"method", op.Method, "path", op.Path, "scope", requirement.Scope, "owner", owner)
 	}
 	return ""
 }

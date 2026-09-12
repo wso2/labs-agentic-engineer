@@ -1,0 +1,116 @@
+operations:
+    - method: GET
+      path: /health
+      public: true
+    - method: GET
+      path: /me
+      policies:
+        - name: jwt-auth
+          version: v1
+    - method: GET
+      path: /claims
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - claims:read
+          version: v1
+    - method: POST
+      path: /claims
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - claims:submit
+          version: v1
+    - method: POST
+      path: /claims/{claimId}/approve
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - claims:approve
+          version: v1
+    - method: POST
+      path: /claims/{claimId}/reject
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - claims:reject
+          version: v1
+    - method: GET
+      path: /reports
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - reports:read
+          version: v1
+    - method: GET
+      path: /reports/export
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - reports:export
+          version: v1
+    - method: OPTIONS
+      path: /health
+      public: true
+    - method: OPTIONS
+      path: /me
+      policies:
+        - name: jwt-auth
+          version: v1
+    - method: OPTIONS
+      path: /claims
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - claims:read
+          version: v1
+    - method: OPTIONS
+      path: /claims/{claimId}/approve
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - claims:approve
+          version: v1
+    - method: OPTIONS
+      path: /claims/{claimId}/reject
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - claims:reject
+          version: v1
+    - method: OPTIONS
+      path: /reports
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - reports:read
+          version: v1
+    - method: OPTIONS
+      path: /reports/export
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - reports:export
+          version: v1

@@ -1,0 +1,37 @@
+operations:
+    - method: GET
+      path: /payments
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - payments:read
+          version: v1
+    - method: POST
+      path: /payments/{id}/release
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - payments:release
+          version: v1
+    - method: OPTIONS
+      path: /payments
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - payments:read
+          version: v1
+    - method: OPTIONS
+      path: /payments/{id}/release
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - payments:release
+          version: v1

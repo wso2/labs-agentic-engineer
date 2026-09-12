@@ -1,0 +1,133 @@
+operations:
+    - method: GET
+      path: /slots
+      public: true
+    - method: GET
+      path: /appointments
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - appointments:read
+          version: v1
+    - method: POST
+      path: /appointments
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - appointments:book
+          version: v1
+    - method: GET
+      path: /appointments/day
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - appointments:read-all
+          version: v1
+    - method: DELETE
+      path: /appointments/{id}
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - appointments:cancel
+          version: v1
+    - method: PUT
+      path: /appointments/{id}
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - appointments:manage
+          version: v1
+    - method: GET
+      path: /schedule
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - schedule:read
+          version: v1
+    - method: POST
+      path: /schedule/publish
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - schedule:publish
+          version: v1
+    - method: GET
+      path: /records
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - records:read
+          version: v1
+    - method: OPTIONS
+      path: /slots
+      public: true
+    - method: OPTIONS
+      path: /appointments
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - appointments:read
+          version: v1
+    - method: OPTIONS
+      path: /appointments/day
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - appointments:read-all
+          version: v1
+    - method: OPTIONS
+      path: /appointments/{id}
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - appointments:cancel
+          version: v1
+    - method: OPTIONS
+      path: /schedule
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - schedule:read
+          version: v1
+    - method: OPTIONS
+      path: /schedule/publish
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - schedule:publish
+          version: v1
+    - method: OPTIONS
+      path: /records
+      policies:
+        - name: jwt-auth
+          params:
+            scopes:
+                anyOf:
+                    - records:read
+          version: v1

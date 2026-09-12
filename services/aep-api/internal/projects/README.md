@@ -69,8 +69,9 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
 - **The DEPLOY** (`DeploymentService`): cut a component's release from the Workload its build posted, compose
   the whole desired binding, write it once, and report what the cluster says back. Plus `ConvergeWatcher`,
   the sweep that re-asserts deployed bindings for drift no event causes.
-- **The desired-state projection** (`DesiredDeploymentFor`, `api_traits.go`, `alert_rule_trait.go`,
-  `gateway_address.go`): design facts → the two objects the platform owns, as pure functions.
+- **The desired-state projection** (`DesiredDeploymentFor`, `api_traits.go`, `api_operations.go`,
+  `alert_rule_trait.go`, `gateway_address.go`): design facts → the two objects the platform owns, as pure
+  functions.
 - **Persistence**: the `component_config` gorm and its entities live in this domain (`repository_config.go`
   over `component_config.go`), single write-authority.
 
@@ -85,6 +86,23 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
   without its config does not degrade — it fails the whole binding render. The two halves land at different
   times (the shape pre-build, since a ComponentRelease freezes it; the config at deploy, since it needs a
   release to bind) and that split is forced by OpenChoreo, not chosen.
+- **The gateway's operation table is projected, and refused rather than guessed** (`api_operations.go`).
+  A component behind END-USER sign-in gets one `operations` row per (method, path) in its openapi.yaml —
+  `public: true`, a `jwt-auth v1` policy carrying one `scopes.anyOf` handle, or a `jwt-auth v1` policy with
+  NO `scopes` param, which is how "signed in, no particular permission" is expressed (`anyOf: [openid]`
+  would admit every signed-in account in the org, silently). Three rules hold it together. The document is
+  read by `spec.OpenAPIOperations` — the SAME classifier the openapi.yaml security gate judges it with, so
+  a spec the gate passed cannot be projected as something else. An `OPTIONS` row is SYNTHESISED per path,
+  because routing runs before policy and an undeclared method+path is a 404 the CORS policy never sees.
+  And anything unrenderable is refused whole: one operation the RestApi CRD rejects leaves EVERY path on
+  that API 404 — policy-free siblings included — so the projection falls back to the trait's `/*` default
+  (every operation needs a token, none needs a scope) and reports why in `APIOperationsProblem`. The
+  rendered parameter keys must all be declared by the trait's schema: OpenChoreo PRUNES an undeclared key
+  silently, which does not fail a deployment — it serves the operation without the policy it was meant to
+  carry. `api_operations_test.go` asserts the rendered keys against the trait yaml itself for that reason.
+  The scope rides the trait PARAMETER (the contract, one value for every environment) while the issuers and
+  the audience ride `traitEnvironmentConfigs` (the environment): the operation names the permission, the
+  environment names whose tokens count.
 - **A protected sibling is addressed through the gateway** (`gateway_address.go`). OpenChoreo resolves a
   `component`-kind dependency to the provider's project Service — right for a trusted service-to-service
   caller, wrong for a consumer that forwards UNTRUSTED traffic, because a SPA's nginx proxying the browser's
