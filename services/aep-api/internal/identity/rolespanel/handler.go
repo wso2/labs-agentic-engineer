@@ -124,6 +124,10 @@ func mapErr(err error, generic string) error {
 	return apierr.Internal(generic)
 }
 
+// toView projects the domain's read onto the wire. The two role lists stay two
+// lists: `roles` is the shared org-group catalog and `projectRoles` is what this
+// project owns, and folding them together would lose the ownership difference
+// the console renders.
 func toView(v identity.PanelView) gen.ProjectRolesView {
 	out := gen.ProjectRolesView{DirectoryAvailable: v.DirectoryAvailable}
 	for _, r := range v.Roles {
@@ -132,12 +136,31 @@ func toView(v identity.PanelView) gen.ProjectRolesView {
 			Description:     r.Description,
 			PlatformCreated: r.PlatformCreated,
 			MemberCount:     r.MemberCount,
+			Projects:        r.Projects,
 		})
+	}
+	for _, r := range v.ProjectRoles {
+		role := gen.ProjectRole{
+			Name:           r.Name,
+			DirectoryName:  r.DirectoryName,
+			ResourceServer: r.ResourceServer,
+			Scopes:         r.Scopes,
+		}
+		for _, a := range r.AssignedTo {
+			role.AssignedTo = append(role.AssignedTo, gen.ProjectRoleAssignment{
+				Group: a.Group, Projects: a.Projects,
+			})
+		}
+		out.ProjectRoles = append(out.ProjectRoles, role)
 	}
 	for _, u := range v.TestUsers {
 		out.TestUsers = append(out.TestUsers, gen.ProjectTestUserState{
-			Username:            u.Username,
+			Username: u.Username,
+			// RoleName is roles[0] by construction (PanelService.heldRoles), and
+			// is on the wire only until phase 5 moves the console to the plural.
 			RoleName:            u.RoleName,
+			Roles:               u.Roles,
+			Scopes:              u.Scopes,
 			Supplied:            u.Supplied,
 			ColdStart:           u.ColdStart,
 			Exists:              u.Exists,

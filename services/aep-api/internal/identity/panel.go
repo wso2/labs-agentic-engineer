@@ -51,6 +51,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 )
@@ -79,16 +80,77 @@ type RoleState struct {
 	Description     string
 	PlatformCreated bool
 	MemberCount     int
+	// Projects is how many projects on this directory assign a role to the
+	// group — the "reused · holds roles in n projects" a role card shows. A
+	// group only this project uses reads 1; one nobody has bound yet reads 0.
+	Projects int
+}
+
+// RoleAssignment is one group a project role is assigned to, and how
+// load-bearing that group already is.
+//
+// The count is deliberately part of the assignment rather than left to the
+// reader to look up: "assigned to Finance" and "assigned to Finance, which
+// holds roles in two other projects" are different facts to a person deciding
+// whether to reuse a group, and only the second is actionable.
+type RoleAssignment struct {
+	Group string
+	// Projects is Store.CountProjectsBindingGroup for Group — DISTINCT projects,
+	// so it counts 1 for a group only this project binds.
+	Projects int
+}
+
+// ProjectRole is one role THIS project owns on the directory: a
+// `<project>/<Role>`, the groups it is assigned to, and what it grants.
+//
+// It is a different thing from RoleState above and deliberately a different
+// type. A RoleState is a SHARED org group — anybody's, additive, and the reason
+// the panel shows the whole catalog. A ProjectRole is project-OWNED: this
+// project's build created it, converges it and deletes it, and no other project
+// can hold one by the same name.
+type ProjectRole struct {
+	// Name is the role as the design declares it (`Approver`), which is what the
+	// console renders and what a test user reference names.
+	Name string
+	// DirectoryName is the name the directory carries — `<project>/Approver`.
+	// The prefix is the platform's ownership device, so it is reported for the
+	// operator reading a live directory and never used as a label.
+	DirectoryName string
+	// ResourceServer is the identifier every grant of this role is on: the
+	// access token's `aud` and the `resource` a scoped token is asked for.
+	ResourceServer string
+	// Scopes are the catalog handles the role grants, read from the DIRECTORY
+	// and sorted. Empty when the directory could not be asked — no table holds
+	// them, so absence here is "unknown", the same as Exists on an account.
+	Scopes []string
+	// AssignedTo are the groups holding the role, in binding order. Empty is
+	// meaningful: it is the normal shape for a self-service role (the app's
+	// registration flow assigns it per account) and for a service role (phase 6
+	// attaches an application principal).
+	AssignedTo []RoleAssignment
 }
 
 // TestUserState is one test account THIS project references, with the live
 // directory facts folded in.
 type TestUserState struct {
 	Username string
+	// RoleName is the role the account exists FOR — the stored reference's one
+	// role, and always Roles[0]. It is the v1 singular and is kept only while
+	// the console moves to Roles; phase 5 removes it.
 	RoleName string
+	// Roles is every project role this login holds: the one it exists for
+	// first, then any other role of this project whose group the account is
+	// also a member of. The extra ones are read from the DIRECTORY, so a role
+	// an administrator granted by hand shows up here — the panel reports the
+	// world, not the design.
+	Roles []string
+	// Scopes is the union of those roles' grants, sorted: the catalog handles
+	// this login's access token will carry. Empty when the directory could not
+	// be asked, which is "unknown" rather than "none".
+	Scopes   []string
 	Supplied bool
 	// ColdStart is a v1 leftover carried for the wire contract and is always
-	// false — see TestUserRef.ColdStart in entities.go. Phase 2/5 removes it.
+	// false — see TestUserRef.ColdStart in entities.go. Phase 5 removes it.
 	ColdStart bool
 	// Exists is presence on the directory. It is meaningless when the panel
 	// reports DirectoryAvailable false, which is exactly why that flag exists.
@@ -110,8 +172,16 @@ type TestUserState struct {
 
 // PanelView is the whole read.
 type PanelView struct {
-	Roles     []RoleState
-	TestUsers []TestUserState
+	Roles []RoleState
+	// ProjectRoles are the roles THIS project owns, which the shared catalog in
+	// Roles above deliberately does not contain: the two are different kinds of
+	// object with different ownership rules, and folding them into one list
+	// would make "which existing group does this design reuse" unanswerable.
+	//
+	// They are derived from the platform's own binding rows, so they survive a
+	// directory outage with everything but their Scopes.
+	ProjectRoles []ProjectRole
+	TestUsers    []TestUserState
 	// DirectoryAvailable is false when the identity provider could not be
 	// reached. Roles is then empty and Exists is false throughout — neither means
 	// "absent", and the console must say so.
@@ -166,6 +236,13 @@ func (s *PanelService) View(ctx context.Context, orgID, projectID string) (Panel
 	if err != nil {
 		return PanelView{}, err
 	}
+	// The project's own roles come from the platform's binding rows, which are
+	// readable whether or not the identity provider is: everything about them
+	// except what they GRANT is the platform's own data.
+	bindings, err := s.store.ListRoleBindings(ctx, scope, projectID)
+	if err != nil {
+		return PanelView{}, err
+	}
 
 	view := PanelView{DirectoryAvailable: true}
 
@@ -173,7 +250,8 @@ func (s *PanelService) View(ctx context.Context, orgID, projectID string) (Panel
 	// carries the fact to the console, which renders "unknown" instead of
 	// inventing an absence. An environment with no identity provider bound yet
 	// fails exactly here, and reads as "unknown" for the same reason.
-	liveAccounts := map[string]bool{}
+	liveAccounts := map[string]string{}
+	var directory Directory
 	target, terr := s.targets.Resolve(ctx, orgID)
 	if terr != nil {
 		slog.WarnContext(ctx, "roles panel: no identity provider for this environment, degrading the read",
@@ -186,28 +264,209 @@ func (s *PanelService) View(ctx context.Context, orgID, projectID string) (Panel
 				"scope", scope.String(), "project", projectID, "error", rerr)
 			view.DirectoryAvailable = false
 		} else {
+			directory = target.Directory
 			view.Roles = roles
 			for _, ref := range refs {
-				_, found, ferr := target.Directory.FindUserByUsername(ctx, ref.Username)
+				account, found, ferr := target.Directory.FindUserByUsername(ctx, ref.Username)
 				if ferr != nil {
 					slog.WarnContext(ctx, "roles panel: account presence unavailable",
 						"username", ref.Username, "error", ferr)
 					view.DirectoryAvailable = false
 					continue
 				}
-				liveAccounts[ref.Username] = found
+				if found {
+					// The id, not a bare bool: the roles an account actually holds
+					// are read from its group memberships, and only the directory's
+					// own id addresses those.
+					liveAccounts[ref.Username] = account.ID
+				}
 			}
 		}
 	}
 
+	projectRoles, err := s.projectRoles(ctx, scope, orgID, projectID, directory, bindings)
+	if err != nil {
+		return PanelView{}, err
+	}
+	view.ProjectRoles = projectRoles
+
 	for _, ref := range refs {
-		state, serr := s.testUserState(ctx, scope, ref, liveAccounts[ref.Username])
+		accountID, exists := liveAccounts[ref.Username]
+		state, serr := s.testUserState(ctx, scope, ref, exists)
 		if serr != nil {
 			return PanelView{}, serr
 		}
+		state.Roles, state.Scopes = s.heldRoles(ctx, ref, accountID, directory, projectRoles)
 		view.TestUsers = append(view.TestUsers, state)
 	}
 	return view, nil
+}
+
+// projectRoles folds the platform's binding rows into one entry per role of
+// this project, with the reuse count of every group it is assigned to and, when
+// the directory can be reached, what the role grants.
+//
+// The resource server is READ from the platform's row and DERIVED when there is
+// none: the identifier is agreed on by parties that never speak to each other
+// (see resource_server.go), so a project whose first build has not run yet can
+// still be told the `aud` its tokens will carry. The row wins when it exists,
+// because a project built before the derivation changed would otherwise be
+// described by a name no token of its has.
+func (s *PanelService) projectRoles(
+	ctx context.Context, scope Scope, orgID, projectID string,
+	directory Directory, bindings []IdPRoleBinding,
+) ([]ProjectRole, error) {
+	if len(bindings) == 0 {
+		return nil, nil
+	}
+	identifier := ResourceServerIdentifier(orgID, projectID)
+	recorded, err := s.store.GetResourceServer(ctx, scope, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if recorded != nil && recorded.Identifier != "" {
+		identifier = recorded.Identifier
+	}
+
+	// One count per GROUP, not per binding: a group two roles of this project
+	// are assigned to is one question about that group, and asking it twice
+	// would double the store reads for an identical answer.
+	counts := map[string]int{}
+	countFor := func(group string) (int, error) {
+		key := strings.ToLower(group)
+		if n, seen := counts[key]; seen {
+			return n, nil
+		}
+		n, cerr := s.store.CountProjectsBindingGroup(ctx, scope, group)
+		if cerr != nil {
+			return 0, cerr
+		}
+		counts[key] = n
+		return n, nil
+	}
+
+	var out []ProjectRole
+	index := map[string]int{}
+	for _, binding := range bindings {
+		i, seen := index[binding.Role]
+		if !seen {
+			i = len(out)
+			index[binding.Role] = i
+			out = append(out, ProjectRole{
+				Name:           binding.Role,
+				DirectoryName:  RoleName(projectID, binding.Role),
+				ResourceServer: identifier,
+				Scopes:         s.roleScopes(ctx, directory, binding),
+			})
+		}
+		// The empty group name is the "recorded, assigned to nobody" marker, not
+		// a group: a self-service role's row carries it so the delete path can
+		// find the role, and reporting it as an assignment would invent a group
+		// called "".
+		if binding.GroupName == "" {
+			continue
+		}
+		projects, cerr := countFor(binding.GroupName)
+		if cerr != nil {
+			return nil, cerr
+		}
+		out[i].AssignedTo = append(out[i].AssignedTo, RoleAssignment{
+			Group: binding.GroupName, Projects: projects,
+		})
+	}
+	return out, nil
+}
+
+// roleScopes reads what one role grants, best-effort.
+//
+// Best-effort for the same reason the catalog's member count is: it costs one
+// call per role, and losing one must not cost the caller the rest of the panel.
+// An empty answer reads as "unknown" beside DirectoryAvailable, never as "this
+// role grants nothing" — a role that genuinely grants nothing is a design the
+// gate refuses.
+func (s *PanelService) roleScopes(ctx context.Context, directory Directory, binding IdPRoleBinding) []string {
+	if directory == nil || binding.DirectoryRoleID == "" {
+		return nil
+	}
+	scopes, err := directory.ListRolePermissions(ctx, DirectoryID(binding.DirectoryRoleID))
+	if err != nil {
+		slog.WarnContext(ctx, "roles panel: role grants unavailable", "role", binding.Role, "error", err)
+		return nil
+	}
+	sort.Strings(scopes)
+	return scopes
+}
+
+// heldRoles answers what ONE test account may do: the roles it holds and the
+// union of their grants.
+//
+// The account's own role — the one the reference says it exists for — comes
+// first and is always present, so `Roles[0]` is `RoleName` whatever the
+// directory says. Everything after it is read from the account's GROUP
+// memberships joined against this project's role assignments, which is how a
+// v2 account holding two roles, or one an administrator enrolled by hand,
+// becomes visible without a table that knows about it.
+//
+// The scopes are the union of the roles' grants, deduplicated and sorted, so
+// two reads of an unchanged directory return byte-identical rows.
+func (s *PanelService) heldRoles(
+	ctx context.Context, ref TestUserRef, accountID string,
+	directory Directory, roles []ProjectRole,
+) (held []string, scopes []string) {
+	byName := make(map[string]ProjectRole, len(roles))
+	for _, role := range roles {
+		byName[strings.ToLower(role.Name)] = role
+	}
+	seen := map[string]bool{}
+	add := func(name string) {
+		if name == "" || seen[strings.ToLower(name)] {
+			return
+		}
+		seen[strings.ToLower(name)] = true
+		held = append(held, name)
+	}
+	add(ref.RoleName)
+
+	if directory != nil && accountID != "" {
+		groups, err := directory.UserGroups(ctx, accountID)
+		if err != nil {
+			// Best-effort, like every other per-account directory read here: the
+			// account's own role is still reported.
+			slog.WarnContext(ctx, "roles panel: account group membership unavailable",
+				"username", ref.Username, "error", err)
+		} else {
+			member := make(map[string]bool, len(groups))
+			for _, group := range groups {
+				member[strings.ToLower(group.Name)] = true
+			}
+			// Role order, not group order: the panel's roles are already in the
+			// store's (role, group) order, so the answer is stable.
+			for _, role := range roles {
+				for _, assignment := range role.AssignedTo {
+					if member[strings.ToLower(assignment.Group)] {
+						add(role.Name)
+						break
+					}
+				}
+			}
+		}
+	}
+
+	granted := map[string]bool{}
+	for _, name := range held {
+		for _, handle := range byName[strings.ToLower(name)].Scopes {
+			granted[handle] = true
+		}
+	}
+	if len(granted) == 0 {
+		return held, nil
+	}
+	scopes = make([]string, 0, len(granted))
+	for handle := range granted {
+		scopes = append(scopes, handle)
+	}
+	sort.Strings(scopes)
+	return held, scopes
 }
 
 // rolesFromDirectory projects the shared catalog join into this package's panel
@@ -226,6 +485,7 @@ func (s *PanelService) rolesFromDirectory(ctx context.Context, target Target) ([
 			Description:     e.Description,
 			PlatformCreated: e.PlatformCreated,
 			MemberCount:     e.MemberCount,
+			Projects:        e.Projects,
 		})
 	}
 	return out, nil

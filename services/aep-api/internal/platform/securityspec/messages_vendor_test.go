@@ -124,6 +124,7 @@ func TestMessagesRenderEveryPlaceholder(t *testing.T) {
 		MsgResourceComponentUnknown:    {"component", "resource"},
 		MsgInvalidTestUsername:         {"username"},
 		MsgRoleNameWhitespace:          {"role"},
+		MsgRoleNameInvalid:             {"role"},
 		MsgAssignToDirectoryChecked:    {"group", "role"},
 		MsgDuplicateRoleName:           {"role"},
 		MsgRoleNameIsGroupName:         {"role"},

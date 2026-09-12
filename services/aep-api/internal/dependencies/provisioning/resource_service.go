@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/dependencies"
+	"github.com/wso2/aep/aep-api/internal/identity"
 	"github.com/wso2/aep/aep-api/internal/platform/securityspec"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
@@ -120,8 +121,8 @@ func (s *Service) provisionResource(ctx context.Context, orgID, projectID, depNa
 // project's own facts when the resource type carries the end-user-auth marker.
 // It never keys on a type name.
 //
-// Both parameters are DERIVED, never authored: security.json v2 removed the
-// `thunder` block because neither value was ever a design decision.
+// Every parameter here is DERIVED, never authored: security.json v2 removed the
+// `thunder` block because none of these values was ever a design decision.
 //
 //   - `displayName` is what a person reads on the login screen, so it is the
 //     project's display name — suffixed `· <web app>` when the project has more
@@ -134,6 +135,21 @@ func (s *Service) provisionResource(ctx context.Context, orgID, projectID, depNa
 //     expected to ask for, not a gate: ThunderID 1.0.0 stores the list and
 //     never enforces it, silently dropping an unknown or ungranted scope, so
 //     the write gate is what keeps a stale handle out.
+//   - `resource` is the project's resource-server identifier — the audience its
+//     API tokens carry. The binding emits it so the generated SPA can read
+//     `<DEP>_RESOURCE` from `window._env_` and send it on /authorize.
+//
+// `resource` is DERIVED (identity.ResourceServerIdentifier), not read from the
+// `idp_resource_servers` row, and that is the design, not a shortcut:
+// provisioning can run before the roles gate has created the row, and the
+// identifier is a pure function of (org, project) anyway. Reading the row would
+// make the SPA's audience depend on which of two independent flows happened to
+// run first.
+//
+// `validityPeriod` is deliberately NOT overlaid: the CRT's 86400 default is
+// what every project wants, and there is no design surface that would say
+// otherwise. A short-lived fixture app is made by patching its
+// ThunderApplication CR directly.
 //
 // Before the overlay it deletes `scopes` so a design.json or request parameter
 // cannot reach the provisioner. A nil catalog or reader, a type that is not
@@ -151,6 +167,7 @@ func (s *Service) overlayThunderParams(ctx context.Context, orgID, projectID, ta
 		return merged, nil
 	}
 	delete(merged, "scopes")
+	delete(merged, "resource")
 	raw, err := s.securityJSON.ReadSecurityJSON(ctx, orgID, projectID, tag)
 	if err != nil {
 		return nil, fmt.Errorf("provisioning: read security.json: %w", err)
@@ -164,6 +181,7 @@ func (s *Service) overlayThunderParams(ctx context.Context, orgID, projectID, ta
 	}
 	merged["displayName"] = s.clientDisplayName(ctx, orgID, projectID, depName)
 	merged["scopes"] = securityspec.ClientScopes(doc)
+	merged["resource"] = identity.ResourceServerIdentifier(orgID, projectID)
 	return merged, nil
 }
 

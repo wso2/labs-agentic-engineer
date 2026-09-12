@@ -297,6 +297,29 @@ type RolesEnsureOutcome struct {
 	// and the same username on another environment is a different account.
 	Issuer      string
 	Environment string
+	// ResourceIdentifier is the project's OAuth resource server — the absolute
+	// URI that is the access token's `aud`. It is published beside the logins
+	// because a login alone cannot mint a usable token: the client has to ask
+	// for this `resource`, and asking for another one (or none) produces a
+	// token the gateway rejects.
+	ResourceIdentifier string
+	// ServicePrincipals is RESERVED for phase 6 and is empty today. A service
+	// identity holds a project role with no login at all, so it can never appear
+	// in the credential table — and a reader who finds only the table would
+	// conclude the scopes it lists are all the ones that exist. The ticket
+	// therefore has a line for them, rendered only when there are any.
+	ServicePrincipals []RolesServicePrincipal
+}
+
+// RolesServicePrincipal is one non-human holder of a project role: an OAuth
+// client that authenticates as itself. Reserved for phase 6 (service identity);
+// nothing populates it yet.
+type RolesServicePrincipal struct {
+	// Name is the principal as a reader would recognise it — the workload's
+	// identity, not a client id.
+	Name string
+	// Scopes are the handles its client-credentials token carries.
+	Scopes []string
 }
 
 // RolesCredential is one published test-account login.
@@ -307,10 +330,16 @@ type RolesEnsureOutcome struct {
 type RolesCredential struct {
 	Username string
 	Password string
-	Role     string
+	// Roles are every project role this login holds, and Scopes the union of
+	// what those roles grant. Both are plural because v2 lets one account hold
+	// several roles, and the ticket's reader needs the union: it is what the
+	// account's token will actually carry, and therefore which criteria it can
+	// exercise.
+	Roles  []string
+	Scopes []string
 	// ColdStart is a v1 leftover carried for the wire contract and is always
 	// false — see identity.TestUserRef.ColdStart. Nothing renders it any more;
-	// phase 2/5 removes it.
+	// phase 5 removes it.
 	ColdStart bool
 }
 

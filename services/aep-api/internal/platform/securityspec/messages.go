@@ -84,6 +84,8 @@ const (
 	MsgInvalidTestUsername = "invalid_test_username"
 	// MsgRoleNameWhitespace {role}
 	MsgRoleNameWhitespace = "role_name_whitespace"
+	// MsgRoleNameInvalid {role}
+	MsgRoleNameInvalid = "role_name_invalid"
 	// MsgAssignToDirectoryChecked {role} {group} — INFO, never a refusal: a
 	// group the org directory already holds is deliberately not redeclared.
 	MsgAssignToDirectoryChecked = "assign_to_directory_checked"
@@ -167,6 +169,7 @@ var MessageKeys = []string{
 	MsgResourceComponentUnknown,
 	MsgInvalidTestUsername,
 	MsgRoleNameWhitespace,
+	MsgRoleNameInvalid,
 	MsgAssignToDirectoryChecked,
 	MsgDuplicateRoleName,
 	MsgRoleNameIsGroupName,

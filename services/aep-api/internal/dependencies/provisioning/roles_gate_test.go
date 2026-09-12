@@ -248,8 +248,8 @@ func TestRolesGate_PublishesEveryLoginInItsOwnComment(t *testing.T) {
 		outcome: RolesEnsureOutcome{
 			Summary: "- Roles created: Trainer, Team Member",
 			Credentials: []RolesCredential{
-				{Username: "test-team-member", Password: "Aep1!alpha-beta_1", Role: "Team Member"},
-				{Username: "test-trainer", Password: "Aep1!gamma-delta_2", Role: "Trainer"},
+				{Username: "test-team-member", Password: "Aep1!alpha-beta_1", Roles: []string{"Team Member"}, Scopes: []string{"workouts:read"}},
+				{Username: "test-trainer", Password: "Aep1!gamma-delta_2", Roles: []string{"Trainer"}, Scopes: []string{"workouts:read", "workouts:write"}},
 			},
 		},
 	}
@@ -279,8 +279,9 @@ func TestRolesGate_PublishesEveryLoginInItsOwnComment(t *testing.T) {
 		t.Errorf("the published comment lacks the anchor the agent looks for:\n%s", comment)
 	}
 	for _, want := range []string{
-		"| `test-team-member` | `Aep1!alpha-beta_1` | Team Member |",
-		"| `test-trainer` | `Aep1!gamma-delta_2` | Trainer |",
+		"| Username | Password | Roles | Scopes |",
+		"| `test-team-member` | `Aep1!alpha-beta_1` | Team Member | workouts:read |",
+		"| `test-trainer` | `Aep1!gamma-delta_2` | Trainer | workouts:read workouts:write |",
 	} {
 		if !strings.Contains(comment, want) {
 			t.Errorf("published comment is missing row\n  %s\ngot:\n%s", want, comment)
@@ -313,7 +314,7 @@ func TestRolesGate_AnUnavailablePasswordSaysSo(t *testing.T) {
 		declared: true,
 		outcome: RolesEnsureOutcome{
 			Summary:     "- Test users reused: test-trainer",
-			Credentials: []RolesCredential{{Username: "test-trainer", Role: "Trainer"}},
+			Credentials: []RolesCredential{{Username: "test-trainer", Roles: []string{"Trainer"}, Scopes: []string{"workouts:read", "workouts:write"}}},
 		},
 	}
 	issues := newFakeIssues(nil)
@@ -415,7 +416,7 @@ func TestRolesGate_APublicationFailureFailsTheBuildAndLeavesTheGateOpen(t *testi
 		declared: true,
 		outcome: RolesEnsureOutcome{
 			Summary:     "- Test users created: test-trainer",
-			Credentials: []RolesCredential{{Username: "test-trainer", Password: "Aep1!secret-value", Role: "Trainer"}},
+			Credentials: []RolesCredential{{Username: "test-trainer", Password: "Aep1!secret-value", Roles: []string{"Trainer"}, Scopes: []string{"workouts:read", "workouts:write"}}},
 		},
 	}
 	issues := newFakeIssues(nil)
@@ -439,13 +440,13 @@ func TestRolesGate_APublicationFailureReasonCarriesNoPassword(t *testing.T) {
 	roles := &fakeRolesEnsurer{
 		declared: true,
 		outcome: RolesEnsureOutcome{
-			Credentials: []RolesCredential{{Username: "test-trainer", Password: "Aep1!secret-value", Role: "Trainer"}},
+			Credentials: []RolesCredential{{Username: "test-trainer", Password: "Aep1!secret-value", Roles: []string{"Trainer"}, Scopes: []string{"workouts:read", "workouts:write"}}},
 		},
 	}
 	// A second account whose seal would not open: its empty password must not
 	// turn the redaction into a per-character rewrite of the whole message.
 	roles.outcome.Credentials = append(roles.outcome.Credentials,
-		RolesCredential{Username: "test-viewer", Role: "Viewer"})
+		RolesCredential{Username: "test-viewer", Roles: []string{"Viewer"}})
 	// A client that quotes what it sent — exactly the case redaction is for.
 	chatty := errors.New(`POST /issues/7/comments failed: body="| test-trainer | Aep1!secret-value |"`)
 	svc := NewService(Deps{
@@ -649,7 +650,7 @@ func TestRolesGate_PublishedLoginsNameTheIssuer(t *testing.T) {
 			Issuer:      issuer,
 			Environment: "default",
 			Credentials: []RolesCredential{
-				{Username: "test-trainer", Password: "Aep1!gamma-delta_2", Role: "Trainer"},
+				{Username: "test-trainer", Password: "Aep1!gamma-delta_2", Roles: []string{"Trainer"}, Scopes: []string{"workouts:read", "workouts:write"}},
 			},
 		},
 	}
@@ -697,7 +698,7 @@ func TestRolesGate_PublishesLoginsEvenWithNoIssuer(t *testing.T) {
 		declared: true,
 		outcome: RolesEnsureOutcome{
 			Summary:     "- Roles created: Trainer",
-			Credentials: []RolesCredential{{Username: "test-trainer", Password: "Aep1!x", Role: "Trainer"}},
+			Credentials: []RolesCredential{{Username: "test-trainer", Password: "Aep1!x", Roles: []string{"Trainer"}, Scopes: []string{"workouts:read", "workouts:write"}}},
 		},
 	}
 	issues := newFakeIssues(nil)
@@ -712,4 +713,115 @@ func TestRolesGate_PublishesLoginsEvenWithNoIssuer(t *testing.T) {
 		}
 	}
 	t.Fatal("no credentials comment was posted")
+}
+
+// ---- the v2 columns and the trailer ----------------------------------------
+//
+// The table's shape is a contract with the validation agent, not formatting.
+// v2 changed it in two ways and both are load-bearing: an account may hold
+// SEVERAL roles, so a singular column could only ever name one of them; and the
+// scopes say which criteria a login can exercise at all, which is what lets the
+// agent plan a run before it opens a browser.
+
+// An account holding two roles publishes both, and the union of their grants.
+// A singular Role column would have named one of them and left the reader to
+// guess whether the other was provisioned.
+func TestRolesGate_PublishesEveryRoleAndTheUnionOfTheirScopes(t *testing.T) {
+	roles := &fakeRolesEnsurer{
+		declared: true,
+		outcome: RolesEnsureOutcome{
+			Summary: "- Roles created: Trainer, Team Member",
+			Credentials: []RolesCredential{{
+				Username: "test-lead", Password: "Aep1!x",
+				Roles:  []string{"Trainer", "Team Member"},
+				Scopes: []string{"workouts:read", "workouts:write", "members:read"},
+			}},
+		},
+	}
+	issues := newFakeIssues(nil)
+
+	if f := newRolesGateService(roles, issues).ensureRolesGate(
+		context.Background(), "acme", "workouts", "v1", 7); f != nil {
+		t.Fatalf("unexpected failure: %+v", f)
+	}
+
+	comment := allComments(issues)[0]
+	want := "| `test-lead` | `Aep1!x` | Trainer, Team Member | workouts:read workouts:write members:read |"
+	if !strings.Contains(comment, want) {
+		t.Errorf("published row is missing\n  %s\ngot:\n%s", want, comment)
+	}
+}
+
+// The trailer carries the two values a login cannot mint a usable token without
+// — the issuer and the resource-server identifier — and the refresh rule, which
+// is the behaviour that otherwise strands an agent mid-run: a token minted
+// before a grant was added never gains it.
+func TestRolesGate_TheTrailerCarriesTheIssuerTheResourceAndTheRefreshRule(t *testing.T) {
+	const resource = "https://aep.wso2.com/orgs/acme/projects/workouts"
+	roles := &fakeRolesEnsurer{
+		declared: true,
+		outcome: RolesEnsureOutcome{
+			Issuer: "http://default-idp.amp.localhost:8080", Environment: "default",
+			ResourceIdentifier: resource,
+			Credentials: []RolesCredential{
+				{Username: "test-trainer", Password: "Aep1!x", Roles: []string{"Trainer"}, Scopes: []string{"workouts:read"}},
+			},
+		},
+	}
+	issues := newFakeIssues(nil)
+
+	if f := newRolesGateService(roles, issues).ensureRolesGate(
+		context.Background(), "acme", "workouts", "v1", 7); f != nil {
+		t.Fatalf("unexpected failure: %+v", f)
+	}
+
+	comment := allComments(issues)[0]
+	for _, want := range []string{
+		"http://default-idp.amp.localhost:8080",
+		resource,
+		"A new grant needs a fresh sign-in: a refresh narrows a token but never widens it.",
+	} {
+		if !strings.Contains(comment, want) {
+			t.Errorf("the trailer is missing %q:\n%s", want, comment)
+		}
+	}
+	// Reserved for phase 6 and empty: an empty "service principals" line would
+	// read as "this project has none", which is a different claim from "the
+	// platform does not provision them yet".
+	if strings.Contains(comment, "service principal") {
+		t.Errorf("a service-principal line was rendered with none to name:\n%s", comment)
+	}
+}
+
+// …and when there ARE service principals, they are named. They hold project
+// roles with no login at all, so a reader who found only the credential table
+// would conclude the scopes it lists are every scope that exists.
+func TestRolesGate_NamesServicePrincipalsWhenThereAreAny(t *testing.T) {
+	roles := &fakeRolesEnsurer{
+		declared: true,
+		outcome: RolesEnsureOutcome{
+			Credentials: []RolesCredential{
+				{Username: "test-finance", Password: "Aep1!x", Roles: []string{"Finance"}, Scopes: []string{"invoices:read"}},
+			},
+			ServicePrincipals: []RolesServicePrincipal{
+				{Name: "reconciliation-job", Scopes: []string{"invoices:read", "payments:read"}},
+			},
+		},
+	}
+	issues := newFakeIssues(nil)
+
+	if f := newRolesGateService(roles, issues).ensureRolesGate(
+		context.Background(), "acme", "workouts", "v1", 7); f != nil {
+		t.Fatalf("unexpected failure: %+v", f)
+	}
+
+	comment := allComments(issues)[0]
+	if !strings.Contains(comment, "reconciliation-job") || !strings.Contains(comment, "invoices:read payments:read") {
+		t.Errorf("the service principal was not published:\n%s", comment)
+	}
+	// It is NOT a credential row: it has no login, and putting it in the table
+	// would hand an agent a username it can never sign in as.
+	if strings.Contains(comment, "| `reconciliation-job` |") {
+		t.Errorf("a service principal was rendered as a login row:\n%s", comment)
+	}
 }

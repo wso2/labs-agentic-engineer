@@ -389,6 +389,31 @@ func CatalogHandles(doc *Document) []string {
 	return handles
 }
 
+// catalogTree is the document's permission catalog as the two-level tree the
+// directory holds, prose and all.
+//
+// It is a straight projection with no folding, because Parse has already
+// refused a resource declared twice and an action handle repeated under one
+// resource: uniqueness is the document's rule, checked where a bad document can
+// still be corrected, not patched up here where the author is long gone.
+func catalogTree(doc *Document) []PlannedResource {
+	out := make([]PlannedResource, 0, len(doc.Permissions))
+	for _, permission := range doc.Permissions {
+		resource := PlannedResource{
+			Handle:      permission.Resource,
+			Description: permission.Description,
+			Actions:     make([]PlannedAction, 0, len(permission.Actions)),
+		}
+		for _, action := range permission.Actions {
+			resource.Actions = append(resource.Actions, PlannedAction{
+				Handle: action.Handle, Description: action.Description,
+			})
+		}
+		out = append(out, resource)
+	}
+	return out
+}
+
 // ClientScopes is what the project's OAuth client is allowed to ask for: the
 // OIDC scopes every access token carries plus every catalog handle,
 // space-joined, exactly as the `thunder-app` CRT's `scopes` parameter wants it.
@@ -428,12 +453,53 @@ type PlannedUser struct {
 	Supplied bool
 }
 
+// PlannedResource is one resource of the permission catalog the build must
+// ensure on the directory, with the actions under it.
+//
+// It exists so the catalog reaches the directory as the TREE the document
+// authored rather than as the flat `Handles` list: a handle carries the
+// identity (`<resource>:<action>`) and nothing else, so a build reconstructing
+// the tree from it can only create objects named after their handles with no
+// description at all. Carrying the document's prose here is what lets somebody
+// reading the identity provider see the same sentences the design shows.
+//
+// The HANDLE is the identity on both sides — it is immutable on the directory
+// and it is what derives the permission — so the description is content, never
+// a key: changing one is an update, never a delete-and-create.
+type PlannedResource struct {
+	// Handle is the catalog's resource segment — `claims` in `claims:read`.
+	Handle string
+	// Description is the document's prose for the resource, empty when it
+	// authored none. There is no separate display NAME in a security document,
+	// so the directory object is named after its handle.
+	Description string
+	// Actions are the resource's actions, in declaration order.
+	Actions []PlannedAction
+}
+
+// PlannedAction is one action under a PlannedResource. `<resource>:<handle>` is
+// the catalog handle the directory derives from the pair.
+type PlannedAction struct {
+	// Handle is the action segment alone — `read-all`, not `claims:read-all`.
+	Handle string
+	// Description is the document's prose for the action, empty when it
+	// authored none.
+	Description string
+}
+
 // EnsurePlan is the deterministic expansion of a security document into the
 // work the build must do. Everything comes out in declaration order, so two
 // runs of the same tag plan byte-identical work.
 type EnsurePlan struct {
-	// Handles is the permission catalog, flattened.
+	// Handles is the permission catalog, flattened. It is the CLIENT's scope
+	// allowlist and the set grants are checked against; Catalog below is the
+	// same catalog as the tree the directory objects are created from.
 	Handles []string
+	// Catalog is the permission catalog as the document's two-level tree, with
+	// the prose the directory objects carry. Same entries as Handles, same
+	// order — Parse guarantees a resource and an action handle appear once, so
+	// neither view has to fold anything.
+	Catalog []PlannedResource
 	// Roles are the declared roles, verbatim and in order (service roles
 	// included — phase 2's role pass needs them).
 	Roles []Role
@@ -465,6 +531,7 @@ type EnsurePlan struct {
 func Plan(doc *Document) EnsurePlan {
 	plan := EnsurePlan{
 		Handles: CatalogHandles(doc),
+		Catalog: catalogTree(doc),
 		Roles:   doc.Roles,
 		Grants:  make(map[string][]string, len(doc.Roles)),
 	}

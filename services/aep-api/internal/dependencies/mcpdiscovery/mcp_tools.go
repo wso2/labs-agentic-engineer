@@ -162,9 +162,9 @@ type sliceProvenanceView struct {
 // for LLM context-window safety on top of the untouched network-level guard.
 const maxToolSpecBytes = 256 << 10
 
-// listGroupsDescription is the one description text behind both `list_groups`
-// and its deprecated alias `list_roles`: the two names must never drift into
-// describing the tool differently.
+// listGroupsDescription is the description text behind `list_groups` — the ONE
+// place a model is told what the directory-group catalog is and which of its
+// fields mean what.
 const listGroupsDescription = "Lists the directory groups in this organization's environment directory. " +
 	"Use it before writing security.json roles[].assignTo: reuse an existing group name when the " +
 	"people who should hold the role already form a group; otherwise declare a new name in groups[] " +
@@ -229,15 +229,6 @@ func mcpTools() []mcpTool {
 		{
 			Name:        "list_groups",
 			Description: listGroupsDescription,
-			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
-		},
-		// Deprecated: remove in scopes phase 2. `list_roles` is the old name of
-		// `list_groups`, kept for one phase so a design turn running an older
-		// skill revision still gets its catalog instead of a tool-not-found. It
-		// dispatches to the same handler.
-		{
-			Name:        "list_roles",
-			Description: "Deprecated: use list_groups. " + listGroupsDescription,
 			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
 		},
 		{
@@ -426,27 +417,19 @@ func handleToolCall(w http.ResponseWriter, r *http.Request, h *mcpHandler, orgHa
 			return
 		}
 		writeToolText(w, req.ID, mustJSON(map[string]any{"resourceTypes": types}))
-	case "list_groups", "list_roles":
-		// The two names are ONE handler. `list_roles` is deprecated and its
-		// result keeps the old `roles` key so a turn on an older skill revision
-		// reads exactly what it read before.
-		// Deprecated: remove in scopes phase 2.
-		key := "groups"
-		if call.Name == "list_roles" {
-			key = "roles"
-		}
-		if h.roles == nil {
-			writeToolText(w, req.ID, mustJSON(map[string]any{key: []any{}}))
+	case "list_groups":
+		if h.groupCatalog == nil {
+			writeToolText(w, req.ID, mustJSON(map[string]any{"groups": []any{}}))
 			return
 		}
 		// orgHandle is the verified ocOrgId claim: the catalog belongs to that
 		// org's environment directory, and no tool argument may choose it.
-		groups, err := h.roles.ListRoleCatalog(r.Context(), orgHandle)
+		groups, err := h.groupCatalog.ListGroupCatalog(r.Context(), orgHandle)
 		if err != nil {
-			writeToolError(w, req.ID, fmt.Sprintf("%s: %v", strings.ReplaceAll(call.Name, "_", " "), err))
+			writeToolError(w, req.ID, fmt.Sprintf("list groups: %v", err))
 			return
 		}
-		writeToolText(w, req.ID, mustJSON(map[string]any{key: groups}))
+		writeToolText(w, req.ID, mustJSON(map[string]any{"groups": groups}))
 	case "get_remote_git_file_contents":
 		if h.remoteGit == nil {
 			writeToolError(w, req.ID, "remote git reader not configured")

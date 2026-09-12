@@ -68,8 +68,15 @@ spec:
                   the consuming SPA's public URL resolves. May be empty at creation.
                 type: string
               scopes:
-                description: Scopes is the space-separated OIDC scope set (e.g. "openid
-                  profile email group ou").
+                description: |-
+                  Scopes is the space-separated scope set this client is expected to request
+                  — the OIDC scopes plus the project's API permission handles. The operator
+                  splits it and writes it to the application's
+                  inboundAuthConfig[oauth2].config.scopes (a JSON array on the wire).
+
+                  It is a truthful RECORD, not a gate: ThunderID 1.0.0 stores the list and
+                  never enforces it (spike P1 §6). What narrows a token is group → role →
+                  permissions, intersected with the resource server the request names.
                 type: string
               secretRef:
                 description: |-
@@ -86,6 +93,14 @@ spec:
                 - key
                 - name
                 type: object
+              validityPeriod:
+                description: |-
+                  ValidityPeriod is the ACCESS token lifetime in seconds. Empty/zero leaves
+                  the operator's 24h default, which is what every app wants; a short value
+                  exists so a fixture app can exercise the silent renew in minutes instead
+                  of a day (spike P6 used 300).
+                minimum: 0
+                type: integer
             type: object
           status:
             description: ThunderApplicationStatus reports the observed state of a

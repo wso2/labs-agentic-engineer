@@ -28,8 +28,8 @@ package identity
 // resource types.
 //
 // This is read-only in the strongest sense: the design agent reaches it through
-// an MCP tool (`list_groups`, and its deprecated alias `list_roles`) with no
-// write counterpart, and nothing on this path can create a group. Creation
+// an MCP tool (`list_groups`) with no write counterpart, and nothing on this
+// path can create a group. Creation
 // happens only at build time, in ensure.go, with no model in the loop.
 
 import (
@@ -58,13 +58,18 @@ type CatalogEntry struct {
 	MemberCount int `json:"memberCount"`
 	// Projects is how many projects already bind a role to this group. It tells
 	// a design agent that a group is load-bearing elsewhere — reusing it is a
-	// decision about people who already hold roles, not a free name.
+	// decision about people who already hold roles, not a free name, and it is
+	// the "reused · holds roles in n projects" the console's role cards show.
 	//
-	// Always 0 until the binding table exists; see readCatalog.
+	// It counts DISTINCT projects on THIS directory
+	// (Store.CountProjectsBindingGroups over `idp_role_bindings`), so a group two
+	// projects assign a role to reads 2 however many roles each of them binds to
+	// it. Best-effort: a store failure leaves every count 0 rather than failing
+	// the whole catalog, for the same reason the member count does.
 	Projects int `json:"projects"`
 }
 
-// CatalogService reads the role catalog of one org's environment.
+// CatalogService reads the group catalog of one org's environment.
 type CatalogService struct {
 	targets TargetResolver
 	store   Store
@@ -97,17 +102,28 @@ func readCatalog(ctx context.Context, target Target, store Store) ([]CatalogEntr
 		ours[strings.ToLower(r.Name)] = true
 	}
 
+	// How many projects hold a role assigned to each group. It is a store read
+	// rather than a directory one: the directory knows a group is assigned to a
+	// role, but only the platform's own bindings say which PROJECT that role
+	// belongs to.
+	//
+	// One query for every group, and best-effort like the member count below: a
+	// number missing from a reuse hint must not cost the caller the listing it
+	// belongs to.
+	projects, perr := store.CountProjectsBindingGroups(ctx, target.Scope())
+	if perr != nil {
+		slog.WarnContext(ctx, "group catalog: project counts unavailable",
+			"scope", target.Scope().String(), "error", perr)
+		projects = nil
+	}
+
 	out := make([]CatalogEntry, 0, len(groups))
 	for _, g := range groups {
 		entry := CatalogEntry{
 			Name:            g.Name,
 			Description:     g.Description,
 			PlatformCreated: ours[strings.ToLower(g.Name)],
-			// TODO(scopes phase 2): read idp_role_bindings — count the DISTINCT
-			// projects whose roles bind to this group. The table does not exist
-			// yet, and 0 is the only honest answer until it does; this is the
-			// one place the value is produced.
-			Projects: 0,
+			Projects:        projects[strings.ToLower(g.Name)],
 		}
 		if members, merr := target.Directory.GroupMembers(ctx, g.ID); merr != nil {
 			slog.WarnContext(ctx, "group catalog: member count unavailable", "group", g.Name, "error", merr)

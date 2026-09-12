@@ -136,6 +136,25 @@ func morePages(got, total, receivedThisPage int) bool {
 	return true
 }
 
+// pageAll walks a Thunder listing endpoint to the end, following the rule
+// morePages states: fetch is called with the number of records RECEIVED so far
+// as its offset, and the loop stops only when the server says there are no more
+// or sends nothing. `what` names the listing in the page-cap error.
+func pageAll[T any](what string, fetch func(offset int) (items []T, total int, err error)) ([]T, error) {
+	var out []T
+	for page := 0; page < maxDirectoryPages; page++ {
+		items, total, err := fetch(len(out))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, items...)
+		if !morePages(len(out), total, len(items)) {
+			return out, nil
+		}
+	}
+	return nil, fmt.Errorf("thunder list %s: more than %d pages", what, maxDirectoryPages)
+}
+
 // ListGroups returns every group in the default OU.
 func (c *client) ListGroups(ctx context.Context) ([]Group, error) {
 	token, err := c.getSystemToken(ctx)
@@ -771,7 +790,7 @@ func (c *client) doRequest(ctx context.Context, token, method, path string, in, 
 				"thunder %s %s returned %d", method, redactPath(path), resp.StatusCode)}
 		}
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return &statusError{code: resp.StatusCode, msg: fmt.Sprintf(
+		return &statusError{code: resp.StatusCode, apiCode: thunderErrorCode(raw), msg: fmt.Sprintf(
 			"thunder %s %s returned %d: %s", method, redactPath(path), resp.StatusCode, string(raw))}
 	}
 	if out == nil || resp.StatusCode == http.StatusNoContent {
@@ -788,10 +807,21 @@ func (c *client) doRequest(ctx context.Context, token, method, path string, in, 
 // branch on it — deleteIfPresent needs "was it a 404" without string-matching.
 type statusError struct {
 	code int
-	msg  string
+	// apiCode is Thunder's OWN error code from the response body ("RES-1013"),
+	// empty when the body carried none or was not read (the no-echo paths).
+	// The HTTP status alone cannot tell a duplicate identifier from a duplicate
+	// name — both are 409 — so the branch a caller needs is this code, not `code`.
+	apiCode string
+	msg     string
 }
 
 func (e *statusError) Error() string { return e.msg }
+
+// Unwrap maps Thunder's error code onto this package's sentinel, so a caller
+// writes errors.Is(err, ErrHandleConflict) instead of matching a message. An
+// unmapped code unwraps to nil, which ends the chain — errors.Is then answers
+// false for every sentinel, which is the truthful answer.
+func (e *statusError) Unwrap() error { return sentinelForCode(e.apiCode) }
 
 // redactPath keeps a directory id out of an error string that may reach a log.
 // The id is not a secret, but it is a directory identifier and errors from this

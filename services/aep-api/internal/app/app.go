@@ -606,7 +606,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// regardless: reading an empty table is a correct "no test user".
 	identityStore := identity.NewStore(db, in.ColumnCipher)
 	var rolesEnsure *identity.EnsureService
-	var roleCatalogSvc *identity.CatalogService
+	var groupCatalogSvc *identity.CatalogService
 	// The console's Security panel. It takes the resolver OPTIONALLY: with none
 	// it reports directoryAvailable=false so the console says "unknown" rather
 	// than "does not exist", and its mutations refuse — there is nothing to
@@ -625,11 +625,25 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 			openchoreo.DevEnvironmentName, cfg.ThunderEnvAdminRoute)
 		identityTargets = resolver
 		rolesEnsure = identity.NewEnsureService(resolver, identityStore, identityDesignReader{art: artifactSvcGit})
-		roleCatalogSvc = identity.NewCatalogService(resolver, identityStore)
+		groupCatalogSvc = identity.NewCatalogService(resolver, identityStore)
 		slog.Info("roles ensure wired — a build provisions specs/design/security.json's roles and test users on the environment's own Thunder",
 			"environment", openchoreo.DevEnvironmentName, "adminRoute", cfg.ThunderEnvAdminRoute)
 	}
 	identityPanel := identity.NewPanelService(identityTargets, identityStore)
+
+	// The other end of the ensure: a project delete removes the authorization
+	// objects its builds created — the resource server, its permission catalog
+	// and its `<project>/<Role>` roles — and forgets the rows about them. Groups
+	// and accounts are shared and stay (ADR-0022).
+	//
+	// It takes the resolver OPTIONALLY, like the panel above: with none it
+	// reports Enabled()==false and every call is a no-op, which is the correct
+	// behaviour for a stack that never provisioned anything to tear down. Wired
+	// unconditionally because the service itself carries that judgement — a
+	// nil-checked setter here would only move it somewhere it is easier to get
+	// wrong.
+	identityTeardownSvc := identity.NewTeardownService(identityTargets, identityStore)
+	projectService.SetIdentityTeardown(identityTeardownSvc)
 
 	// Wire the Thunder OU validator into the org service so a stale/phantom JWT
 	// `ouId` can't poison the org→OU mapping (the root cause behind the runner
@@ -1045,7 +1059,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	params.MCPOrgEndpoints = orgEndpointCatalog
 	resourceTypeCatalog := dependencies.NewResourceTypeCatalog(resourceClient, cfg.PlatformResourcesEnabled)
 	params.MCPResourceTypes = resourceTypeCatalog
-	params.MCPRoleCatalog = roleCatalogOrNil(roleCatalogSvc)
+	params.MCPGroupCatalog = groupCatalogOrNil(groupCatalogSvc)
 	// params.Deps.Dependencies (the strict ListPlatformResourceTypes + provisioning
 	// ops) is assembled below, after provisioningSvc exists.
 	// Endpoint spec discovery: the read-only remote-git reader an agent uses to

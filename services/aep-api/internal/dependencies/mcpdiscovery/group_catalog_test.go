@@ -16,9 +16,8 @@
 
 package mcpdiscovery
 
-// group_catalog_test.go — the `list_groups` tool and the `list_roles` alias it
-// replaces. Both names are one handler for one phase, so every case here runs
-// over both: the day they drift, the table is what catches it.
+// group_catalog_test.go — the `list_groups` tool: the design-time read of the
+// directory groups an org already has.
 
 import (
 	"context"
@@ -31,16 +30,16 @@ import (
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
-// fakeGroupCatalog is a stub RoleCatalogLister. It records the org handle the
+// fakeGroupCatalog is a stub GroupCatalogLister. It records the org handle the
 // handler passed down — proving the catalog is chosen by the verified context
 // claim and never by a tool argument — and answers with canned rows or an error.
 type fakeGroupCatalog struct {
-	rows []RoleCatalogEntry
+	rows []GroupCatalogEntry
 	err  error
 	orgs []string
 }
 
-func (f *fakeGroupCatalog) ListRoleCatalog(_ context.Context, orgHandle string) ([]RoleCatalogEntry, error) {
+func (f *fakeGroupCatalog) ListGroupCatalog(_ context.Context, orgHandle string) ([]GroupCatalogEntry, error) {
 	f.orgs = append(f.orgs, orgHandle)
 	if f.err != nil {
 		return nil, f.err
@@ -51,28 +50,16 @@ func (f *fakeGroupCatalog) ListRoleCatalog(_ context.Context, orgHandle string) 
 // groupCatalogHandler builds the MCP surface with only the catalog port that
 // these cases exercise; the external-resource reader is required for the
 // surface to answer at all.
-func groupCatalogHandler(gc RoleCatalogLister) http.Handler {
+func groupCatalogHandler(gc GroupCatalogLister) http.Handler {
 	return NewMCPHandler(newExternalCatalogFixture(nil), nil, nil, gc, nil,
 		spec.ValidateOpenAPI, spec.NormalizeOpenAPIYAML, spec.FetchSpecFromURL, spec.SliceOpenAPI)
 }
 
-// catalogToolNames is the pair under test: the tool and, for one phase, the
-// deprecated name that dispatches to it. The result KEY differs, and only the
-// key — a turn running an older skill revision must read exactly what it read
-// before.
-var catalogToolNames = []struct {
-	tool string
-	key  string
-}{
-	{tool: "list_groups", key: "groups"},
-	{tool: "list_roles", key: "roles"},
-}
-
 func TestMCP_ListGroups_Rows(t *testing.T) {
-	rows := []RoleCatalogEntry{
+	rows := []GroupCatalogEntry{
 		{Name: "Administrators", Description: "made by hand", PlatformCreated: false, MemberCount: 1},
 		{Name: "Approver", Description: "ours, nobody in it yet", PlatformCreated: true},
-		{Name: "Finance", PlatformCreated: false, MemberCount: 3},
+		{Name: "Finance", PlatformCreated: false, MemberCount: 3, Projects: 2},
 	}
 	want := []struct {
 		name            string
@@ -82,47 +69,42 @@ func TestMCP_ListGroups_Rows(t *testing.T) {
 	}{
 		{name: "Administrators", platformCreated: false, memberCount: 1, projects: 0},
 		{name: "Approver", platformCreated: true, memberCount: 0, projects: 0},
-		{name: "Finance", platformCreated: false, memberCount: 3, projects: 0},
+		{name: "Finance", platformCreated: false, memberCount: 3, projects: 2},
 	}
 
-	for _, tn := range catalogToolNames {
-		t.Run(tn.tool, func(t *testing.T) {
-			gc := &fakeGroupCatalog{rows: rows}
-			resp := decodeRPC(t, postRPC(t, groupCatalogHandler(gc), "org-1", callBody(tn.tool, `{}`)))
-			text := toolText(t, resp, false)
+	gc := &fakeGroupCatalog{rows: rows}
+	resp := decodeRPC(t, postRPC(t, groupCatalogHandler(gc), "org-1", callBody("list_groups", `{}`)))
+	text := toolText(t, resp, false)
 
-			var payload map[string][]map[string]any
-			if err := json.Unmarshal([]byte(text), &payload); err != nil {
-				t.Fatalf("unmarshal %s payload: %v (%s)", tn.tool, err, text)
-			}
-			got, ok := payload[tn.key]
-			if !ok {
-				t.Fatalf("%s payload has no %q key: %s", tn.tool, tn.key, text)
-			}
-			if len(got) != len(want) {
-				t.Fatalf("rows = %d, want %d: %s", len(got), len(want), text)
-			}
-			for i, w := range want {
-				if got[i]["name"] != w.name {
-					t.Errorf("rows[%d].name = %v, want %q", i, got[i]["name"], w.name)
-				}
-				if got[i]["platformCreated"] != w.platformCreated {
-					t.Errorf("%s platformCreated = %v, want %v", w.name, got[i]["platformCreated"], w.platformCreated)
-				}
-				if got[i]["memberCount"] != w.memberCount {
-					t.Errorf("%s memberCount = %v, want %v", w.name, got[i]["memberCount"], w.memberCount)
-				}
-				// 0 until scopes phase 2 reads idp_role_bindings — and the field
-				// must be PRESENT, so a design agent is never left guessing
-				// whether a missing key means "none" or "unknown".
-				if got[i]["projects"] != w.projects {
-					t.Errorf("%s projects = %v, want %v", w.name, got[i]["projects"], w.projects)
-				}
-			}
-			if len(gc.orgs) != 1 || gc.orgs[0] != "org-1" {
-				t.Errorf("orgs seen = %v, want exactly the context org [org-1]", gc.orgs)
-			}
-		})
+	var payload map[string][]map[string]any
+	if err := json.Unmarshal([]byte(text), &payload); err != nil {
+		t.Fatalf("unmarshal list_groups payload: %v (%s)", err, text)
+	}
+	got, ok := payload["groups"]
+	if !ok {
+		t.Fatalf("list_groups payload has no %q key: %s", "groups", text)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("rows = %d, want %d: %s", len(got), len(want), text)
+	}
+	for i, w := range want {
+		if got[i]["name"] != w.name {
+			t.Errorf("rows[%d].name = %v, want %q", i, got[i]["name"], w.name)
+		}
+		if got[i]["platformCreated"] != w.platformCreated {
+			t.Errorf("%s platformCreated = %v, want %v", w.name, got[i]["platformCreated"], w.platformCreated)
+		}
+		if got[i]["memberCount"] != w.memberCount {
+			t.Errorf("%s memberCount = %v, want %v", w.name, got[i]["memberCount"], w.memberCount)
+		}
+		// The field must always be PRESENT, zero included, so a design agent is
+		// never left guessing whether a missing key means "none" or "unknown".
+		if got[i]["projects"] != w.projects {
+			t.Errorf("%s projects = %v, want %v", w.name, got[i]["projects"], w.projects)
+		}
+	}
+	if len(gc.orgs) != 1 || gc.orgs[0] != "org-1" {
+		t.Errorf("orgs seen = %v, want exactly the context org [org-1]", gc.orgs)
 	}
 }
 
@@ -130,18 +112,14 @@ func TestMCP_ListGroups_Rows(t *testing.T) {
 // the surface stays usable for every other tool, which is the same rule the
 // other optional ports follow.
 func TestMCP_ListGroups_NotWiredIsEmpty(t *testing.T) {
-	for _, tn := range catalogToolNames {
-		t.Run(tn.tool, func(t *testing.T) {
-			resp := decodeRPC(t, postRPC(t, groupCatalogHandler(nil), "org-1", callBody(tn.tool, `{}`)))
-			text := toolText(t, resp, false)
-			var payload map[string][]map[string]any
-			if err := json.Unmarshal([]byte(text), &payload); err != nil {
-				t.Fatalf("unmarshal: %v (%s)", err, text)
-			}
-			if rows, ok := payload[tn.key]; !ok || len(rows) != 0 {
-				t.Fatalf("want an empty %q array, got %s", tn.key, text)
-			}
-		})
+	resp := decodeRPC(t, postRPC(t, groupCatalogHandler(nil), "org-1", callBody("list_groups", `{}`)))
+	text := toolText(t, resp, false)
+	var payload map[string][]map[string]any
+	if err := json.Unmarshal([]byte(text), &payload); err != nil {
+		t.Fatalf("unmarshal: %v (%s)", err, text)
+	}
+	if rows, ok := payload["groups"]; !ok || len(rows) != 0 {
+		t.Fatalf("want an empty %q array, got %s", "groups", text)
 	}
 }
 
@@ -149,25 +127,22 @@ func TestMCP_ListGroups_NotWiredIsEmpty(t *testing.T) {
 // empty catalog reads as "no groups exist" and sends the design agent off to
 // declare a duplicate of every group the org has.
 func TestMCP_ListGroups_ReadFailureIsAToolError(t *testing.T) {
-	for _, tn := range catalogToolNames {
-		t.Run(tn.tool, func(t *testing.T) {
-			gc := &fakeGroupCatalog{err: errors.New("thunder is down")}
-			resp := decodeRPC(t, postRPC(t, groupCatalogHandler(gc), "org-1", callBody(tn.tool, `{}`)))
-			text := toolText(t, resp, true)
-			if !strings.Contains(text, "thunder is down") {
-				t.Errorf("tool error = %q, want the underlying cause", text)
-			}
-			if !strings.Contains(text, strings.ReplaceAll(tn.tool, "_", " ")) {
-				t.Errorf("tool error = %q, want it to name the tool that failed", text)
-			}
-		})
+	gc := &fakeGroupCatalog{err: errors.New("thunder is down")}
+	resp := decodeRPC(t, postRPC(t, groupCatalogHandler(gc), "org-1", callBody("list_groups", `{}`)))
+	text := toolText(t, resp, true)
+	if !strings.Contains(text, "thunder is down") {
+		t.Errorf("tool error = %q, want the underlying cause", text)
+	}
+	if !strings.Contains(text, "list groups") {
+		t.Errorf("tool error = %q, want it to name the tool that failed", text)
 	}
 }
 
-// The alias exists so an older skill revision keeps working, and it must say so
-// in the only place a model reads: its description. Both names otherwise carry
-// the SAME text, from one constant.
-func TestMCP_ListRolesIsADeprecatedAliasOfListGroups(t *testing.T) {
+// The description is the ONLY place a model learns what the catalog's fields
+// mean, so a field the rows carry and the text never names is a field the model
+// cannot use. `list_roles`, the deprecated alias this tool replaced, is gone:
+// the old name must no longer be advertised.
+func TestMCP_ListGroupsDescriptionNamesEveryField(t *testing.T) {
 	byName := map[string]mcpTool{}
 	for _, tool := range mcpTools() {
 		byName[tool.Name] = tool
@@ -176,15 +151,11 @@ func TestMCP_ListRolesIsADeprecatedAliasOfListGroups(t *testing.T) {
 	if !ok {
 		t.Fatal("list_groups is not advertised")
 	}
-	roles, ok := byName["list_roles"]
-	if !ok {
-		t.Fatal("list_roles must stay advertised for one phase")
-	}
 	if groups.Description != listGroupsDescription {
 		t.Errorf("list_groups description drifted from the shared text: %q", groups.Description)
 	}
-	if roles.Description != "Deprecated: use list_groups. "+listGroupsDescription {
-		t.Errorf("list_roles description = %q, want the deprecation prefix + the shared text", roles.Description)
+	if _, stillThere := byName["list_roles"]; stillThere {
+		t.Error("list_roles is still advertised — the deprecated alias was removed in scopes phase 2")
 	}
 	for _, field := range []string{"assignTo", "groups[]", "memberCount", "projects", "platformCreated"} {
 		if !strings.Contains(listGroupsDescription, field) {

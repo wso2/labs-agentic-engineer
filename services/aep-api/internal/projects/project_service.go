@@ -57,6 +57,7 @@ type Service struct {
 	descriptors    descriptorWriter       // project descriptor stamp; may be nil
 	skillMirrorSvc skillMirror            // seeds .claude/skills into the new repo; may be nil
 	deprovisioner  resourceDeprovisioner  // dependency provisioning teardown; may be nil
+	identityClean  identityTeardown       // identity-provider teardown on delete; may be nil
 	runReader      milestoneRunRows       // build/deploy stage reads + delete purge (status_stages.go)
 	bindingsReader bindingsReader         // deploy stage: OC release bindings (status_stages.go)
 	specTurns      specTurnRows           // spec stage: newest agent turn (status_stages.go); may be nil
@@ -119,6 +120,20 @@ func (s *Service) SetRunAbandoner(a runAbandoner) { s.runAbandoner = a }
 // SetResourceDeprovisioner at the composition root; nil is a no-op.
 type resourceDeprovisioner interface {
 	DeprovisionProject(ctx context.Context, orgID, projectID string) error
+}
+
+// identityTeardown is project_service's narrow consumer port for the identity
+// domain's project cleanup: on delete it removes the project's OAuth resource
+// server, its permission catalog and its `<project>/<Role>` roles from the
+// environment's identity provider, and forgets the platform's rows about them.
+//
+// Groups and accounts are NOT its business and it never touches them — they are
+// shared directory objects (ADR-0022), and a group two projects assigned a role
+// to outlives both. *identity.TeardownService satisfies this. Wired via
+// SetIdentityTeardown at the composition root; nil is a no-op, which is the
+// ordinary state of a stack with no reachable identity provider.
+type identityTeardown interface {
+	TeardownProject(ctx context.Context, orgID, projectID string) error
 }
 
 // skillsProvisioner is the narrow port for eagerly provisioning the org's
@@ -387,6 +402,14 @@ func (s *Service) SetResourceDeprovisioner(d resourceDeprovisioner) {
 	s.deprovisioner = d
 }
 
+// SetIdentityTeardown wires the identity-provider cleanup so a project delete
+// removes the authorization objects its builds created. A nil teardown is a
+// documented no-op: the objects then stand on the directory, as they did before
+// this step existed.
+func (s *Service) SetIdentityTeardown(t identityTeardown) {
+	s.identityClean = t
+}
+
 func (s *Service) DeleteProject(ctx context.Context, orgName, projectName string) error {
 	// Deprovision the project's OC Resource model FIRST — while its design (the
 	// dependency inventory) is still readable and before the OC Project delete,
@@ -394,6 +417,29 @@ func (s *Service) DeleteProject(ctx context.Context, orgName, projectName string
 	if s.deprovisioner != nil {
 		if err := s.deprovisioner.DeprovisionProject(ctx, orgName, projectName); err != nil {
 			slog.ErrorContext(ctx, "failed to deprovision project resources", "org", orgName, "project", projectName, "error", err)
+		}
+	}
+
+	// Then the project's half of the environment's identity provider: its
+	// resource server, that server's permission catalog and its
+	// `<project>/<Role>` roles, plus the platform's rows about them. Groups and
+	// accounts are shared and are deliberately left standing (ADR-0022).
+	//
+	// Before the OC delete for the same reason the deprovision above is: nothing
+	// downstream can reach these objects again. They are not OpenChoreo's, so
+	// the OC Project delete does not cascade to them, and no other endpoint
+	// removes them — a resource server left behind is invisible to everything
+	// this platform renders, and its `<project>/` roles would be adopted whole
+	// by a project later created under the same name.
+	//
+	// Best-effort, like the deprovision: an identity provider that cannot be
+	// reached must not strand the run supervisors, the repo row and the
+	// executions rows below. The identity domain logs each step it could not
+	// complete; this logs the joined result.
+	if s.identityClean != nil {
+		if err := s.identityClean.TeardownProject(ctx, orgName, projectName); err != nil {
+			slog.ErrorContext(ctx, "failed to remove the project's identity-provider objects — they stand on the directory",
+				"org", orgName, "project", projectName, "error", err)
 		}
 	}
 

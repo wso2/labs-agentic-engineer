@@ -186,6 +186,103 @@ func TestDeleteProject_WebhookUnregisterFailureIsSwallowed(t *testing.T) {
 	assertTeardownOrder(t, trace, "webhook", "repo", "purge")
 }
 
+// --- identity cleanup --------------------------------------------------------
+
+// fakeIdentityTeardown is the identity-provider cleanup port.
+type fakeIdentityTeardown struct {
+	trace *deleteTrace
+	args  [2]string
+	calls int
+	err   error
+}
+
+func (f *fakeIdentityTeardown) TeardownProject(_ context.Context, orgID, projectID string) error {
+	f.calls++
+	f.args = [2]string{orgID, projectID}
+	f.trace.steps = append(f.trace.steps, "identity")
+	return f.err
+}
+
+// fakeDeprovisioner is the dependency-provisioning teardown port, traced so the
+// two pre-OC steps can be pinned against each other.
+type fakeDeprovisioner struct {
+	trace *deleteTrace
+}
+
+func (f *fakeDeprovisioner) DeprovisionProject(_ context.Context, _, _ string) error {
+	f.trace.steps = append(f.trace.steps, "deprovision")
+	return nil
+}
+
+// TestDeleteProject_TearsDownIdentityBeforeTheOCProject pins where the identity
+// cleanup sits, which is the only thing that makes it possible at all.
+//
+// The project's resource server, its permission catalog and its
+// `<project>/<Role>` roles are not OpenChoreo's, so the OC Project delete does
+// not cascade to them and no later step can reach them. Left behind they are
+// invisible — nothing this platform renders lists a directory's resource
+// servers — and the roles would be adopted whole by a project later created
+// under the same name.
+func TestDeleteProject_TearsDownIdentityBeforeTheOCProject(t *testing.T) {
+	t.Parallel()
+	trace := &deleteTrace{}
+	oc := &ocmocks.ProjectClientMock{
+		DeleteProjectFunc: func(context.Context, string, string) error {
+			trace.steps = append(trace.steps, "oc")
+			return nil
+		},
+	}
+	repoSvc := &fakeRepoSvc{DeleteRepoFunc: func(context.Context, string, string) error {
+		trace.steps = append(trace.steps, "repo")
+		return nil
+	}}
+	ident := &fakeIdentityTeardown{trace: trace}
+
+	svc := NewProjectService(oc, repoSvc, nil, nil, &fakeExecs{})
+	svc.SetStageSources(tracingRunRows{trace: trace}, fakeBindingsReader{})
+	svc.SetResourceDeprovisioner(&fakeDeprovisioner{trace: trace})
+	svc.SetIdentityTeardown(ident)
+
+	if err := svc.DeleteProject(context.Background(), "acme", "web"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if ident.calls != 1 || ident.args != [2]string{"acme", "web"} {
+		t.Fatalf("identity teardown: calls=%d args=%v, want 1 (acme,web)", ident.calls, ident.args)
+	}
+	assertTeardownOrder(t, trace, "deprovision", "identity", "oc", "repo", "purge")
+}
+
+// TestDeleteProject_IdentityTeardownFailureIsSwallowed: an identity provider
+// that cannot be reached leaves directory objects behind, which is untidy and
+// recorded. Stranding the run supervisors, the repo row and the executions rows
+// — none of which have any other exit from the system — would be far worse, so
+// this step can never be the one that blocks a delete.
+func TestDeleteProject_IdentityTeardownFailureIsSwallowed(t *testing.T) {
+	t.Parallel()
+	trace := &deleteTrace{}
+	oc := &ocmocks.ProjectClientMock{
+		DeleteProjectFunc: func(context.Context, string, string) error { return nil },
+	}
+	repoSvc := &fakeRepoSvc{DeleteRepoFunc: func(context.Context, string, string) error {
+		trace.steps = append(trace.steps, "repo")
+		return nil
+	}}
+	execs := &fakeExecs{}
+	ident := &fakeIdentityTeardown{trace: trace, err: errors.New("thunder unreachable")}
+
+	svc := NewProjectService(oc, repoSvc, nil, nil, execs)
+	svc.SetStageSources(tracingRunRows{trace: trace}, fakeBindingsReader{})
+	svc.SetIdentityTeardown(ident)
+
+	if err := svc.DeleteProject(context.Background(), "acme", "web"); err != nil {
+		t.Fatalf("identity cleanup failure must be best-effort, got %v", err)
+	}
+	if execs.deleteCalls != 1 {
+		t.Errorf("executions purge ran %d times after a failed identity teardown, want 1", execs.deleteCalls)
+	}
+	assertTeardownOrder(t, trace, "identity", "repo", "purge")
+}
+
 // assertTeardownOrder compares the recorded steps against the expected cascade.
 // The ORDER is the contract: a supervisor abandoned after its repository is gone
 // has already spent a poll on a repository that no longer exists, and one

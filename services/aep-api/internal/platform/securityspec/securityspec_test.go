@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -395,6 +396,57 @@ func TestPlanExpandsTheCatalogAndTheRoles(t *testing.T) {
 	}
 	if got := plan.Grants["Employee"]; !slices.Equal(got, []string{"claims:read", "claims:submit"}) {
 		t.Fatalf("Employee grants = %v", got)
+	}
+}
+
+// The plan carries the catalog TWICE on purpose: flat, because that is the
+// client's scope allowlist and the set grants are checked against, and as the
+// two-level tree the directory objects are created from. The tree is the only
+// copy that carries the document's prose, and the reason it exists: a build
+// rebuilding the tree from the flat handles could only create objects named
+// after their handles with no description at all.
+func TestPlanCarriesTheCatalogAsATreeWithTheDocumentsProse(t *testing.T) {
+	doc, err := Parse(fixture(t, expenseTracker))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	plan := Plan(doc)
+
+	want := []PlannedResource{
+		{
+			Handle: "claims", Description: "Expense claims and their approval",
+			Actions: []PlannedAction{
+				{Handle: "read", Description: "See own claims"},
+				{Handle: "read-all", Description: "See every claim"},
+				{Handle: "submit", Description: "Create and send a claim"},
+				{Handle: "approve", Description: "Approve a submitted claim"},
+				{Handle: "reject", Description: "Reject a submitted claim"},
+			},
+		},
+		{
+			// A resource the document described with nothing carries nothing —
+			// the plan never invents prose.
+			Handle: "reports",
+			Actions: []PlannedAction{
+				{Handle: "read", Description: "Monthly totals"},
+				{Handle: "export", Description: "Download CSV"},
+			},
+		},
+	}
+	if !reflect.DeepEqual(plan.Catalog, want) {
+		t.Fatalf("catalog = %+v\nwant %+v", plan.Catalog, want)
+	}
+
+	// The two views must name the same handles in the same order, or the client's
+	// allowlist and the directory's catalog could disagree about what exists.
+	var flattened []string
+	for _, resource := range plan.Catalog {
+		for _, action := range resource.Actions {
+			flattened = append(flattened, resource.Handle+":"+action.Handle)
+		}
+	}
+	if !slices.Equal(flattened, plan.Handles) {
+		t.Fatalf("catalog flattens to %v, want the plan's handles %v", flattened, plan.Handles)
 	}
 }
 

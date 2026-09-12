@@ -5712,6 +5712,64 @@ components:
       required:
       - items
       type: object
+    ProjectRole:
+      additionalProperties: false
+      description: One role THIS project owns on the identity provider. A different kind of object
+        from ProjectRoleState, which is a SHARED org group. A project role is named
+        `<project>/<Role>`, exactly one project creates it, and that project's builds converge it
+        and its delete removes it.
+      properties:
+        assignedTo:
+          description: The groups holding the role, in binding order. EMPTY is meaningful, not
+            missing data - it is the normal shape for a self-service role (the app's registration
+            flow assigns it per account) and for a service role (an application principal holds it).
+          items:
+            $ref: '#/components/schemas/ProjectRoleAssignment'
+          type: array
+          nullable: true
+        directoryName:
+          description: The name the directory carries - `<project>/<Role>`. The prefix is the
+            platform's ownership device; render `name`, not this.
+          type: string
+        name:
+          description: The role as the design declares it (`Approver`), which is what a test user
+            reference names and what the console renders.
+          type: string
+        resourceServer:
+          description: The resource server identifier every grant of this role is on, which is the
+            access token's `aud`, the audience the gateway checks and the `resource` a scoped token
+            is asked for. Read from the platform's record, or derived from (org, project) when the
+            project has no record yet.
+          type: string
+        scopes:
+          description: The catalog handles the role grants, read from the identity provider and
+            sorted. Empty when the directory could not be asked - "unknown", not "grants nothing".
+          items:
+            type: string
+          type: array
+          nullable: true
+      required:
+      - name
+      - resourceServer
+      type: object
+    ProjectRoleAssignment:
+      additionalProperties: false
+      description: One group a project role is assigned to, with how load-bearing that group already
+        is. The count travels with the assignment because "assigned to Finance" and "assigned to
+        Finance, which holds roles in two projects" are different facts to somebody deciding whether
+        to reuse a group.
+      properties:
+        group:
+          description: The group name, verbatim from the design's `assignTo`.
+          type: string
+        projects:
+          description: How many DISTINCT projects on this directory assign any role to the group. A
+            group only this project binds reads 1.
+          type: integer
+      required:
+      - group
+      - projects
+      type: object
     ProjectRoleState:
       additionalProperties: false
       description: One role as it exists on the identity provider right now, joined against the
@@ -5732,8 +5790,14 @@ components:
           type: string
         platformCreated:
           description: True when the platform created this role and may therefore enrol test users
-            into it. A hand-made group reads false and the platform leaves it alone.
+            into it. A hand-made group reads false and the platform leaves it alone. It is also the
+            new-or-reused answer a role card renders - there is no separate directory status.
           type: boolean
+        projects:
+          description: How many DISTINCT projects on this directory assign a role to this group -
+            the "reused, holds roles in n projects" a role card shows. A group nobody has bound a
+            role to yet reads 0.
+          type: integer
       required:
       - name
       - platformCreated
@@ -5755,6 +5819,16 @@ components:
             $ref: '#/components/schemas/ProjectRoleState'
           type: array
           nullable: true
+        projectRoles:
+          description: The roles THIS project owns, which `roles` above deliberately does not
+            contain - the two are different kinds of object with different ownership rules, and one
+            list would make "which existing group does this design reuse" unanswerable. Derived from
+            the platform's own records, so they survive a directory outage with everything but their
+            scopes.
+          items:
+            $ref: '#/components/schemas/ProjectRole'
+          type: array
+          nullable: true
         testUsers:
           description: The test accounts THIS project's design references, role-ordered.
           items:
@@ -5770,8 +5844,9 @@ components:
         identity provider's scope; only the reference is the project's.
       properties:
         coldStart:
-          description: True for the account holding this project's cold-start role — the one served
-            when a caller asks for credentials without naming a role.
+          description: 'DEPRECATED: always false, and removed in scopes phase 5. Version 1 served a
+            cold-start account when a caller asked for credentials without naming a role; version 2
+            has none, because signed-in operations and self-service enrolment replaced it.'
           type: boolean
         exists:
           description: True when the account is present on the identity provider. Meaningless when
@@ -5795,8 +5870,26 @@ components:
           type: array
           nullable: true
         roleName:
-          description: The role this account holds.
+          description: 'DEPRECATED: = roles[0]; removed in scopes phase 5. The role the account
+            exists FOR. Version 2 lets one account hold several, so read `roles`.'
           type: string
+        roles:
+          description: Every project role this login holds - the one it exists for first (so
+            roles[0] is roleName), then any other role of this project whose group the account is
+            also a member of, read from the identity provider. Empty only when the account
+            references no role at all.
+          items:
+            type: string
+          type: array
+          nullable: true
+        scopes:
+          description: The union of those roles' grants, sorted - the catalog handles this login's
+            access token will carry. Empty when the directory could not be asked, which is "unknown"
+            rather than "none".
+          items:
+            type: string
+          type: array
+          nullable: true
         rotatedAt:
           description: When the password was last replaced; null when never.
           format: date-time
