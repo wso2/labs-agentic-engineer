@@ -82,6 +82,20 @@ func BaseModels() []any {
 		&identity.IdPRole{},
 		&identity.TestUser{},
 		&identity.TestUserRef{},
+		// The project-OWNED half of the same record: the OAuth resource server
+		// one project's build created, and that project's own roles with the
+		// groups they were assigned to. Plain tables with composite primary keys
+		// and one extra unique index, all of it expressible as struct tags, so
+		// these need no Step either.
+		//
+		// There is deliberately NO data migration behind them. Both tables are
+		// new in the generated-app-scopes work, nothing wrote a predecessor, and
+		// the rows are a cache of directory objects a rebuild recreates — so the
+		// fresh-cluster assumption the phase ships under costs nothing: an
+		// existing deployment gets two empty tables and the next build fills
+		// them.
+		&identity.IdPResourceServer{},
+		&identity.IdPRoleBinding{},
 	}
 }
 

@@ -32,6 +32,7 @@ package rolespanel_test
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -163,6 +164,209 @@ func TestPanel_DirectoryUnavailableDegradesTheRead(t *testing.T) {
 	}
 	if u.ReferencingCount != 2 {
 		t.Errorf("referencingCount is a store fact and must survive the outage: %+v", u)
+	}
+}
+
+// ── the project's own roles ─────────────────────────────────────────────────
+
+// The panel answers with TWO role lists, and the difference between them is the
+// ownership rule the whole domain turns on: `roles` is the shared org-group
+// catalog (additive, anybody's, and the reason the panel shows the whole thing)
+// while `projectRoles` is what THIS project owns and its builds converge.
+//
+// The number that cannot be derived on the client is `projects`: how many
+// projects already assign a role to a group. It is what separates "Employees,
+// which exists for this project" from "Finance, which other people's projects
+// already lean on", and it is the difference between reusing a group freely and
+// making a decision about people who already hold roles.
+func TestPanel_ProjectRolesCarryAssignmentsTheirScopesAndTheResourceServer(t *testing.T) {
+	t.Parallel()
+	store := newFakeStore().
+		withRole("Employees").
+		withRole("Finance").
+		// This project's three roles: one assigned to a group only it uses, one
+		// to a group another project also leans on, and one self-service role
+		// recorded with no group at all.
+		withRoleBinding("acme", "expenses", "Approver", "Finance", "rol-approver").
+		withRoleBinding("acme", "expenses", "Employee", "Employees", "rol-employee").
+		withRoleBinding("acme", "expenses", "Patient", "", "rol-patient").
+		// A SECOND project binding one of its own roles to Finance. This is the
+		// only source of the "2" below: nothing on the directory says which
+		// project a role belongs to.
+		withRoleBinding("acme", "vendors", "Finance", "Finance", "rol-vendors-finance")
+	dir := newFakeDirectory().
+		withGroup("Employees", "Everyone on payroll").
+		withGroup("Finance", "Pays the bills").
+		withProjectRole("rol-approver", "claims:read-all", "claims:approve").
+		withProjectRole("rol-employee", "claims:submit", "claims:read").
+		withProjectRole("rol-patient")
+
+	h := newPanel(t, dir, store)
+	resp := h.AsOrg("acme").Get("/api/v1/projects/expenses/roles")
+	if resp.Code != 200 {
+		t.Fatalf("read: got %d body=%s", resp.Code, resp.Body.String())
+	}
+	view := decodeView(t, resp.Body.String())
+
+	// Binding order: role, then group — so the answer is stable across reads.
+	if len(view.ProjectRoles) != 3 {
+		t.Fatalf("projectRoles = %+v, want the project's three roles", view.ProjectRoles)
+	}
+	approver := view.ProjectRoles[0]
+	if approver.Name != "Approver" || approver.DirectoryName != "expenses/Approver" {
+		t.Errorf("the design's name and the directory's must both be reported: %+v", approver)
+	}
+	// No stored resource server: the identifier is DERIVED from (org, project),
+	// which is what lets a project that has never been built still be told the
+	// `aud` its tokens will carry.
+	const derived = "https://aep.wso2.com/orgs/acme/projects/expenses"
+	if approver.ResourceServer != derived {
+		t.Errorf("resourceServer = %q, want the derived %q", approver.ResourceServer, derived)
+	}
+	// Sorted, so two reads of an unchanged directory are byte-identical.
+	if !reflect.DeepEqual(approver.Scopes, []string{"claims:approve", "claims:read-all"}) {
+		t.Errorf("Approver scopes = %v, want the role's grants sorted", approver.Scopes)
+	}
+	wantApproverGroups := []gen.ProjectRoleAssignment{{Group: "Finance", Projects: 2}}
+	if !reflect.DeepEqual(approver.AssignedTo, wantApproverGroups) {
+		t.Errorf("Approver assignedTo = %+v, want Finance held by 2 projects", approver.AssignedTo)
+	}
+
+	employee := view.ProjectRoles[1]
+	wantEmployeeGroups := []gen.ProjectRoleAssignment{{Group: "Employees", Projects: 1}}
+	if !reflect.DeepEqual(employee.AssignedTo, wantEmployeeGroups) {
+		t.Errorf("Employee assignedTo = %+v, want Employees held by 1 project", employee.AssignedTo)
+	}
+
+	// The self-service role: recorded, assigned to nobody. The empty group name
+	// is the marker that lets a delete find the role — reporting it as an
+	// assignment would invent a group called "".
+	patient := view.ProjectRoles[2]
+	if patient.Name != "Patient" || len(patient.AssignedTo) != 0 {
+		t.Errorf("a self-service role must report no assignment: %+v", patient)
+	}
+
+	// The same count on the shared catalog row, which is where a role card reads
+	// "reused, holds roles in n projects" from.
+	byName := map[string]gen.ProjectRoleState{}
+	for _, r := range view.Roles {
+		byName[r.Name] = r
+	}
+	if got := byName["Finance"].Projects; got != 2 {
+		t.Errorf("catalog row Finance projects = %d, want 2", got)
+	}
+	if got := byName["Employees"].Projects; got != 1 {
+		t.Errorf("catalog row Employees projects = %d, want 1", got)
+	}
+}
+
+// A recorded resource server WINS over the derived identifier: a project built
+// before the derivation changed must be described by the identifier its tokens
+// actually carry, not by the one today's code would mint.
+func TestPanel_ProjectRolesReportTheRecordedResourceServer(t *testing.T) {
+	t.Parallel()
+	store := newFakeStore().
+		withRoleBinding("acme", "expenses", "Approver", "Finance", "rol-approver").
+		withResourceServer("acme", "expenses", "https://aep.wso2.com/orgs/legacy/projects/expenses")
+	dir := newFakeDirectory().withGroup("Finance", "Pays the bills")
+
+	h := newPanel(t, dir, store)
+	view := decodeView(t, h.AsOrg("acme").Get("/api/v1/projects/expenses/roles").Body.String())
+
+	if len(view.ProjectRoles) != 1 {
+		t.Fatalf("projectRoles = %+v", view.ProjectRoles)
+	}
+	const recorded = "https://aep.wso2.com/orgs/legacy/projects/expenses"
+	if got := view.ProjectRoles[0].ResourceServer; got != recorded {
+		t.Errorf("resourceServer = %q, want the recorded %q", got, recorded)
+	}
+}
+
+// ── what one login may do ───────────────────────────────────────────────────
+
+// Version 2 lets one account hold SEVERAL roles, and what its token carries is
+// the union of their grants. No table holds that union — the plan that expanded
+// it belonged to one build — so the panel reads it: the account's group
+// memberships, joined against this project's role assignments, then the grants
+// of the roles that survive the join.
+//
+// `roleName` stays on the wire as `roles[0]`, so the console can move to the
+// plural without a flag day.
+func TestPanel_TestUserRolesAndScopesAreTheUnionOfEveryRoleItHolds(t *testing.T) {
+	t.Parallel()
+	store := newFakeStore().
+		withRole("Employees").
+		withRole("Finance").
+		withOwnedUser("test-approver", "Approver", "Aep1!secret").
+		withRef("acme", "expenses", "test-approver", "Approver").
+		withRoleBinding("acme", "expenses", "Approver", "Finance", "rol-approver").
+		withRoleBinding("acme", "expenses", "Employee", "Employees", "rol-employee")
+	dir := newFakeDirectory().
+		withAccount("test-approver").
+		// The account is in BOTH groups, so it holds both project roles — the
+		// second one is invisible to the stored reference, which keeps only the
+		// role the account exists for.
+		withGroup("Finance", "Pays the bills", "usr-test-approver").
+		withGroup("Employees", "Everyone on payroll", "usr-test-approver").
+		withProjectRole("rol-approver", "claims:read-all", "claims:approve").
+		withProjectRole("rol-employee", "claims:submit", "claims:read")
+
+	h := newPanel(t, dir, store)
+	view := decodeView(t, h.AsOrg("acme").Get("/api/v1/projects/expenses/roles").Body.String())
+
+	if len(view.TestUsers) != 1 {
+		t.Fatalf("testUsers = %+v", view.TestUsers)
+	}
+	u := view.TestUsers[0]
+	if !reflect.DeepEqual(u.Roles, []string{"Approver", "Employee"}) {
+		t.Fatalf("roles = %v, want the role it exists for first, then the one its groups add", u.Roles)
+	}
+	if u.RoleName != u.Roles[0] {
+		t.Errorf("roleName = %q, want roles[0] %q — the deprecated field must not disagree", u.RoleName, u.Roles[0])
+	}
+	want := []string{"claims:approve", "claims:read", "claims:read-all", "claims:submit"}
+	if !reflect.DeepEqual(u.Scopes, want) {
+		t.Errorf("scopes = %v, want the sorted union %v", u.Scopes, want)
+	}
+}
+
+// An account in no group holds only the role it exists for, and a directory
+// that cannot be reached cannot say otherwise: the roles list still names that
+// one role (it is a STORE fact) while the scopes come back empty, which is
+// "unknown" beside directoryAvailable=false and never "this login may do
+// nothing".
+func TestPanel_TestUserScopesAreUnknownWhenTheDirectoryIsUnavailable(t *testing.T) {
+	t.Parallel()
+	store := newFakeStore().
+		withOwnedUser("test-approver", "Approver", "Aep1!secret").
+		withRef("acme", "expenses", "test-approver", "Approver").
+		withRoleBinding("acme", "expenses", "Approver", "Finance", "rol-approver")
+	dir := newFakeDirectory()
+	dir.err = errors.New("thunder is down")
+
+	h := newPanel(t, dir, store)
+	view := decodeView(t, h.AsOrg("acme").Get("/api/v1/projects/expenses/roles").Body.String())
+
+	if view.DirectoryAvailable {
+		t.Fatalf("directoryAvailable must be false when the identity provider errors")
+	}
+	// The project's roles are the platform's OWN record, so they survive the
+	// outage — everything except what they grant.
+	if len(view.ProjectRoles) != 1 || len(view.ProjectRoles[0].Scopes) != 0 {
+		t.Errorf("projectRoles must survive the outage without their scopes: %+v", view.ProjectRoles)
+	}
+	if len(view.ProjectRoles[0].AssignedTo) != 1 || view.ProjectRoles[0].AssignedTo[0].Group != "Finance" {
+		t.Errorf("assignments are a store fact and must survive the outage: %+v", view.ProjectRoles[0])
+	}
+	if len(view.TestUsers) != 1 {
+		t.Fatalf("testUsers = %+v", view.TestUsers)
+	}
+	u := view.TestUsers[0]
+	if !reflect.DeepEqual(u.Roles, []string{"Approver"}) {
+		t.Errorf("roles = %v, want the stored role alone", u.Roles)
+	}
+	if len(u.Scopes) != 0 {
+		t.Errorf("scopes = %v, want none — unknown, not none", u.Scopes)
 	}
 }
 

@@ -360,18 +360,34 @@ func redactPasswords(msg string, creds []RolesCredential) string {
 //
 // ADR-0022 carries why a password is published here at all, and what bounds the
 // trade. What this function owes that decision is the SHAPE the agent parses:
-// the marker, then a table whose columns SKILL.md mirrors, then prose saying
-// what these accounts are.
+// the marker, then a table whose columns SKILL.md mirrors, then the trailer, then
+// prose saying what these accounts are.
 //
-// It also names the ISSUER. There is one identity provider per environment now,
-// so a username and password on their own do not say where to sign in — and the
-// same username on another environment is a different account with a different
-// password. The agent reading this comment needs the address as much as the
-// credential.
+// The table is four columns — Username, Password, Roles, Scopes — and the last
+// two are why v2 changed it. A v2 account may hold SEVERAL roles, so a singular
+// Role column could only ever name one of them; and the scopes are the thing the
+// reader actually needs, because they say which criteria this login can exercise
+// before anybody opens a browser. They are published rather than derived because
+// deriving them means reading security.json and re-doing the union the ensure
+// already did.
 //
-// No escaping: a username is `[a-z0-9][a-z0-9._-]*` (securityspec) and a generated
-// password is drawn from an alphabet that excludes the backtick and the pipe, so
-// neither can break out of its cell. The identity domain's
+// The TRAILER carries the two values a login cannot mint a token without. The
+// ISSUER, because there is one identity provider per environment and the same
+// username on another one is a different account with a different password. And
+// the RESOURCE — the project's resource-server identifier — because the token
+// endpoint narrows an access token to one audience: a client that asks for the
+// wrong `resource`, or for none, gets a token the gateway refuses. The third
+// line is the refresh rule, which is the one piece of behaviour that surprises
+// an agent mid-run: a token minted before a grant was added never gains it, so
+// "the role has the scope but the call 401s" is answered by signing in again.
+//
+// No escaping, and each half of that is a rule somewhere else. A username is
+// `[a-z0-9][a-z0-9._-]*` and a role name is letters, digits, spaces, "-", "_"
+// and "." — both enforced by securityspec's referential gate
+// (MsgInvalidTestUsername, MsgRoleNameInvalid), which refuses the document
+// before it can acquire a tag. A handle is `[a-z][a-z0-9-]*` by the schema. A
+// generated password is drawn from an alphabet that excludes the backtick and
+// the pipe. So nothing in a cell can break out of it; the identity domain's
 // TestGeneratedPasswordCarriesNoMarkdownDelimiter pins the password half.
 func renderTestUserLogins(outcome RolesEnsureOutcome) string {
 	creds := outcome.Credentials
@@ -381,7 +397,7 @@ func renderTestUserLogins(outcome RolesEnsureOutcome) string {
 	var b strings.Builder
 	b.WriteString("### Test user logins\n\n")
 	b.WriteString(sourcecontrol.PublishedCredentialsMarker)
-	b.WriteString("\n\n| Username | Password | Role |\n| --- | --- | --- |\n")
+	b.WriteString("\n\n| Username | Password | Roles | Scopes |\n| --- | --- | --- | --- |\n")
 	for _, c := range creds {
 		password := "`" + c.Password + "`"
 		if c.Password == "" {
@@ -390,19 +406,49 @@ func renderTestUserLogins(outcome RolesEnsureOutcome) string {
 			// was never published in the first place.
 			password = "_unavailable — read it from the Security panel_"
 		}
-		fmt.Fprintf(&b, "| `%s` | %s | %s |\n", c.Username, password, c.Role)
+		// Roles are comma-joined because a role name may contain a space
+		// ("Compliance Admin"); scopes are space-joined because a handle cannot,
+		// and space is how the token's own `scope` claim spells the same list.
+		fmt.Fprintf(&b, "| `%s` | %s | %s | %s |\n",
+			c.Username, password, strings.Join(c.Roles, ", "), strings.Join(c.Scopes, " "))
 	}
-	if outcome.Issuer != "" {
-		fmt.Fprintf(&b, "\nSign in at `%s` — the identity provider of the **%s** environment. "+
-			"These logins are valid there and NOWHERE else: every environment has its own "+
-			"identity provider, and the same username on another one is a different account.\n",
-			outcome.Issuer, outcome.Environment)
-	}
+	b.WriteString(renderCredentialsTrailer(outcome))
 	b.WriteString("\n**These are disposable test accounts for automated agents, not people.** " +
 		"The validation agent signs in as one to judge a role-gated acceptance criterion, and it " +
 		"reads these credentials from this comment. They hold nothing but this project's own " +
 		"application roles. Never put a real person's username in " +
 		"`specs/design/security.json` — the platform refuses to touch an account it did not create, " +
 		"so that produces a role with no working login rather than a password reset.")
+	return b.String()
+}
+
+// renderCredentialsTrailer is the block under the table: what a token asked for
+// with one of these logins has to name, and the one rule about when a change
+// takes effect.
+//
+// The service-principal line is reserved for phase 6 and renders NOTHING while
+// there are none. An empty "service principals: —" would read as a statement
+// that this project has no non-human callers, which is a different claim from
+// "the platform does not provision them yet".
+func renderCredentialsTrailer(outcome RolesEnsureOutcome) string {
+	var b strings.Builder
+	b.WriteString("\n")
+	for _, p := range outcome.ServicePrincipals {
+		fmt.Fprintf(&b, "- **service principal** `%s` (no login) — %s\n", p.Name, strings.Join(p.Scopes, " "))
+	}
+	if outcome.Issuer != "" {
+		fmt.Fprintf(&b, "- **issuer** `%s` — the identity provider of the **%s** environment. "+
+			"These logins are valid there and NOWHERE else: every environment has its own "+
+			"identity provider, and the same username on another one is a different account.\n",
+			outcome.Issuer, outcome.Environment)
+	}
+	if outcome.ResourceIdentifier != "" {
+		fmt.Fprintf(&b, "- **resource** `%s` — this project's resource server. Send it as the "+
+			"`resource` parameter when you ask for a token; it is the audience the gateway "+
+			"checks, and a token minted for anything else is refused.\n", outcome.ResourceIdentifier)
+	}
+	b.WriteString("- **A new grant needs a fresh sign-in: a refresh narrows a token but never " +
+		"widens it.** A scope removed from a role disappears at the next renew; one added to a " +
+		"role reaches the token only after signing in again.\n")
 	return b.String()
 }

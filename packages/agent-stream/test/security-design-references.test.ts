@@ -456,6 +456,35 @@ test("a role name carrying whitespace the directory would keep", () => {
   });
 });
 
+test("a role name carrying a character the ticket or the directory cannot escape", () => {
+  for (const name of ["Approver | admin", "Approver/admin", "Approver\nadmin", "Approver`admin`"]) {
+    const doc = expense((d) => {
+      const approver = role(d, "Approver");
+      approver.name = name;
+      approver.assignableBy = [name];
+      d.testUsers[1]!.roles = [name];
+    });
+    assertOnlyError(securityReferenceFindings(doc, contextFor("expense-tracker")), "role_name_invalid", {
+      role: name,
+    });
+  }
+});
+
+test("a role name of letters, digits, spaces, dots, hyphens and underscores is accepted", () => {
+  for (const name of ["Compliance Admin", "Level-2 Approver", "Sr. Approver_2"]) {
+    const doc = expense((d) => {
+      const approver = role(d, "Approver");
+      approver.name = name;
+      approver.assignableBy = [name];
+      d.testUsers[1]!.roles = [name];
+    });
+    assert.deepEqual(
+      errors(securityReferenceFindings(doc, contextFor("expense-tracker"))).map((e) => e.message),
+      [],
+    );
+  }
+});
+
 test("a screen on a component the cell does not draw", () => {
   const doc = expense((d) => {
     d.screens[0]!.component = "expense-admin";

@@ -51,6 +51,8 @@ export const SECURITY_DESIGN_MESSAGES = {
     'role "{role}" is declared twice — a role name identifies one role within the project (compared without case), so it appears once.',
   role_name_whitespace:
     'role "{role}" has leading or trailing whitespace — the name becomes "<project>/{role}" on the directory verbatim.',
+  role_name_invalid:
+    'role "{role}" is not a usable role name — use letters, digits, spaces, "-", "_" or ".". The name is published in the build ticket\'s markdown table and becomes "<project>/{role}" on the directory, so "|", "/" and line breaks cannot appear in it.',
   role_name_is_group_name:
     'role "{role}" is also declared in groups[] — a role is project-scoped (it becomes "<project>/{role}" on the directory) and a group is org-owned and shared, so one name cannot be both. Rename the role.',
   grant_unknown_handle:

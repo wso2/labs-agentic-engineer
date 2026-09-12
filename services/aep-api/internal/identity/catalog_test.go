@@ -65,12 +65,23 @@ func TestCatalogMarksOnlyTheRolesThePlatformCreated(t *testing.T) {
 // platform created the group, how many people are in it today, and how many
 // projects already bind a role to it.
 //
-// `projects` is 0 for every row until scopes phase 2 records the bindings — the
-// assertion is here so the day the count becomes real, this test is what fails.
+// `projects` is the cross-project one: it counts DISTINCT projects that assign
+// a role to the group, so a group two projects lean on reads 2 however many
+// roles each of them binds to it, and a group nobody has bound reads 0.
 func TestCatalogRowFields(t *testing.T) {
 	store := newFakeStore()
 	store.putRole(catalogScope, IdPRole{Name: "Support Agent", ThunderGroupID: "grp-support"})
 	store.putRole(catalogScope, IdPRole{Name: "Approver", ThunderGroupID: "grp-approver"})
+	// Two projects lean on Finance, and one of them binds two of its roles to
+	// it: the answer is 2 projects, not 3 bindings. `helpdesk` binds only
+	// Support Agent, and nobody binds Approver or Administrators.
+	store.putBinding(catalogScope, "expenses", "Approver", "Finance")
+	store.putBinding(catalogScope, "expenses", "Auditor", "Finance")
+	store.putBinding(catalogScope, "vendors", "Finance", "Finance")
+	store.putBinding(catalogScope, "helpdesk", "Agent", "Support Agent")
+	// The "assigned to nobody" marker a self-service role carries is not a
+	// group, so it must not make an empty-named row countable.
+	store.putBinding(catalogScope, "clinic", "Patient", "")
 	dir := newFakeDirectory()
 	dir.seedGroup("Support Agent", "usr-1", "usr-2")
 	dir.seedGroup("Approver") // ours, nobody in it yet
@@ -92,9 +103,9 @@ func TestCatalogRowFields(t *testing.T) {
 		memberCount     int
 		projects        int
 	}{
-		{name: "Support Agent", platformCreated: true, memberCount: 2, projects: 0},
+		{name: "Support Agent", platformCreated: true, memberCount: 2, projects: 1},
 		{name: "Approver", platformCreated: true, memberCount: 0, projects: 0},
-		{name: "Finance", platformCreated: false, memberCount: 3, projects: 0},
+		{name: "Finance", platformCreated: false, memberCount: 3, projects: 2},
 		{name: "Administrators", platformCreated: false, memberCount: 1, projects: 0},
 	}
 	if len(entries) != len(cases) {
@@ -113,7 +124,7 @@ func TestCatalogRowFields(t *testing.T) {
 			t.Errorf("%q memberCount = %d, want %d", tc.name, got.MemberCount, tc.memberCount)
 		}
 		if got.Projects != tc.projects {
-			t.Errorf("%q projects = %d, want %d (no binding table before scopes phase 2)",
+			t.Errorf("%q projects = %d, want %d (DISTINCT projects binding a role to the group)",
 				tc.name, got.Projects, tc.projects)
 		}
 	}
@@ -160,6 +171,52 @@ func TestCatalogSurvivesAFailedMemberCount(t *testing.T) {
 	}
 	if entries[0].MemberCount != 0 {
 		t.Errorf("memberCount = %d, want 0 when it could not be read", entries[0].MemberCount)
+	}
+}
+
+// The project count is a nicety too, and it is now ONE query for the whole
+// listing rather than one per group. Losing it must cost the counts and nothing
+// else — the same bargain the member count strikes, for the same reason.
+func TestCatalogSurvivesAFailedProjectCount(t *testing.T) {
+	store := newFakeStore()
+	store.putRole(catalogScope, IdPRole{Name: "Support Agent", ThunderGroupID: "grp-support"})
+	store.failOn = map[string]error{"CountProjectsBindingGroups": errors.New("the database said no")}
+	dir := newFakeDirectory()
+	dir.seedGroup("Support Agent", "usr-1")
+
+	entries, err := NewCatalogService(newFakeTargets(dir), store).List(context.Background(), catalogOrg)
+	if err != nil {
+		t.Fatalf("a failed project count must not fail the catalog: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name != "Support Agent" {
+		t.Fatalf("entries = %+v, want the row anyway", entries)
+	}
+	if entries[0].Projects != 0 {
+		t.Errorf("projects = %d, want 0 when it could not be read", entries[0].Projects)
+	}
+	if !entries[0].PlatformCreated {
+		t.Errorf("the ownership mark was lost with the count: %+v", entries[0])
+	}
+}
+
+// The count is joined to the directory's groups WITHOUT CASE. A binding row
+// carries the name the design authored and the directory answers with its own
+// spelling, so a case-sensitive join would report a reused group as free — the
+// one number a design agent uses to decide whether reusing it is a decision
+// about people who already hold roles.
+func TestCatalogCountsProjectsAcrossCase(t *testing.T) {
+	store := newFakeStore()
+	store.putBinding(catalogScope, "proj-one", "Approver", "finance")
+	store.putBinding(catalogScope, "proj-two", "Auditor", "FINANCE")
+	dir := newFakeDirectory()
+	dir.seedGroup("Finance", "usr-1")
+
+	entries, err := NewCatalogService(newFakeTargets(dir), store).List(context.Background(), catalogOrg)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Projects != 2 {
+		t.Fatalf("entries = %+v, want Finance bound by 2 projects", entries)
 	}
 }
 

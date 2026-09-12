@@ -295,3 +295,90 @@ func TestProvisionForBuild_ReadsSecurityJSONAtSpecTag(t *testing.T) {
 		t.Fatalf("displayName = %v, want Expense Tracker", plat.params["displayName"])
 	}
 }
+
+// The client's `resource` parameter is the project's resource-server
+// identifier — the audience its API tokens carry, and the value the generated
+// SPA reads back out of the binding as <DEP>_RESOURCE.
+func TestProvision_ResourceIsTheProjectResourceServerIdentifier(t *testing.T) {
+	plat := &fakePlatProv{}
+	svc := thunderOverlayService(designWithThunderApp(nil), plat, &fakeSecurityJSON{raw: securityJSONV2(t)})
+	if err := svc.Provision(context.Background(), "acme", "expense-tracker", "idp", nil, nil); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	const want = "https://aep.wso2.com/orgs/acme/projects/expense-tracker"
+	if got := plat.params["resource"]; got != want {
+		t.Fatalf("resource = %v, want %q", got, want)
+	}
+}
+
+// It is COMPUTED from (org, project), not read from the directory: provisioning
+// can run before the roles gate has registered the resource server, and a
+// binding whose audience depended on that ordering would be a race.
+func TestProvision_ResourceNeedsNoDirectoryRow(t *testing.T) {
+	plat := &fakePlatProv{}
+	// No identity store is wired into this service at all — the overlay must
+	// still produce the identifier.
+	svc := thunderOverlayService(designWithThunderApp(nil), plat, &fakeSecurityJSON{raw: securityJSONV2(t)})
+	if err := svc.Provision(context.Background(), "org", "proj", "idp", nil, nil); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if plat.params["resource"] != "https://aep.wso2.com/orgs/org/projects/proj" {
+		t.Fatalf("resource = %v, want the deterministic identifier", plat.params["resource"])
+	}
+}
+
+// Like `scopes`, `resource` is platform-derived: neither the design's authored
+// parameters nor the request's can name the audience its own tokens carry.
+func TestProvision_AuthoredResourceCannotWin(t *testing.T) {
+	const want = "https://aep.wso2.com/orgs/org/projects/proj"
+	spoof := map[string]any{"resource": "https://attacker.example.com/"}
+
+	t.Run("design.json parameters", func(t *testing.T) {
+		plat := &fakePlatProv{}
+		svc := thunderOverlayService(designWithThunderApp(spoof), plat,
+			&fakeSecurityJSON{raw: securityJSONV2(t)})
+		if err := svc.Provision(context.Background(), "org", "proj", "idp", nil, nil); err != nil {
+			t.Fatalf("Provision: %v", err)
+		}
+		if got := plat.params["resource"]; got != want {
+			t.Fatalf("design.json parameters.resource must not win; got %v", got)
+		}
+	})
+
+	t.Run("request parameters", func(t *testing.T) {
+		plat := &fakePlatProv{}
+		svc := thunderOverlayService(designWithThunderApp(nil), plat,
+			&fakeSecurityJSON{raw: securityJSONV2(t)})
+		if err := svc.Provision(context.Background(), "org", "proj", "idp", spoof, nil); err != nil {
+			t.Fatalf("Provision: %v", err)
+		}
+		if got := plat.params["resource"]; got != want {
+			t.Fatalf("request parameters.resource must not win; got %v", got)
+		}
+	})
+}
+
+// The access-token lifetime has no design surface: the CRT's default stands, so
+// the overlay must not author the parameter at all. (A short-lived fixture app
+// is made by patching its ThunderApplication CR — see 4.V.)
+func TestProvision_ValidityPeriodIsLeftToTheResourceTypeDefault(t *testing.T) {
+	plat := &fakePlatProv{}
+	svc := thunderOverlayService(designWithThunderApp(nil), plat, &fakeSecurityJSON{raw: securityJSONV2(t)})
+	if err := svc.Provision(context.Background(), "org", "proj", "idp", nil, nil); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if got, set := plat.params["validityPeriod"]; set {
+		t.Fatalf("validityPeriod = %v, want the parameter left unset so the CRT default applies", got)
+	}
+}
+
+func TestProvision_NonEndUserAuthGetsNoResource(t *testing.T) {
+	plat := &fakePlatProv{}
+	svc := thunderOverlayService(designWithDeps(), plat, &fakeSecurityJSON{raw: securityJSONV2(t)})
+	if err := svc.Provision(context.Background(), "org", "proj", "orders-db", nil, nil); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if got, set := plat.params["resource"]; set {
+		t.Fatalf("a non-end-user-auth type must not be given a resource indicator, got %v", got)
+	}
+}

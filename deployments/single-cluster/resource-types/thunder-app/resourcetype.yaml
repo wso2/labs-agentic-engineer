@@ -88,13 +88,46 @@ spec:
           default: ""
         scopes:
           type: string
-          # Space-separated OAuth scopes the SPA requests. `group` and `ou` are
-          # required for role-aware apps: verified on Thunder 0.34 that `groups`
-          # (and `ou*`) reach the ID TOKEN only when these scopes are granted —
-          # the app's scopeClaims map them (set by the thunder-app operator). The
-          # SPA reads roles from `user.profile.groups`; drop `group` and it sees
-          # no role. See the thunder-authentication skill.
+          # Space-separated OAuth scopes the SPA requests: the OIDC scopes plus
+          # the project's API permission handles. Platform-derived — aep-api
+          # overlays it from security.json's catalog, so an authored value never
+          # reaches here. The operator splits it and writes the list to the
+          # application's inboundAuthConfig[oauth2].config.scopes.
+          #
+          # `group` and `ou` are required for role-aware apps: verified on
+          # Thunder 0.34 that `groups` (and `ou*`) reach the ID TOKEN only when
+          # these scopes are granted — the app's scopeClaims map them (set by
+          # the thunder-app operator). See the thunder-authentication skill.
+          #
+          # The list is a truthful RECORD of what the client asks for, NOT a
+          # gate: ThunderID 1.0.0 stores it and never enforces it, and drops an
+          # unknown or ungranted handle silently. The only narrowing is
+          # group -> role -> permissions, intersected with the resource server
+          # named below.
           default: "openid profile email group ou"
+        resource:
+          type: string
+          # The OAuth 2.0 resource indicator (RFC 8707) naming the project's own
+          # resource server — the audience its API tokens must carry. Platform-
+          # derived: aep-api sets it to the deterministic per-project identifier
+          # https://aep.wso2.com/orgs/<org>/projects/<project>, which is also
+          # what the roles gate registers on the IdP.
+          #
+          # It is a pure pass-through: nothing in the rendered CR consumes it.
+          # It exists so the binding can EMIT it (see the `resource` output),
+          # which is how the generated SPA reads <DEP>_RESOURCE out of
+          # window._env_ and sends it on /authorize.
+          default: ""
+        validityPeriod:
+          type: integer
+          # ACCESS token lifetime in seconds. The default keeps a returning user
+          # signed in across a refresh/new tab; the ID token keeps the 24h
+          # default regardless. A short value exists only so a fixture app can
+          # exercise the silent renew in minutes instead of a day (spike P6 used
+          # 300) — nothing in aep-api overrides it today, so shortening one app
+          # is a deliberate `kubectl patch` on its ThunderApplication CR.
+          default: 86400
+          minimum: 60
   environmentConfigs:
     openAPIV3Schema:
       type: object
@@ -140,6 +173,7 @@ spec:
         spec:
           displayName: ${parameters.displayName}
           scopes: ${parameters.scopes}
+          validityPeriod: ${parameters.validityPeriod}
           redirectUris: ${environmentConfigs.redirectUris}
   outputs:
     # client_id is DETERMINISTIC — the operator registers the OAuth app on Thunder
@@ -181,3 +215,15 @@ spec:
       value: ${applied.app.status.jwksUrl}
     - name: scopes
       value: ${parameters.scopes}
+    # resource is the second half of the binding the SPA needs: client_id says
+    # WHO is asking, issuer/jwks_url say WHO signs, scopes say WHAT is asked
+    # for, and `resource` says WHICH API the resulting token is for. The SPA
+    # sends it on /authorize and Thunder stamps it as the token's `aud`, which
+    # is exactly what the gateway validates.
+    #
+    # A parameter echo, like `scopes` — the value is authored by aep-api's
+    # overlay from the project's own identity, so nothing has to be read back
+    # from the CR's live status. That keeps the output resolvable at APPLY time
+    # (see the client_id note above).
+    - name: resource
+      value: ${parameters.resource}

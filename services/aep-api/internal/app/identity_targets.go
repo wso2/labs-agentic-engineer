@@ -330,6 +330,93 @@ func (d invalidatingDirectory) DeleteUser(ctx context.Context, userID string) er
 	return d.check(d.inner.DeleteUser(ctx, userID))
 }
 
+// The project-owned half. Identical shape, and for the same reason: the wrap
+// exists so ONE place decides what a rejected credential means, and a verb that
+// skipped it would leave a rotated admin secret failing this call forever while
+// every other call recovered.
+
+func (d invalidatingDirectory) EnsureResourceServer(ctx context.Context, identifier, name string) (identity.DirectoryID, error) {
+	rs, err := d.inner.EnsureResourceServer(ctx, identifier, name)
+	return rs, d.check(err)
+}
+
+func (d invalidatingDirectory) FindResourceServer(ctx context.Context, identifier string) (identity.DirectoryID, bool, error) {
+	rs, found, err := d.inner.FindResourceServer(ctx, identifier)
+	return rs, found, d.check(err)
+}
+
+func (d invalidatingDirectory) ListResources(ctx context.Context, rs identity.DirectoryID) ([]identity.DirectoryResource, error) {
+	resources, err := d.inner.ListResources(ctx, rs)
+	return resources, d.check(err)
+}
+
+func (d invalidatingDirectory) CreateResource(ctx context.Context, rs identity.DirectoryID, handle, name, description string) (identity.DirectoryResource, error) {
+	resource, err := d.inner.CreateResource(ctx, rs, handle, name, description)
+	return resource, d.check(err)
+}
+
+func (d invalidatingDirectory) UpdateResource(ctx context.Context, rs, resource identity.DirectoryID, name, description string) error {
+	return d.check(d.inner.UpdateResource(ctx, rs, resource, name, description))
+}
+
+func (d invalidatingDirectory) DeleteResource(ctx context.Context, rs, resource identity.DirectoryID) error {
+	return d.check(d.inner.DeleteResource(ctx, rs, resource))
+}
+
+func (d invalidatingDirectory) ListActions(ctx context.Context, rs, resource identity.DirectoryID) ([]identity.DirectoryAction, error) {
+	actions, err := d.inner.ListActions(ctx, rs, resource)
+	return actions, d.check(err)
+}
+
+func (d invalidatingDirectory) CreateAction(ctx context.Context, rs, resource identity.DirectoryID, handle, name, description string) (identity.DirectoryAction, error) {
+	action, err := d.inner.CreateAction(ctx, rs, resource, handle, name, description)
+	return action, d.check(err)
+}
+
+func (d invalidatingDirectory) UpdateAction(ctx context.Context, rs, resource, action identity.DirectoryID, name, description string) error {
+	return d.check(d.inner.UpdateAction(ctx, rs, resource, action, name, description))
+}
+
+func (d invalidatingDirectory) DeleteAction(ctx context.Context, rs, resource, action identity.DirectoryID) error {
+	return d.check(d.inner.DeleteAction(ctx, rs, resource, action))
+}
+
+func (d invalidatingDirectory) DeleteResourceServer(ctx context.Context, rs identity.DirectoryID) error {
+	return d.check(d.inner.DeleteResourceServer(ctx, rs))
+}
+
+func (d invalidatingDirectory) EnsureRole(ctx context.Context, id identity.DirectoryID, name, description string, rs identity.DirectoryID, permissions []string) (identity.DirectoryID, error) {
+	role, err := d.inner.EnsureRole(ctx, id, name, description, rs, permissions)
+	return role, d.check(err)
+}
+
+func (d invalidatingDirectory) ListRoles(ctx context.Context) ([]identity.RoleRef, error) {
+	roles, err := d.inner.ListRoles(ctx)
+	return roles, d.check(err)
+}
+
+func (d invalidatingDirectory) ListRolePermissions(ctx context.Context, role identity.DirectoryID) ([]string, error) {
+	permissions, err := d.inner.ListRolePermissions(ctx, role)
+	return permissions, d.check(err)
+}
+
+func (d invalidatingDirectory) DeleteRole(ctx context.Context, role identity.DirectoryID) error {
+	return d.check(d.inner.DeleteRole(ctx, role))
+}
+
+func (d invalidatingDirectory) AssignRole(ctx context.Context, role identity.DirectoryID, principal identity.Principal) error {
+	return d.check(d.inner.AssignRole(ctx, role, principal))
+}
+
+func (d invalidatingDirectory) UnassignRole(ctx context.Context, role identity.DirectoryID, principal identity.Principal) error {
+	return d.check(d.inner.UnassignRole(ctx, role, principal))
+}
+
+func (d invalidatingDirectory) ListRoleAssignments(ctx context.Context, role identity.DirectoryID) ([]identity.Principal, error) {
+	principals, err := d.inner.ListRoleAssignments(ctx, role)
+	return principals, d.check(err)
+}
+
 // openBaoBindingCredentials reads the binding's admin credential out of the
 // local secret store.
 //

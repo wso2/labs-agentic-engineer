@@ -71,6 +71,19 @@ import {
 /** Matches `TEST_USERNAME_RE` in `./security-design-schema.ts`; duplicated here to keep that module's exports the schema's. */
 const TEST_USERNAME = /^[a-z0-9][a-z0-9._-]*$/;
 
+/**
+ * The characters a role name may be made of: letters, digits, spaces, "-", "_"
+ * and ".".
+ *
+ * It is a denylist expressed as an allowlist, and what it keeps out is what
+ * cannot be escaped downstream: "/" is the separator in the directory name
+ * `<project>/<Role>` that makes a role ownable, and "|", backticks and line
+ * breaks would break the markdown table cell the build ticket publishes the
+ * role in and that the validation agent parses. The Go copy is
+ * `validRoleName` in `internal/platform/securityspec/references.go`.
+ */
+const ROLE_NAME = /^[\p{L}\p{N} ._-]+$/u;
+
 /** `screens[].requires` for a screen shown before sign-in. */
 const PUBLIC = "public";
 
@@ -318,6 +331,14 @@ export function securityReferenceFindings(
     declaredRoles.add(key);
     if (role.name !== role.name.trim()) {
       found.add("error", "role_name_whitespace", { role: role.name });
+    }
+    // The charset. A role name travels into two places that cannot escape it:
+    // the directory, where it becomes "<project>/<Role>" and the "/" is the
+    // platform's own ownership separator, and the build ticket's markdown
+    // table, where a "|" or a line break would break the row the validation
+    // agent parses. Everything a PRD actor noun needs is still allowed.
+    if (!ROLE_NAME.test(role.name.trim())) {
+      found.add("error", "role_name_invalid", { role: role.name });
     }
     // A reused org group is NOT redeclared in groups[], so this rule can only
     // judge the names THIS document introduces — the directory check at the

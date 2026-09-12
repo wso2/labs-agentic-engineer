@@ -152,14 +152,49 @@ projection can be retired.
 
 ## Spec fields
 
-`displayName`, `scopes` (space-separated), `redirectUris` (comma-separated,
-may be empty at creation). `redirectUris` is platform-managed: aep-api patches
-it via the binding's `environmentConfigs` once the consuming SPA's public URL
-resolves; the operator picks up the change on its next reconcile. Because
-Thunder rejects an empty redirect URI at application-creation time, the
-client (`internal/thunder/client.go`) substitutes a reserved, non-routable
-placeholder (`https://pending.invalid/callback`) until a real one is patched
-in.
+`displayName`, `scopes` (space-separated), `validityPeriod` (seconds),
+`redirectUris` (comma-separated, may be empty at creation). `redirectUris` is
+platform-managed: aep-api patches it via the binding's `environmentConfigs`
+once the consuming SPA's public URL resolves; the operator picks up the change
+on its next reconcile. Because Thunder rejects an empty redirect URI at
+application-creation time, the client (`internal/thunder/client.go`)
+substitutes a reserved, non-routable placeholder
+(`https://pending.invalid/callback`) until a real one is patched in.
+
+`scopes` is written through to the registered application's
+`inboundAuthConfig[oauth2].config.scopes`. The CR carries it space-joined
+(that is the ClusterResourceType parameter's shape) and ThunderID's contract
+types the field as a JSON array, so the reconciler splits it.
+
+**The allowlist is truthfulness, not enforcement.** Measured on ThunderID
+1.0.0: the field is stored and read back faithfully and has no effect on the
+authorization-code flow — narrowing it does not narrow the issued token, and an
+unknown or ungranted handle is dropped silently rather than refused with
+`invalid_scope`. The only thing that narrows an end-user token is group → role
+→ permissions, intersected with the resource server the request's `resource`
+indicator names. The write exists so the registered application describes its
+client honestly (and keeps working if ThunderID ever starts enforcing it); it
+is not a second control point and must not be described as one. The one place
+the field is load-bearing today is `system` on an m2m client, which is granted
+through this list rather than through a role.
+
+A CR that names no scopes is silent, not a statement that the client may
+request nothing: the stored allowlist is left alone rather than narrowed.
+
+`validityPeriod` is the ACCESS token lifetime. Unset leaves the operator's 24h
+default — which is what every project wants, and which aep-api therefore never
+overrides. It exists so a fixture app can be patched down to a few minutes and
+exercise the silent renew without waiting out a day; the ID token keeps the
+long default either way, because shortening the SPA's session is not the point.
+
+Whatever is written is read back: `verifyWritten` GETs the application once
+after every create and update and diffs the STORED object — never the body that
+was sent. That is the only defence available on this API, which answers 200 to a
+payload it only partly recognises and keeps the rest to itself. The scope diff
+is a subset check rather than an equality one, because ThunderID normalises on
+write (`scopeClaims.email` sent as `["email","email_verified"]` comes back as
+`["email"]`); a read-back carrying more than was sent is the server having an
+opinion, while a scope going missing is a silent misregistration.
 
 There is deliberately no `instanceRef` (or equivalent) field. The target is not
 a property of the application — it is a property of the (org, environment) the

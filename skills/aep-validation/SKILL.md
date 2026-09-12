@@ -145,17 +145,32 @@ yourself; the URL is not something you can work out from inside the cluster.
   marker — the LAST such comment if the ticket carries more than one, since an
   earlier one is a superseded build's. One row per account:
 
-  | Username | Password | Role |
-  |---|---|---|
-  | `test-trainer` | `tdyjkfmq5t` | Trainer |
-  | `test-team-member` | `n3pe5cw8s4` | Team Member |
+  | Username | Password | Roles | Scopes |
+  |---|---|---|---|
+  | `test-trainer` | `tdyjkfmq5t` | Trainer | workouts:read workouts:write |
+  | `test-team-member` | `n3pe5cw8s4` | Team Member | workouts:read |
 
-  Read the table, never the prose around it — a human may rewrite that at any
-  time, and the marker is what the platform guarantees.
+  `Roles` is comma-separated (an account may hold several) and `Scopes` is
+  space-separated — the same spelling the access token's own `scope` claim
+  uses. The scopes are the union of what that account's roles grant: they are
+  exactly what this login may do, so a criterion needing a permission that is
+  not in the row will fail no matter how the app behaves.
 
-  **Which row.** Match the criterion's role to the `Role` column and use that
-  row. For a criterion that needs *a* signed-in user but names no role, use
-  the least-privileged row the criterion implies. Do not reuse one role's
+  Under the table is a short trailer. It names the **issuer** to sign in at
+  (one identity provider per environment; the same username on another one is
+  a different account), the **resource** — the project's resource-server
+  identifier, which a token request must send as its `resource` parameter, and
+  which is the audience the gateway checks — and one rule: *a new grant needs
+  a fresh sign-in; a refresh narrows a token but never widens it*. If a call
+  401s for a scope the row lists, sign in again rather than refreshing.
+
+  Read the table and the trailer, never the prose around them — a human may
+  rewrite that at any time, and the marker is what the platform guarantees.
+
+  **Which row.** Match the criterion's role to the `Roles` column and use that
+  row; when two rows both hold the role, take the one whose `Scopes` are
+  narrower. For a criterion that needs *a* signed-in user but names no role,
+  use the least-privileged row the criterion implies. Do not reuse one role's
   login to exercise another role's screens; that is the difference between
   judging a permission and judging a page.
 
@@ -186,6 +201,7 @@ yourself; the URL is not something you can work out from inside the cluster.
   | A ticket, but no login table | Every role the design declares is one the platform does not own, so it could provision no usable account | A provisioning problem — say so |
   | The ticket is OPEN and carries a failure comment | Provisioning failed; quote the cause | A provisioning problem — say so |
   | A table, but no row for the role you need | That account was refused or could not be enrolled — the ticket's other comment says which | A provisioning problem — name the role |
+  | A row for the role, but the scope the criterion needs is not in its `Scopes` | The design does not grant that role the permission the criterion assumes | A design finding — name the role and the handle |
   | A row whose password says *unavailable* | The platform holds the account but could not publish its password | A platform problem — name the account |
 - **Local dev servers (experimental runs only):** if the fetched
   endpoints are `localhost` dev servers you must start (the local
