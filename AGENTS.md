@@ -15,21 +15,11 @@ SDLC platform built on OpenChoreo.
 | typecheck | `make typecheck` | `tsc` + `go vet` |
 | license-check | `make license-check` | fail if any source lacks the Apache header |
 
-## Development Practices
-- Focus on writing maintainable code, clean code. 
-- Keep files seperated based on responsibility.
-- Proper Fix alawys, no hacks or workarounds unless explicitly specified.
-- Dead code is gated. TS: `make deadcode-ts-check` (knip over `@aep/agents` +
-  `@aep/playground`; `make deadcode-ts` for a report). Retain unwired infra / a
-  deliberate test seam with a `@knipkeep <reason>` JSDoc tag; config + rationale
-  in `knip.jsonc`. Go is gated per-module (`services/aep-api`, `//deadcode:keep`).
-
-## PR Guidelines
-- Make sure tests are enough to prove the change works as expected.
-- Make sure to run /code-review before submitting a PR and then run tests again.
-- Include proof of real execution in the PR Description (screenshots, test case from real payload, etc.)
-- See if documentation(such as README, ADR, etc.) needs to be updated and update it accordingly.
-- The documentation(including comments) should fit the overall project scope and should not be biased towards the specific PR. 
+## Coding Practices
+- Focus on writing maintainable code, clean testable code. 
+- Keep architecture, modules, files separated based on responsibility.
+- Proper Fixes always, Propose design changes for better maintainability after exploring and if you are confident.
+- no hacks or workarounds unless explicitly specified.
 
 ## Design docs
 
