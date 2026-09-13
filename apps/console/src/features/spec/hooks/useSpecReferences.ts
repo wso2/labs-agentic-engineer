@@ -110,6 +110,16 @@ export function useSpecReferences({
  * is therefore cached and rebuilt only when the doc has actually updated or the
  * path list has changed — a revision counter, not a deep compare, because the
  * snapshot is read on every render and the files here run to tens of kilobytes.
+ *
+ * The revision says WHEN to re-read; the CONTENT says whether anything this
+ * caller cares about changed. A doc update is any edit to any file in the room,
+ * so an agent streaming an unrelated markdown file bumps it on every flush —
+ * and a fresh Map with identical entries would then be a new object, which
+ * re-runs the Security page's cross-checks and re-parses every owning
+ * component's `openapi.yaml` for nothing, several times a second, for as long
+ * as the tab is open. A rebuilt map that says the same thing is discarded in
+ * favour of the one already handed out, which is what makes this module's
+ * promise — "identity is stable while the answers are" — true.
  */
 function useRoomTexts(
   collab: CollabSpec | null,
@@ -157,11 +167,30 @@ function useRoomTexts(
         if (ytext) texts.set(path, ytext.toString());
       }
     }
-    cache.current = { revision: revision.current, key, texts };
-    return texts;
+    // Same answers ⇒ same object. The read had to happen to find that out, but
+    // everything downstream of it is spared.
+    const unchanged = sameTexts(current.texts, texts);
+    cache.current = {
+      revision: revision.current,
+      key,
+      texts: unchanged ? current.texts : texts,
+    };
+    return cache.current.texts;
   }, [getFileText, key]);
 
   return useSyncExternalStore(subscribe, getSnapshot);
+}
+
+/** Whether two path → text maps hold exactly the same entries. */
+function sameTexts(
+  a: ReadonlyMap<string, string>,
+  b: ReadonlyMap<string, string>,
+): boolean {
+  if (a.size !== b.size) return false;
+  for (const [path, text] of a) {
+    if (b.get(path) !== text) return false;
+  }
+  return true;
 }
 
 const EMPTY: ReadonlyMap<string, string> = new Map();

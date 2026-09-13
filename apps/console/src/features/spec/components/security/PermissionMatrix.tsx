@@ -26,11 +26,17 @@
  * one grid rather than a card per role — the design settled that trade
  * explicitly, against "cards only" and "per-resource cards".
  *
- * Two rows sit under the grid rather than in it, because they cross no column:
- * what any signed-in caller reaches without holding a handle, and what is open
- * before sign-in at all. They are the baseline the grid is read against, and
- * the design puts them in the same grid so the reader does not have to go and
- * find them in the API view.
+ * Three rows sit under the grid rather than in it, because they cross no
+ * column: what any signed-in caller reaches without holding a handle, what is
+ * open before sign-in, and which components provision no sign-in at all. They
+ * are the baseline the grid is read against, and the design puts them in the
+ * same grid so the reader does not have to go and find them in the API view.
+ *
+ * The last two are adjacent and deliberately not merged. A public screen or
+ * operation belongs to a component that DOES have sign-in and has chosen to
+ * leave this one door open; a component with no sign-in dependency has no door
+ * to close. A reader deciding whether this project exposes anything has to see
+ * both, and has to be able to tell them apart.
  *
  * Service-kind roles are not columns. A service principal holds an application
  * token and reaches no screen, so a column beside the roles a person holds
@@ -52,6 +58,7 @@ import {
 
 import {
   isGranted,
+  isLastGrant,
   type MatrixColumn,
   type MatrixResourceGroup,
   type Ownership,
@@ -62,12 +69,20 @@ import { GrantCell } from "./GrantCell";
 import type { RoutedFindings } from "./findings";
 
 /**
- * The two baseline rows, already merged from the document's screens and the
- * component contracts' operations — one list per row, in reading order.
+ * The rows under the catalog, already merged from the document's screens, the
+ * component contracts' operations, and the architecture — one list per row, in
+ * reading order.
  */
 export interface BaselineRows {
   signedIn: string[];
   open: string[];
+  /**
+   * Components that declare no sign-in dependency at all, so whatever they
+   * serve they serve to everyone. `null` means the dependency read has not
+   * answered — a different fact from "every component needs sign-in", and the
+   * row is omitted rather than asserting the wrong one.
+   */
+  openComponents: string[] | null;
 }
 
 export interface PermissionMatrixProps {
@@ -77,6 +92,15 @@ export interface PermissionMatrixProps {
   /** Why no cell can be toggled, or undefined when they all can. */
   readOnlyReason?: string | undefined;
   onToggleGrant: (role: string, handle: string, next: boolean) => void;
+}
+
+/**
+ * Why a cell that IS granted still cannot be cleared: it is the role's only
+ * grant, and a role with none is a document this page cannot read back. The
+ * way out is a design conversation, which is where a role is removed anyway.
+ */
+function lastGrantReason(role: string): string {
+  return `Every role must grant at least one permission, so this one cannot be cleared — it is all ${role} has. Grant ${role} something else first, or ask in chat to remove the role.`;
 }
 
 /** What rows an action reaches, said in words a reader does not have to decode. */
@@ -146,6 +170,14 @@ export function PermissionMatrix({
               span={span}
               empty="Nothing is open before sign-in."
             />
+            {baseline.openComponents !== null && (
+              <BaselineRow
+                label="open to everyone"
+                entries={baseline.openComponents}
+                span={span}
+                empty="Every component in this project provisions sign-in."
+              />
+            )}
           </ListingTable.Body>
         </ListingTable>
       </ListingTable.Container>
@@ -231,7 +263,12 @@ function ResourceGroup({
                   role={column.name}
                   handle={row.handle}
                   granted={isGranted(row, column)}
-                  disabledReason={readOnlyReason}
+                  disabledReason={
+                    readOnlyReason ??
+                    (isLastGrant(row, column)
+                      ? lastGrantReason(column.name)
+                      : undefined)
+                  }
                   onToggle={(next) => onToggleGrant(column.name, row.handle, next)}
                 />
               </ListingTable.Cell>
@@ -244,8 +281,8 @@ function ResourceGroup({
 }
 
 /**
- * One of the two rows with no column. They are inside the same grid on purpose:
- * the design's point is that the reader sees the baseline where they read the
+ * One of the rows with no column. They are inside the same grid on purpose: the
+ * design's point is that the reader sees the baseline where they read the
  * grants, not in a panel they have to remember to open.
  */
 function BaselineRow({

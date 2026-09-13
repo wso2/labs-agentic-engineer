@@ -28,6 +28,7 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { OpenApiView } from "@aep/ui-openapi-view";
+import { useApiViewSecurity } from "../../spec/hooks/useApiViewSecurity";
 import { useComponentOpenApi } from "../api/queries";
 
 // Renders a service component's OpenAPI contract in-app via the shared
@@ -51,6 +52,11 @@ export function ComponentOpenApiDialog({
     componentName ?? "",
     open,
   );
+  // Who grants each scope and which audience they are on. There is no collab
+  // room here — this dialog opens outside the Spec workspace — so it reads the
+  // committed design, which is the right copy anyway for a contract the
+  // platform has already built.
+  const security = useApiViewSecurity({ projectName, active: open });
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="lg" fullWidth>
@@ -77,7 +83,13 @@ export function ComponentOpenApiDialog({
           </Box>
         )}
 
-        {data && <OpenApiView spec={data.spec} />}
+        {data && (
+          <OpenApiView
+            spec={data.spec}
+            roles={security.roles}
+            resourceServer={security.resourceServer}
+          />
+        )}
       </DialogContent>
 
       <DialogActions>

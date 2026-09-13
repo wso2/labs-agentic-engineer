@@ -54,14 +54,21 @@ describe("OpenApiView — protection on the operation row", () => {
   it("says nothing about who may reach a row when the roles map is absent", () => {
     render(<OpenApiView spec={SPEC} />);
     expect(screen.queryByText(/Employee/)).not.toBeInTheDocument();
-    expect(screen.queryByText("everyone")).not.toBeInTheDocument();
+    expect(screen.queryByText("any signed-in user")).not.toBeInTheDocument();
     expect(screen.queryByText(/no token needed/)).not.toBeInTheDocument();
   });
 
   it("names the fixed copy for the public and signed-in rows once a roles map is given", () => {
     render(<OpenApiView spec={SPEC} roles={{ "claims:read": ["Employee"] }} />);
-    expect(screen.getByText("everyone")).toBeInTheDocument();
     expect(screen.getByText("anyone · no token needed")).toBeInTheDocument();
+  });
+
+  // "everyone" sits one row from "anyone · no token needed" and beside a
+  // padlock, where it reads as the opposite of what it means.
+  it("spells the signed-in baseline out rather than calling it everyone", () => {
+    render(<OpenApiView spec={SPEC} roles={{ "claims:read": ["Employee"] }} />);
+    expect(screen.getByText("any signed-in user")).toBeInTheDocument();
+    expect(screen.queryByText("everyone")).not.toBeInTheDocument();
   });
 
   it("names the granting roles when the roles map covers the handle", () => {
@@ -77,6 +84,25 @@ describe("OpenApiView — protection on the operation row", () => {
       />,
     );
     expect(screen.getByText("Employee, Approver · own rows")).toBeInTheDocument();
+  });
+
+  it("names the resource server the scopes are granted on when given one", () => {
+    render(
+      <OpenApiView
+        spec={SPEC}
+        resourceServer="https://aep.wso2.com/orgs/acme/projects/expense-tracker"
+      />,
+    );
+    expect(
+      screen.getByText(
+        "aud https://aep.wso2.com/orgs/acme/projects/expense-tracker",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("says nothing about an audience the platform has no record of yet", () => {
+    render(<OpenApiView spec={SPEC} />);
+    expect(screen.queryByText(/^aud /)).not.toBeInTheDocument();
   });
 
   it("names no roles beside a handle the map does not cover", () => {

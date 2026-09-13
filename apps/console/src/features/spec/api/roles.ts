@@ -67,6 +67,25 @@ export interface ProjectRolesLiveState {
   testUsers: ProjectTestUserState[];
 }
 
+/**
+ * The resource server this project's roles are granted on — the access token's
+ * `aud`, the audience the gateway checks, and the `resource` a scoped token is
+ * asked for.
+ *
+ * One project has exactly one, so the first role that names it answers for the
+ * project; a role list the platform has no record of yet answers `undefined`,
+ * and every reader says nothing rather than guessing a URL the gateway would
+ * not accept. Asked here, in one place, because two pages now show it — the
+ * Security page's header line and the API view's — and a second spelling of
+ * "the first non-empty one" is a second answer waiting to drift.
+ */
+export function resourceServerOf(
+  live: ProjectRolesLiveState | undefined,
+): string | undefined {
+  return live?.projectRoles.find((role) => role.resourceServer !== "")
+    ?.resourceServer;
+}
+
 export const rolesKeys = {
   all: (projectName: string) => ["roles", projectName] as const,
 };

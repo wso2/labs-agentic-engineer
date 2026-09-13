@@ -125,6 +125,14 @@ vi.mock("../api/queries", () => ({
   },
 }));
 
+// The API dialog this panel opens now decorates its rows with the catalog's
+// granting roles and the project's resource server. Both come from react-query
+// hooks and this file renders without a QueryClientProvider; the dialog's own
+// test covers the join.
+vi.mock("../../spec/hooks/useApiViewSecurity", () => ({
+  useApiViewSecurity: () => ({ roles: undefined, resourceServer: undefined }),
+}));
+
 vi.mock("../../settings/api/queries", () => ({
   usePlatformResourceTypes: () => platformState,
   useExternalResources: () => externalState,

@@ -38,12 +38,20 @@
  * `X:read`: that implication is a gate RULE, reported as a finding on the page,
  * and applying it silently here would make the page disagree with both the
  * gate and the gateway (decision B1).
+ *
+ * One edit it REFUSES: taking away a role's last grant. The schema's `grants`
+ * is `min(1)`, and a document that fails the schema reads back as "empty or
+ * incomplete" — so that one click would replace the matrix with an info box,
+ * taking the cell that could undo it off the page, and the commit path would
+ * still put the invalid document in git.
  */
 
 /** Why a patch could not be applied. The caller shows it; it never throws. */
 export type PatchFailure =
   | { kind: "unreadable"; message: string }
-  | { kind: "no-such-role"; role: string };
+  | { kind: "no-such-role"; role: string }
+  /** The handle is the role's ONLY grant, and the schema forbids an empty one. */
+  | { kind: "last-grant"; role: string };
 
 export type PatchResult =
   | { ok: true; text: string }
@@ -106,6 +114,17 @@ export function patchGrants(
     : [];
   const has = current.includes(handle);
   if (has === granted) return { ok: true, text };
+  // `roleSchema.grants` is `z.array(...).min(1)`, so a role with an empty
+  // `grants` is a document the schema refuses. The console reads its own writes
+  // through that schema and shows a failed parse as "empty or incomplete" — so
+  // taking the last grant away would blank the very page holding the cell that
+  // could put it back, and the collab commit path only WARNS, so the
+  // unreadable document would reach git. The page disables this cell for the
+  // same reason (`isLastGrant`); this guard is what makes the rule true even
+  // when the document changed under the render that drew the cell.
+  if (!granted && current.length === 1) {
+    return { ok: false, failure: { kind: "last-grant", role } };
+  }
   // Appended rather than sorted into catalog order: the array's order is not
   // rendered anywhere, and re-ordering it would put lines in the diff that the
   // author's one click did not ask for.

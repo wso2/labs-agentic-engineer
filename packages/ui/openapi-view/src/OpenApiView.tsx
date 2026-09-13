@@ -142,7 +142,10 @@ function TypeTag({ label }: { label: string }) {
 function grantLine(protection: Protection, roles: ScopeRoles | undefined): string {
   if (!roles) return "";
   if (protection.kind === "public") return "anyone · no token needed";
-  if (protection.kind === "signedIn") return "everyone";
+  // "any signed-in user", never "everyone": this line sits one row from the
+  // public row's "anyone · no token needed" and beside a padlock, where the
+  // shorter word reads as the opposite of what it means.
+  if (protection.kind === "signedIn") return "any signed-in user";
   const grant = roles[protection.scope];
   if (!grant) return "";
   const names = Array.isArray(grant) ? grant : grant.roles;
@@ -566,10 +569,21 @@ export interface OpenApiViewProps {
    * fixed copy for the public and signed-in states. Absent, the view renders
    * exactly as it did before, protection pill included.
    */
-  roles?: ScopeRoles;
+  roles?: ScopeRoles | undefined;
+  /**
+   * Optional: the resource server every scope on this contract belongs to —
+   * the `aud` an access token carries and the audience the gateway checks.
+   * Shown in the header, because a scope handle is only meaningful against the
+   * audience it is granted on.
+   *
+   * Read from the platform's record by the caller, never derived here: before
+   * the first Build there is no record, and a guessed URL the gateway would not
+   * accept is worse than saying nothing.
+   */
+  resourceServer?: string | undefined;
 }
 
-export function OpenApiView({ spec, roles }: OpenApiViewProps) {
+export function OpenApiView({ spec, roles, resourceServer }: OpenApiViewProps) {
   // A STREAMED spec grows line by line; YAML's line-boundary prefixes almost
   // always parse, but the odd one doesn't (e.g. cut inside a quoted scalar).
   // Hold the last GOOD parse so a bad intermediate never flashes the error
@@ -636,6 +650,15 @@ export function OpenApiView({ spec, roles }: OpenApiViewProps) {
             </Box>
             {parsed.info.version && (
               <Chip label={parsed.info.version} size="small" variant="outlined" />
+            )}
+            {resourceServer && (
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ fontFamily: "monospace" }}
+              >
+                aud {resourceServer}
+              </Typography>
             )}
           </Box>
           <Typography variant="h4" sx={{ fontWeight: 700, lineHeight: 1.2 }}>

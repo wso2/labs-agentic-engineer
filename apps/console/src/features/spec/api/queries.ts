@@ -50,9 +50,14 @@ function toError(error: unknown, fallback: string): Error {
  * poll (SpecView unions this with the live doc list). Out-of-room commits
  * won't reflect until reload — the parked external-merge concern (#86).
  */
-export function useSpecFiles(projectName: string) {
+export function useSpecFiles(projectName: string, enabled = true) {
   return useQuery({
     queryKey: specKeys.files(projectName),
+    // `enabled` exists for readers that are mounted long before they are
+    // looked at — a dialog that is closed, a panel behind an unselected tab.
+    // The key is shared, so a caller that does want the list still serves
+    // everyone else from the same cached answer.
+    enabled,
     queryFn: async () => {
       const { data, error } = await client.GET(
         "/projects/{projectName}/files",

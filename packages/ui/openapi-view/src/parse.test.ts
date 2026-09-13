@@ -148,3 +148,118 @@ describe('parseOpenApi — protection degrades rather than throwing', () => {
     expect(op(text, '/me').protection).toEqual({ kind: 'public' });
   });
 });
+
+/**
+ * A YAML anchor referred to from inside itself is a cycle in the PARSED OBJECT,
+ * not in the document's text — js-yaml 4 materialises it as a genuinely
+ * circular graph, which the `$ref` guard cannot see. The schema walk used to
+ * recurse on it until the stack ran out, and because only `yaml.load` was
+ * guarded the `RangeError` escaped as a throw and took the caller down with it.
+ */
+describe('parseOpenApi — cyclic and deep documents', () => {
+  const anchorCycle = `openapi: 3.0.3
+info:
+  title: Cyclic API
+  version: 1.0.0
+paths:
+  /nodes:
+    get:
+      summary: List nodes
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Node"
+components:
+  schemas:
+    Node: &N
+      type: object
+      properties:
+        name:
+          type: string
+        self: *N
+`;
+
+  it('reads a self-referential YAML anchor instead of overflowing the stack', () => {
+    const parsed = parseOpenApi(anchorCycle);
+    expect('kind' in parsed).toBe(false);
+    const node = (parsed as ParsedOpenApi).schemas['Node'];
+    expect(node).toBeDefined();
+    // The cycle stops at the field that closed it; everything beside it reads.
+    expect(node!.fields.map((f) => f.name)).toEqual(['name', 'self']);
+    expect(node!.fields.find((f) => f.name === 'self')?.children ?? []).toEqual([]);
+  });
+
+  it('reads an array whose items are the array itself', () => {
+    const text = `openapi: 3.0.3
+info: { title: Cyclic API, version: 1.0.0 }
+paths: {}
+components:
+  schemas:
+    Chain: &C
+      type: object
+      properties:
+        links: &L
+          type: array
+          items: *L
+`;
+    const parsed = parseOpenApi(text);
+    expect('kind' in parsed).toBe(false);
+    const chain = (parsed as ParsedOpenApi).schemas['Chain'];
+    expect(chain!.fields.map((f) => f.type)).toEqual(['array<array>']);
+  });
+
+  // The identity guard is path-scoped, so genuine depth still expands: a deep
+  // document must read to the bottom rather than being truncated as a "cycle".
+  it('expands a deep but acyclic document all the way down', () => {
+    const DEPTH = 40;
+    let node: Record<string, unknown> = { type: 'string' };
+    for (let i = 0; i < DEPTH; i++) {
+      node = { type: 'object', properties: { [`level${i}`]: node } };
+    }
+    const parsed = parseOpenApi(
+      JSON.stringify({
+        openapi: '3.0.3',
+        info: { title: 'Deep API', version: '1.0.0' },
+        paths: {},
+        components: { schemas: { Deep: node } },
+      }),
+    );
+    expect('kind' in parsed).toBe(false);
+    let fields = (parsed as ParsedOpenApi).schemas['Deep']!.fields;
+    for (let i = DEPTH - 1; i > 0; i--) {
+      expect(fields.map((f) => f.name)).toEqual([`level${i}`]);
+      fields = fields[0]!.children ?? [];
+    }
+    expect(fields.map((f) => f.type)).toEqual(['string']);
+  });
+
+  // The same shape reached twice down two different branches is not a cycle,
+  // and a global "seen" set would silently drop the second one.
+  it('expands the same anchored schema twice when it is used twice', () => {
+    const text = `openapi: 3.0.3
+info: { title: Shared API, version: 1.0.0 }
+paths: {}
+components:
+  schemas:
+    Wrapper:
+      type: object
+      properties:
+        left: &S
+          type: object
+          properties:
+            id:
+              type: string
+        right: *S
+`;
+    const parsed = parseOpenApi(text);
+    expect('kind' in parsed).toBe(false);
+    const fields = (parsed as ParsedOpenApi).schemas['Wrapper']!.fields;
+    expect(fields.map((f) => f.name)).toEqual(['left', 'right']);
+    for (const field of fields) {
+      expect(field.children?.map((c) => c.name)).toEqual(['id']);
+    }
+  });
+});

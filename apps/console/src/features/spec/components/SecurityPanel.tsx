@@ -25,10 +25,10 @@
  * org groups carry it.
  *
  * It is the console's first WRITE into a spec room. One cell is one edit: the
- * document text is patched (`patchGrants`), handed to the room, and the room
- * echoes it back as a new `securityJson`. Nothing is held optimistically —
- * there is no second copy of the truth to reconcile, and a write that the room
- * refuses simply never arrives.
+ * room's CURRENT text is patched (`patchGrants`) inside the write itself, and
+ * the room echoes the result back as a new `securityJson`. Nothing is held
+ * optimistically — there is no second copy of the truth to reconcile, and a
+ * write that the room refuses simply never arrives.
  *
  * Everything else on the page stays read-only. Adding a resource, an action or
  * a role touches `openapi.yaml` and `wireframes.dsl` too, so it is a design
@@ -50,7 +50,9 @@ import {
   type SecurityReferenceContext,
 } from "@aep/agent-stream";
 
-import type { ProjectRolesLiveState } from "../api/roles";
+import type { components } from "../../../generated/aep-api";
+import { componentsWithoutSignIn } from "../../projects/lib/signInlessComponents";
+import { resourceServerOf, type ProjectRolesLiveState } from "../api/roles";
 import {
   parseSecurityDesign,
   securityMatrix,
@@ -87,9 +89,25 @@ export interface SecurityPanelProps {
   references?: SecurityReferenceContext | undefined;
   /** True when the collab room holds this file and can take a write. */
   roomLive?: boolean;
-  /** Hand the whole patched document to the room. */
-  writeSecurityJson?: ((next: string) => void) | undefined;
+  /**
+   * Edit the document in the room. The updater is handed the room's text AS IT
+   * IS NOW and returns the next whole document, or `null` to write nothing —
+   * so the patch is computed against the text the diff is applied to, never
+   * against the text of a render the agent has since overtaken.
+   */
+  writeSecurityJson?:
+    | ((update: (current: string) => string | null) => void)
+    | undefined;
+  /**
+   * Every component's declared dependencies, from the Spec view's own
+   * design-dependencies read. `undefined` while that read is in flight or after
+   * it failed — the "open to everyone" row is then omitted rather than claiming
+   * that every component provisions sign-in.
+   */
+  dependencies?: ComponentDependencies[] | undefined;
 }
+
+type ComponentDependencies = components["schemas"]["ComponentDependencies"];
 
 function Centered({ children }: { children: ReactNode }) {
   return (
@@ -114,6 +132,7 @@ export function SecurityPanel({
   references,
   roomLive = false,
   writeSecurityJson,
+  dependencies,
 }: SecurityPanelProps) {
   const parsed = useMemo(() => parseSecurityDesign(securityJson), [securityJson]);
 
@@ -160,6 +179,7 @@ export function SecurityPanel({
       references={references}
       roomLive={roomLive}
       writeSecurityJson={writeSecurityJson}
+      dependencies={dependencies}
     />
   );
 }
@@ -176,15 +196,27 @@ function SecurityDocument({
   references,
   roomLive,
   writeSecurityJson,
+  dependencies,
 }: {
   doc: SecurityDesign;
   text: string;
   live: ProjectRolesLiveState | undefined;
   references: SecurityReferenceContext | undefined;
   roomLive: boolean;
-  writeSecurityJson: ((next: string) => void) | undefined;
+  writeSecurityJson:
+    | ((update: (current: string) => string | null) => void)
+    | undefined;
+  dependencies: ComponentDependencies[] | undefined;
 }) {
-  const [failure, setFailure] = useState<PatchFailure | null>(null);
+  // The failure is stamped with the document it was raised against, so it
+  // clears itself the moment the page catches up: a banner saying the document
+  // could not be read is about ONE text, and leaving it on screen after the
+  // room delivered a newer one reports a problem that is no longer there.
+  const [failure, setFailure] = useState<{
+    at: string;
+    failure: PatchFailure;
+  } | null>(null);
+  if (failure !== null && failure.at !== text) setFailure(null);
 
   const matrix = useMemo(() => securityMatrix(doc), [doc]);
   const findings = useMemo(
@@ -212,23 +244,37 @@ function SecurityDocument({
         ...operations.open,
         ...matrix.baseline.publicScreens.map(screenLine),
       ],
+      // v1 listed these by hand in `publicComponents`; v2 derives them from the
+      // architecture, because `thunder-app` is the only thing that provisions
+      // sign-in and a component that does not depend on it has none to offer.
+      openComponents: dependencies
+        ? componentsWithoutSignIn(dependencies)
+        : null,
     };
-  }, [matrix, references]);
+  }, [matrix, references, dependencies]);
 
-  const canEdit = roomLive && writeSecurityJson !== undefined;
+  // Editability is asked ONCE. `writer` is the writer only when the room can
+  // actually take the write, so the cells and the handler cannot disagree
+  // about whether a click does anything.
+  const writer = roomLive ? writeSecurityJson : undefined;
 
   const onToggleGrant = useCallback(
     (role: string, handle: string, next: boolean) => {
-      if (!writeSecurityJson) return;
-      const result = patchGrants(text, role, handle, next);
-      if (!result.ok) {
-        setFailure(result.failure);
-        return;
-      }
-      setFailure(null);
-      writeSecurityJson(result.text);
+      if (!writer) return;
+      // The patch runs INSIDE the write, on the room's current text — see
+      // `useSecurityEntry`'s `writeSecurityJson` for why the rendered copy is
+      // not good enough.
+      writer((current) => {
+        const result = patchGrants(current, role, handle, next);
+        if (!result.ok) {
+          setFailure({ at: text, failure: result.failure });
+          return null;
+        }
+        setFailure(null);
+        return result.text;
+      });
     },
-    [text, writeSecurityJson],
+    [text, writer],
   );
 
   return (
@@ -245,13 +291,13 @@ function SecurityDocument({
           <ResourceServerLine live={live} />
         </Box>
 
-        {failure && <PatchFailureAlert failure={failure} />}
+        {failure && <PatchFailureAlert failure={failure.failure} />}
 
         <PermissionMatrix
           matrix={matrix}
           baseline={baseline}
           findings={routed}
-          readOnlyReason={canEdit ? undefined : NO_ROOM_REASON}
+          readOnlyReason={writer ? undefined : NO_ROOM_REASON}
           onToggleGrant={onToggleGrant}
         />
 
@@ -288,9 +334,7 @@ function ResourceServerLine({
 }: {
   live: ProjectRolesLiveState | undefined;
 }) {
-  const resourceServer = live?.projectRoles.find(
-    (role) => role.resourceServer !== "",
-  )?.resourceServer;
+  const resourceServer = resourceServerOf(live);
   if (!resourceServer) return null;
   return (
     <Stack direction="row" spacing={1} alignItems="baseline" sx={{ mt: 0.5 }}>
@@ -314,17 +358,23 @@ function screenLine(entry: { component: string; screen: string }): string {
 }
 
 /**
- * A toggle that could not be applied. It means the document text and the
- * rendered matrix disagree — someone else edited the room mid-click, or the
- * text is not what it was parsed as — so the honest answer is to say so and
- * leave the document alone rather than write a guess.
+ * A toggle that could not be applied: the document and the rendered matrix
+ * disagree (someone edited the room mid-click, or the text is not what it was
+ * parsed as), or the edit would produce a document the schema refuses. Either
+ * way the honest answer is to say so and leave the document alone rather than
+ * write a guess.
+ *
+ * It is shown only while the document it was raised against is still the one on
+ * screen — see the stamp on the state above.
  */
 function PatchFailureAlert({ failure }: { failure: PatchFailure }) {
   return (
     <Alert severity="error">
       {failure.kind === "no-such-role"
         ? `Couldn't change that grant: the document no longer has a role called "${failure.role}". It may have been edited in chat — the page will catch up.`
-        : `Couldn't change that grant: the document could not be read (${failure.message}).`}
+        : failure.kind === "last-grant"
+          ? `Couldn't clear that grant: every role must grant at least one permission, and that is all "${failure.role}" has left. Grant it something else first, or ask in chat to remove the role.`
+          : `Couldn't change that grant: the document could not be read (${failure.message}).`}
     </Alert>
   );
 }

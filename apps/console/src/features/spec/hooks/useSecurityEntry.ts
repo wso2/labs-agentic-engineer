@@ -37,6 +37,8 @@
 
 import { useCallback, useMemo } from "react";
 
+import { applyTextEdit } from "@aep/collab-doc";
+
 import { SECURITY_JSON_PATH } from "../api/designTree";
 import type { SpecFileEntry } from "../api/mapping";
 import { useSpecFileContent } from "../api/queries";
@@ -49,7 +51,6 @@ import {
   referencePaths,
 } from "../api/securityDesign";
 import type { CollabSpec } from "../collab/useCollabSpec";
-import { applyTextareaValue } from "../collab/textareaBinding";
 import { useYTextString } from "../collab/useYTextString";
 import { useSpecReferences, type SpecReferences } from "./useSpecReferences";
 
@@ -91,15 +92,24 @@ export interface SecurityEntry {
    */
   roomLive: boolean;
   /**
-   * Write the WHOLE document back into the room, as a minimal CRDT edit
-   * relative to what is there — so a concurrent edit by the design agent merges
-   * instead of being clobbered. Serialise with `serializeSecurityDesign` first.
+   * Edit the document in the room: the updater is handed the room's text AS IT
+   * IS NOW and returns the whole next document, or `null` to write nothing.
+   *
+   * It takes an UPDATER rather than a string because the caller cannot be
+   * trusted with the timing. A patch computed from the text of the last React
+   * render is then applied as a diff against the room's current text, and the
+   * two are not the same string whenever the design agent flushed in between —
+   * the diff's single changed span then covers the agent's insertion, and
+   * applying it deletes that insertion. Reading the text and computing the next
+   * one inside this call makes the patch and the diff see one text, so a
+   * concurrent edit merges at the CRDT level, which is the whole point of
+   * writing into a room instead of over a file.
    *
    * Synchronous, and a no-op when `roomLive` is false. It deliberately does not
    * flush: the room commits to git on its own schedule, and `collab.flush()`
    * belongs to the Build path, which needs HEAD to be current before it tags.
    */
-  writeSecurityJson: (next: string) => void;
+  writeSecurityJson: (update: (current: string) => string | null) => void;
 }
 
 export function useSecurityEntry({
@@ -153,9 +163,20 @@ export function useSecurityEntry({
   });
 
   const writeSecurityJson = useCallback(
-    (next: string) => {
+    (update: (current: string) => string | null) => {
       if (!securityYText) return;
-      applyTextareaValue(securityYText, next);
+      // One read, one diff, one transaction. `applyTextEdit` is the real
+      // character diff every other writer into this room uses (the design
+      // agent's own writes go through it), rather than the placeholder
+      // textarea binding's single prefix/suffix trim: a trim assumes the two
+      // texts differ in exactly one span, which a re-serialised JSON document
+      // cannot promise — the room's copy need not be in the two-space form
+      // `patchGrants` emits, and one differently-indented line makes the trim
+      // delete and re-insert everything between the first and last difference.
+      const current = securityYText.toString();
+      const next = update(current);
+      if (next === null || next === current) return;
+      applyTextEdit(securityYText, next);
     },
     [securityYText],
   );

@@ -23,7 +23,13 @@
  * planned-user helpers the panel needs to promise usernames. The panel does
  * the rendering; the design agent writes the document in chat.
  *
- * Incomplete JSON objects are empty, not a parse error. JSON is not streamed.
+ * A JSON object that parses but does not satisfy the schema is EMPTY, not a
+ * parse error — `{}` and a half-authored document read the same, and the panel
+ * explains that in words. A document that does not parse at all is `invalid`
+ * and shows as an error. That second case is reachable mid-turn: the room
+ * streams this file in like any other, so a reader watching the design agent
+ * write it sees the error until the closing brace arrives. Softening that is a
+ * recorded follow-up, not a claim this comment should make.
  *
  * The shape is `SecurityDesign` from `@aep/agent-stream` — the same definition
  * the design agent's write gate and the BFF's save gate validate against, so
@@ -370,6 +376,11 @@ export function baselineScreens(doc: SecurityDesign): SecurityBaseline {
  * declared twice and an action repeated under one resource are refused by the
  * write gate, where the author can still fix them, so nothing here has to
  * reconcile a document that got past it.
+ *
+ * Two roles with the same name are refused there too, which is what lets the
+ * columns be keyed by the verbatim name. A document that somehow carried both
+ * would draw two identical columns and score them together — the gate's error
+ * is the fix, not a reconciliation here.
  */
 export function securityMatrix(doc: SecurityDesign): SecurityMatrix {
   // The shared fold, so "does this role hold that handle?" is answered the same
@@ -419,6 +430,25 @@ export function securityMatrix(doc: SecurityDesign): SecurityMatrix {
  */
 export function isGranted(row: MatrixRow, column: MatrixColumn): boolean {
   return row.grantedBy.includes(column.name);
+}
+
+/**
+ * Whether this cell is the ONLY grant its role holds — the one mark the page
+ * must not let a click take away.
+ *
+ * The schema declares `grants` as `min(1)`, and `parseSecurityDesign` reports
+ * any schema failure as "empty or incomplete". So un-granting a role's last
+ * handle does not produce a document with a hole in it; it produces a document
+ * the page cannot read, replacing the matrix with an info box and removing the
+ * cell that could put the grant back. The rule is asked here, next to
+ * `isGranted`, so the matrix and `patchGrants` are answering the same question.
+ *
+ * It counts the role's AUTHORED grants, not the marks in the grid: a role may
+ * grant a handle the catalog does not declare, and the schema counts that one
+ * too.
+ */
+export function isLastGrant(row: MatrixRow, column: MatrixColumn): boolean {
+  return isGranted(row, column) && column.role.grants.length === 1;
 }
 
 /**

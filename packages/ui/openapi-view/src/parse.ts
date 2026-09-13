@@ -151,6 +151,26 @@ interface ResolveCtx {
   root: unknown;
   /** Set of refs currently being expanded — prevents infinite recursion on cyclic specs. */
   seen: Set<string>;
+  /**
+   * The schema nodes on the current path, by IDENTITY.
+   *
+   * `seen` only guards `$ref` cycles, and a `$ref` is not the only way a
+   * document can be cyclic: js-yaml materialises a YAML anchor referred to
+   * from inside itself as a genuinely circular object graph
+   * (`Node: &N {type: object, properties: {self: *N}}`), so the walk below
+   * would recurse on the very node it started from and blow the stack. A ref
+   * cycle is a cycle in the DOCUMENT's text; this is a cycle in the parsed
+   * OBJECT, and only object identity can see it.
+   *
+   * Path-scoped, not global — the same schema reached twice down two different
+   * branches still expands twice, exactly as `seen` behaves for refs.
+   */
+  nodes: ReadonlySet<object>;
+}
+
+/** `ctx` with `node` marked as being on the current path. */
+function entering(ctx: ResolveCtx, node: object): ResolveCtx {
+  return { ...ctx, nodes: new Set(ctx.nodes).add(node) };
 }
 
 function describeSchemaType(node: Record<string, unknown>, ctx: ResolveCtx): string {
@@ -162,7 +182,10 @@ function describeSchemaType(node: Record<string, unknown>, ctx: ResolveCtx): str
   const type = asString(node.type);
   if (type === 'array') {
     const items = asObject(node.items);
-    if (items) return `array<${describeSchemaType(items, ctx)}>`;
+    // `items: *self` — the element type IS the array. Name it `array` rather
+    // than descending into a loop that has no bottom.
+    if (items && ctx.nodes.has(items)) return 'array';
+    if (items) return `array<${describeSchemaType(items, entering(ctx, items))}>`;
     return 'array';
   }
   if (Array.isArray(node.enum)) return 'enum';
@@ -235,14 +258,19 @@ function buildField(
 }
 
 function collectFields(node: Record<string, unknown>, ctx: ResolveCtx): SchemaField[] {
+  // Already expanding this exact node further up the path: a YAML anchor points
+  // back at one of its own ancestors. Stop, and let the field that named it
+  // render as a leaf.
+  if (ctx.nodes.has(node)) return [];
   const props = asObject(node.properties);
   if (!props) return [];
   const requiredList = new Set(asArray(node.required).filter((v): v is string => typeof v === 'string'));
+  const inner = entering(ctx, node);
   const fields: SchemaField[] = [];
   for (const [name, raw] of Object.entries(props)) {
     const propNode = asObject(raw);
     if (!propNode) continue;
-    fields.push(buildField(name, propNode, requiredList.has(name), ctx));
+    fields.push(buildField(name, propNode, requiredList.has(name), inner));
   }
   return fields;
 }
@@ -308,7 +336,12 @@ function buildParam(node: Record<string, unknown>, ctx: ResolveCtx): Param {
 //
 // Nothing here judges a document — a spec is read here while it is still being
 // streamed, and a half-written or hand-edited one must render, not throw. Every
-// shape the gate refuses degrades to the closest readable state instead.
+// shape the gate refuses degrades to the closest readable state instead. Two
+// leniencies follow from that and are worth naming: the scheme is found by
+// TYPE rather than by the name `oauth2`, and nothing here knows whether the
+// component provisions sign-in at all — so a contract that declares a scheme
+// while its component depends on no sign-in reads as protected here, and it is
+// the build gate, which can see the architecture, that calls that a mistake.
 
 /** The scheme name the platform uses, and the fallback when none is declared. */
 const DEFAULT_SCHEME = 'oauth2';
@@ -520,27 +553,38 @@ function buildSchemas(root: Record<string, unknown>, ctx: ResolveCtx): Record<st
   return out;
 }
 
+/**
+ * Read a document into the view model, or say why it cannot be read.
+ *
+ * NEVER THROWS. The whole body is guarded, not just `yaml.load`: this parser
+ * runs against half-streamed and hand-edited documents, and one caller
+ * (`baselineOperations`, behind the console's Security page) parses every
+ * owning component's contract during render — a fault escaping as an exception
+ * there takes a page down rather than degrading one panel. A parser fault is a
+ * document this reader could not read, which is exactly what `parse-error`
+ * says, so the caller that already handles a malformed document handles this
+ * too.
+ */
 export function parseOpenApi(text: string): ParseResult {
-  let doc: unknown;
   try {
-    doc = yaml.load(text);
+    const doc = yaml.load(text);
+    const root = asObject(doc);
+    if (!root) {
+      return { kind: 'parse-error', message: 'OpenAPI document is not an object' };
+    }
+
+    const ctx: ResolveCtx = { root, seen: new Set(), nodes: new Set() };
+    const info = asObject(root.info) ?? {};
+    return {
+      info: {
+        title: asString(info.title, 'Untitled API'),
+        version: asString(info.version, ''),
+        description: asString(info.description),
+      },
+      sections: buildSections(root, ctx, buildSecurityCtx(root)),
+      schemas: buildSchemas(root, ctx),
+    };
   } catch (e) {
     return { kind: 'parse-error', message: e instanceof Error ? e.message : String(e) };
   }
-  const root = asObject(doc);
-  if (!root) {
-    return { kind: 'parse-error', message: 'OpenAPI document is not an object' };
-  }
-
-  const ctx: ResolveCtx = { root, seen: new Set() };
-  const info = asObject(root.info) ?? {};
-  return {
-    info: {
-      title: asString(info.title, 'Untitled API'),
-      version: asString(info.version, ''),
-      description: asString(info.description),
-    },
-    sections: buildSections(root, ctx, buildSecurityCtx(root)),
-    schemas: buildSchemas(root, ctx),
-  };
 }

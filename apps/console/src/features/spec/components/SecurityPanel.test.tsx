@@ -118,21 +118,52 @@ function setup(props: Partial<React.ComponentProps<typeof SecurityPanel>> = {}) 
   );
 }
 
-/** The design of record's Expense Tracker, with a live room and a writer. */
+/**
+ * A stand-in for the collab room: the panel hands it an updater, it answers
+ * with the text it is HOLDING, and it keeps whatever comes back.
+ *
+ * A plain `vi.fn()` would not do. The panel's contract is that the patch is
+ * computed against the room's current text, and only a double that has a text
+ * of its own — one a test can change between the render and the click — can
+ * hold it to that.
+ */
+function room(initial: string) {
+  const state = { text: initial, writes: [] as string[] };
+  const write = vi.fn((update: (current: string) => string | null) => {
+    const next = update(state.text);
+    if (next === null) return;
+    state.text = next;
+    state.writes.push(next);
+  });
+  return { state, write };
+}
+
+/**
+ * The design of record's Expense Tracker, with a live room and a writer.
+ *
+ * `deliver` re-renders the SAME panel with a newer document, which is how the
+ * room's echo arrives in life — a fresh mount would prove nothing about state
+ * the panel is holding.
+ */
 function expenseTracker(
   props: Partial<React.ComponentProps<typeof SecurityPanel>> = {},
 ) {
-  const write = vi.fn();
-  render(
+  const initial = props.securityJson ?? EXPENSE_TRACKER_TEXT;
+  const { state, write } = room(initial);
+  const panel = (json: string) => (
     <SecurityPanel
-      securityJson={EXPENSE_TRACKER_TEXT}
       references={EXPENSE_TRACKER_REFERENCES}
       roomLive
       writeSecurityJson={write}
       {...props}
-    />,
+      securityJson={json}
+    />
   );
-  return write;
+  const view = render(panel(initial));
+  return Object.assign(write, {
+    room: state,
+    deliver: (next: string) => view.rerender(panel(next)),
+  });
 }
 
 /** One cell of the matrix, addressed the way a screen reader would. */
@@ -357,7 +388,7 @@ describe("SecurityPanel — the grant toggle", () => {
     fireEvent.click(cell("Employee", "reports:read"));
 
     expect(write).toHaveBeenCalledTimes(1);
-    const next = JSON.parse(write.mock.calls[0]![0] as string) as SecurityDesign;
+    const next = JSON.parse(write.room.writes[0]!) as SecurityDesign;
     expect(next.roles[0]!.grants).toEqual([
       "claims:read",
       "claims:submit",
@@ -378,8 +409,30 @@ describe("SecurityPanel — the grant toggle", () => {
 
     fireEvent.click(cell("Employee", "claims:submit"));
 
-    const next = JSON.parse(write.mock.calls[0]![0] as string) as SecurityDesign;
+    const next = JSON.parse(write.room.writes[0]!) as SecurityDesign;
     expect(next.roles[0]!.grants).toEqual(["claims:read"]);
+  });
+
+  // The click patches the text the ROOM is holding, never the text of the last
+  // render. When the design agent's flush lands in between, a patch built on
+  // the render is applied as a positional diff against a document it no longer
+  // describes, and the agent's insertion disappears into the changed span.
+  it("patches the room's current text, so an edit that lands mid-click survives", () => {
+    const write = expenseTracker();
+
+    // The agent adds a resource to the catalog while the click is in flight.
+    const withNewResource = write.room.text.replace(
+      '  "groups": [',
+      `  "somethingTheAgentAdded": true,\n  "groups": [`,
+    );
+    expect(withNewResource).not.toBe(write.room.text);
+    write.room.text = withNewResource;
+
+    fireEvent.click(cell("Employee", "reports:read"));
+
+    expect(write.room.text).toContain('"somethingTheAgentAdded": true');
+    const next = JSON.parse(write.room.text) as SecurityDesign;
+    expect(next.roles[0]!.grants).toContain("reports:read");
   });
 
   // Nothing is held optimistically: the room echoes the change back as a new
@@ -409,6 +462,108 @@ describe("SecurityPanel — the grant toggle", () => {
     expenseTracker({ writeSecurityJson: undefined });
 
     expect(cell("Employee", "claims:read")).toBeDisabled();
+  });
+
+  // One editability question, one answer. The cells and the handler used to
+  // ask different ones — the cells asked "is the room live AND is there a
+  // writer?", the handler only "is there a writer?" — so a click that reached
+  // the handler with a stale room still wrote.
+  it("writes nothing on a click the cells say is impossible", () => {
+    const write = expenseTracker({ roomLive: false });
+
+    expect(cell("Employee", "reports:read")).toBeDisabled();
+    fireEvent.click(cell("Employee", "reports:read"));
+
+    expect(write).not.toHaveBeenCalled();
+    expect(write.room.writes).toEqual([]);
+  });
+});
+
+/**
+ * `roleSchema.grants` is `min(1)`, and `parseSecurityDesign` reports a schema
+ * failure as "empty or incomplete" — so clearing a role's last grant used to
+ * replace the whole page with an info box, taking away the cell that could
+ * undo it, while the commit path still put the invalid document in git.
+ */
+describe("SecurityPanel — a role's last grant", () => {
+  /** Employee down to one grant; everything else as the design has it. */
+  const ONE_GRANT = EXPENSE_TRACKER_TEXT.replace(
+    '"claims:read",\n        "claims:submit"',
+    '"claims:submit"',
+  );
+
+  it("refuses the cell, and says why", async () => {
+    expenseTracker({ securityJson: ONE_GRANT });
+
+    const only = cell("Employee", "claims:submit");
+    expect(only).toBeChecked();
+    expect(only).toBeDisabled();
+
+    fireEvent.mouseOver(only.closest("span")!);
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip).toHaveTextContent(
+      /Every role must grant at least one permission/i,
+    );
+    expect(tooltip).toHaveTextContent(/all Employee has/i);
+  });
+
+  it("leaves every other cell of that role alone", () => {
+    expenseTracker({ securityJson: ONE_GRANT });
+
+    expect(cell("Employee", "claims:read")).toBeEnabled();
+    expect(cell("Approver", "claims:read")).toBeEnabled();
+  });
+
+  // The cell is disabled from the RENDER's document. The document can move
+  // under it, so the patch refuses the same edit and the page says so.
+  it("refuses the patch and explains it when the document moved under the cell", () => {
+    const write = expenseTracker();
+
+    write.room.text = ONE_GRANT;
+    fireEvent.click(cell("Employee", "claims:submit"));
+
+    expect(write.room.text).toBe(ONE_GRANT);
+    expect(
+      screen.getByText(/every role must grant at least one permission/i),
+    ).toHaveTextContent(/"Employee"/);
+  });
+});
+
+describe("SecurityPanel — the patch-failure banner", () => {
+  /** A room whose text the panel cannot read at all. */
+  function unreadableRoom() {
+    const write = expenseTracker();
+    write.room.text = '{"version": 2,';
+    fireEvent.click(cell("Employee", "reports:read"));
+    return write;
+  }
+
+  it("reports a document it could not read", () => {
+    unreadableRoom();
+
+    expect(
+      screen.getByText(/the document could not be read/i),
+    ).toBeInTheDocument();
+  });
+
+  // It is a statement about ONE text. Once the room delivers another, the
+  // banner is reporting a problem that is no longer on the page — and until
+  // now only a LATER successful toggle took it down.
+  it("clears itself when the document changes, with no second click", () => {
+    const write = unreadableRoom();
+    expect(screen.getByText(/could not be read/i)).toBeInTheDocument();
+
+    // The room catches up and delivers a readable document.
+    const caughtUp = EXPENSE_TRACKER_TEXT.replace(
+      "Monthly totals",
+      "Monthly totals, by team",
+    );
+    expect(caughtUp).not.toBe(EXPENSE_TRACKER_TEXT);
+    write.deliver(caughtUp);
+
+    expect(screen.queryByText(/could not be read/i)).not.toBeInTheDocument();
+    // And the matrix is still the matrix, not a remount.
+    expect(cell("Employee", "claims:read")).toBeChecked();
   });
 });
 

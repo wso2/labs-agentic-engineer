@@ -18,7 +18,7 @@
 
 // @vitest-environment jsdom
 
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 
@@ -39,7 +39,7 @@ vi.mock("../api/roles", () => ({
   useProjectRoles: () => ({ data: undefined, isPending: false, isError: false }),
 }));
 
-// `useYTextString` and `applyTextareaValue` are NOT mocked: the room here is a
+// `useYTextString` and `applyTextEdit` are NOT mocked: the room here is a
 // real `Y.Doc`, so the read path, the write path and the CRDT merge behaviour
 // under test are the ones that ship. Only the two network reads are doubles.
 
@@ -242,12 +242,24 @@ describe("useSecurityEntry — writeSecurityJson", () => {
     const { result, text } = run({ roomFiles: withDocument(designText()) });
     const next = designText().replace("orders:read", "orders:read-all");
 
-    result.current.writeSecurityJson(next);
+    result.current.writeSecurityJson(() => next);
 
     expect(text(SECURITY_JSON_PATH)?.toString()).toBe(next);
   });
 
-  // The point of going through `applyTextareaValue`: the design agent may be
+  it("hands the updater the room's text", () => {
+    const { result } = run({ roomFiles: withDocument(designText()) });
+    const seen: string[] = [];
+
+    result.current.writeSecurityJson((current) => {
+      seen.push(current);
+      return null;
+    });
+
+    expect(seen).toEqual([designText()]);
+  });
+
+  // The point of going through `applyTextEdit`: the design agent may be
   // writing the same file, and a delete-all-then-insert-all would clobber its
   // edit at the CRDT level even though the text looks right locally.
   it("lands as a minimal edit, not a whole-document replace", () => {
@@ -256,7 +268,7 @@ describe("useSecurityEntry — writeSecurityJson", () => {
     const deltas: unknown[] = [];
     ytext?.observe((event) => deltas.push(event.changes.delta));
 
-    result.current.writeSecurityJson(
+    result.current.writeSecurityJson(() =>
       designText().replace("orders:read", "orders:read-all"),
     );
 
@@ -265,6 +277,59 @@ describe("useSecurityEntry — writeSecurityJson", () => {
     expect(deltas).toEqual([
       [{ retain: designText().indexOf("orders:read") + "orders:read".length }, { insert: "-all" }],
     ]);
+  });
+
+  // The real diff, not the placeholder binding's single prefix/suffix trim.
+  // Nothing guarantees the room's copy is in the two-space form the patch
+  // re-serialises to, and a trim over two differences spans everything between
+  // them — deleting, and re-inserting, every line in the middle.
+  it("changes only the lines that differ in a differently-formatted document", () => {
+    const before = `{\n  "a": 1,\n  "MIDDLE": "untouched",\n  "z": 2\n}\n`;
+    const after = `{\n  "a": 9,\n  "MIDDLE": "untouched",\n  "z": 8\n}\n`;
+    const { result, text } = run({ roomFiles: withDocument(before) });
+    const ytext = text(SECURITY_JSON_PATH)!;
+    const deltas: { retain?: number; insert?: string; delete?: number }[] = [];
+    ytext.observe((event) => deltas.push(...(event.changes.delta as never[])));
+
+    result.current.writeSecurityJson(() => after);
+
+    expect(ytext.toString()).toBe(after);
+    // Two characters changed, so two characters are deleted and two inserted.
+    // A single prefix/suffix trim would span both differences and rewrite the
+    // whole untouched middle — deleting the line between them and any
+    // concurrent edit inside it.
+    expect(deltas.filter((d) => d.delete !== undefined)).toEqual([
+      { delete: 1 },
+      { delete: 1 },
+    ]);
+    expect(deltas.filter((d) => d.insert !== undefined)).toEqual([
+      { insert: "9" },
+      { insert: "8" },
+    ]);
+  });
+
+  // F2: the patch and the diff must see ONE text. A caller handing over a
+  // string computed from the last render applies it as a positional diff
+  // against whatever the room holds NOW — and when the design agent flushed in
+  // between, the single changed span covers its insertion and deletes it.
+  it("patches the room's CURRENT text, so an edit that lands mid-click survives", () => {
+    const { result, text } = run({ roomFiles: withDocument(designText()) });
+    const ytext = text(SECURITY_JSON_PATH)!;
+    const rendered = ytext.toString();
+
+    // The agent appends a second role while the click is in flight.
+    const agentEdit = '\n{ "the agent was here" }\n';
+    ytext.insert(ytext.length, agentEdit);
+
+    // The updater is handed the text as it is NOW, not the text above.
+    result.current.writeSecurityJson((current) => {
+      expect(current).not.toBe(rendered);
+      return current.replace("orders:read", "orders:read-all");
+    });
+
+    const after = ytext.toString();
+    expect(after).toContain("orders:read-all");
+    expect(after).toContain("the agent was here");
   });
 
   it("is a no-op when the room does not hold the document", () => {
@@ -276,7 +341,7 @@ describe("useSecurityEntry — writeSecurityJson", () => {
     const { result } = run();
 
     expect(result.current.roomLive).toBe(false);
-    expect(() => result.current.writeSecurityJson("{}")).not.toThrow();
+    expect(() => result.current.writeSecurityJson(() => "{}")).not.toThrow();
     // The committed copy is untouched: the hook never writes to git.
     expect(result.current.securityJson).toBe(designText());
   });
@@ -287,9 +352,23 @@ describe("useSecurityEntry — writeSecurityJson", () => {
     const deltas: unknown[] = [];
     ytext?.observe((event) => deltas.push(event.changes.delta));
 
-    result.current.writeSecurityJson(designText());
+    result.current.writeSecurityJson(() => designText());
 
     expect(deltas).toEqual([]);
+  });
+
+  // The updater says "nothing to write" — a refused patch, which the panel
+  // turns into a banner rather than a version in the room's history.
+  it("writes nothing when the updater answers null", () => {
+    const { result, text } = run({ roomFiles: withDocument(designText()) });
+    const ytext = text(SECURITY_JSON_PATH);
+    const deltas: unknown[] = [];
+    ytext?.observe((event) => deltas.push(event.changes.delta));
+
+    result.current.writeSecurityJson(() => null);
+
+    expect(deltas).toEqual([]);
+    expect(ytext?.toString()).toBe(designText());
   });
 });
 
@@ -382,6 +461,52 @@ describe("useSecurityEntry — references", () => {
     });
 
     expect(mockContents).toHaveBeenLastCalledWith("p", []);
+  });
+
+  // The room's `update` event fires for EVERY file in it, so an agent streaming
+  // an unrelated markdown document bumps this hook on every flush. The answers
+  // have not changed, so the object must not either: the Security page feeds it
+  // straight into `securityReferenceFindings` and into a parse of every owning
+  // component's `openapi.yaml`, and a fresh object re-runs both, several times a
+  // second, for as long as the tab is open.
+  it("keeps the same references object when an unwatched file changes", () => {
+    const { result, rerender, text } = run({
+      roomFiles: {
+        ...withDocument(designText()),
+        [DESIGN_CELL_PATH]: 'component "orders-api" service',
+        "specs/requirements/prd.md": "# PRD",
+      },
+      files: [FILE, entry(DESIGN_CELL_PATH)],
+    });
+    const before = result.current.references;
+
+    act(() => {
+      text("specs/requirements/prd.md")?.insert(5, " more prose");
+    });
+    rerender();
+
+    expect(result.current.references).toBe(before);
+  });
+
+  it("answers a new object when a file it IS watching changes", () => {
+    const { result, rerender, text } = run({
+      roomFiles: {
+        ...withDocument(designText()),
+        [DESIGN_CELL_PATH]: 'component "orders-api" service',
+      },
+      files: [FILE, entry(DESIGN_CELL_PATH)],
+    });
+    const before = result.current.references;
+
+    act(() => {
+      text(DESIGN_CELL_PATH)?.insert(0, "// changed\n");
+    });
+    rerender();
+
+    expect(result.current.references).not.toBe(before);
+    expect(result.current.references.read(DESIGN_CELL_PATH)).toContain(
+      "// changed",
+    );
   });
 
   it("reads nothing while the entry is not the current selection", () => {

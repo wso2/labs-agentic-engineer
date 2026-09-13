@@ -120,6 +120,36 @@ describe("patchGrants — the one edit the Security page makes", () => {
     ).toEqual({ ok: false, failure: { kind: "no-such-role", role: "Nobody" } });
   });
 
+  // `roleSchema.grants` is `min(1)`: a role with an empty array is a document
+  // the console reads back as "empty or incomplete", which would replace the
+  // matrix with an info box and take away the cell that could undo the edit.
+  it("refuses to take away a role's last grant", () => {
+    const oneGrant = EXPENSE_TRACKER_TEXT.replace(
+      '"claims:read",\n        "claims:submit"',
+      '"claims:submit"',
+    );
+    expect(oneGrant).not.toBe(EXPENSE_TRACKER_TEXT);
+
+    expect(patchGrants(oneGrant, "Employee", "claims:submit", false)).toEqual({
+      ok: false,
+      failure: { kind: "last-grant", role: "Employee" },
+    });
+    // And nothing else about the role is blocked.
+    expect(patchGrants(oneGrant, "Employee", "claims:read", true).ok).toBe(true);
+  });
+
+  it("still removes a grant from a role that holds more than one", () => {
+    const result = patchGrants(
+      EXPENSE_TRACKER_TEXT,
+      "Employee",
+      "claims:submit",
+      false,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(rolesOf(result.text)["Employee"]).toEqual(["claims:read"]);
+  });
+
   it("reports an unreadable document instead of throwing", () => {
     const result = patchGrants('{"version": 2,', "Employee", "claims:read", true);
     expect(result.ok).toBe(false);
