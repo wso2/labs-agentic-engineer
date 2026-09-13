@@ -1,6 +1,6 @@
 ---
 name: mock-verification
-description: Smoke-walk a `web-application` in a real browser once it builds clean — stand it up in mock mode, walk every flow its wireframes draw, fix each failure where you find it, post progress item by item. Required for every change to a webapp component. Judging a DEPLOYED system is `aep-validation`'s job instead.
+description: "Smoke-walk a `web-application` in a real browser once it builds clean — stand it up in mock mode, walk every flow its wireframes draw, fix each failure where you find it, post progress item by item. Required for every change to a webapp component. Judging a DEPLOYED system is `aep-validation`'s job instead."
 metadata:
   aep:
     kind: platform
@@ -50,8 +50,31 @@ smoke.
 ### Once per app
 
 - **Roles** (`mock/roles.ts` exists): each flow's entry screen under its own
-  role, and once under a role the DSL gives no flow there. Both directions are
-  defects.
+  role (`?role=<name>`), and once under a role the DSL gives no flow there.
+  Both directions are defects. Then three more, which the scope model makes
+  walkable and which no build can see:
+  - **Every role, and the no-role visitor.** Walk `?role=<name>` for each role
+    in `mock/roles.ts`, then `?role=` (empty — signed in, holding nothing).
+    The empty one must give **`NoAccess` replacing the shell**, naming the
+    groups to ask to be added to. A shell with an empty nav around it is a
+    defect; so is being let into a screen.
+  - **Forbidden, by hand.** Open one screen a role must NOT reach, by URL,
+    under that role. Expect that screen's **`Forbidden` state INSIDE the app
+    shell** — the rail the role can use still there — naming the role that
+    would unlock it. Never a redirect to sign-in, never a blank page, never the
+    screen itself.
+  - **The mock must have refused something.** None of this means anything
+    unless `mock/handlers.ts` enforces the handle the contract declares and
+    answers 403 + `insufficient_scope` on it. A handler that answers 200
+    regardless, or that accepts a sibling handle (`claims:read-all` where the
+    contract says `claims:read`), makes the whole walk green and hides the
+    defect it exists to find. Check one refusal in
+    `agent-browser network requests` before you trust the rest.
+
+  A screen a role is *meant* to reach but cannot, because the design does not
+  grant it the handle the operation declares, is **open**, naming the role, the
+  screen and the handle. It is a design defect, not a code one: do not widen a
+  mock handler or a route guard to make it pass.
 - **Session** (an auth dependency): `?auth=out` on one entry screen runs the
   app's own guard and `signIn()` brings you back; then **Sign out** where the
   navbar draws it leaves the screen through `signOut()`. The mock signs the
@@ -72,9 +95,11 @@ Every item ends in exactly one:
 - **fixed** — what was wrong; what you changed; what it does now, re-walked.
 - **open** — what happens, after three attempts.
 - **outside** — the truth lives outside the app: a computed total, a generated
-  checklist, a 403. The mock answers to `openapi.yaml`, so it proves the request
-  went out, never that the number is right; `aep-validation` judges that against
-  the deployed system.
+  checklist, what the real IdP grants a real account. The mock answers to
+  `openapi.yaml`, so it proves the request went out, never that the number is
+  right; `aep-validation` judges that against the deployed system. A **403 is
+  not outside** — the mock answers it from the contract's own handle, so
+  `Forbidden` is something you walk and see.
 
 An unreachable screen is **open**, naming the navigation that failed, never
 **done** read off the source.
@@ -185,6 +210,12 @@ in your reply.
   else. A handler bent until a screen passes hides the defect from the deployed
   system too. A `501` is a handler you never wrote: write it against the
   contract.
+- **Widen a scope to make a walk pass.** Not in a handler, not in a route
+  guard, not in `mock/roles.ts`. Scope comparison is a whole-string match at the
+  gateway and in the service, so a mock that accepts a sibling handle passes a
+  walk the deployed system answers 403 to. A role that cannot reach its own
+  screen is a **design defect**: post it open, naming the role, the screen and
+  the handle.
 - **Run `git`, commit, or open a pull request.** The record belongs to the agent
   that dispatched you. Progress, where your prompt says it goes, is the only
   writing you do outside the App Path.

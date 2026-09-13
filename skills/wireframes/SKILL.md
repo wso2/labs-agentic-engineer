@@ -1,6 +1,6 @@
 ---
 name: wireframes
-description: Use when creating or updating UI wireframes for a webapp component (design), or when implementing a web-application component that has a wireframes.dsl (coding) — the DSL is the screen contract the pages must honour, screen for screen and element for element.
+description: "Use when creating or updating UI wireframes for a webapp component (design), or when implementing a web-application component that has a wireframes.dsl (coding) — the DSL is the screen contract the pages must honour, screen for screen and element for element."
 metadata:
   aep:
     kind: platform
