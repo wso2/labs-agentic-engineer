@@ -18,11 +18,28 @@
 
 import { describe, expect, it } from "vitest";
 
+// The canonical documents, imported as text from where the write gate's own
+// tests keep them. `?raw` rather than a JSON import so nothing here depends on
+// `resolveJsonModule`, and so the console's parser is what turns the bytes
+// into a document — which is itself the assertion that it can read them.
+import clinicJson from "../../../../../../packages/agent-stream/test/fixtures/security/clinic.json?raw";
+import expenseTrackerJson from "../../../../../../packages/agent-stream/test/fixtures/security/expense-tracker.json?raw";
+import vendorJson from "../../../../../../packages/agent-stream/test/fixtures/security/vendor.json?raw";
+
 import {
+  baselineScreens,
+  grantsOf,
+  isGranted,
+  needsTestUser,
   parseSecurityDesign,
   plannedUsersFor,
   planUsers,
+  referencePaths,
+  roleEnrolment,
+  roleKind,
   roleSlug,
+  rolesGranting,
+  securityMatrix,
   serializeSecurityDesign,
   suppliedUsernameFor,
   type SecurityDesign,
@@ -368,6 +385,302 @@ describe("suppliedUsernameFor agrees with the Go build's securityspec.supplyUser
     });
     expect(plannedUsersFor(d, "Admin")).toEqual([
       { username: "alice", role: "Admin", supplied: false },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The matrix model
+// ---------------------------------------------------------------------------
+
+/**
+ * The three canonical security documents, read from where the write gate's own
+ * tests keep them rather than copied here. They are the documents the design's
+ * Console pictures are drawn from, so a selector that gets one of them wrong
+ * draws the wrong page — and a copy would drift the moment the gate's fixtures
+ * were corrected.
+ */
+const CANONICAL: Record<"expense-tracker" | "clinic" | "vendor", string> = {
+  "expense-tracker": expenseTrackerJson,
+  clinic: clinicJson,
+  vendor: vendorJson,
+};
+
+function canonical(name: keyof typeof CANONICAL): SecurityDesign {
+  const parsed = parseSecurityDesign(CANONICAL[name]);
+  if (parsed.kind !== "ok") {
+    throw new Error(
+      `canonical fixture ${name}.json did not parse: ${JSON.stringify(parsed)}`,
+    );
+  }
+  return parsed.doc;
+}
+
+describe("roleKind / roleEnrolment", () => {
+  it("applies the document's defaults, which are what the build applies", () => {
+    const plain = role("Admin");
+    expect(roleKind(plain)).toBe("user");
+    expect(roleEnrolment(plain)).toBe("admin");
+    expect(needsTestUser(plain)).toBe(true);
+  });
+
+  it("reads the stated kind and enrolment", () => {
+    const service = { ...role("Ledger Sync"), kind: "service" as const };
+    const shopper = { ...role("Shopper"), enrolment: "self-service" as const };
+    expect(roleKind(service)).toBe("service");
+    expect(roleEnrolment(shopper)).toBe("self-service");
+    expect(needsTestUser(service)).toBe(false);
+    expect(needsTestUser(shopper)).toBe(false);
+  });
+});
+
+describe("securityMatrix", () => {
+  it("groups every action under its resource, carrying the owning component", () => {
+    const matrix = securityMatrix(canonical("expense-tracker"));
+
+    expect(
+      matrix.groups.map((g) => ({
+        resource: g.resource,
+        component: g.component,
+        actions: g.rows.map((r) => r.action),
+      })),
+    ).toEqual([
+      {
+        resource: "claims",
+        component: "expense-api",
+        actions: ["read", "read-all", "submit", "approve", "reject"],
+      },
+      { resource: "reports", component: "expense-api", actions: ["read", "export"] },
+    ]);
+  });
+
+  it("carries the handle, ownership and prose of each action", () => {
+    const [claims] = securityMatrix(canonical("expense-tracker")).groups;
+    expect(claims?.description).toBe("Expense claims and their approval");
+    expect(claims?.rows[0]).toEqual({
+      handle: "claims:read",
+      resource: "claims",
+      action: "read",
+      component: "expense-api",
+      ownership: "own",
+      description: "See own claims",
+      grantedBy: ["Employee", "Approver"],
+    });
+    expect(claims?.rows[1]?.ownership).toBe("any");
+  });
+
+  // The document's `description` is optional and the schema forbids "", so an
+  // absent one is "" here and the renderer needs no third state.
+  it('reads an unauthored description as ""', () => {
+    const [, reports] = securityMatrix(canonical("expense-tracker")).groups;
+    expect(reports?.description).toBe("");
+  });
+
+  it("scores each row with the roles that grant it, in declaration order", () => {
+    const matrix = securityMatrix(canonical("expense-tracker"));
+    const rows = matrix.groups.flatMap((g) => g.rows);
+    expect(
+      Object.fromEntries(rows.map((r) => [r.handle, r.grantedBy])),
+    ).toEqual({
+      "claims:read": ["Employee", "Approver"],
+      "claims:read-all": ["Approver"],
+      "claims:submit": ["Employee"],
+      "claims:approve": ["Approver"],
+      "claims:reject": ["Approver"],
+      "reports:read": ["Approver"],
+      // The design's "⚠ used nowhere" row: no role grants it.
+      "reports:export": [],
+    });
+  });
+
+  it("makes the columns the user-kind roles, in declaration order", () => {
+    const matrix = securityMatrix(canonical("expense-tracker"));
+    expect(matrix.columns.map((c) => c.name)).toEqual(["Employee", "Approver"]);
+    expect(matrix.serviceColumns).toEqual([]);
+    expect(matrix.columns[0]).toMatchObject({ kind: "user", enrolment: "admin" });
+  });
+
+  // A self-service role is user-kind: how somebody comes to hold it changes the
+  // role card, not what the role may do, so it is still a column.
+  it("keeps a self-service role as a column and says so", () => {
+    const matrix = securityMatrix(canonical("clinic"));
+    expect(matrix.columns.map((c) => c.name)).toEqual([
+      "Patient",
+      "Receptionist",
+      "Doctor",
+    ]);
+    expect(matrix.columns[0]).toMatchObject({
+      name: "Patient",
+      kind: "user",
+      enrolment: "self-service",
+    });
+  });
+
+  it("splits a service role out of the columns but still scores its grants", () => {
+    const matrix = securityMatrix(canonical("vendor"));
+    expect(matrix.columns.map((c) => c.name)).toEqual([
+      "Buyer",
+      "Supplier",
+      "Finance",
+    ]);
+    expect(matrix.serviceColumns.map((c) => c.name)).toEqual([
+      "reconciliation-job",
+    ]);
+
+    const rows = matrix.groups.flatMap((g) => g.rows);
+    const invoicesRead = rows.find((r) => r.handle === "invoices:read");
+    expect(invoicesRead?.grantedBy).toEqual([
+      "Buyer",
+      "Supplier",
+      "Finance",
+      "reconciliation-job",
+    ]);
+  });
+
+  it("carries the role declaration on the column, for the card it heads", () => {
+    const matrix = securityMatrix(canonical("expense-tracker"));
+    expect(matrix.columns[1]?.role.assignTo).toEqual(["Finance"]);
+    expect(matrix.columns[1]?.role.assignableBy).toEqual(["Approver"]);
+  });
+
+  it("has no rows and no columns for a document with neither", () => {
+    // Not reachable through the schema (it requires one of each), but the
+    // matrix is a fold and must not assume its input is non-empty.
+    const matrix = securityMatrix({ ...doc(), permissions: [], roles: [] });
+    expect(matrix.groups).toEqual([]);
+    expect(matrix.columns).toEqual([]);
+  });
+});
+
+describe("isGranted", () => {
+  it("answers the cell for a column and a row", () => {
+    const matrix = securityMatrix(canonical("expense-tracker"));
+    const readAll = matrix.groups[0]?.rows[1];
+    const [employee, approver] = matrix.columns;
+    if (!readAll || !employee || !approver) throw new Error("unreachable");
+
+    expect(isGranted(readAll, employee)).toBe(false);
+    expect(isGranted(readAll, approver)).toBe(true);
+  });
+});
+
+describe("baselineScreens", () => {
+  // The three kinds of `requires` in one document: a handle, `null` and the
+  // literal. Only the last two are baseline rows.
+  it("separates the signed-in screens from the public ones", () => {
+    expect(baselineScreens(richDoc())).toEqual({
+      signedInScreens: [{ component: "storefront", screen: "My account" }],
+      publicScreens: [{ component: "storefront", screen: "Catalog" }],
+    });
+  });
+
+  it("reads the clinic's one public screen and no signed-in screen", () => {
+    expect(baselineScreens(canonical("clinic"))).toEqual({
+      signedInScreens: [],
+      publicScreens: [{ component: "booking-site", screen: "Find a slot" }],
+    });
+  });
+
+  // The design's "any signed-in user · GET /me" row is only half derivable
+  // here: this document declares screens and never operations, so a document
+  // whose every screen carries a handle has an EMPTY baseline even when its
+  // components expose unscoped operations. That half comes from each
+  // component's openapi.yaml, which the panel reads separately.
+  it("is empty for a document whose every screen requires a handle", () => {
+    expect(baselineScreens(canonical("expense-tracker"))).toEqual({
+      signedInScreens: [],
+      publicScreens: [],
+    });
+  });
+
+  it("is reachable through the matrix as well", () => {
+    expect(securityMatrix(richDoc()).baseline).toEqual(baselineScreens(richDoc()));
+  });
+});
+
+describe("grantsOf / rolesGranting", () => {
+  it("returns a role's handles as authored, widening nothing", () => {
+    const d = canonical("expense-tracker");
+    expect(grantsOf(d, "Employee")).toEqual(["claims:read", "claims:submit"]);
+    // `claims:read-all` does NOT imply `claims:read`: the gateway matches
+    // scopes exactly, so the authored list is the whole truth.
+    expect(grantsOf(d, "Approver")).toEqual([
+      "claims:read",
+      "claims:read-all",
+      "claims:approve",
+      "claims:reject",
+      "reports:read",
+    ]);
+  });
+
+  it("looks a role up case-insensitively and reads an unknown one as empty", () => {
+    const d = canonical("expense-tracker");
+    expect(grantsOf(d, "eMpLoYeE")).toEqual(grantsOf(d, "Employee"));
+    expect(grantsOf(d, "Nobody")).toEqual([]);
+  });
+
+  it("inverts the lookup, in declaration order, service roles included", () => {
+    expect(rolesGranting(canonical("expense-tracker"), "claims:read")).toEqual([
+      "Employee",
+      "Approver",
+    ]);
+    expect(rolesGranting(canonical("vendor"), "payments:read")).toEqual([
+      "Finance",
+      "reconciliation-job",
+    ]);
+  });
+
+  it("reads a handle nothing grants, and an unknown handle, as empty", () => {
+    expect(rolesGranting(canonical("expense-tracker"), "reports:export")).toEqual([]);
+    expect(rolesGranting(canonical("expense-tracker"), "no:such")).toEqual([]);
+  });
+});
+
+describe("referencePaths", () => {
+  it("asks for the cell, the owners' contracts and the screens' wireframes", () => {
+    expect(referencePaths(canonical("expense-tracker"))).toEqual([
+      "specs/design/design.cell",
+      "specs/design/components/expense-api/openapi.yaml",
+      "specs/design/components/expense-api/openapi.yml",
+      "specs/design/components/expense-webapp/wireframes.dsl",
+    ]);
+  });
+
+  // Two components own resources and two more carry screens: every one of them
+  // is a file some rule reads, and none of them is asked for twice.
+  it("covers every component named, once each", () => {
+    expect(referencePaths(canonical("clinic"))).toEqual([
+      "specs/design/design.cell",
+      "specs/design/components/appointments-api/openapi.yaml",
+      "specs/design/components/appointments-api/openapi.yml",
+      "specs/design/components/booking-site/wireframes.dsl",
+      "specs/design/components/staff-webapp/wireframes.dsl",
+    ]);
+    expect(referencePaths(canonical("vendor"))).toEqual([
+      "specs/design/design.cell",
+      "specs/design/components/orders-api/openapi.yaml",
+      "specs/design/components/orders-api/openapi.yml",
+      "specs/design/components/payments-api/openapi.yaml",
+      "specs/design/components/payments-api/openapi.yml",
+      "specs/design/components/vendor-webapp/wireframes.dsl",
+    ]);
+  });
+
+  // A component that only carries screens has no contract to judge the catalog
+  // against, and a component that only owns resources has no screens.
+  it("does not ask for a contract from a screen-only component", () => {
+    const paths = referencePaths(canonical("expense-tracker"));
+    expect(paths).not.toContain(
+      "specs/design/components/expense-webapp/openapi.yaml",
+    );
+    expect(paths).not.toContain(
+      "specs/design/components/expense-api/wireframes.dsl",
+    );
+  });
+
+  it("asks for the cell alone when the document names no screens", () => {
+    expect(referencePaths({ ...doc(), screens: [], permissions: [] })).toEqual([
+      "specs/design/design.cell",
     ]);
   });
 });

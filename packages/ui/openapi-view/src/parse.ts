@@ -30,6 +30,22 @@ import yaml from 'js-yaml';
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
 
+/**
+ * What a caller must present to reach an operation, read from the document's
+ * and the operation's `security` blocks.
+ *
+ * - `public` — no token at all. The gateway applies no policy to the operation.
+ * - `signedIn` — any valid token for this API's audience, no permission named.
+ * - `scope` — the one permission handle the gateway checks, e.g. `claims:read`.
+ *
+ * There is no fourth state: the platform's gate admits AT MOST ONE scope on an
+ * operation, so this view never has to render a conjunction.
+ */
+export type Protection =
+  | { kind: 'public' }
+  | { kind: 'signedIn' }
+  | { kind: 'scope'; scope: string };
+
 export interface ParsedInfo {
   title: string;
   version: string;
@@ -80,6 +96,8 @@ export interface Operation {
   summary: string;
   params: Param[];
   responses: Response[];
+  /** What the caller must present — the operation's own `security`, else the document default. */
+  protection: Protection;
 }
 
 export interface TagSection {
@@ -278,12 +296,94 @@ function buildParam(node: Record<string, unknown>, ctx: ResolveCtx): Param {
   };
 }
 
+// ── Protection (the `security` blocks) ───────────────────────────────────────
+//
+// The platform's build gate fixes the shape this reader sees
+// (`packages/agent-stream/src/openapi-security.ts`): a protected component
+// declares exactly one scheme, `oauth2`; the document default is exactly
+// `security: [ { oauth2: [] } ]`; an operation's own block is absent, `[]`, or
+// ONE requirement object naming that scheme with at most one scope. A component
+// with no sign-in dependency declares no scheme and no `security` anywhere, so
+// every one of its operations is public.
+//
+// Nothing here judges a document — a spec is read here while it is still being
+// streamed, and a half-written or hand-edited one must render, not throw. Every
+// shape the gate refuses degrades to the closest readable state instead.
+
+/** The scheme name the platform uses, and the fallback when none is declared. */
+const DEFAULT_SCHEME = 'oauth2';
+
+interface SecurityCtx {
+  /** The name this document gives its OAuth2 scheme. */
+  scheme: string;
+  /** Protection for an operation that declares no `security` of its own. */
+  documentDefault: Protection;
+}
+
+/**
+ * The name of the document's OAuth2 security scheme. Generated specs always
+ * call it `oauth2`; a hand-written one may not, so the declared scheme wins.
+ */
+function oauth2SchemeName(root: Record<string, unknown>): string {
+  const schemes = asObject(asObject(root.components)?.securitySchemes);
+  if (schemes) {
+    for (const [name, raw] of Object.entries(schemes)) {
+      const node = asObject(raw);
+      if (node && asString(node.type).toLowerCase() === 'oauth2') return name;
+    }
+  }
+  return DEFAULT_SCHEME;
+}
+
+/**
+ * Read one `security` block into a protection, or `undefined` when the block is
+ * absent or unreadable — which means "inherit the document default" for an
+ * operation, and "no default" for the document itself.
+ *
+ * Degradations, none of which a gate-passing document can reach:
+ * - several requirement objects (an "any of") → the first one is read;
+ * - an object naming several schemes (an "all of") → the OAuth2 one is read;
+ * - an object naming only some other scheme → `signedIn`, because this view
+ *   cannot name a handle the gateway would not enforce;
+ * - several scopes in one requirement → the first one;
+ * - an empty requirement object `{}` → `public`, OpenAPI's own reading of it.
+ */
+function readSecurity(value: unknown, scheme: string): Protection | undefined {
+  if (!Array.isArray(value)) return undefined;
+  if (value.length === 0) return { kind: 'public' };
+  const requirement = asObject(value[0]);
+  if (!requirement) return undefined;
+  const scopes = requirement[scheme];
+  if (scopes === undefined) {
+    return Object.keys(requirement).length > 0 ? { kind: 'signedIn' } : { kind: 'public' };
+  }
+  if (!Array.isArray(scopes) || scopes.length === 0) return { kind: 'signedIn' };
+  const first = scopes[0];
+  return typeof first === 'string' && first !== ''
+    ? { kind: 'scope', scope: first }
+    : { kind: 'signedIn' };
+}
+
+/**
+ * The document-level default. A document with NO `security` key protects
+ * nothing: that is OpenAPI's reading of an absent default, and it is exactly
+ * the shape the gate requires of a component with no sign-in dependency.
+ */
+function buildSecurityCtx(root: Record<string, unknown>): SecurityCtx {
+  const scheme = oauth2SchemeName(root);
+  return {
+    scheme,
+    documentDefault: readSecurity(root.security, scheme) ?? { kind: 'public' },
+  };
+}
+
 function buildOperation(
   method: Method,
   path: string,
   node: Record<string, unknown>,
   pathLevelParams: unknown[],
   ctx: ResolveCtx,
+  sec: SecurityCtx,
 ): Operation {
   const params: Param[] = [];
   for (const raw of [...pathLevelParams, ...asArray(node.parameters)]) {
@@ -343,10 +443,11 @@ function buildOperation(
     summary: asString(node.description),
     params,
     responses,
+    protection: readSecurity(node.security, sec.scheme) ?? sec.documentDefault,
   };
 }
 
-function buildSections(root: Record<string, unknown>, ctx: ResolveCtx): TagSection[] {
+function buildSections(root: Record<string, unknown>, ctx: ResolveCtx, sec: SecurityCtx): TagSection[] {
   const paths = asObject(root.paths) ?? {};
   const tags = asArray(root.tags).map((t) => asObject(t)).filter((t): t is Record<string, unknown> => !!t);
   const tagBlurb = new Map<string, string>();
@@ -368,7 +469,7 @@ function buildSections(root: Record<string, unknown>, ctx: ResolveCtx): TagSecti
       if (!METHOD_SET.has(method)) continue;
       const opNode = asObject(opRaw);
       if (!opNode) continue;
-      const op = buildOperation(method, path, opNode, pathLevelParams, ctx);
+      const op = buildOperation(method, path, opNode, pathLevelParams, ctx, sec);
       const opTags = asArray(opNode.tags).filter((t): t is string => typeof t === 'string');
       const bucket = opTags[0] ?? 'Operations';
       if (!byTag.has(bucket)) byTag.set(bucket, []);
@@ -439,7 +540,7 @@ export function parseOpenApi(text: string): ParseResult {
       version: asString(info.version, ''),
       description: asString(info.description),
     },
-    sections: buildSections(root, ctx),
+    sections: buildSections(root, ctx, buildSecurityCtx(root)),
     schemas: buildSchemas(root, ctx),
   };
 }

@@ -25,10 +25,16 @@
  * on demand against a real identity provider. They are switchable here by
  * project name so the whole panel is developable without a backend:
  *
- *  - any project              → the full catalog, three test-user states
+ *  - any project              → the full catalog, four project roles, three
+ *                               test-user states, and `Finance` bound in two
+ *                               projects so the cross-project count is visible
  *  - `roles-offline`          → `directoryAvailable: false`
  *  - `roles-empty`            → a design that declares no roles
  *  - `roles-locked`           → every mutation 404s (the org/project fence)
+ *
+ * The response is the whole `ProjectRolesView`, `projectRoles[]` included:
+ * `roles` is the shared org-group catalog and `projectRoles` is what this
+ * project owns, and the two stay two lists exactly as the contract keeps them.
  */
 
 import { http, HttpResponse } from "msw";

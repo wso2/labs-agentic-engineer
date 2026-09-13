@@ -16,20 +16,4 @@
  * under the License.
  */
 
-export { OpenApiView } from './OpenApiView.js';
-export type { OpenApiViewProps, ScopeGrant, ScopeRoles } from './OpenApiView.js';
-export { parseOpenApi } from './parse.js';
-export type {
-  ParsedOpenApi,
-  ParsedInfo,
-  TagSection,
-  Operation,
-  Param,
-  Response,
-  Schema,
-  SchemaField,
-  Method,
-  Protection,
-  ParseError,
-  ParseResult,
-} from './parse.js';
+import "@testing-library/jest-dom/vitest";

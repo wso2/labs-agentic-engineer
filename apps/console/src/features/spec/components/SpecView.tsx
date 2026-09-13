@@ -1375,6 +1375,9 @@ export function SpecView({ projectName }: { projectName: string }) {
                   live={security.live}
                   isPending={security.isPending}
                   isError={security.isError}
+                  references={security.references}
+                  roomLive={security.roomLive}
+                  writeSecurityJson={security.writeSecurityJson}
                 />
               ) : effectiveSelection.kind === "wireframe" ? (
                 <WireframePanel
