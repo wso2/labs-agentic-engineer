@@ -31,16 +31,31 @@
 //     The opposite case: the caller holds other scopes and has somewhere to go,
 //     so the rail stays. /forbidden is a route inside the shell branch.
 //
+//   /forbidden is WIRED INTO api-client once, from the router.
+//     api-client.ts imports no router, so it cannot navigate by itself: it
+//     calls the navigator this file hands it. Without that call, a refusal the
+//     screen gate did not catch — a typed URL, a stale bundle, a race past a
+//     narrowed renew — logs an error and routes nowhere, which looks exactly
+//     like a screen that renders nothing.
+//
 //   Every gated route is wrapped in <RequireScope>, with the handle taken from
 //     SCREEN_ROUTES — never a handle typed here.
+//
+//   A "public" screen is routed ABOVE the sign-in guard.
+//     `requires: "public"` means reachable BEFORE sign-in. SignedIn() below
+//     redirects anyone without a session to the IdP, so a public screen routed
+//     inside it can never be seen by the visitor it exists for. It keeps the
+//     session provider (so <Can> and useScopes work on it) and loses the app
+//     shell, which is the honest shape: there is no signed-in chrome to draw.
 //
 //   /callback is routed OUTSIDE the provider: there is no session to read until
 //     the redirect has been processed.
 
 import { useEffect, type ReactElement } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { AuthzProvider, Forbidden, NoAccess, RequireScope, useScopes, useAuthz } from "./authz";
 import { SCREEN_ROUTES, reachableScreens } from "./screens";
+import { setForbiddenNavigator } from "./api-client";
 import { signIn } from "./auth";
 import { AppShell } from "./shell/AppShell";
 import { CallbackPage } from "./pages/Callback";
@@ -59,11 +74,24 @@ const PAGE_BY_KEY: Record<string, ReactElement> = {
   reports: <ReportsPage />,
 };
 
+/** The screens reachable before sign-in — routed above the guard, below. */
+const PUBLIC_SCREENS = SCREEN_ROUTES.filter((screen) => screen.requires === "public");
+
 export function App(): ReactElement {
   return (
     <BrowserRouter>
+      <ForbiddenWiring />
       <Routes>
         <Route path="/callback" element={<CallbackPage />} />
+        {PUBLIC_SCREENS.map((screen) => (
+          <Route
+            key={screen.key}
+            path={screen.path}
+            element={
+              <AuthzProvider fallback={<Splash />}>{PAGE_BY_KEY[screen.key]}</AuthzProvider>
+            }
+          />
+        ))}
         <Route
           path="*"
           element={
@@ -75,6 +103,20 @@ export function App(): ReactElement {
       </Routes>
     </BrowserRouter>
   );
+}
+
+/**
+ * Hands api-client.ts the route a refusal goes to. ONCE, from inside the
+ * router and above every route, so it is wired before the first request can be
+ * answered. `replace` keeps the refused URL out of the history, so Back does
+ * not walk the user straight into the same 403.
+ */
+function ForbiddenWiring(): null {
+  const navigate = useNavigate();
+  useEffect(() => {
+    setForbiddenNavigator(() => navigate("/forbidden", { replace: true }));
+  }, [navigate]);
+  return null;
 }
 
 function Splash(): ReactElement {
@@ -101,8 +143,8 @@ function SignedIn(): ReactElement {
 
   const reachable = reachableScreens(scopes);
 
-  // ── G9: NoAccess REPLACES the shell. It is returned here, above the <Routes>
-  //    that carry AppShell, so there is no rail to wrap it.
+  // NoAccess REPLACES the shell. It is returned here, above the <Routes> that
+  // carry AppShell, so there is no rail to wrap it.
   if (reachable.length === 0) return <NoAccess appName={APP_NAME} />;
 
   const landing = reachable[0].path;
@@ -112,9 +154,12 @@ function SignedIn(): ReactElement {
       <Route element={<AppShell />}>
         <Route index element={<Navigate to={landing} replace />} />
         {SCREEN_ROUTES.map((screen) => {
+          // "public" screens are routed above this guard, in App(), and their
+          // path never reaches here.
+          if (screen.requires === "public") return null;
           const page = PAGE_BY_KEY[screen.key];
-          // "public" and null need no scope — anyone with a session is in.
-          if (screen.requires === null || screen.requires === "public") {
+          // null needs no scope — anyone with a session is in.
+          if (screen.requires === null) {
             return <Route key={screen.key} path={screen.path} element={page} />;
           }
           // The scope comes from the generated table, never from this file.

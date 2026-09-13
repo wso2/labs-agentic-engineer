@@ -268,7 +268,8 @@ and only those — the key table under Constraints in `SKILL.md`: this app's own
 export const mockEnv = {
   USER_AUTH_CLIENT_ID: "mock-client",
   USER_AUTH_ISSUER: "https://mock-idp.test",
-  USER_AUTH_JWKS_URL: "https://mock-idp.test/.well-known/jwks.json",
+  // No <DEP>_JWKS_URL: the platform emits it, src/env.ts does not declare it
+  // (the browser never validates a token), so mock mode does not carry it.
   // The OIDC scopes are `group` and `ou`, SINGULAR — not `groups` — and the
   // project's own catalog handles follow them, exactly as the platform requests
   // them. `<DEP>_RESOURCE` is emitted too; src/env.ts throws without it.
@@ -330,12 +331,14 @@ import from `src/` in a way that survives the substitution.
 Added to this stack's ordinary sequence, after `npm run build`:
 
 ```bash
-npm run gen && npm run build && ! grep -rq mockServiceWorker dist/
+npm run build && ! grep -rq mockServiceWorker dist/
 ```
 
-The `gen` step is not optional on an app with an auth dependency: a stale
-`src/scopes.gen.ts` type-checks green while the app gates on handles the design
-no longer has. Wire it as the first half of `build` so it cannot be skipped.
+`build` is `npm run gen && tsc --noEmit && vite build`, so the generator runs
+first and there is nothing to run by hand. On an app with an auth dependency
+that ordering is not optional: a stale `src/scopes.gen.ts` type-checks green
+while the app gates on handles the design no longer has, which is why `gen` is
+wired as the first half of `build` rather than left to a habit.
 
 **Done when:** the build exits 0 and the grep finds nothing. A hit means the
 guard in `src/main.tsx` was written so the bundler could not prove the branch

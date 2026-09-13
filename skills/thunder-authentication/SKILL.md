@@ -55,7 +55,7 @@ your app's roles, and the platform will not grant it your app's scopes.
 
 ## Order of work
 
-`src/env.ts` (add the five `<DEP>_*` keys to the `react-webapp` shim) →
+`src/env.ts` (add the four `<DEP>_*` keys the SPA reads to the `react-webapp` shim) →
 `scripts/gen-scopes.mjs` wired into the build, so `src/scopes.gen.ts` exists →
 `src/auth.ts` → `src/authz-core.ts` + `src/authz.tsx` → `src/api-client.ts` → a
 **`/callback` route** that calls `handleCallback()` once on mount → `src/screens.ts`
@@ -105,7 +105,7 @@ resource type outputs `client_id`, `issuer`, `jwks_url`, `scopes` and
 |---|---|---|
 | `USER_AUTH_CLIENT_ID` | `<DEP>_CLIENT_ID` | this app's platform-owned OAuth client id |
 | `USER_AUTH_ISSUER` | `<DEP>_ISSUER` | OIDC issuer / authority for `oidc-client-ts` |
-| `USER_AUTH_JWKS_URL` | `<DEP>_JWKS_URL` | JWKS endpoint (token validation reference) |
+| `USER_AUTH_JWKS_URL` | `<DEP>_JWKS_URL` | JWKS endpoint. Emitted, and **not** in the SPA's `Env`: the browser never validates a token — the API gateway does — so no asset reads it. Leave it out of `src/env.ts` and out of `mock/env.ts` |
 | `USER_AUTH_SCOPES` | `<DEP>_SCOPES` | space-separated scopes to request: the OIDC ones (`openid profile email group ou`) plus the project's catalog handles |
 | `USER_AUTH_RESOURCE` | `<DEP>_RESOURCE` | the project's **resource-server identifier** — the RFC 8707 `resource` indicator, and the `aud` the gateway pins |
 
@@ -236,6 +236,23 @@ exits 0**. Exiting 1 there would fail every image build the platform runs. With
 no committed output and no catalog it exits 1 and names why, which is the
 uncommitted-file case.
 
+That fallback is for the walk-up only, and it is the generator's ONLY quiet
+path. Everything else fails loudly, because each of these otherwise emits
+`Scope = never` / `SCREENS = []` — an app where every caller lands on
+`NoAccess`, type-checked green:
+
+| Situation | What it does |
+|---|---|
+| `--spec` / `AEP_SECURITY_JSON` names a file that is not there | **exit 1** — a path the caller typed and misspelled is never a build context |
+| the document is not version 2 (a v1 file, `null`, an array) | **exit 1** naming the version; **v1 is not accepted** |
+| a version-2 document missing `permissions[]`, `roles[]` or `screens[]` | **exit 1** naming the field |
+| `--component` matches no screen in the document | **exit 1** listing the components the document does declare |
+| an unknown flag, or a flag with no value | **exit 2** with the usage, and nothing written |
+
+`--help` prints the usage and exits 0 without writing. `--out` (rarely needed;
+the default is the app's own `src/scopes.gen.ts`) resolves against the current
+directory.
+
 What it emits, and what each export is for:
 
 | Export | Use |
@@ -248,7 +265,8 @@ What it emits, and what each export is for:
 
 ### 2 · `src/auth.ts`
 
-Add the five `<DEP>_*` keys to the `Env` type in the `react-webapp` shim, copy
+Add the four `<DEP>_*` keys the SPA reads — `CLIENT_ID`, `ISSUER`, `SCOPES`,
+`RESOURCE`; not `JWKS_URL` — to the `Env` type in the `react-webapp` shim, copy
 the asset, and change only the `USER_AUTH_` prefix to YOUR dependency's. It is
 `env.ts` and this module that make the import graph browser-only: `env.ts`
 throws at module load when `/env-config.js` did not run, and the `UserManager`
@@ -289,7 +307,7 @@ is unchanged.
 |---|---|
 | `<AuthzProvider fallback={…}>` | resolves the session's scopes ONCE, above everything that gates |
 | `useScopes()`, `useAuthz()` | the caller's scopes / the whole session state |
-| `granted()`, `can(scope)` | the async form, for a route loader or a plain function outside React |
+| `granted()`, `can(scope)` | the async form, for a route loader or a plain function outside React. `granted()` resolves to a `Set<string>` — the token's scopes verbatim, the five OIDC ones included — so ask it with `can()`, never "is the set non-empty" |
 | `<Can scope={…}>` | show a nav item, a button, a column — hide it otherwise |
 | `<RequireScope scope={…} screen={…} />` | route guard; a caller without the scope lands on `/forbidden` |
 | `<Forbidden />` | route it at `/forbidden`, **inside** the app shell |
@@ -352,15 +370,19 @@ at once answers 401 several times over, and without the guard each answer starts
 its own redirect.
 
 **Wire the Forbidden route once, at the router root.** `api-client.ts` holds no
-router import; it takes the navigator:
+router import; it takes the navigator. One component, rendered inside the router
+and above every route — `assets/App.example.tsx`'s `ForbiddenWiring`:
 
 ```tsx
 const navigate = useNavigate();
-useEffect(() => setForbiddenNavigator(() => navigate("/forbidden")), [navigate]);
+useEffect(() => setForbiddenNavigator(() => navigate("/forbidden", { replace: true })), [navigate]);
 ```
 
-Until that call lands, a refusal logs a named error rather than silently doing
-nothing. Your per-service client — `src/api.ts`, generated types and all — calls
+`replace: true` keeps the refused URL out of the history, so Back does not walk
+the user straight back into the same 403. Until that call lands, a refusal logs a
+named error rather than silently doing nothing — **this wiring is not optional**:
+without it every refusal the screen gate did not catch routes nowhere, which
+looks exactly like a screen that renders nothing. Your per-service client — `src/api.ts`, generated types and all — calls
 `apiFetch`/`apiJson`, or, with an `openapi-fetch` client, `authorizationHeader()`
 and `classifyResponse()` from its middleware. It adds **nothing** of its own
 about authorization.
@@ -411,7 +433,11 @@ screen.
   `<Can scope={…}>` around its nav item.
 - `requires: null` → any signed-in caller; no guard.
 - `requires: "public"` → reachable before sign-in; keep it outside the sign-in
-  gate entirely.
+  gate entirely. `App.example.tsx` routes those screens **above** `SignedIn`,
+  still inside `AuthzProvider` (so `<Can>` and `useScopes()` work on them) and
+  outside `AppShell` — a visitor with no session has no signed-in chrome to
+  draw. A public screen routed inside the guard is unreachable by the visitor it
+  exists for, because the guard redirects them to the IdP first.
 
 **The rail is ONE rail whose items are each wrapped in `Can`.** The DSL draws a
 different sidebar per role because it draws one role at a time; a single gated

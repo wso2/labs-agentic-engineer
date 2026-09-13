@@ -216,6 +216,55 @@ test("A1 · a 403 never signs in even when the token is gone", () => {
   assert.equal(calls.forbidden, 1);
 });
 
+test("A1 · a sign-in that REJECTS leaves the next 401 free to retry", async () => {
+  // signIn() fetches the issuer's discovery document, so it can fail without
+  // starting a redirect. If the once-per-page guard stayed armed on that, every
+  // later 401 would answer "signin" and nothing would ever sign in — the page
+  // wedged for the rest of its life by one flaky moment.
+  let calls = 0;
+  const errors = [];
+  const consoleError = console.error;
+  console.error = (...args) => errors.push(args);
+  try {
+    const handle = createUnauthorizedHandler({
+      signIn: () => {
+        calls += 1;
+        return Promise.reject(new Error("discovery failed"));
+      },
+      onForbidden: () => {},
+    });
+
+    assert.equal(handle(401, false), "signin");
+    assert.equal(calls, 1);
+    // Let the rejection be handled: the guard is disarmed in the catch.
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(handle(401, false), "signin");
+    assert.equal(calls, 2);
+    await new Promise((resolve) => setImmediate(resolve));
+  } finally {
+    console.error = consoleError;
+  }
+  // The failure is reported, never swallowed.
+  assert.equal(errors.length, 2);
+  assert.match(String(errors[0][0]), /sign-in failed/);
+});
+
+test("A1 · a sign-in that RESOLVES keeps the guard armed", async () => {
+  let calls = 0;
+  const handle = createUnauthorizedHandler({
+    signIn: () => {
+      calls += 1;
+      return Promise.resolve();
+    },
+    onForbidden: () => {},
+  });
+  assert.equal(handle(401, false), "signin");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(handle(401, false), "signin");
+  assert.equal(calls, 1);
+});
+
 test("anything that is not 401 or 403 touches neither branch", () => {
   const { calls, handle } = spies();
   assert.equal(handle(500, true), "ok");

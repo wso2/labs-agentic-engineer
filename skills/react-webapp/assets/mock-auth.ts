@@ -173,7 +173,17 @@ export async function handleCallback(): Promise<MockUser> {
   return user();
 }
 
+/**
+ * Signing out forgets the role. The persisted `?role=` stands in for the OIDC
+ * session (see ROLE_STORAGE_KEY), so leaving it behind lands the "signed out"
+ * user back on the same role's screens — the one story sign-out exists to walk.
+ */
 export async function signOut(): Promise<void> {
+  try {
+    sessionStorage.removeItem(ROLE_STORAGE_KEY);
+  } catch {
+    /* private mode: nothing was persisted to forget */
+  }
   window.location.assign("/");
 }
 
