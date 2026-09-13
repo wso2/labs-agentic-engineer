@@ -510,20 +510,86 @@ T1_TOKEN="$(form_cfg "grant_type=client_credentials&client_id=${T1_CLIENT_ID}&cl
 
 # WHAT TO ASK FOR. Thunder does NOT hand a token every scope the caller's roles
 # grant — it returns the INTERSECTION of what was asked for with what they hold.
-# Measured here, on the same user in the same minute:
+# Measured on the same account in the same minute:
 #
 #   scope=openid profile email group ou     -> "openid profile email group ou"
-#   scope=… plus the project's catalog       -> "… claims:read claims:submit"
+#   scope=… plus the project's catalog      -> "… claims:read claims:submit"
 #
 # So a run that asks only for the OIDC five gets a token carrying no permission
-# at all, every 200 row below 401s, and the failure looks exactly like a broken
-# gateway. Ask for every scope THIS API can demand — read off the RestApi that is
-# about to answer, so the request and the operation table cannot drift — and let
-# Thunder narrow it per user, which is the per-user difference these assertions
-# are built on. Asking for a scope the caller does not hold is not an error: it
-# is simply absent from the token, which is how the employee ends up without
-# `reports:read`.
-API_SCOPES="$("${KC[@]}" get restapi "$RESTAPI_NAME" -n "$DP_NS" -o json 2>/dev/null | python3 -c '
+# at all, every 200 row below 401s, and the table accuses the gateway of a fault
+# that is entirely in the probe.
+#
+# Ask for the project's WHOLE CATALOG, read from the directory that issues the
+# token — NOT from the RestApi's operation table. The two are different sets and
+# the difference is exactly what the ownership row below tests: a widening
+# handle such as `claims:read-all` guards no operation (it changes which ROWS
+# `claims:read` returns), so it appears nowhere in the gateway's table, and a
+# token minted from that table leaves the approver seeing only their own claims
+# and the row failing 0-vs-0 for a reason that is not the service's. The
+# catalog is also what the platform writes onto the SPA's client allowlist, so
+# this asks for exactly what the generated app asks for.
+#
+# Thunder then narrows per user, which is the per-user difference every
+# assertion below is built on; a handle the caller does not hold is simply
+# absent from the token rather than an error.
+catalog_scopes() {
+    AEP_T2="$T2_ISSUER" AEP_RS="$RESOURCE_ID" AEP_TOKEN="$SYSTEM_TOKEN" python3 - <<'PY'
+import json, os, sys, urllib.error, urllib.request
+
+T2 = os.environ["AEP_T2"].rstrip("/")
+RS_IDENTIFIER = os.environ["AEP_RS"]
+TOKEN = os.environ["AEP_TOKEN"]
+
+
+# `limit` is capped at 100 on Thunder 1.0.0: 101 and above answer 400 RES-1011
+# "The limit parameter must be a positive integer", which reads as a bad
+# request rather than an out-of-range one and would send a reader hunting the
+# value's TYPE. A project catalog is far smaller, so one page is the whole set.
+def get(path):
+    req = urllib.request.Request(T2 + path, headers={"Authorization": "Bearer " + TOKEN})
+    try:
+        with urllib.request.urlopen(req) as r:
+            return json.loads(r.read() or b"{}")
+    except (urllib.error.HTTPError, urllib.error.URLError, ValueError):
+        return {}
+
+
+def rows(body, *keys):
+    for k in keys:
+        if isinstance(body.get(k), list):
+            return body[k]
+    return []
+
+
+server = None
+for s in rows(get("/resource-servers?limit=100"), "resourceServers", "data"):
+    if s.get("identifier") == RS_IDENTIFIER:
+        server = s
+        break
+if not server:
+    sys.exit(0)   # empty ask; the caller falls back
+handles, seen = [], set()
+for resource in rows(get("/resource-servers/%s/resources?limit=100" % server["id"]),
+                     "resources", "data"):
+    actions = get("/resource-servers/%s/resources/%s/actions?limit=100"
+                  % (server["id"], resource["id"]))
+    for action in rows(actions, "actions", "data"):
+        handle = action.get("permission") or "%s:%s" % (resource.get("handle", ""),
+                                                        action.get("handle", ""))
+        if handle and handle not in seen:
+            seen.add(handle)
+            handles.append(handle)
+print(" ".join(handles))
+PY
+}
+
+# Fallback: every handle the RENDERED operation table can demand. Narrower than
+# the catalog (it carries no widening handle), but it needs no directory read,
+# so a run whose system token cannot see the directory still asserts the gateway
+# rows instead of stopping. The banner says which source was used, because the
+# ownership row's verdict depends on it.
+restapi_scopes() {
+    "${KC[@]}" get restapi "$RESTAPI_NAME" -n "$DP_NS" -o json 2>/dev/null | python3 -c '
 import json, sys
 try:
     cr = json.load(sys.stdin)
@@ -537,9 +603,18 @@ for op in cr.get("spec", {}).get("operations", []) or []:
             if handle not in seen:
                 seen.add(handle)
                 out.append(handle)
-print(" ".join(out))')"
+print(" ".join(out))'
+}
+
+API_SCOPES="$(catalog_scopes)"
+SCOPE_SOURCE="the project resource server's catalog"
+if [ -z "$API_SCOPES" ]; then
+    API_SCOPES="$(restapi_scopes)"
+    SCOPE_SOURCE="the RestApi's operation table (directory unreadable)"
+fi
 REQUESTED_SCOPES="openid profile email group ou${API_SCOPES:+ ${API_SCOPES}}"
 echo "   requesting:  ${REQUESTED_SCOPES}"
+echo "   (from ${SCOPE_SOURCE})"
 
 # The five-call flow login. Credentials arrive through the environment
 # (AEP_LOGIN_USERNAME / AEP_LOGIN_PASSWORD), never through argv.
