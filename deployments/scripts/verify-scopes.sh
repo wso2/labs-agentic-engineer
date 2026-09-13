@@ -508,12 +508,46 @@ T1_TOKEN="$(form_cfg "grant_type=client_credentials&client_id=${T1_CLIENT_ID}&cl
 [ -n "$T1_TOKEN" ] && echo "   ✅ platform IdP (T1) token — must be REJECTED below" \
     || { echo "❌ could not mint a platform-IdP token from ${T1_ISSUER}." >&2; exit 1; }
 
+# WHAT TO ASK FOR. Thunder does NOT hand a token every scope the caller's roles
+# grant — it returns the INTERSECTION of what was asked for with what they hold.
+# Measured here, on the same user in the same minute:
+#
+#   scope=openid profile email group ou     -> "openid profile email group ou"
+#   scope=… plus the project's catalog       -> "… claims:read claims:submit"
+#
+# So a run that asks only for the OIDC five gets a token carrying no permission
+# at all, every 200 row below 401s, and the failure looks exactly like a broken
+# gateway. Ask for every scope THIS API can demand — read off the RestApi that is
+# about to answer, so the request and the operation table cannot drift — and let
+# Thunder narrow it per user, which is the per-user difference these assertions
+# are built on. Asking for a scope the caller does not hold is not an error: it
+# is simply absent from the token, which is how the employee ends up without
+# `reports:read`.
+API_SCOPES="$("${KC[@]}" get restapi "$RESTAPI_NAME" -n "$DP_NS" -o json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    cr = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+seen, out = set(), []
+for op in cr.get("spec", {}).get("operations", []) or []:
+    for policy in op.get("policies", []) or []:
+        scopes = (policy.get("params") or {}).get("scopes") or {}
+        for handle in (scopes.get("anyOf") or []) + (scopes.get("allOf") or []):
+            if handle not in seen:
+                seen.add(handle)
+                out.append(handle)
+print(" ".join(out))')"
+REQUESTED_SCOPES="openid profile email group ou${API_SCOPES:+ ${API_SCOPES}}"
+echo "   requesting:  ${REQUESTED_SCOPES}"
+
 # The five-call flow login. Credentials arrive through the environment
 # (AEP_LOGIN_USERNAME / AEP_LOGIN_PASSWORD), never through argv.
 mint_user_token() { # <username-var> <password-var> -> prints the access token
     AEP_LOGIN_USERNAME="${!1}" AEP_LOGIN_PASSWORD="${!2}" \
     AEP_IDP="$T2_ISSUER" AEP_CLIENT_ID="$SPA_CLIENT_ID" \
     AEP_REDIRECT_URI="$REDIRECT_URI" AEP_RESOURCE="$RESOURCE_ID" \
+    AEP_SCOPE="$REQUESTED_SCOPES" \
     python3 - <<'PY'
 import base64, hashlib, http.cookiejar, json, os, sys, urllib.error, urllib.parse, urllib.request
 
@@ -523,8 +557,13 @@ REDIRECT = os.environ["AEP_REDIRECT_URI"]
 RESOURCE = os.environ["AEP_RESOURCE"]
 USER     = os.environ["AEP_LOGIN_USERNAME"]
 PASSWORD = os.environ["AEP_LOGIN_PASSWORD"]
-# Thunder puts every scope the user's roles grant into the token regardless of
-# what is asked for; the five OIDC scopes must be requested to get an id_token.
+# The caller supplies this (AEP_SCOPE, built from the RestApi above). Thunder
+# returns the INTERSECTION of what is asked for with what the user's roles
+# grant, so a request naming only the OIDC five comes back carrying only those
+# five — no permission at all, and every protected operation 401s for a reason
+# that has nothing to do with the gateway. The default below is the OIDC five
+# alone because that is the only set true of every deployment; a caller that
+# wants to assert anything about permissions must name them.
 SCOPE    = os.environ.get("AEP_SCOPE", "openid profile email group ou")
 
 jar = http.cookiejar.CookieJar()

@@ -80,8 +80,8 @@ dev:
 test: gen manifests-check
 	$(TURBO) run test
 	@rc=0; for d in $(GO_MODULE_DIRS); do echo ">> go test $$d"; ( cd "$$d" && go test ./... ) || rc=1; done; exit $$rc
-	@files=$$(find $(ROOT)/skills -name '*.test.mjs' | sort); \
-	  if [ -n "$$files" ]; then echo ">> node --test skills"; node --test $$files; fi
+	@files=$$(find $(ROOT)/skills $(ROOT)/deployments/scripts -name '*.test.mjs' | sort); \
+	  if [ -n "$$files" ]; then echo ">> node --test skills + deployments/scripts"; node --test $$files; fi
 
 # Platform manifests that exist twice: once under deployments/manifests (applied
 # by the setup scripts with kubectl) and once as a verbatim copy in the platform
