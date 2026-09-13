@@ -36,7 +36,9 @@
 //
 // Surface (do not rename — the platform's skills, the wireframe mapping and
 // the mock harness all target these names): granted, can, useScopes, Can,
-// RequireScope, Forbidden, NoAccess, heldRoles.
+// RequireScope, Forbidden, NoAccess, heldRoles. The prop both gates take is
+// `scope`, spelled the way the design of record spells it:
+// <RequireScope scope="claims:approve" />.
 //
 // Style it with the pinned design system; the markup below is structure, not a
 // design. Keep the words.
@@ -160,9 +162,9 @@ export async function granted(): Promise<Set<string>> {
   return parseScopes(user?.scope);
 }
 
-/** Does the caller hold this handle? Whole-string, never a prefix match. */
-export async function can(handle: Scope): Promise<boolean> {
-  return holdsScope(await granted(), handle);
+/** Does the caller hold this scope? Whole-string, never a prefix match. */
+export async function can(scope: Scope): Promise<boolean> {
+  return holdsScope(await granted(), scope);
 }
 
 /**
@@ -179,9 +181,9 @@ export function useHeldRoles(): Role[] {
   return useMemo(() => rolesFor(scopes, ROLE_GRANTS), [scopes]);
 }
 
-/** The roles that grant a handle — what Forbidden names to the user. */
-export function rolesGranting(handle: Scope): Role[] {
-  return rolesGrantingHandle(handle, ROLE_GRANTS);
+/** The roles that grant a scope — what Forbidden names to the user. */
+export function rolesGranting(scope: Scope): Role[] {
+  return rolesGrantingHandle(scope, ROLE_GRANTS);
 }
 
 /** Can the caller open a screen declared with this `requires`? */
@@ -192,46 +194,46 @@ export function canReachScreen(requires: ScreenRequirement, scopes: ReadonlySet<
 // --- the gates --------------------------------------------------------------
 
 /**
- * Renders `children` only when the caller holds `handle`. Wrap every nav item
+ * Renders `children` only when the caller holds `scope`. Wrap every nav item
  * and every action button in one of these: the rail is ONE rail whose items are
  * each gated, which is also what makes a user holding two roles see the union.
  */
 export function Can({
-  handle,
+  scope,
   children,
   fallback = null,
 }: {
-  handle: Scope;
+  scope: Scope;
   children: ReactNode;
   fallback?: ReactNode;
 }): ReactElement {
   const scopes = useScopes();
-  return <>{holdsScope(scopes, handle) ? children : fallback}</>;
+  return <>{holdsScope(scopes, scope) ? children : fallback}</>;
 }
 
 /**
  * Route guard for a screen whose security.json `requires` names a handle:
  *
- *   <Route element={<RequireScope handle="claims:approve" screen="Approvals" />}>
+ *   <Route element={<RequireScope scope="claims:approve" screen="Approvals" />}>
  *     <Route path="/approvals" element={<Approvals />} />
  *   </Route>
  *
- * A caller who reaches the URL without the handle gets Forbidden INSIDE the
+ * A caller who reaches the URL without the scope gets Forbidden INSIDE the
  * shell — never a redirect to sign-in, which loops, and never a blank page.
  */
 export function RequireScope({
-  handle,
+  scope,
   screen,
 }: {
-  handle: Scope;
+  scope: Scope;
   screen?: string;
 }): ReactElement {
   const scopes = useScopes();
-  if (holdsScope(scopes, handle)) return <Outlet />;
-  return <Navigate to="/forbidden" replace state={{ handle, screen }} />;
+  if (holdsScope(scopes, scope)) return <Outlet />;
+  return <Navigate to="/forbidden" replace state={{ scope, screen }} />;
 }
 
-type ForbiddenState = { handle?: Scope; screen?: string };
+type ForbiddenState = { scope?: Scope; screen?: string };
 
 /**
  * "You hold other things, just not this one." Rendered INSIDE the app shell, so
@@ -241,8 +243,8 @@ type ForbiddenState = { handle?: Scope; screen?: string };
  * wireframe .dsl and they are the carve-out from "no invented screens".
  */
 export function Forbidden(): ReactElement {
-  const { handle, screen } = (useLocation().state ?? {}) as ForbiddenState;
-  const unlockedBy = handle ? rolesGranting(handle) : [];
+  const { scope, screen } = (useLocation().state ?? {}) as ForbiddenState;
+  const unlockedBy = scope ? rolesGranting(scope) : [];
   const what = screen ?? "That screen";
 
   return (
@@ -253,9 +255,9 @@ export function Forbidden(): ReactElement {
           ? `${what} needs the ${listOf(unlockedBy)} role${unlockedBy.length > 1 ? "s" : ""}.`
           : `${what} needs a permission your account does not have.`}
       </p>
-      {handle ? (
+      {scope ? (
         <p>
-          It is gated on <code>{handle}</code>, which your session does not carry.
+          It is gated on <code>{scope}</code>, which your session does not carry.
         </p>
       ) : null}
       <p>Everything you can reach is still in the navigation.</p>

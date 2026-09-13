@@ -42,7 +42,7 @@ swapping `src/auth.ts` is a module substitution, not a request.
 │   ├── browser.ts    copied verbatim — starts MSW with your handlers
 │   ├── handlers.ts   YOURS — the seed data and the request handlers
 │   ├── env.ts        YOURS — what window._env_ holds
-│   ├── roles.ts      YOURS — the roster        ┐ only with an auth
+│   ├── roles.ts      YOURS — role -> grants    ┐ only with an auth
 │   └── auth.ts       copied verbatim           ┘ dependency
 ├── src/main.tsx      + the dev-only guard that starts the worker
 ├── vite.config.ts    + the plugin, under `mode === "mock"`
@@ -74,10 +74,18 @@ to either is a change to how every app on the platform mocks, so leave them
 exactly as copied and put what this app needs in the files you author.
 
 `auth.ts` is the one exception: it is a **module substitution**, so it must
-export what YOUR `src/auth.ts` exports. The copy carries the standard surface;
-where your app's auth module adds to it — a `resolveRole`, a `Role` type, a
-`getGroups` — add a mock of that here too, or the swap fails to compile. Removing
-an export it does not have is fine as well.
+export what YOUR `src/auth.ts` exports — `signIn`, `signOut`, `handleCallback`,
+`currentUser`, `accessToken`, `tokenIsValid`, plus `scopesFromToken` for the
+handlers. Where your app's auth module adds to it, add a mock of that here too,
+or the swap fails to compile. Removing an export it does not have is fine as
+well.
+
+**`src/authz.tsx` and `src/authz-core.ts` are NOT substituted.** They read
+`user.scope` off whatever auth module is in play, so the app's real
+authorization code — the route guards, the hidden nav items, `Forbidden`,
+`NoAccess`, the role badge, the 401 rule — runs unchanged in mock mode. That is
+the whole point of the mock emitting a scope string rather than a role name:
+what you walk is what deploys.
 
 **Never run `npx msw init`.** It copies the worker script into `public/`, where
 it would be committed and then shipped inside every production image;
@@ -164,10 +172,27 @@ repeatable, and it is also why a row created a moment ago can vanish if the run
 leaves the app mid-scenario. Seed enough rows that a table, its empty state and
 its pagination are all reachable.
 
+**The mock enforces the contract's scopes too.** An operation whose `security`
+block names a handle answers **403** when the caller's token does not carry it,
+and an `own`/`any` pair widens the same way the service does. Without that,
+`Forbidden` and the ownership rule are unwalkable and the first time anyone sees
+them is on the cluster.
+
+**Enforce EXACTLY the handle the operation declares — never a substitute.**
+Scope comparison is a whole-string match everywhere else in the system, so
+`todos:read-all` does not admit an operation that declares `todos:read`. A
+mock that accepts the sibling handle lets a role pass a walk the real service
+answers 403 to, which hides the precise defect the walk exists to find. If a
+role the design means to serve cannot reach an operation with the grants
+`security.json` gives it, **that is a defect in the design**: leave the mock
+exact and report the role, the screen and the handle, in the walk's progress
+lines and in your own report. Never widen a handler or a route guard to make it
+pass.
+
 ```ts
 import { http, HttpResponse } from "msw";
 import type { components } from "../src/generated/todo-api";
-import { rolesFromToken } from "./auth";
+import { scopesFromToken } from "./auth";
 
 type Todo = components["schemas"]["Todo"];
 
@@ -176,16 +201,27 @@ let todos: Todo[] = [
   { id: "2", title: "Ship the thing", done: true, owner: "mock-owner" },
 ];
 
+const forbidden = (scope: string) =>
+  HttpResponse.json(
+    { error: "insufficient_scope", message: `this action requires the ${scope} permission` },
+    { status: 403, headers: { "WWW-Authenticate": `Bearer error="insufficient_scope", scope="${scope}"` } },
+  );
+
 export const handlers = [
   http.get("/api/todos", ({ request }) => {
-    // Role scoping is part of the story, so the mock enforces it too.
-    const roles = rolesFromToken(request.headers.get("authorization"));
+    // The contract declares todos:read on this operation; todos:read-all widens
+    // it from the caller's own rows to every row. Exactly those two handles.
+    const held = scopesFromToken(request.headers.get("authorization"));
+    if (!held.includes("todos:read")) return forbidden("todos:read");
     return HttpResponse.json(
-      roles.includes("Manager") ? todos : todos.filter((t) => t.owner === "mock-owner"),
+      held.includes("todos:read-all") ? todos : todos.filter((t) => t.owner === "mock-owner"),
     );
   }),
 
   http.post("/api/todos", async ({ request }) => {
+    if (!scopesFromToken(request.headers.get("authorization")).includes("todos:submit")) {
+      return forbidden("todos:submit");
+    }
     const input = (await request.json()) as { title?: string };
     if (!input?.title) {
       return HttpResponse.json({ error: "title is required" }, { status: 400 });
@@ -233,7 +269,11 @@ export const mockEnv = {
   USER_AUTH_CLIENT_ID: "mock-client",
   USER_AUTH_ISSUER: "https://mock-idp.test",
   USER_AUTH_JWKS_URL: "https://mock-idp.test/.well-known/jwks.json",
-  USER_AUTH_SCOPES: "openid profile email groups",
+  // The OIDC scopes are `group` and `ou`, SINGULAR — not `groups` — and the
+  // project's own catalog handles follow them, exactly as the platform requests
+  // them. `<DEP>_RESOURCE` is emitted too; src/env.ts throws without it.
+  USER_AUTH_SCOPES: "openid profile email group ou todos:read todos:read-all todos:submit",
+  USER_AUTH_RESOURCE: "https://mock-idp.test/resources/mock-project",
 };
 ```
 
@@ -248,21 +288,54 @@ turns the one defect this arrangement exists to catch into a green screen.
 
 ## 5 · Author `mock/roles.ts` — only with an auth dependency
 
-The roster comes from `specs/design/security.json`, in the order that file
-declares it: the first is who a visitor is with no `?role=` on the URL.
+**Role → grants**, copied from `specs/design/security.json`'s `roles[]`, in the
+order that file declares them: the first is who a visitor is with no `?role=` on
+the URL. It is the ONLY place mock mode restates the design.
 
 ```ts
-// specs/design/security.json → roles[].name
-export const mockRoles = ["Manager", "Owner"];
+// specs/design/security.json → roles[] (name + grants), same order
+export const mockRoles: { name: string; grants: string[] }[] = [
+  { name: "Owner",   grants: ["todos:read", "todos:submit"] },
+  { name: "Manager", grants: ["todos:read", "todos:read-all"] },
+];
 ```
+
+`mock/auth.ts` turns the `?role=` on the URL into the space-separated scope
+string a real token would carry — the OIDC scopes plus that role's grants — so
+`src/authz.tsx` gates exactly as it does in production. Three URLs the walk
+depends on:
+
+| URL | What it produces |
+|---|---|
+| no `?role=` | the first role's grants |
+| `?role=Manager` | that role's grants — what that role, and only that role, reaches |
+| `?role=` (empty) | signed in, holding **no project scope**: the `NoAccess` case |
+
+A name absent from the list grants nothing, which is how a screen is checked
+against a role that must not reach it. Roles compose: `?role=Owner,Manager`
+holds the union.
+
+**The role survives internal navigation.** The asset persists the last explicit
+`?role=` in `sessionStorage`, because the app's own links and redirects carry
+bare paths — a mock that re-read the URL on every mount reverted every non-default
+role to the first one on the first click. That fix lives in the asset, and this
+is why you re-copy the asset rather than patch your project's copy.
+
+**Do not restate the grants anywhere else.** `src/scopes.gen.ts` is generated
+from the same file for production; this list exists only because `mock/` may not
+import from `src/` in a way that survives the substitution.
 
 ## Verify
 
 Added to this stack's ordinary sequence, after `npm run build`:
 
 ```bash
-npm run build && ! grep -rq mockServiceWorker dist/
+npm run gen && npm run build && ! grep -rq mockServiceWorker dist/
 ```
+
+The `gen` step is not optional on an app with an auth dependency: a stale
+`src/scopes.gen.ts` type-checks green while the app gates on handles the design
+no longer has. Wire it as the first half of `build` so it cannot be skipped.
 
 **Done when:** the build exits 0 and the grep finds nothing. A hit means the
 guard in `src/main.tsx` was written so the bundler could not prove the branch
@@ -287,6 +360,10 @@ memory for the rest of the run.
 | A parameterised route swallows a literal one | Registration order | Most specific first — `/api/todos/archived` before `/api/todos/:id`. |
 | The first call of the page escapes the mock | The app rendered before the worker started | `enableMocking()` is awaited before `createRoot`; keep that order. |
 | The app renders as the wrong role | `mock/roles.ts` is ordered differently from `security.json` | The first entry is the default; keep the file's order. |
+| Every screen is reachable under every `?role=` | `mock/roles.ts` lists names without grants, so the scope string carries no handle and the gate was written to fall open | Grants per role; `authz` hides what is not held. |
+| Every role lands on `NoAccess` | `mockEnv`'s `USER_AUTH_SCOPES` is v1 (`groups`, no project handles), or the mock user carries no `scope` field | `openid profile email group ou <the project's handles>`; the mock user's `scope` is what `authz` reads. |
+| The first internal click reverts to the default role | A project-local `mock/auth.ts` that re-reads `?role=` on every mount | Re-copy the asset; it persists the last explicit `?role=` in `sessionStorage`. |
+| `Forbidden` is unreachable in mock mode | The handlers answer 200 regardless of scope | Enforce the contract's exact handle in the handler; 403 with `insufficient_scope`. |
 | `dist/` contains `msw` or `mock/` | The dev-only guard is not statically decidable | Keep the `import.meta.env.DEV` test first and the import dynamic. |
 | `tsc --noEmit` passes but `dev:mock` fails on a type | `mock` is missing from `tsconfig.json`'s `include` | Add it, and re-run the type-check. |
 | `TS2339: Property 'env' does not exist on type 'ImportMeta'` | `vite/client` is not in `tsconfig.json`'s `types` | Add `"types": ["vite/client", "node"]`. |

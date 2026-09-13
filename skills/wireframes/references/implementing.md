@@ -43,23 +43,22 @@ over the issue text when the two differ.
   though no wireframe names them.
 
   Gate each screen on the handle `specs/design/security.json` gives it in
-  `screens[].requires`, through `thunder-authentication`'s `authz` module:
-  `<RequireScope scope="…" />` around the route, `<Can scope="…">` around the
-  nav item that reaches it. `requires: null` is any signed-in user;
-  `requires: "public"` is reachable before sign-in. Treat all of it as
-  **presentation only** — the backend enforces the same handle and answers 403.
-  A user who holds scopes but opens a gated screen by URL sees `Forbidden`
-  inside the shell; a user who can reach nothing at all sees `NoAccess` instead
-  of the shell. Never read a groups claim, and never fall back to a default
-  role. A component with no auth dependency has no roles: build the screen as
-  drawn.
+  `screens[].requires`, through `thunder-authentication`'s `authz` assets —
+  copied verbatim, never re-implemented: `<RequireScope scope="…" />` around the
+  route and `<Can scope="…">` around the nav item that reaches it, with the
+  scope read from the generated `SCREENS` table rather than typed into JSX.
+  `requires: null` is any signed-in user; `requires: "public"` is reachable
+  before sign-in. Treat all of it as **presentation only** — the backend
+  enforces the same handle and answers 403. A user who holds scopes but opens a
+  gated screen by URL sees `Forbidden` **inside** the shell, rail intact; a user
+  who can reach nothing at all sees `NoAccess` **instead of** the shell. Never
+  read a groups claim, and never fall back to a default role. A component with
+  no auth dependency has no roles: build the screen as drawn.
 
-  **Until the `authz` asset ships** (it lands in a later release; it is not in
-  `thunder-authentication` yet), build the gate yourself under those exact
-  names — a `RequireScope` route wrapper, a `Can` wrapper for a nav item, and
-  the `Forbidden` and `NoAccess` views — reading the `requires` handle from the
-  access token's `scope` claim. Same rule, same names, so the asset replaces
-  your copy without a rewrite of the screens.
+  The screen name `security.json` uses is the one a person reads (`"My Claims"`);
+  the DSL cannot carry a space and spells it `MyClaims`. The two are matched
+  **normalized** — strip non-alphanumerics, lowercase — and neither file changes
+  spelling to suit the other.
 
 ## Element for element
 
@@ -68,7 +67,7 @@ in that order, with that literal content:
 
 | DSL | Build |
 |---|---|
-| `navbar "App"` / `sidebar "A -> S \| B"` | the pinned design system's canonical app shell — the brand in the top bar, the `sidebar` items as the navigation rail — identical on every screen of a role; each item that carries `-> S` links there. Navigation stays in the rail even if a wireframe put a link in the `navbar` |
+| `navbar "App"` / `sidebar "A -> S \| B"` | the pinned design system's canonical app shell — the brand in the top bar, the `sidebar` items as the navigation rail; each item that carries `-> S` links there. The DSL draws a different rail per role because it draws one role at a time; the app has **ONE** rail whose items are each wrapped in `<Can scope="…">`, which reproduces every one of those pictures and also covers a user holding two roles. Navigation stays in the rail even if a wireframe put a link in the `navbar` |
 | `heading`, `text`, `link`, `breadcrumb` | the same words on the page |
 | `card "Label \| Value \| Caption"` | a stat tile with that label, that value bound to live data, that caption |
 | `table "A \| B \| C"` + `row` lines | a data table with exactly those columns, bound to the real list. A column the list endpoint does not return is filled from **one** more request to another list operation of the contract (a name joined on id from the entity list; a count from the child list filtered once and grouped) — never one request per row, and never dropped while some list operation can supply it. Only a column no list can supply is left out, with the gap named in your report |
@@ -85,7 +84,9 @@ wrong for the data the API actually returns, and say so in the PR.
 **Empty, loading, and error states** are implied, not drawn: every `table`,
 `list`, and data `card` needs what it shows with no rows, while fetching,
 and when the request fails. A wireframe shows the happy path; the page
-must not break off it.
+must not break off it. A region whose operation the viewing role cannot call
+renders its own forbidden state — it does not vanish, and it is not the whole
+screen's `Forbidden`.
 
 **The example data is the mock's seed.** The reviewer compares the running
 page against the rendered wireframe, so mock mode should show the `row`s the
