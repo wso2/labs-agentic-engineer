@@ -17,7 +17,11 @@
  */
 
 // PATTERN, not a verbatim copy. Copy this to <app-path>/src/App.tsx and replace
-// PAGE_BY_KEY with YOUR pages. The ROUTING STRUCTURE below is the part that is
+// PAGE_BY_KEY and APP_NAME with YOUR pages and YOUR app's name — both below are
+// the Expense Tracker fixture's. If the app already holds its name (the
+// wireframes' `navbar` title, usually src/appName.ts), import it from there
+// rather than declaring a second copy that can drift.
+// The ROUTING STRUCTURE below is the part that is
 // prescribed, and it is a structure rule, not styling:
 //
 //   NoAccess sits ABOVE the shell route and REPLACES it.

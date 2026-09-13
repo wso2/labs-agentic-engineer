@@ -93,7 +93,11 @@ it would be committed and then shipped inside every production image;
 
 ## 2 · Wire the four project files
 
-`vite.config.ts` — the plugin is added under `mock` mode only:
+`vite.config.ts` — the plugin is added under `mock` mode only. **These four
+snippets are ADDITIONS to the files you already have, not replacements for
+them**; each is written as the whole file so the shape is unambiguous, and
+pasting one over a file that already carried something else is how a `test`
+block or a `types` entry silently disappears:
 
 ```ts
 import { defineConfig } from "vite";
@@ -102,6 +106,9 @@ import { mockMode } from "./mock/plugin";
 
 export default defineConfig(({ mode }) => ({
   plugins: [react(), ...(mode === "mock" ? [mockMode()] : [])],
+  // KEEP whatever else this file carried — a `test: { … }` block for vitest,
+  // `server`, `resolve`, anything. Only `plugins` and the arrow-function form
+  // are what mock mode needs.
 }));
 ```
 
@@ -136,11 +143,14 @@ Read no other key, and read these two nowhere else.
 "scripts": { "dev:mock": "vite --mode mock" }
 ```
 
-`tsconfig.json` — two edits:
+`tsconfig.json` — two edits, both **additive**: add the entries that are
+missing and keep the ones that are there. An app with a vitest suite already
+carries `"vitest/globals"` in `types`, and dropping it turns every `describe` in
+the suite into `TS2304: Cannot find name`.
 
 ```jsonc
-"types": ["vite/client", "node"],          // in compilerOptions
-"include": ["src", "mock", "vite.config.ts"]
+"types": ["vite/client", "node", /* …and whatever was already here */],
+"include": ["src", "mock", "vite.config.ts", /* …and whatever was already here */]
 ```
 
 The `include` puts the whole directory in the ordinary Verify run, rather than

@@ -17,7 +17,8 @@
  */
 
 // PATTERN, not a verbatim copy. Copy this to <app-path>/src/screens.ts and
-// replace COMPONENT and ROUTE_BY_KEY with YOUR component name and YOUR routes.
+// replace COMPONENT and ROUTE_BY_KEY with YOUR component name and YOUR routes —
+// both below are the Expense Tracker fixture's, not defaults.
 // Everything else stays as it is.
 //
 // THE RULE THIS FILE EXISTS FOR: a screen's required handle is READ FROM THE
