@@ -460,3 +460,17 @@ func TestCreateVersionTag_ConcurrentSameSuggestion_LoserRecomputesToNext(t *test
 		}
 	}
 }
+
+// The story-scope read applies the same name rule as every other read at a
+// version: its argument becomes `tags/<name>`, so a name no version could carry
+// is refused before it reaches ref resolution.
+func TestBuildScopeAtTag_RefusesANameNoVersionCouldCarry(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, validSpecSeed())
+	ctx := context.Background()
+	for _, name := range []string{"../heads/main", "has space", "", ".hidden", "ends.lock", "a..b"} {
+		if _, err := r.svc.BuildScopeAtTag(ctx, r.org, r.proj, name); !errors.Is(err, ErrInvalidVersionTag) {
+			t.Errorf("BuildScopeAtTag(%q) err = %v, want ErrInvalidVersionTag", name, err)
+		}
+	}
+}

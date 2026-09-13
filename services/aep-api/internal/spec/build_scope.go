@@ -56,6 +56,12 @@ func (s BuildScope) MilestoneTitle() string { return s.Tag }
 // that impossible for freshly-cut tags.
 func (s *artifactService) BuildScopeAtTag(ctx context.Context, orgID, projectID, tag string) (BuildScope, error) {
 	scope := BuildScope{Tag: tag}
+	// The same rule the save applies, for the same reason GetDesignAtTag applies
+	// it: this tag becomes `tags/<name>` a few lines down, and a name that could
+	// never have been created must not be able to walk out of that namespace.
+	if verr := ValidateVersionName(tag); verr != nil {
+		return scope, fmt.Errorf("%w: %q: %w", ErrInvalidVersionTag, tag, verr)
+	}
 	_, ref, err := s.readyRef(ctx, orgID, projectID)
 	if err != nil {
 		return scope, err
