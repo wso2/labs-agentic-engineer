@@ -31,6 +31,10 @@ const (
 	PermissionRequirementUpdate Permission = "ae:requirement-update"
 	PermissionRequirementView   Permission = "ae:requirement-view"
 	PermissionSkillConfig       Permission = "ae:skill-config"
+	PermissionSkillView         Permission = "ae:skill-view"
+	PermissionUsageView         Permission = "ae:usage-view"
+	PermissionObservabilityView Permission = "ae:observability-view"
+	PermissionAiChat            Permission = "ae:ai-chat"
 )
 
 // AllPermissions is every AE permission key the platform recognizes.
@@ -43,6 +47,10 @@ var AllPermissions = []Permission{
 	PermissionRequirementUpdate,
 	PermissionRequirementView,
 	PermissionSkillConfig,
+	PermissionSkillView,
+	PermissionUsageView,
+	PermissionObservabilityView,
+	PermissionAiChat,
 }
 
 var rolePermissionsCatalog = map[string][]string{
@@ -55,11 +63,22 @@ var rolePermissionsCatalog = map[string][]string{
 		string(PermissionRequirementUpdate),
 		string(PermissionRequirementView),
 		string(PermissionSkillConfig),
+		string(PermissionSkillView),
+		string(PermissionUsageView),
+		string(PermissionObservabilityView),
+		string(PermissionAiChat),
 	},
+	// ae:ai-chat is included: the chat panel is mounted globally whenever a
+	// project is open, so withholding it would leave ae-developer unable to
+	// talk to the coding agent at all. ae:usage-view/ae:observability-view
+	// are NOT — those read org spend and incident/alert reports, which reads
+	// as an admin-facing concern absent a decision to extend it.
 	"ae-developer": {
 		string(PermissionRequirementView),
 		string(PermissionDesignView),
 		string(PermissionBuild),
+		string(PermissionBuildView),
+		string(PermissionAiChat),
 	},
 }
 

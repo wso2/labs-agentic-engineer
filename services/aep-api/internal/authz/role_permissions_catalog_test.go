@@ -31,6 +31,10 @@ func TestAllPermissions_MatchesConstants(t *testing.T) {
 		PermissionRequirementUpdate,
 		PermissionRequirementView,
 		PermissionSkillConfig,
+		PermissionSkillView,
+		PermissionUsageView,
+		PermissionObservabilityView,
+		PermissionAiChat,
 	}
 
 	if len(AllPermissions) != len(constants) {
@@ -104,14 +108,16 @@ func TestRolePermissions_AeAdminHasAllPermissions(t *testing.T) {
 	}
 }
 
-func TestRolePermissions_AeDeveloperHasExactlyThreePermissions(t *testing.T) {
+func TestRolePermissions_AeDeveloperHasExactlyFivePermissions(t *testing.T) {
 	got := RolePermissions("ae-developer")
 	sort.Strings(got)
 
 	want := []string{
 		string(PermissionBuild),
+		string(PermissionBuildView),
 		string(PermissionDesignView),
 		string(PermissionRequirementView),
+		string(PermissionAiChat),
 	}
 	sort.Strings(want)
 

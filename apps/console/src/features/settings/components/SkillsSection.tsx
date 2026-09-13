@@ -90,6 +90,7 @@ const STATUS_META = {
 } as const;
 
 export function SkillsSection() {
+  const hasSkillView = useHasPermission("ae:skill-view");
   const {
     data: config,
     isLoading: configLoading,
@@ -97,7 +98,7 @@ export function SkillsSection() {
     error: configError,
     refetch: refetchConfig,
   } = useConfig();
-  const { data, isLoading, isError, error, refetch } = useSkills();
+  const { data, isLoading, isError, error, refetch } = useSkills(hasSkillView);
   const { data: updates } = useSkillUpdates();
   const hasSkillConfig = useHasPermission("ae:skill-config");
 
@@ -111,6 +112,18 @@ export function SkillsSection() {
   const deleteSkill = useDeleteSkill();
   const syncSkills = useSyncSkills();
   const setSkillEnabled = useSetSkillEnabled();
+
+  // Checked before the config/skills loading states below: without
+  // ae:skill-view there is nothing here to load — the skills query itself
+  // never fires (useSkills(hasSkillView)), so falling through would just
+  // hang on an eternal loading spinner.
+  if (!hasSkillView) {
+    return (
+      <Alert severity="warning">
+        You don't have permission to view skills.
+      </Alert>
+    );
+  }
 
   if (configLoading) {
     return (

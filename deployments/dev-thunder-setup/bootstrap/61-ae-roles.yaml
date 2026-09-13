@@ -80,6 +80,18 @@ resources:
       - name: Skill Config
         handle: skill-config
         description: Configure skills
+      - name: Skill View
+        handle: skill-view
+        description: View skills without configuring them
+      - name: Usage View
+        handle: usage-view
+        description: View org usage/spend
+      - name: Observability View
+        handle: observability-view
+        description: View alerts and RCA reports
+      - name: AI Chat
+        handle: ai-chat
+        description: Use the AI chat panel
 ---
 # resource_type: group
 resource_type: group
@@ -121,6 +133,10 @@ permissions:
       - "ae:requirement-update"
       - "ae:requirement-view"
       - "ae:skill-config"
+      - "ae:skill-view"
+      - "ae:usage-view"
+      - "ae:observability-view"
+      - "ae:ai-chat"
 assignments:
   - id: 01900000-0000-7000-8000-0000000000b9
     type: group
@@ -137,6 +153,8 @@ permissions:
       - "ae:requirement-view"
       - "ae:design-view"
       - "ae:build"
+      - "ae:build-view"
+      - "ae:ai-chat"
 assignments:
   - id: 01900000-0000-7000-8000-0000000000ba
     type: group

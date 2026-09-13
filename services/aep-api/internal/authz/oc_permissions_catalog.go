@@ -70,6 +70,27 @@ package authz
 // should be able to view a project actually holds (both ae-admin and
 // ae-developer), matching project:create's placement under
 // PermissionRequirementUpdate above.
+//
+// The same permission also carries workload:view/resource:view/
+// resourcetype:view, traced to ListWorkloadDependencies
+// (internal/dependencies/provisioning/workload_deps.go): ListWorkloadConsumerDeps
+// reads OC's Workload list, and resolveResourceRow reads back each dependency's
+// Resource and (for org-catalog-typed ones) ResourceType — three separate OC
+// reads for ProjectOverview's Dependencies section.
+//
+// It also carries environment:view (ListOrgEnvironments ->
+// EnvironmentClient.ListNames -> GET /environments, backing the resource
+// registration form's environment picker) and clusterresourcetype:view
+// (ListPlatformResourceTypes -> the org resource catalog's ClusterResourceType
+// read). ListOrgEndpoints reuses workload:view already listed above (it reads
+// the same OC Workload list ListWorkloadDependencies does).
+//
+// PermissionBuildView carries resourcereleasebinding:view, traced to
+// GetProjectDependencyReadiness (internal/dependencies/provisioning/
+// status_service.go's bindingStatus -> resourceClient.GetBinding), which
+// reads a ResourceReleaseBinding to report BuildDetailPage's External
+// Resources panel. GetBuildLogs/StreamRunProgress/StreamTaskLog also gate on
+// this permission but never reach OC, so they need no matching action here.
 var OcActionCatalog = map[string][]string{
 	string(PermissionModelConfig): {
 		"secretreference:view",
@@ -78,6 +99,9 @@ var OcActionCatalog = map[string][]string{
 	},
 	string(PermissionSkillConfig): {"component:view", "component:create"},
 	string(PermissionBuild):       {"component:view", "component:create"},
+	string(PermissionBuildView): {
+		"resourcereleasebinding:view",
+	},
 	string(PermissionRequirementUpdate): {
 		"project:create",
 		"project:delete",
@@ -86,6 +110,11 @@ var OcActionCatalog = map[string][]string{
 	},
 	string(PermissionRequirementView): {
 		"project:view",
+		"workload:view",
+		"resource:view",
+		"resourcetype:view",
+		"environment:view",
+		"clusterresourcetype:view",
 	},
 	string(PermissionGitHubConfig): {
 		"secretreference:view",

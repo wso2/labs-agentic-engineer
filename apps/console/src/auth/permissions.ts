@@ -24,6 +24,7 @@ import { useSession } from "./SessionContext";
 // role signal and no reason to want one.
 export type Permission =
   | "ae:skill-config"
+  | "ae:skill-view"
   | "ae:model-config"
   | "ae:github-config"
   | "ae:requirement-update"
@@ -37,6 +38,7 @@ export type Permission =
 // actual array to filter against. Keep in lockstep with the union above.
 const ALL_PERMISSIONS: readonly Permission[] = [
   "ae:skill-config",
+  "ae:skill-view",
   "ae:model-config",
   "ae:github-config",
   "ae:requirement-update",

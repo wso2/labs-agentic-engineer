@@ -183,7 +183,10 @@ export function useDisconnectGitProvider() {
 
 // Returns the whole envelope: `skills` plus `repoUrl` (the org skills repo
 // backing the catalogue — powers the Import dialog's via-PR guidance link).
-export function useSkills() {
+// `enabled` lets a caller withhold the request entirely (e.g. the caller
+// lacks ae:skill-view) rather than let it fire and land on the generic
+// isError branch.
+export function useSkills(enabled = true) {
   return useQuery({
     queryKey: skillsKeys.lists(),
     queryFn: async () => {
@@ -194,6 +197,7 @@ export function useSkills() {
       return { skills: data.skills ?? [], repoUrl: data.repoUrl };
     },
     staleTime: 30_000,
+    enabled,
   });
 }
 
