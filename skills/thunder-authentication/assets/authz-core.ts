@@ -186,6 +186,14 @@ export interface UnauthorizedHandlerDeps {
  * from one screen answers 401 several times over; without the guard each answer
  * starts its own redirect and the address bar thrashes. The redirect ends this
  * document anyway, so a second call can only be noise.
+ *
+ * A sign-in that REJECTS disarms the guard again. `signIn()` reaches the
+ * network — `oidc-client-ts` fetches the issuer's discovery document before it
+ * can build the authorize URL — so a flaky moment leaves the document exactly
+ * where it was, with no redirect under way. Holding the guard armed on that
+ * would wedge the page for the rest of its life: every later 401 returns
+ * "signin" and nothing ever signs in. The rejection is logged rather than
+ * swallowed, because it is the only trace of a failed redirect.
  */
 export function createUnauthorizedHandler(deps: UnauthorizedHandlerDeps): (
   status: number,
@@ -198,7 +206,10 @@ export function createUnauthorizedHandler(deps: UnauthorizedHandlerDeps): (
       deps.onForbidden({ status });
     } else if (outcome === "signin" && !signInStarted) {
       signInStarted = true;
-      void deps.signIn();
+      void Promise.resolve(deps.signIn()).catch((err) => {
+        signInStarted = false;
+        console.error("api-client: sign-in failed", err);
+      });
     }
     return outcome;
   };

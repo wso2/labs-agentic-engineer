@@ -80,17 +80,34 @@ function project(fixture, { depth = 1 } = {}) {
   return { root, app };
 }
 
-function run(app, args = []) {
+function run(app, args = [], { env = {}, cwd = app } = {}) {
   const result = spawnSync(process.execPath, [path.join(app, "scripts/gen-scopes.mjs"), ...args], {
     encoding: "utf8",
-    cwd: app,
-    env: { ...process.env, AEP_SECURITY_JSON: "", AEP_APP_COMPONENT: "" },
+    cwd,
+    env: { ...process.env, AEP_SECURITY_JSON: "", AEP_APP_COMPONENT: "", ...env },
   });
   return {
     status: result.status,
     out: `${result.stdout ?? ""}${result.stderr ?? ""}`,
     generated: () => readFileSync(path.join(app, "src/scopes.gen.ts"), "utf8"),
   };
+}
+
+/** Rewrite the project's security.json — the document under test. */
+function rewriteSpec(root, mutate) {
+  const spec = path.join(root, "specs/design/security.json");
+  const doc = JSON.parse(readFileSync(spec, "utf8"));
+  const next = mutate(doc);
+  writeFileSync(spec, JSON.stringify(next === undefined ? doc : next));
+  return spec;
+}
+
+/** A previously generated, COMMITTED output the generator must not clobber. */
+function commit(app) {
+  const committed = '// GENERATED earlier and COMMITTED\nexport type Scope = "claims:read";\n';
+  mkdirSync(path.join(app, "src"), { recursive: true });
+  writeFileSync(path.join(app, "src/scopes.gen.ts"), committed);
+  return committed;
 }
 
 test("gen-scopes", { skip: FIXTURES ? false : "design fixtures not in this checkout" }, async (t) => {
@@ -204,5 +221,137 @@ test("gen-scopes", { skip: FIXTURES ? false : "design fixtures not in this check
     const result = run(app, ["--component", "expense-webapp"]);
     assert.equal(result.status, 1);
     assert.match(result.out, /duplicate handles in the catalog: claims:read/);
+  });
+  // --- the document has to BE a version-2 security.json ----------------------
+
+  await t.test("a v1 document is refused — it is not read as an empty catalog", () => {
+    // The failure this catches is silent: v1 has no permissions[]/screens[] in
+    // the shape read here, so a tolerant generator emits `Scope = never` and
+    // `SCREENS = []` over a correct committed file, type-checks green, and
+    // deploys an app where every caller lands on NoAccess.
+    const { root, app } = project("expense-tracker.json");
+    const committed = commit(app);
+    rewriteSpec(root, () => ({
+      version: 1,
+      resources: [{ name: "claims", scopes: ["read"] }],
+      roles: [{ name: "Employee", scopes: ["claims:read"] }],
+    }));
+
+    const result = run(app, ["--component", "expense-webapp"]);
+    assert.equal(result.status, 1);
+    assert.match(result.out, /security\.json v1 is not accepted/);
+    assert.match(result.out, /declares version 1/);
+    assert.match(result.out, /security\.json/);
+    assert.equal(result.generated(), committed);
+  });
+
+  await t.test("a null document is refused with a message, not a stack", () => {
+    const { root, app } = project("expense-tracker.json");
+    const committed = commit(app);
+    writeFileSync(path.join(root, "specs/design/security.json"), "null");
+
+    const result = run(app, ["--component", "expense-webapp"]);
+    assert.equal(result.status, 1);
+    assert.match(result.out, /is not a security\.json document/);
+    assert.match(result.out, /read null/);
+    // A TypeError with a stack means the generator dereferenced it first.
+    assert.doesNotMatch(result.out, /TypeError|\bat .*gen-scopes\.mjs/);
+    assert.equal(result.generated(), committed);
+  });
+
+  await t.test("a version-2 document missing screens[] is refused", () => {
+    const { root, app } = project("expense-tracker.json");
+    rewriteSpec(root, (doc) => {
+      delete doc.screens;
+      return doc;
+    });
+    const result = run(app, ["--component", "expense-webapp"]);
+    assert.equal(result.status, 1);
+    assert.match(result.out, /has no screens\[\] array/);
+  });
+
+  // --- the command line ------------------------------------------------------
+
+  await t.test("a misspelled --component is refused, naming the real ones", () => {
+    // `--component expense-web` used to emit 0 screens and exit 0: an app whose
+    // every user sees NoAccess, built green.
+    const { app } = project("expense-tracker.json");
+    const result = run(app, ["--component", "expense-web"]);
+    assert.equal(result.status, 1);
+    assert.match(result.out, /no screen in .* is declared for component "expense-web"/);
+    assert.match(result.out, /declares screens for: expense-webapp/);
+    assert.equal(existsSync(path.join(app, "src/scopes.gen.ts")), false);
+  });
+
+  await t.test("--component with no value is a usage error, and writes nothing", () => {
+    const { app } = project("expense-tracker.json");
+    const result = run(app, ["--component"]);
+    assert.equal(result.status, 2);
+    assert.match(result.out, /--component needs a value/);
+    assert.match(result.out, /Usage:/);
+    assert.equal(existsSync(path.join(app, "src/scopes.gen.ts")), false);
+  });
+
+  await t.test("an unknown flag is a usage error, and writes nothing", () => {
+    const { app } = project("expense-tracker.json");
+    const result = run(app, ["--componenet", "expense-webapp"]);
+    assert.equal(result.status, 2);
+    assert.match(result.out, /unknown argument "--componenet"/);
+    assert.match(result.out, /Usage:/);
+    assert.equal(existsSync(path.join(app, "src/scopes.gen.ts")), false);
+  });
+
+  await t.test("--help prints the usage, exits 0 and writes nothing", () => {
+    const { app } = project("expense-tracker.json");
+    for (const flag of ["--help", "-h"]) {
+      const result = run(app, [flag]);
+      assert.equal(result.status, 0, result.out);
+      assert.match(result.out, /Usage:/);
+      assert.match(result.out, /--component <name>/);
+      assert.equal(existsSync(path.join(app, "src/scopes.gen.ts")), false);
+    }
+  });
+
+  await t.test("--out is resolved against the CURRENT directory", () => {
+    // Not against the app root: a path typed at a shell prompt means what every
+    // other tool means by it.
+    const { root, app } = project("expense-tracker.json");
+    const result = run(app, ["--component", "expense-webapp", "--out", "generated/scopes.gen.ts"], {
+      cwd: root,
+    });
+    assert.equal(result.status, 0, result.out);
+    assert.equal(existsSync(path.join(root, "generated/scopes.gen.ts")), true);
+    assert.equal(existsSync(path.join(app, "src/scopes.gen.ts")), false);
+    assert.match(readFileSync(path.join(root, "generated/scopes.gen.ts"), "utf8"), /export type Scope =/);
+  });
+
+  await t.test("a --spec that does not exist is an error, not a kept output", () => {
+    // The out-of-reach branch is for the image build, which names no spec. A
+    // path the caller typed and misspelled must not silently keep a stale file.
+    const { app } = project("expense-tracker.json");
+    const committed = commit(app);
+    const missing = path.join(app, "nope/security.json");
+
+    const flagged = run(app, ["--spec", missing]);
+    assert.equal(flagged.status, 1);
+    assert.match(flagged.out, /was named explicitly/);
+    assert.doesNotMatch(flagged.out, /keeping the committed/);
+    assert.equal(flagged.generated(), committed);
+
+    const envd = run(app, [], { env: { AEP_SECURITY_JSON: missing } });
+    assert.equal(envd.status, 1);
+    assert.match(envd.out, /was named explicitly/);
+    assert.equal(envd.generated(), committed);
+  });
+
+  await t.test("a document with no screens at all emits SCREENS = []", () => {
+    const { root, app } = project("expense-tracker.json");
+    rewriteSpec(root, (doc) => {
+      doc.screens = [];
+      return doc;
+    });
+    const result = run(app);
+    assert.equal(result.status, 0, result.out);
+    assert.match(result.generated(), /export const SCREENS: readonly ScreenGate\[\] = \[\];\n/);
   });
 });

@@ -55,10 +55,17 @@ let navigateToForbidden: ForbiddenNavigator = () => {
 };
 
 /**
- * Wire the /forbidden route in. Call ONCE from the app's root, e.g.
+ * Wire the /forbidden route in. Call ONCE from the app's root — one component
+ * inside the router and above every route (App.example.tsx's ForbiddenWiring):
  *
  *   const navigate = useNavigate();
- *   useEffect(() => setForbiddenNavigator(() => navigate("/forbidden")), [navigate]);
+ *   useEffect(
+ *     () => setForbiddenNavigator(() => navigate("/forbidden", { replace: true })),
+ *     [navigate],
+ *   );
+ *
+ * `replace` keeps the refused URL out of the history, so Back does not walk the
+ * user straight back into the same 403.
  *
  * Injected rather than imported so this module stays free of the router — and
  * so the rule it carries is testable without one.

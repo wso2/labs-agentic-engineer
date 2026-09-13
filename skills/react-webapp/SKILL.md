@@ -40,7 +40,8 @@ browser config — they are pod env for nginx.
    ```bash
    npm install                   # regenerates package-lock.json
    # ← the design system's check goes here (see below)
-   npm run gen                   # with auth: regenerate src/scopes.gen.ts FIRST
+   npm run gen                   # with auth: so the standalone tsc below reads a
+                                 # fresh table (`npm run build` re-runs it)
    npx tsc --noEmit              # type-check without emitting
    npm run build                 # actually build
    ! grep -rq mockServiceWorker dist/ # the bundle carries no mock — step 4
@@ -168,6 +169,11 @@ auth through its auth dependency instead.
 **The UI comes from the organization's design system.** Every component, layout
 primitive and style under `src/` comes from the design-system skill pinned on
 this component — no raw HTML styling, no second component or styling library.
+The one carve-out is `thunder-authentication`'s copied assets: `src/authz.tsx`'s
+`Forbidden` and `NoAccess` ship as plain `<main>/<section>/<h1>` so the file is
+copied verbatim into any app, whatever design system it pins. Treat that markup
+as structure to restyle with the design system's components after copying, and
+keep the words — they are prescribed.
 That skill owns everything inside `src/`; this skill owns the app around it.
 Where the two appear to disagree — `base`, the `index.html` script tags, nginx,
 `window._env_` — **this skill wins**, because those are deployment facts, not
@@ -205,6 +211,7 @@ per-component Docker build's context is this app's own folder alone.
 │   ├── api-client.ts     # │ is GENERATED and COMMITTED — the per-component build
 │   ├── screens.ts        # │ context cannot see ../specs, so an uncommitted one fails
 │   ├── scopes.gen.ts     # ┘ the image build
+│   ├── shell/AppShell.tsx # the app chrome — every gated screen renders inside it
 │   └── pages/            # design-system components only, never raw HTML
 ├── mock/                 # mock mode — references/mock-mode.md
 ├── nginx/
@@ -264,12 +271,13 @@ external-kind URLs). Example with no browser API URL:
 
 ```ts
 type Env = {
-  // Only if this SPA declares an auth dependency named `user-auth`. All five,
+  // Only if this SPA declares an auth dependency named `user-auth`. All four,
   // and RESOURCE is not optional: without it the token's `aud` is wrong and
-  // every /api call 401s while sign-in looks healthy.
+  // every /api call 401s while sign-in looks healthy. The dependency also emits
+  // <DEP>_JWKS_URL; it is NOT here, because the browser never validates a token
+  // — the API gateway does — so no asset reads it.
   // USER_AUTH_CLIENT_ID: string;
   // USER_AUTH_ISSUER: string;
-  // USER_AUTH_JWKS_URL: string;
   // USER_AUTH_SCOPES: string;
   // USER_AUTH_RESOURCE: string;
 };
