@@ -39,7 +39,6 @@ type FakeArtifactService struct {
 	SaveSpecFunc                  func(ctx context.Context, orgID, projectID string, req spec.SaveRequest) (*spec.SpecSaveResult, error)
 	BuildVersionFactsFunc         func(ctx context.Context, orgID, projectID string) (spec.VersionFacts, error)
 	ListSpecVersionTagsFunc       func(ctx context.Context, orgID, projectID string) (*spec.TagList, error)
-	GetRequirementsAtTagFunc      func(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
 	GetDesignAtTagFunc            func(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
 	GetDesignAtCommitFunc         func(ctx context.Context, orgID, projectID, commitSHA string) (map[string]string, error)
 	StatusSnapshotFunc            func(ctx context.Context, orgID, projectID string) (*spec.StatusSnapshot, error)
@@ -79,13 +78,6 @@ func (f *FakeArtifactService) ListSpecVersionTags(ctx context.Context, orgID, pr
 		panic("artifactstest: ListSpecVersionTags called but ListSpecVersionTagsFunc is not set")
 	}
 	return f.ListSpecVersionTagsFunc(ctx, orgID, projectID)
-}
-
-func (f *FakeArtifactService) GetRequirementsAtTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error) {
-	if f.GetRequirementsAtTagFunc == nil {
-		panic("artifactstest: GetRequirementsAtTag called but GetRequirementsAtTagFunc is not set")
-	}
-	return f.GetRequirementsAtTagFunc(ctx, orgID, projectID, tag)
 }
 
 func (f *FakeArtifactService) GetDesignAtTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error) {

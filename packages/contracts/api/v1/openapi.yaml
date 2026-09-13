@@ -925,7 +925,12 @@ paths:
         name: tag
         required: true
         schema:
-          description: Spec version tag — letters, digits, dot, dash and underscore.
+          description: >-
+            Spec version tag — the name the user gave the version. The pattern is
+            the character set; the server applies the same full rule it applies
+            when a version is created, which additionally refuses a leading `-`
+            or `.`, a trailing `.` or `.lock`, and `..` anywhere. A name that
+            could never have been created is refused here too.
           pattern: ^[A-Za-z0-9._-]+$
           type: string
       responses:
@@ -963,7 +968,12 @@ paths:
         name: tag
         required: true
         schema:
-          description: Spec version tag — letters, digits, dot, dash and underscore.
+          description: >-
+            Spec version tag — the name the user gave the version. The pattern is
+            the character set; the server applies the same full rule it applies
+            when a version is created, which additionally refuses a leading `-`
+            or `.`, a trailing `.` or `.lock`, and `..` anywhere. A name that
+            could never have been created is refused here too.
           pattern: ^[A-Za-z0-9._-]+$
           type: string
       responses:
@@ -1033,7 +1043,12 @@ paths:
         name: tag
         required: true
         schema:
-          description: Spec version tag — letters, digits, dot, dash and underscore.
+          description: >-
+            Spec version tag — the name the user gave the version. The pattern is
+            the character set; the server applies the same full rule it applies
+            when a version is created, which additionally refuses a leading `-`
+            or `.`, a trailing `.` or `.lock`, and `..` anywhere. A name that
+            could never have been created is refused here too.
           pattern: ^[A-Za-z0-9._-]+$
           type: string
       requestBody:
@@ -1081,7 +1096,12 @@ paths:
         name: tag
         required: true
         schema:
-          description: Spec version tag — letters, digits, dot, dash and underscore.
+          description: >-
+            Spec version tag — the name the user gave the version. The pattern is
+            the character set; the server applies the same full rule it applies
+            when a version is created, which additionally refuses a leading `-`
+            or `.`, a trailing `.` or `.lock`, and `..` anywhere. A name that
+            could never have been created is refused here too.
           pattern: ^[A-Za-z0-9._-]+$
           type: string
       - description: Cycle id, as carried by RunCycleView.id on the run read.

@@ -16,8 +16,8 @@
 
 package spec
 
-// build_scope.go — the STORY SCOPE of one build (spec-agent redesign #369): a
-// A version tag snapshots the PRD + design, so the milestone is the version's
+// build_scope.go — the STORY SCOPE of one build (spec-agent redesign #369). A
+// version tag snapshots the PRD + design, so the milestone is the version's
 // ledger and task planning covers the PRD's stories. Computed here (the PRD's
 // User Stories section declares the story set; each component's design.json
 // claims the stories it serves) and consumed by delivery/build (milestone

@@ -534,10 +534,9 @@ func validationStageFromRun(run *delivery.MilestoneRun) (state string, decided b
 }
 
 // applyFlatArtifactFields recomputes the pre-#184 flat fields from the
-// snapshot, outputs identical to the retired per-call reads: hasSpec from
-// the requirements listing; specStatus approved once a version exists, draft on
-// an unversioned spec;
-// hasDesign only ever true when a spec exists (the old ladder returned at
+// snapshot, outputs identical to the retired per-call reads: hasSpec from the
+// requirements listing; specStatus approved once a version exists, draft on an
+// unversioned spec; hasDesign only ever true when a spec exists (the old ladder returned at
 // "prompt" before reading the design); the phase ladder unchanged. One
 // accepted deviation: a design.cell with malformed frontmatter counts as
 // present here, where the old ReadDesign failed the whole status read — see

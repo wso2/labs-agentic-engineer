@@ -22,7 +22,7 @@
 //   - (*ArtifactStore).StoreConsumedSpec: validate + normalize a consumed spec
 //     and return the component-relative path it will live at. In the
 //     committed-truth model this store has no single-file commit surface
-//     (SaveDesign only reads + tags; all writes land via the Files API), so the
+//     (the spec save only reads + tags; all writes land via the Files API), so the
 //     commit is deferred — see the spec-commit TODO in StoreConsumedSpec.
 
 package spec

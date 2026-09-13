@@ -411,3 +411,52 @@ func TestSaveSpec_SuggestedNameCollision_InWindowClaim(t *testing.T) {
 		t.Errorf("tags = %v, want [v1 v2] (external v1 preserved)", tags)
 	}
 }
+
+// The exit-gate concurrency pin: two goroutines race the SAME suggested name
+// (both start from an empty tag list, so both compute `v1`). One lands it; the
+// other collides, re-lists, recomputes and lands `v2` — both succeed, and both
+// tags point at the pinned commit.
+//
+// Only a SUGGESTED name may be recomputed like this (resuggest=true). A name
+// the user typed is terminal on collision, which delivery/build pins as a 409.
+func TestCreateVersionTag_ConcurrentSameSuggestion_LoserRecomputesToNext(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, validSpecSeed())
+	s := r.svc.(*artifactService)
+	ref := r.workspaceRef()
+	head := r.headSHA()
+
+	type outcome struct {
+		name string
+		err  error
+	}
+	results := make([]outcome, 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			tags := []sourcecontrol.TagInfo{} // both believe no tags exist yet
+			name := suggestedVersionName(tags)
+			err := s.createVersionTag(context.Background(), ref, &tags, &name,
+				"race", head, true)
+			results[i] = outcome{name: name, err: err}
+		}(i)
+	}
+	wg.Wait()
+
+	for i, res := range results {
+		if res.err != nil {
+			t.Fatalf("goroutine %d: %v", i, res.err)
+		}
+	}
+	got := map[string]bool{results[0].name: true, results[1].name: true}
+	if !got["v1"] || !got["v2"] {
+		t.Fatalf("tag names = %s/%s, want exactly {v1, v2}", results[0].name, results[1].name)
+	}
+	for _, tag := range []string{"v1", "v2"} {
+		if peeled := r.originRevParse(tag + "^{commit}"); peeled != head {
+			t.Errorf("%s peels to %s on origin, want the pinned commit %s", tag, peeled, head)
+		}
+	}
+}

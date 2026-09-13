@@ -303,4 +303,3 @@ func (s *artifactService) specTreeUnchanged(ctx context.Context, ref sourcecontr
 	}
 	return specTreesEqual(headEntries, tagEntries), nil
 }
-

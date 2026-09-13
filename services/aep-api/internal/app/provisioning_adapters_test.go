@@ -24,7 +24,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/spec/artifactstest"
 )
 
-func TestSecurityJSONReader_SpecTagUsesGetDesignAtSpecTag(t *testing.T) {
+func TestSecurityJSONReader_SpecTagReadsTheDesignAtThatTag(t *testing.T) {
 	var specTag, head bool
 	art := &artifactstest.FakeArtifactService{
 		GetDesignAtTagFunc: func(_ context.Context, _, _, tag string) (map[string]string, error) {
@@ -48,7 +48,7 @@ func TestSecurityJSONReader_SpecTagUsesGetDesignAtSpecTag(t *testing.T) {
 		t.Fatalf("ReadSecurityJSON(v3): %v", err)
 	}
 	if !specTag || head {
-		t.Fatalf("spec tag must use GetDesignAtSpecTag only (specTag=%v head=%v)", specTag, head)
+		t.Fatalf("a version tag must read the design AT THAT TAG, never at HEAD (specTag=%v head=%v)", specTag, head)
 	}
 	if string(raw) != `{"ok":true}` {
 		t.Fatalf("raw = %q", raw)

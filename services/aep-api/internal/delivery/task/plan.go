@@ -198,13 +198,11 @@ func (s *PlanService) startPlanLocked(ctx context.Context, orgID, projectID stri
 	// stamps) need no new work. Best-effort: a scope-less snapshot
 	// degrades to the legacy plan-everything behavior.
 	scope := spec.BuildScope{}
-	if tag := versions.Latest; tag != "" {
-		if sc, serr := s.versions.BuildScopeAtTag(ctx, orgID, projectID, tag); serr == nil {
-			scope = sc
-		} else {
-			slog.WarnContext(ctx, "plan: story scope read failed — planning without milestone scope",
-				"project", projectID, "tag", tag, "error", serr)
-		}
+	if sc, serr := s.versions.BuildScopeAtTag(ctx, orgID, projectID, versions.Latest); serr == nil {
+		scope = sc
+	} else {
+		slog.WarnContext(ctx, "plan: story scope read failed — planning without milestone scope",
+			"project", projectID, "tag", versions.Latest, "error", serr)
 	}
 	covered := map[int]bool{}
 	for _, p := range preload {

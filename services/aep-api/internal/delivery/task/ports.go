@@ -147,7 +147,7 @@ type Adopter interface {
 	AdoptIssue(ctx context.Context, orgID, projectID string, issueNumber int) error
 }
 
-// MilestoneResolver resolves a `?tag=v<N>` query to the milestone NUMBER the
+// MilestoneResolver resolves a `?tag=<name>` query to the milestone NUMBER the
 // version's Tasks live in, THROUGH THE PLATFORM'S RUN ROWS — never by matching
 // titles against GitHub. delivery.MilestoneRunRepository satisfies it.
 type MilestoneResolver interface {

@@ -29,14 +29,14 @@ package spec
 import "context"
 
 type fakeArtifactSvc struct {
-	ListDesignFilesFunc          func(ctx context.Context, orgID, projectID string) (map[string]string, error)
-	SaveSpecFunc                 func(ctx context.Context, orgID, projectID string, req SaveRequest) (*SpecSaveResult, error)
-	BuildVersionFactsFunc        func(ctx context.Context, orgID, projectID string) (VersionFacts, error)
-	ListSpecVersionTagsFunc      func(ctx context.Context, orgID, projectID string) (*TagList, error)
-	GetDesignAtTagFunc           func(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
-	GetDesignAtCommitFunc        func(ctx context.Context, orgID, projectID, commitSHA string) (map[string]string, error)
-	StatusSnapshotFunc           func(ctx context.Context, orgID, projectID string) (*StatusSnapshot, error)
-	ComponentCountAtTagFunc      func(ctx context.Context, orgID, projectID, tag string) (int, error)
+	ListDesignFilesFunc     func(ctx context.Context, orgID, projectID string) (map[string]string, error)
+	SaveSpecFunc            func(ctx context.Context, orgID, projectID string, req SaveRequest) (*SpecSaveResult, error)
+	BuildVersionFactsFunc   func(ctx context.Context, orgID, projectID string) (VersionFacts, error)
+	ListSpecVersionTagsFunc func(ctx context.Context, orgID, projectID string) (*TagList, error)
+	GetDesignAtTagFunc      func(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
+	GetDesignAtCommitFunc   func(ctx context.Context, orgID, projectID, commitSHA string) (map[string]string, error)
+	StatusSnapshotFunc      func(ctx context.Context, orgID, projectID string) (*StatusSnapshot, error)
+	ComponentCountAtTagFunc func(ctx context.Context, orgID, projectID, tag string) (int, error)
 }
 
 var _ ArtifactService = (*fakeArtifactSvc)(nil)
@@ -80,8 +80,6 @@ func (f *fakeArtifactSvc) GetDesignAtTag(ctx context.Context, orgID, projectID, 
 	return f.GetDesignAtTagFunc(ctx, orgID, projectID, tag)
 }
 
-// GetDesignAtSpecTag reads the design at a `v<N>` SPEC tag; the fake shares the
-// one hook, since nothing in these tests distinguishes the two tag shapes.
 func (f *fakeArtifactSvc) GetDesignAtCommit(ctx context.Context, orgID, projectID, commitSHA string) (map[string]string, error) {
 	if f.GetDesignAtCommitFunc == nil {
 		panic("spec test: GetDesignAtCommit called but GetDesignAtCommitFunc is not set")

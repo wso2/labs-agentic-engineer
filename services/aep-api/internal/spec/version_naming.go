@@ -67,6 +67,14 @@ var legacyVersionName = regexp.MustCompile(`^v(\d+)$`)
 // console's field enforces, and a deliberate narrowing of what git itself would
 // accept. It keeps a name safe in a ref, in a URL path segment, and readable
 // back.
+//
+// It is stated a second time as the `pattern` on every `{tag}` path parameter in
+// packages/contracts/api/v1/openapi.yaml — change one, change the other. The
+// contract carries only this character set, because the rest of
+// ValidateVersionName (no leading `-`/`.`, no trailing `.`/`.lock`, no `..`)
+// needs lookahead that RE2 does not have; those clauses are documented on the
+// parameter and enforced here, which is why a contract-valid name can still be
+// refused.
 var versionNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 // ErrVersionNameInvalid is a name a version may not carry.

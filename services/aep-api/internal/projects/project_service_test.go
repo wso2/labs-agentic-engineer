@@ -932,10 +932,10 @@ func TestGetProjectStatus_PhaseLadder(t *testing.T) {
 			name: "approved spec + design → phase tasks (no task counting, §8)",
 			fx: statusFixture{
 				snap: spec.StatusSnapshot{
-					HasSpec:      true,
-					HasDesign:    true,
-					SpecVersion:  "v1",
-						},
+					HasSpec:     true,
+					HasDesign:   true,
+					SpecVersion: "v1",
+				},
 			},
 			wantPhase:     "tasks",
 			wantSpec:      "approved",

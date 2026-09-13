@@ -316,4 +316,3 @@ func (s *artifactService) readyRef(ctx context.Context, orgID, projectID string)
 	}
 	return repo, ref, nil
 }
-
