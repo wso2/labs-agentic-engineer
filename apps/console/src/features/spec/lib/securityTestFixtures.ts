@@ -17,15 +17,15 @@
  */
 
 /**
- * The design of record's first worked example — Expense Tracker — as the three
- * files the Security page reads it from.
+ * Expense Tracker — the worked example the Security page was designed against —
+ * as the three files the page reads it from.
  *
  * It is here rather than in `src/mocks` because it is the SPEC being asserted,
- * not a convenience: the design draws this exact matrix, down to which cells
- * are filled and which handle carries the "used nowhere" warning, and a test
- * that quietly simplified it would stop being evidence that the page reproduces
- * the design. The document is kept as TEXT, in the on-disk form, so the grant
- * toggle's round-trip claim can be made against it.
+ * not a convenience: the example fixes this exact matrix, down to which cells
+ * are filled and which handle carries the "used nowhere" warning, so a test
+ * that quietly simplified it would stop being evidence. The document is kept as
+ * TEXT, in the on-disk form, so the grant toggle's round-trip claim can be made
+ * against it.
  */
 
 import type { SecurityReferenceContext } from "@aep/agent-stream";

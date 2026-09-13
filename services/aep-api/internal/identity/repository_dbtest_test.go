@@ -418,7 +418,7 @@ func TestStoreReplaceProjectRefsReplaces(t *testing.T) {
 	ctx := context.Background()
 
 	err := s.ReplaceProjectRefs(ctx, devA, projectA, []identity.TestUserRef{
-		{Username: "test-viewer", RoleName: "Viewer", ColdStart: true},
+		{Username: "test-viewer", RoleName: "Viewer", Supplied: true},
 		{Username: "test-auditor", RoleName: "Auditor"},
 	})
 	if err != nil {
@@ -427,7 +427,7 @@ func TestStoreReplaceProjectRefsReplaces(t *testing.T) {
 
 	// v2 drops Auditor.
 	err = s.ReplaceProjectRefs(ctx, devA, projectA, []identity.TestUserRef{
-		{Username: "test-viewer", RoleName: "Viewer", ColdStart: true},
+		{Username: "test-viewer", RoleName: "Viewer", Supplied: true},
 	})
 	if err != nil {
 		t.Fatalf("second ReplaceProjectRefs: %v", err)
@@ -443,8 +443,8 @@ func TestStoreReplaceProjectRefsReplaces(t *testing.T) {
 	if rows[0].OrgID != orgA || rows[0].Environment != devA.Environment || rows[0].ProjectID != projectA {
 		t.Fatalf("ref = %+v, want it stamped with the caller's scope and project", rows[0])
 	}
-	if !rows[0].ColdStart {
-		t.Fatalf("cold_start was not persisted")
+	if !rows[0].Supplied {
+		t.Fatalf("supplied was not persisted")
 	}
 	if rows[0].UpdatedAt.IsZero() {
 		t.Fatalf("updated_at was not stamped")

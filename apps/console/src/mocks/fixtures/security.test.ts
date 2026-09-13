@@ -136,8 +136,6 @@ describe("the mock design and the mock directory agree", () => {
     for (const user of liveUsers) {
       expect(user.roles ?? []).not.toHaveLength(0);
       for (const name of user.roles ?? []) expect(declared.has(name)).toBe(true);
-      // `roleName` is roles[0] by construction on the wire.
-      expect(user.roleName).toBe((user.roles ?? [])[0]);
     }
   });
 
@@ -148,8 +146,11 @@ describe("the mock design and the mock directory agree", () => {
   it("agrees with the panel about which account name the build will generate", () => {
     for (const user of liveUsers) {
       if (!user.supplied) continue;
-      expect(plannedUsersFor(design, user.roleName)).toEqual([
-        { username: user.username, role: user.roleName, supplied: true },
+      // The account exists FOR the first role it holds; that is the one whose
+      // name the build derives the username from.
+      const role = (user.roles ?? [])[0]!;
+      expect(plannedUsersFor(design, role)).toEqual([
+        { username: user.username, role, supplied: true },
       ]);
     }
     // …and the supplied state is actually reachable in mock mode.
@@ -163,9 +164,13 @@ describe("the mock design and the mock directory agree", () => {
     }
   });
 
-  // `coldStart` is on the wire only until it is removed; it is always false.
-  it("has no cold-start account left", () => {
-    expect(liveUsers.every((u) => u.coldStart === false)).toBe(true);
+  // The resource server is a fact about the PROJECT, so the panel names it
+  // whether or not a build has created a role yet.
+  it("names the project's resource server on the view itself", () => {
+    expect(projectRolesView.resourceServer).not.toBe("");
+    for (const role of projectRoles) {
+      expect(role.resourceServer).toBe(projectRolesView.resourceServer);
+    }
   });
 });
 

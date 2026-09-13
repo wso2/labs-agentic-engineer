@@ -50,6 +50,7 @@ const RESOURCE_SERVER = "https://aep.wso2.com/orgs/acme/projects/demo-shop";
 
 export const projectRolesView: RolesView = {
   directoryAvailable: true,
+  resourceServer: RESOURCE_SERVER,
   roles: [
     {
       name: "Administrators",
@@ -115,7 +116,6 @@ export const projectRolesView: RolesView = {
   testUsers: [
     {
       username: "test-compliance-admin",
-      roleName: "Compliance Admin",
       roles: ["Compliance Admin"],
       scopes: [
         "orders:approve",
@@ -124,7 +124,6 @@ export const projectRolesView: RolesView = {
         "orders:refund",
       ],
       supplied: false,
-      coldStart: false,
       exists: true,
       owned: true,
       rotatedAt: "2026-08-20T09:14:00Z",
@@ -133,12 +132,10 @@ export const projectRolesView: RolesView = {
     },
     {
       username: "test-viewer",
-      roleName: "Viewer",
       roles: ["Viewer"],
       scopes: ["catalog:read", "orders:read", "orders:read-all"],
       // The design named none, so this is the name the build will generate.
       supplied: true,
-      coldStart: false,
       exists: false,
       owned: false,
       rotatedAt: null,
@@ -147,9 +144,7 @@ export const projectRolesView: RolesView = {
     },
     {
       username: "jsmith",
-      // v2 lets one login hold several roles; `roleName` is roles[0] and is on
-      // the wire only until the console has moved off it.
-      roleName: "Compliance Admin",
+      // v2 lets one login hold several roles.
       roles: ["Compliance Admin", "Shopper"],
       scopes: [
         "catalog:read",
@@ -160,7 +155,6 @@ export const projectRolesView: RolesView = {
         "orders:refund",
       ],
       supplied: false,
-      coldStart: false,
       // Present on the directory, but NOT the platform's: refused, never
       // adopted. The panel warns and offers no action.
       exists: true,
@@ -181,6 +175,7 @@ export const projectRolesView: RolesView = {
  */
 export const projectRolesViewOffline: RolesView = {
   directoryAvailable: false,
+  resourceServer: RESOURCE_SERVER,
   roles: [],
   projectRoles: (projectRolesView.projectRoles ?? []).map((r) => ({
     ...r,
@@ -195,9 +190,14 @@ export const projectRolesViewOffline: RolesView = {
   })),
 };
 
-/** A project whose design declares no roles at all. */
+/**
+ * A project whose design declares no roles at all — and whose resource server
+ * the panel can still name, because it is derived from (org, project) rather
+ * than created by a build.
+ */
 export const projectRolesViewEmpty: RolesView = {
   directoryAvailable: true,
+  resourceServer: RESOURCE_SERVER,
   roles: [],
   projectRoles: [],
   testUsers: [],

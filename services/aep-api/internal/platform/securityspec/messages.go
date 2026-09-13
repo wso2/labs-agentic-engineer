@@ -102,7 +102,7 @@ const (
 	// MsgScreenOperationNotGranted {role} {screen} {handle} — needs the owning
 	// component's openapi.yaml.
 	MsgScreenOperationNotGranted = "screen_operation_not_granted"
-	// MsgReadAllWithoutRead {role} {allHandle} {readHandle} — decision B1.
+	// MsgReadAllWithoutRead {role} {allHandle} {readHandle}
 	MsgReadAllWithoutRead = "read_all_without_read"
 	// MsgV1Document {fields}
 	MsgV1Document = "v1_document"
@@ -131,9 +131,9 @@ const (
 	MsgSecurityWithoutDependency = "security_without_dependency"
 	// MsgOperationSecurityNotAList {method} {path}
 	MsgOperationSecurityNotAList = "operation_security_not_a_list"
-	// MsgOperationMultipleRequirements {method} {path} — decision B1.
+	// MsgOperationMultipleRequirements {method} {path}
 	MsgOperationMultipleRequirements = "operation_multiple_requirements"
-	// MsgOperationMultipleScopes {method} {path} — decision B1.
+	// MsgOperationMultipleScopes {method} {path}
 	MsgOperationMultipleScopes = "operation_multiple_scopes"
 	// MsgOperationUnknownScheme {method} {path} {scheme}
 	MsgOperationUnknownScheme = "operation_unknown_scheme"
@@ -145,10 +145,10 @@ const (
 	MsgFlowScopeNotInCatalog = "flow_scope_not_in_catalog"
 	// MsgFlowScopeNotOwned {scope} {owner}
 	MsgFlowScopeNotOwned = "flow_scope_not_owned"
-	// MsgReservedOIDCScope {scope} {where} — Δ P2-live-2 §2c: an OIDC scope
-	// emitted as an API scope fails wide open, silently.
+	// MsgReservedOIDCScope {scope} {where} — an OIDC scope emitted as an API
+	// scope fails wide open, silently.
 	MsgReservedOIDCScope = "reserved_oidc_scope"
-	// MsgIdentityHeaderRequired {method} {path} {header} — Δ P6 §7.2.
+	// MsgIdentityHeaderRequired {method} {path} {header}
 	MsgIdentityHeaderRequired = "identity_header_required"
 	// MsgPublicOperationDeclaresIdentityHeader {method} {path} {header}
 	MsgPublicOperationDeclaresIdentityHeader = "public_operation_declares_identity_header"

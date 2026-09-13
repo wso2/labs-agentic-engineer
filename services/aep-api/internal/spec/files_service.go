@@ -567,8 +567,8 @@ type treeReader interface {
 // gate's hard rules: "declared, used nowhere", "unreachable by any role", and
 // the INFO note that an assignTo group is one the directory already holds.
 //
-// This is the apply path's seam for them (plan §5 decision 3) because it is the
-// earliest place that holds the WHOLE bundle: softValidate sees one file's
+// This is the apply path's seam for them because it is the earliest place that
+// holds the WHOLE bundle: softValidate sees one file's
 // content, and a coverage fact is a statement about security.json read against
 // design.cell, the wireframes and the component specs together. Every one of
 // those files may be untouched by this batch, so the committed tree is read for

@@ -303,23 +303,6 @@ type RolesEnsureOutcome struct {
 	// for this `resource`, and asking for another one (or none) produces a
 	// token the gateway rejects.
 	ResourceIdentifier string
-	// ServicePrincipals is RESERVED for phase 6 and is empty today. A service
-	// identity holds a project role with no login at all, so it can never appear
-	// in the credential table — and a reader who finds only the table would
-	// conclude the scopes it lists are all the ones that exist. The ticket
-	// therefore has a line for them, rendered only when there are any.
-	ServicePrincipals []RolesServicePrincipal
-}
-
-// RolesServicePrincipal is one non-human holder of a project role: an OAuth
-// client that authenticates as itself. Reserved for phase 6 (service identity);
-// nothing populates it yet.
-type RolesServicePrincipal struct {
-	// Name is the principal as a reader would recognise it — the workload's
-	// identity, not a client id.
-	Name string
-	// Scopes are the handles its client-credentials token carries.
-	Scopes []string
 }
 
 // RolesCredential is one published test-account login.
@@ -337,10 +320,6 @@ type RolesCredential struct {
 	// exercise.
 	Roles  []string
 	Scopes []string
-	// ColdStart is a v1 leftover carried for the wire contract and is always
-	// false — see identity.TestUserRef.ColdStart. Nothing renders it any more;
-	// phase 5 removes it.
-	ColdStart bool
 }
 
 // RolesEnsurer makes the roles and test users a project's design declares real

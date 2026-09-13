@@ -88,12 +88,10 @@ func BaseModels() []any {
 		// and one extra unique index, all of it expressible as struct tags, so
 		// these need no Step either.
 		//
-		// There is deliberately NO data migration behind them. Both tables are
-		// new in the generated-app-scopes work, nothing wrote a predecessor, and
-		// the rows are a cache of directory objects a rebuild recreates — so the
-		// fresh-cluster assumption the phase ships under costs nothing: an
-		// existing deployment gets two empty tables and the next build fills
-		// them.
+		// There is deliberately NO data migration behind them. Nothing wrote a
+		// predecessor, and the rows are a cache of directory objects a rebuild
+		// recreates: an existing deployment gets two empty tables and the next
+		// build fills them.
 		&identity.IdPResourceServer{},
 		&identity.IdPRoleBinding{},
 	}

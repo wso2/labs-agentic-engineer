@@ -50,10 +50,10 @@ package identity
 //     rows.
 //
 // There is no allowlist pass. The OAuth client's `scopes` list is written by the
-// provisioning overlay onto the `thunder-app` CR (phase 1), not from here — and
-// it enforces nothing either way: ThunderID 1.0.0 stores the field, reads it
-// back and silently drops an unknown or ungranted scope (spike P1 §6). The write
-// gate on security.json is what keeps a stale handle out.
+// provisioning overlay onto the `thunder-app` CR, not from here — and it
+// enforces nothing either way: ThunderID 1.0.0 stores the field, reads it back
+// and silently drops an unknown or ungranted scope. The write gate on
+// security.json is what keeps a stale handle out.
 //
 // Passes 0–2 are ADDITIVE and passes 3–5 CONVERGE. That split is ownership, not
 // taste: groups and accounts are shared within the (org, environment) and a
@@ -224,9 +224,6 @@ type Credential struct {
 	// byte-identical rows. It is what lets the validation agent know, before it
 	// opens a browser, which criteria this account can and cannot exercise.
 	Scopes []string
-	// ColdStart is a v1 leftover carried for the wire contract and is always
-	// false — see TestUserRef.ColdStart in entities.go. Phase 5 removes it.
-	ColdStart bool
 }
 
 // Summary renders the result as the gate's closing comment: one line per
@@ -538,8 +535,7 @@ func (s *EnsureService) ensureResourceServer(ctx context.Context, target Target,
 //     compared; descriptions are only written when they differ, and a difference
 //     never influences what is created or deleted.
 //   - deleting an action CASCADES it out of every role that granted it, silently
-//     and with no error (P1 §7), so no pass has to strip a role's permissions
-//     first. It is also why the role pass runs after this one and reads its
+//     and with no error, so no pass has to strip a role's permissions first. It is also why the role pass runs after this one and reads its
 //     grants fresh.
 //
 // The NAME a resource or action is created under is its handle: a security
@@ -678,9 +674,8 @@ func (s *EnsureService) convergeRoles(
 		result.RolesConverged = append(result.RolesConverged, role.Name)
 		if len(role.AssignTo) == 0 {
 			// Recorded, assigned to nobody — the normal shape for a self-service
-			// role (the registration flow assigns it per account) and for a
-			// service one (phase 6 attaches an app principal). The row still has
-			// to exist: it is what the delete path reads to find the role.
+			// role, whose accounts the registration flow assigns. The row still
+			// has to exist: it is what the delete path reads to find the role.
 			bindings = append(bindings, IdPRoleBinding{Role: role.Name, DirectoryRoleID: string(roleID)})
 			continue
 		}
@@ -736,10 +731,10 @@ func (s *EnsureService) convergeRoles(
 // ADDS the test accounts no group of this role would grant it to (`users`).
 //
 // It converges groups and ONLY groups. A user principal is somebody the app's
-// registration flow enrolled (phase 7), an administrator assigned by hand, or
-// one of the platform's own test accounts bound here; an app principal is a
-// service identity (phase 6). None of them is declared in `assignTo`, so
-// treating "not in the tag" as "remove" would make every build revoke them.
+// registration flow enrolled, an administrator assigned by hand, or one of the
+// platform's own test accounts bound here; an app principal is a service
+// identity. None of them is declared in `assignTo`, so treating "not in the tag"
+// as "remove" would make every build revoke them.
 // They are left exactly as they are.
 //
 // That "never remove a user principal" rule covers the platform's OWN test
@@ -879,10 +874,9 @@ func directRoles(planned securityspec.PlannedUser, assignTo map[string][]string,
 
 // primaryRole is the role an account is recorded under. v2 lets one account
 // hold several — the union of their grants is what its token carries — while
-// the stored row and the ticket's Role column still name one. The first is that
-// one: `testUsers[].roles` is authored in the order the designer thinks of the
-// account, so the first is the role it exists FOR. Phase 2 makes the record
-// plural along with the project-role pass.
+// the stored row still names one. The first is that one: `testUsers[].roles` is
+// authored in the order the designer thinks of the account, so the first is the
+// role it exists FOR.
 func primaryRole(planned securityspec.PlannedUser) string {
 	if len(planned.Roles) == 0 {
 		return ""
@@ -916,10 +910,9 @@ func (s *EnsureService) collectCredentials(ctx context.Context, scope Scope, pro
 	out := make([]Credential, 0, len(refs))
 	for _, ref := range refs {
 		cred := Credential{
-			Username:  ref.Username,
-			Roles:     slices.Clone(planned[ref.Username].Roles),
-			Scopes:    sortedScopes(planned[ref.Username].Scopes),
-			ColdStart: ref.ColdStart,
+			Username: ref.Username,
+			Roles:    slices.Clone(planned[ref.Username].Roles),
+			Scopes:   sortedScopes(planned[ref.Username].Scopes),
 		}
 		password, err := s.store.RevealTestUserPassword(ctx, scope, ref.Username)
 		if err != nil {

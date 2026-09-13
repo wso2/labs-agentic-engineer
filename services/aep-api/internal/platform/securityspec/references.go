@@ -48,7 +48,7 @@ package securityspec
 // `claims:read-all` does not admit a caller to an operation guarded on
 // `claims:read`. Rather than widen grants silently — which would make the gate
 // disagree with the runtime — a role holding `X:read-all` without `X:read` is
-// an error naming both (decision B1).
+// an error naming both (ADR-0030).
 
 import (
 	"regexp"
@@ -409,8 +409,9 @@ func ReferenceFindings(doc *Document, src FileSource) []Finding {
 				found.add(SeverityError, MsgGrantUnknownHandle, "role", role.Name, "handle", handle)
 			}
 		}
-		// Decision B1: the "all" handle widens the rows, it does not replace the
-		// operation, and scope matching is a whole-string compare.
+		// The "all" handle widens the ROWS a caller may see; it does not replace
+		// the operation's own handle, and the gateway compares scopes
+		// whole-string (ADR-0030).
 		for _, handle := range role.Grants {
 			if !isReadAll(handle) {
 				continue
@@ -440,8 +441,8 @@ func ReferenceFindings(doc *Document, src FileSource) []Finding {
 		}
 		for _, group := range role.AssignTo {
 			// Legal, and recorded rather than refused: a group the org directory
-			// already holds is deliberately not redeclared here. Phase 2
-			// resolves it against the directory at build time.
+			// already holds is deliberately not redeclared here. The build's
+			// ensure resolves it against the directory.
 			if !groupNames[group] {
 				found.add(SeverityInfo, MsgAssignToDirectoryChecked, "role", role.Name, "group", group)
 			}

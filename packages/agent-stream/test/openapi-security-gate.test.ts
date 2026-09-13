@@ -20,9 +20,9 @@
  * The security half of the `openapi.yaml` write-gate.
  *
  * The positive case is not a hand-made specimen: it is the Expense API spec
- * that was hand-written for the P6 spike and served live behind the API
- * Platform gateway with per-operation scope policies, checked against the same
- * `security.json` the referential gate's fixtures use. Every negative below is
+ * that was hand-written and served live behind the API Platform gateway with
+ * per-operation scope policies, checked against the same `security.json` the
+ * referential gate's fixtures use. Every negative below is
  * one mutation of that document, so a rule that starts rejecting real specs
  * shows up as the positive test failing rather than as a live 401.
  *
@@ -44,7 +44,7 @@ const SPEC_PATH = "specs/design/components/expense-api/openapi.yaml";
 const DESIGN_PATH = "specs/design/components/expense-api/design.json";
 const SECURITY_PATH = "specs/design/security.json";
 
-const P6_SPEC = readFileSync(new URL("./fixtures/openapi/expense-api.yaml", import.meta.url), "utf8");
+const EXPENSE_API_SPEC = readFileSync(new URL("./fixtures/openapi/expense-api.yaml", import.meta.url), "utf8");
 /** The component design.json that carries the sign-in dependency (`thunder-app`). */
 const PROTECTED_DESIGN = readFileSync(
   new URL("./fixtures/openapi/expense-api.design.json", import.meta.url),
@@ -117,27 +117,27 @@ test("openapi-security-messages.json is in step with the templates it publishes"
 // -------------------------------------------------------------------------
 
 test("the P6 expense-api spec passes against the expense-tracker catalog", () => {
-  assert.equal(gate(P6_SPEC), null);
+  assert.equal(gate(EXPENSE_API_SPEC), null);
 });
 
 test("the same spec passes with security.json absent — catalog rules narrow, they do not block", () => {
   // The design lineup writes security.json before the per-component artifacts,
   // but a re-emitted spec must not be refused for a file that is not there yet.
-  assert.equal(gate(P6_SPEC, { [DESIGN_PATH]: PROTECTED_DESIGN }), null);
+  assert.equal(gate(EXPENSE_API_SPEC, { [DESIGN_PATH]: PROTECTED_DESIGN }), null);
 });
 
 test("a stale handle is NOT caught when security.json is absent, but the structure still is", () => {
-  const stale = mutate(P6_SPEC, "- oauth2: [claims:approve]", "- oauth2: [claims:archive]");
+  const stale = mutate(EXPENSE_API_SPEC, "- oauth2: [claims:approve]", "- oauth2: [claims:archive]");
   assert.equal(gate(stale, { [DESIGN_PATH]: PROTECTED_DESIGN }), null);
 
-  const twoScopes = mutate(P6_SPEC, "- oauth2: [claims:submit]", "- oauth2: [claims:submit, claims:read]");
+  const twoScopes = mutate(EXPENSE_API_SPEC, "- oauth2: [claims:submit]", "- oauth2: [claims:submit, claims:read]");
   assert.match(gate(twoScopes, { [DESIGN_PATH]: PROTECTED_DESIGN })!.message, /more than one scope/);
 });
 
 test("design.json absent means the premise is unknowable — no security verdict at all", () => {
   // Also the back-compatibility of every structural test: a bundle holding only
   // the spec gets exactly the gate it had before.
-  const noScheme = mutate(P6_SPEC, "security:\n  - oauth2: []\n", "");
+  const noScheme = mutate(EXPENSE_API_SPEC, "security:\n  - oauth2: []\n", "");
   assert.equal(gate(noScheme, { [SECURITY_PATH]: CATALOG }), null);
   assert.equal(checkOpenapiSpec(SPEC_PATH, noScheme), null);
 });
@@ -148,7 +148,7 @@ test("design.json absent means the premise is unknowable — no security verdict
 
 test("missing_oauth2_scheme: a component behind sign-in must declare the scheme", () => {
   const noScheme = mutate(
-    P6_SPEC,
+    EXPENSE_API_SPEC,
     `  securitySchemes:
     oauth2:
       type: oauth2`,
@@ -164,12 +164,12 @@ test("missing_oauth2_scheme: a component behind sign-in must declare the scheme"
 });
 
 test("scheme_wrong_type: the scheme must be type oauth2", () => {
-  const wrong = mutate(P6_SPEC, "    oauth2:\n      type: oauth2", "    oauth2:\n      type: http");
+  const wrong = mutate(EXPENSE_API_SPEC, "    oauth2:\n      type: oauth2", "    oauth2:\n      type: http");
   assert.match(gate(wrong)!.message, /declared as type: http/);
 });
 
 test("missing_document_security: the document default is `security: [{oauth2: []}]`", () => {
-  const noDefault = mutate(P6_SPEC, "\nsecurity:\n  - oauth2: []\n", "\n");
+  const noDefault = mutate(EXPENSE_API_SPEC, "\nsecurity:\n  - oauth2: []\n", "\n");
   const problem = gate(noDefault);
   assert.match(problem!.message, /not the document-level default/);
   // The literal brace pair the model must write survives the slot formatter.
@@ -182,7 +182,7 @@ test("missing_document_security: the document default is `security: [{oauth2: []
 // silently dropped and the operation ships open to any signed-in caller. The
 // only default that says what is enforced is the empty one.
 test("missing_document_security: a default naming a scope is refused", () => {
-  const scoped = mutate(P6_SPEC, "\nsecurity:\n  - oauth2: []\n", "\nsecurity:\n  - oauth2: [claims:read]\n");
+  const scoped = mutate(EXPENSE_API_SPEC, "\nsecurity:\n  - oauth2: []\n", "\nsecurity:\n  - oauth2: [claims:read]\n");
   const problem = gate(scoped);
   assert.equal(problem?.code, "INVALID_OPENAPI");
   assert.match(problem!.message, /not the document-level default/);
@@ -194,7 +194,7 @@ test("missing_document_security: a default naming a scope is refused", () => {
 // -------------------------------------------------------------------------
 
 test("scheme_without_dependency: no sign-in dependency, no security scheme", () => {
-  const problem = gate(P6_SPEC, { [DESIGN_PATH]: UNPROTECTED_DESIGN, [SECURITY_PATH]: CATALOG });
+  const problem = gate(EXPENSE_API_SPEC, { [DESIGN_PATH]: UNPROTECTED_DESIGN, [SECURITY_PATH]: CATALOG });
   assert.equal(problem?.code, "INVALID_OPENAPI");
   assert.match(problem!.message, /remove components\.securitySchemes/);
 });
@@ -228,12 +228,12 @@ test("security_without_dependency: an operation-level security block with no dep
 });
 
 // -------------------------------------------------------------------------
-// One requirement object, one scope (decision B1)
+// One requirement object, one scope
 // -------------------------------------------------------------------------
 
 test("operation_multiple_requirements: two requirement objects (OpenAPI anyOf) are refused", () => {
   const anyOf = mutate(
-    P6_SPEC,
+    EXPENSE_API_SPEC,
     "        - oauth2: [claims:approve]",
     "        - oauth2: [claims:approve]\n        - oauth2: [claims:reject]",
   );
@@ -243,18 +243,18 @@ test("operation_multiple_requirements: two requirement objects (OpenAPI anyOf) a
 });
 
 test("operation_multiple_scopes: two scopes in one requirement object are refused", () => {
-  const two = mutate(P6_SPEC, "- oauth2: [claims:submit]", "- oauth2: [claims:submit, claims:read]");
+  const two = mutate(EXPENSE_API_SPEC, "- oauth2: [claims:submit]", "- oauth2: [claims:submit, claims:read]");
   assert.match(gate(two)!.message, /POST \/claims names more than one scope/);
 });
 
 test("operation_unknown_scheme: an operation may only name the oauth2 scheme", () => {
-  const other = mutate(P6_SPEC, "- oauth2: [claims:approve]", "- bearerAuth: [claims:approve]");
+  const other = mutate(EXPENSE_API_SPEC, "- oauth2: [claims:approve]", "- bearerAuth: [claims:approve]");
   assert.match(gate(other)!.message, /secured with the scheme `bearerAuth`/);
 });
 
 test("operation_security_not_a_list: a scalar `security` is refused", () => {
   const scalar = mutate(
-    P6_SPEC,
+    EXPENSE_API_SPEC,
     "      security:\n        - oauth2: [claims:approve]",
     "      security: oauth2",
   );
@@ -264,7 +264,7 @@ test("operation_security_not_a_list: a scalar `security` is refused", () => {
 test("an operation that spells the document default out (`oauth2: []`) is accepted", () => {
   // "at most one requirement object with at most one scope" — zero scopes means
   // exactly what inheriting means, and the gateway renders the same policy.
-  const explicit = mutate(P6_SPEC, "- oauth2: [claims:approve]", "- oauth2: []");
+  const explicit = mutate(EXPENSE_API_SPEC, "- oauth2: [claims:approve]", "- oauth2: []");
   assert.equal(gate(explicit), null);
 });
 
@@ -273,14 +273,14 @@ test("an operation that spells the document default out (`oauth2: []`) is accept
 // -------------------------------------------------------------------------
 
 test("scope_not_in_catalog: a stale handle no longer in security.json", () => {
-  const stale = mutate(P6_SPEC, "- oauth2: [claims:approve]", "- oauth2: [claims:archive]");
+  const stale = mutate(EXPENSE_API_SPEC, "- oauth2: [claims:approve]", "- oauth2: [claims:archive]");
   const problem = gate(stale);
   assert.match(problem!.message, /requires the scope `claims:archive`/);
   assert.match(problem!.message, /reference catalog handles; they never define them/);
 });
 
 test("scope_not_owned: a handle whose resource another component owns", () => {
-  const foreign = mutate(P6_SPEC, "- oauth2: [claims:approve]", "- oauth2: [notifications:send]");
+  const foreign = mutate(EXPENSE_API_SPEC, "- oauth2: [claims:approve]", "- oauth2: [notifications:send]");
   const problem = gate(foreign, {
     [DESIGN_PATH]: PROTECTED_DESIGN,
     [SECURITY_PATH]: CATALOG_WITH_FOREIGN_RESOURCE,
@@ -290,7 +290,7 @@ test("scope_not_owned: a handle whose resource another component owns", () => {
 
 test("flow_scope_not_in_catalog: an advertised flow scope the catalog does not declare", () => {
   const bogus = mutate(
-    P6_SPEC,
+    EXPENSE_API_SPEC,
     "            reports:read: Monthly totals",
     "            reports:read: Monthly totals\n            claims:archive: Archive a claim",
   );
@@ -299,7 +299,7 @@ test("flow_scope_not_in_catalog: an advertised flow scope the catalog does not d
 
 test("flow_scope_not_owned: an advertised flow scope another component owns", () => {
   const foreign = mutate(
-    P6_SPEC,
+    EXPENSE_API_SPEC,
     "            reports:read: Monthly totals",
     "            reports:read: Monthly totals\n            notifications:send: Send a notification",
   );
@@ -311,11 +311,11 @@ test("flow_scope_not_owned: an advertised flow scope another component owns", ()
 });
 
 // -------------------------------------------------------------------------
-// The OIDC scopes ride every token — refused anywhere (Δ P2-live-2 §2c)
+// The OIDC scopes ride every token — refused anywhere
 // -------------------------------------------------------------------------
 
 test("reserved_oidc_scope: `openid` as an operation scope fails wide open", () => {
-  const wideOpen = mutate(P6_SPEC, "- oauth2: [claims:approve]", "- oauth2: [openid]");
+  const wideOpen = mutate(EXPENSE_API_SPEC, "- oauth2: [claims:approve]", "- oauth2: [openid]");
   const problem = gate(wideOpen);
   assert.match(problem!.message, /`openid` is an OIDC scope, not a permission handle/);
   assert.match(problem!.message, /the security of POST \/claims\/\{claimId\}\/approve/);
@@ -323,7 +323,7 @@ test("reserved_oidc_scope: `openid` as an operation scope fails wide open", () =
 
 test("reserved_oidc_scope: an OIDC scope as a flows key is refused too", () => {
   const inFlows = mutate(
-    P6_SPEC,
+    EXPENSE_API_SPEC,
     "            reports:read: Monthly totals",
     "            reports:read: Monthly totals\n            group: Groups the user is in",
   );
@@ -334,18 +334,18 @@ test("reserved_oidc_scope: an OIDC scope as a flows key is refused too", () => {
 
 test("every reserved OIDC scope is refused, not just openid", () => {
   for (const scope of ["openid", "profile", "email", "group", "ou"]) {
-    const spec = mutate(P6_SPEC, "- oauth2: [claims:approve]", `- oauth2: [${scope}]`);
+    const spec = mutate(EXPENSE_API_SPEC, "- oauth2: [claims:approve]", `- oauth2: [${scope}]`);
     assert.match(gate(spec)!.message, new RegExp(`\`${scope}\` is an OIDC scope`), scope);
   }
 });
 
 // -------------------------------------------------------------------------
-// The injected identity header (Δ P6 §7.2, P2-live-1 a)
+// The injected identity header
 // -------------------------------------------------------------------------
 
 test("identity_header_required: X-User-Id must be required: false", () => {
   const required = mutate(
-    P6_SPEC,
+    EXPENSE_API_SPEC,
     `    UserId:
       name: X-User-Id
       in: header
@@ -362,7 +362,7 @@ test("identity_header_required: X-User-Id must be required: false", () => {
 
 test("identity_header_required catches any X-User-* header, wherever it is declared", () => {
   const inline = mutate(
-    P6_SPEC,
+    EXPENSE_API_SPEC,
     `  /reports/monthly:
     parameters:
       - $ref: '#/components/parameters/UserId'`,
@@ -379,7 +379,7 @@ test("identity_header_required catches any X-User-* header, wherever it is decla
 
 test("public_operation_declares_identity_header: a `security: []` operation reads no identity", () => {
   const leaky = mutate(
-    P6_SPEC,
+    EXPENSE_API_SPEC,
     `  /health:
     get:`,
     `  /health:
@@ -457,7 +457,7 @@ for (const tc of [
   },
 ]) {
   test(`first violation: ${tc.name}`, () => {
-    assert.match(gate(tc.mutate(P6_SPEC))!.message, tc.wantHas);
+    assert.match(gate(tc.mutate(EXPENSE_API_SPEC))!.message, tc.wantHas);
   });
 }
 
@@ -469,19 +469,19 @@ test("a rejected security block leaves the bundle byte-for-byte unchanged", () =
   const bundle = new FileBundle({
     [DESIGN_PATH]: PROTECTED_DESIGN,
     [SECURITY_PATH]: CATALOG,
-    [SPEC_PATH]: P6_SPEC,
+    [SPEC_PATH]: EXPENSE_API_SPEC,
   });
-  const stale = mutate(P6_SPEC, "- oauth2: [claims:approve]", "- oauth2: [claims:archive]");
+  const stale = mutate(EXPENSE_API_SPEC, "- oauth2: [claims:approve]", "- oauth2: [claims:archive]");
 
   const res = bundle.editFile(SPEC_PATH, "- oauth2: [claims:approve]", "- oauth2: [claims:archive]");
   assert.ok(!res.ok, "the edit must be rejected");
   if (!res.ok) assert.equal(res.code, "INVALID_OPENAPI");
-  assert.equal(bundle.read(SPEC_PATH), P6_SPEC, "the file is unchanged");
-  assert.notEqual(stale, P6_SPEC);
+  assert.equal(bundle.read(SPEC_PATH), EXPENSE_API_SPEC, "the file is unchanged");
+  assert.notEqual(stale, EXPENSE_API_SPEC);
 });
 
 test("the gate accepts the spec written whole into a bundle that already holds its siblings", () => {
   const bundle = new FileBundle({ [DESIGN_PATH]: PROTECTED_DESIGN, [SECURITY_PATH]: CATALOG });
-  const res = bundle.addFile(SPEC_PATH, P6_SPEC);
+  const res = bundle.addFile(SPEC_PATH, EXPENSE_API_SPEC);
   assert.ok(res.ok, `the write must be accepted: ${res.ok ? "" : res.message}`);
 });

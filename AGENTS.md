@@ -14,12 +14,18 @@ SDLC platform built on OpenChoreo.
 | lint | `make lint` | eslint + golangci-lint |
 | typecheck | `make typecheck` | `tsc` + `go vet` |
 | license-check | `make license-check` | fail if any source lacks the Apache header |
+| deadcode (TS) | `make deadcode-ts-check` | knip over `@aep/agents` + `@aep/playground`; fails on any finding (`make deadcode-ts` reports without failing) |
 
 ## Coding Practices
 - Focus on writing maintainable code, clean testable code. 
 - Keep architecture, modules, files separated based on responsibility.
 - Proper Fixes always, Propose design changes for better maintainability after exploring and if you are confident.
 - no hacks or workarounds unless explicitly specified.
+- Dead code is gated, in TS by `make deadcode-ts-check` and per Go module by
+  that module's `make deadcode-check` (`services/aep-api`). Keep unwired
+  infrastructure or a deliberate test seam only with a reason attached: a
+  `@knipkeep <reason>` JSDoc tag in TS, `//deadcode:keep` in Go. What each
+  gate covers and why is in `knip.jsonc` and `services/aep-api/Makefile`.
 
 ## Design docs
 

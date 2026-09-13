@@ -19,7 +19,7 @@
 import { describe, expect, it } from "vitest";
 
 import { patchGrants } from "./patchGrants";
-import { EXPENSE_TRACKER_TEXT } from "./testFixtures";
+import { EXPENSE_TRACKER_TEXT } from "./securityTestFixtures";
 
 describe("patchGrants — the one edit the Security page makes", () => {
   it("leaves the rest of the document byte-identical", () => {
@@ -92,9 +92,8 @@ describe("patchGrants — the one edit the Security page makes", () => {
     ]);
   });
 
-  // Decision B1: the "all" handle widens rows, it does not replace the
-  // operation. Nothing here repairs the document — the page shows the gate's
-  // warning instead.
+  // The "all" handle widens rows, it does not replace the operation. Nothing
+  // here repairs the document — the page shows the gate's warning instead.
   it("does not add X:read when X:read-all is granted", () => {
     const result = patchGrants(
       EXPENSE_TRACKER_TEXT,

@@ -23,13 +23,14 @@
  * planned-user helpers the panel needs to promise usernames. The panel does
  * the rendering; the design agent writes the document in chat.
  *
- * A JSON object that parses but does not satisfy the schema is EMPTY, not a
- * parse error — `{}` and a half-authored document read the same, and the panel
- * explains that in words. A document that does not parse at all is `invalid`
- * and shows as an error. That second case is reachable mid-turn: the room
- * streams this file in like any other, so a reader watching the design agent
- * write it sees the error until the closing brace arrives. Softening that is a
- * recorded follow-up, not a claim this comment should make.
+ * The parse answers four states because the panel owes the reader four
+ * different sentences. A JSON object that parses but does not satisfy the
+ * schema is EMPTY, not a parse error — `{}` and a half-authored document read
+ * the same. Text that cannot parse YET, because the room is streaming it in a
+ * line at a time, is `unfinished`: it is a prefix, and the closing brace is on
+ * its way. Text that cannot parse at all is `invalid`. Both of the last two
+ * cost the reader the whole page, findings included, so the two are told apart
+ * here rather than shown as one error the reader cannot act on.
  *
  * The shape is `SecurityDesign` from `@aep/agent-stream` — the same definition
  * the design agent's write gate and the BFF's save gate validate against, so
@@ -54,6 +55,8 @@ const SECURITY_DESIGN_PATH = "specs/design/security.json";
 export type ParsedSecurity =
   | { kind: "ok"; doc: SecurityDesign }
   | { kind: "empty" }
+  /** Not JSON yet, but a prefix of something that could be — mid-stream. */
+  | { kind: "unfinished" }
   | { kind: "invalid"; message: string };
 
 /**
@@ -75,6 +78,7 @@ export function parseSecurityDesign(
   try {
     raw = JSON.parse(text);
   } catch (e) {
+    if (isJsonPrefix(text)) return { kind: "unfinished" };
     return {
       kind: "invalid",
       message: e instanceof Error ? e.message : String(e),
@@ -92,6 +96,37 @@ export function parseSecurityDesign(
   const res = securityDesignSchema.safeParse(raw);
   if (!res.success) return { kind: "empty" };
   return { kind: "ok", doc: res.data };
+}
+
+/**
+ * Whether `text` is a PREFIX of a JSON document — one more keystroke could
+ * still make it parse — as opposed to a document that is simply wrong.
+ *
+ * Structural only, and deliberately so: an engine's parse message is not a
+ * contract, and the one fact that separates "the agent is still typing" from
+ * "this file is broken" is whether the text merely stops early. A string still
+ * open or a bracket still unclosed means it stops early; a closer that does not
+ * match its opener, or anything after the last one, is a mistake no amount of
+ * further typing repairs.
+ */
+function isJsonPrefix(text: string): boolean {
+  const open: string[] = [];
+  let inString = false;
+  let escaped = false;
+  for (const ch of text) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{" || ch === "[") open.push(ch);
+    else if (ch === "}" || ch === "]") {
+      if (open.pop() !== (ch === "}" ? "{" : "[")) return false;
+    }
+  }
+  return inString || open.length > 0;
 }
 
 /**

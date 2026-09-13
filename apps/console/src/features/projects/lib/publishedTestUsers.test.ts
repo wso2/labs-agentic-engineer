@@ -22,18 +22,18 @@ import { publishedTestUsers } from "./publishedTestUsers";
 
 function user(
   over: Partial<ProjectTestUserState> &
-    Pick<ProjectTestUserState, "username" | "roleName" | "owned">,
+    Pick<ProjectTestUserState, "username" | "owned"> & { role?: string },
 ): ProjectTestUserState {
+  const { role, ...rest } = over;
   return {
     supplied: false,
-    coldStart: false,
     exists: true,
     rotatedAt: null,
     referencingProjects: null,
     referencingCount: 1,
-    roles: [over.roleName],
+    roles: role === undefined ? [] : [role],
     scopes: [],
-    ...over,
+    ...rest,
   };
 }
 
@@ -43,7 +43,7 @@ describe("publishedTestUsers", () => {
       publishedTestUsers([
         user({
           username: "test-approver",
-          roleName: "Approver",
+          role: "Approver",
           owned: true,
           exists: true,
           roles: ["Approver", "Employee"],
@@ -66,7 +66,7 @@ describe("publishedTestUsers", () => {
     const [row] = publishedTestUsers([
       user({
         username: "test-approver",
-        roleName: "Approver",
+        role: "Approver",
         owned: true,
         roles: ["Approver", "Employee"],
         scopes: ["reports:read", "claims:read"],
@@ -76,19 +76,20 @@ describe("publishedTestUsers", () => {
     expect(row?.scopes).toEqual(["reports:read", "claims:read"]);
   });
 
-  // roleName is the v1 field and equals roles[0]. A server that has not been
-  // upgraded yet must not empty the Roles column.
-  it("falls back to roleName when the server sends no roles array", () => {
+  // A row the platform could not attach any role to is still a login somebody
+  // can sign in as, so it is published with an empty Roles column rather than
+  // dropped.
+  it("reads an absent roles array as empty", () => {
     expect(
       publishedTestUsers([
         user({
           username: "test-viewer",
-          roleName: "Viewer",
+          role: "Viewer",
           owned: true,
           roles: null,
         }),
       ]),
-    ).toEqual([{ username: "test-viewer", roles: ["Viewer"], scopes: [] }]);
+    ).toEqual([{ username: "test-viewer", roles: [], scopes: [] }]);
   });
 
   // Two roles can grant the same handle. The union is what the login's token
@@ -97,7 +98,7 @@ describe("publishedTestUsers", () => {
     const [row] = publishedTestUsers([
       user({
         username: "test-approver",
-        roleName: "Approver",
+        role: "Approver",
         owned: true,
         roles: ["Approver", "Employee", "Approver"],
         scopes: ["claims:read", "claims:approve", "claims:read"],
@@ -111,7 +112,7 @@ describe("publishedTestUsers", () => {
     const [row] = publishedTestUsers([
       user({
         username: "test-viewer",
-        roleName: "Viewer",
+        role: "Viewer",
         owned: true,
         scopes: null,
       }),
@@ -124,7 +125,7 @@ describe("publishedTestUsers", () => {
       publishedTestUsers([
         user({
           username: "test-viewer",
-          roleName: "Viewer",
+          role: "Viewer",
           owned: true,
           exists: false,
         }),
@@ -137,7 +138,7 @@ describe("publishedTestUsers", () => {
       publishedTestUsers([
         user({
           username: "jsmith",
-          roleName: "Compliance Admin",
+          role: "Compliance Admin",
           owned: false,
           exists: true,
         }),
@@ -150,7 +151,7 @@ describe("publishedTestUsers", () => {
       publishedTestUsers([
         user({
           username: "test-viewer",
-          roleName: "Viewer",
+          role: "Viewer",
           owned: false,
           exists: false,
         }),
@@ -161,11 +162,11 @@ describe("publishedTestUsers", () => {
   it("keeps only owned rows and preserves order", () => {
     expect(
       publishedTestUsers([
-        user({ username: "first-owned", roleName: "Viewer", owned: true }),
-        user({ username: "not-ours", roleName: "Admin", owned: false }),
+        user({ username: "first-owned", role: "Viewer", owned: true }),
+        user({ username: "not-ours", role: "Admin", owned: false }),
         user({
           username: "second-owned",
-          roleName: "Compliance Admin",
+          role: "Compliance Admin",
           owned: true,
           scopes: ["audit:read"],
         }),
@@ -186,24 +187,10 @@ describe("publishedTestUsers", () => {
 
   it("return value has no password field", () => {
     const [row] = publishedTestUsers([
-      user({ username: "test-viewer", roleName: "Viewer", owned: true }),
+      user({ username: "test-viewer", role: "Viewer", owned: true }),
     ]);
     expect(row).toBeDefined();
     expect(Object.keys(row!)).not.toContain("password");
     expect(row).not.toHaveProperty("password");
-  });
-
-  // Version 2 has no cold-start account, so the projection must not carry the
-  // wire's deprecated field into the console's own type.
-  it("drops the deprecated coldStart field", () => {
-    const [row] = publishedTestUsers([
-      user({
-        username: "test-viewer",
-        roleName: "Viewer",
-        owned: true,
-        coldStart: true,
-      }),
-    ]);
-    expect(row).not.toHaveProperty("coldStart");
   });
 });

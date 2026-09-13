@@ -22,11 +22,10 @@ package thundersvc
 // intersected with the resource server named by the token request's `resource`
 // indicator — is the ONLY thing that narrows a generated app's access token.
 // (The application's own `scopes` allowlist looks like a second gate and is
-// not: ThunderID 1.0.0 stores it, reads it back and never enforces it,
-// docs/design/draft/spikes/P1.md §6.)
+// not: ThunderID 1.0.0 stores it, reads it back and never enforces it.)
 //
 // Five Thunder facts shape this file, all measured against a running ThunderID
-// 1.0.0 rather than read from documentation (P1 §2, §3, §7):
+// 1.0.0 rather than read from documentation:
 //
 //  1. **`/` is legal in a role name.** Role names are per-OU, not per-project,
 //     so the platform qualifies them — `<project>/<Role>` — and Thunder echoes

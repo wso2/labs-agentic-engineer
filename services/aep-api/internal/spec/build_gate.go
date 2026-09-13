@@ -296,9 +296,9 @@ func validateRolesDocument(designFiles map[string]string, prdStories map[int]str
 // one. The errors are the gate's business and are excluded here — one defect,
 // one message.
 //
-// They ride the existing soft-warning type rather than a new endpoint (plan §5
-// decision 3); the apply path attaches them to ApplyResult.Warnings, SaveSpec
-// logs them, and phase 5 gives the console a structured read.
+// They ride the existing soft-warning type rather than a new endpoint: the
+// apply path attaches them to ApplyResult.Warnings, which is the console's
+// channel for them.
 //
 // Paths are BUNDLE-relative (`security.json`), like every other row this file
 // produces; a caller whose channel speaks repo paths prefixes DesignDir.

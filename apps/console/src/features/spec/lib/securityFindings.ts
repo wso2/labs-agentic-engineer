@@ -19,6 +19,10 @@
 /**
  * Where each referential finding belongs on the Security page.
  *
+ * The findings are computed in the BROWSER, from the same shared rules the
+ * build gate runs, rather than fetched from the BFF — so they follow the
+ * document as it is edited, which a request/response endpoint could not.
+ *
  * `securityReferenceFindings` returns one flat list for the whole document; the
  * page has three places to put a sentence — on a matrix row, on a role card, or
  * above the matrix. The routing is by the finding's `params`, which is why the

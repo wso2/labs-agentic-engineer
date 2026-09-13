@@ -785,43 +785,4 @@ func TestRolesGate_TheTrailerCarriesTheIssuerTheResourceAndTheRefreshRule(t *tes
 			t.Errorf("the trailer is missing %q:\n%s", want, comment)
 		}
 	}
-	// Reserved for phase 6 and empty: an empty "service principals" line would
-	// read as "this project has none", which is a different claim from "the
-	// platform does not provision them yet".
-	if strings.Contains(comment, "service principal") {
-		t.Errorf("a service-principal line was rendered with none to name:\n%s", comment)
-	}
-}
-
-// …and when there ARE service principals, they are named. They hold project
-// roles with no login at all, so a reader who found only the credential table
-// would conclude the scopes it lists are every scope that exists.
-func TestRolesGate_NamesServicePrincipalsWhenThereAreAny(t *testing.T) {
-	roles := &fakeRolesEnsurer{
-		declared: true,
-		outcome: RolesEnsureOutcome{
-			Credentials: []RolesCredential{
-				{Username: "test-finance", Password: "Aep1!x", Roles: []string{"Finance"}, Scopes: []string{"invoices:read"}},
-			},
-			ServicePrincipals: []RolesServicePrincipal{
-				{Name: "reconciliation-job", Scopes: []string{"invoices:read", "payments:read"}},
-			},
-		},
-	}
-	issues := newFakeIssues(nil)
-
-	if f := newRolesGateService(roles, issues).ensureRolesGate(
-		context.Background(), "acme", "workouts", "v1", 7); f != nil {
-		t.Fatalf("unexpected failure: %+v", f)
-	}
-
-	comment := allComments(issues)[0]
-	if !strings.Contains(comment, "reconciliation-job") || !strings.Contains(comment, "invoices:read payments:read") {
-		t.Errorf("the service principal was not published:\n%s", comment)
-	}
-	// It is NOT a credential row: it has no login, and putting it in the table
-	// would hand an agent a username it can never sign in as.
-	if strings.Contains(comment, "| `reconciliation-job` |") {
-		t.Errorf("a service principal was rendered as a login row:\n%s", comment)
-	}
 }

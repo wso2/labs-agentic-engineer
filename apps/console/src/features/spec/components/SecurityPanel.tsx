@@ -58,16 +58,16 @@ import {
   securityMatrix,
   type SecurityDesign,
 } from "../api/securityDesign";
-import { baselineOperations } from "./security/baselineOperations";
+import { baselineOperations } from "../lib/baselineOperations";
+import { patchGrants, type PatchFailure } from "../lib/patchGrants";
+import { routeFindings } from "../lib/securityFindings";
 import {
   GroupsBlock,
   RolesIntro,
   ScreensBlock,
 } from "./security/DocumentSections";
-import { patchGrants, type PatchFailure } from "./security/patchGrants";
 import { PermissionMatrix } from "./security/PermissionMatrix";
 import { RoleCard } from "./security/RoleCard";
-import { routeFindings } from "./security/findings";
 
 /** Why the cells are read-only when the room is not holding this file. */
 const NO_ROOM_REASON =
@@ -161,11 +161,34 @@ export function SecurityPanel({
       </Box>
     );
   }
+  // A document that does not parse costs the reader the WARNINGS too, and those
+  // are the half a reader cannot see for themselves — so both states say so,
+  // and say which one it is: waiting is not the same as broken.
+  if (parsed.kind === "unfinished") {
+    return (
+      <Box sx={{ p: 3 }}>
+        <Alert severity="info">
+          <AlertTitle>This Security document is still being written</AlertTitle>
+          It stops mid-way, so there is nothing to show yet — including the
+          warnings this page raises about it. They appear as soon as the design
+          agent finishes writing.
+        </Alert>
+      </Box>
+    );
+  }
   if (parsed.kind === "invalid") {
     return (
       <Box sx={{ p: 3 }}>
         <Alert severity="error">
-          Couldn&apos;t read the Security document: {parsed.message}
+          <AlertTitle>Couldn&apos;t read the Security document</AlertTitle>
+          <Typography variant="body2" sx={{ mb: 1 }}>
+            {parsed.message}
+          </Typography>
+          <Typography variant="body2">
+            Nothing on this page was checked — the warnings it raises are worked
+            out from the document, so one it cannot read gets none. Ask in chat
+            to have it fixed.
+          </Typography>
         </Alert>
       </Box>
     );
@@ -244,9 +267,8 @@ function SecurityDocument({
         ...operations.open,
         ...matrix.baseline.publicScreens.map(screenLine),
       ],
-      // v1 listed these by hand in `publicComponents`; v2 derives them from the
-      // architecture, because `thunder-app` is the only thing that provisions
-      // sign-in and a component that does not depend on it has none to offer.
+      // Derived from the architecture, never authored — see
+      // `signInlessComponents` for why that is the only honest source.
       openComponents: dependencies
         ? componentsWithoutSignIn(dependencies)
         : null,

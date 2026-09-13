@@ -146,8 +146,26 @@ describe("parseSecurityDesign", () => {
     expect(parseSecurityDesign(text)).toEqual({ kind: "empty" });
   });
 
-  it("reports malformed JSON as invalid", () => {
-    const parsed = parseSecurityDesign('{"version": 2,');
+  // The room streams this file in a line at a time, so most of the text a
+  // reader sees mid-turn is a PREFIX. Calling that broken would raise an alarm
+  // about a document nothing is wrong with.
+  it.each([
+    ["a truncated object", '{"version": 2,'],
+    ["a key with no value yet", '{"version": 2, "permissions"'],
+    ["an unterminated string", '{"version": 2, "roles": [{"name": "Admi'],
+    ["an array still open", '{"version": 2, "roles": ['],
+  ])("reads %s as unfinished rather than as a failure", (_label, text) => {
+    expect(parseSecurityDesign(text)).toEqual({ kind: "unfinished" });
+  });
+
+  // Balanced, and still not JSON: no further typing repairs these, so the
+  // reader is owed the error.
+  it.each([
+    ["a closer that does not match its opener", '{"roles": [1, 2}'],
+    ["one closer too many", '{"version": 2}}'],
+    ["text after the document", '{"version": 2} and then some'],
+  ])("reports %s as invalid", (_label, text) => {
+    const parsed = parseSecurityDesign(text);
     expect(parsed.kind).toBe("invalid");
     if (parsed.kind !== "invalid") throw new Error("unreachable");
     expect(parsed.message).not.toBe("");

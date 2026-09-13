@@ -47,14 +47,6 @@ function unique(values: readonly string[]): string[] {
   return [...new Set(values)];
 }
 
-/** The roles the wire reports, tolerating a server still on the v1 field.
- *  `roleName` is deprecated and equals `roles[0]`; reading it only when
- *  `roles` is absent keeps an older BFF from emptying the column. */
-function heldRoles(user: ProjectTestUserState): string[] {
-  if (user.roles && user.roles.length > 0) return unique(user.roles);
-  return user.roleName === "" ? [] : [user.roleName];
-}
-
 /** Accounts the sealed store can reveal. `owned` is ADR-0022: the platform holds the password. */
 export function publishedTestUsers(
   users: readonly ProjectTestUserState[],
@@ -63,7 +55,7 @@ export function publishedTestUsers(
     .filter((u) => u.owned)
     .map((u) => ({
       username: u.username,
-      roles: heldRoles(u),
+      roles: unique(u.roles ?? []),
       scopes: unique(u.scopes ?? []),
     }));
 }

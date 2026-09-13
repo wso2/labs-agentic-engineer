@@ -129,7 +129,10 @@ func mapErr(err error, generic string) error {
 // project owns, and folding them together would lose the ownership difference
 // the console renders.
 func toView(v identity.PanelView) gen.ProjectRolesView {
-	out := gen.ProjectRolesView{DirectoryAvailable: v.DirectoryAvailable}
+	out := gen.ProjectRolesView{
+		DirectoryAvailable: v.DirectoryAvailable,
+		ResourceServer:     v.ResourceServer,
+	}
 	for _, r := range v.Roles {
 		out.Roles = append(out.Roles, gen.ProjectRoleState{
 			Name:            r.Name,
@@ -155,14 +158,10 @@ func toView(v identity.PanelView) gen.ProjectRolesView {
 	}
 	for _, u := range v.TestUsers {
 		out.TestUsers = append(out.TestUsers, gen.ProjectTestUserState{
-			Username: u.Username,
-			// RoleName is roles[0] by construction (PanelService.heldRoles), and
-			// is on the wire only until phase 5 moves the console to the plural.
-			RoleName:            u.RoleName,
+			Username:            u.Username,
 			Roles:               u.Roles,
 			Scopes:              u.Scopes,
 			Supplied:            u.Supplied,
-			ColdStart:           u.ColdStart,
 			Exists:              u.Exists,
 			Owned:               u.Owned,
 			RotatedAt:           u.RotatedAt,

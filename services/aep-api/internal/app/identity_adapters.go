@@ -221,7 +221,7 @@ func toGateCredentials(creds []identity.Credential) []provisioning.RolesCredenti
 	for _, c := range creds {
 		out = append(out, provisioning.RolesCredential{
 			Username: c.Username, Password: c.Password,
-			Roles: c.Roles, Scopes: c.Scopes, ColdStart: c.ColdStart,
+			Roles: c.Roles, Scopes: c.Scopes,
 		})
 	}
 	return out
@@ -408,7 +408,7 @@ func (d thunderDirectory) DeleteAction(ctx context.Context, rs, resource, action
 // DeleteResourceServer is the CASCADE, and the order is the whole content of
 // this method: every action, then every resource, then the server. Thunder has
 // no cascade of its own and answers 400 RES-1006 for a parent that still has
-// children (spike P1 §7).
+// children.
 func (d thunderDirectory) DeleteResourceServer(ctx context.Context, rs identity.DirectoryID) error {
 	return mapDirectoryError(d.c.DeleteResourceServerCascade(ctx, string(rs)))
 }
@@ -417,8 +417,8 @@ func (d thunderDirectory) DeleteResourceServer(ctx context.Context, rs identity.
 // do.
 //
 // Three outcomes: no id → create; present and different → one PUT that replaces
-// the permission set wholesale and LEAVES THE ASSIGNMENTS (P1 §7), which is why
-// there is no re-assignment pass; present and equal → no write at all.
+// the permission set wholesale and LEAVES THE ASSIGNMENTS, which is why there
+// is no re-assignment pass; present and equal → no write at all.
 //
 // The id comes from the caller, which listed the directory's roles before it
 // converged anything (see the port): looking the name up again here would be one

@@ -65,6 +65,12 @@ export interface ProjectRolesLiveState {
    */
   projectRoles: ProjectRole[];
   testUsers: ProjectTestUserState[];
+  /**
+   * The resource server this project's grants are on. A fact about the
+   * PROJECT, so the platform answers it before the first Build has created any
+   * role; absent only when the panel could not be scoped at all.
+   */
+  resourceServer?: string | undefined;
 }
 
 /**
@@ -72,18 +78,21 @@ export interface ProjectRolesLiveState {
  * `aud`, the audience the gateway checks, and the `resource` a scoped token is
  * asked for.
  *
- * One project has exactly one, so the first role that names it answers for the
- * project; a role list the platform has no record of yet answers `undefined`,
- * and every reader says nothing rather than guessing a URL the gateway would
- * not accept. Asked here, in one place, because two pages now show it — the
- * Security page's header line and the API view's — and a second spelling of
- * "the first non-empty one" is a second answer waiting to drift.
+ * The view's own answer, which the platform derives from (org, project) and can
+ * therefore give before any role exists. A project's roles all carry the same
+ * string, so a state assembled from roles alone still answers. Nothing is
+ * guessed here: without either, the readers say nothing rather than print a URL
+ * the gateway would not accept. Asked in one place because two pages show it —
+ * the Security page's header line and the API view's.
  */
 export function resourceServerOf(
   live: ProjectRolesLiveState | undefined,
 ): string | undefined {
-  return live?.projectRoles.find((role) => role.resourceServer !== "")
-    ?.resourceServer;
+  return (
+    live?.resourceServer ||
+    live?.projectRoles.find((role) => role.resourceServer !== "")
+      ?.resourceServer
+  );
 }
 
 export const rolesKeys = {
@@ -111,6 +120,7 @@ export function useProjectRoles(projectName: string, enabled: boolean) {
         roles: data?.roles ?? [],
         projectRoles: data?.projectRoles ?? [],
         testUsers: data?.testUsers ?? [],
+        resourceServer: data?.resourceServer,
       };
     },
     // Short, not Infinity: a Build in another tab changes this, and the panel

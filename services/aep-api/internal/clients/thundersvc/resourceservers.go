@@ -37,7 +37,7 @@ package thundersvc
 // gateway's per-operation policies all spell scopes `resource:action`.
 //
 // Four Thunder facts shape this file, all measured against a running ThunderID
-// 1.0.0 rather than read from documentation (docs/design/draft/spikes/P1.md):
+// 1.0.0 rather than read from documentation:
 //
 //  1. **Handle uniqueness is per PARENT, not per resource server.** `read`
 //     exists under both `claims` and `reports`; a second `read` under `claims`
@@ -200,7 +200,7 @@ func (c *client) DeleteResourceServer(ctx context.Context, rsID string) error {
 
 // DeleteResourceServerCascade removes a resource server and everything under
 // it, in the only order Thunder accepts: every action, then every resource,
-// then the server itself (P1 §7). Each layer is deleted in full before the next
+// then the server itself. Each layer is deleted in full before the next
 // one starts — a depth-by-depth walk, not a per-branch one — because that is
 // the sequence the cascade was measured in.
 //

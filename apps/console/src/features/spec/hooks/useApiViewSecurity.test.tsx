@@ -26,7 +26,7 @@ import { SECURITY_JSON_PATH } from "../api/designTree";
 import type { SpecFileEntry } from "../api/mapping";
 import type { ProjectRolesLiveState } from "../api/roles";
 import type { CollabSpec } from "../collab/useCollabSpec";
-import { EXPENSE_TRACKER_TEXT } from "../components/security/testFixtures";
+import { EXPENSE_TRACKER_TEXT } from "../lib/securityTestFixtures";
 import { useApiViewSecurity } from "./useApiViewSecurity";
 
 const mockFiles = vi.fn();

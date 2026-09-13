@@ -113,7 +113,7 @@ func TestPanel_ReadJoinsSharedCatalogWithProjectTestUsers(t *testing.T) {
 		t.Fatalf("testUsers = %d, want 1: %+v", len(view.TestUsers), view.TestUsers)
 	}
 	u := view.TestUsers[0]
-	if u.Username != "support-bot" || u.RoleName != "Support Agent" {
+	if u.Username != "support-bot" || len(u.Roles) != 1 || u.Roles[0] != "Support Agent" {
 		t.Errorf("test user not projected: %+v", u)
 	}
 	if !u.Exists || !u.Owned {
@@ -153,7 +153,7 @@ func TestPanel_DirectoryUnavailableDegradesTheRead(t *testing.T) {
 		t.Fatalf("store-derived test users must survive the outage: %+v", view.TestUsers)
 	}
 	u := view.TestUsers[0]
-	if u.Username != "support-bot" || u.RoleName != "Support Agent" {
+	if u.Username != "support-bot" || len(u.Roles) != 1 || u.Roles[0] != "Support Agent" {
 		t.Errorf("store-derived fields lost: %+v", u)
 	}
 	if !u.Owned {
@@ -260,6 +260,25 @@ func TestPanel_ProjectRolesCarryAssignmentsTheirScopesAndTheResourceServer(t *te
 	}
 }
 
+// The resource server is a fact about the PROJECT, so the panel answers it
+// before the project has any role at all. A project whose first build has not
+// run has no binding rows and no recorded resource server, and the console's
+// Security page and API view both still need the `aud` its tokens will carry —
+// which is derivable from (org, project) and nothing else.
+func TestPanel_ResourceServerAnswersBeforeTheFirstBuild(t *testing.T) {
+	t.Parallel()
+	h := newPanel(t, newFakeDirectory(), newFakeStore())
+	view := decodeView(t, h.AsOrg("acme").Get("/api/v1/projects/expenses/roles").Body.String())
+
+	if len(view.ProjectRoles) != 0 {
+		t.Fatalf("projectRoles = %+v, want none before the first build", view.ProjectRoles)
+	}
+	const derived = "https://aep.wso2.com/orgs/acme/projects/expenses"
+	if view.ResourceServer != derived {
+		t.Errorf("resourceServer = %q, want the derived %q", view.ResourceServer, derived)
+	}
+}
+
 // A recorded resource server WINS over the derived identifier: a project built
 // before the derivation changed must be described by the identifier its tokens
 // actually carry, not by the one today's code would mint.
@@ -278,7 +297,10 @@ func TestPanel_ProjectRolesReportTheRecordedResourceServer(t *testing.T) {
 	}
 	const recorded = "https://aep.wso2.com/orgs/legacy/projects/expenses"
 	if got := view.ProjectRoles[0].ResourceServer; got != recorded {
-		t.Errorf("resourceServer = %q, want the recorded %q", got, recorded)
+		t.Errorf("role resourceServer = %q, want the recorded %q", got, recorded)
+	}
+	if view.ResourceServer != recorded {
+		t.Errorf("view resourceServer = %q, want the recorded %q", view.ResourceServer, recorded)
 	}
 }
 
@@ -289,9 +311,6 @@ func TestPanel_ProjectRolesReportTheRecordedResourceServer(t *testing.T) {
 // it belonged to one build — so the panel reads it: the account's group
 // memberships, joined against this project's role assignments, then the grants
 // of the roles that survive the join.
-//
-// `roleName` stays on the wire as `roles[0]`, so the console can move to the
-// plural without a flag day.
 func TestPanel_TestUserRolesAndScopesAreTheUnionOfEveryRoleItHolds(t *testing.T) {
 	t.Parallel()
 	store := newFakeStore().
@@ -320,9 +339,6 @@ func TestPanel_TestUserRolesAndScopesAreTheUnionOfEveryRoleItHolds(t *testing.T)
 	u := view.TestUsers[0]
 	if !reflect.DeepEqual(u.Roles, []string{"Approver", "Employee"}) {
 		t.Fatalf("roles = %v, want the role it exists for first, then the one its groups add", u.Roles)
-	}
-	if u.RoleName != u.Roles[0] {
-		t.Errorf("roleName = %q, want roles[0] %q — the deprecated field must not disagree", u.RoleName, u.Roles[0])
 	}
 	want := []string{"claims:approve", "claims:read", "claims:read-all", "claims:submit"}
 	if !reflect.DeepEqual(u.Scopes, want) {

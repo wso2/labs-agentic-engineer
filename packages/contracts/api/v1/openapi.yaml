@@ -5736,10 +5736,9 @@ components:
             reference names and what the console renders.
           type: string
         resourceServer:
-          description: The resource server identifier every grant of this role is on, which is the
-            access token's `aud`, the audience the gateway checks and the `resource` a scoped token
-            is asked for. Read from the platform's record, or derived from (org, project) when the
-            project has no record yet.
+          description: The resource server identifier every grant of this role is on. Every role of
+            one project carries the same value, so a reader that wants the project's answer - and
+            wants it before any role exists - reads `resourceServer` on the view instead.
           type: string
         scopes:
           description: The catalog handles the role grants, read from the identity provider and
@@ -5829,6 +5828,14 @@ components:
             $ref: '#/components/schemas/ProjectRole'
           type: array
           nullable: true
+        resourceServer:
+          description: The resource server this project's grants are on - the access token's `aud`,
+            the audience the gateway checks and the `resource` a scoped token is asked for. Read
+            from the platform's record, or derived from (org, project) when no build has written
+            one, so it answers before the first build too. Absent only when the panel could not be
+            scoped to an environment at all, which is the same condition that empties every other
+            field.
+          type: string
         testUsers:
           description: The test accounts THIS project's design references, role-ordered.
           items:
@@ -5843,11 +5850,6 @@ components:
       description: One test account this project references. The account itself is shared at the
         identity provider's scope; only the reference is the project's.
       properties:
-        coldStart:
-          description: 'DEPRECATED: always false, and removed in scopes phase 5. Version 1 served a
-            cold-start account when a caller asked for credentials without naming a role; version 2
-            has none, because signed-in operations and self-service enrolment replaced it.'
-          type: boolean
         exists:
           description: True when the account is present on the identity provider. Meaningless when
             directoryAvailable is false.
@@ -5869,15 +5871,11 @@ components:
             type: string
           type: array
           nullable: true
-        roleName:
-          description: 'DEPRECATED: = roles[0]; removed in scopes phase 5. The role the account
-            exists FOR. Version 2 lets one account hold several, so read `roles`.'
-          type: string
         roles:
-          description: Every project role this login holds - the one it exists for first (so
-            roles[0] is roleName), then any other role of this project whose group the account is
-            also a member of, read from the identity provider. Empty only when the account
-            references no role at all.
+          description: Every project role this login holds - the one the account exists FOR
+            first, then any other role of this project whose group the account is also a member of,
+            read from the identity provider. Empty only when the account references no role at
+            all.
           items:
             type: string
           type: array
@@ -5904,9 +5902,7 @@ components:
           type: string
       required:
       - username
-      - roleName
       - supplied
-      - coldStart
       - exists
       - owned
       type: object

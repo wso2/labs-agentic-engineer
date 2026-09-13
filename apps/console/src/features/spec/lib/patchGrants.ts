@@ -37,7 +37,7 @@
  * Nothing here is widened or repaired. Granting `X:read-all` does not add
  * `X:read`: that implication is a gate RULE, reported as a finding on the page,
  * and applying it silently here would make the page disagree with both the
- * gate and the gateway (decision B1).
+ * gate and the gateway.
  *
  * One edit it REFUSES: taking away a role's last grant. The schema's `grants`
  * is `min(1)`, and a document that fails the schema reads back as "empty or
@@ -57,9 +57,24 @@ export type PatchResult =
   | { ok: true; text: string }
   | { ok: false; failure: PatchFailure };
 
+/**
+ * One role as it appears in a document that has NOT been through the schema.
+ *
+ * `SecurityRole` cannot stand in: this function edits the AUTHORED text (see
+ * above), so every field is whatever the file held — a `name` that is a number,
+ * a missing `grants` — and a type that promises otherwise would be a lie the
+ * casts then have to keep repeating.
+ */
 interface RawRole {
   name?: unknown;
   grants?: unknown;
+}
+
+/** The one `unknown` → open-record narrowing, kept to a single place. */
+function asRawRole(value: unknown): RawRole | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as RawRole)
+    : undefined;
 }
 
 /**
@@ -100,13 +115,10 @@ export function patchGrants(
     };
   }
   const key = role.toLowerCase();
-  const target = roles.find(
-    (r): r is RawRole =>
-      typeof r === "object" &&
-      r !== null &&
-      typeof (r as RawRole).name === "string" &&
-      ((r as RawRole).name as string).toLowerCase() === key,
-  );
+  const target = roles.map(asRawRole).find((r) => {
+    const name = r?.name;
+    return typeof name === "string" && name.toLowerCase() === key;
+  });
   if (!target) return { ok: false, failure: { kind: "no-such-role", role } };
 
   const current = Array.isArray(target.grants)
@@ -114,14 +126,8 @@ export function patchGrants(
     : [];
   const has = current.includes(handle);
   if (has === granted) return { ok: true, text };
-  // `roleSchema.grants` is `z.array(...).min(1)`, so a role with an empty
-  // `grants` is a document the schema refuses. The console reads its own writes
-  // through that schema and shows a failed parse as "empty or incomplete" — so
-  // taking the last grant away would blank the very page holding the cell that
-  // could put it back, and the collab commit path only WARNS, so the
-  // unreadable document would reach git. The page disables this cell for the
-  // same reason (`isLastGrant`); this guard is what makes the rule true even
-  // when the document changed under the render that drew the cell.
+  // The page disables this cell too (`isLastGrant`); the guard is here as well
+  // because the document can change under the render that drew the cell.
   if (!granted && current.length === 1) {
     return { ok: false, failure: { kind: "last-grant", role } };
   }

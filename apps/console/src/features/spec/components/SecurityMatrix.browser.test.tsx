@@ -39,7 +39,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   EXPENSE_TRACKER_REFERENCES,
   EXPENSE_TRACKER_TEXT,
-} from "./security/testFixtures";
+} from "../lib/securityTestFixtures";
 import { SecurityPanel } from "./SecurityPanel";
 
 afterEach(() => {

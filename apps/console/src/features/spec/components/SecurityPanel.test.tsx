@@ -30,7 +30,7 @@ import { serializeSecurityDesign, type SecurityDesign } from "../api/securityDes
 import {
   EXPENSE_TRACKER_REFERENCES,
   EXPENSE_TRACKER_TEXT,
-} from "./security/testFixtures";
+} from "../lib/securityTestFixtures";
 import { SecurityPanel } from "./SecurityPanel";
 
 afterEach(cleanup);
@@ -139,7 +139,7 @@ function room(initial: string) {
 }
 
 /**
- * The design of record's Expense Tracker, with a live room and a writer.
+ * The Expense Tracker worked example, with a live room and a writer.
  *
  * `deliver` re-renders the SAME panel with a newer document, which is how the
  * room's echo arrives in life — a fresh mount would prove nothing about state
@@ -212,12 +212,24 @@ describe("SecurityPanel — reading the document", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows a malformed document as an error with the Security prefix", () => {
+  // Mid-turn the room holds a PREFIX of the document, which is not a fault and
+  // must not read like one — but it does cost the reader the warnings, and the
+  // page has to say so rather than show an empty page that looks checked.
+  it("says a half-written document is still being written, warnings included", () => {
     setup({ securityJson: '{"version": 2,' });
 
-    expect(
-      screen.getByText(/Couldn't read the Security document:/i),
-    ).toBeInTheDocument();
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent(/still being written/i);
+    expect(alert).toHaveTextContent(/warnings this page raises/i);
+    expect(alert).not.toHaveTextContent(/Couldn't read/i);
+  });
+
+  it("says a broken document was not checked, rather than showing no warnings", () => {
+    setup({ securityJson: '{"version": 2} and then some' });
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent(/Couldn't read the Security document/i);
+    expect(alert).toHaveTextContent(/Nothing on this page was checked/i);
   });
 
   // A project whose last design turn predates v2 has a complete v1 file. The
@@ -225,9 +237,11 @@ describe("SecurityPanel — reading the document", () => {
   it("shows a version-1 document as an error naming what v2 removed", () => {
     setup({ securityJson: V1_DOCUMENT });
 
-    const alert = screen.getByText(/Couldn't read the Security document:/i);
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent(/Couldn't read the Security document/i);
     expect(alert).toHaveTextContent(/v1 is not accepted/i);
     expect(alert).toHaveTextContent(/coldStartRole/);
+    expect(alert).not.toHaveTextContent(/still being written/i);
     expect(
       screen.queryByRole("heading", { name: "Roles & users" }),
     ).not.toBeInTheDocument();
@@ -245,8 +259,8 @@ describe("SecurityPanel — reading the document", () => {
   });
 });
 
-// The design of record draws this grid exactly: two roles, two resources, seven
-// handles, one warning. Each assertion below names a mark the design draws.
+// The worked example draws exactly this grid: two roles, two resources, seven
+// handles, one warning.
 describe("SecurityPanel — the permission matrix (Expense Tracker)", () => {
   it("heads a column per user role, in declaration order", () => {
     expenseTracker();
@@ -364,8 +378,8 @@ describe("SecurityPanel — warnings on the row they name", () => {
     expect(note.closest("div")!.textContent).toMatch(/build gate resolves it/i);
   });
 
-  // Decision B1 is law: the page reports the document the toggle produced, it
-  // does not refuse the edit and does not silently repair it.
+  // The page reports the document the toggle produced; it does not refuse the
+  // edit and does not silently repair it.
   it("shows the read-all-without-read error rather than blocking the grant", () => {
     const withoutRead = EXPENSE_TRACKER_TEXT.replace(
       '"claims:read",\n        "claims:read-all"',

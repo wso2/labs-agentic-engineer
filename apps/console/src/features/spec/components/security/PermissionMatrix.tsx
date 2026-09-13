@@ -22,21 +22,17 @@
  *
  * Rows are the catalog grouped by resource, each group headed by the resource
  * and the component that owns it; columns are the user-kind roles; a filled
- * mark is a grant. Comparing roles is the reader's task, which is why this is
- * one grid rather than a card per role — the design settled that trade
- * explicitly, against "cards only" and "per-resource cards".
+ * mark is a grant.
  *
  * Three rows sit under the grid rather than in it, because they cross no
  * column: what any signed-in caller reaches without holding a handle, what is
- * open before sign-in, and which components provision no sign-in at all. They
- * are the baseline the grid is read against, and the design puts them in the
- * same grid so the reader does not have to go and find them in the API view.
+ * open before sign-in, and which components provision no sign-in at all.
  *
  * The last two are adjacent and deliberately not merged. A public screen or
  * operation belongs to a component that DOES have sign-in and has chosen to
  * leave this one door open; a component with no sign-in dependency has no door
- * to close. A reader deciding whether this project exposes anything has to see
- * both, and has to be able to tell them apart.
+ * to close — a reader deciding whether this project exposes anything has to be
+ * able to tell them apart.
  *
  * Service-kind roles are not columns. A service principal holds an application
  * token and reaches no screen, so a column beside the roles a person holds
@@ -64,9 +60,9 @@ import {
   type Ownership,
   type SecurityMatrix,
 } from "../../api/securityDesign";
+import type { RoutedFindings } from "../../lib/securityFindings";
 import { FindingLines } from "./FindingLine";
 import { GrantCell } from "./GrantCell";
-import type { RoutedFindings } from "./findings";
 
 /**
  * The rows under the catalog, already merged from the document's screens, the

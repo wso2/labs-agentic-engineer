@@ -18,7 +18,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { EXPENSE_TRACKER_TEXT } from "../components/security/testFixtures";
+import { EXPENSE_TRACKER_TEXT } from "../lib/securityTestFixtures";
 import { scopeRolesOf } from "./apiViewRoles";
 
 describe("scopeRolesOf — the catalog as the API view reads it", () => {
