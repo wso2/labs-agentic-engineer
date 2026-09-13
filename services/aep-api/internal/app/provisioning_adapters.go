@@ -25,10 +25,10 @@ import (
 )
 
 // securityJSONReader reads the project's security.json from the design bundle
-// for platform-resource provision overlay. Empty tag is HEAD (HTTP drawer);
-// a build's `v<N>` spec tag uses GetDesignAtSpecTag. GetDesignAtTag next door
-// parses `v<N>-<M>` design-revision tags and refuses a spec tag — identity
-// already works around this; this adapter does the same.
+// for platform-resource provision overlay. An empty tag is HEAD (the HTTP
+// drawer, which has no version); a build supplies the version tag it is
+// building, so the overlay is what THAT version declares rather than whatever
+// has been edited since.
 type securityJSONReader struct{ art spec.ArtifactService }
 
 func (r securityJSONReader) ReadSecurityJSON(ctx context.Context, orgID, projectID, tag string) ([]byte, error) {
@@ -39,7 +39,7 @@ func (r securityJSONReader) ReadSecurityJSON(ctx context.Context, orgID, project
 	if tag == "" {
 		files, err = r.art.ListDesignFiles(ctx, orgID, projectID)
 	} else {
-		files, err = r.art.GetDesignAtSpecTag(ctx, orgID, projectID, tag)
+		files, err = r.art.GetDesignAtTag(ctx, orgID, projectID, tag)
 	}
 	if err != nil {
 		return nil, err

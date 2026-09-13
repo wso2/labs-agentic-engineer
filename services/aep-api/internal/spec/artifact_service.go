@@ -29,7 +29,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"regexp"
 	"strings"
 
@@ -50,12 +49,9 @@ var (
 	// ErrArtifactPathInvalid is returned for illegal-shape inputs and for the
 	// save-gate layout failure (root file missing). Maps to 400.
 	ErrArtifactPathInvalid = errors.New("invalid artifact path")
-	// ErrNoRequirementsBaseline is returned by SaveDesign when no `v<N>` tag
-	// exists yet — design tags must reference an existing requirements
-	// version. Maps to 409.
-	ErrNoRequirementsBaseline = errors.New("no requirements baseline — save requirements first")
-	// ErrInvalidVersionTag is returned when a tag string in a path/query does
-	// not parse as `v<N>` or `v<N>-<M>`. Maps to 400.
+	// ErrInvalidVersionTag is returned when a tag string could never name a
+	// version — it fails ValidateVersionName, the same rule the save applies.
+	// Maps to 400.
 	ErrInvalidVersionTag = errors.New("invalid version tag")
 	// ErrDesignNotFound is the design member of the artifact-not-found family —
 	// raised when the design corpus is absent at HEAD / a tag.
@@ -67,13 +63,13 @@ var (
 const (
 	// RequirementsDir is the repo directory holding all requirement markdown
 	// documents. Each file is one document; the bundle is versioned together as
-	// a single artifact under `v<N>` tags.
+	// a single artifact under the project's version tags.
 	RequirementsDir = "specs/requirements"
 	// DesignDir is the repo directory holding all design files. The
 	// architecture artifact is multi-file: a root `design.cell` plus
 	// `domain-model.md`, `flows/<slug>.md`, and `components/<name>/design.json`
-	// (+ optional `openapi.yaml`) per component. Versioned as a single artifact
-	// under `v<N>-<M>` tags.
+	// (+ optional `openapi.yaml`) per component. Versioned together with the
+	// requirements under the project's version tags.
 	DesignDir = "specs/design"
 	// requirementsMainFile is the canonical "main" requirements document (the
 	// PRD). Its presence is the requirements save gate.
@@ -123,23 +119,6 @@ func (s *artifactService) resolveSaveCommit(ctx context.Context, ref sourcecontr
 	return head, nil
 }
 
-// RequirementsSaveResult is the response of POST /artifacts/requirements/save.
-type RequirementsSaveResult struct {
-	Status     string `json:"status"` // "approved" | "unchanged"
-	Tag        string `json:"tag"`    // e.g. "v3"
-	Version    int    `json:"version"`
-	CommitHash string `json:"commitHash,omitempty"`
-}
-
-// DesignSaveResult is the response of POST /artifacts/design/save.
-type DesignSaveResult struct {
-	Status              string `json:"status"` // "approved" | "unchanged"
-	Tag                 string `json:"tag"`    // e.g. "v1-2"
-	RequirementsVersion int    `json:"requirementsVersion"`
-	DesignRevision      int    `json:"designRevision"`
-	CommitHash          string `json:"commitHash,omitempty"`
-}
-
 // ----- Service -----
 
 // ArtifactService is the typed entry-point for the artifact endpoints. Reads
@@ -153,36 +132,24 @@ type ArtifactService interface {
 
 	// Save / Discard.
 	// SaveSpec is the single-tag save: whole-spec hard gate (requirements +
-	// design) at the save commit, then the next `v<N>` tag covering the whole
-	// specs/ tree. Validation failure returns *SpecValidationError (422).
+	// design) at the save commit, then one tag — the name the user gave, or a
+	// suggestion — covering the whole specs/ tree. Validation failure returns
+	// *SpecValidationError (422).
 	SaveSpec(ctx context.Context, orgID, projectID string, req SaveRequest) (*SpecSaveResult, error)
-	// ValidateSpecAtTag re-runs the whole-spec gate at a `v<N>` tag — the dev
-	// workflow's defensive pre-plan check.
-	ValidateSpecAtTag(ctx context.Context, orgID, projectID, tag string) error
 	// BuildScopeAtTag computes the tag's story scope (#369): the PRD's story
 	// set + titles, and per-component claims from each design.json's
 	// `stories`. Consumed by delivery/build (milestone identity) and
 	// delivery/task (delta planning + the Serves-stories stamp).
 	BuildScopeAtTag(ctx context.Context, orgID, projectID, tag string) (BuildScope, error)
-	// LatestSpecTag returns the newest `v<N>` tag name from the local mirror
-	// WITHOUT a fetch, degrading to "" — the task stale-spec attention read.
-	LatestSpecTag(ctx context.Context, orgID, projectID string) string
-	SaveRequirements(ctx context.Context, orgID, projectID string, req SaveRequest) (*RequirementsSaveResult, error)
-	SaveDesign(ctx context.Context, orgID, projectID string, req SaveRequest) (*DesignSaveResult, error)
 
 	// Versions.
-	ListRequirementsVersions(ctx context.Context, orgID, projectID string) ([]RequirementsVersionInfo, error)
-	ListDesignVersions(ctx context.Context, orgID, projectID string) ([]DesignVersionInfo, error)
-	// ListSpecVersionTags lists the `v<N>` spec version tags (newest first)
-	// with the latest tag and whether specs/ moved since it (#117).
+	// ListSpecVersionTags lists the spec version tags (newest first by creation
+	// time) with the latest tag and whether specs/ moved since it (#117).
 	ListSpecVersionTags(ctx context.Context, orgID, projectID string) (*TagList, error)
-	GetRequirementsAtTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
+	// GetDesignAtTag reads the design bundle at a spec version tag — the tag a
+	// build carries. The name is the user's (ADR-0030) and is not parsed: the
+	// tag either resolves or it does not.
 	GetDesignAtTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
-	// GetDesignAtSpecTag reads the design bundle at a `v<N>` SPEC tag — the tag
-	// a build actually has. GetDesignAtTag above takes the legacy `v<N>-<M>`
-	// design-revision tag and REFUSES a spec tag outright, so a build-time
-	// consumer must use this one.
-	GetDesignAtSpecTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
 	// BuildVersionFacts reports what the next version would be called and what
 	// it would change — the version half of the build preflight (console
 	// ADR-0029). Read-only; it cuts nothing.
@@ -289,17 +256,6 @@ func (s *artifactService) ListDesignFiles(ctx context.Context, orgID, projectID 
 	return s.readBundleAtHead(ctx, ref, designPrefix, designBundleFilter)
 }
 
-func (s *artifactService) GetRequirementsAtTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error) {
-	if _, ok := parseRequirementsTag(tag); !ok {
-		return nil, fmt.Errorf("%w: %q is not a v<N> tag", ErrInvalidVersionTag, tag)
-	}
-	_, ref, err := s.readyRef(ctx, orgID, projectID)
-	if err != nil {
-		return nil, err
-	}
-	return s.readBundleAtTag(ctx, ref, tag, requirementsPrefix, requirementsBundleFilter)
-}
-
 func (s *artifactService) GetDesignAtCommit(ctx context.Context, orgID, projectID, commitSHA string) (map[string]string, error) {
 	if !commitSHAPattern.MatchString(commitSHA) {
 		return nil, fmt.Errorf("%w: %q is not a commit sha", ErrArtifactPathInvalid, commitSHA)
@@ -311,202 +267,23 @@ func (s *artifactService) GetDesignAtCommit(ctx context.Context, orgID, projectI
 	return s.readBundleAtCommit(ctx, ref, commitSHA, designPrefix, designBundleFilter)
 }
 
-func (s *artifactService) GetDesignAtTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error) {
-	if _, _, ok := parseDesignTag(tag); !ok {
-		return nil, fmt.Errorf("%w: %q is not a v<N>-<M> tag", ErrInvalidVersionTag, tag)
-	}
-	_, ref, err := s.readyRef(ctx, orgID, projectID)
-	if err != nil {
-		return nil, err
-	}
-	return s.readBundleAtTag(ctx, ref, tag, designPrefix, designBundleFilter)
-}
-
-// GetDesignAtSpecTag reads the design bundle at a `v<N>` spec tag.
+// GetDesignAtTag reads the design bundle at a spec version tag.
 //
-// It exists because GetDesignAtTag next door parses its argument as a
-// design-REVISION tag (`v<N>-<M>`, the legacy per-design sequence) and rejects
-// anything else. A build only ever knows the spec tag, so wiring a build-time
-// consumer to the other method fails on every real build with "not a v<N>-<M>
-// tag" — which is exactly what happened to the roles ensure.
-func (s *artifactService) GetDesignAtSpecTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error) {
-	if _, ok := parseRequirementsTag(tag); !ok {
-		return nil, fmt.Errorf("%w: %q is not a v<N> spec tag", ErrInvalidVersionTag, tag)
+// The name is NOT parsed. A version carries the name the user gave it
+// (ADR-0030), so any shape test here refuses legitimate versions — this method
+// used to demand `v<N>` and failed every named one. What the name must survive
+// is becoming a ref: ValidateVersionName is the same rule the save applies, so
+// a name that could never have been created cannot be asked for either, and
+// `..` or `/` cannot walk out of `tags/` into a branch.
+func (s *artifactService) GetDesignAtTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error) {
+	if verr := ValidateVersionName(tag); verr != nil {
+		return nil, fmt.Errorf("%w: %q: %w", ErrInvalidVersionTag, tag, verr)
 	}
 	_, ref, err := s.readyRef(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
 	return s.readBundleAtTag(ctx, ref, tag, designPrefix, designBundleFilter)
-}
-
-// ----- Versions -----
-
-func (s *artifactService) ListRequirementsVersions(ctx context.Context, orgID, projectID string) ([]RequirementsVersionInfo, error) {
-	_, ref, err := s.readyRef(ctx, orgID, projectID)
-	if err != nil {
-		return nil, err
-	}
-	tags, err := s.listVersionTags(ctx, ref)
-	if err != nil {
-		return nil, fmt.Errorf("list tags: %w", err)
-	}
-	return tagsToRequirementsVersions(tags), nil
-}
-
-func (s *artifactService) ListDesignVersions(ctx context.Context, orgID, projectID string) ([]DesignVersionInfo, error) {
-	_, ref, err := s.readyRef(ctx, orgID, projectID)
-	if err != nil {
-		return nil, err
-	}
-	tags, err := s.listVersionTags(ctx, ref)
-	if err != nil {
-		return nil, fmt.Errorf("list tags: %w", err)
-	}
-	return tagsToDesignVersions(tags), nil
-}
-
-// ----- Save (hard gate → tag at HEAD) -----
-
-// SaveRequirements runs the requirements hard gate (prd.md must exist
-// at HEAD) and cuts the next `v<N>` annotated tag pointing at HEAD. No commit is
-// created — the accepted draft is already on `main`. When HEAD already matches
-// the latest tag the save is a no-op ("unchanged").
-func (s *artifactService) SaveRequirements(ctx context.Context, orgID, projectID string, req SaveRequest) (*RequirementsSaveResult, error) {
-	_, ref, err := s.readyRef(ctx, orgID, projectID)
-	if err != nil {
-		return nil, err
-	}
-	head, err := s.resolveSaveCommit(ctx, ref, req)
-	if err != nil {
-		return nil, err
-	}
-	files, err := s.readBundleAtCommit(ctx, ref, head, requirementsPrefix, requirementsBundleFilter)
-	if err != nil {
-		return nil, err
-	}
-	// The commit this save gates + tags (pinned by the publish flow's apply,
-	// or the freshly-fetched branch tip when unpinned).
-	slog.InfoContext(ctx, "requirements save: head read",
-		"project", projectID, "repo", ref.OrgID+"/"+ref.ProjectID+"/"+ref.RepoSlug, "commit", head,
-		"pinned", req.CommitSHA != "", "files", len(files))
-	// Hard gate: requirements.md must exist.
-	if strings.TrimSpace(files[requirementsMainFile]) == "" {
-		slog.WarnContext(ctx, "requirements save: hard gate failed — requirements.md missing at HEAD",
-			"project", projectID, "commit", head, "files", len(files))
-		return nil, fmt.Errorf("%w: %s/%s missing — populate requirements before saving",
-			ErrArtifactPathInvalid, RequirementsDir, requirementsMainFile)
-	}
-
-	tags, err := s.listVersionTags(ctx, ref)
-	if err != nil {
-		return nil, fmt.Errorf("list tags: %w", err)
-	}
-
-	// Unchanged detection: HEAD bundle == latest requirements tag's bundle.
-	if latest := latestRequirementsTag(tags); latest != "" {
-		if tagged, terr := s.readBundleAtTag(ctx, ref, latest, requirementsPrefix, requirementsBundleFilter); terr == nil && trimmedMapsEqual(files, tagged) {
-			slog.InfoContext(ctx, "requirements save: unchanged — HEAD matches latest tag",
-				"project", projectID, "tag", latest, "commit", head)
-			return &RequirementsSaveResult{
-				Status:  "unchanged",
-				Tag:     latest,
-				Version: latestRequirementsVersion(tags),
-			}, nil
-		}
-	}
-
-	nextN, tagName := nextRequirementsTag(tags)
-	tagBody := fmt.Sprintf("Requirements v%d", nextN)
-	if req.Message != "" && req.Message != "Update requirements" {
-		tagBody = fmt.Sprintf("%s\n\n%s", tagBody, req.Message)
-	}
-	if err := s.createAnnotatedTag(ctx, ref, &tags, &nextN, &tagName, tagBody, head, 0, "requirements"); err != nil {
-		return nil, fmt.Errorf("create tag: %w", err)
-	}
-
-	slog.InfoContext(ctx, "requirements tagged at HEAD", "project", projectID, "tag", tagName, "commit", head)
-	return &RequirementsSaveResult{
-		Status:     "approved",
-		Tag:        tagName,
-		Version:    nextN,
-		CommitHash: head,
-	}, nil
-}
-
-// SaveDesign runs the design hard gate (layout + component design.json schema +
-// OpenAPI parseability) and cuts the next `v<N>-<M>` annotated tag pointing at
-// HEAD, where N is the latest requirements version. A validation failure returns
-// a *DesignValidationError (422); ErrNoRequirementsBaseline when no `v<N>` tag
-// exists. When HEAD already matches the latest design tag the save is
-// "unchanged".
-func (s *artifactService) SaveDesign(ctx context.Context, orgID, projectID string, req SaveRequest) (*DesignSaveResult, error) {
-	_, ref, err := s.readyRef(ctx, orgID, projectID)
-	if err != nil {
-		return nil, err
-	}
-	head, err := s.resolveSaveCommit(ctx, ref, req)
-	if err != nil {
-		return nil, err
-	}
-	files, err := s.readBundleAtCommit(ctx, ref, head, designPrefix, designBundleFilter)
-	if err != nil {
-		return nil, err
-	}
-	// The commit this save gates + tags (see the requirements twin).
-	slog.InfoContext(ctx, "design save: head read",
-		"project", projectID, "repo", ref.OrgID+"/"+ref.ProjectID+"/"+ref.RepoSlug, "commit", head,
-		"pinned", req.CommitSHA != "", "files", len(files))
-	// Hard gate: nothing malformed may acquire a tag.
-	if err := validateDesignBundle(files); err != nil {
-		slog.WarnContext(ctx, "design save: hard gate failed",
-			"project", projectID, "commit", head, "files", len(files), "error", err)
-		return nil, err
-	}
-
-	tags, err := s.listVersionTags(ctx, ref)
-	if err != nil {
-		return nil, fmt.Errorf("list tags: %w", err)
-	}
-	parentN := latestRequirementsVersion(tags)
-	if parentN == 0 {
-		slog.WarnContext(ctx, "design save: no requirements baseline tag",
-			"project", projectID, "tags", len(tags))
-		return nil, ErrNoRequirementsBaseline
-	}
-
-	// Unchanged detection: HEAD bundle == latest v<parentN>-<M> tag's bundle.
-	if latestM := latestDesignRevision(tags, parentN); latestM > 0 {
-		latestTag := designTagFor(parentN, latestM)
-		if tagged, terr := s.readBundleAtTag(ctx, ref, latestTag, designPrefix, designBundleFilter); terr == nil && trimmedMapsEqual(files, tagged) {
-			slog.InfoContext(ctx, "design save: unchanged — HEAD matches latest tag",
-				"project", projectID, "tag", latestTag, "commit", head)
-			return &DesignSaveResult{
-				Status:              "unchanged",
-				Tag:                 latestTag,
-				RequirementsVersion: parentN,
-				DesignRevision:      latestM,
-			}, nil
-		}
-	}
-
-	nextRev, tagName := nextDesignTag(tags, parentN)
-	tagBody := fmt.Sprintf("Design v%d-%d", parentN, nextRev)
-	if req.Message != "" && req.Message != "Update design" {
-		tagBody = fmt.Sprintf("%s\n\n%s", tagBody, req.Message)
-	}
-	if err := s.createAnnotatedTag(ctx, ref, &tags, &nextRev, &tagName, tagBody, head, parentN, "design"); err != nil {
-		return nil, fmt.Errorf("create tag: %w", err)
-	}
-
-	slog.InfoContext(ctx, "design tagged at HEAD", "project", projectID, "tag", tagName, "commit", head)
-	return &DesignSaveResult{
-		Status:              "approved",
-		Tag:                 tagName,
-		RequirementsVersion: parentN,
-		DesignRevision:      nextRev,
-		CommitHash:          head,
-	}, nil
 }
 
 // ----- Internal helpers -----
@@ -538,23 +315,4 @@ func (s *artifactService) readyRef(ctx context.Context, orgID, projectID string)
 		return nil, sourcecontrol.RepoRef{}, err
 	}
 	return repo, ref, nil
-}
-
-// trimmedMapsEqual compares two file maps for byte-equality after trimming
-// surrounding whitespace on each value — the same equality the save flow uses to
-// decide "unchanged".
-func trimmedMapsEqual(a, b map[string]string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, va := range a {
-		vb, ok := b[k]
-		if !ok {
-			return false
-		}
-		if strings.TrimSpace(va) != strings.TrimSpace(vb) {
-			return false
-		}
-	}
-	return true
 }

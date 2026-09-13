@@ -16,15 +16,19 @@
 
 package spec
 
-// SaveSpec = whole-spec hard gate (requirements + design) → single `v<N>`
-// annotated tag covering the specs/ tree. These run over the real gitfs
-// Workspace engine like the save tests.
+// SaveSpec = whole-spec hard gate (requirements + design) → one annotated tag
+// covering the specs/ tree, named by the user or suggested. These run over the
+// real gitfs Workspace engine.
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
+
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // validSpecSeed is a buildable spec: a PRD with a User Stories section, a
@@ -72,8 +76,8 @@ func TestSaveSpec_TagsAtHead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SaveSpec: %v", err)
 	}
-	if res.Status != "approved" || res.Tag != "v1" || res.Version != 1 {
-		t.Fatalf("result = %+v, want approved/v1/1", res)
+	if res.Status != "approved" || res.Tag != "v1" {
+		t.Fatalf("result = %+v, want approved/v1", res)
 	}
 	if res.CommitHash != head {
 		t.Errorf("tag points at %s, want HEAD %s (no new commit on save)", res.CommitHash, head)
@@ -190,7 +194,7 @@ func TestSaveSpec_Unchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second save: %v", err)
 	}
-	if res.Status != "unchanged" || res.Tag != "v1" || res.Version != 1 {
+	if res.Status != "unchanged" || res.Tag != "v1" {
 		t.Fatalf("result = %+v, want unchanged/v1/1", res)
 	}
 	if got := r.tags(); len(got) != 1 {
@@ -215,7 +219,7 @@ func TestSaveSpec_DesignOnlyChange_CutsNewTag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second save: %v", err)
 	}
-	if res.Status != "approved" || res.Tag != "v2" || res.Version != 2 {
+	if res.Status != "approved" || res.Tag != "v2" {
 		t.Fatalf("result = %+v, want approved/v2/2 (design-only change bumps the spec version)", res)
 	}
 	if res.CommitHash != head {
@@ -237,7 +241,7 @@ func TestSaveSpec_LegacyDesignTagsExcluded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SaveSpec: %v", err)
 	}
-	if res.Tag != "v2" || res.Version != 2 {
+	if res.Tag != "v2" {
 		t.Fatalf("result = %+v, want v2/2 (legacy design tags excluded from the sequence)", res)
 	}
 }
@@ -262,59 +266,6 @@ func TestSaveSpec_AtProvidedCommit_TagsThatCommit(t *testing.T) {
 	}
 }
 
-func TestValidateSpecAtTag(t *testing.T) {
-	t.Parallel()
-	r := newRig(t, validSpecSeed())
-	ctx := context.Background()
-	res, err := r.svc.SaveSpec(ctx, r.org, r.proj, SaveRequest{})
-	if err != nil {
-		t.Fatalf("SaveSpec: %v", err)
-	}
-
-	if err := r.svc.ValidateSpecAtTag(ctx, r.org, r.proj, res.Tag); err != nil {
-		t.Errorf("ValidateSpecAtTag(%s) = %v, want nil", res.Tag, err)
-	}
-	if err := r.svc.ValidateSpecAtTag(ctx, r.org, r.proj, "v1-1"); !errors.Is(err, ErrInvalidVersionTag) {
-		t.Errorf("ValidateSpecAtTag(v1-1) = %v, want ErrInvalidVersionTag", err)
-	}
-}
-
-func TestValidateSpecAtTag_InvalidSpecAtTag(t *testing.T) {
-	// The gate these assert is switched OFF (specGateDisabled), so it refuses
-	// nothing and every assertion below would fail. Skipped by the SAME constant
-	// rather than deleted or weakened: flipping the constant back re-arms the gate
-	// and its tests together, which is what stops the gate returning unguarded.
-	if specGateDisabled {
-		t.Skip("whole-spec gate disabled (specGateDisabled)")
-	}
-	t.Parallel()
-	// A tag cut externally over a design-less tree fails re-validation.
-	r := newRig(t, map[string]string{"specs/requirements/prd.md": "the spec\n"})
-	r.tag("v1", specTagSubject+"v1")
-
-	err := r.svc.ValidateSpecAtTag(context.Background(), r.org, r.proj, "v1")
-	var se *SpecValidationError
-	if !errors.As(err, &se) {
-		t.Fatalf("err = %v, want *SpecValidationError", err)
-	}
-}
-
-func TestLatestSpecTag(t *testing.T) {
-	t.Parallel()
-	r := newRig(t, validSpecSeed())
-	ctx := context.Background()
-	if got := r.svc.LatestSpecTag(ctx, r.org, r.proj); got != "" {
-		t.Errorf("LatestSpecTag with no tags = %q, want empty", got)
-	}
-	if _, err := r.svc.SaveSpec(ctx, r.org, r.proj, SaveRequest{}); err != nil {
-		t.Fatalf("SaveSpec: %v", err)
-	}
-	r.tag("v1-3", "legacy design rev — must not win")
-	if got := r.svc.LatestSpecTag(ctx, r.org, r.proj); got != "v1" {
-		t.Errorf("LatestSpecTag = %q, want v1", got)
-	}
-}
-
 func TestBuildScopeAtTag(t *testing.T) {
 	t.Parallel()
 	seed := validSpecSeed()
@@ -329,7 +280,7 @@ func TestBuildScopeAtTag(t *testing.T) {
 		`"buildpack":"go","appPath":".","entrypoint":"main.go","exposure":"internet",` +
 		`"stories":[7],"dependencies":[],"description":"a service"}`
 	r := newRig(t, seed)
-	if _, err := r.svc.SaveRequirements(context.Background(), r.org, r.proj, SaveRequest{}); err != nil {
+	if _, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{}); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 
@@ -353,5 +304,173 @@ func TestBuildScopeAtTag(t *testing.T) {
 	// Claims are filtered to PRD stories (the junk 9 is dropped).
 	if fmt.Sprint(scope.ComponentStories["svc"]) != "[1 2]" || fmt.Sprint(scope.ComponentStories["notify-svc"]) != "[7]" {
 		t.Errorf("componentStories = %v", scope.ComponentStories)
+	}
+}
+
+// -- the save's shared plumbing: the commit it pins, and the name it lands ----
+
+func TestSaveSpec_InvalidCommitSHA(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, validSpecSeed())
+	_, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{CommitSHA: "not-a-sha!"})
+	if !errors.Is(err, ErrArtifactPathInvalid) {
+		t.Fatalf("err = %v, want ErrArtifactPathInvalid (malformed commit sha)", err)
+	}
+	if got := r.tags(); len(got) != 0 {
+		t.Errorf("tags = %v, want none", got)
+	}
+}
+
+// A well-formed but UNKNOWN pinned sha fails the gate read with the engine's
+// ref-not-found: the pinned bundle read runs first, so no tag is ever attempted.
+func TestSaveSpec_UnknownPinnedSha_RefNotFound(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, validSpecSeed())
+	_, err := r.svc.SaveSpec(context.Background(), r.org, r.proj,
+		SaveRequest{CommitSHA: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"})
+	if !errors.Is(err, sourcecontrol.ErrRefNotFound) {
+		t.Fatalf("err = %v, want wrapped sourcecontrol.ErrRefNotFound", err)
+	}
+	if got := r.tags(); len(got) != 0 {
+		t.Errorf("tags = %v, want none (unknown sha must never acquire a tag)", got)
+	}
+}
+
+// The tag the save reports is the same object origin and the mirror resolve,
+// and it is HEAD — a save commits nothing.
+func TestSaveSpec_TagShaConsistency_OriginAndMirror(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, validSpecSeed())
+
+	res, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{})
+	if err != nil {
+		t.Fatalf("SaveSpec: %v", err)
+	}
+	if origin := r.originRevParse("v1^{commit}"); res.CommitHash != origin {
+		t.Errorf("CommitHash %s != origin peeled v1 %s", res.CommitHash, origin)
+	}
+	if mirror := r.mirrorRevParse("v1^{commit}"); res.CommitHash != mirror {
+		t.Errorf("CommitHash %s != mirror peeled v1 %s", res.CommitHash, mirror)
+	}
+	if head := r.headSHA(); res.CommitHash != head {
+		t.Errorf("CommitHash %s != origin tip %s (save must tag HEAD)", res.CommitHash, head)
+	}
+}
+
+// A SUGGESTED name may be re-suggested past a taken one: the suggestion is the
+// platform's, so stepping it costs the caller nothing. (A name the USER typed
+// is terminal instead — delivery/build asserts that 409.)
+func TestSaveSpec_SuggestedNameCollision_RecomputesToNextName(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, validSpecSeed())
+	// v1 already claimed externally, and the draft has since moved on → the save
+	// wants a tag but must skip the taken v1 and land v2.
+	r.tag("v1", specTagSubject+"v1")
+	r.seed(map[string]string{
+		"specs/requirements/prd.md": "# PRD\n\n## User Stories\n\n1. As a user, I want the thing, so that value.\n\nmoved on\n",
+	}, "draft edit")
+
+	res, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{})
+	if err != nil {
+		t.Fatalf("SaveSpec: %v", err)
+	}
+	if res.Tag != "v2" {
+		t.Fatalf("result = %+v, want v2 (skip the taken v1)", res)
+	}
+	if tags := r.tags(); len(tags) != 2 || tags[0] != "v1" || tags[1] != "v2" {
+		t.Errorf("tags = %v, want [v1 v2] (v1 preserved)", tags)
+	}
+}
+
+// A true external-pusher collision in the window between the save's fresh
+// tag-list read and its Tag push, forced via the harness BeforeTag hook: the
+// engine's fetch+precheck surfaces ErrTagAlreadyExists, and the recompute loop
+// must refresh the tag list and land v2.
+func TestSaveSpec_SuggestedNameCollision_InWindowClaim(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, validSpecSeed())
+
+	var tagAttempts int32
+	var once sync.Once
+	r.ws.BeforeTag = func(sourcecontrol.TagSpec) {
+		atomic.AddInt32(&tagAttempts, 1)
+		once.Do(func() { r.tag("v1", specTagSubject+"v1") })
+	}
+
+	res, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{})
+	if err != nil {
+		t.Fatalf("SaveSpec: %v", err)
+	}
+	if res.Tag != "v2" {
+		t.Fatalf("result = %+v, want v2 (retry past the claimed v1)", res)
+	}
+	if n := atomic.LoadInt32(&tagAttempts); n < 2 {
+		t.Errorf("Tag attempts = %d, want ≥2 (first collides, recompute lands v2)", n)
+	}
+	if tags := r.tags(); len(tags) != 2 || tags[0] != "v1" || tags[1] != "v2" {
+		t.Errorf("tags = %v, want [v1 v2] (external v1 preserved)", tags)
+	}
+}
+
+// The exit-gate concurrency pin: two goroutines race the SAME suggested name
+// (both start from an empty tag list, so both compute `v1`). One lands it; the
+// other collides, re-lists, recomputes and lands `v2` — both succeed, and both
+// tags point at the pinned commit.
+//
+// Only a SUGGESTED name may be recomputed like this (resuggest=true). A name
+// the user typed is terminal on collision, which delivery/build pins as a 409.
+func TestCreateVersionTag_ConcurrentSameSuggestion_LoserRecomputesToNext(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, validSpecSeed())
+	s := r.svc.(*artifactService)
+	ref := r.workspaceRef()
+	head := r.headSHA()
+
+	type outcome struct {
+		name string
+		err  error
+	}
+	results := make([]outcome, 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			tags := []sourcecontrol.TagInfo{} // both believe no tags exist yet
+			name := suggestedVersionName(tags)
+			err := s.createVersionTag(context.Background(), ref, &tags, &name,
+				"race", head, true)
+			results[i] = outcome{name: name, err: err}
+		}(i)
+	}
+	wg.Wait()
+
+	for i, res := range results {
+		if res.err != nil {
+			t.Fatalf("goroutine %d: %v", i, res.err)
+		}
+	}
+	got := map[string]bool{results[0].name: true, results[1].name: true}
+	if !got["v1"] || !got["v2"] {
+		t.Fatalf("tag names = %s/%s, want exactly {v1, v2}", results[0].name, results[1].name)
+	}
+	for _, tag := range []string{"v1", "v2"} {
+		if peeled := r.originRevParse(tag + "^{commit}"); peeled != head {
+			t.Errorf("%s peels to %s on origin, want the pinned commit %s", tag, peeled, head)
+		}
+	}
+}
+
+// The story-scope read applies the same name rule as every other read at a
+// version: its argument becomes `tags/<name>`, so a name no version could carry
+// is refused before it reaches ref resolution.
+func TestBuildScopeAtTag_RefusesANameNoVersionCouldCarry(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, validSpecSeed())
+	ctx := context.Background()
+	for _, name := range []string{"../heads/main", "has space", "", ".hidden", "ends.lock", "a..b"} {
+		if _, err := r.svc.BuildScopeAtTag(ctx, r.org, r.proj, name); !errors.Is(err, ErrInvalidVersionTag) {
+			t.Errorf("BuildScopeAtTag(%q) err = %v, want ErrInvalidVersionTag", name, err)
+		}
 	}
 }

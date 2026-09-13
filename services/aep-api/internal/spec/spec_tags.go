@@ -24,10 +24,10 @@ import (
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
-// GET /projects/{p}/tags (#117). The spec is versioned as ONE incrementing
-// `v<N>` sequence covering the whole specs/ tree (requirements + design +
-// validation together); legacy `v<N>-<M>` design-revision tags are not part
-// of the sequence and are excluded here.
+// GET /projects/{p}/tags (#117). The spec is versioned as ONE sequence of tags
+// covering the whole specs/ tree (requirements + design + validation together).
+// A version carries the name the user gave it and is recognised by its
+// annotation, so tags this platform did not cut are excluded here.
 
 // specTreePrefix scopes the dirtiness check: only blobs under specs/ count.
 const specTreePrefix = "specs/"
@@ -35,10 +35,10 @@ const specTreePrefix = "specs/"
 // TagList is the wire shape of list-project-tags. Field semantics match the
 // contract (packages/contracts/api/v1/openapi.yaml TagList).
 type TagList struct {
-	Tags []string `json:"tags" doc:"Spec version tags (v<N>), newest first."`
+	Tags []string `json:"tags" doc:"Spec version tags, newest first by creation time."`
 	// Latest is the newest user-tagged spec version; absent when nothing is
 	// tagged yet.
-	Latest string `json:"latest,omitempty" doc:"Newest spec version tag (e.g. v3); absent when nothing is tagged."`
+	Latest string `json:"latest,omitempty" doc:"Newest spec version tag (e.g. m1); absent when nothing is tagged."`
 	// SpecDirty is true when the specs/ tree at HEAD differs from the specs/
 	// tree at Latest — the spec changed after it was last versioned.
 	SpecDirty bool `json:"specDirty,omitempty" doc:"True when specs/ changed after latest was tagged."`

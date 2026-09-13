@@ -60,7 +60,8 @@ func NewReads(issues IssueClient, repos RepoResolver, execs ExecutionReader, run
 // "closed" | "all"; default "open") and optionally scoped to one spec/build
 // version tag.
 //
-// THE TAG IS MILESTONE MEMBERSHIP. It resolves `v<N>` to a milestone NUMBER
+// THE TAG IS MILESTONE MEMBERSHIP. It resolves the version's name to a
+// milestone NUMBER
 // through the platform's own run rows and then lists that milestone — never by
 // matching titles against GitHub, whose milestone titles are renamable and
 // whose title filters are case-insensitive while its create-uniqueness is not.

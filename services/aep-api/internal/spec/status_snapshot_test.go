@@ -52,7 +52,7 @@ func TestStatusSnapshot_LadderAndDirty(t *testing.T) {
 	if snap.HeadSHA == "" {
 		t.Fatal("HeadSHA empty on a seeded repo")
 	}
-	if snap.HasSpec || snap.HasDesign || snap.SpecVersion != "" || snap.SpecDirty || snap.HasDesignTag {
+	if snap.HasSpec || snap.HasDesign || snap.SpecVersion != "" || snap.SpecDirty {
 		t.Fatalf("fresh snapshot not zero: %+v", snap)
 	}
 
@@ -86,10 +86,6 @@ func TestStatusSnapshot_LadderAndDirty(t *testing.T) {
 	if snap.SpecVersion != "v1" || snap.SpecDirty {
 		t.Fatalf("after tag: version=%q dirty=%v, want v1 clean", snap.SpecVersion, snap.SpecDirty)
 	}
-	if snap.HasDesignTag {
-		t.Fatal("HasDesignTag true without a v<N>-<M> tag")
-	}
-
 	// specs/ moves past the tag → dirty; a non-spec change must NOT dirty.
 	r.seed(map[string]string{"README.md": "# hi again\n"}, "readme only")
 	r.freshen()
@@ -101,13 +97,6 @@ func TestStatusSnapshot_LadderAndDirty(t *testing.T) {
 	snap = r.snapshot()
 	if !snap.SpecDirty || snap.SpecVersion != "v1" {
 		t.Fatalf("after spec edit: version=%q dirty=%v, want v1 dirty", snap.SpecVersion, snap.SpecDirty)
-	}
-
-	// Legacy v<N>-<M> design tag flips the flat designStatus flag.
-	r.tag("v1-1", "design rev")
-	r.freshen()
-	if snap = r.snapshot(); !snap.HasDesignTag {
-		t.Fatal("HasDesignTag false though v1-1 exists")
 	}
 }
 

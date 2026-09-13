@@ -33,7 +33,7 @@ import (
 // the build hands it to the tagger verbatim.
 func TestBuild_CutsTheVersionTheUserNamed(t *testing.T) {
 	spy := newPlanSpy()
-	tagger := &fakeTagger{res: &spec.SpecSaveResult{Status: spec.SpecSaveApproved, Tag: "payments-v2", Version: 2}}
+	tagger := &fakeTagger{res: &spec.SpecSaveResult{Status: spec.SpecSaveApproved, Tag: "payments-v2"}}
 	svc := withPlanPath(newSvc(fakeRepos{}, tagger), spy)
 
 	resp := newHarness(t, svc).AsOrg("acme").
@@ -91,7 +91,7 @@ func TestBuild_AMalformedNameIsABadRequest(t *testing.T) {
 // click, and every build the platform starts for itself.
 func TestBuild_NoNameLeavesTheSuggestionToTheTagger(t *testing.T) {
 	spy := newPlanSpy()
-	tagger := &fakeTagger{res: &spec.SpecSaveResult{Status: spec.SpecSaveApproved, Tag: "v4", Version: 4}}
+	tagger := &fakeTagger{res: &spec.SpecSaveResult{Status: spec.SpecSaveApproved, Tag: "v4"}}
 	svc := withPlanPath(newSvc(fakeRepos{}, tagger), spy)
 
 	code, body := postBuild(t, svc, "shop")

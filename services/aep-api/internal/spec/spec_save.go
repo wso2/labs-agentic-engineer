@@ -16,10 +16,12 @@
 
 package spec
 
-// SaveSpec is the build endpoint's tagging primitive: ONE `v<N>` sequence
-// versioning the whole specs/ tree (requirements + design together — the
-// single-tag successor to the SaveRequirements/SaveDesign pair). The hard gate
-// runs BEFORE the tag is cut, so every `v<N>` names a buildable spec.
+// SaveSpec is the build endpoint's tagging primitive: ONE tag versioning the
+// whole specs/ tree, requirements and design together. The hard gate runs
+// BEFORE the tag is cut, so every version names a buildable spec.
+//
+// The tag carries the name the user gave it (ADR-0030); order comes from when
+// it was cut, never from its name.
 
 import (
 	"context"
@@ -73,7 +75,7 @@ func (e *SpecValidationError) Error() string {
 // and the planning turn skipped. The spec-save status is the only question asked;
 // there is no separate "was it cancelled" read anywhere.
 const (
-	// SpecSaveApproved: the specs/ tree moved, so a new `v<N>` tag was cut.
+	// SpecSaveApproved: the specs/ tree moved, so a new version tag was cut.
 	SpecSaveApproved = "approved"
 	// SpecSaveUnchanged: the specs/ tree matches the latest tag, so no tag was
 	// cut and Tag names the EXISTING version.
@@ -81,19 +83,22 @@ const (
 )
 
 // SpecSaveResult is the outcome of SaveSpec.
+//
+// Tag IS the version's identity (ADR-0030) — there is no separate number. A
+// count of versions was reported here alongside it and nothing ever read it:
+// two identifiers for one thing, one of which shifts under its own reader.
 type SpecSaveResult struct {
 	Status     string `json:"status"` // SpecSaveApproved | SpecSaveUnchanged
-	Tag        string `json:"tag"`    // e.g. "v3"
-	Version    int    `json:"version"`
+	Tag        string `json:"tag"`    // the name the user gave, e.g. "m1"
 	CommitHash string `json:"commitHash,omitempty"`
 }
 
 // SaveSpec runs the whole-spec hard gate (requirements main doc + design
-// bundle) at the save commit and cuts the next `v<N>` annotated tag. No commit
-// is created — the draft is already on `main`. When the specs/ tree at the
-// save commit matches the latest `v<N>` tag's the save is a no-op
-// ("unchanged"). Validation failures aggregate into a *SpecValidationError;
-// nothing malformed acquires a tag.
+// bundle) at the save commit and cuts one annotated tag — the name the caller
+// asked for, or a suggestion. No commit is created — the draft is already on
+// `main`. When the specs/ tree at the save commit matches the latest version's
+// the save is a no-op ("unchanged"). Validation failures aggregate into a
+// *SpecValidationError; nothing malformed acquires a tag.
 func (s *artifactService) SaveSpec(ctx context.Context, orgID, projectID string, req SaveRequest) (*SpecSaveResult, error) {
 	_, ref, err := s.readyRef(ctx, orgID, projectID)
 	if err != nil {
@@ -153,9 +158,8 @@ func (s *artifactService) SaveSpec(ctx context.Context, orgID, projectID string,
 			slog.InfoContext(ctx, "spec save: unchanged — specs/ matches latest tag",
 				"project", projectID, "tag", latest.Name, "commit", commit)
 			return &SpecSaveResult{
-				Status:  SpecSaveUnchanged,
-				Tag:     latest.Name,
-				Version: len(versionTags(tags)),
+				Status: SpecSaveUnchanged,
+				Tag:    latest.Name,
 			}, nil
 		}
 	}
@@ -177,56 +181,11 @@ func (s *artifactService) SaveSpec(ctx context.Context, orgID, projectID string,
 	return &SpecSaveResult{
 		Status:     SpecSaveApproved,
 		Tag:        tagName,
-		Version:    len(versionTags(tags)) + 1,
 		CommitHash: commit,
 	}, nil
 }
 
-// ValidateSpecAtTag re-runs the whole-spec hard gate on the tree a `v<N>` tag
-// names — the dev workflow's defensive re-check that what it is about to plan
-// from is buildable.
-func (s *artifactService) ValidateSpecAtTag(ctx context.Context, orgID, projectID, tag string) error {
-	if _, ok := parseRequirementsTag(tag); !ok {
-		return fmt.Errorf("%w: %q is not a v<N> tag", ErrInvalidVersionTag, tag)
-	}
-	_, ref, err := s.readyRef(ctx, orgID, projectID)
-	if err != nil {
-		return err
-	}
-	reqFiles, err := s.readBundleAtTag(ctx, ref, tag, requirementsPrefix, requirementsBundleFilter)
-	if err != nil {
-		return err
-	}
-	designFiles, err := s.readBundleAtTag(ctx, ref, tag, designPrefix, designBundleFilter)
-	if err != nil {
-		return err
-	}
-	return validateSpecBundles(reqFiles, designFiles)
-}
-
-// LatestSpecTag returns the newest spec version's tag name read from the local
-// mirror WITHOUT a fetch — the network-free, best-effort read behind the task
-// stale-spec attention flag. Any failure degrades to "".
-func (s *artifactService) LatestSpecTag(ctx context.Context, orgID, projectID string) string {
-	_, ref, err := s.readyRef(ctx, orgID, projectID)
-	if err != nil {
-		return ""
-	}
-	tags, err := s.listVersionTagsLocal(ctx, ref)
-	if err != nil {
-		slog.WarnContext(ctx, "latest spec tag: local tag read failed",
-			"project", projectID, "error", err)
-		return ""
-	}
-	latest, ok := latestVersionTag(tags)
-	if !ok {
-		return ""
-	}
-	return latest.Name
-}
-
-// specGateDisabled turns the whole-spec gate off — both the build-click gate and
-// ValidateSpecAtTag.
+// specGateDisabled turns the whole-spec gate off at the build click.
 //
 // It is here because the design agent does not reliably emit each component's
 // `stories`, and without them the gate fails every Build with UNCOVERED_STORY —
@@ -344,4 +303,3 @@ func (s *artifactService) specTreeUnchanged(ctx context.Context, ref sourcecontr
 	}
 	return specTreesEqual(headEntries, tagEntries), nil
 }
-

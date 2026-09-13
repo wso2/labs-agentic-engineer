@@ -44,60 +44,6 @@ var tagRetryAttempts = []time.Duration{
 	800 * time.Millisecond,
 }
 
-// createAnnotatedTag creates an annotated tag pointing at commitSHA via
-// Workspace.Tag, under the collision-recompute loop (design §10): on
-// ErrTagAlreadyExists it re-lists the tags (the engine fetches --tags),
-// recomputes the next name in-place via the unchanged
-// nextDesignTag/nextRequirementsTag, and retries — bounded by
-// tagRetryAttempts.
-//
-// `kind` is "design" or "requirements" — selects nextDesignTag vs
-// nextRequirementsTag. For design, `parentN` is the parent requirements
-// version; for requirements it is ignored.
-func (s *artifactService) createAnnotatedTag(
-	ctx context.Context,
-	ref sourcecontrol.RepoRef,
-	tags *[]sourcecontrol.TagInfo,
-	nextN *int,
-	tagName *string,
-	tagBody, commitSHA string,
-	parentN int,
-	kind string,
-) error {
-	tagger, _ := s.git.ResolveSaveIdentities(ref.Cred)
-	attempt := func() error {
-		// Recompute the target name on each attempt so collisions push us forward.
-		if refreshed, ferr := s.listVersionTags(ctx, ref); ferr == nil {
-			*tags = refreshed
-		}
-		switch kind {
-		case "design":
-			rev, name := nextDesignTag(*tags, parentN)
-			*nextN, *tagName = rev, name
-		case "requirements":
-			ver, name := nextRequirementsTag(*tags)
-			*nextN, *tagName = ver, name
-		}
-		return s.git.Workspace().Tag(ctx, ref, sourcecontrol.TagSpec{
-			Name:    *tagName,
-			Target:  commitSHA,
-			Message: tagBody,
-			Tagger:  tagger,
-		})
-	}
-	err := attempt()
-	for _, delay := range tagRetryAttempts {
-		if !errors.Is(err, sourcecontrol.ErrTagAlreadyExists) {
-			return err
-		}
-		if jerr := jitterSleep(ctx, delay); jerr != nil {
-			return jerr
-		}
-		err = attempt()
-	}
-	return err
-}
-
 // createVersionTag cuts a spec version's annotated tag at commitSHA.
 //
 // Its subject is `Spec <name>` — the marker that makes the tag a VERSION now

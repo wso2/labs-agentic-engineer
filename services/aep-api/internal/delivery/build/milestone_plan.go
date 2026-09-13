@@ -28,9 +28,9 @@ import (
 )
 
 // The MILESTONE PLAN PATH: everything the build click does once the whole-spec
-// gate has passed and the `v<N>` tag is cut.
+// gate has passed and the version tag is cut.
 //
-//	supersede v<N-1>  →  create milestone "v<N>"  →  admit the run row
+//	supersede the previous  →  create the milestone  →  admit the run row
 //	                                              └→ (detached) plan Tasks into
 //	                                                 it, mint its gates, start
 //	                                                 the supervisor

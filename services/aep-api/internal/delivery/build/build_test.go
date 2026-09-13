@@ -318,7 +318,7 @@ func decodeBody[T any](t *testing.T, body string) T {
 // runs detached — the POST must not hold open for an LLM turn.
 func TestBuild_CutsTheTagAndClaimsTheVersion(t *testing.T) {
 	spy := newPlanSpy()
-	tagger := &fakeTagger{res: &spec.SpecSaveResult{Status: "approved", Tag: "v1", Version: 1}}
+	tagger := &fakeTagger{res: &spec.SpecSaveResult{Status: "approved", Tag: "v1"}}
 	svc := withPlanPath(newSvc(fakeRepos{}, tagger), spy)
 
 	code, body := postBuild(t, svc, "shop")
@@ -362,7 +362,7 @@ func TestBuild_UnchangedSpec_ReopensTheIncrementAndDoesNotReplan(t *testing.T) {
 	spy.milestoneIssues = []sourcecontrol.IssueInfo{
 		{Number: 31, State: "closed", Labels: []string{"aep", "development", "aep:cancelled"}},
 	}
-	tagger := &fakeTagger{res: &spec.SpecSaveResult{Status: spec.SpecSaveUnchanged, Tag: "v2", Version: 2}}
+	tagger := &fakeTagger{res: &spec.SpecSaveResult{Status: spec.SpecSaveUnchanged, Tag: "v2"}}
 	svc := withPlanPath(newSvc(fakeRepos{}, tagger), spy)
 
 	code, body := postBuild(t, svc, "shop")
@@ -399,7 +399,7 @@ func TestBuild_UnchangedSpecOverAnUnplannedMilestone_StillPlansIt(t *testing.T) 
 	spy.milestoneIssues = []sourcecontrol.IssueInfo{
 		{Number: 12, State: "open", Labels: []string{"provision", "aep:dep/orders-db"}},
 	}
-	tagger := &fakeTagger{res: &spec.SpecSaveResult{Status: spec.SpecSaveUnchanged, Tag: "v2", Version: 2}}
+	tagger := &fakeTagger{res: &spec.SpecSaveResult{Status: spec.SpecSaveUnchanged, Tag: "v2"}}
 	svc := withPlanPath(newSvc(fakeRepos{}, tagger), spy)
 
 	code, body := postBuild(t, svc, "shop")
@@ -421,7 +421,7 @@ func TestBuild_UnchangedSpecOverAnUnplannedMilestone_StillPlansIt(t *testing.T) 
 // never filled has to be.
 func TestBuild_ChangedSpec_PlansTheNewVersionFresh(t *testing.T) {
 	spy := newPlanSpy()
-	tagger := &fakeTagger{res: &spec.SpecSaveResult{Status: spec.SpecSaveApproved, Tag: "v3", Version: 3}}
+	tagger := &fakeTagger{res: &spec.SpecSaveResult{Status: spec.SpecSaveApproved, Tag: "v3"}}
 	svc := withPlanPath(newSvc(fakeRepos{}, tagger), spy)
 
 	code, body := postBuild(t, svc, "shop")
@@ -507,7 +507,7 @@ func TestBuild_ValidationRunLive_409_TaggerUntouched(t *testing.T) {
 func TestBuild_NoLiveValidationRun_Proceeds(t *testing.T) {
 	spy := newPlanSpy()
 	spy.judgingRun = nil // the validation settled
-	tagger := &fakeTagger{res: &spec.SpecSaveResult{Status: "changed", Tag: "v3", Version: 3}}
+	tagger := &fakeTagger{res: &spec.SpecSaveResult{Status: "changed", Tag: "v3"}}
 	svc := withPlanPath(newSvc(fakeRepos{}, tagger), spy)
 
 	code, body := postBuild(t, svc, "shop")
@@ -646,7 +646,7 @@ func TestBuild_PublisherProvisionErrorDoesNotTag(t *testing.T) {
 
 func TestStartProjectBuild_HappyPath_ClaimsTheVersion(t *testing.T) {
 	spy := newPlanSpy()
-	tagger := &fakeTagger{res: &spec.SpecSaveResult{Status: "approved", Tag: "v1", Version: 1}}
+	tagger := &fakeTagger{res: &spec.SpecSaveResult{Status: "approved", Tag: "v1"}}
 	svc := withPlanPath(newSvc(fakeRepos{}, tagger), spy)
 
 	if err := svc.StartProjectBuild(context.Background(), "acme", "shop"); err != nil {

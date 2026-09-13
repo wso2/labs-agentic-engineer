@@ -908,7 +908,6 @@ func TestGetProjectStatus_PhaseLadder(t *testing.T) {
 		fx            statusFixture
 		wantPhase     string
 		wantSpec      string
-		wantDesign    string
 		wantHasDesign bool
 	}{
 		{
@@ -933,15 +932,13 @@ func TestGetProjectStatus_PhaseLadder(t *testing.T) {
 			name: "approved spec + design → phase tasks (no task counting, §8)",
 			fx: statusFixture{
 				snap: spec.StatusSnapshot{
-					HasSpec:      true,
-					HasDesign:    true,
-					SpecVersion:  "v1",
-					HasDesignTag: true,
+					HasSpec:     true,
+					HasDesign:   true,
+					SpecVersion: "v1",
 				},
 			},
 			wantPhase:     "tasks",
 			wantSpec:      "approved",
-			wantDesign:    "approved",
 			wantHasDesign: true,
 		},
 	}
@@ -956,9 +953,6 @@ func TestGetProjectStatus_PhaseLadder(t *testing.T) {
 			}
 			if st.SpecStatus != tc.wantSpec {
 				t.Errorf("specStatus = %q, want %q", st.SpecStatus, tc.wantSpec)
-			}
-			if st.DesignStatus != tc.wantDesign {
-				t.Errorf("designStatus = %q, want %q", st.DesignStatus, tc.wantDesign)
 			}
 			// The flat flags mirror the snapshot; hasDesign stays gated on a
 			// spec existing (the old ladder's early return).

@@ -624,7 +624,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		resolver := newIdentityTargetResolver(environmentClient, bindingKV,
 			openchoreo.DevEnvironmentName, cfg.ThunderEnvAdminRoute)
 		identityTargets = resolver
-		rolesEnsure = identity.NewEnsureService(resolver, identityStore, identityDesignReader{art: artifactSvcGit})
+		rolesEnsure = identity.NewEnsureService(resolver, identityStore, artifactSvcGit)
 		roleCatalogSvc = identity.NewCatalogService(resolver, identityStore)
 		slog.Info("roles ensure wired — a build provisions specs/design/security.json's roles and test users on the environment's own Thunder",
 			"environment", openchoreo.DevEnvironmentName, "adminRoute", cfg.ThunderEnvAdminRoute)

@@ -3,7 +3,7 @@
 > **L2 · a domain.** Part of the [aep-api architecture](../../README.md).
 
 Turn a prompt into a versioned requirements+design Spec stored as committed truth in git, let humans and
-agents co-edit it live, cut and read the `v<N>` Spec version, and steer authoring with the org's Skill
+agents co-edit it live, cut and read the named Spec version, and steer authoring with the org's Skill
 library. **Single write-authority over the git spec-content store and its version tags.**
 
 ```mermaid
@@ -14,7 +14,7 @@ flowchart LR
     SL["slices — genaiturns · files · tags · skills · collab"]
     CORE["artifacts store/versioning + turn engine + files + design + skills services"]
     SL --> CORE
-    CORE --> GIT[("git: prd.md · specs/design/** · v<N> tags · org-skills repo")]
+    CORE --> GIT[("git: prd.md · specs/design/** · version tags · org-skills repo")]
     CORE --> TURNS[("agent_turns")]
   end
   CORE -->|Workspace · GitOps engine| SC[[sourcecontrol]]
@@ -50,7 +50,7 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
 | `CredentialsRefreshService`-adjacent turn/tag reads | offers | delivery/build (SpecTagger, validation criteria) |
 
 ## Owns
-- git spec content (`prd.md`, `specs/design/**`), the annotated `v<N>` tag (the version store),
+- git spec content (`prd.md`, `specs/design/**`), the annotated version tag (the version store),
   the org-skills repo, `AgentTurn` (turn lifecycle) + the resumable-turn SSE broker (in-memory seam).
 - **One external dependency, one definition** (ADR-0027). An external dependency lives in
   `specs/design/dependencies/<name>/` — `dependency.json` (provider, style, config keys, open
@@ -157,7 +157,9 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   `v<N>-<M>` design tag, is not one — and versions are ORDERED by `TagInfo.CreatedAt`, never by a
   number parsed out of a name. A supplied name is used verbatim: a collision is `ErrVersionNameTaken`
   (the build maps it to 409), never a quietly different tag. Only a name the platform itself suggested
-  is recomputed past a racing pusher.
+  is recomputed past a racing pusher. Reads at a version apply the SAME name rule
+  (`ValidateVersionName`) rather than any shape test: a name that could never have been created
+  cannot be asked for either, and nothing walks out of `tags/` onto a branch.
 - **A name labels a snapshot; it does not make one.** `SaveSpec` still compares the whole `specs/` tree
   with the newest version's and reuses that version when they match — the requested name is ignored on
   that path, because cutting a second tag over an identical tree would spend a planning turn to change
