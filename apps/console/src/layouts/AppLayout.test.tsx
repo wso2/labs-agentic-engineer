@@ -45,10 +45,16 @@ vi.mock("@tanstack/react-router", () => ({
   useSearch: () => mockSearch,
 }));
 
+// Every test but the dedicated permission-denial ones below holds every
+// sidebar-relevant permission, so every item reads as reachable by default.
+const heldPermissions = vi.hoisted(
+  () => new Set(["ae:observability-view", "ae:requirement-view"]),
+);
 vi.mock("../auth/SessionContext", () => ({
   useSession: () => ({
     user: { name: "Test User", email: "test@example.com" },
     orgHandle: "acme",
+    permissions: heldPermissions,
     signOut: vi.fn(),
   }),
 }));
@@ -92,6 +98,9 @@ beforeEach(() => {
   mockPathname = `/projects/${PROJECT}`;
   mockSearch = {};
   mockParams = { projectName: PROJECT };
+  heldPermissions.clear();
+  heldPermissions.add("ae:observability-view");
+  heldPermissions.add("ae:requirement-view");
   // The panel's open state persists (#666); without this a test that opened
   // it would leak an open panel into every test after it.
   localStorage.removeItem("aep.chat.panelOpen");
@@ -125,6 +134,46 @@ describe("AppLayout — org sidebar", () => {
       endpoints.compareDocumentPosition(alerts) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(sidebarItem("Settings")).toBeInTheDocument();
+  });
+
+  it("makes Alerts navigable when the caller holds ae:observability-view", () => {
+    mockPathname = "/";
+    render();
+    expect(sidebarItem("Alerts").closest("a")).not.toBeNull();
+  });
+
+  it("makes Alerts non-navigable without ae:observability-view, with an explanatory tooltip", async () => {
+    heldPermissions.delete("ae:observability-view");
+    mockPathname = "/";
+    render();
+
+    const alerts = sidebarItem("Alerts");
+    expect(alerts.closest("a")).toBeNull();
+
+    fireEvent.mouseOver(alerts.closest("span") ?? alerts);
+    expect(
+      await screen.findByText("You don't have permission to view alerts."),
+    ).toBeInTheDocument();
+  });
+
+  it("makes Endpoints navigable when the caller holds ae:requirement-view", () => {
+    mockPathname = "/";
+    render();
+    expect(sidebarItem("Endpoints").closest("a")).not.toBeNull();
+  });
+
+  it("makes Endpoints non-navigable without ae:requirement-view, with an explanatory tooltip", async () => {
+    heldPermissions.delete("ae:requirement-view");
+    mockPathname = "/";
+    render();
+
+    const endpoints = sidebarItem("Endpoints");
+    expect(endpoints.closest("a")).toBeNull();
+
+    fireEvent.mouseOver(endpoints.closest("span") ?? endpoints);
+    expect(
+      await screen.findByText("You don't have permission to view endpoints."),
+    ).toBeInTheDocument();
   });
 
   it("selects Resources on /resources", () => {

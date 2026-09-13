@@ -32,7 +32,8 @@ export type Permission =
   | "ae:design-view"
   | "ae:build"
   | "ae:build-view"
-  | "ae:usage-view";
+  | "ae:usage-view"
+  | "ae:observability-view";
 
 // Runtime twin of the Permission union — TS types don't exist at runtime, so
 // deriving a Set from the access token's scope claim (AuthGuard) needs an
@@ -48,6 +49,7 @@ const ALL_PERMISSIONS: readonly Permission[] = [
   "ae:build",
   "ae:build-view",
   "ae:usage-view",
+  "ae:observability-view",
 ];
 
 // Mirrors the BFF's filterPermissions (services/aep-api/internal/platform/auth/jwt.go):

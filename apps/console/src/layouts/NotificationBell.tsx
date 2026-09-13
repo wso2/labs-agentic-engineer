@@ -29,43 +29,61 @@ import {
 } from "@wso2/oxygen-ui";
 import { Bell } from "@wso2/oxygen-ui-icons-react";
 import { useNavigate } from "@tanstack/react-router";
+import { useHasPermission } from "../auth/permissions";
+import { NoPermissionIllustration } from "../components/NoPermissionIllustration";
 import { useRecentAlerts } from "../features/alerts/api/queries";
 import { useAlertsUnread } from "../features/alerts/hooks/useAlertsUnread";
 import { classificationLabel } from "../features/alerts/classification";
+
+const NO_PERMISSION_TOOLTIP = "You don't have permission to view alerts.";
 
 // Top-nav notification bell (#154) — global, read-only, client-tracked
 // unread state (no server read-state; see the issue's grilling decisions).
 // Must be a child of AppShell to reach useAppShell()'s panel toggle.
 export function NotificationButton() {
   const { actions } = useAppShell();
-  const { data: reports = [] } = useRecentAlerts();
+  const hasObservabilityAccess = useHasPermission("ae:observability-view");
+  const { data: reports = [] } = useRecentAlerts(undefined, hasObservabilityAccess);
   const { unreadCount, markAllSeen } = useAlertsUnread(reports);
 
   return (
-    <Tooltip title="Alerts">
-      <IconButton
-        onClick={() => {
-          actions.toggleNotificationPanel();
-          markAllSeen();
-        }}
-        size="small"
-        sx={{ color: "text.secondary" }}
-        aria-label="Alerts"
-      >
-        <Badge badgeContent={unreadCount} color="error" max={99} invisible={unreadCount === 0}>
-          <Bell size={20} />
-        </Badge>
-      </IconButton>
+    <Tooltip title={hasObservabilityAccess ? "Alerts" : NO_PERMISSION_TOOLTIP}>
+      <span>
+        <IconButton
+          onClick={() => {
+            actions.toggleNotificationPanel();
+            markAllSeen();
+          }}
+          size="small"
+          sx={{ color: "text.secondary" }}
+          aria-label="Alerts"
+          disabled={!hasObservabilityAccess}
+        >
+          <Badge badgeContent={unreadCount} color="error" max={99} invisible={unreadCount === 0}>
+            <Bell size={20} />
+          </Badge>
+        </IconButton>
+      </span>
     </Tooltip>
   );
 }
 
 // Panel body — no per-item read state (the badge clears as a whole on open,
-// per #154's decision), so this only needs the report list itself.
+// per #154's decision), so this only needs the report list itself. Reachable
+// only via the bell button above, which is itself disabled without the
+// permission — this still self-gates rather than trusting that, since the
+// panel is its own mounted component (AppLayout renders it unconditionally).
 export function AlertsNotificationPanel() {
   const navigate = useNavigate();
   const { actions } = useAppShell();
-  const { data: reports = [], isPending, isError, error, refetch } = useRecentAlerts();
+  const hasObservabilityAccess = useHasPermission("ae:observability-view");
+  const {
+    data: reports = [],
+    isPending,
+    isError,
+    error,
+    refetch,
+  } = useRecentAlerts(undefined, hasObservabilityAccess);
 
   const openAlert = (alertId: string) => {
     // Close the overlay so it doesn't linger over the destination page.
@@ -82,7 +100,16 @@ export function AlertsNotificationPanel() {
         <NotificationPanel.HeaderTitle>Alerts</NotificationPanel.HeaderTitle>
         <NotificationPanel.HeaderClose />
       </NotificationPanel.Header>
-      {isPending ? (
+      {!hasObservabilityAccess ? (
+        <Box sx={{ px: 3, py: 4, textAlign: "center" }}>
+          <Box sx={{ display: "flex", justifyContent: "center", mb: 1 }}>
+            <NoPermissionIllustration size={64} />
+          </Box>
+          <Typography variant="body2" color="text.secondary">
+            {NO_PERMISSION_TOOLTIP}
+          </Typography>
+        </Box>
+      ) : isPending ? (
         <NotificationPanel.EmptyState />
       ) : isError && reports.length === 0 ? (
         // Initial load failed with no last-known data to fall back on —

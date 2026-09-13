@@ -56,6 +56,7 @@ import {
   useRouterState,
   useSearch,
 } from "@tanstack/react-router";
+import { useHasPermission } from "../auth/permissions";
 import { useSession } from "../auth/SessionContext";
 import { OrgSwitcher, ProjectSwitcher } from "./HeaderSwitchers";
 import { ProjectStatusBadge } from "./ProjectStatusBadge";
@@ -108,6 +109,8 @@ const CHAT_OPEN_KEY = "aep.chat.panelOpen";
 export function AppLayout() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { user, signOut, orgHandle } = useSession();
+  const hasObservabilityAccess = useHasPermission("ae:observability-view");
+  const hasRequirementView = useHasPermission("ae:requirement-view");
 
   // Project AI panel (#130): available on every project route — mounted here
   // because the full-screen spec route bypasses ProjectLayout. Same
@@ -386,19 +389,49 @@ export function AppLayout() {
                   </Sidebar.ItemIcon>
                   <Sidebar.ItemLabel>Resources</Sidebar.ItemLabel>
                 </Sidebar.Item>
-                <Sidebar.Item id="endpoints" link={<Link to="/endpoints" />}>
-                  <Sidebar.ItemIcon>
-                    <Radio />
-                  </Sidebar.ItemIcon>
-                  <Sidebar.ItemLabel>Endpoints</Sidebar.ItemLabel>
-                </Sidebar.Item>
+                {hasRequirementView ? (
+                  <Sidebar.Item id="endpoints" link={<Link to="/endpoints" />}>
+                    <Sidebar.ItemIcon>
+                      <Radio />
+                    </Sidebar.ItemIcon>
+                    <Sidebar.ItemLabel>Endpoints</Sidebar.ItemLabel>
+                  </Sidebar.Item>
+                ) : (
+                  <Tooltip title="You don't have permission to view endpoints.">
+                    <span>
+                      <Sidebar.Item id="endpoints" sx={{ opacity: 0.5, pointerEvents: "none" }}>
+                        <Sidebar.ItemIcon>
+                          <Radio />
+                        </Sidebar.ItemIcon>
+                        <Sidebar.ItemLabel>Endpoints</Sidebar.ItemLabel>
+                      </Sidebar.Item>
+                    </span>
+                  </Tooltip>
+                )}
                 {/* Global Alerts section (#155) — RCA-agent reports across every project. */}
-                <Sidebar.Item id="alerts" link={<Link to="/alerts" />}>
-                  <Sidebar.ItemIcon>
-                    <Siren />
-                  </Sidebar.ItemIcon>
-                  <Sidebar.ItemLabel>Alerts</Sidebar.ItemLabel>
-                </Sidebar.Item>
+                {hasObservabilityAccess ? (
+                  <Sidebar.Item id="alerts" link={<Link to="/alerts" />}>
+                    <Sidebar.ItemIcon>
+                      <Siren />
+                    </Sidebar.ItemIcon>
+                    <Sidebar.ItemLabel>Alerts</Sidebar.ItemLabel>
+                  </Sidebar.Item>
+                ) : (
+                  // SidebarItem has no disabled prop of its own — omitting
+                  // `link` already makes it non-navigating; pointerEvents:none
+                  // + reduced opacity finishes the job (blocks hover/click,
+                  // matches the Tab-disabled treatment in SettingsLayout).
+                  <Tooltip title="You don't have permission to view alerts.">
+                    <span>
+                      <Sidebar.Item id="alerts" sx={{ opacity: 0.5, pointerEvents: "none" }}>
+                        <Sidebar.ItemIcon>
+                          <Siren />
+                        </Sidebar.ItemIcon>
+                        <Sidebar.ItemLabel>Alerts</Sidebar.ItemLabel>
+                      </Sidebar.Item>
+                    </span>
+                  </Tooltip>
+                )}
               </Sidebar.Category>
             )}
           </Sidebar.Nav>

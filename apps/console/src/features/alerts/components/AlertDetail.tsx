@@ -39,6 +39,9 @@ import { classificationLabel, classificationTone } from "../classification";
 // a preview rather than raw text. MarkdownView is the console's shared
 // theme-token-styled react-markdown renderer.
 import { MarkdownView } from "../../../components/MarkdownView";
+import { useHasPermission } from "../../../auth/permissions";
+import { EmptyState } from "../../../components/EmptyState";
+import { NoPermissionIllustration } from "../../../components/NoPermissionIllustration";
 import { PageHeader } from "../../../components/PageHeader";
 import { StatusChip } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
@@ -202,7 +205,14 @@ function VerifyFixContent({ report }: { report: RcaAgentReport }) {
 }
 
 export function AlertDetail({ alertId }: { alertId: string }) {
-  const { data: report, isPending, isError, error, refetch } = useAlertReport(alertId);
+  const hasObservabilityAccess = useHasPermission("ae:observability-view");
+  const {
+    data: report,
+    isPending,
+    isError,
+    error,
+    refetch,
+  } = useAlertReport(alertId, hasObservabilityAccess);
 
   return (
     <PageContent>
@@ -212,7 +222,16 @@ export function AlertDetail({ alertId }: { alertId: string }) {
         backTo={{ link: <RouterLink to="/alerts" />, label: "Back to Alerts" }}
       />
 
-      {isPending ? (
+      {!hasObservabilityAccess ? (
+        // Checked before the loading/error states below — same reasoning as
+        // AlertsList: without ae:observability-view the report query never
+        // fires, and a direct-URL visit must never flash real content.
+        <EmptyState
+          icon={<NoPermissionIllustration size={120} />}
+          title="No alerts access"
+          description="You don't have permission to view alerts."
+        />
+      ) : isPending ? (
         <Box sx={{ display: "flex", justifyContent: "center", p: 6 }}>
           <CircularProgress aria-label="Loading alert" />
         </Box>
