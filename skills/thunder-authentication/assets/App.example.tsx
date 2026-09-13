@@ -113,15 +113,15 @@ function SignedIn(): ReactElement {
         <Route index element={<Navigate to={landing} replace />} />
         {SCREEN_ROUTES.map((screen) => {
           const page = PAGE_BY_KEY[screen.key];
-          // "public" and null need no handle — anyone with a session is in.
+          // "public" and null need no scope — anyone with a session is in.
           if (screen.requires === null || screen.requires === "public") {
             return <Route key={screen.key} path={screen.path} element={page} />;
           }
-          // The handle comes from the generated table, never from this file.
+          // The scope comes from the generated table, never from this file.
           return (
             <Route
               key={screen.key}
-              element={<RequireScope handle={screen.requires} screen={screen.label} />}
+              element={<RequireScope scope={screen.requires} screen={screen.label} />}
             >
               <Route path={screen.path} element={page} />
             </Route>

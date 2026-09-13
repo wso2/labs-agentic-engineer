@@ -1,6 +1,6 @@
 ---
 name: react-webapp
-description: How to build a React SPA on the platform — project layout, the build-verify command, and this stack's constraints and pitfalls. Apply when a component's `type` is `web-application`.
+description: "How to build a React SPA on the platform — project layout, the build-verify command, and this stack's constraints and pitfalls. Apply when a component's `type` is `web-application`."
 metadata:
   aep:
     kind: org
@@ -27,7 +27,9 @@ browser config — they are pod env for nginx.
 2. **Prepare shared interfaces** — write `src/env.ts`, generate `src/generated/`
    from each dependency's OpenAPI contract, and write `src/api.ts` with a
    **same-origin** `baseUrl`. With auth, establish `src/auth.ts` and its exports
-   now: mock mode substitutes that module.
+   now (mock mode substitutes that module), copy the rest of
+   `thunder-authentication`'s assets, and run `npm run gen` once so
+   `src/scopes.gen.ts` exists for the type-check.
 3. **Implement pages** — follow Constraints, and check `src/api.ts` against the
    **first** page with `npx tsc --noEmit` before writing the rest: that pair proves
    how the generated client types, and every later page repeats the pattern.
@@ -38,6 +40,7 @@ browser config — they are pod env for nginx.
    ```bash
    npm install                   # regenerates package-lock.json
    # ← the design system's check goes here (see below)
+   npm run gen                   # with auth: regenerate src/scopes.gen.ts FIRST
    npx tsc --noEmit              # type-check without emitting
    npm run build                 # actually build
    ! grep -rq mockServiceWorker dist/ # the bundle carries no mock — step 4
@@ -74,6 +77,13 @@ browser config — they are pod env for nginx.
    `tsconfig.node.json` setting `noEmit` fails with `TS6310: Referenced project
    may not disable emit`, and unwinding that costs more than it buys.
 
+   **With an auth dependency `build` gains a `gen` step in front:**
+   `npm run gen && tsc --noEmit && vite build`, where `gen` regenerates
+   `src/scopes.gen.ts` from the permission catalog. It is not optional and it
+   must come BEFORE the type-check — a stale generated union type-checks
+   perfectly green while the app gates on handles the design no longer has
+   (`thunder-authentication`).
+
    Verification ends at exit 0. **Never run `npm audit` or `npm audit fix`** —
    the advisories land on Vite's dev-only transitive dependencies, which never
    reach a static bundle served by nginx, and `audit fix` bumps pinned
@@ -97,7 +107,7 @@ is `undefined` at module load. Use these exact spellings:
 | Key | Set when | Meaning |
 |---|---|---|
 | `<NAME>_URL` | `dependencies` include an `external`-kind entry `<name>` | URL of that **external** upstream (browser may call it). Not used for a sibling `component`-kind service. |
-| `<DEP>_*` | this web-app declares an auth `platform-resource` dependency named `<dep>` | OIDC config (`<DEP>_CLIENT_ID`, `<DEP>_ISSUER`, `<DEP>_JWKS_URL`, `<DEP>_SCOPES`), `<DEP>` = UPPER_SNAKE of the dependency name (`user-auth` → `USER_AUTH_*`) — owned by `thunder-authentication` |
+| `<DEP>_*` | this web-app declares an auth `platform-resource` dependency named `<dep>` | OIDC config — `<DEP>_CLIENT_ID`, `<DEP>_ISSUER`, `<DEP>_JWKS_URL`, `<DEP>_SCOPES` and **`<DEP>_RESOURCE`** (the project's resource-server identifier, the RFC 8707 `resource` indicator the SPA must send or every `/api` call 401s). `<DEP>` = UPPER_SNAKE of the dependency name (`user-auth` → `USER_AUTH_*`) — owned by `thunder-authentication` |
 | `<NAME>` (any) | you declared it in `workload.yaml` `configurations.env` | app-config default, per-env override possible |
 
 There is **no** `API_BASE_URL` and **no** `<UPSTREAM>_URL` in `window._env_` for
@@ -122,7 +132,7 @@ they are NOT interchangeable:
 
 | Pod env var | Reaches | Auth |
 |---|---|---|
-| `<DEP>_GATEWAY_URL` | the API gateway. Set by the platform for a sibling whose design declares `exposesAPI.auth`. Carries a **context path prefix**. | validates the bearer token, injects `X-User-*` from its claims |
+| `<DEP>_GATEWAY_URL` | the API gateway's **runtime Service**, `…-gateway-runtime.<ns>.svc.cluster.local:22893` — a cluster address, never the public vhost. Set by the platform for a sibling whose design declares `exposesAPI.auth`. Carries a **context path prefix**. | validates the bearer token, injects `X-User-*` from its claims |
 | `<DEP>_URL` | the project Service, directly | none — nothing validates a token, nothing injects identity |
 
 The asset **prefers `<DEP>_GATEWAY_URL`** and falls back to `<DEP>_URL`. That
@@ -134,16 +144,23 @@ which is why you copy it rather than write it:
 - **Preserve the context prefix.** The gateway routes on it; a rewrite that
   strips it 404s every call.
 - **Clear inbound `X-User-*`.** Identity is the gateway's to assert. A browser
-  that sets those headers itself must not be believed.
+  that sets those headers itself must not be believed. The asset clears all
+  five, **`X-User-Scopes` included** — that one is the *authorization*
+  authority, so on a public operation and on the direct-Service fallback lane
+  nothing else stands between a hand-set header and the handler's scope check.
 
 Copy the assets in Layout; do not hand-write a different `proxy_pass`, do not add
 `/oidc/` (token endpoint stays cross-origin; `thunder-authentication`), do not
 copy `apps/console/docker-entrypoint.sh`. Keep the official `nginx:alpine`
 `ENTRYPOINT`. The only extra file is `/docker-entrypoint.d/15-aep-api-proxy.sh`.
 
-**Auth.** If the component declares an auth `platform-resource` dependency, add
-`src/auth.ts` and attach `Authorization: Bearer <token>` to every API call —
-`thunder-authentication` owns that wiring.
+**Auth.** If the component declares an auth `platform-resource` dependency, its
+sign-in, screen gating and API-client wiring are `thunder-authentication`'s:
+copy that skill's assets into `src/auth.ts`, `src/authz-core.ts`,
+`src/authz.tsx`, `src/api-client.ts` and `scripts/gen-scopes.mjs`, and reach the
+API through `apiFetch`/`apiJson` rather than attaching a bearer by hand. Screens
+are gated on `specs/design/security.json`'s `screens[].requires`, through the
+generated `src/scopes.gen.ts`.
 
 **Never `exposesAPI`.** That toggle is for backends only; a web-app expresses
 auth through its auth dependency instead.
@@ -174,13 +191,20 @@ per-component Docker build's context is this app's own folder alone.
 ├── tsconfig.json         # ONE file — no project references, no tsconfig.node.json
 ├── vite.config.ts        # no `base` — served at host root
 ├── index.html
+├── scripts/
+│   └── gen-scopes.mjs    # only with an auth dependency — copied verbatim, run by `npm run gen`
 ├── src/
 │   ├── main.tsx
 │   ├── App.tsx
 │   ├── env.ts            # typed window._env_ shim
 │   ├── generated/        # openapi-typescript output, one file per dependency — commit, never hand-edit
 │   ├── api.ts            # openapi-fetch client(s), typed against generated/
-│   ├── auth.ts           # only with an auth dependency — see thunder-authentication
+│   ├── auth.ts           # ┐ only with an auth dependency — thunder-authentication owns
+│   ├── authz-core.ts     # │ all six. auth/authz-core/authz/api-client are copied
+│   ├── authz.tsx         # │ verbatim; screens.ts is a pattern you adapt; scopes.gen.ts
+│   ├── api-client.ts     # │ is GENERATED and COMMITTED — the per-component build
+│   ├── screens.ts        # │ context cannot see ../specs, so an uncommitted one fails
+│   ├── scopes.gen.ts     # ┘ the image build
 │   └── pages/            # design-system components only, never raw HTML
 ├── mock/                 # mock mode — references/mock-mode.md
 ├── nginx/
@@ -240,7 +264,14 @@ external-kind URLs). Example with no browser API URL:
 
 ```ts
 type Env = {
-  // USER_AUTH_* only if this SPA declares that auth dependency
+  // Only if this SPA declares an auth dependency named `user-auth`. All five,
+  // and RESOURCE is not optional: without it the token's `aud` is wrong and
+  // every /api call 401s while sign-in looks healthy.
+  // USER_AUTH_CLIENT_ID: string;
+  // USER_AUTH_ISSUER: string;
+  // USER_AUTH_JWKS_URL: string;
+  // USER_AUTH_SCOPES: string;
+  // USER_AUTH_RESOURCE: string;
 };
 
 declare global {
@@ -343,9 +374,12 @@ place rather than stripping `external` because this SPA uses `/api`
 | `nginx: [emerg] host not found in upstream "…"` at pod start | Literal `proxy_pass http://hostname` (startup DNS) or leftover `/oidc/` block | Use the asset conf (`proxy_pass http://$api_backend`) and the drop-in; delete `/oidc/`. |
 | Browser CORS error calling the sibling API | `baseUrl` is the public gateway URL or `window._env_.API_BASE_URL` | `baseUrl: "/api"`. |
 | `/api` 502, SPA otherwise fine | API pod down, or drop-in left `TODO_API_URL` when the dep is named something else | Align both `API_URL="${…}"` lines with the dependency name; 502 while the API is down is expected. |
+| `/api` 502 on EVERY call, API pod healthy, the address is the public gateway vhost | nginx's `resolver` does not read `/etc/hosts`, so a `hostAliases` entry for the gateway vhost is invisible to it — and the `:19080` LoadBalancer routes strictly on that vhost anyway | `<DEP>_GATEWAY_URL` must be the gateway **runtime Service** on `:22893` (`…-gw-gateway-gateway-runtime.<org>-<env>.svc.cluster.local:22893`), whose router host is `*`. The platform sets it; do not override it with a vhost. |
 | `/api` 400 `no header value found for 'x-user-id'` | The proxy took the direct-Service lane, so nothing injected identity | Check the pod log line `aep-api-proxy: /api -> … [lane]`. `direct Service` means `<DEP>_GATEWAY_URL` was unset: the provider's design has no `exposesAPI.auth`, or the drop-in names the wrong variable. |
 | `/api` 404 from the gateway | The rewrite dropped the context prefix | `nginx/default.conf` must rewrite to `__API_CONTEXT__/$1`, not `/$1`. |
 | `/api` 503 through the gateway | The gateway authenticated but cannot reach the service | The provider endpoint needs `internal` in its `workload.yaml` visibility (`workload-and-wiring`). |
 | Types in `src/generated/*` don't match the live service | Upstream `openapi.yaml` changed since last generation | Re-run the `openapi-typescript` command and commit the diff. |
-| Docker build succeeds but ships stale/hand-written shapes, or fails `ENOENT ../specs/...` | `src/generated/` wasn't committed — the per-component build context is this app's folder alone | Generate and commit `src/generated/` before PR. |
+| Docker build succeeds but ships stale/hand-written shapes, or fails `ENOENT ../specs/...` | `src/generated/` or `src/scopes.gen.ts` wasn't committed — the per-component build context is this app's folder alone | Generate and commit BOTH before PR. `gen-scopes.mjs` prints `…is out of reach (per-component build context); keeping the committed src/scopes.gen.ts` when it falls back; with nothing committed it exits 1 and the image build fails. |
+| The deployed bundle gates a screen on a handle the design dropped, or a newly added handle reaches nothing | A **stale bundle**: `build` ran without `gen`, or `src/scopes.gen.ts` was committed before the last design change | `build` is `npm run gen && tsc --noEmit && vite build`; re-run `gen` and commit the diff whenever `security.json` changes. A stale generated union type-checks green. |
+| A role opens its own screen, and the screen's list call answers 401/403 | The role holds the screen's `requires` handle but not the handle of an **operation** that screen calls — whole-string match, so `x:read-all` is not `x:read` | A design finding, not a code one: name the role, the screen and the operation's handle in your report. Never widen a guard or a mock to hide it. |
 | Build red on `TS2307: Cannot find module './generated/…'` (plus a burst of `TS7006` implicit-`any`) while `tsc --noEmit` is clean locally | `src/generated/` is **git-ignored**, usually by an unanchored `generated/` in the repo-root `.gitignore` written for a backend component. `git add` skipped it at exit 0 and `git status` stayed clean | `git check-ignore -v src/generated/*` names the offending line. Anchor that pattern (`/onboarding-api/generated/`), then re-add. The `TS7006` rows are downstream of the missing types and vanish with them. Never `git add -f`. |

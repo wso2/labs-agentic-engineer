@@ -60,9 +60,12 @@ export function parseScopes(scopeClaim: string | undefined): Set<string> {
   return new Set((scopeClaim ?? "").split(/\s+/).filter(Boolean));
 }
 
-/** Does this scope set carry `handle`, spelled exactly as the catalog does? */
-export function granted(scopes: ReadonlySet<string>, handle: string): boolean {
-  return scopes.has(handle);
+/**
+ * Does this scope set carry `scope` — one catalog handle, spelled exactly as
+ * the catalog spells it?
+ */
+export function granted(scopes: ReadonlySet<string>, scope: string): boolean {
+  return scopes.has(scope);
 }
 
 /**
@@ -99,16 +102,16 @@ export function heldRoles<R extends string, S extends string>(
 }
 
 /**
- * The roles that grant `handle` — what the Forbidden page names to the user.
+ * The roles that grant `scope` — what the Forbidden page names to the user.
  * Deterministic: declaration order of `ROLE_GRANTS`, which is the sorted
  * generator output.
  */
 export function rolesGranting<R extends string, S extends string>(
-  handle: string,
+  scope: string,
   roleGrants: Readonly<Record<R, readonly S[]>>,
 ): R[] {
   return (Object.keys(roleGrants) as R[]).filter((role) =>
-    (roleGrants[role] as readonly string[]).includes(handle),
+    (roleGrants[role] as readonly string[]).includes(scope),
   );
 }
 

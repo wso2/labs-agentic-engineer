@@ -192,9 +192,12 @@ yourself; the URL is not something you can work out from inside the cluster.
   same body and no `WWW-Authenticate`, for every other token failure too (no
   token, expired, wrong audience). So a 401 seen through the app does not tell
   you WHY, and you must never report one as "missing permission" on its own.
-  Assert the user-visible outcome the criterion states — the Forbidden view, the
-  action that is not offered, the row that is not listed — and name the scope
-  you read from the table as the reason.
+  Assert the user-visible outcome the criterion states — the Forbidden view
+  (inside the app's own shell, with the navigation the account CAN use still
+  there), the action that is not offered, the row that is not listed — and name
+  the scope you read from the table as the reason. An account that unlocks
+  nothing at all sees a "no access" page **instead of** the shell, naming the
+  groups to ask for; a rail with no items in it is a defect, not that page.
 
   **Sign in FRESH after any grant change.** A refresh narrows but never widens:
   a permission removed from a role disappears at the next silent renew, while a
