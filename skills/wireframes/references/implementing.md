@@ -36,13 +36,30 @@ over the issue text when the two differ.
   on the viewer. How you factor the code behind those routes is your call:
   share a component where the views genuinely overlap, as long as each route
   renders exactly what its screen shows.
-  Read the role in the SPA from the sign-in identity the auth
-  dependency provides (`user.profile.groups`; see `thunder-authentication`),
-  and treat it as **presentation only** — the backend enforces permission and
-  answers 403. Groups matching no declared role fall to the design's
-  `coldStartRole`, the same rule the backend applies, so a first-time person
-  sees the base experience rather than an empty shell. A component with no auth
-  dependency has no roles: build the screen as drawn.
+  **`/forbidden` and `NoAccess` are platform-prescribed views and appear in no
+  `.dsl`.** They are the one carve-out from "build only the screens the DSL
+  draws": every app with an auth dependency has both, they come from
+  `thunder-authentication`'s `authz` asset, and their absence is a defect even
+  though no wireframe names them.
+
+  Gate each screen on the handle `specs/design/security.json` gives it in
+  `screens[].requires`, through `thunder-authentication`'s `authz` module:
+  `<RequireScope scope="…" />` around the route, `<Can scope="…">` around the
+  nav item that reaches it. `requires: null` is any signed-in user;
+  `requires: "public"` is reachable before sign-in. Treat all of it as
+  **presentation only** — the backend enforces the same handle and answers 403.
+  A user who holds scopes but opens a gated screen by URL sees `Forbidden`
+  inside the shell; a user who can reach nothing at all sees `NoAccess` instead
+  of the shell. Never read a groups claim, and never fall back to a default
+  role. A component with no auth dependency has no roles: build the screen as
+  drawn.
+
+  **Until the `authz` asset ships** (it lands in a later release; it is not in
+  `thunder-authentication` yet), build the gate yourself under those exact
+  names — a `RequireScope` route wrapper, a `Can` wrapper for a nav item, and
+  the `Forbidden` and `NoAccess` views — reading the `requires` handle from the
+  access token's `scope` claim. Same rule, same names, so the asset replaces
+  your copy without a rewrite of the screens.
 
 ## Element for element
 

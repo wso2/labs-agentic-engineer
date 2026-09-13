@@ -17,129 +17,214 @@
  */
 
 /**
- * SecurityDesign — the AUTHORED `specs/design/security.json`. There is no
- * prose companion: this file is the whole security design. It declares which
- * roles the project uses, what each may do WITHIN this project, its test users,
- * and the Thunder OIDC client the project registers.
+ * SecurityDesign v2 — the AUTHORED `specs/design/security.json`. There is no
+ * prose companion: this file is the whole security design.
+ *
+ * v2 makes the permission **catalog** the centre of the document. A project
+ * owns one OAuth resource server; `permissions[]` declares its resources and
+ * the actions on them, and every other section references those handles rather
+ * than restating prose:
+ *
+ *  - `roles[].grants` names catalog handles (`<resource>:<action>`);
+ *  - `screens[].requires` names one handle, `null` for any signed-in user, or
+ *    the literal `"public"` for a screen shown before sign-in;
+ *  - `openapi.yaml` operations name handles in their `security` block.
  *
  * It is read by two very different consumers:
  *
- *  - the **coding agent**, which implements the permissions it declares;
+ *  - the **coding agent**, which implements the permissions it declares
+ *    (including the `own`/`any` row filter each action carries);
  *  - the **platform**, deterministically at build time (no model in the loop),
- *    which ensures each role and test user exists on the identity provider
- *    before validation runs.
+ *    which ensures the resource server, its actions, the project roles, the org
+ *    groups and the test users exist on the identity provider before validation
+ *    runs.
  *
- * Roles and test users are SHARED directory objects — their scope is the IdP's
- * scope, not the project's. Two projects naming the same role mean the same
- * role. This file therefore DECLARES roles; only the permissions it grants them
- * are this project's.
+ * Scope of the names. A **role** is project-owned: it becomes
+ * `<project>/<name>` on the directory, so two projects naming the same role do
+ * NOT mean the same role. A **group** is org-owned and shared: it is reused
+ * when the directory already has it and only declared here when this project
+ * introduces it. That split is why `roles[].description` is now rewritten on
+ * every ensure while a group's is only seeded.
  *
  * **No secret ever appears here.** The file is committed to git and pinned into
- * the project's `v<N>` tag; a test user carries a username and a role and
+ * the project's `v<N>` tag; a test user carries a username and role names and
  * nothing else. The platform generates the password at build and seals it.
  *
  * The Zod validator (`securityDesignSchema` in `../security-design-schema.ts`)
  * is drift-guarded against this type.
  */
 
-/** The Thunder OIDC client this project registers. */
-export interface ThunderClient {
-  /** Display / client name. 1–100 characters. */
-  name: string;
-  /** Client type — only browser apps are supported. */
-  type: "browser";
-  /**
-   * Optional whitespace-separated OIDC scopes. When present and non-empty, the
-   * tokens must include `group` and `ou`.
-   */
-  scopes?: string | undefined;
-}
-
+/** The authored `specs/design/security.json`. */
 export interface SecurityDesign {
   /**
-   * Schema version. Pinned to the literal `1`, not widened to `number`: only one
-   * version exists, and a `2` appearing here should be a compile error at the
-   * call site rather than something the runtime gate has to catch.
+   * Schema version. Pinned to the literal `2`, not widened to `number`: one
+   * version exists at a time, and a stale `1` appearing here is caught by the
+   * codec with a message naming the fields v2 removed.
    */
-  version: 1;
+  version: 2;
   /**
-   * The role a caller holds before anyone grants them one, or `null` when a
-   * caller with no role reaches nothing. Must name a declared role when set —
-   * `security-design`'s cold-start rule, made mechanical.
+   * The permission catalog — every resource this project's services expose and
+   * the actions on them. At least one. `resource` is unique within the project.
    */
-  coldStartRole: string | null;
+  permissions: Permission[];
   /**
-   * Components that serve unauthenticated traffic. Absence of sign-in is a
-   * decision, so it is written down rather than inferred from silence.
+   * The org groups this project INTRODUCES. A group the directory already holds
+   * (`list_groups`) is reused by naming it in `roles[].assignTo` and is not
+   * redeclared here. Created if absent; never renamed or deleted by the
+   * platform. May be empty when every `assignTo` reuses an existing group.
    */
-  publicComponents: string[];
-  /** Every role this project uses. At least one. */
-  roles: RoleDeclaration[];
+  groups: Group[];
+  /** Every role this project defines. At least one. */
+  roles: Role[];
+  /**
+   * One row per screen a web application's wireframe declares, saying what a
+   * caller must hold to reach it. May be empty for an API-only project.
+   */
+  screens: Screen[];
   /**
    * The accounts that exist so a role's behaviour can be exercised — the
-   * validation agent signs in as one to judge role-gated criteria. Every role
-   * needs at least one; the build supplies any the design omits.
+   * validation agent signs in as one to judge role-gated criteria. May be
+   * empty; the build supplies the users the design omits. A `service`-kind role
+   * never gets one.
    */
-  testUsers: TestUserDeclaration[];
-  /** The Thunder OIDC client this project registers. */
-  thunder: ThunderClient;
+  testUsers: TestUser[];
 }
 
-/** One role, and what it may do within this project. */
-export interface RoleDeclaration {
+/** One resource in the catalog, and the actions callers may take on it. */
+export interface Permission {
   /**
-   * The role name, verbatim — it becomes the IdP group name and reaches an app
-   * as a `groups` claim. Reuse an existing catalog row's name rather than
-   * minting a near-duplicate (`list_roles`).
+   * The resource name — one lowercase handle segment, unique within the
+   * project (`claims`, `reports`). It is the first half of every handle on it.
+   */
+  resource: string;
+  /**
+   * The component that OWNS the resource, as it appears in `design.cell`. One
+   * owner per resource; other components may call it but do not declare it.
+   */
+  component: string;
+  /** What the resource is, for the console and the coding agent. */
+  description?: string | undefined;
+  /** The actions on this resource. At least one; handles unique per resource. */
+  actions: Action[];
+}
+
+/** One action on a resource. `<resource>:<handle>` is the scope handle. */
+export interface Action {
+  /**
+   * The action name — one lowercase handle segment (`read`, `read-all`,
+   * `submit`). Unique within its resource; the same segment may legally appear
+   * under a different resource (`claims:read` and `reports:read` coexist).
+   */
+  handle: string;
+  /**
+   * Which rows the action reaches: `own` (only the caller's) or `any`. The
+   * coding agent emits the row filter for `own`; the console shows it beside
+   * the handle. Required — an unstated ownership is how prose-only permissions
+   * turn into a list-everything endpoint.
+   */
+  ownership: Ownership;
+  /** What holding this action lets a caller do. */
+  description?: string | undefined;
+}
+
+/** Which rows an action reaches. */
+export type Ownership = "own" | "any";
+
+/** An org group this project introduces. */
+export interface Group {
+  /** The group name, verbatim, as the org directory holds it. */
+  name: string;
+  /**
+   * What the group is. A CREATE-TIME SEED only: a group is org-owned and may
+   * have been described by somebody else first, so the platform never rewrites
+   * an existing group's description from here.
+   */
+  description: string;
+}
+
+/** How a person comes to hold a role. */
+export type Enrolment = "admin" | "self-service";
+
+/** What a role is assigned to. */
+export type RoleKind = "user" | "service";
+
+/** One project role and everything it may do. */
+export interface Role {
+  /**
+   * The role name — a PRD actor noun, unique within the project
+   * (case-insensitively). Becomes `<project>/<name>` on the directory, so it is
+   * project-scoped and must never equal an org group name.
    */
   name: string;
   /**
-   * What the role is for. A CREATE-TIME SEED only: the platform never updates
-   * an existing group's description from here, because a shared role may have
-   * been described by somebody else first.
+   * What the role is for. Project-owned, so the platform writes it on every
+   * ensure rather than seeding it once.
    */
   description: string;
   /** The PRD story numbers this role serves. At least one. */
   stories: number[];
   /**
-   * How a person comes to hold this role: the name of the role that can grant
-   * it, or `first sign-in` for the cold-start role. Prose, not a key — the
-   * matrix answer to "who admits people".
+   * Catalog handles (`<resource>:<action>`) this role holds. At least one.
+   * Every handle must exist in `permissions[]`. A role holding `X:read-all`
+   * also holds `X:read`: the "all" handle widens the ROWS, it does not replace
+   * the operation.
    */
-  grantedBy: string;
-  /** What this role may do, per component. At least one entry. */
-  permissions: RolePermission[];
+  grants: string[];
+  /**
+   * Org groups the role is assigned to. Each must be declared in `groups[]` or
+   * already exist in the directory. Required for an `admin`-enrolment `user`
+   * role; absent for a self-service role and for a `service` role.
+   */
+  assignTo?: string[] | undefined;
+  /**
+   * How a person comes to hold this role. `admin` (the default) means somebody
+   * puts them in an `assignTo` group; `self-service` means the web app's
+   * registration flow assigns it at account creation.
+   */
+  enrolment?: Enrolment | undefined;
+  /**
+   * Role names that may hand this role out, validated against `roles[]`.
+   * Records who admits people; the in-app admin screen reads it.
+   */
+  assignableBy?: string[] | undefined;
+  /**
+   * `user` (the default) or `service`. A service role is assigned to an app
+   * principal, never to a group, and gets no test user.
+   */
+  kind?: RoleKind | undefined;
 }
 
-/**
- * What one role may do on one component. `actions` for a service (verbs),
- * `screens` for a web application (reachable screens) — at least one of the two
- * is non-empty.
- */
-export interface RolePermission {
-  /** The component name, as it appears in `design.cell`. */
+/** One screen of one web application, and what it takes to reach it. */
+export interface Screen {
+  /** The web-application component, as it appears in `design.cell`. */
   component: string;
-  // `| undefined` is explicit on both: the package compiles with
-  // exactOptionalPropertyTypes, so `actions?: string[]` and
-  // `actions?: string[] | undefined` are DIFFERENT types, and only the second
-  // matches what Zod's `.optional()` infers. Without it the drift guard below
-  // fails rather than passing — which is the guard working, not a nuisance.
-  /** Allowed actions on a service component. */
-  actions?: string[] | undefined;
-  /** Reachable screens on a web-application component. */
-  screens?: string[] | undefined;
+  /**
+   * The screen name as `wireframes.dsl` declares it. Both sides normalize
+   * before comparing, so `"My Claims"` matches `screen MyClaims`.
+   */
+  screen: string;
+  /**
+   * One catalog handle, `null` for any signed-in user, or the literal
+   * `"public"` for a screen shown before sign-in. A handle always contains a
+   * colon, so the literal cannot collide with one.
+   */
+  requires: string | null;
 }
 
 /**
- * One test user. Username and role, and nothing else, ever — a password here
- * would be committed to git.
+ * One test user. A username and role names, and nothing else, ever — a password
+ * here would be committed to git.
  */
-export interface TestUserDeclaration {
+export interface TestUser {
   /**
    * The IdP username. Lowercase, so the platform's own generated names
    * (`test-<role-slug>`) and authored ones cannot collide by case alone.
    */
   username: string;
-  /** The role this account holds. Must name a declared role. */
-  role: string;
+  /**
+   * The roles this account holds. At least one, each a declared `user`-kind
+   * role. The account is enrolled in every `assignTo` group of every role
+   * listed.
+   */
+  roles: string[];
 }

@@ -45,8 +45,8 @@ flowchart LR
 
 | | |
 |---|---|
-| `ensure.go` | The build-time ensure: read `specs/design/security.json` at the tag, make every role and test user real, and return every account's login for the gate to publish. Three passes — classify, then accounts, then roles created complete with their members. |
-| `catalog.go` | The design-time read: every role on the org's environment directory, with whether the platform created it. Backs the `list_roles` MCP tool. |
+| `ensure.go` | The build-time ensure: read `specs/design/security.json` at the tag, make every org group the design needs — the ones `groups[]` introduces and the ones its roles `assignTo` — and every test user real, and return every account's login for the gate to publish. Three passes — classify, then accounts, then groups created complete with their members. |
+| `catalog.go` | The design-time read: every group on the org's environment directory, with whether the platform created it, how many members it has, and how many projects bind a role to it. Backs the `list_groups` MCP tool (and its deprecated alias `list_roles`). |
 | `target.go` | `Scope` — the `(org, environment)` pair that names one directory — and the `TargetResolver` port that turns an org into a `Target`: that pair, the issuer, and a `Directory` already bound to it. |
 | `repository.go` | `idp_roles`, `test_users`, `test_user_refs` — all three keyed by `Scope` — and the sealed password column. |
 | `panel.go` | The Security panel's domain service: the live-state read (degrading to `directoryAvailable: false` rather than failing), and reveal / rotate / delete behind the org+project and ownership fences. |
@@ -88,11 +88,15 @@ not from a platform callback. One published copy cannot disagree with itself.
 
 ## Invariants
 
-**Roles and test users are SHARED within one `(org, environment)`, not
+**Groups and test users are SHARED within one `(org, environment)`, not
 project-scoped.** That pair IS the identity provider. Two of an org's projects
-naming the same role mean the same role, and a person who holds it holds it
-everywhere **in that environment** — while the same name on another environment
-is a different group, on a different directory, that shares nothing. `idp_roles`
+naming the same group mean the same group — that reuse is the point of
+`assignTo` — and a person who is in it is in it everywhere **in that
+environment**, while the same name on another environment is a different group,
+on a different directory, that shares nothing. (A *role* is the other way round:
+it is project-owned and becomes `<project>/<name>` on the directory. The project
+roles themselves are provisioned in a later phase; today's ensure makes the
+groups and the accounts.) `idp_roles`
 and `test_users` are keyed by `(org_id, environment, name | username)`;
 `test_user_refs` carries the project on top of that, and every panel mutation
 goes through it.

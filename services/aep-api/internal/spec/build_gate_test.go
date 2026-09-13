@@ -22,6 +22,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/wso2/aep/aep-api/internal/platform/securityspec"
 )
 
 const gatePRD = `# Lunch — PRD
@@ -241,12 +243,63 @@ func authService(id, stories string) string {
 		`"description":"real responsibility text","exposesAPI":{"auth":"end-user-required"}}`
 }
 
+// rolesDoc is a security.json v2 for the lunch design: one resource owned by
+// lunch-api, one role that grants from it and is assigned to an org group, one
+// screen the wireframe declares, one test user.
 func rolesDoc(stories string) string {
-	return `{"version":1,"coldStartRole":"Member","publicComponents":[],` +
+	return `{"version":2,` +
+		`"permissions":[{"resource":"rounds","component":"lunch-api","actions":[` +
+		`{"handle":"read","ownership":"own"},{"handle":"join","ownership":"own"}]}],` +
+		`"groups":[{"name":"Lunch Members","description":"Everyone who orders lunch"}],` +
 		`"roles":[{"name":"Member","description":"Joins today's order.","stories":[` + stories + `],` +
-		`"grantedBy":"first sign-in","permissions":[{"component":"lunch-api","actions":["join round"]}]}],` +
-		`"testUsers":[{"username":"test-member","role":"Member"}],` +
-		`"thunder":{"name":"Expense Tracker","type":"browser"}}`
+		`"grants":["rounds:read","rounds:join"],"assignTo":["Lunch Members"]}],` +
+		`"screens":[{"component":"lunch-web","screen":"home","requires":"rounds:read"}],` +
+		`"testUsers":[{"username":"test-member","roles":["Member"]}]}`
+}
+
+// protectedStubSpec is the smallest openapi.yaml a component BEHIND SIGN-IN can
+// carry: the oauth2 scheme the gateway and the generated server are rendered
+// from, and the document default that makes an operation whose security block
+// is forgotten fail closed. Without both, the openapi security gate refuses the
+// component — which is the whole point of it.
+const protectedStubSpec = `openapi: 3.0.3
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+security:
+  - oauth2: []
+paths: {}
+`
+
+// lunchAPISpec is lunch-api's openapi.yaml with real operations, so the rules
+// that read a component spec — the screen→operation cross-check and the two
+// coverage warnings — have something to read.
+const lunchAPISpec = `openapi: 3.0.3
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+security:
+  - oauth2: []
+paths:
+  /rounds:
+    get:
+      security: [{oauth2: [rounds:read]}]
+  /rounds/join:
+    post:
+      security: [{oauth2: [rounds:join]}]
+`
+
+// signInDesignFiles is the complete design with lunch-api moved behind end-user
+// sign-in: the design.json the auth derivation stamped AND the openapi.yaml a
+// protected component must then carry. The two travel together because the
+// platform's own gates treat them as one fact.
+func signInDesignFiles() map[string]string {
+	files := completeDesignFiles()
+	files["components/lunch-api/design.json"] = authService("lunch-api", "1, 2, 4")
+	files["components/lunch-api/openapi.yaml"] = protectedStubSpec
+	return files
 }
 
 // A design with no sign-in needs no roles document — most designs are this.
@@ -260,8 +313,7 @@ func TestBuildGate_NoSignInNeedsNoRolesDocument(t *testing.T) {
 // role-gated behaviour nothing can exercise, because the platform has no roles
 // or test users to create and validation has no login to sign in as.
 func TestBuildGate_SignInWithoutRolesDocument(t *testing.T) {
-	files := completeDesignFiles()
-	files["components/lunch-api/design.json"] = authService("lunch-api", "1, 2, 4")
+	files := signInDesignFiles()
 
 	errs := gateErrors(t, files)
 	if !slices.Contains(codesOf(errs), codeMissingRolesDocument) {
@@ -270,8 +322,7 @@ func TestBuildGate_SignInWithoutRolesDocument(t *testing.T) {
 }
 
 func TestBuildGate_SignInWithARolesDocumentPasses(t *testing.T) {
-	files := completeDesignFiles()
-	files["components/lunch-api/design.json"] = authService("lunch-api", "1, 2, 4")
+	files := signInDesignFiles()
 	files["security.json"] = rolesDoc("1, 2")
 
 	if errs := gateErrors(t, files); len(errs) != 0 {
@@ -282,8 +333,7 @@ func TestBuildGate_SignInWithARolesDocumentPasses(t *testing.T) {
 // A roles document that acquired a tag but does not parse is a hard failure, not
 // a warning: the platform provisions credentials from it.
 func TestBuildGate_UnparseableRolesDocument(t *testing.T) {
-	files := completeDesignFiles()
-	files["components/lunch-api/design.json"] = authService("lunch-api", "1, 2, 4")
+	files := signInDesignFiles()
 	files["security.json"] = `{"version":1,`
 
 	errs := gateErrors(t, files)
@@ -292,17 +342,100 @@ func TestBuildGate_UnparseableRolesDocument(t *testing.T) {
 	}
 }
 
-// A referential rule securityspec owns surfaces through the same gate code, so the
-// two halves of the validation cannot drift apart.
+// A referential rule securityspec owns surfaces through the same gate code, so
+// the two halves of the validation cannot drift apart.
 func TestBuildGate_RolesDocumentBreakingAReferentialRule(t *testing.T) {
-	files := completeDesignFiles()
-	files["components/lunch-api/design.json"] = authService("lunch-api", "1, 2, 4")
-	// coldStartRole names a role the document does not declare.
-	files["security.json"] = strings.Replace(rolesDoc("1"), `"coldStartRole":"Member"`, `"coldStartRole":"Nobody"`, 1)
+	files := signInDesignFiles()
+	// A grant naming a handle the catalog does not declare.
+	files["security.json"] = strings.Replace(rolesDoc("1"), `"rounds:join"`, `"rounds:audit"`, 1)
 
 	errs := gateErrors(t, files)
 	if !slices.Contains(codesOf(errs), codeInvalidRolesDocument) {
 		t.Fatalf("want %s, got %+v", codeInvalidRolesDocument, errs)
+	}
+}
+
+// The rules that need MORE than security.json run here and nowhere else: only
+// the gate holds the cell, the wireframes and every component spec at once.
+func TestBuildGate_RulesThatNeedTheWholeBundle(t *testing.T) {
+	cases := map[string]func(files map[string]string){
+		"a screen the wireframe does not declare": func(files map[string]string) {
+			files["security.json"] = strings.Replace(rolesDoc("1"), `"screen":"home"`, `"screen":"Archive"`, 1)
+		},
+		"a resource owned by a component the cell does not declare": func(files map[string]string) {
+			files["security.json"] = strings.Replace(rolesDoc("1"), `"component":"lunch-api"`, `"component":"ghost-api"`, 1)
+		},
+		// Δ P6 §5: the screen is gated on rounds:join, the list it renders is
+		// GET /rounds (rounds:read), and the role grants only the first — a live
+		// 401 the SPA cannot tell from an expired session.
+		"a role reaching a screen whose operation it cannot call": func(files map[string]string) {
+			files["components/lunch-api/openapi.yaml"] = lunchAPISpec
+			doc := strings.Replace(rolesDoc("1"), `"grants":["rounds:read","rounds:join"]`, `"grants":["rounds:join"]`, 1)
+			files["security.json"] = strings.Replace(doc, `"requires":"rounds:read"`, `"requires":"rounds:join"`, 1)
+		},
+	}
+	for name, edit := range cases {
+		t.Run(name, func(t *testing.T) {
+			files := signInDesignFiles()
+			files["security.json"] = rolesDoc("1")
+			edit(files)
+
+			errs := gateErrors(t, files)
+			if !slices.Contains(codesOf(errs), codeInvalidRolesDocument) {
+				t.Fatalf("want %s, got %+v", codeInvalidRolesDocument, errs)
+			}
+		})
+	}
+}
+
+// The two coverage warnings are NON-BLOCKING: they never appear among the gate's
+// errors, and they do name the handle nobody uses and the one nobody can reach.
+func TestBuildGate_CoverageWarningsDoNotBlock(t *testing.T) {
+	files := signInDesignFiles()
+	files["components/lunch-api/openapi.yaml"] = lunchAPISpec
+	// `rounds:audit` is declared and used by nothing; `rounds:join` is required
+	// by POST /rounds/join and granted by nobody once the role drops it.
+	doc := strings.Replace(rolesDoc("1"),
+		`{"handle":"join","ownership":"own"}`,
+		`{"handle":"join","ownership":"own"},{"handle":"audit","ownership":"any"}`, 1)
+	files["security.json"] = strings.Replace(doc, `"grants":["rounds:read","rounds:join"]`, `"grants":["rounds:read"]`, 1)
+
+	if errs := gateErrors(t, files); len(errs) != 0 {
+		t.Fatalf("a coverage warning must not fail the gate, got %+v", errs)
+	}
+	var codes []string
+	for _, w := range buildGateWarnings(files) {
+		codes = append(codes, w.Code)
+		// Bundle-relative, like every row this file produces; the apply path
+		// prefixes DesignDir for the channel that speaks repo paths.
+		if w.Path != securityspec.BundleKey {
+			t.Errorf("warning path %q is not bundle-relative", w.Path)
+		}
+	}
+	for _, want := range []string{codeSecurityHandleUsedNowhere, codeSecurityHandleUnreachable} {
+		if !slices.Contains(codes, want) {
+			t.Fatalf("want a %s warning, got %v", want, codes)
+		}
+	}
+}
+
+// INFO is not dropped: a role whose assignTo names a group the document does
+// not declare is a deliberate delegation to the org directory, and the record
+// of that decision rides the same channel as the warnings.
+func TestBuildGate_DirectoryCheckedNoteRidesTheWarningsChannel(t *testing.T) {
+	files := signInDesignFiles()
+	files["components/lunch-api/openapi.yaml"] = lunchAPISpec
+	// `Finance` is not one of the document's own groups, so it can only be one
+	// the org directory already holds.
+	files["security.json"] = strings.Replace(rolesDoc("1"),
+		`"assignTo":["Lunch Members"]`, `"assignTo":["Finance"]`, 1)
+
+	var codes []string
+	for _, w := range buildGateWarnings(files) {
+		codes = append(codes, w.Code)
+	}
+	if !slices.Contains(codes, codeSecurityAssignToDirectoryChecked) {
+		t.Fatalf("want a %s note, got %v", codeSecurityAssignToDirectoryChecked, codes)
 	}
 }
 
@@ -311,8 +444,7 @@ func TestBuildGate_RolesDocumentBreakingAReferentialRule(t *testing.T) {
 // The gate is the only place this is checkable: securityspec validates one file,
 // and only the gate also sees the PRD.
 func TestBuildGate_RoleCitingAStoryThePRDDoesNotDefine(t *testing.T) {
-	files := completeDesignFiles()
-	files["components/lunch-api/design.json"] = authService("lunch-api", "1, 2, 4")
+	files := signInDesignFiles()
 	files["security.json"] = rolesDoc("1, 99")
 
 	errs := gateErrors(t, files)

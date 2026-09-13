@@ -1,0 +1,331 @@
+openapi: 3.0.3
+info:
+  title: Expense API
+  version: 1.0.0
+  description: >-
+    Expense claims and their approval. Authorization is by OAuth2 scope: every
+    protected operation declares exactly one handle from the project's
+    permission catalog (specs/design/security.json).
+servers:
+  - url: /
+tags:
+  - name: claims
+  - name: reports
+  - name: identity
+  - name: ops
+
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      description: Tokens issued by the environment's identity provider for this project.
+      flows:
+        authorizationCode:
+          authorizationUrl: https://idp.example/oauth2/authorize
+          tokenUrl: https://idp.example/oauth2/token
+          scopes:
+            claims:read: See own claims
+            claims:read-all: See every claim
+            claims:submit: Create and send a claim
+            claims:approve: Approve a submitted claim
+            claims:reject: Reject a submitted claim
+            reports:read: Monthly totals
+  parameters:
+    UserId:
+      name: X-User-Id
+      in: header
+      required: false
+      description: caller identity injected by the gateway from the validated token
+      schema: { type: string }
+    ClaimId:
+      name: claimId
+      in: path
+      required: true
+      description: identifier of the claim
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: page size
+      schema: { type: integer, default: 20, maximum: 100 }
+    Offset:
+      name: offset
+      in: query
+      required: false
+      description: number of items to skip
+      schema: { type: integer, default: 0 }
+    Status:
+      name: status
+      in: query
+      required: false
+      description: filter by claim status
+      schema:
+        type: string
+        enum: [submitted, approved, rejected]
+  schemas:
+    Claim:
+      type: object
+      required: [id, ownerId, description, amount, incurredOn, status]
+      properties:
+        id: { type: string, description: claim identifier }
+        ownerId: { type: string, description: subject of the employee who filed it }
+        ownerName: { type: string, description: display name of the employee }
+        description: { type: string, description: what the money was spent on }
+        amount: { type: number, format: double, description: amount claimed }
+        incurredOn: { type: string, format: date, description: date the expense was incurred }
+        status:
+          type: string
+          description: lifecycle state
+          enum: [submitted, approved, rejected]
+        decidedBy: { type: string, description: subject of the approver who decided it }
+        reason: { type: string, description: reason recorded with a rejection }
+    NewClaim:
+      type: object
+      required: [description, amount, incurredOn]
+      properties:
+        description: { type: string }
+        amount: { type: number, format: double }
+        incurredOn: { type: string, format: date }
+    Decision:
+      type: object
+      properties:
+        reason: { type: string, description: why the claim was rejected }
+    ClaimPage:
+      type: object
+      required: [count, data]
+      properties:
+        count: { type: integer, description: total matching items }
+        next: { type: string, nullable: true, description: relative URI of the next page }
+        previous: { type: string, nullable: true, description: relative URI of the previous page }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Claim' }
+    MonthlyTotal:
+      type: object
+      required: [month, approvedCount, approvedTotal]
+      properties:
+        month: { type: string, description: calendar month, YYYY-MM }
+        approvedCount: { type: integer, description: number of approved claims }
+        approvedTotal: { type: number, format: double, description: sum of approved amounts }
+    MonthlyReport:
+      type: object
+      required: [count, data]
+      properties:
+        count: { type: integer, description: number of months reported }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/MonthlyTotal' }
+    Me:
+      type: object
+      required: [userId, scopes]
+      properties:
+        userId: { type: string, description: the caller's subject }
+        scopes:
+          type: array
+          description: handles the caller's token carries
+          items: { type: string }
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, description: liveness marker }
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: integer, description: HTTP or application error code }
+        message: { type: string, description: short human-readable label }
+        description: { type: string, description: detailed explanation }
+        moreInfo: { type: string, description: URI to documentation }
+  responses:
+    BadRequest:
+      description: the request body or a parameter is invalid
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: no verified end-user identity on the request
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: the caller's token does not carry the scope this operation requires
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: no such claim
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: the claim has already been decided
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+security:
+  - oauth2: []
+
+paths:
+  /me:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    get:
+      operationId: getMe
+      tags: [identity]
+      summary: The signed-in caller's identity and granted handles
+      responses:
+        '200':
+          description: the caller
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Me' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /claims:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    get:
+      operationId: listClaims
+      tags: [claims]
+      summary: List expense claims
+      description: >-
+        The caller's own claims. A caller who also holds claims:read-all sees
+        every claim.
+      security:
+        - oauth2: [claims:read]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/Status'
+      responses:
+        '200':
+          description: a page of claims
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClaimPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      operationId: submitClaim
+      tags: [claims]
+      summary: Submit an expense claim
+      security:
+        - oauth2: [claims:submit]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NewClaim' }
+      responses:
+        '201':
+          description: the created claim
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Claim' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /claims/{claimId}:
+    parameters:
+      - $ref: '#/components/parameters/ClaimId'
+      - $ref: '#/components/parameters/UserId'
+    get:
+      operationId: getClaim
+      tags: [claims]
+      summary: One expense claim
+      description: >-
+        The caller's own claim. A caller who also holds claims:read-all may read
+        any claim.
+      security:
+        - oauth2: [claims:read]
+      responses:
+        '200':
+          description: the claim
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Claim' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /claims/{claimId}/approve:
+    parameters:
+      - $ref: '#/components/parameters/ClaimId'
+      - $ref: '#/components/parameters/UserId'
+    post:
+      operationId: approveClaim
+      tags: [claims]
+      summary: Approve a submitted claim
+      security:
+        - oauth2: [claims:approve]
+      responses:
+        '200':
+          description: the approved claim
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Claim' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /claims/{claimId}/reject:
+    parameters:
+      - $ref: '#/components/parameters/ClaimId'
+      - $ref: '#/components/parameters/UserId'
+    post:
+      operationId: rejectClaim
+      tags: [claims]
+      summary: Reject a submitted claim
+      security:
+        - oauth2: [claims:reject]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Decision' }
+      responses:
+        '200':
+          description: the rejected claim
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Claim' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /reports/monthly:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    get:
+      operationId: getMonthlyReport
+      tags: [reports]
+      summary: Monthly totals of approved claims
+      security:
+        - oauth2: [reports:read]
+      responses:
+        '200':
+          description: one row per calendar month
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MonthlyReport' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /health:
+    get:
+      operationId: getHealth
+      tags: [ops]
+      summary: Liveness probe
+      security: []
+      responses:
+        '200':
+          description: the service is up
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }

@@ -1,0 +1,53 @@
+# Design section, standalone: the Expense Tracker PRD from the generated-app
+# scopes design (two roles, one API, own vs all rows). This scenario exists to
+# exercise the design lineup's SECURITY step — specs/design/security.json v2 —
+# so its rubric leans on the permission catalog and the grant rules the
+# `security-design` skill states.
+
+brief:
+  name: expense-tracker
+  idea: >-
+    A shared expense tracker: an employee files a claim for money they spent at
+    work and follows its status, an approver works one queue of everything
+    waiting for a decision and approves or rejects each one, and Finance reads
+    the monthly total from the same record.
+  persona: >-
+    Finance operations lead at a 300-person company; knows the claim lifecycle
+    cold, has no interest in technology choices, answers in plain language.
+  facts:
+    - Two actors only — Employee (files claims, sees their own) and Approver (works the queue, sees every claim).
+    - Sign-in is SSO through the platform identity provider; the app stores nothing about who a person is.
+    - An Employee sees their own claims only; an Approver sees every claim. That is a permission difference, not two copies of the data.
+    - Approvers do not file claims in this release; somebody who does both holds both roles.
+    - A claim is submitted, approved or rejected — no draft state, no multi-step approval chain.
+    - A decision is final; an approved or rejected claim cannot be decided again. A rejection carries a reason the employee can read.
+    - The monthly report is the total of approved claims per calendar month, read-only, no export in this release.
+    - Finance already exists as a group in the company directory; the people who approve claims are exactly that group.
+    - Out of scope - receipt images and OCR, per-department budgets and approval limits, and the reimbursement payment itself.
+    - "Notifications: everything is in-app; no email and no chat integration."
+  fallback: >-
+    Prefer the smallest reasonable v1; when genuinely indifferent, take the
+    recommended option and keep the claim lifecycle simple.
+
+fixture: expense-tracker-requirements
+
+rubric:
+  mustCover:
+    - item: A web application component and a protected service component are both designed, with the service owning claims and the monthly report
+      weight: 2
+    - item: "specs/design/security.json is written at version 2 with a permissions catalog whose every action declares ownership — own for the employee's own rows, any for the approver's every-row capabilities"
+      weight: 2
+    - item: Exactly two roles, named Employee and Approver, each citing the PRD story numbers it serves, and each assigned to an organisation group (the Approver reusing the directory's existing Finance group rather than inventing one)
+      weight: 2
+    - item: "The Approver's grants hold BOTH claims:read and claims:read-all — the all handle widens the rows an operation returns and never replaces the operation's own handle"
+      weight: 3
+    - item: "Every screen carries a requires handle from the catalog, and each role that reaches a screen holds the scope of every operation that screen calls (the approvals queue reads the claims list operation, which requires claims:read)"
+      weight: 2
+    - item: "The service's openapi.yaml declares an oauth2 security scheme whose scope keys are catalog handles, a document-level default of any signed-in user, and at most one scope on any operation"
+      weight: 2
+    - "Test users are declared one per role, each with a roles list, and no password appears anywhere in the design"
+  mustNot:
+    - "A coldStartRole, publicComponents or thunder block in security.json — those are version-1 fields and version 2 has none of them"
+    - "More than one scope on a single operation's security requirement, or a bearerAuth security scheme"
+    - An auth, login, registration or token-issuance endpoint specced on the service
+    - Receipt image upload or OCR, or any payment/reimbursement integration

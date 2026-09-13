@@ -30,9 +30,16 @@
  * the console cannot invent a fourth idea of what the file looks like.
  */
 
-import { securityDesignSchema, type SecurityDesign } from "@aep/agent-stream";
+import {
+  checkSecurityDesign,
+  securityDesignSchema,
+  type SecurityDesign,
+} from "@aep/agent-stream";
 
 export type { SecurityDesign };
+
+/** The one authored security document, as the write gate addresses it. */
+const SECURITY_DESIGN_PATH = "specs/design/security.json";
 
 export type ParsedSecurity =
   | { kind: "ok"; doc: SecurityDesign }
@@ -43,6 +50,11 @@ export type ParsedSecurity =
  * Parse the document text. Missing or blank content is `empty` (a rail concern);
  * a present but incomplete object (e.g. `{}`) is also `empty`, and the panel
  * explains that in words rather than showing a parse failure.
+ *
+ * A document that DECLARES a version this console cannot read is neither: a
+ * version-1 file is finished, it is just the previous schema, so it is
+ * `invalid` and carries the write gate's own migration sentence — the reader is
+ * told exactly what the design agent is told when it writes one.
  */
 export function parseSecurityDesign(
   text: string | null | undefined,
@@ -61,9 +73,24 @@ export function parseSecurityDesign(
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     return { kind: "empty" };
   }
+  if ("version" in raw && (raw as { version?: unknown }).version !== 2) {
+    const problem = checkSecurityDesign(SECURITY_DESIGN_PATH, text);
+    if (problem) {
+      return { kind: "invalid", message: unprefixed(problem.message) };
+    }
+  }
   const res = securityDesignSchema.safeParse(raw);
   if (!res.success) return { kind: "empty" };
   return { kind: "ok", doc: res.data };
+}
+
+/**
+ * The gate prefixes its messages with the path it checked; the panel already
+ * names the document it failed to read, so the prefix is dropped.
+ */
+function unprefixed(message: string): string {
+  const prefix = `${SECURITY_DESIGN_PATH}: `;
+  return message.startsWith(prefix) ? message.slice(prefix.length) : message;
 }
 
 /** Serialise a document back to the on-disk form: 2-space indent, trailing newline. */
@@ -71,7 +98,11 @@ export function serializeSecurityDesign(doc: SecurityDesign): string {
   return `${JSON.stringify(doc, null, 2)}\n`;
 }
 
-/** One test user as the panel shows it, including the ones the build will supply. */
+/**
+ * One test user as the panel shows it, under ONE of its roles. A v2 test user
+ * may hold several, so the same username appears once per role it holds — the
+ * panel lists users inside role cards, not the other way round.
+ */
 export interface PlannedUser {
   username: string;
   role: string;
@@ -81,7 +112,8 @@ export interface PlannedUser {
 
 /**
  * The complete set of test users this design will have after Build — the
- * authored ones, plus one generated name for every role the design gave none.
+ * authored ones, plus one generated name for every role that OWES a login and
+ * was given none (see `needsTestUser`).
  *
  * This is a LINE-FOR-LINE mirror of `securityspec.Plan` in the BFF, and it has
  * to be: the panel promises the user a username, and the build has to create
@@ -94,26 +126,45 @@ export interface PlannedUser {
  */
 export function planUsers(doc: SecurityDesign): PlannedUser[] {
   const taken = new Set(doc.testUsers.map((u) => u.username));
-  const byRole = new Map<string, typeof doc.testUsers>();
+  const byRole = new Map<string, string[]>();
   for (const u of doc.testUsers) {
-    const key = u.role.toLowerCase();
-    byRole.set(key, [...(byRole.get(key) ?? []), u]);
+    for (const roleName of u.roles) {
+      const key = roleName.toLowerCase();
+      byRole.set(key, [...(byRole.get(key) ?? []), u.username]);
+    }
   }
 
   const out: PlannedUser[] = [];
+  // The forEach index is the ordinal the collision suffix uses, so it counts
+  // DECLARED roles — including the ones that owe no login — exactly as the Go
+  // `for i, role := range doc.Roles` does.
   doc.roles.forEach((role, i) => {
     const authored = byRole.get(role.name.toLowerCase()) ?? [];
     if (authored.length > 0) {
-      for (const u of authored) {
-        out.push({ username: u.username, role: role.name, supplied: false });
+      for (const username of authored) {
+        out.push({ username, role: role.name, supplied: false });
       }
       return;
     }
+    if (!needsTestUser(role)) return;
     const name = supplyUsername(role.name, i, taken);
     taken.add(name);
     out.push({ username: name, role: role.name, supplied: true });
   });
   return out;
+}
+
+/**
+ * Whether the build owes this role a login — `securityspec.Role.NeedsTestUser`
+ * in the BFF, with the same defaults applied.
+ *
+ * Only an admin-enrolment user role: a self-service role's accounts come from
+ * the application's own registration flow, and a service role's principal is an
+ * application, not a person. Promising either a `test-…` name would name an
+ * account the build never creates.
+ */
+function needsTestUser(role: SecurityDesign["roles"][number]): boolean {
+  return (role.kind ?? "user") === "user" && (role.enrolment ?? "admin") === "admin";
 }
 
 /** The planned users for one role. */

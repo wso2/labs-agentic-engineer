@@ -17,7 +17,8 @@
  */
 
 /**
- * Regenerate the checked-in JSON Schema artifacts from the Zod schemas. Wired
+ * Regenerate the checked-in contract artifacts: the JSON Schemas rendered from
+ * the Zod schemas, and the security-gate message catalog the BFF vendors. Wired
  * into this package's `gen` script (turbo `build` runs `gen` first), so the
  * artifacts cannot silently drift from their schemas; `test/json-schema.test.ts`
  * fails the build if any does.
@@ -40,7 +41,11 @@ import {
   SECURITY_DESIGN_SCHEMA_ARTIFACT,
   PLAN_TASK_SCHEMA_ARTIFACT,
   UPDATE_TASK_SCHEMA_ARTIFACT,
+  SECURITY_DESIGN_MESSAGES_ARTIFACT,
+  OPENAPI_SECURITY_MESSAGES_ARTIFACT,
 } from "./artifact-path.js";
+import { SECURITY_DESIGN_MESSAGES } from "../src/security-design-messages.js";
+import { OPENAPI_SECURITY_MESSAGES } from "../src/openapi-security-messages.js";
 
 const artifacts: [string, Record<string, unknown>][] = [
   [COMPONENT_DESIGN_SCHEMA_ARTIFACT, componentDesignJsonSchema()],
@@ -48,6 +53,12 @@ const artifacts: [string, Record<string, unknown>][] = [
   [SECURITY_DESIGN_SCHEMA_ARTIFACT, securityDesignJsonSchema()],
   [PLAN_TASK_SCHEMA_ARTIFACT, planTaskJsonSchema()],
   [UPDATE_TASK_SCHEMA_ARTIFACT, updateTaskJsonSchema()],
+  // Not schemas, but the same anti-drift deal: one source module, one
+  // committed artifact, one freshness test. Both catalogs are vendored by the
+  // BFF, so a reword that lands in one language and not the other would give
+  // the two gates two wordings of one rule.
+  [SECURITY_DESIGN_MESSAGES_ARTIFACT, SECURITY_DESIGN_MESSAGES],
+  [OPENAPI_SECURITY_MESSAGES_ARTIFACT, OPENAPI_SECURITY_MESSAGES],
 ];
 
 for (const [path, schema] of artifacts) {

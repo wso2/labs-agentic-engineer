@@ -145,20 +145,19 @@ yourself; the URL is not something you can work out from inside the cluster.
   marker — the LAST such comment if the ticket carries more than one, since an
   earlier one is a superseded build's. One row per account:
 
-  | Username | Password | Role | Cold start |
-  |---|---|---|---|
-  | `test-trainer` | `tdyjkfmq5t` | Trainer | no |
-  | `test-team-member` | `n3pe5cw8s4` | Team Member | yes |
+  | Username | Password | Role |
+  |---|---|---|
+  | `test-trainer` | `tdyjkfmq5t` | Trainer |
+  | `test-team-member` | `n3pe5cw8s4` | Team Member |
 
   Read the table, never the prose around it — a human may rewrite that at any
   time, and the marker is what the platform guarantees.
 
   **Which row.** Match the criterion's role to the `Role` column and use that
   row. For a criterion that needs *a* signed-in user but names no role, use
-  the row with **Cold start: yes** — that is the role a person holds before
-  anyone grants them one. Do not reuse one role's login to exercise another
-  role's screens; that is the difference between judging a permission and
-  judging a page.
+  the least-privileged row the criterion implies. Do not reuse one role's
+  login to exercise another role's screens; that is the difference between
+  judging a permission and judging a page.
 
   Export the pair in-session, per role, as you need it:
 
@@ -188,7 +187,6 @@ yourself; the URL is not something you can work out from inside the cluster.
   | The ticket is OPEN and carries a failure comment | Provisioning failed; quote the cause | A provisioning problem — say so |
   | A table, but no row for the role you need | That account was refused or could not be enrolled — the ticket's other comment says which | A provisioning problem — name the role |
   | A row whose password says *unavailable* | The platform holds the account but could not publish its password | A platform problem — name the account |
-  | No row has **Cold start: yes** | The design says a caller with no role reaches nothing. Use the least-privileged role the criterion implies; if it implies none, the criterion is unreachable by design | Expected; explain the reasoning |
 - **Local dev servers (experimental runs only):** if the fetched
   endpoints are `localhost` dev servers you must start (the local
   harness), this overrides the base "never start servers" rule: start

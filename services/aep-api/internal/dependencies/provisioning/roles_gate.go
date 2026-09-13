@@ -360,8 +360,8 @@ func redactPasswords(msg string, creds []RolesCredential) string {
 //
 // ADR-0022 carries why a password is published here at all, and what bounds the
 // trade. What this function owes that decision is the SHAPE the agent parses:
-// the marker, then a table whose columns and cold-start values SKILL.md
-// mirrors, then prose saying what these accounts are.
+// the marker, then a table whose columns SKILL.md mirrors, then prose saying
+// what these accounts are.
 //
 // It also names the ISSUER. There is one identity provider per environment now,
 // so a username and password on their own do not say where to sign in — and the
@@ -381,7 +381,7 @@ func renderTestUserLogins(outcome RolesEnsureOutcome) string {
 	var b strings.Builder
 	b.WriteString("### Test user logins\n\n")
 	b.WriteString(sourcecontrol.PublishedCredentialsMarker)
-	b.WriteString("\n\n| Username | Password | Role | Cold start |\n| --- | --- | --- | --- |\n")
+	b.WriteString("\n\n| Username | Password | Role |\n| --- | --- | --- |\n")
 	for _, c := range creds {
 		password := "`" + c.Password + "`"
 		if c.Password == "" {
@@ -390,11 +390,7 @@ func renderTestUserLogins(outcome RolesEnsureOutcome) string {
 			// was never published in the first place.
 			password = "_unavailable — read it from the Security panel_"
 		}
-		coldStart := "no"
-		if c.ColdStart {
-			coldStart = "yes"
-		}
-		fmt.Fprintf(&b, "| `%s` | %s | %s | %s |\n", c.Username, password, c.Role, coldStart)
+		fmt.Fprintf(&b, "| `%s` | %s | %s |\n", c.Username, password, c.Role)
 	}
 	if outcome.Issuer != "" {
 		fmt.Fprintf(&b, "\nSign in at `%s` — the identity provider of the **%s** environment. "+
@@ -407,8 +403,6 @@ func renderTestUserLogins(outcome RolesEnsureOutcome) string {
 		"reads these credentials from this comment. They hold nothing but this project's own " +
 		"application roles. Never put a real person's username in " +
 		"`specs/design/security.json` — the platform refuses to touch an account it did not create, " +
-		"so that produces a role with no working login rather than a password reset.\n\n" +
-		"The **cold start** account is the one a caller holds before anyone grants them a role; " +
-		"it answers a request that names no role.")
+		"so that produces a role with no working login rather than a password reset.")
 	return b.String()
 }

@@ -60,6 +60,65 @@ func TestCatalogMarksOnlyTheRolesThePlatformCreated(t *testing.T) {
 	}
 }
 
+// The catalog is the row set the design-time `list_groups` tool renders, so the
+// three fields a design decision turns on are pinned together: whether the
+// platform created the group, how many people are in it today, and how many
+// projects already bind a role to it.
+//
+// `projects` is 0 for every row until scopes phase 2 records the bindings — the
+// assertion is here so the day the count becomes real, this test is what fails.
+func TestCatalogRowFields(t *testing.T) {
+	store := newFakeStore()
+	store.putRole(catalogScope, IdPRole{Name: "Support Agent", ThunderGroupID: "grp-support"})
+	store.putRole(catalogScope, IdPRole{Name: "Approver", ThunderGroupID: "grp-approver"})
+	dir := newFakeDirectory()
+	dir.seedGroup("Support Agent", "usr-1", "usr-2")
+	dir.seedGroup("Approver") // ours, nobody in it yet
+	dir.seedGroup("Finance", "usr-3", "usr-4", "usr-5")
+	dir.seedGroup("Administrators", "usr-admin")
+
+	entries, err := NewCatalogService(newFakeTargets(dir), store).List(context.Background(), catalogOrg)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	byName := make(map[string]CatalogEntry, len(entries))
+	for _, e := range entries {
+		byName[e.Name] = e
+	}
+
+	cases := []struct {
+		name            string
+		platformCreated bool
+		memberCount     int
+		projects        int
+	}{
+		{name: "Support Agent", platformCreated: true, memberCount: 2, projects: 0},
+		{name: "Approver", platformCreated: true, memberCount: 0, projects: 0},
+		{name: "Finance", platformCreated: false, memberCount: 3, projects: 0},
+		{name: "Administrators", platformCreated: false, memberCount: 1, projects: 0},
+	}
+	if len(entries) != len(cases) {
+		t.Fatalf("entries = %d, want the whole directory (%d): %+v", len(entries), len(cases), entries)
+	}
+	for _, tc := range cases {
+		got, ok := byName[tc.name]
+		if !ok {
+			t.Errorf("%q is missing from the catalog", tc.name)
+			continue
+		}
+		if got.PlatformCreated != tc.platformCreated {
+			t.Errorf("%q platformCreated = %v, want %v", tc.name, got.PlatformCreated, tc.platformCreated)
+		}
+		if got.MemberCount != tc.memberCount {
+			t.Errorf("%q memberCount = %d, want %d", tc.name, got.MemberCount, tc.memberCount)
+		}
+		if got.Projects != tc.projects {
+			t.Errorf("%q projects = %d, want %d (no binding table before scopes phase 2)",
+				tc.name, got.Projects, tc.projects)
+		}
+	}
+}
+
 // A role name differing only in case is the SAME role, and the ownership mark
 // has to agree — otherwise a design spelling it `support agent` would be told
 // the platform did not create a role it did.

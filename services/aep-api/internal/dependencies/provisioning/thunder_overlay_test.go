@@ -19,6 +19,7 @@ package provisioning
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/dependencies"
@@ -59,25 +60,28 @@ func (f *fakeSecurityJSON) ReadSecurityJSON(_ context.Context, _, _, tag string)
 	return f.raw, f.err
 }
 
-func securityJSONThunder(t *testing.T, name, scopes string) []byte {
+// securityJSONV2 is a minimal v2 document whose catalog is the whole point: the
+// client's `scopes` parameter is derived from it, and nothing in the file names
+// the client at all — v2 removed the `thunder` block because neither parameter
+// was ever a design decision.
+func securityJSONV2(t *testing.T) []byte {
 	t.Helper()
-	thunder := map[string]any{"name": name, "type": "browser"}
-	if scopes != "" {
-		thunder["scopes"] = scopes
-	}
 	raw, err := json.Marshal(map[string]any{
-		"version":          1,
-		"coldStartRole":    "Viewer",
-		"publicComponents": []string{"web"},
-		"roles": []any{map[string]any{
-			"name":        "Viewer",
-			"description": "Reads own claims.",
-			"stories":     []int{1},
-			"grantedBy":   "first sign-in",
-			"permissions": []any{map[string]any{"component": "api", "actions": []string{"read"}}},
+		"version": 2,
+		"permissions": []any{map[string]any{
+			"resource": "claims", "component": "api",
+			"actions": []any{
+				map[string]any{"handle": "read", "ownership": "own"},
+				map[string]any{"handle": "approve", "ownership": "any"},
+			},
 		}},
-		"testUsers": []any{map[string]any{"username": "test-viewer", "role": "Viewer"}},
-		"thunder":   thunder,
+		"groups": []any{},
+		"roles": []any{map[string]any{
+			"name": "Viewer", "description": "Reads own claims.", "stories": []int{1},
+			"grants": []string{"claims:read"}, "assignTo": []string{"Viewers"},
+		}},
+		"screens":   []any{},
+		"testUsers": []any{map[string]any{"username": "test-viewer", "roles": []string{"Viewer"}}},
 	})
 	if err != nil {
 		t.Fatalf("marshal security.json fixture: %v", err)
@@ -86,6 +90,21 @@ func securityJSONThunder(t *testing.T, name, scopes string) []byte {
 		t.Fatalf("fixture is not a valid security.json: %v", err)
 	}
 	return raw
+}
+
+// wantScopes is what the catalog above projects onto the CRT parameter: the
+// OIDC scopes every access token carries, then every catalog handle.
+const wantScopes = "openid profile email group ou claims:read claims:approve"
+
+// fakeProjectNames is the display-name lookup. Its zero value answers "", which
+// is the "project has no display name" case the overlay falls back from.
+type fakeProjectNames struct {
+	display string
+	err     error
+}
+
+func (f fakeProjectNames) ProjectDisplayName(context.Context, string, string) (string, error) {
+	return f.display, f.err
 }
 
 func designWithThunderApp(params map[string]any) []spec.DesignComponent {
@@ -98,6 +117,10 @@ func designWithThunderApp(params map[string]any) []spec.DesignComponent {
 }
 
 func thunderOverlayService(design []spec.DesignComponent, plat *fakePlatProv, security *fakeSecurityJSON) *Service {
+	return thunderOverlayServiceNamed(design, plat, security, fakeProjectNames{display: "Expense Tracker"})
+}
+
+func thunderOverlayServiceNamed(design []spec.DesignComponent, plat *fakePlatProv, security *fakeSecurityJSON, names ProjectNamer) *Service {
 	return NewService(Deps{
 		Issues:       newFakeIssues(nil),
 		Execs:        &fakeExecStore{},
@@ -106,12 +129,15 @@ func thunderOverlayService(design []spec.DesignComponent, plat *fakePlatProv, se
 		PlatProv:     plat,
 		Markers:      endUserAuthMarkers(),
 		SecurityJSON: security,
+		ProjectNames: names,
 	})
 }
 
-func TestProvision_ThunderNameOverlaysDisplayName(t *testing.T) {
+// The client's display name is the PROJECT's — what a person reads on the login
+// screen — not anything security.json says. Nothing in the document names it.
+func TestProvision_DisplayNameIsTheProjectDisplayName(t *testing.T) {
 	plat := &fakePlatProv{}
-	sec := &fakeSecurityJSON{raw: securityJSONThunder(t, "Expense Tracker", "")}
+	sec := &fakeSecurityJSON{raw: securityJSONV2(t)}
 	svc := thunderOverlayService(designWithThunderApp(nil), plat, sec)
 	if err := svc.Provision(context.Background(), "org", "proj", "idp", nil, nil); err != nil {
 		t.Fatalf("Provision: %v", err)
@@ -126,90 +152,102 @@ func TestProvision_ThunderNameOverlaysDisplayName(t *testing.T) {
 		t.Fatalf("displayName = %v, want %q", got, "Expense Tracker")
 	}
 	if _, copied := plat.params["type"]; copied {
-		t.Fatalf("thunder.type must not be copied onto CRT params, got %+v", plat.params)
+		t.Fatalf("the client type is a constant, never a CRT param: %+v", plat.params)
 	}
 }
 
-func TestProvision_ThunderScopesOverlayWhenAuthored(t *testing.T) {
-	const authored = "openid profile email group ou"
+// A project that never set a display name falls back to its id — what the
+// console shows for it anyway — rather than to anything invented.
+func TestProvision_DisplayNameFallsBackToTheProjectID(t *testing.T) {
+	for name, namer := range map[string]ProjectNamer{
+		"no display name": fakeProjectNames{},
+		"lookup failed":   fakeProjectNames{err: errors.New("openchoreo said no")},
+		"unwired":         nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			plat := &fakePlatProv{}
+			svc := thunderOverlayServiceNamed(designWithThunderApp(nil), plat,
+				&fakeSecurityJSON{raw: securityJSONV2(t)}, namer)
+			if err := svc.Provision(context.Background(), "org", "proj", "idp", nil, nil); err != nil {
+				t.Fatalf("Provision: %v", err)
+			}
+			if got := plat.params["displayName"]; got != "proj" {
+				t.Fatalf("displayName = %v, want the project id", got)
+			}
+		})
+	}
+}
+
+// One project, several web applications: the project name alone would not say
+// WHICH app the login screen belongs to, so the owning component is suffixed.
+func TestProvision_DisplayNameNamesTheWebAppWhenAProjectHasSeveral(t *testing.T) {
+	design := []spec.DesignComponent{
+		{
+			Name: "web", ComponentType: "web-application",
+			Dependencies: []spec.Dependency{
+				{Kind: spec.DependencyKindPlatformResource, Name: "idp", ResourceType: "thunder-app"},
+			},
+		},
+		{Name: "admin-web", ComponentType: "web-application"},
+	}
 	plat := &fakePlatProv{}
-	svc := thunderOverlayService(designWithThunderApp(nil), plat, &fakeSecurityJSON{
-		raw: securityJSONThunder(t, "Expense Tracker", authored),
-	})
+	svc := thunderOverlayService(design, plat, &fakeSecurityJSON{raw: securityJSONV2(t)})
 	if err := svc.Provision(context.Background(), "org", "proj", "idp", nil, nil); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
-	if got := plat.params["scopes"]; got != authored {
-		t.Fatalf("scopes = %v, want %q", got, authored)
+	if got := plat.params["displayName"]; got != "Expense Tracker · web" {
+		t.Fatalf("displayName = %v, want the project name suffixed with the web app", got)
 	}
 }
 
-func TestProvision_OmittedThunderScopesLeavesScopesAbsent(t *testing.T) {
+// The client's allowlist is derived from the catalog: the OIDC scopes plus every
+// declared handle. It is a truthful record of what the client will ask for —
+// ThunderID stores it and never enforces it.
+func TestProvision_ScopesAreTheOIDCScopesPlusTheCatalog(t *testing.T) {
 	plat := &fakePlatProv{}
-	svc := thunderOverlayService(designWithThunderApp(nil), plat, &fakeSecurityJSON{
-		raw: securityJSONThunder(t, "Expense Tracker", ""),
-	})
+	svc := thunderOverlayService(designWithThunderApp(nil), plat, &fakeSecurityJSON{raw: securityJSONV2(t)})
 	if err := svc.Provision(context.Background(), "org", "proj", "idp", nil, nil); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
-	if got := plat.params["displayName"]; got != "Expense Tracker" {
-		t.Fatalf("displayName = %v, want %q (overlay still applies when scopes are omitted)", got, "Expense Tracker")
-	}
-	if _, present := plat.params["scopes"]; present {
-		t.Fatalf("scopes must be absent when thunder omits them, got %+v", plat.params)
+	if got := plat.params["scopes"]; got != wantScopes {
+		t.Fatalf("scopes = %v, want %q", got, wantScopes)
 	}
 }
 
-func TestProvision_DesignJSONScopesCannotWin(t *testing.T) {
+// Neither the design's authored parameters nor the request's can reach the
+// provisioner: the catalog is the only source of the client's scope list.
+func TestProvision_AuthoredScopesCannotWin(t *testing.T) {
 	designScopes := map[string]any{"scopes": "openid profile email"}
 
-	t.Run("overlay wins", func(t *testing.T) {
-		const authored = "openid profile email group ou"
+	t.Run("design.json parameters", func(t *testing.T) {
 		plat := &fakePlatProv{}
-		svc := thunderOverlayService(designWithThunderApp(designScopes), plat, &fakeSecurityJSON{
-			raw: securityJSONThunder(t, "Expense Tracker", authored),
-		})
+		svc := thunderOverlayService(designWithThunderApp(designScopes), plat,
+			&fakeSecurityJSON{raw: securityJSONV2(t)})
 		if err := svc.Provision(context.Background(), "org", "proj", "idp", nil, nil); err != nil {
 			t.Fatalf("Provision: %v", err)
 		}
-		if got := plat.params["scopes"]; got != authored {
-			t.Fatalf("design.json parameters.scopes must not win; got %v, want thunder %q", got, authored)
+		if got := plat.params["scopes"]; got != wantScopes {
+			t.Fatalf("design.json parameters.scopes must not win; got %v", got)
 		}
 	})
 
-	t.Run("omit wins", func(t *testing.T) {
+	t.Run("request parameters", func(t *testing.T) {
 		plat := &fakePlatProv{}
-		svc := thunderOverlayService(designWithThunderApp(designScopes), plat, &fakeSecurityJSON{
-			raw: securityJSONThunder(t, "Expense Tracker", ""),
-		})
-		if err := svc.Provision(context.Background(), "org", "proj", "idp", nil, nil); err != nil {
+		svc := thunderOverlayService(designWithThunderApp(nil), plat,
+			&fakeSecurityJSON{raw: securityJSONV2(t)})
+		if err := svc.Provision(context.Background(), "org", "proj", "idp",
+			map[string]any{"scopes": "openid profile email"}, nil); err != nil {
 			t.Fatalf("Provision: %v", err)
 		}
-		if _, present := plat.params["scopes"]; present {
-			t.Fatalf("design.json parameters.scopes must be deleted when thunder omits scopes, got %+v", plat.params)
-		}
-	})
-
-	t.Run("request params cannot win", func(t *testing.T) {
-		const authored = "openid profile email group ou"
-		plat := &fakePlatProv{}
-		svc := thunderOverlayService(designWithThunderApp(nil), plat, &fakeSecurityJSON{
-			raw: securityJSONThunder(t, "Expense Tracker", authored),
-		})
-		if err := svc.Provision(context.Background(), "org", "proj", "idp", map[string]any{"scopes": "openid profile email"}, nil); err != nil {
-			t.Fatalf("Provision: %v", err)
-		}
-		if got := plat.params["scopes"]; got != authored {
-			t.Fatalf("request parameters.scopes must not win; got %v, want thunder %q", got, authored)
+		if got := plat.params["scopes"]; got != wantScopes {
+			t.Fatalf("request parameters.scopes must not win; got %v", got)
 		}
 	})
 }
 
 func TestProvision_NonEndUserAuthParamsUnchanged(t *testing.T) {
 	plat := &fakePlatProv{}
-	svc := thunderOverlayService(designWithDeps(), plat, &fakeSecurityJSON{
-		raw: securityJSONThunder(t, "Expense Tracker", "openid profile email group ou"),
-	})
+	svc := thunderOverlayService(designWithDeps(), plat, &fakeSecurityJSON{raw: securityJSONV2(t)})
 	if err := svc.Provision(context.Background(), "org", "proj", "orders-db", nil, nil); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
@@ -239,7 +277,7 @@ func TestProvision_InvalidSecurityJSONFailsProvision(t *testing.T) {
 
 func TestProvisionForBuild_ReadsSecurityJSONAtSpecTag(t *testing.T) {
 	plat := &fakePlatProv{}
-	sec := &fakeSecurityJSON{raw: securityJSONThunder(t, "Expense Tracker", "")}
+	sec := &fakeSecurityJSON{raw: securityJSONV2(t)}
 	svc := thunderOverlayService(designWithThunderApp(nil), plat, sec)
 	fails, err := svc.ProvisionForBuild(context.Background(), "org", "org", "proj", "v3", 0, []BuildProvisionInput{
 		{Component: "web", Dependency: "idp", Kind: buildKindPlatformResrc},

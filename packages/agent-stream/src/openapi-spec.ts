@@ -41,9 +41,19 @@
  *
  * The YAML parse itself is already gated upstream (`checkYaml` runs first in
  * `commit`), so this starts from a document that parses.
+ *
+ * ONE thing was added since: the SECURITY block, in `./openapi-security.ts`.
+ * It is not structural and it is not the MCP tool's coverage — it is the half
+ * of the document whose mistakes are invisible in the document itself (a scope
+ * no catalog declares, an OIDC scope that admits everyone, a required
+ * `X-User-Id` the parameter binder answers 400 for), and judging it needs the
+ * component's `design.json` and the project's `security.json`. That is why the
+ * gate now takes a bundle reader; without one it is exactly the check it was.
  */
 
 import { parse as parseYaml } from "yaml";
+import type { DiagramBundleReader } from "./design-diagrams.js";
+import { checkOpenapiSecurity } from "./openapi-security.js";
 
 export interface OpenapiSpecProblem {
   code: "INVALID_OPENAPI";
@@ -86,10 +96,18 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 /**
  * Validate a candidate `openapi.yaml` body for `path`. Returns null when the
- * path is not a component spec or the document is structurally sound;
- * otherwise the problem, phrased for the model's self-correction.
+ * path is not a component spec or the document is sound; otherwise the problem,
+ * phrased for the model's self-correction.
+ *
+ * `bundle` is what lets the security rules run: they are cross-file, so a
+ * caller that holds no bundle (a standalone structural check) gets the
+ * structural gate alone rather than a half-applied one.
  */
-export function checkOpenapiSpec(path: string, content: string): OpenapiSpecProblem | null {
+export function checkOpenapiSpec(
+  path: string,
+  content: string,
+  bundle?: DiagramBundleReader,
+): OpenapiSpecProblem | null {
   if (!isComponentOpenapiPath(path)) return null;
 
   let doc: unknown;
@@ -131,15 +149,25 @@ export function checkOpenapiSpec(path: string, content: string): OpenapiSpecProb
     return reject(path, "it has no operations (no get/put/post/delete/... under any path)");
   }
 
+  if (bundle) {
+    const securityProblem = checkOpenapiSecurity(path, root, bundle);
+    if (securityProblem) return rejectSecurity(path, securityProblem);
+  }
+
   return null;
 }
 
+/** The tail every refusal carries: what happened to the file, and how to fix it in one step. */
+const REMEDY =
+  `The file is unchanged. Re-emit the WHOLE corrected document with removeFile + addFile. ` +
+  `Every write to this path is validated here, so there is no need to check it with a separate tool.`;
+
+/** `because` is a clause — "it has no paths" — that this punctuates. */
 function reject(path: string, because: string): OpenapiSpecProblem {
-  return {
-    code: "INVALID_OPENAPI",
-    message:
-      `${path} was rejected — ${because}. The file is unchanged. Re-emit the WHOLE corrected ` +
-      `document with removeFile + addFile. Every write to this path is validated here, so there ` +
-      `is no need to check it with a separate tool.`,
-  };
+  return { code: "INVALID_OPENAPI", message: `${path} was rejected — ${because}. ${REMEDY}` };
+}
+
+/** `sentence` is already finished prose, straight from the message catalog. */
+function rejectSecurity(path: string, sentence: string): OpenapiSpecProblem {
+  return { code: "INVALID_OPENAPI", message: `${path} was rejected — ${sentence} ${REMEDY}` };
 }

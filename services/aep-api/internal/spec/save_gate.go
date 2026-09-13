@@ -118,9 +118,17 @@ func validateDesignBundle(files map[string]string) error {
 	}
 
 	// The security.json document, when present: schema + the referential rules
-	// (every test user's role declared, coldStartRole declared or null). Same
+	// that ONE FILE can answer — every grant names a catalog handle, every test
+	// user names a declared role, a role name is not a group name. The same
 	// single definition the agent's write gate uses, so a document that passes
 	// one gate passes the other.
+	//
+	// The rules that read a SIBLING file (a component the cell declares, a
+	// screen the wireframe declares, the operation behind a screen) are
+	// deliberately not run here: the design lineup writes security.json before
+	// those files exist, and a save refused on a file that is not written yet
+	// would be unfixable. The build gate runs the whole list against the tag,
+	// where every file is present by construction.
 	for _, name := range DependencyNamesIn(files) {
 		key := dependencyDesignKey(name)
 		content, ok := files[key]
@@ -174,6 +182,14 @@ func validateDesignBundle(files map[string]string) error {
 			verrs = append(verrs, FileValidationError{Path: rel, Code: codeInvalidOpenAPI, Message: err.Error()})
 		}
 	}
+
+	// OpenAPI SECURITY (task 1.6): the same rule set the agent's write gate
+	// applies, over whatever siblings THIS save happens to hold. A component
+	// whose design.json is not in the bundle gets no security verdict, and with
+	// security.json absent the catalog rules narrow away and the structural ones
+	// still run — so a save is never refused for a file that is not written yet,
+	// and the build gate is the backstop that sees them all.
+	verrs = append(verrs, openapiSecurityFindings(files)...)
 
 	if len(verrs) > 0 {
 		return &DesignValidationError{Files: verrs}

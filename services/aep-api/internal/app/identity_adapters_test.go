@@ -46,11 +46,16 @@ func TestToGateCredentialsCarriesEveryField(t *testing.T) {
 	if got[0].Role != "Team Member" {
 		t.Errorf("role = %q — the agent matches a criterion's role on this column", got[0].Role)
 	}
+	// ColdStart is a v1 LEFTOVER: nothing sets it any more and nothing renders
+	// it (the gate ticket dropped its column). The projection must still carry
+	// it while the field exists, so this asserts transport and nothing about
+	// behaviour — phase 2/5 deletes the field, this pair of assertions and the
+	// cold_start column together.
 	if !got[0].ColdStart {
-		t.Error("coldStart was lost — it is how a criterion with no role picks a login")
+		t.Error("coldStart was dropped by the projection")
 	}
 	if got[1].ColdStart {
-		t.Error("coldStart was set on the account that does not hold it")
+		t.Error("coldStart was invented by the projection")
 	}
 	if got[1].Password != "Aep1!beta" {
 		t.Errorf("second password = %q", got[1].Password)

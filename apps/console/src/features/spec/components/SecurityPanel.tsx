@@ -17,8 +17,13 @@
  */
 
 /**
- * Spec → Security: one scroll over `security.json` — thunder, roles & users,
- * and standing rules. Read-only; the design agent writes the document in chat.
+ * Spec → Security: one scroll over `security.json` v2 — the permission
+ * catalog, the roles that grant from it, the screens each handle opens, and
+ * the test users. Read-only; the design agent writes the document in chat.
+ *
+ * This is the INTERIM v2 rendering: the same visual language the v1 panel had,
+ * reading the fields v2 actually has. The permission matrix, the grant toggle
+ * and the live cross-project counts are a later phase — nothing here writes.
  */
 
 import { useMemo, type ReactNode } from "react";
@@ -118,17 +123,18 @@ export function SecurityPanel({
             Security
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Who can sign in, what each role may do, and the Thunder application
-            that issues the session.
+            What this project protects, what each role may do with it, and the
+            accounts the validation agent signs in with.
           </Typography>
         </Box>
-        <ThunderBlock doc={doc} />
+        <PermissionsBlock doc={doc} />
+        <GroupsBlock doc={doc} />
         <RolesIntro />
         <DisposableWarning />
         {doc.roles.map((role) => (
           <RoleCard key={role.name} doc={doc} role={role} live={live} />
         ))}
-        <StandingRules doc={doc} />
+        <ScreensBlock doc={doc} />
       </Stack>
     </Box>
   );
@@ -147,25 +153,93 @@ function DisposableWarning() {
   );
 }
 
-function ThunderBlock({ doc }: { doc: SecurityDesign }) {
-  const scopes = doc.thunder.scopes?.trim();
+/** What rows an action reaches, said in words. */
+function ownershipLabel(ownership: SecurityDesign["permissions"][number]["actions"][number]["ownership"]) {
+  return ownership === "own" ? "own rows" : "any row";
+}
+
+function PermissionsBlock({ doc }: { doc: SecurityDesign }) {
   return (
     <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1, p: 2 }}>
       <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 0.5 }}>
-        {doc.thunder.name}
+        Permissions
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-        People sign in through this Thunder application. The platform creates
-        it at Build. Callback URLs are bound when the app is deployed — they
-        are not part of this document.
+        Everything this project protects. A role grants these by name, and the
+        API asks for them by name — nothing else is a permission.
+      </Typography>
+      <Stack spacing={1.5}>
+        {doc.permissions.map((permission) => (
+          <Box key={permission.resource}>
+            <Stack direction="row" spacing={1} alignItems="baseline">
+              <Typography variant="body2" sx={{ fontFamily: "monospace" }}>
+                {permission.resource}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                owned by {permission.component}
+              </Typography>
+            </Stack>
+            {permission.description && (
+              <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+                {permission.description}
+              </Typography>
+            )}
+            <Stack spacing={0.25} sx={{ mt: 0.5 }}>
+              {permission.actions.map((action) => (
+                <Stack
+                  key={action.handle}
+                  direction="row"
+                  spacing={1}
+                  alignItems="center"
+                >
+                  <Typography variant="body2" sx={{ fontFamily: "monospace" }}>
+                    {permission.resource}:{action.handle}
+                  </Typography>
+                  <Chip
+                    size="small"
+                    variant="outlined"
+                    label={ownershipLabel(action.ownership)}
+                  />
+                  {action.description && (
+                    <Typography variant="body2" color="text.secondary">
+                      {action.description}
+                    </Typography>
+                  )}
+                </Stack>
+              ))}
+            </Stack>
+          </Box>
+        ))}
+      </Stack>
+    </Box>
+  );
+}
+
+/**
+ * Only the groups this project INTRODUCES. A role may be assigned to a group
+ * the org already has; that one is named on the role, not declared here.
+ */
+function GroupsBlock({ doc }: { doc: SecurityDesign }) {
+  if (doc.groups.length === 0) return null;
+  return (
+    <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1, p: 2 }}>
+      <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 0.5 }}>
+        New org groups
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+        Groups this project adds to the organisation directory at Build. They
+        are shared — other projects can assign roles to them too.
       </Typography>
       <Stack spacing={0.5}>
-        <Typography variant="body2">Type: {doc.thunder.type}</Typography>
-        <Typography variant="body2">
-          {scopes
-            ? `Scopes: ${scopes}`
-            : "Scopes: platform default (openid profile email group ou)"}
-        </Typography>
+        {doc.groups.map((group) => (
+          <Typography key={group.name} variant="body2">
+            <Box component="span" sx={{ fontWeight: 600 }}>
+              {group.name}
+            </Box>
+            {" — "}
+            {group.description}
+          </Typography>
+        ))}
       </Stack>
     </Box>
   );
@@ -186,6 +260,75 @@ function RolesIntro() {
   );
 }
 
+/** One line saying how a person comes to hold this role. */
+function enrolmentLine(role: SecurityDesign["roles"][number]): string {
+  if (role.kind === "service") {
+    return "Held by a service, not by a person.";
+  }
+  if (role.enrolment === "self-service") {
+    return "Self-service — the application assigns it when an account is created.";
+  }
+  const groups = role.assignTo ?? [];
+  return groups.length > 0
+    ? `Assigned to everyone in ${groups.join(", ")}.`
+    : "Assigned by an administrator.";
+}
+
+/**
+ * One directory chip: an `assignTo` GROUP of this role, judged against the
+ * catalog the BFF returns.
+ *
+ * The live half is a group catalog, never a role catalog — a project role is
+ * not an object on the directory, it reaches the app through the groups it is
+ * assigned to. So the chip is per assignTo group, and a role with no assignTo
+ * (a service role, a self-service one) gets none: there is nothing about it for
+ * the directory to already hold.
+ */
+interface GroupStatus {
+  group: string;
+  label: string;
+  color: "info" | "success" | "warning";
+  why: string;
+}
+
+function groupStatuses(
+  role: SecurityDesign["roles"][number],
+  live: ProjectRolesLiveState | undefined,
+): GroupStatus[] {
+  if (!live?.directoryAvailable) return [];
+  return (role.assignTo ?? []).map((group) => {
+    const liveGroup = live.roles.find(
+      (r) => r.name.toLowerCase() === group.toLowerCase(),
+    );
+    const members =
+      (liveGroup?.memberCount ?? 0) > 0
+        ? ` ${liveGroup?.memberCount} ${liveGroup?.memberCount === 1 ? "member" : "members"} today.`
+        : "";
+    if (!liveGroup) {
+      return {
+        group,
+        label: "New at Build",
+        color: "info" as const,
+        why: `${group} does not exist on the identity provider yet — Build creates it.`,
+      };
+    }
+    if (liveGroup.platformCreated) {
+      return {
+        group,
+        label: "Reused",
+        color: "success" as const,
+        why: `${group} is already on the identity provider, created by the platform.${members}`,
+      };
+    }
+    return {
+      group,
+      label: "Not ours",
+      color: "warning" as const,
+      why: `This group already exists and the platform did not create it, so it will be left alone.${members}`,
+    };
+  });
+}
+
 function RoleCard({
   doc,
   role,
@@ -195,29 +338,9 @@ function RoleCard({
   role: SecurityDesign["roles"][number];
   live: ProjectRolesLiveState | undefined;
 }) {
-  const liveRole = live?.roles.find(
-    (r) => r.name.toLowerCase() === role.name.toLowerCase(),
-  );
-  const status = !live?.directoryAvailable
-    ? null
-    : !liveRole
-      ? {
-          label: "New at Build",
-          color: "info" as const,
-          why: "This role does not exist yet — Build creates it.",
-        }
-      : liveRole.platformCreated
-        ? {
-            label: "Reused",
-            color: "success" as const,
-            why: "Already on the identity provider, created by the platform.",
-          }
-        : {
-            label: "Not ours",
-            color: "warning" as const,
-            why: "This group already exists and the platform did not create it, so it will be left alone.",
-          };
+  const statuses = groupStatuses(role, live);
   const planned = plannedUsersFor(doc, role.name);
+  const describeHandle = useHandleDescriptions(doc);
 
   return (
     <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1, p: 2 }}>
@@ -225,17 +348,18 @@ function RoleCard({
         <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
           {role.name}
         </Typography>
-        {status && (
-          <Tooltip title={status.why}>
-            <Chip size="small" color={status.color} label={status.label} />
+        {role.kind === "service" && (
+          <Chip size="small" variant="outlined" label="Service" />
+        )}
+        {statuses.map((status) => (
+          <Tooltip key={status.group} title={status.why}>
+            <Chip
+              size="small"
+              color={status.color}
+              label={`${status.group}: ${status.label}`}
+            />
           </Tooltip>
-        )}
-        {(liveRole?.memberCount ?? 0) > 0 && (
-          <Typography variant="caption" color="text.secondary">
-            {liveRole?.memberCount}{" "}
-            {liveRole?.memberCount === 1 ? "member" : "members"}
-          </Typography>
-        )}
+        ))}
       </Stack>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
         {role.description}
@@ -243,19 +367,31 @@ function RoleCard({
       <Typography
         variant="caption"
         color="text.secondary"
-        sx={{ display: "block", mb: 1.5 }}
+        sx={{ display: "block" }}
       >
-        Granted by {role.grantedBy}
+        {enrolmentLine(role)}
       </Typography>
-      <Stack spacing={0.25} sx={{ mb: 1.5 }}>
-        {role.permissions.map((p, i) => (
-          <Typography key={`${p.component}:${i}`} variant="body2">
-            <Box component="span" sx={{ fontFamily: "monospace" }}>
-              {p.component}
-            </Box>
-            {" — "}
-            {[...(p.actions ?? []), ...(p.screens ?? [])].join(", ")}
-          </Typography>
+      {role.assignableBy && role.assignableBy.length > 0 && (
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ display: "block" }}
+        >
+          Handed out by {role.assignableBy.join(", ")}.
+        </Typography>
+      )}
+      <Stack spacing={0.25} sx={{ mt: 1.5, mb: 1.5 }}>
+        {role.grants.map((handle) => (
+          <Stack key={handle} direction="row" spacing={1} alignItems="center">
+            <Typography variant="body2" sx={{ fontFamily: "monospace" }}>
+              {handle}
+            </Typography>
+            {describeHandle(handle) && (
+              <Typography variant="body2" color="text.secondary">
+                {describeHandle(handle)}
+              </Typography>
+            )}
+          </Stack>
         ))}
       </Stack>
       <Divider sx={{ mb: 1 }} />
@@ -289,25 +425,64 @@ function RoleCard({
   );
 }
 
-function StandingRules({ doc }: { doc: SecurityDesign }) {
+/**
+ * A grant is a bare handle; the sentence beside it comes from the catalog entry
+ * it names. Absent when the action carries no description — never invented.
+ */
+function useHandleDescriptions(doc: SecurityDesign) {
+  const byHandle = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const permission of doc.permissions) {
+      for (const action of permission.actions) {
+        if (action.description) {
+          map.set(`${permission.resource}:${action.handle}`, action.description);
+        }
+      }
+    }
+    return map;
+  }, [doc]);
+  return (handle: string) => byHandle.get(handle);
+}
+
+/** What a caller must hold to reach each screen the wireframes declare. */
+function ScreensBlock({ doc }: { doc: SecurityDesign }) {
+  if (doc.screens.length === 0) return null;
   return (
-    <Stack spacing={1}>
-      {doc.coldStartRole !== null ? (
-        <Typography variant="body2" color="text.secondary">
-          A person who has just signed in and been granted nothing holds{" "}
-          <strong>{doc.coldStartRole}</strong>.
-        </Typography>
-      ) : (
-        <Typography variant="body2" color="text.secondary">
-          A person who has just signed in and been granted nothing reaches
-          nothing.
-        </Typography>
-      )}
-      {doc.publicComponents.length > 0 && (
-        <Typography variant="body2" color="text.secondary">
-          Open to everyone, no sign-in: {doc.publicComponents.join(", ")}.
-        </Typography>
-      )}
-    </Stack>
+    <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1, p: 2 }}>
+      <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 0.5 }}>
+        Screens
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+        What a person must hold to reach each screen.
+      </Typography>
+      <Stack spacing={0.5}>
+        {doc.screens.map((screen) => (
+          <Stack
+            key={`${screen.component}:${screen.screen}`}
+            direction="row"
+            spacing={1}
+            alignItems="center"
+          >
+            <Typography variant="body2">{screen.screen}</Typography>
+            <Typography variant="caption" color="text.secondary">
+              {screen.component}
+            </Typography>
+            {screen.requires === null ? (
+              <Typography variant="body2" color="text.secondary">
+                Any signed-in person
+              </Typography>
+            ) : screen.requires === "public" ? (
+              <Typography variant="body2" color="text.secondary">
+                Open to everyone, no sign-in
+              </Typography>
+            ) : (
+              <Typography variant="body2" sx={{ fontFamily: "monospace" }}>
+                {screen.requires}
+              </Typography>
+            )}
+          </Stack>
+        ))}
+      </Stack>
+    </Box>
   );
 }

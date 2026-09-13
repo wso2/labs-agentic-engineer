@@ -72,6 +72,16 @@ type ResourceMarkerCatalog interface {
 	MarkersByName(ctx context.Context) (map[string]dependencies.TypeMarkers, error)
 }
 
+// ProjectNamer resolves a project's display name for the end-user-auth
+// overlay. Nil (or an error) falls back to the project id.
+type ProjectNamer interface {
+	// ProjectDisplayName is the project's human name, as the console shows it.
+	// It becomes the sign-in client's display name — what a person reads on the
+	// generated app's consent and login screens — so a project with no display
+	// name of its own falls back to its id rather than to anything invented.
+	ProjectDisplayName(ctx context.Context, orgID, projectID string) (string, error)
+}
+
 // SecurityJSONReader returns the project's security.json bytes. Empty tag is
 // HEAD (HTTP drawer provision); a spec tag is the build's version. A missing
 // file is (nil, nil) — no overlay, no invented defaults. Nil reader skips
@@ -295,9 +305,12 @@ type RolesEnsureOutcome struct {
 // seal. The comment says so per row rather than printing a blank, so a reader —
 // human or agent — is never handed an empty string that looks like a password.
 type RolesCredential struct {
-	Username  string
-	Password  string
-	Role      string
+	Username string
+	Password string
+	Role     string
+	// ColdStart is a v1 leftover carried for the wire contract and is always
+	// false — see identity.TestUserRef.ColdStart. Nothing renders it any more;
+	// phase 2/5 removes it.
 	ColdStart bool
 }
 

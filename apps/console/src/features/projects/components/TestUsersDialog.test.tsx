@@ -62,19 +62,29 @@ function rowOf(username: string): HTMLElement {
 }
 
 describe("TestUsersDialog", () => {
-  it("gives every account its role, and marks the cold-start one", () => {
+  it("gives every account its role", () => {
     renderDialog();
 
     // The role used to live in a tooltip on the username. It is a column now,
     // which is the whole reason the table earns a dialog.
     expect(within(rowOf("test-viewer")).getByText("Viewer")).toBeInTheDocument();
-    expect(within(rowOf("test-viewer")).getByText("Cold start")).toBeInTheDocument();
     expect(
       within(rowOf("test-compliance-admin")).getByText("Compliance Admin"),
     ).toBeInTheDocument();
-    expect(
-      within(rowOf("test-compliance-admin")).queryByText("Cold start"),
-    ).not.toBeInTheDocument();
+  });
+
+  // v2 has no cold-start role — the account served when a caller asked for
+  // credentials without naming one. The wire field outlives the concept for a
+  // release, so the table must not show a column that is now always "no".
+  it("has no cold-start column", () => {
+    renderDialog();
+
+    expect(screen.queryByText("Cold start")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("columnheader").map((c) => c.textContent)).toEqual([
+      "Username",
+      "Password",
+      "Role",
+    ]);
   });
 
   it("masks every password, with both controls, before any reveal", () => {

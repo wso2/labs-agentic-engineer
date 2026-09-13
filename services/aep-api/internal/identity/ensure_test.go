@@ -45,34 +45,41 @@ const (
 // userFixture is one authored `testUsers[]` entry.
 type userFixture struct{ username, role string }
 
-// rolesJSON renders a minimal security.json that the real securityspec schema
-// accepts. Building it rather than pasting literals keeps every case one line
-// of intent, and keeps the fixtures honest: a schema change breaks these tests
-// instead of letting them ensure a document the platform would reject.
-func rolesJSON(t *testing.T, coldStartRole string, roles []string, users ...userFixture) string {
+// rolesJSON renders a minimal security.json v2 that the real securityspec
+// schema accepts. Building it rather than pasting literals keeps every case one
+// line of intent, and keeps the fixtures honest: a schema change breaks these
+// tests instead of letting them ensure a document the platform would reject.
+//
+// Each name becomes BOTH a project role and the org group that role is assigned
+// to — the shape the Vendor Portal example uses for its reused `Finance` group,
+// and legal precisely because the group is not redeclared in `groups[]`. It is
+// what lets these cases keep saying "the group Viewer" while the document says
+// what v2 says: roles grant catalog handles, and groups are what the directory
+// actually holds.
+func rolesJSON(t *testing.T, roles []string, users ...userFixture) string {
 	t.Helper()
 	roleEntries := make([]any, 0, len(roles))
 	for _, name := range roles {
 		roleEntries = append(roleEntries, map[string]any{
 			"name": name, "description": name + " may read.", "stories": []int{1},
-			"grantedBy":   "invitation",
-			"permissions": []any{map[string]any{"component": "expense-api", "actions": []string{"read"}}},
+			"grants":   []string{"claims:read"},
+			"assignTo": []string{name},
 		})
 	}
 	userEntries := make([]any, 0, len(users))
 	for _, u := range users {
-		userEntries = append(userEntries, map[string]any{"username": u.username, "role": u.role})
+		userEntries = append(userEntries, map[string]any{"username": u.username, "roles": []string{u.role}})
 	}
 	doc := map[string]any{
-		"version":          1,
-		"coldStartRole":    nil,
-		"publicComponents": []string{},
-		"roles":            roleEntries,
-		"testUsers":        userEntries,
-		"thunder":          map[string]any{"name": "Expense Tracker", "type": "browser"},
-	}
-	if coldStartRole != "" {
-		doc["coldStartRole"] = coldStartRole
+		"version": 2,
+		"permissions": []any{map[string]any{
+			"resource": "claims", "component": "expense-api",
+			"actions": []any{map[string]any{"handle": "read", "ownership": "own"}},
+		}},
+		"groups":    []any{},
+		"roles":     roleEntries,
+		"screens":   []any{},
+		"testUsers": userEntries,
 	}
 	raw, err := json.Marshal(doc)
 	if err != nil {
@@ -180,11 +187,15 @@ func TestEnsureForTagIsNotDeclaredWhenTheDesignCarriesNoRolesDocument(t *testing
 func TestEnsureForTagReportsDeclaredWhenTheRolesDocumentDoesNotParse(t *testing.T) {
 	for name, doc := range map[string]string{
 		"not JSON":         `{`,
-		"schema violation": `{"version": 2, "coldStartRole": null, "publicComponents": [], "roles": [], "testUsers": []}`,
-		"undeclared coldStart": rolesJSONRaw(`{"version":1,"coldStartRole":"Nobody","publicComponents":[],` +
+		"schema violation": `{"version": 2, "permissions": [], "groups": [], "roles": [], "screens": [], "testUsers": []}`,
+		"a v1 document": rolesJSONRaw(`{"version":1,"coldStartRole":null,"publicComponents":[],` +
 			`"roles":[{"name":"Viewer","description":"d","stories":[1],"grantedBy":"g",` +
 			`"permissions":[{"component":"api","actions":["read"]}]}],"testUsers":[],` +
 			`"thunder":{"name":"Expense Tracker","type":"browser"}}`),
+		"a grant naming no catalog handle": rolesJSONRaw(`{"version":2,` +
+			`"permissions":[{"resource":"claims","component":"api","actions":[{"handle":"read","ownership":"own"}]}],` +
+			`"groups":[],"roles":[{"name":"Viewer","description":"d","stories":[1],` +
+			`"grants":["claims:audit"],"assignTo":["Viewers"]}],"screens":[],"testUsers":[]}`),
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness(doc)
@@ -235,14 +246,14 @@ func TestEnsureForTagIsNotDeclaredWhenTheDesignCannotBeRead(t *testing.T) {
 // members would change its id on its very first build for no reason, since the
 // IdP's only membership write is a delete-and-recreate.
 func TestEnsureCreatesEachRoleCompleteWithItsMembersInOneCall(t *testing.T) {
-	h := newHarness(rolesJSON(t, "Viewer", []string{"Viewer", "Compliance Admin"},
+	h := newHarness(rolesJSON(t, []string{"Viewer", "Compliance Admin"},
 		userFixture{"test-viewer", "Viewer"}))
 
 	result := h.run(t)
 
-	if len(result.RolesCreated) != 2 || !contains(result.RolesCreated, "Viewer") ||
-		!contains(result.RolesCreated, "Compliance Admin") {
-		t.Fatalf("RolesCreated = %v, want both roles", result.RolesCreated)
+	if len(result.GroupsCreated) != 2 || !contains(result.GroupsCreated, "Viewer") ||
+		!contains(result.GroupsCreated, "Compliance Admin") {
+		t.Fatalf("RolesCreated = %v, want both roles", result.GroupsCreated)
 	}
 	// The design named a user only for Viewer; the platform supplies the other.
 	if len(result.UsersCreated) != 2 || !contains(result.UsersCreated, "test-viewer") ||
@@ -296,7 +307,7 @@ func TestEnsureCreatesEachRoleCompleteWithItsMembersInOneCall(t *testing.T) {
 // human a credential that no longer works; one that recreated a group would
 // churn an id OpenChoreo's bindings were rendered against.
 func TestEnsureIsIdempotent(t *testing.T) {
-	h := newHarness(rolesJSON(t, "Viewer", []string{"Viewer", "Compliance Admin"},
+	h := newHarness(rolesJSON(t, []string{"Viewer", "Compliance Admin"},
 		userFixture{"test-viewer", "Viewer"}))
 
 	first := h.run(t)
@@ -312,12 +323,12 @@ func TestEnsureIsIdempotent(t *testing.T) {
 
 	second := h.run(t)
 
-	if len(second.RolesCreated) != 0 || len(second.UsersCreated) != 0 {
-		t.Fatalf("second run created %v / %v, want nothing", second.RolesCreated, second.UsersCreated)
+	if len(second.GroupsCreated) != 0 || len(second.UsersCreated) != 0 {
+		t.Fatalf("second run created %v / %v, want nothing", second.GroupsCreated, second.UsersCreated)
 	}
-	if len(second.RolesReused) != len(first.RolesCreated) || len(second.UsersReused) != len(first.UsersCreated) {
+	if len(second.GroupsReused) != len(first.GroupsCreated) || len(second.UsersReused) != len(first.UsersCreated) {
 		t.Fatalf("second run reused %v / %v, want everything the first run made",
-			second.RolesReused, second.UsersReused)
+			second.GroupsReused, second.UsersReused)
 	}
 	// The ensure still ASKS the directory to add the members (it cannot know
 	// they are already there without asking), but nothing may be written: no
@@ -363,17 +374,17 @@ func TestEnsureIsIdempotent(t *testing.T) {
 // "the platform enrols only into roles it created", keyed off the presence of
 // an idp_roles row, so every hand-made group is protected without a denylist.
 func TestEnsureLeavesAPreExistingDirectoryGroupAlone(t *testing.T) {
-	h := newHarness(rolesJSON(t, "", []string{"Administrators"}))
+	h := newHarness(rolesJSON(t, []string{"Administrators"}))
 	// On the directory, but with NO idp_roles row: somebody else made it.
 	seeded := h.dir.seedGroup("Administrators", "usr-existing-admin")
 
 	result := h.run(t)
 
-	if !contains(result.RolesPreExisting, "Administrators") {
-		t.Fatalf("RolesPreExisting = %v, want Administrators", result.RolesPreExisting)
+	if !contains(result.GroupsPreExisting, "Administrators") {
+		t.Fatalf("RolesPreExisting = %v, want Administrators", result.GroupsPreExisting)
 	}
-	if contains(result.RolesCreated, "Administrators") || contains(result.RolesReused, "Administrators") {
-		t.Fatalf("Administrators was claimed: created=%v reused=%v", result.RolesCreated, result.RolesReused)
+	if contains(result.GroupsCreated, "Administrators") || contains(result.GroupsReused, "Administrators") {
+		t.Fatalf("Administrators was claimed: created=%v reused=%v", result.GroupsCreated, result.GroupsReused)
 	}
 	if n := h.dir.countOp("CreateGroup"); n != 0 {
 		t.Fatalf("CreateGroup called %d times on a group that already exists", n)
@@ -439,7 +450,7 @@ func TestEnsureLeavesAPreExistingDirectoryGroupAlone(t *testing.T) {
 // no password reset, no enrolment. Otherwise a design naming `jsmith` would
 // reset a real person's login and hand it to a validation runner.
 func TestEnsureRefusesAnAccountThePlatformDoesNotOwn(t *testing.T) {
-	h := newHarness(rolesJSON(t, "Viewer", []string{"Viewer"}, userFixture{"jsmith", "Viewer"}))
+	h := newHarness(rolesJSON(t, []string{"Viewer"}, userFixture{"jsmith", "Viewer"}))
 	person := h.dir.seedUser("jsmith")
 
 	result := h.run(t)
@@ -466,8 +477,8 @@ func TestEnsureRefusesAnAccountThePlatformDoesNotOwn(t *testing.T) {
 		t.Fatalf("a test_users row was written for an account the platform does not own")
 	}
 	// Refusal is per account and does not stop the pass: the role is still made.
-	if !contains(result.RolesCreated, "Viewer") {
-		t.Fatalf("RolesCreated = %v — one refused account blocked the role around it", result.RolesCreated)
+	if !contains(result.GroupsCreated, "Viewer") {
+		t.Fatalf("RolesCreated = %v — one refused account blocked the role around it", result.GroupsCreated)
 	}
 	// And the refused account is nowhere near the group.
 	for _, id := range h.dir.memberSet("Viewer") {
@@ -490,7 +501,7 @@ func TestEnsureRefusesAnAccountThePlatformDoesNotOwn(t *testing.T) {
 // on a membership edit, so a stale cached id would point at a group that no
 // longer exists.
 func TestEnsureAddsANewMemberAndRefreshesTheCachedGroupID(t *testing.T) {
-	h := newHarness(rolesJSON(t, "Viewer", []string{"Viewer"}, userFixture{"test-viewer", "Viewer"}))
+	h := newHarness(rolesJSON(t, []string{"Viewer"}, userFixture{"test-viewer", "Viewer"}))
 	h.run(t)
 	firstGroupID := h.dir.groups["viewer"].ID
 	if row, _ := h.store.role(testScope, "viewer"); row.ThunderGroupID != firstGroupID {
@@ -498,7 +509,7 @@ func TestEnsureAddsANewMemberAndRefreshesTheCachedGroupID(t *testing.T) {
 	}
 	h.dir.calls = nil
 
-	h.setDoc(rolesJSON(t, "Viewer", []string{"Viewer"},
+	h.setDoc(rolesJSON(t, []string{"Viewer"},
 		userFixture{"test-viewer", "Viewer"}, userFixture{"second-viewer", "Viewer"}))
 	result := h.run(t)
 
@@ -547,7 +558,7 @@ func TestEnsureAddsANewMemberAndRefreshesTheCachedGroupID(t *testing.T) {
 // put it in the gate ticket) and that is a different thing: it opens the seal
 // without writing one.
 func TestEnsureRefreshesAReusedAccountsFactsWithoutTouchingItsPassword(t *testing.T) {
-	h := newHarness(rolesJSON(t, "", []string{"Viewer"}, userFixture{"test-viewer", "Viewer"}))
+	h := newHarness(rolesJSON(t, []string{"Viewer"}, userFixture{"test-viewer", "Viewer"}))
 	h.run(t)
 	sealed, _ := h.store.password(testScope, "test-viewer")
 	if sealed == "" {
@@ -558,7 +569,7 @@ func TestEnsureRefreshesAReusedAccountsFactsWithoutTouchingItsPassword(t *testin
 	h.dir.users["test-viewer"] = DirectoryAccount{
 		ID: "usr-recreated", Username: "test-viewer", Email: "test-viewer@test-users.invalid",
 	}
-	h.setDoc(rolesJSON(t, "", []string{"Viewer", "Auditor"}, userFixture{"test-viewer", "Auditor"}))
+	h.setDoc(rolesJSON(t, []string{"Viewer", "Auditor"}, userFixture{"test-viewer", "Auditor"}))
 	reveals, upserts := h.store.revealCalls, h.store.upsertUserCalls
 
 	result := h.run(t)
@@ -594,7 +605,7 @@ func TestEnsureRefreshesAReusedAccountsFactsWithoutTouchingItsPassword(t *testin
 // whole run here with ErrNoPassword, for a role correction that never needed
 // the credential.
 func TestEnsureRefreshesFactsForAnAccountWithNoSealedPassword(t *testing.T) {
-	h := newHarness(rolesJSON(t, "", []string{"Viewer"}, userFixture{"test-viewer", "Viewer"}))
+	h := newHarness(rolesJSON(t, []string{"Viewer"}, userFixture{"test-viewer", "Viewer"}))
 	h.run(t)
 
 	// A row written before the seal existed, or one whose password was never
@@ -620,7 +631,7 @@ func TestEnsureRefreshesFactsForAnAccountWithNoSealedPassword(t *testing.T) {
 // the provenance on the surviving row is kept, so the console still credits the
 // project that first declared the role rather than whoever happened to rebuild.
 func TestEnsureRecreatesAVanishedRoleAndKeepsItsOriginalProvenance(t *testing.T) {
-	h := newHarness(rolesJSON(t, "", []string{"Viewer"}))
+	h := newHarness(rolesJSON(t, []string{"Viewer"}))
 	h.store.putRole(testScope, IdPRole{
 		Name: "Viewer", ThunderGroupID: "grp-deleted", Description: "first description",
 		CreatedByOrg: "org-first", CreatedByProject: "proj-first",
@@ -628,8 +639,8 @@ func TestEnsureRecreatesAVanishedRoleAndKeepsItsOriginalProvenance(t *testing.T)
 
 	result := h.run(t)
 
-	if !contains(result.RolesCreated, "Viewer") {
-		t.Fatalf("RolesCreated = %v, want the recreated role", result.RolesCreated)
+	if !contains(result.GroupsCreated, "Viewer") {
+		t.Fatalf("RolesCreated = %v, want the recreated role", result.GroupsCreated)
 	}
 	row, _ := h.store.role(testScope, "viewer")
 	if row.ThunderGroupID == "grp-deleted" || row.ThunderGroupID != h.dir.groups["viewer"].ID {
@@ -643,11 +654,11 @@ func TestEnsureRecreatesAVanishedRoleAndKeepsItsOriginalProvenance(t *testing.T)
 
 // ---- 10: the project references -------------------------------------------
 
-// Exactly one ref per USABLE planned user, with the cold-start and supplied
-// flags the console renders. A refused account produces no ref: the project
-// does not reference an account the platform did not provision for it.
+// Exactly one ref per USABLE planned user, with the supplied flag the console
+// renders. A refused account produces no ref: the project does not reference an
+// account the platform did not provision for it.
 func TestEnsureWritesOneRefPerUsablePlannedUser(t *testing.T) {
-	h := newHarness(rolesJSON(t, "Viewer", []string{"Viewer", "Compliance Admin", "Auditor"},
+	h := newHarness(rolesJSON(t, []string{"Viewer", "Compliance Admin", "Auditor"},
 		userFixture{"test-viewer", "Viewer"}, userFixture{"jsmith", "Auditor"}))
 	h.dir.seedUser("jsmith") // refused: a real person's account
 
@@ -666,8 +677,8 @@ func TestEnsureWritesOneRefPerUsablePlannedUser(t *testing.T) {
 	// Viewer's authored user, Compliance Admin's supplied one; Auditor's only
 	// planned user was refused, so Auditor contributes nothing.
 	want := map[string]TestUserRef{
-		"test-viewer":           {Username: "test-viewer", RoleName: "Viewer", ColdStart: true, Supplied: false},
-		"test-compliance-admin": {Username: "test-compliance-admin", RoleName: "Compliance Admin", ColdStart: false, Supplied: true},
+		"test-viewer":           {Username: "test-viewer", RoleName: "Viewer", Supplied: false},
+		"test-compliance-admin": {Username: "test-compliance-admin", RoleName: "Compliance Admin", Supplied: true},
 	}
 	if len(byUser) != len(want) {
 		t.Fatalf("refs = %v, want exactly %d (a refused account contributes none)", byUser, len(want))
@@ -697,10 +708,10 @@ func TestEnsureWritesOneRefPerUsablePlannedUser(t *testing.T) {
 // A role dropped from v2 stops being referenced by this project, while the
 // directory object itself stands — the additive-only rule.
 func TestEnsureStopsReferencingARoleDroppedFromTheDesign(t *testing.T) {
-	h := newHarness(rolesJSON(t, "", []string{"Viewer", "Auditor"}))
+	h := newHarness(rolesJSON(t, []string{"Viewer", "Auditor"}))
 	h.run(t)
 
-	h.setDoc(rolesJSON(t, "", []string{"Viewer"}))
+	h.setDoc(rolesJSON(t, []string{"Viewer"}))
 	h.run(t)
 
 	refs, err := h.store.ListProjectRefs(context.Background(), testScope, testProject)
@@ -730,7 +741,7 @@ func TestEnsureStopsReferencingARoleDroppedFromTheDesign(t *testing.T) {
 // afterwards, because the IdP will not give it back: GET /users/{id} returns no
 // password field, so a credential the platform failed to keep is gone.
 func TestEnsureSealsARetrievableDistinctPasswordForEachNewAccount(t *testing.T) {
-	h := newHarness(rolesJSON(t, "", []string{"Viewer", "Compliance Admin"}))
+	h := newHarness(rolesJSON(t, []string{"Viewer", "Compliance Admin"}))
 
 	h.run(t)
 
@@ -767,14 +778,14 @@ func TestEnsureSealsARetrievableDistinctPasswordForEachNewAccount(t *testing.T) 
 // the property that makes the ticket usable at all: keyed to what CHANGED, v2's
 // comment would list no accounts and v2's validation could sign in as nobody.
 func TestEnsurePublishesEveryLoginOnARebuildNotOnlyTheNewOnes(t *testing.T) {
-	h := newHarness(rolesJSON(t, "Viewer", []string{"Viewer"}, userFixture{"test-viewer", "Viewer"}))
+	h := newHarness(rolesJSON(t, []string{"Viewer"}, userFixture{"test-viewer", "Viewer"}))
 	first := h.run(t)
 	if len(first.Credentials) != 1 || first.Credentials[0].Username != "test-viewer" {
 		t.Fatalf("first build published %+v, want the account it created", first.Credentials)
 	}
 	firstPassword := first.Credentials[0].Password
 
-	h.setDoc(rolesJSON(t, "Viewer", []string{"Viewer", "Auditor"},
+	h.setDoc(rolesJSON(t, []string{"Viewer", "Auditor"},
 		userFixture{"test-viewer", "Viewer"}, userFixture{"test-auditor", "Auditor"}))
 	second := h.run(t)
 
@@ -796,10 +807,13 @@ func TestEnsurePublishesEveryLoginOnARebuildNotOnlyTheNewOnes(t *testing.T) {
 	}
 }
 
-// The cold-start flag rides along, because the agent needs to know which login
-// answers a criterion that names no role.
-func TestEnsurePublishesTheColdStartFlag(t *testing.T) {
-	h := newHarness(rolesJSON(t, "Viewer", []string{"Viewer", "Auditor"},
+// v2 has NO cold start. Signed-in operations, self-service enrolment and the
+// SPA's no-access state replace it, so no account is published as the one a
+// caller holds before anybody grants them a role. The column and the flag
+// survive on the row until the console stops reading them (phase 5); what must
+// not survive is a login being SERVED as the cold-start answer.
+func TestEnsurePublishesNoColdStartAccount(t *testing.T) {
+	h := newHarness(rolesJSON(t, []string{"Viewer", "Auditor"},
 		userFixture{"test-viewer", "Viewer"}, userFixture{"test-auditor", "Auditor"}))
 	result := h.run(t)
 
@@ -807,11 +821,10 @@ func TestEnsurePublishesTheColdStartFlag(t *testing.T) {
 	for _, c := range result.Credentials {
 		byName[c.Username] = c
 	}
-	if !byName["test-viewer"].ColdStart {
-		t.Errorf("the cold-start role's account was published as not cold-start: %+v", byName["test-viewer"])
-	}
-	if byName["test-auditor"].ColdStart {
-		t.Errorf("a granted role's account was published as cold-start: %+v", byName["test-auditor"])
+	for name, cred := range byName {
+		if cred.ColdStart {
+			t.Errorf("account %q was published as cold-start, which v2 removed: %+v", name, cred)
+		}
 	}
 	if byName["test-viewer"].Role != "Viewer" {
 		t.Errorf("role = %q, want the role the account was enrolled into", byName["test-viewer"].Role)
@@ -823,7 +836,7 @@ func TestEnsurePublishesTheColdStartFlag(t *testing.T) {
 // beside somebody else's login in a ticket, for an account whose password the
 // platform never set.
 func TestEnsurePublishesNoLoginForARefusedOrSkippedAccount(t *testing.T) {
-	h := newHarness(rolesJSON(t, "", []string{"Viewer"}, userFixture{"jsmith", "Viewer"}))
+	h := newHarness(rolesJSON(t, []string{"Viewer"}, userFixture{"jsmith", "Viewer"}))
 	// A real person's account, already on the directory and not ours.
 	h.dir.users["jsmith"] = DirectoryAccount{ID: "usr-jsmith", Username: "jsmith"}
 	result := h.run(t)
@@ -843,7 +856,7 @@ func TestEnsurePublishesNoLoginForARefusedOrSkippedAccount(t *testing.T) {
 // lost, and the ticket has to say so rather than print a blank that reads as a
 // password-less login.
 func TestEnsurePublishesAnEmptyPasswordRatherThanFailingWhenTheSealWontOpen(t *testing.T) {
-	h := newHarness(rolesJSON(t, "", []string{"Viewer"}, userFixture{"test-viewer", "Viewer"}))
+	h := newHarness(rolesJSON(t, []string{"Viewer"}, userFixture{"test-viewer", "Viewer"}))
 	h.store.failOn = map[string]error{"RevealTestUserPassword": errors.New("cipher key rotated")}
 
 	result := h.run(t)
@@ -862,7 +875,7 @@ func TestEnsurePublishesAnEmptyPasswordRatherThanFailingWhenTheSealWontOpen(t *t
 // Summary() is the half of the result that reaches LOGS. A password must never
 // be in it, however Credentials grows.
 func TestSummaryCarriesNoPassword(t *testing.T) {
-	h := newHarness(rolesJSON(t, "", []string{"Viewer"}, userFixture{"test-viewer", "Viewer"}))
+	h := newHarness(rolesJSON(t, []string{"Viewer"}, userFixture{"test-viewer", "Viewer"}))
 	result := h.run(t)
 	if len(result.Credentials) == 0 || result.Credentials[0].Password == "" {
 		t.Fatalf("the fixture published no password, so this test proves nothing")
@@ -982,7 +995,7 @@ func TestTestUserEmailIsUndeliverable(t *testing.T) {
 // stack with no IdP, so it must be false for every missing collaborator rather
 // than panicking later.
 func TestEnabledIsFalseWithoutEveryCollaborator(t *testing.T) {
-	full := newHarness(rolesJSON(t, "", []string{"Viewer"}))
+	full := newHarness(rolesJSON(t, []string{"Viewer"}))
 	if !full.svc.Enabled() {
 		t.Fatalf("Enabled = false with every collaborator wired")
 	}
@@ -1004,16 +1017,16 @@ func TestEnabledIsFalseWithoutEveryCollaborator(t *testing.T) {
 // nothing at all when nothing did.
 func TestResultSummaryReportsOnlyWhatHappened(t *testing.T) {
 	r := Result{
-		RolesCreated: []string{"Viewer"}, RolesPreExisting: []string{"Administrators"},
+		GroupsCreated: []string{"Viewer"}, GroupsPreExisting: []string{"Administrators"},
 		UsersRefused: []string{"jsmith"},
 	}
 	got := r.Summary()
-	for _, want := range []string{"Roles created: Viewer", "Administrators", "jsmith"} {
+	for _, want := range []string{"Groups created: Viewer", "Administrators", "jsmith"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("summary %q does not mention %q", got, want)
 		}
 	}
-	if strings.Contains(got, "Roles reused") || strings.Contains(got, "Test users created") {
+	if strings.Contains(got, "Groups reused") || strings.Contains(got, "Test users created") {
 		t.Fatalf("summary %q reports outcomes that did not occur", got)
 	}
 	if (Result{}).HasRefusals() {
@@ -1028,7 +1041,7 @@ func TestResultSummaryReportsOnlyWhatHappened(t *testing.T) {
 // reach — there is one identity provider per environment now, and a credential
 // minted on one is rejected by every other.
 func TestEnsureReportsTheIssuerItProvisionedOn(t *testing.T) {
-	h := newHarness(rolesJSON(t, "Viewer", []string{"Viewer"}, userFixture{"test-viewer", "Viewer"}))
+	h := newHarness(rolesJSON(t, []string{"Viewer"}, userFixture{"test-viewer", "Viewer"}))
 
 	result := h.run(t)
 
@@ -1047,7 +1060,7 @@ func TestEnsureReportsTheIssuerItProvisionedOn(t *testing.T) {
 // the environment's binding and its admin credential over the network, and a
 // design with a dozen roles must not pay for a dozen of those.
 func TestEnsureResolvesTheDirectoryOncePerBuild(t *testing.T) {
-	h := newHarness(rolesJSON(t, "", []string{"Viewer", "Auditor", "Compliance Admin"},
+	h := newHarness(rolesJSON(t, []string{"Viewer", "Auditor", "Compliance Admin"},
 		userFixture{"test-viewer", "Viewer"}, userFixture{"test-auditor", "Auditor"}))
 
 	h.run(t)
@@ -1065,7 +1078,7 @@ func TestEnsureResolvesTheDirectoryOncePerBuild(t *testing.T) {
 // directory — would create the accounts somewhere their logins do not work,
 // publish them, and send validation to a sign-in that rejects every one.
 func TestEnsureFailsWhenTheEnvironmentHasNoIdentityProvider(t *testing.T) {
-	h := newHarness(rolesJSON(t, "", []string{"Viewer"}, userFixture{"test-viewer", "Viewer"}))
+	h := newHarness(rolesJSON(t, []string{"Viewer"}, userFixture{"test-viewer", "Viewer"}))
 	h.targets.err = errors.New(`environment "default" of "org-acme" has no Thunder binding`)
 
 	_, declared, err := h.svc.EnsureForTag(context.Background(), testOrg, testProject, testTag)

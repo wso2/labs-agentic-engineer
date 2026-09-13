@@ -1,0 +1,63 @@
+openapi: 3.0.3
+info:
+  title: Orders API
+  version: "1.0.0"
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: https://idp.example/oauth2/authorize
+          tokenUrl: https://idp.example/oauth2/token
+          scopes:
+            orders:read: See own company's orders
+            orders:place: Raise an order
+            orders:confirm: Confirm an order
+            invoices:read: See own company's invoices
+            invoices:read-all: See every invoice
+            invoices:submit: Submit an invoice
+            invoices:approve: Approve an invoice
+security:
+  - oauth2: []
+paths:
+  /orders:
+    get:
+      operationId: listOrders
+      security: [{ oauth2: [orders:read] }]
+      responses:
+        "200": { description: ok }
+    post:
+      operationId: placeOrder
+      security: [{ oauth2: [orders:place] }]
+      responses:
+        "201": { description: created }
+  /orders/{id}/confirm:
+    post:
+      operationId: confirmOrder
+      security: [{ oauth2: [orders:confirm] }]
+      responses:
+        "204": { description: confirmed }
+  /invoices:
+    get:
+      operationId: listInvoices
+      security: [{ oauth2: [invoices:read] }]
+      responses:
+        "200": { description: ok }
+    post:
+      operationId: submitInvoice
+      security: [{ oauth2: [invoices:submit] }]
+      responses:
+        "201": { description: created }
+  /invoices/all:
+    get:
+      operationId: listEveryInvoice
+      security: [{ oauth2: [invoices:read-all] }]
+      responses:
+        "200": { description: ok }
+  /invoices/{id}/approve:
+    post:
+      operationId: approveInvoice
+      security: [{ oauth2: [invoices:approve] }]
+      responses:
+        "204": { description: approved }

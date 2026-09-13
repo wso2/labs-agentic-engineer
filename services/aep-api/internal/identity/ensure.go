@@ -27,10 +27,13 @@ package identity
 //
 // Three passes, and the ORDER is load-bearing.
 //
-//  0. **Classify**, reading only. Each declared role is settled as one the
-//     platform owns, one somebody else made, or one that does not exist yet.
-//  1. **Accounts**, for the roles the platform may enrol into — and ONLY those.
-//  2. **Roles**: create each absent one complete with its members, and add the
+//  0. **Classify**, reading only. Each org group the design needs — the ones
+//     `groups[]` introduces and the ones its roles assign to — is settled as
+//     one the platform owns, one somebody else made, or one that does not
+//     exist yet.
+//  1. **Accounts**, for the groups the platform may enrol into — and ONLY
+//     those.
+//  2. **Groups**: create each absent one complete with its members, and add the
 //     missing members to each owned one.
 //
 // Classification has to come first because of what pass 1 costs. Creating an
@@ -39,10 +42,10 @@ package identity
 // role". Doing that for a role the platform will refuse to enrol into produces
 // exactly the failure this whole design exists to close — validation signing in
 // as an account that holds no role at all, and grading role-gated criteria
-// against it. So a pre-existing role's accounts are not created, not sealed and
-// not referenced; they are reported and skipped.
+// against it. So an account whose every group is one somebody else made is not
+// created, not sealed and not referenced; it is reported and skipped.
 //
-// Accounts still come before roles, because the IdP sets group membership only
+// Accounts still come before groups, because the IdP sets group membership only
 // when a group is CREATED. Knowing the member ids up front lets a brand-new role
 // be created complete, in one call, instead of created empty and then
 // deleted-and-recreated to add its members — which would change the group's id
@@ -51,7 +54,7 @@ package identity
 // Two rules carry all the safety, and both reduce to the same ownership marker
 // — a row in this package's own tables:
 //
-//   - **The platform enrols members only into roles it created.** That is what
+//   - **The platform enrols members only into groups it created.** That is what
 //     stops a design that reasonably reuses `Administrators` from getting a
 //     platform-made test account into the group `setup-aep.sh` binds to
 //     OpenChoreo's `admin` role. It is a rule, not a denylist, so every
@@ -98,20 +101,21 @@ func (s *EnsureService) Enabled() bool {
 
 // Result is what one ensure did, for the gate's closing comment and the logs.
 type Result struct {
-	// RolesCreated / RolesReused are the roles this run made and the ones it
-	// found already on the directory.
-	RolesCreated []string
-	RolesReused  []string
-	// RolesPreExisting are roles that exist on the directory but that the
+	// GroupsCreated / GroupsReused are the org groups this run made and the ones
+	// it found already on the directory. The design names them in `groups[]` and
+	// in its roles' `assignTo`.
+	GroupsCreated []string
+	GroupsReused  []string
+	// GroupsPreExisting are groups that exist on the directory but that the
 	// platform did not create. It does not enrol members into these.
-	RolesPreExisting []string
-	UsersCreated     []string
-	UsersReused      []string
+	GroupsPreExisting []string
+	UsersCreated      []string
+	UsersReused       []string
 	// UsersRefused are usernames the design named that already exist on the
 	// directory as accounts the platform does not own.
 	UsersRefused []string
-	// UsersSkipped are accounts the design asked for whose ROLE the platform
-	// does not own. They are deliberately not created: an account that can
+	// UsersSkipped are accounts the design asked for that no group the platform
+	// owns would take. They are deliberately not created: an account that can
 	// never be enrolled is a standing credential for a login that holds
 	// nothing, and serving it to validation would be worse than serving
 	// nothing.
@@ -144,9 +148,11 @@ type Result struct {
 // build must not die over a publishing step, but the ticket has to say the row
 // is unusable instead of printing a blank and reading as a password-less login.
 type Credential struct {
-	Username  string
-	Password  string
-	Role      string
+	Username string
+	Password string
+	Role     string
+	// ColdStart is a v1 leftover carried for the wire contract and is always
+	// false — see TestUserRef.ColdStart in entities.go. Phase 2/5 removes it.
 	ColdStart bool
 }
 
@@ -160,13 +166,13 @@ func (r Result) Summary() string {
 			lines = append(lines, fmt.Sprintf("- %s: %s", label, strings.Join(names, ", ")))
 		}
 	}
-	add("Roles created", r.RolesCreated)
-	add("Roles reused", r.RolesReused)
-	add("Roles left alone (not created by the platform, so no members are enrolled)", r.RolesPreExisting)
+	add("Groups created", r.GroupsCreated)
+	add("Groups reused", r.GroupsReused)
+	add("Groups left alone (not created by the platform, so no members are enrolled)", r.GroupsPreExisting)
 	add("Test users created", r.UsersCreated)
 	add("Test users reused", r.UsersReused)
 	add("Test users refused (the username already belongs to an account the platform does not own)", r.UsersRefused)
-	add("Test users not created (their role is not one the platform created, so nothing could be enrolled into it)", r.UsersSkipped)
+	add("Test users not created (no group the platform created to enrol them into)", r.UsersSkipped)
 	if len(lines) == 0 {
 		return "Nothing to provision — the design declares no roles."
 	}
@@ -239,16 +245,16 @@ func (s *EnsureService) readRolesAtTag(ctx context.Context, orgID, projectID, ta
 	return raw, true, nil
 }
 
-// roleTarget is one declared role after classification.
-type roleTarget struct {
-	role securityspec.Role
-	// group is the live directory group, zero when the role is absent from it.
+// groupTarget is one org group the design needs, after classification.
+type groupTarget struct {
+	planned securityspec.PlannedGroup
+	// group is the live directory group, zero when it is absent from it.
 	group       DirectoryGroup
 	onDirectory bool
-	// recorded is the platform's own row for the role, nil when it has none.
+	// recorded is the platform's own row for the group, nil when it has none.
 	recorded *IdPRole
 	// enrolable is the whole point of classifying: true when the platform may
-	// put a member into this role — because it created it, or because it is
+	// put a member into this group — because it created it, or because it is
 	// about to. False for a group somebody else made.
 	enrolable bool
 }
@@ -259,34 +265,39 @@ func (s *EnsureService) ensure(ctx context.Context, target Target, projectID str
 	orgID, scope, dir := target.OrgID, target.Scope(), target.Directory
 
 	// ---- pass 0: classify, writing nothing --------------------------------
-	targets := make([]roleTarget, 0, len(plan.Roles))
-	enrolable := make(map[string]bool, len(plan.Roles))
-	for _, role := range plan.Roles {
-		classified, err := s.classifyRole(ctx, scope, dir, role)
+	targets := make([]groupTarget, 0, len(plan.Groups))
+	enrolable := make(map[string]bool, len(plan.Groups))
+	for _, group := range plan.Groups {
+		classified, err := s.classifyGroup(ctx, scope, dir, group)
 		if err != nil {
 			return result, err
 		}
 		targets = append(targets, classified)
 		if classified.enrolable {
-			enrolable[strings.ToLower(role.Name)] = true
+			enrolable[strings.ToLower(group.Name)] = true
 			continue
 		}
 		// Somebody else's group. Left entirely alone, and nothing is minted for
 		// it — see the file header on why that includes its accounts.
 		slog.InfoContext(ctx, "roles ensure: leaving a pre-existing directory group alone",
-			"role", role.Name, "org", orgID, "environment", target.Environment, "project", projectID)
-		result.RolesPreExisting = append(result.RolesPreExisting, role.Name)
+			"group", group.Name, "org", orgID, "environment", target.Environment, "project", projectID)
+		result.GroupsPreExisting = append(result.GroupsPreExisting, group.Name)
 	}
 
-	// ---- pass 1: accounts, only for roles the platform may enrol into ------
+	// ---- pass 1: accounts, only for groups the platform may enrol into -----
 	//
 	// Refusal and skipping are both per account and neither stops the pass: one
 	// design naming a real person's username, or reusing one hand-made group,
-	// must not block the roles around it.
-	membersByRole := map[string][]string{}
+	// must not block the accounts around it.
+	membersByGroup := map[string][]string{}
 	var refs []TestUserRef
 	for _, planned := range plan.Users {
-		if !enrolable[strings.ToLower(planned.Role)] {
+		joins := enrolableGroups(planned, enrolable)
+		if len(joins) == 0 {
+			// Nothing this account could be enrolled in — either its roles name
+			// only groups somebody else made, or (a self-service role) no group
+			// at all. A standing credential for a login that holds nothing is
+			// worse than no credential, so it is not minted.
 			result.UsersSkipped = append(result.UsersSkipped, planned.Username)
 			continue
 		}
@@ -297,26 +308,27 @@ func (s *EnsureService) ensure(ctx context.Context, target Target, projectID str
 		if !usable {
 			continue
 		}
-		key := strings.ToLower(planned.Role)
-		membersByRole[key] = append(membersByRole[key], account.ID)
+		for _, group := range joins {
+			key := strings.ToLower(group)
+			membersByGroup[key] = append(membersByGroup[key], account.ID)
+		}
 		// A reference is the statement "this account is the login for this role
 		// in this project", and the credential provider reads it as exactly
 		// that. It is written only for an account that WILL be enrolled.
 		refs = append(refs, TestUserRef{
-			Username:  planned.Username,
-			RoleName:  planned.Role,
-			ColdStart: planned.ColdStart,
-			Supplied:  planned.Supplied,
+			Username: planned.Username,
+			RoleName: primaryRole(planned),
+			Supplied: planned.Supplied,
 		})
 	}
 
-	// ---- pass 2: roles ----------------------------------------------------
+	// ---- pass 2: groups ---------------------------------------------------
 	for _, classified := range targets {
 		if !classified.enrolable {
 			continue
 		}
-		if err := s.realiseRole(ctx, target, projectID, classified,
-			membersByRole[strings.ToLower(classified.role.Name)], &result); err != nil {
+		if err := s.realiseGroup(ctx, target, projectID, classified,
+			membersByGroup[strings.ToLower(classified.planned.Name)], &result); err != nil {
 			return result, err
 		}
 	}
@@ -330,6 +342,31 @@ func (s *EnsureService) ensure(ctx context.Context, target Target, projectID str
 
 	result.Credentials = s.collectCredentials(ctx, scope, projectID, refs)
 	return result, nil
+}
+
+// enrolableGroups is the subset of an account's groups the platform may put it
+// into, in plan order.
+func enrolableGroups(planned securityspec.PlannedUser, enrolable map[string]bool) []string {
+	var joins []string
+	for _, group := range planned.Groups {
+		if enrolable[strings.ToLower(group)] {
+			joins = append(joins, group)
+		}
+	}
+	return joins
+}
+
+// primaryRole is the role an account is recorded under. v2 lets one account
+// hold several — the union of their grants is what its token carries — while
+// the stored row and the ticket's Role column still name one. The first is that
+// one: `testUsers[].roles` is authored in the order the designer thinks of the
+// account, so the first is the role it exists FOR. Phase 2 makes the record
+// plural along with the project-role pass.
+func primaryRole(planned securityspec.PlannedUser) string {
+	if len(planned.Roles) == 0 {
+		return ""
+	}
+	return planned.Roles[0]
 }
 
 // collectCredentials opens the seal on every account this project can sign in
@@ -361,7 +398,8 @@ func (s *EnsureService) collectCredentials(ctx context.Context, scope Scope, pro
 	return out
 }
 
-// classifyRole settles what the platform may do with one role, reading only.
+// classifyGroup settles what the platform may do with one org group, reading
+// only.
 //
 // Three outcomes, and the middle one is the safety property:
 //
@@ -371,19 +409,21 @@ func (s *EnsureService) collectCredentials(ctx context.Context, scope Scope, pro
 //     OpenChoreo's `admin` role, so a design that reasonably reuses the name
 //     must not get a platform-made account into it. This is a rule, not a
 //     denylist — every hand-made group is protected by it, with no list to
-//     maintain.
+//     maintain. A group a project REUSES on purpose (the design's `Finance`)
+//     lands here too, and that is the intended outcome: it is enrolled into
+//     only if the platform made it.
 //   - absent from the directory → the platform is about to create it, whether or
 //     not a stale row survived somebody deleting the group; enrolable.
-func (s *EnsureService) classifyRole(ctx context.Context, scope Scope, dir Directory, role securityspec.Role) (roleTarget, error) {
-	recorded, err := s.store.GetRole(ctx, scope, role.Name)
+func (s *EnsureService) classifyGroup(ctx context.Context, scope Scope, dir Directory, group securityspec.PlannedGroup) (groupTarget, error) {
+	recorded, err := s.store.GetRole(ctx, scope, group.Name)
 	if err != nil {
-		return roleTarget{}, err
+		return groupTarget{}, err
 	}
-	live, onDirectory, err := dir.FindGroupByName(ctx, role.Name)
+	live, onDirectory, err := dir.FindGroupByName(ctx, group.Name)
 	if err != nil {
-		return roleTarget{}, err
+		return groupTarget{}, err
 	}
-	classified := roleTarget{role: role, onDirectory: onDirectory, recorded: recorded}
+	classified := groupTarget{planned: group, onDirectory: onDirectory, recorded: recorded}
 	if onDirectory {
 		classified.group = *live
 	}
@@ -391,13 +431,14 @@ func (s *EnsureService) classifyRole(ctx context.Context, scope Scope, dir Direc
 	return classified, nil
 }
 
-// realiseRole makes one classified, enrolable role real and enrols its accounts.
+// realiseGroup makes one classified, enrolable org group real and enrols its
+// accounts.
 //
 // It re-reads nothing: pass 0 already settled whether the platform owns this
-// role, and re-deciding here would let the two passes disagree — which is how
+// group, and re-deciding here would let the two passes disagree — which is how
 // the "leave a pre-existing group alone" rule would come to be enforced in one
 // place and not the other.
-func (s *EnsureService) realiseRole(ctx context.Context, target Target, projectID string, classified roleTarget, memberIDs []string, result *Result) error {
+func (s *EnsureService) realiseGroup(ctx context.Context, target Target, projectID string, classified groupTarget, memberIDs []string, result *Result) error {
 	if classified.onDirectory {
 		group := classified.group
 		if len(memberIDs) > 0 {
@@ -415,19 +456,19 @@ func (s *EnsureService) realiseRole(ctx context.Context, target Target, projectI
 				return err
 			}
 		}
-		result.RolesReused = append(result.RolesReused, classified.role.Name)
+		result.GroupsReused = append(result.GroupsReused, classified.planned.Name)
 		return nil
 	}
 
 	// Absent from the directory: create it complete, whether or not a stale row
 	// survived from a group somebody deleted out from under us.
-	created, err := target.Directory.CreateGroup(ctx, classified.role.Name, classified.role.Description, memberIDs)
+	created, err := target.Directory.CreateGroup(ctx, classified.planned.Name, classified.planned.Description, memberIDs)
 	if err != nil {
-		return fmt.Errorf("create role %q: %w", classified.role.Name, err)
+		return fmt.Errorf("create group %q: %w", classified.planned.Name, err)
 	}
 	row := IdPRole{
 		OrgID: target.OrgID, Environment: target.Environment,
-		Name: classified.role.Name, ThunderGroupID: created.ID, Description: classified.role.Description,
+		Name: classified.planned.Name, ThunderGroupID: created.ID, Description: classified.planned.Description,
 		CreatedByOrg: target.OrgID, CreatedByProject: projectID,
 	}
 	if classified.recorded != nil {
@@ -445,7 +486,7 @@ func (s *EnsureService) realiseRole(ctx context.Context, target Target, projectI
 	if err := s.store.UpsertRole(ctx, row); err != nil {
 		return err
 	}
-	result.RolesCreated = append(result.RolesCreated, classified.role.Name)
+	result.GroupsCreated = append(result.GroupsCreated, classified.planned.Name)
 	return nil
 }
 
@@ -473,8 +514,8 @@ func (s *EnsureService) ensureUser(ctx context.Context, scope Scope, dir Directo
 		// facts update deliberately never reads it: revealing a password only to
 		// seal it again decrypts a credential for no reason, and would fail the
 		// whole build for an account whose sealed password is missing.
-		if recorded.ThunderUserID != live.ID || recorded.RoleName != planned.Role {
-			if err := s.store.UpdateTestUserFacts(ctx, scope, planned.Username, live.ID, planned.Role); err != nil {
+		if recorded.ThunderUserID != live.ID || recorded.RoleName != primaryRole(planned) {
+			if err := s.store.UpdateTestUserFacts(ctx, scope, planned.Username, live.ID, primaryRole(planned)); err != nil {
 				return DirectoryAccount{}, false, err
 			}
 		}
@@ -500,7 +541,7 @@ func (s *EnsureService) ensureUser(ctx context.Context, scope Scope, dir Directo
 		row := TestUser{
 			OrgID: scope.OrgID, Environment: scope.Environment,
 			Username: planned.Username, ThunderUserID: created.ID,
-			RoleName: planned.Role, Email: created.Email,
+			RoleName: primaryRole(planned), Email: created.Email,
 		}
 		if err := s.store.UpsertTestUser(ctx, row, password); err != nil {
 			return DirectoryAccount{}, false, err

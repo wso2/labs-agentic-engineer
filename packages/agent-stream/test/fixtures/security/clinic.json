@@ -1,0 +1,76 @@
+{
+  "version": 2,
+  "permissions": [
+    {
+      "resource": "appointments",
+      "component": "appointments-api",
+      "description": "Patient appointments and the day's diary",
+      "actions": [
+        { "handle": "read", "ownership": "own", "description": "See own appointments" },
+        { "handle": "read-all", "ownership": "any", "description": "See the whole day" },
+        { "handle": "book", "ownership": "own", "description": "Book an appointment" },
+        { "handle": "cancel", "ownership": "own", "description": "Cancel own appointment" },
+        { "handle": "manage", "ownership": "any", "description": "Move, check in, cancel any" }
+      ]
+    },
+    {
+      "resource": "schedule",
+      "component": "appointments-api",
+      "actions": [
+        { "handle": "read", "ownership": "any", "description": "See the clinic schedule" },
+        { "handle": "publish", "ownership": "any", "description": "Publish next week" }
+      ]
+    },
+    {
+      "resource": "records",
+      "component": "appointments-api",
+      "actions": [
+        { "handle": "read", "ownership": "own", "description": "Records of the caller's own patients" }
+      ]
+    }
+  ],
+  "groups": [
+    { "name": "Clinic Reception", "description": "Front-desk staff" },
+    { "name": "Clinic Doctors", "description": "Practising doctors" }
+  ],
+  "roles": [
+    {
+      "name": "Patient",
+      "description": "Books and cancels their own appointments.",
+      "stories": [1, 2],
+      "enrolment": "self-service",
+      "grants": ["appointments:read", "appointments:book", "appointments:cancel"]
+    },
+    {
+      "name": "Receptionist",
+      "description": "Manages the day's appointments and publishes the schedule.",
+      "stories": [3, 4],
+      "assignTo": ["Clinic Reception"],
+      "grants": [
+        "appointments:read",
+        "appointments:read-all",
+        "appointments:manage",
+        "schedule:read",
+        "schedule:publish"
+      ]
+    },
+    {
+      "name": "Doctor",
+      "description": "Sees their own schedule and their own patients' records.",
+      "stories": [5, 6],
+      "assignTo": ["Clinic Doctors"],
+      "grants": ["appointments:read", "schedule:read", "records:read"]
+    }
+  ],
+  "screens": [
+    { "component": "booking-site", "screen": "Find a slot", "requires": "public" },
+    { "component": "booking-site", "screen": "My appointments", "requires": "appointments:book" },
+    { "component": "staff-webapp", "screen": "Front desk", "requires": "appointments:manage" },
+    { "component": "staff-webapp", "screen": "Schedule", "requires": "schedule:read" },
+    { "component": "staff-webapp", "screen": "Patient records", "requires": "records:read" }
+  ],
+  "testUsers": [
+    { "username": "test-receptionist", "roles": ["Receptionist"] },
+    { "username": "test-doctor", "roles": ["Doctor"] }
+  ]
+}

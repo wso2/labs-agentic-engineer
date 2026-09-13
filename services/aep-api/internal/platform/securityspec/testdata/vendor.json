@@ -1,0 +1,85 @@
+{
+  "version": 2,
+  "permissions": [
+    {
+      "resource": "orders",
+      "component": "orders-api",
+      "description": "Purchase orders raised by buyers and confirmed by suppliers",
+      "actions": [
+        { "handle": "read", "ownership": "own", "description": "See own company's orders" },
+        { "handle": "place", "ownership": "own", "description": "Raise an order" },
+        { "handle": "confirm", "ownership": "own", "description": "Confirm an order" }
+      ]
+    },
+    {
+      "resource": "invoices",
+      "component": "orders-api",
+      "actions": [
+        { "handle": "read", "ownership": "own", "description": "See own company's invoices" },
+        { "handle": "read-all", "ownership": "any", "description": "See every invoice" },
+        { "handle": "submit", "ownership": "own", "description": "Submit an invoice" },
+        { "handle": "approve", "ownership": "any", "description": "Approve an invoice" }
+      ]
+    },
+    {
+      "resource": "payments",
+      "component": "payments-api",
+      "actions": [
+        { "handle": "read", "ownership": "any", "description": "See payments" },
+        { "handle": "release", "ownership": "any", "description": "Release a payment" }
+      ]
+    }
+  ],
+  "groups": [
+    { "name": "Buyers", "description": "Purchasing staff who raise orders" },
+    { "name": "Suppliers", "description": "External supplier accounts" }
+  ],
+  "roles": [
+    {
+      "name": "Buyer",
+      "description": "Places orders and reads invoices.",
+      "stories": [1, 2],
+      "assignTo": ["Buyers"],
+      "grants": ["orders:read", "orders:place", "invoices:read"]
+    },
+    {
+      "name": "Supplier",
+      "description": "Confirms orders and submits invoices.",
+      "stories": [3, 4],
+      "assignTo": ["Suppliers"],
+      "grants": ["orders:read", "orders:confirm", "invoices:read", "invoices:submit"]
+    },
+    {
+      "name": "Finance",
+      "description": "Approves invoices and releases payments.",
+      "stories": [5, 6],
+      "assignTo": ["Finance"],
+      "grants": [
+        "invoices:read",
+        "invoices:read-all",
+        "invoices:approve",
+        "payments:read",
+        "payments:release"
+      ]
+    },
+    {
+      "name": "reconciliation-job",
+      "description": "Matches payments to invoices nightly with nobody signed in.",
+      "stories": [9],
+      "kind": "service",
+      "grants": ["invoices:read", "invoices:read-all", "payments:read"]
+    }
+  ],
+  "screens": [
+    { "component": "vendor-webapp", "screen": "Orders", "requires": "orders:read" },
+    { "component": "vendor-webapp", "screen": "Place order", "requires": "orders:place" },
+    { "component": "vendor-webapp", "screen": "Confirm orders", "requires": "orders:confirm" },
+    { "component": "vendor-webapp", "screen": "Invoices", "requires": "invoices:read" },
+    { "component": "vendor-webapp", "screen": "Payments", "requires": "payments:read" }
+  ],
+  "testUsers": [
+    { "username": "test-buyer", "roles": ["Buyer"] },
+    { "username": "test-supplier", "roles": ["Supplier"] },
+    { "username": "test-finance", "roles": ["Finance"] }
+  ]
+}

@@ -547,6 +547,95 @@ func TestApply_SchemaViolationWarning_NonBlocking(t *testing.T) {
 	}
 }
 
+// The security design's COVERAGE notices ride the same soft-warning channel as
+// every other non-blocking note (plan §5 decision 3). They are the one class
+// that cannot be computed from the written file alone — a handle is "used
+// nowhere" only relative to the component specs and the screens — so the apply
+// path assembles the bundle the batch lands and judges that.
+func TestApply_SecurityDesignCoverageWarnings(t *testing.T) {
+	fixture := func(rel string) string {
+		t.Helper()
+		body, err := os.ReadFile("../platform/securityspec/testdata/" + rel)
+		if err != nil {
+			t.Fatalf("read fixture %s — layout drift?: %v", rel, err)
+		}
+		return string(body)
+	}
+	catalog := fixture("expense-tracker.json")
+	r := newFilesRig(t, map[string]string{
+		"specs/design/security.json":                            catalog,
+		"specs/design/design.cell":                              fixture("expense-tracker/design.cell"),
+		"specs/design/components/expense-api/openapi.yaml":      fixture("expense-tracker/expense-api.openapi.yaml"),
+		"specs/design/components/expense-webapp/wireframes.dsl": fixture("expense-tracker/expense-webapp.wireframes.dsl"),
+	})
+
+	// One more action nobody grants, no screen requires and no operation
+	// guards: the shape of a handle renamed in the spec but not in the catalog.
+	withOrphan := strings.Replace(catalog,
+		`{ "handle": "submit", "ownership": "own", "description": "Create and send a claim" }`,
+		`{ "handle": "submit", "ownership": "own", "description": "Create and send a claim" },
+        { "handle": "archive", "ownership": "own", "description": "Archive an old claim" }`, 1)
+	if withOrphan == catalog {
+		t.Fatal("fixture reworded — the orphan handle was never added")
+	}
+	rec := r.apply(mustJSON(t, spec.ApplyRequest{
+		Writes: []spec.WriteOp{{
+			Path:    "specs/design/security.json",
+			Content: withOrphan,
+			BaseSHA: r.readSHA(t, "specs/design/security.json"),
+		}},
+	}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("a coverage warning must never block apply: code %d (%s)", rec.Code, rec.Body.String())
+	}
+	var res spec.ApplyResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatalf("decode apply result: %v", err)
+	}
+	byCode := map[string]spec.Warning{}
+	for _, w := range res.Warnings {
+		byCode[w.Code] = w
+	}
+	unused, ok := byCode["SECURITY_HANDLE_USED_NOWHERE"]
+	if !ok {
+		t.Fatalf("the orphan handle must reach the warnings channel: %+v", res.Warnings)
+	}
+	if unused.Path != "specs/design/security.json" {
+		t.Errorf("warning path %q, want the repo path of the catalog", unused.Path)
+	}
+	if !strings.Contains(unused.Message, "claims:archive") {
+		t.Errorf("warning %q does not name the handle", unused.Message)
+	}
+	// INFO rides the same channel: the design says assignTo may name a group the
+	// org directory already holds, and the record of that decision is the note.
+	if _, ok := byCode["SECURITY_ASSIGN_TO_DIRECTORY_CHECKED"]; !ok {
+		t.Errorf("the assignTo INFO note must not be dropped: %+v", res.Warnings)
+	}
+	// Non-blocking means committed.
+	if got := r.remote.FileAt(t, "main", "specs/design/security.json"); got != withOrphan {
+		t.Error("the catalog was not committed despite the notices being non-blocking")
+	}
+}
+
+// A batch that touches no design file pays nothing for the coverage pass and
+// says nothing about it.
+func TestApply_NoSecurityNoticesForANonDesignWrite(t *testing.T) {
+	r := newFilesRig(t, map[string]string{"specs/requirements/prd.md": "# PRD\n"})
+	rec := r.apply(mustJSON(t, spec.ApplyRequest{
+		Writes: []spec.WriteOp{{Path: "specs/requirements/notes.md", Content: "hello"}},
+	}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("apply code %d: %s", rec.Code, rec.Body.String())
+	}
+	var res spec.ApplyResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatalf("decode apply result: %v", err)
+	}
+	if len(res.Warnings) != 0 {
+		t.Errorf("a requirements write must carry no design notices: %+v", res.Warnings)
+	}
+}
+
 func TestFiles_NoAuth_401(t *testing.T) {
 	r := newFilesRig(t, map[string]string{"specs/requirements/prd.md": "x"})
 	if rec := r.h.NoAuth().Get(apiBase); rec.Code != http.StatusUnauthorized {

@@ -317,6 +317,7 @@ func TestMCP_ToolsList_RenamedTools(t *testing.T) {
 		"list_org_endpoints",
 		"list_org_component_endpoints",
 		"list_platform_resource_types",
+		"list_groups",
 		"list_roles",
 		"get_remote_git_file_contents",
 		"search_remote_git_code",

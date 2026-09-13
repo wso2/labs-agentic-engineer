@@ -51,19 +51,43 @@ func isAdmittedSpecPath(p string) bool {
 	return ok
 }
 
+// securityDesignPath is the project's security design — ONE design-level file,
+// admitted by its EXACT path rather than by basename.
+//
+// It has to be in the snapshot for two reasons a later turn depends on: the
+// agent that wrote it in turn N must be able to read it back in turn N+1
+// (otherwise every subsequent read is NO_SUCH_FILE), and the openapi.yaml write
+// gate reads the permission catalog OUT OF THE BUNDLE — with the file invisible
+// the gate's catalog rules go deliberately lenient, so a stale scope handle in a
+// later openapi.yaml edit is accepted.
+//
+// A basename match would be wrong: the contract is the single project-level
+// catalog (the agent-stream gate claims this path and no other), so a
+// specs/design/components/<c>/security.json is not a second, per-component
+// catalog — nothing reads it and nothing validates it.
+const securityDesignPath = "specs/design/security.json"
+
 // KeepInTurnSnapshot mirrors keepInTurnSnapshot: keep agent-authored sources
 // (*.md, *.dsl, *.cell, a design.json or validation-criteria.json basename,
-// the two OpenAPI contract shapes above) and drop everything else. *.cell is
-// the project-level cell-diagram DSL (design.cell). validation-criteria.json
+// the project security design specs/design/security.json, the two OpenAPI
+// contract shapes above) and drop everything else. *.cell is the
+// project-level cell-diagram DSL (design.cell). validation-criteria.json
 // is kept so a design regeneration can see the existing acceptance oracle and
 // reuse its criterion ids (keeping committed e2e specs, which are keyed by
 // criterion id, mapped) instead of renumbering. Arbitrary *.yaml (e.g.
 // workload.yaml) stays excluded — only the two exact shapes are admitted.
+//
+// The two filters are ONE rule implemented twice, and snapshot_filter_test.go
+// pins the same fixed accept/reject table as the agents service's
+// test/load-workspace.test.ts.
 func KeepInTurnSnapshot(path string) bool {
 	if strings.HasSuffix(path, ".md") || strings.HasSuffix(path, ".dsl") || strings.HasSuffix(path, ".cell") {
 		return true
 	}
 	if isAdmittedSpecPath(path) {
+		return true
+	}
+	if path == securityDesignPath {
 		return true
 	}
 	if isTextReferencePath(path) {

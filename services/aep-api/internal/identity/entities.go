@@ -143,9 +143,11 @@ type TestUserRef struct {
 	// RoleName is denormalised from TestUser so the credential lookup is one
 	// indexed query. The ensure rewrites it on every build, so it cannot drift.
 	RoleName string `gorm:"column:role_name;type:text;not null;index" json:"roleName"`
-	// ColdStart marks the account holding this project's cold-start role — the
-	// one the credential provider serves when a caller asks without naming a
-	// role.
+	// ColdStart is a v1 LEFTOVER and is always false: v2 has no cold-start
+	// account (signed-in operations and self-service enrolment replaced it),
+	// and the ensure writes every ref without it. The field and its column stay
+	// only so the stored row and the published API keep their shape; phase 2/5
+	// drops both.
 	ColdStart bool `gorm:"column:cold_start;not null;default:false" json:"coldStart"`
 	// Supplied is true when the design named no test user for the role and the
 	// platform generated the name. The console badges these.

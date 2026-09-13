@@ -99,6 +99,8 @@ test("filterTurnSnapshot mirrors the walk's rules over an in-memory map", () => 
     "specs/validation/validation-criteria.json": "keep",
     "specs/design/components/api/openapi.yaml": "keep",
     "specs/design/components/api/dependencies/stripe.openapi.yaml": "keep",
+    "specs/design/security.json": "keep",
+    "specs/design/components/api/security.json": "drop", // not a per-component catalog
     "b/openapi.yaml": "drop", // not under specs/design/components/*/
     "b/x.gen.json": "drop",
     ".hidden/inner.md": "drop",
@@ -110,6 +112,7 @@ test("filterTurnSnapshot mirrors the walk's rules over an in-memory map", () => 
     "b/system.dsl",
     "specs/design/components/api/dependencies/stripe.openapi.yaml",
     "specs/design/components/api/openapi.yaml",
+    "specs/design/security.json",
     "specs/validation/validation-criteria.json",
   ]);
 });
@@ -156,6 +159,70 @@ test("keepInTurnSnapshot admits the two OpenAPI contract shapes but still reject
   assert.equal(keepInTurnSnapshot("specs/design/components/orders/openapi.yml"), false);
   // A `*` must not cross a path segment: nesting the dep name breaks the shape.
   assert.equal(keepInTurnSnapshot("specs/design/components/orders/dependencies/nested/stripe.openapi.yaml"), false);
+});
+
+// The project's security design must survive into EVERY later turn, not just
+// the one that wrote it. Without it the agent reads NO_SUCH_FILE on its own
+// file, and — worse, because it is silent — the openapi.yaml gate's catalog
+// rules read the permission catalog out of the bundle, find nothing, and go
+// deliberately lenient, so a stale scope handle in a later openapi.yaml edit is
+// accepted.
+//
+// The contract is the SINGLE design-level file, so the admission is by exact
+// path: a per-component security.json is not a second catalog (nothing reads or
+// validates one) and stays out.
+test("keepInTurnSnapshot admits the project security design, by exact path only", () => {
+  assert.equal(keepInTurnSnapshot("specs/design/security.json"), true);
+  assert.equal(keepInTurnSnapshot("specs/design/components/orders/security.json"), false);
+  assert.equal(keepInTurnSnapshot("security.json"), false);
+  assert.equal(keepInTurnSnapshot("specs/security.json"), false);
+});
+
+/**
+ * The FIXED accept/reject table the two implementations of this one rule are
+ * pinned to. Its twin lives in aep-api
+ * (`internal/platform/agentfold/snapshot_filter_test.go`, `keepParity` /
+ * `TestKeepInTurnSnapshot_ParityTable`): the same paths, the same verdicts. A
+ * change made on one side only shows up as a failing row here rather than as a
+ * turn that can read a file on one side and gets NO_SUCH_FILE on the other.
+ */
+const KEEP_PARITY: Record<string, boolean> = {
+  // Agent-authored sources.
+  "specs/requirements/prd.md": true,
+  "specs/design/domain-model.md": true,
+  "specs/design/design.cell": true,
+  "specs/design/system.dsl": true,
+  "specs/design/components/api/design.json": true,
+  "specs/validation/validation-criteria.json": true,
+  "specs/design/components/api/openapi.yaml": true,
+  "specs/design/components/api/dependencies/stripe.openapi.yaml": true,
+  // The project security design: one design-level file, by exact path.
+  "specs/design/security.json": true,
+  // Text references: the folder decides, not the extension.
+  "specs/requirements/references/brief.txt": true,
+  "specs/requirements/references/rows.csv": true,
+
+  // A per-component security.json is NOT a second catalog — nothing reads or
+  // validates one, so it stays out rather than riding along unvalidated.
+  "specs/design/components/api/security.json": false,
+  "security.json": false,
+  "specs/security.json": false,
+  // Derived projections, code, arbitrary yaml, near-miss spec shapes.
+  "specs/design/components/api/workload.yaml": false,
+  "specs/design/components/api/api.gen.json": false,
+  "specs/design/wireframe.excalidraw": false,
+  "src/main.go": false,
+  "specs/design/components/api/openapi.yml": false,
+  "specs/design/components/api/dependencies/nested/stripe.openapi.yaml": false,
+  "specs/requirements/rows.csv": false,
+  // A binary reference rides as a file part, never as text.
+  "specs/requirements/references/doc.pdf": false,
+};
+
+test("keepInTurnSnapshot / KeepInTurnSnapshot agree on one fixed accept/reject table", () => {
+  for (const [path, want] of Object.entries(KEEP_PARITY)) {
+    assert.equal(keepInTurnSnapshot(path), want, `keepInTurnSnapshot(${JSON.stringify(path)}) should be ${want}`);
+  }
 });
 
 // --- Reference PDF attachments (#384) -----------------------------------------

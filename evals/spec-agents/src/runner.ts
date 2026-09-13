@@ -84,6 +84,9 @@ function designArtifact(projectDir: string): string {
   const parts: string[] = [
     labeled("specs/design/design.cell"),
     labeled("specs/design/domain-model.md"),
+    // The security step's artifact: the judge cannot score a permission
+    // catalog, a grant set or a screen's `requires` handle it never sees.
+    labeled("specs/design/security.json"),
   ];
   for (const f of listFlows(projectDir)) {
     parts.push(labeled(`specs/design/flows/${f}`));

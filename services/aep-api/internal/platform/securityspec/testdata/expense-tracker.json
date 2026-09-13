@@ -1,0 +1,55 @@
+{
+  "version": 2,
+  "permissions": [
+    {
+      "resource": "claims",
+      "component": "expense-api",
+      "description": "Expense claims and their approval",
+      "actions": [
+        { "handle": "read", "ownership": "own", "description": "See own claims" },
+        { "handle": "read-all", "ownership": "any", "description": "See every claim" },
+        { "handle": "submit", "ownership": "own", "description": "Create and send a claim" },
+        { "handle": "approve", "ownership": "any", "description": "Approve a submitted claim" },
+        { "handle": "reject", "ownership": "any", "description": "Reject a submitted claim" }
+      ]
+    },
+    {
+      "resource": "reports",
+      "component": "expense-api",
+      "actions": [
+        { "handle": "read", "ownership": "any", "description": "Monthly totals" },
+        { "handle": "export", "ownership": "any", "description": "Download CSV" }
+      ]
+    }
+  ],
+  "groups": [
+    { "name": "Employees", "description": "Everyone on payroll" }
+  ],
+  "roles": [
+    {
+      "name": "Employee",
+      "description": "Submits and follows their own claims.",
+      "stories": [1, 2],
+      "grants": ["claims:read", "claims:submit"],
+      "assignTo": ["Employees"]
+    },
+    {
+      "name": "Approver",
+      "description": "Approves or rejects submitted claims and reads monthly reports.",
+      "stories": [3, 7],
+      "grants": ["claims:read", "claims:read-all", "claims:approve", "claims:reject", "reports:read"],
+      "assignTo": ["Finance"],
+      "assignableBy": ["Approver"]
+    }
+  ],
+  "screens": [
+    { "component": "expense-webapp", "screen": "My Claims", "requires": "claims:read" },
+    { "component": "expense-webapp", "screen": "Submit Claim", "requires": "claims:submit" },
+    { "component": "expense-webapp", "screen": "Approvals", "requires": "claims:approve" },
+    { "component": "expense-webapp", "screen": "Reports", "requires": "reports:read" }
+  ],
+  "testUsers": [
+    { "username": "test-employee", "roles": ["Employee"] },
+    { "username": "test-approver", "roles": ["Approver"] }
+  ]
+}
