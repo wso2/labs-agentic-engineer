@@ -57,7 +57,8 @@ your app's roles, and the platform will not grant it your app's scopes.
 
 `src/env.ts` (add the four `<DEP>_*` keys the SPA reads to the `react-webapp` shim) →
 `scripts/gen-scopes.mjs` wired into the build, so `src/scopes.gen.ts` exists →
-`src/auth.ts` → `src/authz-core.ts` + `src/authz.tsx` → `src/api-client.ts` → a
+`src/auth.ts` → `src/authz-core.ts` + `src/authz.tsx` → `src/api-client.ts` →
+**`src/api.ts` stripped of every authorization rule of its own** (§4) → a
 **`/callback` route** that calls `handleCallback()` once on mount → `src/screens.ts`
 and the route guards in `src/App.tsx`. Verify with the `react-webapp` build check.
 
@@ -76,7 +77,22 @@ real run.
 | `assets/auth.ts` | `src/auth.ts` | verbatim except the `USER_AUTH_` prefix, which becomes YOUR dependency's |
 | `assets/api-client.ts` | `src/api-client.ts` | verbatim |
 | `assets/screens.example.ts` | `src/screens.ts` | **pattern** — replace `COMPONENT` and `ROUTE_BY_KEY` with yours, keep the rest |
-| `assets/App.example.tsx` | `src/App.tsx` | **pattern** — replace `PAGE_BY_KEY` with your pages; the ROUTING STRUCTURE is prescribed |
+| `assets/App.example.tsx` | `src/App.tsx` | **pattern** — replace `PAGE_BY_KEY` *and* `APP_NAME` with yours; the ROUTING STRUCTURE is prescribed |
+
+An eighth file is not copied and is not optional: **`src/api.ts`, the per-service
+client you already have.** Whatever it carried about authorization comes OUT —
+the bearer it attached, any `WWW-Authenticate` read, and above all
+`if (res.status === 401) signIn()` — and it calls `api-client.ts`'s
+`authorizationHeader()` and `classifyResponse()` instead (§4 has the
+`openapi-fetch` middleware to paste). Two modules that both decide what a 401
+means is the same bug as one module deciding it wrong, and on an app that
+already exists this is the only edit the copy table cannot make for you.
+
+The two example files are written against the Expense Tracker — `COMPONENT`,
+`ROUTE_BY_KEY`, `PAGE_BY_KEY` and `APP_NAME` all name ITS screens. They are a
+shape to follow, not a fixture to ship: every one of those four is yours to
+replace. If your app already holds its name somewhere (the wireframes' `navbar`
+title, usually `src/appName.ts`), import it rather than declaring a second copy.
 
 ```bash
 mkdir -p scripts

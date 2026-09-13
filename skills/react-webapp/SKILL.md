@@ -218,7 +218,9 @@ per-component Docker build's context is this app's own folder alone.
 │   ├── default.conf      # copied from the skill assets, then /api locations kept
 │   └── 15-aep-api-proxy.sh
 ├── Dockerfile
-└── .dockerignore         # what `COPY . .` leaves behind
+├── .dockerignore         # what `COPY . .` leaves behind
+└── .gitignore            # `node_modules` and `dist` — both are made by a build
+                          #   and neither belongs in the project repo
 ```
 
 **Copy the nginx assets first, and never run a project generator** — `npm create
@@ -244,9 +246,19 @@ name, and do not delete the fallback — an unprotected sibling has no gateway
 address.
 
 **Done when:** `nginx/default.conf` contains `location /api/`,
-`proxy_pass http://$api_backend` and the `__API_CONTEXT__` rewrite; the drop-in
+`proxy_pass http://$api_backend`, the `__API_CONTEXT__` rewrite and **all five
+`proxy_set_header X-User-* ""` lines** — `X-User-Id`, `X-User-Name`,
+`X-User-Groups`, `X-User-Ou` and `X-User-Scopes`; the drop-in
 script's two `API_URL=` lines use that
 primary `<DEP>_URL`; there is no `/oidc/` location.
+
+**Count the five.** This proxy is a lane into the service that the API gateway
+does not sit on, and the service is required to believe those headers: a browser
+that sets `X-User-Scopes` on a call to this SPA's own `/api` would otherwise
+grant itself every permission in the catalog, and `X-User-Id` would let it pick
+whose rows to read. An app whose conf carries four of the five looks correct in
+every other respect and is a total authorization bypass — which is why the check
+is a count, not "it looks like the asset".
 
 Extra component-kind siblings: add one `location /api/<component-name>/` block
 each (same `proxy_pass` pattern, rewrite stripping that prefix) and a matching
@@ -357,6 +369,14 @@ dist
 
 `mock/` stays in the context: `vite.config.ts` imports `mock/plugin`, so the
 production build needs the directory on disk even though it ships none of it.
+
+`.gitignore` — beside it, with the **same two lines**, because the flow above
+runs `npm install` and `npm run build` in this folder and the project repo has no
+ignore rule of its own to catch what they leave. Without it `git add <app-path>`
+stages a whole `node_modules` and a `dist` that is stale the moment the design
+moves. Keep the patterns to these two and do not write an unanchored
+`generated/` — `src/generated/` is committed on purpose, and ignoring it is the
+`TS2307` failure in Pitfalls.
 
 **Done when:** Dockerfile COPYs the drop-in to `/docker-entrypoint.d/` and has
 no `ENTRYPOINT` line, and `.dockerignore` sits beside it.
