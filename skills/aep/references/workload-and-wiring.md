@@ -138,6 +138,25 @@ auth-terminating address — and the proxy prefers it over the direct
 `<DEP_NAME>_URL` (`react-webapp` owns that rule). Both are pod env vars, never
 `window._env_` keys.
 
+`<DEP_NAME>_GATEWAY_URL` is the gateway's **runtime Service** on `:22893` —
+`api-platform-<org>-<env>-gw-gateway-gateway-runtime.<org>-<env>.svc.cluster.local:22893`
+— **not the public vhost**. The runtime listener routes on any `Host`; the
+`:19080` LoadBalancer path routes strictly on the vhost, and nginx's own
+`resolver` does not read `/etc/hosts`, so a `hostAliases` entry for the vhost is
+invisible to it and every `/api` call answers `502`. Pass the injected value
+through unchanged and never substitute a hostname you resolved yourself.
+
+**A `web-application`'s own endpoint** lists `visibility: [project,
+external]`. `external` is the browser's lane — and it is also what materialises
+the component's public URL, which the platform patches into the `redirectUris`
+of an auth dependency that declares `consumer-url-env-config`. Without
+`external` there is no public URL, so the OAuth client is registered with no
+callback and sign-in fails at `/authorize`. `project` is the implicit
+same-project lane; write it anyway. A SPA never needs `internal` — nothing is
+routed to it through the API gateway. The **service it calls** is the other
+case, immediately below: all three of `project`, `internal`, `external`, and
+without `internal` every call through the SPA's `/api` proxy is a `503`.
+
 **Provider endpoint visibility:** a service a sibling SPA calls lists
 `visibility: [project, internal, external]`. Each item earns its place:
 
@@ -162,3 +181,30 @@ sibling projects and grants the gateway nothing.
 add `namespace` (`visibility: [external, namespace]`). This is the only way a
 service becomes an `org-service` target; the platform never edits your
 `workload.yaml`. Add `namespace` **only** when `orgPublished` is set.
+
+## A `thunder-app` dependency's outputs
+
+Every output of a bound `platform-resource` arrives as `<DEP>_<OUTPUT>`, both
+upper-cased — `user-auth` + `jwks_url` → `USER_AUTH_JWKS_URL`. You do not choose
+those names: copy the `envBindings` pairs out of `wiring` verbatim, as above.
+The `thunder-app` type emits **five**:
+
+| Output | `<DEP>_…` | What it is |
+|---|---|---|
+| `client_id` | `_CLIENT_ID` | the OAuth client registered for this app |
+| `issuer` | `_ISSUER` | who signs the token |
+| `jwks_url` | `_JWKS_URL` | where its keys are published |
+| `scopes` | `_SCOPES` | the space-separated set the SPA requests |
+| `resource` | `_RESOURCE` | the project's resource-server identifier |
+
+`<DEP>_RESOURCE` is `https://aep.wso2.com/orgs/<org>/projects/<project>` — the
+value the SPA sends as `resource` on sign-in (RFC 8707) and the audience the
+gateway pins on the way in. Omitting its `envBindings` pair leaves the SPA
+asking for a token with no audience, which the gateway rejects. It is
+platform-derived; never author or edit the value.
+
+The type also takes a `validityPeriod` parameter — the **access** token's
+lifetime in seconds, `86400` by default; the ID token keeps its own day
+regardless. Nothing in a `workload.yaml` sets it, and no generated app should
+assume a shorter one: a short value exists only so a fixture app can exercise
+the silent renew in minutes.

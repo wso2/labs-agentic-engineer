@@ -16,6 +16,13 @@
 #   - version:     v1.0
 #   - upstream:    http://<componentName>.<namespace>:<endpointName port>
 #   - operations:  All methods (GET, POST, PUT, PATCH, DELETE, OPTIONS) on /*
+#                  unless the caller passes an explicit `operations` list
+#
+# Per-operation authorization (scopes):
+#   An `operations[]` item may carry `policies[]` (a `jwt-auth` policy whose
+#   params name the scope the caller must hold) or `public: true`. Both are
+#   projected from the component's OpenAPI contract by aep-api
+#   (internal/projects/api_operations.go). See the DESIGN NOTE below.
 #
 # Policy configuration (per-environment via ReleaseBinding traitEnvironmentConfigs):
 #   - cors:       CORS headers (enabled by default with wildcard origins)
@@ -43,6 +50,122 @@
 #   3. Reference the trait in the Component's traits with endpointName parameter
 #   4. Configure policies per-environment in the ReleaseBinding's traitEnvironmentConfigs
 #   See component.yaml and release-binding for complete usage examples.
+#
+# ───────────────────────────────────────────────────────────────────────────
+# DESIGN NOTE — per-operation scopes (measured, not assumed)
+# ───────────────────────────────────────────────────────────────────────────
+# Every claim below was measured against a running gateway, not read off a
+# document. The stack it holds for, and the command that re-reads each version
+# from any cluster (org `default`, environment `default` below):
+#
+#   gateway chart     gateway-1.2.2 (appVersion 1.2.0)
+#     helm list -n default-default
+#   gateway images    ghcr.io/wso2/api-platform/gateway-controller:1.2.1
+#                     ghcr.io/wso2/api-platform/gateway-runtime:1.2.1
+#     kubectl -n default-default get pods \
+#       -o jsonpath='{range .items[*]}{.spec.containers[*].image}{"\n"}{end}'
+#   gateway-operator  gateway-operator-0.11.0 (appVersion 0.10.1)
+#     helm list -n openchoreo-data-plane
+#   jwt-auth policy   v1.3.0
+#     kubectl -n default-default exec <gateway-controller-pod> -- ls default-policies
+#   RestApi CRD       v1 served + storage; v1alpha1 served, not storage
+#     kubectl get crd restapis.gateway.api-platform.wso2.com \
+#       -o jsonpath='{range .spec.versions[*]}{.name}{" storage="}{.storage}{"\n"}{end}'
+#
+# Re-measure before trusting any of it on a different stack.
+#
+# 1. Scopes are compared as WHOLE STRINGS. `claims:read-all` does NOT imply
+#    `claims:read`; there is no prefix, hierarchy or wildcard matching
+#    anywhere in the gateway. An operation that both a `read` holder and a
+#    `read-all` holder may call must list both handles in `anyOf`.
+#
+# 2. `scopes.anyOf` is a UNION (hold at least one), `scopes.allOf` an
+#    INTERSECTION (hold every one); when both are given they are AND-ed. The
+#    projection emits exactly one handle in `anyOf` for a normal operation —
+#    `allOf` exists here because the policy supports it, not because anything
+#    renders it today. The deprecated `requiredScopes` param is never emitted;
+#    it is ignored whenever `scopes` is set.
+#
+# 3. OIDC scopes are NEVER emitted as a required scope. Thunder puts
+#    `openid profile email group ou` in the ACCESS token, so
+#    `scopes.anyOf: [openid]` admits every signed-in user in the org — which
+#    is the correct expression of "signed in, no particular permission", and
+#    a silent wide-open failure if it is emitted by accident. This trait
+#    expresses that class differently and more safely: a `jwt-auth` policy
+#    with NO `scopes` param at all (issuer + audience still enforced).
+#
+# 4. Group gating is deliberately NOT used. The policy can do it —
+#    `claims.allOf: [{claim: groups, values: [...]}]` was measured working and
+#    matches the token's multi-valued `groups` claim — and this trait's schema
+#    still does not expose it. There is ONE authorization authority for a
+#    generated app: the scope. The roles → groups indirection belongs in the
+#    identity directory, where a role's permission set is assembled; a second
+#    copy of it at the gateway would be a second source of truth that nothing
+#    keeps in sync. The schema omits `claims` so the decision cannot be
+#    quietly reversed by a hand-edited ReleaseBinding.
+#
+# 5. An OPTIONS operation must be SYNTHESISED for every path. Routing happens
+#    before policy: an undeclared method+path pair is a 404 before the CORS
+#    policy ever runs, so a browser's preflight dies and every cross-origin
+#    call with it. An OpenAPI contract never declares OPTIONS, so the
+#    projection adds the row. Once declared, the preflight short-circuits
+#    BEFORE jwt-auth (204, no token required) even when that OPTIONS operation
+#    carries jwt-auth itself — so the OPTIONS row may safely carry the same
+#    policy as its siblings, and does not need `public: true`.
+#
+# 6. ONE INVALID OPERATION UNSERVES THE WHOLE RestApi. A single rejected
+#    parameter leaves the CR `Programmed=False`, and then *every* path on that
+#    API answers 404 — including policy-free siblings — which is byte-identical
+#    to "this API was never deployed". The renderer must therefore refuse to
+#    emit a shape it cannot vouch for rather than emit it and hope. In
+#    particular `onFailureStatusCode` is REJECTED at admission in
+#    `spec.policies[].params` and in `spec.operations[].policies[].params`
+#    (it is a cluster-wide gateway ConfigMap setting only), so it is never
+#    emitted here and no operation can be made to answer 403: the gateway
+#    answers 401 with a byte-identical body for no token, bad token, wrong
+#    issuer, wrong audience AND missing scope, and never sends
+#    `WWW-Authenticate`. 403 + `insufficient_scope` exists only in the
+#    service's own middleware, behind the gateway.
+#
+# 7. AN APPLIED EDIT IS NOT LIVE WHEN `kubectl apply` RETURNS. The previous
+#    generation keeps serving (~90 s observed while the gateway pods
+#    restarted). Anything that edits an API and then asserts must poll for
+#    `status.conditions[Programmed].status == True` AND
+#    `status.observedGeneration == metadata.generation`, then allow a few
+#    seconds more. `deployments/scripts/verify-scopes.sh` does exactly this.
+#
+# 8. Audience is pinned PER OPERATION, not per API, so one component may mix
+#    operations pinned to its project resource server with operations pinned
+#    to another audience. The per-operation `params.audiences` overrides the
+#    environment's `jwtAuth.audience`; an empty list inherits it.
+#
+# 9. API-level vs per-operation jwt-auth. Per-operation policies ADD TO the
+#    API-level ones, they do not replace them — so an API-level `jwt-auth`
+#    would still demand a token on an operation marked `public`. This trait
+#    therefore suppresses the API-level `jwt-auth` as soon as ANY operation
+#    declares `public: true` or a non-empty `policies` list: those operations
+#    own their authentication. Components with neither (the `/*` default)
+#    keep exactly today's behaviour — one API-level `jwt-auth` governed by
+#    `jwtAuth.enabled`. Note the asymmetry, which is deliberate: a declared
+#    per-operation policy is emitted even when `jwtAuth.enabled` is false
+#    (fail closed — the component's contract says that operation needs a
+#    scope), while `jwtAuth.enabled: false` still opens a `/*`-default
+#    component.
+#
+#    PRECEDENCE, for the same reason: an operation carrying BOTH `public: true`
+#    and a non-empty `policies` list keeps its policies. `public` is read only
+#    where no policy is declared. The projection never emits both — but a
+#    hand-edited ReleaseBinding or Component can, and the other order made that
+#    row unauthenticated twice over: it dropped the operation's own jwt-auth
+#    AND suppressed the API-level one.
+#
+# A public operation is a TWO-WAY PASS-THROUGH: the gateway neither injects
+# nor strips there, so a caller's forged `x-user-*` AND a real `Authorization`
+# both reach the handler untouched. A public handler must read no identity
+# header. On a protected operation the gateway overwrites every mapped
+# `x-user-*` header (setting it to the EMPTY STRING when the claim is absent),
+# strips the inbound `Authorization` and re-presents the token as
+# `x-forwarded-authorization`.
 
 ---
 apiVersion: openchoreo.dev/v1alpha1
@@ -88,20 +211,32 @@ spec:
         # Validates JWT access tokens in API requests.
         # System-level key manager configuration is set in the gateway-configuration ConfigMap
         # (`jwtauth_v1` block). The trait emits `jwt-auth v1` so each RestApi
-        # can pin which issuers + audiences it trusts, fixing the C5
-        # multi-IDP footgun (without this filter every RestApi accepts
-        # tokens from every keymanager registered cluster-wide).
+        # can pin which issuers + audiences it trusts: without that filter a
+        # RestApi accepts tokens from EVERY keymanager registered cluster-wide,
+        # so any other tenant's identity provider can mint a token this API
+        # honours.
         #
-        # Per Phase 6 of docs/design/api-platform-integration.md:
         #   - `issuers`  : list of OIDC issuer URLs this API trusts.
-        #                  Empty → fall back to v0 semantics (accept any
-        #                  cluster-configured keymanager). Phase 7 fills
-        #                  this with the org's IDP profile issuer.
+        #                  Empty → accept any cluster-configured keymanager.
+        #                  aep-api fills this with the org's IDP issuer.
         #   - `audience` : list of accepted `aud` claim values. Empty
-        #                  ⇒ skip the audience check. Thunder hardcodes
-        #                  aud="application" (C8), so the discriminator
-        #                  is `client_id` instead and this field stays
-        #                  empty for Thunder-backed components.
+        #                  ⇒ skip the audience check. For a component whose
+        #                  project has a resource server this carries that
+        #                  RS identifier, which is what pins a token minted
+        #                  for THIS project (a token minted for any other
+        #                  resource server, including the platform's own,
+        #                  is then rejected with the same opaque 401).
+        #                  It is the default for every operation; an
+        #                  operation may override it in its own
+        #                  `policies[].params.audiences`.
+        #
+        # `claimMappings` is not configurable: the five mappings the trait
+        # emits (`sub`, `username`, `ouHandle`, `groups`, `scope`) are the
+        # contract the generated services and the `api-management` skill are
+        # written against. `scope → x-user-scopes` is the authorization
+        # authority: the RAW space-separated scope claim, OIDC scopes
+        # included, so a reader must split on space and compare exact
+        # handles — "holds some scope" is never "is authorized".
         JwtAuthConfig:
           type: object
           properties:
@@ -191,6 +326,15 @@ spec:
         # Must match an endpoint key defined in the Workload spec.
         endpointName:
           type: string
+        # The API's operation table, projected from the component's OpenAPI
+        # contract by aep-api (internal/projects/api_operations.go). The
+        # default below — six methods on `/*` — is what a component with no
+        # sign-in dependency keeps, and is exactly the pre-scopes behaviour.
+        #
+        # Parameters are PRUNED against this schema before the template runs:
+        # a key that is not declared here is dropped silently and never
+        # reaches the RestApi. Anything the renderer needs to emit must be
+        # added here first.
         operations:
           type: array
           default:
@@ -211,8 +355,86 @@ spec:
             properties:
               method:
                 type: string
+                description: "HTTP method, uppercase. Synthesise an OPTIONS row per path (design note 5)."
               path:
                 type: string
+                description: "Route path with optional {param} placeholders, relative to the API context."
+              public:
+                type: boolean
+                default: false
+                description: >-
+                  No authentication on this operation. Suppresses jwt-auth here
+                  AND, because per-operation policies only ADD to API-level
+                  ones, suppresses the API-level jwt-auth for the whole API
+                  (design note 9). The gateway is then a two-way pass-through
+                  on this operation: a caller's forged `x-user-*` and a real
+                  `Authorization` both reach the handler, so a public handler
+                  must read no identity header. Read only when the operation
+                  declares no `policies`: a row carrying both keeps its
+                  policies (design note 9, PRECEDENCE).
+              policies:
+                type: array
+                default: []
+                description: >-
+                  Policies applied to this operation only. Declaring any
+                  suppresses the API-level jwt-auth for the whole API. The
+                  environment supplies `issuers`, `audiences` and the fixed
+                  `claimMappings`; the operation supplies the scope.
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                      default: "jwt-auth"
+                      enum: ["jwt-auth"]
+                      description: >-
+                        Policy name. `jwt-auth` is the only one this trait can
+                        emit, and the enum is what keeps it that way: the
+                        composition below puts jwt-auth's params (issuers,
+                        audiences, claimMappings, scopes) on WHATEVER name is
+                        given, so an unrecognised name would be rendered as a
+                        policy the RestApi CRD rejects — and one rejected
+                        operation leaves every path on the API unserved
+                        (design note 6).
+                    version:
+                      type: string
+                      default: "v1"
+                      description: >-
+                        Policy version as the RestApi CRD spells it — `v<major>`,
+                        pattern ^v\d+$. The jwt-auth POLICY's own semantic version
+                        is 1.3.0; the field here still reads `v1`.
+                    params:
+                      type: object
+                      default: {}
+                      properties:
+                        scopes:
+                          type: object
+                          default: {}
+                          description: >-
+                            Omitted from the rendered policy when both lists are
+                            empty, which is how "signed in, no particular
+                            permission" is expressed (design note 3).
+                          properties:
+                            anyOf:
+                              type: array
+                              items:
+                                type: string
+                              default: []
+                              description: "Caller must hold at least one. Exactly one handle in the normal case."
+                            allOf:
+                              type: array
+                              items:
+                                type: string
+                              default: []
+                              description: "Caller must hold every one. Not rendered by anything today."
+                        audiences:
+                          type: array
+                          items:
+                            type: string
+                          default: []
+                          description: >-
+                            Per-operation audience override. Empty inherits the
+                            environment's `jwtAuth.audience` (design note 8).
         upstreamPort:
           type: integer
           default: 0
@@ -265,7 +487,12 @@ spec:
     # Service using the endpoint port. Policies are conditionally included based
     # on the enabled flags in the environmentConfigs.
     - template:
-        apiVersion: gateway.api-platform.wso2.com/v1alpha1
+        # v1, not v1alpha1: `kubectl get crd restapis.gateway.api-platform.wso2.com
+        # -o jsonpath='{range .spec.versions[*]}{.name} served={.served} storage={.storage}{"\n"}{end}'`
+        # reports v1 served+storage and v1alpha1 served-but-not-storage, so an
+        # object written as v1alpha1 is converted on every read and is the one
+        # that goes away when the alpha version is dropped.
+        apiVersion: gateway.api-platform.wso2.com/v1
         kind: RestApi
         metadata:
           name: ${metadata.name}-${parameters.endpointName}
@@ -290,12 +517,61 @@ spec:
           upstream:
             main:
               url: "http://${metadata.componentName}.${metadata.namespace}:${parameters.upstreamPort > 0 ? parameters.upstreamPort : workload.endpoints[parameters.endpointName].port}${parameters.upstreamBasePath}"
+          # API-level policies. The `jwt-auth` entry is the WHOLE-API
+          # authentication of a component that declares no per-operation
+          # policies and no public operation — today's behaviour, unchanged.
+          # As soon as ANY operation declares `public: true` or a non-empty
+          # `policies` list, this entry is suppressed: per-operation policies
+          # add to API-level ones rather than replacing them, so leaving it in
+          # would make every "public" operation demand a token anyway
+          # (design note 9).
           policies: >-
             ${(environmentConfigs.cors.enabled ? [{"name": "cors", "version": "v1", "params": {"allowedOrigins": environmentConfigs.cors.allowedOrigins, "allowedMethods": environmentConfigs.cors.allowedMethods, "allowedHeaders": environmentConfigs.cors.allowedHeaders, "allowCredentials": environmentConfigs.cors.allowCredentials}}] : [])
-              + (environmentConfigs.jwtAuth.enabled ? [{"name": "jwt-auth", "version": "v1", "params": {"issuers": environmentConfigs.jwtAuth.issuers, "audiences": environmentConfigs.jwtAuth.audience, "claimMappings": {"sub": "x-user-id", "username": "x-user-name", "ouHandle": "x-user-ou", "groups": "x-user-groups"}}}] : [])
+              + ((environmentConfigs.jwtAuth.enabled && !parameters.operations.exists(op, (has(op.policies) && op.policies.size() > 0) || (has(op.public) && op.public)))
+                  ? [{"name": "jwt-auth", "version": "v1", "params": {"issuers": environmentConfigs.jwtAuth.issuers, "audiences": environmentConfigs.jwtAuth.audience, "claimMappings": {"sub": "x-user-id", "username": "x-user-name", "ouHandle": "x-user-ou", "groups": "x-user-groups", "scope": "x-user-scopes"}}}] : [])
               + (environmentConfigs.rateLimit.enabled ? [{"name": "basic-ratelimit", "version": "v1", "params": {"limits": environmentConfigs.rateLimit.limits}}] : [])
               + (environmentConfigs.addHeaders.enabled ? [{"name": "add-headers", "version": "v1", "params": {"requestHeaders": environmentConfigs.addHeaders.requestHeaders, "responseHeaders": environmentConfigs.addHeaders.responseHeaders}}] : [])}
-          operations: ${parameters.operations}
+          # Operations. `method` and `path` pass through; the per-operation
+          # policy list is COMPOSED here rather than passed through, because
+          # the scope is a property of the component's contract (a trait
+          # parameter, one value for every environment) while the issuers and
+          # the audience are properties of the environment (the ReleaseBinding's
+          # traitEnvironmentConfigs, a different value per environment). The
+          # operation names the scope; the environment names whose tokens count.
+          #
+          # A non-empty `policies` list is composed FIRST, so `public: true`
+          # can only ever be read on an operation that declares no policy of
+          # its own (design note 9, PRECEDENCE).
+          #
+          # `oc_omit()` drops a key entirely: `policies` on a public or
+          # policy-free operation, and `scopes` (or either of its lists) when
+          # empty — an empty `scopes` object is not the same request as no
+          # scope requirement, and `onFailureStatusCode` is never emitted at
+          # all because the gateway rejects it (design note 6).
+          operations: >-
+            ${parameters.operations.map(op, {
+              "method": op.method,
+              "path": op.path,
+              "policies": has(op.policies) && op.policies.size() > 0
+                ? op.policies.map(p, {
+                    "name": has(p.name) && p.name != "" ? p.name : "jwt-auth",
+                    "version": has(p.version) && p.version != "" ? p.version : "v1",
+                    "params": {
+                      "issuers": environmentConfigs.jwtAuth.issuers,
+                      "audiences": has(p.params) && has(p.params.audiences) && p.params.audiences.size() > 0
+                        ? p.params.audiences : environmentConfigs.jwtAuth.audience,
+                      "claimMappings": {"sub": "x-user-id", "username": "x-user-name", "ouHandle": "x-user-ou", "groups": "x-user-groups", "scope": "x-user-scopes"},
+                      "scopes": has(p.params) && has(p.params.scopes)
+                          && ((has(p.params.scopes.anyOf) && p.params.scopes.anyOf.size() > 0) || (has(p.params.scopes.allOf) && p.params.scopes.allOf.size() > 0))
+                        ? {
+                            "anyOf": has(p.params.scopes.anyOf) && p.params.scopes.anyOf.size() > 0 ? p.params.scopes.anyOf : oc_omit(),
+                            "allOf": has(p.params.scopes.allOf) && p.params.scopes.allOf.size() > 0 ? p.params.scopes.allOf : oc_omit()
+                          }
+                        : oc_omit()
+                    }
+                  })
+                : oc_omit()
+            })}
 
   patches:
     # --- Patch HTTPRoute: Replace backendRef with WSO2 router Backend ---

@@ -171,9 +171,22 @@ test("scheme_wrong_type: the scheme must be type oauth2", () => {
 test("missing_document_security: the document default is `security: [{oauth2: []}]`", () => {
   const noDefault = mutate(P6_SPEC, "\nsecurity:\n  - oauth2: []\n", "\n");
   const problem = gate(noDefault);
-  assert.match(problem!.message, /no document-level default/);
+  assert.match(problem!.message, /not the document-level default/);
   // The literal brace pair the model must write survives the slot formatter.
   assert.match(problem!.message, /security: \[\{oauth2: \[\]\}\]/);
+});
+
+// A default that NAMES a scope reads as "every operation needs this
+// permission", but nothing enforces that: an operation with no `security` block
+// of its own is projected onto the gateway as plain signed-in, so the scope is
+// silently dropped and the operation ships open to any signed-in caller. The
+// only default that says what is enforced is the empty one.
+test("missing_document_security: a default naming a scope is refused", () => {
+  const scoped = mutate(P6_SPEC, "\nsecurity:\n  - oauth2: []\n", "\nsecurity:\n  - oauth2: [claims:read]\n");
+  const problem = gate(scoped);
+  assert.equal(problem?.code, "INVALID_OPENAPI");
+  assert.match(problem!.message, /not the document-level default/);
+  assert.match(problem!.message, /EMPTY scope list/);
 });
 
 // -------------------------------------------------------------------------
