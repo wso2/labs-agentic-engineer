@@ -22,6 +22,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/organization/disconnectgithub"
 	"github.com/wso2/aep/aep-api/internal/organization/discoveridp"
 	"github.com/wso2/aep/aep-api/internal/organization/getconfig"
+	"github.com/wso2/aep/aep-api/internal/organization/getconfigstatus"
 	"github.com/wso2/aep/aep-api/internal/organization/listorgs"
 	"github.com/wso2/aep/aep-api/internal/organization/patchconfig"
 	"github.com/wso2/aep/aep-api/internal/organization/rotateidp"
@@ -31,6 +32,7 @@ import (
 // "Handler redeclared". Local aliases give distinct field names (§6).
 type (
 	getconfigHandler        = getconfig.Handler
+	getconfigstatusHandler  = getconfigstatus.Handler
 	patchconfigHandler      = patchconfig.Handler
 	connectgithubHandler    = connectgithub.Handler
 	disconnectgithubHandler = disconnectgithub.Handler
@@ -43,6 +45,7 @@ type (
 // each operation exactly once into the edge's composite. It declares nothing.
 type Handlers struct {
 	*getconfigHandler
+	*getconfigstatusHandler
 	*patchconfigHandler
 	*connectgithubHandler
 	*disconnectgithubHandler
@@ -61,6 +64,7 @@ type Handlers struct {
 func New(d organization.Deps) (*Handlers, error) {
 	return &Handlers{
 		getconfigHandler:        getconfig.New(d.Config),
+		getconfigstatusHandler:  getconfigstatus.New(d.Config),
 		patchconfigHandler:      patchconfig.New(d.Config),
 		connectgithubHandler:    connectgithub.New(d.Config),
 		disconnectgithubHandler: disconnectgithub.New(d.Config),

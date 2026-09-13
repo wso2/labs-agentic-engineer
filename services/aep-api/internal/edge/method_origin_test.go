@@ -93,6 +93,7 @@ var opOwner = map[string]string{
 	"GetComponentConfig":            embedProjects,
 	"GetComponentOpenapi":           embedProjects,
 	"GetConfig":                     embedOrganization,
+	"GetConfigStatus":               embedOrganization,
 	"GetConversation":               embedSpec,
 	"GetDependencyStatus":           embedDependencies,
 	"GetProjectDependencyReadiness": embedDependencies,

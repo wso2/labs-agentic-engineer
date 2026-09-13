@@ -91,6 +91,11 @@ const STATUS_META = {
 
 export function SkillsSection() {
   const hasSkillView = useHasPermission("ae:skill-view");
+  const hasSkillConfig = useHasPermission("ae:skill-config");
+  // Either permission gets you onto the page — ae:skill-config is a superset
+  // of what ae:skill-view grants, never less, so a config-only holder (no
+  // separate view grant) must not be locked out of their own mutating page.
+  const canViewSkills = hasSkillView || hasSkillConfig;
   const {
     data: config,
     isLoading: configLoading,
@@ -98,9 +103,11 @@ export function SkillsSection() {
     error: configError,
     refetch: refetchConfig,
   } = useConfig();
-  const { data, isLoading, isError, error, refetch } = useSkills(hasSkillView);
-  const { data: updates } = useSkillUpdates();
-  const hasSkillConfig = useHasPermission("ae:skill-config");
+  const { data, isLoading, isError, error, refetch } = useSkills(canViewSkills);
+  // Update badges are config-gated on the BFF (see queries.ts) — a view-only
+  // caller would always 403, so withhold the request rather than surface it
+  // as noise on a page they otherwise fully see.
+  const { data: updates } = useSkillUpdates(hasSkillConfig);
 
   const [importOpen, setImportOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -113,11 +120,11 @@ export function SkillsSection() {
   const syncSkills = useSyncSkills();
   const setSkillEnabled = useSetSkillEnabled();
 
-  // Checked before the config/skills loading states below: without
-  // ae:skill-view there is nothing here to load — the skills query itself
-  // never fires (useSkills(hasSkillView)), so falling through would just
-  // hang on an eternal loading spinner.
-  if (!hasSkillView) {
+  // Checked before the config/skills loading states below: without either
+  // permission there is nothing here to load — the skills query itself never
+  // fires (useSkills(canViewSkills)), so falling through would just hang on
+  // an eternal loading spinner.
+  if (!canViewSkills) {
     return (
       <Alert severity="warning">
         You don't have permission to view skills.

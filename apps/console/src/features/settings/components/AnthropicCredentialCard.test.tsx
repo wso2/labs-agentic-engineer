@@ -27,10 +27,14 @@ import { AnthropicCredentialCard } from "./AnthropicCredentialCard";
 type LLMProjection = components["schemas"]["LLMProjection"];
 
 // Every existing test in this file assumes the card is otherwise operable —
-// only the dedicated "no permission" test below flips this to false.
+// only the dedicated "no permission" tests below flip this to false.
 const modelConfigPermission = vi.hoisted(() => ({ current: true }));
 vi.mock("../../../auth/permissions", () => ({
   useHasPermission: () => modelConfigPermission.current,
+}));
+
+vi.mock("../../../components/NoPermissionIllustration", () => ({
+  NoPermissionIllustration: () => <svg data-testid="no-permission-illustration" />,
 }));
 
 vi.mock("../api/queries", () => ({
@@ -70,28 +74,44 @@ describe("AnthropicCredentialCard — permission gate", () => {
     expect(screen.getByRole("button", { name: "Connect" })).toBeDisabled(); // empty input, not permission
   });
 
-  it("disables the key field, reveal toggle, and connect/disconnect actions without ae:model-config", () => {
+  // Without ae:model-config, nothing about the key — connected or not — is
+  // shown at all, not merely disabled: the form, the key prefix/dates, and
+  // the connect/disconnect actions (and the nested CodingAgentKeySection)
+  // are all absent.
+  it("shows no Anthropic info at all without ae:model-config, connected", () => {
     modelConfigPermission.current = false;
     renderCard(connectedLlm);
 
-    expect(screen.getByLabelText("Replace API key")).toBeDisabled();
-    expect(screen.getByLabelText("show key")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Replace key" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Disconnect" })).toBeDisabled();
+    expect(screen.queryByLabelText("Replace API key")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Replace key" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Disconnect" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/sk-ant-api03-ABC/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Coding agent key")).not.toBeInTheDocument();
   });
 
-  it("shows no permission banner when the user holds ae:model-config", () => {
-    renderCard(connectedLlm);
-    expect(
-      screen.queryByText("You don't have permission to change these settings."),
-    ).not.toBeInTheDocument();
+  it("shows no Anthropic info at all without ae:model-config, not connected", () => {
+    modelConfigPermission.current = false;
+    renderCard(null);
+
+    expect(screen.queryByLabelText("API key")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect" })).not.toBeInTheDocument();
   });
 
-  it("shows a permission banner when the user lacks ae:model-config", () => {
+  it("shows the no-permission illustration and message instead", () => {
     modelConfigPermission.current = false;
     renderCard(connectedLlm);
+
+    expect(screen.getByTestId("no-permission-illustration")).toBeInTheDocument();
     expect(
-      screen.getByText("You don't have permission to change these settings."),
+      screen.getByText("You don't have permission to view Anthropic settings."),
     ).toBeInTheDocument();
+  });
+
+  it("still shows the Anthropic header even when denied", () => {
+    modelConfigPermission.current = false;
+    renderCard(connectedLlm);
+    expect(screen.getByText("Anthropic")).toBeInTheDocument();
+    expect(screen.queryByText("connected")).not.toBeInTheDocument();
+    expect(screen.queryByText("not connected")).not.toBeInTheDocument();
   });
 });

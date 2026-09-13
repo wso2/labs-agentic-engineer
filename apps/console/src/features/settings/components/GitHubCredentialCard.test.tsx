@@ -27,10 +27,14 @@ import { GitHubCredentialCard } from "./GitHubCredentialCard";
 type GitProviderProjection = components["schemas"]["GitProviderProjection"];
 
 // Every existing test in this file assumes the card is otherwise operable —
-// only the dedicated "no permission" test below flips this to false.
+// only the dedicated "no permission" tests below flip this to false.
 const gitHubConfigPermission = vi.hoisted(() => ({ current: true }));
 vi.mock("../../../auth/permissions", () => ({
   useHasPermission: () => gitHubConfigPermission.current,
+}));
+
+vi.mock("../../../components/NoPermissionIllustration", () => ({
+  NoPermissionIllustration: () => <svg data-testid="no-permission-illustration" />,
 }));
 
 vi.mock("../api/queries", () => ({
@@ -74,29 +78,46 @@ describe("GitHubCredentialCard — permission gate", () => {
     expect(screen.getByLabelText("show token")).toBeEnabled();
   });
 
-  it("disables the token/org fields, reveal toggle, and connect/disconnect actions without ae:github-config", () => {
+  // Without ae:github-config, nothing about the connection — connected or
+  // not — is shown at all, not merely disabled: the form, the org/identity
+  // info, and the connect/disconnect actions are all absent.
+  it("shows no GitHub info at all without ae:github-config, connected", () => {
     gitHubConfigPermission.current = false;
     renderCard(connectedProvider);
 
-    expect(screen.getByLabelText("Replace personal access token")).toBeDisabled();
-    expect(screen.getByLabelText(/GitHub organization name/)).toBeDisabled();
-    expect(screen.getByLabelText("show token")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Replace token" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Disconnect" })).toBeDisabled();
+    expect(screen.queryByLabelText(/personal access token/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/GitHub organization name/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Replace token" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Disconnect" })).not.toBeInTheDocument();
+    expect(screen.queryByText("acme-dev")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Connected as/)).not.toBeInTheDocument();
   });
 
-  it("shows no permission banner when the user holds ae:github-config", () => {
-    renderCard(connectedProvider);
-    expect(
-      screen.queryByText("You don't have permission to change these settings."),
-    ).not.toBeInTheDocument();
+  it("shows no GitHub info at all without ae:github-config, not connected", () => {
+    gitHubConfigPermission.current = false;
+    renderCard(null);
+
+    expect(screen.queryByLabelText("Personal access token")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect" })).not.toBeInTheDocument();
   });
 
-  it("shows a permission banner when the user lacks ae:github-config", () => {
+  it("shows the no-permission illustration and message instead", () => {
     gitHubConfigPermission.current = false;
     renderCard(connectedProvider);
+
+    expect(screen.getByTestId("no-permission-illustration")).toBeInTheDocument();
     expect(
-      screen.getByText("You don't have permission to change these settings."),
+      screen.getByText("You don't have permission to view GitHub settings."),
     ).toBeInTheDocument();
+  });
+
+  it("still shows the GitHub header even when denied", () => {
+    gitHubConfigPermission.current = false;
+    renderCard(connectedProvider);
+    expect(screen.getByText("GitHub")).toBeInTheDocument();
+    // The status chip reveals whether GitHub is connected — itself
+    // information a denied caller should not see.
+    expect(screen.queryByText("connected")).not.toBeInTheDocument();
+    expect(screen.queryByText("not connected")).not.toBeInTheDocument();
   });
 });

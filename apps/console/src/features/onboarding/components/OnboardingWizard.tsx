@@ -31,29 +31,30 @@ import { GitHubStep } from "./GitHubStep";
 import { AnthropicStep } from "./AnthropicStep";
 import { RepositorySetupStep } from "./RepositorySetupStep";
 
-type ConfigProjection = components["schemas"]["ConfigProjection"];
+type ConfigStatus = components["schemas"]["ConfigStatus"];
 
 const STEPS = ["Connect GitHub", "Connect Anthropic", "Set up repository"];
 
 // The active step derives from server state, not local navigation: each
-// successful PATCH /config updates the query cache and the wizard advances.
-// A partially-configured org therefore resumes at its first incomplete step
-// (issue #102 decisions comment).
-function activeStep(config: ConfigProjection): number {
-  if (config.gitProvider === null) return 0;
-  if (config.llm === null) return 1;
+// successful PATCH /config invalidates GET /config/status (see queries.ts)
+// and the wizard advances. A partially-configured org therefore resumes at
+// its first incomplete step (issue #102 decisions comment). Exported for
+// direct unit testing (OnboardingWizard.test.tsx) without rendering.
+export function activeStep(status: ConfigStatus): number {
+  if (!status.gitProviderConnected) return 0;
+  if (!status.llmConnected) return 1;
   return 2;
 }
 
 export function OnboardingWizard({
-  config,
+  status,
   onComplete,
 }: {
-  config: ConfigProjection;
+  status: ConfigStatus;
   onComplete: () => void;
 }) {
   const { user, signOut } = useSession();
-  const step = activeStep(config);
+  const step = activeStep(status);
 
   return (
     <Box

@@ -34,19 +34,14 @@ import {
   Radio,
   RadioGroup,
   TextField,
-  Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
 import { Eye, EyeOff } from "@wso2/oxygen-ui-icons-react";
-import { useHasPermission } from "../../../auth/permissions";
 import type { components } from "../../../generated/aep-api";
 import {
   useConnectCodingAnthropic,
   useRemoveCodingAnthropic,
 } from "../api/queries";
-
-const NO_PERMISSION_TOOLTIP =
-  "You don't have permission to configure the coding agent's key.";
 
 type LLMProjection = components["schemas"]["LLMProjection"];
 
@@ -62,6 +57,11 @@ type LLMProjection = components["schemas"]["LLMProjection"];
  * through a confirm, because although nothing breaks (coding runs simply fall
  * back to the key above), the key itself cannot be read back and would have to
  * be re-fetched from Anthropic.
+ *
+ * No ae:model-config check of its own: AnthropicCredentialCard, the only
+ * mount point, already returns its own no-permission state before this ever
+ * renders — so a permission check here would be unreachable dead code, not
+ * defense in depth.
  */
 export function CodingAgentKeySection({
   codingLlm,
@@ -69,7 +69,6 @@ export function CodingAgentKeySection({
   codingLlm: LLMProjection | null;
 }) {
   const hasKey = codingLlm !== null;
-  const hasModelConfig = useHasPermission("ae:model-config");
   const [wantsSeparate, setWantsSeparate] = useState(hasKey);
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
@@ -120,27 +119,13 @@ export function CodingAgentKeySection({
         above either way.
       </Typography>
 
-      <Tooltip title={hasModelConfig ? "" : NO_PERMISSION_TOOLTIP}>
-        <span>
-          <RadioGroup
-            value={wantsSeparate ? "separate" : "reuse"}
-            onChange={(e) => chooseMode(e.target.value)}
-          >
-            <FormControlLabel
-              value="reuse"
-              control={<Radio />}
-              label="Reuse the key above"
-              disabled={!hasModelConfig}
-            />
-            <FormControlLabel
-              value="separate"
-              control={<Radio />}
-              label="Use a separate key"
-              disabled={!hasModelConfig}
-            />
-          </RadioGroup>
-        </span>
-      </Tooltip>
+      <RadioGroup
+        value={wantsSeparate ? "separate" : "reuse"}
+        onChange={(e) => chooseMode(e.target.value)}
+      >
+        <FormControlLabel value="reuse" control={<Radio />} label="Reuse the key above" />
+        <FormControlLabel value="separate" control={<Radio />} label="Use a separate key" />
+      </RadioGroup>
 
       {wantsSeparate && (
         <Box sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 2 }}>
@@ -178,7 +163,6 @@ export function CodingAgentKeySection({
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             fullWidth
-            disabled={!hasModelConfig}
             slotProps={{
               input: {
                 endAdornment: (
@@ -202,22 +186,14 @@ export function CodingAgentKeySection({
 
           {save.isError && <Alert severity="error">{save.error.message}</Alert>}
 
-          <Tooltip title={hasModelConfig ? "" : NO_PERMISSION_TOOLTIP}>
-            <span>
-              <Button
-                variant="contained"
-                onClick={submit}
-                disabled={!apiKey || save.isPending || !hasModelConfig}
-                sx={{ alignSelf: "flex-start" }}
-              >
-                {save.isPending
-                  ? "Validating…"
-                  : codingLlm
-                    ? "Replace key"
-                    : "Save key"}
-              </Button>
-            </span>
-          </Tooltip>
+          <Button
+            variant="contained"
+            onClick={submit}
+            disabled={!apiKey || save.isPending}
+            sx={{ alignSelf: "flex-start" }}
+          >
+            {save.isPending ? "Validating…" : codingLlm ? "Replace key" : "Save key"}
+          </Button>
         </Box>
       )}
 
@@ -242,18 +218,14 @@ export function CodingAgentKeySection({
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setRemoveOpen(false)}>Cancel</Button>
-          <Tooltip title={hasModelConfig ? "" : NO_PERMISSION_TOOLTIP}>
-            <span>
-              <Button
-                color="error"
-                variant="contained"
-                onClick={confirmRemove}
-                disabled={remove.isPending || !hasModelConfig}
-              >
-                Remove
-              </Button>
-            </span>
-          </Tooltip>
+          <Button
+            color="error"
+            variant="contained"
+            onClick={confirmRemove}
+            disabled={remove.isPending}
+          >
+            Remove
+          </Button>
         </DialogActions>
       </Dialog>
     </>

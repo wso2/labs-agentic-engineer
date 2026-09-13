@@ -33,19 +33,17 @@ import {
   IconButton,
   InputAdornment,
   TextField,
-  Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
 import { ExternalLink, Eye, EyeOff, Key } from "@wso2/oxygen-ui-icons-react";
 import { useHasPermission } from "../../../auth/permissions";
+import { EmptyState } from "../../../components/EmptyState";
+import { NoPermissionIllustration } from "../../../components/NoPermissionIllustration";
 import type { components } from "../../../generated/aep-api";
 import { useConnectAnthropic, useDisconnectAnthropic } from "../api/queries";
 import { CodingAgentKeySection } from "./CodingAgentKeySection";
 
 type LLMProjection = components["schemas"]["LLMProjection"];
-
-const NO_PERMISSION_TOOLTIP =
-  "You don't have permission to configure the Anthropic key.";
 
 export function AnthropicCredentialCard({
   llm,
@@ -63,6 +61,29 @@ export function AnthropicCredentialCard({
   const disconnect = useDisconnectAnthropic();
 
   const connected = llm !== null;
+
+  // Without ae:model-config there is nothing here to show — not even whether
+  // a key is connected, since that's itself org-sensitive information. Every
+  // check below this point (including inside CodingAgentKeySection, which
+  // only ever mounts past this return) can assume the permission is held.
+  if (!hasModelConfig) {
+    return (
+      <Card variant="outlined">
+        <CardContent sx={{ p: 3 }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mb: 2 }}>
+            <Key size={22} />
+            <Typography variant="h6">Anthropic</Typography>
+          </Box>
+          <Divider sx={{ mb: 3 }} />
+          <EmptyState
+            icon={<NoPermissionIllustration size={72} />}
+            description="You don't have permission to view Anthropic settings."
+            compact
+          />
+        </CardContent>
+      </Card>
+    );
+  }
 
   const submit = () => {
     connect.mutate(apiKey, {
@@ -89,12 +110,6 @@ export function AnthropicCredentialCard({
           )}
         </Box>
         <Divider sx={{ mb: 3 }} />
-
-        {!hasModelConfig && (
-          <Alert severity="warning" sx={{ mb: 3 }}>
-            You don't have permission to change these settings.
-          </Alert>
-        )}
 
         <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
           Requirements, architecture, and task generation run on this key, and
@@ -127,7 +142,6 @@ export function AnthropicCredentialCard({
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             fullWidth
-            disabled={!hasModelConfig}
             slotProps={{
               input: {
                 endAdornment: (
@@ -136,7 +150,6 @@ export function AnthropicCredentialCard({
                       aria-label={showKey ? "hide key" : "show key"}
                       onClick={() => setShowKey((v) => !v)}
                       edge="end"
-                      disabled={!hasModelConfig}
                     >
                       {showKey ? <EyeOff size={18} /> : <Eye size={18} />}
                     </IconButton>
@@ -167,34 +180,25 @@ export function AnthropicCredentialCard({
               justifyContent: "space-between",
             }}
           >
-            <Tooltip title={hasModelConfig ? "" : NO_PERMISSION_TOOLTIP}>
-              <span>
-                <Button
-                  variant="contained"
-                  onClick={submit}
-                  disabled={!apiKey || connect.isPending || !hasModelConfig}
-                >
-                  {connect.isPending
-                    ? "Validating…"
-                    : connected
-                      ? "Replace key"
-                      : "Connect"}
-                </Button>
-              </span>
-            </Tooltip>
+            <Button
+              variant="contained"
+              onClick={submit}
+              disabled={!apiKey || connect.isPending}
+            >
+              {connect.isPending
+                ? "Validating…"
+                : connected
+                  ? "Replace key"
+                  : "Connect"}
+            </Button>
             {connected && (
-              <Tooltip title={hasModelConfig ? "" : NO_PERMISSION_TOOLTIP}>
-                <span>
-                  <Button
-                    color="error"
-                    variant="outlined"
-                    onClick={() => setDisconnectOpen(true)}
-                    disabled={!hasModelConfig}
-                  >
-                    Disconnect
-                  </Button>
-                </span>
-              </Tooltip>
+              <Button
+                color="error"
+                variant="outlined"
+                onClick={() => setDisconnectOpen(true)}
+              >
+                Disconnect
+              </Button>
             )}
           </Box>
         </Box>
@@ -225,18 +229,14 @@ export function AnthropicCredentialCard({
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setDisconnectOpen(false)}>Cancel</Button>
-          <Tooltip title={hasModelConfig ? "" : NO_PERMISSION_TOOLTIP}>
-            <span>
-              <Button
-                color="error"
-                variant="contained"
-                onClick={confirmDisconnect}
-                disabled={disconnect.isPending || !hasModelConfig}
-              >
-                Disconnect
-              </Button>
-            </span>
-          </Tooltip>
+          <Button
+            color="error"
+            variant="contained"
+            onClick={confirmDisconnect}
+            disabled={disconnect.isPending}
+          >
+            Disconnect
+          </Button>
         </DialogActions>
       </Dialog>
     </Card>

@@ -43,15 +43,17 @@ var operationPermissions = map[string][]authz.Permission{
 	"UpdateSkill":     {authz.PermissionSkillConfig},
 	"ImportSkill":     {authz.PermissionSkillConfig},
 	"CreateSkill":     {authz.PermissionSkillConfig},
-	// The list itself — new permission, distinct from ae:skill-config, since
+	// The list itself — a separate permission from ae:skill-config, since
 	// viewing the skills panel shouldn't require the edit permission every
-	// mutation above needs. No OC dependency (reads the org's git-backed
-	// skills repo via h.skills, not OpenChoreo), so no OcActionCatalog entry
-	// is needed for it.
-	"ListSkills": {authz.PermissionSkillView},
+	// mutation above needs. ae:skill-config also satisfies it (OR, same
+	// pattern as ListProjectBuilds below): a config holder can always do
+	// everything a view-only holder can, never less. No OC dependency (reads
+	// the org's git-backed skills repo via h.skills, not OpenChoreo), so no
+	// OcActionCatalog entry is needed for it.
+	"ListSkills": {authz.PermissionSkillView, authz.PermissionSkillConfig},
 	// Same reasoning — SkillViewerDialog/EditSkillDialog, both reachable only
 	// from the same Skills panel ListSkills backs.
-	"GetSkill": {authz.PermissionSkillView},
+	"GetSkill": {authz.PermissionSkillView, authz.PermissionSkillConfig},
 	// Platform-update status badges on each skill row — gated by the config
 	// permission rather than skill-view, matching every mutation above.
 	"ListSkillUpdates": {authz.PermissionSkillConfig},
@@ -61,6 +63,14 @@ var operationPermissions = map[string][]authz.Permission{
 	// updateConfigPermissions, not this map; UpdateConfig itself is a
 	// permissionGateCarveOuts entry.
 	"DisconnectGitProvider": {authz.PermissionGitHubConfig},
+	// Settings > Credentials (both cards, read from the same GET /config).
+	// OR here only decides whether the call is answered AT ALL: a caller
+	// holding just one of the two still gets the OTHER section redacted to
+	// null inside the handler itself (getconfig.Handler.GetConfig) — the
+	// gate can't express "half a response", only a request-level allow/deny.
+	// GetConfigStatus (permissionGateCarveOuts) is the permission-free
+	// sibling for OnboardingGate's own bootstrap need.
+	"GetConfig": {authz.PermissionGitHubConfig, authz.PermissionModelConfig},
 
 	// Project lifecycle & requirements authoring.
 	"CreateProject":        {authz.PermissionRequirementUpdate},
@@ -201,9 +211,13 @@ var permissionGateCarveOuts = map[string]struct{}{
 	// caller: queries.ts's PATCH /config (settings' credential/model cards).
 	"UpdateConfig": {},
 
-	// Read at app bootstrap (OnboardingGate), before a user's AE permissions
-	// are necessarily provisioned. Console caller: queries.ts's GET /config.
-	"GetConfig": {},
+	// GetConfigStatus is the permission-free sibling GetConfig itself no
+	// longer is (see operationPermissions below): just the two "is it
+	// connected" booleans, with none of GetConfig's identity/key detail —
+	// safe at app bootstrap (OnboardingGate), before a caller's AE
+	// permissions are necessarily provisioned. Console caller: queries.ts's
+	// GET /config/status.
+	"GetConfigStatus": {},
 
 	// --- Has a real caller, just not the console -------------------------
 	// Each of these is genuinely exercised in production — verified against

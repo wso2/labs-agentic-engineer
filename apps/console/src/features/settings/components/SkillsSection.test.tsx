@@ -29,11 +29,15 @@ vi.mock("@tanstack/react-router", () => ({
   Link: (props: Record<string, unknown>) => <a {...props} />,
 }));
 
-// Every existing test in this file assumes the toggle is otherwise operable —
-// only the dedicated "no permission" test below flips this to false.
-const skillConfigPermission = vi.hoisted(() => ({ current: true }));
+// ae:skill-view and ae:skill-config are independent grants (a real user can
+// hold either, both, or neither) — the mock must distinguish them by the
+// permission key requested, not return one shared flag for every call.
+// Every existing test in this file assumes both are held; only the dedicated
+// permission tests below flip one or the other off.
+const skillPermissions = vi.hoisted(() => ({ view: true, config: true }));
 vi.mock("../../../auth/permissions", () => ({
-  useHasPermission: () => skillConfigPermission.current,
+  useHasPermission: (permission: string) =>
+    permission === "ae:skill-config" ? skillPermissions.config : skillPermissions.view,
 }));
 
 type SkillSummary = components["schemas"]["SkillSummary"];
@@ -155,7 +159,8 @@ function resetMocks() {
     skills: [],
     repoUrl: "https://github.com/acme-dev/org-skills",
   };
-  skillConfigPermission.current = true;
+  skillPermissions.view = true;
+  skillPermissions.config = true;
 }
 
 describe("SkillsSection — availability toggle", () => {
@@ -256,9 +261,11 @@ describe("SkillsSection — availability toggle", () => {
 
   // Lacking ae:skill-config takes every row's toggle out of play, regardless
   // of that row's own required/enabled state — permission is checked first.
+  // ae:skill-view stays held here (this is the view-only role, not "no
+  // access" — the page itself must still render).
   it("disables every toggle when the user lacks ae:skill-config", () => {
     resetMocks();
-    skillConfigPermission.current = false;
+    skillPermissions.config = false;
     skillsData = {
       skills: [
         skill({ name: "go", enabled: true }),
@@ -276,7 +283,7 @@ describe("SkillsSection — availability toggle", () => {
   // only other ways to change something on this page — view stays open.
   it("disables Import and the viewer's Edit/Delete when the user lacks ae:skill-config", () => {
     resetMocks();
-    skillConfigPermission.current = false;
+    skillPermissions.config = false;
     skillsData = { skills: [skill({ name: "go" })] };
 
     render(<SkillsSection />);
@@ -286,5 +293,48 @@ describe("SkillsSection — availability toggle", () => {
     fireEvent.click(screen.getByRole("button", { name: "View" }));
     expect(screen.getByRole("button", { name: "Edit" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
+  });
+});
+
+describe("SkillsSection — view/config permission gate", () => {
+  it("renders the page for a view-only user (ae:skill-view, no ae:skill-config)", () => {
+    resetMocks();
+    skillPermissions.config = false;
+    skillsData = { skills: [skill({ name: "go" })] };
+
+    render(<SkillsSection />);
+
+    expect(screen.getByText("go")).toBeInTheDocument();
+    expect(
+      screen.queryByText("You don't have permission to view skills."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the page for a config-only user (ae:skill-config, no ae:skill-view — config implies view)", () => {
+    resetMocks();
+    skillPermissions.view = false;
+    skillsData = { skills: [skill({ name: "go" })] };
+
+    render(<SkillsSection />);
+
+    expect(screen.getByText("go")).toBeInTheDocument();
+    // Config holds every capability view does, plus mutation — nothing here
+    // should be disabled just because the view grant itself is absent.
+    expect(screen.getByRole("button", { name: "Import" })).not.toBeDisabled();
+  });
+
+  it("shows an insufficient-permissions message and renders no skill content with neither permission", () => {
+    resetMocks();
+    skillPermissions.view = false;
+    skillPermissions.config = false;
+    skillsData = { skills: [skill({ name: "go" })] };
+
+    render(<SkillsSection />);
+
+    expect(
+      screen.getByText("You don't have permission to view skills."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("go")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Import" })).not.toBeInTheDocument();
   });
 });

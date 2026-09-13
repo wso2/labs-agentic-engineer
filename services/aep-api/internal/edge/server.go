@@ -110,7 +110,14 @@ func newAPIV1Handler(deps Deps) http.Handler {
 			authzHandlers:         authzOrEmpty(deps.Authz),
 			designSvc:             deps.DesignSvc,
 		},
-		[]gen.StrictMiddlewareFunc{tenantGate, permissionGate},
+		// gen.NewStrictHandlerWithOptions composes this list innermost-first
+		// (each entry wraps the one before it), so the LAST entry is the
+		// OUTERMOST gate — the one that actually runs first per request.
+		// tenantGate must run before permissionGate: a claimless request
+		// needs tenantGate's own 401 (and its bound-org context), not a
+		// permission denial for holding no permissions. Listing permissionGate
+		// first, tenantGate last achieves that execution order.
+		[]gen.StrictMiddlewareFunc{permissionGate, tenantGate},
 		gen.StrictHTTPServerOptions{
 			RequestErrorHandlerFunc:  writeRequestError,
 			ResponseErrorHandlerFunc: writeResponseError,

@@ -50,6 +50,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/edge"
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/organization/httpapi"
+	"github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/platform/componenttest"
 	"github.com/wso2/aep/aep-api/internal/platform/contracttest"
 	"github.com/wso2/aep/aep-api/internal/platform/dbtest"
@@ -314,6 +315,111 @@ func TestConfigComponent_B2_AllConnectedNoSecrets(t *testing.T) {
 	for _, secret := range []string{goodAnthKey, "ghp_live", "the-stored-secret"} {
 		if strings.Contains(body, secret) {
 			t.Fatalf("GET /config leaks secret material %q: %s", secret, body)
+		}
+	}
+}
+
+// GetConfig requires holding EITHER ae:github-config or ae:model-config to be
+// answered at all, but a caller holding only one still gets the OTHER
+// section redacted to null — the OR-gate decides whether the call is
+// answered, not which half of the answer is theirs (getconfig.Handler).
+
+func TestConfigComponent_B2b_GitHubConfigOnlySeesGitProviderNotLLM(t *testing.T) {
+	t.Parallel()
+	c := newConfigHarness(t)
+	c.gh.patHappy()
+	if r := c.h.AsOrg("acme").Patch(configPath, llmConnect(goodAnthKey)); r.Code != 200 {
+		t.Fatalf("llm connect: %d %s", r.Code, r.Body.String())
+	}
+	if r := c.h.AsOrg("acme").Patch(configPath, `{"gitProvider":{"kind":"github","mode":"pat","pat":"ghp_live","githubLogin":"ada"}}`); r.Code != 200 {
+		t.Fatalf("gitProvider connect: %d %s", r.Code, r.Body.String())
+	}
+
+	resp := c.h.AsOrg("acme").
+		With(func(cl *auth.Claims) { cl.Scope = "ae:github-config" }).
+		Get(configPath)
+	if resp.Code != 200 {
+		t.Fatalf("get with ae:github-config only: want 200, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	m := decodeCfg(t, resp.Body.Bytes())
+	if m["gitProvider"] == nil {
+		t.Fatalf("holding ae:github-config must still see gitProvider: %v", m)
+	}
+	if m["llm"] != nil {
+		t.Fatalf("without ae:model-config, llm must be redacted to null: %v", m["llm"])
+	}
+	if m["codingLlm"] != nil {
+		t.Fatalf("without ae:model-config, codingLlm must be redacted to null: %v", m["codingLlm"])
+	}
+}
+
+func TestConfigComponent_B2c_ModelConfigOnlySeesLLMNotGitProvider(t *testing.T) {
+	t.Parallel()
+	c := newConfigHarness(t)
+	c.gh.patHappy()
+	if r := c.h.AsOrg("acme").Patch(configPath, llmConnect(goodAnthKey)); r.Code != 200 {
+		t.Fatalf("llm connect: %d %s", r.Code, r.Body.String())
+	}
+	if r := c.h.AsOrg("acme").Patch(configPath, `{"gitProvider":{"kind":"github","mode":"pat","pat":"ghp_live","githubLogin":"ada"}}`); r.Code != 200 {
+		t.Fatalf("gitProvider connect: %d %s", r.Code, r.Body.String())
+	}
+
+	resp := c.h.AsOrg("acme").
+		With(func(cl *auth.Claims) { cl.Scope = "ae:model-config" }).
+		Get(configPath)
+	if resp.Code != 200 {
+		t.Fatalf("get with ae:model-config only: want 200, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	m := decodeCfg(t, resp.Body.Bytes())
+	if m["llm"] == nil {
+		t.Fatalf("holding ae:model-config must still see llm: %v", m)
+	}
+	if m["gitProvider"] != nil {
+		t.Fatalf("without ae:github-config, gitProvider must be redacted to null: %v", m["gitProvider"])
+	}
+}
+
+func TestConfigComponent_B2d_NeitherPermissionIsForbidden(t *testing.T) {
+	t.Parallel()
+	c := newConfigHarness(t)
+
+	resp := c.h.AsOrg("acme").
+		With(func(cl *auth.Claims) { cl.Scope = "" }).
+		Get(configPath)
+	if resp.Code != http.StatusForbidden {
+		t.Fatalf("get holding neither permission: want 403, got %d body=%s", resp.Code, resp.Body.String())
+	}
+}
+
+// --- B2e. GET /config/status: the permission-free sibling. Any authenticated,
+// tenant-bound caller — including one holding NEITHER ae:github-config nor
+// ae:model-config, the onboarding gate's own bootstrap case — gets just the
+// two connectivity booleans. ------------------------------------------------
+
+func TestConfigComponent_B2e_StatusNeedsNoPermission(t *testing.T) {
+	t.Parallel()
+	c := newConfigHarness(t)
+	if r := c.h.AsOrg("acme").Patch(configPath, llmConnect(goodAnthKey)); r.Code != 200 {
+		t.Fatalf("llm connect: %d %s", r.Code, r.Body.String())
+	}
+
+	resp := c.h.AsOrg("acme").
+		With(func(cl *auth.Claims) { cl.Scope = "" }).
+		Get(configPath + "/status")
+	if resp.Code != 200 {
+		t.Fatalf("get config status holding no permission: want 200, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	m := decodeCfg(t, resp.Body.Bytes())
+	if m["llmConnected"] != true {
+		t.Fatalf("llmConnected must be true: %v", m)
+	}
+	if m["gitProviderConnected"] != false {
+		t.Fatalf("gitProviderConnected must be false (never connected): %v", m)
+	}
+	// None of GetConfig's identity/key detail leaks through the status route.
+	for _, field := range []string{"keyPrefix", "keyLast4", "identityLogin", "githubLogin"} {
+		if strings.Contains(resp.Body.String(), field) {
+			t.Fatalf("config/status must carry no detail field %q: %s", field, resp.Body.String())
 		}
 	}
 }
@@ -708,6 +814,34 @@ func TestConfigComponent_F1_PatchOnlyLLMLeavesOthers(t *testing.T) {
 	afterIDP := sectionOf(t, c.h.AsOrg("acme").Get(configPath).Body.Bytes(), "idp")
 	if beforeIDP != afterIDP {
 		t.Fatalf("patching llm must leave idp untouched:\nbefore %s\nafter  %s", beforeIDP, afterIDP)
+	}
+}
+
+// PATCH's response echoes the FULL projection regardless of which section
+// the body touched, so it needs the same redaction GET does (both call
+// organization.RedactConfigForPermissions) — otherwise a caller holding only
+// ae:github-config could patch gitProvider and get the org's llm detail
+// (already connected by another admin) back for free.
+func TestConfigComponent_F1b_PatchResponseRedactsUnheldSection(t *testing.T) {
+	t.Parallel()
+	c := newConfigHarness(t)
+	if r := c.h.AsOrg("acme").Patch(configPath, llmConnect(goodAnthKey)); r.Code != 200 {
+		t.Fatalf("llm connect: %d %s", r.Code, r.Body.String())
+	}
+	c.gh.patHappy()
+
+	resp := c.h.AsOrg("acme").
+		With(func(cl *auth.Claims) { cl.Scope = "ae:github-config" }).
+		Patch(configPath, `{"gitProvider":{"kind":"github","mode":"pat","pat":"ghp_live","githubLogin":"ada"}}`)
+	if resp.Code != 200 {
+		t.Fatalf("patch gitProvider with ae:github-config only: want 200, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	m := decodeCfg(t, resp.Body.Bytes())
+	if m["gitProvider"] == nil {
+		t.Fatalf("holding ae:github-config must still see the section just patched: %v", m)
+	}
+	if m["llm"] != nil {
+		t.Fatalf("without ae:model-config, llm must be redacted from the PATCH response too, got %v", m["llm"])
 	}
 }
 

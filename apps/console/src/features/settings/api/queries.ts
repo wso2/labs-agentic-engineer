@@ -33,13 +33,37 @@ function errorMessage(error: unknown, fallback: string): string {
 // --- Org config: GitHub + Anthropic (+ IDP, read-only here — out of scope
 // for this feature, issue #96) --------------------------------------------
 
-export function useConfig() {
+// `enabled` withholds the request for a caller holding neither
+// ae:github-config nor ae:model-config — the BFF now requires one of the two
+// to answer this at all (redacting whichever section the caller can't see),
+// so a caller with neither would otherwise always land on a 403.
+export function useConfig(enabled = true) {
   return useQuery({
     queryKey: configKeys.all,
     queryFn: async () => {
       const { data, error } = await client.GET("/config");
       if (error) {
         throw new Error(errorMessage(error, "Failed to load configuration"));
+      }
+      return data;
+    },
+    staleTime: 30_000,
+    enabled,
+  });
+}
+
+// The permission-free sibling of useConfig: just the two connectivity
+// booleans, with none of ConfigProjection's identity/key detail — what
+// OnboardingGate/OnboardingWizard need, and all they need, to decide whether
+// the org is bootstrapped. Safe to call before the caller's AE permissions
+// are necessarily provisioned (the very case useConfig can no longer cover).
+export function useConfigStatus() {
+  return useQuery({
+    queryKey: configKeys.status,
+    queryFn: async () => {
+      const { data, error } = await client.GET("/config/status");
+      if (error) {
+        throw new Error(errorMessage(error, "Failed to load configuration status"));
       }
       return data;
     },
@@ -64,6 +88,11 @@ export function useConnectAnthropic() {
     },
     onSuccess: (data: ConfigProjection) => {
       queryClient.setQueryData(configKeys.all, data);
+      // The status query is separate from (and permission-free unlike)
+      // configKeys.all, so a write here doesn't update it by itself —
+      // invalidated rather than derived from `data`, since `data.llm` may
+      // itself be redacted to null for a caller without ae:model-config.
+      void queryClient.invalidateQueries({ queryKey: configKeys.status });
     },
   });
 }
@@ -89,6 +118,7 @@ export function useConnectCodingAnthropic() {
     },
     onSuccess: (data: ConfigProjection) => {
       queryClient.setQueryData(configKeys.all, data);
+      void queryClient.invalidateQueries({ queryKey: configKeys.status });
     },
   });
 }
@@ -111,6 +141,7 @@ export function useRemoveCodingAnthropic() {
     },
     onSuccess: (data: ConfigProjection) => {
       queryClient.setQueryData(configKeys.all, data);
+      void queryClient.invalidateQueries({ queryKey: configKeys.status });
     },
   });
 }
@@ -131,6 +162,7 @@ export function useDisconnectAnthropic() {
     },
     onSuccess: (data: ConfigProjection) => {
       queryClient.setQueryData(configKeys.all, data);
+      void queryClient.invalidateQueries({ queryKey: configKeys.status });
     },
   });
 }
@@ -156,6 +188,7 @@ export function useConnectGitHubPat() {
     },
     onSuccess: (data: ConfigProjection) => {
       queryClient.setQueryData(configKeys.all, data);
+      void queryClient.invalidateQueries({ queryKey: configKeys.status });
     },
   });
 }
@@ -175,6 +208,7 @@ export function useDisconnectGitProvider() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: configKeys.all });
+      void queryClient.invalidateQueries({ queryKey: configKeys.status });
     },
   });
 }
@@ -201,7 +235,11 @@ export function useSkills(enabled = true) {
   });
 }
 
-export function useSkillUpdates() {
+// `enabled` withholds the request for a caller without ae:skill-config — the
+// BFF gates this endpoint on that permission alone (update badges are a
+// config-adjacent concern, not a plain-view one), so a view-only caller would
+// otherwise always land on a 403.
+export function useSkillUpdates(enabled = true) {
   return useQuery({
     queryKey: skillsKeys.updates(),
     queryFn: async () => {
@@ -212,6 +250,7 @@ export function useSkillUpdates() {
       return data.updates ?? [];
     },
     staleTime: 30_000,
+    enabled,
   });
 }
 

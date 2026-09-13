@@ -142,6 +142,41 @@ func TestPermissionGate_DenyByDefault(t *testing.T) {
 			t.Fatal("handler must run")
 		}
 	})
+
+	t.Run("GetSkill: ae:skill-view alone satisfies it", func(t *testing.T) {
+		called = false
+		ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:skill-view"})
+		if _, err := permissionGate(next, "GetSkill")(ctx, nil, req, nil); err != nil {
+			t.Fatalf("ae:skill-view alone should satisfy GetSkill, got %v", err)
+		}
+		if !called {
+			t.Fatal("handler must run")
+		}
+	})
+
+	t.Run("GetSkill: ae:skill-config alone also satisfies it", func(t *testing.T) {
+		called = false
+		ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:skill-config"})
+		if _, err := permissionGate(next, "GetSkill")(ctx, nil, req, nil); err != nil {
+			t.Fatalf("ae:skill-config alone should satisfy GetSkill (config implies view), got %v", err)
+		}
+		if !called {
+			t.Fatal("handler must run")
+		}
+	})
+
+	t.Run("GetSkill: neither permission denies", func(t *testing.T) {
+		called = false
+		ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "openid profile"})
+		_, err := permissionGate(next, "GetSkill")(ctx, nil, req, nil)
+		var ae *apiError
+		if !errors.As(err, &ae) || ae.Status != http.StatusForbidden {
+			t.Fatalf("want 403 holding neither ae:skill-view nor ae:skill-config, got %v", err)
+		}
+		if called {
+			t.Fatal("handler must not run")
+		}
+	})
 }
 
 // TestPermissionGate_UpdateConfig unit-tests the field-aware special case:

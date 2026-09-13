@@ -36,6 +36,13 @@ type Handler struct{ config *organization.Service }
 // New returns the slice's handler.
 func New(config *organization.Service) *Handler { return &Handler{config: config} }
 
+// UpdateConfig's own permission gate (updateConfigPermissions) only requires
+// a permission for the section(s) the PATCH body actually touches — a caller
+// holding just ae:github-config can legally patch gitProvider alone. But the
+// response echoes the FULL projection (every section, not just the one
+// patched), so the same redaction GetConfig applies is needed here too:
+// without it, patching gitProvider would hand that caller the org's llm
+// section detail for free.
 func (h *Handler) UpdateConfig(ctx context.Context, request gen.UpdateConfigRequestObject) (gen.UpdateConfigResponseObject, error) {
 	org := tenant.BoundOrgFromContext(ctx)
 	actor := auth.ActorFromContext(ctx)
@@ -43,6 +50,9 @@ func (h *Handler) UpdateConfig(ctx context.Context, request gen.UpdateConfigRequ
 	if err != nil {
 		return nil, mapPatchError(err)
 	}
+
+	organization.RedactConfigForPermissions(proj, auth.ClaimsFromContext(ctx).Permissions())
+
 	return gen.UpdateConfig200JSONResponse(*proj), nil
 }
 

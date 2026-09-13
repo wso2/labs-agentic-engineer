@@ -253,6 +253,30 @@ paths:
       summary: Discover an OIDC issuer's metadata
       tags:
       - Org Config
+  /config/status:
+    get:
+      operationId: get-config-status
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigStatus'
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: Whether the org's GitHub and Anthropic connections exist, with
+        none of get-config's identity/key detail — safe for any authenticated
+        org member, including one whose AE permissions aren't provisioned yet
+        (the onboarding gate's own bootstrap case)
+      tags:
+      - Org Config
   /dependencies/external-resources:
     get:
       operationId: list-external-resources
@@ -4028,6 +4052,22 @@ components:
       - codingLlm
       - gitProvider
       - idp
+      type: object
+    ConfigStatus:
+      description: Minimal, permission-free connectivity signal (get-config-status)
+        — whether gitProvider/llm are connected, with none of ConfigProjection's
+        identity/key detail. Exists so the onboarding gate can decide whether to
+        show the wizard without needing ae:github-config/ae:model-config itself,
+        which the org's very first admin may not hold yet.
+      additionalProperties: false
+      properties:
+        gitProviderConnected:
+          type: boolean
+        llmConnected:
+          type: boolean
+      required:
+      - gitProviderConnected
+      - llmConnected
       type: object
     ConfigValue:
       additionalProperties: false

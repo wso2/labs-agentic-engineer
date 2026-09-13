@@ -1117,6 +1117,12 @@ type ConfigPatch = orgconfig.ConfigPatch
 // ConfigProjection defines model for ConfigProjection.
 type ConfigProjection = orgconfig.ConfigProjection
 
+// ConfigStatus Minimal, permission-free connectivity signal (get-config-status) — whether gitProvider/llm are connected, with none of ConfigProjection's identity/key detail. Exists so the onboarding gate can decide whether to show the wizard without needing ae:github-config/ae:model-config itself, which the org's very first admin may not hold yet.
+type ConfigStatus struct {
+	GitProviderConnected bool `json:"gitProviderConnected"`
+	LlmConnected         bool `json:"llmConnected"`
+}
+
 // ConfigValue defines model for ConfigValue.
 type ConfigValue struct {
 	Key   string `json:"key"`
