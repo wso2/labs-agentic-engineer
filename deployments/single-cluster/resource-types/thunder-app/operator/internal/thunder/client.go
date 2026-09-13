@@ -68,23 +68,40 @@ type DesiredApp struct {
 	// deterministic per-CR identity). Task 4's live verification may wire
 	// this in if Thunder accepts a separate label field.
 	DisplayName string
-	// Scopes is accepted for interface completeness but is still a no-op on
-	// the wire. The advertised scope set is carried independently by the
-	// thunder-app ClusterResourceType's `outputs.scopes` value, so leaving
-	// this a no-op does not break that path.
+	// Scopes is the list of scopes this client is expected to request. It is
+	// written to `inboundAuthConfig[oauth2].config.scopes` on create AND on
+	// update, and read back by verifyWritten.
 	//
-	// NOTE: the reason this is a no-op has changed. It used to be that
-	// Thunder 0.34.0's application inboundAuthConfig had no per-app scope
-	// allowlist at all. ThunderID 1.0.0 DOES have one
-	// (inboundAuthConfig[].config.scopes), and it is load-bearing: `system`
-	// is granted through it, not through a role, and an application that
-	// omits it authenticates fine and then 403s on every admin call. That is
-	// why single-cluster/thunder-resources/81-aep-system-client.yaml declares
-	// scopes explicitly. Wiring this field through to the create/update calls
-	// would let a ThunderApplication CR request scopes for the apps it
-	// provisions — worth doing, but it is a behaviour change with an
-	// authorization blast radius, not a comment fix.
+	// WHAT IT IS NOT: a gate. Measured on ThunderID 1.0.0 (spike P1 §6, three
+	// escalating runs down to `["openid"]`): the field is stored faithfully and
+	// read back faithfully, and has NO effect on the authorization-code flow —
+	// removing a handle from the list does not remove it from the issued token,
+	// and an unknown or ungranted handle is dropped silently rather than
+	// rejected with `invalid_scope`. The only thing that narrows an end-user
+	// token is group → role → permissions, intersected with the resource server
+	// named by the request's `resource` indicator. Write-through exists so the
+	// registered application is a TRUTHFUL record of what its client asks for
+	// (and so it keeps working if ThunderID ever starts enforcing it) — do not
+	// describe it as a second control point.
+	//
+	// The one place the field is load-bearing today is `system` on an m2m
+	// client: it is granted through this list, not through a role, which is why
+	// single-cluster/thunder-resources/81-aep-system-client.yaml declares it.
+	//
+	// Empty means the CR said nothing, which is NOT the same as "this client may
+	// request nothing": an empty set is left alone rather than written, so the
+	// operator never narrows an allowlist it was not told about.
 	Scopes []string
+	// ValidityPeriod is the ACCESS token lifetime in seconds, written to
+	// `token.accessToken.userConfig.validityPeriod`. Zero means "not set by the
+	// CR" and falls back to defaultTokenValiditySeconds.
+	//
+	// It is a per-app knob and not a constant because a short-lived token is the
+	// only way to observe a silent renew without waiting out a day: spike P6
+	// registered its fixture app at 300 s to measure that a refresh keeps the
+	// audience and narrows the scope set. The ID token keeps the long default —
+	// it carries the SPA's session identity, not its API authority.
+	ValidityPeriod int
 	// RedirectURIs is the exact set of allowed OAuth redirect URIs.
 	// EnsureApplication REPLACES the app's stored redirect URIs with this
 	// set on every call — it does not merge with whatever Thunder
@@ -109,7 +126,8 @@ type AdminClient interface {
 	// EnsureApplication creates the app if absent (public client, PKCE
 	// required, token_endpoint_auth_method=none) or updates scopes/
 	// redirectUris to match (PUT is a full replace of those fields —
-	// desired state, not merge).
+	// desired state, not merge). Whatever it writes it reads back: see
+	// verifyWritten.
 	EnsureApplication(ctx context.Context, app DesiredApp) (clientID string, err error)
 	// DeleteApplication removes the app by name; absent app is success
 	// (idempotent).
@@ -438,16 +456,20 @@ func (c *client) EnsureApplication(ctx context.Context, app DesiredApp) (string,
 	if err != nil {
 		return "", fmt.Errorf("getDefaultOUID: %w", err)
 	}
+	var clientID string
 	if app.ClientType == "confidential" {
-		clientID, err := c.createConfidentialApp(ctx, token, app, ouID)
+		clientID, err = c.createConfidentialApp(ctx, token, app, ouID)
 		if err != nil {
 			return "", fmt.Errorf("createConfidentialApp %q: %w", app.Name, err)
 		}
-		return clientID, nil
+	} else {
+		clientID, err = c.createApp(ctx, token, app, ouID)
+		if err != nil {
+			return "", fmt.Errorf("createApp %q: %w", app.Name, err)
+		}
 	}
-	clientID, err := c.createApp(ctx, token, app, ouID)
-	if err != nil {
-		return "", fmt.Errorf("createApp %q: %w", app.Name, err)
+	if !needsVerify(app) {
+		return clientID, nil
 	}
 	// The create response does not carry the internal id in a shape this
 	// client parses, so the app is looked up again to read it back.
@@ -461,19 +483,68 @@ func (c *client) EnsureApplication(ctx context.Context, app DesiredApp) (string,
 	return clientID, nil
 }
 
-// verifyWritten reads back what a create/update actually stored.
+// needsVerify reports whether this app has anything for verifyWritten to diff —
+// it spares the create path a list + get round trip for an m2m client that
+// declared no scopes, which is every confidential app before phase 2.
+func needsVerify(app DesiredApp) bool {
+	return app.ClientType != "confidential" || len(app.Scopes) > 0
+}
+
+// verifyWritten reads the application back ONCE and diffs what the IdP actually
+// stored against what this reconcile asked for. Two checks ride on that read:
 //
-// Only browser apps carry the identity contract: a confidential client here is
-// an m2m one, whose token has no user behind it and therefore no user
-// attributes to release.
+//   - the scope allowlist, for every client type (see DesiredApp.Scopes);
+//   - the identity-claim contract, for browser apps only — a confidential client
+//     here is an m2m one, whose token has no user behind it and therefore no
+//     user attributes to release.
+//
+// Reading back is the whole defence on this API: ThunderID answers 200 to a
+// payload it only partly recognises and keeps the rest to itself, so "the write
+// succeeded" says nothing about what the application now is.
 func (c *client) verifyWritten(ctx context.Context, token, internalID string, app DesiredApp) error {
-	if app.ClientType == "confidential" {
+	if !needsVerify(app) {
 		return nil
 	}
+	browser := app.ClientType != "confidential"
 	if internalID == "" {
-		return fmt.Errorf("verify identity claims %q: the IdP returned no application id to read back", app.Name)
+		return fmt.Errorf("verify application %q: the IdP returned no application id to read back", app.Name)
 	}
-	return c.verifyIdentityClaims(ctx, token, internalID, app.Name)
+	stored, err := c.getAppByID(ctx, token, internalID)
+	if err != nil {
+		return fmt.Errorf("verify application %q: %w", app.Name, err)
+	}
+	cfg, err := inboundOAuthConfig(stored)
+	if err != nil {
+		return fmt.Errorf("verify application %q: %w", app.Name, err)
+	}
+	if err := verifyScopes(cfg, app); err != nil {
+		return err
+	}
+	if !browser {
+		return nil
+	}
+	return verifyIdentityClaims(cfg, app.Name)
+}
+
+// verifyScopes fails when the scope allowlist did not survive the write.
+//
+// This does not make the allowlist a gate — ThunderID 1.0.0 never enforces it
+// (see DesiredApp.Scopes). It makes it HONEST: the point of writing the list is
+// that the registered application describes the client truthfully, and a list
+// the server quietly discarded describes nothing.
+func verifyScopes(cfg map[string]any, app DesiredApp) error {
+	if len(app.Scopes) == 0 {
+		return nil
+	}
+	missing := missingScopes(app.Scopes, configuredScopes(cfg))
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf(
+		"application %q was written but the IdP did not store its scope allowlist (missing %v) — "+
+			"inboundAuthConfig[oauth2].config.scopes is a JSON array of strings; a rejected shape "+
+			"is accepted with 200 and dropped",
+		app.Name, missing)
 }
 
 // createApp registers a new public OAuth2 client: PKCE required, no client
@@ -516,16 +587,20 @@ var (
 	allowedUserTypes = []string{"Person"}
 )
 
-// tokenValiditySeconds is the access/id token lifetime (24h). Thunder's default
-// is short; a SPA whose token expires quickly is forced back through a full
-// sign-in redirect (or a silent renew) far too often, so pin a long-lived token
-// — the same 86400 the seeded Console app uses. The SPA still refreshes via the
-// refresh_token grant; this just keeps a returning user signed in across a
-// refresh/new tab without a round-trip.
-const tokenValiditySeconds = 86400
+// defaultTokenValiditySeconds is the access/id token lifetime (24h) used when
+// the CR names none. Thunder's default is short; a SPA whose token expires
+// quickly is forced back through a full sign-in redirect (or a silent renew)
+// far too often, so pin a long-lived token — the same 86400 the seeded Console
+// app uses. The SPA still refreshes via the refresh_token grant; this just
+// keeps a returning user signed in across a refresh/new tab without a
+// round-trip.
+//
+// DesiredApp.ValidityPeriod overrides it for the ACCESS token only.
+const defaultTokenValiditySeconds = 86400
 
-// tokenClaimConfig returns the oauth2 `token` block. A fresh map per call so
-// each app payload owns its copy.
+// tokenClaimConfig returns the oauth2 `token` block for an app whose access
+// token lives accessValidity seconds (0 → defaultTokenValiditySeconds). A fresh
+// map per call so each app payload owns its copy.
 //
 // The two tokens declare their attributes at DIFFERENT paths, and getting this
 // wrong costs a day:
@@ -547,16 +622,23 @@ const tokenValiditySeconds = 86400
 // (services/aep-api/internal/clients/thundersvc/client.go): per-audience token
 // config, attributes under it. verifyIdentityClaims reads the app back after
 // every write precisely because neither shape is rejected.
-func tokenClaimConfig() map[string]any {
+func tokenClaimConfig(accessValidity int) map[string]any {
+	if accessValidity <= 0 {
+		accessValidity = defaultTokenValiditySeconds
+	}
 	return map[string]any{
 		"accessToken": map[string]any{
 			"userConfig": map[string]any{
-				"validityPeriod": tokenValiditySeconds,
+				"validityPeriod": accessValidity,
 				"attributes":     append([]string(nil), identityUserAttributes...),
 			},
 		},
 		"idToken": map[string]any{
-			"validityPeriod": tokenValiditySeconds,
+			// Deliberately NOT accessValidity: the ID token carries the SPA's
+			// session identity, and shortening it would force a full sign-in
+			// redirect on an app whose only reason for a short access token is
+			// to exercise the silent renew.
+			"validityPeriod": defaultTokenValiditySeconds,
 			"userAttributes": append([]string(nil), identityUserAttributes...),
 		},
 	}
@@ -571,6 +653,13 @@ func accessTokenAttributes(cfg map[string]any) []string {
 	access, _ := token["accessToken"].(map[string]any)
 	userCfg, _ := access["userConfig"].(map[string]any)
 	return stringsOf(userCfg["attributes"])
+}
+
+// configuredScopes reads the client's scope allowlist back out of an
+// application body, at the path wireScopes writes it. nil when absent, which is
+// what a silent drop looks like.
+func configuredScopes(cfg map[string]any) []string {
+	return stringsOf(cfg["scopes"])
 }
 
 func idTokenAttributes(cfg map[string]any) []string {
@@ -594,6 +683,51 @@ func stringsOf(v any) []string {
 	return out
 }
 
+// wireScopes adapts the desired scope list for Thunder's wire. ThunderID's
+// application contract types `inboundAuthConfig[oauth2].config.scopes` as a
+// JSON ARRAY of strings (spike P1 §4; the space-joined form is the CRT
+// parameter's, and the reconciler splits it) — sending the joined string would
+// register one scope literally named "openid profile email …".
+func wireScopes(desired []string) []any {
+	out := make([]any, 0, len(desired))
+	for _, s := range desired {
+		out = append(out, s)
+	}
+	return out
+}
+
+// setWireScopes writes the desired allowlist onto an oauth2 config, and leaves
+// whatever is stored alone when the CR named no scopes — see DesiredApp.Scopes
+// for why silence is not the same as an empty allowlist.
+func setWireScopes(cfg map[string]any, desired []string) {
+	if len(desired) == 0 {
+		return
+	}
+	cfg["scopes"] = wireScopes(desired)
+}
+
+// missingScopes returns the desired scopes absent from `have`, preserving the
+// desired order so the message is stable.
+//
+// A SUBSET check, not equality: ThunderID normalises on write (measured on
+// 1.0.0 — `scopeClaims.email` sent as ["email","email_verified"] comes back as
+// ["email"]), so a read-back that carries more than was sent is the server
+// having its own opinion, not a failure. What must never happen silently is a
+// scope we asked for going missing.
+func missingScopes(want, have []string) []string {
+	present := make(map[string]struct{}, len(have))
+	for _, s := range have {
+		present[s] = struct{}{}
+	}
+	var missing []string
+	for _, w := range want {
+		if _, ok := present[w]; !ok {
+			missing = append(missing, w)
+		}
+	}
+	return missing
+}
+
 // missingIdentityAttributes returns the identity attributes absent from
 // `have`, preserving the contract's order so the message is stable.
 func missingIdentityAttributes(have []string) []string {
@@ -610,8 +744,9 @@ func missingIdentityAttributes(have []string) []string {
 	return missing
 }
 
-// verifyIdentityClaims reads the application back and fails when the identity
-// attributes did not survive the write.
+// verifyIdentityClaims fails when the identity attributes did not survive the
+// write. cfg is the READ-BACK oauth2 config (see verifyWritten), never the body
+// that was sent.
 //
 // This is not defensive coding for its own sake. ThunderID accepts an
 // application payload with 200 and keeps only the fields it recognises, so a
@@ -620,15 +755,7 @@ func missingIdentityAttributes(have []string) []string {
 // a deployed app, hours later, as a 403 with no mention of a claim anywhere.
 // Reading back turns it into a ThunderApplication that refuses to go ready and
 // names the attributes that vanished.
-func (c *client) verifyIdentityClaims(ctx context.Context, token, internalID, name string) error {
-	app, err := c.getAppByID(ctx, token, internalID)
-	if err != nil {
-		return fmt.Errorf("verify identity claims %q: %w", name, err)
-	}
-	cfg, err := inboundOAuthConfig(app)
-	if err != nil {
-		return fmt.Errorf("verify identity claims %q: %w", name, err)
-	}
+func verifyIdentityClaims(cfg map[string]any, name string) error {
 	accessMissing := missingIdentityAttributes(accessTokenAttributes(cfg))
 	idMissing := missingIdentityAttributes(idTokenAttributes(cfg))
 	if len(accessMissing) == 0 && len(idMissing) == 0 {
@@ -660,6 +787,18 @@ func scopeClaimConfig() map[string]any {
 // lookup key — where createSPAApp used the project name).
 func (c *client) createApp(ctx context.Context, token string, app DesiredApp, ouID string) (string, error) {
 	uris := wireRedirectURIs(app.RedirectURIs)
+	oauthConfig := map[string]any{
+		"clientId":                app.Name,
+		"redirectUris":            uris,
+		"grantTypes":              []string{"authorization_code", "refresh_token"},
+		"responseTypes":           []string{"code"},
+		"tokenEndpointAuthMethod": "none",
+		"pkceRequired":            true,
+		"publicClient":            true,
+		"token":                   tokenClaimConfig(app.ValidityPeriod),
+		"scopeClaims":             scopeClaimConfig(),
+	}
+	setWireScopes(oauthConfig, app.Scopes)
 	payload := map[string]any{
 		"name": app.Name,
 		// REQUIRED from ThunderID 1.0.0 (APP-1042 without it); Thunder 0.34's
@@ -670,20 +809,7 @@ func (c *client) createApp(ctx context.Context, token string, app DesiredApp, ou
 		"ouId":             ouID,
 		"allowedUserTypes": allowedUserTypes,
 		"inboundAuthConfig": []map[string]any{
-			{
-				"type": "oauth2",
-				"config": map[string]any{
-					"clientId":                app.Name,
-					"redirectUris":            uris,
-					"grantTypes":              []string{"authorization_code", "refresh_token"},
-					"responseTypes":           []string{"code"},
-					"tokenEndpointAuthMethod": "none",
-					"pkceRequired":            true,
-					"publicClient":            true,
-					"token":                   tokenClaimConfig(),
-					"scopeClaims":             scopeClaimConfig(),
-				},
-			},
+			{"type": "oauth2", "config": oauthConfig},
 		},
 	}
 	body, err := json.Marshal(payload)
@@ -724,6 +850,16 @@ func (c *client) createApp(ctx context.Context, token string, app DesiredApp, ou
 // client_credentials grant. No PKCE, no redirect URIs — the caller supplies
 // the pre-generated secret via app.ClientSecret.
 func (c *client) createConfidentialApp(ctx context.Context, token string, app DesiredApp, ouID string) (string, error) {
+	oauthConfig := map[string]any{
+		"clientId":                app.Name,
+		"clientSecret":            app.ClientSecret,
+		"grantTypes":              []string{"client_credentials"},
+		"tokenEndpointAuthMethod": "client_secret_post",
+		"pkceRequired":            false,
+		"publicClient":            false,
+		"token":                   tokenClaimConfig(app.ValidityPeriod),
+	}
+	setWireScopes(oauthConfig, app.Scopes)
 	payload := map[string]any{
 		"name": app.Name,
 		// See createApp: required from ThunderID 1.0.0. "m2m" is the
@@ -733,18 +869,7 @@ func (c *client) createConfidentialApp(ctx context.Context, token string, app De
 		"ouId":             ouID,
 		"allowedUserTypes": allowedUserTypes,
 		"inboundAuthConfig": []map[string]any{
-			{
-				"type": "oauth2",
-				"config": map[string]any{
-					"clientId":                app.Name,
-					"clientSecret":            app.ClientSecret,
-					"grantTypes":              []string{"client_credentials"},
-					"tokenEndpointAuthMethod": "client_secret_post",
-					"pkceRequired":            false,
-					"publicClient":            false,
-					"token":                   tokenClaimConfig(),
-				},
-			},
+			{"type": "oauth2", "config": oauthConfig},
 		},
 	}
 	body, err := json.Marshal(payload)
@@ -804,8 +929,9 @@ func (c *client) updateApp(ctx context.Context, token, internalID string, app De
 		// reading the OpenBao-provisioned value.
 		cfg["clientSecret"] = app.ClientSecret
 	}
-	cfg["token"] = tokenClaimConfig()
+	cfg["token"] = tokenClaimConfig(app.ValidityPeriod)
 	cfg["scopeClaims"] = scopeClaimConfig()
+	setWireScopes(cfg, app.Scopes)
 	full["allowedUserTypes"] = allowedUserTypes
 	return c.putAppByID(ctx, token, internalID, full)
 }

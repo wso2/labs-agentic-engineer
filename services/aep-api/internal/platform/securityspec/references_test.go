@@ -257,6 +257,69 @@ func TestAReusedOrgGroupIsInfoNotAnError(t *testing.T) {
 	}
 }
 
+// A role name is refused for the characters that cannot be escaped downstream.
+//
+// A "|" is the one that bites: the role is published in the build ticket's
+// markdown table, and the validation agent parses that table to learn which
+// login exercises which criteria — a pipe inside a cell silently shifts every
+// column after it. The "/" is the platform's own separator in the directory
+// name `<project>/<Role>`. Everything a PRD actor noun needs — spaces, dots,
+// hyphens, underscores, digits, non-ASCII letters — is still accepted.
+//
+// The rule is a document-only one, so Parse itself refuses: the refusal is what
+// the write gate shows the model, not a finding a caller has to look for.
+func TestRoleNameCharset(t *testing.T) {
+	rename := func(name string) func(map[string]any) {
+		return func(m map[string]any) {
+			role := roleNamed(t, m, "Approver")
+			role["name"] = name
+			// testUsers[].roles and assignableBy name it too; keep the document
+			// referentially whole so this rule is the only one that speaks.
+			role["assignableBy"] = []any{name}
+			for _, entry := range m["testUsers"].([]any) {
+				user := entry.(map[string]any)
+				if user["username"] == "test-approver" {
+					user["roles"] = []any{name}
+				}
+			}
+		}
+	}
+	for _, tc := range []struct {
+		name    string
+		refused bool
+	}{
+		{"Approver | admin", true},
+		{"Approver/admin", true},
+		{"Approver\nadmin", true},
+		{"Approver`admin`", true},
+		{"Compliance Admin", false},
+		{"Level-2 Approver", false},
+		{"Sr. Approver_2", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc, err := Parse(mutate(t, "expense-tracker.json", rename(tc.name)))
+			if tc.refused {
+				if err == nil {
+					t.Fatalf("role %q was accepted", tc.name)
+				}
+				want := Msg(MsgRoleNameInvalid, "role", tc.name)
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("Parse refused with %q, want the %s sentence %q", err, MsgRoleNameInvalid, want)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("role %q was refused: %v", tc.name, err)
+			}
+			for _, f := range ReferenceFindings(doc, bundleOf(t, "expense-tracker")) {
+				if f.Key == MsgRoleNameInvalid {
+					t.Fatalf("role %q was refused by the charset rule: %s", tc.name, f.Message)
+				}
+			}
+		})
+	}
+}
+
 // The two coverage warnings: declared and used nowhere, required and granted by
 // nobody. Neither blocks a build.
 func TestCoverageWarnings(t *testing.T) {

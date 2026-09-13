@@ -76,6 +76,18 @@ type fakeThunder struct {
 	// tokens — a stand-in for the next ThunderID contract change.
 	dropTokenAttrs bool
 
+	// dropScopes makes the fake swallow the scope allowlist the way it swallows
+	// an unrecognised token shape: 200, and the field is simply not there on the
+	// read-back.
+	dropScopes bool
+
+	// normaliseScopes makes the fake rewrite the stored allowlist the way
+	// ThunderID normalises scopeClaims on write (P1 §4: `email_verified` is
+	// dropped from scopeClaims.email). Here it appends a server-side extra, so
+	// the read-back is a SUPERSET of what was sent — which must not be read as
+	// a failed write.
+	normaliseScopes bool
+
 	srv *httptest.Server
 }
 
@@ -258,6 +270,26 @@ func storeTokenConfig(cfg map[string]any, drop bool) {
 	cfg["token"] = kept
 }
 
+// storeScopes models what ThunderID does to `inboundAuthConfig[oauth2].config
+// .scopes`: it stores the array verbatim (measured on 1.0.0, P1 §4) — unless a
+// test asks it to misbehave the two ways that matter. A fake that only ever
+// echoed the payload back could not tell a stored allowlist from a discarded
+// one, which is the thing verifyWritten exists to catch.
+func (f *fakeThunder) storeScopes(cfg map[string]any) {
+	if cfg == nil {
+		return
+	}
+	if f.dropScopes {
+		delete(cfg, "scopes")
+		return
+	}
+	if f.normaliseScopes {
+		if have, ok := cfg["scopes"].([]any); ok {
+			cfg["scopes"] = append(append([]any{}, have...), "openid")
+		}
+	}
+}
+
 func (f *fakeThunder) handleCreate(w http.ResponseWriter, r *http.Request) {
 	var body map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -275,6 +307,7 @@ func (f *fakeThunder) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	cfg, _ := firstOAuthConfig(body)
 	storeTokenConfig(cfg, f.dropTokenAttrs)
+	f.storeScopes(cfg)
 	a := &fakeApp{
 		id:     id,
 		name:   asString(body["name"]),
@@ -321,6 +354,7 @@ func (f *fakeThunder) handleApplicationByID(w http.ResponseWriter, r *http.Reque
 		f.lastPutBody = body
 		cfg, _ := firstOAuthConfig(body)
 		storeTokenConfig(cfg, f.dropTokenAttrs)
+		f.storeScopes(cfg)
 		a.name = asString(body["name"])
 		a.desc = asString(body["description"])
 		a.config = cfg
@@ -384,6 +418,20 @@ func firstOAuthConfig(body map[string]any) (map[string]any, bool) {
 func asString(v any) string {
 	s, _ := v.(string)
 	return s
+}
+
+// asNumber reads a JSON number out of a decoded request body. encoding/json
+// gives every number back as float64, so an int comparison against a body the
+// fake observed would never match even when the value is right.
+func asNumber(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	default:
+		return -1
+	}
 }
 
 // anySliceHas reports whether a JSON-decoded array ([]any) contains want.
@@ -524,6 +572,58 @@ func (f *fakeThunder) seedApp(clientID string, redirectURIs []string) string {
 	return id
 }
 
+// seedScopes gives an already-seeded app a stored scope allowlist, so a test
+// can ask what an update does to one it was told nothing about.
+func (f *fakeThunder) seedScopes(id string, scopes []string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	a := f.findByID(id)
+	if a == nil {
+		return
+	}
+	stored := make([]any, 0, len(scopes))
+	for _, sc := range scopes {
+		stored = append(stored, sc)
+	}
+	a.config["scopes"] = stored
+}
+
+// storedScopes reads the allowlist the fake SERVER kept for an app.
+func (f *fakeThunder) storedScopes(t *testing.T, clientID string) []string {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, a := range f.apps {
+		if asString(a.config["clientId"]) == clientID {
+			return stringsOf(a.config["scopes"])
+		}
+	}
+	t.Fatalf("no application with clientId %q on the fake server", clientID)
+	return nil
+}
+
+// assertWireScopes checks that a create/update body carries the allowlist as a
+// JSON array of exactly the desired strings, in order.
+func assertWireScopes(t *testing.T, body map[string]any, want []string) {
+	t.Helper()
+	cfg, ok := firstOAuthConfig(body)
+	if !ok {
+		t.Fatalf("body missing inboundAuthConfig[0].config: %#v", body)
+	}
+	raw, isArray := cfg["scopes"].([]any)
+	if !isArray {
+		t.Fatalf("config.scopes = %#v (%T), want a JSON array of strings — "+
+			"the space-joined CRT form must be split before the wire", cfg["scopes"], cfg["scopes"])
+	}
+	got := stringsOf(raw)
+	if len(got) != len(raw) {
+		t.Errorf("config.scopes = %#v, want every element to be a string", raw)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("config.scopes = %v, want %v", got, want)
+	}
+}
+
 // -- tests ------------------------------------------------------------------
 
 func newTestClient(f *fakeThunder) AdminClient {
@@ -607,10 +707,10 @@ func TestEnsureApplication_CreatesWhenAbsent(t *testing.T) {
 			t.Errorf("POST body carries snake_case key %q — Thunder 0.34.0 speaks camelCase (thundersvc parity)", stale)
 		}
 	}
-	// NOTE: no wire-level "scopes"/"scope" assertion here — Thunder 0.34.0's
-	// application inboundAuthConfig has no per-app scope allowlist field
-	// (see DesiredApp.Scopes doc comment in client.go). Asserting one would
-	// mean inventing a field Thunder doesn't accept.
+	// The allowlist rides on the create as a JSON ARRAY of strings — the CRT
+	// parameter is space-joined, ThunderID's contract is a list, and sending the
+	// joined form would register one scope literally named "openid profile".
+	assertWireScopes(t, f.lastCreateBody, app.Scopes)
 
 	// The identity-claim contract must ride on every created app so end-user
 	// tokens carry `groups` (role) + `ou*` (org).
@@ -631,6 +731,7 @@ func TestEnsureApplication_UpdatesExistingReplacesRedirectURIs(t *testing.T) {
 	app := DesiredApp{
 		Name:         name,
 		DisplayName:  "Existing App",
+		Scopes:       []string{"openid", "claims:read"},
 		RedirectURIs: []string{"https://fresh.example.com/callback"},
 	}
 
@@ -667,6 +768,7 @@ func TestEnsureApplication_UpdatesExistingReplacesRedirectURIs(t *testing.T) {
 	// Backfill: an app created before the identity-claim contract existed must
 	// self-heal on update — the PUT re-asserts the full contract, not just URIs.
 	assertIdentityClaimContract(t, f.lastPutBody)
+	assertWireScopes(t, f.lastPutBody, app.Scopes)
 }
 
 // Create with NO desired redirect URIs must still succeed: Thunder rejects
@@ -982,5 +1084,277 @@ func TestEnsureApplication_ConfidentialClientSkipsTheUserClaimCheck(t *testing.T
 		ClientSecret: "s3cret",
 	}); err != nil {
 		t.Fatalf("confidential EnsureApplication: %v", err)
+	}
+}
+
+// -- the scope allowlist must SURVIVE the write ------------------------------
+//
+// What these pin is TRUTHFULNESS, not enforcement. Measured on ThunderID 1.0.0
+// (spike P1 §6): the field is stored and read back faithfully and has no effect
+// on the authorization-code flow — narrowing it does not narrow the issued
+// token. The reason to write it is that the registered application should
+// describe its client honestly; the reason to read it back is that a list the
+// server quietly discarded describes nothing.
+
+// The allowlist the client asked for is what the server ends up holding.
+func TestEnsureApplication_StoresTheScopeAllowlist(t *testing.T) {
+	f := newFakeThunder(t)
+	c := newTestClient(f)
+
+	const name = "aep-default-scoped-app"
+	want := []string{"openid", "profile", "email", "group", "ou", "claims:read", "claims:approve"}
+	if _, err := c.EnsureApplication(context.Background(), DesiredApp{
+		Name:         name,
+		Scopes:       want,
+		RedirectURIs: []string{"https://app.example.com/callback"},
+	}); err != nil {
+		t.Fatalf("EnsureApplication: %v", err)
+	}
+	if got := f.storedScopes(t, name); !reflect.DeepEqual(got, want) {
+		t.Errorf("stored scopes = %v, want %v", got, want)
+	}
+}
+
+// An app registered before write-through existed picks the allowlist up on its
+// next reconcile, like the identity claims do.
+func TestEnsureApplication_UpdateBackfillsTheScopeAllowlist(t *testing.T) {
+	f := newFakeThunder(t)
+	c := newTestClient(f)
+
+	const name = "aep-default-unscoped-app"
+	f.seedApp(name, []string{"https://app.example.com/callback"})
+
+	want := []string{"openid", "reports:read"}
+	if _, err := c.EnsureApplication(context.Background(), DesiredApp{
+		Name:         name,
+		Scopes:       want,
+		RedirectURIs: []string{"https://app.example.com/callback"},
+	}); err != nil {
+		t.Fatalf("EnsureApplication: %v", err)
+	}
+	if got := f.storedScopes(t, name); !reflect.DeepEqual(got, want) {
+		t.Errorf("stored scopes = %v, want %v", got, want)
+	}
+}
+
+// Converge-to-desired, not merge: a handle the design dropped leaves the
+// allowlist, exactly as redirect URIs do. (It changes no token — see the block
+// comment above — but a record that only ever grows is not a record.)
+func TestEnsureApplication_UpdateReplacesTheScopeAllowlist(t *testing.T) {
+	f := newFakeThunder(t)
+	c := newTestClient(f)
+
+	const name = "aep-default-shrinking-scopes"
+	id := f.seedApp(name, []string{"https://app.example.com/callback"})
+	f.seedScopes(id, []string{"openid", "claims:read", "claims:retired"})
+
+	want := []string{"openid", "claims:read"}
+	if _, err := c.EnsureApplication(context.Background(), DesiredApp{
+		Name:         name,
+		Scopes:       want,
+		RedirectURIs: []string{"https://app.example.com/callback"},
+	}); err != nil {
+		t.Fatalf("EnsureApplication: %v", err)
+	}
+	if got := f.storedScopes(t, name); !reflect.DeepEqual(got, want) {
+		t.Errorf("stored scopes = %v, want EXACTLY %v (replace, not union with the retired handle)", got, want)
+	}
+}
+
+// A CR that names no scopes is SILENT, not a statement that the client may
+// request nothing: the operator must not narrow an allowlist it was never told
+// about. (The CRT always carries a default, so this is the hand-authored CR and
+// the platform-client case.)
+func TestEnsureApplication_NoDesiredScopesLeavesTheStoredAllowlistAlone(t *testing.T) {
+	f := newFakeThunder(t)
+	c := newTestClient(f)
+
+	const name = "aep-default-silent-scopes"
+	id := f.seedApp(name, []string{"https://app.example.com/callback"})
+	existing := []string{"openid", "system"}
+	f.seedScopes(id, existing)
+
+	if _, err := c.EnsureApplication(context.Background(), DesiredApp{
+		Name:         name,
+		RedirectURIs: []string{"https://app.example.com/callback"},
+	}); err != nil {
+		t.Fatalf("EnsureApplication: %v", err)
+	}
+	if got := f.storedScopes(t, name); !reflect.DeepEqual(got, existing) {
+		t.Errorf("stored scopes = %v, want %v untouched", got, existing)
+	}
+	// updateApp is a read-modify-write, so the PUT does echo the stored list
+	// back — what matters is that it is the list the server already had, not a
+	// narrower one this reconcile invented.
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cfg, _ := firstOAuthConfig(f.lastPutBody)
+	if got := stringsOf(cfg["scopes"]); !reflect.DeepEqual(got, existing) {
+		t.Errorf("PUT scopes = %v, want the stored %v echoed back untouched", got, existing)
+	}
+}
+
+// The point of reading back: when the IdP swallows the allowlist, the write
+// FAILS and names what vanished, rather than leaving a ThunderApplication that
+// claims to be ready and is registered as something else.
+func TestEnsureApplication_FailsWhenTheIdPDropsTheScopeAllowlist(t *testing.T) {
+	f := newFakeThunder(t)
+	f.dropScopes = true
+	c := newTestClient(f)
+
+	_, err := c.EnsureApplication(context.Background(), DesiredApp{
+		Name:         "aep-default-scopes-dropped",
+		Scopes:       []string{"openid", "claims:read"},
+		RedirectURIs: []string{"https://app.example.com/callback"},
+	})
+	if err == nil {
+		t.Fatal("EnsureApplication returned nil when the IdP stored no scope allowlist")
+	}
+	for _, want := range []string{"claims:read", "scope allowlist"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q — the message has to name what vanished", err, want)
+		}
+	}
+}
+
+// The diff is against the READ-BACK and is a subset check, because ThunderID
+// normalises on write (P1 §4: scopeClaims.email loses email_verified). A server
+// that returns MORE than was sent is having its own opinion, not failing.
+func TestEnsureApplication_ToleratesAServerNormalisedReadBack(t *testing.T) {
+	f := newFakeThunder(t)
+	f.normaliseScopes = true
+	c := newTestClient(f)
+
+	if _, err := c.EnsureApplication(context.Background(), DesiredApp{
+		Name:         "aep-default-normalised",
+		Scopes:       []string{"claims:read"},
+		RedirectURIs: []string{"https://app.example.com/callback"},
+	}); err != nil {
+		t.Fatalf("a read-back carrying more than was sent must not fail the write: %v", err)
+	}
+}
+
+// An m2m client's allowlist is the one place the field is load-bearing today:
+// `system` is granted through it, not through a role, and an app that loses it
+// authenticates fine and then 403s on every admin call. So it is written and
+// verified for confidential clients too, even though the user-claim contract
+// does not apply to them.
+func TestEnsureApplication_ConfidentialClientWritesAndVerifiesItsScopes(t *testing.T) {
+	f := newFakeThunder(t)
+	f.dropTokenAttrs = true // irrelevant to an m2m client; must not fail it
+	c := newTestClient(f)
+
+	const name = "aep-default-m2m-scoped"
+	if _, err := c.EnsureApplication(context.Background(), DesiredApp{
+		Name:         name,
+		ClientType:   "confidential",
+		ClientSecret: "s3cret",
+		Scopes:       []string{"system"},
+	}); err != nil {
+		t.Fatalf("confidential EnsureApplication: %v", err)
+	}
+	if got := f.storedScopes(t, name); !reflect.DeepEqual(got, []string{"system"}) {
+		t.Errorf("stored scopes = %v, want [system]", got)
+	}
+
+	f2 := newFakeThunder(t)
+	f2.dropScopes = true
+	if _, err := newTestClient(f2).EnsureApplication(context.Background(), DesiredApp{
+		Name:         name,
+		ClientType:   "confidential",
+		ClientSecret: "s3cret",
+		Scopes:       []string{"system"},
+	}); err == nil {
+		t.Fatal("a confidential client that lost `system` must fail the write, not 403 later")
+	}
+}
+
+// -- access-token lifetime ---------------------------------------------------
+
+// The CR's validityPeriod reaches the ACCESS token and nothing else. A short
+// value is how a fixture app exercises the silent renew in minutes (P6 used
+// 300 s); the ID token keeps the long default, because shortening the SPA's
+// session is not what was asked for.
+func TestEnsureApplication_ValidityPeriodSetsTheAccessTokenLifetimeOnly(t *testing.T) {
+	f := newFakeThunder(t)
+	c := newTestClient(f)
+
+	if _, err := c.EnsureApplication(context.Background(), DesiredApp{
+		Name:           "aep-default-short-lived",
+		ValidityPeriod: 300,
+		RedirectURIs:   []string{"https://app.example.com/callback"},
+	}); err != nil {
+		t.Fatalf("EnsureApplication: %v", err)
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cfg, ok := firstOAuthConfig(f.lastCreateBody)
+	if !ok {
+		t.Fatalf("POST body missing inboundAuthConfig[0].config: %#v", f.lastCreateBody)
+	}
+	tok, _ := cfg["token"].(map[string]any)
+	access, _ := tok["accessToken"].(map[string]any)
+	userCfg, _ := access["userConfig"].(map[string]any)
+	if got := asNumber(userCfg["validityPeriod"]); got != 300 {
+		t.Errorf("token.accessToken.userConfig.validityPeriod = %v, want 300", userCfg["validityPeriod"])
+	}
+	id, _ := tok["idToken"].(map[string]any)
+	if got := asNumber(id["validityPeriod"]); got != defaultTokenValiditySeconds {
+		t.Errorf("token.idToken.validityPeriod = %v, want the %d default left alone",
+			id["validityPeriod"], defaultTokenValiditySeconds)
+	}
+}
+
+// Zero means "the CR said nothing", which is every app that is not a
+// short-lived fixture: the long default applies.
+func TestEnsureApplication_NoValidityPeriodKeepsTheDefault(t *testing.T) {
+	f := newFakeThunder(t)
+	c := newTestClient(f)
+
+	if _, err := c.EnsureApplication(context.Background(), DesiredApp{
+		Name:         "aep-default-default-lifetime",
+		RedirectURIs: []string{"https://app.example.com/callback"},
+	}); err != nil {
+		t.Fatalf("EnsureApplication: %v", err)
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cfg, _ := firstOAuthConfig(f.lastCreateBody)
+	tok, _ := cfg["token"].(map[string]any)
+	access, _ := tok["accessToken"].(map[string]any)
+	userCfg, _ := access["userConfig"].(map[string]any)
+	if got := asNumber(userCfg["validityPeriod"]); got != defaultTokenValiditySeconds {
+		t.Errorf("token.accessToken.userConfig.validityPeriod = %v, want %d",
+			userCfg["validityPeriod"], defaultTokenValiditySeconds)
+	}
+}
+
+// An update re-asserts the lifetime too, so patching a live CR down to 300 s
+// takes effect on the next reconcile rather than needing a re-create.
+func TestEnsureApplication_UpdateReassertsTheAccessTokenLifetime(t *testing.T) {
+	f := newFakeThunder(t)
+	c := newTestClient(f)
+
+	const name = "aep-default-relifetimed"
+	f.seedApp(name, []string{"https://app.example.com/callback"})
+
+	if _, err := c.EnsureApplication(context.Background(), DesiredApp{
+		Name:           name,
+		ValidityPeriod: 300,
+		RedirectURIs:   []string{"https://app.example.com/callback"},
+	}); err != nil {
+		t.Fatalf("EnsureApplication: %v", err)
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cfg, _ := firstOAuthConfig(f.lastPutBody)
+	tok, _ := cfg["token"].(map[string]any)
+	access, _ := tok["accessToken"].(map[string]any)
+	userCfg, _ := access["userConfig"].(map[string]any)
+	if got := asNumber(userCfg["validityPeriod"]); got != 300 {
+		t.Errorf("PUT token.accessToken.userConfig.validityPeriod = %v, want 300", userCfg["validityPeriod"])
 	}
 }

@@ -32,6 +32,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -615,5 +616,420 @@ func mustReplace(t *testing.T, ctx context.Context, s identity.Store, scope iden
 	})
 	if err != nil {
 		t.Fatalf("ReplaceProjectRefs(%s/%s): %v", scope, projectID, err)
+	}
+}
+
+// ---- project-owned directory objects ----------------------------------------
+//
+// These four tables' rows are the OTHER half of this package's record, and the
+// half the shared rows above deliberately are not: a resource server and a
+// project's own roles are created by exactly one project, so they may be
+// converged and they may be deleted. Only a real database can say whether the
+// project half of the key is genuinely in the SQL, whether the converge really
+// leaves an unchanged row alone, and whether the count behind "reused by 2
+// projects" is DISTINCT and scope-fenced.
+
+// The project is part of the KEY, not a filter. Two orgs running a project of
+// the same name have two resource servers on two directories, and neither read
+// may answer the other's.
+func TestStoreResourceServerIsScopeFenced(t *testing.T) {
+	t.Parallel()
+	s, _, _ := newStore(t)
+	ctx := context.Background()
+
+	for _, scope := range []identity.Scope{devA, devB, stagingA} {
+		err := s.UpsertResourceServer(ctx, identity.IdPResourceServer{
+			OrgID: scope.OrgID, Environment: scope.Environment, ProjectID: projectA,
+			Identifier:  "https://aep.wso2.com/orgs/" + scope.OrgID + "/projects/" + projectA,
+			DirectoryID: "rs-" + scope.String(),
+		})
+		if err != nil {
+			t.Fatalf("UpsertResourceServer on %s: %v", scope, err)
+		}
+	}
+
+	for _, scope := range []identity.Scope{devA, devB, stagingA} {
+		got, err := s.GetResourceServer(ctx, scope, projectA)
+		if err != nil || got == nil {
+			t.Fatalf("GetResourceServer on %s = %v, %v", scope, got, err)
+		}
+		if got.DirectoryID != "rs-"+scope.String() {
+			t.Fatalf("%s resolved to %q — another scope's row answered its read",
+				scope, got.DirectoryID)
+		}
+	}
+
+	// A project with no resource server is (nil, nil), the same ownership answer
+	// GetRole gives: the directory may hold one, but the platform did not make it.
+	got, err := s.GetResourceServer(ctx, devA, projectB)
+	if err != nil {
+		t.Fatalf("GetResourceServer for an absent project errored: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("GetResourceServer = %+v, want nil", got)
+	}
+}
+
+// A rebuild of the same tag upserts the same row: one row, refreshed facts, and
+// created_at untouched — the ensure must be re-runnable without looking like it
+// recreated the resource server.
+func TestStoreUpsertResourceServerIsIdempotent(t *testing.T) {
+	t.Parallel()
+	s, db, _ := newStore(t)
+	ctx := context.Background()
+
+	const identifier = "https://aep.wso2.com/orgs/org-a/projects/proj-a"
+	first := identity.IdPResourceServer{
+		OrgID: devA.OrgID, Environment: devA.Environment, ProjectID: projectA,
+		Identifier: identifier, DirectoryID: "rs-1",
+	}
+	if err := s.UpsertResourceServer(ctx, first); err != nil {
+		t.Fatalf("first UpsertResourceServer: %v", err)
+	}
+	created, err := s.GetResourceServer(ctx, devA, projectA)
+	if err != nil || created == nil {
+		t.Fatalf("GetResourceServer = %v, %v", created, err)
+	}
+
+	second := first
+	second.DirectoryID = "rs-recreated"
+	if err := s.UpsertResourceServer(ctx, second); err != nil {
+		t.Fatalf("second UpsertResourceServer: %v", err)
+	}
+
+	got, err := s.GetResourceServer(ctx, devA, projectA)
+	if err != nil || got == nil {
+		t.Fatalf("GetResourceServer = %v, %v", got, err)
+	}
+	if got.DirectoryID != "rs-recreated" {
+		t.Fatalf("directory_id = %q, want the refreshed rs-recreated", got.DirectoryID)
+	}
+	if !got.CreatedAt.Equal(created.CreatedAt) {
+		t.Fatalf("created_at moved on an upsert: %v -> %v", created.CreatedAt, got.CreatedAt)
+	}
+	var rows int64
+	if err := db.Raw(`SELECT count(*) FROM idp_resource_servers`).Scan(&rows).Error; err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if rows != 1 {
+		t.Fatalf("idp_resource_servers holds %d rows, want one", rows)
+	}
+}
+
+// The identifier is the token audience, and the directory treats it as unique,
+// so the table does too: a second project claiming one project's identifier on
+// the same directory is a conflict, not a silent duplicate. The SAME identifier
+// on another environment is fine — it is another directory.
+func TestStoreResourceServerIdentifierIsUniquePerDirectory(t *testing.T) {
+	t.Parallel()
+	s, _, _ := newStore(t)
+	ctx := context.Background()
+	const identifier = "https://aep.wso2.com/orgs/org-a/projects/proj-a"
+
+	err := s.UpsertResourceServer(ctx, identity.IdPResourceServer{
+		OrgID: devA.OrgID, Environment: devA.Environment, ProjectID: projectA,
+		Identifier: identifier, DirectoryID: "rs-1",
+	})
+	if err != nil {
+		t.Fatalf("UpsertResourceServer: %v", err)
+	}
+
+	err = s.UpsertResourceServer(ctx, identity.IdPResourceServer{
+		OrgID: devA.OrgID, Environment: devA.Environment, ProjectID: projectB,
+		Identifier: identifier, DirectoryID: "rs-2",
+	})
+	if err == nil {
+		t.Fatalf("a second project claimed %q on the same directory", identifier)
+	}
+
+	err = s.UpsertResourceServer(ctx, identity.IdPResourceServer{
+		OrgID: stagingA.OrgID, Environment: stagingA.Environment, ProjectID: projectB,
+		Identifier: identifier, DirectoryID: "rs-3",
+	})
+	if err != nil {
+		t.Fatalf("the same identifier on another environment was refused: %v", err)
+	}
+}
+
+// ReplaceRoleBindings converges: what the tag still names is KEPT (created_at
+// and all), what it adds is written, and what it dropped is gone. The keep is
+// the reason this is not a clear-and-insert — a rebuild of the same tag must not
+// make every binding look new.
+func TestStoreReplaceRoleBindingsConverges(t *testing.T) {
+	t.Parallel()
+	s, _, _ := newStore(t)
+	ctx := context.Background()
+
+	err := s.ReplaceRoleBindings(ctx, devA, projectA, []identity.IdPRoleBinding{
+		{Role: "Approver", GroupName: "Finance", DirectoryRoleID: "role-approver"},
+		{Role: "Employee", GroupName: "Employees", DirectoryRoleID: "role-employee"},
+	})
+	if err != nil {
+		t.Fatalf("first ReplaceRoleBindings: %v", err)
+	}
+	before, err := s.ListRoleBindings(ctx, devA, projectA)
+	if err != nil || len(before) != 2 {
+		t.Fatalf("ListRoleBindings = %+v, %v", before, err)
+	}
+	// Ordered by role then group, so the read is stable for a console table.
+	if before[0].Role != "Approver" || before[1].Role != "Employee" {
+		t.Fatalf("bindings are not role-ordered: %+v", before)
+	}
+	if before[0].OrgID != orgA || before[0].Environment != devA.Environment || before[0].ProjectID != projectA {
+		t.Fatalf("binding = %+v, want it stamped with the caller's scope and project", before[0])
+	}
+
+	// v2: Approver keeps Finance and gains Auditors, Employee is dropped, and a
+	// self-service role arrives with no group at all.
+	err = s.ReplaceRoleBindings(ctx, devA, projectA, []identity.IdPRoleBinding{
+		{Role: "Approver", GroupName: "Finance", DirectoryRoleID: "role-approver"},
+		{Role: "Approver", GroupName: "Auditors", DirectoryRoleID: "role-approver"},
+		{Role: "Member", GroupName: "", DirectoryRoleID: "role-member"},
+	})
+	if err != nil {
+		t.Fatalf("second ReplaceRoleBindings: %v", err)
+	}
+
+	after, err := s.ListRoleBindings(ctx, devA, projectA)
+	if err != nil {
+		t.Fatalf("ListRoleBindings: %v", err)
+	}
+	var got []string
+	for _, b := range after {
+		got = append(got, b.Role+"->"+b.GroupName)
+	}
+	want := []string{"Approver->Auditors", "Approver->Finance", "Member->"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("bindings = %v, want %v", got, want)
+	}
+
+	// The kept binding is the SAME row, not a recreated one.
+	for _, b := range after {
+		if b.Role == "Approver" && b.GroupName == "Finance" {
+			if !b.CreatedAt.Equal(before[0].CreatedAt) {
+				t.Fatalf("an unchanged binding was recreated: created_at %v -> %v",
+					before[0].CreatedAt, b.CreatedAt)
+			}
+		}
+	}
+
+	// An empty set clears the project's bindings without failing — the shape a
+	// design that dropped every role leaves behind.
+	if err := s.ReplaceRoleBindings(ctx, devA, projectA, nil); err != nil {
+		t.Fatalf("empty ReplaceRoleBindings: %v", err)
+	}
+	rows, err := s.ListRoleBindings(ctx, devA, projectA)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("bindings = %+v, %v; want none", rows, err)
+	}
+}
+
+// A replace touches only the calling project, and only on its own scope: the
+// project id alone names nothing, exactly as with the resource server.
+func TestStoreReplaceRoleBindingsIsScopeAndProjectFenced(t *testing.T) {
+	t.Parallel()
+	s, _, _ := newStore(t)
+	ctx := context.Background()
+
+	mustBind(t, ctx, s, devA, projectA, "Approver", "Finance", "role-a")
+	mustBind(t, ctx, s, devA, projectB, "Approver", "Finance", "role-b")
+	mustBind(t, ctx, s, devB, projectA, "Approver", "Finance", "role-other-org")
+	mustBind(t, ctx, s, stagingA, projectA, "Approver", "Finance", "role-staging")
+
+	if err := s.ReplaceRoleBindings(ctx, devA, projectA, nil); err != nil {
+		t.Fatalf("ReplaceRoleBindings: %v", err)
+	}
+
+	for _, tc := range []struct {
+		scope   identity.Scope
+		project string
+		roleID  string
+	}{
+		{devA, projectB, "role-b"},
+		{devB, projectA, "role-other-org"},
+		{stagingA, projectA, "role-staging"},
+	} {
+		rows, err := s.ListRoleBindings(ctx, tc.scope, tc.project)
+		if err != nil {
+			t.Fatalf("ListRoleBindings(%s/%s): %v", tc.scope, tc.project, err)
+		}
+		if len(rows) != 1 || rows[0].DirectoryRoleID != tc.roleID {
+			t.Fatalf("%s/%s = %+v, want its one binding %q intact",
+				tc.scope, tc.project, rows, tc.roleID)
+		}
+	}
+}
+
+// The `projects` number beside a group in the directory panel counts DISTINCT
+// projects — a project binding one group to two roles is still one project —
+// and it is fenced by the scope, because a group exists on exactly one
+// environment's directory.
+func TestStoreCountProjectsBindingGroup(t *testing.T) {
+	t.Parallel()
+	s, _, _ := newStore(t)
+	ctx := context.Background()
+
+	// projectA binds Finance twice, through two roles. That is one project.
+	err := s.ReplaceRoleBindings(ctx, devA, projectA, []identity.IdPRoleBinding{
+		{Role: "Approver", GroupName: "Finance", DirectoryRoleID: "role-approver"},
+		{Role: "Auditor", GroupName: "Finance", DirectoryRoleID: "role-auditor"},
+		{Role: "Member", GroupName: "", DirectoryRoleID: "role-member"},
+	})
+	if err != nil {
+		t.Fatalf("ReplaceRoleBindings(%s): %v", projectA, err)
+	}
+	mustBind(t, ctx, s, devA, projectB, "Reviewer", "Finance", "role-reviewer")
+	// Other scopes name the same group; neither may be counted here.
+	mustBind(t, ctx, s, devB, "proj-secret", "Reviewer", "Finance", "role-other-org")
+	mustBind(t, ctx, s, stagingA, "proj-staging", "Reviewer", "Finance", "role-staging")
+
+	count, err := s.CountProjectsBindingGroup(ctx, devA, "Finance")
+	if err != nil {
+		t.Fatalf("CountProjectsBindingGroup: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("Finance is bound by %d projects on %s, want 2", count, devA)
+	}
+
+	// A group nobody binds is zero, not an error.
+	if count, err := s.CountProjectsBindingGroup(ctx, devA, "Nobody"); err != nil || count != 0 {
+		t.Fatalf("CountProjectsBindingGroup(absent) = %d, %v; want 0, nil", count, err)
+	}
+	// The empty name is the "assigned to nobody" marker, not a group: counting it
+	// would report every project holding a self-service role as a member of a
+	// group that does not exist.
+	if count, err := s.CountProjectsBindingGroup(ctx, devA, ""); err != nil || count != 0 {
+		t.Fatalf("CountProjectsBindingGroup(\"\") = %d, %v; want 0, nil", count, err)
+	}
+}
+
+// The name is compared WITHOUT CASE, like every other group comparison in this
+// domain. The rows carry the DIRECTORY's spelling (the ensure normalises them to
+// it) while the caller asks with whatever it holds — the console asks with the
+// directory's name, an older row may carry the design's — so a case-sensitive
+// compare would report a reused group as free.
+func TestStoreCountProjectsBindingGroupIgnoresCase(t *testing.T) {
+	t.Parallel()
+	s, _, _ := newStore(t)
+	ctx := context.Background()
+
+	mustBind(t, ctx, s, devA, projectA, "Approver", "Finance", "role-approver")
+	mustBind(t, ctx, s, devA, projectB, "Reviewer", "finance", "role-reviewer")
+
+	for _, spelling := range []string{"Finance", "finance", "FINANCE"} {
+		count, err := s.CountProjectsBindingGroup(ctx, devA, spelling)
+		if err != nil {
+			t.Fatalf("CountProjectsBindingGroup(%q): %v", spelling, err)
+		}
+		if count != 2 {
+			t.Fatalf("CountProjectsBindingGroup(%q) = %d, want 2", spelling, count)
+		}
+	}
+}
+
+// The grouped read is the same count for every group at once — what the catalog
+// asks, because asking per group costs one round trip per group on a directory
+// that can hold hundreds. Same scope fence, same case fold, same treatment of
+// the "assigned to nobody" marker; the key is the LOWERCASED name.
+func TestStoreCountProjectsBindingGroups(t *testing.T) {
+	t.Parallel()
+	s, _, _ := newStore(t)
+	ctx := context.Background()
+
+	err := s.ReplaceRoleBindings(ctx, devA, projectA, []identity.IdPRoleBinding{
+		{Role: "Approver", GroupName: "Finance", DirectoryRoleID: "role-approver"},
+		{Role: "Auditor", GroupName: "Finance", DirectoryRoleID: "role-auditor"},
+		{Role: "Employee", GroupName: "Employees", DirectoryRoleID: "role-employee"},
+		{Role: "Member", GroupName: "", DirectoryRoleID: "role-member"},
+	})
+	if err != nil {
+		t.Fatalf("ReplaceRoleBindings(%s): %v", projectA, err)
+	}
+	// A second project, spelling the same group differently.
+	mustBind(t, ctx, s, devA, projectB, "Reviewer", "FINANCE", "role-reviewer")
+	// Other scopes name the same group; neither may be counted here.
+	mustBind(t, ctx, s, devB, "proj-secret", "Reviewer", "Finance", "role-other-org")
+	mustBind(t, ctx, s, stagingA, "proj-staging", "Reviewer", "Finance", "role-staging")
+
+	counts, err := s.CountProjectsBindingGroups(ctx, devA)
+	if err != nil {
+		t.Fatalf("CountProjectsBindingGroups: %v", err)
+	}
+	want := map[string]int{"finance": 2, "employees": 1}
+	if !reflect.DeepEqual(counts, want) {
+		t.Fatalf("CountProjectsBindingGroups(%s) = %+v, want %+v", devA, counts, want)
+	}
+}
+
+// Deleting a project forgets both of its project-owned records, leaves every
+// other project's alone, and is idempotent — the cleanup is best-effort and
+// re-runs, so a second pass over an already-clean project must not fail it.
+func TestStoreDeleteProjectOwnedRows(t *testing.T) {
+	t.Parallel()
+	s, _, _ := newStore(t)
+	ctx := context.Background()
+
+	seed := func(scope identity.Scope, projectID string) {
+		t.Helper()
+		err := s.UpsertResourceServer(ctx, identity.IdPResourceServer{
+			OrgID: scope.OrgID, Environment: scope.Environment, ProjectID: projectID,
+			Identifier:  "https://aep.wso2.com/orgs/" + scope.OrgID + "/" + scope.Environment + "/projects/" + projectID,
+			DirectoryID: "rs-" + projectID,
+		})
+		if err != nil {
+			t.Fatalf("UpsertResourceServer(%s/%s): %v", scope, projectID, err)
+		}
+		mustBind(t, ctx, s, scope, projectID, "Approver", "Finance", "role-"+projectID)
+	}
+	seed(devA, projectA)
+	seed(devA, projectB)
+	seed(stagingA, projectA)
+
+	if err := s.DeleteRoleBindings(ctx, devA, projectA); err != nil {
+		t.Fatalf("DeleteRoleBindings: %v", err)
+	}
+	if err := s.DeleteResourceServer(ctx, devA, projectA); err != nil {
+		t.Fatalf("DeleteResourceServer: %v", err)
+	}
+
+	if rows, err := s.ListRoleBindings(ctx, devA, projectA); err != nil || len(rows) != 0 {
+		t.Fatalf("bindings = %+v, %v after delete; want none", rows, err)
+	}
+	if rs, err := s.GetResourceServer(ctx, devA, projectA); err != nil || rs != nil {
+		t.Fatalf("GetResourceServer = %+v, %v after delete; want nil, nil", rs, err)
+	}
+
+	// Deleting again is success: the cleanup is best-effort and re-runs.
+	if err := s.DeleteRoleBindings(ctx, devA, projectA); err != nil {
+		t.Fatalf("second DeleteRoleBindings: %v", err)
+	}
+	if err := s.DeleteResourceServer(ctx, devA, projectA); err != nil {
+		t.Fatalf("second DeleteResourceServer: %v", err)
+	}
+
+	// Every other project's rows stand — including the same project id on the
+	// org's other environment, which is a different directory's objects.
+	for _, tc := range []struct {
+		scope   identity.Scope
+		project string
+	}{{devA, projectB}, {stagingA, projectA}} {
+		if rs, err := s.GetResourceServer(ctx, tc.scope, tc.project); err != nil || rs == nil {
+			t.Fatalf("%s/%s's resource server was deleted too: %v, %v", tc.scope, tc.project, rs, err)
+		}
+		if rows, err := s.ListRoleBindings(ctx, tc.scope, tc.project); err != nil || len(rows) != 1 {
+			t.Fatalf("%s/%s's bindings = %+v, %v; want its one row intact",
+				tc.scope, tc.project, rows, err)
+		}
+	}
+}
+
+// mustBind writes one role binding, for the cases that only need it to exist.
+func mustBind(t *testing.T, ctx context.Context, s identity.Store, scope identity.Scope, projectID, role, group, roleID string) {
+	t.Helper()
+	err := s.ReplaceRoleBindings(ctx, scope, projectID, []identity.IdPRoleBinding{
+		{Role: role, GroupName: group, DirectoryRoleID: roleID},
+	})
+	if err != nil {
+		t.Fatalf("ReplaceRoleBindings(%s/%s): %v", scope, projectID, err)
 	}
 }

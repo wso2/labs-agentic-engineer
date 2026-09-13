@@ -153,6 +153,102 @@ type Client interface {
 
 	// DeleteUser removes an account. Idempotent.
 	DeleteUser(ctx context.Context, userID string) error
+
+	// -- permission catalog (resource servers, resources, actions) --------
+	//
+	// One resource server per project: its identifier is the access-token
+	// audience the generated app's clients ask for, its resources and actions
+	// derive the scope handles the token's `scope` claim carries.
+	// resourceservers.go carries the Thunder constraints, the cascade order
+	// and the conflict codes.
+
+	// FindResourceServerByIdentifier returns the resource server claiming this
+	// identifier (an absolute URI), and whether one exists.
+	FindResourceServerByIdentifier(ctx context.Context, identifier string) (*ResourceServer, bool, error)
+
+	// CreateResourceServer registers a project's permission namespace with the
+	// platform-wide ":" delimiter. A taken identifier is ErrIdentifierConflict.
+	CreateResourceServer(ctx context.Context, name, identifier string) (ResourceServer, error)
+
+	// DeleteResourceServer removes an EMPTY resource server; one that still has
+	// resources answers ErrHasDependencies. Idempotent.
+	DeleteResourceServer(ctx context.Context, rsID string) error
+
+	// DeleteResourceServerCascade removes a resource server and its whole tree
+	// in the order Thunder accepts: actions, then resources, then the server.
+	DeleteResourceServerCascade(ctx context.Context, rsID string) error
+
+	// ListResources returns the top-level resources of a resource server.
+	ListResources(ctx context.Context, rsID string) ([]Resource, error)
+
+	// CreateResource adds a resource. Its handle derives the permission prefix
+	// and is immutable; a handle already used here is ErrHandleConflict.
+	CreateResource(ctx context.Context, rsID, handle, name, description string) (Resource, error)
+
+	// UpdateResource rewrites a resource's display name and description. The
+	// handle and the parent are immutable, so this is the ONLY way a corrected
+	// description reaches the directory without a delete that would cascade
+	// through the resource's actions and every role granting them.
+	UpdateResource(ctx context.Context, rsID, resourceID, name, description string) (Resource, error)
+
+	// DeleteResource removes a resource with no actions left; one that still
+	// has them answers ErrHasDependencies. Idempotent.
+	DeleteResource(ctx context.Context, rsID, resourceID string) error
+
+	// ListActions returns the actions under one resource. Their Permission
+	// fields are the derived scope handles ("claims:read").
+	ListActions(ctx context.Context, rsID, resourceID string) ([]Action, error)
+
+	// CreateAction adds an action under a resource. Handle uniqueness is per
+	// parent resource — a duplicate under THIS resource is ErrHandleConflict.
+	CreateAction(ctx context.Context, rsID, resourceID, handle, name, description string) (Action, error)
+
+	// UpdateAction rewrites an action's display name and description; its handle
+	// and kind are immutable. See UpdateResource.
+	UpdateAction(ctx context.Context, rsID, resourceID, actionID, name, description string) (Action, error)
+
+	// DeleteAction removes an action. Thunder cascades the removal out of every
+	// role that granted it. Idempotent.
+	DeleteAction(ctx context.Context, rsID, resourceID, actionID string) error
+
+	// -- roles and assignments --------------------------------------------
+	//
+	// group → role → permissions ∩ the requested resource server is the only
+	// thing that narrows a generated app's access token. roles.go carries the
+	// Thunder constraints.
+
+	// ListRoles returns every role in the directory WITHOUT its permissions —
+	// the name → id map the ensure converges against.
+	ListRoles(ctx context.Context) ([]Role, error)
+
+	// FindRoleByName returns the role with this name (case-insensitive), and
+	// whether one exists. Role names may contain "/" (`<project>/<Role>`).
+	FindRoleByName(ctx context.Context, name string) (*Role, bool, error)
+
+	// GetRole reads one role with its permissions.
+	GetRole(ctx context.Context, roleID string) (Role, error)
+
+	// ListRoleAssignments returns the principals holding a role, with display
+	// names resolved.
+	ListRoleAssignments(ctx context.Context, roleID string) ([]Assignment, error)
+
+	// CreateRole creates a role granting exactly these permissions. Every
+	// permission must already exist in the catalog (else ErrInvalidPermissions).
+	CreateRole(ctx context.Context, name, description string, permissions []RolePermission) (Role, error)
+
+	// UpdateRole REPLACES a role's name, description and permission set. Its
+	// assignments survive, so converging a role is this one call.
+	UpdateRole(ctx context.Context, roleID, name, description string, permissions []RolePermission) (Role, error)
+
+	// DeleteRole removes a role and its assignments. Idempotent.
+	DeleteRole(ctx context.Context, roleID string) error
+
+	// AddRoleAssignments gives a role to these principals (additive, 204).
+	AddRoleAssignments(ctx context.Context, roleID string, assignments []Assignment) error
+
+	// RemoveRoleAssignments takes a role away from these principals, leaving
+	// the rest.
+	RemoveRoleAssignments(ctx context.Context, roleID string, assignments []Assignment) error
 }
 
 // Config bundles the construction params — a struct rather than

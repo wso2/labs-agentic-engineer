@@ -464,11 +464,15 @@ func desiredApp(app *v1alpha1.ThunderApplication) thunder.DesiredApp {
 		displayName = app.Name
 	}
 	return thunder.DesiredApp{
-		Name:         clientIDForApp(app),
-		DisplayName:  displayName,
-		Scopes:       strings.Fields(app.Spec.Scopes),
-		RedirectURIs: splitRedirectURIs(app.Spec.RedirectURIs),
-		ClientType:   app.Spec.ClientType,
+		Name:        clientIDForApp(app),
+		DisplayName: displayName,
+		// The CR carries the scope set space-joined (that is the shape the
+		// ClusterResourceType parameter has); ThunderID's application contract
+		// types the field as a JSON array, so the split happens here.
+		Scopes:         strings.Fields(app.Spec.Scopes),
+		ValidityPeriod: app.Spec.ValidityPeriod,
+		RedirectURIs:   splitRedirectURIs(app.Spec.RedirectURIs),
+		ClientType:     app.Spec.ClientType,
 	}
 }
 

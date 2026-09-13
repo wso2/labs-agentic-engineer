@@ -215,9 +215,10 @@ func newAppIn(ns, name, org, env string, spec v1alpha1.ThunderApplicationSpec) *
 // split scopes/redirectURIs, ConfigMap published with owner ref, status ready.
 func TestReconcile_FreshCR(t *testing.T) {
 	app := newApp("test-ns", "my-app", v1alpha1.ThunderApplicationSpec{
-		DisplayName:  "My App",
-		Scopes:       "openid profile email group ou",
-		RedirectURIs: "https://a.example.com,https://b.example.com",
+		DisplayName:    "My App",
+		Scopes:         "openid profile email group ou claims:read",
+		ValidityPeriod: 300,
+		RedirectURIs:   "https://a.example.com,https://b.example.com",
 	})
 	admin := &fakeAdmin{clientID: "cid-123"}
 	r, cl := newReconciler(t, admin, app)
@@ -237,8 +238,15 @@ func TestReconcile_FreshCR(t *testing.T) {
 	if got.Name != "aep-test-ns-my-app" {
 		t.Errorf("DesiredApp.Name = %q, want aep-test-ns-my-app", got.Name)
 	}
-	if !reflect.DeepEqual(got.Scopes, []string{"openid", "profile", "email", "group", "ou"}) {
-		t.Errorf("Scopes = %#v, want [openid profile email group ou]", got.Scopes)
+	// The CR carries the set space-joined (the CRT parameter's shape); the
+	// Thunder application contract types it as a list, so the reconciler splits
+	// it. A permission handle rides in the same field as the OIDC scopes.
+	wantScopes := []string{"openid", "profile", "email", "group", "ou", "claims:read"}
+	if !reflect.DeepEqual(got.Scopes, wantScopes) {
+		t.Errorf("Scopes = %#v, want %v", got.Scopes, wantScopes)
+	}
+	if got.ValidityPeriod != 300 {
+		t.Errorf("ValidityPeriod = %d, want 300 (the CR's access-token lifetime must reach the client)", got.ValidityPeriod)
 	}
 	if !reflect.DeepEqual(got.RedirectURIs, []string{"https://a.example.com", "https://b.example.com"}) {
 		t.Errorf("RedirectURIs = %#v", got.RedirectURIs)

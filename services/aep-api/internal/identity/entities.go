@@ -146,7 +146,7 @@ type TestUserRef struct {
 	// ColdStart is a v1 LEFTOVER and is always false: v2 has no cold-start
 	// account (signed-in operations and self-service enrolment replaced it),
 	// and the ensure writes every ref without it. The field and its column stay
-	// only so the stored row and the published API keep their shape; phase 2/5
+	// only so the stored row and the published API keep their shape; phase 5
 	// drops both.
 	ColdStart bool `gorm:"column:cold_start;not null;default:false" json:"coldStart"`
 	// Supplied is true when the design named no test user for the role and the
@@ -156,3 +156,97 @@ type TestUserRef struct {
 }
 
 func (TestUserRef) TableName() string { return "test_user_refs" }
+
+// IdPResourceServer is the platform's record of the OAuth resource server it
+// created on an environment's identity provider for ONE project.
+//
+// It is the first row in this package that is keyed by project, and it is keyed
+// that way because the object it records is project-OWNED rather than shared: a
+// resource server, its resources and its actions are created by exactly one
+// project, carry that project's name, and may therefore be converged — deleted
+// when the design drops them and deleted outright when the project is deleted.
+// Roles and groups keep the additive rules ADR-0022 set; these do not. See
+// README.md, "project-owned converge, shared additive".
+//
+// Identifier is the absolute URI that reaches a generated app as the token's
+// `aud`, and Thunder treats it as unique across the whole directory, so the
+// uniqueness the row asserts is (org, environment, identifier) — one project per
+// identifier on one directory.
+type IdPResourceServer struct {
+	// OrgID and Environment name the identity provider, exactly as on IdPRole:
+	// the same project id on two environments is two resource servers, on two
+	// directories, that share nothing.
+	OrgID       string `gorm:"column:org_id;primaryKey;type:text;uniqueIndex:idx_idp_resource_servers_identifier,priority:1" json:"orgId"`
+	Environment string `gorm:"column:environment;primaryKey;type:text;uniqueIndex:idx_idp_resource_servers_identifier,priority:2" json:"environment"`
+	// ProjectID completes the key. One project has at most one resource server
+	// on one directory.
+	ProjectID string `gorm:"column:project_id;primaryKey;type:text" json:"projectId"`
+	// Identifier is the resource server's absolute-URI identifier — the `aud` of
+	// every token minted for this project's app, and the value the token
+	// endpoint's `resource` parameter must match. Unique per directory, which is
+	// what the second index above pins.
+	Identifier string `gorm:"column:identifier;type:text;not null;uniqueIndex:idx_idp_resource_servers_identifier,priority:3" json:"identifier"`
+	// DirectoryID is the directory's own id for the resource server. Unlike a
+	// group id this one is stable — resource servers are updated in place — but
+	// it is still a detail of the directory, so nothing keys on it. It exists
+	// because a delete needs it: the cleanup path walks actions, resources and
+	// then the resource server by id.
+	DirectoryID string    `gorm:"column:directory_id;type:text;not null" json:"directoryId"`
+	CreatedAt   time.Time `gorm:"column:created_at" json:"createdAt"`
+	UpdatedAt   time.Time `gorm:"column:updated_at" json:"updatedAt"`
+}
+
+func (IdPResourceServer) TableName() string { return "idp_resource_servers" }
+
+// scope is the identity provider this resource server lives on.
+func (r IdPResourceServer) scope() Scope { return Scope{OrgID: r.OrgID, Environment: r.Environment} }
+
+// IdPRoleBinding is the platform's record of one project-owned role on an
+// environment's identity provider, and of the group it was assigned to.
+//
+// A project role is named `<project>/<Role>` on the directory and, like the
+// resource server above, is owned by the one project that declared it — so the
+// ensure converges the set and a project delete removes it. That is the whole
+// reason this row exists beside IdPRole: IdPRole records the SHARED org-wide
+// role group, which is additive and is never deleted; this records the
+// project's OWN role, which is not.
+//
+// The key carries GroupName because one role may be assigned to several groups.
+// An EMPTY GroupName is meaningful and is the normal shape for a self-service
+// role: the role exists and is recorded — so the delete path can find its
+// DirectoryRoleID — but the build assigned it to nobody, because the
+// registration flow assigns it per account instead.
+type IdPRoleBinding struct {
+	OrgID       string `gorm:"column:org_id;primaryKey;type:text" json:"orgId"`
+	Environment string `gorm:"column:environment;primaryKey;type:text" json:"environment"`
+	ProjectID   string `gorm:"column:project_id;primaryKey;type:text" json:"projectId"`
+	// Role is the role name as the design declares it (`Approver`), NOT the
+	// `<project>/Approver` handle the directory carries. The project half is
+	// already in the key, and the console renders the design's name.
+	Role string `gorm:"column:role;primaryKey;type:text" json:"role"`
+	// GroupName is the directory group the role was assigned to, verbatim from
+	// the design's `assignTo`. Empty means "recorded, assigned to nobody" — see
+	// the type comment. It is part of the key so a role assigned to two groups
+	// is two rows.
+	GroupName string `gorm:"column:group_name;primaryKey;type:text" json:"groupName"`
+	// DirectoryRoleID is the directory's id for the role. Denormalised onto every
+	// binding of the same role, because a binding is what the delete path reads
+	// and it must not need a second lookup to know what to remove.
+	DirectoryRoleID string    `gorm:"column:directory_role_id;type:text;not null;index" json:"directoryRoleId"`
+	CreatedAt       time.Time `gorm:"column:created_at" json:"createdAt"`
+	UpdatedAt       time.Time `gorm:"column:updated_at" json:"updatedAt"`
+}
+
+func (IdPRoleBinding) TableName() string { return "idp_role_bindings" }
+
+// scope is the identity provider this role lives on — the accessor every row
+// type in this file carries. The SQL store puts the pair in the WHERE clause
+// rather than reading it off a row, so only the in-memory store model, which has
+// to reproduce the table's key to be a faithful stand-in, calls this one.
+//
+//deadcode:keep uniform (org, environment) accessor; only the test store model calls it
+func (b IdPRoleBinding) scope() Scope { return Scope{OrgID: b.OrgID, Environment: b.Environment} }
+
+// key is the pair that identifies a binding WITHIN one (scope, project): the
+// role and the group it is assigned to. ReplaceRoleBindings converges on it.
+func (b IdPRoleBinding) key() [2]string { return [2]string{b.Role, b.GroupName} }

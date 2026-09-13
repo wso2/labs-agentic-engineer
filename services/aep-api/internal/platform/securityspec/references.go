@@ -55,6 +55,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -299,6 +300,27 @@ func resourceOf(handle string) string {
 
 func isReadAll(handle string) bool { return strings.HasSuffix(handle, ":read-all") }
 
+// validRoleName reports whether a role name is made only of letters, digits,
+// spaces, "-", "_" and ".".
+//
+// The TS copy is `ROLE_NAME` in
+// `packages/agent-stream/src/security-design-references.ts`; the two gates must
+// refuse the same documents, so a change here is a change there.
+func validRoleName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, r := range name {
+		switch {
+		case unicode.IsLetter(r), unicode.IsDigit(r):
+		case r == ' ', r == '.', r == '_', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // ReferenceFindings returns every referential finding for doc, in rule order.
 //
 // src is optional: with none, only the rules that read the document alone run
@@ -364,6 +386,15 @@ func ReferenceFindings(doc *Document, src FileSource) []Finding {
 		declaredRoles[key] = true
 		if role.Name != strings.TrimSpace(role.Name) {
 			found.add(SeverityError, MsgRoleNameWhitespace, "role", role.Name)
+		}
+		// The charset. A role name travels into two places that cannot escape
+		// it: the directory, where it becomes `<project>/<Role>` and the "/" is
+		// the platform's own ownership separator, and the build ticket's
+		// markdown table, where a "|" or a line break would break the row the
+		// validation agent parses. Everything a PRD actor noun needs is still
+		// allowed.
+		if !validRoleName(strings.TrimSpace(role.Name)) {
+			found.add(SeverityError, MsgRoleNameInvalid, "role", role.Name)
 		}
 		// A reused org group is NOT redeclared in groups[], so this rule can
 		// only judge the names THIS document introduces — the directory check

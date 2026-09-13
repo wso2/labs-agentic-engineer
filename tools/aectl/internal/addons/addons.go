@@ -121,6 +121,20 @@ var Available = []Addon{
 // thunderAppResourceType is the ClusterResourceType that makes the thunder-app
 // OAuth provisioning available as a platform-resource dependency type in AEP.
 // Source: deployments/single-cluster/resource-types/thunder-app/resourcetype.yaml
+//
+// DERIVED, not verbatim — and deliberately so. It differs from the source in
+// exactly two places, both of which addons_test.go pins:
+//
+//   - the prose comments are stripped (the source's are for whoever edits the
+//     type; this literal is shipped to a cluster);
+//   - `issuer` and `jwks_url` are rendered LITERALS pointing at the bundled
+//     local Thunder, not `${applied.app.status.*}`, because aectl installs the
+//     add-on before any environment binding record exists to resolve them from.
+//
+// Everything else — parameters (names, types, defaults), the rendered
+// ThunderApplication template, and the remaining outputs — must stay in step
+// with the source. addons_test.go compares them field by field, so adding a
+// parameter or an output on one side and not the other fails the build.
 const thunderAppResourceType = `
 apiVersion: openchoreo.dev/v1alpha1
 kind: ClusterResourceType
@@ -147,6 +161,13 @@ spec:
         scopes:
           type: string
           default: "openid profile email group ou"
+        resource:
+          type: string
+          default: ""
+        validityPeriod:
+          type: integer
+          default: 86400
+          minimum: 60
   environmentConfigs:
     openAPIV3Schema:
       type: object
@@ -167,6 +188,7 @@ spec:
         spec:
           displayName: ${parameters.displayName}
           scopes: ${parameters.scopes}
+          validityPeriod: ${parameters.validityPeriod}
           redirectUris: ${environmentConfigs.redirectUris}
   outputs:
     - name: client_id
@@ -177,6 +199,8 @@ spec:
       value: http://thunder.openchoreo.localhost:8080/oauth2/jwks
     - name: scopes
       value: ${parameters.scopes}
+    - name: resource
+      value: ${parameters.resource}
 `
 
 // thunderAppRBAC grants the OpenChoreo data-plane agent permission to manage
