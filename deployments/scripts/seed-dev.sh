@@ -44,14 +44,10 @@
 #   SEEDER_CLIENT_ID             defaults to aep-local-dev-seeder
 #   SEEDER_CLIENT_SECRET         defaults to aep-local-dev-seeder-secret
 #
-# The seeder client is registered by the Thunder bootstrap (one row in
-# CONFIDENTIAL_APPS in single-cluster/values-thunder.yaml). If you ran
-# setup.sh from a values-thunder.yaml that predates that row, helm-upgrade
-# Thunder first:
-#   helm upgrade thunder oci://ghcr.io/asgardeo/helm-charts/thunder \
-#       --version 0.34.0 -n thunder --reuse-values \
-#       -f single-cluster/values-thunder.yaml
-#   kubectl -n thunder delete job thunder-setup ; kubectl -n thunder rollout status job/thunder-setup --timeout=120s
+# The seeder client is registered by the platform IdP bootstrap
+# (single-cluster/thunder-resources/85-aep-local-dev-seeder.yaml). If the
+# running IdP predates that document, re-import the bootstrap:
+#   THUNDER_REIMPORT=1 bash scripts/setup-thunder.sh
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -118,8 +114,8 @@ if [ -z "$TOKEN" ]; then
     printf '   %s\n' "$(printf '%s' "$TOKEN_RESP" | head -c 200)"
     echo
     echo "   The most likely cause: the '${SEEDER_CLIENT_ID}' OAuth app is not"
-    echo "   registered in Thunder. See the helm-upgrade hint in this script's"
-    echo "   header comment, or re-run setup.sh from latest values-thunder.yaml."
+    echo "   registered in the IdP. See the re-import hint in this script's"
+    echo "   header comment (THUNDER_REIMPORT=1 bash scripts/setup-thunder.sh)."
     exit 1
 fi
 echo "✅ Token minted"

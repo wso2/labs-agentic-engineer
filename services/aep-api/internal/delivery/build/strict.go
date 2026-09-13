@@ -19,6 +19,8 @@ package build
 import (
 	"context"
 	"fmt"
+
+	"github.com/wso2/aep/aep-api/internal/delivery"
 )
 
 // This file is the strict-server (contract-first) entry surface of the build
@@ -64,6 +66,7 @@ func (s *Service) List(ctx context.Context, orgID, projectID string) (BuildList,
 			MilestoneNumber: row.MilestoneNumber,
 			Status:          statusFromRunState(row.State),
 			Reason:          row.TerminalReason,
+			FailureCode:     failureCodeFor(row.State, row.Failure),
 			StartedAt:       row.CreatedAt,
 			CompletedAt:     row.EndedAt,
 			// Only a run that IS waiting may explain a wait. A reason left on a
@@ -72,4 +75,15 @@ func (s *Service) List(ctx context.Context, orgID, projectID string) (BuildList,
 		})
 	}
 	return BuildList{Builds: builds}, nil
+}
+
+// failureCodeFor is the ledger's reading of the run's failure record: only a
+// FAILED run may be described by it. A record left on a row that recovered
+// and went on is cleared by the activity that recovered; a record on a
+// cancelled row is a fault the person stopping the run never met.
+func failureCodeFor(state string, f *delivery.RunFailure) string {
+	if state != delivery.RunStateFailed || f == nil {
+		return ""
+	}
+	return f.Code
 }

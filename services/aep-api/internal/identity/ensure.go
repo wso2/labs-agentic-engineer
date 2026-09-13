@@ -18,7 +18,7 @@ package identity
 
 // ensure.go — the build-time ensure. It reads the roles document at the tag
 // being built and makes every role and test user it declares real on the
-// Platform IdP.
+// identity provider of the environment this version is validated in.
 //
 // It runs with NO MODEL IN THE LOOP. A model authored security.json and read the
 // role catalog; below the version tag everything is deterministic — which is
@@ -74,23 +74,26 @@ import (
 
 // EnsureService makes a project's declared roles and test users real.
 type EnsureService struct {
-	dir    Directory
-	store  Store
-	design DesignReader
+	targets TargetResolver
+	store   Store
+	design  DesignReader
 }
 
 // NewEnsureService builds the ensure. Every collaborator is required; a nil one
 // is a wiring defect, and the composition root skips wiring the whole feature
 // rather than passing a nil (see Enabled).
-func NewEnsureService(dir Directory, store Store, design DesignReader) *EnsureService {
-	return &EnsureService{dir: dir, store: store, design: design}
+func NewEnsureService(targets TargetResolver, store Store, design DesignReader) *EnsureService {
+	return &EnsureService{targets: targets, store: store, design: design}
 }
 
-// Enabled reports whether the ensure can run. It is false when the Thunder
-// admin client is not configured — a local stack with no IdP — and the caller
-// then skips the roles gate entirely instead of failing every build.
+// Enabled reports whether the ensure can run. It is false when no target
+// resolver is wired — a local stack that cannot reach OpenChoreo or the secret
+// store — and the caller then skips the roles gate entirely instead of failing
+// every build. A resolver that is wired but cannot resolve THIS org's
+// environment is a different thing: that is an error the gate reports, because
+// the environment genuinely has no identity provider.
 func (s *EnsureService) Enabled() bool {
-	return s != nil && s.dir != nil && s.store != nil && s.design != nil
+	return s != nil && s.targets != nil && s.store != nil && s.design != nil
 }
 
 // Result is what one ensure did, for the gate's closing comment and the logs.
@@ -123,6 +126,14 @@ type Result struct {
 	// This is the one field that carries a secret, and it exists to be
 	// PUBLISHED (see rolesGateClosingComment). Summary() must never render it.
 	Credentials []Credential
+	// Issuer is the identity provider these accounts were created on, and the
+	// only one their logins work at. The gate prints it beside the credentials:
+	// with one identity provider per environment, a password published without
+	// its issuer names no sign-in anybody can reach.
+	Issuer string
+	// Environment is the environment whose identity provider was used, for the
+	// gate comment and the logs.
+	Environment string
 }
 
 // Credential is one test account's login, as published to the provisioning
@@ -188,7 +199,15 @@ func (s *EnsureService) EnsureForTag(ctx context.Context, orgID, projectID, tag 
 	if err != nil {
 		return Result{}, true, fmt.Errorf("%s at %s: %w", securityspec.Path, tag, err)
 	}
-	result, err = s.ensure(ctx, orgID, projectID, securityspec.Plan(doc))
+	// WHICH directory, before anything is written. The resolver picks the
+	// environment (see TargetResolver) and hands back a Directory already bound
+	// to that environment's identity provider; an unbound environment is an
+	// error here rather than a write onto the wrong tier.
+	target, err := s.targets.Resolve(ctx, orgID)
+	if err != nil {
+		return Result{}, true, err
+	}
+	result, err = s.ensure(ctx, target, projectID, securityspec.Plan(doc))
 	return result, true, err
 }
 
@@ -234,27 +253,28 @@ type roleTarget struct {
 	enrolable bool
 }
 
-// ensure runs the three passes over a plan.
-func (s *EnsureService) ensure(ctx context.Context, orgID, projectID string, plan securityspec.EnsurePlan) (Result, error) {
-	var result Result
+// ensure runs the three passes over a plan, against ONE target's directory.
+func (s *EnsureService) ensure(ctx context.Context, target Target, projectID string, plan securityspec.EnsurePlan) (Result, error) {
+	result := Result{Issuer: target.Issuer, Environment: target.Environment}
+	orgID, scope, dir := target.OrgID, target.Scope(), target.Directory
 
 	// ---- pass 0: classify, writing nothing --------------------------------
 	targets := make([]roleTarget, 0, len(plan.Roles))
 	enrolable := make(map[string]bool, len(plan.Roles))
 	for _, role := range plan.Roles {
-		target, err := s.classifyRole(ctx, role)
+		classified, err := s.classifyRole(ctx, scope, dir, role)
 		if err != nil {
 			return result, err
 		}
-		targets = append(targets, target)
-		if target.enrolable {
+		targets = append(targets, classified)
+		if classified.enrolable {
 			enrolable[strings.ToLower(role.Name)] = true
 			continue
 		}
 		// Somebody else's group. Left entirely alone, and nothing is minted for
 		// it — see the file header on why that includes its accounts.
 		slog.InfoContext(ctx, "roles ensure: leaving a pre-existing directory group alone",
-			"role", role.Name, "org", orgID, "project", projectID)
+			"role", role.Name, "org", orgID, "environment", target.Environment, "project", projectID)
 		result.RolesPreExisting = append(result.RolesPreExisting, role.Name)
 	}
 
@@ -270,7 +290,7 @@ func (s *EnsureService) ensure(ctx context.Context, orgID, projectID string, pla
 			result.UsersSkipped = append(result.UsersSkipped, planned.Username)
 			continue
 		}
-		account, usable, err := s.ensureUser(ctx, planned, &result)
+		account, usable, err := s.ensureUser(ctx, scope, dir, planned, &result)
 		if err != nil {
 			return result, err
 		}
@@ -291,12 +311,12 @@ func (s *EnsureService) ensure(ctx context.Context, orgID, projectID string, pla
 	}
 
 	// ---- pass 2: roles ----------------------------------------------------
-	for _, target := range targets {
-		if !target.enrolable {
+	for _, classified := range targets {
+		if !classified.enrolable {
 			continue
 		}
-		if err := s.realiseRole(ctx, orgID, projectID, target,
-			membersByRole[strings.ToLower(target.role.Name)], &result); err != nil {
+		if err := s.realiseRole(ctx, target, projectID, classified,
+			membersByRole[strings.ToLower(classified.role.Name)], &result); err != nil {
 			return result, err
 		}
 	}
@@ -304,11 +324,11 @@ func (s *EnsureService) ensure(ctx context.Context, orgID, projectID string, pla
 	// The references are rewritten wholesale, so a role dropped from the design
 	// stops being referenced by this project — while the directory object
 	// itself stands, per the additive-only rule.
-	if err := s.store.ReplaceProjectRefs(ctx, orgID, projectID, refs); err != nil {
+	if err := s.store.ReplaceProjectRefs(ctx, scope, projectID, refs); err != nil {
 		return result, err
 	}
 
-	result.Credentials = s.collectCredentials(ctx, orgID, projectID, refs)
+	result.Credentials = s.collectCredentials(ctx, scope, projectID, refs)
 	return result, nil
 }
 
@@ -324,14 +344,14 @@ func (s *EnsureService) ensure(ctx context.Context, orgID, projectID string, pla
 // A reveal failure never fails the build. The account exists and is enrolled;
 // only its publication is lost, and the row goes out with an empty password
 // that the renderer calls out explicitly.
-func (s *EnsureService) collectCredentials(ctx context.Context, orgID, projectID string, refs []TestUserRef) []Credential {
+func (s *EnsureService) collectCredentials(ctx context.Context, scope Scope, projectID string, refs []TestUserRef) []Credential {
 	out := make([]Credential, 0, len(refs))
 	for _, ref := range refs {
 		cred := Credential{Username: ref.Username, Role: ref.RoleName, ColdStart: ref.ColdStart}
-		password, err := s.store.RevealTestUserPassword(ctx, ref.Username)
+		password, err := s.store.RevealTestUserPassword(ctx, scope, ref.Username)
 		if err != nil {
 			slog.WarnContext(ctx, "roles ensure: could not open a test user's password to publish it",
-				"org", orgID, "project", projectID, "username", ref.Username, "error", err)
+				"scope", scope.String(), "project", projectID, "username", ref.Username, "error", err)
 		} else {
 			cred.Password = password
 		}
@@ -354,21 +374,21 @@ func (s *EnsureService) collectCredentials(ctx context.Context, orgID, projectID
 //     maintain.
 //   - absent from the directory → the platform is about to create it, whether or
 //     not a stale row survived somebody deleting the group; enrolable.
-func (s *EnsureService) classifyRole(ctx context.Context, role securityspec.Role) (roleTarget, error) {
-	recorded, err := s.store.GetRole(ctx, role.Name)
+func (s *EnsureService) classifyRole(ctx context.Context, scope Scope, dir Directory, role securityspec.Role) (roleTarget, error) {
+	recorded, err := s.store.GetRole(ctx, scope, role.Name)
 	if err != nil {
 		return roleTarget{}, err
 	}
-	live, onDirectory, err := s.dir.FindGroupByName(ctx, role.Name)
+	live, onDirectory, err := dir.FindGroupByName(ctx, role.Name)
 	if err != nil {
 		return roleTarget{}, err
 	}
-	target := roleTarget{role: role, onDirectory: onDirectory, recorded: recorded}
+	classified := roleTarget{role: role, onDirectory: onDirectory, recorded: recorded}
 	if onDirectory {
-		target.group = *live
+		classified.group = *live
 	}
-	target.enrolable = !onDirectory || recorded != nil
-	return target, nil
+	classified.enrolable = !onDirectory || recorded != nil
+	return classified, nil
 }
 
 // realiseRole makes one classified, enrolable role real and enrols its accounts.
@@ -377,39 +397,40 @@ func (s *EnsureService) classifyRole(ctx context.Context, role securityspec.Role
 // role, and re-deciding here would let the two passes disagree — which is how
 // the "leave a pre-existing group alone" rule would come to be enforced in one
 // place and not the other.
-func (s *EnsureService) realiseRole(ctx context.Context, orgID, projectID string, target roleTarget, memberIDs []string, result *Result) error {
-	if target.onDirectory {
-		group := target.group
+func (s *EnsureService) realiseRole(ctx context.Context, target Target, projectID string, classified roleTarget, memberIDs []string, result *Result) error {
+	if classified.onDirectory {
+		group := classified.group
 		if len(memberIDs) > 0 {
 			// AddMembers is a no-op when every id is already in the group, so an
 			// unchanged re-run does not churn the group's identity.
 			var err error
-			if group, err = s.dir.AddMembers(ctx, group, memberIDs); err != nil {
+			if group, err = target.Directory.AddMembers(ctx, group, memberIDs); err != nil {
 				return err
 			}
 		}
-		if target.recorded != nil && target.recorded.ThunderGroupID != group.ID {
-			row := *target.recorded
+		if classified.recorded != nil && classified.recorded.ThunderGroupID != group.ID {
+			row := *classified.recorded
 			row.ThunderGroupID = group.ID
 			if err := s.store.UpsertRole(ctx, row); err != nil {
 				return err
 			}
 		}
-		result.RolesReused = append(result.RolesReused, target.role.Name)
+		result.RolesReused = append(result.RolesReused, classified.role.Name)
 		return nil
 	}
 
 	// Absent from the directory: create it complete, whether or not a stale row
 	// survived from a group somebody deleted out from under us.
-	created, err := s.dir.CreateGroup(ctx, target.role.Name, target.role.Description, memberIDs)
+	created, err := target.Directory.CreateGroup(ctx, classified.role.Name, classified.role.Description, memberIDs)
 	if err != nil {
-		return fmt.Errorf("create role %q: %w", target.role.Name, err)
+		return fmt.Errorf("create role %q: %w", classified.role.Name, err)
 	}
 	row := IdPRole{
-		Name: target.role.Name, ThunderGroupID: created.ID, Description: target.role.Description,
-		CreatedByOrg: orgID, CreatedByProject: projectID,
+		OrgID: target.OrgID, Environment: target.Environment,
+		Name: classified.role.Name, ThunderGroupID: created.ID, Description: classified.role.Description,
+		CreatedByOrg: target.OrgID, CreatedByProject: projectID,
 	}
-	if target.recorded != nil {
+	if classified.recorded != nil {
 		// Provenance survives a recreate: the role was first declared by whoever
 		// the stale row says, not by whoever rebuilt today. And so does the
 		// recorded SPELLING — `name` is the primary key while GetRole matches
@@ -418,13 +439,13 @@ func (s *EnsureService) realiseRole(ctx context.Context, orgID, projectID string
 		// than update the first. One role, one row; the directory group carries
 		// the design's spelling either way, and that is the one the token claim
 		// uses.
-		row.CreatedByOrg, row.CreatedByProject = target.recorded.CreatedByOrg, target.recorded.CreatedByProject
-		row.Name = target.recorded.Name
+		row.CreatedByOrg, row.CreatedByProject = classified.recorded.CreatedByOrg, classified.recorded.CreatedByProject
+		row.Name = classified.recorded.Name
 	}
 	if err := s.store.UpsertRole(ctx, row); err != nil {
 		return err
 	}
-	result.RolesCreated = append(result.RolesCreated, target.role.Name)
+	result.RolesCreated = append(result.RolesCreated, classified.role.Name)
 	return nil
 }
 
@@ -435,12 +456,12 @@ func (s *EnsureService) realiseRole(ctx context.Context, orgID, projectID string
 // own. It is left completely untouched — not adopted, not password-reset, not
 // enrolled — because the design naming `jsmith` must not hand out a real
 // person's login.
-func (s *EnsureService) ensureUser(ctx context.Context, planned securityspec.PlannedUser, result *Result) (DirectoryAccount, bool, error) {
-	recorded, err := s.store.GetTestUser(ctx, planned.Username)
+func (s *EnsureService) ensureUser(ctx context.Context, scope Scope, dir Directory, planned securityspec.PlannedUser, result *Result) (DirectoryAccount, bool, error) {
+	recorded, err := s.store.GetTestUser(ctx, scope, planned.Username)
 	if err != nil {
 		return DirectoryAccount{}, false, err
 	}
-	live, onDirectory, err := s.dir.FindUserByUsername(ctx, planned.Username)
+	live, onDirectory, err := dir.FindUserByUsername(ctx, planned.Username)
 	if err != nil {
 		return DirectoryAccount{}, false, err
 	}
@@ -453,7 +474,7 @@ func (s *EnsureService) ensureUser(ctx context.Context, planned securityspec.Pla
 		// seal it again decrypts a credential for no reason, and would fail the
 		// whole build for an account whose sealed password is missing.
 		if recorded.ThunderUserID != live.ID || recorded.RoleName != planned.Role {
-			if err := s.store.UpdateTestUserFacts(ctx, planned.Username, live.ID, planned.Role); err != nil {
+			if err := s.store.UpdateTestUserFacts(ctx, scope, planned.Username, live.ID, planned.Role); err != nil {
 				return DirectoryAccount{}, false, err
 			}
 		}
@@ -469,7 +490,7 @@ func (s *EnsureService) ensureUser(ctx context.Context, planned securityspec.Pla
 		if err != nil {
 			return DirectoryAccount{}, false, err
 		}
-		created, err := s.dir.CreateUser(ctx, planned.Username, testUserEmail(planned.Username), password)
+		created, err := dir.CreateUser(ctx, planned.Username, testUserEmail(planned.Username), password)
 		if err != nil {
 			return DirectoryAccount{}, false, fmt.Errorf("create test user %q: %w", planned.Username, err)
 		}
@@ -477,6 +498,7 @@ func (s *EnsureService) ensureUser(ctx context.Context, planned securityspec.Pla
 		// password only this process knows, and losing it here would leave an
 		// account nobody can sign in as and the platform cannot rotate.
 		row := TestUser{
+			OrgID: scope.OrgID, Environment: scope.Environment,
 			Username: planned.Username, ThunderUserID: created.ID,
 			RoleName: planned.Role, Email: created.Email,
 		}

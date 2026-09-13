@@ -1,7 +1,47 @@
 # ADR-0022 — Roles and test users are shared directory objects the BFF ensures at build
 
 Status: accepted. Revisited: one `security.json` instead of a two-file split;
-the identity model is unchanged.
+the identity model is unchanged. **Scope amended 2026-09-05** — see below.
+
+> **Amendment · 2026-09-05 · the sharing scope is an ENVIRONMENT, not the
+> cluster.** The decision below stands in every part: one `security.json`, the
+> BFF ensures directory objects at build with no model in the loop, a row is the
+> ownership marker, additive only, passwords sealed and published on the gate
+> ticket. What changed is WHERE those objects live. AEP now runs a second
+> identity tier — one ThunderID per `(org, environment)`, provisioned by
+> `deployments/scripts/setup-environment-thunder.sh` and recorded on the
+> OpenChoreo Environment as `aep.wso2.com/thunder-*` annotations — and a build's
+> roles and test users are created on the identity provider of the environment
+> that version is validated in, never on the platform IdP. The platform IdP is
+> neutral infrastructure ([ADR-0028](ADR-0028-the-platform-idp-is-neutral-infrastructure.md))
+> and holds no roles or test users at all.
+>
+> Read "cluster-wide" below as "within one `(org, environment)`". Concretely:
+>
+> * `idp_roles` and `test_users` are keyed by `(org_id, environment, name)` and
+>   `(org_id, environment, username)`; `test_user_refs` gains `environment`.
+>   Migration `phase15_identity_per_environment` DELETES the platform-IdP era's
+>   rows — they name group and user ids on an instance no build provisions to,
+>   and a row is the ownership marker, so a backfill would claim ownership of
+>   objects that are not there. The next build's ensure recreates them on the
+>   right directory and republishes the logins.
+> * **Cross-org role visibility is CLOSED**, which is the resolution the
+>   Consequences section below anticipated. `list_roles` reads the catalog of
+>   the caller's own `(org, default)` directory, and the panel's
+>   "referencing projects" column and its delete warning are now one query — an
+>   account exists on exactly one org's directory, so every project that can
+>   reference it is that org's.
+> * **Cross-ORG password publication is closed too**; the shared-account edge
+>   below now bounds to one org's projects in one environment. The remedy the
+>   last paragraph of that item proposes — scoping the account name — is still
+>   the fix if per-project isolation is wanted.
+> * A published login now names its issuer. The gate comment says "Sign in at
+>   `<issuer>` — the identity provider of the **<env>** environment", because a
+>   username and password alone name no sign-in once there is one provider per
+>   environment.
+>
+> The mechanism is documented where it is enforced:
+> [`internal/identity/README.md`](../../services/aep-api/internal/identity/README.md).
 
 The validation agent judged role-gated acceptance criteria against `admin`/`admin`
 with `mock: true` and a note saying user provisioning did not exist. That login

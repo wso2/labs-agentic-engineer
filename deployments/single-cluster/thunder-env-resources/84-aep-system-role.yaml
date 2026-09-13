@@ -1,0 +1,52 @@
+# Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+#
+# WSO2 LLC. licenses this file to you under the Apache License,
+# Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# Grants aep-system-client the `system` permission on ThunderID's built-in
+# System resource server, through a role AEP OWNS.
+#
+# Registering `system` as a scope on the application (80-aep-system-client.yaml)
+# only makes the client eligible to request it; the client_credentials grant
+# still runs every requested scope through an entitlement evaluation keyed off
+# the app's own id and its role assignments before it lands in the token. This
+# role is what makes that evaluation say yes.
+#
+# Deliberately NOT ThunderID's built-in Administrator role
+# ("01900000-0000-7000-8000-000000000050"), which the platform-IdP counterpart
+# (thunder-resources/84-aep-system-role.yaml) extends. On the platform IdP the
+# Administrator role is shared by everything and re-asserting its fields there
+# is a no-op; on an environment Thunder the publisher contract is "touch only
+# what you created", and a role with an `aep-` id is exactly that: auditable,
+# removable, and never a write into anyone else's object. Agent Manager's
+# 12-amp-system-client-thunder-admin-role.yaml does the same for its client, so
+# a T2 shared by both products carries two small roles, one per publisher.
+# ThunderID's bootstrap importer accepts the caller-chosen id (Agent Manager's
+# document relies on that too).
+#
+# resourceServerId is ThunderID's own System resource server, fixed on every
+# install; only its IDENTIFIER is per instance ("<issuer>/mcp") and that is the
+# platform layer's document, not this one.
+resource_type: role
+id: aep-system-client-thunder-admin
+name: "AEP System Client Thunder Admin"
+description: "Grants AEP's system client access to this environment Thunder's admin API"
+ouHandle: default
+permissions:
+  - resourceServerId: "01900000-0000-7000-8000-000000000020"
+    permissions:
+      - system
+assignments:
+  - id: aep-system-client
+    type: app

@@ -79,6 +79,14 @@ type RunStore interface {
 	SetWaiting(ctx context.Context, id, reason string, dependencies []string) error
 	// Settle writes the terminal state and its reason, once.
 	Settle(ctx context.Context, id, state, reason string) error
+	// RecordFailure writes the fault the run is failing on (delivery.RunFailure),
+	// replacing any earlier record — an activity calls it on EVERY attempt that
+	// meets the fault, so the row reads "attempt 2 of 3" while the run is still
+	// planning. ClearFailure removes it once a later attempt succeeds: a blip
+	// that healed is not a failure to report. Both are read-model bookkeeping,
+	// never the loop's arithmetic.
+	RecordFailure(ctx context.Context, id string, failure delivery.RunFailure) error
+	ClearFailure(ctx context.Context, id string) error
 	// BumpBudget increments one counter — bookkeeping for the read model, never
 	// the loop's own arithmetic.
 	BumpBudget(ctx context.Context, id string, counter delivery.RunBudget) error
@@ -296,6 +304,15 @@ type Deployer interface {
 // predicate honest from the moment the first Task lands.
 type Gates interface {
 	ProvisionForBuild(ctx context.Context, orgID, projectID, tag string, milestoneNumber int, inputs []delivery.ProvisionInput) error
+}
+
+// RunFailedRecorder is told when a run settles FAILED, so a surface a reader
+// is not looking at (the project's activity feed) can carry the fact. It is
+// handed the run id and nothing else: the recorder reads the row — tag,
+// failure code, component — itself, so the workflow carries no copy of facts
+// the row already holds. Best-effort by contract: it never returns an error.
+type RunFailedRecorder interface {
+	RecordRunFailed(ctx context.Context, orgID, runID string)
 }
 
 // Planner runs the version's planning turn, minting one prose issue per planned

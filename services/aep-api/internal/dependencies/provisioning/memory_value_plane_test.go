@@ -22,7 +22,7 @@ func TestMemoryValuePlane_CellsAreOrgScoped(t *testing.T) {
 	t.Parallel()
 	p := NewMemoryValuePlane()
 	p.PutEnvCells("acme", "stripe", []EnvCell{
-		{Environment: "development", Key: "region", Status: "configured", Value: "us"},
+		{Environment: "default", Key: "region", Status: "configured", Value: "us"},
 	})
 	if got := p.EnvCells("acme", "stripe"); len(got) != 1 || got[0].Value != "us" {
 		t.Fatalf("acme stripe cells = %#v", got)

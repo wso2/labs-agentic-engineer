@@ -52,6 +52,9 @@ type ActivityInput struct {
 	Component   string
 	Environment string
 	Tag         string
+	// Reason is a code, never prose: `run_failed` carries the run's failure
+	// code (or its terminal reason) and the console owns the sentence.
+	Reason string
 
 	DedupKey   string
 	OccurredAt time.Time

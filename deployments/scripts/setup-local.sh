@@ -311,6 +311,15 @@ thunder_confidential "AEP System Client"                    "System-level Thunde
 thunder_confidential "OpenChoreo RCA Agent"                 "SRE/RCA agent service-account identity"    "openchoreo-rca-agent"       "${OC_RCA_AGENT_SECRET}"
 
 # ── Console PKCE client ──────────────────────────────────────────────────────
+# The two tokens declare these at DIFFERENT paths on ThunderID 1.0.0:
+#   idToken     validityPeriod + userAttributes          (top level)
+#   accessToken userConfig{ validityPeriod, attributes }  (nested, key `attributes`)
+# The server accepts either shape with 200 and keeps only what it recognises, so
+# the id-token shape on an access token yields a token with NO groups claim and
+# an app that 403s every authorated call while its login still works. The
+# authoritative copy of this contract is
+# single-cluster/thunder-resources/87-aep-console-app.yaml; this upsert runs
+# against the same IdP and would otherwise REGRESS the console's registration.
 USER_ATTRS='["given_name","family_name","username","groups","ouId","ouName","ouHandle"]'
 thunder_upsert_app "aep-console-client" "{
   \"name\":\"AEP Console\",\"description\":\"AEP Platform Console\",
@@ -323,7 +332,7 @@ thunder_upsert_app "aep-console-client" "{
     \"tokenEndpointAuthMethod\":\"none\",
     \"pkceRequired\":true,\"publicClient\":true,
     \"token\":{
-      \"accessToken\":{\"validityPeriod\":86400,\"userAttributes\":${USER_ATTRS}},
+      \"accessToken\":{\"userConfig\":{\"validityPeriod\":86400,\"attributes\":${USER_ATTRS}}},
       \"idToken\":{\"validityPeriod\":86400,\"userAttributes\":${USER_ATTRS}}
     }
   }}]}"
@@ -448,19 +457,8 @@ helm upgrade --install thunder-app-operator \
   -n thunder-app-operator-system --create-namespace \
   --set image.repository=thunder-app-operator \
   --set image.tag=local \
-  --set image.pullPolicy=Never \
-  --set thunder.systemClientSecret="${THUNDER_SYSTEM_CLIENT_SECRET}"
+  --set image.pullPolicy=Never
 
-# The operator caches an aep-system-client token at startup. On a re-run the
-# helm upgrade above is a no-op (same :local image) so the pod keeps a token
-# minted BEFORE the Administrator role assignment above — every reconcile then
-# 403s ("thunder list apps returned 403") until the token expires (~1h), which
-# fails the platform's provisioning step for the first project. Force a fresh
-# pod so it mints a token that carries the just-assigned role.
-kubectl --context "${CLUSTER_CONTEXT}" rollout restart \
-  deployment/thunder-app-operator -n thunder-app-operator-system >/dev/null
-kubectl --context "${CLUSTER_CONTEXT}" rollout status \
-  deployment/thunder-app-operator -n thunder-app-operator-system --timeout=120s >/dev/null
 log_ok "thunder-app-operator installed (ns: thunder-app-operator-system)"
 
 kubectl --context "${CLUSTER_CONTEXT}" apply \

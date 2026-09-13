@@ -1269,9 +1269,12 @@ type ActivityEvent struct {
 	ID          string    `json:"id"`
 	Issue       int64     `json:"issue,omitempty"`
 	OccurredAt  time.Time `json:"occurredAt"`
-	Tag         string    `json:"tag,omitempty"`
-	Title       string    `json:"title,omitempty"`
-	Type        string    `json:"type"`
+
+	// Reason `run_failed` only: the run's failure code (RunFailure.code) when the platform recorded one, else its terminal reason. A code, never prose — the console owns the sentence, the same rule RunEvent.notice follows.
+	Reason string `json:"reason,omitempty"`
+	Tag    string `json:"tag,omitempty"`
+	Title  string `json:"title,omitempty"`
+	Type   string `json:"type"`
 }
 
 // ActivityFeed A page of activity events plus the cursor for the next (older) page.
@@ -1464,6 +1467,9 @@ type BuildRunList struct {
 
 // BuildStage Build-stage aggregate on ProjectStatus (#184) — the version the newest milestone run is working, and how that run is doing. Deliberately count-free - the only honest source of a per-version task tally is the version's milestone on GitHub, and this endpoint is polled at 5s. The console renders counts from the list-tasks response it already holds, on the surface that already pays for it.
 type BuildStage struct {
+	// FailureCode Why the build failed, as RunFailure.code, when status is `failed` and the platform recorded a failure — so the overview's track can say what went wrong in the same words as the build page. Empty otherwise.
+	FailureCode string `json:"failureCode,omitempty"`
+
 	// Status idle (never built), running, failed, cancelled, succeeded. `cancelled` is its own value for the same reason it is on BuildSummary — a person abandoning an increment is a different fact from the platform failing to deliver one, and the project badge read "Build failed" over a build somebody had deliberately stopped.
 	Status string `json:"status"`
 
@@ -1474,6 +1480,9 @@ type BuildStage struct {
 // BuildSummary One entry of the version ledger — a spec version tag and the state of the newest milestone run that has worked it. A ledger read has no live workflow query, so "started" never occurs here.
 type BuildSummary struct {
 	CompletedAt *time.Time `json:"completedAt,omitempty"`
+
+	// FailureCode The failure class of a failed version, as RunFailure.code, when the platform recorded one (empty otherwise). Finer than `reason` — `plan-failed` says which phase, this says what went wrong in it — and cheap for the ledger, which is built from the run row that holds it.
+	FailureCode string `json:"failureCode,omitempty"`
 
 	// MilestoneNumber The GitHub milestone this version's work lives in — the platform key the tag resolves to, and the handle list-build-runs is read by.
 	MilestoneNumber int64 `json:"milestoneNumber"`
@@ -1987,7 +1996,10 @@ type MilestoneRunView struct {
 	// Cycles Oldest first — one record per dispatch.
 	Cycles  []RunCycleView `json:"cycles"`
 	EndedAt *time.Time     `json:"endedAt,omitempty"`
-	ID      string         `json:"id"`
+
+	// Failure The fault this run is failing, or failed, on. Absent when it met none.
+	Failure *RunFailure `json:"failure,omitempty"`
+	ID      string      `json:"id"`
 
 	// Kind What this run DOES, and the value every platform predicate is written on. `dev` delivers a version — it plans its own milestone, and is the only kind that takes the one-active-build-per-project mutex. `task` works a defect inside a version already delivered; task runs execute concurrently on their own milestones. `validation` asks a shipped version's validation criteria again — it has no working set, builds nothing, and is outside the mutex so it never holds up the next build.
 	Kind            MilestoneRunViewKind `json:"kind"`
@@ -2308,7 +2320,7 @@ type PromoteFromIssueRequest struct {
 
 // ProvisionBody defines model for ProvisionBody.
 type ProvisionBody struct {
-	// Environments Environments to provision (default: [development])
+	// Environments Environments to provision (defaults to ["default"])
 	Environments []string `json:"environments,omitempty"`
 
 	// Params Provisioning parameters (override the design defaults)
@@ -2671,6 +2683,38 @@ type RunEventWaitingOn string
 // RunEventKind What a RunEvent reports. It selects which of the event's optional fields are meaningful, and each of those fields names the kinds it belongs to.
 // `run_started` opens an attempt and states its runtime, model and task kind. `agent_started`, `agent_progress` and `agent_settled` are one agent's life — the lead's or a spawned one's — carrying its label, role, depth and parent, then its live phrase, then its status, report and counters. `tool_use` and `tool_result` pair a call with its outcome through `toolUseId`. `task_started` and `task_settled` are a backgrounded shell command, which outlives the tool call that started it and so needs its own `taskId`. `git_commit`, `git_push` and `gh_action` are the run's effects on the repository and its host. `work_item` is a named unit of work whose status changed — a validation criterion, or an entry of an agent's own plan. `heartbeat` says the run is alive and what it is waiting on, so silence is never ambiguous. `notice` is an out-of-band condition (a retry, a refusal, a denied write) under a closed `code`. `turn_ended` closes one model turn with its outcome and usage, and `run_settled` closes the attempt.
 type RunEventKind string
+
+// RunFailure The platform's own record of why a run is failing — the facts that used to survive only as one aep-api log line once the run settled. Present on a run that has met a fault: while the run is still non-terminal it is the fault being RETRIED (read `attempts` against `maxAttempts`); on a failed run it is the terminal fault `terminalReason` names. Absent on a run that met none, on a cancelled run (a person stopping an increment is not a fault), and on every run failed before this record existed — a consumer renders the terminal reason alone and says the platform recorded no further details. `code` is a closed set and the console owns each code's sentence, the rule RunEvent.notice established; `detail` is the platform's recorded error text — never model output or a request body — scrubbed and capped by the producer, for a reader who wants the platform's exact words.
+type RunFailure struct {
+	// Attempts Attempts that have hit this fault so far.
+	Attempts int64 `json:"attempts"`
+
+	// Code Which failure class. `dependency-unprovisionable` a dependency the platform cannot author however often it tries (a schema the ResourceType builder refuses, a ClusterResourceType nobody installed, a Resource that never cuts a release) — the design has to change; `dependency-provision-failed` provisioning failed for a reason the platform could not call permanent, and the bounded retry is being or has been spent; `plan-turn-failed` the planning turn errored (an LLM or transport error, retried); `repository-unavailable` the run's repository, issue or credential is gone.
+	Code string `json:"code"`
+
+	// Component The component that declared the failing dependency, when the fault has one.
+	Component string `json:"component,omitempty"`
+
+	// Dependency The dependency the platform could not provision, when the fault has one.
+	Dependency string `json:"dependency,omitempty"`
+
+	// Detail The platform's recorded error text, scrubbed and capped at the producer.
+	Detail  string    `json:"detail,omitempty"`
+	FirstAt time.Time `json:"firstAt"`
+	LastAt  time.Time `json:"lastAt"`
+
+	// MaxAttempts The activity's retry bound; 0 when unbounded.
+	MaxAttempts int64 `json:"maxAttempts"`
+
+	// Permanent Repeating cannot change the answer. The producer's own classification — the one that also decided the retry policy — so "retrying cannot fix this" and the single attempt it took are two readings of one fact.
+	Permanent bool `json:"permanent"`
+
+	// Phase The run phase the fault was met in.
+	Phase string `json:"phase"`
+
+	// WorkflowID The run's workflow id — the handle an operator reads history by. Derived at read time, never stored.
+	WorkflowID string `json:"workflowId,omitempty"`
+}
 
 // RunProgressEvent One SSE frame on the run progress stream. `type` discriminates the payload: `cycle` carries a RunCycleView (the client upserts by id and renders one accordion section per cycle), `event` one RunEvent — the v2 feed — stamped with the cycle and attempt that produced it, `line` one RunProgressLine attributed to its own cycle, and `done` the terminal run state, after which the server closes the stream.
 // `event` and `line` are the same feed in two envelope versions and a single stream can carry both: a run whose earlier cycles were dispatched before the v2 cutover replays them as `line` frames and its later ones as `event` frames. A consumer must therefore handle whichever it is given rather than choosing one, for as long as the compatibility window lasts.
@@ -3378,13 +3422,13 @@ type GetBuildLogsParams struct {
 
 // GetDependencyStatusParams defines parameters for GetDependencyStatus.
 type GetDependencyStatusParams struct {
-	// Environment Environment (default: development)
+	// Environment Environment (defaults to "default")
 	Environment string `form:"environment,omitempty" json:"environment,omitempty"`
 }
 
 // GetProjectDependencyReadinessParams defines parameters for GetProjectDependencyReadiness.
 type GetProjectDependencyReadinessParams struct {
-	// Environment Environment (default: development)
+	// Environment Environment (defaults to "default")
 	Environment string `form:"environment,omitempty" json:"environment,omitempty"`
 }
 

@@ -24,7 +24,7 @@ source "$SCRIPT_DIR/utils.sh"
 echo "=== Setting up AEP Platform ==="
 
 # Verify Thunder is running and AEP client exists
-kubectl get deployment thunder-deployment -n thunder &>/dev/null || {
+kubectl get deployment "${THUNDER_RELEASE}-deployment" -n "${THUNDER_NS}" &>/dev/null || {
     echo "❌ Thunder not found. Run setup-openchoreo.sh first."
     exit 1
 }
@@ -558,9 +558,10 @@ echo "✅ ClusterResourceType 'postgres-cnpg' + CNPG data-plane RBAC created"
 # ── thunder-app-operator (reconciles ThunderApplication CRs → Thunder apps) ──
 # Builds the operator image from its self-contained module, imports it into the
 # k3d nodes (Never pull policy — no registry involved), and installs the chart.
-# The chart's LOCAL DEV credentials default to the aectl-system-client the Thunder
-# bootstrap registers; a real cluster must override thunder.systemClient* (see
-# the chart's values.yaml). CRD ships under the chart's crds/.
+# The operator carries no Thunder configuration of its own: it resolves the
+# Thunder for each CR from that (org, environment)'s binding record, which
+# setup-environment-thunder.sh writes and mirrors into this namespace further
+# down. CRD ships under the chart's crds/.
 echo ""
 echo "🔧 Building + installing thunder-app-operator..."
 docker build -t thunder-app-operator:local "${SCRIPT_DIR}/../single-cluster/resource-types/thunder-app/operator"
@@ -624,19 +625,30 @@ print(json.dumps({
 done
 echo "✅ Namespaced ComponentTypes 'service' + 'web-application' created in ns 'default'"
 
-# Environment: development — backed by the default ClusterDataPlane
+# Environment: default — backed by the default ClusterDataPlane. The ONE
+# environment AEP provisions and validates in; the same object Agent Manager's
+# platform-resources chart adopts when Agent Manager is installed (see
+# setup-aep.sh for why).
 kubectl apply -f - <<'OCEOF'
 apiVersion: openchoreo.dev/v1alpha1
 kind: Environment
 metadata:
-  name: development
+  name: default
   namespace: default
 spec:
   dataPlaneRef:
     kind: ClusterDataPlane
     name: default
 OCEOF
-echo "✅ Environment 'development' created"
+echo "✅ Environment 'default' created"
+
+# The environment's identity tier and its API Platform gateway, the same two
+# steps setup-aep.sh runs for this Environment: a bound Thunder (binding record
+# annotated onto the Environment above) and one gateway per (org, environment).
+# Without them nothing serves this environment's managed APIs and
+# verify-convergence.sh check 5 fails.
+bash "$SCRIPT_DIR/setup-environment-thunder.sh" default default
+bash "$SCRIPT_DIR/setup-environment-gateway.sh" default default
 
 # DeploymentPipeline: default — single environment pipeline
 kubectl apply -f - <<'OCEOF'
@@ -648,7 +660,7 @@ metadata:
 spec:
   promotionPaths:
     - sourceEnvironmentRef:
-        name: development
+        name: default
       targetEnvironmentRefs: []
 OCEOF
 echo "✅ DeploymentPipeline 'default' created"

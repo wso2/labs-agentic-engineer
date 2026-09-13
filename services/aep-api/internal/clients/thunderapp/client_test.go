@@ -34,7 +34,7 @@ import (
 
 const (
 	testResource = "proj-idp"
-	testEnv      = "development"
+	testEnv      = "default"
 )
 
 func mustClient(t *testing.T, cfg thunderapp.Config) *thunderapp.Client {

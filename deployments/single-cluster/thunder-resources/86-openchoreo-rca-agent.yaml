@@ -1,0 +1,21 @@
+# resource_type: application
+resource_type: application
+id: openchoreo-rca-agent
+type: m2m # client_credentials only, no interactive login
+name: "OpenChoreo RCA Agent"
+description: "SRE/RCA agent service-account identity. Authenticates to the OpenChoreo API and Observer to run root-cause analyses. Bound by the rca-agent-binding ClusterAuthzRoleBinding shipped with the OpenChoreo control-plane chart."
+ouId: "01900000-0000-7000-8000-000000000001"
+inboundAuthConfig:
+  - type: oauth2
+    config:
+      clientId: "openchoreo-rca-agent"
+      clientSecret: "openchoreo-rca-agent-secret"
+      grantTypes: ["client_credentials"]
+      tokenEndpointAuthMethod: "client_secret_post"
+      pkceRequired: false
+      publicClient: false
+      token:
+        accessToken:
+          clientConfig:
+            validityPeriod: 3600
+            attributes: ["ouId", "ouHandle"]

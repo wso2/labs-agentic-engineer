@@ -35,14 +35,61 @@ import (
 // The one thing they do record is directory writes, because "did the directory
 // actually change?" is the other half of the rotate and delete assertions.
 
+// panelEnv is the environment fakeTargets resolves every org to — the one
+// identity provider these fakes model.
+const panelEnv = "default"
+
+// panelOrg is the org whose directory the role and account fixtures belong to.
+// It matches the org the component tests authenticate as; a fixture for any
+// other org would be a row on a directory those requests never reach, which is
+// what the fence tests below are for.
+const panelOrg = "acme"
+
+// scopeOf is the (org, environment) key, the same one the resolver hands the
+// panel.
+func scopeOf(orgID string) identity.Scope {
+	return identity.Scope{OrgID: orgID, Environment: panelEnv}
+}
+
+// fakeTargets is the identity.TargetResolver: every org resolves to the same
+// faked directory, under that org's default scope.
+type fakeTargets struct {
+	dir identity.Directory
+	// err, when set, is what Resolve answers — the environment with no identity
+	// provider bound to it. Scope keeps working, which is what lets the panel's
+	// read degrade instead of failing.
+	err error
+}
+
+func newFakeTargets(dir identity.Directory) *fakeTargets { return &fakeTargets{dir: dir} }
+
+func (f *fakeTargets) Scope(orgID string) identity.Scope { return scopeOf(orgID) }
+
+func (f *fakeTargets) Resolve(_ context.Context, orgID string) (identity.Target, error) {
+	if f.err != nil {
+		return identity.Target{}, f.err
+	}
+	return identity.Target{
+		OrgID: orgID, Environment: panelEnv,
+		Issuer:    "http://default-idp.amp.localhost:8080",
+		Directory: f.dir,
+	}, nil
+}
+
+var _ identity.TargetResolver = (*fakeTargets)(nil)
+
 // fakeStore is an in-memory identity.Store. Passwords are kept in the clear —
 // the real sealing is the ColumnCipher's job and is covered by the repository's
 // own tests; what matters here is WHICH password the panel stored.
+//
+// Every map is keyed by the SCOPE as well as the name, because the store is: a
+// fake that ignored the scope would let a panel reading the wrong environment's
+// rows pass.
 type fakeStore struct {
 	roles     map[string]identity.IdPRole
 	testUsers map[string]identity.TestUser
 	passwords map[string]string
-	// refs is keyed org/project → the rows that project references.
+	// refs is keyed scope/project → the rows that project references.
 	refs map[string][]identity.TestUserRef
 
 	// setPasswordErr makes the seal fail, which is how the half-applied rotate
@@ -59,43 +106,59 @@ func newFakeStore() *fakeStore {
 	}
 }
 
-func refKey(orgID, projectID string) string { return orgID + "/" + projectID }
+func refKey(scope identity.Scope, projectID string) string { return scope.String() + "/" + projectID }
 
-// withRole records a role the platform created.
+// scopedKey joins the scope with a role name or username, exactly as the
+// composite primary key does.
+func scopedKey(scope identity.Scope, name string) string { return scope.String() + "|" + name }
+
+// withRole records a role the platform created on panelOrg's directory.
 func (s *fakeStore) withRole(name string) *fakeStore {
-	s.roles[strings.ToLower(name)] = identity.IdPRole{Name: name, ThunderGroupID: "grp-" + name}
+	scope := scopeOf(panelOrg)
+	s.roles[scopedKey(scope, strings.ToLower(name))] = identity.IdPRole{
+		OrgID: scope.OrgID, Environment: scope.Environment,
+		Name: name, ThunderGroupID: "grp-" + name,
+	}
 	return s
 }
 
-// withOwnedUser records an account the platform owns, with its sealed password.
+// withOwnedUser records an account the platform owns on panelOrg's directory,
+// with its sealed password.
 func (s *fakeStore) withOwnedUser(username, role, password string) *fakeStore {
-	s.testUsers[username] = identity.TestUser{
+	scope := scopeOf(panelOrg)
+	s.testUsers[scopedKey(scope, username)] = identity.TestUser{
+		OrgID: scope.OrgID, Environment: scope.Environment,
 		Username: username, ThunderUserID: "usr-" + username, RoleName: role,
 	}
-	s.passwords[username] = password
+	s.passwords[scopedKey(scope, username)] = password
 	return s
 }
 
 // withRef records that org/project's design references username. It is the ONLY
 // project-scoped fact in this domain, and therefore the whole org+project fence.
 func (s *fakeStore) withRef(orgID, projectID, username, role string) *fakeStore {
-	k := refKey(orgID, projectID)
+	scope := scopeOf(orgID)
+	k := refKey(scope, projectID)
 	s.refs[k] = append(s.refs[k], identity.TestUserRef{
-		OrgID: orgID, ProjectID: projectID, Username: username, RoleName: role,
+		OrgID: orgID, Environment: scope.Environment,
+		ProjectID: projectID, Username: username, RoleName: role,
 	})
 	return s
 }
 
-func (s *fakeStore) GetRole(_ context.Context, name string) (*identity.IdPRole, error) {
-	if r, ok := s.roles[strings.ToLower(name)]; ok {
+func (s *fakeStore) GetRole(_ context.Context, scope identity.Scope, name string) (*identity.IdPRole, error) {
+	if r, ok := s.roles[scopedKey(scope, strings.ToLower(name))]; ok {
 		return &r, nil
 	}
 	return nil, nil
 }
 
-func (s *fakeStore) ListRoles(context.Context) ([]identity.IdPRole, error) {
+func (s *fakeStore) ListRoles(_ context.Context, scope identity.Scope) ([]identity.IdPRole, error) {
 	out := make([]identity.IdPRole, 0, len(s.roles))
 	for _, r := range s.roles {
+		if r.OrgID != scope.OrgID || r.Environment != scope.Environment {
+			continue
+		}
 		out = append(out, r)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
@@ -103,68 +166,65 @@ func (s *fakeStore) ListRoles(context.Context) ([]identity.IdPRole, error) {
 }
 
 func (s *fakeStore) UpsertRole(_ context.Context, role identity.IdPRole) error {
-	s.roles[strings.ToLower(role.Name)] = role
+	scope := identity.Scope{OrgID: role.OrgID, Environment: role.Environment}
+	s.roles[scopedKey(scope, strings.ToLower(role.Name))] = role
 	return nil
 }
 
-func (s *fakeStore) DeleteRole(_ context.Context, name string) error {
-	delete(s.roles, strings.ToLower(name))
-	return nil
-}
-
-func (s *fakeStore) GetTestUser(_ context.Context, username string) (*identity.TestUser, error) {
-	if u, ok := s.testUsers[username]; ok {
+func (s *fakeStore) GetTestUser(_ context.Context, scope identity.Scope, username string) (*identity.TestUser, error) {
+	if u, ok := s.testUsers[scopedKey(scope, username)]; ok {
 		return &u, nil
 	}
 	return nil, nil
 }
 
 func (s *fakeStore) UpsertTestUser(_ context.Context, user identity.TestUser, password string) error {
-	s.testUsers[user.Username] = user
-	s.passwords[user.Username] = password
+	scope := identity.Scope{OrgID: user.OrgID, Environment: user.Environment}
+	s.testUsers[scopedKey(scope, user.Username)] = user
+	s.passwords[scopedKey(scope, user.Username)] = password
 	return nil
 }
 
-func (s *fakeStore) UpdateTestUserFacts(_ context.Context, username, thunderUserID, roleName string) error {
-	u, ok := s.testUsers[username]
+func (s *fakeStore) UpdateTestUserFacts(_ context.Context, scope identity.Scope, username, thunderUserID, roleName string) error {
+	u, ok := s.testUsers[scopedKey(scope, username)]
 	if !ok {
 		return errors.New("no such account")
 	}
 	u.ThunderUserID, u.RoleName = thunderUserID, roleName
-	s.testUsers[username] = u
+	s.testUsers[scopedKey(scope, username)] = u
 	return nil
 }
 
-func (s *fakeStore) SetTestUserPassword(_ context.Context, username, password string) error {
+func (s *fakeStore) SetTestUserPassword(_ context.Context, scope identity.Scope, username, password string) error {
 	if s.setPasswordErr != nil {
 		return s.setPasswordErr
 	}
-	u, ok := s.testUsers[username]
+	u, ok := s.testUsers[scopedKey(scope, username)]
 	if !ok {
 		return errors.New("no such account")
 	}
 	now := time.Now().UTC()
 	u.RotatedAt = &now
-	s.testUsers[username] = u
-	s.passwords[username] = password
+	s.testUsers[scopedKey(scope, username)] = u
+	s.passwords[scopedKey(scope, username)] = password
 	return nil
 }
 
-func (s *fakeStore) RevealTestUserPassword(_ context.Context, username string) (string, error) {
-	p, ok := s.passwords[username]
+func (s *fakeStore) RevealTestUserPassword(_ context.Context, scope identity.Scope, username string) (string, error) {
+	p, ok := s.passwords[scopedKey(scope, username)]
 	if !ok || p == "" {
 		return "", identity.ErrNoPassword
 	}
 	return p, nil
 }
 
-func (s *fakeStore) DeleteTestUser(_ context.Context, username string) error {
-	delete(s.testUsers, username)
-	delete(s.passwords, username)
+func (s *fakeStore) DeleteTestUser(_ context.Context, scope identity.Scope, username string) error {
+	delete(s.testUsers, scopedKey(scope, username))
+	delete(s.passwords, scopedKey(scope, username))
 	for k, rows := range s.refs {
 		var kept []identity.TestUserRef
 		for _, r := range rows {
-			if r.Username != username {
+			if r.Username != username || r.OrgID != scope.OrgID || r.Environment != scope.Environment {
 				kept = append(kept, r)
 			}
 		}
@@ -173,13 +233,13 @@ func (s *fakeStore) DeleteTestUser(_ context.Context, username string) error {
 	return nil
 }
 
-func (s *fakeStore) ReplaceProjectRefs(_ context.Context, orgID, projectID string, refs []identity.TestUserRef) error {
-	s.refs[refKey(orgID, projectID)] = refs
+func (s *fakeStore) ReplaceProjectRefs(_ context.Context, scope identity.Scope, projectID string, refs []identity.TestUserRef) error {
+	s.refs[refKey(scope, projectID)] = refs
 	return nil
 }
 
-func (s *fakeStore) ListProjectRefs(_ context.Context, orgID, projectID string) ([]identity.TestUserRef, error) {
-	rows := append([]identity.TestUserRef(nil), s.refs[refKey(orgID, projectID)]...)
+func (s *fakeStore) ListProjectRefs(_ context.Context, scope identity.Scope, projectID string) ([]identity.TestUserRef, error) {
+	rows := append([]identity.TestUserRef(nil), s.refs[refKey(scope, projectID)]...)
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].RoleName != rows[j].RoleName {
 			return rows[i].RoleName < rows[j].RoleName
@@ -189,11 +249,15 @@ func (s *fakeStore) ListProjectRefs(_ context.Context, orgID, projectID string) 
 	return rows, nil
 }
 
-func (s *fakeStore) ProjectsReferencing(_ context.Context, orgID, username string) ([]identity.TestUserRef, error) {
+// ProjectsReferencing is SCOPE-fenced, mirroring the real store: it answers
+// both the names the panel lists and the count its delete warning carries,
+// which is sound only because an account exists on exactly one (org,
+// environment) directory.
+func (s *fakeStore) ProjectsReferencing(_ context.Context, scope identity.Scope, username string) ([]identity.TestUserRef, error) {
 	var out []identity.TestUserRef
 	for _, rows := range s.refs {
 		for _, r := range rows {
-			if r.OrgID == orgID && r.Username == username {
+			if r.OrgID == scope.OrgID && r.Environment == scope.Environment && r.Username == username {
 				out = append(out, r)
 			}
 		}
@@ -202,18 +266,22 @@ func (s *fakeStore) ProjectsReferencing(_ context.Context, orgID, username strin
 	return out, nil
 }
 
-// CountReferencing is org-BLIND on purpose, mirroring the real store: it is the
-// bare cross-org total that makes the delete warning true.
-func (s *fakeStore) CountReferencing(_ context.Context, username string) (int, error) {
-	n := 0
-	for _, rows := range s.refs {
-		for _, r := range rows {
-			if r.Username == username {
-				n++
-			}
-		}
-	}
-	return n, nil
+var _ identity.Store = (*fakeStore)(nil)
+
+// storedPassword / hasUser / hasRole are the read helpers the component tests
+// assert through, so no test has to spell the composite key.
+func (s *fakeStore) storedPassword(username string) string {
+	return s.passwords[scopedKey(scopeOf(panelOrg), username)]
+}
+
+func (s *fakeStore) hasUser(username string) bool {
+	_, ok := s.testUsers[scopedKey(scopeOf(panelOrg), username)]
+	return ok
+}
+
+func (s *fakeStore) hasRole(name string) bool {
+	_, ok := s.roles[scopedKey(scopeOf(panelOrg), strings.ToLower(name))]
+	return ok
 }
 
 // fakeDirectory is the identity provider. `deleted` records the user ids the

@@ -80,9 +80,10 @@ type DeploymentInputs struct {
 	// ComponentNamespace is the OC namespace the component's CR lives in — a
 	// segment of every managed API's gateway context path.
 	ComponentNamespace string
-	// GatewayHost is host:port of the API gateway runtime. Empty emits no
-	// gateway address, which leaves a consumer on the direct-Service lane.
-	GatewayHost string
+	// GatewayHostOverride pins host:port of the API gateway runtime instead of
+	// deriving it from (ComponentNamespace, Environment). Empty is the normal
+	// case — see APIGatewayHost in gateway_address.go.
+	GatewayHostOverride string
 	// ProtectedSiblings are the component-kind dependencies whose provider sits
 	// behind the gateway. Each becomes a `<DEP>_GATEWAY_URL` env var so the
 	// consumer can choose the authenticated lane (see gateway_address.go).
@@ -132,7 +133,7 @@ func DesiredDeploymentFor(in DeploymentInputs) DesiredDeployment {
 	envVars := in.EnvVars
 	if envVars != nil {
 		envVars = mergeEnvVars(envVars,
-			GatewayEnvVars(in.GatewayHost, in.Environment, in.ComponentNamespace, in.ProtectedSiblings))
+			GatewayEnvVars(in.GatewayHostOverride, in.Environment, in.ComponentNamespace, in.ProtectedSiblings))
 	}
 
 	return DesiredDeployment{

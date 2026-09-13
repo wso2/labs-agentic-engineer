@@ -27,7 +27,12 @@
 #   - addHeaders: Custom request/response headers (disabled by default)
 #
 # Prerequisites:
-#   - WSO2 API Platform gateway installed in the data plane (see README.md)
+#   - The environment's own WSO2 API Platform gateway (`api-platform-<org>-<env>`
+#     in namespace `<org>-<env>`), installed by
+#     deployments/scripts/setup-environment-gateway.sh. There is no cluster-wide
+#     gateway: both the RestApi label and the Backend host below name the
+#     per-environment one, and an environment without its gateway gets a RestApi
+#     no gateway serves.
 #   - WSO2 API Platform CRDs available (RestApi, APIGateway)
 #   - kgateway installed (default) with Backend CRD support
 #   - ComponentType must have HTTPRoute resources for the patch to target
@@ -237,8 +242,25 @@ spec:
           type: Static
           static:
             hosts:
-              - host: api-platform-default-gateway-gateway-runtime.openchoreo-data-plane
-                port: 8080
+              # The environment's OWN gateway runtime, not a cluster-wide one.
+              # There is one API Platform gateway per (org, environment) —
+              # `api-platform-<org>-<env>` in namespace `<org>-<env>` — because
+              # the gateway is where a managed API's authentication is
+              # terminated, and it must be terminated against that
+              # environment's identity tier and no other. componentNamespace IS
+              # the org (the OpenChoreo namespace components are created in);
+              # the same pair keys the RestApi label below.
+              #
+              # The `-gw-` infix comes from the API Platform gateway-operator:
+              # from 0.11.0 it names the child Helm release for an APIGateway
+              # "<apigateway-name>-gw". Port 22893 (not 8080) is the gateway
+              # extension chart's runtime Service port. Both halves are the
+              # chart's derivation — keep in lockstep with APIGatewayHost in
+              # aep-api (projects/gateway_address.go) and with
+              # deployments/scripts/setup-environment-gateway.sh, which
+              # installs the gateway these names point at.
+              - host: api-platform-${metadata.componentNamespace}-${metadata.environmentName}-gw-gateway-gateway-runtime.${metadata.componentNamespace}-${metadata.environmentName}
+                port: 22893
 
     # --- RestApi: WSO2 API Platform API definition ---
     # Registers the API in the WSO2 gateway. The displayName, context, and version are
@@ -251,6 +273,19 @@ spec:
         metadata:
           name: ${metadata.name}-${parameters.endpointName}
           namespace: ${metadata.namespace}
+          labels:
+            # Selects the environment's own APIGateway, which matches on exactly
+            # this label (`apiSelector.scope: LabelSelector`). Required, not
+            # decorative: no gateway is Cluster-scoped any more — that would
+            # make every gateway serve every environment's APIs — so a RestApi
+            # whose label names no existing APIGateway is served by nothing at
+            # all, which presents as a 404 from the gateway with a
+            # perfectly healthy-looking RestApi CR.
+            #
+            # The value is the APIGateway's name, derived by the gateway
+            # extension chart as `api-platform-<org>-<env>`. verify-convergence
+            # check 5 asserts every RestApi's label names a gateway that exists.
+            gateway.api-platform.wso2.com/restapi-target: api-platform-${metadata.componentNamespace}-${metadata.environmentName}
         spec:
           displayName: ${metadata.environmentName}-${metadata.componentNamespace}-${metadata.componentName}-${parameters.endpointName}
           version: v1.0

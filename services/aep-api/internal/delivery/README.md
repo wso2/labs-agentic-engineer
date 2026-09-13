@@ -107,6 +107,7 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
 | `ComponentEnsurer` | needs | `eventcore` → the projects component service + the runtime-config emitter. Provision a component's OpenChoreo CR immediately before its first build; see the invariant below |
 | `RunReader` · `CycleReader` · `CycleLogReader` · `RunCanceller` · `Revalidator` | needs | `runread` → the root run/cycle repositories, `codingagent`'s cycle-log reader (the pod's log through the OC API while it lives, the observer's archive while the Component is retained), `*run.Supervisor` and the event plane. Four reads and two writes, which is the whole dependency surface of the read model. `Revalidator` is a port for the same reason `RunCanceller` is: deciding a revalidation needs GitHub (is there open work?) and the project repo (is there an oracle?), and this surface must stay free-to-poll |
 | `Gates` · `Planner` | needs | `run` → `dependencies/provisioning` (through an app-root adapter) and `task`. Mint the version's dependency gates, then plan its Tasks — the run's first phase. Declared here rather than imported for the same reason `build` declares its own: `task ⊥ run` is an import ban in both directions, and a port over root types satisfies it |
+| `RunFailedRecorder` | needs | `run` → the projects domain's activity service (through an app-root adapter). Told once per FAILED settle so the project's feed carries a `run_failed` line; the fault itself is the run row's `failure` record, written by `ProvisionGates` / `PlanMilestone` through `RunStore.RecordFailure` — see [`design/run-failure-record.md`](../../design/run-failure-record.md) |
 | `Deployer` · `DeploymentReader` | needs | `run` → `projects.DeploymentService`. Promote a cycle's built components and read back whether they are serving. The supervisor owns the ORDER and the verdict; the projects domain owns the OpenChoreo writes, which is why `run` still names no cluster client |
 | `DeployIssueMinter` | needs | `run` → the event plane. The ONE recovery issue the plane cannot mint on its own initiative: every other one has a webhook behind it, and a ReleaseBinding that never becomes Ready delivers nothing. The supervisor observes it and asks; the plane still owns the write, the labels and the dedupe key |
 | `RunSignaler` · `RunStarter` | needs | `eventcore` and `build` → the run supervisor. Signal a run, start one. Interfaces, which is what keeps both the event plane and the build click free of a workflow engine; both are declared over the root `StartRunRequest`, and `*run.Supervisor` satisfies both |
@@ -214,7 +215,7 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   whole version because nothing told a blip from an answer, and it left no history to diagnose. As
   activities it is durable, retried, and classified by `planErr` exactly as every other I/O the loop does.
   A planning failure still settles `plan-failed` — same terminal reason, now written by the supervisor.
-  **The phase is cancellable and its gate activity gives up** ([ADR-0024][adr24]). Its two activities are
+  **The phase is cancellable and its gate activity gives up** ([ADR-0027][adr27]). Its two activities are
   raced against the cancel channel (`loop.awaitInterruptibly`) and heartbeat, so a cancel both settles the
   run and stops the work in flight — without it the phase was blind to cancel for its whole duration, which
   is what let a version with an unsatisfiable dependency loop for 22 minutes over six unread cancels.
@@ -225,7 +226,7 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   nobody has named yet. What it looped ON was the gate mint, whose dedupe considered only OPEN gates while
   the same activity closes the ready ones — so the mint now keys on (version, dependency) in EVERY state,
   which a version label on the gate is what makes safe (`provisioning.gateVersionLabelPrefix`).
-- **A CANCELLED version says so, in both aggregates that report one** ([ADR-0024][adr24]).
+- **A CANCELLED version says so, in both aggregates that report one** ([ADR-0027][adr27]).
   `build.statusFromRunState` (the version ledger and the build page header) and
   `projects.buildStageStatus` (the toolbar's project badge) both folded `cancelled` into `failed`;
   both now carry their own value, and they move together because a reader sees both at once. `blocked`
@@ -234,7 +235,7 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   deployable for this change (an old bundle rendered the new value as "Unknown"). Ship the console
   with, or before, the BFF.
 - **Whether a rebuild skips the planning turn is answered by the MILESTONE, not by the spec status**
-  ([ADR-0024][adr24]). `Rebuild` means "already filled", and an unchanged spec is not evidence of that: a
+  ([ADR-0027][adr27]). `Rebuild` means "already filled", and an unchanged spec is not evidence of that: a
   run that died in its planning phase leaves the milestone holding its gates and no work, and a run that
   skips planning over it reads the empty working set as "planning produced nothing" and settles the version
   succeeded having built none of it. `build.reopenIncrement` lists the milestone's issues in every state
@@ -425,7 +426,7 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   `activityCtx` with `MaximumAttempts` — permanence is the activity's to declare, and bounding the
   SHARED options would put every activity on a cap sized for one of them.
   **`ProvisionGates` is the one activity with a cap of its own, and the two guards are layered rather
-  than alternative** (ADR-0024). Classification is the front line: a fault we can NAME is refused before
+  than alternative** (ADR-0027). Classification is the front line: a fault we can NAME is refused before
   the run starts (an unknown `resourceType` is a 409 on the click) or fails on attempt one with the
   provisioner's own message. The cap in `gateActivityCtx` catches only what is left — a permanent fault
   nobody has named yet, which under the unbounded default is an invisible forever-loop rather than a
@@ -831,4 +832,4 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   run card's gate-hold vs. empty-working-set distinction.
 - Platform-wide rules (tenant gate, secrets fence, persistence-in-domain) → [../../README.md](../../README.md).
 
-[adr24]: ../../../../docs/decisions/ADR-0024-cancel-reaches-the-planning-phase.md
+[adr27]: ../../../../docs/decisions/ADR-0027-cancel-reaches-the-planning-phase.md

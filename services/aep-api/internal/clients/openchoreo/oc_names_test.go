@@ -58,7 +58,7 @@ func TestNewBuildRunNameFitsLabelBudget(t *testing.T) {
 
 // TestNewCodingAgentRunNameFitsOCJobLabelBudget is the coding-agent counterpart
 // of TestNewBuildRunNameFitsLabelBudget. OpenChoreo names the dataplane Job
-// `{scopedComponent}-{development}-{hash8}` and stamps that into pod-template
+// `{scopedComponent}-{default}-{hash8}` and stamps that into pod-template
 // labels; overflowing 63 is ResourceApplyFailed with no runner pod.
 func TestNewCodingAgentRunNameFitsOCJobLabelBudget(t *testing.T) {
 	cycle := "08d05715-b1aa-444e-88e9-0875ff58d5c0"

@@ -19,12 +19,14 @@ package identity_test
 // DB tier for the identity store — against a real migrated Postgres (dbtest;
 // skipped under -short).
 //
-// Three things here can only be told the truth by a real database, and each is
+// Four things here can only be told the truth by a real database, and each is
 // a property the in-memory fake in ensure_test.go deliberately does not model:
 // the password column is genuinely encrypted and genuinely undecryptable under
-// a different key; the org fence on test_user_refs is in the SQL and not in a
-// caller; and UpsertRole's on-conflict clause really does leave provenance
-// alone.
+// a different key; the (org, environment) key is in the SQL and not in a
+// caller, so two environments' rows genuinely cannot answer each other's reads;
+// UpsertRole's on-conflict clause really does leave provenance alone; and the
+// composite primary key really does admit the same role name twice, once per
+// environment.
 
 import (
 	"context"
@@ -45,6 +47,15 @@ const (
 	orgB     = "org-b"
 	projectA = "proj-a"
 	projectB = "proj-b"
+)
+
+// The scopes under test. devA and devB are two orgs' default environments;
+// stagingA is the SAME org's other environment — a different identity provider,
+// and the case that proves the key is a key and not a filter.
+var (
+	devA     = identity.Scope{OrgID: orgA, Environment: "default"}
+	devB     = identity.Scope{OrgID: orgB, Environment: "default"}
+	stagingA = identity.Scope{OrgID: orgA, Environment: "staging"}
 )
 
 // newKey mints a random AES-256 key, so two ciphers in one test are genuinely
@@ -77,16 +88,31 @@ func newStore(t *testing.T) (identity.Store, *gorm.DB, []byte) {
 	return identity.NewStore(db, newCipher(t, key)), db, key
 }
 
-// seedUser writes one account through the store.
-func seedUser(t *testing.T, ctx context.Context, s identity.Store, username, role, password string) {
+// seedUser writes one account through the store, on one scope's directory.
+func seedUser(t *testing.T, ctx context.Context, s identity.Store, scope identity.Scope, username, role, password string) {
 	t.Helper()
 	err := s.UpsertTestUser(ctx, identity.TestUser{
+		OrgID: scope.OrgID, Environment: scope.Environment,
 		Username: username, ThunderUserID: "usr-" + username, RoleName: role,
 		Email: username + "@test-users.invalid",
 	}, password)
 	if err != nil {
-		t.Fatalf("UpsertTestUser(%q): %v", username, err)
+		t.Fatalf("UpsertTestUser(%q on %s): %v", username, scope, err)
 	}
+}
+
+// sealedColumn reads one account's raw sealed password straight out of the
+// table, for the assertions that must not go through the cipher.
+func sealedColumn(t *testing.T, db *gorm.DB, scope identity.Scope, username string) string {
+	t.Helper()
+	var stored string
+	err := db.Raw(`SELECT password_sealed FROM test_users
+	                WHERE org_id = ? AND environment = ? AND username = ?`,
+		scope.OrgID, scope.Environment, username).Scan(&stored).Error
+	if err != nil {
+		t.Fatalf("read column: %v", err)
+	}
+	return stored
 }
 
 // ---- the sealed password column -------------------------------------------
@@ -100,13 +126,9 @@ func TestStorePasswordRoundTripsThroughTheSealedColumn(t *testing.T) {
 	ctx := context.Background()
 	const plaintext = "Aep1!nR7xk2QpZ4vLmT8yWb3d"
 
-	seedUser(t, ctx, s, "test-viewer", "Viewer", plaintext)
+	seedUser(t, ctx, s, devA, "test-viewer", "Viewer", plaintext)
 
-	var stored string
-	if err := db.Raw(`SELECT password_sealed FROM test_users WHERE username = ?`, "test-viewer").
-		Scan(&stored).Error; err != nil {
-		t.Fatalf("read column: %v", err)
-	}
+	stored := sealedColumn(t, db, devA, "test-viewer")
 	if stored == "" {
 		t.Fatalf("password_sealed is empty — nothing was stored")
 	}
@@ -117,7 +139,7 @@ func TestStorePasswordRoundTripsThroughTheSealedColumn(t *testing.T) {
 		t.Fatalf("password_sealed contains the plaintext: %q", stored)
 	}
 
-	got, err := s.RevealTestUserPassword(ctx, "test-viewer")
+	got, err := s.RevealTestUserPassword(ctx, devA, "test-viewer")
 	if err != nil {
 		t.Fatalf("RevealTestUserPassword: %v", err)
 	}
@@ -128,7 +150,7 @@ func TestStorePasswordRoundTripsThroughTheSealedColumn(t *testing.T) {
 	// The row itself never carries the sealed value off the store: json:"-" keeps
 	// it off every wire shape, and GetTestUser is what the wire shapes are built
 	// from.
-	row, err := s.GetTestUser(ctx, "test-viewer")
+	row, err := s.GetTestUser(ctx, devA, "test-viewer")
 	if err != nil || row == nil {
 		t.Fatalf("GetTestUser = %v, %v", row, err)
 	}
@@ -148,16 +170,12 @@ func TestStoreRevealFailsUnderADifferentKeyRatherThanReturningCiphertext(t *test
 	const plaintext = "Aep1!originalSecretValue"
 
 	written := identity.NewStore(db, newCipher(t, newKey(t)))
-	seedUser(t, ctx, written, "test-viewer", "Viewer", plaintext)
+	seedUser(t, ctx, written, devA, "test-viewer", "Viewer", plaintext)
 
-	var sealed string
-	if err := db.Raw(`SELECT password_sealed FROM test_users WHERE username = ?`, "test-viewer").
-		Scan(&sealed).Error; err != nil {
-		t.Fatalf("read column: %v", err)
-	}
+	sealed := sealedColumn(t, db, devA, "test-viewer")
 
 	rotated := identity.NewStore(db, newCipher(t, newKey(t)))
-	got, err := rotated.RevealTestUserPassword(ctx, "test-viewer")
+	got, err := rotated.RevealTestUserPassword(ctx, devA, "test-viewer")
 	if err == nil {
 		t.Fatalf("reveal under a different key returned %q with no error", got)
 	}
@@ -176,12 +194,12 @@ func TestStoreRevealReportsNoPassword(t *testing.T) {
 	s, _, _ := newStore(t)
 	ctx := context.Background()
 
-	if _, err := s.RevealTestUserPassword(ctx, "nobody"); !errors.Is(err, identity.ErrNoPassword) {
+	if _, err := s.RevealTestUserPassword(ctx, devA, "nobody"); !errors.Is(err, identity.ErrNoPassword) {
 		t.Fatalf("reveal for an unknown account = %v, want ErrNoPassword", err)
 	}
 
-	seedUser(t, ctx, s, "test-viewer", "Viewer", "")
-	if _, err := s.RevealTestUserPassword(ctx, "test-viewer"); !errors.Is(err, identity.ErrNoPassword) {
+	seedUser(t, ctx, s, devA, "test-viewer", "Viewer", "")
+	if _, err := s.RevealTestUserPassword(ctx, devA, "test-viewer"); !errors.Is(err, identity.ErrNoPassword) {
 		t.Fatalf("reveal for an account with no sealed password = %v, want ErrNoPassword", err)
 	}
 }
@@ -192,19 +210,19 @@ func TestStoreSetTestUserPasswordRotatesAndStamps(t *testing.T) {
 	t.Parallel()
 	s, _, _ := newStore(t)
 	ctx := context.Background()
-	seedUser(t, ctx, s, "test-viewer", "Viewer", "Aep1!first")
+	seedUser(t, ctx, s, devA, "test-viewer", "Viewer", "Aep1!first")
 
-	if err := s.SetTestUserPassword(ctx, "test-viewer", "Aep1!second"); err != nil {
+	if err := s.SetTestUserPassword(ctx, devA, "test-viewer", "Aep1!second"); err != nil {
 		t.Fatalf("SetTestUserPassword: %v", err)
 	}
-	got, err := s.RevealTestUserPassword(ctx, "test-viewer")
+	got, err := s.RevealTestUserPassword(ctx, devA, "test-viewer")
 	if err != nil {
 		t.Fatalf("RevealTestUserPassword: %v", err)
 	}
 	if got != "Aep1!second" {
 		t.Fatalf("revealed %q, want the rotated password", got)
 	}
-	row, err := s.GetTestUser(ctx, "test-viewer")
+	row, err := s.GetTestUser(ctx, devA, "test-viewer")
 	if err != nil || row == nil {
 		t.Fatalf("GetTestUser = %v, %v", row, err)
 	}
@@ -213,8 +231,13 @@ func TestStoreSetTestUserPasswordRotatesAndStamps(t *testing.T) {
 	}
 	// Rotating an account that does not exist is an error, not a silent no-op:
 	// the caller believes it has issued a new credential.
-	if err := s.SetTestUserPassword(ctx, "nobody", "Aep1!x"); err == nil {
+	if err := s.SetTestUserPassword(ctx, devA, "nobody", "Aep1!x"); err == nil {
 		t.Fatalf("rotating an unknown account succeeded")
+	}
+	// The same username on ANOTHER environment is another account, so rotating
+	// it here must not reach across.
+	if err := s.SetTestUserPassword(ctx, stagingA, "test-viewer", "Aep1!x"); err == nil {
+		t.Fatalf("rotating an account on a different environment succeeded")
 	}
 }
 
@@ -227,34 +250,25 @@ func TestStoreUpdateTestUserFactsLeavesTheSealedPasswordAlone(t *testing.T) {
 	s, db, _ := newStore(t)
 	ctx := context.Background()
 	const plaintext = "Aep1!untouchedByAFactsUpdate"
-	seedUser(t, ctx, s, "test-viewer", "Viewer", plaintext)
+	seedUser(t, ctx, s, devA, "test-viewer", "Viewer", plaintext)
 
-	var before string
-	if err := db.Raw(`SELECT password_sealed FROM test_users WHERE username = ?`, "test-viewer").
-		Scan(&before).Error; err != nil {
-		t.Fatalf("read column: %v", err)
-	}
+	before := sealedColumn(t, db, devA, "test-viewer")
 
-	if err := s.UpdateTestUserFacts(ctx, "test-viewer", "usr-recreated", "Auditor"); err != nil {
+	if err := s.UpdateTestUserFacts(ctx, devA, "test-viewer", "usr-recreated", "Auditor"); err != nil {
 		t.Fatalf("UpdateTestUserFacts: %v", err)
 	}
 
-	row, err := s.GetTestUser(ctx, "test-viewer")
+	row, err := s.GetTestUser(ctx, devA, "test-viewer")
 	if err != nil || row == nil {
 		t.Fatalf("GetTestUser = %v, %v", row, err)
 	}
 	if row.ThunderUserID != "usr-recreated" || row.RoleName != "Auditor" {
 		t.Fatalf("facts = %q/%q, want usr-recreated/Auditor", row.ThunderUserID, row.RoleName)
 	}
-	var after string
-	if err := db.Raw(`SELECT password_sealed FROM test_users WHERE username = ?`, "test-viewer").
-		Scan(&after).Error; err != nil {
-		t.Fatalf("read column: %v", err)
-	}
-	if after != before {
+	if after := sealedColumn(t, db, devA, "test-viewer"); after != before {
 		t.Fatalf("password_sealed was rewritten by a facts-only update")
 	}
-	got, err := s.RevealTestUserPassword(ctx, "test-viewer")
+	got, err := s.RevealTestUserPassword(ctx, devA, "test-viewer")
 	if err != nil {
 		t.Fatalf("RevealTestUserPassword: %v", err)
 	}
@@ -263,8 +277,8 @@ func TestStoreUpdateTestUserFactsLeavesTheSealedPasswordAlone(t *testing.T) {
 	}
 	// It must also work for a row that has no sealed password at all — the case
 	// the reveal-then-reseal path failed the whole build on.
-	seedUser(t, ctx, s, "test-legacy", "Viewer", "")
-	if err := s.UpdateTestUserFacts(ctx, "test-legacy", "usr-2", "Auditor"); err != nil {
+	seedUser(t, ctx, s, devA, "test-legacy", "Viewer", "")
+	if err := s.UpdateTestUserFacts(ctx, devA, "test-legacy", "usr-2", "Auditor"); err != nil {
 		t.Fatalf("UpdateTestUserFacts on an account with no sealed password: %v", err)
 	}
 }
@@ -275,7 +289,7 @@ func TestStoreUpdateTestUserFactsErrorsOnAnUnknownAccount(t *testing.T) {
 	t.Parallel()
 	s, _, _ := newStore(t)
 
-	err := s.UpdateTestUserFacts(context.Background(), "nobody", "usr-1", "Viewer")
+	err := s.UpdateTestUserFacts(context.Background(), devA, "nobody", "usr-1", "Viewer")
 	if err == nil {
 		t.Fatalf("UpdateTestUserFacts on an unknown account succeeded")
 	}
@@ -295,7 +309,7 @@ func TestStoreGetsReturnNilForAnAbsentRow(t *testing.T) {
 	s, _, _ := newStore(t)
 	ctx := context.Background()
 
-	role, err := s.GetRole(ctx, "Administrators")
+	role, err := s.GetRole(ctx, devA, "Administrators")
 	if err != nil {
 		t.Fatalf("GetRole for an absent role errored: %v", err)
 	}
@@ -303,7 +317,7 @@ func TestStoreGetsReturnNilForAnAbsentRow(t *testing.T) {
 		t.Fatalf("GetRole = %+v, want nil", role)
 	}
 
-	user, err := s.GetTestUser(ctx, "jsmith")
+	user, err := s.GetTestUser(ctx, devA, "jsmith")
 	if err != nil {
 		t.Fatalf("GetTestUser for an absent account errored: %v", err)
 	}
@@ -323,6 +337,7 @@ func TestStoreUpsertRoleKeepsTheOriginalProvenance(t *testing.T) {
 	ctx := context.Background()
 
 	first := identity.IdPRole{
+		OrgID: devA.OrgID, Environment: devA.Environment,
 		Name: "Viewer", ThunderGroupID: "grp-1", Description: "first description",
 		CreatedByOrg: orgA, CreatedByProject: projectA,
 	}
@@ -331,6 +346,7 @@ func TestStoreUpsertRoleKeepsTheOriginalProvenance(t *testing.T) {
 	}
 
 	second := identity.IdPRole{
+		OrgID: devA.OrgID, Environment: devA.Environment,
 		Name: "Viewer", ThunderGroupID: "grp-2", Description: "second description",
 		CreatedByOrg: orgB, CreatedByProject: projectB,
 	}
@@ -338,7 +354,7 @@ func TestStoreUpsertRoleKeepsTheOriginalProvenance(t *testing.T) {
 		t.Fatalf("second UpsertRole: %v", err)
 	}
 
-	got, err := s.GetRole(ctx, "Viewer")
+	got, err := s.GetRole(ctx, devA, "Viewer")
 	if err != nil || got == nil {
 		t.Fatalf("GetRole = %v, %v", got, err)
 	}
@@ -350,7 +366,7 @@ func TestStoreUpsertRoleKeepsTheOriginalProvenance(t *testing.T) {
 			got.CreatedByOrg, got.CreatedByProject, orgA, projectA)
 	}
 	// The name is the identity, so a second upsert is one row, not two.
-	rows, err := s.ListRoles(ctx)
+	rows, err := s.ListRoles(ctx, devA)
 	if err != nil {
 		t.Fatalf("ListRoles: %v", err)
 	}
@@ -366,12 +382,16 @@ func TestStoreGetRoleIsCaseInsensitive(t *testing.T) {
 	t.Parallel()
 	s, _, _ := newStore(t)
 	ctx := context.Background()
-	if err := s.UpsertRole(ctx, identity.IdPRole{Name: "Compliance Admin", ThunderGroupID: "grp-1"}); err != nil {
+	role := identity.IdPRole{
+		OrgID: devA.OrgID, Environment: devA.Environment,
+		Name: "Compliance Admin", ThunderGroupID: "grp-1",
+	}
+	if err := s.UpsertRole(ctx, role); err != nil {
 		t.Fatalf("UpsertRole: %v", err)
 	}
 
 	for _, name := range []string{"Compliance Admin", "compliance admin", "COMPLIANCE ADMIN"} {
-		got, err := s.GetRole(ctx, name)
+		got, err := s.GetRole(ctx, devA, name)
 		if err != nil || got == nil {
 			t.Fatalf("GetRole(%q) = %v, %v", name, got, err)
 		}
@@ -382,7 +402,7 @@ func TestStoreGetRoleIsCaseInsensitive(t *testing.T) {
 	// A name that differs only in case is the SAME role, so a lookup under any
 	// casing finds the one row. There is deliberately no DeleteRole: nothing here
 	// ever removes a role, and the panel does not offer it — see ADR-0022.
-	if got, err := s.GetRole(ctx, "no such role"); err != nil || got != nil {
+	if got, err := s.GetRole(ctx, devA, "no such role"); err != nil || got != nil {
 		t.Fatalf("GetRole(absent) = %+v, %v; want nil, nil", got, err)
 	}
 }
@@ -396,7 +416,7 @@ func TestStoreReplaceProjectRefsReplaces(t *testing.T) {
 	s, _, _ := newStore(t)
 	ctx := context.Background()
 
-	err := s.ReplaceProjectRefs(ctx, orgA, projectA, []identity.TestUserRef{
+	err := s.ReplaceProjectRefs(ctx, devA, projectA, []identity.TestUserRef{
 		{Username: "test-viewer", RoleName: "Viewer", ColdStart: true},
 		{Username: "test-auditor", RoleName: "Auditor"},
 	})
@@ -405,22 +425,22 @@ func TestStoreReplaceProjectRefsReplaces(t *testing.T) {
 	}
 
 	// v2 drops Auditor.
-	err = s.ReplaceProjectRefs(ctx, orgA, projectA, []identity.TestUserRef{
+	err = s.ReplaceProjectRefs(ctx, devA, projectA, []identity.TestUserRef{
 		{Username: "test-viewer", RoleName: "Viewer", ColdStart: true},
 	})
 	if err != nil {
 		t.Fatalf("second ReplaceProjectRefs: %v", err)
 	}
 
-	rows, err := s.ListProjectRefs(ctx, orgA, projectA)
+	rows, err := s.ListProjectRefs(ctx, devA, projectA)
 	if err != nil {
 		t.Fatalf("ListProjectRefs: %v", err)
 	}
 	if len(rows) != 1 || rows[0].Username != "test-viewer" {
 		t.Fatalf("refs = %+v, want only test-viewer", rows)
 	}
-	if rows[0].OrgID != orgA || rows[0].ProjectID != projectA {
-		t.Fatalf("ref = %+v, want it stamped with the caller's org/project", rows[0])
+	if rows[0].OrgID != orgA || rows[0].Environment != devA.Environment || rows[0].ProjectID != projectA {
+		t.Fatalf("ref = %+v, want it stamped with the caller's scope and project", rows[0])
 	}
 	if !rows[0].ColdStart {
 		t.Fatalf("cold_start was not persisted")
@@ -430,10 +450,10 @@ func TestStoreReplaceProjectRefsReplaces(t *testing.T) {
 	}
 
 	// An empty set clears the project's references without failing.
-	if err := s.ReplaceProjectRefs(ctx, orgA, projectA, nil); err != nil {
+	if err := s.ReplaceProjectRefs(ctx, devA, projectA, nil); err != nil {
 		t.Fatalf("empty ReplaceProjectRefs: %v", err)
 	}
-	rows, err = s.ListProjectRefs(ctx, orgA, projectA)
+	rows, err = s.ListProjectRefs(ctx, devA, projectA)
 	if err != nil {
 		t.Fatalf("ListProjectRefs: %v", err)
 	}
@@ -449,13 +469,13 @@ func TestStoreReplaceProjectRefsLeavesOtherProjectsAlone(t *testing.T) {
 	s, _, _ := newStore(t)
 	ctx := context.Background()
 
-	mustReplace(t, ctx, s, orgA, projectA, "test-viewer", "Viewer")
-	mustReplace(t, ctx, s, orgA, projectB, "test-viewer", "Viewer")
+	mustReplace(t, ctx, s, devA, projectA, "test-viewer", "Viewer")
+	mustReplace(t, ctx, s, devA, projectB, "test-viewer", "Viewer")
 
-	if err := s.ReplaceProjectRefs(ctx, orgA, projectA, nil); err != nil {
+	if err := s.ReplaceProjectRefs(ctx, devA, projectA, nil); err != nil {
 		t.Fatalf("ReplaceProjectRefs: %v", err)
 	}
-	rows, err := s.ListProjectRefs(ctx, orgA, projectB)
+	rows, err := s.ListProjectRefs(ctx, devA, projectB)
 	if err != nil {
 		t.Fatalf("ListProjectRefs: %v", err)
 	}
@@ -464,79 +484,88 @@ func TestStoreReplaceProjectRefsLeavesOtherProjectsAlone(t *testing.T) {
 	}
 }
 
-// SECURITY: ProjectsReferencing is ORG-FENCED. The account is shared at the
-// IdP's scope, but a project NAME is one org's data — the console panel listing
-// another org's project names would be a cross-tenant disclosure the shared
-// directory does not license.
-func TestStoreProjectsReferencingIsOrgFenced(t *testing.T) {
+// SECURITY: every reference read is fenced by the (org, environment) SCOPE.
+// The account is shared, but only within one environment's identity provider —
+// so another org's project names, and this org's OTHER environment's, are both
+// out of reach. The count the panel warns with is len() of this same read now,
+// which is only sound because the scope IS the disclosure boundary.
+func TestStoreProjectsReferencingIsScopeFenced(t *testing.T) {
 	t.Parallel()
 	s, _, _ := newStore(t)
 	ctx := context.Background()
 
-	mustReplace(t, ctx, s, orgA, projectA, "test-viewer", "Viewer")
-	mustReplace(t, ctx, s, orgB, "proj-secret", "test-viewer", "Viewer")
+	mustReplace(t, ctx, s, devA, projectA, "test-viewer", "Viewer")
+	mustReplace(t, ctx, s, devB, "proj-secret", "test-viewer", "Viewer")
+	mustReplace(t, ctx, s, stagingA, "proj-staging", "test-viewer", "Viewer")
 
-	rows, err := s.ProjectsReferencing(ctx, orgA, "test-viewer")
+	rows, err := s.ProjectsReferencing(ctx, devA, "test-viewer")
 	if err != nil {
 		t.Fatalf("ProjectsReferencing: %v", err)
 	}
 	if len(rows) != 1 {
-		t.Fatalf("org A sees %d references, want only its own: %+v", len(rows), rows)
+		t.Fatalf("%s sees %d references, want only its own: %+v", devA, len(rows), rows)
 	}
 	for _, r := range rows {
-		if r.OrgID != orgA {
-			t.Fatalf("org A was shown org %q's reference to %+v", r.OrgID, r)
+		if r.OrgID != orgA || r.Environment != devA.Environment {
+			t.Fatalf("%s was shown %s/%s's reference to %+v", devA, r.OrgID, r.Environment, r)
 		}
-		if r.ProjectID == "proj-secret" {
-			t.Fatalf("org A was shown another org's project name")
+		if r.ProjectID != projectA {
+			t.Fatalf("%s was shown another scope's project name: %+v", devA, r)
 		}
 	}
 
 	// ListProjectRefs carries the same fence: one org cannot read another org's
-	// project by guessing its id.
-	leaked, err := s.ListProjectRefs(ctx, orgA, "proj-secret")
+	// project by guessing its id, and one environment cannot read another's.
+	leaked, err := s.ListProjectRefs(ctx, devA, "proj-secret")
 	if err != nil {
 		t.Fatalf("ListProjectRefs: %v", err)
 	}
 	if len(leaked) != 0 {
-		t.Fatalf("org A read org B's project refs: %+v", leaked)
+		t.Fatalf("%s read %s's project refs: %+v", devA, devB, leaked)
+	}
+	if crossEnv, err := s.ListProjectRefs(ctx, devA, "proj-staging"); err != nil || len(crossEnv) != 0 {
+		t.Fatalf("%s read %s's project refs: %+v (%v)", devA, stagingA, crossEnv, err)
 	}
 }
 
-// CountReferencing counts across EVERY org, deliberately. It is a bare number
-// and never names, and it is what makes "others may still be using this"
-// truthful before a delete.
-func TestStoreCountReferencingCountsAcrossOrgs(t *testing.T) {
+// The composite key is a KEY, not a filter: the same role name and the same
+// username exist independently on two environments, because they are two groups
+// and two accounts on two directories that share nothing. Under the old
+// single-column primary key the second write here was a conflict that silently
+// overwrote the first environment's row.
+func TestStoreSameNamesCoexistAcrossEnvironments(t *testing.T) {
 	t.Parallel()
 	s, _, _ := newStore(t)
 	ctx := context.Background()
 
-	mustReplace(t, ctx, s, orgA, projectA, "test-viewer", "Viewer")
-	mustReplace(t, ctx, s, orgB, projectB, "test-viewer", "Viewer")
-
-	n, err := s.CountReferencing(ctx, "test-viewer")
-	if err != nil {
-		t.Fatalf("CountReferencing: %v", err)
-	}
-	if n != 2 {
-		t.Fatalf("count = %d, want both orgs' projects", n)
-	}
-	// An org-fenced read of the same account still sees one, so the count is
-	// genuinely wider than what any one org may be shown.
-	rows, err := s.ProjectsReferencing(ctx, orgA, "test-viewer")
-	if err != nil {
-		t.Fatalf("ProjectsReferencing: %v", err)
-	}
-	if len(rows) != 1 {
-		t.Fatalf("org A sees %d, want 1", len(rows))
+	for _, scope := range []identity.Scope{devA, stagingA} {
+		err := s.UpsertRole(ctx, identity.IdPRole{
+			OrgID: scope.OrgID, Environment: scope.Environment,
+			Name: "Viewer", ThunderGroupID: "grp-" + scope.Environment,
+			CreatedByOrg: scope.OrgID, CreatedByProject: projectA,
+		})
+		if err != nil {
+			t.Fatalf("UpsertRole on %s: %v", scope, err)
+		}
+		seedUser(t, ctx, s, scope, "test-viewer", "Viewer", "pw-"+scope.Environment)
 	}
 
-	zero, err := s.CountReferencing(ctx, "nobody")
-	if err != nil {
-		t.Fatalf("CountReferencing: %v", err)
-	}
-	if zero != 0 {
-		t.Fatalf("count for an unreferenced account = %d", zero)
+	for _, scope := range []identity.Scope{devA, stagingA} {
+		role, err := s.GetRole(ctx, scope, "Viewer")
+		if err != nil || role == nil {
+			t.Fatalf("GetRole on %s = %v, %v", scope, role, err)
+		}
+		if role.ThunderGroupID != "grp-"+scope.Environment {
+			t.Fatalf("%s resolved to %q — one environment's row answered the other's read",
+				scope, role.ThunderGroupID)
+		}
+		pw, err := s.RevealTestUserPassword(ctx, scope, "test-viewer")
+		if err != nil {
+			t.Fatalf("RevealTestUserPassword on %s: %v", scope, err)
+		}
+		if pw != "pw-"+scope.Environment {
+			t.Fatalf("%s revealed %q — the wrong environment's credential", scope, pw)
+		}
 	}
 }
 
@@ -546,37 +575,45 @@ func TestStoreDeleteTestUserRemovesItsReferences(t *testing.T) {
 	t.Parallel()
 	s, _, _ := newStore(t)
 	ctx := context.Background()
-	seedUser(t, ctx, s, "test-viewer", "Viewer", "Aep1!viewer")
-	mustReplace(t, ctx, s, orgA, projectA, "test-viewer", "Viewer")
-	mustReplace(t, ctx, s, orgB, projectB, "test-viewer", "Viewer")
+	seedUser(t, ctx, s, devA, "test-viewer", "Viewer", "Aep1!viewer")
+	mustReplace(t, ctx, s, devA, projectA, "test-viewer", "Viewer")
+	mustReplace(t, ctx, s, devA, projectB, "test-viewer", "Viewer")
+	// The same username on another environment is a different account, and the
+	// delete must not reach it.
+	seedUser(t, ctx, s, stagingA, "test-viewer", "Viewer", "Aep1!staging")
+	mustReplace(t, ctx, s, stagingA, projectA, "test-viewer", "Viewer")
 
-	if err := s.DeleteTestUser(ctx, "test-viewer"); err != nil {
+	if err := s.DeleteTestUser(ctx, devA, "test-viewer"); err != nil {
 		t.Fatalf("DeleteTestUser: %v", err)
 	}
-	row, err := s.GetTestUser(ctx, "test-viewer")
+	row, err := s.GetTestUser(ctx, devA, "test-viewer")
 	if err != nil {
 		t.Fatalf("GetTestUser: %v", err)
 	}
 	if row != nil {
 		t.Fatalf("GetTestUser = %+v after delete", row)
 	}
-	n, err := s.CountReferencing(ctx, "test-viewer")
+	rows, err := s.ProjectsReferencing(ctx, devA, "test-viewer")
 	if err != nil {
-		t.Fatalf("CountReferencing: %v", err)
+		t.Fatalf("ProjectsReferencing: %v", err)
 	}
-	if n != 0 {
-		t.Fatalf("%d references survive the account they point at", n)
+	if len(rows) != 0 {
+		t.Fatalf("%d references survive the account they point at", len(rows))
+	}
+	survivor, err := s.GetTestUser(ctx, stagingA, "test-viewer")
+	if err != nil || survivor == nil {
+		t.Fatalf("the other environment's account was deleted too: %v, %v", survivor, err)
 	}
 }
 
 // mustReplace writes one project reference, for the cases that only need the
 // ref to exist.
-func mustReplace(t *testing.T, ctx context.Context, s identity.Store, orgID, projectID, username, role string) {
+func mustReplace(t *testing.T, ctx context.Context, s identity.Store, scope identity.Scope, projectID, username, role string) {
 	t.Helper()
-	err := s.ReplaceProjectRefs(ctx, orgID, projectID, []identity.TestUserRef{
+	err := s.ReplaceProjectRefs(ctx, scope, projectID, []identity.TestUserRef{
 		{Username: username, RoleName: role},
 	})
 	if err != nil {
-		t.Fatalf("ReplaceProjectRefs(%s/%s): %v", orgID, projectID, err)
+		t.Fatalf("ReplaceProjectRefs(%s/%s): %v", scope, projectID, err)
 	}
 }

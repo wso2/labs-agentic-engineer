@@ -14,12 +14,13 @@
 #
 # Least privilege: only the ThunderApplication lifecycle verbs the data-plane
 # applier needs (create/patch/update to apply, get/list/watch to copy the live
-# status into applied.<id>.status — which the ResourceType's readyWhen gates on
-# (`status.ready`) — delete for retainPolicy: Delete). The client_id output is
-# resolved from the CR's `status.clientId` (a CEL value output); the operator's
-# `<cr-name>-oauth` ConfigMap remains a k8s-native artifact readable via the
-# agent's EXISTING core-group configmaps grant, so configmaps are intentionally
-# NOT re-granted here.
+# status into applied.<id>.status — which the ResourceType's `issuer` and
+# `jwks_url` outputs read, since which Thunder an app lives on is known only
+# once the operator has resolved the environment's binding — delete for
+# retainPolicy: Delete). client_id is emitted as a rendered literal, not read
+# from status; the operator's `<cr-name>-oauth` ConfigMap remains a k8s-native
+# artifact readable via the agent's EXISTING core-group configmaps grant, so
+# configmaps are intentionally NOT re-granted here.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:

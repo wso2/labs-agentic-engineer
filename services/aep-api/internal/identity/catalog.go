@@ -17,12 +17,12 @@
 package identity
 
 // catalog.go — the READ side: the roles that already exist on the identity
-// provider.
+// provider of the org's environment.
 //
-// It exists because roles are shared. A design agent that cannot see the
-// existing roles mints a near-duplicate of one already there — `Compliance
-// Admin` beside `Compliance Officer` — and the two then diverge in what they
-// can do while naming the same job. Showing the catalog at design time is the
+// It exists because roles are shared within that environment. A design agent
+// that cannot see the existing roles mints a near-duplicate of one already
+// there — `Compliance Admin` beside `Compliance Officer` — and the two then
+// diverge in what they can do while naming the same job. Showing the catalog at design time is the
 // same reuse-before-invent rule the architecture skill already applies to
 // external resources and platform resource types.
 //
@@ -52,10 +52,10 @@ type CatalogEntry struct {
 	MemberCount int `json:"memberCount"`
 }
 
-// CatalogService reads the role catalog.
+// CatalogService reads the role catalog of one org's environment.
 type CatalogService struct {
-	dir   Directory
-	store Store
+	targets TargetResolver
+	store   Store
 }
 
 // readCatalog is the ONE join behind every "what roles exist" answer: the
@@ -71,12 +71,12 @@ type CatalogService struct {
 // The member count is best-effort by design: the identity provider exposes no
 // count on the listing, so it costs one call per role, and losing one must not
 // cost the caller the row it belongs to.
-func readCatalog(ctx context.Context, dir Directory, store Store) ([]CatalogEntry, error) {
-	groups, err := dir.ListGroups(ctx)
+func readCatalog(ctx context.Context, target Target, store Store) ([]CatalogEntry, error) {
+	groups, err := target.Directory.ListGroups(ctx)
 	if err != nil {
 		return nil, err
 	}
-	recorded, err := store.ListRoles(ctx)
+	recorded, err := store.ListRoles(ctx, target.Scope())
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +92,7 @@ func readCatalog(ctx context.Context, dir Directory, store Store) ([]CatalogEntr
 			Description:     g.Description,
 			PlatformCreated: ours[strings.ToLower(g.Name)],
 		}
-		if members, merr := dir.GroupMembers(ctx, g.ID); merr != nil {
+		if members, merr := target.Directory.GroupMembers(ctx, g.ID); merr != nil {
 			slog.WarnContext(ctx, "role catalog: member count unavailable", "role", g.Name, "error", merr)
 		} else {
 			entry.MemberCount = len(members)
@@ -104,19 +104,29 @@ func readCatalog(ctx context.Context, dir Directory, store Store) ([]CatalogEntr
 }
 
 // NewCatalogService builds the read side. Both collaborators are required; a
-// nil one means the identity provider is not configured, and the caller should
-// not wire the catalog at all (see Enabled).
-func NewCatalogService(dir Directory, store Store) *CatalogService {
-	return &CatalogService{dir: dir, store: store}
+// nil one means no identity provider can be resolved, and the caller should not
+// wire the catalog at all (see Enabled).
+func NewCatalogService(targets TargetResolver, store Store) *CatalogService {
+	return &CatalogService{targets: targets, store: store}
 }
 
 // Enabled reports whether the catalog can be read.
 func (s *CatalogService) Enabled() bool {
-	return s != nil && s.dir != nil && s.store != nil
+	return s != nil && s.targets != nil && s.store != nil
 }
 
-// List returns every role on the identity provider, name-ordered, joined against
-// the platform's own record to compute PlatformCreated. See readCatalog.
-func (s *CatalogService) List(ctx context.Context) ([]CatalogEntry, error) {
-	return readCatalog(ctx, s.dir, s.store)
+// List returns every role on the identity provider serving orgID's environment,
+// name-ordered, joined against the platform's own record to compute
+// PlatformCreated. See readCatalog.
+//
+// It takes the ORG because the catalog is that org's environment's catalog and
+// nobody else's. While one identity provider served the whole cluster this read
+// showed one org's design agent the role names another org had created; with a
+// directory per (org, environment) that disclosure is closed by construction.
+func (s *CatalogService) List(ctx context.Context, orgID string) ([]CatalogEntry, error) {
+	target, err := s.targets.Resolve(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	return readCatalog(ctx, target, s.store)
 }

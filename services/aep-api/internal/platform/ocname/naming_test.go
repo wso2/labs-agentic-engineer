@@ -61,7 +61,7 @@ func TestExternalResourceNaming(t *testing.T) {
 	if got := ExternalResourceName("weatherproj", "openweather"); got != "weatherproj-openweather" {
 		t.Errorf("ExternalResourceName = %q", got)
 	}
-	if got := ExternalResourceBindingName("weatherproj", "openweather", "development"); got != "weatherproj-openweather-development" {
+	if got := ExternalResourceBindingName("weatherproj", "openweather", "default"); got != "weatherproj-openweather-default" {
 		t.Errorf("ExternalResourceBindingName = %q", got)
 	}
 }
@@ -98,6 +98,8 @@ func TestExternalResourceName_BoundsForCNPG(t *testing.T) {
 	if len(long) > maxOCResourceName {
 		t.Errorf("bounded resource name len = %d, want <= %d (%q)", len(long), maxOCResourceName, long)
 	}
+	// The env slug is the widest maxEnvNameLen allows, not the one AEP provisions
+	// into — the bound has to hold at its own worst case.
 	if rn := renderedName(long, "development"); len(rn) > cnpgMaxClusterName {
 		t.Errorf("OC-rendered cluster name %q would be %d chars, want <= %d", rn, len(rn), cnpgMaxClusterName)
 	}
@@ -120,7 +122,7 @@ func TestExternalResourceName_BoundsForCNPG(t *testing.T) {
 
 	// The binding name derived from a bounded resource name stays label-legal and
 	// within its guard bound.
-	b := ExternalResourceBindingName("audit-evidence-hub-4", "audit-db", "development")
+	b := ExternalResourceBindingName("audit-evidence-hub-4", "audit-db", "development") // widest env the bound allows
 	if len(b) > maxOCBindingName {
 		t.Errorf("binding name len = %d, want <= %d (%q)", len(b), maxOCBindingName, b)
 	}

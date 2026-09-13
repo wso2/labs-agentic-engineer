@@ -550,7 +550,7 @@ func decodeEnvConfigs(t *testing.T, raw json.RawMessage) map[string]string {
 // The patch reads the binding, overlays the given keys onto the existing
 // env-config map (unrelated keys survive), and re-applies via EnsureBinding.
 func TestPatchBindingEnvironmentConfigs_MergePreservesOtherKeys(t *testing.T) {
-	const name = "proj-auth-development"
+	const name = "proj-auth-default"
 	var gotWriteBody ResourceReleaseBinding
 	wrote := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -559,7 +559,7 @@ func TestPatchBindingEnvironmentConfigs_MergePreservesOtherKeys(t *testing.T) {
 			existing := ResourceReleaseBinding{
 				Metadata: OCObjectMeta{Name: name},
 				Spec: ResourceReleaseBindingSpec{
-					Environment:                    "development",
+					Environment:                    "default",
 					ResourceRelease:                "rel-1",
 					ResourceTypeEnvironmentConfigs: json.RawMessage(`{"keepMe":"stay","redirectUris":"http://old/callback"}`),
 				},
@@ -592,7 +592,7 @@ func TestPatchBindingEnvironmentConfigs_MergePreservesOtherKeys(t *testing.T) {
 		t.Errorf("merge dropped an unrelated key: %v", got)
 	}
 	// The pin + environment carry through the re-apply untouched.
-	if gotWriteBody.Spec.ResourceRelease != "rel-1" || gotWriteBody.Spec.Environment != "development" {
+	if gotWriteBody.Spec.ResourceRelease != "rel-1" || gotWriteBody.Spec.Environment != "default" {
 		t.Errorf("re-apply mutated spec pin/env: %+v", gotWriteBody.Spec)
 	}
 }
@@ -600,7 +600,7 @@ func TestPatchBindingEnvironmentConfigs_MergePreservesOtherKeys(t *testing.T) {
 // An idempotent re-patch carrying identical values is a no-op: EnsureBinding is
 // never called, so a per-cascade re-run does not churn the CR.
 func TestPatchBindingEnvironmentConfigs_IdempotentNoOp(t *testing.T) {
-	const name = "proj-auth-development"
+	const name = "proj-auth-default"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			t.Fatalf("EnsureBinding must NOT run when values are unchanged; got %s %s", r.Method, r.URL.Path)

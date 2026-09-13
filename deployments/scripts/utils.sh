@@ -22,8 +22,16 @@
 # LOCAL_DEV_ADMIN_GITHUB_PAT is available (env or deployments/.env) the fetch
 # goes through the authenticated contents API instead — a far higher limit.
 # Falls back to the plain unauthenticated raw URL when no PAT is configured.
+#
+#   fetch_gh_raw <raw-url> <dest> [ref]
+#
+# Pass `ref` whenever the ref contains a SLASH — release tags like
+# `amp/v1.0.0-rc2` do. The URL is otherwise split on the assumption that the ref
+# is one path segment, which silently mis-parses such a URL into ref=`amp` and
+# path=`v1.0.0-rc2/deployments/...`, and the authenticated fetch then 404s while
+# the plain URL it was derived from works fine.
 fetch_gh_raw() {
-    local url="$1" dest="$2"
+    local url="$1" dest="$2" explicit_ref="${3:-}"
     local pat="${LOCAL_DEV_ADMIN_GITHUB_PAT:-}"
     if [ -z "$pat" ]; then
         local envfile
@@ -36,7 +44,13 @@ fetch_gh_raw() {
     local rest="${url#https://raw.githubusercontent.com/}"
     local owner="${rest%%/*}"; rest="${rest#*/}"
     local repo="${rest%%/*}"; rest="${rest#*/}"
-    local ref="${rest%%/*}"; local path="${rest#*/}"
+    local ref path
+    if [ -n "$explicit_ref" ]; then
+        ref="$explicit_ref"
+        path="${rest#"${explicit_ref}"/}"
+    else
+        ref="${rest%%/*}"; path="${rest#*/}"
+    fi
     local attempt
     for attempt in 1 2 3 4 5; do
         if [ -n "$pat" ]; then
@@ -84,6 +98,34 @@ check_required_ports() {
         return 1
     fi
     echo "✅ All ports available"
+}
+
+# require_helm_v4 fails fast when the `helm` on PATH is older than 4. The
+# scripts pass `--force-conflicts` to `helm upgrade` (setup-observability.sh,
+# setup-agent-manager.sh), which only Helm 4 accepts; on Helm 3 that surfaces
+# as "Error: unknown flag: --force-conflicts" fifteen minutes into setup.sh,
+# after every earlier chart has already installed with the wrong binary. The
+# usual cause is PATH order, not a missing install: Rancher Desktop puts
+# ~/.rd/bin (Helm 3) ahead of Homebrew's Helm 4, so the message names the
+# binary it found and where a newer one would have to come first.
+require_helm_v4() {
+    local found major
+    found="$(command -v helm || true)"
+    if [ -z "$found" ]; then
+        echo "❌ helm not found on PATH — install Helm 4 (brew install helm)" >&2
+        return 1
+    fi
+    major="$(helm version --template '{{.Version}}' 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/')"
+    if [ -z "$major" ] || [ "$major" -lt 4 ]; then
+        echo "❌ helm at $found is $(helm version --short 2>/dev/null); these scripts need Helm 4+." >&2
+        echo "   Another helm may be shadowed by PATH order (e.g. ~/.rd/bin from Rancher Desktop):" >&2
+        for h in /opt/homebrew/bin/helm /usr/local/bin/helm; do
+            [ -x "$h" ] && echo "     $h -> $("$h" version --short 2>/dev/null)" >&2
+        done
+        echo "   Put the Helm 4 directory first on PATH for this shell, e.g." >&2
+        echo "     PATH=/opt/homebrew/bin:\$PATH bash scripts/setup.sh" >&2
+        return 1
+    fi
 }
 
 # helm_release_deployed <release> <namespace> — succeeds ONLY when the release
@@ -250,7 +292,9 @@ ensure_host_k3d_internal_in_coredns() {
     local current
     current=$(kubectl get cm coredns-custom -n kube-system --context "${CLUSTER_CONTEXT}" \
         -o jsonpath="{.data.${key}}" 2>/dev/null)
-    if [ "$current" = "$desired" ]; then
+    # Trailing newline dropped for the comparison only — see
+    # ensure_platform_idp_in_coredns for why.
+    if [ "$current" = "${desired%$'\n'}" ]; then
         echo "✅ host.k3d.internal already in coredns-custom (${gw_ip})"
         return
     fi
@@ -296,7 +340,9 @@ ensure_openchoreo_localhost_in_coredns() {
     local current
     current=$(kubectl get cm coredns-custom -n kube-system --context "${CLUSTER_CONTEXT}" \
         -o jsonpath="{.data.${key}}" 2>/dev/null)
-    if [ "$current" = "$desired" ]; then
+    # Trailing newline dropped for the comparison only — see
+    # ensure_platform_idp_in_coredns for why.
+    if [ "$current" = "${desired%$'\n'}" ]; then
         echo "✅ openchoreo*.localhost rewrite already correct in coredns-custom"
         return
     fi
@@ -314,13 +360,152 @@ json.dump(cm, sys.stdout)
     echo "✅ openchoreo*.localhost rewrite installed in coredns-custom"
 }
 
+# Add the CoreDNS rewrites Agent Manager's hostnames need, alongside the
+# openchoreo one above. Called by setup-agent-manager.sh.
+#
+# These go to host.k3d.internal rather than to an in-cluster Service, unlike the
+# openchoreo rewrite. The difference matters: an in-cluster Service name would
+# reach the gateway but lose the vhost the request has to match on, so agent and
+# LLM-gateway calls would land on the wrong route. Hairpinning out to the k3d
+# load balancer and back in preserves the Host header. This is the shape Agent
+# Manager itself ships (deployments/k8s/coredns-amp-custom.yaml).
+#
+#   amp.localhost           console.amp.localhost / api.amp.localhost — and the
+#                           gateway extension's bootstrap Job calls the latter
+#                           from inside the cluster
+#   agentmanager.localhost  the data-plane gateway's default agent host
+#   am-gateway.localhost    the agent host advertised on Environment CRs
+#   gateway.localhost       the AI-gateway / LLM-proxy vhost injected into agent
+#                           pods
+ensure_amp_localhost_in_coredns() {
+    local changed=0 key host
+    for key in amp agentmanager am-gateway gateway; do
+        host="${key//-/\\-}"
+        local cm_key="${key//-/}.override"
+        local desired
+        desired="rewrite stop {
+  name regex (.+\\.)?${host}\\.localhost host.k3d.internal
+  answer auto
+}
+"
+        local current
+        current="$(kubectl get cm coredns-custom -n kube-system --context "${CLUSTER_CONTEXT}" \
+            -o jsonpath="{.data.${cm_key}}" 2>/dev/null || true)"
+        # Trailing newline dropped for the comparison only — see
+        # ensure_platform_idp_in_coredns for why.
+        [ "$current" = "${desired%$'\n'}" ] && continue
+        kubectl get cm coredns-custom -n kube-system --context "${CLUSTER_CONTEXT}" -o json 2>/dev/null \
+            | CM_KEY="$cm_key" REWRITE_HOST="$host" python3 -c "
+import json, os, sys
+cm = json.load(sys.stdin)
+cm.setdefault('data', {})[os.environ['CM_KEY']] = (
+    'rewrite stop {\n'
+    '  name regex (.+\\\\.)?' + os.environ['REWRITE_HOST'] + '\\\\.localhost host.k3d.internal\n'
+    '  answer auto\n'
+    '}\n'
+)
+cm['metadata'] = {'name': cm['metadata']['name'], 'namespace': cm['metadata']['namespace']}
+json.dump(cm, sys.stdout)
+" | kubectl apply --context "${CLUSTER_CONTEXT}" -f - >/dev/null
+        changed=1
+    done
+    if [ "$changed" = 1 ]; then
+        kubectl rollout restart deployment coredns -n kube-system --context "${CLUSTER_CONTEXT}" >/dev/null
+        kubectl rollout status deployment coredns -n kube-system --context "${CLUSTER_CONTEXT}" --timeout=60s >/dev/null
+        echo "✅ *.amp / *.agentmanager / *.am-gateway / *.gateway .localhost rewrites installed"
+    else
+        echo "✅ Agent Manager DNS rewrites already correct in coredns-custom"
+    fi
+}
+
+# Make the platform IdP's PUBLIC hostname reach its HTTPS gateway from inside
+# the cluster. Requires load_public_urls (PUBLIC_THUNDER_HOST) and env.sh
+# (THUNDER_HTTPS_GATEWAY_SVC).
+#
+# Why: an environment Thunder (Agent Manager's second tier) trusts the platform
+# IdP as an issuer, and ThunderID fetches a trusted issuer's JWKS over HTTPS
+# only — the URL it is given is https://<public host>:8443/oauth2/jwks. The
+# openchoreo.override rewrite below sends every *.openchoreo.localhost name to
+# the DATA-plane gateway, which serves neither 8080 nor 8443 for the IdP's
+# hostname, so that fetch times out and the trust is never established. The
+# IdP's chart ships a dedicated HTTPS Gateway Service in the control plane for
+# exactly this; rewriting the hostname to it keeps the Host header (so the
+# HTTPRoute still matches) and lands on a listener that actually has 8443.
+#
+# Why the key is `0-platform-idp.override`: CoreDNS imports the *.override
+# fragments in NAME order and `rewrite stop` is first-match, so this rule has
+# to sort before `openchoreo.override` or the broader rule swallows the name
+# first. The regex escapes every dot of the hostname (a bare `.` would match any
+# character) and is derived from PUBLIC_THUNDER_HOST, never spelled here.
+ensure_platform_idp_in_coredns() {
+    if [ -z "${PUBLIC_THUNDER_HOST:-}" ] || [ -z "${THUNDER_HTTPS_GATEWAY_SVC:-}" ]; then
+        echo "❌ ensure_platform_idp_in_coredns needs PUBLIC_THUNDER_HOST (load_public_urls) and THUNDER_HTTPS_GATEWAY_SVC (env.sh)" >&2
+        return 1
+    fi
+    local key="0-platform-idp.override"
+    local host_regex="${PUBLIC_THUNDER_HOST//./\\.}"
+    local desired="rewrite stop {
+  name regex ${host_regex} ${THUNDER_HTTPS_GATEWAY_SVC}
+  answer auto
+}
+"
+    local current
+    # The dot in the key is escaped: an unescaped `.data.a.b` is read as a
+    # nested path and silently returns nothing.
+    current="$(kubectl get cm coredns-custom -n kube-system --context "${CLUSTER_CONTEXT}" \
+        -o jsonpath="{.data.${key//./\\.}}" 2>/dev/null || true)"
+    # Compare against the desired value with its trailing newline removed:
+    # command substitution strips trailing newlines from `current`, so a
+    # newline-terminated `desired` can never equal it and the "already correct"
+    # branch below would be unreachable — every run would restart CoreDNS.
+    # The stored value keeps its newline; only the comparison drops it.
+    if [ "$current" = "${desired%$'\n'}" ]; then
+        echo "✅ ${PUBLIC_THUNDER_HOST} → ${THUNDER_HTTPS_GATEWAY_SVC} rewrite already correct in coredns-custom"
+        return
+    fi
+    kubectl get cm coredns-custom -n kube-system --context "${CLUSTER_CONTEXT}" -o json 2>/dev/null \
+        | KEY="$key" DESIRED="$desired" python3 -c "
+import json, os, sys
+cm = json.load(sys.stdin)
+cm.setdefault('data', {})[os.environ['KEY']] = os.environ['DESIRED']
+cm['metadata'] = {'name': cm['metadata']['name'], 'namespace': cm['metadata']['namespace']}
+json.dump(cm, sys.stdout)
+" | kubectl apply --context "${CLUSTER_CONTEXT}" -f - >/dev/null
+    kubectl rollout restart deployment coredns -n kube-system --context "${CLUSTER_CONTEXT}" >/dev/null
+    kubectl rollout status deployment coredns -n kube-system --context "${CLUSTER_CONTEXT}" --timeout=60s >/dev/null
+    echo "✅ ${PUBLIC_THUNDER_HOST} → ${THUNDER_HTTPS_GATEWAY_SVC} rewrite installed in coredns-custom"
+}
+
 # Fix DNS on all k3d nodes. Keeps Docker's embedded DNS (127.0.0.11) as primary
 # so that Docker-internal names (container names) still resolve, and adds
 # 8.8.8.8 as a fallback for external image pulls.
 fix_node_dns() {
     echo "🔧 Fixing k3d node DNS resolution..."
+    local node
     for node in $(docker ps --filter "name=k3d-${CLUSTER_NAME}" --format '{{.Names}}'); do
-        docker exec "$node" sh -c 'echo "nameserver 127.0.0.11" > /etc/resolv.conf; echo "nameserver 8.8.8.8" >> /etc/resolv.conf' 2>/dev/null || true
+        # Docker's embedded resolver (127.0.0.11) is preferred when it works:
+        # it is what resolves other CONTAINER names on the k3d network. But it
+        # does not always survive the node container being restarted — after a
+        # `k3d cluster stop/start`, or a Colima resize, it answers CONNECTION
+        # REFUSED. Listing a dead resolver first is not harmless: containerd's
+        # image pulls intermittently fail with "lookup registry-1.docker.io:
+        # Try again" rather than falling through cleanly, and the cluster then
+        # sits in ImagePullBackOff looking like a registry problem.
+        #
+        # So probe it, and only put it first if it actually answers. The public
+        # resolvers are the fallback either way; two of them, because a single
+        # unreachable one strands the node with no external DNS at all.
+        if docker exec "$node" sh -c \
+            'nslookup -timeout=2 localhost 127.0.0.11 >/dev/null 2>&1' 2>/dev/null; then
+            docker exec "$node" sh -c \
+                'printf "nameserver 127.0.0.11\nnameserver 8.8.8.8\nnameserver 1.1.1.1\n" > /etc/resolv.conf' \
+                2>/dev/null || true
+        else
+            echo "   ${node}: Docker's embedded resolver is not answering — using public resolvers only"
+            docker exec "$node" sh -c \
+                'printf "nameserver 8.8.8.8\nnameserver 1.1.1.1\n" > /etc/resolv.conf' \
+                2>/dev/null || true
+        fi
     done
     echo "✅ Node DNS configured"
 }
@@ -552,17 +737,19 @@ load_public_urls() {
            PUBLIC_THUNDER_HOST PUBLIC_THUNDER_PORT PUBLIC_THUNDER_SCHEME
 }
 
-# Render a Helm values file with `${PUBLIC_*}` placeholders into a temp file
-# (post-processing dedupes any duplicate hostnames the substitution produced —
-# in local mode PUBLIC_THUNDER_HOST equals thunder.openchoreo.localhost).
-# Echoes the rendered file path on stdout.
+# Render a Helm values file with `${PUBLIC_*}` placeholders (load_public_urls)
+# and the platform IdP's in-cluster address placeholders (env.sh
+# THUNDER_INTERNAL_URL / THUNDER_SVC_HOST) into a temp file. Post-processing
+# dedupes any duplicate hostnames the substitution produced — in local mode
+# PUBLIC_THUNDER_HOST equals thunder.openchoreo.localhost. Echoes the rendered
+# file path on stdout.
 render_values_file() {
     local src="$1"
     local rendered
     rendered="$(mktemp -t "aep-values.XXXXXX.yaml")"
-    # Only expand the public URL placeholders — bootstrap scripts contain
-    # bash variables like ${SCRIPT_DIR} that must NOT be touched.
-    envsubst '${PUBLIC_THUNDER_URL} ${PUBLIC_THUNDER_HOST} ${PUBLIC_THUNDER_PORT} ${PUBLIC_THUNDER_SCHEME} ${PUBLIC_CONSOLE_URL}' < "$src" > "$rendered"
+    # Only expand the listed placeholders — bootstrap scripts contain bash
+    # variables like ${SCRIPT_DIR} that must NOT be touched.
+    envsubst '${PUBLIC_THUNDER_URL} ${PUBLIC_THUNDER_HOST} ${PUBLIC_THUNDER_PORT} ${PUBLIC_THUNDER_SCHEME} ${PUBLIC_CONSOLE_URL} ${THUNDER_INTERNAL_URL} ${THUNDER_SVC_HOST}' < "$src" > "$rendered"
     # Dedupe consecutive identical YAML list items (handles HTTPRoute hostnames)
     python3 - "$rendered" <<'PY'
 import sys, pathlib
@@ -579,67 +766,19 @@ PY
     echo "$rendered"
 }
 
-# Ensure Thunder's aep-console-client accepts logins from the public console
-# origin. Thunder ≥0.34 keeps OAuth config in APP_OAUTH_INBOUND_CONFIG.OAUTH_CONFIG
-# (JSON — there is no CLIENT_ID column); the clientId→app mapping lives in
-# userdb's ENTITY_IDENTIFIER table. Thunder matches redirect URIs exactly, so
-# each origin needs its bare, trailing-slash, and /callback forms registered.
-# Idempotent: only writes (and restarts Thunder) when a URI is missing.
-sync_console_redirect_uris() {
-    local pod app_id current desired
-    pod="$(kubectl -n thunder get pod -l app.kubernetes.io/name=thunder \
-            -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
-    if [ -z "$pod" ]; then
-        echo "⚠️  no thunder pod found — skipping console redirect-URI sync"
-        return 0
-    fi
-    app_id="$(kubectl -n thunder exec "$pod" -- sqlite3 \
-        /opt/thunder/repository/database/userdb.db \
-        "SELECT ENTITY_ID FROM ENTITY_IDENTIFIER WHERE NAME='clientId' AND VALUE='aep-console-client';" \
-        2>/dev/null || true)"
-    if [ -z "$app_id" ]; then
-        echo "⚠️  aep-console-client not registered in Thunder (run scripts/setup-local.sh) — skipping redirect-URI sync"
-        return 0
-    fi
-    current="$(kubectl -n thunder exec "$pod" -- sqlite3 \
-        /opt/thunder/repository/database/configdb.db \
-        "SELECT json_extract(OAUTH_CONFIG, '\$.redirect_uris') FROM APP_OAUTH_INBOUND_CONFIG WHERE APP_ID='$app_id';" \
-        2>/dev/null || true)"
-    # Union of the registered URIs and the required console origins; empty
-    # output means nothing is missing.
-    desired="$(python3 -c '
-import json, sys
-current = json.loads(sys.argv[1]) if sys.argv[1] else []
-uris = list(current)
-for origin in sys.argv[2:]:
-    origin = origin.rstrip("/")
-    for uri in (origin, origin + "/", origin + "/callback"):
-        if uri not in uris:
-            uris.append(uri)
-print("" if uris == current else json.dumps(uris))
-' "$current" "http://localhost:8090" "$PUBLIC_CONSOLE_URL")"
-    if [ -z "$desired" ]; then
-        echo "   ✓ console redirect URIs already registered"
-        return 0
-    fi
-    kubectl -n thunder exec -i "$pod" -- sqlite3 \
-        /opt/thunder/repository/database/configdb.db <<SQL
-UPDATE APP_OAUTH_INBOUND_CONFIG
-SET OAUTH_CONFIG = json_set(OAUTH_CONFIG, '\$.redirect_uris', json('$desired'))
-WHERE APP_ID = '$app_id';
-SQL
-    kubectl -n thunder rollout restart deployment thunder-deployment >/dev/null
-    kubectl -n thunder rollout status deployment thunder-deployment --timeout=120s >/dev/null
-    echo "   ✓ console redirect URIs updated: $desired"
-}
-
 # Patch the running cluster to match the current PUBLIC_* env vars.
-# Surgical kubectl patches, not `helm upgrade` — avoids field-manager conflicts
-# with prior kubectl-replace/kubectl-patch operations on the same fields.
 # Idempotent: skips work when the live state already matches.
+#
+# This used to be several hundred lines of surgery on Thunder 0.34 — rewriting
+# its ConfigMap key by key, patching its HTTPRoute hostnames, and reaching into
+# the running pod to UPDATE redirect_uris in SQLite. None of that survives the
+# move to ThunderID, whose config, routing and OAuth clients all come from Helm
+# values and the declarative bootstrap. Re-running setup-thunder.sh with the new
+# PUBLIC_* values applies every one of them through the supported path, so the
+# Thunder half of this function is now that one call.
 apply_public_urls_to_cluster() {
-    if ! kubectl get ns thunder >/dev/null 2>&1; then
-        echo "⚠️  thunder namespace not found — skipping public-URL sync"
+    if ! kubectl get ns "${THUNDER_NS}" >/dev/null 2>&1; then
+        echo "⚠️  ${THUNDER_NS} namespace not found — skipping public-URL sync"
         return 0
     fi
 
@@ -647,124 +786,22 @@ apply_public_urls_to_cluster() {
     echo "   thunder: ${PUBLIC_THUNDER_URL}"
     echo "   console: ${PUBLIC_CONSOLE_URL}"
 
-    # Thunder ≥0.34 renders deployment.yaml scalars unquoted — accept both
-    # styles here or the comparison below always looks like a URL change.
+    # Compare against the address Thunder is actually serving before paying for
+    # a helm upgrade plus a bootstrap re-import.
     local current_public_url
-    current_public_url="$(kubectl -n thunder get cm thunder-config-map \
+    current_public_url="$(kubectl -n "${THUNDER_NS}" get cm "${THUNDER_RELEASE}-config-map" \
         -o jsonpath='{.data.deployment\.yaml}' 2>/dev/null \
         | sed -nE 's/^[[:space:]]*public_url:[[:space:]]*"?([^" ]+)"?.*/\1/p' | head -1)"
 
     if [ "$current_public_url" != "$PUBLIC_THUNDER_URL" ]; then
-        # Fetch EVERY ConfigMap data key to a file, rewrite the URL fields in
-        # the ones we manage, then rebuild the ConfigMap from all of them.
-        # The chart grows keys over time (e.g. consent-deployment.yaml); a
-        # rebuild that misses one breaks that key's subPath mount on the next
-        # pod start (CrashLoopBackOff).
-        local cm_dir f_dep f_console f_gate
-        cm_dir="$(mktemp -d)"
-        kubectl -n thunder get cm thunder-config-map -o json | python3 -c '
-import json, sys, pathlib
-outdir = pathlib.Path(sys.argv[1])
-for key, value in json.load(sys.stdin)["data"].items():
-    (outdir / key).write_text(value)
-' "$cm_dir"
-        f_dep="$cm_dir/deployment.yaml"
-        f_console="$cm_dir/console-config.js"
-        f_gate="$cm_dir/gate-config.js"
-
-        python3 - "$f_dep" "$f_console" "$f_gate" \
-                  "$PUBLIC_THUNDER_URL" "$PUBLIC_CONSOLE_URL" \
-                  "$PUBLIC_THUNDER_HOST" "$PUBLIC_THUNDER_PORT" "$PUBLIC_THUNDER_SCHEME" <<'PY'
-import sys, re, pathlib
-(f_dep, f_console, f_gate,
- thunder_url, console_url, thunder_host,
- gate_port, gate_scheme) = sys.argv[1:]
-gate_port = int(gate_port)
-
-# Console + gate config.js: only public_url to swap (JS — value stays quoted)
-for f in (f_console, f_gate):
-    p = pathlib.Path(f)
-    p.write_text(re.sub(r'public_url:\s*"[^"]*"',
-                        f'public_url: "{thunder_url}"', p.read_text()))
-
-# deployment.yaml: public_url, gate_client block, cors origins.
-# Thunder ≥0.34 renders these YAML scalars unquoted — match either style
-# and write unquoted to stay consistent with the chart.
-p = pathlib.Path(f_dep)
-text = p.read_text()
-text = re.sub(r'public_url:[ \t]*"?[^"\n]*"?', f'public_url: {thunder_url}', text)
-
-def fix_gate_client(m):
-    block = m.group(0)
-    block = re.sub(r'(hostname:[ \t]*)"?[^"\n]*"?', f'\\g<1>{thunder_host}', block)
-    block = re.sub(r'(port:[ \t]*)\d+', f'\\g<1>{gate_port}', block)
-    block = re.sub(r'(scheme:[ \t]*)"?[^"\n]*"?', f'\\g<1>{gate_scheme}', block)
-    return block
-text = re.sub(r'gate_client:\n(?:\s+\S.*\n){2,6}', fix_gate_client, text, count=1)
-
-origins = [
-    "http://openchoreo.localhost:8080",
-    "http://localhost:7007",
-    "http://localhost:8090",
-    thunder_url,
-    console_url,
-]
-seen, dedup = set(), []
-for o in origins:
-    if o not in seen: seen.add(o); dedup.append(o)
-new_block = "cors:\n  allowed_origins:\n" + "".join(
-    f'  - {o}\n' for o in dedup)
-text = re.sub(
-    r'cors:\n\s*allowed_origins:\n(?:\s*-\s*"?[^"\n]*"?\n)+',
-    new_block, text, count=1)
-p.write_text(text)
-PY
-
-        # Recreate the ConfigMap from ALL fetched files (dry-run + replace
-        # preserves namespace + name; data is fully replaced from --from-file).
-        local cm_file from_args=()
-        for cm_file in "$cm_dir"/*; do
-            from_args+=(--from-file="$(basename "$cm_file")=$cm_file")
-        done
-        kubectl create configmap thunder-config-map \
-            --namespace=thunder --dry-run=client -o yaml \
-            "${from_args[@]}" \
-            | kubectl replace -f - >/dev/null
-        rm -rf "$cm_dir"
-
-        # Update Thunder's HTTPRoute so it routes the public hostname.
-        local hostnames_json
-        if [ "$PUBLIC_THUNDER_HOST" = "thunder.openchoreo.localhost" ]; then
-            hostnames_json='["thunder.openchoreo.localhost"]'
-        else
-            hostnames_json="[\"thunder.openchoreo.localhost\",\"$PUBLIC_THUNDER_HOST\"]"
-        fi
-        kubectl -n thunder patch httproute thunder-httproute --type=merge \
-            -p "{\"spec\":{\"hostnames\":${hostnames_json}}}" >/dev/null
-
-        # Clear stale OAuth/flow state from prior public URL. (The console
-        # redirect_uris themselves are synced by sync_console_redirect_uris
-        # below — unconditionally, since they can drift without a URL change.)
-        local pod
-        pod="$(kubectl -n thunder get pod -l app.kubernetes.io/name=thunder \
-                -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)"
-        if [ -n "$pod" ]; then
-            kubectl -n thunder exec -i "$pod" -- sqlite3 \
-                /opt/thunder/repository/database/runtimedb.db <<'SQL' >/dev/null 2>&1 || true
-DELETE FROM FLOW_CONTEXT;
-DELETE FROM AUTHORIZATION_REQUEST;
-DELETE FROM AUTHORIZATION_CODE;
-DELETE FROM FLOW_USER_DATA;
-PRAGMA wal_checkpoint(TRUNCATE);
-SQL
-        fi
-
-        kubectl -n thunder rollout restart deployment thunder-deployment >/dev/null
-        kubectl -n thunder rollout status deployment thunder-deployment --timeout=120s >/dev/null
-        echo "   ✓ thunder ConfigMap, HTTPRoute updated"
+        echo "   public URL changed (${current_public_url:-unset} → ${PUBLIC_THUNDER_URL}) — reconverging the IdP"
+        # THUNDER_FORCE_UPGRADE re-drives an already-deployed release. This is
+        # the one caller that means "the values changed, converge it" rather
+        # than "install it if absent".
+        THUNDER_FORCE_UPGRADE=1 bash "${SCRIPT_DIR}/setup-thunder.sh"
+    else
+        echo "   ✓ platform IdP already serving ${PUBLIC_THUNDER_URL}"
     fi
-
-    sync_console_redirect_uris
 
     # OpenChoreo API: only the OIDC issuer changes. Patch its ConfigMap directly.
     if kubectl get cm openchoreo-api-config -n openchoreo-control-plane >/dev/null 2>&1; then
@@ -776,14 +813,12 @@ SQL
             local cm_yaml
             cm_yaml="$(mktemp)"
             kubectl -n openchoreo-control-plane get cm openchoreo-api-config -o yaml > "$cm_yaml"
-            python3 - "$cm_yaml" "$PUBLIC_THUNDER_URL" <<'PY'
+            python3 - "$cm_yaml" "$PUBLIC_THUNDER_URL" <<'PYEOF'
 import sys, re, pathlib
 path, issuer = sys.argv[1:]
 p = pathlib.Path(path)
-text = p.read_text()
-text = re.sub(r'(issuer:\s*)"[^"]*"', f'\\g<1>"{issuer}"', text, count=1)
-p.write_text(text)
-PY
+p.write_text(re.sub(r'(issuer:\s*)"[^"]*"', rf'\g<1>"{issuer}"', p.read_text(), count=1))
+PYEOF
             kubectl replace -f "$cm_yaml" >/dev/null
             kubectl -n openchoreo-control-plane rollout restart deploy/openchoreo-api >/dev/null
             rm -f "$cm_yaml"
@@ -803,4 +838,129 @@ generate_machine_ids() {
         docker exec "$node" sh -c "cat /proc/sys/kernel/random/uuid | tr -d '-' > /etc/machine-id" 2>/dev/null || true
     done
     echo "✅ Machine IDs generated"
+}
+
+# ── Chart CRD synchronisation ────────────────────────────────────────────────
+# `helm upgrade` NEVER touches a chart's crds/ directory — it applies them only
+# on the very first install. So bumping a chart's version on a cluster that
+# already has the old release leaves the OLD CRDs in place, and every new kind
+# or field the new version introduces is silently unavailable. That is not a
+# theoretical concern here: the OpenChoreo 1.1.1 -> 1.2.0 bump adds the
+# ProjectType / ClusterProjectType CRDs that Project.spec.type now requires, so
+# without this an upgraded cluster fails every project creation while a fresh
+# one works.
+#
+# Applying the new CRDs is safe: CRDs are additive and keep serving the
+# existing stored versions alongside the new ones. --force-conflicts is needed
+# because the first install stamped them with Helm's field manager.
+#
+# Usage: sync_chart_crds <chart-name> <version> [oci-registry]
+sync_chart_crds() {
+    local chart="$1"
+    local version="$2"
+    local registry="${3:-oci://ghcr.io/openchoreo/helm-charts}"
+    local tmp rc=0
+
+    tmp="$(mktemp -d)" || {
+        echo "❌ Failed to create temp dir for ${chart} CRD sync" >&2
+        return 1
+    }
+    if helm pull "${registry}/${chart}" --version "$version" \
+        --untar --untardir "$tmp" >/dev/null 2>&1; then
+        if compgen -G "$tmp/${chart}/crds/*.yaml" >/dev/null; then
+            echo "   Syncing ${chart} CRDs to ${version} (helm upgrade does not update crds/)..."
+            kubectl --context "${CLUSTER_CONTEXT}" apply --server-side --force-conflicts \
+                -f "$tmp/${chart}/crds/" >/dev/null || rc=1
+        fi
+    else
+        echo "❌ Failed to pull ${chart} ${version} for CRD sync" >&2
+        rc=1
+    fi
+    rm -rf "$tmp"
+    return "$rc"
+}
+
+# ── Names, secrets and records shared by the environment scripts ─────────────
+# setup-environment-thunder.sh, setup-environment-gateway.sh,
+# remove-environment-thunder.sh, seed-test-users.sh and verify-convergence.sh
+# all reach the same four things. Each is small; each was copied; and a copy
+# that drifts is silent — a probe that stops matching, a label selector that
+# stops finding the record every other consumer still finds.
+
+# validate_dns_label <name>… — every argument must be a DNS-1123 label.
+# Everything derived from an (org, env) pair is one: the release, the namespace,
+# the hostname label, the ConfigMap and Secret names. A bad one otherwise fails
+# several layers down, inside a chart template or a kubectl apply, with the
+# reason nowhere near the input that caused it.
+validate_dns_label() {
+    local name
+    for name in "$@"; do
+        if ! printf '%s' "$name" | grep -Eq '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'; then
+            echo "❌ '${name}' is not a valid name — lowercase alphanumeric and hyphens, no leading or trailing hyphen." >&2
+            return 1
+        fi
+    done
+}
+
+# amp_api_present — is there an Agent Manager to talk to? One short probe, no
+# wait loop: Agent Manager is optional, and in setup.sh's order the environment
+# scripts run before it is installed. Both URLs are tried because the health
+# endpoint is not served on every version.
+amp_api_present() {
+    curl -fsS -o /dev/null --max-time 5 "${AMP_API_URL%/api/v1}/health" 2>/dev/null \
+        || curl -fsS -o /dev/null --max-time 5 "${AMP_API_URL}" 2>/dev/null
+}
+
+# bao <args…> — the OpenBao CLI inside the server pod, stdin forwarded.
+#
+# Driven through `kubectl exec` rather than the host's :8200, which is a
+# NodePort mapping only clusters created from k3d-local-config.yaml have
+# (start.sh otherwise port-forwards it, and start.sh runs long after the
+# provisioning scripts do). Values go in over STDIN, so no secret ever appears
+# in an argv.
+#
+# `-i` is what makes that possible, and it is also a trap: a caller inside a
+# loop fed by a heredoc must redirect stdin (`</dev/null`) or this swallows the
+# rest of the loop's input.
+bao() {
+    kubectl exec -i -n "${OPENBAO_NS:-openbao}" "${OPENBAO_POD:-openbao-0}" \
+        --context "$CLUSTER_CONTEXT" -- \
+        env BAO_ADDR=http://127.0.0.1:8200 BAO_TOKEN="${OPENBAO_TOKEN:-root}" bao "$@"
+}
+
+# thunder_binding_configmaps <org> <env> — every binding record for the pair, as
+# space-separated `namespace/name`; empty when there is none.
+#
+# By LABEL, never by name: the name is an implementation detail of the script
+# that writes the record, and the namespace is the environment Thunder's, which
+# Agent Manager's naming library derives and can truncate. The labels are the
+# contract — thunder-app selects on exactly these.
+#
+# Plural because more than one is a real failure mode, not an impossibility: two
+# records for one environment leave every consumer resolving a different
+# instance, and the operator refuses an ambiguous binding outright.
+thunder_binding_configmaps() {
+    kubectl get configmap -A --context "$CLUSTER_CONTEXT" \
+        -l "aep.wso2.com/kind=thunder-binding,aep.wso2.com/org=$1,aep.wso2.com/env=$2" \
+        -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name} {end}' 2>/dev/null || true
+}
+
+# thunder_binding_configmap <org> <env> — the first binding record, as
+# `namespace/name`; empty when there is none.
+thunder_binding_configmap() {
+    local found
+    # shellcheck disable=SC2086
+    set -- $(thunder_binding_configmaps "$1" "$2")
+    found="${1:-}"
+    printf '%s' "$found"
+}
+
+# thunder_binding_value <org> <env> <key> — one field of the binding record.
+# The keys are the ones setup-environment-thunder.sh writes: issuer, adminURL,
+# systemResourceIdentifier, secretName, secretNamespace, secretPath,
+# trustedIssuer*, release, org, env, publicHost.
+thunder_binding_value() {
+    kubectl get configmap -A --context "$CLUSTER_CONTEXT" \
+        -l "aep.wso2.com/kind=thunder-binding,aep.wso2.com/org=$1,aep.wso2.com/env=$2" \
+        -o "jsonpath={.items[0].data.$3}" 2>/dev/null || true
 }

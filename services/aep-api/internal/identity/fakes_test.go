@@ -411,19 +411,66 @@ func (d *fakeDirectory) DeleteUser(_ context.Context, userID string) error {
 	return nil
 }
 
+// ---- targets --------------------------------------------------------------
+
+// testEnvironment is the environment every fake resolver answers with. It is a
+// second, DIFFERENT environment from any org handle on purpose: a test that
+// passes with the two confused would prove nothing about the (org, environment)
+// key.
+const testEnvironment = "default"
+
+// testIssuer is the environment tier's public issuer — the thing a published
+// login is only valid at.
+const testIssuer = "http://default-idp.amp.localhost:8080"
+
+// fakeTargets is the TargetResolver: it hands every org the same directory,
+// under the (org, testEnvironment) scope, and records what it was asked for.
+type fakeTargets struct {
+	dir Directory
+	// err, when set, is what Resolve answers — the "this environment has no
+	// identity provider" case. Scope keeps working, which is what lets the panel
+	// degrade instead of failing.
+	err error
+	// resolved counts Resolve calls, so a test can see the directory being
+	// looked up once per operation rather than per role.
+	resolved int
+	// orgs records every org Resolve was asked for, in order.
+	orgs []string
+}
+
+func newFakeTargets(dir Directory) *fakeTargets { return &fakeTargets{dir: dir} }
+
+func (f *fakeTargets) Scope(orgID string) Scope {
+	return Scope{OrgID: orgID, Environment: testEnvironment}
+}
+
+func (f *fakeTargets) Resolve(_ context.Context, orgID string) (Target, error) {
+	f.resolved++
+	f.orgs = append(f.orgs, orgID)
+	if f.err != nil {
+		return Target{}, f.err
+	}
+	return Target{
+		OrgID: orgID, Environment: testEnvironment,
+		Issuer: testIssuer, Directory: f.dir,
+	}, nil
+}
+
 // ---- store ----------------------------------------------------------------
 
 // fakeStore is an in-memory Store. It seals nothing — the password map IS the
 // sealed column — because the seal is the repository's job and is pinned by the
 // DB tier; here the point is only WHICH password reached the store, and when.
 type fakeStore struct {
-	// roles is keyed by lowercased name, matching the real store's
-	// case-insensitive GetRole.
+	// roles is keyed by scope + lowercased name, matching the real store's
+	// composite key and its case-insensitive GetRole. Every map here carries the
+	// scope in its key for the same reason the table does: two environments'
+	// rows must not be able to answer each other's reads.
 	roles map[string]IdPRole
 	users map[string]TestUser
-	// passwords is the sealed column, keyed by username.
+	// passwords is the sealed column, keyed by scope + username.
 	passwords map[string]string
-	// refs is keyed by org + "/" + project.
+	// refs is keyed by scope + project.
 	refs map[string][]TestUserRef
 
 	// replaceCalls records each ReplaceProjectRefs payload, so a test can assert
@@ -448,22 +495,56 @@ func newFakeStore() *fakeStore {
 	}
 }
 
-func refKey(orgID, projectID string) string { return orgID + "/" + projectID }
+func refKey(scope Scope, projectID string) string { return scope.String() + "/" + projectID }
 
-func (s *fakeStore) GetRole(_ context.Context, name string) (*IdPRole, error) {
+// scopedKey is how every map here is keyed: the (org, environment) pair, then
+// the name. Lowercasing is the caller's business — role names are matched
+// case-insensitively, usernames exactly — so this only joins.
+func scopedKey(scope Scope, name string) string { return scope.String() + "|" + name }
+
+// role / user / password are the read helpers the tests assert through, so a
+// test never has to spell the composite key.
+func (s *fakeStore) role(scope Scope, name string) (IdPRole, bool) {
+	row, ok := s.roles[scopedKey(scope, strings.ToLower(name))]
+	return row, ok
+}
+
+func (s *fakeStore) putRole(scope Scope, role IdPRole) {
+	role.OrgID, role.Environment = scope.OrgID, scope.Environment
+	s.roles[scopedKey(scope, strings.ToLower(role.Name))] = role
+}
+
+func (s *fakeStore) user(scope Scope, username string) (TestUser, bool) {
+	row, ok := s.users[scopedKey(scope, username)]
+	return row, ok
+}
+
+func (s *fakeStore) password(scope Scope, username string) (string, bool) {
+	pw, ok := s.passwords[scopedKey(scope, username)]
+	return pw, ok
+}
+
+func (s *fakeStore) setPassword(scope Scope, username, password string) {
+	s.passwords[scopedKey(scope, username)] = password
+}
+
+func (s *fakeStore) GetRole(_ context.Context, scope Scope, name string) (*IdPRole, error) {
 	if err := s.failOn["GetRole"]; err != nil {
 		return nil, err
 	}
-	row, ok := s.roles[strings.ToLower(name)]
+	row, ok := s.role(scope, name)
 	if !ok {
 		return nil, nil
 	}
 	return &row, nil
 }
 
-func (s *fakeStore) ListRoles(_ context.Context) ([]IdPRole, error) {
+func (s *fakeStore) ListRoles(_ context.Context, scope Scope) ([]IdPRole, error) {
 	out := make([]IdPRole, 0, len(s.roles))
 	for _, r := range s.roles {
+		if r.scope() != scope {
+			continue
+		}
 		out = append(out, r)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
@@ -478,20 +559,15 @@ func (s *fakeStore) UpsertRole(_ context.Context, role IdPRole) error {
 	if err := s.failOn["UpsertRole"]; err != nil {
 		return err
 	}
-	s.roles[strings.ToLower(role.Name)] = role
+	s.roles[scopedKey(role.scope(), strings.ToLower(role.Name))] = role
 	return nil
 }
 
-func (s *fakeStore) DeleteRole(_ context.Context, name string) error {
-	delete(s.roles, strings.ToLower(name))
-	return nil
-}
-
-func (s *fakeStore) GetTestUser(_ context.Context, username string) (*TestUser, error) {
+func (s *fakeStore) GetTestUser(_ context.Context, scope Scope, username string) (*TestUser, error) {
 	if err := s.failOn["GetTestUser"]; err != nil {
 		return nil, err
 	}
-	row, ok := s.users[username]
+	row, ok := s.user(scope, username)
 	if !ok {
 		return nil, nil
 	}
@@ -503,54 +579,54 @@ func (s *fakeStore) UpsertTestUser(_ context.Context, user TestUser, password st
 		return err
 	}
 	s.upsertUserCalls++
-	s.users[user.Username] = user
-	s.passwords[user.Username] = password
+	s.users[scopedKey(user.scope(), user.Username)] = user
+	s.passwords[scopedKey(user.scope(), user.Username)] = password
 	return nil
 }
 
 // UpdateTestUserFacts touches the two metadata columns and nothing else — in
 // particular it does not go near the password map, which is what makes the
 // "reuse never reads the credential" assertion meaningful.
-func (s *fakeStore) UpdateTestUserFacts(_ context.Context, username, thunderUserID, roleName string) error {
+func (s *fakeStore) UpdateTestUserFacts(_ context.Context, scope Scope, username, thunderUserID, roleName string) error {
 	if err := s.failOn["UpdateTestUserFacts"]; err != nil {
 		return err
 	}
-	row, ok := s.users[username]
+	row, ok := s.user(scope, username)
 	if !ok {
-		return fmt.Errorf("fake store: no account %q", username)
+		return fmt.Errorf("fake store: no account %q on %s", username, scope)
 	}
 	row.ThunderUserID, row.RoleName = thunderUserID, roleName
-	s.users[username] = row
+	s.users[scopedKey(scope, username)] = row
 	return nil
 }
 
-func (s *fakeStore) SetTestUserPassword(_ context.Context, username, password string) error {
-	if _, ok := s.users[username]; !ok {
-		return fmt.Errorf("fake store: no account %q", username)
+func (s *fakeStore) SetTestUserPassword(_ context.Context, scope Scope, username, password string) error {
+	if _, ok := s.user(scope, username); !ok {
+		return fmt.Errorf("fake store: no account %q on %s", username, scope)
 	}
-	s.passwords[username] = password
+	s.setPassword(scope, username, password)
 	return nil
 }
 
-func (s *fakeStore) RevealTestUserPassword(_ context.Context, username string) (string, error) {
+func (s *fakeStore) RevealTestUserPassword(_ context.Context, scope Scope, username string) (string, error) {
 	s.revealCalls++
 	if err := s.failOn["RevealTestUserPassword"]; err != nil {
 		return "", err
 	}
-	pw, ok := s.passwords[username]
+	pw, ok := s.password(scope, username)
 	if !ok || pw == "" {
 		return "", ErrNoPassword
 	}
 	return pw, nil
 }
 
-func (s *fakeStore) DeleteTestUser(_ context.Context, username string) error {
-	delete(s.users, username)
-	delete(s.passwords, username)
+func (s *fakeStore) DeleteTestUser(_ context.Context, scope Scope, username string) error {
+	delete(s.users, scopedKey(scope, username))
+	delete(s.passwords, scopedKey(scope, username))
 	for key, rows := range s.refs {
 		var kept []TestUserRef
 		for _, r := range rows {
-			if r.Username != username {
+			if r.Username != username || r.OrgID != scope.OrgID || r.Environment != scope.Environment {
 				kept = append(kept, r)
 			}
 		}
@@ -559,46 +635,34 @@ func (s *fakeStore) DeleteTestUser(_ context.Context, username string) error {
 	return nil
 }
 
-func (s *fakeStore) ReplaceProjectRefs(_ context.Context, orgID, projectID string, refs []TestUserRef) error {
+func (s *fakeStore) ReplaceProjectRefs(_ context.Context, scope Scope, projectID string, refs []TestUserRef) error {
 	if err := s.failOn["ReplaceProjectRefs"]; err != nil {
 		return err
 	}
 	stamped := make([]TestUserRef, 0, len(refs))
 	for _, r := range refs {
-		r.OrgID, r.ProjectID = orgID, projectID
+		r.OrgID, r.Environment, r.ProjectID = scope.OrgID, scope.Environment, projectID
 		stamped = append(stamped, r)
 	}
-	s.refs[refKey(orgID, projectID)] = stamped
+	s.refs[refKey(scope, projectID)] = stamped
 	s.replaceCalls = append(s.replaceCalls, stamped)
 	return nil
 }
 
-func (s *fakeStore) ListProjectRefs(_ context.Context, orgID, projectID string) ([]TestUserRef, error) {
-	return s.refs[refKey(orgID, projectID)], nil
+func (s *fakeStore) ListProjectRefs(_ context.Context, scope Scope, projectID string) ([]TestUserRef, error) {
+	return s.refs[refKey(scope, projectID)], nil
 }
 
-func (s *fakeStore) ProjectsReferencing(_ context.Context, orgID, username string) ([]TestUserRef, error) {
+func (s *fakeStore) ProjectsReferencing(_ context.Context, scope Scope, username string) ([]TestUserRef, error) {
 	var out []TestUserRef
 	for _, rows := range s.refs {
 		for _, r := range rows {
-			if r.OrgID == orgID && r.Username == username {
+			if r.OrgID == scope.OrgID && r.Environment == scope.Environment && r.Username == username {
 				out = append(out, r)
 			}
 		}
 	}
 	return out, nil
-}
-
-func (s *fakeStore) CountReferencing(_ context.Context, username string) (int, error) {
-	n := 0
-	for _, rows := range s.refs {
-		for _, r := range rows {
-			if r.Username == username {
-				n++
-			}
-		}
-	}
-	return n, nil
 }
 
 // fakeDesign is the design bundle at a tag. `calls` counts reads, so a test can

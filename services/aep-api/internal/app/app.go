@@ -414,6 +414,12 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// configService can call back into it to mirror env-var edits onto
 	// the OC Component's workflow params.
 	projectService := projects.NewProjectService(projectClient, repoService, webhookRegService, artifactSvcGit, executionRepo)
+	// Cell-namespace provisioning. OpenChoreo 1.2.0 stopped materializing a
+	// project's namespace as a side effect of creating the Project — a
+	// ProjectReleaseBinding per environment does it now, and nothing creates
+	// those for us. Without this the project is created, reports Ready, and
+	// then fails every deploy with "namespace ... not found".
+	projectService.SetProjectCellProvisioner(openchoreo.NewProjectCellClient(ocConfig))
 	// Build/deploy stage sources for the status poll (#184): the milestone-run
 	// index (one row read) + the org-scoped release-binding list —
 	// consumer-side ports wired here so projects imports neither.
@@ -564,43 +570,66 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 			thunderBase = thunderBase[:idx]
 		}
 	}
+	// The System resource server's identifier is a NAME derived from the
+	// public issuer, not from the admin URL — in-cluster the two differ, and
+	// the identifier has to match what the IdP registered.
+	systemRS := cfg.ThunderAdmin.SystemResourceIdentifier
+	if systemRS == "" {
+		systemRS = thundersvc.SystemResourceIdentifier(cfg.PlatformIDP.Issuer)
+	}
 	if cfg.ThunderAdmin.ClientID != "" && cfg.ThunderAdmin.ClientSecret != "" && thunderBase != "" {
 		thunderAdminClient = thundersvc.New(thundersvc.Config{
-			BaseURL:      thunderBase,
-			ClientID:     cfg.ThunderAdmin.ClientID,
-			ClientSecret: cfg.ThunderAdmin.ClientSecret,
+			BaseURL:                  thunderBase,
+			ClientID:                 cfg.ThunderAdmin.ClientID,
+			ClientSecret:             cfg.ThunderAdmin.ClientSecret,
+			SystemResourceIdentifier: systemRS,
 		})
-		slog.Info("Thunder admin client", "baseURL", thunderBase, "clientID", cfg.ThunderAdmin.ClientID)
+		slog.Info("Thunder admin client", "baseURL", thunderBase, "clientID", cfg.ThunderAdmin.ClientID,
+			"systemResource", systemRS)
 	} else {
 		slog.Warn("Thunder admin client disabled — set THUNDER_ADMIN_URL + THUNDER_SYSTEM_CLIENT_ID + THUNDER_SYSTEM_CLIENT_SECRET")
 	}
 
-	// The identity domain: the platform's record of the SHARED roles and test
-	// users it creates on Thunder at build time, and the ensure that creates
-	// them. Both are optional — with no Thunder admin client there is no
-	// directory to write to, so `rolesEnsure` reports Enabled()==false and the
-	// build skips the roles gate entirely rather than failing every build.
-	// The store is wired regardless: it is what the validation credential
-	// provider reads, and reading an empty table is a correct "no test user".
+	// The identity domain: the platform's record of the roles and test users it
+	// creates at build time, and the ensure that creates them.
+	//
+	// NOT on the platform IdP. Roles and test users belong to the ENVIRONMENT the
+	// version is validated in, on that environment's own Thunder, resolved per
+	// (org, environment) from the binding record on the OpenChoreo Environment
+	// plus the admin credential in the secret store (identity_targets.go). The T1
+	// admin client above stays for the per-org publisher apps and the OU
+	// validator, which are platform-tier objects.
+	//
+	// The resolver is optional — without OpenBao there is no credential to read,
+	// so `rolesEnsure` reports Enabled()==false and the build skips the roles
+	// gate entirely rather than failing every build. The store is wired
+	// regardless: reading an empty table is a correct "no test user".
 	identityStore := identity.NewStore(db, in.ColumnCipher)
 	var rolesEnsure *identity.EnsureService
 	var roleCatalogSvc *identity.CatalogService
-	// The console's Security panel. It takes the directory OPTIONALLY: with no
-	// Thunder admin client it still serves this project's references and their
-	// ownership from the store, and reports directoryAvailable=false so the
-	// console says "unknown" rather than "does not exist". The mutations refuse
-	// in that state — there is nothing to write to.
-	var identityDirectory identity.Directory
-	if thunderAdminClient != nil {
-		directory := thunderDirectory{c: thunderAdminClient}
-		identityDirectory = directory
-		rolesEnsure = identity.NewEnsureService(directory, identityStore, artifactSvcGit)
-		roleCatalogSvc = identity.NewCatalogService(directory, identityStore)
-		slog.Info("roles ensure wired — a build provisions the roles and test users specs/design/security.json declares")
+	// The console's Security panel. It takes the resolver OPTIONALLY: with none
+	// it reports directoryAvailable=false so the console says "unknown" rather
+	// than "does not exist", and its mutations refuse — there is nothing to
+	// write to.
+	var identityTargets identity.TargetResolver
+	if bindingKV, kvErr := environmentThunderCredentials(cfg); kvErr != nil {
+		slog.Warn("roles ensure disabled — the environment Thunder credential store is unreachable",
+			"error", kvErr)
+	} else if bindingKV == nil {
+		slog.Warn("roles ensure disabled — OPENBAO_ADDR is not set, so no environment's Thunder admin credential can be read; " +
+			"builds will not provision roles or test users")
 	} else {
-		slog.Warn("roles ensure disabled — no Thunder admin client; builds will not provision roles or test users")
+		// ONE place decides which environment's identity provider a build's roles
+		// belong to: the environment aep-api deploys and validates in.
+		resolver := newIdentityTargetResolver(environmentClient, bindingKV,
+			openchoreo.DevEnvironmentName, cfg.ThunderEnvAdminRoute)
+		identityTargets = resolver
+		rolesEnsure = identity.NewEnsureService(resolver, identityStore, artifactSvcGit)
+		roleCatalogSvc = identity.NewCatalogService(resolver, identityStore)
+		slog.Info("roles ensure wired — a build provisions specs/design/security.json's roles and test users on the environment's own Thunder",
+			"environment", openchoreo.DevEnvironmentName, "adminRoute", cfg.ThunderEnvAdminRoute)
 	}
-	identityPanel := identity.NewPanelService(identityDirectory, identityStore)
+	identityPanel := identity.NewPanelService(identityTargets, identityStore)
 
 	// Wire the Thunder OU validator into the org service so a stale/phantom JWT
 	// `ouId` can't poison the org→OU mapping (the root cause behind the runner
@@ -1305,13 +1334,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// for why the local plane must not wire it.
 	deploymentService.SetEndpointGate(endpointGate)
 	// The address a consumer reaches a protected sibling's managed API on. Config
-	// carries only an override; the default lives beside the context-path builder
-	// it has to agree with.
-	if host := cfg.APIGatewayHost; host != "" {
-		deploymentService.SetAPIGatewayHost(host)
-	} else {
-		deploymentService.SetAPIGatewayHost(projects.DefaultAPIGatewayHost)
-	}
+	// carries only an OVERRIDE: the gateway is one per (org, environment), so the
+	// address is derived per deploy beside the context-path builder it has to
+	// agree with (projects.APIGatewayHost). Empty is the normal case.
+	deploymentService.SetAPIGatewayHostOverride(cfg.APIGatewayHost)
 	configService.SetConverger(deploymentService)
 	// The cross-project access grant is the only deploy observer left. The two
 	// that rode beside it — the env-config.js re-emit and the api-configuration
@@ -1406,7 +1432,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// worker connects when it comes up.
 	if cfg.Temporal.Enabled() {
 		runActs := run.NewActivities(run.Deps{
-			Runs:       runRuns{runs: milestoneRunRepo},
+			Runs: runRuns{runs: milestoneRunRepo},
+			// A failed settle becomes one feed line (run_failed), read off the
+			// row the settle just wrote.
+			Failed:     runFailedActivityRecorder{svc: activitySvc, runs: milestoneRunRepo},
 			Cycles:     runCycles{cycles: runCycleRepo},
 			Milestones: issueService,
 			PRs:        issueService,
@@ -1542,6 +1571,30 @@ func buildGitHost(cfg config.Config) (sourcecontrol.Host, error) {
 		return nil, fmt.Errorf("unknown GIT_PROVIDER %q — supported: github", cfg.GitProvider)
 	}
 }
+
+// environmentThunderCredentials opens the secret store the environment-tier
+// Thunder binding's admin credential is read from.
+//
+// (nil, nil) when OPENBAO_ADDR is unset: a stack with no secret store cannot
+// reach any environment's identity provider, and the caller skips the whole
+// feature rather than wiring a resolver that fails every call. It performs no
+// I/O — Assemble stays pure; the first read happens when a build asks.
+func environmentThunderCredentials(cfg config.Config) (bindingCredentialReader, error) {
+	if cfg.OpenBaoAddr == "" {
+		return nil, nil
+	}
+	kv, err := secrets.NewDeliveryKV(cfg.OpenBaoAddr, cfg.OpenBaoToken, thunderBindingKVMount)
+	if err != nil {
+		return nil, err
+	}
+	return openBaoBindingCredentials{kv: kv, mount: thunderBindingKVMount}, nil
+}
+
+// thunderBindingKVMount is the KV mount setup-environment-thunder.sh writes the
+// binding credential under, and the one the binding's recorded path is prefixed
+// with. It matches the mount every other local secret is delivered through
+// (deliveryOpenBaoConfigFromAppConfig).
+const thunderBindingKVMount = "secret"
 
 // deliveryOpenBaoConfigFromAppConfig maps local OPENBAO_* config onto the
 // provider-neutral StoreConfig.OpenBao shape. Nil when addr is unset.

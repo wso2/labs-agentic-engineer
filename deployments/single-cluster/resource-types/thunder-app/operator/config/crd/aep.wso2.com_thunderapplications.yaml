@@ -38,18 +38,21 @@ spec:
           metadata:
             type: object
           spec:
-            description: ThunderApplicationSpec — desired OAuth application on the
-              platform Thunder.
+            description: |-
+              ThunderApplicationSpec — desired OAuth application on the Thunder that serves
+              the (organization, environment) this CR is rendered into.
             properties:
               clientId:
-                description: ClientID overrides the derived aep-<namespace>-<name>
-                  identity. Use this for platform clients that must have a stable,
-                  well-known client ID.
+                description: |-
+                  ClientID overrides the derived aep-<namespace>-<name> identity. Use this
+                  for platform clients that must have a stable, well-known client ID.
                 type: string
               clientType:
-                description: ClientType is "public" (default, PKCE authorization_code)
-                  or "confidential" (client_credentials). SecretRef is required when
-                  clientType=confidential.
+                description: |-
+                  ClientType is either "public" (default) or "confidential".
+                  "public" creates a PKCE authorization_code client (browser SPA).
+                  "confidential" creates a client_credentials client (service-to-service);
+                  SecretRef is required in that case.
                 enum:
                 - public
                 - confidential
@@ -63,16 +66,15 @@ spec:
                   RedirectURIs is a comma-separated list of allowed OAuth redirect URIs.
                   Platform-managed: aep-api patches it via binding environmentConfigs once
                   the consuming SPA's public URL resolves. May be empty at creation.
-                  Ignored for confidential (client_credentials) clients.
                 type: string
               scopes:
                 description: Scopes is the space-separated OIDC scope set (e.g. "openid
-                  profile email").
+                  profile email group ou").
                 type: string
               secretRef:
-                description: SecretRef points to the Kubernetes Secret key holding
-                  the pre-generated OAuth client secret. Required when clientType=confidential.
-                  The Secret must be in the same namespace as the ThunderApplication CR.
+                description: |-
+                  SecretRef points to the Kubernetes Secret key holding the pre-generated
+                  OAuth client secret. Required when clientType=confidential.
                 properties:
                   key:
                     description: Key within the secret.
@@ -89,8 +91,25 @@ spec:
             description: ThunderApplicationStatus reports the observed state of a
               ThunderApplication.
             properties:
+              adminUrl:
+                description: |-
+                  AdminURL is the in-cluster admin API base of the same instance. It is
+                  the operator's own record of where the application was created, so a
+                  later delete goes to that instance and not to whatever the binding
+                  happens to name by then.
+                type: string
               clientId:
                 description: ClientID is the OAuth client_id assigned by Thunder.
+                type: string
+              issuer:
+                description: |-
+                  Issuer is the OIDC issuer of the Thunder instance this application was
+                  registered on — the environment's own Thunder, resolved from the (org,
+                  environment) binding record. Published so a consumer reads WHERE the
+                  application lives instead of assuming one cluster-wide IdP.
+                type: string
+              jwksUrl:
+                description: JWKSURL is that issuer's JWKS endpoint (issuer + /oauth2/jwks).
                 type: string
               message:
                 description: Message carries a human-readable status/error detail.

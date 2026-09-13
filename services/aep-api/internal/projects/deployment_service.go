@@ -58,10 +58,10 @@ type DeploymentService struct {
 	// files computes the literal files a component needs mounted
 	// (env-config.js). Optional, same unmanaged-vs-empty rule.
 	files RuntimeFileProvider
-	// gatewayHost is host:port of the API gateway runtime, published to a
-	// consumer of a protected sibling as `<DEP>_GATEWAY_URL`. Empty leaves every
-	// consumer on the direct-Service lane (see gateway_address.go).
-	gatewayHost string
+	// gatewayHostOverride pins host:port of the API gateway runtime for every
+	// environment, overriding the per-(org, environment) derivation. Empty — the
+	// normal case — derives it (see gateway_address.go).
+	gatewayHostOverride string
 	// catalog, resourceClient, and thunder are the thunder-callback wait
 	// ports. Any nil (including a nil store) skips the wait so existing
 	// OC-only DeploymentState tests stay green without new wiring.
@@ -110,14 +110,14 @@ func (s *DeploymentService) SetConfigSources(envVars ComponentEnvVarReader, file
 	}
 }
 
-// SetAPIGatewayHost wires the address a consumer reaches a protected sibling's
-// managed API on. Empty (the zero value) publishes no gateway address at all,
-// which leaves consumers on the unauthenticated direct-Service lane — so the
-// composition root passes projects.DefaultAPIGatewayHost unless the deployment
-// overrides it.
-func (s *DeploymentService) SetAPIGatewayHost(host string) {
+// SetAPIGatewayHostOverride pins the address a consumer reaches a protected
+// sibling's managed API on, for every environment. Empty (the zero value) is the
+// normal case: the address is then derived per (org, environment), because the
+// platform runs one gateway per environment and no single literal addresses two
+// of them. The composition root passes API_GATEWAY_HOST straight through.
+func (s *DeploymentService) SetAPIGatewayHostOverride(host string) {
 	if s != nil {
-		s.gatewayHost = host
+		s.gatewayHostOverride = host
 	}
 }
 
@@ -272,9 +272,9 @@ func (s *DeploymentService) deployOne(ctx context.Context, orgID, projectID, com
 		Files:         s.filesFor(ctx, orgID, projectID, componentName),
 		// The org IS the OC namespace components are created in, and that
 		// namespace is a segment of every managed API's gateway context path.
-		ComponentNamespace: orgID,
-		GatewayHost:        s.gatewayHost,
-		ProtectedSiblings:  ProtectedSiblingsOf(design, *comp),
+		ComponentNamespace:  orgID,
+		GatewayHostOverride: s.gatewayHostOverride,
+		ProtectedSiblings:   ProtectedSiblingsOf(design, *comp),
 	})
 	if err := s.components.ApplyReleaseBinding(ctx, orgID, projectID, desired.Binding); err != nil {
 		return outcome, fmt.Errorf("apply release binding: %w", permanentIfMissing(err))

@@ -20,7 +20,11 @@ rules:
   - apiGroups: ["aep.wso2.com"]
     resources: ["thunderapplications/finalizers"]
     verbs: ["update"]
-  # Published <cr-name>-oauth ConfigMaps carrying the assigned client_id.
+  # Two cluster-wide ConfigMap uses: the published <cr-name>-oauth ConfigMaps
+  # carrying the assigned client_id + issuer, and the read of the binding record
+  # ConfigMap that says which Thunder an (org, environment) uses — that one
+  # lives in the target Thunder's namespace, so the grant cannot be narrowed to
+  # this release's namespace.
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
@@ -28,12 +32,14 @@ rules:
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "patch"]
-  # OpenChoreo ResourceReleaseBindings — the operator nudges the owning binding
-  # (annotation patch) when an app becomes ready, so OC re-reconciles it and
-  # resolves the client_id output instead of staying stuck Ready=False.
+  # OpenChoreo RenderedReleases — the operator nudges the RenderedRelease that
+  # applied an app (annotation patch) when the app becomes ready, so OC
+  # re-observes the app's status now instead of on its ~6-minute requeue; the
+  # owning ResourceReleaseBinding then resolves its issuer/jwks_url outputs
+  # from that fresh snapshot.
   - apiGroups: ["openchoreo.dev"]
-    resources: ["resourcereleasebindings"]
-    verbs: ["get", "list", "patch"]
+    resources: ["renderedreleases"]
+    verbs: ["get", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -50,10 +56,13 @@ subjects:
     name: thunder-app-operator
     namespace: {{ .Release.Namespace }}
 ---
-# Secrets are intentionally NOT in the ClusterRole above. The operator only
-# reads client secrets that are in the same namespace as the ThunderApplication
-# CR (which is always the platform namespace). A namespace-scoped Role limits
-# the blast radius: no CR can be used to read Secrets from other namespaces.
+# Secrets are intentionally NOT in the ClusterRole above. The operator reads
+# Secrets ONLY from its own release namespace: the credential half of every
+# (org, environment) Thunder binding, which setup-environment-thunder.sh mirrors
+# here precisely because this grant is namespace-scoped, and the client secrets
+# of confidential CRs that live in this namespace. A namespace-scoped Role
+# limits the blast radius: no CR can be used to read Secrets from other
+# namespaces, and no binding credential is readable outside this release.
 # list;watch are required in addition to get because the controller-runtime
 # cache informer must be able to enumerate and subscribe to Secret changes
 # before the manager starts serving reconcile requests.

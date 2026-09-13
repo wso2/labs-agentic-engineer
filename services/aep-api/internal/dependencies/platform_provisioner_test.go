@@ -29,6 +29,12 @@ import (
 	ocmocks "github.com/wso2/aep/aep-api/internal/clients/openchoreo/mocks"
 )
 
+// The provisioner is environment-generic: it fans a Resource out over whatever
+// environment list it is handed. These tests therefore use two arbitrary env
+// slugs ("development", "production") rather than the one environment AEP
+// provisions into (openchoreo.DevEnvironmentName) — a single-env fixture could
+// not tell a fan-out apart from a short-circuit.
+
 // ---- pure builders -----------------------------------------------------------
 
 func TestBuildPlatformResource_ReferencesClusterResourceType(t *testing.T) {

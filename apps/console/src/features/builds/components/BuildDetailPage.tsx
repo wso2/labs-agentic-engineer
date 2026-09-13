@@ -82,6 +82,7 @@ import { AgentPulse } from "./AgentPulse";
 import { BuildTaskList } from "./BuildTaskList";
 import { CycleBuilds } from "./CycleBuilds";
 import { EXTERNAL_RESOURCES_ANCHOR, ExternalResources } from "./ExternalResources";
+import { RunFailureCard } from "./RunFailureCard";
 import { RunFeed } from "./RunFeed";
 import { useCycleBuilds } from "../api/queries";
 import { useSessionStages } from "../hooks/useSessionStages";
@@ -256,6 +257,9 @@ export function BuildDetailPage({
       />
 
       <Stack spacing={2}>
+        {/* Why the run failed, or what it is retrying — before the summary,
+            because a reader arriving at a failed build asks that first. */}
+        <RunFailureCard projectName={projectName} run={current} />
         <BuildSummaryCard
           projectName={projectName}
           build={build}
@@ -519,7 +523,7 @@ function parkTitle(dependencies: string[]): string {
  *
  * Every state the header pill can show gets its own sentence. The generic
  * "deploys as its tasks merge" line is for a version that has not reached an
- * environment — using it while the header reads "Deploying to development"
+ * environment — using it while the header reads "Deploying"
  * put two contradictory claims on one card.
  */
 function deploymentNote(
@@ -529,11 +533,11 @@ function deploymentNote(
   if (deploy?.version !== tag) return `${tag} deploys as its tasks merge.`;
   switch (deploy.status) {
     case "deployed":
-      return `${tag} is live in development.`;
+      return `${tag} is live.`;
     case "deploying":
-      return `${tag} is rolling out to development now.`;
+      return `${tag} is rolling out now.`;
     case "failed":
-      return `${tag} failed to deploy to development.`;
+      return `${tag} failed to deploy.`;
     default:
       return `${tag} deploys as its tasks merge.`;
   }
@@ -666,6 +670,15 @@ function AgentLogSection({
         <EmptyState
           compact
           description="Nothing has been dispatched for this version yet — the agent's log appears once a build session starts."
+        />
+      ) : runs.every((r) => r.cycles.length === 0) && runState && isTerminalRun(runState) ? (
+        // Every run ended before dispatching a cycle: the failure (or cancel)
+        // happened while the platform was still preparing the version. Saying
+        // so is the difference between "the agent wrote nothing" and "the
+        // agent never started" — the card above says why.
+        <EmptyState
+          compact
+          description="Did not start — the run ended while the platform was preparing the version."
         />
       ) : (
         <Stack spacing={2}>

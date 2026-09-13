@@ -876,3 +876,83 @@ func TestMilestoneRunRepository_RunsWaitingOnValues(t *testing.T) {
 			len(rows), older)
 	}
 }
+
+// TestMilestoneRunRepository_RecordFailureKeepsTheFirstAttempt is the failure
+// record's repository contract (ADR-0029): the activity stamps FirstAt = LastAt
+// = now on every attempt, so the row is the only place the FIRST attempt's
+// stamp can survive — it is kept when the fault is the same one (code + subject)
+// and replaced when a different fault lands. ClearFailure nulls the column, and
+// like every other non-terminal write a settled run is a no-op.
+func TestMilestoneRunRepository_RecordFailureKeepsTheFirstAttempt(t *testing.T) {
+	t.Parallel()
+	db := dbtest.New(t)
+	repo := delivery.NewMilestoneRunRepository(db)
+	ctx := context.Background()
+
+	run := devRun("orgfail", "proj", 1, "v1")
+	if ok, _, err := repo.TryAdmit(ctx, run); err != nil || !ok {
+		t.Fatalf("TryAdmit = (%v, %v), want admitted", ok, err)
+	}
+
+	t0 := time.Date(2026, 9, 11, 7, 35, 54, 0, time.UTC)
+	t1 := t0.Add(20 * time.Second)
+	fault := func(at time.Time, attempt int) delivery.RunFailure {
+		return delivery.RunFailure{
+			Code: delivery.RunFailureCodeDependencyProvisionFailed, Phase: delivery.RunPhasePlanning,
+			Component: "api", Dependency: "orders-db", Attempts: attempt, MaxAttempts: 3,
+			FirstAt: at, LastAt: at, Detail: "orders-db: 503",
+		}
+	}
+
+	first, err := repo.RecordFailure(ctx, run.ID, fault(t0, 1))
+	if err != nil || first == nil || first.Failure == nil {
+		t.Fatalf("RecordFailure #1 = (%+v, %v)", first, err)
+	}
+	second, err := repo.RecordFailure(ctx, run.ID, fault(t1, 2))
+	if err != nil || second == nil || second.Failure == nil {
+		t.Fatalf("RecordFailure #2 = (%+v, %v)", second, err)
+	}
+	if !second.Failure.FirstAt.Equal(t0) || !second.Failure.LastAt.Equal(t1) || second.Failure.Attempts != 2 {
+		t.Fatalf("same fault must keep FirstAt and take the new LastAt/attempts, got first=%s last=%s attempts=%d",
+			second.Failure.FirstAt, second.Failure.LastAt, second.Failure.Attempts)
+	}
+
+	// A DIFFERENT fault is a fresh record: its own FirstAt.
+	other := fault(t1, 1)
+	other.Dependency = "sendgrid"
+	other.Code = delivery.RunFailureCodeDependencyUnprovisionable
+	other.Permanent = true
+	third, err := repo.RecordFailure(ctx, run.ID, other)
+	if err != nil || third == nil || third.Failure == nil {
+		t.Fatalf("RecordFailure #3 = (%+v, %v)", third, err)
+	}
+	if !third.Failure.FirstAt.Equal(t1) || third.Failure.Dependency != "sendgrid" || !third.Failure.Permanent {
+		t.Fatalf("a different fault replaces the record, got %+v", *third.Failure)
+	}
+
+	// Round trip through a scoped read, not just the write's return.
+	back, err := repo.GetByIDScoped(ctx, "orgfail", run.ID)
+	if err != nil || back == nil || back.Failure == nil || back.Failure.Dependency != "sendgrid" {
+		t.Fatalf("re-read = (%+v, %v), want the sendgrid record", back, err)
+	}
+
+	cleared, err := repo.ClearFailure(ctx, run.ID)
+	if err != nil || cleared == nil {
+		t.Fatalf("ClearFailure = (%+v, %v)", cleared, err)
+	}
+	if cleared.Failure != nil {
+		t.Fatalf("ClearFailure must null the column, got %+v", *cleared.Failure)
+	}
+
+	// A code-less record is refused; a settled run ignores the write.
+	if _, err := repo.RecordFailure(ctx, run.ID, delivery.RunFailure{}); err == nil {
+		t.Fatal("RecordFailure without a code must be refused")
+	}
+	if _, err := repo.Settle(ctx, run.ID, delivery.RunStateFailed, delivery.RunReasonPlanFailed); err != nil {
+		t.Fatalf("Settle: %v", err)
+	}
+	late, err := repo.RecordFailure(ctx, run.ID, fault(t1, 3))
+	if err != nil || late != nil {
+		t.Fatalf("a settled run must ignore a late record, got (%+v, %v)", late, err)
+	}
+}
