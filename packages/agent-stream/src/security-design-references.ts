@@ -33,7 +33,7 @@
  *     before some of those files exist, so **a rule whose input is missing is
  *     skipped in silence** — the build gate re-runs the whole list with the
  *     full tag, where every file is present by construction.
- *  3. **The reachability cross-check** (plan §1.2, Δ P6 §5): for every role,
+ *  3. **The reachability cross-check.** For every role,
  *     every operation behind every screen that role can reach must be granted
  *     by that role. This is the rule the design's own Expense Tracker example
  *     fails — `Approvals` is gated on `claims:approve`, the list it renders is
@@ -43,11 +43,11 @@
  *     the observed symptom was an infinite sign-in loop. Caught here it is one
  *     sentence at authoring time.
  *
- * **Nothing implies anything.** The gateway compares scopes whole-string
- * (P2-live-2 b2), so `claims:read-all` does not admit a caller to an operation
- * guarded on `claims:read`. Rather than widen grants silently — which would
- * make the gate disagree with the runtime — a role holding `X:read-all`
- * without `X:read` is an error naming both handles (decision B1).
+ * **Nothing implies anything.** The gateway compares scopes whole-string, so
+ * `claims:read-all` does not admit a caller to an operation guarded on
+ * `claims:read`. Rather than widen grants silently — which would make the gate
+ * disagree with the runtime — a role holding `X:read-all` without `X:read` is
+ * an error naming both handles.
  *
  * Findings carry a severity. Errors refuse the write; warnings are the
  * Security page's "declared, used nowhere" / "unreachable by any role" lines;
@@ -150,7 +150,7 @@ function cellComponents(ctx: SecurityReferenceContext): Set<string> | null {
  * person reads ("My Claims"); the wireframe grammar is `/^screen\s+([\w-]+)/`,
  * so the same screen is `MyClaims` there. Neither file format changes: the
  * comparison drops everything that is not a letter or a digit and lowercases
- * the rest (plan §1.2, Δ P6 §7.34).
+ * the rest.
  */
 export function normalizeScreenName(name: string): string {
   return name.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
@@ -351,8 +351,8 @@ export function securityReferenceFindings(
         found.add("error", "grant_unknown_handle", { role: role.name, handle });
       }
     }
-    // Decision B1: the "all" handle widens the rows, it does not replace the
-    // operation, and scope matching is a whole-string compare.
+    // The "all" handle widens the ROWS an operation reaches; it does not
+    // replace the operation, and the gateway compares scopes whole-string.
     const grants = new Set(role.grants);
     for (const handle of role.grants) {
       if (!isReadAll(handle)) continue;
@@ -499,7 +499,7 @@ function reachabilityRules(
   }
   if (operationsByComponent.size === 0) return;
 
-  // --- the reachability cross-check (plan §1.2, Δ P6 §5) -------------------
+  // --- the reachability cross-check ---------------------------------------
   for (const screen of doc.screens) {
     const requires = screen.requires;
     if (requires === null || requires === PUBLIC || !catalog.has(requires)) continue;

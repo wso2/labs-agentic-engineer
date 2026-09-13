@@ -2,20 +2,24 @@
 
 Status: accepted. Revisited: one `security.json` instead of a two-file split;
 the identity model is unchanged. **Scope amended 2026-09-05, and the role half
-amended 2026-09-12** — see below.
+superseded by [ADR-0030](ADR-0030-scopes-are-the-authorization-authority-for-a-generated-app.md)**
+— see below.
 
-> **Amended by the generated-app scopes design (2026-09-12) — roles are
-> PROJECT-OWNED.** Two of the three object kinds below are unchanged: directory
-> **groups** and **test users** remain shared, org-owned, ADDITIVE objects a
-> build only ever adds to. **Roles are not.** A role now belongs to the project
-> that declares it, is named `<project>/<Role>` on the directory, and the build
-> CONVERGES it to the `security.json` at the version tag — created, updated and
-> removed to match — because a role is an access decision inside one project's
-> API and nothing outside that project may hold it. What stays shared is WHO
-> holds it: `roles[].assignTo` names org groups, and the design-time catalog of
-> those groups is the `list_groups` tool (`list_roles`, the alias it replaced,
-> was removed in scopes phase 2). The successor ADR lands with the scopes work;
-> until then read this one as the identity-object model that amendment edits.
+> **The role half is superseded by
+> [ADR-0030](ADR-0030-scopes-are-the-authorization-authority-for-a-generated-app.md)
+> — roles are PROJECT-OWNED, and scopes decide what one may do.** Two of the
+> three object kinds below are unchanged: directory **groups** and **test users**
+> remain shared, org-owned, ADDITIVE objects a build only ever adds to. **Roles
+> are not.** A role belongs to the project that declares it, is named
+> `<project>/<Role>` on the directory, and the build CONVERGES it to the
+> `security.json` at the version tag — created, updated and removed to match —
+> because a role is an access decision inside one project's API and nothing
+> outside that project may hold it. What stays shared is WHO holds it:
+> `roles[].assignTo` names org groups, and the design-time catalog of those
+> groups is the `list_groups` tool (`list_roles`, the alias it replaced, is
+> gone). Read this one as the identity-object model ADR-0030 edits; where the
+> two differ about a role, ADR-0030 wins. The credential table it describes
+> below has no cold-start column: there is no cold-start account.
 
 > **Amendment · 2026-09-05 · the sharing scope is an ENVIRONMENT, not the
 > cluster.** The decision below stands in every part: one `security.json`, the

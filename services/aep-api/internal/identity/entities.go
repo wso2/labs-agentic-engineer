@@ -132,6 +132,10 @@ func (u TestUser) scope() Scope { return Scope{OrgID: u.OrgID, Environment: u.En
 // credential provider answer "which account serves role X for project P".
 // Nothing about the directory object depends on it, and deleting the row
 // deletes no account.
+//
+// The table still carries a `cold_start` column that no field maps: there is no
+// cold-start account any more, and the column's default keeps inserts legal
+// until a migration drops it.
 type TestUserRef struct {
 	OrgID string `gorm:"column:org_id;primaryKey;type:text" json:"orgId"`
 	// Environment completes the reference to the account: a username alone no
@@ -143,12 +147,6 @@ type TestUserRef struct {
 	// RoleName is denormalised from TestUser so the credential lookup is one
 	// indexed query. The ensure rewrites it on every build, so it cannot drift.
 	RoleName string `gorm:"column:role_name;type:text;not null;index" json:"roleName"`
-	// ColdStart is a v1 LEFTOVER and is always false: v2 has no cold-start
-	// account (signed-in operations and self-service enrolment replaced it),
-	// and the ensure writes every ref without it. The field and its column stay
-	// only so the stored row and the published API keep their shape; phase 5
-	// drops both.
-	ColdStart bool `gorm:"column:cold_start;not null;default:false" json:"coldStart"`
 	// Supplied is true when the design named no test user for the role and the
 	// platform generated the name. The console badges these.
 	Supplied  bool      `gorm:"column:supplied;not null;default:false" json:"supplied"`

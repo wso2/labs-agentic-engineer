@@ -144,11 +144,11 @@ which is why you copy it rather than write it:
 
 - **Preserve the context prefix.** The gateway routes on it; a rewrite that
   strips it 404s every call.
-- **Clear inbound `X-User-*`.** Identity is the gateway's to assert. A browser
-  that sets those headers itself must not be believed. The asset clears all
-  five, **`X-User-Scopes` included** — that one is the *authorization*
-  authority, so on a public operation and on the direct-Service fallback lane
-  nothing else stands between a hand-set header and the handler's scope check.
+- **Clear inbound `X-User-*`.** Identity is the gateway's to assert
+  (`api-management`), and a browser that sets those headers itself must not be
+  believed. The asset clears all five, **`X-User-Scopes` included**: on a public
+  operation and on the direct-Service fallback lane, this proxy is the only
+  thing standing between a hand-set header and the handler's scope check.
 
 Copy the assets in Layout; do not hand-write a different `proxy_pass`, do not add
 `/oidc/` (token endpoint stays cross-origin; `thunder-authentication`), do not

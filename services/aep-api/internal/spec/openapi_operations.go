@@ -38,9 +38,9 @@ import (
 )
 
 // OperationRequirementKind is what an operation demands of its caller. The
-// three values are the whole vocabulary: the design fixed "at most one scope,
-// at most one requirement object" (decision B1), so there is no "any of these
-// two scopes" case to represent.
+// three values are the whole vocabulary: one scope per operation, in at most one
+// requirement object (ADR-0030), so there is no "any of these two scopes" case
+// to represent.
 type OperationRequirementKind string
 
 const (

@@ -1,6 +1,6 @@
 ---
 name: thunder-authentication
-description: "How end-user identity and permission work on the platform — Thunder, the IDP wired into the API gateway, signs users in and the access token's scopes say what they may do. Covers the auth platform-resource dependency, the platform-owned OAuth client, the window._env_.<DEP>_* runtime keys, OIDC + PKCE with a resource indicator in the SPA, scope-gated screens with Forbidden and NoAccess, and the scope middleware every protected backend copies. Apply to any SPA whose users sign in, and to every protected backend they call."
+description: "Apply when a component sits on the project's sign-in — a SPA whose users authenticate through the auth platform-resource dependency, or a protected backend those signed-in users call."
 metadata:
   aep:
     kind: org
@@ -348,12 +348,11 @@ name, group name or administrator is ever hardcoded in that page.
 
 ### 4 · `src/api-client.ts` — the 401 rule
 
-**The gateway answers 401 for every failure.** No token, expired token, wrong
-issuer, wrong audience and **missing scope** all come back as a 401 with a
-byte-identical body and **no `WWW-Authenticate`** — measured three ways on the
-pinned chart. Nothing on the wire distinguishes them, and there is no gateway
-setting that changes it. **Do not add a `WWW-Authenticate` read: there is
-nothing to read.**
+**The gateway answers 401 for every failure, missing scope included, and sends
+no `WWW-Authenticate`** — `api-management`'s status matrix owns that and why no
+setting changes it. What follows for the SPA: nothing on the wire tells an
+expired token from a refused permission, so **do not add a `WWW-Authenticate`
+read — there is nothing to read.**
 
 So the SPA absorbs it, in three places, and all three are already in the assets:
 
@@ -378,8 +377,7 @@ So the SPA absorbs it, in three places, and all three are already in the assets:
 `if (res.status === 401) signIn()` — what the previous revision of this skill
 taught — is **DELETED**, and deleting it is the point of the file. It threw a
 correctly provisioned user who touched one operation their role does not grant
-into an endless sign-in loop: sign in, succeed, call, 401, sign in. That was
-observed on real accounts, at 160 ms per cycle.
+into an endless sign-in loop: sign in, succeed, call, 401, sign in.
 
 `signIn` is guarded to one call per page load: a screen firing several requests
 at once answers 401 several times over, and without the guard each answer starts
@@ -489,7 +487,7 @@ a table a drift test pins to the contract — and answers:
 required = the operation's declared scope        (exactly one, or none)
 if the operation is public                → next()   # reads no identity header
 if X-User-Id is EMPTY                     → 401      # the request bypassed the gateway
-if required and required ∉ X-User-Scopes  → 403 + WWW-Authenticate: Bearer error="insufficient_scope", scope="<handle>"
+if required and required ∉ X-User-Scopes  → 403 + the insufficient_scope challenge (api-management)
 next()
 ```
 
@@ -503,17 +501,15 @@ Copy it from your stack skill and wire it once:
 **You author no new check.** A handler that re-tests the operation's own scope
 is a second authority that drifts from the contract.
 
-**Test for EMPTY, never for MISSING.** The gateway sets every mapped header even
-when the claim is absent, so `X-User-Id: ""` is what an identity-less request
-looks like on the wire; "the header is present" is not a signal.
+**Test for EMPTY, never for MISSING** — `X-User-Id: ""` is what an
+identity-less request looks like on the wire (`api-management`).
 
-**The service answers 403 even though the gateway answers 401.** On the pinned
-gateway every policy failure — no token, bad token, wrong issuer, wrong
-audience, missing scope — is a 401 with a byte-identical body and no
-`WWW-Authenticate`, and there is no knob that changes it. Your 403 is what a
-bypass, a test, or a direct in-cluster call sees, and it is the status the SPA's
-Forbidden path is written against. Never answer 401 for a permission failure:
-the SPA reads 401 as "token expired" and restarts sign-in, which loops forever.
+**The service answers 403 even though the gateway answers 401** —
+`api-management`'s status matrix owns the two columns and why they differ. What
+it means here is that the SPA has to treat **both** statuses as a refusal: §4's
+`classifyResponse()` sends a 401 with a still-valid token to Forbidden for
+exactly this reason. Never answer 401 for a permission failure — the SPA reads
+that as "token expired" and restarts sign-in, which loops forever.
 
 ## Ownership: the finer rule an operation-level check cannot express
 
@@ -533,8 +529,8 @@ an ownership pair, map it the same way: read the catalog's
 `actions[].description`, not your own guess.
 
 **The widening handle is extra, not a substitute.** Scope comparison is an exact
-whole-string match, at the gateway and in the middleware: `claims:read-all` does
-not imply `claims:read` to anything but a human reader. A role meant to call
+whole-string match (`api-management`), so `claims:read-all` does not imply
+`claims:read` to anything but a human reader. A role meant to call
 `GET /claims` must be granted the operation's OWN handle (`claims:read`) as well
 as the widening one. If the design grants a role only the widening handle, say
 so in your report — the app cannot fix it, and the role will be refused at the
@@ -542,11 +538,6 @@ gateway before your code runs.
 
 **A row that exists but is not the caller's is a 404, not a 403** — a caller who
 may not see a row may not learn it exists (`api-management` owns that rule).
-
-**`X-User-Scopes` also carries the OIDC scopes** (`openid profile email group
-ou`), verbatim from the token. Tokenise on space and compare whole strings;
-"the caller has some scope" is true of everybody signed in and is never an
-authorization answer.
 
 ## Identity is not authorization
 

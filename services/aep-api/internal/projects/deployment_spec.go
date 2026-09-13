@@ -153,9 +153,7 @@ func DesiredDeploymentFor(in DeploymentInputs) DesiredDeployment {
 		Issuers:       in.Issuers,
 		// Pinned for a sign-in component whatever the operation table does: the
 		// audience is a fact about the TOKEN (the SPA asks for this resource,
-		// Thunder binds it into the `aud`), not about the rows. Pinning it on a
-		// `service-required` API would reject the service tokens it lives on
-		// today, so it waits for phase 6 there.
+		// Thunder binds it into the `aud`), not about the rows.
 		Audience:   audienceFor(in, apiEnabled, endUserSignIn),
 		Operations: operations,
 	})
@@ -213,8 +211,8 @@ func DesiredDeploymentFor(in DeploymentInputs) DesiredDeployment {
 // Only for a managed API behind END-USER sign-in. Those are the tokens the SPA
 // mints against the project's resource server, so pinning rejects a token
 // minted for any other one — including the platform's own. A `service-required`
-// API's callers present tokens whose audience phase 6 has not settled yet, and
-// pinning there would 401 every call it serves today.
+// API's callers present tokens the platform does not mint, whose audience it
+// therefore cannot assert, and pinning there would 401 every call it serves.
 func audienceFor(in DeploymentInputs, apiEnabled, endUserSignIn bool) string {
 	if !apiEnabled || !endUserSignIn {
 		return ""

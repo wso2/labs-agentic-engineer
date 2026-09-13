@@ -115,20 +115,17 @@ resource gets wrong:
 
 | Rule | Why |
 |---|---|
-| **Never read `Authorization`.** | The gateway's jwt-auth filter **strips** it and re-presents the verified token as `X-Forwarded-Authorization`. `Authorization` reaches a resource only on a **public** operation — where any caller can set it — so it is never an authorization input. |
-| **Test a header for *empty*, never for *missing*.** | A claim absent from the token still yields its header, set to `""`. The asset's `header()` helper collapses both cases to `""` for exactly this reason; a `is ()` check on a bound `string?` parameter is not the same test. |
-| **`X-User-Scopes` is the authorization authority — and it carries the five OIDC scopes too** (`openid profile email group ou`). | Every signed-in user therefore holds five scopes, so "holds some scope" is never "is authorized". `hasScope` splits on whitespace and compares **whole strings**: `claims:read-all` is not `claims:read`, at this layer or at the gateway. |
+| **Never read `Authorization`** — the gateway strips it. | Binding it as a resource header parameter yields nothing on every request that came through the gateway, and whatever the caller typed on a public one. |
+| **Test a header for *empty*, never for *missing*.** | The asset's `header()` helper collapses both cases to `""` for exactly this reason; a `is ()` check on a bound `string?` parameter is not the same test. |
+| **`X-User-Scopes` is the authorization authority** — what it carries and how it compares is in that table. | Call the asset's `hasScope`, which already splits on whitespace and compares whole handles. A `string:includes` test is the trap — it matches `claims:read` inside `claims:read-all` — and so is testing the header for non-empty, which is true of every signed-in caller. |
 | **`X-User-Groups` is JSON** (`["Finance"]`), and this stack does not read it. | Roles reach a service only as scopes. If anything ever needs the list it is `value:fromJsonString`, never a comma split. |
 
-**What the interceptor is, and is not.** It converts *misconfiguration* into a
-401/403: an operation accidentally left public, a stale trait, a local run with
-no gateway in front. It does **not** stop a hostile pod in the same namespace —
-that pod sets `X-User-Scopes` itself and is believed, because the forwarded
-headers carry no proof of who set them. The boundary is the NetworkPolicy that
-the workload's `visibility: internal` creates; this is the second line behind
-it. Do not try to close that gap by validating a JWT in the service —
-`http:ServiceConfig { auth: … }` is listener-side token validation and is the
-wrong construct here.
+**What the interceptor is, and is not.** `api-management` owns the argument: it
+turns *misconfiguration* into a 401/403 and is the second line behind the
+NetworkPolicy the workload's `visibility: internal` creates, not a replacement
+for it. What that rules out in Ballerina: do not try to close the gap by
+validating a JWT in the service — `http:ServiceConfig { auth: … }` is
+listener-side token validation and is the wrong construct here.
 
 **Widening inside a resource.** The generated resource already binds
 `X-User-Scopes` as a header parameter, so no context plumbing is needed:

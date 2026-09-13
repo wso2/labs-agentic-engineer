@@ -425,17 +425,9 @@ func renderTestUserLogins(outcome RolesEnsureOutcome) string {
 // renderCredentialsTrailer is the block under the table: what a token asked for
 // with one of these logins has to name, and the one rule about when a change
 // takes effect.
-//
-// The service-principal line is reserved for phase 6 and renders NOTHING while
-// there are none. An empty "service principals: —" would read as a statement
-// that this project has no non-human callers, which is a different claim from
-// "the platform does not provision them yet".
 func renderCredentialsTrailer(outcome RolesEnsureOutcome) string {
 	var b strings.Builder
 	b.WriteString("\n")
-	for _, p := range outcome.ServicePrincipals {
-		fmt.Fprintf(&b, "- **service principal** `%s` (no login) — %s\n", p.Name, strings.Join(p.Scopes, " "))
-	}
 	if outcome.Issuer != "" {
 		fmt.Fprintf(&b, "- **issuer** `%s` — the identity provider of the **%s** environment. "+
 			"These logins are valid there and NOWHERE else: every environment has its own "+

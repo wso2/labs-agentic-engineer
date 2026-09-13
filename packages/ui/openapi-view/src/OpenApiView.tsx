@@ -37,13 +37,14 @@ import {
   TextField,
   Typography,
 } from "@wso2/oxygen-ui";
-import { ChevronDown, ChevronRight, Search, X } from "@wso2/oxygen-ui-icons-react";
+import { ChevronDown, ChevronRight, Globe, Lock, Search, X } from "@wso2/oxygen-ui-icons-react";
 import {
   parseOpenApi,
   type Method,
   type ParsedOpenApi,
   type Operation,
   type Param,
+  type Protection,
   type Response,
   type Schema,
   type SchemaField,
@@ -129,6 +130,65 @@ function TypeTag({ label }: { label: string }) {
         whiteSpace: "nowrap",
       }}
     >
+      {label}
+    </Box>
+  );
+}
+
+// Who may reach the operation, in words: "Employee, Approver · own rows" for a
+// scope, and fixed copy for the other two states — they are constants of the
+// model, not data a caller could vary. Empty when the caller passed no map, so
+// a view without one renders exactly as it did before.
+function grantLine(protection: Protection, roles: ScopeRoles | undefined): string {
+  if (!roles) return "";
+  if (protection.kind === "public") return "anyone · no token needed";
+  // "any signed-in user", never "everyone": this line sits one row from the
+  // public row's "anyone · no token needed" and beside a padlock, where the
+  // shorter word reads as the opposite of what it means.
+  if (protection.kind === "signedIn") return "any signed-in user";
+  const grant = roles[protection.scope];
+  if (!grant) return "";
+  const names = Array.isArray(grant) ? grant : grant.roles;
+  const note = Array.isArray(grant) ? undefined : grant.note;
+  if (!names?.length) return "";
+  return note ? `${names.join(", ")} · ${note}` : names.join(", ");
+}
+
+// Protection pill — "public", "signed in", or the scope handle the gateway
+// enforces. Same quiet pill as TypeTag so it annotates the row rather than
+// competing with the method badge; the scope handle is the only one that gets
+// full-strength text, because it is the one the reader is looking for.
+function ProtectionTag({ protection }: { protection: Protection }) {
+  const isScope = protection.kind === "scope";
+  const label =
+    protection.kind === "public"
+      ? "public"
+      : protection.kind === "signedIn"
+        ? "signed in"
+        : protection.scope;
+  const Icon = protection.kind === "public" ? Globe : Lock;
+  return (
+    <Box
+      component="span"
+      sx={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 0.5,
+        px: 0.75,
+        py: "1px",
+        borderRadius: 999,
+        border: 1,
+        borderColor: "divider",
+        bgcolor: "action.hover",
+        color: isScope ? "text.primary" : "text.secondary",
+        fontFamily: isScope ? "monospace" : "inherit",
+        fontSize: "0.6875rem",
+        lineHeight: 1.4,
+        whiteSpace: "nowrap",
+        flexShrink: 0,
+      }}
+    >
+      <Icon size={11} />
       {label}
     </Box>
   );
@@ -355,7 +415,8 @@ function ResponseRow({ code, description, schema, schemaName, example }: Respons
 }
 
 // ── Operation row ────────────────────────────────────────────────────────────
-function OperationRow({ op }: { op: Operation }) {
+function OperationRow({ op, roles }: { op: Operation; roles: ScopeRoles | undefined }) {
+  const grants = grantLine(op.protection, roles);
   return (
     <Accordion disableGutters sx={{ "&:before": { display: "none" } }}>
       <AccordionSummary expandIcon={<ChevronDown size={18} />}>
@@ -372,6 +433,19 @@ function OperationRow({ op }: { op: Operation }) {
           >
             {op.name}
           </Typography>
+          <ProtectionTag protection={op.protection} />
+          {grants && (
+            // `title` carries the full line, since the row truncates it.
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              title={grants}
+              sx={{ maxWidth: 260, flexShrink: 0 }}
+              noWrap
+            >
+              {grants}
+            </Typography>
+          )}
         </Box>
       </AccordionSummary>
       <AccordionDetails>
@@ -406,7 +480,7 @@ function OperationRow({ op }: { op: Operation }) {
 }
 
 // ── Tag section ──────────────────────────────────────────────────────────────
-function TagSectionView({ section }: { section: TagSection }) {
+function TagSectionView({ section, roles }: { section: TagSection; roles: ScopeRoles | undefined }) {
   return (
     <Box component="section" sx={{ mb: 4 }}>
       <Typography variant="h6" sx={{ fontWeight: 700 }}>
@@ -419,7 +493,7 @@ function TagSectionView({ section }: { section: TagSection }) {
       )}
       <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1, overflow: "hidden" }}>
         {section.endpoints.map((ep) => (
-          <OperationRow key={ep.id} op={ep} />
+          <OperationRow key={ep.id} op={ep} roles={roles} />
         ))}
       </Box>
     </Box>
@@ -468,12 +542,48 @@ function SchemasSection({ schemas }: { schemas: Record<string, Schema> }) {
 }
 
 // ── Public component ─────────────────────────────────────────────────────────
+/**
+ * Who may reach an operation, resolved by the caller from the permission
+ * catalog (`specs/design/security.json`): scope handle → the roles that grant
+ * it. The view resolves nothing itself — it holds the contract, not the
+ * catalog — so an unmapped handle simply shows no roles.
+ *
+ * A plain array is the common case (`{ "claims:read": ["Employee", "Approver"] }`).
+ * The object form adds the qualifier the Security page shows beside a grant,
+ * e.g. `{ roles: ["Employee", "Approver"], note: "own rows" }` renders as
+ * "Employee, Approver · own rows".
+ */
+export interface ScopeGrant {
+  roles: string[];
+  note?: string;
+}
+
+export type ScopeRoles = Record<string, string[] | ScopeGrant>;
+
 export interface OpenApiViewProps {
   /** Raw OpenAPI YAML or JSON text. */
   spec: string;
+  /**
+   * Optional: scope handle → the roles that grant it. When given, every row
+   * names who may reach it — the granting roles beside a scope handle, and the
+   * fixed copy for the public and signed-in states. Absent, the view renders
+   * exactly as it did before, protection pill included.
+   */
+  roles?: ScopeRoles | undefined;
+  /**
+   * Optional: the resource server every scope on this contract belongs to —
+   * the `aud` an access token carries and the audience the gateway checks.
+   * Shown in the header, because a scope handle is only meaningful against the
+   * audience it is granted on.
+   *
+   * Read from the platform's record by the caller, never derived here: before
+   * the first Build there is no record, and a guessed URL the gateway would not
+   * accept is worse than saying nothing.
+   */
+  resourceServer?: string | undefined;
 }
 
-export function OpenApiView({ spec }: OpenApiViewProps) {
+export function OpenApiView({ spec, roles, resourceServer }: OpenApiViewProps) {
   // A STREAMED spec grows line by line; YAML's line-boundary prefixes almost
   // always parse, but the odd one doesn't (e.g. cut inside a quoted scalar).
   // Hold the last GOOD parse so a bad intermediate never flashes the error
@@ -541,6 +651,15 @@ export function OpenApiView({ spec }: OpenApiViewProps) {
             {parsed.info.version && (
               <Chip label={parsed.info.version} size="small" variant="outlined" />
             )}
+            {resourceServer && (
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ fontFamily: "monospace" }}
+              >
+                aud {resourceServer}
+              </Typography>
+            )}
           </Box>
           <Typography variant="h4" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
             {parsed.info.title}
@@ -583,7 +702,7 @@ export function OpenApiView({ spec }: OpenApiViewProps) {
         />
 
         {filtered.map((s) => (
-          <TagSectionView key={s.id} section={s} />
+          <TagSectionView key={s.id} section={s} roles={roles} />
         ))}
         {filtered.length === 0 && (
           <Typography variant="body2" color="text.secondary">

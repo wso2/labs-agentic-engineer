@@ -73,8 +73,8 @@ func APIConfigurationInstanceName(componentName, endpointName string) string {
 // wrapper only decides when to ask for it. It PANICS on a handle that is not a
 // slug — deliberately, since the result is a token audience nobody can correct
 // afterwards — so a handle that has not been through the platform's boundary
-// check yields no audience instead. An empty audience is the pre-scopes
-// behaviour (the gateway skips the `aud` check), never a wider one.
+// check yields no audience instead. An empty audience leaves the gateway's
+// `aud` check off; it never widens one.
 func ProjectAudience(orgHandle, projectHandle string) string {
 	orgHandle = strings.TrimSpace(orgHandle)
 	projectHandle = strings.TrimSpace(projectHandle)
@@ -102,12 +102,12 @@ type APIConfigurationDesired struct {
 	// cluster-configured keymanager.
 	Issuers []string
 	// Audience is the project's resource-server identifier — the `aud` every
-	// token minted for this project carries. Empty skips the audience check,
-	// which is the pre-scopes behaviour.
+	// token minted for this project carries. Empty leaves the audience
+	// unchecked.
 	Audience string
-	// Operations is the projected operation table. Empty leaves the trait's
-	// own default (six methods on `/*`) in place, which is exactly the
-	// pre-scopes behaviour: one API-level jwt-auth, no per-operation scope.
+	// Operations is the projected operation table. Empty leaves the trait's own
+	// default (six methods on `/*`) in place: one API-level jwt-auth and no
+	// per-operation scope.
 	Operations []Operation
 }
 
@@ -133,10 +133,9 @@ type APIConfigurationDesired struct {
 // `EndpointName` is the design.json-declared workload endpoint name the trait
 // binds to (it must match a key in the component's workload.yaml
 // `spec.endpoints`). An empty value defaults to spec.DefaultEndpointName
-// ("http"). This is the SINGLE point that decides the bound endpoint name — it
-// is no longer hardcoded, so a component whose workload names its endpoint
-// something other than "http" still renders (previously deploy rendering failed
-// with `workload.endpoints["http"]: no such key`).
+// ("http"). This is the SINGLE point that decides the bound endpoint name: the
+// value must match a key in the component's workload.yaml, or deploy rendering
+// fails with `workload.endpoints[…]: no such key`.
 func DesiredAPIConfigurationTrait(in APIConfigurationDesired) (traits []openchoreo.ComponentTrait, configs map[string]map[string]interface{}) {
 	endpointName := strings.TrimSpace(in.EndpointName)
 	if endpointName == "" {

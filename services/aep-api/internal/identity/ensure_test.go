@@ -707,9 +707,9 @@ func TestEnsureWritesOneRefPerUsablePlannedUser(t *testing.T) {
 		if !ok {
 			t.Fatalf("no ref for %q; got %v", name, byUser)
 		}
-		if got.RoleName != expect.RoleName || got.ColdStart != expect.ColdStart || got.Supplied != expect.Supplied {
-			t.Fatalf("ref for %q = %+v, want role=%q coldStart=%v supplied=%v",
-				name, got, expect.RoleName, expect.ColdStart, expect.Supplied)
+		if got.RoleName != expect.RoleName || got.Supplied != expect.Supplied {
+			t.Fatalf("ref for %q = %+v, want role=%q supplied=%v",
+				name, got, expect.RoleName, expect.Supplied)
 		}
 		if got.OrgID != testOrg || got.ProjectID != testProject {
 			t.Fatalf("ref for %q is scoped to %s/%s", name, got.OrgID, got.ProjectID)
@@ -829,12 +829,11 @@ func TestEnsurePublishesEveryLoginOnARebuildNotOnlyTheNewOnes(t *testing.T) {
 	}
 }
 
-// v2 has NO cold start. Signed-in operations, self-service enrolment and the
-// SPA's no-access state replace it, so no account is published as the one a
-// caller holds before anybody grants them a role. The column and the flag
-// survive on the row until the console stops reading them (phase 5); what must
-// not survive is a login being SERVED as the cold-start answer.
-func TestEnsurePublishesNoColdStartAccount(t *testing.T) {
+// Every published login is a ROLE's login. There is no cold-start account —
+// signed-in operations, self-service enrolment and the SPA's no-access state
+// replace it — so every row the gate publishes names the roles it holds and the
+// handles they grant, and a login belonging to no role is not published at all.
+func TestEnsurePublishesOnlyRoleHoldingAccounts(t *testing.T) {
 	h := newHarness(rolesJSON(t, []string{"Viewer", "Auditor"},
 		userFixture{"test-viewer", "Viewer"}, userFixture{"test-auditor", "Auditor"}))
 	result := h.run(t)
@@ -844,8 +843,8 @@ func TestEnsurePublishesNoColdStartAccount(t *testing.T) {
 		byName[c.Username] = c
 	}
 	for name, cred := range byName {
-		if cred.ColdStart {
-			t.Errorf("account %q was published as cold-start, which v2 removed: %+v", name, cred)
+		if len(cred.Roles) == 0 {
+			t.Errorf("account %q was published holding no role: %+v", name, cred)
 		}
 	}
 	viewer := byName["test-viewer"]

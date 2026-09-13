@@ -124,9 +124,8 @@ type ProjectRole struct {
 	// them, so absence here is "unknown", the same as Exists on an account.
 	Scopes []string
 	// AssignedTo are the groups holding the role, in binding order. Empty is
-	// meaningful: it is the normal shape for a self-service role (the app's
-	// registration flow assigns it per account) and for a service role (phase 6
-	// attaches an application principal).
+	// meaningful: it is the normal shape for a self-service role, whose accounts
+	// the app's own registration flow assigns.
 	AssignedTo []RoleAssignment
 }
 
@@ -134,10 +133,6 @@ type ProjectRole struct {
 // directory facts folded in.
 type TestUserState struct {
 	Username string
-	// RoleName is the role the account exists FOR — the stored reference's one
-	// role, and always Roles[0]. It is the v1 singular and is kept only while
-	// the console moves to Roles; phase 5 removes it.
-	RoleName string
 	// Roles is every project role this login holds: the one it exists for
 	// first, then any other role of this project whose group the account is
 	// also a member of. The extra ones are read from the DIRECTORY, so a role
@@ -149,9 +144,6 @@ type TestUserState struct {
 	// be asked, which is "unknown" rather than "none".
 	Scopes   []string
 	Supplied bool
-	// ColdStart is a v1 leftover carried for the wire contract and is always
-	// false — see TestUserRef.ColdStart in entities.go. Phase 5 removes it.
-	ColdStart bool
 	// Exists is presence on the directory. It is meaningless when the panel
 	// reports DirectoryAvailable false, which is exactly why that flag exists.
 	Exists bool
@@ -181,7 +173,11 @@ type PanelView struct {
 	// They are derived from the platform's own binding rows, so they survive a
 	// directory outage with everything but their Scopes.
 	ProjectRoles []ProjectRole
-	TestUsers    []TestUserState
+	// ResourceServer is the identifier this project's grants are on — the token
+	// `aud`. It is a fact about the PROJECT, not about any role, so it is
+	// answered whether or not a build has created a role yet.
+	ResourceServer string
+	TestUsers      []TestUserState
 	// DirectoryAvailable is false when the identity provider could not be
 	// reached. Roles is then empty and Exists is false throughout — neither means
 	// "absent", and the console must say so.
@@ -284,7 +280,12 @@ func (s *PanelService) View(ctx context.Context, orgID, projectID string) (Panel
 		}
 	}
 
-	projectRoles, err := s.projectRoles(ctx, scope, orgID, projectID, directory, bindings)
+	identifier, err := s.resourceServer(ctx, scope, orgID, projectID)
+	if err != nil {
+		return PanelView{}, err
+	}
+	view.ResourceServer = identifier
+	projectRoles, err := s.projectRoles(ctx, scope, projectID, identifier, directory, bindings)
 	if err != nil {
 		return PanelView{}, err
 	}
@@ -302,32 +303,32 @@ func (s *PanelService) View(ctx context.Context, orgID, projectID string) (Panel
 	return view, nil
 }
 
+// resourceServer is the identifier this project's grants are on.
+//
+// It is READ from the platform's row and DERIVED when there is none: the
+// identifier is agreed on by parties that never speak to each other (see
+// resource_server.go), so a project whose first build has not run yet is still
+// told the `aud` its tokens will carry. The row wins when it exists, because a
+// project built before the derivation changed would otherwise be described by a
+// name no token of its has.
+func (s *PanelService) resourceServer(ctx context.Context, scope Scope, orgID, projectID string) (string, error) {
+	recorded, err := s.store.GetResourceServer(ctx, scope, projectID)
+	if err != nil {
+		return "", err
+	}
+	if recorded != nil && recorded.Identifier != "" {
+		return recorded.Identifier, nil
+	}
+	return ResourceServerIdentifier(orgID, projectID), nil
+}
+
 // projectRoles folds the platform's binding rows into one entry per role of
 // this project, with the reuse count of every group it is assigned to and, when
 // the directory can be reached, what the role grants.
-//
-// The resource server is READ from the platform's row and DERIVED when there is
-// none: the identifier is agreed on by parties that never speak to each other
-// (see resource_server.go), so a project whose first build has not run yet can
-// still be told the `aud` its tokens will carry. The row wins when it exists,
-// because a project built before the derivation changed would otherwise be
-// described by a name no token of its has.
 func (s *PanelService) projectRoles(
-	ctx context.Context, scope Scope, orgID, projectID string,
+	ctx context.Context, scope Scope, projectID, identifier string,
 	directory Directory, bindings []IdPRoleBinding,
 ) ([]ProjectRole, error) {
-	if len(bindings) == 0 {
-		return nil, nil
-	}
-	identifier := ResourceServerIdentifier(orgID, projectID)
-	recorded, err := s.store.GetResourceServer(ctx, scope, projectID)
-	if err != nil {
-		return nil, err
-	}
-	if recorded != nil && recorded.Identifier != "" {
-		identifier = recorded.Identifier
-	}
-
 	// One count per GROUP, not per binding: a group two roles of this project
 	// are assigned to is one question about that group, and asking it twice
 	// would double the store reads for an identical answer.
@@ -401,8 +402,8 @@ func (s *PanelService) roleScopes(ctx context.Context, directory Directory, bind
 // union of their grants.
 //
 // The account's own role — the one the reference says it exists for — comes
-// first and is always present, so `Roles[0]` is `RoleName` whatever the
-// directory says. Everything after it is read from the account's GROUP
+// first and is always present, whatever the directory says. Everything after it
+// is read from the account's GROUP
 // memberships joined against this project's role assignments, which is how a
 // v2 account holding two roles, or one an administrator enrolled by hand,
 // becomes visible without a table that knows about it.
@@ -495,11 +496,9 @@ func (s *PanelService) rolesFromDirectory(ctx context.Context, target Target) ([
 // referencing counts.
 func (s *PanelService) testUserState(ctx context.Context, scope Scope, ref TestUserRef, exists bool) (TestUserState, error) {
 	state := TestUserState{
-		Username:  ref.Username,
-		RoleName:  ref.RoleName,
-		Supplied:  ref.Supplied,
-		ColdStart: ref.ColdStart,
-		Exists:    exists,
+		Username: ref.Username,
+		Supplied: ref.Supplied,
+		Exists:   exists,
 	}
 	owned, err := s.store.GetTestUser(ctx, scope, ref.Username)
 	if err != nil {

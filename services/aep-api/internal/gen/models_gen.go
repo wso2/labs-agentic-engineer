@@ -2217,7 +2217,7 @@ type ProjectRole struct {
 	// Name The role as the design declares it (`Approver`), which is what a test user reference names and what the console renders.
 	Name string `json:"name"`
 
-	// ResourceServer The resource server identifier every grant of this role is on, which is the access token's `aud`, the audience the gateway checks and the `resource` a scoped token is asked for. Read from the platform's record, or derived from (org, project) when the project has no record yet.
+	// ResourceServer The resource server identifier every grant of this role is on. Every role of one project carries the same value, so a reader that wants the project's answer - and wants it before any role exists - reads `resourceServer` on the view instead.
 	ResourceServer string `json:"resourceServer"`
 
 	// Scopes The catalog handles the role grants, read from the identity provider and sorted. Empty when the directory could not be asked - "unknown", not "grants nothing".
@@ -2259,6 +2259,9 @@ type ProjectRolesView struct {
 	// ProjectRoles The roles THIS project owns, which `roles` above deliberately does not contain - the two are different kinds of object with different ownership rules, and one list would make "which existing group does this design reuse" unanswerable. Derived from the platform's own records, so they survive a directory outage with everything but their scopes.
 	ProjectRoles []ProjectRole `json:"projectRoles,omitempty"`
 
+	// ResourceServer The resource server this project's grants are on - the access token's `aud`, the audience the gateway checks and the `resource` a scoped token is asked for. Read from the platform's record, or derived from (org, project) when no build has written one, so it answers before the first build too. Absent only when the panel could not be scoped to an environment at all, which is the same condition that empties every other field.
+	ResourceServer string `json:"resourceServer,omitempty"`
+
 	// Roles The WHOLE directory catalog, name-ordered — not just this project's roles. Roles are shared, so the panel shows which existing role a design reuses. Empty when directoryAvailable is false.
 	Roles []ProjectRoleState `json:"roles,omitempty"`
 
@@ -2299,9 +2302,6 @@ type ProjectStatus struct {
 
 // ProjectTestUserState One test account this project references. The account itself is shared at the identity provider's scope; only the reference is the project's.
 type ProjectTestUserState struct {
-	// ColdStart DEPRECATED: always false, and removed in scopes phase 5. Version 1 served a cold-start account when a caller asked for credentials without naming a role; version 2 has none, because signed-in operations and self-service enrolment replaced it.
-	ColdStart bool `json:"coldStart"`
-
 	// Exists True when the account is present on the identity provider. Meaningless when directoryAvailable is false.
 	Exists bool `json:"exists"`
 
@@ -2314,10 +2314,7 @@ type ProjectTestUserState struct {
 	// ReferencingProjects THIS ORG's projects that reference the account. Never another org's — a project name is one org's data, and the shared directory does not license disclosing it.
 	ReferencingProjects []string `json:"referencingProjects,omitempty"`
 
-	// RoleName DEPRECATED: = roles[0]; removed in scopes phase 5. The role the account exists FOR. Version 2 lets one account hold several, so read `roles`.
-	RoleName string `json:"roleName"`
-
-	// Roles Every project role this login holds - the one it exists for first (so roles[0] is roleName), then any other role of this project whose group the account is also a member of, read from the identity provider. Empty only when the account references no role at all.
+	// Roles Every project role this login holds - the one the account exists FOR first, then any other role of this project whose group the account is also a member of, read from the identity provider. Empty only when the account references no role at all.
 	Roles []string `json:"roles,omitempty"`
 
 	// RotatedAt When the password was last replaced; null when never.

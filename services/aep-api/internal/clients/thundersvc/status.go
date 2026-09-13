@@ -63,9 +63,8 @@ func IsAuthError(err error) bool {
 // -- Thunder error codes ------------------------------------------------------
 
 // The failures the resource-server / role surface has to branch on. Each is the
-// sentinel for one Thunder error code, observed live against ThunderID 1.0.0
-// (docs/design/draft/spikes/P1.md) and declared in the v1.0.0 `resource.yaml` /
-// `role.yaml` contracts. Everything else stays an opaque error carrying the
+// sentinel for one Thunder error code, observed live against ThunderID 1.0.0 and
+// declared in the v1.0.0 `resource.yaml` / `role.yaml` contracts. Everything else stays an opaque error carrying the
 // status and the body.
 var (
 	// ErrIdentifierConflict — 409 RES-1013: another resource server already
@@ -79,12 +78,12 @@ var (
 
 	// ErrHandleConflict — 409 RES-1014: a resource or action with this handle
 	// already exists under the same PARENT. Uniqueness is per parent, not per
-	// resource server: `claims:read` and `reports:read` coexist (P1 §1).
+	// resource server: `claims:read` and `reports:read` coexist.
 	ErrHandleConflict = errors.New("thunder: handle already in use under this parent")
 
 	// ErrHasDependencies — 400 RES-1006: the resource server or resource still
-	// has children. The delete order is actions → resources → resource server
-	// (P1 §7); roles are NOT the dependency. DeleteResourceServerCascade walks it.
+	// has children. The delete order is actions → resources → resource server;
+	// roles are NOT the dependency. DeleteResourceServerCascade walks it.
 	ErrHasDependencies = errors.New("thunder: object still has dependencies")
 
 	// ErrRoleNameConflict — 409 ROL-1004: a role with this name already exists
@@ -99,7 +98,7 @@ var (
 	// ErrGrantNotPermitted — 403 SAZ-4030: the write would grant a permission
 	// the caller does not itself hold. It has never been observed for the
 	// platform's system client, whose `system` scope on the System resource
-	// server bypasses the check (P1 §2) — it is mapped so that if it ever does
+	// server bypasses the check — it is mapped so that if it ever does
 	// fire, the failure is named rather than guessed at. There is no fallback.
 	//
 	// It is a 403, so IsAuthError also answers true for it. That is deliberate:

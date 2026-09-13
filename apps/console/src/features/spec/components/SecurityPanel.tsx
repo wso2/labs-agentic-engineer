@@ -17,34 +17,61 @@
  */
 
 /**
- * Spec → Security: one scroll over `security.json` v2 — the permission
- * catalog, the roles that grant from it, the screens each handle opens, and
- * the test users. Read-only; the design agent writes the document in chat.
+ * Spec → Security: one scroll over `security.json` v2.
  *
- * This is the INTERIM v2 rendering: the same visual language the v1 panel had,
- * reading the fields v2 actually has. The permission matrix, the grant toggle
- * and the live cross-project counts are a later phase — nothing here writes.
+ * The page is the permission MATRIX first — every handle the project declares
+ * against every role a person can hold — and then a card per role for the
+ * things a grid cannot say: what the role is for, who signs in as it, and which
+ * org groups carry it.
+ *
+ * It is the console's first WRITE into a spec room. One cell is one edit: the
+ * room's CURRENT text is patched (`patchGrants`) inside the write itself, and
+ * the room echoes the result back as a new `securityJson`. Nothing is held
+ * optimistically — there is no second copy of the truth to reconcile, and a
+ * write that the room refuses simply never arrives.
+ *
+ * Everything else on the page stays read-only. Adding a resource, an action or
+ * a role touches `openapi.yaml` and `wireframes.dsl` too, so it is a design
+ * conversation; the page says so where a reader would look for the control.
  */
 
-import { useMemo, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import {
   Alert,
   AlertTitle,
   Box,
-  Chip,
   CircularProgress,
-  Divider,
   Stack,
-  Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
 
-import type { ProjectRolesLiveState } from "../api/roles";
+import {
+  securityReferenceFindings,
+  type SecurityReferenceContext,
+} from "@aep/agent-stream";
+
+import type { components } from "../../../generated/aep-api";
+import { componentsWithoutSignIn } from "../../projects/lib/signInlessComponents";
+import { resourceServerOf, type ProjectRolesLiveState } from "../api/roles";
 import {
   parseSecurityDesign,
-  plannedUsersFor,
+  securityMatrix,
   type SecurityDesign,
 } from "../api/securityDesign";
+import { baselineOperations } from "../lib/baselineOperations";
+import { patchGrants, type PatchFailure } from "../lib/patchGrants";
+import { routeFindings } from "../lib/securityFindings";
+import {
+  GroupsBlock,
+  RolesIntro,
+  ScreensBlock,
+} from "./security/DocumentSections";
+import { PermissionMatrix } from "./security/PermissionMatrix";
+import { RoleCard } from "./security/RoleCard";
+
+/** Why the cells are read-only when the room is not holding this file. */
+const NO_ROOM_REASON =
+  "Grants are edited in the live document. This page is showing the last committed copy, so cells are read-only until the collaborative room has the file.";
 
 export interface SecurityPanelProps {
   /** Live `security.json` text — from the room, or the committed fallback. */
@@ -54,7 +81,33 @@ export interface SecurityPanelProps {
   isPending?: boolean;
   /** Committed-blob read failed. */
   isError?: boolean;
+  /**
+   * The sibling spec files, for the rules that are about this document AND
+   * another one. Absent is normal mid-design: those rules are then skipped in
+   * silence rather than reported as failures.
+   */
+  references?: SecurityReferenceContext | undefined;
+  /** True when the collab room holds this file and can take a write. */
+  roomLive?: boolean;
+  /**
+   * Edit the document in the room. The updater is handed the room's text AS IT
+   * IS NOW and returns the next whole document, or `null` to write nothing —
+   * so the patch is computed against the text the diff is applied to, never
+   * against the text of a render the agent has since overtaken.
+   */
+  writeSecurityJson?:
+    | ((update: (current: string) => string | null) => void)
+    | undefined;
+  /**
+   * Every component's declared dependencies, from the Spec view's own
+   * design-dependencies read. `undefined` while that read is in flight or after
+   * it failed — the "open to everyone" row is then omitted rather than claiming
+   * that every component provisions sign-in.
+   */
+  dependencies?: ComponentDependencies[] | undefined;
 }
+
+type ComponentDependencies = components["schemas"]["ComponentDependencies"];
 
 function Centered({ children }: { children: ReactNode }) {
   return (
@@ -76,6 +129,10 @@ export function SecurityPanel({
   live,
   isPending = false,
   isError = false,
+  references,
+  roomLive = false,
+  writeSecurityJson,
+  dependencies,
 }: SecurityPanelProps) {
   const parsed = useMemo(() => parseSecurityDesign(securityJson), [securityJson]);
 
@@ -104,17 +161,144 @@ export function SecurityPanel({
       </Box>
     );
   }
+  // A document that does not parse costs the reader the WARNINGS too, and those
+  // are the half a reader cannot see for themselves — so both states say so,
+  // and say which one it is: waiting is not the same as broken.
+  if (parsed.kind === "unfinished") {
+    return (
+      <Box sx={{ p: 3 }}>
+        <Alert severity="info">
+          <AlertTitle>This Security document is still being written</AlertTitle>
+          It stops mid-way, so there is nothing to show yet — including the
+          warnings this page raises about it. They appear as soon as the design
+          agent finishes writing.
+        </Alert>
+      </Box>
+    );
+  }
   if (parsed.kind === "invalid") {
     return (
       <Box sx={{ p: 3 }}>
         <Alert severity="error">
-          Couldn&apos;t read the Security document: {parsed.message}
+          <AlertTitle>Couldn&apos;t read the Security document</AlertTitle>
+          <Typography variant="body2" sx={{ mb: 1 }}>
+            {parsed.message}
+          </Typography>
+          <Typography variant="body2">
+            Nothing on this page was checked — the warnings it raises are worked
+            out from the document, so one it cannot read gets none. Ask in chat
+            to have it fixed.
+          </Typography>
         </Alert>
       </Box>
     );
   }
 
-  const { doc } = parsed;
+  return (
+    <SecurityDocument
+      doc={parsed.doc}
+      text={securityJson ?? ""}
+      live={live}
+      references={references}
+      roomLive={roomLive}
+      writeSecurityJson={writeSecurityJson}
+      dependencies={dependencies}
+    />
+  );
+}
+
+/**
+ * The page once the document reads. Split from `SecurityPanel` so the hooks
+ * below run against a document that exists — the parse decides between five
+ * renderings, and a hook cannot live behind that decision.
+ */
+function SecurityDocument({
+  doc,
+  text,
+  live,
+  references,
+  roomLive,
+  writeSecurityJson,
+  dependencies,
+}: {
+  doc: SecurityDesign;
+  text: string;
+  live: ProjectRolesLiveState | undefined;
+  references: SecurityReferenceContext | undefined;
+  roomLive: boolean;
+  writeSecurityJson:
+    | ((update: (current: string) => string | null) => void)
+    | undefined;
+  dependencies: ComponentDependencies[] | undefined;
+}) {
+  // The failure is stamped with the document it was raised against, so it
+  // clears itself the moment the page catches up: a banner saying the document
+  // could not be read is about ONE text, and leaving it on screen after the
+  // room delivered a newer one reports a problem that is no longer there.
+  const [failure, setFailure] = useState<{
+    at: string;
+    failure: PatchFailure;
+  } | null>(null);
+  if (failure !== null && failure.at !== text) setFailure(null);
+
+  const matrix = useMemo(() => securityMatrix(doc), [doc]);
+  const findings = useMemo(
+    () => securityReferenceFindings(doc, references),
+    [doc, references],
+  );
+  const routed = useMemo(() => {
+    const rows = new Set(
+      matrix.groups.flatMap((group) => group.rows.map((row) => row.handle)),
+    );
+    return routeFindings(findings, rows);
+  }, [findings, matrix]);
+
+  const baseline = useMemo(() => {
+    const operations = baselineOperations(
+      matrix.groups.map((group) => group.component),
+      references,
+    );
+    return {
+      signedIn: [
+        ...operations.signedIn,
+        ...matrix.baseline.signedInScreens.map(screenLine),
+      ],
+      open: [
+        ...operations.open,
+        ...matrix.baseline.publicScreens.map(screenLine),
+      ],
+      // Derived from the architecture, never authored — see
+      // `signInlessComponents` for why that is the only honest source.
+      openComponents: dependencies
+        ? componentsWithoutSignIn(dependencies)
+        : null,
+    };
+  }, [matrix, references, dependencies]);
+
+  // Editability is asked ONCE. `writer` is the writer only when the room can
+  // actually take the write, so the cells and the handler cannot disagree
+  // about whether a click does anything.
+  const writer = roomLive ? writeSecurityJson : undefined;
+
+  const onToggleGrant = useCallback(
+    (role: string, handle: string, next: boolean) => {
+      if (!writer) return;
+      // The patch runs INSIDE the write, on the room's current text — see
+      // `useSecurityEntry`'s `writeSecurityJson` for why the rendered copy is
+      // not good enough.
+      writer((current) => {
+        const result = patchGrants(current, role, handle, next);
+        if (!result.ok) {
+          setFailure({ at: text, failure: result.failure });
+          return null;
+        }
+        setFailure(null);
+        return result.text;
+      });
+    },
+    [text, writer],
+  );
+
   return (
     <Box sx={{ p: 3, overflow: "auto", height: "100%" }}>
       <Stack spacing={3}>
@@ -126,17 +310,94 @@ export function SecurityPanel({
             What this project protects, what each role may do with it, and the
             accounts the validation agent signs in with.
           </Typography>
+          <ResourceServerLine live={live} />
         </Box>
-        <PermissionsBlock doc={doc} />
+
+        {failure && <PatchFailureAlert failure={failure.failure} />}
+
+        <PermissionMatrix
+          matrix={matrix}
+          baseline={baseline}
+          findings={routed}
+          readOnlyReason={writer ? undefined : NO_ROOM_REASON}
+          onToggleGrant={onToggleGrant}
+        />
+
         <GroupsBlock doc={doc} />
         <RolesIntro />
         <DisposableWarning />
         {doc.roles.map((role) => (
-          <RoleCard key={role.name} doc={doc} role={role} live={live} />
+          <RoleCard
+            key={role.name}
+            doc={doc}
+            role={role}
+            live={live}
+            findings={routed.byRole.get(role.name.toLowerCase()) ?? []}
+          />
         ))}
         <ScreensBlock doc={doc} />
       </Stack>
     </Box>
+  );
+}
+
+/**
+ * The resource server every grant of this project's roles is on — the access
+ * token's `aud`, the audience the gateway checks, and the `resource` a scoped
+ * token is asked for. One project has exactly one, so the first role's answer
+ * is the project's.
+ *
+ * It is read from the platform's record rather than derived here: the console
+ * guessing a URL that the gateway then does not accept would be worse than
+ * saying nothing, and before the first Build there is no record to read.
+ */
+function ResourceServerLine({
+  live,
+}: {
+  live: ProjectRolesLiveState | undefined;
+}) {
+  const resourceServer = resourceServerOf(live);
+  if (!resourceServer) return null;
+  return (
+    <Stack direction="row" spacing={1} alignItems="baseline" sx={{ mt: 0.5 }}>
+      <Typography variant="caption" color="text.secondary">
+        Resource server
+      </Typography>
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{ fontFamily: "monospace" }}
+      >
+        {resourceServer}
+      </Typography>
+    </Stack>
+  );
+}
+
+/** One baseline screen, as the design writes it: `screen Find a slot (booking-site)`. */
+function screenLine(entry: { component: string; screen: string }): string {
+  return `screen ${entry.screen} (${entry.component})`;
+}
+
+/**
+ * A toggle that could not be applied: the document and the rendered matrix
+ * disagree (someone edited the room mid-click, or the text is not what it was
+ * parsed as), or the edit would produce a document the schema refuses. Either
+ * way the honest answer is to say so and leave the document alone rather than
+ * write a guess.
+ *
+ * It is shown only while the document it was raised against is still the one on
+ * screen — see the stamp on the state above.
+ */
+function PatchFailureAlert({ failure }: { failure: PatchFailure }) {
+  return (
+    <Alert severity="error">
+      {failure.kind === "no-such-role"
+        ? `Couldn't change that grant: the document no longer has a role called "${failure.role}". It may have been edited in chat — the page will catch up.`
+        : failure.kind === "last-grant"
+          ? `Couldn't clear that grant: every role must grant at least one permission, and that is all "${failure.role}" has left. Grant it something else first, or ask in chat to remove the role.`
+          : `Couldn't change that grant: the document could not be read (${failure.message}).`}
+    </Alert>
   );
 }
 
@@ -150,339 +411,5 @@ function DisposableWarning() {
       what that role can actually do. Usernames live here; passwords are shown
       on Deploy after Build publishes them — never name a real person.
     </Alert>
-  );
-}
-
-/** What rows an action reaches, said in words. */
-function ownershipLabel(ownership: SecurityDesign["permissions"][number]["actions"][number]["ownership"]) {
-  return ownership === "own" ? "own rows" : "any row";
-}
-
-function PermissionsBlock({ doc }: { doc: SecurityDesign }) {
-  return (
-    <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1, p: 2 }}>
-      <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 0.5 }}>
-        Permissions
-      </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-        Everything this project protects. A role grants these by name, and the
-        API asks for them by name — nothing else is a permission.
-      </Typography>
-      <Stack spacing={1.5}>
-        {doc.permissions.map((permission) => (
-          <Box key={permission.resource}>
-            <Stack direction="row" spacing={1} alignItems="baseline">
-              <Typography variant="body2" sx={{ fontFamily: "monospace" }}>
-                {permission.resource}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                owned by {permission.component}
-              </Typography>
-            </Stack>
-            {permission.description && (
-              <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
-                {permission.description}
-              </Typography>
-            )}
-            <Stack spacing={0.25} sx={{ mt: 0.5 }}>
-              {permission.actions.map((action) => (
-                <Stack
-                  key={action.handle}
-                  direction="row"
-                  spacing={1}
-                  alignItems="center"
-                >
-                  <Typography variant="body2" sx={{ fontFamily: "monospace" }}>
-                    {permission.resource}:{action.handle}
-                  </Typography>
-                  <Chip
-                    size="small"
-                    variant="outlined"
-                    label={ownershipLabel(action.ownership)}
-                  />
-                  {action.description && (
-                    <Typography variant="body2" color="text.secondary">
-                      {action.description}
-                    </Typography>
-                  )}
-                </Stack>
-              ))}
-            </Stack>
-          </Box>
-        ))}
-      </Stack>
-    </Box>
-  );
-}
-
-/**
- * Only the groups this project INTRODUCES. A role may be assigned to a group
- * the org already has; that one is named on the role, not declared here.
- */
-function GroupsBlock({ doc }: { doc: SecurityDesign }) {
-  if (doc.groups.length === 0) return null;
-  return (
-    <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1, p: 2 }}>
-      <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 0.5 }}>
-        New org groups
-      </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-        Groups this project adds to the organisation directory at Build. They
-        are shared — other projects can assign roles to them too.
-      </Typography>
-      <Stack spacing={0.5}>
-        {doc.groups.map((group) => (
-          <Typography key={group.name} variant="body2">
-            <Box component="span" sx={{ fontWeight: 600 }}>
-              {group.name}
-            </Box>
-            {" — "}
-            {group.description}
-          </Typography>
-        ))}
-      </Stack>
-    </Box>
-  );
-}
-
-function RolesIntro() {
-  return (
-    <Box>
-      <Typography variant="h5" sx={{ mb: 0.5 }}>
-        Roles &amp; users
-      </Typography>
-      <Typography variant="body2" color="text.secondary">
-        These roles are created on the platform identity provider when you
-        click Build — the same directory every project shares, so a role
-        another project already uses is reused rather than duplicated.
-      </Typography>
-    </Box>
-  );
-}
-
-/** One line saying how a person comes to hold this role. */
-function enrolmentLine(role: SecurityDesign["roles"][number]): string {
-  if (role.kind === "service") {
-    return "Held by a service, not by a person.";
-  }
-  if (role.enrolment === "self-service") {
-    return "Self-service — the application assigns it when an account is created.";
-  }
-  const groups = role.assignTo ?? [];
-  return groups.length > 0
-    ? `Assigned to everyone in ${groups.join(", ")}.`
-    : "Assigned by an administrator.";
-}
-
-/**
- * One directory chip: an `assignTo` GROUP of this role, judged against the
- * catalog the BFF returns.
- *
- * The live half is a group catalog, never a role catalog — a project role is
- * not an object on the directory, it reaches the app through the groups it is
- * assigned to. So the chip is per assignTo group, and a role with no assignTo
- * (a service role, a self-service one) gets none: there is nothing about it for
- * the directory to already hold.
- */
-interface GroupStatus {
-  group: string;
-  label: string;
-  color: "info" | "success" | "warning";
-  why: string;
-}
-
-function groupStatuses(
-  role: SecurityDesign["roles"][number],
-  live: ProjectRolesLiveState | undefined,
-): GroupStatus[] {
-  if (!live?.directoryAvailable) return [];
-  return (role.assignTo ?? []).map((group) => {
-    const liveGroup = live.roles.find(
-      (r) => r.name.toLowerCase() === group.toLowerCase(),
-    );
-    const members =
-      (liveGroup?.memberCount ?? 0) > 0
-        ? ` ${liveGroup?.memberCount} ${liveGroup?.memberCount === 1 ? "member" : "members"} today.`
-        : "";
-    if (!liveGroup) {
-      return {
-        group,
-        label: "New at Build",
-        color: "info" as const,
-        why: `${group} does not exist on the identity provider yet — Build creates it.`,
-      };
-    }
-    if (liveGroup.platformCreated) {
-      return {
-        group,
-        label: "Reused",
-        color: "success" as const,
-        why: `${group} is already on the identity provider, created by the platform.${members}`,
-      };
-    }
-    return {
-      group,
-      label: "Not ours",
-      color: "warning" as const,
-      why: `This group already exists and the platform did not create it, so it will be left alone.${members}`,
-    };
-  });
-}
-
-function RoleCard({
-  doc,
-  role,
-  live,
-}: {
-  doc: SecurityDesign;
-  role: SecurityDesign["roles"][number];
-  live: ProjectRolesLiveState | undefined;
-}) {
-  const statuses = groupStatuses(role, live);
-  const planned = plannedUsersFor(doc, role.name);
-  const describeHandle = useHandleDescriptions(doc);
-
-  return (
-    <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1, p: 2 }}>
-      <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
-        <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-          {role.name}
-        </Typography>
-        {role.kind === "service" && (
-          <Chip size="small" variant="outlined" label="Service" />
-        )}
-        {statuses.map((status) => (
-          <Tooltip key={status.group} title={status.why}>
-            <Chip
-              size="small"
-              color={status.color}
-              label={`${status.group}: ${status.label}`}
-            />
-          </Tooltip>
-        ))}
-      </Stack>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
-        {role.description}
-      </Typography>
-      <Typography
-        variant="caption"
-        color="text.secondary"
-        sx={{ display: "block" }}
-      >
-        {enrolmentLine(role)}
-      </Typography>
-      {role.assignableBy && role.assignableBy.length > 0 && (
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          sx={{ display: "block" }}
-        >
-          Handed out by {role.assignableBy.join(", ")}.
-        </Typography>
-      )}
-      <Stack spacing={0.25} sx={{ mt: 1.5, mb: 1.5 }}>
-        {role.grants.map((handle) => (
-          <Stack key={handle} direction="row" spacing={1} alignItems="center">
-            <Typography variant="body2" sx={{ fontFamily: "monospace" }}>
-              {handle}
-            </Typography>
-            {describeHandle(handle) && (
-              <Typography variant="body2" color="text.secondary">
-                {describeHandle(handle)}
-              </Typography>
-            )}
-          </Stack>
-        ))}
-      </Stack>
-      <Divider sx={{ mb: 1 }} />
-      <Typography variant="overline" color="text.secondary">
-        Test users
-      </Typography>
-      <Stack spacing={0.5} sx={{ mt: 0.5 }}>
-        {planned.map((u) => (
-          <Stack
-            key={u.username}
-            direction="row"
-            spacing={1}
-            alignItems="center"
-          >
-            <Typography variant="body2" sx={{ fontFamily: "monospace" }}>
-              {u.username}
-            </Typography>
-            {u.supplied && (
-              <Tooltip title="You didn't name a test user for this role, so the platform will use this name.">
-                <Chip
-                  size="small"
-                  variant="outlined"
-                  label="Platform-supplied"
-                />
-              </Tooltip>
-            )}
-          </Stack>
-        ))}
-      </Stack>
-    </Box>
-  );
-}
-
-/**
- * A grant is a bare handle; the sentence beside it comes from the catalog entry
- * it names. Absent when the action carries no description — never invented.
- */
-function useHandleDescriptions(doc: SecurityDesign) {
-  const byHandle = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const permission of doc.permissions) {
-      for (const action of permission.actions) {
-        if (action.description) {
-          map.set(`${permission.resource}:${action.handle}`, action.description);
-        }
-      }
-    }
-    return map;
-  }, [doc]);
-  return (handle: string) => byHandle.get(handle);
-}
-
-/** What a caller must hold to reach each screen the wireframes declare. */
-function ScreensBlock({ doc }: { doc: SecurityDesign }) {
-  if (doc.screens.length === 0) return null;
-  return (
-    <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1, p: 2 }}>
-      <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 0.5 }}>
-        Screens
-      </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-        What a person must hold to reach each screen.
-      </Typography>
-      <Stack spacing={0.5}>
-        {doc.screens.map((screen) => (
-          <Stack
-            key={`${screen.component}:${screen.screen}`}
-            direction="row"
-            spacing={1}
-            alignItems="center"
-          >
-            <Typography variant="body2">{screen.screen}</Typography>
-            <Typography variant="caption" color="text.secondary">
-              {screen.component}
-            </Typography>
-            {screen.requires === null ? (
-              <Typography variant="body2" color="text.secondary">
-                Any signed-in person
-              </Typography>
-            ) : screen.requires === "public" ? (
-              <Typography variant="body2" color="text.secondary">
-                Open to everyone, no sign-in
-              </Typography>
-            ) : (
-              <Typography variant="body2" sx={{ fontFamily: "monospace" }}>
-                {screen.requires}
-              </Typography>
-            )}
-          </Stack>
-        ))}
-      </Stack>
-    </Box>
   );
 }

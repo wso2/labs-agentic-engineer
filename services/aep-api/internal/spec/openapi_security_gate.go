@@ -18,57 +18,28 @@ package spec
 
 // openapi_security_gate.go — the SECURITY half of a component openapi.yaml's
 // gate, the platform-side twin of packages/agent-stream/src/openapi-security.ts.
-//
 // The structural half (`openapi: 3.x`, has paths, parses) is owned elsewhere:
-// the agent's `checkOpenapiSpec` upstream, `NormalizeOpenAPIYAML` here. This
-// file judges the document against the two files that give its `security` block
-// meaning:
+// the agent's `checkOpenapiSpec` upstream, `NormalizeOpenAPIYAML` here. What the
+// rules are, which siblings give a `security` block its meaning, and why the
+// platform mirrors the agent's gate at all are in README.md, "A component
+// openapi.yaml is judged against its two siblings".
 //
-//   - the component's design.json — whether the component sits behind end-user
-//     sign-in at all;
-//   - specs/design/security.json — the permission catalog. Operations REFERENCE
-//     handles; they never define them, and a handle whose resource another
-//     component owns is that component's to enforce.
+// Two constraints the code below cannot state for itself:
 //
-// Why it is worth mirroring rather than trusting the agent's write gate: every
-// rule here is a SILENT failure downstream. A scope the catalog does not
-// declare is a scope the identity provider never puts on a token, so every call
-// 401s at the gateway and the SPA restarts sign-in — an infinite login loop with
-// nothing in any log. An OIDC scope emitted as an API scope (`openid`,
-// `profile`, `email`, `group`, `ou`) is worse: the operation looks guarded and
-// admits every signed-in account in the org. `X-User-Id` declared
-// `required: true` makes the generated server answer 400 from the parameter
-// binder before the auth middleware runs, so the design's "no identity → 401"
-// is unreachable.
+//   - Rule ORDER is part of the contract. Both gates must name the SAME first
+//     violation of one document, or a model fixing one refusal meets a different
+//     one from the other side and the two read as two rule sets. The order here
+//     is the TypeScript order, and the document is read in DOCUMENT order
+//     (yaml.Node, never a Go map — random iteration would make the first
+//     violation of a two-defect document a coin toss).
 //
-// # Rule ORDER is part of the contract
-//
-// Both gates must name the SAME first violation for the same document, or the
-// model fixing one refusal meets a different one from the other side and the
-// two gates read as two rule sets. So the order below is the TypeScript order,
-// and the document is read in DOCUMENT order (yaml.Node, not a Go map) — a map's
-// random iteration would make the first violation of a two-defect document a
-// coin toss.
-//
-// # The one deliberate divergence: how "protected" is decided
-//
-// The agent bundle keys protectedness on the LITERAL resourceType `thunder-app`
-// in the component's design.json dependencies. The platform must not: ADR-0007
-// says membership is the resource catalog's `aep.wso2.com/role: end-user-auth`
-// CRT marker, never a hardcoded type name, so a new sign-in flavour is a cluster
-// install rather than an app-factory release. derive_auth.go resolves that
-// marker at design-save and stamps its consequence —
-// `exposesAPI.auth = end-user-required` — into the committed design.json, which
-// is what this gate reads (the same committed-truth signal build_gate.go's
-// hasEndUserSignIn uses, and the reason neither gate needs a cluster round-trip).
-//
-// PARITY GAP, recorded rather than papered over: a sign-in CRT that is renamed
-// or aliased (any labelled type that is not literally `thunder-app`) is seen as
-// PROTECTED here and UNPROTECTED by the agent's gate. The agent would then
-// refuse the oauth2 scheme this gate requires, and the component could not be
-// written at all. Closing it means teaching the agent bundle the marker instead
-// of the name — it needs a catalog read the FileBundle does not have today, so
-// it is a task for the phase that gives the bundle a platform fact channel.
+//   - PARITY GAP, recorded rather than papered over: the agent's bundle keys
+//     protectedness on the literal `thunder-app` resourceType while this gate
+//     reads the committed consequence of the CRT role marker (ADR-0007), so a
+//     renamed or aliased sign-in CRT is PROTECTED here and UNPROTECTED there —
+//     and the component then cannot be written at all. Closing it means teaching
+//     the agent bundle the marker, which needs a catalog read the FileBundle
+//     does not have.
 
 import (
 	"encoding/json"
@@ -566,7 +537,7 @@ func checkProtectedComponent(
 }
 
 // checkOperationSecurity accepts absent, `[]`, or ONE requirement object naming
-// oauth2 with at most one scope (decision B1).
+// oauth2 with at most one scope — one scope per operation, ADR-0030.
 //
 // The structural half is operationRequirement (openapi_operations.go) — the
 // SAME classifier the gateway projection reads the block with, so a document

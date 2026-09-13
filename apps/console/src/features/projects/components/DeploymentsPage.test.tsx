@@ -812,8 +812,7 @@ describe("DeploymentsPage — Test users", () => {
     mockTestUsers = [
       {
         username: "test-viewer",
-        roleName: "Viewer",
-        coldStart: true,
+        roles: ["Viewer"],
         exists: true,
         owned: true,
         supplied: false,
@@ -863,8 +862,7 @@ describe("DeploymentsPage — Test users", () => {
     mockTestUsers = [
       {
         username: "test-viewer",
-        roleName: "Viewer",
-        coldStart: true,
+        roles: ["Viewer"],
         exists: false,
         owned: false,
         supplied: false,
@@ -894,8 +892,7 @@ describe("DeploymentsPage — Test users", () => {
     mockTestUsers = [
       {
         username: "test-viewer",
-        roleName: "Viewer",
-        coldStart: true,
+        roles: ["Viewer"],
         exists: true,
         owned: true,
         supplied: false,
@@ -950,8 +947,7 @@ describe("DeploymentsPage — Test users", () => {
     mockTestUsers = [
       {
         username: "test-viewer",
-        roleName: "Viewer",
-        coldStart: true,
+        roles: ["Viewer"],
         exists: true,
         owned: true,
         supplied: false,

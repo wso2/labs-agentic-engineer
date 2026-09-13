@@ -40,7 +40,7 @@ import (
 // role-gated criterion `not_run`, with nothing anywhere saying why.
 func TestToGateCredentialsCarriesEveryField(t *testing.T) {
 	got := toGateCredentials([]identity.Credential{
-		{Username: "test-team-member", Password: "Aep1!alpha", Roles: []string{"Team Member"}, Scopes: []string{"claims:read"}, ColdStart: true},
+		{Username: "test-team-member", Password: "Aep1!alpha", Roles: []string{"Team Member"}, Scopes: []string{"claims:read"}},
 		{Username: "test-trainer", Password: "Aep1!beta", Roles: []string{"Trainer"}},
 	})
 
@@ -60,17 +60,6 @@ func TestToGateCredentialsCarriesEveryField(t *testing.T) {
 	// all. Dropping it publishes a row that reads as a login with no permissions.
 	if len(got[0].Scopes) != 1 || got[0].Scopes[0] != "claims:read" {
 		t.Errorf("scopes = %v, want the handles the ensure resolved", got[0].Scopes)
-	}
-	// ColdStart is a v1 LEFTOVER: nothing sets it any more and nothing renders
-	// it (the gate ticket dropped its column). The projection must still carry
-	// it while the field exists, so this asserts transport and nothing about
-	// behaviour — phase 5 deletes the field, this pair of assertions and the
-	// cold_start column together.
-	if !got[0].ColdStart {
-		t.Error("coldStart was dropped by the projection")
-	}
-	if got[1].ColdStart {
-		t.Error("coldStart was invented by the projection")
 	}
 	if got[1].Password != "Aep1!beta" {
 		t.Errorf("second password = %q", got[1].Password)

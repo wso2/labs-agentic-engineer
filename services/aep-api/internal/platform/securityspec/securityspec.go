@@ -500,8 +500,8 @@ type EnsurePlan struct {
 	// order — Parse guarantees a resource and an action handle appear once, so
 	// neither view has to fold anything.
 	Catalog []PlannedResource
-	// Roles are the declared roles, verbatim and in order (service roles
-	// included — phase 2's role pass needs them).
+	// Roles are the declared roles, verbatim and in order — service roles
+	// included, since the ensure's role pass creates those too.
 	Roles []Role
 	// Grants is role name → the handles it grants, for the gate's cross-checks
 	// and the ticket's Scopes column.

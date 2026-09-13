@@ -55,7 +55,7 @@ export const OPENAPI_SECURITY_MESSAGES = {
   security_without_dependency:
     "{component} does not depend on the sign-in client, so {method} {path} must declare no security — remove the operation's `security` block. A component that depends on the sign-in client declares the oauth2 scheme; one that does not declares none. If this component is meant to be protected, add the sign-in dependency to its design.json first.",
 
-  // --- one requirement object, one scope (decision B1) ---------------------
+  // --- one requirement object, one scope -----------------------------------
   operation_security_not_a_list:
     "the `security` of {method} {path} is not a list. An operation's security is either absent (inheriting the document default), an empty list `[]` for a public operation, or a list holding one requirement object — `security: [ { oauth2: [<handle>] } ]`.",
   operation_multiple_requirements:

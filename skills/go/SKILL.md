@@ -142,18 +142,16 @@ Go handler gets wrong:
 
 | Rule | Why |
 |---|---|
-| **Never read `Authorization`.** | The gateway's jwt-auth filter **strips** it and re-presents the verified token as `X-Forwarded-Authorization`. `Authorization` reaches a handler only on a **public** operation — where any caller can set it — so it is never an authorization input. |
-| **Test a header for *empty*, never for *missing*.** | A claim absent from the token still yields its header, set to `""` (`X-User-Name: ""`, `X-User-Groups: ""`). `r.Header.Get` cannot tell the two apart anyway; `strings.TrimSpace(r.Header.Get("X-User-Id")) == ""` is the check, and it is what the asset does. |
-| **`X-User-Scopes` is the authorization authority — and it carries the five OIDC scopes too** (`openid profile email group ou`). | Every signed-in user therefore holds five scopes, so "holds some scope" is never "is authorized". Tokenise on **space** (`strings.Fields`) and compare **whole strings**: `claims:read-all` is not `claims:read`, at this layer or at the gateway. |
+| **Never read `Authorization`** — the gateway strips it. | `r.Header.Get("Authorization")` returns `""` on every request that came through the gateway, and whatever the caller typed on a public one. |
+| **Test a header for *empty*, never for *missing*.** | `r.Header.Get` cannot tell an absent header from one set to `""` anyway, so there is only one check to write: `strings.TrimSpace(r.Header.Get("X-User-Id")) == ""`, which is what the asset does. |
+| **`X-User-Scopes` is the authorization authority** — what it carries and how it compares is in that table. | In Go that spelling is `strings.Fields` plus `==` on a whole handle. `strings.Contains` is the trap — it matches `claims:read` inside `claims:read-all` — and so is testing the header for non-empty, which is true of every signed-in caller. |
 | **`X-User-Groups` is JSON** (`["Finance"]`), and this stack does not read it. | Roles reach a service only as scopes. `strings.Split(h, ",")` is wrong even for the one caller that ever needs the list — that is `json.Unmarshal`. |
 
-**What the middleware is, and is not.** It converts *misconfiguration* into a
-401/403: an operation accidentally left public, a stale trait, a local run with
-no gateway in front. It does **not** stop a hostile pod in the same namespace —
-that pod sets `X-User-Scopes` itself and is believed, because the forwarded
-headers carry no proof of who set them. The boundary is the NetworkPolicy that
-`visibility: internal` creates; this middleware is the second line behind it.
-Do not try to close that gap by verifying a JWT in the service.
+**What the middleware is, and is not.** `api-management` owns the argument: it
+turns *misconfiguration* into a 401/403 and is the second line behind the
+NetworkPolicy `visibility: internal` creates, not a replacement for it. What
+that rules out in Go: do not try to close the gap by verifying a JWT in the
+service.
 
 **Widen inside a handler with `auth.HasScope`.** Where the catalog pairs an
 `own` action with an `any` one:
@@ -179,9 +177,10 @@ tests, by these names:
 
 - **`TestScopeMatrix`** — table-driven over *every* operation × four header
   combinations: no headers, `X-User-Id` only, id + a wrong scope, id + the
-  right scope. Assert the status, and on a 403 assert the exact header
-  `WWW-Authenticate: Bearer error="insufficient_scope", scope="<handle>"` —
-  byte for byte, and assert its **absence** on every other row.
+  right scope. Assert the status, and on a 403 assert the `WWW-Authenticate`
+  challenge `api-management`'s status matrix prescribes — byte for byte, taken
+  from there rather than retyped — and assert its **absence** on every other
+  row.
 - **`TestHealthIsPublic`** — the `security: []` operation answers 200 with no
   headers *and* with forged ones, and the handler reads neither.
 - **`Test<Resource>ListOwnershipAndWidening`** and

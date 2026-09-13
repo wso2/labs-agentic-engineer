@@ -16,7 +16,12 @@
  * under the License.
  */
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import type { components } from "../../../generated/aep-api";
 import { client } from "../../../api/client";
 import { specKeys } from "./keys";
@@ -45,9 +50,14 @@ function toError(error: unknown, fallback: string): Error {
  * poll (SpecView unions this with the live doc list). Out-of-room commits
  * won't reflect until reload — the parked external-merge concern (#86).
  */
-export function useSpecFiles(projectName: string) {
+export function useSpecFiles(projectName: string, enabled = true) {
   return useQuery({
     queryKey: specKeys.files(projectName),
+    // `enabled` exists for readers that are mounted long before they are
+    // looked at — a dialog that is closed, a panel behind an unselected tab.
+    // The key is shared, so a caller that does want the list still serves
+    // everyone else from the same cached answer.
+    enabled,
     queryFn: async () => {
       const { data, error } = await client.GET(
         "/projects/{projectName}/files",
@@ -156,6 +166,46 @@ export function useSpecFileContent(
     queryFn: () => {
       if (!file) throw new Error("no file selected");
       return fetchSpecFileContent(projectName, file);
+    },
+  });
+}
+
+/**
+ * Content of SEVERAL spec files at once, as `path → content` for the ones that
+ * have arrived.
+ *
+ * The plural exists because some readers need a set of files whose SIZE depends
+ * on what they are reading — the Security page's cross-checks read the OpenAPI
+ * and wireframes of whichever components the security document names — and a
+ * hook cannot be called a variable number of times. Same key, same fetch and
+ * the same immutable-per-(path, sha) caching as `useSpecFileContent`, so a file
+ * one of these pulls in is free for the single-file hook and vice versa.
+ *
+ * Files still loading or failed are simply absent from the map: every caller so
+ * far degrades (a cross-check that cannot read a sibling spec is skipped, not
+ * failed), and a per-file status nobody reads would be state to keep correct
+ * for nothing.
+ */
+export function useSpecFileContents(
+  projectName: string,
+  files: { path: string; sha: string }[],
+): Record<string, string> {
+  return useQueries({
+    queries: files.map((file) => ({
+      queryKey: specKeys.file(projectName, file.path, file.sha),
+      staleTime: Infinity,
+      queryFn: () => fetchSpecFileContent(projectName, file),
+    })),
+    // `combine` runs inside react-query's own memo over the results array, so
+    // the identity below is stable while the answers are — which is what lets a
+    // caller put the map in a dependency array.
+    combine: (results) => {
+      const out: Record<string, string> = {};
+      results.forEach((result, i) => {
+        const path = files[i]?.path;
+        if (path !== undefined && result.data) out[path] = result.data.content;
+      });
+      return out;
     },
   });
 }

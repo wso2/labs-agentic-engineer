@@ -78,8 +78,8 @@ describe("SignInPanel", () => {
   it("says how many accounts there are and offers the dialog, listing none itself", () => {
     renderPanel({
       logins: [
-        { username: "test-viewer", role: "Viewer", coldStart: true },
-        { username: "test-admin", role: "Admin", coldStart: false },
+        { username: "test-viewer", roles: ["Viewer"], scopes: ["claims:read"] },
+        { username: "test-admin", roles: ["Admin"], scopes: [] },
       ],
     });
 
@@ -99,7 +99,9 @@ describe("SignInPanel", () => {
 
   it("counts one account without pluralising it", () => {
     renderPanel({
-      logins: [{ username: "test-viewer", role: "Viewer", coldStart: true }],
+      logins: [
+        { username: "test-viewer", roles: ["Viewer"], scopes: ["claims:read"] },
+      ],
     });
 
     expect(screen.getByText("1 account, one per role")).toBeInTheDocument();
@@ -108,8 +110,8 @@ describe("SignInPanel", () => {
   it("opens the accounts in a dialog", () => {
     renderPanel({
       logins: [
-        { username: "test-viewer", role: "Viewer", coldStart: true },
-        { username: "test-admin", role: "Admin", coldStart: false },
+        { username: "test-viewer", roles: ["Viewer"], scopes: ["claims:read"] },
+        { username: "test-admin", roles: ["Admin"], scopes: [] },
       ],
     });
 
@@ -123,7 +125,9 @@ describe("SignInPanel", () => {
 
   it("does not render Add, Rotate, Delete, or Roles-gate copy", () => {
     renderPanel({
-      logins: [{ username: "test-viewer", role: "Viewer", coldStart: true }],
+      logins: [
+        { username: "test-viewer", roles: ["Viewer"], scopes: ["claims:read"] },
+      ],
     });
 
     expect(screen.queryByText(/^Add$/i)).not.toBeInTheDocument();
