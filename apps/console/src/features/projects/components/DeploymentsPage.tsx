@@ -70,6 +70,10 @@ import { PromoteDialog } from "./PromoteDialog";
 export function DeploymentsPage({ projectName }: { projectName: string }) {
   const navigate = useNavigate();
   const canViewDeployments = useHasAnyPermission(["ae:build", "ae:build-view"]);
+  const hasResourceAccess = useHasAnyPermission([
+    "ae:resource-view",
+    "ae:resource-config",
+  ]);
   const components = useProjectComponents(projectName);
   const componentNames = (components.data?.items ?? []).map((c) => c.name);
   const deployments = useComponentsDeployments(projectName, componentNames);
@@ -93,8 +97,13 @@ export function DeploymentsPage({ projectName }: { projectName: string }) {
   // values on the org plane — Connections must not offer Configure / the
   // project values dialog for those names. While the catalog query is
   // pending or failed, registeredNames is empty, so hide Configure for
-  // every external until the query has settled successfully.
-  const externalCatalog = useExternalResources();
+  // every external until the query has settled successfully. This is
+  // supporting lookup data gated on ae:resource-view/ae:resource-config
+  // (the BFF read itself requires one of those, not ae:build/ae:build-view),
+  // so a caller without either simply never resolves the catalog —
+  // catalogUnknown stays true and Configure stays hidden, same as any other
+  // pending/failed read; it never blocks the rest of this build-gated page.
+  const externalCatalog = useExternalResources(hasResourceAccess);
   const catalogUnknown = externalCatalog.isPending || externalCatalog.isError;
   const registeredNames = useMemo(() => {
     const names = new Set<string>();

@@ -35,6 +35,8 @@ const (
 	PermissionUsageView         Permission = "ae:usage-view"
 	PermissionObservabilityView Permission = "ae:observability-view"
 	PermissionAiChat            Permission = "ae:ai-chat"
+	PermissionResourceView      Permission = "ae:resource-view"
+	PermissionResourceConfig    Permission = "ae:resource-config"
 )
 
 // AllPermissions is every AE permission key the platform recognizes.
@@ -51,6 +53,8 @@ var AllPermissions = []Permission{
 	PermissionUsageView,
 	PermissionObservabilityView,
 	PermissionAiChat,
+	PermissionResourceView,
+	PermissionResourceConfig,
 }
 
 var rolePermissionsCatalog = map[string][]string{
@@ -67,6 +71,8 @@ var rolePermissionsCatalog = map[string][]string{
 		string(PermissionUsageView),
 		string(PermissionObservabilityView),
 		string(PermissionAiChat),
+		string(PermissionResourceView),
+		string(PermissionResourceConfig),
 	},
 	// ae:ai-chat is included: the chat panel is mounted globally whenever a
 	// project is open, so withholding it would leave ae-developer unable to

@@ -77,14 +77,17 @@ var operationPermissions = map[string][]authz.Permission{
 	"DeleteProject":        {authz.PermissionRequirementUpdate},
 	"PutProjectReferences": {authz.PermissionRequirementUpdate},
 	// Matches the OcActionCatalog mapping backing OC's own project:view
-	// action — both grant on the same permission, so the BFF gate and OC's
-	// AuthzRole agree on who can view a project instead of the BFF allowing
-	// anyone through and OC silently narrowing it.
-	"GetProject": {authz.PermissionRequirementView},
-	// Same reasoning as GetProject — backs the console's projects grid and
-	// the header's project switcher, both of which read the same "which
-	// projects can I see" question.
-	"ListProjects": {authz.PermissionRequirementView},
+	// action for both permissions below — the BFF gate and OC's AuthzRole
+	// agree on who can view a project instead of the BFF allowing anyone
+	// through and OC silently narrowing it. A requirement-update-only
+	// caller (create/edit rights, no standalone view grant) can still open
+	// the project they just created or are editing — ProjectsList's card
+	// (canOpen) matches this same OR.
+	"GetProject": {authz.PermissionRequirementView, authz.PermissionRequirementUpdate},
+	// The projects grid and the header's project switcher — same OR as
+	// GetProject, since the list is how a requirement-update-only caller
+	// finds the project they're about to open or the one they just created.
+	"ListProjects": {authz.PermissionRequirementView, authz.PermissionRequirementUpdate},
 	// ProjectOverview's Dependencies section. Reaches OC three ways
 	// (ListWorkloadConsumerDeps/GetResource/GetResourceType — see
 	// OcActionCatalog's PermissionRequirementView entry for the matching
@@ -95,22 +98,40 @@ var operationPermissions = map[string][]authz.Permission{
 	"ListOrgEndpoints": {authz.PermissionRequirementView},
 	// Resource-registration form's environment picker — reaches OC
 	// (EnvironmentClient.ListNames -> GET /environments; OcActionCatalog gets
-	// a new environment:view entry under this permission for it).
-	"ListOrgEnvironments": {authz.PermissionRequirementView},
-	// Project overview's Dependencies section AND the org Resources catalog
-	// page — reaches OC (catalog.List -> ClusterResourceType read;
-	// OcActionCatalog gets a new clusterresourcetype:view entry).
-	"ListPlatformResourceTypes": {authz.PermissionRequirementView},
+	// a new environment:view entry under this permission for it). Its only
+	// console caller is RegisterFormPage (the Resources register/edit form),
+	// whose content only renders once its own outer wrapper confirms
+	// ae:resource-config — no path reaches this holding ae:requirement-view
+	// alone, so that permission doesn't belong in the OR (a past over-grant,
+	// caught with the same shared-read reasoning as ListExternalResources).
+	"ListOrgEnvironments": {authz.PermissionResourceConfig},
+	// Read from two console call sites — Project Overview's Dependencies
+	// section and the org Resources catalog page — but both now check
+	// ae:resource-view/ae:resource-config before calling (Dependencies
+	// treats this as supporting lookup data for its own ae:requirement-view
+	// -gated content, not content it's entitled to on that permission
+	// alone), so the gate needs only the resource permission pair. Reaches
+	// OC (catalog.List -> ClusterResourceType read; OcActionCatalog gets a
+	// new clusterresourcetype:view entry).
+	"ListPlatformResourceTypes": {
+		authz.PermissionResourceView,
+		authz.PermissionResourceConfig,
+	},
 	// SpecView's version/tag references — git-backed (ArtifactService), no OC.
 	"ListProjectTags": {authz.PermissionRequirementView},
+
+	// Org resource catalog (settings > Resources, register/edit flow) —
+	// exclusively RegisterFormPage/ResourcesCatalog's own mutations, no
+	// other console caller, so these are ae:resource-config only, not an OR
+	// with ae:build (their previous, borrowed gate).
+	"RegisterExternalResource": {authz.PermissionResourceConfig},
+	"UpdateExternalResource":   {authz.PermissionResourceConfig},
+	"DeleteExternalResource":   {authz.PermissionResourceConfig},
 
 	// Build execution (write).
 	"BuildProject":                  {authz.PermissionBuild},
 	"CollectExternalResourceValues": {authz.PermissionBuild},
 	"CancelRun":                     {authz.PermissionBuild},
-	"RegisterExternalResource":      {authz.PermissionBuild},
-	"UpdateExternalResource":        {authz.PermissionBuild},
-	"DeleteExternalResource":        {authz.PermissionBuild},
 	// Discloses a live test-user credential — deliberately requires the
 	// stronger ae:build rather than mirroring the console's current
 	// ae:build/ae:build-view page-level gate (DeploymentsPage), which reads
@@ -121,16 +142,27 @@ var operationPermissions = map[string][]authz.Permission{
 
 	// Build/deployment read surfaces: viewable with either the write or the
 	// view-only permission.
-	"ListProjectBuilds":     {authz.PermissionBuild, authz.PermissionBuildView},
-	"ListBuildRuns":         {authz.PermissionBuild, authz.PermissionBuildView},
-	"ListTasks":             {authz.PermissionBuild, authz.PermissionBuildView},
-	"GetTask":               {authz.PermissionBuild, authz.PermissionBuildView},
-	"GetProjectStatus":      {authz.PermissionBuild, authz.PermissionBuildView},
-	"ListCycleBuilds":       {authz.PermissionBuild, authz.PermissionBuildView},
-	"ListComponents":        {authz.PermissionBuild, authz.PermissionBuildView},
-	"ListDeployments":       {authz.PermissionBuild, authz.PermissionBuildView},
-	"ListExternalResources": {authz.PermissionBuild, authz.PermissionBuildView},
-	"GetProjectRoles":       {authz.PermissionBuild, authz.PermissionBuildView},
+	"ListProjectBuilds": {authz.PermissionBuild, authz.PermissionBuildView},
+	"ListBuildRuns":     {authz.PermissionBuild, authz.PermissionBuildView},
+	"ListTasks":         {authz.PermissionBuild, authz.PermissionBuildView},
+	"GetTask":           {authz.PermissionBuild, authz.PermissionBuildView},
+	"GetProjectStatus":  {authz.PermissionBuild, authz.PermissionBuildView},
+	"ListCycleBuilds":   {authz.PermissionBuild, authz.PermissionBuildView},
+	"ListComponents":    {authz.PermissionBuild, authz.PermissionBuildView},
+	"ListDeployments":   {authz.PermissionBuild, authz.PermissionBuildView},
+	// Read from three console call sites — DeploymentsPage,
+	// ProjectOverview's Dependencies section, and the org Resources catalog
+	// page — but every one of them now checks ae:resource-view/
+	// ae:resource-config before calling (the two build-scoped pages treat
+	// this as supporting lookup data for their own build-gated content, not
+	// content they're entitled to on ae:build/ae:build-view alone), so the
+	// gate itself only needs the resource permission pair, not a borrowed
+	// build permission.
+	"ListExternalResources": {
+		authz.PermissionResourceView,
+		authz.PermissionResourceConfig,
+	},
+	"GetProjectRoles": {authz.PermissionBuild, authz.PermissionBuildView},
 	// Gates the pre-build dependency/approval check (SpecView's "Build"
 	// action) — write-only, not the view permission, since this is part of
 	// triggering a build rather than reading its state.

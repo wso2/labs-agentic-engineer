@@ -177,6 +177,216 @@ func TestPermissionGate_DenyByDefault(t *testing.T) {
 			t.Fatal("handler must not run")
 		}
 	})
+
+	t.Run("ListOrgEnvironments: ae:resource-config alone satisfies it (RegisterFormPage, no ae:requirement-view)", func(t *testing.T) {
+		called = false
+		ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:resource-config"})
+		if _, err := permissionGate(next, "ListOrgEnvironments")(ctx, nil, req, nil); err != nil {
+			t.Fatalf("ae:resource-config alone should satisfy ListOrgEnvironments, got %v", err)
+		}
+		if !called {
+			t.Fatal("handler must run")
+		}
+	})
+
+	t.Run("ListOrgEnvironments: ae:requirement-view alone does NOT satisfy it (its only caller, RegisterFormPage, requires ae:resource-config)", func(t *testing.T) {
+		called = false
+		ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:requirement-view"})
+		_, err := permissionGate(next, "ListOrgEnvironments")(ctx, nil, req, nil)
+		var ae *apiError
+		if !errors.As(err, &ae) || ae.Status != http.StatusForbidden {
+			t.Fatalf("want 403 holding only ae:requirement-view, got %v", err)
+		}
+		if called {
+			t.Fatal("handler must not run")
+		}
+	})
+
+	t.Run("ListPlatformResourceTypes: ae:resource-view alone satisfies it (org Resources catalog, no ae:requirement-view)", func(t *testing.T) {
+		called = false
+		ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:resource-view"})
+		if _, err := permissionGate(next, "ListPlatformResourceTypes")(ctx, nil, req, nil); err != nil {
+			t.Fatalf("ae:resource-view alone should satisfy ListPlatformResourceTypes, got %v", err)
+		}
+		if !called {
+			t.Fatal("handler must run")
+		}
+	})
+
+	t.Run("ListProjects: ae:requirement-update alone satisfies it (a caller finding the project they just created)", func(t *testing.T) {
+		called = false
+		ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:requirement-update"})
+		if _, err := permissionGate(next, "ListProjects")(ctx, nil, req, nil); err != nil {
+			t.Fatalf("ae:requirement-update alone should satisfy ListProjects, got %v", err)
+		}
+		if !called {
+			t.Fatal("handler must run")
+		}
+	})
+
+	t.Run("ListProjects: ae:requirement-view alone still satisfies it", func(t *testing.T) {
+		called = false
+		ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:requirement-view"})
+		if _, err := permissionGate(next, "ListProjects")(ctx, nil, req, nil); err != nil {
+			t.Fatalf("ae:requirement-view alone should still satisfy ListProjects, got %v", err)
+		}
+		if !called {
+			t.Fatal("handler must run")
+		}
+	})
+
+	t.Run("ListProjects: neither permission denies", func(t *testing.T) {
+		called = false
+		ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "openid profile"})
+		_, err := permissionGate(next, "ListProjects")(ctx, nil, req, nil)
+		var ae *apiError
+		if !errors.As(err, &ae) || ae.Status != http.StatusForbidden {
+			t.Fatalf("want 403 holding neither permission, got %v", err)
+		}
+		if called {
+			t.Fatal("handler must not run")
+		}
+	})
+
+	// GetProject (a single project's own view/open action, backing
+	// ProjectsList's canOpen) is OR-gated the same way as ListProjects: a
+	// requirement-update-only caller must still be able to open the project
+	// they just created, not just find it in the list.
+	t.Run("GetProject: ae:requirement-view alone satisfies it", func(t *testing.T) {
+		called = false
+		ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:requirement-view"})
+		if _, err := permissionGate(next, "GetProject")(ctx, nil, req, nil); err != nil {
+			t.Fatalf("ae:requirement-view alone should satisfy GetProject, got %v", err)
+		}
+		if !called {
+			t.Fatal("handler must run")
+		}
+	})
+
+	t.Run("GetProject: ae:requirement-update alone satisfies it (opening the project just created)", func(t *testing.T) {
+		called = false
+		ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:requirement-update"})
+		if _, err := permissionGate(next, "GetProject")(ctx, nil, req, nil); err != nil {
+			t.Fatalf("ae:requirement-update alone should satisfy GetProject, got %v", err)
+		}
+		if !called {
+			t.Fatal("handler must run")
+		}
+	})
+
+	t.Run("GetProject: neither permission denies", func(t *testing.T) {
+		called = false
+		ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "openid profile"})
+		_, err := permissionGate(next, "GetProject")(ctx, nil, req, nil)
+		var ae *apiError
+		if !errors.As(err, &ae) || ae.Status != http.StatusForbidden {
+			t.Fatalf("want 403 holding neither permission, got %v", err)
+		}
+		if called {
+			t.Fatal("handler must not run")
+		}
+	})
+
+	// ListExternalResources is read by four console call sites
+	// (DeploymentsPage, ProjectOverview's Dependencies section, the org
+	// Resources catalog page, and RegisterFormPage's edit-mode prefill), but
+	// every one of them checks ae:resource-view/ae:resource-config before
+	// calling — DeploymentsPage and the Dependencies section treat this as
+	// supporting lookup data for their own ae:build/ae:build-view-gated
+	// content, not content they're entitled to on a build permission alone.
+	// Each of the two resource permissions is pinned individually so a
+	// future edit can't silently drop one without a test catching it (a
+	// real regression this exact gap once let through unnoticed).
+	for _, perm := range []string{"ae:resource-view", "ae:resource-config"} {
+		t.Run("ListExternalResources: "+perm+" alone satisfies it", func(t *testing.T) {
+			called = false
+			ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: perm})
+			if _, err := permissionGate(next, "ListExternalResources")(ctx, nil, req, nil); err != nil {
+				t.Fatalf("%s alone should satisfy ListExternalResources, got %v", perm, err)
+			}
+			if !called {
+				t.Fatal("handler must run")
+			}
+		})
+	}
+
+	for _, perm := range []string{"ae:build", "ae:build-view"} {
+		t.Run("ListExternalResources: "+perm+" alone does NOT satisfy it (build access no longer borrows this gate)", func(t *testing.T) {
+			called = false
+			ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: perm})
+			_, err := permissionGate(next, "ListExternalResources")(ctx, nil, req, nil)
+			var ae *apiError
+			if !errors.As(err, &ae) || ae.Status != http.StatusForbidden {
+				t.Fatalf("want 403 holding only %s, got %v", perm, err)
+			}
+			if called {
+				t.Fatal("handler must not run")
+			}
+		})
+	}
+
+	t.Run("ListExternalResources: neither resource permission denies", func(t *testing.T) {
+		called = false
+		ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "openid profile"})
+		_, err := permissionGate(next, "ListExternalResources")(ctx, nil, req, nil)
+		var ae *apiError
+		if !errors.As(err, &ae) || ae.Status != http.StatusForbidden {
+			t.Fatalf("want 403 holding neither resource permission, got %v", err)
+		}
+		if called {
+			t.Fatal("handler must not run")
+		}
+	})
+
+	t.Run("ListPlatformResourceTypes: ae:requirement-view alone does NOT satisfy it (Dependencies section now also requires a resource permission)", func(t *testing.T) {
+		called = false
+		ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:requirement-view"})
+		_, err := permissionGate(next, "ListPlatformResourceTypes")(ctx, nil, req, nil)
+		var ae *apiError
+		if !errors.As(err, &ae) || ae.Status != http.StatusForbidden {
+			t.Fatalf("want 403 holding only ae:requirement-view, got %v", err)
+		}
+		if called {
+			t.Fatal("handler must not run")
+		}
+	})
+
+	t.Run("RegisterExternalResource/UpdateExternalResource/DeleteExternalResource require ae:resource-config, not ae:build", func(t *testing.T) {
+		for _, op := range []string{"RegisterExternalResource", "UpdateExternalResource", "DeleteExternalResource"} {
+			called = false
+			ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:build"})
+			_, err := permissionGate(next, op)(ctx, nil, req, nil)
+			var ae *apiError
+			if !errors.As(err, &ae) || ae.Status != http.StatusForbidden {
+				t.Fatalf("%s: ae:build alone must no longer satisfy it (moved off the borrowed build gate), got %v", op, err)
+			}
+			if called {
+				t.Fatalf("%s: handler must not run holding only ae:build", op)
+			}
+
+			called = false
+			ctx = auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:resource-config"})
+			if _, err := permissionGate(next, op)(ctx, nil, req, nil); err != nil {
+				t.Fatalf("%s: ae:resource-config should satisfy it, got %v", op, err)
+			}
+			if !called {
+				t.Fatalf("%s: handler must run holding ae:resource-config", op)
+			}
+		}
+	})
+
+	t.Run("RegisterExternalResource: ae:resource-view alone (view, not config) denies", func(t *testing.T) {
+		called = false
+		ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:resource-view"})
+		_, err := permissionGate(next, "RegisterExternalResource")(ctx, nil, req, nil)
+		var ae *apiError
+		if !errors.As(err, &ae) || ae.Status != http.StatusForbidden {
+			t.Fatalf("want 403 holding only ae:resource-view, got %v", err)
+		}
+		if called {
+			t.Fatal("handler must not run")
+		}
+	})
 }
 
 // TestPermissionGate_UpdateConfig unit-tests the field-aware special case:

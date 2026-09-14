@@ -48,7 +48,7 @@ vi.mock("@tanstack/react-router", () => ({
 // Every test but the dedicated permission-denial ones below holds every
 // sidebar-relevant permission, so every item reads as reachable by default.
 const heldPermissions = vi.hoisted(
-  () => new Set(["ae:observability-view", "ae:requirement-view"]),
+  () => new Set(["ae:observability-view", "ae:requirement-view", "ae:resource-view"]),
 );
 vi.mock("../auth/SessionContext", () => ({
   useSession: () => ({
@@ -101,6 +101,7 @@ beforeEach(() => {
   heldPermissions.clear();
   heldPermissions.add("ae:observability-view");
   heldPermissions.add("ae:requirement-view");
+  heldPermissions.add("ae:resource-view");
   // The panel's open state persists (#666); without this a test that opened
   // it would leak an open panel into every test after it.
   localStorage.removeItem("aep.chat.panelOpen");
@@ -173,6 +174,34 @@ describe("AppLayout — org sidebar", () => {
     fireEvent.mouseOver(endpoints.closest("span") ?? endpoints);
     expect(
       await screen.findByText("You don't have permission to view endpoints."),
+    ).toBeInTheDocument();
+  });
+
+  it("makes Resources navigable when the caller holds either resource permission", () => {
+    mockPathname = "/";
+    render();
+    expect(sidebarItem("Resources").closest("a")).not.toBeNull();
+  });
+
+  it("keeps Resources navigable holding only ae:resource-config (not ae:resource-view)", () => {
+    heldPermissions.delete("ae:resource-view");
+    heldPermissions.add("ae:resource-config");
+    mockPathname = "/";
+    render();
+    expect(sidebarItem("Resources").closest("a")).not.toBeNull();
+  });
+
+  it("makes Resources non-navigable holding NEITHER resource permission, with an explanatory tooltip", async () => {
+    heldPermissions.delete("ae:resource-view");
+    mockPathname = "/";
+    render();
+
+    const resources = sidebarItem("Resources");
+    expect(resources.closest("a")).toBeNull();
+
+    fireEvent.mouseOver(resources.closest("span") ?? resources);
+    expect(
+      await screen.findByText("You don't have permission to view resources."),
     ).toBeInTheDocument();
   });
 

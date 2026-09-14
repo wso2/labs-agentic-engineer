@@ -42,6 +42,7 @@ vi.mock("@tanstack/react-router", () => ({
     },
 }));
 
+
 type WorkloadDependencyDTO = components["schemas"]["WorkloadDependencyDTO"];
 type PlatformResourceTypeDTO = components["schemas"]["PlatformResourceTypeDTO"];
 type ExternalResourceDTO = components["schemas"]["ExternalResourceDTO"];
@@ -135,6 +136,19 @@ vi.mock("../../settings/api/queries", () => ({
     mutate: vi.fn(),
     reset: vi.fn(),
   }),
+}));
+
+// This page reuses CatalogTypeDrawer (the org Resources catalog's own
+// inspect drawer) for its resource-click view — that drawer's Edit/Delete
+// controls check ae:resource-config, so it needs a permission mock too, even
+// though this page itself isn't gated on it (it's gated on
+// ae:requirement-view, unrelated here). useHasAnyPermission backs the
+// external-resources catalog read (ae:resource-view/ae:resource-config) —
+// every test here holds it, so that read resolves exactly as it did before
+// being permission-gated.
+vi.mock("../../../auth/permissions", () => ({
+  useHasPermission: () => true,
+  useHasAnyPermission: () => true,
 }));
 
 function resetState() {

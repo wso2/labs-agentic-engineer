@@ -56,7 +56,7 @@ import {
   useRouterState,
   useSearch,
 } from "@tanstack/react-router";
-import { useHasPermission } from "../auth/permissions";
+import { useHasAnyPermission, useHasPermission } from "../auth/permissions";
 import { useSession } from "../auth/SessionContext";
 import { OrgSwitcher, ProjectSwitcher } from "./HeaderSwitchers";
 import { ProjectStatusBadge } from "./ProjectStatusBadge";
@@ -111,6 +111,7 @@ export function AppLayout() {
   const { user, signOut, orgHandle } = useSession();
   const hasObservabilityAccess = useHasPermission("ae:observability-view");
   const hasRequirementView = useHasPermission("ae:requirement-view");
+  const hasResourceAccess = useHasAnyPermission(["ae:resource-view", "ae:resource-config"]);
 
   // Project AI panel (#130): available on every project route — mounted here
   // because the full-screen spec route bypasses ProjectLayout. Same
@@ -383,12 +384,25 @@ export function AppLayout() {
                   </Sidebar.ItemIcon>
                   <Sidebar.ItemLabel>Projects</Sidebar.ItemLabel>
                 </Sidebar.Item>
-                <Sidebar.Item id="resources" link={<Link to="/resources" />}>
-                  <Sidebar.ItemIcon>
-                    <Boxes />
-                  </Sidebar.ItemIcon>
-                  <Sidebar.ItemLabel>Resources</Sidebar.ItemLabel>
-                </Sidebar.Item>
+                {hasResourceAccess ? (
+                  <Sidebar.Item id="resources" link={<Link to="/resources" />}>
+                    <Sidebar.ItemIcon>
+                      <Boxes />
+                    </Sidebar.ItemIcon>
+                    <Sidebar.ItemLabel>Resources</Sidebar.ItemLabel>
+                  </Sidebar.Item>
+                ) : (
+                  <Tooltip title="You don't have permission to view resources.">
+                    <span>
+                      <Sidebar.Item id="resources" sx={{ opacity: 0.5, pointerEvents: "none" }}>
+                        <Sidebar.ItemIcon>
+                          <Boxes />
+                        </Sidebar.ItemIcon>
+                        <Sidebar.ItemLabel>Resources</Sidebar.ItemLabel>
+                      </Sidebar.Item>
+                    </span>
+                  </Tooltip>
+                )}
                 {hasRequirementView ? (
                   <Sidebar.Item id="endpoints" link={<Link to="/endpoints" />}>
                     <Sidebar.ItemIcon>

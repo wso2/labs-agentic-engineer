@@ -33,6 +33,7 @@ import {
   MenuItem,
   PageContent,
   SearchBar,
+  Tooltip,
   Typography,
   useMediaQuery,
   useTheme,
@@ -44,8 +45,9 @@ import {
   Trash2,
 } from "@wso2/oxygen-ui-icons-react";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useHasPermission } from "../../../auth/permissions";
+import { useHasAnyPermission, useHasPermission } from "../../../auth/permissions";
 import { EmptyState } from "../../../components/EmptyState";
+import { NoPermissionIllustration } from "../../../components/NoPermissionIllustration";
 import { PageHeader } from "../../../components/PageHeader";
 import type { components } from "../../../generated/aep-api";
 import { useProjectsList } from "../api/queries";
@@ -171,9 +173,52 @@ function useGridColumns(): number {
 // only ever appears under a completely filled last row (#71 feedback).
 const GRID_ROWS_PER_PAGE = 3;
 
+const NO_CREATE_PERMISSION_TOOLTIP =
+  "You don't have permission to create a new project.";
+
+// Shown wherever "Create project" appears (the page header action and the
+// true-empty state's centered action): visible either way, per ae:requirement-update
+// alone — never hidden, so a view-only caller can see the capability exists
+// and why it's out of reach, matching every other section's disabled-not-hidden
+// treatment this release.
+function CreateProjectButton({ canCreate }: { canCreate: boolean }) {
+  if (canCreate) {
+    return (
+      <Button
+        variant="contained"
+        startIcon={<Plus size={20} />}
+        component={Link}
+        to="/projects/new"
+      >
+        Create project
+      </Button>
+    );
+  }
+  return (
+    <Tooltip title={NO_CREATE_PERMISSION_TOOLTIP}>
+      <span>
+        <Button variant="contained" startIcon={<Plus size={20} />} disabled>
+          Create project
+        </Button>
+      </span>
+    </Tooltip>
+  );
+}
+
 export function ProjectsList() {
   const hasRequirementUpdate = useHasPermission("ae:requirement-update");
-  const hasRequirementView = useHasPermission("ae:requirement-view");
+  // Either permission gets you onto the page (create-only implies you'll
+  // want to find the project you just made) — the Projects sidebar item
+  // itself is never disabled (unlike Alerts/Endpoints/Resources/Credentials):
+  // it's the default landing page, always reachable, and this page's own
+  // denied state is what a caller holding neither permission actually sees.
+  // The same OR also gates opening a card (canOpen below): GetProject is
+  // OR-gated the same way on the backend, since a requirement-update-only
+  // caller must still be able to open the project they just created.
+  const hasProjectsAccess = useHasAnyPermission([
+    "ae:requirement-view",
+    "ae:requirement-update",
+  ]);
   const [search, setSearch] = useState("");
   // The project awaiting delete confirmation; one dialog serves the grid.
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
@@ -188,7 +233,7 @@ export function ProjectsList() {
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
-  } = useProjectsList(debouncedSearch, columns * GRID_ROWS_PER_PAGE);
+  } = useProjectsList(debouncedSearch, columns * GRID_ROWS_PER_PAGE, hasProjectsAccess);
 
   const items = data?.pages.flatMap((page) => page.items ?? []) ?? [];
   // True-empty (no projects at all, not a fruitless search) hides the page
@@ -200,34 +245,24 @@ export function ProjectsList() {
       <PageHeader
         title="Projects"
         subtitle="Everything Agentic Engineer is building for you, one project per app."
-        {...(!isTrueEmpty &&
-          hasRequirementUpdate && {
-            actions: (
-              <Button
-                variant="contained"
-                startIcon={<Plus size={20} />}
-                component={Link}
-                to="/projects/new"
-              >
-                Create project
-              </Button>
-            ),
+        {...(hasProjectsAccess &&
+          !isTrueEmpty && {
+            actions: <CreateProjectButton canCreate={hasRequirementUpdate} />,
           })}
       />
 
-      {!hasRequirementView && (
-        <Alert severity="warning" sx={{ mb: 3 }}>
-          You don't have permission to open a project.
-        </Alert>
-      )}
-
-      {hasRequirementView && !hasRequirementUpdate && (
-        <Alert severity="warning" sx={{ mb: 3 }}>
-          You don't have permission to create a new project.
-        </Alert>
-      )}
-
-      {isPending ? (
+      {!hasProjectsAccess ? (
+        // Checked before the loading/error states below: without either
+        // permission there is nothing here to load — the projects query
+        // itself never fires (useProjectsList(..., hasProjectsAccess)) —
+        // and a direct-URL visit must never flash real project content
+        // before this check runs.
+        <EmptyState
+          icon={<NoPermissionIllustration size={120} />}
+          title="No projects access"
+          description="You don't have permission to view projects."
+        />
+      ) : isPending ? (
         <Box sx={{ display: "flex", justifyContent: "center", p: 6 }}>
           <CircularProgress aria-label="Loading projects" />
         </Box>
@@ -244,18 +279,7 @@ export function ProjectsList() {
           icon={<Folder size={48} />}
           title="No projects yet"
           description="Tell Agentic Engineer what you want to build and it becomes your first project."
-          action={
-            hasRequirementUpdate ? (
-              <Button
-                variant="contained"
-                startIcon={<Plus size={20} />}
-                component={Link}
-                to="/projects/new"
-              >
-                Create project
-              </Button>
-            ) : undefined
-          }
+          action={<CreateProjectButton canCreate={hasRequirementUpdate} />}
         />
       ) : (
         <>
@@ -278,7 +302,7 @@ export function ProjectsList() {
                     <ProjectCard
                       project={project}
                       onDelete={setDeleteTarget}
-                      canOpen={hasRequirementView}
+                      canOpen={hasProjectsAccess}
                     />
                   </Grid>
                 ))}

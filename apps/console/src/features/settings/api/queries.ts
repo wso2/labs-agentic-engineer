@@ -407,7 +407,11 @@ export function useEnsureAuthzRole() {
 // --- Resources (org-settings "Resources" tabs: platform-provisioned types +
 // the external-resource catalog) ------------------------------------------
 
-export function usePlatformResourceTypes() {
+// `enabled` defaults true: this hook is shared by OverviewDependencies (a
+// project page, gated on ae:requirement-view) and ResourcesCatalog (the org
+// Resources page, gated on ae:resource-view/ae:resource-config) — only the
+// latter ever needs to withhold the request.
+export function usePlatformResourceTypes(enabled = true) {
   return useQuery({
     queryKey: resourceKeys.platformTypes,
     queryFn: async () => {
@@ -418,10 +422,14 @@ export function usePlatformResourceTypes() {
       return data;
     },
     staleTime: 30_000,
+    enabled,
   });
 }
 
-export function useExternalResources() {
+// `enabled` defaults true — shared by OverviewDependencies, DeploymentsPage,
+// RegisterFormPage (edit-mode prefill), and ResourcesCatalog; same reasoning
+// as usePlatformResourceTypes above.
+export function useExternalResources(enabled = true) {
   return useQuery({
     queryKey: resourceKeys.external,
     queryFn: async () => {
@@ -432,6 +440,7 @@ export function useExternalResources() {
       return data;
     },
     staleTime: 30_000,
+    enabled,
   });
 }
 

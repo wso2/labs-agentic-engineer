@@ -29,6 +29,13 @@ vi.mock("@tanstack/react-router", () => ({
   ),
 }));
 
+// Every test but the dedicated "no permission" one below holds
+// ae:resource-config, so the composer reads as reachable by default.
+const hasResourceConfig = vi.hoisted(() => ({ current: true }));
+vi.mock("../../../auth/permissions", () => ({
+  useHasPermission: () => hasResourceConfig.current,
+}));
+
 import { RegisterComposerPage } from "./RegisterComposerPage";
 
 const STRIPE_PROMPT =
@@ -36,6 +43,7 @@ const STRIPE_PROMPT =
 
 beforeEach(() => {
   vi.clearAllMocks();
+  hasResourceConfig.current = true;
 });
 
 describe("RegisterComposerPage", () => {
@@ -62,5 +70,16 @@ describe("RegisterComposerPage", () => {
       to: "/resources/register/form",
       state: { registerPrompt: STRIPE_PROMPT },
     });
+  });
+
+  it("shows an insufficient-permissions message and renders no composer without ae:resource-config", () => {
+    hasResourceConfig.current = false;
+    render(<RegisterComposerPage />);
+
+    expect(
+      screen.getByText("You don't have permission to register or edit resources."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.queryByText("Stripe")).not.toBeInTheDocument();
   });
 });

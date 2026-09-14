@@ -18,7 +18,7 @@
 
 // @vitest-environment jsdom
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 import { ProjectsList } from "./ProjectsList";
@@ -30,11 +30,16 @@ vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => vi.fn(),
 }));
 
-// Every existing test in this file assumes project creation is otherwise
-// reachable — only the dedicated "no permission" tests below flip this.
-const requirementUpdatePermission = vi.hoisted(() => ({ current: true }));
+// Every test but the dedicated permission-denial ones below holds both
+// permissions, so the page and Create project read as fully reachable by
+// default — mirrors SkillsSection.test.tsx's per-suite permission toggle.
+const heldPermissions = vi.hoisted(
+  () => new Set(["ae:requirement-view", "ae:requirement-update"]),
+);
 vi.mock("../../../auth/permissions", () => ({
-  useHasPermission: () => requirementUpdatePermission.current,
+  useHasPermission: (permission: string) => heldPermissions.has(permission),
+  useHasAnyPermission: (permissions: string[]) =>
+    permissions.some((p) => heldPermissions.has(p)),
 }));
 
 let listItems: Project[] = [];
@@ -69,46 +74,93 @@ function project(overrides: Partial<Project>): Project {
 }
 
 beforeEach(() => {
-  requirementUpdatePermission.current = true;
+  heldPermissions.clear();
+  heldPermissions.add("ae:requirement-view");
+  heldPermissions.add("ae:requirement-update");
   listItems = [];
 });
 
-const noPermissionText = "You don't have permission to create a new project.";
+const noCreatePermissionText = "You don't have permission to create a new project.";
+const noAccessText = "You don't have permission to view projects.";
 
 describe("ProjectsList — permission gate", () => {
-  it("shows Create project and no banner when the user holds ae:requirement-update, with projects", () => {
+  it("shows an enabled Create project link when the user holds ae:requirement-update, with projects", () => {
     listItems = [project({})];
     render(<ProjectsList />);
 
     expect(screen.getByRole("link", { name: "Create project" })).toBeInTheDocument();
-    expect(screen.queryByText(noPermissionText)).not.toBeInTheDocument();
   });
 
-  it("hides Create project and shows a banner instead, without ae:requirement-update, with projects", () => {
-    requirementUpdatePermission.current = false;
+  it("shows Create project DISABLED (not hidden) when holding only ae:requirement-view", () => {
+    heldPermissions.delete("ae:requirement-update");
     listItems = [project({})];
     render(<ProjectsList />);
 
-    expect(
-      screen.queryByRole("link", { name: "Create project" }),
-    ).not.toBeInTheDocument();
-    expect(screen.getByText(noPermissionText)).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Create project" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create project" })).toBeDisabled();
   });
 
-  it("shows Create project in the true-empty state when the user holds the permission", () => {
+  it("shows the disabled Create project's tooltip on hover", async () => {
+    heldPermissions.delete("ae:requirement-update");
+    listItems = [project({})];
+    render(<ProjectsList />);
+
+    const button = screen.getByRole("button", { name: "Create project" });
+    fireEvent.mouseOver(button.closest("span") ?? button);
+    expect(await screen.findByText(noCreatePermissionText)).toBeInTheDocument();
+  });
+
+  it("shows Create project enabled in the true-empty state when the user holds the permission", () => {
     render(<ProjectsList />);
 
     expect(screen.getByRole("link", { name: "Create project" })).toBeInTheDocument();
-    expect(screen.queryByText(noPermissionText)).not.toBeInTheDocument();
   });
 
-  it("hides Create project in the true-empty state and shows a banner instead", () => {
-    requirementUpdatePermission.current = false;
+  it("shows Create project DISABLED in the true-empty state, holding only ae:requirement-view", () => {
+    heldPermissions.delete("ae:requirement-update");
     render(<ProjectsList />);
 
-    expect(
-      screen.queryByRole("link", { name: "Create project" }),
-    ).not.toBeInTheDocument();
-    expect(screen.getByText(noPermissionText)).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Create project" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create project" })).toBeDisabled();
+  });
+
+  it("shows the no-access illustration and hides everything else holding neither permission", () => {
+    heldPermissions.clear();
+    listItems = [project({})];
+    render(<ProjectsList />);
+
+    expect(screen.getByText(noAccessText)).toBeInTheDocument();
+    expect(screen.queryByText("Todo app")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Create project" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create project" })).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Search projects...")).not.toBeInTheDocument();
+  });
+
+  it("reaches the page holding only ae:requirement-update (no ae:requirement-view), with Create project enabled", () => {
+    heldPermissions.clear();
+    heldPermissions.add("ae:requirement-update");
+    listItems = [project({})];
+    render(<ProjectsList />);
+
+    expect(screen.queryByText(noAccessText)).not.toBeInTheDocument();
+    expect(screen.getByText("Todo app")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Create project" })).toBeInTheDocument();
+  });
+
+  it("keeps a project card open (canOpen) for a requirement-view-only holder", () => {
+    heldPermissions.delete("ae:requirement-update");
+    listItems = [project({})];
+    render(<ProjectsList />);
+
+    expect(screen.getByText("Todo app").closest("button")).not.toBeDisabled();
+  });
+
+  it("keeps a project card open (canOpen) for a requirement-update-only holder (no ae:requirement-view)", () => {
+    heldPermissions.clear();
+    heldPermissions.add("ae:requirement-update");
+    listItems = [project({})];
+    render(<ProjectsList />);
+
+    expect(screen.getByText("Todo app").closest("button")).not.toBeDisabled();
   });
 });

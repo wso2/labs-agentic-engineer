@@ -19,6 +19,7 @@
 import { useMemo, useState } from "react";
 import { Alert, Box, Button, Card, Chip, Skeleton } from "@wso2/oxygen-ui";
 import { Plug } from "@wso2/oxygen-ui-icons-react";
+import { useHasAnyPermission } from "../../../auth/permissions";
 import { OverviewRow } from "./OverviewRow";
 import { SectionTitle } from "../../../components/SectionTitle";
 import { EmptyState } from "../../../components/EmptyState";
@@ -82,8 +83,17 @@ function rowChipLabel(row: WorkloadDependencyDTO): string {
  */
 export function OverviewDependencies({ projectName }: { projectName: string }) {
   const deps = useWorkloadDependencies(projectName);
-  const platform = usePlatformResourceTypes();
-  const external = useExternalResources();
+  // Both catalog reads below (ListPlatformResourceTypes, ListExternalResources)
+  // are gated on ae:resource-view/ae:resource-config, not this page's own
+  // ae:requirement-view — a viewer without either resource permission still
+  // sees the dependency rows, just without the detail drawer resolving past
+  // the bare name (onRow's fallback below).
+  const hasResourceAccess = useHasAnyPermission([
+    "ae:resource-view",
+    "ae:resource-config",
+  ]);
+  const platform = usePlatformResourceTypes(hasResourceAccess);
+  const external = useExternalResources(hasResourceAccess);
   const [selection, setSelection] = useState<ResourceSelection>({
     kind: null,
     resource: null,

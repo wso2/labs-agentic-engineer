@@ -29,6 +29,7 @@ import {
 } from "@wso2/oxygen-ui";
 import { Pencil, X } from "@wso2/oxygen-ui-icons-react";
 import { useNavigate } from "@tanstack/react-router";
+import { useHasPermission } from "../../../auth/permissions";
 import type { components } from "../../../generated/aep-api";
 import {
   CollapsibleSection,
@@ -195,6 +196,7 @@ function PlatformResourceBody({ resource }: { resource: PlatformResourceTypeDTO 
 export function CatalogTypeDrawer(props: CatalogTypeDrawerProps) {
   const { resource, open, onClose } = props;
   const navigate = useNavigate();
+  const hasResourceConfig = useHasPermission("ae:resource-config");
   const showEdit =
     props.kind === "external" && isRegisteredExternal(props.resource);
 
@@ -221,18 +223,27 @@ export function CatalogTypeDrawer(props: CatalogTypeDrawerProps) {
             {resource?.name}
           </Typography>
           {showEdit && (
-            <Tooltip title="Edit">
-              <IconButton
-                aria-label="Edit"
-                onClick={() => {
-                  void navigate({
-                    to: "/resources/register/form",
-                    search: { name: props.resource.name },
-                  });
-                }}
-              >
-                <Pencil size={18} />
-              </IconButton>
+            <Tooltip
+              title={
+                hasResourceConfig
+                  ? "Edit"
+                  : "You don't have permission to configure resources."
+              }
+            >
+              <span>
+                <IconButton
+                  aria-label="Edit"
+                  disabled={!hasResourceConfig}
+                  onClick={() => {
+                    void navigate({
+                      to: "/resources/register/form",
+                      search: { name: props.resource.name },
+                    });
+                  }}
+                >
+                  <Pencil size={18} />
+                </IconButton>
+              </span>
             </Tooltip>
           )}
           <IconButton aria-label="Close" onClick={onClose}>

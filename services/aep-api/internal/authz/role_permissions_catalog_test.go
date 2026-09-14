@@ -35,6 +35,8 @@ func TestAllPermissions_MatchesConstants(t *testing.T) {
 		PermissionUsageView,
 		PermissionObservabilityView,
 		PermissionAiChat,
+		PermissionResourceView,
+		PermissionResourceConfig,
 	}
 
 	if len(AllPermissions) != len(constants) {
