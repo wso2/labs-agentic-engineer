@@ -143,6 +143,13 @@ type MilestoneRunRepository interface {
 	// settle wins and no later signal can overwrite a recorded outcome. reason
 	// must be empty for succeeded and one of the RunReason* values otherwise.
 	Settle(ctx context.Context, id, state, terminalReason string) (*MilestoneRun, error)
+	// RecordFailure writes the fault the run is failing on (RunFailure),
+	// replacing an earlier record but keeping its FirstAt when it is the SAME
+	// fault (code + subject), so the attempt window spans every attempt.
+	// ClearFailure removes the record once a later attempt succeeded. Both are
+	// guarded like every other non-terminal write and a no-op on a settled run.
+	RecordFailure(ctx context.Context, id string, failure RunFailure) (*MilestoneRun, error)
+	ClearFailure(ctx context.Context, id string) (*MilestoneRun, error)
 
 	// BumpBudget increments one budget counter by one, guarded on the run being
 	// non-terminal. The supervisor compares the returned row against the
@@ -318,6 +325,30 @@ func (r *milestoneRunRepository) Settle(ctx context.Context, id, state, terminal
 		"terminal_reason": terminalReason,
 		"ended_at":        time.Now().UTC(),
 	})
+}
+
+func (r *milestoneRunRepository) RecordFailure(ctx context.Context, id string, failure RunFailure) (*MilestoneRun, error) {
+	if failure.Code == "" {
+		return nil, fmt.Errorf("milestone run: RecordFailure needs a code")
+	}
+	// The activity stamps FirstAt = LastAt = now on every attempt; the row is
+	// the only place the first attempt's stamp survives, so preserve it here
+	// when the fault is the same one.
+	if prev, err := r.getByID(ctx, id); err != nil {
+		return nil, err
+	} else if prev != nil && prev.Failure != nil && sameFault(*prev.Failure, failure) && prev.Failure.FirstAt.Before(failure.FirstAt) {
+		failure.FirstAt = prev.Failure.FirstAt
+	}
+	return r.updateNonTerminal(ctx, id, map[string]any{"failure": &failure})
+}
+
+func (r *milestoneRunRepository) ClearFailure(ctx context.Context, id string) (*MilestoneRun, error) {
+	return r.updateNonTerminal(ctx, id, map[string]any{"failure": nil})
+}
+
+// sameFault says two records describe one fault: same class, same subject.
+func sameFault(a, b RunFailure) bool {
+	return a.Code == b.Code && a.Component == b.Component && a.Dependency == b.Dependency
 }
 
 func (r *milestoneRunRepository) BumpBudget(ctx context.Context, id string, counter RunBudget) (*MilestoneRun, error) {

@@ -99,6 +99,7 @@ func (l *loop) fillMilestone(ctx workflow.Context) (settled bool, res RunResult,
 	}
 
 	in := PlanMilestoneInput{
+		RunID:           l.in.RunID,
 		OrgID:           l.in.OrgID,
 		ProjectID:       l.in.ProjectID,
 		MilestoneNumber: l.in.MilestoneNumber,

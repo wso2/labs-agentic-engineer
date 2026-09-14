@@ -100,17 +100,21 @@ type endpointJSON struct {
 }
 
 // dependencyJSON is the on-disk shape for one unified dependency entry. It
-// mirrors Dependency MINUS Status/Reason (read-time computed, never
+// mirrors Dependency MINUS Status/Reason/Flags (read-time computed, never
 // persisted): omitting them makes DisallowUnknownFields reject any `status` or
-// `reason` key inside a dependency entry. `style`/`package`/`specPath`/
-// `candidates` are external-only (kind-conditioned validation lives in the
-// write-gates — the zod superRefine + agentfold/designgate.go — not here: this
-// decoder stays lenient about kind-specific fields, matching the rest of the
-// struct).
+// `reason` key inside a dependency entry. An external dependency's definition
+// fields are legacy here (see below) — the write-gates refuse them on a
+// component, and this decoder stays lenient about kind-specific fields,
+// matching the rest of the struct.
 type dependencyJSON struct {
-	Kind         string          `json:"kind"`
-	Name         string          `json:"name"`
-	Description  string          `json:"description,omitempty"`
+	Kind        string `json:"kind"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	// LEGACY, read only. An external dependency's definition lives in its own
+	// file now (dependency_json.go); a design written before that still
+	// carries these on the component. They are decoded so the read path can
+	// LIFT them into a dependency file at the next save, and never encoded —
+	// toJSONDeps drops them, which is the migration.
 	Style        string          `json:"style,omitempty"`
 	Package      string          `json:"package,omitempty"`
 	SpecPath     string          `json:"specPath,omitempty"`
@@ -149,8 +153,9 @@ type endpointWiringJSON struct {
 	EnvBindings map[string]string `json:"envBindings"`
 }
 
-// candidateJSON is the on-disk shape of one entry in a dependency's
-// `candidates` array. Mirrors DependencyCandidate.
+// candidateJSON is the retired on-disk shape of one entry in a `candidates`
+// array (a component's legacy carry, or a definition written before
+// suggestions). Decoded only, and read as a suggestion.
 type candidateJSON struct {
 	Name        string `json:"name"`
 	Style       string `json:"style"`
@@ -255,8 +260,8 @@ func validateExposure(dir, exposure string) error {
 // model. This is a PURE DECODE: no Status/Reason is ever computed here (this
 // codec has no org/registry context to correctly resolve against — that
 // requires the shared resolver, which reads the live catalog). Every
-// resolution state (resolved/ambiguous/unresolved) is derived at READ time by
-// that resolver from the presence/absence of Style/Package/Candidates/SpecPath
+// resolution state (resolved/unresolved/blocked) is derived at READ time by
+// that resolver from the presence/absence of Provider/Style/Contract/SDK
 // — never stored, never computed here.
 //
 // A dependency entry missing `kind` or `name`, or declaring a `kind` outside
@@ -279,19 +284,26 @@ func assembleDependencies(dir string, in []dependencyJSON) ([]Dependency, error)
 			return nil, fmt.Errorf("components/%s/design.json: dependencies[%d] has unknown kind %q — every dependency needs kind (%s) and name",
 				dir, i, d.Kind, validDependencyKinds)
 		}
-		out = append(out, Dependency{
+		dep := Dependency{
 			Kind:         d.Kind,
 			Name:         d.Name,
 			Description:  d.Description,
-			Style:        d.Style,
-			Package:      d.Package,
-			SpecPath:     d.SpecPath,
-			Candidates:   toModelCandidates(d.Candidates),
-			Config:       toModelConfigKeys(d.Config),
 			ResourceType: d.ResourceType,
 			Parameters:   d.Parameters,
 			Wiring:       toModelWiring(d.Wiring),
-		})
+		}
+		if d.Kind == DependencyKindExternal {
+			// Legacy carry (see dependencyJSON): hydration replaces it when the
+			// dependency file exists, lifts it into one when it does not.
+			dep.Style = d.Style
+			dep.Package = d.Package
+			dep.Suggestions = toModelCandidates(d.Candidates)
+			dep.Config = toModelConfigKeys(d.Config)
+			if d.SpecPath != "" {
+				dep.Provenance = &DependencyProvenance{SourceURL: d.SpecPath}
+			}
+		}
+		out = append(out, dep)
 	}
 	return out, nil
 }
@@ -392,15 +404,12 @@ func toJSONDeps(in []Dependency) []dependencyJSON {
 		if d.Name == "" || d.Kind == "" {
 			continue
 		}
+		// An external dependency is written as a REFERENCE: its definition is
+		// its own file (SplitDesign writes that from DesignFile.Dependencies).
 		out = append(out, dependencyJSON{
 			Kind:         d.Kind,
 			Name:         d.Name,
 			Description:  d.Description,
-			Style:        d.Style,
-			Package:      d.Package,
-			SpecPath:     d.SpecPath,
-			Candidates:   toJSONCandidates(d.Candidates),
-			Config:       toJSONConfigKeys(d.Config),
 			ResourceType: d.ResourceType,
 			Parameters:   d.Parameters,
 			Wiring:       toJSONWiring(d.Wiring),
@@ -409,36 +418,39 @@ func toJSONDeps(in []Dependency) []dependencyJSON {
 	return out
 }
 
-// toModelCandidates/toJSONCandidates mirror toModelConfigKeys/toJSONConfigKeys
-// for the `candidates` array (DependencyCandidate ⇄ candidateJSON).
-func toModelCandidates(in []candidateJSON) []DependencyCandidate {
+// toModelCandidates reads the retired `candidates` array as suggestions — the
+// option's package was the agent's guess and is not carried over.
+func toModelCandidates(in []candidateJSON) []DependencySuggestion {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]DependencyCandidate, 0, len(in))
+	out := make([]DependencySuggestion, 0, len(in))
 	for _, c := range in {
-		out = append(out, DependencyCandidate{
-			Name:        c.Name,
-			Style:       c.Style,
-			Description: c.Description,
-			Package:     c.Package,
-		})
+		out = append(out, DependencySuggestion{Name: c.Name, Style: c.Style, Description: c.Description})
 	}
 	return out
 }
 
-func toJSONCandidates(in []DependencyCandidate) []candidateJSON {
+// toModelSuggestions/toJSONSuggestions mirror toModelConfigKeys/toJSONConfigKeys
+// for the `suggestions` array (DependencySuggestion ⇄ suggestionJSON).
+func toModelSuggestions(in []suggestionJSON) []DependencySuggestion {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]candidateJSON, 0, len(in))
+	out := make([]DependencySuggestion, 0, len(in))
 	for _, c := range in {
-		out = append(out, candidateJSON{
-			Name:        c.Name,
-			Style:       c.Style,
-			Description: c.Description,
-			Package:     c.Package,
-		})
+		out = append(out, DependencySuggestion{Name: c.Name, Style: c.Style, Description: c.Description})
+	}
+	return out
+}
+
+func toJSONSuggestions(in []DependencySuggestion) []suggestionJSON {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]suggestionJSON, 0, len(in))
+	for _, c := range in {
+		out = append(out, suggestionJSON{Name: c.Name, Style: c.Style, Description: c.Description})
 	}
 	return out
 }

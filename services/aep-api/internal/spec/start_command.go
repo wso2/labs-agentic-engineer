@@ -27,8 +27,9 @@
 //   - `/start` carries state no client sees and the agent cannot read — the
 //     idea captured in specs/.agentic-engineer.toml, whose dot-led segment is
 //     stripped from every turn snapshot. Only this side can read it.
-//   - The flow token gates web search + MCP minting for design turns
-//     (designOrCollabTurn), and MCP needs a BFF-signed bearer.
+//   - The flow token gates web search (designOrCollabTurn) and MCP minting
+//     (catalogTurn — design, room-scoped and requirements turns), and MCP
+//     needs a BFF-signed bearer.
 //
 // Flows are deliberately NOT a conversation-identity dimension: a flow runs an
 // interview whose answers are ordinary chat turns, so every turn of a project

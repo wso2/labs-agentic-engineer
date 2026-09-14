@@ -576,10 +576,33 @@ func softValidate(path, content string) []Warning {
 		}
 		return nil
 	}
+	if dir, ok := dependencyDesignDir(path); ok {
+		if err := designspec.ValidateDependencyDesignInDir([]byte(content), dir); err != nil {
+			var ve *designspec.ValidationError
+			if errors.As(err, &ve) {
+				return []Warning{{Path: path, Code: ve.Code, Message: ve.Message}}
+			}
+		}
+		return nil
+	}
 	if strings.HasSuffix(path, ".json") && !json.Valid([]byte(content)) {
 		return []Warning{{Path: path, Code: designspec.CodeInvalidJSON, Message: "content is not valid JSON"}}
 	}
 	return nil
+}
+
+// dependencyDesignDir is componentDesignDir's twin for
+// specs/design/dependencies/<name>/dependency.json.
+func dependencyDesignDir(path string) (string, bool) {
+	const prefix = "specs/design/dependencies/"
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, "/dependency.json") {
+		return "", false
+	}
+	parts := strings.Split(strings.TrimPrefix(path, prefix), "/")
+	if len(parts) != 2 {
+		return "", false
+	}
+	return parts[0], true
 }
 
 // componentDesignDir returns the <name> directory of a component design.json

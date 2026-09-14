@@ -18,9 +18,9 @@
 
 // @vitest-environment jsdom
 
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
-import { MarkdownView } from "./MarkdownView";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { MarkdownView, specLinkPath } from "./MarkdownView";
 
 describe("MarkdownView", () => {
   it("renders headings, paragraphs, and code as their semantic elements", () => {
@@ -47,5 +47,30 @@ describe("MarkdownView", () => {
   it("renders nothing for empty content", () => {
     const { container } = render(<MarkdownView>{""}</MarkdownView>);
     expect(container.textContent).toBe("");
+  });
+});
+
+describe("MarkdownView — links into the spec (ADR-0028)", () => {
+  const md = "Needs your input\n\n- [currency-service](aep://spec/specs/design/dependencies/currency-service/dependency.json) — select a provider\n- [docs](https://example.com/docs)";
+
+  it("names the document an aep://spec link points at, and nothing else", () => {
+    expect(specLinkPath("aep://spec/specs/design/dependencies/x/dependency.json")).toBe("specs/design/dependencies/x/dependency.json");
+    expect(specLinkPath("aep://spec/etc/passwd")).toBeNull();
+    expect(specLinkPath("https://example.com")).toBeNull();
+    expect(specLinkPath(undefined)).toBeNull();
+  });
+
+  it("turns a spec link into a click that opens the document, and leaves other links alone", () => {
+    const onSpecLink = vi.fn();
+    render(<MarkdownView onSpecLink={onSpecLink}>{md}</MarkdownView>);
+    fireEvent.click(screen.getByRole("link", { name: "currency-service" }));
+    expect(onSpecLink).toHaveBeenCalledWith("specs/design/dependencies/currency-service/dependency.json");
+    expect(screen.getByRole("link", { name: "docs" })).toHaveAttribute("href", "https://example.com/docs");
+  });
+
+  it("renders a spec link as plain text where nothing can open it", () => {
+    render(<MarkdownView>{md}</MarkdownView>);
+    expect(screen.queryByRole("link", { name: "currency-service" })).not.toBeInTheDocument();
+    expect(screen.getByText(/currency-service/)).toBeInTheDocument();
   });
 });

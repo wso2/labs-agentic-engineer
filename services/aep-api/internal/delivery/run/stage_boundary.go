@@ -946,7 +946,7 @@ func (l *loop) setState(ctx workflow.Context, state string) error {
 
 func (l *loop) settleRun(ctx workflow.Context, state, reason string) error {
 	return workflow.ExecuteActivity(activityCtx(ctx), (*Activities).SettleRun,
-		SettleRunInput{RunID: l.in.RunID, State: state, Reason: reason}).Get(ctx, nil)
+		SettleRunInput{RunID: l.in.RunID, State: state, Reason: reason, OrgID: l.in.OrgID}).Get(ctx, nil)
 }
 
 func (l *loop) bump(ctx workflow.Context, counter delivery.RunBudget) error {

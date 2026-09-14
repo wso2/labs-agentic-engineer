@@ -23,9 +23,13 @@ question can take, one convention:
    (one question) or `ask_questions` (a batch answered as a form). The Zod
    input schema is the structural contract: options, at most one
    `recommended`, unique labels, `multiSelect`.
-2. The turn **ends at the call** (`hasToolCall` stop condition, files toolset
-   only); the tool's `execute` resolves a placeholder so transcripts replay
-   cleanly; the conversation enters `awaiting-human`.
+2. The turn **ends at an accepted call** (a stop condition over the files
+   toolset that skips a call the SDK flagged `invalid`); the tool's `execute`
+   resolves a placeholder so transcripts replay cleanly; the conversation
+   enters `awaiting-human` only when that placeholder is on the transcript. A
+   call the schema rejects (an option without a label, say) leaves an error
+   result instead, the model reads it and retries in its next step, and a turn
+   that then ends without an accepted call is `done`, not waiting on anyone.
 3. The payload rides the **existing `tool-call` frame** — no new SSE event
    kinds; `@aep/agent-stream` owns the wire tool names, input types, and the
    answer serializers (`buildAnswerInstruction` / `buildAnswersInstruction`),
@@ -34,7 +38,12 @@ question can take, one convention:
    a list of questions (single = length 1); a single `QuestionCard` renders
    one question compactly or several as a form. Answered-ness derives from the
    log (`answerableQuestionIds`) — reload / multi-tab safe — and cards are
-   reconstructed from history on rehydrate.
+   reconstructed from history on rehydrate. A card **degrades per option, never
+   per card**: an option the card cannot render or tell apart is dropped and
+   the rest still show, because the turn is waiting on this card and a blank
+   panel is the one thing it must never leave behind. A call flagged `invalid`
+   on the stream, or one whose result on the transcript is an error, is not a
+   question the user was asked and folds to nothing.
 5. The user's response returns as the **next turn's plain-text instruction**
    (`Answer to "<q>": …` for one, an `Answers:` bullet list for a batch) —
    never a new API channel. Free text in the composer is an equally valid

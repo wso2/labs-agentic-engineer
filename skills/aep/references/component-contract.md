@@ -53,7 +53,9 @@ path or a payload shape, and never invent an operation.
 | `component` | `specs/design/components/<dep>/openapi.yaml`, already in your tree — authoritative whether or not that component is built yet. Read the spec, never the provider's source |
 | `org-service` | the provider's published contract: your prompt carries it, names where it is, or says it is undocumented |
 | `platform-resource` | its `wiring` outputs |
-| `external` | **a pinned contract wins when there is one**: its `specPath` (a URL, or a file under `specs/design/components/<component>/dependencies/`), else the vendor's docs. The procedure is `external-dependency-research.md` beside this file |
+| `external` | **a pinned contract wins when there is one**: `specs/design/dependencies/<name>/openapi.yaml` (or `schema.graphql`, or `sdk.json`), the slice of the provider's document the design committed to — or the interface it derived from the provider's reference; the vendor's docs fill what it does not cover. The procedure is `external-dependency-research.md` beside this file |
+
+**Generate the client from an OpenAPI contract with your stack's generator instead of hand-writing one.**
 
 **An endpoint dependency's env var is always `<DEP_NAME>_URL`**, upper-snake-cased
 (`todo-api` → `TODO_API_URL`). With no published contract at all, implement a

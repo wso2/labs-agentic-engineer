@@ -199,12 +199,12 @@ func TestTextToProgressEvents(t *testing.T) {
 
 	// Over-cap input keeps the NEWEST window (live-tail freshness).
 	var b strings.Builder
-	for i := 0; i < defaultProgressLimit+50; i++ {
+	for i := 0; i < legacyProgressLimit+50; i++ {
 		b.WriteString(`{"schemaVersion":1,"kind":"log","summary":"line"}` + "\n")
 	}
 	capped, cappedTruncated := textToProgressEvents(b.String())
-	if len(capped) != defaultProgressLimit {
-		t.Errorf("capped len = %d, want %d", len(capped), defaultProgressLimit)
+	if len(capped) != legacyProgressLimit {
+		t.Errorf("capped len = %d, want %d", len(capped), legacyProgressLimit)
 	}
 	if !cappedTruncated {
 		t.Error("an over-cap page must report truncated")
@@ -358,12 +358,12 @@ func TestBootstrapEvent(t *testing.T) {
 func TestPageEvents(t *testing.T) {
 	t.Parallel()
 	var b strings.Builder
-	for i := 0; i < defaultProgressLimit+10; i++ {
+	for i := 0; i < legacyProgressLimit+10; i++ {
 		b.WriteString(`{"schemaVersion":1,"kind":"log","summary":"x"}` + "\n")
 	}
 	lines, truncated, _ := pageEvents(b.String(), 0)
-	if len(lines) != defaultProgressLimit || !truncated {
-		t.Errorf("pageEvents over-cap = (%d, %v), want (%d, true)", len(lines), truncated, defaultProgressLimit)
+	if len(lines) != legacyProgressLimit || !truncated {
+		t.Errorf("pageEvents over-cap = (%d, %v), want (%d, true)", len(lines), truncated, legacyProgressLimit)
 	}
 
 	lines, truncated, _ = pageEvents(`{"schemaVersion":1,"kind":"phase","phase":"p"}`+"\n", 0)
@@ -494,7 +494,7 @@ func TestCycleProgress_FallsBackToTheArchiveWhenThePodIsGone(t *testing.T) {
 // banner so the console never looks like the whole run was this short.
 func TestCycleProgress_ClosedArchiveOverCapLeadsWithTruncatedBanner(t *testing.T) {
 	var b strings.Builder
-	for i := 0; i < defaultProgressLimit+25; i++ {
+	for i := 0; i < legacyProgressLimit+25; i++ {
 		fmt.Fprintf(&b, "{\"schemaVersion\":1,\"kind\":\"log\",\"summary\":\"line-%d\",\"ts\":\"2026-08-06T10:00:00.%09dZ\"}\n", i, i)
 	}
 	live := &stubLive{err: fmt.Errorf("%w: ca-trunc", ErrComponentGone)}
@@ -517,8 +517,8 @@ func TestCycleProgress_ClosedArchiveOverCapLeadsWithTruncatedBanner(t *testing.T
 	if !resp.Truncated || !resp.Final {
 		t.Fatalf("Truncated=%v Final=%v, want both true", resp.Truncated, resp.Final)
 	}
-	if got := len(resp.Lines) - 1; got != defaultProgressLimit {
-		t.Fatalf("content lines = %d, want %d", got, defaultProgressLimit)
+	if got := len(resp.Lines) - 1; got != legacyProgressLimit {
+		t.Fatalf("content lines = %d, want %d", got, legacyProgressLimit)
 	}
 }
 

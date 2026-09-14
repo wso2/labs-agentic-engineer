@@ -155,11 +155,63 @@ func trashDest(root string) string {
 
 // ----- git execution (hermetic child env, design D2/§8) -----
 
+// forcedConfig is git config the engine imposes on every child, whatever the
+// mirror's own config file says.
+//
+// maintenance.auto is here because the reaper must be the only thing that
+// repacks a shared mirror — it is the only thing that does so under the
+// per-repo EX flock. Git's default is the opposite: `fetch`, `push` and
+// `commit` all end by spawning `git maintenance run --auto --detach`, which
+// double-forks, so it goes on rewriting the object DB after the engine's
+// critical section has closed and the lock is gone. Two concurrent repacks on
+// one object DB is precisely the state the flock exists to prevent, and the
+// detached one holds nothing. The value has to be maintenance.auto: git's auto
+// strategy is geometric-repack, which never consults gc.auto.
+//
+// It is forced through the environment rather than stamped into each mirror
+// because the shared volume outlives any single release. A stamp written at
+// clone time cannot reach a mirror that was cloned before the rule existed;
+// env-supplied config outranks the repo's own file and so covers every mirror
+// already on disk.
+var forcedConfig = []gitConfigRule{
+	{"maintenance.auto", "false"},
+}
+
+// gitConfigRule is one config key/value the engine imposes on git children.
+type gitConfigRule struct{ key, value string }
+
+// forcedConfigEnv renders forcedConfig as git's GIT_CONFIG_COUNT /
+// GIT_CONFIG_KEY_n / GIT_CONFIG_VALUE_n triplets (equivalent to `git -c`, and
+// higher precedence than any config file). The indices are derived from the
+// slice, so adding a rule above is the whole change — there is no count to
+// keep in step by hand.
+//
+// MINIMUM GIT 2.31, which is where these variables were added. Below it they
+// are inert and every rule above silently stops applying. The image installs
+// Alpine's unversioned `git` package (services/aep-api/Dockerfile) and is not
+// pinned to a floor: 2.31 shipped in March 2021, the image currently resolves
+// 2.47, and pinning an apk version would break the build the first time the
+// package is superseded — a certainty, against a regression that is not. What
+// guards it instead is TestGitResolvesEveryForcedConfigRule, which asks the
+// git binary on the box what it RESOLVES for every rule here: on a git too old
+// to read this environment, that test fails rather than the platform quietly
+// losing the rule.
+func forcedConfigEnv() map[string]string {
+	env := map[string]string{"GIT_CONFIG_COUNT": strconv.Itoa(len(forcedConfig))}
+	for i, c := range forcedConfig {
+		n := strconv.Itoa(i)
+		env["GIT_CONFIG_KEY_"+n] = c.key
+		env["GIT_CONFIG_VALUE_"+n] = c.value
+	}
+	return env
+}
+
 // baseEnv is the scrubbed environment every git child gets: no user/system
 // config, no terminal prompts, C locale for machine-stable output, HOME
-// pointed into tmp/ so nothing ambient leaks in.
+// pointed into tmp/ so nothing ambient leaks in, plus the forcedConfig rules
+// the engine imposes on every mirror.
 func (e *Engine) baseEnv() map[string]string {
-	return map[string]string{
+	env := map[string]string{
 		"PATH":                os.Getenv("PATH"),
 		"HOME":                TmpDir(e.root),
 		"GIT_CONFIG_GLOBAL":   os.DevNull,
@@ -167,6 +219,10 @@ func (e *Engine) baseEnv() map[string]string {
 		"GIT_TERMINAL_PROMPT": "0",
 		"LC_ALL":              "C",
 	}
+	for k, v := range forcedConfigEnv() {
+		env[k] = v
+	}
+	return env
 }
 
 // execOpts parametrizes one git invocation.
@@ -301,8 +357,15 @@ func (e *Engine) ensureMirror(ctx context.Context, ref RepoRef, p repoPaths) (cl
 	if _, err := e.remoteGit(ctx, ref, execOpts{}, "clone", "--mirror", ref.CloneURL, stagingGit); err != nil {
 		return false, fmt.Errorf("gitfs: mirror clone %s: %w", ref.RepoSlug, err)
 	}
-	// Never auto-gc a shared mirror — the reaper maintainRepos pass runs
-	// repack/prune/pack-refs under the EX flock (never git gc: gc.pid hostname trap).
+	// gc.auto=0 turns off the classic `gc --auto` path only. It is NOT what
+	// keeps automatic maintenance off a shared mirror: git's auto strategy is
+	// geometric-repack, which never reads gc.auto. That is closed by
+	// forcedConfig (maintenance.auto=false) on every child instead, which also
+	// covers mirrors cloned before this rule existed. The stamp stays as the
+	// narrower belt-and-braces — a mirror handed to a git that still routes
+	// through gc --auto must not gc either, since the reaper's maintainRepos
+	// pass owns repack/prune/pack-refs under the EX flock (never git gc: the
+	// gc.pid hostname trap).
 	if _, err := e.git(ctx, execOpts{}, "--git-dir", stagingGit, "config", "gc.auto", "0"); err != nil {
 		return false, err
 	}

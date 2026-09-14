@@ -32,6 +32,13 @@ describe("fileLabel — a document's name, never its filename", () => {
     expect(fileLabel("specs/design/components/orders/openapi.yaml")).toBe("API");
   });
 
+  it("names a dependency's files without repeating the dependency", () => {
+    expect(fileLabel("specs/design/dependencies/stripe/dependency.json")).toBe("Definition");
+    expect(fileLabel("specs/design/dependencies/stripe/openapi.yaml")).toBe("API");
+    expect(fileLabel("specs/design/dependencies/shop/schema.graphql")).toBe("API");
+    expect(fileLabel("specs/design/dependencies/s3/sdk.json")).toBe("SDK");
+  });
+
   it("falls back to the slug for feature and flow files", () => {
     expect(fileLabel("specs/requirements/features/checkout.md")).toBe("checkout");
     expect(fileLabel("specs/design/flows/checkout.md")).toBe("checkout");

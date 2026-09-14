@@ -29,11 +29,13 @@
 // travels through the submitter's pendingSeed exactly like their typed reply
 // would.
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { Box, Button, Checkbox, Chip, CircularProgress, Radio, Stack, TextField, Typography } from "@wso2/oxygen-ui";
 import { Sparkles, Users } from "@wso2/oxygen-ui-icons-react";
 import type { Doc } from "yjs";
-import type { AskQuestionInput, QuestionAnswer } from "@aep/agent-stream";
+import type { AskQuestionInput, QuestionAnswer, QuestionOptionAction } from "@aep/agent-stream";
+import { useAcceptDependencyAssumption } from "../api/queries";
+import { ProvideInterfaceDialog } from "./ProvideInterfaceDialog";
 import {
   applyNote,
   applySelection,
@@ -212,11 +214,29 @@ export function QuestionBlock({
   );
 }
 
+/**
+ * The typed actions the chosen options carry (ADR-0028): the console runs them
+ * on submit, before the answer reaches the agent — the user's authorization
+ * to build on an assumed interface is a platform write on their click, and an
+ * upload is a modal a card cannot hold. One action per kind per submit.
+ */
+function selectedActions(questions: AskQuestionInput[], answers: QuestionAnswer[]): QuestionOptionAction[] {
+  const out: QuestionOptionAction[] = [];
+  questions.forEach((q, i) => {
+    const chosen = new Set(answers[i]?.selected ?? []);
+    for (const o of q.options) {
+      if (o.action && chosen.has(o.label)) out.push(o.action);
+    }
+  });
+  return out;
+}
+
 export function SpecQuestionForm({
   doc,
   entry,
   org,
   projectName,
+  onDependencyCommitted,
 }: {
   /** The live room Y.Doc — selections write straight into its shared map. */
   doc: Doc;
@@ -224,7 +244,18 @@ export function SpecQuestionForm({
   entry: RoomQuestion;
   org: string;
   projectName: string;
+  /**
+   * A typed action wrote into a dependency's directory outside the room; the
+   * owner brings the room's copy up to date before the answer is sent, so the
+   * agent's next snapshot carries what the platform recorded.
+   */
+  onDependencyCommitted?: ((name: string) => Promise<void> | void) | undefined;
 }) {
+  const accept = useAcceptDependencyAssumption(projectName);
+  // An upload action holds the submit until the document lands (or the
+  // modal is cancelled, which leaves the card as it was).
+  const [pendingUpload, setPendingUpload] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   // Re-aligned to the CURRENT question count on every render: while the batch
   // streams the stored array is shorter than the list, and editing through a
   // short array drops writes for the later questions (#335).
@@ -249,14 +280,54 @@ export function SpecQuestionForm({
   const streaming = entry.streaming === true;
   const canSubmit = allAnswered && !streaming;
 
-  const submit = () => {
-    if (!canSubmit) return;
-    const cleaned = answers.map((a) => ({
+  const cleanedAnswers = () =>
+    answers.map((a) => ({
       selected: a.selected,
       ...(a.freeText?.trim() ? { freeText: a.freeText.trim() } : {}),
     }));
+  const send = (cleaned: QuestionAnswer[]) => {
     setPendingSeed(chatKeyFor(org, projectName), serializeQuestionAnswer(entry.questions, cleaned));
     closeRoomQuestion(doc, entry.toolCallId);
+  };
+
+  const submit = () => {
+    if (!canSubmit || accept.isPending) return;
+    const actions = selectedActions(entry.questions, answers);
+    const upload = actions.find((a) => a.kind === "upload-interface");
+    if (upload) {
+      // The answer waits for the document: the modal's own success path
+      // finishes the submit (uploadLanded).
+      setPendingUpload(upload.dependency);
+      return;
+    }
+    const authorize = actions.find((a) => a.kind === "accept-assumption");
+    if (authorize) {
+      setActionError(null);
+      accept.mutate(
+        { depName: authorize.dependency },
+        {
+          onSuccess: () => {
+            void Promise.resolve(onDependencyCommitted?.(authorize.dependency)).then(() => send(cleanedAnswers()));
+          },
+          onError: (e) => setActionError(e instanceof Error ? e.message : "The authorization was not recorded."),
+        },
+      );
+      return;
+    }
+    send(cleanedAnswers());
+  };
+
+  const uploadLanded = (dependency: string) => {
+    setPendingUpload(null);
+    void Promise.resolve(onDependencyCommitted?.(dependency)).then(() =>
+      send(
+        cleanedAnswers().map((a, i) =>
+          selectedActions([entry.questions[i]!], [a]).some((x) => x.kind === "upload-interface")
+            ? { ...a, freeText: [a.freeText, "uploaded the interface document"].filter(Boolean).join(" — ") }
+            : a,
+        ),
+      ),
+    );
   };
 
   // The other exit: close the form for the WHOLE room and hand the questions
@@ -381,11 +452,26 @@ export function SpecQuestionForm({
           <Button variant="text" color="inherit" disabled={streaming} onClick={useRecommended}>
             Use recommended answers
           </Button>
-          <Button variant="contained" disabled={!canSubmit} onClick={submit}>
+          {actionError && (
+            <Typography variant="body2" color="error">
+              {actionError}
+            </Typography>
+          )}
+          <Button variant="contained" disabled={!canSubmit || accept.isPending} loading={accept.isPending} onClick={submit}>
             Continue
           </Button>
         </Stack>
       </Stack>
+      {pendingUpload && (
+        <ProvideInterfaceDialog
+          projectName={projectName}
+          name={pendingUpload}
+          replacing={false}
+          open
+          onClose={() => setPendingUpload(null)}
+          onCommitted={() => uploadLanded(pendingUpload)}
+        />
+      )}
     </Box>
   );
 }

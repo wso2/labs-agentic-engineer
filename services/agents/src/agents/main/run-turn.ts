@@ -66,8 +66,8 @@ export interface RunTurnInput {
   fileParts?: FilePart[];
   /**
    * Stop conditions; defaults to `[isStepCount(maxSteps ?? 20)]`. Stays generic
-   * — the main wiring passes `[isStepCount(n), hasToolCall('ask_question'),
-   * hasToolCall('ask_questions')]` without runTurn ever knowing a tool name.
+   * — the main wiring passes `[isStepCount(n), <stop on an accepted question
+   * call>]` without runTurn ever knowing a tool name.
    */
   stopWhen?: StopCondition<ToolSet>[];
   onEvent?: (part: StreamPart) => void;

@@ -1030,7 +1030,6 @@ func Test_FilesForComponent(t *testing.T) {
 		}
 	})
 
-
 	t.Run("nil service receiver is a no-op", func(t *testing.T) {
 		t.Parallel()
 		var svc *RuntimeConfigService
@@ -1039,4 +1038,3 @@ func Test_FilesForComponent(t *testing.T) {
 		}
 	})
 }
-

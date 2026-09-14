@@ -24,6 +24,7 @@ import {
   classifyIPv4,
   classifyIPv6,
   createWebFetchGuardHook,
+  webFetchDenial,
   isSsrfUrl,
   parseIPv6ToBigInt,
   WEBFETCH_SECRET_DENIAL_MESSAGE,
@@ -326,7 +327,7 @@ function preToolUseInput(url: string): PreToolUseHookInput {
 }
 
 test("createWebFetchGuardHook: denies an SSRF URL (cloud metadata)", async () => {
-  const hook = createWebFetchGuardHook([]);
+  const hook = createWebFetchGuardHook(webFetchDenial([]));
   const output = (await hook(
     preToolUseInput("https://169.254.169.254/latest/meta-data"),
     "tool-use-1",
@@ -339,7 +340,7 @@ test("createWebFetchGuardHook: denies an SSRF URL (cloud metadata)", async () =>
 });
 
 test("createWebFetchGuardHook: denies a URL containing a staged secret value", async () => {
-  const hook = createWebFetchGuardHook(["staged-secret-value-123456"]);
+  const hook = createWebFetchGuardHook(webFetchDenial(["staged-secret-value-123456"]));
   const output = (await hook(
     preToolUseInput("https://api.example.com/collect?token=staged-secret-value-123456"),
     "tool-use-1",
@@ -351,7 +352,7 @@ test("createWebFetchGuardHook: denies a URL containing a staged secret value", a
 });
 
 test("createWebFetchGuardHook: allows a clean, benign public https URL (no permissionDecision set)", async () => {
-  const hook = createWebFetchGuardHook(["staged-secret-value-123456"]);
+  const hook = createWebFetchGuardHook(webFetchDenial(["staged-secret-value-123456"]));
   const output = (await hook(
     preToolUseInput("https://api.example.com/v1/docs"),
     "tool-use-1",
@@ -362,7 +363,7 @@ test("createWebFetchGuardHook: allows a clean, benign public https URL (no permi
 });
 
 test("createWebFetchGuardHook: denies a missing/non-string url (fail-closed)", async () => {
-  const hook = createWebFetchGuardHook([]);
+  const hook = createWebFetchGuardHook(webFetchDenial([]));
   const input: PreToolUseHookInput = {
     session_id: "s1",
     transcript_path: "/tmp/transcript.jsonl",
@@ -380,7 +381,7 @@ test("createWebFetchGuardHook: denies a missing/non-string url (fail-closed)", a
 });
 
 test("createWebFetchGuardHook: ignores non-PreToolUse hook events", async () => {
-  const hook = createWebFetchGuardHook(["staged-secret-value-123456"]);
+  const hook = createWebFetchGuardHook(webFetchDenial(["staged-secret-value-123456"]));
   const output = await hook(
     { session_id: "s1", transcript_path: "/tmp/t.jsonl", cwd: "/workspace", hook_event_name: "PostToolUse" } as never,
     "tool-use-1",
@@ -390,7 +391,7 @@ test("createWebFetchGuardHook: ignores non-PreToolUse hook events", async () => 
 });
 
 test("createWebFetchGuardHook: ignores PreToolUse calls for tools other than WebFetch", async () => {
-  const hook = createWebFetchGuardHook(["staged-secret-value-123456"]);
+  const hook = createWebFetchGuardHook(webFetchDenial(["staged-secret-value-123456"]));
   const input: PreToolUseHookInput = {
     session_id: "s1",
     transcript_path: "/tmp/transcript.jsonl",

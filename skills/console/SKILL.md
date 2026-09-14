@@ -33,7 +33,7 @@ that names a directory, a next step that names a command — these rules win.
 `apps/console/design/lexicon.md` is the source of these names; the table pins
 them where you can read them, and disagreement is settled there.
 
-## Never quote a repo path
+## Never quote a repo path The one exception is a dependency link in a design turn's closing list, `[<name>](aep://spec/<path to its dependency.json>)`, which the console turns into a click that opens the definition.
 
 Not in a closing, not in a question, not when something fails. A path is a
 string the user cannot click, in a tree they cannot see.

@@ -78,7 +78,7 @@ outside that lock is the duplicate-issue race the lock exists to close.
 
 | Sub-package | Owns | Reaches the root for |
 |---|---|---|
-| `build` (buildpipe) | the whole-spec gate + `v<N>` tag cut, **the milestone plan path** (mint `v<N>`'s milestone, supersede the previous version into it, admit the run row, then plan its Tasks and mint its gates), the version ledger, dependency preflight | `MilestoneRun`/`StartRunRequest`, and the planner via `SpecPlanner` |
+| `build` (buildpipe) | the whole-spec gate + the version's tag cut (its NAME comes from the request — console ADR-0030), **the milestone plan path** (mint the version's milestone, supersede the previous version into it, admit the run row, then plan its Tasks and mint its gates), the version ledger, dependency preflight — which also answers what the version is called and changes, since the click makes one request | `MilestoneRun`/`StartRunRequest`, and the planner via `SpecPlanner` |
 | `task` (taskflow) | the GitHub-native Task READ surface (list/get, scoped to a version by milestone membership) + the plan turn, which mints one **prose** issue per Task **into the version's milestone**, assigned at creation; plus the SRE/RCA handoff's adoption leg | the read DTOs, the milestone label vocabulary, and the run rows (via `MilestoneResolver`) |
 | `execution` | the executions READ surface: the per-Task progress endpoint, the task-log SSE stream, `OpsExecutionReader`. It writes nothing and dispatches nothing — the only execution rows left are the provisioning gates' | `TaskStreamHub`, the executions kernel |
 | `eventcore` | the event plane of the milestone-run loop: the auto-merge policy seam, the merged-PR path-diff build fan-out + per-`(component, SHA)` re-trigger budget, fix/conflict/red-main issue minting, the halt of a failed run's unfinished work and the close of a cancelled run's in-flight work, milestone-matched predicate re-evaluation, adoption, the reconcile sweep (trigger router; halted-aware, and blind to cancelled increments), and the build sweep that observes those builds reaching terminal | the milestone model (labels, `MilestoneRun`/`RunCycle`, run signals), `DiffComponents`/`BuildRunName` and `BuildTerminalObserver`; **no Temporal** — it reaches the supervisor only through the `RunSignaler`/`RunStarter` ports |
@@ -107,6 +107,7 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
 | `ComponentEnsurer` | needs | `eventcore` → the projects component service + the runtime-config emitter. Provision a component's OpenChoreo CR immediately before its first build; see the invariant below |
 | `RunReader` · `CycleReader` · `CycleLogReader` · `RunCanceller` · `Revalidator` | needs | `runread` → the root run/cycle repositories, `codingagent`'s cycle-log reader (the pod's log through the OC API while it lives, the observer's archive while the Component is retained), `*run.Supervisor` and the event plane. Four reads and two writes, which is the whole dependency surface of the read model. `Revalidator` is a port for the same reason `RunCanceller` is: deciding a revalidation needs GitHub (is there open work?) and the project repo (is there an oracle?), and this surface must stay free-to-poll |
 | `Gates` · `Planner` | needs | `run` → `dependencies/provisioning` (through an app-root adapter) and `task`. Mint the version's dependency gates, then plan its Tasks — the run's first phase. Declared here rather than imported for the same reason `build` declares its own: `task ⊥ run` is an import ban in both directions, and a port over root types satisfies it |
+| `RunFailedRecorder` | needs | `run` → the projects domain's activity service (through an app-root adapter). Told once per FAILED settle so the project's feed carries a `run_failed` line; the fault itself is the run row's `failure` record, written by `ProvisionGates` / `PlanMilestone` through `RunStore.RecordFailure` — see [`design/run-failure-record.md`](../../design/run-failure-record.md) |
 | `Deployer` · `DeploymentReader` | needs | `run` → `projects.DeploymentService`. Promote a cycle's built components and read back whether they are serving. The supervisor owns the ORDER and the verdict; the projects domain owns the OpenChoreo writes, which is why `run` still names no cluster client |
 | `DeployIssueMinter` | needs | `run` → the event plane. The ONE recovery issue the plane cannot mint on its own initiative: every other one has a webhook behind it, and a ReleaseBinding that never becomes Ready delivers nothing. The supervisor observes it and asks; the plane still owns the write, the labels and the dedupe key |
 | `RunSignaler` · `RunStarter` | needs | `eventcore` and `build` → the run supervisor. Signal a run, start one. Interfaces, which is what keeps both the event plane and the build click free of a workflow engine; both are declared over the root `StartRunRequest`, and `*run.Supervisor` satisfies both |
@@ -131,8 +132,8 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   conflict: the design is unsatisfiable on this cluster, so the click claims no version and
   starts no workflow.
 - **What preflight gates**: it reports what a version's dependencies still need, and only
-  `needsResolution` — a dependency the design itself cannot name (ambiguous, unresolved, missing spec,
-  or an org service awaiting access) — blocks the version cut. `needsInput` stays the broad "there is
+  `needsResolution` — a dependency the design itself cannot name (no service chosen, an unaccepted
+  assumption, missing spec, or an org service awaiting access) — blocks the version cut. `needsInput` stays the broad "there is
   something to show" flag: an external dependency's config VALUES are collected while the build runs
   and enforced at the deploy gate, so they never hold up starting a build.
 - The **event plane** (`eventcore`): the platform's whole reaction to a pull request, a milestone-matched
@@ -643,16 +644,24 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   be a logged no-op rather than a nil check at each call site.
 - **A run's progress is ONE connection over every cycle, and only a terminal run settles it.**
   `stream-run-progress` (`GET .../runs/{runId}/progress`, `text/event-stream`) carries a `cycle` frame per
-  cycle record and a `line` frame per agent-log entry, each line stamped with its cycle id, its 1-based
-  cycle index and an **emitter chip** (`main` | `subagent`) so the console renders one accordion section
-  per cycle and can tell the run's main agent from the work it fanned out with the Task tool. The frame
+  cycle record and an **`event` frame per feed entry** — one `RunEvent`, the generated v2 envelope, stamped
+  by aep-api with the `cycleId` and the `attempt` that produced it, so the console renders one accordion
+  section per cycle and can order a feed whose `seq` restarts on a re-dispatch. Attribution is per AGENT
+  (`agentId`, with `label`/`depth`/`parentAgentId` on the agent-lifecycle kinds), not a `main`/`subagent`
+  chip: a run that fans out to a dozen agents at three depths cannot be described by two values. The frame
   kind rides in a `type` field inside the `data:` payload so it passes the shared agent-stream parser.
   A live run — including one parked in `waiting` — holds the stream open indefinitely; a terminal run
   streams its history, sends `done` + `[DONE]`, and the server closes. The server keeps no cursor; the
-  client dedups by cycle id and `(cycleId, seq)`. This is the read for ONE EXECUTION.
+  client dedups by cycle id and `(cycleId, attempt, seq)`. This is the read for ONE EXECUTION.
+  **This stream sends no `line` frames.** Cycles dispatched by a v1 runner are not a second envelope on it:
+  `codingagent` LIFTS their output into `RunEvent`s (a first sighting of an `emitterId` becomes an
+  `agent_started` marked `role: "inferred"`; the fan-out `tool_result` that answers that id becomes
+  `agent_settled`), so one shape reaches a console whatever produced it. `line` stays in the contract for
+  the version stream below.
 - **A VERSION's progress is one connection across its RUNS, and it settles only while no run is live.**
   `stream-build-progress` (`GET .../builds/{tag}/progress`, `text/event-stream`) is the same frames plus a
-  `run` object — id, kind, and the run's 1-based chronological index — because a version's story is spread
+  `run` object — id, kind, and the run's 1-based chronological index — and it is still the v1 `line`
+  frame (`RunProgressLine`, with the `main`/`subagent` emitter chip), because a version's story is spread
   across several executions and a cycle is not identified until you know which run opened it. The tag
   resolves to a milestone through the run rows, which IS the tenant fence: another org's or another
   project's version is a 404 before a byte. Runs are emitted OLDEST FIRST, sorted here rather than
@@ -666,15 +675,32 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   `done { reason: "no_live_run" }` + `[DONE]` when none is — `reason`, never `state`, which is
   contract-defined as one RUN's terminal state. The console reopens it from the run-list poll it already
   makes every 5s. A milestone whose runs are purged mid-stream needs no second ending: no row is live.
-- **Agent logs are read, never stored.** Three sources answer, in order: live OpenChoreo pod logs while
-  the Component exists, the observability archive while the Component is retained, and a synthetic
-  `logs_unavailable` line when the Component is gone or no observability plane is configured. An empty
-  stream and a lost log look identical to a reader and mean opposite things about the agent, so the
-  platform never lets "gone" render as "silent". `CycleLogReader` serves the run-progress stream;
-  `codingagent` owns the read path and writes no log text to Postgres. The one thing taken from a
-  terminal pod's log is the runner's token-usage line, stamped onto the cycle row — accounting, not
-  logging. `coding_agent_logs` remains for legacy execution rows; milestone cycles never used it.
-  (`run_cycle_logs` is retired — do not revive a Postgres sidecar for cycle logs.)
+- **A cycle's feed is RECORDED once, server-side, and viewers read the recording.** The pod's log used to
+  be tailed per viewer — each SSE connection on its own 2s cursor, keeping the newest 64KiB, writing
+  nothing — which lost output five measured ways. `codingagent.CycleRecorder` now reads each dispatched
+  cycle once (1s while its pod is Running, the cycle watcher's 30s otherwise, plus one FINAL FULL READ on
+  a terminal pod) and appends v2 `RunEvent` NDJSON to
+  `<workspaceRoot>/runs/<org>/<cycleId>/events.<attempt>.ndjson`. One file per attempt, because a
+  re-dispatch is a new pod whose seqs restart at 1. `CycleEvents` serves the run stream from that file by
+  byte offset — so a reload mid-run replays from the first event and a reload after the pod is reaped shows
+  the whole cycle. **The 200-event post-mortem window is gone**; the observability archive is called only to
+  backfill a detected `seq` gap.
+  The recording is **observability, not ledger**
+  ([ADR-0027](../../../../docs/decisions/ADR-0027-run-recordings-are-observability-not-ledger.md)):
+  `run_cycles` stays the system of record, and `RunCycleView.recording`
+  (`none | recording | complete | gaps | lost`) tells a console what can actually be served — `none` and
+  `lost` are never collapsed, because they paint the same empty screen and are very different bugs.
+  The v1 VERSION build-progress stream still derives per viewer from the pod, then the archive, then a
+  synthetic "logs unavailable" marker (`CycleProgress`, resolved once by `resolveCycleLog`), and keeps its
+  200-event page cap. Every platform-minted marker that is re-derived per poll — the dark zone, a
+  truncation, a lost log — is a `notice` on a stable NEGATIVE seq with no timestamp, which is what makes it
+  dedup to one row; a notice the RECORDER writes at a point in the run (a gap, the size cap) takes the next
+  free POSITIVE seq and stays where it happened. `CycleLogReader` serves both streams and `RecordingReader`
+  answers `recording`; `codingagent` owns both and writes no log text to Postgres. The one thing taken from
+  a terminal pod's log by the WATCHER is the runner's token-usage line — v2 `run_settled` or v1 `result`,
+  always the LAST one, because the runtime reports usage cumulatively — stamped onto the cycle row:
+  accounting, not logging. `coding_agent_logs` remains for legacy execution rows; milestone cycles never
+  used it. (`run_cycle_logs` is retired — do not revive a Postgres sidecar for cycle logs.)
 - **A project delete purges the WORK and retires the SPEND.** `runs` and `run_cycles` are working state and
   go, so a recreated same-named project cannot inherit a timeline its repo never had; the
   `agent_usage_ledger` is not purged by anything — `RetireByProject` stamps its live entries instead, and

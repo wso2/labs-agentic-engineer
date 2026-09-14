@@ -22,6 +22,7 @@ import type { PreToolUseHookInput } from "@anthropic-ai/claude-agent-sdk";
 import {
   checkWebSearchQuery,
   createWebSearchDlpHook,
+  webSearchDenial,
   stagedSecretValues,
   WEBSEARCH_DENIAL_MESSAGE,
 } from "./websearch_dlp.js";
@@ -139,7 +140,7 @@ function preToolUseInput(query: string): PreToolUseHookInput {
 }
 
 test("createWebSearchDlpHook: denies a WebSearch call whose query contains a staged secret value", async () => {
-  const hook = createWebSearchDlpHook(["staged-secret-value-123456"]);
+  const hook = createWebSearchDlpHook(webSearchDenial(["staged-secret-value-123456"]));
   const output = (await hook(
     preToolUseInput("how do I use staged-secret-value-123456 with this SDK"),
     "tool-use-1",
@@ -152,7 +153,7 @@ test("createWebSearchDlpHook: denies a WebSearch call whose query contains a sta
 });
 
 test("createWebSearchDlpHook: allows a clean WebSearch query (no permissionDecision set)", async () => {
-  const hook = createWebSearchDlpHook(["staged-secret-value-123456"]);
+  const hook = createWebSearchDlpHook(webSearchDenial(["staged-secret-value-123456"]));
   const output = (await hook(
     preToolUseInput("Stripe API idempotency keys official docs"),
     "tool-use-1",
@@ -163,7 +164,7 @@ test("createWebSearchDlpHook: allows a clean WebSearch query (no permissionDecis
 });
 
 test("createWebSearchDlpHook: denial message instructs retrying without values", async () => {
-  const hook = createWebSearchDlpHook(["staged-secret-value-123456"]);
+  const hook = createWebSearchDlpHook(webSearchDenial(["staged-secret-value-123456"]));
   const output = (await hook(preToolUseInput("staged-secret-value-123456"), "tool-use-1", {
     signal: new AbortController().signal,
   })) as SyncOutput;
@@ -174,7 +175,7 @@ test("createWebSearchDlpHook: denial message instructs retrying without values",
 });
 
 test("createWebSearchDlpHook: ignores non-PreToolUse hook events", async () => {
-  const hook = createWebSearchDlpHook(["staged-secret-value-123456"]);
+  const hook = createWebSearchDlpHook(webSearchDenial(["staged-secret-value-123456"]));
   const output = await hook(
     { session_id: "s1", transcript_path: "/tmp/t.jsonl", cwd: "/workspace", hook_event_name: "PostToolUse" } as never,
     "tool-use-1",
@@ -184,7 +185,7 @@ test("createWebSearchDlpHook: ignores non-PreToolUse hook events", async () => {
 });
 
 test("createWebSearchDlpHook: ignores PreToolUse calls for tools other than WebSearch", async () => {
-  const hook = createWebSearchDlpHook(["staged-secret-value-123456"]);
+  const hook = createWebSearchDlpHook(webSearchDenial(["staged-secret-value-123456"]));
   const input: PreToolUseHookInput = {
     session_id: "s1",
     transcript_path: "/tmp/transcript.jsonl",

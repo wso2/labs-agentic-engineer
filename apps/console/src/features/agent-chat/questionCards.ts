@@ -25,15 +25,36 @@
 import {
   ASK_QUESTION_TOOL,
   ASK_QUESTIONS_TOOL,
+  isQuestionTool,
   buildAnswerInstruction,
   buildAnswersInstruction,
   type AskQuestionInput,
   type QuestionAnswer,
   type AskQuestionOption,
+  type QuestionOptionAction,
 } from "@aep/agent-stream";
 import type { ChatMessage } from "./chatStore";
 
-/** Parse one question object; null if malformed or its labels aren't unique. */
+/**
+ * Parse one question object; null only when the QUESTION is malformed. Options
+ * degrade individually: one the card cannot render (no label) or cannot tell
+ * apart (a repeated label — labels are the selection identity on the card AND
+ * in the serialized answer) is dropped and the rest still show. The turn ended
+ * on this call and waits for the user, so a dropped card would leave them
+ * facing a blank panel; a card short one option is answerable, and the form
+ * always offers free text for whatever the missing option meant.
+ */
+/** A well-formed typed action, or undefined — a malformed one is dropped, the option stays. */
+function parseOptionAction(raw: unknown): QuestionOptionAction | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const a = raw as Record<string, unknown>;
+  if (typeof a.dependency !== "string" || !a.dependency) return undefined;
+  if (a.kind === "accept-assumption" || a.kind === "upload-interface") {
+    return { kind: a.kind, dependency: a.dependency };
+  }
+  return undefined;
+}
+
 function parseOneQuestion(value: unknown): AskQuestionInput | null {
   if (typeof value !== "object" || value === null) return null;
   const v = value as Record<string, unknown>;
@@ -42,20 +63,21 @@ function parseOneQuestion(value: unknown): AskQuestionInput | null {
   // text field); a missing/non-array options is malformed.
   if (!Array.isArray(v.options)) return null;
   const options: AskQuestionOption[] = [];
+  const seen = new Set<string>();
   for (const raw of v.options) {
-    if (typeof raw !== "object" || raw === null) return null;
+    if (typeof raw !== "object" || raw === null) continue;
     const o = raw as Record<string, unknown>;
-    if (typeof o.label !== "string" || !o.label) return null;
+    if (typeof o.label !== "string" || !o.label || seen.has(o.label)) continue;
+    seen.add(o.label);
+    const action = parseOptionAction(o.action);
     options.push({
       label: o.label,
       ...(typeof o.description === "string" ? { description: o.description } : {}),
       ...(o.recommended === true ? { recommended: true } : {}),
       ...(o.freeText === true ? { freeText: true } : {}),
+      ...(action ? { action } : {}),
     });
   }
-  // Labels are the selection identity on the card AND in the serialized answer;
-  // duplicates would make a pick ambiguous.
-  if (new Set(options.map((o) => o.label)).size !== options.length) return null;
   return {
     question: v.question,
     ...(typeof v.detail === "string" && v.detail ? { detail: v.detail } : {}),
@@ -67,8 +89,9 @@ function parseOneQuestion(value: unknown): AskQuestionInput | null {
 /**
  * Parse an `ask_question` (single) or `ask_questions` (batch) tool-call input
  * — object or the provider's stringified JSON — into a uniform, non-empty list
- * of questions. Anything malformed → null; the fold then renders no card and
- * the turn's prose still carries the question.
+ * of questions. Malformed parts drop individually — an option in
+ * `parseOneQuestion`, a question in a batch here — and the card renders what
+ * is left; null only when nothing renderable remains.
  */
 export function parseQuestionsInput(toolName: string, input: unknown): AskQuestionInput[] | null {
   let value = input;
@@ -86,22 +109,20 @@ export function parseQuestionsInput(toolName: string, input: unknown): AskQuesti
   if (toolName === ASK_QUESTIONS_TOOL) {
     if (typeof value !== "object" || value === null) return null;
     const list = (value as Record<string, unknown>).questions;
-    if (!Array.isArray(list) || list.length === 0) return null;
+    if (!Array.isArray(list)) return null;
+    // Same rule one level up: a malformed question drops, the form still
+    // renders the rest; only a form with nothing left in it is no card.
     const out: AskQuestionInput[] = [];
     for (const q of list) {
       const parsed = parseOneQuestion(q);
-      if (!parsed) return null;
-      out.push(parsed);
+      if (parsed) out.push(parsed);
     }
-    return out;
+    return out.length > 0 ? out : null;
   }
   return null;
 }
 
-/** True when `toolName` is one of the question tools (single or batch). */
-export function isQuestionTool(toolName: string | undefined): boolean {
-  return toolName === ASK_QUESTION_TOOL || toolName === ASK_QUESTIONS_TOOL;
-}
+export { isQuestionTool };
 
 /**
  * Incrementally extract the COMPLETE question objects from a PARTIAL

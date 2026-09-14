@@ -45,6 +45,7 @@ import { checkOpenapiSpec } from "./openapi-spec.js";
 import { checkWireframeLayout } from "./wireframe-layout.js";
 import { checkDesignDiagram } from "./design-diagrams.js";
 import { checkComponentDependencies } from "./component-dependencies.js";
+import { checkDependencyDesign, preserveAssumption } from "./dependency-design-schema.js";
 import type {
   Op,
   ErrCode,
@@ -78,6 +79,8 @@ const MAX_CANDIDATES = 6;
 export class FileBundle {
   private files = new Map<string, string>();
   private touchedPaths = new Set<string>();
+  /** What removeFile took out this turn, by path — the prior an add-after-remove is judged against. */
+  private readonly removedThisTurn = new Map<string, string>();
 
   constructor(initial: Record<string, string> = {}) {
     for (const [path, content] of Object.entries(initial)) {
@@ -195,6 +198,10 @@ export class FileBundle {
     if (!this.files.has(path)) {
       return ok(path, op, "noop"); // idempotent delete
     }
+    // A definition removed to be re-added wholesale still carries the user's
+    // authorization record for the add that follows (preserveAssumption).
+    const removed = this.files.get(path);
+    if (removed !== undefined) this.removedThisTurn.set(path, removed);
     this.files.delete(path);
     this.touchedPaths.add(path);
     return ok(path, op, "applied");
@@ -229,6 +236,17 @@ export class FileBundle {
     const dependencyProblem = checkComponentDependencies(path, content, this);
     if (dependencyProblem) {
       return err(path, op, dependencyProblem.code, dependencyProblem.message);
+    }
+    // The user's authorization record on a dependency's definition rides
+    // through every agent write of the file, whether or not the agent carried
+    // it (see preserveAssumption).
+    const priorDefinition = this.read(path) ?? this.removedThisTurn.get(path);
+    content = preserveAssumption(path, content, priorDefinition);
+    const dependencyDesignProblem = checkDependencyDesign(path, content, {
+      read: (p) => (p === path ? priorDefinition : this.read(p)),
+    });
+    if (dependencyDesignProblem) {
+      return err(path, op, dependencyDesignProblem.code, dependencyDesignProblem.message);
     }
     // The security document is gated on the same terms: it is the ONE spec file
     // the platform acts on deterministically at build time (creating directory

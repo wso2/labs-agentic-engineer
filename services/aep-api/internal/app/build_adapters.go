@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/delivery/build"
@@ -36,8 +35,21 @@ type buildSpecTagger struct {
 	art spec.ArtifactService
 }
 
-func (t buildSpecTagger) TagSpec(ctx context.Context, orgID, projectID string) (*spec.SpecSaveResult, error) {
-	return t.art.SaveSpec(ctx, orgID, projectID, spec.SaveRequest{Message: "Build"})
+func (t buildSpecTagger) TagSpec(ctx context.Context, orgID, projectID, version string) (*spec.SpecSaveResult, error) {
+	// The name rides as Name, never as the message: the message is the tag's
+	// body (what this save was), the name is the tag itself (what the version
+	// IS). Empty takes the platform's suggestion.
+	return t.art.SaveSpec(ctx, orgID, projectID, spec.SaveRequest{Message: "Build", Name: version})
+}
+
+// buildVersionFacts adapts the artifact service onto the preflight's
+// VersionFactsReader — what the next version would be called and carry.
+type buildVersionFacts struct {
+	art spec.ArtifactService
+}
+
+func (v buildVersionFacts) BuildVersionFacts(ctx context.Context, orgID, projectID string) (spec.VersionFacts, error) {
+	return v.art.BuildVersionFacts(ctx, orgID, projectID)
 }
 
 func (t buildSpecTagger) BuildScopeAtTag(ctx context.Context, orgID, projectID, tag string) (spec.BuildScope, error) {
@@ -133,25 +145,26 @@ func (b buildGateResolver) ProvisionForBuild(ctx context.Context, orgID, project
 	return aggregateProvisionFailures(fails)
 }
 
+// aggregateProvisionFailures maps the provisioning feature's per-dependency
+// failures onto delivery's typed error. The facts travel (which component,
+// which dependency, the provisioner's words, permanent or not) so the run can
+// record them on its row; the error TEXT and the ErrProvisionPermanent
+// classification are what they were, so nothing reading the error changes.
 func aggregateProvisionFailures(fails []provisioning.ProvisionFailure) error {
 	if len(fails) == 0 {
 		return nil
 	}
-	reasons := make([]string, 0, len(fails))
-	permanent := false
-	var cause error
+	out := &delivery.ProvisionFailedError{Faults: make([]delivery.ProvisionFault, 0, len(fails))}
 	for _, f := range fails {
-		reasons = append(reasons, f.Dependency+": "+f.Reason)
-		if errors.Is(f.Err, dependencies.ErrProvisionPermanent) {
-			permanent = true
-			cause = f.Err
-		}
+		out.Faults = append(out.Faults, delivery.ProvisionFault{
+			Component:  f.Component,
+			Dependency: f.Dependency,
+			Reason:     f.Reason,
+			Permanent:  errors.Is(f.Err, dependencies.ErrProvisionPermanent),
+			Cause:      f.Err,
+		})
 	}
-	joined := fmt.Errorf("provision %d dependenc(ies) failed: %s", len(fails), strings.Join(reasons, "; "))
-	if !permanent {
-		return joined
-	}
-	return fmt.Errorf("%w: %w: %w", delivery.ErrProvisionPermanent, cause, joined)
+	return out
 }
 
 // mapProvisionInputs maps the delivery-root payload onto the provisioning

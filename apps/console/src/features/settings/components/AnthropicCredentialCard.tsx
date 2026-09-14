@@ -41,16 +41,13 @@ import { EmptyState } from "../../../components/EmptyState";
 import { NoPermissionIllustration } from "../../../components/NoPermissionIllustration";
 import type { components } from "../../../generated/aep-api";
 import { useConnectAnthropic, useDisconnectAnthropic } from "../api/queries";
-import { CodingAgentKeySection } from "./CodingAgentKeySection";
 
 type LLMProjection = components["schemas"]["LLMProjection"];
 
 export function AnthropicCredentialCard({
   llm,
-  codingLlm,
 }: {
   llm: LLMProjection | null;
-  codingLlm: LLMProjection | null;
 }) {
   const hasModelConfig = useHasPermission("ae:model-config");
   const [apiKey, setApiKey] = useState("");
@@ -64,8 +61,7 @@ export function AnthropicCredentialCard({
 
   // Without ae:model-config there is nothing here to show — not even whether
   // a key is connected, since that's itself org-sensitive information. Every
-  // check below this point (including inside CodingAgentKeySection, which
-  // only ever mounts past this return) can assume the permission is held.
+  // check below this point can assume the permission is held.
   if (!hasModelConfig) {
     return (
       <Card variant="outlined">
@@ -113,9 +109,9 @@ export function AnthropicCredentialCard({
 
         <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
           Requirements, architecture, and task generation run on this key, and
-          so does the coding agent unless you give it one of its own below.
-          There is no platform-provided fallback, so agents cannot run until a
-          key is configured here.
+          so does the coding agent unless it is given one of its own under
+          Coding agent. There is no platform-provided fallback, so agents
+          cannot run until a key is configured here.
         </Typography>
 
         {connected && (
@@ -203,10 +199,6 @@ export function AnthropicCredentialCard({
           </Box>
         </Box>
 
-        {/* The coding-agent key overrides the key above, so it is only
-            offered once there is a key to override — the server rejects it
-            otherwise. */}
-        {connected && <CodingAgentKeySection codingLlm={codingLlm} />}
       </CardContent>
 
       <Dialog

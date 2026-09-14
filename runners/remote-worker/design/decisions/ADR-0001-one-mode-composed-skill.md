@@ -134,7 +134,7 @@ Consequences of the shape, in the order they were decided:
    invisible when rendered, perfectly readable to a model. There is no "raw"
    fast path for production; an unstripped `mode:local` block in a production
    session is exactly the failure in (4).
-6. **Composing is a single choke point inside `runClaudeQuery`.** Entrypoints
+6. **Composing is a single choke point inside `startCodingRun`.** Entrypoints
    pass a mode, not a composed directory, so a new caller cannot forget to
    compose and hand the SDK the authored source with both procedures in it.
 7. **Malformed markup fails the run.** Unknown mode name, nested block,

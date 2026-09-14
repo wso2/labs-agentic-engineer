@@ -242,14 +242,15 @@ describe("RunSpine", () => {
     mockCycles = [
       {
         cycle: live,
-        lines: [
+        events: [
           {
+            v: 2,
             cycleId: "c1",
-            cycleKind: "coding",
-            cycleIndex: 1,
-            kind: "git_push",
-            emitter: "main",
+            attempt: 1,
             seq: 1,
+            ts: "2026-07-10T09:01:00Z",
+            agentId: "lead",
+            kind: "git_push",
             branch: "aep/m2-c1",
           },
         ],
@@ -555,14 +556,15 @@ describe("RunSpine", () => {
     mockCycles = [
       {
         cycle: live,
-        lines: [
+        events: [
           {
+            v: 2,
             cycleId: "c1",
-            cycleKind: "coding",
-            cycleIndex: 1,
-            kind: "git_push",
-            emitter: "main",
+            attempt: 1,
             seq: 1,
+            ts: "2026-07-10T09:01:00Z",
+            agentId: "lead",
+            kind: "git_push",
             branch: "aep/m2-c1",
           },
         ],

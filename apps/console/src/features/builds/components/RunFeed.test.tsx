@@ -20,7 +20,11 @@
 
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { RunProgressCycle, RunProgressPhase } from "../hooks/useRunProgress";
+import type {
+  RunProgressCycle,
+  RunProgressPhase,
+  StampedRunEvent,
+} from "../hooks/useRunProgress";
 
 let mockCycles: RunProgressCycle[] = [];
 let mockPhase: RunProgressPhase = "live";
@@ -40,10 +44,25 @@ vi.mock("../hooks/useRunProgress", async (importOriginal) => {
 
 import { RunFeed } from "./RunFeed";
 
-function section(
+/** One v2 event, stamped with the cycle and attempt aep-api relays it under. */
+const ev = (
+  cycleId: string,
+  seq: number,
+  rest: Partial<StampedRunEvent> & { kind: string; agentId: string },
+): StampedRunEvent =>
+  ({
+    v: 2,
+    ts: "2026-07-10T09:01:00Z",
+    cycleId,
+    attempt: 1,
+    seq,
+    ...rest,
+  }) as StampedRunEvent;
+
+function cycleOf(
   id: string,
   kind: string,
-  emitters: string[],
+  events: StampedRunEvent[],
   pr?: { number: number; url: string },
 ): RunProgressCycle {
   return {
@@ -54,16 +73,25 @@ function section(
       createdAt: "2026-07-10T09:00:00Z",
       ...(pr ? { prNumber: pr.number, prUrl: pr.url } : {}),
     },
-    lines: emitters.map((emitter, i) => ({
-      cycleId: id,
-      cycleKind: kind,
-      cycleIndex: 1,
-      kind: "log",
-      emitter: emitter as "main" | "subagent",
-      seq: i + 1,
-      summary: `${emitter} line ${i + 1}`,
-    })),
+    events,
   };
+}
+
+/** A cycle with one plain lead step, for the tests that are about the boxes. */
+function section(
+  id: string,
+  kind: string,
+  agents: string[],
+  pr?: { number: number; url: string },
+): RunProgressCycle {
+  return cycleOf(
+    id,
+    kind,
+    agents.map((agentId, i) =>
+      ev(id, i + 1, { kind: "tool_use", agentId, tool: "Bash", summary: `${agentId} step ${String(i + 1)}` }),
+    ),
+    pr,
+  );
 }
 
 afterEach(() => {
@@ -91,7 +119,7 @@ describe("RunFeed", () => {
   // opposite edge from the content. Asserted because nothing else would catch it
   // drifting back to the left when this block is next edited.
   it("right-aligns the stream status line", () => {
-    mockCycles = [section("c1", "coding", ["main"])];
+    mockCycles = [section("c1", "coding", ["lead"])];
     mockPhase = "reconnecting";
     render(<RunFeed projectName="acme" runId="run-1" />);
     expect(screen.getByText(/Connection lost/)).toHaveStyle({
@@ -100,7 +128,7 @@ describe("RunFeed", () => {
   });
 
   it("renders one section per cycle, labelled by kind", () => {
-    mockCycles = [section("c1", "coding", ["main"]), section("c2", "fix", ["main"])];
+    mockCycles = [section("c1", "coding", ["lead"]), section("c2", "fix", ["lead"])];
     render(<RunFeed projectName="acme" runId="run-1" />);
     expect(screen.getByText("Cycle 1")).toBeInTheDocument();
     expect(screen.getByText("Cycle 2")).toBeInTheDocument();
@@ -113,7 +141,7 @@ describe("RunFeed", () => {
   // it. The numbers still count from the OLDEST, so they run down the page — that is
   // what keeps a box's name stable when the render order flips.
   it("renders the newest cycle first, numbered from the oldest", () => {
-    mockCycles = [section("c1", "coding", ["main"]), section("c2", "fix", ["main"])];
+    mockCycles = [section("c1", "coding", ["lead"]), section("c2", "fix", ["lead"])];
     render(<RunFeed projectName="acme" runId="run-1" />);
     // The ORDER is the assertion: both labels are present whichever end the newest is
     // drawn at, which is why the tests around this one could not have caught the flip.
@@ -124,7 +152,7 @@ describe("RunFeed", () => {
   });
 
   it("opens the newest cycle and leaves the earlier ones collapsed", () => {
-    mockCycles = [section("c1", "coding", ["main"]), section("c2", "fix", ["main"])];
+    mockCycles = [section("c1", "coding", ["lead"]), section("c2", "fix", ["lead"])];
     render(<RunFeed projectName="acme" runId="run-1" />);
     expect(screen.getByRole("button", { name: /Cycle 2/ })).toHaveAttribute(
       "aria-expanded",
@@ -140,8 +168,8 @@ describe("RunFeed", () => {
   // newest run's feed may open its newest cycle; every earlier attempt is a record.
   it("opens nothing when it is not the newest feed on the page", () => {
     mockCycles = [
-      section("c1", "validation", ["main"]),
-      section("c2", "validation", ["main"]),
+      section("c1", "validation", ["lead"]),
+      section("c2", "validation", ["lead"]),
     ];
     render(<RunFeed projectName="acme" runId="run-1" expandNewest={false} />);
     const summaries = screen.getAllByRole("button", { name: /Cycle \d/ });
@@ -155,8 +183,8 @@ describe("RunFeed", () => {
   // apart when a version was validated by more than one run.
   it("prefixes the run when it is given one", () => {
     mockCycles = [
-      section("c1", "validation", ["main"]),
-      section("c2", "validation", ["main"]),
+      section("c1", "validation", ["lead"]),
+      section("c2", "validation", ["lead"]),
     ];
     render(<RunFeed projectName="acme" runId="run-1" runNumber={2} />);
     expect(
@@ -167,7 +195,7 @@ describe("RunFeed", () => {
   // The single-feed case: there is nothing to disambiguate, so nothing is prefixed and
   // the heading is exactly what it was before the prop existed.
   it("says nothing about a run when it is given no number", () => {
-    mockCycles = [section("c1", "validation", ["main"])];
+    mockCycles = [section("c1", "validation", ["lead"])];
     render(<RunFeed projectName="acme" runId="run-1" />);
     expect(screen.getByText("Cycle 1")).toBeInTheDocument();
     expect(screen.queryByText(/Run \d/)).toBeNull();
@@ -177,7 +205,7 @@ describe("RunFeed", () => {
   // name alone — "Cycle 1 pull request" would name both of them.
   it("carries the run into the pull request's accessible name", () => {
     mockCycles = [
-      section("c1", "validation", ["main"], {
+      section("c1", "validation", ["lead"], {
         number: 41,
         url: "https://github.com/acme/demo/pull/41",
       }),
@@ -191,7 +219,7 @@ describe("RunFeed", () => {
   // The stream keeps moving which cycle is newest, but a reader reading an earlier
   // one must not have it yanked shut underneath them.
   it("lets the reader open an earlier cycle instead of the newest", () => {
-    mockCycles = [section("c1", "coding", ["main"]), section("c2", "fix", ["main"])];
+    mockCycles = [section("c1", "coding", ["lead"]), section("c2", "fix", ["lead"])];
     render(<RunFeed projectName="acme" runId="run-1" />);
     fireEvent.click(screen.getByRole("button", { name: /Cycle 1/ }));
     expect(screen.getByRole("button", { name: /Cycle 1/ })).toHaveAttribute(
@@ -207,7 +235,7 @@ describe("RunFeed", () => {
   // Closing the open one leaves the feed closed rather than snapping back to the
   // newest, which is what a naive "follow the newest" default re-derives.
   it("stays closed when the reader shuts the open cycle", () => {
-    mockCycles = [section("c1", "coding", ["main"]), section("c2", "fix", ["main"])];
+    mockCycles = [section("c1", "coding", ["lead"]), section("c2", "fix", ["lead"])];
     render(<RunFeed projectName="acme" runId="run-1" />);
     fireEvent.click(screen.getByRole("button", { name: /Cycle 2/ }));
     for (const summary of screen.getAllByRole("button", { name: /Cycle \d/ })) {
@@ -215,95 +243,12 @@ describe("RunFeed", () => {
     }
   });
 
-  it("stamps a subagent line and leaves the main agent's unstamped", () => {
-    mockCycles = [section("c1", "coding", ["main", "subagent"])];
-    render(<RunFeed projectName="acme" runId="run-1" />);
-    // Exactly one chip: absence of a stamp is the positive fact "main agent".
-    expect(screen.getAllByText("subagent")).toHaveLength(1);
-  });
-
-  it("gives each subagent its own section, and keeps the main agent's lines loose", () => {
-    // A cycle fans out to several subagents at once and their lines arrive
-    // INTERLEAVED — read flat, three components' work reads as one agent
-    // contradicting itself.
-    mockCycles = [
-      {
-        cycle: { id: "c1", kind: "coding" as never, attempts: 1, createdAt: "2026-07-10T09:00:00Z" },
-        lines: [
-          { cycleId: "c1", cycleKind: "coding", cycleIndex: 1, kind: "log", emitter: "main", seq: 1, summary: "planning" },
-          { cycleId: "c1", cycleKind: "coding", cycleIndex: 1, kind: "log", emitter: "subagent", emitterId: "a1", emitterLabel: "Implement todo-api", seq: 2, summary: "bal build" },
-          { cycleId: "c1", cycleKind: "coding", cycleIndex: 1, kind: "log", emitter: "subagent", emitterId: "a2", emitterLabel: "Implement todo-webapp", seq: 3, summary: "npm install" },
-          { cycleId: "c1", cycleKind: "coding", cycleIndex: 1, kind: "log", emitter: "subagent", emitterId: "a1", emitterLabel: "Implement todo-api", seq: 4, summary: "bal test" },
-        ],
-      },
-    ];
-    render(<RunFeed projectName="acme" runId="run-1" />);
-
-    // One section per subagent, named — not one per contiguous stretch, so the
-    // two todo-api lines land together despite todo-webapp interleaving.
-    expect(screen.getByText("Implement todo-api")).toBeInTheDocument();
-    expect(screen.getByText("Implement todo-webapp")).toBeInTheDocument();
-    // Collapsed, the header is ALL a reader gets about a subagent, so it carries
-    // the verdict rather than a line count. Neither has settled here.
-    expect(screen.getAllByText("running")).toHaveLength(2);
-
-    // Sections are open by default: a progress feed that hides its work behind
-    // a click reads as a run doing nothing.
-    expect(screen.getByText(/bal build/)).toBeInTheDocument();
-    expect(screen.getByText(/bal test/)).toBeInTheDocument();
-
-    // The main agent's line is NOT swept into a section.
-    expect(screen.getByText(/planning/)).toBeInTheDocument();
-  });
-
-  it("a settled subagent reports the SDK's own figures, and a dead one reads as failed", () => {
-    mockCycles = [
-      {
-        cycle: { id: "c1", kind: "coding" as never, attempts: 1, createdAt: "2026-07-10T09:00:00Z" },
-        lines: [
-          { cycleId: "c1", cycleKind: "coding", cycleIndex: 1, kind: "tool_use", tool: "Write", summary: "todo-api/service.bal", toolUseId: "s1", emitter: "subagent", emitterId: "a1", emitterLabel: "todo-api", seq: 1 },
-          { cycleId: "c1", cycleKind: "coding", cycleIndex: 1, kind: "tool_result", tool: "Agent", ok: true, status: "completed", summary: "todo-api", durationMs: 209158, toolCount: 19, linesAdded: 553, linesRemoved: 4, toolUseId: "a1", emitter: "subagent", emitterId: "a1", seq: 2 },
-          { cycleId: "c1", cycleKind: "coding", cycleIndex: 1, kind: "tool_result", tool: "Agent", ok: false, status: "error_during_execution", summary: "todo-webapp", durationMs: 353000, toolCount: 31, toolUseId: "a2", emitter: "subagent", emitterId: "a2", emitterLabel: "todo-webapp", seq: 3 },
-        ],
-      },
-    ];
-    render(<RunFeed projectName="acme" runId="run-1" />);
-
-    // Every figure is the SDK's own — the audit signal is how much code it made.
-    expect(screen.getByText("completed \u00b7 3m29s \u00b7 19 tools \u00b7 +553/\u22124 lines")).toBeInTheDocument();
-    // A subagent that died reads as a failure, not as merely going quiet.
-    expect(screen.getByText("error_during_execution \u00b7 5m53s \u00b7 31 tools")).toBeInTheDocument();
-    // Its closing report is the header, so it is NOT also a row in the section.
-    expect(screen.queryByText(/\u25aa/)).not.toBeInTheDocument();
-  });
-
-  it("attaches a step's outcome to its own action row, not to a second row", () => {
-    mockCycles = [
-      {
-        cycle: { id: "c1", kind: "coding" as never, attempts: 1, createdAt: "2026-07-10T09:00:00Z" },
-        lines: [
-          { cycleId: "c1", cycleKind: "coding", cycleIndex: 1, emitter: "main" as const, kind: "tool_use", tool: "Bash", summary: "bal build", toolUseId: "t1", seq: 1 },
-          { cycleId: "c1", cycleKind: "coding", cycleIndex: 1, emitter: "main" as const, kind: "tool_use", tool: "Read", summary: "db.bal", toolUseId: "t2", seq: 2 },
-          { cycleId: "c1", cycleKind: "coding", cycleIndex: 1, emitter: "main" as const, kind: "tool_result", tool: "Read", ok: true, durationMs: 20, toolUseId: "t2", seq: 3 },
-          { cycleId: "c1", cycleKind: "coding", cycleIndex: 1, emitter: "main" as const, kind: "tool_result", tool: "Bash", ok: false, exitCode: 1, summary: "error: compilation contains errors", durationMs: 25100, toolUseId: "t1", seq: 4 },
-        ],
-      },
-    ];
-    render(<RunFeed projectName="acme" runId="run-1" />);
-
-    // The action keeps its row; the outcome trails on it rather than repeating
-    // the command a second time further down.
-    expect(screen.getByText("$ bal build")).toBeInTheDocument();
-    expect(screen.getByText("exit 1 \u00b7 error: compilation contains errors \u00b7 25.1s")).toBeInTheDocument();
-    expect(screen.queryByText(/\u2717 Bash/)).not.toBeInTheDocument();
-    // A fast success adds nothing — its action row stands alone.
-    expect(screen.getByText("$ Read db.bal")).toBeInTheDocument();
-  });
-
+  // The agent-shape tests live in RunCrew.test.tsx: inside a cycle the events
+  // are a CREW now, and this file is about the accordion boxes holding them.
   it("filters to the cycle kinds a surface owns", () => {
     mockCycles = [
-      section("c1", "coding", ["main"]),
-      section("c2", "validation", ["main"]),
+      section("c1", "coding", ["lead"]),
+      section("c2", "validation", ["lead"]),
     ];
     render(
       <RunFeed projectName="acme" runId="run-1" cycleKinds={["validation"]} />,
@@ -316,7 +261,7 @@ describe("RunFeed", () => {
   // feed body must stay quiet about it — a settled stream repeating the header
   // beneath the log is the duplication that move was meant to remove.
   it("leaves the run's ending to the section header", () => {
-    mockCycles = [section("c1", "coding", ["main"])];
+    mockCycles = [section("c1", "coding", ["lead"])];
     mockPhase = "ended";
     mockSettled = "succeeded";
     render(<RunFeed projectName="acme" runId="run-1" />);
@@ -334,11 +279,11 @@ describe("RunFeed", () => {
   // request, so one run-level link would reach only the last of them.
   it("links each cycle to the pull request that cycle produced", () => {
     mockCycles = [
-      section("c1", "validation", ["main"], {
+      section("c1", "validation", ["lead"], {
         number: 41,
         url: "https://github.com/acme/demo/pull/41",
       }),
-      section("c2", "validation", ["main"], {
+      section("c2", "validation", ["lead"], {
         number: 47,
         url: "https://github.com/acme/demo/pull/47",
       }),
@@ -353,7 +298,7 @@ describe("RunFeed", () => {
   });
 
   it("shows no pull request link for a cycle that has not opened one", () => {
-    mockCycles = [section("c1", "validation", ["main"])];
+    mockCycles = [section("c1", "validation", ["lead"])];
     render(<RunFeed projectName="acme" runId="run-1" />);
     expect(screen.queryByRole("link", { name: /pull request/ })).toBeNull();
   });
@@ -363,7 +308,7 @@ describe("RunFeed", () => {
   // reader was looking at.
   it("opens a cycle's pull request without collapsing its log", () => {
     mockCycles = [
-      section("c1", "validation", ["main"], {
+      section("c1", "validation", ["lead"], {
         number: 41,
         url: "https://github.com/acme/demo/pull/41",
       }),

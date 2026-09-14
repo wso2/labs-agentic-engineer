@@ -261,13 +261,16 @@ export const mockRoles = ["Manager", "Owner"];
 Added to this stack's ordinary sequence, after `npm run build`:
 
 ```bash
-npm run build && ! grep -rqE "mock/|msw" dist/
+npm run build && ! grep -rq mockServiceWorker dist/
 ```
 
 **Done when:** the build exits 0 and the grep finds nothing. A hit means the
 guard in `src/main.tsx` was written so the bundler could not prove the branch
 dead — production would then ship the mock, which is the one failure this whole
-arrangement exists to prevent.
+arrangement exists to prevent. `mockServiceWorker` is the marker because msw's
+browser build carries that string literally and nothing else in a bundle does;
+a bare `msw` matches three characters of the base64 font data a design system
+inlines, and fails a clean build.
 
 You never start it. The walk (`mock-verification`) starts and stops the dev
 server through its own script, and a server you start here has nothing to reap

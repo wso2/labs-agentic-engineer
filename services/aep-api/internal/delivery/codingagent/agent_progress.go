@@ -16,11 +16,11 @@
 
 package codingagent
 
-// Coding-agent activity feed for the console's progress surfaces.
+// Coding-agent activity feed for the console's V1 progress surfaces.
 //
-// The runner emits typed NDJSON progress events (kind:phase/tool_use/… ; schema
-// at remote-worker/src/lib/progress/schema.ts) on stdout, and this reader turns
-// that stream into progress events from whichever source can still see it:
+// The runner emits typed NDJSON events on stdout — v2 RunEvents, or the frozen
+// v1 envelope from a pre-cutover image — and this reader turns that stream into
+// a v1 feed from whichever source can still see it:
 //
 //   - while the cycle's Component exists, the pod's live log through the
 //     OpenChoreo API (LiveLogSource);
@@ -32,9 +32,15 @@ package codingagent
 // to a reader, and they mean opposite things about the agent — so the reader
 // never lets "gone" render as "silent".
 //
-// Nothing here writes: agent logs are not stored by this platform. The legacy
-// coding_agent_logs snapshot is still READ for execution rows that predate the
-// milestone model, and nothing writes new ones.
+// THIS DERIVE-PER-VIEWER SHAPE IS THE OLD ONE, and it survives only for the v1
+// surfaces: the VERSION build-progress stream, which stitches many runs into
+// one narrative, and the legacy execution path. The v2 RUN feed no longer
+// derives anything — the platform records each cycle once and serves every
+// viewer from that file (run_recorder.go, run_events.go). Which is why the
+// page cap below is named `legacy`: a recording has no window at all.
+//
+// The legacy coding_agent_logs snapshot is still READ for execution rows that
+// predate the milestone model, and nothing writes new ones.
 
 import (
 	"bufio"
@@ -57,9 +63,15 @@ import (
 const (
 	// progressSchemaVersion mirrors the runner NDJSON schema (schemaVersion=1).
 	progressSchemaVersion = 1
-	// defaultProgressLimit caps events surfaced per poll (matches the retired
-	// pre-cutover reader).
-	defaultProgressLimit = 200
+	// legacyProgressLimit caps events surfaced per poll on the V1 surfaces.
+	//
+	// It is a property of deriving a feed from a sliding pod-log window: a page
+	// has to end somewhere, and the newest events are the ones a live tail wants.
+	// The cost was that a finished run's whole post-mortem WAS this window —
+	// 200 events, however long the run — which is one of the five losses the
+	// recording closes. The v2 run feed therefore has no cap: it reads a file
+	// from offset zero. Nothing here applies to it.
+	legacyProgressLimit = 200
 )
 
 // Bootstrap seqs identify the synthetic "dark zone" progress lines the reader
@@ -98,7 +110,7 @@ const (
 const seqLogsUnavailable = -20
 
 // seqLogsTruncated is the stable seq of the "newest window only" banner when a
-// finished cycle's archive exceeds defaultProgressLimit. Same negative-space
+// finished cycle's archive exceeds legacyProgressLimit. Same negative-space
 // reason as seqLogsUnavailable.
 const seqLogsTruncated = -21
 
@@ -129,59 +141,95 @@ func logsTruncatedEvent() contracts.ProgressEvent {
 		Phase:         "logs_truncated",
 		Summary: fmt.Sprintf(
 			"Showing the newest %d lines of this cycle's output.",
-			defaultProgressLimit,
+			legacyProgressLimit,
 		),
 	}
 }
 
-// bootstrapEvent maps a pre-stdout runner state to the synthetic progress line
-// the console renders during the dark zone. podFound=false means the Job exists
-// but no pod object does yet; otherwise phase/waitingReason/message come from
-// the pod's status (waitingReason is the first waiting container's reason, or
-// PodScheduled's Unschedulable when the pod never got a node; "" once the
-// container is running). Phase names are stable ids the console maps to friendly
-// labels; Summary is the human fallback when it doesn't.
-func bootstrapEvent(podFound bool, phase, waitingReason, message string) contracts.ProgressEvent {
-	mk := func(seq int64, name, summary string) contracts.ProgressEvent {
-		return contracts.ProgressEvent{
-			SchemaVersion: progressSchemaVersion,
-			Seq:           seq,
-			Kind:          "phase",
-			Phase:         name,
-			Summary:       summary,
-			// Ts intentionally empty — synthetic, wall-clock-less marker.
-		}
-	}
+// bootState is one pre-stdout runner state, resolved once and rendered by both
+// envelope versions of the feed.
+//
+//   - seq is the stable negative id;
+//   - name is the stable phase id — the v1 console maps it to a friendly label,
+//     and it is ALSO the v2 `notice` code verbatim (RunEventCodeRunner*), which
+//     is what lets the v2 render carry no prose at all;
+//   - summary is the human sentence, and is the V1 render's alone. Wording lives
+//     in @aep/progress-view, keyed off the code; a producer that shipped its own
+//     copy would be a second place the words could change;
+//   - detail is the only prose the v2 render carries, and only where the code
+//     genuinely cannot say the whole thing: the scheduler's own message on an
+//     unschedulable pod, and the raw waiting reason on one this build does not
+//     recognise. Empty everywhere else;
+//   - alarming marks the states that are a problem rather than a wait (the v2
+//     feed renders it as a `warn` notice).
+type bootState struct {
+	seq      int64
+	name     string
+	summary  string
+	detail   string
+	alarming bool
+}
+
+// bootstrapState maps a pre-stdout runner state to its marker. podFound=false
+// means the Job exists but no pod object does yet; otherwise phase/waitingReason/
+// message come from the pod's status (waitingReason is the first waiting
+// container's reason, or PodScheduled's Unschedulable when the pod never got a
+// node; "" once the container is running).
+func bootstrapState(podFound bool, phase, waitingReason, message string) bootState {
+	scheduling := bootState{seq: seqBootScheduling, name: "runner_scheduling", summary: "Waiting for a runner to be scheduled…"}
 	if !podFound {
-		return mk(seqBootScheduling, "runner_scheduling", "Waiting for a runner to be scheduled…")
+		return scheduling
 	}
 	switch waitingReason {
 	case "ImagePullBackOff", "ErrImagePull", "ImageInspectError", "RegistryUnavailable":
-		return mk(seqBootBackoff, "runner_image_pull_backoff", "Pulling the agent image is taking longer than usual (retrying)…")
+		return bootState{seq: seqBootBackoff, name: "runner_image_pull_backoff",
+			summary: "Pulling the agent image is taking longer than usual (retrying)…", alarming: true}
 	case "CreateContainerConfigError", "CreateContainerError", "InvalidImageName":
-		return mk(seqBootConfig, "runner_config_error", "Runner is waiting on its configuration and secrets…")
+		return bootState{seq: seqBootConfig, name: "runner_config_error",
+			summary: "Runner is waiting on its configuration and secrets…", alarming: true}
 	case "ContainerCreating", "PodInitializing":
-		return mk(seqBootPulling, "runner_pulling_image", "Pulling the agent image and preparing the container…")
+		return bootState{seq: seqBootPulling, name: "runner_pulling_image", summary: "Pulling the agent image and preparing the container…"}
 	case "Unschedulable", "SchedulerError":
 		// Cluster has no room (Too many pods / Insufficient cpu/memory). Do not
 		// reuse runner_scheduling — that reads as "still queuing" when the truth
-		// is capacity. Prefer the scheduler's first-line message when present.
-		summary := "No capacity to schedule the runner on the cluster…"
+		// is capacity. The scheduler's own first line is the one thing the code
+		// cannot carry (WHICH resource ran out), so it rides `detail`.
+		st := bootState{seq: seqBootUnschedulable, name: "runner_unschedulable",
+			summary: "No capacity to schedule the runner on the cluster…", alarming: true}
 		if detail := firstLine(message); detail != "" {
-			summary = "No capacity to schedule the runner: " + detail
+			st.detail = detail
+			st.summary = "No capacity to schedule the runner: " + detail
 		}
-		return mk(seqBootUnschedulable, "runner_unschedulable", summary)
+		return st
 	case "":
 		// No waiting reason: a Running pod is booting the agent; anything else
 		// (Pending with no container status yet) is still being scheduled.
 		if strings.EqualFold(phase, "Running") {
-			return mk(seqBootStarting, "runner_starting", "Runner container started — booting the agent…")
+			return bootState{seq: seqBootStarting, name: "runner_starting", summary: "Runner container started — booting the agent…"}
 		}
-		return mk(seqBootScheduling, "runner_scheduling", "Waiting for a runner to be scheduled…")
+		return scheduling
 	default:
 		// An unrecognised waiting reason — surface it verbatim so nothing hides,
-		// bucketed under the pulling seq (its most common cause).
-		return mk(seqBootPulling, "runner_pulling_image", "Preparing the runner container ("+waitingReason+")…")
+		// bucketed under the pulling seq and code (its most common cause). The
+		// reason itself is the detail: it is a word this build has never seen, so
+		// no code can stand for it.
+		return bootState{seq: seqBootPulling, name: "runner_pulling_image",
+			summary: "Preparing the runner container (" + waitingReason + ")…", detail: waitingReason}
+	}
+}
+
+// bootstrapEvent renders that state as the v1 synthetic progress line. Phase
+// names are stable ids the console maps to friendly labels; Summary is the human
+// fallback when it doesn't.
+func bootstrapEvent(podFound bool, phase, waitingReason, message string) contracts.ProgressEvent {
+	st := bootstrapState(podFound, phase, waitingReason, message)
+	return contracts.ProgressEvent{
+		SchemaVersion: progressSchemaVersion,
+		Seq:           st.seq,
+		Kind:          "phase",
+		Phase:         st.name,
+		Summary:       st.summary,
+		// Ts intentionally empty — synthetic, wall-clock-less marker.
 	}
 }
 
@@ -192,11 +240,21 @@ func firstLine(s string) string {
 	return s
 }
 
-// AgentProgressReader serves a cycle's (or a legacy execution's) agent activity
-// from the live pod log, the archive, or an explicit unavailable state.
+// AgentProgressReader serves a cycle's (or a legacy execution's) agent activity.
+//
+// It answers two different questions from two different places, which is the
+// whole shape of the cutover: the v2 RUN feed comes out of the platform's own
+// recording (recordings), and the v1 surfaces still derive theirs from the live
+// pod log or the archive (live / archive).
 type AgentProgressReader struct {
 	live    LiveLogSource
 	archive ArchiveLogSource
+
+	// recordings is the v2 read: the file the CycleRecorder wrote for this
+	// cycle. nil on a boot with no workspace volume, which every reader then
+	// reports as `none` rather than falling back to a per-viewer pod tail —
+	// silently re-deriving would hide the fact that nothing is being recorded.
+	recordings *RecordingStore
 
 	// logs is the LEGACY execution-keyed snapshot store. Read-only: the
 	// milestone model mints no execution rows, so this serves history that
@@ -210,25 +268,46 @@ func NewAgentProgressReader(live LiveLogSource, logs delivery.CodingAgentLogRepo
 	return &AgentProgressReader{live: live, logs: logs}
 }
 
-// WithArchive attaches the post-terminal source. Optional — without it, a cycle
-// whose pod is gone reports unavailable. Returns the receiver.
+// WithArchive attaches the post-terminal source for the V1 surfaces. Optional —
+// without it, a cycle whose pod is gone reports unavailable. Returns the
+// receiver.
 func (r *AgentProgressReader) WithArchive(a ArchiveLogSource) *AgentProgressReader {
 	r.archive = a
 	return r
 }
 
-// CycleProgress returns one run CYCLE's agent activity, filtered to events
-// strictly newer than sinceMillis.
-func (r *AgentProgressReader) CycleProgress(ctx context.Context, cycle *delivery.RunCycle, sinceMillis int64) (*contracts.ProgressResponse, error) {
-	resp := &contracts.ProgressResponse{
-		SchemaVersion: progressSchemaVersion,
-		Lines:         []contracts.ProgressEvent{},
-		CursorMillis:  sinceMillis,
-		Final:         false,
-	}
-	if r == nil || cycle == nil || cycle.JobRef == "" {
-		return resp, nil
-	}
+// WithRecordings attaches the run-feed recording store — the v2 read's only
+// source. Optional; without it every cycle reports `none`. Returns the receiver.
+func (r *AgentProgressReader) WithRecordings(store *RecordingStore) *AgentProgressReader {
+	r.recordings = store
+	return r
+}
+
+// cycleLog is WHICH source could still answer for a cycle, plus how to read its
+// silence. It serves the V1 surfaces only: the v2 run feed reads a recording
+// and asks no such question, because the platform wrote the file and knows what
+// it holds.
+type cycleLog struct {
+	// text is the raw pod stdout the winning source returned. Empty is a real
+	// answer — "nothing said yet" — not a failure.
+	text string
+	// live says the dark zone MAY be narrated when text holds nothing: the
+	// attempt is still running, so the pod's own state is the only report there
+	// is.
+	live bool
+	// final marks a settled answer (a closed cycle) so consumers stop polling.
+	final bool
+	pod   openchoreo.RuntimePod
+	// gone means no source can answer for this cycle any more; reason says why,
+	// in words a user can act on rather than an error chain.
+	gone   bool
+	reason string
+}
+
+// resolveCycleLog picks the source that can still see a cycle's output: the live
+// pod tail while its Component exists, then the observability archive while the
+// Component is retained, then nothing at all.
+func (r *AgentProgressReader) resolveCycleLog(ctx context.Context, cycle *delivery.RunCycle) (cycleLog, error) {
 	closed := cycle.EndedAt != nil
 
 	if r.live != nil {
@@ -242,19 +321,18 @@ func (r *AgentProgressReader) CycleProgress(ctx context.Context, cycle *delivery
 			// holds lines (pod reaped while the cycle is still open awaiting
 			// its PR webhook). Otherwise empty live is still scheduling / boot.
 			if strings.TrimSpace(tail.Text) != "" {
-				return r.fromText(resp, tail.Text, sinceMillis, !closed, closed, tail.Pod), nil
+				return cycleLog{text: tail.Text, live: !closed, final: closed, pod: tail.Pod}, nil
 			}
-			if closed || terminalPod(tail.Pod) {
-				break
+			if !closed && !terminalPod(tail.Pod) {
+				if text, aerr := r.readArchive(ctx, cycle); aerr == nil && strings.TrimSpace(text) != "" {
+					return cycleLog{text: text}, nil
+				}
+				return cycleLog{text: tail.Text, live: true, pod: tail.Pod}, nil
 			}
-			if text, aerr := r.readArchive(ctx, cycle); aerr == nil && strings.TrimSpace(text) != "" {
-				return r.fromText(resp, text, sinceMillis, false, false, openchoreo.RuntimePod{}), nil
-			}
-			return r.fromText(resp, tail.Text, sinceMillis, !closed, closed, tail.Pod), nil
 		case !errors.Is(err, ErrComponentGone):
 			// A transport failure is not an answer about the cycle: surface it so
 			// the caller degrades this poll and tries again.
-			return nil, fmt.Errorf("tail cycle pod log: %w", err)
+			return cycleLog{}, fmt.Errorf("tail cycle pod log: %w", err)
 		}
 	}
 
@@ -264,18 +342,44 @@ func (r *AgentProgressReader) CycleProgress(ctx context.Context, cycle *delivery
 	// was reclaimed" surfaces.
 	text, err := r.readArchive(ctx, cycle)
 	if err != nil {
-		resp.Lines = []contracts.ProgressEvent{logsUnavailableEvent(unavailableReason(err))}
 		// A CLOSED cycle will never gain a new source, so its unavailability is
 		// settled. An open one may still be mid-render or mid-observer-hiccup.
-		resp.Final = closed
-		return resp, nil
+		return cycleLog{gone: true, reason: unavailableReason(err), final: closed}, nil
 	}
 	if strings.TrimSpace(text) == "" && closed {
-		resp.Lines = []contracts.ProgressEvent{logsUnavailableEvent("no archived output")}
-		resp.Final = true
+		return cycleLog{gone: true, reason: "no archived output", final: true}, nil
+	}
+	return cycleLog{text: text, final: closed}, nil
+}
+
+// CycleProgress returns one run CYCLE's agent activity as V1 progress events,
+// filtered to events strictly newer than sinceMillis.
+//
+// The v2 read of the same cycle is CycleEvents, and the two no longer share a
+// source: this one derives per viewer from the pod (or the archive), while that
+// one reads the platform's recording. This survives because the VERSION
+// build-progress stream still speaks v1 — it stitches many runs into one
+// narrative and is not part of the run feed's cutover.
+func (r *AgentProgressReader) CycleProgress(ctx context.Context, cycle *delivery.RunCycle, sinceMillis int64) (*contracts.ProgressResponse, error) {
+	resp := &contracts.ProgressResponse{
+		SchemaVersion: progressSchemaVersion,
+		Lines:         []contracts.ProgressEvent{},
+		CursorMillis:  sinceMillis,
+		Final:         false,
+	}
+	if r == nil || cycle == nil || cycle.JobRef == "" {
 		return resp, nil
 	}
-	return r.fromText(resp, text, sinceMillis, false, closed, openchoreo.RuntimePod{}), nil
+	src, err := r.resolveCycleLog(ctx, cycle)
+	if err != nil {
+		return nil, err
+	}
+	if src.gone {
+		resp.Lines = []contracts.ProgressEvent{logsUnavailableEvent(src.reason)}
+		resp.Final = src.final
+		return resp, nil
+	}
+	return r.fromText(resp, src.text, sinceMillis, src.live, src.final, src.pod), nil
 }
 
 // readArchive asks the observability plane for the cycle's window. The window
@@ -413,7 +517,7 @@ func (r *AgentProgressReader) AgentProgress(ctx context.Context, row *delivery.E
 }
 
 // pageEvents parses a raw pod-log page into events newer than sinceMillis,
-// capped at defaultProgressLimit. truncated is true when the raw page exceeded
+// capped at legacyProgressLimit. truncated is true when the raw page exceeded
 // the cap (oldest lines dropped) or the post-filter set still exceeds it.
 //
 // hadOutput reports whether the page held ANY lines before the cursor filter —
@@ -424,8 +528,8 @@ func (r *AgentProgressReader) AgentProgress(ctx context.Context, row *delivery.E
 func pageEvents(text string, sinceMillis int64) (lines []contracts.ProgressEvent, truncated, hadOutput bool) {
 	all, truncated := textToProgressEvents(text)
 	newer := filterEventsAfter(all, sinceMillis)
-	if len(newer) > defaultProgressLimit {
-		newer = newer[:defaultProgressLimit]
+	if len(newer) > legacyProgressLimit {
+		newer = newer[:legacyProgressLimit]
 		truncated = true
 	}
 	return newer, truncated, len(all) > 0
@@ -435,7 +539,7 @@ func pageEvents(text string, sinceMillis int64) (lines []contracts.ProgressEvent
 // line becomes one event; the K8s `timestamps=true` prefix
 // (`YYYY-MM-DDTHH:MM:SS.NNNNNNNNNZ <line>`) is split off the front and used as
 // the event Ts when the envelope carries none. When the page holds more than
-// defaultProgressLimit lines the newest window is kept (live-tail freshness)
+// legacyProgressLimit lines the newest window is kept (live-tail freshness)
 // and truncated is true.
 func textToProgressEvents(text string) ([]contracts.ProgressEvent, bool) {
 	if text == "" {
@@ -454,7 +558,7 @@ func textToProgressEvents(text string) ([]contracts.ProgressEvent, bool) {
 	scanner.Buffer(make([]byte, 0, 4096), 1024*1024)
 	for scanner.Scan() {
 		ts, msg := splitTimestampPrefix(scanner.Text())
-		ev := parseProgressLine(msg)
+		ev := parseProgressLine(msg).ProgressEvent
 		if ev.Ts == "" {
 			ev.Ts = ts
 		}
@@ -476,14 +580,14 @@ func textToProgressEvents(text string) ([]contracts.ProgressEvent, bool) {
 			Summary:       "… an agent log line exceeded the reader's size cap; the rest of this page was skipped",
 		})
 	}
-	if len(out) > defaultProgressLimit {
+	if len(out) > legacyProgressLimit {
 		// Keeping the NEWEST window is right, but dropping the rest in silence is
 		// not: a fresh attach to a long finished run showed its last 200 events
 		// with nothing to say the run had started earlier. Truncated carries that
 		// fact on the response and no reader has ever consumed it (no wire field,
 		// no console branch), so say it in the feed — the same way the scanner
 		// overflow above does.
-		kept := out[len(out)-(defaultProgressLimit-1):]
+		kept := out[len(out)-(legacyProgressLimit-1):]
 		return append([]contracts.ProgressEvent{headDroppedEvent(len(out) - len(kept))}, kept...), true
 	}
 	return out, scanFailed
@@ -498,7 +602,7 @@ func headDroppedEvent(dropped int) contracts.ProgressEvent {
 		SchemaVersion: progressSchemaVersion,
 		Seq:           seqHeadDropped,
 		Kind:          "log",
-		Summary:       fmt.Sprintf("… %d earlier line(s) omitted — showing the most recent %d", dropped, defaultProgressLimit-1),
+		Summary:       fmt.Sprintf("… %d earlier line(s) omitted — showing the most recent %d", dropped, legacyProgressLimit-1),
 	}
 }
 
@@ -531,23 +635,40 @@ func dropTruncatedTail(text string) string {
 	return text[:nl+1]
 }
 
+// runnerLine is the runner's v1 NDJSON envelope AS THE READER DECODES IT: the
+// console-facing contracts.ProgressEvent (embedded, so its fields decode in
+// place) plus the terminal `result` line's token usage.
+//
+// The usage lives here and not on ProgressEvent because it is ACCOUNTING, not
+// feed content: it is stamped onto the run cycle's row and must never reach a
+// console. It used to sit on ProgressEvent, where it serialised as an
+// undocumented `usage` field on a shape three surfaces put on the wire, kept
+// harmless only by the fact that nothing but usage_capture.go ever filled it in.
+// Moving it one level out makes that structural — a wire shape cannot carry
+// what it does not have — while the reader still reads it from the same line.
+type runnerLine struct {
+	contracts.ProgressEvent
+	Usage *contracts.CapturedUsage `json:"usage,omitempty"`
+}
+
 // parseProgressLine decodes one runner NDJSON envelope. Non-JSON lines, or lines
 // without a recognised schema version / kind, are wrapped as a `log` event so
 // the feed stays continuous (bootstrap output like "[oneshot] …" and stray
 // library lines still render). Recovered from the retired observer.ParseProgressLine.
-func parseProgressLine(raw string) contracts.ProgressEvent {
+func parseProgressLine(raw string) runnerLine {
+	wrapped := runnerLine{ProgressEvent: contracts.ProgressEvent{Kind: "log", Summary: raw}}
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" || trimmed[0] != '{' {
-		return contracts.ProgressEvent{Kind: "log", Summary: raw}
+		return wrapped
 	}
-	var ev contracts.ProgressEvent
-	if err := json.Unmarshal([]byte(trimmed), &ev); err != nil {
-		return contracts.ProgressEvent{Kind: "log", Summary: raw}
+	var ln runnerLine
+	if err := json.Unmarshal([]byte(trimmed), &ln); err != nil {
+		return wrapped
 	}
-	if ev.SchemaVersion != progressSchemaVersion || ev.Kind == "" {
-		return contracts.ProgressEvent{Kind: "log", Summary: raw}
+	if ln.SchemaVersion != progressSchemaVersion || ln.Kind == "" {
+		return wrapped
 	}
-	return ev
+	return ln
 }
 
 // splitTimestampPrefix peels the K8s `?timestamps=true` prefix off a log line.

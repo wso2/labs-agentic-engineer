@@ -233,7 +233,7 @@ func (c *componentClient) GetReleaseBindingStatus(ctx context.Context, orgName, 
 			JSON500: resp.JSON500,
 		})
 	}
-	summary := releaseBindingSummary(*resp.JSON200)
+	summary := c.releaseBindingSummary(*resp.JSON200)
 	return &summary, nil
 }
 

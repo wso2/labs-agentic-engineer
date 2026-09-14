@@ -24,6 +24,7 @@ import {
   mirrorQuestion,
   readRoomQuestions,
   updateRoomAnswer,
+  withdrawRoomQuestion,
 } from "./questionRoom";
 import { applySelection } from "./questionCards";
 
@@ -32,6 +33,32 @@ const Q = { question: "Which auth flow?", options: [{ label: "OIDC" }] };
 function entryOf(doc: Doc, toolCallId: string) {
   return readRoomQuestions(doc).find((e) => e.toolCallId === toolCallId);
 }
+
+describe("withdrawRoomQuestion", () => {
+  it("keeps the copy of a question that carries the typed option actions when an older client re-mirrors without them", () => {
+    const doc = new Doc();
+    const withAction = [{ question: "How?", options: [{ label: "Proceed on your assumption", action: { kind: "accept-assumption" as const, dependency: "mail" } }] }];
+    const stripped = [{ question: "How?", options: [{ label: "Proceed on your assumption" }] }];
+    mirrorQuestion(doc, { toolCallId: "c1", questions: withAction });
+    mirrorQuestion(doc, { toolCallId: "c1", questions: stripped });
+    expect(readRoomQuestions(doc)[0]!.questions[0]!.options[0]!.action).toEqual({ kind: "accept-assumption", dependency: "mail" });
+    // The other order lands the same: the richer copy wins.
+    const doc2 = new Doc();
+    mirrorQuestion(doc2, { toolCallId: "c1", questions: stripped });
+    mirrorQuestion(doc2, { toolCallId: "c1", questions: withAction });
+    expect(readRoomQuestions(doc2)[0]!.questions[0]!.options[0]!.action).toBeDefined();
+  });
+
+  it("removes the entry a streamed prefix left, and is a no-op otherwise", () => {
+    const doc = new Doc();
+    mirrorQuestion(doc, { toolCallId: "tc-bad", questions: [Q], streaming: true });
+    mirrorQuestion(doc, { toolCallId: "tc-good", questions: [Q] });
+    withdrawRoomQuestion(doc, "tc-bad");
+    withdrawRoomQuestion(doc, "tc-bad");
+    withdrawRoomQuestion(doc, "never");
+    expect(readRoomQuestions(doc).map((e) => e.toolCallId)).toEqual(["tc-good"]);
+  });
+});
 
 describe("closeStaleRoomQuestions", () => {
   it("closes an entry once its question is no longer answerable (composer answer)", () => {

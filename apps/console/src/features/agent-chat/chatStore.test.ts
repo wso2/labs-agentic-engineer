@@ -35,6 +35,9 @@ import {
   addMessage,
   appendAssistantText,
   chatKeyFor,
+  dropQuestionMessage,
+  upsertQuestionMessage,
+  withdrawnQuestionIds,
   consumePendingSeed,
   dropTurnOutput,
   ensureUserMessage,
@@ -67,6 +70,23 @@ function freshKey(): string {
 beforeEach(() => localStorage.clear());
 
 describe("chatStore", () => {
+  it("dropQuestionMessage removes only the card with that tool-call id", () => {
+    const key = freshKey();
+    const q = { question: "Which?", options: [{ label: "A" }] };
+    upsertQuestionMessage(key, { role: "question", turnId: "t1", toolCallId: "tc-bad", questions: [q] });
+    upsertQuestionMessage(key, { role: "question", turnId: "t1", toolCallId: "tc-good", questions: [q] });
+    dropQuestionMessage(key, "tc-bad");
+    expect(getMessages(key).map((m) => (m as { toolCallId?: string }).toolCallId)).toEqual(["tc-good"]);
+    // Unknown or empty ids are no-ops on the log…
+    dropQuestionMessage(key, "nope");
+    dropQuestionMessage(key, "");
+    expect(getMessages(key)).toHaveLength(1);
+    // …but every real withdrawal is remembered for the room mirror, including
+    // one whose prefix never reached the log.
+    expect([...withdrawnQuestionIds(key)].sort()).toEqual(["nope", "tc-bad"]);
+    expect(withdrawnQuestionIds(freshKey()).size).toBe(0);
+  });
+
   it("drops a stale question message with no questions[] on load (schema guard)", () => {
     const key = freshKey();
     // A log written by an older build: a `question` message before the

@@ -18,13 +18,30 @@
 
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Doc } from "yjs";
 import type { AskQuestionInput } from "@aep/agent-stream";
 import { chatKeyFor, consumePendingSeed } from "../../agent-chat/chatStore";
 import { mirrorQuestion, readRoomQuestions, type RoomQuestion } from "../../agent-chat/questionRoom";
 import { SpecQuestionForm } from "./SpecQuestionForm";
+
+// The two typed-action writes: stubbed, since this file renders without a
+// QueryClientProvider. `acceptMutate` resolves its onSuccess synchronously so
+// a test can watch the answer follow the authorization.
+const acceptMutate = vi.fn((_input: unknown, opts?: { onSuccess?: () => void }) => opts?.onSuccess?.());
+const provideMutate = vi.fn();
+vi.mock("../api/queries", () => ({
+  useAcceptDependencyAssumption: () => ({ mutate: acceptMutate, isPending: false, isError: false, error: null }),
+  useProvideDependencyContract: () => ({
+    mutate: provideMutate,
+    reset: vi.fn(),
+    isPending: false,
+    isError: false,
+    isSuccess: false,
+    error: null,
+  }),
+}));
 
 const ORG = "acme";
 const PROJECT = "expenses";
@@ -201,5 +218,63 @@ describe("the seeded command names the assumption tag literally", () => {
     expect(seed).toContain("`*assumed*`");
     // The bare word alone is what drifted; it must not stand on its own.
     expect(seed).not.toMatch(/flag each one as assumed\b/i);
+  });
+});
+
+describe("SpecQuestionForm — typed option actions (ADR-0028)", () => {
+  const ASSUME: AskQuestionInput[] = [
+    {
+      question: "How should I get its interface?",
+      options: [
+        { label: "Give a link", freeText: true },
+        { label: "Upload one", action: { kind: "upload-interface", dependency: "currency-service" } },
+        { label: "Proceed on your assumption", recommended: true, action: { kind: "accept-assumption", dependency: "currency-service" } },
+      ],
+    },
+  ];
+
+  beforeEach(() => {
+    consumePendingSeed(KEY);
+    acceptMutate.mockClear();
+  });
+
+  it("records the authorization on the definition before the answer is sent, and refreshes the room's copy", async () => {
+    const { doc, entry } = room(ASSUME);
+    const committed = vi.fn(() => Promise.resolve());
+    const form = (e: RoomQuestion) => (
+      <SpecQuestionForm doc={doc} entry={e} org={ORG} projectName={PROJECT} onDependencyCommitted={committed} />
+    );
+    const { rerender } = render(form(entry));
+    fireEvent.click(screen.getByRole("radio", { name: /proceed on your assumption/i }));
+    rerender(form(readRoomQuestions(doc)[0]!));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    expect(acceptMutate).toHaveBeenCalledWith({ depName: "currency-service" }, expect.anything());
+    await waitFor(() => expect(committed).toHaveBeenCalledWith("currency-service"));
+    await waitFor(() => expect(consumePendingSeed(KEY)?.message).toContain("Proceed on your assumption"));
+  });
+
+  it("holds the answer for an upload until the document lands", async () => {
+    const { doc, entry } = room(ASSUME);
+    const { rerender } = renderForm(doc, entry);
+    fireEvent.click(screen.getByRole("radio", { name: /upload one/i }));
+    rerender(<SpecQuestionForm doc={doc} entry={readRoomQuestions(doc)[0]!} org={ORG} projectName={PROJECT} />);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    // The modal is up and nothing was sent.
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(consumePendingSeed(KEY)).toBeNull();
+    expect(acceptMutate).not.toHaveBeenCalled();
+  });
+
+  it("sends a plain answer straight away when no chosen option carries an action", () => {
+    const { doc, entry } = room(ASSUME);
+    const { rerender } = renderForm(doc, entry);
+    fireEvent.click(screen.getByRole("radio", { name: /give a link/i }));
+    fireEvent.change(screen.getByLabelText(/other — your own answer/i), { target: { value: "https://x/openapi.yaml" } });
+    rerender(<SpecQuestionForm doc={doc} entry={readRoomQuestions(doc)[0]!} org={ORG} projectName={PROJECT} />);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(acceptMutate).not.toHaveBeenCalled();
+    expect(consumePendingSeed(KEY)?.message).toContain("https://x/openapi.yaml");
   });
 });

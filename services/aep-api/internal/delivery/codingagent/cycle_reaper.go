@@ -44,11 +44,22 @@ type LatestCycleReader interface {
 type CycleReaper struct {
 	oc     openchoreo.ComponentClient
 	cycles LatestCycleReader
+	// recorder is closed BEFORE the Component is deleted. Deleting it makes the
+	// pod's log unreadable from that instant, so a recording left open would sit
+	// at `recording` for ever with no way to finish it. Optional; nil skips.
+	recorder *CycleRecorder
 }
 
 // NewCycleReaper wires the reaper.
 func NewCycleReaper(oc openchoreo.ComponentClient, cycles LatestCycleReader) *CycleReaper {
 	return &CycleReaper{oc: oc, cycles: cycles}
+}
+
+// WithRecorder attaches the run-feed recorder so a cancel closes the cycle's
+// recording rather than orphaning it. Returns the receiver.
+func (r *CycleReaper) WithRecorder(rec *CycleRecorder) *CycleReaper {
+	r.recorder = rec
+	return r
 }
 
 // ReapRunCycle deletes the Component of the run's newest cycle.
@@ -74,6 +85,13 @@ func (r *CycleReaper) ReapRunCycle(ctx context.Context, orgID, projectID, runID 
 	if !isCodingAgentRun(cycle.JobRef) {
 		return nil
 	}
+	// Close the recording FIRST. The delete below is what makes the pod's log
+	// unreadable, so anything not already recorded is lost at that moment: the
+	// recorder writes a runner-less `run_settled {outcome: cancelled}` onto the
+	// feed and marks the recording `gaps`, because the last poll interval is
+	// genuinely missing and a truncated feed presented as the whole of it is the
+	// one thing the state exists to prevent.
+	r.recorder.CloseCancelled(ctx, cycle)
 	if err := r.oc.DeleteComponent(ctx, orgID, projectID, cycle.JobRef); err != nil {
 		return fmt.Errorf("reap run cycle %s: delete component %q: %w", runID, cycle.JobRef, err)
 	}

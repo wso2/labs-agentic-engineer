@@ -50,6 +50,12 @@ and what the alternative costs — then:
 
 ## Answering an open question
 
+An external service is a given or nothing: a Registered External resource or
+a service the user already uses is written as the decision; "no preference"
+leaves the capability unnamed, and the choice waits on the dependency's
+definition at design (`prd-contract`). Never settle a capability by proposing
+a provider.
+
 Ask it. The answer **moves to the section it belongs in** — a decision, a story,
 a scope line — and the entry leaves Open Questions. An answer parked in the
 Open Questions list is not an answer.

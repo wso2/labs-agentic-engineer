@@ -188,7 +188,7 @@ schema violation that both the zod write-gate and the Go fold gate reject.
 | `component` | a SIBLING in this design that this component CALLS | the sibling's own name | — | this design |
 | `org-service` | a service ANOTHER project publishes for cross-project use | the provider's exact name, **copied verbatim** | — | `list_org_endpoints`, then `list_org_component_endpoints` |
 | `platform-resource` | a backing resource the platform provisions (database, cache, IDP) | **your choice** — it becomes the env-var prefix | `resourceType` (a registered type), `parameters` | `list_platform_resource_types` |
-| `external` | a system OUTSIDE the platform (a SaaS API, a legacy service) | a **Registered External resource**'s exact name, else a **new** name for a **Project External resource** | `style` (`rest-api`\|`sdk`), then `specPath` or `package`; `config`; `candidates` | `list_external_resources` + `get_external_resource_schema`, else `web_search` |
+| `external` | a system OUTSIDE the platform (a SaaS API, a legacy service) | a **Registered External resource**'s exact name, else a **new** name for a **Project External resource** | none on the component — the definition is the dependency's own file (below) | `list_external_resources` + `get_external_resource_schema`, else `web_search` |
 
 **Reuse.** Call that last column's tool before authoring the entry, and take
 the name and schema from the matching row rather than from the requirement's
@@ -210,12 +210,15 @@ coining a name: a `resourceType` that was not in this turn's
   { "kind": "component", "name": "expense-api" },
   { "kind": "platform-resource", "name": "orders-db", "resourceType": "postgres-cnpg" },
   { "kind": "external", "name": "github",
-    "config": [ { "key": "GITHUB_TOKEN", "secret": true, "description": "GitHub personal access token" } ],
-    "description": "Call GitHub issues + PRs — consumption instructions from the Registered row." }
+    "description": "Call GitHub issues + PRs for the sync story." }
 ]
 ```
 
-The `github` entry is authored from the catalog row.
+The `github` entry is a REFERENCE: its definition — provider, style, contract,
+config keys — is `specs/design/dependencies/github/dependency.json`, written
+once and shared by every component that uses it. A component's `description`
+on the edge says why THIS component uses it; the dependency's own description
+says what the system is.
 
 #### Reading a provider's real contract
 
@@ -270,58 +273,92 @@ operations its contract actually exposes:
 
 ### Resolving an `external` dependency
 
-`external` is the one kind with real-world discovery to do. Work it in order:
+**One dependency, one definition.** An external dependency lives in its own
+directory, `specs/design/dependencies/<name>/`, and a component only
+references it by `name`. The write-gate refuses a component that names an
+external dependency whose directory has no `dependency.json` yet, so write
+the dependency file BEFORE the component that uses it (a `declare_plan`
+entry per dependency keeps the rail honest). The name is the same
+identifier everywhere: the directory, the cell's `south` node, the
+component's reference, and — for a reuse — the org registry.
 
-1. **Reuse first.** Call `list_external_resources`. Prefer a fitting
-   **Registered External resource** — take its exact name, config-key schema,
-   consumption instructions, and org resource docs pointers.
-   Write consumption instructions into the dependency `description`.
-   That name resolves from the registry regardless of
-   `style`/`specPath`/`package`. A user-asked reconsider may switch to a
+`dependency.json`:
+
+```json
+{
+  "name": "payment-provider",
+  "description": "Charges the customer for shipping once a box is priced.",
+  "provider": "Stripe",
+  "style": "rest-api",
+  "contract": "openapi.yaml",
+  "provenance": { "sourceUrl": "https://…/spec3.json", "sha256": "…", "fetchedAt": "…", "sliced": true },
+  "config": [ { "key": "PAYMENT_API_KEY", "secret": true, "description": "Stripe secret API key" } ]
+}
+```
+
+Work each one in order:
+
+1. **Reuse first.** Call `list_external_resources`. When a **Registered
+   External resource** fits, write the stub `{ "name": "<its exact name>",
+   "source": "org" }` — the platform fills provider, contract and config from
+   the org record, and the build collects no values for it, because
+   org values stay on the Registered name.
+   Write consumption instructions into the dependency `description` — the
+   row's consumption instructions and its org resource docs pointers, as the
+   tool returns them — because the coding agent reads them there and never
+   calls the catalog. Then stop. A user-asked reconsider may switch to a
    different Registered name, or create a **Project External resource** under
-   a **new** name — a separate catalog record; org values stay on the Registered name.
-2. **`web_search` for candidates** when nothing registered fits. Stop at the
-   options actually worth presenting — often 2–3 genuine contenders, sometimes
-   one when a real signal already points to it.
-3. **Classify each candidate's style.** `rest-api` when the component calls
-   specific HTTP endpoints; `sdk` when it codes against a vendor SDK/library —
-   the candidate's own docs make it obvious ("REST API reference" vs "install our
-   SDK").
-4. **Resolve the contract.** A `rest-api` needs a `specPath`: prefer an OpenAPI
-   URL from org resource docs on the Registered row, else a URL you discovered —
-   confirm it is a real OpenAPI document with `fetch_openapi_spec`
-   (it fetches and validates, stores nothing), then set `specPath` to that URL. If
-   the user hands you a spec file, or the API is private/undocumented, `addFile`
-   it to
-   `specs/design/components/<component>/dependencies/<dep-name>.openapi.yaml` and
-   point `specPath` at that repo-relative path. With NO `specPath` and no catalog
-   hit the dep stays `needs-spec` and the build gate asks the user for one. Don't hand-author a
-   whole spec — the coding agent researches the API. An `sdk` needs `package`
-   instead: one ecosystem-prefixed identifier (`npm:`, `go:`, `pypi:`), version
-   inline but optional.
-5. **Derive `config` keys** from the contract — a `rest-api`'s
-   `components.securitySchemes`, an `sdk`'s auth documentation. A reused
-   Registered row already named the keys — keep them.
-6. **Emit the outcome**, never a `status`/`reason`:
-   - **A real SIGNAL points to one option → emit it resolved**, with `style` +
-     (`package` or `specPath`) and `config`. A signal is one of: the requirement
-     names or implies the vendor, a registered resource fits, an org or platform
-     skill mandates it, or a concrete technical reason forces it. "This one is
-     popular" is not a signal — it is a guess dressed as a resolution, and it
-     belongs in `candidates`.
-   - **No signal and 2+ viable equivalents → emit `candidates`** — 2 or more,
-     never one. This is the EXPECTED outcome for a genuinely-choosable dependency
-     (transactional email: SendGrid/Resend/Postmark); don't force a pick the
-     requirements don't justify. One option fully known resolves outright, one
-     only partly known is a partial dep — leave what you know on the dependency
-     itself and let the missing field compute the reason. Each candidate carries
-     its own `style` and a lean `package`; the dependency's own
-     `style`/`package`/`specPath` stay unset until one is pinned.
-   - **You can't identify the system at all** → a style-less entry: `name` plus a
-     `description` saying what is missing and what the user must supply.
-7. **On pin** (a chat turn collapses `candidates` to one): REMOVE `candidates`
-   entirely — a one-item array is a schema violation — and set the chosen
-   option's `style` and `package`/`specPath`.
+   a **new** name.
+2. **The PRD names the service, or nobody has.** The user chooses providers;
+   you never do. Two outcomes, never a `status`:
+   - **The PRD's Product Decisions name a service for this capability**
+     ("Payments: Stripe") → write `provider` + `style` and go on to the
+     contract (step 3). An org or platform skill that mandates a vendor
+     counts the same way. Nothing else does: "the requirement implies it",
+     "this one is popular", "there is only one real option" are guesses, and
+     a guess is the user's to make.
+   - **No provider named** → write the NEED only: `name`, `description`, and
+     `suggestions` — providers commonly used for this capability, from what
+     you know, any number, each `{ "name", "style"?, "description"? }` with
+     the one distinction that matters for THIS product. No `web_search`, no
+     `provider`, no `style`, no `contract`, no `config` — the config keys
+     follow the provider, and none is chosen. The definition then offers
+     **Select a provider**, which runs the `resolve-dependency` flow: it asks
+     the user, with your suggestions as the options, and does the research.
+     This is the EXPECTED outcome for a choosable dependency; do not force a
+     pick the PRD does not make.
+   The dependency IS the service the product needs, so name it
+   `<capability>-service` (`currency-service`, `payment-service`,
+   `email-service`); the chosen system is its provider.
+3. **Get the contract on disk — for a named provider only.** `style` says
+   how: `rest-api` and `graphql` need a document in the directory
+   (`openapi.yaml` / `schema.graphql`), `sdk` needs `sdk.json` (and the API
+   slice beside it when the provider has one). The contract is a SLICE: name
+   the operations the design's flows actually call and let
+   `slice_openapi_spec` cut them from the provider's published document with
+   their referenced schemas — it fetches outside your context, so the
+   document's size does not matter — then `addFile` the returned content as
+   `openapi.yaml` and copy the returned `provenance` into `dependency.json`.
+   A user-supplied document goes through the same tool. With no document to
+   be found, climb one rung: **derive** the interface from the provider's
+   OWN developer reference when it names every operation the design calls
+   with parameters and responses — `openapi.yaml` with `x-aep-derived: true`
+   at the root and `x-aep-source: <page>` on every operation, `provenance.
+   sourceUrl` = the reference's root page. That needs no permission: the
+   dependency reads resolved, flagged *derived*. With no such documentation
+   either, never guess during the design turn: leave `contract` unset, say so
+   under **Needs your input**, and the `resolve-dependency` flow takes it
+   from there (it may write an ASSUMED contract, but only under the user's
+   authorization). This rung is for a NAMED provider only — an open
+   capability gets no interface search at all.
+4. **Derive `config` keys** from the contract — a `rest-api`'s
+   `components.securitySchemes`, an `sdk`'s auth documentation — for a named
+   provider only; a definition with no provider carries no keys (the gate
+   refuses them). A reused Registered row already named the keys — keep them.
+5. **Reference it** from each consuming component:
+   `{ "kind": "external", "name": "<name>", "description": "<why this component uses it>" }`.
+   `style`, `package`, `specPath`, `suggestions`, `config` on the component
+   are refused — they belong in the dependency file.
 
 ### Config-key conventions
 
@@ -340,23 +377,29 @@ value-collection gate needs something to collect.
 
 #### How the platform derives status/reason
 
-You never author `status`/`reason`. The platform computes them at read time from
-which fields are present, first match wins:
+You never author `status`/`reason`. The platform reads them off the dependency
+file at read time, first match wins:
 
-1. `candidates` present (2+) → `ambiguous`
-2. `name` matches a registered external resource → `resolved` (registry reuse,
-   regardless of `style`)
-3. `style` absent → `unresolved`/`needs-input`
-4. `style: "rest-api"` with no `specPath` → `unresolved`/`needs-spec`
-5. `style: "sdk"` with no `package` → `unresolved`/`needs-input`
-6. otherwise → `resolved`
+1. `source: "org"`, or `name` matches a registered external resource →
+   `resolved` (flagged `registered`)
+2. no `provider` (`suggestions` open or not) → `unresolved`/`needs-input` —
+   the user has not chosen a service; the definition asks them
+3. a `style` whose contract is not on disk (no `openapi.yaml` /
+   `schema.graphql` for `rest-api` / `graphql`; no `sdk.json` for `sdk`) →
+   `unresolved`/`needs-contract`
+4. a contract marked assumed with no user acceptance → `unresolved`/
+   `needs-acceptance`
+5. otherwise → `resolved` — flagged `assumed` when the contract was accepted
+   as an assumption, `derived` when it was written from the provider's own
+   documentation, `sdk-only` when an `sdk` dependency has no API slice
 
 `component` is always `resolved` here. A `platform-resource` is too — once
 emitted — so only emit one whose `resourceType` is a `name` from this turn's
 `list_platform_resource_types`. An `org-service` resolves on catalog visibility,
 and is `blocked`/`access-required` when the provider exists but this project
-cannot see it. The old `needsSpec` boolean is REMOVED from the schema — a draft
-carrying it fails the write-gate; migrate `needsSpec: true` to `style: "rest-api"`.
+cannot see it. `needsSpec`, `specPath` and the other definition fields are gone from the
+component's schema — a draft carrying them fails the write-gate with a message
+naming the dependency file they moved to.
 
 ### Narrating the design turn
 
@@ -364,47 +407,60 @@ The design-generate turn runs in the chat panel, so your turn text is what the
 user watches live. **Narrate each dependency decision in one plain-prose line as
 you settle it**, before moving to the next:
 
-- resolved → `✓ <capability>: using <choice>`
-- candidates → `<capability>: options are A / B / C — tell me which (I'll
-  continue meanwhile)`
-- needs-input → `<capability>: I couldn't identify the system — tell me which +
-  how it authenticates`
+- resolved → `✓ <capability>: using <choice>` (say `, contract sliced` when
+  you cut one, `, interface derived from docs` when you wrote it from the
+  provider's reference, `, registered` for an org reuse)
+- needs-input → `<capability>: your choice — A / B / C are common; select a
+  provider on its definition`
+- needs-contract → `<capability>: <provider> chosen, no published contract
+  found — you can upload one or let me assume it, from the dependency's definition in the spec view`
 
-Never block the design on an ambiguous or unresolved dependency — print the line
+Never block the design on an unresolved dependency — print the line
 and keep emitting the rest; the user replies in the same chat to steer it, now or
 later. Then **close with three parts and nothing more**: one line per component
 (name, type, one-clause role); a **"Needs your input"** block listing ONLY the
-dependencies still ambiguous or unresolved, each with the single thing you need;
-and a one-line pointer to `specs/design/`. The narration already carried the
+dependencies still unresolved, each as a LINK to its definition —
+`[currency-service](aep://spec/specs/design/dependencies/currency-service/dependency.json)`
+— followed by the single thing you need (the console opens the definition
+from the link; this link form is the one place a repo path is allowed in
+your prose); and a one-line pointer to `specs/design/`. The narration already carried the
 play-by-play, so a file-by-file recap would only bury the user's next action.
+Each **Needs your input** line names the dependency the way its definition in the spec view does, so
+the user can click through and press **Resolve** — that runs the
+`resolve-dependency` flow, which is where the contract gets provided or
+assumed; the design turn never waits for it.
 
 ### Resolving or reconsidering a named dependency on request
 
-A later chat turn may point you at a single dependency by name — "resolve the
-`email` dependency on `notification-service`", "reconsider the `stripe`
-dependency on `billing-api`". It carries no dependency JSON and no playbook by
-design: read that entry from the component's `design.json` (it is in the turn's
-snapshot) and act on its current state.
+`/resolve-dependency <name>` runs the `resolve-dependency` skill — the guided
+flow that takes one dependency from open to resolved; read that skill when the
+instruction names it. A plain chat turn may still point you at a dependency
+("reconsider `stripe`"): read `specs/design/dependencies/<name>/dependency.json`
+from the snapshot and act on its current state.
 
-- **Ambiguous — it already carries `candidates`.** The user clicked to CHOOSE, so
-  hand them the choice: each option with a one-line distinction, plus that they
-  may name another. Pin the one they name — the same signal rule as discovery, so
-  with no signal the choice stays theirs — then remove `candidates` per step 7.
-- **Unresolved.** Apply that kind's row in the table above.
+- **No service chosen — it carries `suggestions`, or nothing.** The user's
+  answer, if the instruction carries one (a service name or a document URL),
+  IS the choice: set `provider` + `style`, remove `suggestions`, and go for
+  the contract (step 3). With no answer, put the choice to them — the
+  suggestions, or what your research finds, each with a one-line distinction,
+  plus that they may name another — and write nothing until they answer.
 - **Already resolved — reconsider.** This is the only branch that may leave a
-  catalog row that still fills the role. Present fresh alternatives as
-  `candidates`, or repin to the Registered name the user picks, or emit a
+  catalog row that still fills the role. Present fresh alternatives in the
+  conversation, or repin to the Registered name the user picks, or start a
   **Project External resource** under a **new** name.
 
-Edit ONLY that one dependency's entry: re-emit the component's whole
-`design.json` (never a patch) with every other field and dependency carried over
-exactly as they were.
+Edit ONLY that dependency's file: re-emit the whole `dependency.json` (never a
+patch) with every field you are not changing carried over exactly. The
+components' references do not change. Never write or alter `assumed` — that is
+the user's record; the write-gate refuses it.
 
 ### Descriptions, and the per-component artifacts
 
 Every dependency carries a one-line `description`: what the target is and how
-this component uses it. Source it per kind — an `external`'s is the consumption
-instructions when the name is a Registered External resource; an `org-service`'s
+this component uses it. Source it per kind — an `external`'s definition file
+carries what the system is (the consumption instructions when the name is a
+Registered External resource) and the component's reference why this component
+calls it; an `org-service`'s
 says the specific
 operations it calls from the discovered contract, or plainly that no contract was
 resolvable, never a guess; a `platform-resource`'s says what it stores. The

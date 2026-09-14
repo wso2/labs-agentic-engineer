@@ -448,8 +448,8 @@ test("ask_question: turn ends awaiting-human with a fully-resolved transcript", 
   const guard = new TurnGuard();
   const { events, onEvent } = collector();
 
-  // ONE scripted step: the tool-call. The paired hasToolCall stop condition ends
-  // the turn at the call — no follow-up text step is ever requested.
+  // ONE scripted step: the tool-call. The paired stop condition ends the turn
+  // at the accepted call — no follow-up text step is ever requested.
   const model = mockModel([
     {
       kind: "toolCall",
@@ -491,6 +491,79 @@ test("ask_question: turn ends awaiting-human with a fully-resolved transcript", 
   assert.ok(stored.messages.some((m) => m.role === "tool"), "tool result persisted");
   // A manifest is still the terminal event (nothing to commit → empty).
   assert.equal(events.at(-1)?.type, "manifest");
+});
+
+test("ask_question: an option with an empty label is rejected and the model retries", async () => {
+  const store = new InMemoryConversationStore();
+  const guard = new TurnGuard();
+  const { events, onEvent } = collector();
+
+  // Step 1: the model appends an unlabeled free-text "Other" (the console cannot
+  // render it — the whole card used to vanish). The schema rejects the call and
+  // the turn must NOT stop on it: the model gets the error and retries.
+  // Step 2: the corrected call ends the turn awaiting-human.
+  const model = mockModel([
+    {
+      kind: "toolCall",
+      toolCallId: "q-bad",
+      toolName: "ask_question",
+      input: {
+        question: A_QUESTION,
+        options: [{ label: "Individual consumers", recommended: true }, { label: "", freeText: true }],
+      },
+    },
+    {
+      kind: "toolCall",
+      toolCallId: "q-good",
+      toolName: "ask_question",
+      input: { question: A_QUESTION, options: [{ label: "Individual consumers", recommended: true }] },
+    },
+  ]);
+
+  const conv = await runConversationTurn({
+    id: "q-retry",
+    instruction: "grill me about the spec",
+    files: SEED_FILES,
+    model,
+    store,
+    guard,
+    onEvent,
+  });
+
+  assert.equal(model.doStreamCalls.length, 2, "the rejected call did not end the turn");
+  assert.equal(conv.status, "awaiting-human");
+  const results = events.filter((e) => e.type === "tool-result" && e.toolName === "ask_question");
+  assert.equal(results.length, 1, "only the valid call resolved a placeholder result");
+  assert.equal(results[0]!.toolCallId, "q-good");
+});
+
+// The rejected call must not count as "asked": the turn continues, and when it
+// then ends any other way (here the model gives up in prose; running out of
+// steps is the same shape) the conversation is done, not awaiting-human.
+test("ask_question: a turn that continues past a rejected call and ends on prose is done, not awaiting-human", async () => {
+  const store = new InMemoryConversationStore();
+  const guard = new TurnGuard();
+  const { onEvent } = collector();
+
+  const conv = await runConversationTurn({
+    id: "q-exhausted",
+    instruction: "grill me about the spec",
+    files: SEED_FILES,
+    model: mockModel([
+      {
+        kind: "toolCall",
+        toolCallId: "q-bad",
+        toolName: "ask_question",
+        input: { question: A_QUESTION, options: [{ label: "" }] },
+      },
+      { kind: "text", text: "I could not phrase the question." },
+    ]),
+    store,
+    guard,
+    onEvent,
+  });
+
+  assert.equal(conv.status, "done");
 });
 
 test("ask_question: a follow-up turn carries the answer as a plain user message", async () => {

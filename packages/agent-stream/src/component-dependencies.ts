@@ -31,6 +31,7 @@
  */
 
 import { cellNodeIds, DESIGN_CELL_PATH, type DiagramBundleReader } from "./design-diagrams.js";
+import { dependencyDesignPath } from "./dependency-design-schema.js";
 
 export interface ComponentDependencyProblem {
   code: "UNKNOWN_DEPENDENCY";
@@ -108,7 +109,20 @@ export function checkComponentDependencies(
   const nodes = cellNodeIds(cellSource);
   const declared = new Set([...nodes.components, ...nodes.externals]);
   const unknown = deps.filter((d) => !declared.has(d.name));
-  if (unknown.length === 0) return null;
+  if (unknown.length === 0) {
+    // The cell knows the node; an external one must ALSO have its definition
+    // on disk, because the component only references it by name (one
+    // dependency, one definition). A registered org dependency is declared the
+    // same way — a stub naming `"source": "org"` — and the platform fills it
+    // at save.
+    const missing = deps.filter((d) => d.kind === "external" && bundle.read(dependencyDesignPath(d.name)) === undefined);
+    if (missing.length === 0) return null;
+    const what = missing.map((d) => `\`${d.name}\` → ${dependencyDesignPath(d.name)}`).join("; ");
+    return {
+      code: "UNKNOWN_DEPENDENCY",
+      message: `${path} rejected — ${missing.length === 1 ? "an external dependency has" : "external dependencies have"} no definition yet: ${what}. A component references an external dependency by name only; its provider, style, contract file, config keys (or open suggestions) live once in that dependency.json, shared by every component that uses it. Write the dependency file first (addFile — for a Registered External resource a stub with "source": "org" is enough), then re-emit this file. The file is unchanged.`,
+    };
+  }
 
   const list = (xs: string[]) => (xs.length ? xs.join(", ") : "none");
   const what = unknown

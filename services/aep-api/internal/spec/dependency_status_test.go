@@ -25,7 +25,7 @@ import "testing"
 // test; artifacts.resolveOrgServices' own tests pin the same outcomes through
 // the read path unchanged).
 func TestComputeDependencyStatus(t *testing.T) {
-	twoCandidates := []DependencyCandidate{
+	twoSuggestions := []DependencySuggestion{
 		{Name: "sendgrid-rest", Style: DependencyStyleRestAPI},
 		{Name: "resend-sdk", Style: DependencyStyleSDK},
 	}
@@ -75,62 +75,107 @@ func TestComputeDependencyStatus(t *testing.T) {
 
 		// --- external: precedence order (first match wins) -------------------
 		{
-			name: "rule 1: 2+ candidates is ambiguous, even with a registry hit",
+			name: "open suggestions never resolve on their own: the user chooses",
 			dep: Dependency{Kind: DependencyKindExternal, Name: "email-provider",
-				Candidates: twoCandidates},
-			registryHit: true,
-			wantStatus:  DependencyStatusAmbiguous,
+				Suggestions: twoSuggestions},
+			wantStatus: DependencyStatusUnresolved,
+			wantReason: DependencyReasonNeedsInput,
 		},
 		{
-			name:        "rule 2: registry reuse resolves with no style at all",
+			name: "a registry hit resolves over open suggestions",
+			dep: Dependency{Kind: DependencyKindExternal, Name: "email-provider",
+				Suggestions: twoSuggestions},
+			registryHit: true,
+			wantStatus:  DependencyStatusResolved,
+		},
+		{
+			name:        "rule 2: registry reuse resolves with nothing else known",
 			dep:         Dependency{Kind: DependencyKindExternal, Name: "stripe"},
 			registryHit: true,
 			wantStatus:  DependencyStatusResolved,
 		},
 		{
-			name: "rule 2: registry reuse resolves ahead of rule 4 (rest-api, no specPath)",
-			dep: Dependency{Kind: DependencyKindExternal, Name: "stripe",
-				Style: DependencyStyleRestAPI},
-			registryHit: true,
-			wantStatus:  DependencyStatusResolved,
-		},
-		{
-			name: "rule 2: registry reuse resolves ahead of rule 5 (sdk, no package)",
-			dep: Dependency{Kind: DependencyKindExternal, Name: "stripe",
-				Style: DependencyStyleSDK},
-			registryHit: true,
-			wantStatus:  DependencyStatusResolved,
-		},
-		{
-			name:       "rule 3: no style is unresolved/needs-input",
-			dep:        Dependency{Kind: DependencyKindExternal, Name: "stripe"},
-			wantStatus: DependencyStatusUnresolved,
-			wantReason: DependencyReasonNeedsInput,
-		},
-		{
-			name: "rule 4: rest-api with no specPath is unresolved/needs-spec",
-			dep: Dependency{Kind: DependencyKindExternal, Name: "stripe",
-				Style: DependencyStyleRestAPI},
-			wantStatus: DependencyStatusUnresolved,
-			wantReason: DependencyReasonNeedsSpec,
-		},
-		{
-			name: "rest-api WITH specPath resolves",
-			dep: Dependency{Kind: DependencyKindExternal, Name: "stripe",
-				Style: DependencyStyleRestAPI, SpecPath: "dependencies/stripe.openapi.yaml"},
+			name:       "rule 2: a platform-stamped org copy resolves with nothing else known",
+			dep:        Dependency{Kind: DependencyKindExternal, Name: "stripe", Source: DependencySourceOrg},
 			wantStatus: DependencyStatusResolved,
 		},
 		{
-			name: "rule 5: sdk with no package is unresolved/needs-input",
+			name: "rule 2: registry reuse resolves ahead of the contract rules",
 			dep: Dependency{Kind: DependencyKindExternal, Name: "stripe",
-				Style: DependencyStyleSDK},
+				Provider: "Stripe", Style: DependencyStyleRestAPI},
+			registryHit: true,
+			wantStatus:  DependencyStatusResolved,
+		},
+		{
+			name:       "rule 3: nothing identified is unresolved/needs-input",
+			dep:        Dependency{Kind: DependencyKindExternal, Name: "crm"},
 			wantStatus: DependencyStatusUnresolved,
 			wantReason: DependencyReasonNeedsInput,
 		},
 		{
-			name: "sdk WITH package resolves",
+			name:       "rule 4: a provider named but no style is unresolved/needs-input",
+			dep:        Dependency{Kind: DependencyKindExternal, Name: "crm", Provider: "HubSpot"},
+			wantStatus: DependencyStatusUnresolved,
+			wantReason: DependencyReasonNeedsInput,
+		},
+		{
+			name: "rule 5: sdk with no manifest on disk is unresolved/needs-contract",
 			dep: Dependency{Kind: DependencyKindExternal, Name: "stripe",
-				Style: DependencyStyleSDK, Package: "npm:stripe@^14"},
+				Provider: "Stripe", Style: DependencyStyleSDK},
+			wantStatus: DependencyStatusUnresolved,
+			wantReason: DependencyReasonNeedsContract,
+		},
+		{
+			name: "rule 6: rest-api with no contract file is unresolved/needs-contract",
+			dep: Dependency{Kind: DependencyKindExternal, Name: "stripe",
+				Provider: "Stripe", Style: DependencyStyleRestAPI},
+			wantStatus: DependencyStatusUnresolved,
+			wantReason: DependencyReasonNeedsContract,
+		},
+		{
+			name: "rule 6: graphql with no contract file is unresolved/needs-contract",
+			dep: Dependency{Kind: DependencyKindExternal, Name: "shopify",
+				Provider: "Shopify", Style: DependencyStyleGraphQL},
+			wantStatus: DependencyStatusUnresolved,
+			wantReason: DependencyReasonNeedsContract,
+		},
+		{
+			name: "rest-api WITH its contract resolves",
+			dep: Dependency{Kind: DependencyKindExternal, Name: "stripe",
+				Provider: "Stripe", Style: DependencyStyleRestAPI, Contract: "openapi.yaml"},
+			wantStatus: DependencyStatusResolved,
+		},
+		{
+			name: "sdk WITH its manifest resolves, contract or not",
+			dep: Dependency{Kind: DependencyKindExternal, Name: "stripe",
+				Provider: "Stripe", Style: DependencyStyleSDK, SDK: "sdk.json"},
+			wantStatus: DependencyStatusResolved,
+		},
+		{
+			name: "a derived contract resolves with no permission asked",
+			dep: Dependency{Kind: DependencyKindExternal, Name: "printer",
+				Provider: "Star", Style: DependencyStyleRestAPI, Contract: "openapi.yaml", ContractDerived: true},
+			wantStatus: DependencyStatusResolved,
+		},
+		{
+			name: "no provider is unchosen even with a contract named (hydration names the provider off the document on disk)",
+			dep: Dependency{Kind: DependencyKindExternal, Name: "openweather",
+				Style: DependencyStyleRestAPI, Contract: "openapi.yaml"},
+			wantStatus: DependencyStatusUnresolved,
+			wantReason: DependencyReasonNeedsInput,
+		},
+		{
+			name: "rule 7: an agent-written contract nobody accepted is unresolved/needs-acceptance",
+			dep: Dependency{Kind: DependencyKindExternal, Name: "dhl",
+				Provider: "DHL", Style: DependencyStyleRestAPI, Contract: "openapi.yaml", ContractAssumed: true},
+			wantStatus: DependencyStatusUnresolved,
+			wantReason: DependencyReasonNeedsAcceptance,
+		},
+		{
+			name: "an accepted assumption resolves like any contract",
+			dep: Dependency{Kind: DependencyKindExternal, Name: "dhl",
+				Provider: "DHL", Style: DependencyStyleRestAPI, Contract: "openapi.yaml", ContractAssumed: true,
+				Assumed: &DependencyAssumption{By: "admin", At: "2026-09-08T10:00:00Z"}},
 			wantStatus: DependencyStatusResolved,
 		},
 
@@ -148,6 +193,82 @@ func TestComputeDependencyStatus(t *testing.T) {
 			if gotStatus != tc.wantStatus || gotReason != tc.wantReason {
 				t.Errorf("ComputeDependencyStatus(%+v, registryHit=%v, %+v) = (%q, %q), want (%q, %q)",
 					tc.dep, tc.registryHit, tc.orgSvc, gotStatus, gotReason, tc.wantStatus, tc.wantReason)
+			}
+		})
+	}
+}
+
+// TestComputeDependencyFlags pins the qualifiers on a RESOLVED external
+// dependency — what the rail, the drawer and the deploy page show beside it —
+// and that nothing else carries flags.
+func TestComputeDependencyFlags(t *testing.T) {
+	cases := []struct {
+		name        string
+		dep         Dependency
+		registryHit bool
+		want        []string
+	}{
+		{
+			name: "a plain resolved rest-api has no flags",
+			dep:  Dependency{Kind: DependencyKindExternal, Name: "stripe", Provider: "Stripe", Style: DependencyStyleRestAPI, Contract: "openapi.yaml"},
+		},
+		{
+			name:        "registry hit → registered",
+			dep:         Dependency{Kind: DependencyKindExternal, Name: "github"},
+			registryHit: true,
+			want:        []string{DependencyFlagRegistered},
+		},
+		{
+			name: "org copy → registered",
+			dep:  Dependency{Kind: DependencyKindExternal, Name: "github", Source: DependencySourceOrg},
+			want: []string{DependencyFlagRegistered},
+		},
+		{
+			name: "accepted assumption → assumed",
+			dep: Dependency{Kind: DependencyKindExternal, Name: "dhl", Provider: "DHL", Style: DependencyStyleRestAPI, Contract: "openapi.yaml", ContractAssumed: true,
+				Assumed: &DependencyAssumption{By: "admin", At: "now"}},
+			want: []string{DependencyFlagAssumed},
+		},
+		{
+			name: "an acceptance echoed beside a real document is no flag",
+			dep: Dependency{Kind: DependencyKindExternal, Name: "dhl", Provider: "DHL", Style: DependencyStyleRestAPI, Contract: "openapi.yaml",
+				Assumed: &DependencyAssumption{By: "admin", At: "now"}},
+		},
+		{
+			name: "sdk with manifest and no API slice → sdk-only",
+			dep:  Dependency{Kind: DependencyKindExternal, Name: "twilio", Provider: "Twilio", Style: DependencyStyleSDK, SDK: "sdk.json"},
+			want: []string{DependencyFlagSDKOnly},
+		},
+		{
+			name: "sdk with manifest AND API slice → no flag",
+			dep:  Dependency{Kind: DependencyKindExternal, Name: "stripe", Provider: "Stripe", Style: DependencyStyleSDK, SDK: "sdk.json", Contract: "openapi.yaml"},
+		},
+		{
+			name: "assumed sdk-only carries both, in a fixed order",
+			dep: Dependency{Kind: DependencyKindExternal, Name: "twilio", Provider: "Twilio", Style: DependencyStyleSDK, SDK: "sdk.json", ContractAssumed: true,
+				Assumed: &DependencyAssumption{By: "admin", At: "now"}},
+			want: []string{DependencyFlagAssumed, DependencyFlagSDKOnly},
+		},
+		{
+			name: "an unresolved dependency has no flags even when assumed",
+			dep: Dependency{Kind: DependencyKindExternal, Name: "dhl", Provider: "DHL", Style: DependencyStyleRestAPI,
+				Assumed: &DependencyAssumption{By: "admin", At: "now"}},
+		},
+		{
+			name: "a component dependency never has flags",
+			dep:  Dependency{Kind: DependencyKindComponent, Name: "cart"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ComputeDependencyFlags(tc.dep, tc.registryHit)
+			if len(got) != len(tc.want) {
+				t.Fatalf("flags = %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("flags = %v, want %v", got, tc.want)
+				}
 			}
 		})
 	}

@@ -19,6 +19,7 @@ package codingagent
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/organization"
+	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
@@ -288,6 +290,54 @@ func TestDispatch_ValidationCycleDispatchesOnOCPath(t *testing.T) {
 	}
 }
 
+// TestDispatch_ValidationCycleNamesItsIssueToThePod: the runner posts the
+// validation issue's status line itself, and nothing else in the pod's
+// environment answers "which issue" — AEP_TASK_ID is the cycle's uuid, and the
+// number reaches the agent only as prose inside AEP_PROMPT.
+func TestDispatch_ValidationCycleNamesItsIssueToThePod(t *testing.T) {
+	rec := &chainRecorder{}
+	e := newOCDispatchExecutor(rec)
+
+	req := codingMilestoneDispatch()
+	req.Kind = delivery.CycleKindValidation
+	req.IssueNumber = 77
+
+	if _, err := e.Dispatch(context.Background(), req); err != nil {
+		t.Fatalf("a validation cycle must dispatch on the OC path: %v", err)
+	}
+	if got := podEnv(rec, envValidationIssue); got != "77" {
+		t.Errorf("%s = %q, want %q", envValidationIssue, got, "77")
+	}
+}
+
+// TestDispatch_CodingCycleNamesNoIssue: a coding cycle discovers a whole
+// working set rather than being anchored to one issue, so it has no issue to
+// name. The var is ABSENT rather than "0" — the runner reads presence, and a
+// stamped zero would be a number it has to know is not one.
+func TestDispatch_CodingCycleNamesNoIssue(t *testing.T) {
+	rec := &chainRecorder{}
+	e := newOCDispatchExecutor(rec)
+
+	if _, err := e.Dispatch(context.Background(), codingMilestoneDispatch()); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	for _, ev := range rec.load.Env {
+		if ev.Key == envValidationIssue {
+			t.Fatalf("a coding cycle stamped %s = %q", envValidationIssue, ev.Value)
+		}
+	}
+}
+
+// podEnv reads one env var off the dispatched Workload.
+func podEnv(rec *chainRecorder, key string) string {
+	for _, ev := range rec.load.Env {
+		if ev.Key == key {
+			return ev.Value
+		}
+	}
+	return ""
+}
+
 // TestDispatch_OCPathStillRequiresTheOrgsSecretRefs: refs-only means the run
 // cannot start without them, and the message must name which one is missing.
 // (The Anthropic side's equivalent — a resolver that cannot answer — is
@@ -522,5 +572,114 @@ func TestDeadlinesFitTheComponentTypeSchema(t *testing.T) {
 		if want > int64(ceiling) {
 			t.Errorf("%s deadline %d exceeds the ComponentType schema maximum %d — the dispatch would be rejected", name, want, ceiling)
 		}
+	}
+}
+
+// --- the org's coding-agent setting, and the run's own deadline -------------
+
+// fakeCodingAgentSettings stands in for organization.CodingAgentService.
+type fakeCodingAgentSettings struct {
+	proj orgconfig.CodingAgentProjection
+	err  error
+}
+
+func (f fakeCodingAgentSettings) Effective(context.Context, string) (orgconfig.CodingAgentProjection, error) {
+	return f.proj, f.err
+}
+
+// An org that never opened the setting must get exactly the run it had before
+// the setting existed — which is what an unwired resolver stands in for here.
+func TestDispatch_NoCodingAgentSettingStampsThePlatformDefaults(t *testing.T) {
+	rec := &chainRecorder{}
+	e := newOCDispatchExecutor(rec)
+
+	if _, err := e.Dispatch(context.Background(), codingMilestoneDispatch()); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if got := secretEnvByKey(t, rec.load, "AEP_AGENT_RUNTIME").Value; got != orgconfig.DefaultAgentRuntime {
+		t.Errorf("AEP_AGENT_RUNTIME = %q, want %q", got, orgconfig.DefaultAgentRuntime)
+	}
+	if got := secretEnvByKey(t, rec.load, "AEP_AGENT_MODEL").Value; got != orgconfig.DefaultCodingAgentModel {
+		t.Errorf("AEP_AGENT_MODEL = %q, want %q", got, orgconfig.DefaultCodingAgentModel)
+	}
+	// Two plain values, never a secret — a secretKeyRef here would need a
+	// SecretReference nobody creates and the dispatch would fail to render.
+	if secretEnvByKey(t, rec.load, "AEP_AGENT_MODEL").ValueFrom != nil {
+		t.Error("AEP_AGENT_MODEL was mounted as a secret ref")
+	}
+}
+
+// The setting is COPIED onto the run, which is what makes "applies from the next
+// cycle" true: a run already in flight keeps the model it was launched with, so
+// its usage lines and the tokens they were billed for name the same model.
+func TestDispatch_TheOrgsCodingAgentSettingIsCopiedOntoTheRun(t *testing.T) {
+	rec := &chainRecorder{}
+	e := newOCDispatchExecutor(rec)
+	e.WithCodingAgentSettings(fakeCodingAgentSettings{
+		proj: orgconfig.CodingAgentProjection{Runtime: "claude-code", Model: "claude-haiku-4-5"},
+	})
+
+	if _, err := e.Dispatch(context.Background(), codingMilestoneDispatch()); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if got := secretEnvByKey(t, rec.load, "AEP_AGENT_MODEL").Value; got != "claude-haiku-4-5" {
+		t.Errorf("AEP_AGENT_MODEL = %q, want the org's chosen model", got)
+	}
+	if got := secretEnvByKey(t, rec.load, "AEP_AGENT_RUNTIME").Value; got != "claude-code" {
+		t.Errorf("AEP_AGENT_RUNTIME = %q", got)
+	}
+}
+
+// A read failure is not "no setting". Launching on the defaults here would bill
+// an org for a model it deliberately moved off, and never say so.
+func TestDispatch_AnUnreadableCodingAgentSettingFailsTheDispatch(t *testing.T) {
+	rec := &chainRecorder{}
+	e := newOCDispatchExecutor(rec)
+	e.WithCodingAgentSettings(fakeCodingAgentSettings{err: errors.New("connection refused")})
+
+	if _, err := e.Dispatch(context.Background(), codingMilestoneDispatch()); err == nil {
+		t.Fatal("dispatch succeeded with an unreadable coding-agent setting")
+	}
+	if len(rec.calls) != 0 {
+		t.Errorf("the OC chain was walked anyway: %v", rec.calls)
+	}
+}
+
+// The Job's activeDeadlineSeconds kills the pod mid-sentence: no result line, no
+// watchdog snapshot, and for a run with background subagents no way to tell
+// "still working" from "wedged". The runner has a guard that ends the run
+// cleanly BEFORE that, and it was inert because nothing passed it the number.
+// One number, two consumers — the pod's own budget and the cluster's backstop —
+// so they cannot disagree.
+func TestDispatch_TheRunLearnsItsOwnDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		disp delivery.MilestoneDispatch
+		want int64
+	}{
+		{"coding", codingMilestoneDispatch(), codingDeadlineSeconds},
+		{"validation", func() delivery.MilestoneDispatch {
+			d := codingMilestoneDispatch()
+			d.Kind = delivery.CycleKindValidation
+			d.IssueNumber = 7
+			return d
+		}(), validationDeadlineSeconds},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &chainRecorder{}
+			e := newOCDispatchExecutor(rec)
+			if _, err := e.Dispatch(context.Background(), tc.disp); err != nil {
+				t.Fatalf("dispatch: %v", err)
+			}
+			want := strconv.FormatInt(tc.want, 10)
+			if got := secretEnvByKey(t, rec.load, "AEP_RUN_DEADLINE_SECONDS").Value; got != want {
+				t.Errorf("AEP_RUN_DEADLINE_SECONDS = %q, want %q", got, want)
+			}
+			// The same number the cluster enforces. A runner budget larger than
+			// the Job's would fire after the kill it exists to beat.
+			if got := rec.create.Parameters["activeDeadlineSeconds"]; got != int(tc.want) {
+				t.Errorf("activeDeadlineSeconds = %v, want %d", got, tc.want)
+			}
+		})
 	}
 }

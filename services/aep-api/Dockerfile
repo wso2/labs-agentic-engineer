@@ -47,7 +47,7 @@ FROM alpine:3.21
 # shell out to the git CLI. GitHub REST remains only for repo admin, issues,
 # webhooks, and App installs. aep-api is the sole writer of the mount;
 # the agents service consumes read-only per-SHA snapshots from it.
-RUN apk add --no-cache git
+RUN apk add --no-cache git tini
 RUN addgroup -g 1000 appgroup && adduser -S -u 1000 -G appgroup appuser
 
 WORKDIR /app
@@ -63,4 +63,11 @@ USER appuser
 
 EXPOSE 8080
 
-ENTRYPOINT ["./aep-api"]
+# tini as PID 1, because aep-api would otherwise hold that slot itself. git
+# leaves helpers behind it (a background `gc --auto`, a remote helper outliving
+# the fetch that spawned it); an orphan re-parents to PID 1, and no process
+# implicitly reaps children it did not spawn, so they accumulate as zombies
+# (~6/min observed on a local stack). tini reaps them and forwards signals
+# through unchanged, so shutdown behaves as before. Here rather than on a
+# runtime flag so every path gets it (compose, skaffold/helm, cloud).
+ENTRYPOINT ["/sbin/tini", "--", "./aep-api"]

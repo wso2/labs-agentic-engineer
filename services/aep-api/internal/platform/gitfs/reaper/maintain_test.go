@@ -48,7 +48,7 @@ func TestMaintainReposRepacksLooseHeavyMirror(t *testing.T) {
 	r.diskUsage = fakeDisk(1000, 900)
 	slug := mkSlugDir(t, root, "o1", "p1", "r1")
 	gitDir := filepath.Join(slug, "git")
-	runGit(t, "", "init", "--bare", gitDir)
+	initSyntheticMirror(t, gitDir)
 	// Seed >1000 reachable loose objects. hash-object alone leaves blobs
 	// unreachable, and `repack -ad` only packs/drops reachable objects —
 	// commit them through a temporary work tree so repack can reclaim.
@@ -88,7 +88,7 @@ func TestMaintainReposSlowGitCompletes(t *testing.T) {
 	r.diskUsage = fakeDisk(1000, 900)
 	slug := mkSlugDir(t, root, "o1", "p1", "r1")
 	gitDir := filepath.Join(slug, "git")
-	runGit(t, "", "init", "--bare", gitDir)
+	initSyntheticMirror(t, gitDir)
 	work := t.TempDir()
 	for i := 0; i < 1101; i++ {
 		name := filepath.Join(work, "f"+strconv.Itoa(i))
@@ -149,7 +149,7 @@ func TestMaintainReposSkipsBusyLock(t *testing.T) {
 	r.diskUsage = fakeDisk(1000, 900)
 	slug := mkSlugDir(t, root, "o1", "p1", "r1")
 	gitDir := filepath.Join(slug, "git")
-	runGit(t, "", "init", "--bare", gitDir)
+	initSyntheticMirror(t, gitDir)
 	work := t.TempDir()
 	for i := 0; i < 1101; i++ {
 		name := filepath.Join(work, "f"+strconv.Itoa(i))
@@ -175,6 +175,24 @@ func TestMaintainReposSkipsBusyLock(t *testing.T) {
 		t.Fatalf("busy lock should skip within ~2s timeout, took %s", time.Since(start))
 	}
 	// Still locked — objects unrepacked is fine; the point is skip, not hang.
+}
+
+// initSyntheticMirror creates the bare mirror a maintain test operates on.
+// The config stamp is load-bearing, not hygiene: `git commit` (and `git
+// fetch`) hand the repo to `git maintenance run --auto --detach`, which
+// double-forks and outlives the command that spawned it. That detached repack
+// keeps creating objects/pack/tmp_pack_* after the seeding commit has already
+// exited, so it races t.TempDir's RemoveAll at test end — RemoveAll lists
+// objects/, unlinks what it saw, then rmdir's it and gets ENOTEMPTY from a
+// pack that appeared in between. The knob has to be maintenance.auto: git's
+// auto strategy is geometric-repack, which never consults gc.auto, so
+// gc.auto=0 leaves the detached repack running. Tests seed through porcelain
+// on a repo they created with `git init --bare`, so they must disable it
+// themselves.
+func initSyntheticMirror(t *testing.T, gitDir string) {
+	t.Helper()
+	runGit(t, "", "init", "--bare", gitDir)
+	runGit(t, gitDir, "config", "maintenance.auto", "false")
 }
 
 func countLoose(t *testing.T, gitDir string) int {

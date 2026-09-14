@@ -41,12 +41,16 @@ BFF, which is its only backend.
 ## Spec versioning
 
 The whole spec — requirements, design, and validation files under the repo's
-`specs/` tree — is versioned as **one incrementing `v<N>` git tag sequence**,
-cut when the user approves/publishes. There are no per-artifact version
-trails (the earlier `v<N>-<M>` design-revision tags are legacy). The console
-reads this via `GET /projects/{p}/tags` (`latest` + `specDirty`): the
-"vN published" chip is the latest tag, and "draft changes" means `specs/`
-moved on GitHub after that tag.
+`specs/` tree — is versioned as **one tag per snapshot**, cut when the user
+approves/publishes. **The user names the version** in the Start build dialog;
+the box suggests `v<count of versions + 1>` and most projects keep it, so the
+sequence usually reads `v1`, `v2`, `v3`. Order is the tags' creation order,
+not the number
+([ADR-0030](design/decisions/ADR-0030-a-version-carries-the-name-the-user-gives-it.md)).
+There are no per-artifact version trails (the earlier `v<N>-<M>`
+design-revision tags are legacy). The console reads this via
+`GET /projects/{p}/tags` (`latest` + `specDirty`): the published chip names
+the latest tag, and "draft changes" means `specs/` moved on GitHub after it.
 
 ## Personas
 
@@ -92,6 +96,19 @@ which is also what closes its issue. Newest first; links go to the feature's
 GitHub issue plus any ADRs it produced. Features still being built aren't
 here: they're the open `console` + `feature` issues.
 
+- Build asks in a dialog — one click, one surface, never a drawer for some
+  projects and a modal for the rest. An open dependency opens **Resolve
+  dependencies** (the names, and one **Resolve** that runs the guided flow over
+  all of them); everything else opens **Start build**, which carries the
+  version's **name** — the user's, and the tag that gets cut — over what this
+  version changes, grouped **Components** · **External dependencies** ·
+  **Platform resources** so a name says what it is, chipped **new** and
+  **removed**. An unchanged spec tree rebuilds the version it matches rather
+  than cutting a second one
+  ([ADR-0029](design/decisions/ADR-0029-build-asks-in-a-dialog-that-lists.md),
+  [ADR-0030](design/decisions/ADR-0030-a-version-carries-the-name-the-user-gives-it.md)) —
+  [#749](https://github.com/wso2/labs-agentic-engineer/issues/749)
+  (contract: `BuildPreflight.changes` + the version fields, `BuildRequest.version`)
 - Spec view — the design reads as its parts: the rail's **DESIGN** section
   lists *Architecture · Domain model · Security* as documents, then a
   collapsible **Flows** group — one row per key flow, a ghost row while the
@@ -157,6 +174,23 @@ here: they're the open `console` + `feature` issues.
   once the last value is saved. A Registered External is outside the gate — its
   values live on the org record, which no project surface can clear —
   [ADR-0023](../../docs/decisions/ADR-0023-external-dependency-values-are-a-deploy-gate.md)
+- Every external dependency is a group in the spec rail, shaped like a
+  component's, since its definition is one file in its own directory (repo
+  ADR-0027): the header carries the one thing the user must do, and the rows
+  are its files — the definition, the interface (an OpenAPI document or a
+  GraphQL schema), an SDK manifest. The definition renders as its own view,
+  the way a component's design does: the provider, the interface on file with
+  its provenance, the config keys and who uses it, and every way forward —
+  **Select a provider** (or **Resolve** once one is chosen) runs the guided
+  `/resolve-dependency` flow, whose cards ask which provider and, when neither
+  a published document nor the provider's own documentation exists, how to
+  get its interface; an interface the agent derives from that documentation
+  needs no consent and reads *Derived from docs*, and choosing *proceed on
+  your assumption* on the card is the whole consent for a guess. **Provide interface** opens a modal that lands a
+  document straight in the directory. The design turn's closing list links
+  each open definition. The Build drawer lists what blocks the cut, opens each
+  row's definition, and offers one **Resolve all in chat** —
+  [ADR-0028](design/decisions/ADR-0028-a-dependency-is-a-directory-in-the-rail.md)
 - Empty states teach *what*, never narrate the *how* — the five flow-narrating
   empty states (Builds, Deployments, Validations, Components, Recent activity —
   the last retired with the feed itself, #662)

@@ -213,6 +213,14 @@ var operationPermissions = map[string][]authz.Permission{
 	// Reachable from both the design workspace and the build/deployment
 	// pages (DeploymentsPage also loads it); any of the three satisfies it.
 	"ListDesignDependencies": {authz.PermissionDesignView, authz.PermissionBuild, authz.PermissionBuildView},
+	// DependencyView/ProvideInterfaceDialog's two writes into
+	// specs/design/dependencies/<name>/ — committing a contract, or signing
+	// off on the one the design agent wrote. Same reasoning as GenerateDesign:
+	// exact-match ae:design, not OR'd with ae:design-view — a caller who can
+	// only VIEW the design tree does not get to commit into it or accept an
+	// assumption on the project's behalf just because the page renders.
+	"ProvideDependencyContract":  {authz.PermissionDesign},
+	"AcceptDependencyAssumption": {authz.PermissionDesign},
 
 	// Org usage/spend (settings > Usage page). New permission, no existing
 	// analog — this is an org-financial view, not a project one.
@@ -442,10 +450,11 @@ func containsPermission(held []authz.Permission, want authz.Permission) bool {
 
 // updateConfigPermissions resolves the permission(s) UpdateConfig requires
 // from which section(s) of the patch body are actually populated —
-// gitProvider needs ae:github-config, llm/codingLlm need ae:model-config. A
-// patch touching both sections needs BOTH permissions (unlike
-// operationPermissions' OR semantics, permissionGate requires every entry
-// this function returns).
+// gitProvider needs ae:github-config, llm/codingLlm/codingAgent need
+// ae:model-config (the runtime/model pair CodingAgentCard writes is grouped
+// with the credential it bills, per ADR-0016). A patch touching both
+// sections needs BOTH permissions (unlike operationPermissions' OR
+// semantics, permissionGate requires every entry this function returns).
 //
 // idp is NOT yet mapped to a permission — no AE permission concept for IdP
 // config exists today — so an idp-only patch is presently allowed to any
@@ -461,7 +470,7 @@ func updateConfigPermissions(request any) ([]authz.Permission, error) {
 	if req.Body.GitProvider.Sent {
 		required = append(required, authz.PermissionGitHubConfig)
 	}
-	if req.Body.LLM.Sent || req.Body.CodingLLM.Sent {
+	if req.Body.LLM.Sent || req.Body.CodingLLM.Sent || req.Body.CodingAgent.Sent {
 		required = append(required, authz.PermissionModelConfig)
 	}
 	return required, nil

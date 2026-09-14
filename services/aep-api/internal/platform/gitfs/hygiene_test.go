@@ -170,3 +170,27 @@ func TestNilCredentialSkipsAskpass(t *testing.T) {
 		}
 	}
 }
+
+// TestForcedConfigIsNotACredentialChannel guards the config the engine forces
+// into EVERY git child's environment. It is a tempting place to put
+// http.extraheader or a credential helper, and doing so would broadcast a
+// secret to every invocation and every mirror at once — the exact opposite of
+// the askpass design, where the token reaches only remote ops and only via
+// GITFS_TOKEN. The same banned words the mirror's config is held to apply
+// here, checked on the key AND the value: a rule may configure git's
+// behaviour, never its credentials.
+func TestForcedConfigIsNotACredentialChannel(t *testing.T) {
+	rules := gitfs.ForcedConfigRules()
+	if len(rules) == 0 {
+		t.Fatal("no forced config rules — this test would prove nothing")
+	}
+	for _, rule := range rules {
+		for _, field := range rule {
+			for _, banned := range []string{"askpass", "credential", "extraheader", "x-access-token", "authorization", "token", "password"} {
+				if strings.Contains(strings.ToLower(field), banned) {
+					t.Errorf("forced config rule %v contains %q — credentials must travel via GITFS_TOKEN + the askpass shim, not the forced config every child inherits", rule, banned)
+				}
+			}
+		}
+	}
+}

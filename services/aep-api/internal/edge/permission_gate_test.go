@@ -589,6 +589,9 @@ func TestPermissionGate_UpdateConfig(t *testing.T) {
 	llmOnly := gen.UpdateConfigRequestObject{Body: &gen.ConfigPatch{}}
 	llmOnly.Body.LLM.Sent = true
 
+	codingAgentOnly := gen.UpdateConfigRequestObject{Body: &gen.ConfigPatch{}}
+	codingAgentOnly.Body.CodingAgent.Sent = true
+
 	both := gen.UpdateConfigRequestObject{Body: &gen.ConfigPatch{}}
 	both.Body.GitProvider.Sent = true
 	both.Body.CodingLLM.Sent = true
@@ -620,6 +623,20 @@ func TestPermissionGate_UpdateConfig(t *testing.T) {
 
 		ctx = auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:model-config"})
 		if _, err := permissionGate(next, "UpdateConfig")(ctx, nil, req, llmOnly); err != nil {
+			t.Fatalf("want pass holding ae:model-config, got %v", err)
+		}
+	})
+
+	t.Run("codingAgent section requires ae:model-config", func(t *testing.T) {
+		ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:github-config"})
+		_, err := permissionGate(next, "UpdateConfig")(ctx, nil, req, codingAgentOnly)
+		var ae *apiError
+		if !errors.As(err, &ae) || ae.Status != http.StatusForbidden {
+			t.Fatalf("want 403 holding only ae:github-config, got %v", err)
+		}
+
+		ctx = auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:model-config"})
+		if _, err := permissionGate(next, "UpdateConfig")(ctx, nil, req, codingAgentOnly); err != nil {
 			t.Fatalf("want pass holding ae:model-config, got %v", err)
 		}
 	})

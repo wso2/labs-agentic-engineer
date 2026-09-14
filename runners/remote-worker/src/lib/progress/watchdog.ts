@@ -32,15 +32,16 @@
 // Those are different faults with different fixes, and the feed could not
 // previously distinguish them at all.
 //
-// The subagent case is read off `emitterId`, not off the fan-out call: the
-// translator gives an `Agent` call no tool_use event of its own (from-sdk.ts
-// drops it so the feed does not print the section heading twice), so the only
-// trace of a running subagent on this stream is the attribution stamped on the
-// lines it produces. Deriving it from the fan-out call is what the code used to
-// claim and never did — measured on a live run, a subagent that went silent for
-// ten minutes and then failed produced four reports, every one of them saying
-// "no tool in flight" while a 22-minute `Agent` call was the thing being waited
-// on.
+// **The agent case is now DECLARED.** It used to be read off `emitterId`,
+// because v1 had no "an agent started" event at all: a fan-out call produced no
+// `tool_use`, so the watchdog never had the call in flight and could not name
+// it. Measured on a live run, a subagent that went silent for ten minutes and
+// then failed produced four reports, every one saying "no tool in flight" while
+// a 22-minute `Agent` call was the thing being waited on. Registering from the
+// FIRST LINE an agent produced fixed the naming and left the clock a few
+// seconds late. v2 removes the guess entirely: `agent_started` opens an agent
+// and `agent_settled` closes it, so the clock starts when the runtime says the
+// agent did.
 //
 // "The model turn is stuck" was the end of the diagnosis and is now the middle
 // of it: `observeRetry` and `observeStream` carry the two things that tell those
@@ -54,8 +55,7 @@
 // dependency pull is legitimate, and a watchdog that failed the run on its own
 // clock would be a worse bug than the silence it replaces.
 
-import type { ProgressEventInput } from "./schema.js";
-import { emit as defaultEmit } from "./emitter.js";
+import { emit as defaultEmit, LEAD_AGENT_ID, type RunEventInput } from "./emitter.js";
 import type { ApiRetryInfo } from "./diagnostics.js";
 
 // Long enough that an ordinary compile or install does not trip it, short
@@ -63,18 +63,19 @@ import type { ApiRetryInfo } from "./diagnostics.js";
 // instead of one silent terminal.
 export const DEFAULT_IDLE_MS = 120_000;
 
-// What the SDK calls its fan-out tool, and what the feed labels a subagent's
-// section with. `Task` in SDK 0.2, `Agent` since 0.3 — this is display text
-// here, never a match, so it does not need the two-name set from-sdk.ts keeps.
-const FANOUT_TOOL = "Agent";
+// How a spawned agent is named in a report. Deliberately NOT the runtime's
+// fan-out tool name: v2 says an agent started, not that a tool called `Agent`
+// was invoked, and this line is read by a person who has no reason to know
+// which runtime produced it.
+const AGENT_LABEL = "agent";
 
 interface InFlight {
   tool: string;
   summary: string;
   startedAt: number;
-  /** The fan-out call itself, as opposed to a tool call made inside one. */
-  fanOut?: boolean;
-  /** For a call made inside a subagent: which subagent. */
+  /** A whole spawned agent, as opposed to a tool call made inside one. */
+  agent?: boolean;
+  /** For a call made inside a spawned agent: which agent. */
   ownerLabel?: string;
 }
 
@@ -82,12 +83,20 @@ export interface RunWatchdogOptions {
   /** Silence tolerated before the first report, and between repeats. */
   idleMs?: number;
   now?: () => number;
-  emit?: (event: ProgressEventInput) => void;
+  emit?: (event: RunEventInput) => void;
 }
 
 export interface RunWatchdog {
-  /** Record one SDK message's worth of activity, with the events it produced. */
-  observe(events: readonly ProgressEventInput[]): void;
+  /**
+   * Record one SDK message's worth of activity, with the events it produced.
+   *
+   * A `heartbeat` is deliberately not activity: it says the run is ALIVE, not
+   * that anything happened, and one every ten seconds would keep the idle clock
+   * permanently reset — the watchdog would then go silent through exactly the
+   * stall the heartbeats are describing. Same rule as a retry, for the same
+   * reason.
+   */
+  observe(events: readonly RunEventInput[]): void;
   /**
    * Record a retryable API failure. NOT activity — see the header: a retry is
    * the run failing to make progress, and the idle clock has to keep running
@@ -117,13 +126,19 @@ export function createRunWatchdog(opts?: RunWatchdogOptions): RunWatchdog {
   const now = opts?.now ?? Date.now;
   const emit = opts?.emit ?? defaultEmit;
 
+  // Keyed by an agent's id for a whole spawned agent, and by a tool call's id
+  // for one call. The two id spaces never collide — one is the runtime's task
+  // id, the other its tool_use id — and keeping them in one map is what lets
+  // `describe` prefer the innermost thing that is actually stuck.
   const inFlight = new Map<string, InFlight>();
-  // Fan-outs that have already settled. A subagent's id is registered from the
-  // lines it produces, so without this a stray late line about a FINISHED
-  // subagent would register a phantom that nothing ever closes, and the
-  // watchdog would report it as running for the rest of the run. One entry per
-  // subagent the run ever had, so it needs no cap.
-  const settledFanOuts = new Set<string>();
+  // Agents that have already settled, so a late line about a FINISHED agent
+  // cannot register a phantom that nothing ever closes. One entry per agent the
+  // run ever had, so it needs no cap.
+  const settledAgents = new Set<string>();
+  // An agent's label, for the line that names which one is stuck. Kept here
+  // rather than looked up from `inFlight` because a tool call made INSIDE an
+  // agent has to name that agent after the agent itself has been settled.
+  const agentLabels = new Map<string, string>();
   let lastActivityAt = now();
   // Tracked separately from lastActivityAt so a repeat fires every idleMs of
   // continued silence rather than only once.
@@ -143,8 +158,8 @@ export function createRunWatchdog(opts?: RunWatchdogOptions): RunWatchdog {
     return oldest;
   }
 
-  function runningFanOuts(): InFlight[] {
-    return [...inFlight.values()].filter((c) => c.fanOut);
+  function runningAgents(): InFlight[] {
+    return [...inFlight.values()].filter((c) => c.agent);
   }
 
   function named(call: InFlight): string {
@@ -175,15 +190,15 @@ export function createRunWatchdog(opts?: RunWatchdogOptions): RunWatchdog {
 
   function describe(): string {
     const t = now();
-    // A real tool beats the fan-out that owns it: "waiting on Bash (npm ci)" is
-    // the diagnosis, and "waiting on Agent" while a Bash of its own is open
+    // A real tool beats the agent that owns it: "waiting on Bash (npm ci)" is
+    // the diagnosis, and "waiting on an agent" while a Bash of its own is open
     // would be the symptom one level up.
-    const oldest = oldestInFlight((c) => !c.fanOut);
+    const oldest = oldestInFlight((c) => !c.agent);
     if (oldest) {
-      const where = oldest.ownerLabel ? ` in subagent (${oldest.ownerLabel})` : "";
+      const where = oldest.ownerLabel ? ` in agent (${oldest.ownerLabel})` : "";
       return `waiting on ${named(oldest)}${where} for ${seconds(t - oldest.startedAt)}${cause(t)}`;
     }
-    const agents = runningFanOuts();
+    const agents = runningAgents();
     if (agents.length === 1) {
       const a = agents[0];
       return (
@@ -195,7 +210,7 @@ export function createRunWatchdog(opts?: RunWatchdogOptions): RunWatchdog {
       // Naming one of several would be a coin flip: the lines interleave and
       // any of them could be the silent one.
       return (
-        `no tool in flight in any of ${agents.length} running subagents` +
+        `no tool in flight in any of ${agents.length} running agents` +
         ` — waiting on the model for ${seconds(t - lastActivityAt)}${cause(t)}`
       );
     }
@@ -204,49 +219,55 @@ export function createRunWatchdog(opts?: RunWatchdogOptions): RunWatchdog {
 
   return {
     observe(events) {
+      // A feed that says only "still alive" is not a feed that says "still
+      // working". Heartbeats are stripped BEFORE the clock is touched, and a
+      // message that produced nothing but heartbeats leaves the idle window
+      // running — which is the whole point of having them.
+      const work = events.filter((e) => e.kind !== "heartbeat");
+      if (work.length === 0 && events.length > 0) return;
       lastActivityAt = now();
       lastReportAt = lastActivityAt;
       lastRetry = undefined;
       lastStreamAt = 0;
-      for (const e of events) {
-        // A subagent line is the fan-out call announcing itself — see the
-        // header. Its clock therefore starts at the subagent's FIRST line
-        // rather than at the call, a few seconds later than the truth and the
-        // only start this stream carries. Registered before the tool_result
-        // branch below so the fan-out's own closing result still settles it:
-        // that event carries the same id in both fields.
-        if (
-          e.emitter === "subagent" &&
-          e.emitterId &&
-          !inFlight.has(e.emitterId) &&
-          !settledFanOuts.has(e.emitterId)
-        ) {
-          inFlight.set(e.emitterId, {
-            tool: FANOUT_TOOL,
-            summary: e.emitterLabel ?? "",
-            startedAt: now(),
-            fanOut: true,
-          });
+      for (const e of work) {
+        // An agent's life is DECLARED in v2 — see the header. The clock starts
+        // when the runtime says the agent started, not at its first visible
+        // line, and it stops at the settle rather than at a tool_result whose
+        // ids happened to line up.
+        if (e.kind === "agent_started" && e.agentId) {
+          if (e.label) agentLabels.set(e.agentId, e.label);
+          if (!settledAgents.has(e.agentId)) {
+            inFlight.set(e.agentId, {
+              tool: AGENT_LABEL,
+              summary: e.label ?? "",
+              startedAt: now(),
+              agent: true,
+            });
+          }
+          continue;
+        }
+        if (e.kind === "agent_settled" && e.agentId) {
+          settledAgents.add(e.agentId);
+          inFlight.delete(e.agentId);
+          continue;
         }
         if (!e.toolUseId) continue;
         if (e.kind === "tool_result") {
-          if (inFlight.get(e.toolUseId)?.fanOut) settledFanOuts.add(e.toolUseId);
           inFlight.delete(e.toolUseId);
           continue;
         }
         // Every other kind carrying a call id IS a call going out — including
         // the git_commit/git_push/gh_action rewrites of a Bash command.
-        const tool = "tool" in e && typeof e.tool === "string" ? e.tool : e.kind;
-        const summary = "summary" in e && typeof e.summary === "string" ? e.summary : "";
+        const tool = typeof e.tool === "string" ? e.tool : e.kind;
+        const summary = typeof e.summary === "string" ? e.summary : "";
+        const ownerLabel = e.agentId && e.agentId !== LEAD_AGENT_ID ? agentLabels.get(e.agentId) : undefined;
         inFlight.set(e.toolUseId, {
           tool,
           summary,
           startedAt: now(),
-          // Which subagent's work this is, so a stuck tool names its own
-          // section rather than leaving the reader to scroll for it.
-          ...(e.emitter === "subagent" && e.emitterId !== e.toolUseId && e.emitterLabel
-            ? { ownerLabel: e.emitterLabel }
-            : {}),
+          // Which agent's work this is, so a stuck tool names its own section
+          // rather than leaving the reader to scroll for it.
+          ...(ownerLabel ? { ownerLabel } : {}),
         });
       }
     },
@@ -262,7 +283,11 @@ export function createRunWatchdog(opts?: RunWatchdogOptions): RunWatchdog {
     check() {
       if (now() - lastReportAt < idleMs) return;
       lastReportAt = now();
-      emit({ kind: "log", level: "warn", summary: `[watchdog] ${describe()}` });
+      // A code-less notice: the closed `code` set names CONDITIONS a consumer
+      // branches on, and "the run has been quiet" is not one of them — it is a
+      // sentence for a reader. v2's structured answer to the same question is
+      // the heartbeat's `waitingOn`; this line is the diagnosis behind it.
+      emit({ kind: "notice", agentId: LEAD_AGENT_ID, level: "warn", detail: `[watchdog] ${describe()}` });
     },
 
     describe,

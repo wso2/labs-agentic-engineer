@@ -26,9 +26,9 @@ const ambiguousDep: Dependency = {
   kind: "external",
   name: "email-provider",
   description: "Transactional email for signup + reset flows.",
-  status: "ambiguous",
-  reason: "2 candidates available",
-  candidates: [
+  status: "unresolved",
+  reason: "needs-input",
+  suggestions: [
     {
       name: "sendgrid-rest",
       style: "rest-api",
@@ -38,7 +38,6 @@ const ambiguousDep: Dependency = {
       name: "resend-sdk",
       style: "sdk",
       description: "Resend Node SDK",
-      package: "npm:resend@^4.0.0",
     },
   ],
 };
@@ -51,21 +50,18 @@ const resolvedDep: Dependency = {
   package: "npm:stripe@^17.0.0",
 };
 
-// #252 Task 17 (Q4): the message dropped the embedded dependency JSON + the
-// resolution playbook — the chat agent gets both from design.json's live
-// snapshot and the architecture skill (Task 16), so the seed
-// message only needs to name the component + dependency + intent.
+// The message is lean: the agent reads the dependency's own file from the
+// snapshot and the playbook from its skills, so the seed only names the
+// dependency (and, for a reconsider, the component whose choice is in
+// question) plus the intent.
 describe("buildDependencyResolutionMessage — lean seed message (#252 Task 17)", () => {
-  it("resolve intent: names the dependency and component, asking to resolve", () => {
+  it("resolve intent: runs the guided flow for the dependency — the skill command, nothing else", () => {
     const msg = buildDependencyResolutionMessage(
       "checkout-api",
       ambiguousDep,
       "resolve",
     );
-    expect(msg).toContain("email-provider");
-    expect(msg).toContain("checkout-api");
-    expect(msg).toMatch(/resolve/i);
-    expect(msg).not.toMatch(/reconsider/i);
+    expect(msg).toBe("/resolve-dependency email-provider");
   });
 
   it("reconsider intent: names the dependency and component, asking to look at other options", () => {
@@ -95,7 +91,7 @@ describe("buildDependencyResolutionMessage — lean seed message (#252 Task 17)"
     // none of that survives the lean message.
     expect(resolveMsg).not.toContain("```");
     expect(resolveMsg).not.toContain(JSON.stringify(ambiguousDep));
-    expect(resolveMsg).not.toContain("candidates");
+    expect(resolveMsg).not.toContain("suggestions");
     expect(reconsiderMsg).not.toContain("```");
     expect(reconsiderMsg).not.toContain("style");
     expect(reconsiderMsg).not.toContain("package");
@@ -117,7 +113,6 @@ describe("buildDependencyResolutionMessage — lean seed message (#252 Task 17)"
     const bareDep: Dependency = { kind: "external", name: "github" };
     const msg = buildDependencyResolutionMessage("issue-sync", bareDep, "resolve");
     expect(msg).not.toContain("undefined");
-    expect(msg).toContain("github");
-    expect(msg).toContain("issue-sync");
+    expect(msg).toBe("/resolve-dependency github");
   });
 });

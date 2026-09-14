@@ -37,11 +37,21 @@ const validationReportPath = "tests/validation/report.json"
 type Reads struct {
 	runs   RunReader
 	cycles CycleReader
+	// recordings answers RunCycleView.recording. Optional: nil reports `none`
+	// for every cycle, which is exactly right on a boot that records nothing.
+	recordings RecordingReader
 }
 
 // NewReads wires the read service.
 func NewReads(runs RunReader, cycles CycleReader) *Reads {
 	return &Reads{runs: runs, cycles: cycles}
+}
+
+// WithRecordings attaches the recording-state reader so the cycle views can say
+// what the platform can serve of each cycle's feed. Returns the receiver.
+func (r *Reads) WithRecordings(rec RecordingReader) *Reads {
+	r.recordings = rec
+	return r
 }
 
 // RunsForTag returns every milestone run that has worked one spec version,
@@ -76,7 +86,7 @@ func (r *Reads) RunsForTag(ctx context.Context, orgID, projectID, tag string) (*
 		if cerr != nil {
 			return nil, cerr
 		}
-		out.Runs = append(out.Runs, runView(&rows[i], cycles))
+		out.Runs = append(out.Runs, runView(&rows[i], cycles, r.recordings))
 	}
 	return out, nil
 }
@@ -84,7 +94,7 @@ func (r *Reads) RunsForTag(ctx context.Context, orgID, projectID, tag string) (*
 // runView projects a run row plus its cycles onto the wire shape. It stores no
 // loop position: that renders from the LATEST cycle, because fix and conflict
 // cycles re-enter earlier phases and a flat phase enum would lie mid-loop.
-func runView(row *delivery.MilestoneRun, cycles []delivery.RunCycle) gen.MilestoneRunView {
+func runView(row *delivery.MilestoneRun, cycles []delivery.RunCycle, recordings RecordingReader) gen.MilestoneRunView {
 	view := gen.MilestoneRunView{
 		ID:              row.ID,
 		MilestoneNumber: int64(row.MilestoneNumber),
@@ -107,15 +117,26 @@ func runView(row *delivery.MilestoneRun, cycles []delivery.RunCycle) gen.Milesto
 			ValidationCycles: int64(row.ValidationCycles),
 		},
 		Validation: validationView(row.ValidationVerdict, row.ValidationIssue),
+		Failure:    failureView(row),
 		Cycles:     make([]gen.RunCycleView, 0, len(cycles)),
 		CreatedAt:  row.CreatedAt,
 		StartedAt:  row.StartedAt,
 		EndedAt:    row.EndedAt,
 	}
 	for i := range cycles {
-		view.Cycles = append(view.Cycles, CycleView(&cycles[i]))
+		view.Cycles = append(view.Cycles, CycleView(&cycles[i], RecordingOf(recordings, &cycles[i])))
 	}
 	return view
+}
+
+// RecordingOf resolves one cycle's recording state through an optional reader.
+// A nil reader answers `none`: the platform has no record of this cycle's feed,
+// which is what a boot with no recording store honestly has.
+func RecordingOf(recordings RecordingReader, c *delivery.RunCycle) gen.RunCycleViewRecording {
+	if recordings == nil {
+		return gen.RunCycleViewRecordingNone
+	}
+	return recordings.RecordingState(c)
 }
 
 // validationView carries the run's verdict — its LATEST attempt's — the issue
@@ -155,7 +176,14 @@ func validationView(verdict string, issue int) gen.RunValidation {
 // progress stream emits the same shape in its `cycle` frames — one projection,
 // so a list read and a stream frame can never describe the same cycle
 // differently.
-func CycleView(c *delivery.RunCycle) gen.RunCycleView {
+//
+// `recording` is passed IN rather than derived here, and that is the seam: it is
+// the only field on this shape that is not a column of the row. It answers what
+// the PLATFORM can serve of the cycle's feed — `none` when it has no record at
+// all, `lost` when it had one and cannot serve it — and those two are the same
+// empty screen and very different bugs, so a projection that could not be told
+// the difference would have to guess.
+func CycleView(c *delivery.RunCycle, recording gen.RunCycleViewRecording) gen.RunCycleView {
 	resolves := make([]int64, 0, len(c.Resolves))
 	for _, n := range c.Resolves {
 		resolves = append(resolves, int64(n))
@@ -179,7 +207,33 @@ func CycleView(c *delivery.RunCycle) gen.RunCycleView {
 		// shows that an earlier attempt failed and the next one passed.
 		ValidationVerdict: gen.RunCycleViewValidationVerdict(c.ValidationVerdict),
 		ValidationIssue:   int64(c.ValidationIssue),
+		Recording:         recording,
 		CreatedAt:         c.CreatedAt,
 		EndedAt:           c.EndedAt,
+	}
+}
+
+// failureView projects the run's failure record onto the wire, nil when the
+// run has met no fault. The workflow id is derived here rather than stored:
+// it is a function of facts the row already holds, and it is the handle an
+// operator reads Temporal history by, so a support conversation can start
+// from the card instead of from a log grep.
+func failureView(row *delivery.MilestoneRun) *gen.RunFailure {
+	f := row.Failure
+	if f == nil || f.Code == "" {
+		return nil
+	}
+	return &gen.RunFailure{
+		Code:        f.Code,
+		Phase:       f.Phase,
+		Component:   f.Component,
+		Dependency:  f.Dependency,
+		Permanent:   f.Permanent,
+		Attempts:    int64(f.Attempts),
+		MaxAttempts: int64(f.MaxAttempts),
+		FirstAt:     f.FirstAt,
+		LastAt:      f.LastAt,
+		Detail:      f.Detail,
+		WorkflowID:  delivery.MilestoneRunWorkflowID(row.Kind, row.OrgID, row.ProjectID, row.MilestoneNumber),
 	}
 }

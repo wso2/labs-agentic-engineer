@@ -26,6 +26,12 @@
 #     server by process group and needs neither, but an agent improvising a
 #     cleanup reaches for `pkill` first, and on the image without it every such
 #     call was a silenced "command not found" that left the server running.
+#   - file (libmagic) — the same backstop reasoning, for identification rather
+#     than cleanup: it is the first command an agent runs on a binary it finds
+#     in the workspace and did not write. One run found a 26MB `core` in the
+#     clone, reached for `file` unprompted, got "command not found", and could
+#     not say what it was looking at. ~5MB for the one question that turns an
+#     unknown artefact in a customer's repository into a named one.
 #   - Go and Ballerina (pinned archives, not distro packages) + node/npm
 #     from the base — the agent's compile-level build verification
 #     (`go build`, `bal build`, `tsc --noEmit`, lockfile resolution) before
@@ -100,6 +106,7 @@ RUN apt-get update \
         bash \
         python3 \
         procps \
+        file \
         unzip \
         ca-certificates \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
@@ -240,6 +247,45 @@ RUN npm install -g "@playwright/test@${PLAYWRIGHT_VERSION}" "@playwright/cli@${P
 # files (icudtl.dat, the .pak set, the crashpad handler) beside it.
 ARG AGENT_BROWSER_VERSION=0.35.2
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/local/share/aep-chromium/chrome
+
+# `--no-sandbox` IS THE IMAGE'S, for every run. This reverses an earlier call
+# recorded here — that the flag was a build-time concession only, because a
+# `docker run` of this image launched chromium sandboxed as `aep` — and the
+# reversal is what a live run measured: inside a dispatched coding-agent Job the
+# walk's first two `agent-browser open` calls failed at launch, and the agent
+# only got a page by discovering this variable for itself. Four failed
+# background tasks and several minutes of trial and error, on a fact the image
+# knows and the agent cannot.
+#
+# WHY chromium cannot start sandboxed HERE, when it can under `docker run`:
+# its layer-1 sandbox needs one of two things, and the pod has neither. The
+# setuid helper (`chrome_sandbox`) is not installed setuid-root — playwright
+# ships it but nothing in this image chowns and chmods it, and a pod's
+# filesystem is not writable enough to fix that at task time. The fallback is
+# an unprivileged user namespace, which is a `clone(CLONE_NEWUSER)` the
+# container runtime's default seccomp profile denies. That is the same "No
+# usable sandbox!" BuildKit's own RUN container produces, which is why the
+# smoke test below needed the flag long before a run did — the build was
+# telling us about the runtime and it was read as a quirk of the builder.
+#
+# WHY DROPPING IT IS ACCEPTABLE — chromium's sandbox contains a browser that
+# renders the open web for a person; neither half describes this pod. THE POD
+# IS THE BOUNDARY: one-shot, unprivileged (`USER aep`, no securityContext
+# raising it), its whole filesystem an emptyDir discarded with the Job, and the
+# page it opens is the app THIS RUN just wrote, served by a dev server on
+# loopback. The flag does not widen what the container can reach; it removes a
+# second boundary inside one that already holds. A run that needs to browse the
+# real internet is not a shape this image supports, and the day it is, this
+# variable is where that argument gets re-opened.
+#
+# AN ENV RATHER THAN THE `--args` FLAG THE CLI ALSO ACCEPTS: `--args
+# "--no-sandbox"` works (verified against 0.35.2 — it reaches the launch both
+# before and after the subcommand), but it is per-invocation, and a browser job
+# is dozens of invocations against a DAEMON that outlives each one. One
+# forgotten flag is a launch that fails or, worse, a session that quietly keeps
+# whatever args launched it. The environment is the only form that is true for
+# every call the agent will make, including the ones inside a script it writes.
+ENV AGENT_BROWSER_ARGS=--no-sandbox
 # BuildKit predefines both; a stage has to redeclare them to read them in a RUN.
 # Equal on a native build, different on the emulated half of the release matrix.
 ARG BUILDPLATFORM
@@ -260,22 +306,22 @@ RUN npm install -g "agent-browser@${AGENT_BROWSER_VERSION}" \
     #
     # NOT `agent-browser doctor`, which is the obvious-looking choice: its
     # launch test is the only check that touches the browser, and it ignores
-    # both AGENT_BROWSER_ARGS (so it cannot be made to pass here, see below)
-    # and — measured — AGENT_BROWSER_EXECUTABLE_PATH in its "Chrome" line,
-    # which reports whatever the CLI's own discovery finds. `doctor --quick`
-    # passes with this variable pointing at nothing at all.
+    # both AGENT_BROWSER_ARGS (so it cannot be made to pass here — see the
+    # AGENT_BROWSER_ARGS block above) and — measured —
+    # AGENT_BROWSER_EXECUTABLE_PATH in its "Chrome" line, which reports whatever
+    # the CLI's own discovery finds. `doctor --quick` passes with this variable
+    # pointing at nothing at all.
     #
-    # `--no-sandbox` is a BUILD-TIME concession and deliberately NOT an ENV:
-    # BuildKit's RUN container denies the unprivileged user namespace
-    # chromium's zygote needs ("No usable sandbox!"), while a `docker run` of
-    # this image launches the same chromium sandboxed, as `aep`, unchanged —
-    # measured both ways. Exporting the flag would silently drop the sandbox
-    # for every run in order to make a build step pass.
+    # NO `export AGENT_BROWSER_ARGS` HERE ANY MORE, and its absence is the
+    # point: the flag is now an ENV above, so this test launches through
+    # EXACTLY the configuration a task launches through. It used to be exported
+    # inline, which made the build pass on a setting no run had — the gap that
+    # let a shipped image reach a live run with no working browser command.
     #
     # Run as `aep` because that is who runs a task: a chromium that starts for
     # root and not for an unprivileged user is the class of bug ADR-0007
-    # records. `su` without `-` keeps the environment, so the variable set
-    # above is the one under test.
+    # records. `su` without `-` keeps the environment, so the variables set
+    # above are the ones under test.
     #
     # NATIVE BUILDS ONLY. The release builds both platforms on one amd64
     # runner, so its arm64 half runs under QEMU user-mode emulation, and
@@ -299,7 +345,6 @@ RUN npm install -g "agent-browser@${AGENT_BROWSER_VERSION}" \
         printf '<h1>agent-browser-ok</h1>' > /tmp/ab-smoke.html \
         && chmod a+r /tmp/ab-smoke.html \
         && su aep -s /bin/bash -c 'set -e; \
-            export AGENT_BROWSER_ARGS=--no-sandbox; \
             agent-browser open file:///tmp/ab-smoke.html; \
             agent-browser get text h1 | grep agent-browser-ok; \
             agent-browser close --all' \
@@ -329,6 +374,20 @@ RUN npm ci --include=optional \
 # `chown -R /app` (which would rewrite every file as a fresh layer and
 # roughly double the image size).
 COPY --chown=aep:aep . .
+
+# The process ancestor of everything a task runs. It sets `ulimit -c 0` and
+# execs the CMD below; the reasoning is in the file, and the reason it exists at
+# all is that nothing else in the stack can set an rlimit — Kubernetes has no
+# `ulimit` field, so `docker run --ulimit` has no cluster equivalent and the
+# coding-agent Job template renders a container with image/env/resources and
+# nothing that reaches one. It has to be here, and a wrapper is the only shape
+# that covers BOTH the exec-form default below and any command a caller passes
+# instead (the playground's local entrypoint, a `docker run … bash` for triage).
+#
+# --chmod rather than relying on the mode bit in git: a build from a checkout
+# that lost the executable bit would otherwise produce an image whose ENTRYPOINT
+# is not executable, which fails at `docker run`, long after the build.
+COPY --chmod=0755 docker-entrypoint.sh /usr/local/bin/aep-runner-entrypoint
 
 # The authored skill library. A session's base plugin is ASSEMBLED from it at
 # startup (lib/base_plugin.ts selects the runner's skills and applies the mode
@@ -380,4 +439,10 @@ RUN HOME=/home/aep bash /tmp/bal-library-tool/install.sh \
     && bal library --help > /dev/null \
     && rm -rf /tmp/bal-library-tool
 
-ENTRYPOINT ["npx", "tsx", "src/oneshot.ts"]
+# ENTRYPOINT + CMD, not one exec-form ENTRYPOINT. The wrapper is the entrypoint
+# so its limits cannot be bypassed, and the real command is the CMD so it can
+# still be replaced — `docker run <image> npx tsx src/local.ts` and a triage
+# shell both go through the wrapper and keep `ulimit -c 0`, which an argument
+# appended to a single ENTRYPOINT would not.
+ENTRYPOINT ["/usr/local/bin/aep-runner-entrypoint"]
+CMD ["npx", "tsx", "src/oneshot.ts"]

@@ -194,19 +194,23 @@ The gateway hands your service the caller's verified identity as headers
 (`api-management` covers the mechanism and the 401-on-missing-`X-User-Id` rule).
 What follows is what that identity *means*. Which roles exist, and what each may
 do in this project, is `specs/design/security.json` — read role names,
-permissions, `coldStartRole`, and `publicComponents` from it before writing a
-resolver, and match its `roles[].name` values.
+permissions and `coldStartRole` from it before writing a resolver, and match its
+`roles[].name` values. `publicComponents` names the components that serve
+unauthenticated traffic; it says nothing about where a role comes from.
 
 ## Identity is not authorization
 
 `X-User-Id` is an **opaque IdP subject** — not a record key in any other service,
 so a directory lookup keyed on it 404s. Split the two questions a caller raises:
 
-- **Role** (what may they do) comes from ONE authority, and which one depends on
-  whether the org publishes a directory: `X-User-Groups` when it does, the
-  service's own people record when it does not (**Implementation** below). Either
-  way, an authenticated caller with no role is a **403, never a 401**: a 401 tells
-  the SPA its token expired, so it restarts sign-in and loops forever.
+- **Role** (what may they do) comes from `X-User-Groups`, always: the platform
+  makes an identity-provider group out of every `security.json` role — enrolling
+  the project's test accounts in the ones it owns — so the groups claim IS the
+  role (**Implementation** below). A group the platform found rather than created
+  reaches your service the same way; only its membership is somebody else's.
+  A caller whose groups match no declared role holds the design's
+  `coldStartRole`, and where that is `null` they are a **403, never a 401**: a
+  401 tells the SPA its token expired, so it restarts sign-in and loops forever.
 - **Directory attributes** (which unit is theirs, their own id in the directory)
   come from the caller's **directory record**, resolved by `X-User-Name` — the
   username, which the directory keys on. A group name is a role, not an identity,
@@ -217,18 +221,17 @@ so a directory lookup keyed on it 404s. Split the two questions a caller raises:
 
 ## Implementation
 
-**One authority decides a caller's role, and the design picks which.** A published
-directory owns roles through `X-User-Groups`; with none published, the service
-owns them in its own people records. The two are alternatives, never a fallback
-chain — a resolver that tries one and falls through to the other grants whatever
-the weaker source says.
+**`X-User-Groups` is the role authority, and there is no fork to pick.** Every
+`roles[].name` in `security.json` becomes an identity-provider group at Build
+(`security-design`), so a role reaches you only through that header. A service
+that reads the role from anywhere else — a role column in its own table, a
+roster in config — sees none of them: the seeded admin arrives as whatever that
+service defaults to, and no endpoint exists to correct it. Your own records hold
+per-user DATA, never the role.
 
-One resolver, called by every protected handler, whichever authority it reads.
-**403**, never 401, when it yields no role: return the empty/absent case
-explicitly rather than defaulting to the least-privileged real role, which is a
-silent authorization grant.
+One resolver, called by every protected handler.
 
-### A directory is published — the role is in `X-User-Groups`
+### The role is in `X-User-Groups`
 
 Resolve from the header, never by looking `X-User-Id` up anywhere. It arrives as
 a JSON array (e.g. `["Compliance Admin"]`) — the SAME groups claim the SPA reads
@@ -236,6 +239,14 @@ from `user.profile.groups`; accept a comma-separated string as a fallback. Match
 each group case-insensitively against the spec's role names: a substring match on
 the keyword (`admin`, `auditor`) survives the org renaming its groups, an
 equality check does not.
+
+**No group matches a declared role → the design's `coldStartRole`**, read from
+`specs/design/security.json` and not from prose. The platform enrols every test
+account in its role's group, so those never arrive here: this is the path a
+**real person** takes on first sign-in, and it is what lets them reach the app's
+base experience instead of a 403 nobody can clear. `coldStartRole: null` means
+such a caller reaches nothing — answer **403**, and never substitute the
+least-privileged real role, which is a silent grant.
 
 When roles scope by the caller's own directory attributes — their unit, their own
 id — resolve the caller's **directory record** by `X-User-Name` and filter on
@@ -246,25 +257,14 @@ that record's fields:
   of the resolved record — never on `X-User-Id` (opaque) and never on a group
   name.
 
-### No directory is published — the service owns its people records
+### The service's own per-caller rows
 
-Key them on `X-User-Id` — the one case where that is right, because the service
-stored the subject itself rather than matching it against ids another system
-minted — and fill display fields from `X-User-Name`.
-
-**The stored record's role IS the role**, resolved by `X-User-Id`. Read
-`X-User-Groups` for nothing on this path: no directory published those groups, so
-they carry no authority here, and a token issued without a `groups` claim leaves
-that header caller-controlled (`api-management`) — reading a role out of it lets
-a caller name their own.
-
-**A caller with no record yet gets one, at the cold-start role.**
-`specs/design/security.json`'s `coldStartRole` says which role a first-time caller
-holds — read it from that file, not from prose. `null` there means a caller with
-no role reaches nothing, and there is no record to create. Otherwise create the
-record on first sign-in at that role, so a new user reaches the app's base
-experience rather than a 403 nobody can clear. A roster in config is a demo
-fixture, not the mechanism: it goes stale the moment somebody new signs in.
+Rows this service creates for a caller — their draft, their preferences, the
+record that makes "their own" well-defined — are keyed on `X-User-Id`, the one
+case where that is right, because the service stored the subject itself rather
+than matching it against ids another system minted. Fill display fields from
+`X-User-Name`. Store no role column: the header already answered that, and a
+second copy is a second authority that drifts.
 
 Express this in your stack's own idiom — where the resolver lives, its
 signature, and how a handler returns 403 — following the conventions that skill
@@ -278,10 +278,11 @@ hardcode a roster.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Signed-in user loops back to the login page forever | A protected handler answers no-role (or a failed directory lookup keyed on `X-User-Id`) with **401**; the SPA reads 401 as "token expired" and restarts sign-in | Return **403**. Resolve the role from the service's one authority — `X-User-Groups` with a directory, the stored people record without one — and never key a *directory* lookup on `X-User-Id`. |
+| Signed-in user loops back to the login page forever | A protected handler answers no-role (or a failed directory lookup keyed on `X-User-Id`) with **401**; the SPA reads 401 as "token expired" and restarts sign-in | Return **403**. Resolve the role from `X-User-Groups`, and never key a *directory* lookup on `X-User-Id`. |
 | A role-scoped caller signs in but sees no rows | Scope derived the attribute from a group NAME (empty for a generic role group), or matched `X-User-Id` (an opaque subject) against a stored directory id (never equal) | Resolve the caller's directory record via `X-User-Name`, read the attribute from it, filter on that. |
 | Every user shows no role / `groups` is empty | Roles read from the access token or a hand-decoded JWT | SPA: `user.profile.groups`. API: `X-User-Groups`. |
-| Every signed-in user gets 403 and the app is unusable from a fresh deploy | The service requires a people record it has no way to create, or it creates one and then still resolves the role from `X-User-Groups` | Create the caller's record on first sign-in at the cold-start role, and resolve the role FROM that record — `specs/design/security.json`'s `coldStartRole` names it. |
+| The SPA shows a role's screens but every call it makes 403s, naming a role the caller does not hold | Two authorities: the SPA read `user.profile.groups`, the service read a role off its own record instead of `X-User-Groups`, so every seeded user is stuck at the service's default | One authority. Match `X-User-Groups` against `roles[].name`, and fall to `coldStartRole` only when no group matches. |
+| A design with no directory dependency is read as "no roles are published" | `publicComponents` is about unauthenticated traffic; the platform publishes role groups for every project with a `security.json` | Resolve from `X-User-Groups` regardless of what the design depends on. |
 | Sign-in loops at the right path, or the user is sent to login on every visit / new tab | No persistent `WebStorageStateStore` (the in-memory default loses the PKCE verifier across the redirect), session in `sessionStorage`, or the load path calls `signIn()` on a merely-expired token | `WebStorageStateStore({ store: localStorage })` + `automaticSilentRenew`; renew via `signinSilent()` and only `signIn()` when there is no session. |
 | After login, "invalid redirect URI" | `redirect_uri` doesn't match the `<origin>/callback` the platform registered | Compute `window.location.origin + '/callback'`. |
 | Logout button does nothing | `signOut()` calls only `signoutRedirect()`, which rejects (no `end_session_endpoint`), and the handler swallows it | Wrap it in the try/catch fallback to `removeUser()` + reload. |

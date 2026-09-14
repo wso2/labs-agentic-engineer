@@ -73,15 +73,12 @@ test("a header secret does not swallow the fields after it", () => {
     tool: "Bash",
     summary: "curl -H authorization:sk-live-abcdefgh",
     toolUseId: "toolu_01ABC",
-    emitter: "subagent",
-    emitterId: "toolu_01PARENT",
-    emitterLabel: "Build maintenance-api Ballerina service",
+    agentId: "a8562a681e0fcee7f",
   });
 
   const parsed = JSON.parse(emitted());
   assert.equal(parsed.toolUseId, "toolu_01ABC");
-  assert.equal(parsed.emitterId, "toolu_01PARENT");
-  assert.equal(parsed.emitterLabel, "Build maintenance-api Ballerina service");
+  assert.equal(parsed.agentId, "a8562a681e0fcee7f", "the one field the whole feed is attributed by");
 });
 
 test("x-api-key at a field boundary keeps the envelope intact", () => {
@@ -96,39 +93,45 @@ test("x-api-key at a field boundary keeps the envelope intact", () => {
 // covered without anyone remembering to opt in.
 test("nested values survive the walk and stay typed", () => {
   emit({
-    kind: "result",
-    status: "success",
-    summary: "done",
+    kind: "run_settled",
+    outcome: "success",
     usage: {
       inputTokens: 100,
       outputTokens: 200,
       cacheReadTokens: 0,
       cacheCreationTokens: 0,
       model: "claude-opus-5",
-      models: [
-        {
-          model: "claude-opus-5",
-          inputTokens: 100,
-          outputTokens: 200,
-          cacheReadTokens: 0,
-          cacheCreationTokens: 0,
-        },
-      ],
+      costUsd: null,
     },
   });
 
   const parsed = JSON.parse(emitted());
   assert.equal(parsed.usage.inputTokens, 100, "numbers must not become strings");
   assert.equal(parsed.usage.model, "claude-opus-5");
-  assert.equal(parsed.usage.models[0].outputTokens, 200);
+  // null is a value the contract gives a meaning to — "nobody has priced this
+  // yet" — so the walk must not collapse it into an absence.
+  assert.equal(parsed.usage.costUsd, null);
 });
 
 test("ordinary output is untouched and still stamped", () => {
-  emit({ kind: "phase", phase: "coding" });
+  emit({ kind: "notice", level: "info", detail: "[workspace] ready" });
 
   const parsed = JSON.parse(emitted());
-  assert.equal(parsed.schemaVersion, 1);
+  assert.equal(parsed.v, 2);
   assert.equal(parsed.seq, 1);
-  assert.equal(parsed.phase, "coding");
+  assert.equal(parsed.detail, "[workspace] ready");
   assert.ok(typeof parsed.ts === "string" && parsed.ts.length > 0);
+});
+
+// Every v2 event is attributed, and the runner's own lines are the lead's. The
+// default lives in the emitter rather than at each call site because "stamp the
+// author" is a rule a call site forgets, and an event with no author is one a
+// consumer cannot place.
+test("a line that names no agent is the lead's, and a line that names one keeps it", () => {
+  emit({ kind: "notice", level: "info", detail: "provisioning" });
+  assert.equal(JSON.parse(emitted()).agentId, "lead");
+
+  captured.length = 0;
+  emit({ kind: "agent_progress", agentId: "a6e8d6b9cd56b107f", phrase: "Writing service.bal" });
+  assert.equal(JSON.parse(emitted()).agentId, "a6e8d6b9cd56b107f");
 });

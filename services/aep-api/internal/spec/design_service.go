@@ -18,10 +18,12 @@ package spec
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 )
 
 // ErrSpecNotApproved is the design-domain sentinel surfaced (as 409 by the
@@ -32,7 +34,7 @@ var ErrSpecNotApproved = errors.New("spec must be saved (tagged) before generati
 // ErrUnresolvedDependency is the design-domain sentinel surfaced (as 409 by the
 // controller) when the tag-cut (SaveAndProceed) is attempted while a
 // dependency in the design being tagged is still in a non-actionable state:
-// an `org-service` that is not namespace-visible (unresolved/blocked/ambiguous
+// an `org-service` that is not namespace-visible (unresolved/blocked
 // against the live org catalog — see resolveOrgServices). external
 // dependencies are NOT proceed-gated here for now: the needsSpec flag that
 // used to drive this was dropped (dependency-management schema revision —
@@ -80,6 +82,13 @@ var (
 	// ErrDependencyWrongKind: the dependency exists but is not `external` — spec
 	// collection applies only to external API dependencies.
 	ErrDependencyWrongKind = errors.New("dependency is not an external dependency")
+	// ErrDependencyNotAssumed: AcceptDependencyAssumption on a dependency whose
+	// contract on disk is not an agent-written one (nothing to accept).
+	ErrDependencyNotAssumed = errors.New("dependency has no assumed contract to accept")
+	// ErrDependencyNotChosen: a document offered for a dependency no service has
+	// been chosen for, and the document names none itself (no `info.title`) —
+	// nothing says which system it is, and the platform never names one.
+	ErrDependencyNotChosen = errors.New("no service chosen yet, and the document names none — choose the service first")
 	// ErrSpecFetchFailed: the SSRF-guarded fetch of a user-supplied spec URL
 	// failed (bad URL, blocked target, non-2xx, oversized).
 	ErrSpecFetchFailed = errors.New("failed to fetch spec from URL")
@@ -206,6 +215,18 @@ func (s *designService) ListDependencies(ctx context.Context, orgID, projectID s
 // specUrl hint is dropped). Read-time status/reason are never persisted — the
 // design.json codec (SplitDesign → dependencyJSON) omits them (ADR-0003).
 func (s *designService) CollectSpec(ctx context.Context, orgID, projectID, component, depName string, rawSpec []byte, specURL string) (string, error) {
+	return s.collectContract(ctx, orgID, projectID, component, depName, rawSpec, specURL)
+}
+
+// CollectDependencyContract is CollectSpec without a consumer in hand — the
+// dependency definition view's route, where the user provides the document for the
+// dependency itself. Any component that references the dependency stands in
+// as the consumer whose design.json is re-rendered (the migration ride).
+func (s *designService) CollectDependencyContract(ctx context.Context, orgID, projectID, depName string, rawSpec []byte, specURL string) (string, error) {
+	return s.collectContract(ctx, orgID, projectID, "", depName, rawSpec, specURL)
+}
+
+func (s *designService) collectContract(ctx context.Context, orgID, projectID, component, depName string, rawSpec []byte, specURL string) (string, error) {
 	hasRaw := len(rawSpec) > 0
 	hasURL := strings.TrimSpace(specURL) != ""
 	switch {
@@ -232,25 +253,31 @@ func (s *designService) CollectSpec(ctx context.Context, orgID, projectID, compo
 	}
 	compIdx, depIdx := -1, -1
 	for i := range design.Components {
-		if design.Components[i].Name != component {
+		if component != "" && design.Components[i].Name != component {
 			continue
 		}
-		compIdx = i
 		for j := range design.Components[i].Dependencies {
 			if design.Components[i].Dependencies[j].Name == depName {
-				depIdx = j
+				compIdx, depIdx = i, j
+				break
 			}
 		}
+		if compIdx >= 0 {
+			break
+		}
+	}
+	if component != "" && compIdx < 0 {
+		if !componentExists(design.Components, component) {
+			return "", fmt.Errorf("%w: component %q not found in design", ErrDependencyNotFound, component)
+		}
+		return "", fmt.Errorf("%w: dependency %q not found on component %q", ErrDependencyNotFound, depName, component)
 	}
 	if compIdx < 0 {
-		return "", fmt.Errorf("%w: component %q not found in design", ErrDependencyNotFound, component)
-	}
-	if depIdx < 0 {
-		return "", fmt.Errorf("%w: dependency %q not found on component %q", ErrDependencyNotFound, depName, component)
+		return "", fmt.Errorf("%w: no component references dependency %q", ErrDependencyNotFound, depName)
 	}
 	if kind := design.Components[compIdx].Dependencies[depIdx].Kind; kind != DependencyKindExternal {
 		return "", fmt.Errorf("%w: dependency %q on component %q has kind %q; spec collection applies only to %q",
-			ErrDependencyWrongKind, depName, component, kind, DependencyKindExternal)
+			ErrDependencyWrongKind, depName, design.Components[compIdx].Name, kind, DependencyKindExternal)
 	}
 
 	if hasURL {
@@ -261,9 +288,9 @@ func (s *designService) CollectSpec(ctx context.Context, orgID, projectID, compo
 		rawSpec = fetched
 	}
 
-	// Validate + normalize; StoreConsumedSpec returns the component-relative
-	// specPath and the normalized blob to commit.
-	specPath, normalized, err := s.store.StoreConsumedSpec(ctx, orgID, projectID, component, depName, rawSpec)
+	// Validate + normalize; StoreConsumedSpec returns the repo-relative contract
+	// path and the normalized blob to commit.
+	specPath, normalized, err := s.store.StoreConsumedSpec(ctx, orgID, projectID, design.Components[compIdx].Name, depName, rawSpec)
 	if err != nil {
 		if errors.Is(err, ErrInvalidSpecContent) {
 			return "", fmt.Errorf("%w: %v", ErrInvalidSpec, err)
@@ -271,47 +298,204 @@ func (s *designService) CollectSpec(ctx context.Context, orgID, projectID, compo
 		return "", err
 	}
 
-	// Record specPath, then render ONLY this component's design.json through the
-	// canonical codec.
-	comp := design.Components[compIdx]
-	comp.Dependencies[depIdx].SpecPath = specPath
-	rendered, rerr := SplitDesign(&DesignFile{Components: []DesignComponent{comp}})
-	if rerr != nil {
-		return "", fmt.Errorf("render component %q design.json: %w", component, rerr)
+	// The contract lands in the dependency's own directory and its definition
+	// records the file (one dependency, one definition). A design from before
+	// the directory existed has its definition lifted in memory by
+	// AssembleDesign, so this write also migrates it — and re-rendering the
+	// consumer's design.json drops the legacy fields from the component. A
+	// user-provided document replaces an assumed one outright: the acceptance
+	// record goes with the assumption it accepted.
+	def, found := definitionByName(design.Dependencies, depName)
+	if !found {
+		def = DependencyDefinition{Name: depName, Description: design.Components[compIdx].Dependencies[depIdx].Description}
 	}
-	designSub := "components/" + component + "/design.json" // relative to specs/design/
+	// Handing over a document is choosing the service: a definition with no
+	// provider yet takes the document's own name for it (`info.title`) — and
+	// is refused when the document names none, since the platform never
+	// invents a provider. Any suggestions still open close, so the file this
+	// writes passes the agent's own gates afterwards (suggestions never beside
+	// a provider). An OpenAPI document lands only on a dependency whose style
+	// takes one.
+	if def.Provider == "" && def.Source != DependencySourceOrg {
+		def.Provider = contractTitle(string(rawSpec))
+		if def.Provider == "" {
+			return "", fmt.Errorf("%w: %q", ErrDependencyNotChosen, depName)
+		}
+	}
+	def.Suggestions = nil
+	if def.Style == DependencyStyleGraphQL {
+		return "", fmt.Errorf("%w: dependency %q is a GraphQL API; its contract is a schema, not an OpenAPI document", ErrDependencyWrongKind, depName)
+	}
+	if def.Style == "" {
+		def.Style = DependencyStyleRestAPI
+	}
+	def.Contract = ConsumedContractFile
+	def.Assumed = nil
+	def.Provenance = &DependencyProvenance{
+		SourceURL: specURL,
+		SHA256:    fmt.Sprintf("%x", sha256.Sum256(rawSpec)),
+		FetchedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	comp := design.Components[compIdx]
+	rendered, rerr := SplitDesign(&DesignFile{Components: []DesignComponent{comp}, Dependencies: []DependencyDefinition{def}})
+	if rerr != nil {
+		return "", fmt.Errorf("render dependency %q and component %q: %w", depName, comp.Name, rerr)
+	}
+	designSub := "components/" + comp.Name + "/design.json" // relative to specs/design/
 	designContent, ok := rendered[designSub]
 	if !ok {
-		return "", fmt.Errorf("render component %q design.json: %q missing from split", component, designSub)
+		return "", fmt.Errorf("render component %q design.json: %q missing from split", comp.Name, designSub)
 	}
+	definitionSub := dependencyDesignKey(depName)
+	definitionContent := rendered[definitionSub]
 
-	// Full repo paths + CAS shas. design.json must exist; the spec file may not
-	// yet (a fresh collect creates it, a re-collect overwrites at its sha).
+	// Full repo paths + CAS shas. design.json must exist; the dependency file
+	// and the contract may not yet (a fresh collect creates them, a re-collect
+	// overwrites at their shas).
 	designFull := DesignDir + "/" + designSub
-	specFull := DesignDir + "/components/" + component + "/" + specPath
+	definitionFull := DesignDir + "/" + definitionSub
 	_, designSHA, designExists, rerr := s.fileCommitter.ReadFile(ctx, orgID, projectID, designFull)
 	if rerr != nil {
 		return "", fmt.Errorf("read design.json for CAS: %w", rerr)
 	}
 	if !designExists {
-		return "", fmt.Errorf("%w: component %q design.json missing on disk", ErrDependencyNotFound, component)
+		return "", fmt.Errorf("%w: component %q design.json missing on disk", ErrDependencyNotFound, comp.Name)
 	}
-	_, specSHA, _, rerr := s.fileCommitter.ReadFile(ctx, orgID, projectID, specFull)
+	_, definitionSHA, _, rerr := s.fileCommitter.ReadFile(ctx, orgID, projectID, definitionFull)
 	if rerr != nil {
-		return "", fmt.Errorf("read spec file for CAS: %w", rerr)
+		return "", fmt.Errorf("read dependency.json for CAS: %w", rerr)
+	}
+	_, specSHA, _, rerr := s.fileCommitter.ReadFile(ctx, orgID, projectID, specPath)
+	if rerr != nil {
+		return "", fmt.Errorf("read contract file for CAS: %w", rerr)
 	}
 
 	writes := []DesignFileWrite{
-		{Path: specFull, Content: normalized, BaseSHA: specSHA}, // BaseSHA "" ⇒ create
+		{Path: specPath, Content: normalized, BaseSHA: specSHA},                    // BaseSHA "" ⇒ create
+		{Path: definitionFull, Content: definitionContent, BaseSHA: definitionSHA}, // "" ⇒ create
 		{Path: designFull, Content: designContent, BaseSHA: designSHA},
 	}
 	if err := s.fileCommitter.Commit(ctx, orgID, projectID, writes,
-		fmt.Sprintf("Collect OpenAPI spec for %s dependency %s", component, depName)); err != nil {
+		fmt.Sprintf("Collect OpenAPI contract for dependency %s", depName)); err != nil {
 		return "", err // ErrSpecCommitConflict (409) or infra (500)
 	}
-	slog.InfoContext(ctx, "collected consumed spec",
-		"org", orgID, "project", projectID, "component", component, "dependency", depName, "specPath", specPath)
+	slog.InfoContext(ctx, "collected dependency contract",
+		"org", orgID, "project", projectID, "component", comp.Name, "dependency", depName, "contract", specPath)
 	return specPath, nil
+}
+
+func componentExists(comps []DesignComponent, name string) bool {
+	for _, c := range comps {
+		if c.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// AcceptDependencyAssumption records the user's permission to build against
+// the contract the design agent wrote for depName: the `assumed` block in the
+// dependency's dependency.json, which only this path writes (the agent's
+// write-gate refuses it). `by` is the accepting user; `note` defaults to the
+// agent's own uncertainty note when empty. The record may precede the
+// interface: answering "proceed on your assumption" in the resolve flow
+// records it, and the agent then writes the interface and echoes the record.
+// Refused when a real (not agent-written) document is on disk — there is
+// nothing to accept.
+func (s *designService) AcceptDependencyAssumption(ctx context.Context, orgID, projectID, depName, by, note string) error {
+	if s.fileCommitter == nil {
+		return fmt.Errorf("assumption acceptance unavailable: no committed-truth write surface wired")
+	}
+	design, err := s.store.ReadDesign(ctx, orgID, projectID)
+	if err != nil {
+		if IsNotFound(err) {
+			return fmt.Errorf("%w: no design for project %q", ErrDependencyNotFound, projectID)
+		}
+		return fmt.Errorf("read design: %w", err)
+	}
+	if design == nil {
+		return fmt.Errorf("%w: no design for project %q", ErrDependencyNotFound, projectID)
+	}
+	def, found := definitionByName(design.Dependencies, depName)
+	if !found {
+		return fmt.Errorf("%w: dependency %q has no definition", ErrDependencyNotFound, depName)
+	}
+	var edge *Dependency
+	for i := range design.Components {
+		for j := range design.Components[i].Dependencies {
+			d := &design.Components[i].Dependencies[j]
+			if d.Kind == DependencyKindExternal && d.Name == depName {
+				edge = d
+				break
+			}
+		}
+		if edge != nil {
+			break
+		}
+	}
+	// Accepted before the interface exists (the user answered "proceed on your
+	// assumption" and the agent is about to write it), or once an agent-written
+	// one is on disk. Refused when a real document is on disk — nothing there
+	// is an assumption. A definition no component references yet has no
+	// hydrated edge; its directory is read directly for the same answer.
+	contractOnDisk, assumedOnDisk := "", false
+	if edge != nil {
+		contractOnDisk, assumedOnDisk = edge.Contract, edge.ContractAssumed
+		if contractOnDisk == "" && edge.SDK != "" {
+			contractOnDisk = edge.SDK
+		}
+	} else if def.Contract != "" {
+		raw, _, exists, rerr := s.fileCommitter.ReadFile(ctx, orgID, projectID, ContractPath(depName, def.Contract))
+		if rerr != nil {
+			return fmt.Errorf("read contract for %q: %w", depName, rerr)
+		}
+		if exists {
+			contractOnDisk, assumedOnDisk = def.Contract, contractMarkedAssumed(raw)
+		}
+	}
+	if contractOnDisk != "" && !assumedOnDisk {
+		return fmt.Errorf("%w: %q", ErrDependencyNotAssumed, depName)
+	}
+	if note == "" && def.Provenance != nil && def.Provenance.SourceURL != "" {
+		note = "Written by the design agent from " + def.Provenance.SourceURL
+	}
+	// The record names the person the way a turn names its author — the
+	// display identity the bearer carries — and falls back to the caller's
+	// subject when the token has none.
+	if a := journalAuthorFrom(ctx); a != nil && a.DisplayName != "" {
+		by = a.DisplayName
+	}
+	def.Assumed = &DependencyAssumption{By: by, At: time.Now().UTC().Format(time.RFC3339), Note: note}
+
+	body, err := marshalDependencyDefinitionJSON(depName, def)
+	if err != nil {
+		return fmt.Errorf("render dependency %q: %w", depName, err)
+	}
+	definitionFull := DesignDir + "/" + dependencyDesignKey(depName)
+	_, sha, exists, err := s.fileCommitter.ReadFile(ctx, orgID, projectID, definitionFull)
+	if err != nil {
+		return fmt.Errorf("read dependency.json for CAS: %w", err)
+	}
+	if !exists {
+		return fmt.Errorf("%w: dependency %q file missing on disk", ErrDependencyNotFound, depName)
+	}
+	if err := s.fileCommitter.Commit(ctx, orgID, projectID,
+		[]DesignFileWrite{{Path: definitionFull, Content: string(body), BaseSHA: sha}},
+		fmt.Sprintf("Accept the assumed contract for dependency %s", depName)); err != nil {
+		return err
+	}
+	slog.InfoContext(ctx, "accepted dependency assumption", "org", orgID, "project", projectID, "dependency", depName, "by", by)
+	return nil
+}
+
+// definitionByName finds a dependency's definition in an assembled design.
+func definitionByName(defs []DependencyDefinition, name string) (DependencyDefinition, bool) {
+	for _, d := range defs {
+		if d.Name == name {
+			return d, true
+		}
+	}
+	return DependencyDefinition{}, false
 }
 
 // MarkOrgPublished commits the `exposesAPI.orgPublished` durability marker on a

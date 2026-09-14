@@ -23,7 +23,6 @@ package app
 //	thundersvc.Client      → identity.Directory   (one environment's IdP admin
 //	                                               surface, built per (org, env)
 //	                                               in identity_targets.go)
-//	spec.ArtifactService   → identity.DesignReader (security.json at a tag)
 //	identity.EnsureService → provisioning.RolesEnsurer (the build gate's driver)
 //	identity.CatalogService → mcpdiscovery.RoleCatalogLister (the design-time
 //	                                                          `list_roles` tool)
@@ -42,7 +41,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/dependencies/mcpdiscovery"
 	"github.com/wso2/aep/aep-api/internal/dependencies/provisioning"
 	"github.com/wso2/aep/aep-api/internal/identity"
-	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
 // -- the identity provider ----------------------------------------------------
@@ -147,23 +145,6 @@ func (d thunderDirectory) SetUserPassword(ctx context.Context, userID, password 
 
 func (d thunderDirectory) DeleteUser(ctx context.Context, userID string) error {
 	return d.c.DeleteUser(ctx, userID)
-}
-
-// -- the design read ----------------------------------------------------------
-
-// identityDesignReader gives the ensure the design bundle at a spec tag, which
-// is where it finds `security.json`. Reading at the TAG rather than at HEAD is the
-// point: the build provisions what the version it is building declares, not
-// what somebody has edited since.
-//
-// The port's method name is GetDesignAtTag; the implementation is deliberately
-// GetDesignAtSpecTag. A build knows only the `v<N>` spec tag, and the
-// similarly-named GetDesignAtTag next door parses its argument as a legacy
-// `v<N>-<M>` design-revision tag and refuses a spec tag outright.
-type identityDesignReader struct{ art spec.ArtifactService }
-
-func (r identityDesignReader) GetDesignAtTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error) {
-	return r.art.GetDesignAtSpecTag(ctx, orgID, projectID, tag)
 }
 
 // -- the build gate's driver --------------------------------------------------

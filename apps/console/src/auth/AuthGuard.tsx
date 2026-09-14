@@ -101,35 +101,15 @@ function OidcGuard({ children }: PropsWithChildren) {
     return {
       user: { name: identity.name, email: identity.email },
       orgHandle: identity.orgHandle,
-      // TEMP (testing only — revert before merging): hardcoded to every AE
-      // permission regardless of the token's actual scope claim. aep-api still
-      // enforces the real scope server-side, so this only unlocks console UI
-      // gating, not backend authorization.
-      permissions: new Set([
-        // "ae:skill-config",
-        // "ae:skill-view",
-        // "ae:model-config",
-        // "ae:github-config",
-        "ae:requirement-update",
-        "ae:requirement-view",
-        "ae:design",
-        "ae:design-view",
-        "ae:build",
-        "ae:build-view",
-        // "ae:usage-view",
-        // "ae:observability-view",
-        // "ae:resource-view",
-        // "ae:resource-config",
-      ]),
-      // Real permissions, derived from the access token's own scope claim —
-      // the same source aep-api's permission gate checks (auth.Claims.Permissions()),
-      // so the console can never grant something the backend would refuse.
-      // Requires the token to actually carry ae:* scope entries, which needs
-      // both a scope request that lists them (VITE_THUNDER_SCOPES) and a
-      // matching OAuth `resource` indicator (VITE_THUNDER_RESOURCE) — see
+      // Derived from the access token's own scope claim — the same source
+      // aep-api's permission gate checks (auth.Claims.Permissions()), so the
+      // console can never grant something the backend would refuse. Requires
+      // the token to actually carry ae:* scope entries, which needs both a
+      // scope request that lists them (VITE_THUNDER_SCOPES) and a matching
+      // OAuth `resource` indicator (VITE_THUNDER_RESOURCE) — see
       // deployments/single-cluster/thunder-resources/92-ae-roles.yaml's
       // resource_server header for why the resource indicator is required.
-      // permissions: permissionsFromScope(accessClaims["scope"]),
+      permissions: permissionsFromScope(accessClaims["scope"]),
       signOut: () => void signOut(),
     };
   }, [auth]);

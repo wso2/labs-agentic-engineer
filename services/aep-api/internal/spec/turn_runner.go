@@ -143,6 +143,23 @@ func designOrCollabTurn(job turnJob) bool {
 	return job.flow == "design" || job.collabRoomID != ""
 }
 
+// catalogTurn is the MCP discovery gate: every turn designOrCollabTurn admits,
+// plus the requirements flows wherever they run. A requirements interview
+// records a Registered External resource as a given instead of asking the
+// user which service to use, so it needs `list_external_resources` even from
+// the playground or the CLI, where no collab room scopes the turn. Web search
+// stays a design-turn affair.
+func catalogTurn(job turnJob) bool {
+	if designOrCollabTurn(job) {
+		return true
+	}
+	switch job.flow {
+	case "start", "amend", "settle":
+		return true
+	}
+	return false
+}
+
 // journalFor is the turn's display record (#463): the raw client-sent
 // instruction — exactly what the sender's UI rendered as the user bubble —
 // plus the acting user. The agents service stores it beside the transcript;
@@ -218,18 +235,19 @@ func journalAuthorFrom(ctx context.Context) *agentsvc.JournalAuthor {
 	return &agentsvc.JournalAuthor{ID: email, DisplayName: name}
 }
 
-// mcpForTurn mints the per-turn MCP discovery block for design-generation turns
-// AND collab room-scoped turns (dependency-management Phase 5): a BFF-signed
+// mcpForTurn mints the per-turn MCP discovery block for design-generation turns,
+// collab room-scoped turns (dependency-management Phase 5) and the requirements
+// flows (catalogTurn): a BFF-signed
 // token (aud aep-api-mcp) carrying the org, plus the BFF's internal MCP endpoint
 // the agents service calls back into. Returns nil (no MCP block) when the minter
-// / base URL are not wired, when the turn is neither a design-generate nor a
-// collab room-scoped turn, or when minting fails — a turn without MCP is
+// / base URL are not wired, when the turn is none of those, or when minting
+// fails — a turn without MCP is
 // byte-identical to today, so this is best-effort.
 func (s *Service) mcpForTurn(ctx context.Context, job turnJob) *agentsvc.MCPBlock {
 	if s.mcpTokens == nil || s.mcpBaseURL == "" {
 		return nil
 	}
-	if !designOrCollabTurn(job) {
+	if !catalogTurn(job) {
 		return nil
 	}
 	token, err := s.mcpTokens.IssueMCPToken(job.orgID)

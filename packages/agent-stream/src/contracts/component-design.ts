@@ -113,54 +113,33 @@ export interface Endpoint {
 /** The closed set of dependency kinds (mirrors Go `models.DependencyKind`). */
 export type DependencyKind = "component" | "org-service" | "external" | "platform-resource";
 
-/** The closed set of external dependency shapes (mirrors Go `models.DependencyStyle`). */
-export type DependencyStyle = "rest-api" | "sdk";
+// The external dependency's own definition lives in its directory
+// (`./dependency-design.ts`); these re-exports keep the older import paths
+// working for readers that only need the shared leaf types.
+export type { DependencyStyle, DependencySuggestion, ConfigKey } from "./dependency-design.js";
 
 /**
- * One unified dependency edge. A single flat shape carries every kind's
- * fields; `kind` selects which are meaningful — mirroring the Go codec, which
- * uses one struct and is LENIENT about kind-specific fields (it does not
- * reject, e.g., `resourceType` on an `external` dep). Only `kind` (closed set)
- * and `name` are required; every other field is optional. `status`/`reason`
- * are deliberately ABSENT — they are read-time computed, never authored.
+ * One dependency edge as a component declares it. A single flat shape carries
+ * every kind's fields; `kind` selects which are meaningful — mirroring the Go
+ * codec, which uses one struct and is LENIENT about kind-specific fields. Only
+ * `kind` (closed set) and `name` are required. `status`/`reason` are
+ * deliberately ABSENT — they are read-time computed, never authored.
  *
- * `style`/`package`/`specPath`/`candidates` are meaningful only on
- * `kind: "external"` — a `platform-resource` is catalog-picked, an
- * `org-service` is catalog-resolved, neither has web provenance. Every
- * resolution state (resolved / ambiguous / unresolved) is
- * DERIVED from which of these fields are present, never stored as a flag: the
- * old `needsSpec` boolean is gone (a boolean can contradict reality; a missing
- * field cannot).
+ * An `external` dependency is a REFERENCE: its definition (provider, style,
+ * contract, config keys, candidates) lives once, in
+ * `specs/design/dependencies/<name>/dependency.json` (`DependencyDesign`),
+ * and every component that uses it points at that one file by `name`. The
+ * fields that used to sit here (`style`, `package`, `specPath`, `candidates`,
+ * `config`) are rejected on a component now — the write-gate names the file
+ * they moved to. The platform hydrates the reference from the directory when
+ * it reads the design, so downstream readers still see one flat edge.
  */
 export interface Dependency {
   kind: DependencyKind;
   /** Sibling component / org-service provider / external system / resource name. */
   name: string;
+  /** Why THIS component uses it — the dependency's own description lives in its file. */
   description?: string;
-  /** external: REST API ("rest-api") or SDK ("sdk") shape. External-only. */
-  style?: DependencyStyle;
-  /**
-   * external (sdk style): one ecosystem-prefixed package identifier, e.g.
-   * "npm:stripe@^14" — version inline but optional (omitted ⇒ latest
-   * compatible). External-only.
-   */
-  package?: string;
-  /**
-   * external: the contract location — either a URL to a published OpenAPI
-   * spec (recorded as-is, NOT fetched-and-stored) or a repo-relative path to a
-   * user-provided committed spec (dependencies/<name>.openapi.yaml).
-   */
-  specPath?: string;
-  /**
-   * external: 2+ identified-but-not-pinned options — the "ambiguous"
-   * resolution state. Omitted, never empty: one option fully known ⇒
-   * resolved; one option partially known ⇒ a partially-filled dep (not a
-   * candidate); 2+ identified options ⇒ ambiguous. Pinning REMOVES the field.
-   * External-only.
-   */
-  candidates?: DependencyCandidate[];
-  /** external: the config-key schema the consuming component codes against. */
-  config?: ConfigKey[];
   /** platform-resource: the registered (Cluster)ResourceType. */
   resourceType?: string;
   /**
@@ -261,29 +240,6 @@ export interface EndpointWiring {
   envBindings: Record<string, string>;
 }
 
-/**
- * One option in an ambiguous external dependency's resolution set (2+
- * required — see `Dependency.candidates`; a single candidate never occurs).
- * Mirrors Go `models.DependencyCandidate`.
- */
-export interface DependencyCandidate {
-  name: string;
-  style: DependencyStyle;
-  description?: string;
-  /** sdk-style candidates only: ecosystem-prefixed package identifier. */
-  package?: string;
-}
-
-/** One env-var key a component reads at runtime. Mirrors Go `models.ConfigKey`. */
-export interface ConfigKey {
-  key: string;
-  /** Secret keys route through the secret path. Default: false. */
-  secret?: boolean;
-  /** Optional human-readable note on what this value is for; the Build dependency drawer renders it under the field. */
-  description?: string;
-  /** Optional suggested initial value for a NON-secret key (a region, a base URL); the Build dependency drawer pre-fills the field with it. Never set for a secret. */
-  defaultValue?: string;
-}
 
 /** Managed-API exposure policy (platform-owned). Mirrors Go `models.ExposesAPI`. */
 export interface ExposesAPI {

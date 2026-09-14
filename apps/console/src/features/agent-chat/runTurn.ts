@@ -32,6 +32,7 @@ import {
   appendAssistantText,
   addMessage,
   upsertToolMessage,
+  dropQuestionMessage,
   upsertQuestionMessage,
   upsertPlanMessage,
   setTurnStatus,
@@ -313,6 +314,16 @@ export async function attachAndFoldTurn(
         // (individually-validated questions) is finalized as the card; with no
         // prefix, no card (the agent's prose still carries it).
         if (!isQuestionTool(part.toolName)) break;
+        // The SDK rejected the input against the tool schema: the turn did not
+        // ask this, a `tool-error` follows, and the model retries. Any prefix
+        // that streamed onto a card is withdrawn; the retry brings its own call.
+        if (part.invalid) {
+          if (part.toolCallId) {
+            inputs.delete(part.toolCallId);
+            dropQuestionMessage(chatKey, part.toolCallId);
+          }
+          break;
+        }
         askedQuestion = true;
         const questions = parseQuestionsInput(part.toolName!, part.input);
         if (!questions) {

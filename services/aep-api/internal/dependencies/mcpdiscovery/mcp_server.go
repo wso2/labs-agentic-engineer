@@ -80,6 +80,7 @@ type mcpHandler struct {
 	validateSpec  SpecValidator
 	normalizeSpec SpecNormalizer
 	fetchSpec     SpecFetcher
+	sliceSpec     SpecSlicer
 }
 
 // NewMCPHandler returns the JSON-RPC MCP handler over the external-resource
@@ -95,11 +96,11 @@ type mcpHandler struct {
 // error.
 func NewMCPHandler(
 	er ExternalResourceReader, ep OrgEndpointLister, rt ResourceTypeLister, rc RoleCatalogLister,
-	rg RemoteGitReader, vs SpecValidator, ns SpecNormalizer, fs SpecFetcher,
+	rg RemoteGitReader, vs SpecValidator, ns SpecNormalizer, fs SpecFetcher, ss SpecSlicer,
 ) http.Handler {
 	h := &mcpHandler{
 		resources: er, orgEndpoints: ep, resourceTypes: rt, roles: rc, remoteGit: rg,
-		validateSpec: vs, normalizeSpec: ns, fetchSpec: fs,
+		validateSpec: vs, normalizeSpec: ns, fetchSpec: fs, sliceSpec: ss,
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if h.resources == nil {

@@ -16,8 +16,9 @@
  * under the License.
  */
 
-import { alpha, Stack, Typography } from "@wso2/oxygen-ui";
+import { alpha, Box, Stack, Typography } from "@wso2/oxygen-ui";
 import { WorkingPulse } from "../../agent-chat/components/WorkingIndicator";
+import type { StatusLine } from "../../tasks/lib/statusLine";
 
 /**
  * MUI sizes an Alert's message column to fit-content, so a tinted child stops
@@ -33,9 +34,19 @@ export const FULL_WIDTH_ALERT_MESSAGE = {
  *
  * Rendered ONLY while validation is running (see ValidationPage): the pulse
  * claims an agent is working, and it would be a lie over a settled verdict.
+ *
+ * The note may be a plain sentence the console derived from the rows, or one
+ * POSTED on the run's issue — and a posted one carries who wrote it. Only the
+ * agent's is labelled. Most posted lines are the platform reporting a tool call
+ * it watched, which is what the pulse beside them already means; the agent
+ * speaks between them for what no command can show, and that line is worth more
+ * than the one before it. Labelling the common case would spend the reader's
+ * attention on the case that needs none.
  */
-export function LiveNote({ note }: { note: string }) {
-  if (!note) return null;
+export function LiveNote({ note }: { note: string | StatusLine }) {
+  const text = typeof note === "string" ? note : note.text;
+  const fromAgent = typeof note !== "string" && note.writer === "agent";
+  if (!text) return null;
   return (
     <Stack
       direction="row"
@@ -53,7 +64,12 @@ export function LiveNote({ note }: { note: string }) {
     >
       <WorkingPulse />
       <Typography variant="body2" sx={{ minWidth: 0 }}>
-        {note}
+        {fromAgent && (
+          <Box component="span" sx={{ color: "text.secondary" }}>
+            The agent:{" "}
+          </Box>
+        )}
+        {text}
       </Typography>
     </Stack>
   );

@@ -31,6 +31,10 @@ const (
 	TypeTaskStarted   = "task_started"
 	TypeTaskDeployed  = "task_deployed"
 	TypeTaskFailed    = "task_failed"
+	// TypeRunFailed — a version's run settled failed. Carries the tag, the
+	// component when the fault named one, and Reason = the failure code (or
+	// the terminal reason when no record exists).
+	TypeRunFailed = "run_failed"
 
 	ActorUser  = "user"
 	ActorAgent = "agent"

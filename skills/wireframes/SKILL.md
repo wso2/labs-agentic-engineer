@@ -45,7 +45,7 @@ position comes from structure:
 
 ```text
 screen <Name> ["what this view is for"]   // one per view; description renders as a subtitle
-  navbar "App | Nav1 -> Screen | Nav2"    // top bar; first item is the brand; bell+avatar automatic
+  navbar "App"                            // top bar: the brand; bell+avatar automatic; links live in the sidebar
   sidebar "Item1 -> Screen | Item2"       // left rail; same items on every screen a role sees
   <kind> "<label>" [WxH] [variant] [-> Screen]   // a block: stacks below the previous one
   row                            // children go side by side (equal shares, 16px gaps)

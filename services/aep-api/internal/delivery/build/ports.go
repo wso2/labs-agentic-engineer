@@ -58,11 +58,14 @@ type RepoLookup interface {
 	RepoFullName(ctx context.Context, orgID, projectID string) (string, error)
 }
 
-// SpecTagger runs the whole-spec hard gate and cuts the next `v<N>` tag
-// (spec.SaveSpec). Implementations MUST preserve error identity — the
-// handler unwraps *spec.SpecValidationError into the 422 detail.
+// SpecTagger runs the whole-spec hard gate and cuts the version's tag
+// (spec.SaveSpec). `version` is the name the user gave it, empty for the
+// platform's suggestion; it is ignored when the spec tree is unchanged, which
+// cuts nothing. Implementations MUST preserve error identity — the handler
+// unwraps *spec.SpecValidationError into the 422 detail, and
+// spec.ErrVersionNameTaken into the 409.
 type SpecTagger interface {
-	TagSpec(ctx context.Context, orgID, projectID string) (*spec.SpecSaveResult, error)
+	TagSpec(ctx context.Context, orgID, projectID, version string) (*spec.SpecSaveResult, error)
 	// BuildScopeAtTag reads the tag's story scope (#369): the milestone the
 	// claim mints is the version's.
 	BuildScopeAtTag(ctx context.Context, orgID, projectID, tag string) (spec.BuildScope, error)

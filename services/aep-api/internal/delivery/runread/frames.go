@@ -40,8 +40,15 @@ import (
 // Frame discriminators. They ride INSIDE the JSON payload (`type`), never as an
 // SSE `event:` name — the console's shared agent-stream parser keeps only `data:`
 // lines, so a self-describing payload is what it can read.
+//
+// `event` and `line` are the SAME feed in two envelope versions, and which one a
+// stream sends is a property of the stream: the run stream emits `event`
+// (RunEvent, v2), the version stream still emits `line` (RunProgressLine, v1).
+// Neither ever sends both — a consumer that had to merge two envelope versions
+// of one cycle's feed would have to dedup across two incompatible seq spaces.
 const (
 	frameTypeCycle = "cycle"
+	frameTypeEvent = "event"
 	frameTypeLine  = "line"
 	frameTypeDone  = "done"
 )
@@ -97,25 +104,28 @@ func (f *frameWriter) keepAlive() bool {
 
 // emitCycles walks one run's cycles OLDEST FIRST, sending a `cycle` frame for
 // every record whose projection CHANGED since this connection last sent it, then
-// every log line the connection has not sent yet. A cycle frame therefore always
-// precedes its own lines, so the console can open the section before filling it.
+// whatever of that cycle's FEED the connection has not sent yet. A cycle frame
+// therefore always precedes its own feed, so the console can open the section
+// before filling it.
 //
-// last and cursor are the CONNECTION's dedup state, both keyed by cycle id.
-// A cycle id is unique across runs, so the version stream shares one pair of maps
-// across every run it stitches rather than keeping a set per run — and a cycle
-// re-read on the next tick emits nothing unless a webhook actually changed it.
+// last is the CONNECTION's cycle dedup state, keyed by cycle id. A cycle id is
+// unique across runs, so the version stream shares one map across every run it
+// stitches rather than keeping a set per run — and a cycle re-read on the next
+// tick emits nothing unless a webhook actually changed it.
 //
-// index is the cycle's 1-based position WITHIN THIS RUN, which is what the
+// emitFeed is the caller's, and is the one thing the two streams do NOT share:
+// the run stream sends v2 `event` frames and the version stream v1 `line` frames.
+// It takes the cycle's 1-based position WITHIN THIS RUN, which is what the
 // contract's `cycleIndex` says it is. The version stream deliberately does not
 // renumber it: see build_progress.go.
 //
 // False means the client is gone.
 func (s *ProgressService) emitCycles(ctx context.Context, cycles []delivery.RunCycle,
-	last map[string]string, cursor map[string]int64,
-	emitCycle func(*gen.RunCycleView) bool, emitLine func(*runLine) bool) bool {
+	last map[string]string, emitCycle func(*gen.RunCycleView) bool,
+	emitFeed func(context.Context, *delivery.RunCycle, int) bool) bool {
 	for i := range cycles {
 		c := &cycles[i]
-		view := CycleView(c)
+		view := CycleView(c, RecordingOf(s.recordings, c))
 		b, _ := json.Marshal(view)
 		if last[c.ID] != string(b) {
 			last[c.ID] = string(b)
@@ -123,7 +133,7 @@ func (s *ProgressService) emitCycles(ctx context.Context, cycles []delivery.RunC
 				return false
 			}
 		}
-		if !s.emitLines(ctx, c, i+1, cursor, emitLine) {
+		if !emitFeed(ctx, c, i+1) {
 			return false
 		}
 	}

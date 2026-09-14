@@ -18,10 +18,20 @@ package runread
 
 // progress.go — the run progress SSE endpoint (contract: GET
 // /projects/{p}/runs/{runId}/progress). ONE connection carries the whole run:
-// a `cycle` frame per cycle record (upserted by id) and a `line` frame per agent
-// log entry, every line stamped with the cycle that produced it so the console
-// renders one accordion section per cycle, and with an emitter chip saying
-// whether the run's main agent or one of its Task subagents produced it.
+// a `cycle` frame per cycle record (upserted by id) and an `event` frame per
+// entry on the agent feed, every event stamped by this service with the cycle
+// and the ATTEMPT that produced it, so the console renders one accordion section
+// per cycle and can order and dedup a feed whose seqs restart on a re-dispatch.
+//
+// The events are v2 RunEvents and this stream sends NOTHING ELSE. It emitted v1
+// `line` frames until the cutover, and the frame type stays in the contract
+// because the VERSION build-progress stream still sends it — but a single
+// connection never mixes the two: a consumer that had to merge two envelope
+// versions of one cycle's feed would have to dedup across two incompatible seq
+// spaces. Cycles dispatched before the cutover are not a second envelope on this
+// stream either; the reader LIFTS their v1 output into RunEvents
+// (codingagent/run_event_lift.go), so what reaches a console is one shape
+// whatever produced it.
 //
 // Frame types ride INSIDE the JSON payload (`type`), never as an SSE `event:`
 // name — the console's shared parser keeps only `data:` lines, so a
@@ -65,9 +75,9 @@ const (
 	runStreamKeepAlive = 15 * time.Second
 )
 
-// Emitter values. The runner stamps `subagent` on lines it forwards from inside
-// a Task tool call and stamps nothing otherwise, so an unlabelled line is the
-// main agent's.
+// Emitter values, for the v1 `line` frames the VERSION stream still sends. The
+// runner stamps `subagent` on lines it forwards from inside a Task tool call and
+// stamps nothing otherwise, so an unlabelled line is the main agent's.
 const (
 	emitterMain     = "main"
 	emitterSubagent = "subagent"
@@ -79,6 +89,10 @@ type ProgressService struct {
 	runs   RunReader
 	cycles CycleReader
 	logs   CycleLogReader
+	// recordings answers RunCycleView.recording on every `cycle` frame. It is a
+	// separate port from logs because a boot can serve cycles without recording
+	// them, and the frame must then say `none` rather than nothing.
+	recordings RecordingReader
 
 	// tick / keepAlive are the loop's two cadences, held as fields purely so a
 	// same-package test can drive the live loop in milliseconds instead of
@@ -94,20 +108,37 @@ func NewProgressService(runs RunReader, cycles CycleReader, logs CycleLogReader)
 	return &ProgressService{runs: runs, cycles: cycles, logs: logs, tick: runStreamTick, keepAlive: runStreamKeepAlive}
 }
 
+// WithRecordings attaches the recording-state reader so every `cycle` frame can
+// say what the platform can serve of that cycle's feed. Returns the receiver.
+func (s *ProgressService) WithRecordings(rec RecordingReader) *ProgressService {
+	s.recordings = rec
+	return s
+}
+
 // runFrame is one SSE `data:` payload, discriminated by Type. It is hand-written
 // rather than the generated gen.RunProgressEvent because the frame's optional
 // members must actually be omitted, and a generated struct-valued field with
 // `omitempty` never is.
+//
+// CycleID and Attempt ride on the FRAME rather than inside the event, exactly as
+// the contract puts them: a runner knows what it is doing but not which cycle of
+// which run it turned out to be, so the attribution is the platform's to stamp.
+// Attempt is load-bearing next to RunEvent.seq — a seq is monotonic only WITHIN
+// one dispatch, so a re-dispatched cycle starts numbering again and a client that
+// deduped on seq alone would silently drop the retry's whole feed.
 type runFrame struct {
-	Type  string            `json:"type"` // cycle | line | done
-	Cycle *gen.RunCycleView `json:"cycle,omitempty"`
-	Line  *runLine          `json:"line,omitempty"`
-	State string            `json:"state,omitempty"`
+	Type    string            `json:"type"` // cycle | event | done
+	Cycle   *gen.RunCycleView `json:"cycle,omitempty"`
+	Event   *gen.RunEvent     `json:"event,omitempty"`
+	CycleID string            `json:"cycleId,omitempty"`
+	Attempt int               `json:"attempt,omitempty"`
+	State   string            `json:"state,omitempty"`
 }
 
-// runLine is one agent-log line with the attribution the console groups on.
+// runLine is one v1 agent-log line with the attribution the console groups on.
 // contracts.ProgressEvent is EMBEDDED, so its fields flatten into the JSON and
-// the wire shape matches the contract's RunProgressLine.
+// the wire shape matches the contract's RunProgressLine. Only the VERSION stream
+// (build_progress.go) still sends these.
 type runLine struct {
 	contracts.ProgressEvent
 	CycleID    string `json:"cycleId"`
@@ -154,7 +185,12 @@ func (s *ProgressService) run(ctx context.Context, w io.Writer, flush func(), or
 
 	// Per-connection dedup + cursor state.
 	lastCycleJSON := map[string]string{} // cycle id → last emitted cycle frame
-	cursor := map[string]int64{}         // cycle id → last emitted log ts millis
+	// cursor is the OPAQUE feed cursor per cycle — a position inside the
+	// platform's recording of that cycle, whose grammar belongs to the reader.
+	// It is per CONNECTION: a reconnect starts at "" and replays the cycle from
+	// its first event, which is the whole point of recording it. The client
+	// dedups on (cycleId, attempt, seq).
+	cursor := map[string]string{}
 
 	// derive re-reads the run row, walks its cycles oldest-first emitting changed
 	// `cycle` frames and new `line` frames, and reports the run's state.
@@ -181,9 +217,11 @@ func (s *ProgressService) run(ctx context.Context, w io.Writer, flush func(), or
 		if err != nil {
 			return row.State, false, true
 		}
-		alive = s.emitCycles(ctx, cycles, lastCycleJSON, cursor,
+		alive = s.emitCycles(ctx, cycles, lastCycleJSON,
 			func(v *gen.RunCycleView) bool { return writeFrame(&runFrame{Type: frameTypeCycle, Cycle: v}) },
-			func(l *runLine) bool { return writeFrame(&runFrame{Type: frameTypeLine, Line: l}) })
+			func(ctx context.Context, c *delivery.RunCycle, _ int) bool {
+				return s.emitEvents(ctx, c, cursor, func(f *runFrame) bool { return writeFrame(f) })
+			})
 		return row.State, false, alive
 	}
 
@@ -243,10 +281,39 @@ func (s *ProgressService) run(ctx context.Context, w io.Writer, flush func(), or
 	}
 }
 
-// emitLines pulls one cycle's NEW log lines and writes them, attributed to the
-// cycle and to whichever agent produced them. A source hiccup degrades to no new
-// lines — it never kills the stream, because a run's cycle timeline is worth
-// more to the reader than its pod tail.
+// emitEvents pulls one cycle's NEW feed events and writes them, each stamped
+// with the cycle and the attempt that produced it. A source hiccup degrades to
+// no new events — it never kills the stream, because a run's cycle timeline is
+// worth more to the reader than its feed.
+//
+// The attempt comes from the READER, not from the row. A re-dispatched cycle's
+// row names the attempt in flight, while a replay is still walking the previous
+// attempt's recording — stamping the row's number on those events would file a
+// retry's history under the retry, and a client deduping on (cycleId, attempt,
+// seq) would then drop half of it as duplicates of the other half.
+func (s *ProgressService) emitEvents(ctx context.Context, c *delivery.RunCycle, cursor map[string]string, emit func(*runFrame) bool) bool {
+	if s.logs == nil || c.JobRef == "" {
+		return true
+	}
+	events, attempt, next, err := s.logs.CycleEvents(ctx, c, cursor[c.ID])
+	if err != nil {
+		return true
+	}
+	for i := range events {
+		if !emit(&runFrame{Type: frameTypeEvent, Event: &events[i], CycleID: c.ID, Attempt: attempt}) {
+			return false
+		}
+	}
+	if next != "" {
+		cursor[c.ID] = next
+	}
+	return true
+}
+
+// emitLines pulls one cycle's NEW v1 log lines and writes them, attributed to the
+// cycle and to whichever agent produced them. Only the VERSION stream calls it.
+// A source hiccup degrades to no new lines — it never kills the stream, because
+// a run's cycle timeline is worth more to the reader than its pod tail.
 func (s *ProgressService) emitLines(ctx context.Context, c *delivery.RunCycle, index int, cursor map[string]int64, emit func(*runLine) bool) bool {
 	if s.logs == nil || c.JobRef == "" {
 		return true

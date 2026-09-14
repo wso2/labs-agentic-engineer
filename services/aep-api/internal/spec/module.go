@@ -16,7 +16,11 @@
 
 package spec
 
-import "github.com/wso2/aep/aep-api/internal/sourcecontrol"
+import (
+	"context"
+
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
+)
 
 // Deps is what this domain must be handed to exist: typed ports / services,
 // never concrete collaborators (§8). Constructor injection only.
@@ -43,4 +47,15 @@ type Deps struct {
 	SkillImport *SkillImportService
 	// CollabRepo is the project-ownership oracle behind the two collab ops.
 	CollabRepo sourcecontrol.RepoService
+	// Design backs the dependency definition view's two writes (provide a contract,
+	// accept an assumption). *designService satisfies it.
+	Design DependencyContractService
+}
+
+// DependencyContractService is the dependency definition view's write surface into an
+// external dependency's directory — see CollectDependencyContract and
+// AcceptDependencyAssumption on the design service.
+type DependencyContractService interface {
+	CollectDependencyContract(ctx context.Context, orgID, projectID, depName string, rawSpec []byte, specURL string) (string, error)
+	AcceptDependencyAssumption(ctx context.Context, orgID, projectID, depName, by, note string) error
 }

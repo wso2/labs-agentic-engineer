@@ -30,6 +30,7 @@ import {
   milestoneLabel,
   taskBreakdown,
 } from "./ledger";
+import type { SpineStage } from "./stage";
 
 type BuildSummary = components["schemas"]["BuildSummary"];
 type TaskView = components["schemas"]["TaskView"];
@@ -72,12 +73,71 @@ afterEach(() => {
 });
 
 describe("ledgerStatus", () => {
-  it("names the actor while a version is running", () => {
+  // A version's rail, as far as it has got. Every stage before `at` is done,
+  // `at` is the one being tested, and everything after it is still waiting.
+  const railAt = (id: string, state: SpineStage["state"]): SpineStage[] => {
+    const ids = ["agent", "pr", "merge", "builds", "deploy"];
+    const at = ids.indexOf(id);
+    return ids.map((stageId, i) => ({
+      id: stageId,
+      name: stageId,
+      actor: "platform",
+      state: i < at ? "done" : i === at ? state : "waiting",
+      note: "",
+    }));
+  };
+
+  const settledRail = (): SpineStage[] =>
+    railAt("deploy", "done").map((stage) => ({ ...stage, state: "done" as const }));
+
+  // The ledger cannot afford the run read (ADR-0021 §6), so its rows have no
+  // rail to name a stage from. "Running" claims nothing beyond what the status
+  // says — where the old label claimed the coding agent for the whole run.
+  it("claims no actor for a running version whose rail it has not read", () => {
     expect(ledgerStatus(build({ status: "in_progress" }))).toEqual({
-      label: "Running · Coding agent",
+      label: "Running",
       tone: "info",
       live: true,
     });
+  });
+
+  // The reported bug: `in_progress` spans coding, the merge, the component
+  // builds and the rollout, so naming the first stage was right for the first
+  // third of a run and wrong after it. Measured live — both components green at
+  // 05:50, header still crediting the coding agent at 05:52.
+  it("names the stage that is working now, not the first one", () => {
+    expect(ledgerStatus(build({ status: "in_progress" }), undefined, railAt("agent", "active")).label)
+      .toBe("Running · Coding agent");
+    expect(ledgerStatus(build({ status: "in_progress" }), undefined, railAt("merge", "active")).label)
+      .toBe("Running · Merging the pull request");
+    expect(ledgerStatus(build({ status: "in_progress" }), undefined, railAt("builds", "active")).label)
+      .toBe("Running · Building components");
+  });
+
+  // The rail has nothing left to do and the version has not completed: the last
+  // stage is a green build deploying itself.
+  it("says the version is deploying once every stage is done", () => {
+    const status = ledgerStatus(build({ status: "in_progress" }), undefined, settledRail());
+    expect(status).toEqual({ label: "Deploying to development", tone: "info", live: true });
+  });
+
+  // A draft pull request, a declined merge, a red build: the rail below spells
+  // each one out in a sentence, and a pill has no room to do it justice. It
+  // says the one thing it can stand behind — that the version is still open.
+  it("names nobody when the current stage is not the platform working", () => {
+    for (const state of ["waiting", "attention", "failed"] as const) {
+      expect(ledgerStatus(build({ status: "in_progress" }), undefined, railAt("pr", state)).label)
+        .toBe("Running");
+    }
+  });
+
+  // The park outranks the rail: a parked run's agent stage is still "active",
+  // and nothing is working.
+  it("still says a parked version is waiting, whatever its rail says", () => {
+    const parked = build({ status: "in_progress", waitingReason: "external-values" });
+    expect(ledgerStatus(parked, undefined, railAt("agent", "active")).label).toBe(
+      "Waiting for configuration",
+    );
   });
 
   it("says a parked version is waiting on the reader, not that an agent is running", () => {
@@ -131,6 +191,16 @@ describe("ledgerStatus", () => {
 
   it("falls back to a bare Failed when the platform left no reason", () => {
     expect(ledgerStatus(build({ status: "failed" })).label).toBe("Failed");
+  });
+
+  it("names WHAT failed when the platform recorded a failure code", () => {
+    expect(
+      ledgerStatus(build({ status: "failed", reason: "plan-failed", failureCode: "dependency-unprovisionable" })).label,
+    ).toBe("Failed · Dependency could not be provisioned");
+  });
+
+  it("puts a bare terminal reason into words rather than showing the slug", () => {
+    expect(ledgerStatus(build({ status: "failed", reason: "plan-failed" })).label).toBe("Failed · Planning failed");
   });
 
   it("describes the DEPLOYED version by its deploy state", () => {

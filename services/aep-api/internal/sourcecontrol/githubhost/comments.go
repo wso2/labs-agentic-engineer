@@ -77,7 +77,7 @@ func toIssueComments(nodes []commentNode) []sourcecontrol.IssueComment {
 		if n.Author != nil {
 			login = n.Author.Login
 		}
-		body, machine := isMachineComment(n.Body)
+		body, machine, observed := classifyComment(n.Body)
 		out = append(out, sourcecontrol.IssueComment{
 			ID:        n.ID,
 			Author:    login,
@@ -85,13 +85,20 @@ func toIssueComments(nodes []commentNode) []sourcecontrol.IssueComment {
 			URL:       n.URL,
 			CreatedAt: n.CreatedAt,
 			Machine:   machine,
+			Observed:  observed,
 		})
 	}
 	return out
 }
 
-// isMachineComment reports whether a body is one the PLATFORM wrote
-// (sourcecontrol.MachineCommentMarker) and returns the body without the brand.
+// classifyComment reports which of the platform's two brands a body leads with —
+// MachineCommentMarker (written for the AGENT) or ObservedCommentMarker (written
+// for a PERSON, from what the platform saw a run do) — and returns the body
+// without it. Neither brand means the comment is an agent's or a human's own.
+//
+// The two are mutually exclusive by construction: only one marker can lead, and
+// only the leading one is tested. That is what lets both flags be plain bools
+// rather than a class the caller has to keep consistent.
 //
 // The brand is stripped rather than passed through because it is an
 // implementation detail of telling machine from human — every consumer wants the
@@ -107,11 +114,24 @@ func toIssueComments(nodes []commentNode) []sourcecontrol.IssueComment {
 // comment that slips through is visible noise somebody can report; a human note
 // classified as machine is data loss nobody can see. So the strict test wins,
 // and the writer putting the brand first is what makes it correct.
-func isMachineComment(body string) (string, bool) {
+func classifyComment(body string) (string, bool, bool) {
+	if rest, ok := stripLeadingMarker(body, sourcecontrol.MachineCommentMarker); ok {
+		return rest, true, false
+	}
+	if rest, ok := stripLeadingMarker(body, sourcecontrol.ObservedCommentMarker); ok {
+		return rest, false, true
+	}
+	return body, false, false
+}
+
+// stripLeadingMarker removes one brand from the front of a body, reporting
+// whether it was there. The leading whitespace either side of the marker goes
+// with it: a brand on its own line is the writers' convention, and leaving the
+// newline behind would make every branded body start blank.
+func stripLeadingMarker(body, marker string) (string, bool) {
 	trimmed := strings.TrimLeft(body, " \t\r\n")
-	if !strings.HasPrefix(trimmed, sourcecontrol.MachineCommentMarker) {
+	if !strings.HasPrefix(trimmed, marker) {
 		return body, false
 	}
-	rest := strings.TrimPrefix(trimmed, sourcecontrol.MachineCommentMarker)
-	return strings.TrimLeft(rest, " \t\r\n"), true
+	return strings.TrimLeft(strings.TrimPrefix(trimmed, marker), " \t\r\n"), true
 }

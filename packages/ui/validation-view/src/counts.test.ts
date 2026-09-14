@@ -21,6 +21,8 @@ import {
   countOf,
   CRITERION_STATE_LABEL,
   METHOD_LABEL,
+  runAnswers,
+  runWorksOn,
   tallyCriterionMethods,
   tallyCriterionStates,
   uncoveredCount,
@@ -253,5 +255,31 @@ describe("METHOD_LABEL", () => {
   it("expands the e2e wire value and leaves the rest alone", () => {
     expect(METHOD_LABEL["e2e"]).toBe("auto");
     expect(METHOD_LABEL["manual"]).toBeUndefined();
+  });
+});
+
+// The two questions a run gets asked about a method, and the gap between them.
+// Collapsing them into one predicate put the criterion rows out of step with the
+// console's run-wide progress line, which reads runWorksOn.
+describe("runAnswers / runWorksOn", () => {
+  it("answers only e2e", () => {
+    expect(runAnswers("e2e")).toBe(true);
+    for (const m of ["manual", "scenario", "unknown", ""]) {
+      expect(runAnswers(m)).toBe(false);
+    }
+  });
+
+  it("works on everything except manual", () => {
+    for (const m of ["e2e", "scenario", "unknown", ""]) {
+      expect(runWorksOn(m)).toBe(true);
+    }
+    expect(runWorksOn("manual")).toBe(false);
+  });
+
+  it("differ exactly where a run acts without answering", () => {
+    // `scenario` is the live case: worked on, never answered. If these two ever
+    // agree on it, one of the two callers is wrong.
+    expect(runWorksOn("scenario")).toBe(true);
+    expect(runAnswers("scenario")).toBe(false);
   });
 });

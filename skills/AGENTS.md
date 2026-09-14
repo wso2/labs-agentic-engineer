@@ -43,8 +43,8 @@ An absent kind means `org`, which is a real decision, not a default to lean on:
   `aep-validation`, `mock-verification`) and the browser CLIs they drive
   (`playwright-cli`, `agent-browser`).
 - **`org`** — the org-visible stack skills (`go`, `ballerina`, `react-webapp`,
-  `astryx-design-system`, `api-management`, `thunder-authentication`). Editable
-  and deletable by an org.
+  `oxygen-ui-design-system`, `astryx-design-system`, `api-management`,
+  `thunder-authentication`). Editable and deletable by an org.
 
 Kind decides console visibility and who may edit a skill, and nothing else. It is
 `audience` that decides who may *read* one, and the two are independent — a skill
@@ -84,9 +84,13 @@ one was `go`'s, and it was invisible for as long as `go` was preloaded regardles
 A web app's UI toolkit is an **organization** decision, and nothing in this
 library hardcodes one. Two edits change it, both in places an org may edit:
 
-1. Add the new design-system skill — author `skills/<name>/SKILL.md`, or import
-   it through Settings → Skills. Delete `astryx-design-system` if the org does
-   not want it available.
+1. Make sure a skill for the design system exists — author
+   `skills/<name>/SKILL.md`, or import it through Settings → Skills. The
+   library ships two: `oxygen-ui-design-system` (WSO2 Oxygen UI, the default
+   `organization` names) and `astryx-design-system` (kept available, named by
+   nothing). Delete the one an org does not want offered at all, or switch it
+   off in Settings → Skills — availability is the org's manifest flag
+   (ADR-0015), not something a library file can set.
 2. Point the **UI design system** section of `organization` at its name.
 
 `architecture` reads the name out of that section rather than holding one of its
@@ -97,7 +101,13 @@ per-flow eager skill), so the name is always in context when a component's
 the pin follows the org's choice with **no platform-skill edit** —
 `architecture` is `kind: platform` and read-only in the console, which is exactly
 why the name cannot live there. An empty section means web-app builds carry only
-the stack skills. `astryx-design-system` is the shipped default, nothing more.
+the stack skills. A design-system skill this section does not name is never
+**pinned**, so no build is steered by it — but it is still seeded **enabled**
+(ADR-0015: an absent manifest entry means enabled) and still copied into every
+project mirror, where a coding agent can load it by name. Withholding it as
+well is the org's toggle at Settings → Skills, and **no file in this library
+can pre-set it**: `reconcileEmbedded` only carries a `Disabled` flag forward
+from the org's own repo and never originates one.
 
 A design-system skill must declare four things to work in that slot:
 
@@ -105,7 +115,10 @@ A design-system skill must declare four things to work in that slot:
   system is built against, not designed with; `[coding]` is what puts it in the
   project mirror, and `org` is what lets an org edit or delete it.
 - **A `## Verify` section** naming the one command `react-webapp`'s verify
-  sequence should run for it, or nothing if it has none.
+  sequence should run for it, or nothing if it has none. A command that is a
+  script the skill ships (`oxygen-ui-design-system/scripts/verify.mjs`) rides
+  the mirror like any aux file and is pinned by a `*.test.mjs` beside it, which
+  `make test` runs.
 - **Which of its own defaults the platform overrides.** Every vendor's
   quickstart assumes a project it scaffolded itself; `react-webapp`'s deployment
   facts (no `base`, the platform's own nginx assets, `window._env_`, one
@@ -115,7 +128,7 @@ A design-system skill must declare four things to work in that slot:
   layer (`openapi-fetch` + the committed `src/generated/` client) stays
   `react-webapp`'s.
 
-Only `organization` and the design-system skill itself may name a design system.
+Only `organization` and a design-system skill itself may name a design system.
 A vendor name anywhere else in this library is a defect — it is the thing that
 would make a swap need more than the two edits above. That includes
 `references/*.md`: a mirror copies a skill's whole directory, so a vendor name in
@@ -123,13 +136,22 @@ a reference reaches a coding session exactly as a body would. Check it before
 changing a web-app skill:
 
 ```bash
-grep -rniE 'astryx|@astryxdesign' skills/ --include='*.md'
+grep -rniE 'astryx|@astryxdesign|\boxygen\b|@wso2/oxygen' skills/ --include='*.md'
 ```
 
-Only `skills/organization/SKILL.md`, `skills/astryx-design-system/**` and this
-file should match. A hit anywhere else — especially in `architecture`, which is
+Four paths may match, plus the one exception below: `skills/organization/SKILL.md`,
+`skills/oxygen-ui-design-system/**`, `skills/astryx-design-system/**` and this
+file. A hit anywhere else — especially in `architecture`, which is
 `kind: platform` and read-only in the console — means an org can no longer swap
 its design system without a platform change.
+
+The exception: `skills/wireframes/SKILL.md` says the wireframe
+compiler renders with an "Oxygen UI palette" and applies "the Oxygen theme".
+That is the **compiler's** drawing style for a `.excalidraw` picture, not the
+app's UI toolkit, and it does not follow the org's design system — swapping
+the design system does not restyle a wireframe. Keep it that way: do not
+couple the two, and do not let the name spread from there into anything a
+build reads.
 
 ## Who owns what
 

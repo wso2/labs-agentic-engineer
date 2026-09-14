@@ -19,16 +19,15 @@ package spec
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
-// GET /projects/{p}/tags (#117). The spec is versioned as ONE incrementing
-// `v<N>` sequence covering the whole specs/ tree (requirements + design +
-// validation together); legacy `v<N>-<M>` design-revision tags are not part
-// of the sequence and are excluded here.
+// GET /projects/{p}/tags (#117). The spec is versioned as ONE sequence of tags
+// covering the whole specs/ tree (requirements + design + validation together).
+// A version carries the name the user gave it and is recognised by its
+// annotation, so tags this platform did not cut are excluded here.
 
 // specTreePrefix scopes the dirtiness check: only blobs under specs/ count.
 const specTreePrefix = "specs/"
@@ -36,17 +35,18 @@ const specTreePrefix = "specs/"
 // TagList is the wire shape of list-project-tags. Field semantics match the
 // contract (packages/contracts/api/v1/openapi.yaml TagList).
 type TagList struct {
-	Tags []string `json:"tags" doc:"Spec version tags (v<N>), newest first."`
+	Tags []string `json:"tags" doc:"Spec version tags, newest first by creation time."`
 	// Latest is the newest user-tagged spec version; absent when nothing is
 	// tagged yet.
-	Latest string `json:"latest,omitempty" doc:"Newest spec version tag (e.g. v3); absent when nothing is tagged."`
+	Latest string `json:"latest,omitempty" doc:"Newest spec version tag (e.g. m1); absent when nothing is tagged."`
 	// SpecDirty is true when the specs/ tree at HEAD differs from the specs/
 	// tree at Latest — the spec changed after it was last versioned.
 	SpecDirty bool `json:"specDirty,omitempty" doc:"True when specs/ changed after latest was tagged."`
 }
 
-// ListSpecVersionTags lists the project's `v<N>` spec version tags, newest
-// first, with the latest tag and whether specs/ moved since it. One origin
+// ListSpecVersionTags lists the project's spec version tags, newest first by
+// CREATION time (a version's name is the user's and carries no sequence —
+// ADR-0030), with the latest tag and whether specs/ moved since it. One origin
 // fetch (the HEAD tree read; its refspec also freshens all tags), then
 // local-mirror reads: the tag list and the sha-addressed tag tree.
 func (s *artifactService) ListSpecVersionTags(ctx context.Context, orgID, projectID string) (*TagList, error) {
@@ -64,32 +64,21 @@ func (s *artifactService) ListSpecVersionTags(ctx context.Context, orgID, projec
 		return nil, fmt.Errorf("list tags: %w", err)
 	}
 
-	type versionTag struct {
-		n    int
-		info sourcecontrol.TagInfo
-	}
-	var versions []versionTag
-	for _, t := range tags {
-		if n, ok := parseRequirementsTag(t.Name); ok {
-			versions = append(versions, versionTag{n: n, info: t})
-		}
-	}
-	sort.Slice(versions, func(i, j int) bool { return versions[i].n > versions[j].n })
-
+	versions := versionTags(tags)
 	out := &TagList{Tags: make([]string, 0, len(versions))}
 	for _, v := range versions {
-		out.Tags = append(out.Tags, v.info.Name)
+		out.Tags = append(out.Tags, v.Name)
 	}
 	if len(versions) == 0 {
 		return out, nil
 	}
 
 	latest := versions[0]
-	out.Latest = latest.info.Name
+	out.Latest = latest.Name
 	// Sha-addressed (the peeled tag commit) — a local read, no second fetch.
-	tagEntries, _, err := s.git.Workspace().List(ctx, ref, latest.info.CommitHash)
+	tagEntries, _, err := s.git.Workspace().List(ctx, ref, latest.CommitHash)
 	if err != nil {
-		return nil, fmt.Errorf("list tree at %s: %w", latest.info.Name, err)
+		return nil, fmt.Errorf("list tree at %s: %w", latest.Name, err)
 	}
 	out.SpecDirty = !specTreesEqual(headEntries, tagEntries)
 	return out, nil

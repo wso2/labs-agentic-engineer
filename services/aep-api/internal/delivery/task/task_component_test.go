@@ -214,24 +214,18 @@ func (f fakeExecs) ListByIssueScoped(_ context.Context, _, _ string, n int) ([]d
 
 // fakeVersions drives the plan versioned-spec gate.
 type fakeVersions struct {
-	spec []spec.RequirementsVersionInfo
+	tags []string
 }
 
 func (fakeVersions) BuildScopeAtTag(context.Context, string, string, string) (spec.BuildScope, error) {
 	return spec.BuildScope{}, nil
 }
 
-func (f fakeVersions) ListRequirementsVersions(context.Context, string, string) ([]spec.RequirementsVersionInfo, error) {
-	return f.spec, nil
-}
-func (f fakeVersions) LatestSpecTag(context.Context, string, string) string {
-	if len(f.spec) == 0 {
-		return ""
+func (f fakeVersions) ListSpecVersionTags(context.Context, string, string) (*spec.TagList, error) {
+	if len(f.tags) == 0 {
+		return &spec.TagList{}, nil
 	}
-	return f.spec[0].Tag
-}
-func (f fakeVersions) GetRequirementsAtTag(context.Context, string, string, string) (map[string]string, error) {
-	return nil, nil
+	return &spec.TagList{Tags: f.tags, Latest: f.tags[0]}, nil
 }
 
 func hasAll(have, want []string) bool {
@@ -367,7 +361,7 @@ func TestPlan_InProgress_409(t *testing.T) {
 		RepoURL: skillsOrigin.URL(), DefaultBranch: "main", RepoSlug: "org-skills", Status: "ready"}
 	git := sourcecontrol.NewGitOpsService(nilCredResolver{}, fx.Engine)
 	plan := task.NewPlanService(fixedRepos{repo: repoRow},
-		fakeVersions{spec: []spec.RequirementsVersionInfo{{Tag: "v1"}}}, git,
+		fakeVersions{tags: []string{"v1"}}, git,
 		func(context.Context, string) (string, error) { return "sk-key", nil }, bt, iss, iss.writer(), fx.Engine,
 		func(context.Context, string) (*sourcecontrol.GitRepository, error) { return skillsRow, nil })
 

@@ -86,10 +86,12 @@ func (h *Handler) BuildProject(ctx context.Context, request gen.BuildProjectRequ
 		}
 	}
 	var inputs []BuildInputItem
+	var version string
 	if request.Body != nil {
 		inputs = toBuildInputItems(request.Body.Inputs)
+		version = request.Body.Version
 	}
-	tag, failures, err := h.svc.Run(ctx, org, request.ProjectName, inputs)
+	tag, failures, err := h.svc.Run(ctx, org, request.ProjectName, inputs, version)
 	if err != nil {
 		return nil, mapBuildRunError(err)
 	}
@@ -225,6 +227,7 @@ func toBuildList(l BuildList) gen.BuildList {
 			MilestoneNumber: int64(b.MilestoneNumber),
 			Status:          gen.BuildSummaryStatus(b.Status),
 			Reason:          b.Reason,
+			FailureCode:     b.FailureCode,
 			StartedAt:       b.StartedAt,
 			WaitingReason:   gen.BuildSummaryWaitingReason(b.WaitingReason),
 		}
@@ -257,5 +260,24 @@ func toBuildPreflight(pf BuildPreflight) gen.BuildPreflight {
 			Parameters:   it.Parameters,
 		})
 	}
-	return gen.BuildPreflight{NeedsInput: pf.NeedsInput, NeedsResolution: pf.NeedsResolution, Items: items}
+	// The version half rides the same response: the click asks one question.
+	// Changes stays nil when there are none, so an unchanged tree and a first
+	// build are told apart by specUnchanged, not by an empty list.
+	var changes []gen.BuildChange
+	for _, c := range pf.Changes {
+		changes = append(changes, gen.BuildChange{
+			Name:  c.Name,
+			Kind:  gen.BuildChangeKind(c.Kind),
+			State: gen.BuildChangeState(c.State),
+		})
+	}
+	return gen.BuildPreflight{
+		NeedsInput:       pf.NeedsInput,
+		NeedsResolution:  pf.NeedsResolution,
+		Items:            items,
+		CurrentVersion:   pf.CurrentVersion,
+		SuggestedVersion: pf.SuggestedVersion,
+		SpecUnchanged:    pf.SpecUnchanged,
+		Changes:          changes,
+	}
 }

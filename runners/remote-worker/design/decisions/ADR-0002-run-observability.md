@@ -137,6 +137,68 @@ Four further gaps, all verified rather than assumed:
     `allowedTools` was never enforcing anything under `bypassPermissions` — it
     still named `Task`, a tool 0.3.220 does not define, and nothing failed.
 
+    **Re-measured on SDK 0.3.247, and the forwarding half of this is now wrong.**
+    Two recordings were made against the current SDK and kept as fixtures:
+    `test/fixtures/probe1-background-fanout.jsonl` (three subagents launched with
+    `run_in_background: true` in one turn, one of them spawning a depth-2 child)
+    and `test/fixtures/probe2-lead-ends-early.jsonl` (one background subagent,
+    with the lead ending its turn while it works). A backgrounded subagent's
+    messages DO reach the parent stream on 0.3.247: every one of probe 1's four
+    subagents arrives with `parent_tool_use_id` set, its commands and their
+    outcomes attributed, and its section settled by a `task_notification` —
+    including the depth-2 child, whose lines are attributed to IT rather than
+    flattened onto its parent. The zero-attribution measurement above was a
+    property of 0.3.220, not of backgrounding. The claim that backgrounding
+    "costs the entire implementation phase of the feed" no longer holds.
+
+    What DOES still hold is the second half of the same paragraph, and it turns
+    out to have been the expensive one: a detached subagent lets the session end
+    while its children are still running. Probe 2 is that in 40 messages — the
+    lead launches one subagent, ends its turn at message **16**, and the
+    subagent's own steps arrive at 18-25, its completion notification at 28, a
+    SECOND `result` at 37, and the orphaned shell task's `stopped` notification
+    at 40. So the defect was never only the forwarding; it was a loop that
+    treated the first `result` as the run ending. Decision 18 is that fix. The
+    foreground hook stays for now — it is what makes a fan-out's steps arrive
+    inside the turn that launched it, and removing it is a separate change with
+    its own evidence to gather.
+
+18. **The run settles when the event source closes; a `result` is one turn
+    ending, not the run.** The loop reads to the end of the stream, records the
+    LATEST result's outcome, and settles when the iterator closes — measured
+    against both fixtures above, where returning on the first `result` would
+    have killed probe 2's pod with 24 of its 40 messages unread and a subagent
+    mid-flight. The exit code follows the settle, and it follows the *translated*
+    verdict rather than the SDK's subtype, so the feed and the process agree
+    about the same run: decision 4's backstop turns a `success` whose subagents
+    were still detached into a failure, and an exit code of 0 beside that line
+    would be two answers to one question.
+
+    **The wire shape did not move for it.** v1 carries exactly one
+    `kind: "result"` event per run and every consumer treats it as terminal, so
+    several would settle one run several times — the first, on probe 2, with a
+    verdict the run went on to disprove. The translator still produces a result
+    event per `result` message; the loop holds the newest back and emits it at
+    the settle.
+
+    **A run that never ends is not a settle**, so the loop carries a deadline:
+    the Job's own deadline (`AEP_RUN_DEADLINE_SECONDS`) minus a margin, clocked
+    from process start because cloning and mirroring spend the pod's budget too.
+    When it fires the run stops every task it knows is still live
+    (`Query.stopTask`), says so in one `error`-level line, and settles as a
+    failure — because a pod killed from outside explains nothing, which is the
+    same reason the SIGTERM handler exists. Unset means no guard, which is every
+    caller today: passing it from the Job spec is a separate change.
+
+    **The wait tools came off `DISALLOWED_TOOLS`.** A lead that backgrounds work
+    has to be able to wait on it, and probe 1 shows exactly that — three
+    `TaskOutput` calls, one per subagent, blocking until each reports. Denying
+    them while the SDK's own default is to background a fan-out is what left the
+    0.3.220 run reaching for `ScheduleWakeup`. `TaskOutput` and `TaskStop` act on
+    tasks this session started; the task *board* tools
+    (`TaskCreate`/`TaskUpdate`/`TaskGet`/`TaskList`) stay denied, because a
+    one-shot pod has no board.
+
 5. **Tool outcomes are events.** `tool_result` carries `ok`, `durationMs` and,
    on failure only, the error text. Success output is bulky, uninteresting, and
    the likelier place for a secret. `ok` is a POINTER in the Go mirror: a plain
@@ -291,6 +353,28 @@ Four further gaps, all verified rather than assumed:
     Deliberately not fed to `watchdog.observe` — none is the agent making
     progress, and an idle report that fires slightly early is the safe direction.
 
+19. **Redaction needs the credential ENROLLED; shape is only a backstop.**
+    `GITHUB_TOKEN` was enrolled nowhere for as long as the mount existed, and the
+    failure was invisible in the way that matters: the tokens people tested with
+    carried `ghp_`/`github_pat_` prefixes a shape pattern caught, so the feed
+    looked correct while any credential outside those families passed through
+    whole. Shape was never the layer holding this — the BFF's own second line of
+    defense says so: `delivery/codingagent/redact.go`, "It cannot catch an opaque
+    token (that is the runner's job)." Three rejected alternatives, each a
+    re-litigation risk. Enrolling from the deny-by-default sweep
+    `websearch_dlp.ts` runs over the same environment: a false positive there
+    costs one denied web call, where a literal rewrites every line containing it
+    — the over-redaction that disabled the entropy backstop above. Lowering
+    `MIN_LITERAL_LEN` so short values enroll: four characters would redact those
+    characters everywhere they appear in ordinary text. Failing a run whose
+    credential is too short to enroll: that is a misconfiguration, not a
+    disclosure, and ending a cycle over a placeholder in a local run is the worse
+    trade — so it is reported by NAME and the run warns. KNOWN GAP: the credhelper
+    git path mints its token inside bash, so nothing can enroll it; its at-rest
+    copy in `.gh-config/hosts.yml` is covered by an `oauth_token:` shape pattern
+    on both sides and nothing more. Closing it means giving the helper a way to
+    hand the runner what it minted.
+
 8. **`console.*` is converted, not merely scrubbed.** It shares the fd with the
    feed, so a bare line makes the stream unparseable — and a watchdog cannot
    watch a feed it cannot parse. Every call becomes a typed `log` event. The
@@ -357,6 +441,11 @@ Four further gaps, all verified rather than assumed:
   `toolStats` rides the tool_result a backgrounded fan-out never produces, so such
   a section reports its duration and step count and omits `+N/−N lines` rather
   than claiming zero. Only reachable when the foreground hook is bypassed.
+- **A run outlives its lead's last turn.** The pod stays up until the SDK stream
+  closes, which on probe 2 is 24 messages and one subagent past the first
+  `result`. Anything that used to key off "the loop returned" — a sink flush, a
+  timer, a cleanup — now happens later than it did, and a session that never
+  closes its stream is the deadline guard's problem rather than a hang.
 - **Known limit: a `local_bash` task's own `task_*` messages carry no owner.**
   `task_started` has no owning task id, so nothing on that channel says which
   subagent backgrounded the command. This is survivable only because those
@@ -364,3 +453,103 @@ Four further gaps, all verified rather than assumed:
   from the forwarded channel, which does carry `parent_tool_use_id`. Correlating
   the `task_*` half by "whichever subagent was active" would be a guess, and a
   feed that guesses attribution is worse than one that declines to.
+
+## Amendment — run events v2 (2026-09-07)
+
+The feed this ADR describes is v1. The runner now emits **run events v2**
+(`RunEvent` in `packages/contracts/api/v1/openapi.yaml`), and the change is not
+a rename: v1 could not say that an agent existed. Every decision above still
+holds unless it is listed here, and each entry below says what replaced it and
+why, so a reader of the original text is never left guessing which half is live.
+
+1. **Decisions 1, 2 and 7 — identity.** `emitter` / `emitterId` /
+   `emitterLabel` are gone. Attribution is ONE field, `agentId`, on every event,
+   and the lead is the literal string `lead`. The id is the runtime's `task_id`,
+   not the spawning tool call: `agent_started` declares the agent, and the two
+   maps that make the tree reconstructible are `tool_use_id → the agent that
+   ISSUED the call` and `tool_use_id → the agent the call STARTED`. Decision 2's
+   "one identity for both channels" survives intact; what changes is that the
+   identity is now declared rather than inferred from a call id, which is what
+   lets a depth-2 child name its parent instead of being flattened onto it.
+
+2. **Decision 4 — the settle, and its backstop.** `task_notification` is now the
+   settle for EVERY spawned agent, foreground or background, and a fan-out's
+   `tool_result` produces no row at all. Measured on probe 1: a foreground spawn
+   (`is_backgrounded: false`, the depth-2 child) emits a notification too, so
+   "a foreground fan-out emits no agent notification" was a property of the run
+   this ADR measured and not of the SDK. Reading only one channel is therefore
+   simpler AND more complete.
+
+   The corollary is that decision 10's `toolStats` usually arrives too late to
+   be used: the notification is message 58 and the result 59 on probe 1, and
+   167/168 on the run measured here. `agent_settled` prefers `toolStats` when it
+   has it and otherwise reports line deltas COUNTED from the `Write` and `Edit`
+   inputs the agent's own forwarded calls carried — which is possible only
+   because 0.3.247 forwards those calls. The known limit "a section settled from
+   a notification has no line deltas" is retired.
+
+   The detached-subagent backstop — a `result` turned into a failure while
+   fan-outs were still outstanding — is **removed**, not ported. It existed
+   because the loop treated the first `result` as the run ending, so an
+   outstanding agent really did mean unfinished work shipped. With decision 18's
+   loop the stream stays open until every notification has arrived, so an agent
+   that has not settled at the close means the runtime never said how it ended.
+   Reporting that as a failed run would invent a verdict from a missing message,
+   which is the same defect pointed the other way.
+
+3. **Decision 9 — the intent phrase.** `activity` is now `agent_progress`, with
+   the same rule: it repaints a row's state and formats to no line of its own.
+
+4. **Decision 13 — the foreground hook.** Deleted, with its module and its test.
+   The forwarding half was already recorded above as reversed by 0.3.247. The
+   surviving half — a detached agent lets the session end while its children
+   work — is fixed by decision 18's loop rather than by constraining the shape of
+   fan-out, and backgrounding is what lets a lead keep working while its builders
+   build. The regression pin is now a v2 pin in `run_loop.test.ts`: probe 1
+   replays into four `agent_started`, one of them `background: true, depth: 1`,
+   each followed by its own attributed steps.
+
+5. **Decision 18 — one settle, two events.** v1 had a single terminal kind, so
+   the loop had to hold the translated `result` back and emit it at the close.
+   v2 separates them: `turn_ended` goes out where the turn ended, and
+   `run_settled` is written by the loop when the source closes, carrying the last
+   turn's outcome and usage. Usage is NOT summable — the runtime reports
+   `modelUsage` cumulatively across turns (probe 2: 20 input tokens on the first
+   result, 48 on the second) — so the last turn's figure IS the run's total.
+   A stream that closes with no turn at all now settles as a failure rather than
+   emitting nothing: under the recorder, "never settled" and "the recording was
+   lost" have to be distinguishable.
+
+6. **The `local_bash` known limit is narrower than recorded.** `task_started`
+   for a backgrounded command DOES carry the `tool_use_id` of the `Bash` call
+   that started it on 0.3.247, plus `owned_by_subagent` (probe 2, message 21),
+   so its owner is resolved exactly rather than guessed. The heuristic the design
+   specified — the in-flight `Bash` call whose command matches the description —
+   is kept as the fallback for a runtime that reports no id, and anything less
+   certain than that is the lead's. Those messages now DO produce lines
+   (`task_started` / `task_settled`), which is what names an orphaned command:
+   probe 2 ends with `status: "stopped"` on a `sleep 25` the session outran.
+
+7. **New: liveness is on the feed, bounded.** `tool_progress` and
+   `thinking_tokens` become `heartbeat`, at most one per agent per 10 s and only
+   while something is in flight. Decision 14's rule extends to them verbatim: a
+   heartbeat must never reach `watchdog.observe`, because it says the run is
+   alive and not that anything happened. The rule has to hold for the heartbeats
+   the rate limiter DROPS as well, which is why the loop routes those messages by
+   type rather than by whether an event came back — an empty event list reaching
+   `observe` resets the idle clock just as effectively as a full one.
+
+8. **New: the lead's plan is on the feed.** `TaskCreate`/`TaskUpdate` are no
+   longer denied and become `work_item {source: "plan"}`. The id is minted on the
+   result, so the two halves are paired before anything is emitted. Validation's
+   `progress_item` becomes `work_item {source: "criterion"}` — same statuses,
+   same inference (ADR-0009 unchanged), new envelope.
+
+9. **New: the contract is generated.** `lib/progress/schema.ts` is deleted and
+   the types come from the committed OpenAPI document. What v2 has no home for is
+   v1's `phase` and `log`: the runner's own prose lines (its `console.*` output,
+   the watchdog's sentence, a dangling skill pin, the two workspace-lifecycle
+   lines) are `notice` events with a `level` and a `detail` and NO `code`, since
+   the code set names conditions a consumer branches on. A surface that needs to
+   branch on one of those needs a code in the contract, not a field invented in
+   the runner.

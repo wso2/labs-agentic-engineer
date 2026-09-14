@@ -183,8 +183,8 @@ test("loadSkill I/O fault returns could-not-read — never unknown skills", asyn
 });
 
 // #576: declaring a plan must NOT end the turn — the agent says what it is
-// about to write and then writes it. The call site pairs `hasToolCall` stop
-// conditions with the question tools only; here we hold the other half of that
+// about to write and then writes it. The call site's stop condition names the
+// question tools only; here we hold the other half of that
 // contract: the tool resolves immediately rather than parking on the user.
 test("declare_plan acknowledges and resolves — it never awaits a human", async () => {
   const tools = buildFileToolSet(new FileBundle({})).tools;

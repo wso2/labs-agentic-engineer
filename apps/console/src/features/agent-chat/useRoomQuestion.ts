@@ -24,11 +24,12 @@
 
 import { useEffect, useState } from "react";
 import type { Doc } from "yjs";
-import { getMessages, subscribe } from "./chatStore.js";
+import { getMessages, subscribe, withdrawnQuestionIds } from "./chatStore.js";
 import { answerableQuestionIds } from "./questionCards.js";
 import {
   closeStaleRoomQuestions,
   mirrorQuestion,
+  withdrawRoomQuestion,
   observeRoomQuestions,
   readRoomQuestions,
   type RoomQuestion,
@@ -75,6 +76,11 @@ export function useRoomQuestion(doc: Doc | null, chatKey: string): RoomQuestion 
         if (!answerable.has(m.id)) superseded.add(m.toolCallId);
       }
       closeStaleRoomQuestions(doc, superseded, known);
+      // A prefix this client streamed and then withdrew (the SDK rejected the
+      // call) must not wait out the orphan TTL on everyone's spec panel. Runs
+      // from the doc observer too, so an entry syncing in late is removed as
+      // well.
+      for (const id of withdrawnQuestionIds(chatKey)) withdrawRoomQuestion(doc, id);
     };
     const backfill = () => {
       const messages = getMessages(chatKey);

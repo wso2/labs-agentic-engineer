@@ -54,6 +54,7 @@ type ActivityEvent struct {
 	Component   string `gorm:"type:text" json:"component,omitempty"`
 	Environment string `gorm:"type:text" json:"environment,omitempty"`
 	Tag         string `gorm:"type:text" json:"tag,omitempty"`
+	Reason      string `gorm:"type:text" json:"reason,omitempty"`
 
 	// DedupKey — deterministic per logical event (e.g. "exec:{id}:deployed").
 	DedupKey string `gorm:"type:text;not null;uniqueIndex:ux_activity_events_dedup,priority:3" json:"-"`

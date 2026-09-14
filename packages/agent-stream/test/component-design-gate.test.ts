@@ -74,29 +74,29 @@ test("rejects an endpoint block with an unknown key", () => {
   assert.equal(problem?.code, "SCHEMA_VIOLATION");
 });
 
-// --- config keys carry an optional description ------------------------------
+// --- an external dependency is a reference; its definition has its own file --
 
-const dep = (config: unknown) => ({ kind: "external", name: "stripe", config });
-
-test("accepts a config key with an optional description", () => {
-  const doc = design({
-    dependencies: [dep([{ key: "STRIPE_API_KEY", secret: true, description: "Your Stripe secret API key" }])],
-  });
+test("accepts an external dependency as a bare reference (kind + name)", () => {
+  const doc = design({ dependencies: [{ kind: "external", name: "stripe", description: "charges shipping" }] });
   assert.equal(checkComponentDesign(PATH, doc), null);
 });
 
-test("accepts a non-secret config key that omits secret entirely, with a defaultValue", () => {
-  const doc = design({
-    dependencies: [dep([{ key: "AWS_REGION", defaultValue: "us-east-1" }])],
+for (const moved of [
+  { style: "rest-api" },
+  { package: "npm:stripe" },
+  { specPath: "https://example.com/openapi.json" },
+  { candidates: [{ name: "a", style: "sdk" }, { name: "b", style: "sdk" }] },
+  { config: [{ key: "STRIPE_API_KEY", secret: true }] },
+]) {
+  const field = Object.keys(moved)[0]!;
+  test(`rejects "${field}" on a component's external dependency, pointing at the dependency file`, () => {
+    const doc = design({ dependencies: [{ kind: "external", name: "stripe", ...moved }] });
+    const problem = checkComponentDesign(PATH, doc);
+    assert.equal(problem?.code, "SCHEMA_VIOLATION");
+    assert.match(problem!.message, /specs\/design\/dependencies\/stripe\/dependency\.json/);
+    assert.match(problem!.message, new RegExp(`"${field}"`));
   });
-  assert.equal(checkComponentDesign(PATH, doc), null);
-});
-
-test("rejects an unknown key on a config entry (e.g. the retired credentialClass)", () => {
-  const doc = design({ dependencies: [dep([{ key: "STRIPE_API_KEY", credentialClass: "secret" }])] });
-  const problem = checkComponentDesign(PATH, doc);
-  assert.equal(problem?.code, "SCHEMA_VIOLATION");
-});
+}
 
 // --- buildpack is pinned to "docker" (agent write-gate only; see the .refine) -
 

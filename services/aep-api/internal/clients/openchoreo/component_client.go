@@ -1052,7 +1052,7 @@ func (c *componentClient) ListProjectReleaseBindings(ctx context.Context, orgNam
 			if isInternalComponent(nil, lbls) {
 				continue
 			}
-			out = append(out, releaseBindingSummary(rb))
+			out = append(out, c.releaseBindingSummary(rb))
 		}
 		next := resp.JSON200.Pagination.NextCursor
 		if next == nil || *next == "" {
@@ -1069,9 +1069,15 @@ func (c *componentClient) ListProjectReleaseBindings(ctx context.Context, orgNam
 }
 
 // releaseBindingSummary extracts the deploy-stage facts: identity, undeploy
-// intent, and the aggregate Ready-typed condition (never the last-array-entry
-// heuristic — condition array order is not guaranteed).
-func releaseBindingSummary(rb ocgen.ReleaseBinding) ReleaseBindingSummary {
+// intent, the aggregate Ready-typed condition (never the last-array-entry
+// heuristic — condition array order is not guaranteed), and the public URL the
+// binding advertises.
+//
+// A METHOD for the URL alone: picking between the advertised http and https
+// forms needs the client's scheme preference, and a summary that chose
+// differently from the deployments read would hand two callers two answers
+// about one binding.
+func (c *componentClient) releaseBindingSummary(rb ocgen.ReleaseBinding) ReleaseBindingSummary {
 	s := ReleaseBindingSummary{}
 	var projectName, componentName string
 	if rb.Spec != nil {
@@ -1087,6 +1093,14 @@ func releaseBindingSummary(rb ocgen.ReleaseBinding) ReleaseBindingSummary {
 			if cond.Type == "Ready" {
 				s.ReadyStatus = string(cond.Status)
 				s.ReadyReason = cond.Reason
+				break
+			}
+		}
+	}
+	if rb.Status != nil && rb.Status.Endpoints != nil {
+		for _, ep := range *rb.Status.Endpoints {
+			if u := publicEndpointURL(ep.ExternalURLs, c.preferPlainHTTP); u != "" {
+				s.ExternalURL = u
 				break
 			}
 		}

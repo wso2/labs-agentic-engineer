@@ -21,6 +21,7 @@ import type { CriterionTally } from "@aep/ui-validation-view";
 import { validationView, type StageTone } from "../../projects/lib/pipeline";
 import { countsFromTally, verdictCounts, verdictSentence } from "../lib/verdict";
 import { FULL_WIDTH_ALERT_MESSAGE, LiveNote } from "./LiveNote";
+import type { StatusLine } from "../../tasks/lib/statusLine";
 
 // The verdicts this tile speaks for. `skipped` is absent on purpose: the page
 // answers it with an empty state, because there is no report and no criteria to
@@ -84,7 +85,7 @@ export function VerdictTile({
   /** What a REPEAT attempt is doing while no criterion has anything to say — see
    *  LiveNote. Absent whenever nothing is in flight, which is the usual case for
    *  this tile: it mostly reports a verdict that has settled. */
-  note?: string;
+  note?: string | StatusLine;
 }) {
   const view = validationView(state);
   if (!view || !TILE_VERDICTS.has(verdict)) return null;

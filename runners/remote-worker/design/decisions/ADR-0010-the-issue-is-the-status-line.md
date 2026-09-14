@@ -50,6 +50,12 @@ but never wrong about anything that has not happened.
    readers of the skill. Only the actor doing the work knows what is happening,
    and a lead relaying a subagent's state would be inventing it.
 
+   **Narrowed by ADR-0011 for VALIDATION runs**, where it was measured not to
+   happen: the platform infers that line from the run's tool calls instead. The
+   distinction this decision rests on — that a status line is prose about intent,
+   which nothing can infer from a `Write` call — is what bounds the exception to
+   one run kind, and it still holds for every other.
+
 3. **A subagent gets exactly one `gh` and no `git` at all.** `gh issue comment`
    on its own issue; the branch, the commits and the pull request stay the lead's
    ("You are the sole git writer"). The fan-out prompt list carries this as item

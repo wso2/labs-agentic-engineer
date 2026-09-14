@@ -39,6 +39,7 @@
 import { z } from "zod";
 import { componentDesignSchema } from "./component-design-schema.js";
 import { securityDesignSchema } from "./security-design-schema.js";
+import { dependencyDesignSchema } from "./dependency-design-schema.js";
 import { planTaskInputSchema, updateTaskInputSchema } from "./task-tools-schema.js";
 
 /** The `ComponentDesign` structural schema as JSON Schema (draft 2020-12). */
@@ -47,6 +48,10 @@ export function componentDesignJsonSchema(): Record<string, unknown> {
 }
 
 /** The `SecurityDesign` structural schema as JSON Schema (draft 2020-12). */
+export function dependencyDesignJsonSchema(): Record<string, unknown> {
+  return z.toJSONSchema(dependencyDesignSchema, { target: "draft-2020-12" }) as Record<string, unknown>;
+}
+
 export function securityDesignJsonSchema(): Record<string, unknown> {
   return z.toJSONSchema(securityDesignSchema, { target: "draft-2020-12" }) as Record<string, unknown>;
 }

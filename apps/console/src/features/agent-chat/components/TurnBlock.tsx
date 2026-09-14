@@ -142,12 +142,15 @@ function TurnBody({
   expandedGroups,
   onToggleGroup,
   onOpenSpec,
+  onOpenSpecFile,
   showSpecLink,
 }: {
   items: ChatItem[];
   expandedGroups: Set<string>;
   onToggleGroup: (id: string) => void;
   onOpenSpec: () => void;
+  /** A document link in a message was clicked — open the spec view on it. */
+  onOpenSpecFile?: ((path: string) => void) | undefined;
   showSpecLink: boolean;
 }) {
   const out: ReactNode[] = [];
@@ -205,7 +208,11 @@ function TurnBody({
       // Empty assistant messages appear briefly at a turn's start (created
       // before the first text delta); render nothing until they have content.
       if (msg.content) {
-        out.push(<MarkdownView key={msg.id}>{msg.content}</MarkdownView>);
+        out.push(
+          <MarkdownView key={msg.id} onSpecLink={onOpenSpecFile}>
+            {msg.content}
+          </MarkdownView>,
+        );
       }
     } else if (msg.role === "question" && msg.questions?.length && showSpecLink) {
       // EVERY question is answered on the spec body's shared form — one place,
@@ -226,12 +233,15 @@ export function TurnBlock({
   expandedGroups,
   onToggleGroup,
   onOpenSpec,
+  onOpenSpecFile,
   showSpecLink = true,
 }: {
   turn: TurnFeedBlock;
   expandedGroups: Set<string>;
   onToggleGroup: (id: string) => void;
   onOpenSpec: () => void;
+  /** A document link in a message (`aep://spec/<path>`) was clicked. */
+  onOpenSpecFile?: ((path: string) => void) | undefined;
   showSpecLink?: boolean;
 }) {
   return (
@@ -256,6 +266,7 @@ export function TurnBlock({
         expandedGroups={expandedGroups}
         onToggleGroup={onToggleGroup}
         onOpenSpec={onOpenSpec}
+        onOpenSpecFile={onOpenSpecFile}
         showSpecLink={showSpecLink}
       />
       <TurnFooter status={turn.status} onOpenSpec={onOpenSpec} showSpecLink={showSpecLink} />

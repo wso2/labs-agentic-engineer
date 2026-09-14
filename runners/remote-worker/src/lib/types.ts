@@ -66,6 +66,13 @@ export interface DispatchRequest {
    */
   taskKind: "implementation" | "validation";
   /**
+   * The validation issue this run is anchored to (AEP_VALIDATION_ISSUE), and
+   * absent for every other kind. The run posts that issue's status line as it
+   * works, and nothing else here answers "which issue": taskId is the cycle's
+   * uuid, and the number reaches the agent only as prose inside the prompt.
+   */
+  validationIssue?: number;
+  /**
    * Developer diagnostics for this run: the SDK's own debug log, its stderr,
    * and per-token streaming frames for the watchdog. All three land in files
    * beside `claude.log`; none of them reach the progress feed.

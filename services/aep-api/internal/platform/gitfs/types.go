@@ -198,13 +198,20 @@ type TagSpec struct {
 	Tagger  *GitIdentity
 }
 
-// TagInfo describes a git tag: the peeled commit it points at and the tag
-// message subject (empty for lightweight tags). Field shape matches the
-// historical sourcecontrol.TagInfo (now an alias of this type).
+// TagInfo describes a git tag: the peeled commit it points at, the tag
+// message subject (empty for lightweight tags), and when the tag was made.
+// Field shape matches the historical sourcecontrol.TagInfo (now an alias of
+// this type).
 type TagInfo struct {
 	Name       string `json:"name"`
 	CommitHash string `json:"commitHash"`
 	Message    string `json:"message,omitempty"`
+	// CreatedAt is git's `creatordate` — the tag's own date for an annotated
+	// tag, the commit's for a lightweight one. It is what ORDERS versions now
+	// that their names are the user's (spec ADR-0030): a name carries no
+	// sequence, and two versions can even name the same commit, which only a
+	// date separates. Zero when the ref could not be dated.
+	CreatedAt time.Time `json:"createdAt,omitempty"`
 }
 
 // GitIdentity is a git author/committer/tagger identity. Field names and

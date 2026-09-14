@@ -83,6 +83,31 @@ describe("projectableHistory", () => {
     expect(out[2]).toMatchObject({ role: "question", toolCallId: "tc-9", questions: [q] });
   });
 
+  it("skips a question call the schema rejected, keeping the retry that resolved", () => {
+    const bad = { question: "Which provider?", options: [{ label: "A" }, { label: "", freeText: true }] };
+    const good = { question: "Which provider?", options: [{ label: "A" }] };
+    const history: ConversationMessage[] = [
+      { role: "user", content: "resolve it" },
+      { role: "assistant", content: [{ type: "tool-call", toolName: "ask_question", toolCallId: "tc-bad", input: bad }] },
+      {
+        role: "tool",
+        content: [
+          { type: "tool-result", toolCallId: "tc-bad", toolName: "ask_question", output: { type: "error-text", value: "invalid" } },
+        ],
+      },
+      { role: "assistant", content: [{ type: "tool-call", toolName: "ask_question", toolCallId: "tc-good", input: good }] },
+      {
+        role: "tool",
+        content: [
+          { type: "tool-result", toolCallId: "tc-good", toolName: "ask_question", output: { type: "json", value: {} } },
+        ],
+      },
+    ];
+    const out = projectableHistory(history);
+    expect(out.map((m) => m.role)).toEqual(["user", "question"]);
+    expect(out[1]).toMatchObject({ role: "question", toolCallId: "tc-good", questions: [good] });
+  });
+
   it("carries attachment names onto a rehydrated user row (#428)", () => {
     // The point of putting names on the journal: without this, a reload shows
     // the agent discussing a document that appears nowhere in the thread.

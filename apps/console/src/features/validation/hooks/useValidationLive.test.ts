@@ -22,43 +22,62 @@ import { foldValidationProgress } from "./useValidationLive";
 
 let seq = 0;
 
-const item = (itemId: string, status: string, cycleId = "c1") =>
+const item = (itemId: string, itemStatus: string, cycleId = "c1") =>
   ({
-    kind: "progress_item",
+    v: 2,
+    kind: "work_item",
+    source: "criterion",
     itemId,
-    status,
+    itemStatus,
+    agentId: "lead",
     cycleId,
-    cycleIndex: 1,
-    cycleKind: "validation",
-    emitter: "main",
+    attempt: 1,
     seq: (seq += 1),
-  }) as RunProgressCycle["lines"][number];
+    ts: "2026-08-31T00:00:00Z",
+  }) as RunProgressCycle["events"][number];
 
 const other = (kind: string, cycleId = "c1") =>
   ({
+    v: 2,
     kind,
+    agentId: "lead",
     cycleId,
-    cycleIndex: 1,
-    cycleKind: "validation",
-    emitter: "main",
+    attempt: 1,
     seq: (seq += 1),
+    ts: "2026-08-31T00:00:00Z",
     summary: "npm test",
-  }) as RunProgressCycle["lines"][number];
+  }) as RunProgressCycle["events"][number];
+
+/** An entry of the AGENT's own plan — the other half of the work_item kind. */
+const planItem = (itemId: string, itemStatus: string, cycleId = "c1") =>
+  ({
+    v: 2,
+    kind: "work_item",
+    source: "plan",
+    itemId,
+    itemStatus,
+    title: "Wire the fixture",
+    agentId: "lead",
+    cycleId,
+    attempt: 1,
+    seq: (seq += 1),
+    ts: "2026-08-31T00:00:00Z",
+  }) as RunProgressCycle["events"][number];
 
 const cycle = (
   id: string,
   kind: string,
-  lines: RunProgressCycle["lines"],
+  events: RunProgressCycle["events"],
   endedAt?: string,
 ): RunProgressCycle =>
   ({
     cycle: { id, kind, attempts: 1, createdAt: "2026-08-31T00:00:00Z", ...(endedAt ? { endedAt } : {}) },
-    lines,
+    events,
   }) as RunProgressCycle;
 
 describe("foldValidationProgress", () => {
-  it("folds many lines about one criterion into one status", () => {
-    // The whole reason progress_item exists: a reader wants one row repainted,
+  it("folds many events about one criterion into one status", () => {
+    // The whole reason work_item exists: a reader wants one row repainted,
     // not seven rows printed.
     const out = foldValidationProgress([
       cycle("c1", "validation", [
@@ -120,16 +139,30 @@ describe("foldValidationProgress", () => {
     });
   });
 
-  it("skips a line missing either half of its identity", () => {
-    // An older runner on a newer console: the row it would produce is blank in
-    // one direction or the other, and a blank row is worse than no row.
+  it("skips an event missing either half of its identity", () => {
+    // A producer this build does not understand: the row it would produce is
+    // blank in one direction or the other, and a blank row is worse than no row.
     const out = foldValidationProgress([
       cycle("c1", "validation", [
         { ...item("AC-001-a", "running"), itemId: undefined },
-        { ...item("AC-002-a", "running"), status: undefined },
+        { ...item("AC-002-a", "running"), itemStatus: undefined },
         item("AC-003-a", "running"),
-      ] as RunProgressCycle["lines"]),
+      ] as RunProgressCycle["events"]),
     ]);
     expect(out).toEqual({ statuses: { "AC-003-a": "running" }, active: true });
+  });
+
+  // `work_item` serves two populations and `source` is what splits them. A plan
+  // entry's `completed` says an agent ticked an item off its own to-do list;
+  // a criterion's `pass` says something was asserted and held. Folding the
+  // former in would paint the agent's plan onto the acceptance criteria.
+  it("ignores an agent's own plan items, which share the kind", () => {
+    const out = foldValidationProgress([
+      cycle("c1", "validation", [
+        planItem("plan-1", "completed"),
+        item("AC-001-a", "pass"),
+      ]),
+    ]);
+    expect(out).toEqual({ statuses: { "AC-001-a": "pass" }, active: true });
   });
 });

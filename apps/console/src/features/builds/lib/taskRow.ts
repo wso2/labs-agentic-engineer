@@ -18,7 +18,7 @@
 
 import type { StatusTone } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
-import { statusLine } from "../../tasks/lib/statusLine";
+import { statusLineText } from "../../tasks/lib/statusLine";
 import { buildCycles } from "./runView";
 
 type TaskView = components["schemas"]["TaskView"];
@@ -199,7 +199,7 @@ export function taskRowChip(state: TaskRowState): TaskRowChip {
 }
 
 /**
- * The row's second line — the agent's latest note.
+ * The row's second line — the newest note on the issue.
  *
  * The note ITSELF is `statusLine`, shared with the Validation page so the two
  * surfaces cannot disagree about which comment counts or where the line ends.
@@ -207,9 +207,13 @@ export function taskRowChip(state: TaskRowState): TaskRowChip {
  * then the dependency a hold is waiting on. Returns null rather than a
  * placeholder when there is nothing to say — an empty second line is quieter
  * than "No updates yet" repeated down a list of eleven tasks.
+ *
+ * The row takes the text and drops who wrote it. A list of eleven tasks has one
+ * line each and no room for a second signal per row; the Validation page, which
+ * gives its one run a tile, is where attribution earns its space.
  */
 export function taskRowNote(task: TaskView): string | null {
-  const line = statusLine(task);
+  const line = statusLineText(task);
   if (line) return line;
   if (task.blockedBy && task.blockedBy.length > 0) {
     return `Waiting on ${task.blockedBy.join(", ")}`;

@@ -194,6 +194,48 @@ test("participants match with case, spaces and hyphens flattened", () => {
   assert.equal(checkDesignDiagram(FLOW, ok, bundle()), null);
 });
 
+test("a participant resolves by its `as` alias, not only by its id", () => {
+  // Mermaid ids hold no space, so a multi-word name reaches the diagram only
+  // as an alias. Seen live: `actor Staff as Warehouse Staff` was refused four
+  // times running because only the id `Staff` was matched against the PRD.
+  const ok = flow(`sequenceDiagram
+    actor LM as Line Manager
+    LM->>expense-webapp: approve
+`);
+  assert.equal(checkDesignDiagram(FLOW, ok, bundle()), null);
+});
+
+test("an alias resolves a cell node the same way an id does", () => {
+  const ok = flow(`sequenceDiagram
+    actor Employee
+    participant api as expense-api
+    Employee->>api: submit
+`);
+  assert.equal(checkDesignDiagram(FLOW, ok, bundle()), null);
+});
+
+test("an alias that names nobody is still refused, and the refusal teaches the alias route", () => {
+  const bad = flow(`sequenceDiagram
+    actor Employee
+    participant gw as Payments Gateway
+    Employee->>gw: pay
+`);
+  const p = checkDesignDiagram(FLOW, bad, bundle());
+  assert.equal(p?.code, "UNKNOWN_PARTICIPANT");
+  assert.match(p!.message, /`gw` is neither a node design.cell declares/);
+  assert.match(p!.message, /name one in the declaration's `as` alias/);
+});
+
+test("an alias does not license the ids a message names", () => {
+  const bad = flow(`sequenceDiagram
+    actor LM as Line Manager
+    LM->>ghost-service: approve
+`);
+  const p = checkDesignDiagram(FLOW, bad, bundle());
+  assert.equal(p?.code, "UNKNOWN_PARTICIPANT");
+  assert.match(p!.message, /`ghost-service`/);
+});
+
 test("a flow written before the cell is refused until the cell exists", () => {
   const p = checkDesignDiagram(FLOW, GOOD_FLOW, new FileBundle({ "specs/requirements/prd.md": PRD }));
   assert.equal(p?.code, "UNKNOWN_PARTICIPANT");

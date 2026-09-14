@@ -14,44 +14,43 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// dependency_status.go — the single resolution authority for a dependency's
+// read-time Status/Reason/Flags (ADR-0003: never authored, never persisted).
+//
+// For an external dependency the state is read off its hydrated definition
+// (dependency_json.go): what is on disk decides, so a stale flag can never
+// contradict the files. Precedence, first match wins:
+//
+//  1. Source "org" or registry hit  → resolved, flag registered
+//  2. no Provider                   → unresolved / needs-input (no service chosen;
+//     Suggestions may be open — the user chooses, the agent never does)
+//  3. no Style                      → unresolved / needs-input (a provider named, its shape not)
+//  4. sdk with no manifest on disk  → unresolved / needs-contract
+//  5. rest-api/graphql, no contract → unresolved / needs-contract
+//  6. contract agent-written, not
+//     yet accepted by a user          → unresolved / needs-acceptance
+//  7. otherwise                     → resolved; flag assumed when the contract
+//     is agent-written under the user's permission, flag derived when it was
+//     written from the provider's own documentation (no permission needed),
+//     flag sdk-only when an sdk dependency has no API contract beside its
+//     manifest.
+//
+// The build gate blocks on unresolved and on nothing else: an
+// assumed or sdk-only dependency builds, flagged everywhere it appears.
+
 package spec
 
-// OrgServiceHit carries the freshly-fetched org-service catalog lookup
-// results ComputeDependencyStatus needs for a kind=org-service dependency:
-// whether the name is namespace-visible, and (independently) whether it
-// exists in the catalog under ANY visibility. Meaningless for every other
-// kind — callers pass the zero value when resolving a non-org-service
-// dependency.
+// OrgServiceHit is the org-service resolver's answer for one dependency name:
+// Visible (reachable from this project's namespace) and Exists (in the org
+// catalog at all).
 type OrgServiceHit struct {
 	Visible bool
 	Exists  bool
 }
 
-// ComputeDependencyStatus is the SINGLE authority for a dependency's
-// read-time resolution status/reason — the ONLY place the precedence table
-// lives. Every caller (artifacts.ArtifactStore's read path, and later the
-// build preflight + hard-gate) fetches the resolver-port lookups fresh and
-// passes them in; this function never calls a resolver itself, so it stays
-// pure and trivially table-testable.
-//
-//   - registryHit is the rule-2 lookup: whether dep.Name is registered in the
-//     org's external-resource registry. Meaningful only for kind=external.
-//   - orgSvc carries the rule for kind=org-service: the namespace-visible /
-//     exists-any-visibility catalog lookups (the unchanged 4-state model).
-//
-// `component` and `platform-resource` dependencies are always `resolved`
-// here — platform-resource provisioning readiness stays a build-time
-// concern, computed elsewhere, never in this function.
-//
-// External precedence (first match wins — dependency-management migration
-// plan lines 93-104):
-//
-//  1. candidates present (2+)                        → ambiguous
-//  2. name found in the org's external-resource registry → resolved (reuse)
-//  3. style absent                                   → unresolved / needs-input
-//  4. style=rest-api && specPath absent               → unresolved / needs-spec
-//  5. style=sdk && package absent                     → unresolved / needs-input
-//  6. else                                            → resolved
+// ComputeDependencyStatus returns the read-time (status, reason) pair for one
+// dependency. ComputeDependencyFlags is its companion for the qualifiers on a
+// resolved external dependency; ApplyDependencyStatus sets all three.
 func ComputeDependencyStatus(dep Dependency, registryHit bool, orgSvc OrgServiceHit) (status, reason string) {
 	switch dep.Kind {
 	case DependencyKindComponent, DependencyKindPlatformResource:
@@ -68,24 +67,56 @@ func ComputeDependencyStatus(dep Dependency, registryHit bool, orgSvc OrgService
 
 	case DependencyKindExternal:
 		switch {
-		case len(dep.Candidates) >= 2:
-			return DependencyStatusAmbiguous, ""
-		case registryHit:
+		case dep.Source == DependencySourceOrg || registryHit:
 			return DependencyStatusResolved, ""
+		case dep.Provider == "":
+			return DependencyStatusUnresolved, DependencyReasonNeedsInput
 		case dep.Style == "":
 			return DependencyStatusUnresolved, DependencyReasonNeedsInput
-		case dep.Style == DependencyStyleRestAPI && dep.SpecPath == "":
-			return DependencyStatusUnresolved, DependencyReasonNeedsSpec
-		case dep.Style == DependencyStyleSDK && dep.Package == "":
-			return DependencyStatusUnresolved, DependencyReasonNeedsInput
+		case dep.Style == DependencyStyleSDK && dep.SDK == "":
+			return DependencyStatusUnresolved, DependencyReasonNeedsContract
+		case dep.Style != DependencyStyleSDK && dep.Contract == "":
+			return DependencyStatusUnresolved, DependencyReasonNeedsContract
+		case dep.ContractAssumed && dep.Assumed == nil:
+			return DependencyStatusUnresolved, DependencyReasonNeedsAcceptance
 		default:
 			return DependencyStatusResolved, ""
 		}
 
 	default:
-		// DependencyKind is a closed set (component|org-service|external|
-		// platform-resource); an unrecognized kind should never occur. Fail
-		// safe to resolved rather than block on something unclassifiable.
 		return DependencyStatusResolved, ""
 	}
+}
+
+// ComputeDependencyFlags returns the qualifiers on a RESOLVED external
+// dependency, in a fixed order; nil for anything else.
+func ComputeDependencyFlags(dep Dependency, registryHit bool) []string {
+	if dep.Kind != DependencyKindExternal {
+		return nil
+	}
+	if status, _ := ComputeDependencyStatus(dep, registryHit, OrgServiceHit{}); status != DependencyStatusResolved {
+		return nil
+	}
+	var flags []string
+	if dep.Source == DependencySourceOrg || registryHit {
+		flags = append(flags, DependencyFlagRegistered)
+	}
+	// Assumed means the contract on disk is the agent-written one AND the user
+	// accepted it; a record echoed beside a real document is not a flag.
+	if dep.ContractAssumed && dep.Assumed != nil {
+		flags = append(flags, DependencyFlagAssumed)
+	}
+	if dep.ContractDerived {
+		flags = append(flags, DependencyFlagDerived)
+	}
+	if dep.Style == DependencyStyleSDK && dep.Contract == "" {
+		flags = append(flags, DependencyFlagSDKOnly)
+	}
+	return flags
+}
+
+// ApplyDependencyStatus stamps Status, Reason and Flags on dep in place.
+func ApplyDependencyStatus(dep *Dependency, registryHit bool, orgSvc OrgServiceHit) {
+	dep.Status, dep.Reason = ComputeDependencyStatus(*dep, registryHit, orgSvc)
+	dep.Flags = ComputeDependencyFlags(*dep, registryHit)
 }

@@ -16,11 +16,12 @@
  * under the License.
  */
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { components } from "../../../generated/aep-api";
 import { client } from "../../../api/client";
 import { specKeys } from "./keys";
 import { toSpecEntries } from "./mapping";
+import { scheduleFreshnessPoll } from "./dependencyFreshness";
 import { ApiRequestError } from "../../../api/errors";
 
 type FileContent = components["schemas"]["FileContent"];
@@ -155,6 +156,61 @@ export function useSpecFileContent(
     queryFn: () => {
       if (!file) throw new Error("no file selected");
       return fetchSpecFileContent(projectName, file);
+    },
+  });
+}
+
+/**
+ * The definition view's "provide the interface": a URL the platform fetches, or
+ * the document itself (pasted or dropped). The platform validates, normalizes
+ * and commits it into the dependency's directory and records it in
+ * dependency.json. Both the file list and the dependency read model change,
+ * so both refresh.
+ */
+export function useProvideDependencyContract(projectName: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { depName: string; url?: string; content?: string }) => {
+      const { data, error } = await client.POST(
+        "/projects/{projectName}/dependencies/{depName}/contract",
+        {
+          params: { path: { projectName, depName: input.depName } },
+          body: {
+            ...(input.url ? { url: input.url } : {}),
+            ...(input.content ? { content: input.content } : {}),
+          },
+        },
+      );
+      if (error || data === undefined) throw toError(error, "Failed to provide the contract");
+      return data;
+    },
+    onSuccess: () => {
+      // The write lands through the Files API and the read model is served
+      // from the repo's HEAD, which follows a moment later — the same shape a
+      // turn end has, so the same immediate-then-later refresh.
+      scheduleFreshnessPoll(queryClient, projectName);
+      void queryClient.invalidateQueries({ queryKey: specKeys.files(projectName) });
+    },
+  });
+}
+
+/** The user's permission to build against a contract the agent wrote. */
+export function useAcceptDependencyAssumption(projectName: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { depName: string; note?: string }) => {
+      const { error } = await client.POST(
+        "/projects/{projectName}/dependencies/{depName}/assumption",
+        {
+          params: { path: { projectName, depName: input.depName } },
+          body: input.note ? { note: input.note } : {},
+        },
+      );
+      if (error) throw toError(error, "Failed to accept the assumption");
+    },
+    onSuccess: () => {
+      scheduleFreshnessPoll(queryClient, projectName);
+      void queryClient.invalidateQueries({ queryKey: specKeys.files(projectName) });
     },
   });
 }

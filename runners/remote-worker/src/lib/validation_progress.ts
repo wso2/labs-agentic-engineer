@@ -51,8 +51,34 @@
  *     wrong repair issues.
  */
 
-import type { HookCallback, PreToolUseHookInput } from "@anthropic-ai/claude-agent-sdk";
-import type { ProgressItemStatus } from "./progress/schema.js";
+import type { RunEvent } from "./progress/emitter.js";
+
+/**
+ * What a criterion's row may say, as the committed contract spells it.
+ *
+ * The contract's `itemStatus` is the UNION of two vocabularies — a validation
+ * criterion's, and the runtime task list's `pending | in_progress | completed |
+ * deleted` — and `source` says which half applies. This narrows it back to the
+ * criterion half, which is the only one this module produces, so a typo here is
+ * a compile error rather than a row a console cannot fold.
+ *
+ * The terminal two are report.json's OWN words (`pass`/`fail`, see
+ * aep-validation's generate-report.mjs), deliberately not `passed`/`failed`: the
+ * console overlays these live statuses onto the same rows it later fills from
+ * that report, and a second spelling for one fact would need a translation
+ * table between them. `not_run` is absent because only the report can conclude
+ * it — nothing observed DURING a run proves a criterion was never attempted.
+ *
+ * `healing` means a spec that once passed has broken, matching what
+ * aep-validation's healing.md scopes a heal to. An edit before an item's first
+ * pass is still `authoring`: authoring.md requires a spec to pass twice
+ * consecutively, so failing on the way there is the normal path, and calling it
+ * healing would make a healthy run read as a struggling one.
+ */
+export type ProgressItemStatus = Extract<
+  NonNullable<RunEvent["itemStatus"]>,
+  "planned" | "exploring" | "authoring" | "running" | "healing" | "pass" | "fail"
+>;
 
 /** One row's status changed. */
 export interface ProgressItemUpdate {
@@ -90,8 +116,12 @@ const TEST_RUN = /\b(?:npm|pnpm|yarn)\s+(?:run\s+)?test\b|\bplaywright\s+test\b/
 /** A spec file with a body — Playwright's own entry point, however it is spelled. */
 const HAS_TEST_BLOCK = /\btest\s*(?:\.\w+)*\s*\(/;
 
-/** Tools whose input names a file the agent is authoring. */
-const WRITE_TOOLS = new Set(["Write", "Edit", "NotebookEdit"]);
+/**
+ * Tools whose input names a file the agent is authoring. Exported because the
+ * issue's status line watches the same set (validation_status_line.ts), and two
+ * copies would let one grow a tool the other never sees.
+ */
+export const WRITE_TOOLS = new Set(["Write", "Edit", "NotebookEdit"]);
 
 interface ItemState {
   last: ProgressItemStatus;
@@ -249,10 +279,29 @@ export function validationRunOutcome(itemIds: string[], ok: boolean): ProgressIt
 }
 
 export interface ValidationProgressTracker {
-  /** PreToolUse hook: the statuses a call announces before it runs. */
-  hook: HookCallback;
-  /** Called by the SDK translator when a tool call settles. */
+  /**
+   * A tool call, before it runs: the statuses it announces.
+   *
+   * A WATCHER, never a decision — it is wired onto `RuntimePolicy.observe`,
+   * whose contract says the return value is ignored. The tools it watches are
+   * the ones the run needs, and a progress feature that could block a write
+   * would be a worse bargain than no progress feature.
+   *
+   * Plain arguments rather than a runtime's hook shape: which mechanism
+   * delivers a call is the adapter's business, and this module has no reason to
+   * know one runtime's hook grammar.
+   */
+  observe(toolName: string, toolInput: unknown, toolUseId: string): void;
+  /** Called when a tool call settles, with the `ok` that reaches the feed. */
   settle(toolUseId: string, ok: boolean): void;
+  /**
+   * This run's per-criterion history, exposed so a second reader of the SAME
+   * derivation can share it — the issue's status line does
+   * (validation_status_line.ts). Two states would derive the same tool call
+   * twice and could answer differently, which is how a row ends up saying
+   * `healing` while the line beside it still says `authoring`.
+   */
+  state: ValidationProgressState;
 }
 
 /**
@@ -276,28 +325,22 @@ export function createValidationProgressTracker(
   };
 
   return {
-    hook: async (input) => {
-      const hookInput = input as PreToolUseHookInput;
-      if (hookInput?.hook_event_name !== "PreToolUse") return {};
+    state,
 
-      const updates = validationProgressUpdates(hookInput.tool_name, hookInput.tool_input, state);
-      if (updates.length === 0) return {};
+    observe: (toolName, toolInput, toolUseId) => {
+      const updates = validationProgressUpdates(toolName, toolInput, state);
+      if (updates.length === 0) return;
 
       // Remembered BEFORE publishing, and keyed by the tool call, because the
       // outcome arrives with nothing but that id — the command's text is long
       // gone by the time the result comes back.
       if (updates[0]?.status === "running") {
         state.noteRun(
-          hookInput.tool_use_id,
+          toolUseId,
           updates.map((u) => u.itemId),
         );
       }
       publish(updates);
-
-      // Never a decision. This hook observes; the tools it watches are the ones
-      // the run needs, and a progress feature that could block a write would be
-      // a worse bargain than no progress feature.
-      return {};
     },
 
     settle: (toolUseId, ok) => {

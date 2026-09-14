@@ -65,7 +65,7 @@ Consequences, in the order they were decided:
    it does not do a smaller version of the job, it improvises one and reports
    success. **No image fallback**: two sources drift, and the fallback path would
    silently discard an org's edit to the skill on exactly the runs that hit it.
-   The check lives in `runClaudeQuery`, not in each entrypoint, so no new caller
+   The check lives in `startCodingRun`, not in each entrypoint, so no new caller
    can start a procedure-less session.
 4. **`PATCH /skills/{name}` refuses to disable the always-on set**
    (`spec.RequiredSkills`, 409). Availability is deliberately not gated on

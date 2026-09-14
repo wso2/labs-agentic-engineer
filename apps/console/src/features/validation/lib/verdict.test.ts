@@ -230,7 +230,7 @@ describe("verdictSentence", () => {
   // shared copy exists to stop.
   it("speaks for a first attempt, which has no verdict yet", () => {
     expect(verdictSentence("", undefined, "running")).toBe(
-      "Nothing reported yet — the validation attempt is still running.",
+      "The validation agent is running.",
     );
   });
 

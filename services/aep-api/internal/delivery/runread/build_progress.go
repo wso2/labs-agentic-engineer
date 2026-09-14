@@ -28,8 +28,11 @@ package runread
 // stays exactly what it was: the right read for ONE execution, and what
 // `get-task` and the per-run views are written against.
 //
-// The frames are that stream's, plus a `run` object naming the run each cycle
-// belongs to. Two consequences worth stating outright:
+// The frames are that stream's `cycle` and `done`, plus a `run` object naming the
+// run each cycle belongs to — and a `line` frame per agent-log entry. The feed
+// here is still v1 RunProgressLine: the run stream cut over to v2 `event` frames,
+// this one has not, and one connection never mixes the two envelope versions.
+// Three consequences worth stating outright:
 //
 // CYCLEINDEX STAYS RUN-RELATIVE. The contract says `cycleIndex` is the cycle's
 // 1-based position IN ITS RUN, and both streams honour that, so the same cycle
@@ -168,12 +171,14 @@ func (s *ProgressService) version(ctx context.Context, w io.Writer, flush func()
 				continue
 			}
 			run := &buildFrameRun{ID: row.ID, Kind: row.Kind, Index: i + 1}
-			ok := s.emitCycles(ctx, cycles, lastCycleJSON, cursor,
+			ok := s.emitCycles(ctx, cycles, lastCycleJSON,
 				func(v *gen.RunCycleView) bool {
 					return out.write(&buildFrame{Type: frameTypeCycle, Run: run, Cycle: v})
 				},
-				func(l *runLine) bool {
-					return out.write(&buildFrame{Type: frameTypeLine, Run: run, Line: l})
+				func(ctx context.Context, c *delivery.RunCycle, index int) bool {
+					return s.emitLines(ctx, c, index, cursor, func(l *runLine) bool {
+						return out.write(&buildFrame{Type: frameTypeLine, Run: run, Line: l})
+					})
 				})
 			if !ok {
 				return live, false

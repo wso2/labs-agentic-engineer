@@ -29,6 +29,7 @@
 // the later user messages via answerableQuestionIds.
 
 import type { ChatMessage } from "./chatStore.js";
+import { isErrorToolOutput } from "@aep/agent-stream";
 import { isQuestionTool, parseQuestionsInput } from "./questionCards.js";
 import type { ConversationMessage } from "./api/turns.js";
 
@@ -40,6 +41,7 @@ import type { ConversationMessage } from "./api/turns.js";
 // position never moves under it.
 export function projectableHistory(history: ConversationMessage[]): ChatMessage[] {
   const out: ChatMessage[] = [];
+  const rejected = rejectedToolCallIds(history);
   for (const m of history) {
     const text = contentText(m.content);
     if (m.role === "user") {
@@ -56,7 +58,7 @@ export function projectableHistory(history: ConversationMessage[]): ChatMessage[
       });
     } else if (m.role === "assistant") {
       if (text) out.push({ id: `h${out.length}`, role: "assistant", turnId: "history", content: text });
-      for (const q of questionCardsOf(m.content, out.length)) out.push(q);
+      for (const q of questionCardsOf(m.content, out.length, rejected)) out.push(q);
     }
   }
   return out;
@@ -83,14 +85,41 @@ function attachmentNamesOf(m: ConversationMessage): string[] {
   return m.attachments ?? [];
 }
 
+/**
+ * Tool-call ids whose result on the transcript is an error. A question call the
+ * SDK rejected against its schema still sits on the assistant message with the
+ * input the model sent, followed by an error result; the model then retried
+ * with a call that resolved. Only the resolved one is a question the user was
+ * asked — replaying the rejected one would put a second, near-identical card on
+ * the log.
+ */
+function rejectedToolCallIds(history: ConversationMessage[]): Set<string> {
+  const ids = new Set<string>();
+  for (const m of history) {
+    if (m.role !== "tool" || !Array.isArray(m.content)) continue;
+    for (const part of m.content) {
+      if (typeof part !== "object" || part === null) continue;
+      const p = part as { type?: string; toolCallId?: string; output?: unknown };
+      if (p.type !== "tool-result" || !p.toolCallId) continue;
+      if (isErrorToolOutput(p.output)) ids.add(p.toolCallId);
+    }
+  }
+  return ids;
+}
+
 /** Reconstruct question cards from an assistant message's tool-call parts. */
-function questionCardsOf(content: unknown, at: number): Extract<ChatMessage, { role: "question" }>[] {
+function questionCardsOf(
+  content: unknown,
+  at: number,
+  rejected: ReadonlySet<string>,
+): Extract<ChatMessage, { role: "question" }>[] {
   if (!Array.isArray(content)) return [];
   const cards: Extract<ChatMessage, { role: "question" }>[] = [];
   for (const part of content) {
     if (typeof part !== "object" || part === null) continue;
     const p = part as { type?: string; toolName?: string; input?: unknown; toolCallId?: string };
     if (p.type !== "tool-call" || !isQuestionTool(p.toolName)) continue;
+    if (p.toolCallId && rejected.has(p.toolCallId)) continue;
     const questions = parseQuestionsInput(p.toolName!, p.input);
     if (!questions) continue;
     cards.push({

@@ -39,8 +39,10 @@ over the issue text when the two differ.
   Read the role in the SPA from the sign-in identity the auth
   dependency provides (`user.profile.groups`; see `thunder-authentication`),
   and treat it as **presentation only** — the backend enforces permission and
-  answers 403. A component with no auth dependency has no roles: build the
-  screen as drawn.
+  answers 403. Groups matching no declared role fall to the design's
+  `coldStartRole`, the same rule the backend applies, so a first-time person
+  sees the base experience rather than an empty shell. A component with no auth
+  dependency has no roles: build the screen as drawn.
 
 ## Element for element
 
@@ -49,10 +51,10 @@ in that order, with that literal content:
 
 | DSL | Build |
 |---|---|
-| `navbar "App \| Nav -> S"` / `sidebar "…"` | the app's real navigation chrome, identical on every screen of a role; each item that carries `-> S` links there |
+| `navbar "App"` / `sidebar "A -> S \| B"` | the pinned design system's canonical app shell — the brand in the top bar, the `sidebar` items as the navigation rail — identical on every screen of a role; each item that carries `-> S` links there. Navigation stays in the rail even if a wireframe put a link in the `navbar` |
 | `heading`, `text`, `link`, `breadcrumb` | the same words on the page |
 | `card "Label \| Value \| Caption"` | a stat tile with that label, that value bound to live data, that caption |
-| `table "A \| B \| C"` + `row` lines | a data table with exactly those columns; the `row`s are example data, so bind the table to the real list |
+| `table "A \| B \| C"` + `row` lines | a data table with exactly those columns, bound to the real list. A column the list endpoint does not return is filled from **one** more request to another list operation of the contract (a name joined on id from the entity list; a count from the child list filtered once and grouped) — never one request per row, and never dropped while some list operation can supply it. Only a column no list can supply is left out, with the gap named in your report |
 | `list`, `tabs`, `badge`, `progress`, `avatar`, `chart`, `image` | the matching UI primitive — a status is a badge, not a paragraph |
 | `input`, `textarea`, `select`, `search`, `checkbox`, `radio`, `toggle` | a real form control whose placeholder/label is the DSL label, wired to submit |
 | `button "X" primary` | a primary-styled button; every button the DSL marks `primary` is primary on the page, and only those. Unmarked buttons take a non-primary style (destructive where the DSL says `danger`) |
@@ -67,6 +69,23 @@ wrong for the data the API actually returns, and say so in the PR.
 `list`, and data `card` needs what it shows with no rows, while fetching,
 and when the request fails. A wireframe shows the happy path; the page
 must not break off it.
+
+**The example data is the mock's seed.** The reviewer compares the running
+page against the rendered wireframe, so mock mode should show the `row`s the
+DSL draws, and a stat `card`'s value should agree with the rows it counts.
+Print them instead of retyping them:
+
+```bash
+node "${AEP_SKILLS_DIR:-.claude/skills}/wireframes/scripts/seed.mjs" specs/design/components/<name>/wireframes.dsl
+```
+
+That prints, per screen, every `table` (columns and its `row`s as records),
+stat `card` (label, value, caption), `list`, `select` (label and preselected
+value) and `badge` as JSON. Map each record onto the provider's schema in the
+mock handlers and derive the stat values from those records. `AEP_SKILLS_DIR`
+is where a run finds the skill library; the fallback is `.claude/skills/`, the
+mirror the platform writes into every project, where this skill's `scripts/`
+also live.
 
 ## Arrow for arrow
 

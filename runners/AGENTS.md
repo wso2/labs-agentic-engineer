@@ -31,37 +31,157 @@ into the runner pod at `/app/skills` for live skill edits (see
   in argv or URL. Don't add a third path. Changes to the generated refresh
   scripts must keep `credhelper.test.ts` green — it drives them with real `git`.
 - Runner `console.*` is a **user-facing** channel, and it shares the file
-  descriptor the NDJSON progress feed writes to. `installConsoleScrubber()` at
-  each entry point converts every call into a scrubbed `log` progress event, so
+  descriptor the NDJSON progress feed writes to. `installConsoleScrubber()`
+  converts every call into a scrubbed `notice` run event, so
   the feed stays parseable NDJSON end to end; don't bypass it by writing to
   `process.stdout` directly. The BFF still wraps any non-NDJSON pod line into a
   build-log event, but that is now a safety net, not the normal path.
-- **The progress contract is `lib/progress/schema.ts`, and it moves with three
-  mirrors**: `contracts/progress.go`, the three progress schemas in
-  `packages/contracts/api/v1/openapi.yaml` (contract-first — then `make gen-api`),
-  and the WORDING, which is nobody's here: `@aep/progress-view` renders every
-  line for both the console and the playground, so an event without a case there
+  **Redaction needs the credential ENROLLED, not just the console wrapped.**
+  `installLogRedaction()` does both in one call so every entrypoint gets both,
+  enrolling from `lib/credential_env.ts` — which MIRRORS the Go dispatch
+  constants with nothing mechanical between them, so a credential added there
+  is added here too. One the scrubber cannot enroll is reported by name rather
+  than dropped in silence. Rationale, and the credhelper path this cannot
+  reach: ADR-0002 decision 19.
+- **The progress contract is RUN EVENTS v2, and it is GENERATED, not written
+  here.** `RunEvent` lives in `packages/contracts/api/v1/openapi.yaml` and
+  reaches this package through `openapi-typescript` (see the generated-types
+  bullet below); `lib/progress/emitter.ts` re-exports it and owns only what the
+  contract does not carry — the envelope (`v: 2`, `seq`, `ts`), the default
+  author of a line, and the scrubber walk. The hand-kept `lib/progress/schema.ts`
+  and its Go twin are gone: one document, three generated consumers. Changing
+  the feed is therefore a contract change first (`make gen-api`, then `make gen`
+  for this package), never an edit here.
+
+  Four rules hold across the whole feed, and each is load-bearing:
+
+  - **Attribution is ONE field.** Every event carries `agentId`; the lead is the
+    literal string `lead`. No consumer infers an author from an absence, from a
+    tool name, or from anything else. v1's `emitter` / `emitterId` /
+    `emitterLabel` are gone with the tree they could not describe.
+  - **An agent's life is DECLARED.** `agent_started` / `agent_progress` /
+    `agent_settled` come from the runtime's own `task_*` messages, so depth, the
+    parent and the report are recorded rather than guessed. v1 had no "an agent
+    started" event at all, which is why a depth-2 child was flattened onto its
+    parent and no surface could draw a tree.
+  - **`turn_ended` is not `run_settled`.** A `result` message is one turn
+    ending; the run settles when the stream closes. See the loop bullet below.
+  - **Heartbeats are bounded and are never progress.** At most one per agent per
+    10s, only while a tool or a model turn is in flight, and the watchdog's idle
+    clock ignores them exactly as it ignores retries. A heartbeat that reset that
+    clock would hide the stall it exists to report — and the rule has to hold for
+    the ones the rate limiter DROPS too, which is why `run_loop.ts` routes those
+    messages by TYPE rather than by whether an event came back.
+
+  `notice` carries a CLOSED `code` for the conditions a consumer branches on
+  (`api_retry`, `compaction`, `refusal`, `rate_limit`, `permission_denied`,
+  `terminated`, `workspace_guard`, the eight dark-zone conditions, …) and a
+  code-LESS variant for prose a reader reads and nothing branches on: the
+  runner's own `console.*` output, the watchdog's sentence, a dangling skill pin.
+  v2 has no `phase` and no `log` kind — v1's eight phase ids became notice CODES,
+  and the two the runner raises (`workspace_provisioning`, `workspace_ready`,
+  `lib/progress/lifecycle.ts`) carry the code and no prose. If a surface ever
+  needs to branch on one of the remaining prose lines, the answer is another code
+  in the contract, not a field invented here.
+
+  The WORDING is nobody's here either: `@aep/progress-view` renders every line
+  for both the console and the playground, so an event without a case there
   reaches a user as a blank row or a raw field dump. Decisions and the SDK's
   measured capabilities are in
   `remote-worker/design/decisions/ADR-0002-run-observability.md`; read it before
   changing what a line says, because several of its entries are corrections of
-  the obvious-looking choice.
+  the obvious-looking choice — and its v2 amendment records which of them the
+  run-events cutover reverses.
+- **`runtime/port.ts` is the WHOLE runtime-specific surface, and `lib/runner.ts`
+  depends on nothing else about a runtime.** A `Runtime` answers three things —
+  its name, its tool glossary, and `start(prompt, policy)` — and `RuntimePolicy`
+  states the platform's rules for a coding run in vocabulary no runtime owns:
+  where authored files may land, what a WebSearch query may contain, which skills
+  are reachable, which CAPABILITY CLASSES are denied, which model to bill. An
+  adapter enforces every clause through whatever mechanism its runtime has:
+  `runtime/claude/runtime.ts` turns the guards into `PreToolUse` hooks, the
+  capability classes into `disallowedTools` (`runtime/claude/tools.ts`), and the
+  MCP policy into an `http` server behind a loopback auth proxy, because this
+  SDK's MCP config only accepts a static header. The test for whether something
+  belongs in the port is whether a second runtime would write it the same way; if
+  it names a tool, a hook or an SDK option, it does not.
+  **There is exactly ONE adapter**, and `runtime/registry.ts` refuses `opencode`
+  by name with the reason — three spikes are owed (pre-dispatch tool/permission
+  parity, whether the stream declares an agent's id/depth/parent, and how usage
+  is reported for cost stamping) and each unanswered one fails SILENTLY: an
+  unenforced guard, an inferred tree, a blanked cost. A seam that says "not
+  implemented" is the deliverable; a stub would be a claim.
+  Every deviation from the design's sketch is recorded at its field in
+  `port.ts` and argued in
+  `remote-worker/design/decisions/ADR-0012-the-runtime-is-a-port-with-one-adapter.md`
+  — read it before reshaping the interface, because the largest one (the session
+  exposes `stream` + `translate`, not a flat `events()`) is a measured constraint
+  of the WATCHDOG's contract, not a preference.
+- **`lib/progress/claude_adapter.ts` is the TRANSLATION half of that adapter.** SDK messages in, run events v2 out. Runtime names must not reach
+  a consumer's logic: `tool` carries the SDK's own tool name because that is what
+  a row prints, but fan-out is `agent_started`, never "a `tool_result` whose tool
+  is called `Agent`". It is a per-run factory — the agent registry, the in-flight
+  calls and the heartbeat clocks describe ONE run, and two runs sharing them
+  would mislabel lines rather than merely lose detail. A second runtime is a
+  second adapter and nothing else.
+- **The run settles when the SDK stream CLOSES, and the feed gets exactly one
+  `result` line.** `remote-worker/src/lib/run_loop.ts` owns both, and both are
+  counter-intuitive. A `result` message is one TURN ending: a lead can launch a
+  background subagent and end its turn while that subagent works, so returning
+  there kills the pod mid-flight (measured —
+  `remote-worker/test/fixtures/probe2-lead-ends-early.jsonl`, first `result` at
+  message 16 of 40, subagent steps at 18-25). The loop keeps reading and writes
+  `run_settled` when the iterator closes; the exit code follows that same
+  settle. The adapter emits a `turn_ended` per SDK `result` — informational, on
+  the feed where it happened — and the loop remembers the newest one so the
+  settle can carry its outcome and its usage. So **do not emit a `run_settled`
+  from anywhere else**: several would settle one run several times, and every
+  consumer treats a settle as terminal — `buildCrew` in
+  `packages/progress-view/src/crew.ts` settles every agent it never heard close
+  on the run's settle, so a second one describes a run that had not ended.
+  Anything that has to end a RUNNING run early states its reason through the
+  loop's own seam instead (`createRunTerminator`, `run_loop.ts`): the deadline
+  and a fatal MCP auth failure both trip it, and the loop stops the tasks still
+  live, names the cause in a `terminated` notice and writes the one settle. It
+  shipped the other way once — the MCP policy's `onFatal` emitted its own settle
+  while the loop was still reading, so a fatal put two on one feed.
+  **The one carve-out is a failure BEFORE the loop exists**: `oneshot.ts` and
+  `local.ts` settle their own pre-flight failures (a workspace that would not
+  provision, a validation context that would not load, a mirror with no workflow
+  skill) and they may, because `consumeRun` is never reached on that path — the
+  run really did end there and there is no second settle to collide with. That
+  carve-out does not travel: copied anywhere the loop is already reading, it is
+  the double settle again. Usage is NOT summable across turns —
+  the runtime reports it cumulatively, so the last turn's number IS the run's
+  total. The loop takes its stream as an `AsyncIterable` exactly
+  so a recording can be replayed through it: when a change turns on what the SDK
+  does, add a fixture rather than a hand-written mock — both probes in
+  `remote-worker/test/fixtures/` are replayed through it in `run_loop.test.ts`.
+  `AEP_RUN_DEADLINE_SECONDS` bounds a run that never ends — it stops the tasks
+  still live and settles as a failure. The dispatcher stamps it with the SAME
+  number it puts on the Job's `activeDeadlineSeconds`, so the pod's own budget
+  and the cluster's backstop cannot disagree; the runner subtracts its own
+  margin, which is not the dispatcher's to know. Unset still means no guard,
+  which is what the playground runs under.
 - **API retries are on the feed for every run; the rest of the diagnostics are
   developer-only files.** A stalled model turn used to be reported as bare
   silence. The SDK emits `system`/`api_retry` for every retryable failure and
-  `from-sdk.ts` was discarding it, so `progress/diagnostics.ts` reads it into a
-  `warn` line and the watchdog names it in its own. Ungated on purpose: a healthy
+  the translator was discarding it, so `progress/diagnostics.ts` reads it into a
+  `warn` notice and the watchdog names it in its own. Ungated on purpose: a healthy
   run emits nothing, the `error` field is a closed enum (no prompt or credential
   can ride it into a console build log), and overload is load-dependent so a flag
   would be off during every incident. **A retry must never reach
   `watchdog.observe`** — it is the absence of progress, and resetting the idle
-  clock hides the stall it explains. **A running subagent is known only from
-  `emitterId`** — the translator emits no `tool_use` for a fan-out call, so a
-  watchdog that expects one reports "no tool in flight" for the whole of a
-  subagent's run (it did, through a ten-minute live stall). **A failed fan-out
-  prints its error text as a second, `error`-level line**, because that text is
-  the last copy of the reason: the subagent's transcript is not on the feed and
-  `claude.log` dies with the pod. `debugFile`, `stderr`,
+  clock hides the stall it explains; the same now holds for heartbeats. **A
+  running agent is known from `agent_started`, and closed by `agent_settled`** —
+  the adapter emits no `tool_use` for a fan-out call, so a watchdog that expected
+  one reported "no tool in flight" for the whole of an agent's run (it did,
+  through a ten-minute live stall). v1 had to register an agent from the first
+  LINE it produced, which was a few seconds late and the only start that stream
+  carried; v2 has the runtime's own declaration. **A failed spawn prints its
+  error text as an `error`-level notice**, because that text is the last copy of
+  the reason: the agent's transcript is not on the feed and `claude.log` dies
+  with the pod. `debugFile`, `stderr`,
   `includePartialMessages` and the reasoning pair (`thinking` +
   `forwardSubagentText`) are the opposite call: on for every playground run,
   off in a pod unless `AEP_RUNNER_DEBUG=1`, and they land in files beside
@@ -74,16 +194,47 @@ into the runner pod at `/app/skills` for live skill edits (see
   either alone re-creates a log that says reasoning happened without saying what
   it was. ADR-0002 decisions 14–16 have the measurements, including why stderr
   is *not* where retry detail lives.
-- **Fan-out runs in the foreground.** A `PreToolUse` hook
-  (`lib/fanout_foreground.ts`) forces `run_in_background: false` on every
-  `Agent`/`Task` call that did not already say so. Backgrounding does not add
-  concurrency — several fan-out calls in one turn is what does — and it detaches
-  the subagent, so the SDK forwards none of its messages, a whole component's work
-  reaches the feed as an empty section, and the session can finish while its
-  children are still running (it did: `result: success` with one component
-  stubbed and one missing). **Background is the SDK default**, so the hook keys on
-  the flag's absence, not on `true`; the omitted-flag test is the regression pin.
-  Rationale inline in the module; ADR-0002 decision 13 has the measurements.
+- **A validation run keeps its own issue's status line, and the platform writes
+  it.** `lib/validation_status_line.ts` is a WATCHER on
+  `RuntimePolicy.observe.toolUse` beside the per-criterion one, sharing its
+  `ValidationProgressState` so a row and the line above it cannot disagree (the
+  two are fanned out in `runner.ts`, rows first, so neither can swallow the
+  other's call). Two things make it unlike every other watcher here.
+  It performs **I/O on the agent's path** — an awaited `gh issue comment`
+  through the REAL `gh` (`resolveRealGhPath`, never the `.aep/gh` wrapper) —
+  because the whole value is that the line lands BEFORE the silence it explains;
+  a detached post during a twenty-minute exploration could land after it, and
+  `RuntimeObservers.toolUse` is awaited for exactly this one caller (ADR-0012).
+  And it reads the **outcome** as well as the call, through the same
+  `observe.toolOutcome` seam the rows settle on, because the report generator
+  FAILING is what puts a run into its repair mode. A failure is warned and swallowed: two hours of work
+  must never die because it could not be watched. The issue number arrives as
+  `AEP_VALIDATION_ISSUE`, stamped by the BFF — nothing else in the pod answers
+  "which issue", since `AEP_TASK_ID` is the cycle's uuid and the number reaches
+  the agent only as prose inside `AEP_PROMPT`. Rungs are one-way and the repair
+  mode absorbs the exit-2 loop, which is what keeps a lapping run to six lines
+  instead of three per criterion; `design/decisions/ADR-0011-the-platform-writes-a-validation-runs-status-line.md`
+  has the measurements, including the p44 run that produced two wrong lines
+  before either rule existed.
+- **Fan-out is NOT forced into the foreground any more, and the hook that did it
+  is deleted.** `lib/fanout_foreground.ts` rewrote `run_in_background` to `false`
+  on every `Agent`/`Task` call, for two measured reasons. The first — that a
+  backgrounded subagent's messages are not forwarded at all — was true of SDK
+  0.3.220 and is **not** true of 0.3.247: both recordings in
+  `remote-worker/test/fixtures/` show a backgrounded agent's steps arriving
+  attributed, with its depth, its parent and its report. The second — that a
+  detached agent lets the session end while its children work — was real and is
+  fixed where it belonged, in the loop that treated the first `result` as the
+  run ending. Neither reason survives, so the rewrite would now cost the
+  concurrency it was never buying: **backgrounding is what lets a lead keep
+  working while its builders build**, and the `aep` skill governs the shape.
+  The regression pin moved with it — `run_loop.test.ts` replays probe 1 and
+  asserts a backgrounded spawn arrives as `agent_started {background: true}`
+  followed by its own attributed steps. Read ADR-0002 decision 13 and its
+  amendments before reintroducing any of this. The shape itself is the skill's,
+  and it is now background-by-default:
+  `ADR-0014-fan-out-is-backgrounded-by-default.md` is that decision, and the
+  glossary below is what lets the skill state it without naming a runtime.
 - **Authored files land in the project.** `lib/workspace_guard.ts` is a
   `PreToolUse` hook that denies `Write`/`Edit`/`NotebookEdit` outside the
   workspace, and `promptWithProjectRoot` (`lib/runner.ts`) states the absolute
@@ -105,13 +256,35 @@ into the runner pod at `/app/skills` for live skill edits (see
   sandbox.
 - **`allowedTools` restricts nothing here.** `bypassPermissions` +
   `allowDangerouslySkipPermissions` allow every harness tool regardless, so
-  `BASE_ALLOWED_TOOLS` documents intent while `DISALLOWED_TOOLS` is the boundary
-  that holds. Keep the harness's session-management surface (schedulers, task
-  channels, interactive prompts) in the deny list: a one-shot pod has no user and
-  no next session, and a reachable-but-useless tool is somewhere a run will spend
-  a turn. Corollary: a typo in `BASE_ALLOWED_TOOLS` cannot fail loudly — it named
+  `BASE_ALLOWED_TOOLS` documents intent while the DENY list is the boundary
+  that holds. Both live in `runtime/claude/tools.ts`, and the deny list is
+  derived: the port states CAPABILITY CLASSES (`interactive_prompt`,
+  `scheduling`, `durable_session`, `peer_messaging`, `artifact_publishing`) and
+  that file maps each to this runtime's names. There are no runtime-neutral tool
+  names to write — a second runtime shares none of these sixteen — but the two
+  lists share the REASON each entry is on them, which is the sentence below. Keep the surface that assumes an interactive user, a scheduler, a
+  durable session or a peer to talk to (schedulers, cron, prompts, worktrees,
+  messaging) in the deny list: a one-shot pod has none of those, and a
+  reachable-but-useless tool is somewhere a run will spend a turn.
+  **The whole TASK surface is deliberately allowed**, and it took two
+  corrections to get there. `TaskOutput`/`TaskStop` came off first: a lead that
+  backgrounds work has to be able to wait on it and to stop one that runs away,
+  and denying them is what left a run reaching for `ScheduleWakeup` instead
+  (`remote-worker/test/fixtures/probe1-background-fanout.jsonl` shows the healthy
+  shape: three `TaskOutput` calls, one per agent).
+  `TaskCreate`/`TaskUpdate`/`TaskGet`/`TaskList` followed. They were denied as
+  "a durable board's surface, and this pod has no board", and that had the
+  audience wrong: the board is not for a next session, it is for the person
+  watching this one. A lead's plan is the only statement of intent a run
+  produces, and v2 puts it on the feed as `work_item {source: "plan"}` rows a
+  console folds by item — so the plan being true is worth more than the turn it
+  costs. Corollary: a typo in `BASE_ALLOWED_TOOLS` cannot fail loudly — it named
   `Task` for a whole SDK generation after the tool became `Agent`.
-- **`settingSources` is `["project"]`, and that is load-bearing.** The BFF
+- **`settingSources` is `["project"]`, and that is load-bearing.** It lives in
+  `runtime/claude/runtime.ts` now, with the other two invariants that are
+  conditions of running this platform's workload rather than policy anyone
+  decides per run (`strictMcpConfig`, and `bypassPermissions` +
+  `allowDangerouslySkipPermissions`). The BFF
   mirrors the org's coding-relevant skills into the project clone at
   `.claude/skills/`, and the SDK only discovers them if the project source is
   admitted — its `skills:` option is an ALLOWLIST over discovered skills, not a
@@ -119,7 +292,7 @@ into the runner pod at `/app/skills` for live skill edits (see
   the run reported success while the agent compensated by grepping `SKILL.md`
   out of the tree. `AGENT_SETTING_SOURCES` is exported and
   pinned by a test so a revert to `[]` fails there instead of in a build, and
-  `runClaudeQuery` warns when the `init` message's resolved list is missing
+  `startCodingRun` warns when the `init` message's resolved list is missing
   something we asked for (`skills_preload_check.ts`). 'user' and 'local' stay
   out — a developer's `~/.claude` has no place in a container run. The MCP
   isolation that `[]` used to give for free is now explicit: `strictMcpConfig`
@@ -140,7 +313,44 @@ into the runner pod at `/app/skills` for live skill edits (see
   claiming `skills:` "injects full bodies at startup" was wrong for as long as it
   existed, through the earlier `aep-task-skills` plugin too — an agent given a
   listed skill cannot state a codeword from its body until it calls the tool.
+- **The RUNTIME and the MODEL are an organization setting, and they arrive as
+  env.** `AEP_AGENT_RUNTIME` and `AEP_AGENT_MODEL` are stamped onto the Workload
+  by `delivery/codingagent`, copied from the org's `/config` `codingAgent`
+  section — copied, not referenced, so a change applies from the NEXT cycle and a
+  run in flight keeps the model its usage lines were billed against. Unset means
+  the platform defaults (`claude-code`, `claude-sonnet-5`), which is what every
+  dispatch carried before the setting existed and what the playground still runs
+  under. An unrecognised runtime is an error, never a silent fallback: running
+  the one we do have would bill an org for a runtime it did not choose. The model
+  is no longer a literal in `runner.ts`.
 - Self-contained: all agent and SDK-specific wiring lives here.
+- **The runner's contract types are GENERATED and DELIBERATELY NOT COMMITTED.**
+  `pnpm --filter remote-worker gen` (wired into root `make gen` via turbo) runs
+  `openapi-typescript` over `packages/contracts/api/v1/openapi.yaml` — the same
+  committed document `aep-api` and the console generate from — into
+  `remote-worker/src/generated/aep-api.d.ts`. The root `.gitignore` rule
+  `generated/` keeps it out of git, and that is correct, not an oversight:
+  the image runs `npx tsx src/oneshot.ts`, there is no `tsc` in the
+  image, and `tsx` erases types — so a **type-only** import
+  (`import type { components } from "../generated/aep-api"`) resolves at
+  workspace typecheck and vanishes before the pod ever runs. Do NOT "fix" this
+  by committing the file (it would go stale against the contract, which is the
+  exact failure the gitignore rule exists to prevent), and do NOT create a
+  runtime (value) import of the generated module — `import { ... }` without
+  `type` survives erasure and the pod would crash on a missing file.
+  `remote-worker/turbo.json` overrides `gen.inputs` to name the contract
+  because the file it reads lives two packages up, the same override
+  `apps/console` carries.
+
+  **`openapi-typescript` is deliberately NOT a dependency of this package** —
+  the script runs the repo ROOT's copy, which pnpm puts on a workspace script's
+  PATH. Declaring it here breaks the image: this package pins
+  `typescript@^6`, openapi-typescript's peer is `typescript@^5.x`, and npm (which
+  is strict about peers where pnpm only warns) then refuses to resolve, so
+  `npm install --package-lock-only` errors and the Dockerfile's `npm ci` has no
+  lockfile to read. Keeping it at the root also keeps a host-only codegen tool
+  out of the pod image entirely, since `npm ci` there does not omit dev
+  dependencies.
 - **Skills scope is stated by the caller, never read off `AEP_COMPONENT_NAME`.**
   A milestone Job carries a sentinel there (`aep-milestone`), so an
   implementation run resolves the union of `skillsPinned` across every
@@ -173,6 +383,19 @@ into the runner pod at `/app/skills` for live skill edits (see
   (their workflow arrives as prompt text, not through the tool) while every
   `Skill playwright-cli` call was rejected and the agent grepped the mirror's
   files by hand.
+- **The workflow names tool ROLES; `lib/tool_glossary.ts` binds them.** The `aep`
+  skill says "the fan-out tool", "the wait tool", "the task list" rather than
+  `Agent`, `TaskOutput`, `TaskCreate`, because one authored library is shared by
+  every org and a body naming this runtime's tools would mis-steer any other one
+  — silently, since prose cannot fail at startup the way a missing overlay anchor
+  does. `systemPromptAppend` (`lib/runner.ts`) is the order that makes it work:
+  the workflow body, then the pinned skill bodies, then the glossary LAST,
+  because the skill points at it by position ("the tool glossary at the end of
+  your instructions"). Append nothing after it. A second runtime is one more
+  entry in `GLOSSARIES` and nothing else — this is not the runtime port, which is
+  the seam `progress/claude_adapter.ts` sits on. `make workflow-skill` prints the
+  glossary after the composed body in both modes, since the roles do not resolve
+  without it. ADR-0014.
 - **A mirror with no workflow skill is FATAL.** `requireWorkflowBodies` throws and
   both entrypoints report a failed run. Every other skill degrades — a dangling
   pin warns and the build continues — because missing guidance costs quality and
@@ -181,7 +404,7 @@ into the runner pod at `/app/skills` for live skill edits (see
   The mirror's writes are best-effort by design (they may not fail a creation,
   publish or dispatch), so this is where that becomes visible. **Do not add an
   image fallback**: two sources drift, and the fallback would silently discard an
-  org's own edit to the skill. The check sits in `runClaudeQuery`, so no new
+  org's own edit to the skill. The check sits in `startCodingRun`, so no new
   entrypoint can start a procedure-less session.
 - **Anything a skill must invoke by absolute path reads `$AEP_SKILLS_DIR`**, now
   `<workspace>/.claude/skills`. The runner stamps it (`lib/runner.ts`) because it
@@ -223,6 +446,14 @@ into the runner pod at `/app/skills` for live skill edits (see
   name belong here rather than in the skill directory: nothing but prose then
   reaches an org's editable skills repo. See
   `remote-worker/design/decisions/ADR-0008-the-bal-library-tool-is-built-in-the-image.md`.
+- **This package is inside the eslint gate, and was not until 2026-09-07.**
+  `make lint` is `turbo run lint`, which runs a package's own `lint` script — and
+  `remote-worker` had none, so the most safety-critical TypeScript in the repo
+  (credential helpers, the write guard, the DLP and SSRF hooks, the progress
+  feed) was the one package nothing linted. Three findings had accumulated
+  unnoticed, one of them a useless escape inside a **secret-redaction regex**,
+  which is exactly the place a silent character-class mistake costs the most.
+  Keep the `lint` script; a new entry point or module has to pass it.
 - **The image installs from `remote-worker/package-lock.json`, not from
   `pnpm-lock.yaml`.** Two lockfiles, one `package.json`: pnpm's covers the
   workspace (tests, typecheck, the playground), npm's is what `npm ci` in the
@@ -231,6 +462,36 @@ into the runner pod at `/app/skills` for live skill edits (see
   on an out-of-sync `npm ci`, which is the loud outcome. The quiet one is worse:
   a range that still resolves leaves the pod running a version the tests never
   saw.
+- **The image states what the environment IS, so no agent has to discover it.**
+  Two entries earn their place there rather than in a skill or a prompt.
+  `AGENT_BROWSER_ARGS=--no-sandbox` (Dockerfile): a pod has no usable chromium
+  sandbox — no setuid helper, and the runtime's seccomp profile denies the
+  unprivileged user namespace the zygote falls back to — so without it the first
+  browser command of a walk fails and the agent spends failed tasks guessing.
+  The pod is the boundary that holds; the argument for why dropping chromium's
+  own is acceptable is at the variable. And `remote-worker/docker-entrypoint.sh`,
+  the image's ENTRYPOINT, which sets `ulimit -c 0` (soft AND hard, so no
+  descendant can raise it) before exec'ing the CMD: a `bal build` JVM or a
+  chromium that crashes used to drop a `core` of tens of megabytes into the
+  cloned repository, untracked and one `git add -A` from a customer's PR. It has
+  to be the image because Kubernetes has no `ulimit` field and Node cannot call
+  `setrlimit`. Any new way of starting the container goes THROUGH that wrapper —
+  the playground's `--entrypoint` names it (`playground/src/engine/coding-run.ts`)
+  rather than `npx`, which is how it skipped the limits for a while.
+  What the image CANNOT state is `/dev/shm`, which is the caller's: this
+  Chromium aborts on the 64Mi a pod gets by default, so all three run paths size
+  it to 1 GiB — `--shm-size=1g` locally and in the playground, a bounded
+  `medium: Memory` emptyDir in the Job. ADR-0013 has the two properties that are
+  easy to get wrong (it is charged to `memoryLimit`, and unbounded it is sized
+  from the NODE's memory) and why `--disable-dev-shm-usage` was rejected.
+  The `core` guard has a second half in the RUNNER: `installCrashArtefactExclude`
+  (`lib/workspace.ts`) writes the crash-artefact patterns into the clone's
+  `.git/info/exclude` — per-clone, never committed, so no platform concern
+  reaches a customer's `.gitignore`. It is not redundant with the rlimit (it
+  covers the JVM's own `hs_err_pid*.log`, which no rlimit suppresses), and
+  neither is redundant with the patterns `skills/aep/SKILL.md` names — that is
+  the only copy a reader meets when they wonder why `core` is not in
+  `git status`.
 - **One image**, `remote-worker/Dockerfile`, serves BOTH task kinds
   (`AEP_TASK_KIND=implementation` and `=validation`). It is Debian-based
   because Playwright's browsers are glibc-linked; do not reintroduce a second,

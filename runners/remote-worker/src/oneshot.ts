@@ -20,7 +20,7 @@
 //
 // OpenChoreo renders a batch/v1 Job from the coding-agent ComponentType,
 // passing the dispatch payload via AEP_* env vars (no HTTP, no token in body).
-// We reuse the same provisionWorkspace + runClaudeQuery code that the legacy
+// We reuse the same provisionWorkspace + startCodingRun code that the legacy
 // HTTP server used; only the wrapper changes shape.
 //
 // Exit codes:
@@ -33,12 +33,13 @@
 
 import { randomUUID } from "node:crypto";
 import { provisionWorkspace } from "./lib/workspace.js";
-import { onDemandSkills, runClaudeQuery, type McpAuthOpts } from "./lib/runner.js";
+import { onDemandSkills, startCodingRun, type McpAuthOpts } from "./lib/runner.js";
 import { openTaskLog } from "./lib/logger.js";
 import { isUUID, isSlug } from "./lib/uuid.js";
 import type { DispatchRequest } from "./lib/types.js";
 import { emit, primeScrubber } from "./lib/progress/emitter.js";
-import { installConsoleScrubber } from "./lib/progress/console_scrub.js";
+import { PROVISIONING, WORKSPACE_READY } from "./lib/progress/lifecycle.js";
+import { installLogRedaction } from "./lib/progress/console_scrub.js";
 import { resolveTaskSkills } from "./lib/skills_resolver.js";
 import { listMirroredSkills, readSkillBodies, resolveSkillPresence } from "./lib/skills_presence.js";
 import { ClientCredentialsTokenProvider } from "./lib/oauth.js";
@@ -99,6 +100,17 @@ function readDispatchFromEnv(): { req: DispatchRequest; publisher: PublisherCred
     throw new Error(`AEP_TASK_KIND must be "implementation" or "validation": ${taskKind}`);
   }
 
+  // Absent on every non-validation dispatch, and absent rather than 0 when the
+  // BFF could not name one — the run then works exactly as before, minus its
+  // status line. A garbage value is the one case worth refusing: posting to
+  // whatever issue "12abc" truncates to would put this run's lines on a
+  // stranger's ticket.
+  const issueEnv = process.env.AEP_VALIDATION_ISSUE ?? "";
+  const validationIssue = issueEnv === "" ? 0 : Number(issueEnv);
+  if (!Number.isSafeInteger(validationIssue) || validationIssue < 0) {
+    throw new Error(`AEP_VALIDATION_ISSUE must be a whole number or unset: ${issueEnv}`);
+  }
+
   const publisher = requirePublisherCreds();
 
   if (!isUUID(taskId)) throw new Error(`AEP_TASK_ID is not a valid UUID: ${taskId}`);
@@ -123,6 +135,7 @@ function readDispatchFromEnv(): { req: DispatchRequest; publisher: PublisherCred
       mcpUrl: mcpUrl || undefined,
       mcpToken: undefined,
       taskKind,
+      validationIssue: validationIssue > 0 ? validationIssue : undefined,
       // OFF unless a human opts this pod in. The sinks are files in a workspace
       // nothing collects, so in the cluster they are write-only — and the debug
       // log holds prompt text. The opt-in exists because a stall that only
@@ -135,17 +148,20 @@ function readDispatchFromEnv(): { req: DispatchRequest; publisher: PublisherCred
 }
 
 async function main(): Promise<number> {
-  // Before anything logs: the BFF forwards this pod's console output into the
-  // user-visible build log, so every line has to pass the scrubber.
-  installConsoleScrubber();
+  // Before anything logs, and before anything CAN log: the BFF forwards this
+  // pod's console output into the user-visible build log, so console is wrapped
+  // and every mounted credential is enrolled as a literal in one call. Ahead of
+  // dispatch validation deliberately — those failures log too.
+  installLogRedaction();
 
   let req: DispatchRequest;
   let publisher: PublisherCreds;
   try {
     ({ req, publisher } = readDispatchFromEnv());
   } catch (err) {
-    // Nothing is enrolled as a literal yet (the bearer hasn't been read), so
-    // this line is covered only by the scrubber's token-shape patterns.
+    // Every MOUNTED credential is already enrolled (above); the only secret
+    // this line could not cover is the CC token, which has not been minted yet
+    // and so cannot appear in a validation failure.
     console.error("[oneshot] env validation failed:", err instanceof Error ? err.message : String(err));
     return 2;
   }
@@ -173,34 +189,24 @@ async function main(): Promise<number> {
     return 2;
   }
 
-  // BOTH credential variables: a run authenticates with exactly one of them
-  // (an org may bill its coding agent to a Claude Code OAuth token instead of
-  // an API key), and priming only the one that happens to be unset would leave
-  // the other unredacted in the progress feed. Unset entries are skipped.
-  primeScrubber([
-    process.env.ANTHROPIC_API_KEY,
-    process.env.CLAUDE_CODE_OAUTH_TOKEN,
-    req.bearer,
-    publisher.clientSecret,
-    req.mcpToken,
-  ]);
+  // No second priming pass here: the mounted credentials went in above, and
+  // req.bearer / req.mcpToken ARE the ccToken enrolled at the mint. The env
+  // pair that used to be listed here now lives in credential_env.ts, which is
+  // also what widened it to the git credential.
 
-  emit({
-    kind: "phase",
-    phase: "workspace_provisioning",
-  });
+  emit(PROVISIONING);
 
   let layout;
   try {
     layout = await provisionWorkspace(req);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    emit({ kind: "result", status: "failure", error: `workspace_provisioning: ${msg}` });
+    emit({ kind: "run_settled", outcome: "failure", error: `workspace_provisioning: ${msg}` });
     console.error("[oneshot] provisionWorkspace failed:", msg);
     return 2;
   }
 
-  emit({ kind: "phase", phase: "workspace_ready" });
+  emit(WORKSPACE_READY);
 
   // Per-task skills — read the design's pinned skill names from the project
   // clone (no network: `.claude/skills/` is already the BFF-mirrored, filtered
@@ -251,7 +257,7 @@ async function main(): Promise<number> {
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      emit({ kind: "result", status: "failure", error: `validation_context: ${msg}` });
+      emit({ kind: "run_settled", outcome: "failure", error: `validation_context: ${msg}` });
       console.error(`[oneshot] validation context unavailable — not starting the agent: ${msg}`);
       return 2;
     }
@@ -285,7 +291,7 @@ async function main(): Promise<number> {
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      emit({ kind: "result", status: "failure", error: `endpoint_access: ${msg}` });
+      emit({ kind: "run_settled", outcome: "failure", error: `endpoint_access: ${msg}` });
       console.error(`[oneshot] cannot make the endpoints reachable — not starting the agent: ${msg}`);
       return 2;
     }
@@ -298,7 +304,7 @@ async function main(): Promise<number> {
     const unreachable = await probeEndpoints(endpoints);
     if (unreachable.length > 0) {
       const detail = unreachable.map((u) => `${u.component} (${u.url}): ${u.reason}`).join("; ");
-      emit({ kind: "result", status: "failure", error: `endpoint_unreachable: ${detail}` });
+      emit({ kind: "run_settled", outcome: "failure", error: `endpoint_unreachable: ${detail}` });
       console.error(`[oneshot] deployed endpoint(s) did not answer — not starting the agent: ${detail}`);
       return 2;
     }
@@ -351,14 +357,14 @@ async function main(): Promise<number> {
       : undefined;
   let completion: Promise<{ exitCode: number }>;
   try {
-    ({ completion } = await runClaudeQuery(req, layout, log, { availableSkillNames, pinnedBodies }, mcpAuth));
+    ({ completion } = await startCodingRun(req, layout, log, { availableSkillNames, pinnedBodies }, mcpAuth));
   } catch (err) {
     // The mirror carries no workflow skill (see requireWorkflowBodies), so this
     // run has no procedure to follow. Fail the build rather than let the agent
     // improvise one and report success — the mirror's writes are best-effort by
     // design, and this is the point where the cause is still obvious.
     const msg = err instanceof Error ? err.message : String(err);
-    emit({ kind: "result", status: "failure", error: `skills: ${msg}` });
+    emit({ kind: "run_settled", outcome: "failure", error: `skills: ${msg}` });
     console.error(`[oneshot] ${msg}`);
     return 2;
   }

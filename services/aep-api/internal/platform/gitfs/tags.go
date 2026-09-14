@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Tag implements Workspace (design §10): annotated tag + push, under the
@@ -137,7 +138,7 @@ func (e *Engine) readTags(ctx context.Context, ref RepoRef, p repoPaths, prefix 
 	defer release()
 	out, err := e.git(ctx, execOpts{}, "--git-dir", p.gitDir,
 		"for-each-ref",
-		"--format=%(refname:short)%00%(objectname)%00%(*objectname)%00%(contents:subject)",
+		"--format=%(refname:short)%00%(objectname)%00%(*objectname)%00%(contents:subject)%00%(creatordate:iso-strict)",
 		"refs/tags/"+prefix+"*")
 	if err != nil {
 		return nil, fmt.Errorf("gitfs: list tags %q*: %w", prefix, err)
@@ -147,15 +148,21 @@ func (e *Engine) readTags(ctx context.Context, ref RepoRef, p repoPaths, prefix 
 		if line == "" {
 			continue
 		}
-		fields := strings.SplitN(line, "\x00", 4)
-		if len(fields) != 4 {
+		fields := strings.SplitN(line, "\x00", 5)
+		if len(fields) != 5 {
 			return nil, fmt.Errorf("gitfs: unexpected for-each-ref record %q", line)
 		}
-		name, object, peeled, subject := fields[0], fields[1], fields[2], fields[3]
+		name, object, peeled, subject, created := fields[0], fields[1], fields[2], fields[3], fields[4]
 		info := TagInfo{Name: name, CommitHash: object}
 		if peeled != "" { // annotated: dereference to the commit, keep the tag message
 			info.CommitHash = peeled
 			info.Message = subject
+		}
+		// An undatable ref leaves the zero time rather than failing the listing:
+		// ordering degrades for that one tag, which is better than no tags at
+		// all on a repo carrying something odd.
+		if at, perr := time.Parse(time.RFC3339, created); perr == nil {
+			info.CreatedAt = at
 		}
 		tags = append(tags, info)
 	}

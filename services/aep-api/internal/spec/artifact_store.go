@@ -119,7 +119,17 @@ func (s *ArtifactStore) SetExternalResourceResolver(r ExternalResourceResolver) 
 // the diagram documents are read as plain bundle files by whoever needs them.
 type DesignFile struct {
 	Components []DesignComponent `json:"components"`
-	SourceSpec string            `json:"sourceSpec,omitempty"`
+	// Dependencies are the external dependency definitions on disk
+	// (specs/design/dependencies/<name>/dependency.json), one per name,
+	// sorted. Every component's external edge is hydrated from the matching
+	// entry at assembly; SplitDesign writes them back.
+	Dependencies []DependencyDefinition `json:"dependencies,omitempty"`
+	// LegacyCarriers are the components whose design.json still carries an
+	// external dependency's definition fields (a design from before the
+	// dependency file existed). The next save re-renders them as bare
+	// references and writes the lifted definitions — see derive.go.
+	LegacyCarriers []string `json:"-"`
+	SourceSpec     string   `json:"sourceSpec,omitempty"`
 }
 
 // DesignRootFile is the canonical root design document: the cell. Its presence
@@ -132,6 +142,10 @@ const DesignRootFile = "design.cell"
 // componentDirPrefix is the path prefix under specs/design/ for per-component
 // directories.
 const componentDirPrefix = "components/"
+
+// dependencyDirPrefix is the path prefix under specs/design/ for per-dependency
+// directories — one external dependency, one definition (dependency_json.go).
+const dependencyDirPrefix = "dependencies/"
 
 // ListDesignFiles returns the design file map at HEAD, under `specs/design/`.
 // Keys are paths relative to that directory, using forward slashes (e.g.
@@ -286,7 +300,7 @@ func (s *ArtifactStore) resolveExternalDependencies(ctx context.Context, orgID s
 					hits[dep.Name] = registryHit
 				}
 			}
-			dep.Status, dep.Reason = ComputeDependencyStatus(*dep, registryHit, OrgServiceHit{})
+			ApplyDependencyStatus(dep, registryHit, OrgServiceHit{})
 		}
 	}
 }
@@ -374,6 +388,13 @@ func AssembleDesign(files map[string]string) (*DesignFile, error) {
 		comp.OpenAPISpec = openapi
 		out.Components = append(out.Components, comp)
 	}
+
+	defs, err := assembleDependencyDefinitions(files)
+	if err != nil {
+		return nil, err
+	}
+	out.Dependencies, out.LegacyCarriers = liftLegacyDefinitions(defs, out.Components)
+	hydrateExternalDependencies(out, files)
 	return out, nil
 }
 
@@ -390,7 +411,7 @@ func SplitDesign(d *DesignFile) (map[string]string, error) {
 	if d == nil {
 		return nil, fmt.Errorf("nil design")
 	}
-	files := make(map[string]string, 2*len(d.Components))
+	files := make(map[string]string, 2*len(d.Components)+len(d.Dependencies))
 
 	for _, comp := range d.Components {
 		body, err := marshalComponentDesignJSON(comp.Name, comp)
@@ -402,18 +423,35 @@ func SplitDesign(d *DesignFile) (map[string]string, error) {
 			files[componentDirPrefix+comp.Name+"/openapi.yaml"] = comp.OpenAPISpec
 		}
 	}
+	for _, def := range d.Dependencies {
+		body, err := marshalDependencyDefinitionJSON(def.Name, def)
+		if err != nil {
+			return nil, fmt.Errorf("marshal dependency %q: %w", def.Name, err)
+		}
+		files[dependencyDesignKey(def.Name)] = string(body)
+	}
 	return files, nil
 }
 
 // ComponentNamesIn walks the file map and returns the unique component
 // directory names found under `components/`, sorted alphabetically.
 func ComponentNamesIn(files map[string]string) []string {
+	return dirNamesUnder(files, componentDirPrefix)
+}
+
+// DependencyNamesIn returns the sorted names of every dependency directory in
+// the design file map (`dependencies/<name>/…`).
+func DependencyNamesIn(files map[string]string) []string {
+	return dirNamesUnder(files, dependencyDirPrefix)
+}
+
+func dirNamesUnder(files map[string]string, prefix string) []string {
 	seen := make(map[string]struct{})
 	for p := range files {
-		if !strings.HasPrefix(p, componentDirPrefix) {
+		if !strings.HasPrefix(p, prefix) {
 			continue
 		}
-		rest := p[len(componentDirPrefix):]
+		rest := p[len(prefix):]
 		slash := strings.IndexByte(rest, '/')
 		if slash <= 0 {
 			continue

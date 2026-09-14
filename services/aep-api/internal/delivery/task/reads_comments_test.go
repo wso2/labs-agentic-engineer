@@ -317,6 +317,46 @@ func TestReads_Get_DropsMachineComments(t *testing.T) {
 	}
 }
 
+// The platform's two brands get opposite policies here, and the asymmetry is the
+// point: a MACHINE comment is written for the agent and would crowd out the
+// narrative, while an OBSERVED one IS the narrative for most of a validation run
+// — the agent posts an opening line and a closing summary and the platform
+// reports everything between them. Dropping both would leave this field holding
+// two comments hours apart, which is the defect the observed class was added for.
+func TestReads_Get_KeepsObservedCommentsAndDropsMachineOnes(t *testing.T) {
+	base := time.Date(2026, 9, 4, 10, 0, 0, 0, time.UTC)
+	machine := comment("m1", "aep-bot", "Validation run dispatched.", base)
+	machine.Machine = true
+	observed := comment("o1", "aep-bot", "Running specs against the deployed system.", base.Add(time.Hour))
+	observed.Observed = true
+
+	issues := newFakeIssues()
+	issues.seed(validationIssue(7))
+	issues.seedComment(7, comment("c1", "aep-bot", "Starting validation: 12 criteria.", base.Add(-time.Hour)))
+	issues.seedComment(7, machine)
+	issues.seedComment(7, observed)
+
+	detail, err := newReads(issues, newFakeExecReader(), nil).Get(context.Background(), "org1", "proj1", 7)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(detail.Comments) != 2 {
+		t.Fatalf("comments = %d, want the agent's and the platform's observation", len(detail.Comments))
+	}
+	if detail.Comments[0].ID != "c1" || detail.Comments[1].ID != "o1" {
+		t.Fatalf("surviving comments = %+v, want c1 then o1 in host order", detail.Comments)
+	}
+	// Carried through rather than flattened away: the status line is the NEWEST
+	// comment, and a reader deciding how much to trust it needs to know a machine
+	// inferred it from a tool call rather than an agent judging its own work.
+	if !detail.Comments[1].Observed {
+		t.Error("the observed brand was lost on the way to the read DTO")
+	}
+	if detail.Comments[0].Observed {
+		t.Error("the agent's own line was marked as the platform's observation")
+	}
+}
+
 // A host that will not answer comments costs the caller its narrative, never its
 // Task — the same bargain the list makes, and for the same reason: the detail
 // page's other halves are not decorative.

@@ -32,6 +32,7 @@ import (
 //	<root>/repos/<orgId>/<projectId>/<repoSlug>/snapshots/<sha>/ immutable plain-file tree
 //	<root>/trash/<id>/                                          two-phase delete staging
 //	<root>/tmp/                                                 atomic clone/snapshot staging
+//	<root>/runs/<orgId>/<cycleId>/                              coding-agent run recordings (ADR-0027)
 //
 // The skills repo is not special-cased: projectID "_skills", slug
 // "org-skills" flow through the same derivation.
@@ -72,6 +73,23 @@ func TrashDir(root string) string { return filepath.Join(root, "trash") }
 
 // TmpDir is <root>/tmp — atomic clone/snapshot staging.
 func TmpDir(root string) string { return filepath.Join(root, "tmp") }
+
+// RunsDir is <root>/runs — the coding-agent RUN RECORDINGS tree
+// (runs/<orgId>/<cycleId>/{events.<attempt>.ndjson,state.json}).
+//
+// It is the one subtree of this mount that is NOT a rebuildable cache: a run's
+// feed exists while its pod does and nowhere else, so a lost recording cannot
+// be regenerated from git or from Postgres (ADR-0027). The path helper lives
+// here, beside the other layout constants, because two packages need to agree
+// on it and neither may import the other: the writer/reader is a delivery slice
+// (internal/delivery/codingagent) and the retention pass is this kernel's own
+// reaper.
+//
+// No RepoRef: a recording is keyed by (org, cycle), not by a repo — a cycle's
+// component is ephemeral and its project's repo may be deleted while the
+// recording is still worth serving. Segment validation is the caller's, for the
+// same defense-in-depth reason the RepoRef helpers validate theirs.
+func RunsDir(root string) string { return filepath.Join(root, "runs") }
 
 // OrgDir is <root>/repos/<orgId> — the subtree TrashOrg renames away.
 func OrgDir(root, orgID string) (string, error) {

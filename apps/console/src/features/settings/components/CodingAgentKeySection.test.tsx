@@ -61,7 +61,8 @@ function renderSection(codingLlm: Coding) {
   );
 }
 
-const reuseRadio = () => screen.getByRole("radio", { name: "Reuse the key above" });
+const reuseRadio = () =>
+  screen.getByRole("radio", { name: "Reuse the organization's Anthropic key" });
 const separateRadio = () => screen.getByRole("radio", { name: "Use a separate key" });
 
 // While the confirm dialog is open MUI marks the page behind it aria-hidden, so

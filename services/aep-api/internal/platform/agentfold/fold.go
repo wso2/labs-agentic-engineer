@@ -206,9 +206,39 @@ func (f *Fold) AddFile(ctx context.Context, path, content string) (OpResult, err
 		return opErr(path, op, ErrAlreadyExists,
 			path+" already exists — use editFile to change it, or removeFile then addFile to replace it wholesale."), nil
 	}
-	return f.commit(path, op, next, func(e string) string {
+	if code, msg := f.checkComponentDependencies(ctx, path, next); code != "" {
+		return opErr(path, op, code, msg), nil
+	}
+	// A definition removed this turn to be re-added wholesale is still judged
+	// against what was on disk: the user's authorization record rides through
+	// (preserveAssumption), and an altered record is still refused.
+	prior, err := f.removedThisTurn(ctx, path)
+	if err != nil {
+		return OpResult{}, err
+	}
+	return f.commit(path, op, next, prior, func(e string) string {
 		return path + " would not be valid YAML: " + e
 	}), nil
+}
+
+// removedThisTurn is the base content of a path the overlay marks deleted,
+// nil for any other path.
+func (f *Fold) removedThisTurn(ctx context.Context, path string) (*string, error) {
+	if v, ok := f.overlay[path]; !ok || v != nil {
+		return nil, nil
+	}
+	if c, ok := f.baseCache[path]; ok {
+		return c, nil
+	}
+	raw, exists, err := f.base(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("agentfold: read base %q: %w", path, err)
+	}
+	if !exists {
+		return nil, nil
+	}
+	s := lf(string(raw))
+	return &s, nil
 }
 
 // EditFile is FileBundle.editFile: an anchored, exactly-once literal
@@ -258,7 +288,10 @@ func (f *Fold) EditFile(ctx context.Context, path, oldString, newString string) 
 
 	idx := starts[0]
 	after := content[:idx] + newS + content[idx+len(oldS):]
-	return f.commit(path, op, after, func(e string) string {
+	if code, msg := f.checkComponentDependencies(ctx, path, after); code != "" {
+		return opErr(path, op, code, msg), nil
+	}
+	return f.commit(path, op, after, &content, func(e string) string {
 		return "Edit rejected — result would not be valid YAML: " + e + ". The file is unchanged; fix the indentation of newString and retry."
 	}), nil
 }
@@ -283,11 +316,20 @@ func (f *Fold) RemoveFile(ctx context.Context, path string) (OpResult, error) {
 // commit applies content to path gated by the YAML reparse guard, the
 // component design.json schema gate, and the wireframes .dsl syntax gate;
 // a rejection leaves the fold byte-for-byte unchanged.
-func (f *Fold) commit(path string, op Op, content string, rejectMsg func(yamlErr string) string) OpResult {
+// commit runs every write-gate over the candidate content and, when all pass,
+// lands it in the overlay. `prior` is the file as it stood before this write
+// (nil for a create) — the dependency gate's assumed-is-echoed rule reads it.
+func (f *Fold) commit(path string, op Op, content string, prior *string, rejectMsg func(yamlErr string) string) OpResult {
 	if yamlErr := checkYAMLGuard(path, content); yamlErr != "" {
 		return opErr(path, op, ErrInvalidYAML, rejectMsg(yamlErr))
 	}
 	if code, msg := checkComponentDesignGuard(path, content); code != "" {
+		return opErr(path, op, code, msg)
+	}
+	// The user's authorization record on a dependency's definition rides
+	// through every agent write of the file (preserveAssumption).
+	content = preserveAssumption(path, content, prior)
+	if code, msg := checkDependencyDesignGuard(path, content, prior); code != "" {
 		return opErr(path, op, code, msg)
 	}
 	if code, msg := checkWireframeDslGuard(path, content); code != "" {
@@ -600,4 +642,44 @@ func checkComponentDesignGuard(path, content string) (ErrCode, string) {
 		return "", ""
 	}
 	return err.code, path + ": " + err.message
+}
+
+// checkComponentDependencies mirrors the agent gate's checkComponentDependencies
+// for the half the fold can judge with a file read: a component's external
+// dependency must have its definition on disk (or in this turn's overlay),
+// because the component only references it by name — one dependency, one
+// definition. The cell-membership half lives on the agent side, where the cell
+// is always in the bundle.
+func (f *Fold) checkComponentDependencies(ctx context.Context, path, content string) (ErrCode, string) {
+	if componentDesignRe.FindStringSubmatch(path) == nil {
+		return "", ""
+	}
+	var parsed struct {
+		Dependencies []struct {
+			Kind string `json:"kind"`
+			Name string `json:"name"`
+		} `json:"dependencies"`
+	}
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		return "", "" // the schema gate reports malformed JSON
+	}
+	var missing []string
+	for _, d := range parsed.Dependencies {
+		if d.Kind != "external" || d.Name == "" {
+			continue
+		}
+		defPath := "specs/design/dependencies/" + d.Name + "/dependency.json"
+		if _, exists, err := f.read(ctx, defPath); err != nil || !exists {
+			missing = append(missing, "`"+d.Name+"` → "+defPath)
+		}
+	}
+	if len(missing) == 0 {
+		return "", ""
+	}
+	noun := "an external dependency has"
+	if len(missing) > 1 {
+		noun = "external dependencies have"
+	}
+	return ErrUnknownDependency, fmt.Sprintf("%s rejected — %s no definition yet: %s. A component references an external dependency by name only; its provider, style, contract file, config keys (or open suggestions) live once in that dependency.json, shared by every component that uses it. Write the dependency file first (addFile — for a Registered External resource a stub with \"source\": \"org\" is enough), then re-emit this file. The file is unchanged.",
+		path, noun, strings.Join(missing, "; "))
 }

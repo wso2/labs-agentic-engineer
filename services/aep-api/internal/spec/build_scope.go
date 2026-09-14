@@ -16,8 +16,8 @@
 
 package spec
 
-// build_scope.go — the STORY SCOPE of one build (spec-agent redesign #369): a
-// v<N> tag snapshots the PRD + design, so the milestone is the version's
+// build_scope.go — the STORY SCOPE of one build (spec-agent redesign #369). A
+// version tag snapshots the PRD + design, so the milestone is the version's
 // ledger and task planning covers the PRD's stories. Computed here (the PRD's
 // User Stories section declares the story set; each component's design.json
 // claims the stories it serves) and consumed by delivery/build (milestone
@@ -56,6 +56,12 @@ func (s BuildScope) MilestoneTitle() string { return s.Tag }
 // that impossible for freshly-cut tags.
 func (s *artifactService) BuildScopeAtTag(ctx context.Context, orgID, projectID, tag string) (BuildScope, error) {
 	scope := BuildScope{Tag: tag}
+	// The same rule the save applies, for the same reason GetDesignAtTag applies
+	// it: this tag becomes `tags/<name>` a few lines down, and a name that could
+	// never have been created must not be able to walk out of that namespace.
+	if verr := ValidateVersionName(tag); verr != nil {
+		return scope, fmt.Errorf("%w: %q: %w", ErrInvalidVersionTag, tag, verr)
+	}
 	_, ref, err := s.readyRef(ctx, orgID, projectID)
 	if err != nil {
 		return scope, err

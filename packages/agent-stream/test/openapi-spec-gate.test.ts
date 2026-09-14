@@ -128,3 +128,8 @@ test("the gate runs on an edit too, not just a whole-file write", () => {
   if (!res.ok) assert.equal(res.code, "INVALID_OPENAPI");
   assert.equal(bundle.read(PATH), CLEAN, "the file is unchanged");
 });
+
+test("a dependency's contract is not held to the component gate — it is someone else's API", () => {
+  const swagger = CLEAN.replace("openapi: 3.0.3", "swagger: '2.0'");
+  assert.equal(checkOpenapiSpec("specs/design/dependencies/stripe/openapi.yaml", swagger), null);
+});

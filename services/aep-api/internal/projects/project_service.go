@@ -54,15 +54,16 @@ type Service struct {
 	artifactSvc    spec.ArtifactService
 	execs          delivery.ExecutionRepository
 	skillsProv     skillsProvisioner
-	descriptors    descriptorWriter      // project descriptor stamp; may be nil
-	skillMirrorSvc skillMirror           // seeds .claude/skills into the new repo; may be nil
-	deprovisioner  resourceDeprovisioner // dependency provisioning teardown; may be nil
-	runReader      milestoneRunRows      // build/deploy stage reads + delete purge (status_stages.go)
-	bindingsReader bindingsReader        // deploy stage: OC release bindings (status_stages.go)
-	specTurns      specTurnRows          // spec stage: newest agent turn (status_stages.go); may be nil
-	runAbandoner   runAbandoner          // run-supervisor teardown on delete; may be nil
-	kickoff        kickoffStarter        // fires `/start` on create (#562); may be nil
+	descriptors    descriptorWriter       // project descriptor stamp; may be nil
+	skillMirrorSvc skillMirror            // seeds .claude/skills into the new repo; may be nil
+	deprovisioner  resourceDeprovisioner  // dependency provisioning teardown; may be nil
+	runReader      milestoneRunRows       // build/deploy stage reads + delete purge (status_stages.go)
+	bindingsReader bindingsReader         // deploy stage: OC release bindings (status_stages.go)
+	specTurns      specTurnRows           // spec stage: newest agent turn (status_stages.go); may be nil
+	runAbandoner   runAbandoner           // run-supervisor teardown on delete; may be nil
+	kickoff        kickoffStarter         // fires `/start` on create (#562); may be nil
 	cells          projectCellProvisioner // per-environment cell namespaces; may be nil
+	endpointGate   *EndpointGate          // deploy stage: is a Ready binding reachable (status_stages.go); may be nil
 }
 
 // projectCellProvisioner authors the ProjectReleaseBinding that gives a new
@@ -78,6 +79,17 @@ type Service struct {
 type projectCellProvisioner interface {
 	PipelineEnvironments(ctx context.Context, namespace, pipelineName string) ([]string, error)
 	EnsureProjectReleaseBinding(ctx context.Context, namespace, projectName, environment string) error
+}
+
+// SetEndpointGate wires the reachability gate the deploy stage's counts are
+// held on. The SAME gate as DeploymentService's, by construction at the
+// composition root: two gates would be two memos and, in the window before
+// either has an answer, two different verdicts about one component.
+// Nil skips the gate, which is the binding-only count this replaced.
+func (s *Service) SetEndpointGate(g *EndpointGate) {
+	if s != nil {
+		s.endpointGate = g
+	}
 }
 
 // runAbandoner is project_service's narrow consumer port for the run-supervisor

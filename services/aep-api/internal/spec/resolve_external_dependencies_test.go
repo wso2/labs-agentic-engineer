@@ -37,8 +37,8 @@ func (f fakeExternalResourceResolver) IsRegistered(_ context.Context, _, name st
 }
 
 // TestResolveExternalDependencies_AppliesStoredRules asserts that with no
-// resolver wired (or a miss), `external` precedence derives from stored
-// intent fields (style/specPath/package) — rule 2 does not fire.
+// resolver wired (or a miss), `external` precedence derives from the hydrated
+// definition (provider/style/contract/sdk) — the registry rule does not fire.
 func TestResolveExternalDependencies_AppliesStoredRules(t *testing.T) {
 	store := &ArtifactStore{}
 
@@ -46,8 +46,8 @@ func TestResolveExternalDependencies_AppliesStoredRules(t *testing.T) {
 		Name: "checkout",
 		Dependencies: []Dependency{
 			{Kind: DependencyKindExternal, Name: "no-style"},
-			{Kind: DependencyKindExternal, Name: "sdk-ready", Style: DependencyStyleSDK, Package: "npm:stripe@^14"},
-			{Kind: DependencyKindExternal, Name: "rest-no-spec", Style: DependencyStyleRestAPI},
+			{Kind: DependencyKindExternal, Name: "sdk-ready", Provider: "Stripe", Style: DependencyStyleSDK, SDK: "sdk.json", Package: "npm:stripe@^14"},
+			{Kind: DependencyKindExternal, Name: "rest-no-spec", Provider: "Partner", Style: DependencyStyleRestAPI},
 		},
 	}}}
 
@@ -61,9 +61,9 @@ func TestResolveExternalDependencies_AppliesStoredRules(t *testing.T) {
 	if deps[1].Status != DependencyStatusResolved {
 		t.Errorf("sdk-ready: status = %q, want %q", deps[1].Status, DependencyStatusResolved)
 	}
-	if deps[2].Status != DependencyStatusUnresolved || deps[2].Reason != DependencyReasonNeedsSpec {
+	if deps[2].Status != DependencyStatusUnresolved || deps[2].Reason != DependencyReasonNeedsContract {
 		t.Errorf("rest-no-spec: status/reason = %q/%q, want %q/%q", deps[2].Status, deps[2].Reason,
-			DependencyStatusUnresolved, DependencyReasonNeedsSpec)
+			DependencyStatusUnresolved, DependencyReasonNeedsContract)
 	}
 }
 
@@ -78,8 +78,8 @@ func TestResolveExternalDependencies_RegistryHitResolvesWithoutStyle(t *testing.
 	d := &DesignFile{Components: []DesignComponent{{
 		Name: "api",
 		Dependencies: []Dependency{
-			{Kind: DependencyKindExternal, Name: "github", Style: DependencyStyleRestAPI},
-			{Kind: DependencyKindExternal, Name: "stripe", Style: DependencyStyleRestAPI},
+			{Kind: DependencyKindExternal, Name: "github", Provider: "GitHub", Style: DependencyStyleRestAPI},
+			{Kind: DependencyKindExternal, Name: "stripe", Provider: "Stripe", Style: DependencyStyleRestAPI},
 		},
 	}}}
 
@@ -90,9 +90,12 @@ func TestResolveExternalDependencies_RegistryHitResolvesWithoutStyle(t *testing.
 		t.Errorf("github (catalog hit): status/reason = %q/%q, want %q/empty",
 			deps[0].Status, deps[0].Reason, DependencyStatusResolved)
 	}
-	if deps[1].Status != DependencyStatusUnresolved || deps[1].Reason != DependencyReasonNeedsSpec {
+	if len(deps[0].Flags) != 1 || deps[0].Flags[0] != DependencyFlagRegistered {
+		t.Errorf("github (catalog hit): flags = %v, want [registered]", deps[0].Flags)
+	}
+	if deps[1].Status != DependencyStatusUnresolved || deps[1].Reason != DependencyReasonNeedsContract {
 		t.Errorf("stripe (catalog miss): status/reason = %q/%q, want %q/%q",
-			deps[1].Status, deps[1].Reason, DependencyStatusUnresolved, DependencyReasonNeedsSpec)
+			deps[1].Status, deps[1].Reason, DependencyStatusUnresolved, DependencyReasonNeedsContract)
 	}
 }
 
@@ -108,16 +111,16 @@ func TestResolveExternalDependencies_ResolverErrorFailsOpen(t *testing.T) {
 	d := &DesignFile{Components: []DesignComponent{{
 		Name: "api",
 		Dependencies: []Dependency{
-			{Kind: DependencyKindExternal, Name: "github", Style: DependencyStyleRestAPI},
+			{Kind: DependencyKindExternal, Name: "github", Provider: "GitHub", Style: DependencyStyleRestAPI},
 		},
 	}}}
 
 	store.resolveExternalDependencies(context.Background(), "org", d)
 
 	dep := d.Components[0].Dependencies[0]
-	if dep.Status != DependencyStatusUnresolved || dep.Reason != DependencyReasonNeedsSpec {
+	if dep.Status != DependencyStatusUnresolved || dep.Reason != DependencyReasonNeedsContract {
 		t.Errorf("resolver error: status/reason = %q/%q, want stored-intent %q/%q",
-			dep.Status, dep.Reason, DependencyStatusUnresolved, DependencyReasonNeedsSpec)
+			dep.Status, dep.Reason, DependencyStatusUnresolved, DependencyReasonNeedsContract)
 	}
 }
 

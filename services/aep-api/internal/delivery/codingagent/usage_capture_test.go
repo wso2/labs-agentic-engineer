@@ -83,3 +83,59 @@ some stray text mentioning "result" and "usage" but not JSON
 		t.Fatalf("expected nil for a usage-less log, got %+v", u)
 	}
 }
+
+// TestUsageFromLogReadsAV2RunSettledLine covers the envelope a v2 runner
+// actually writes. It emits NO `result` kind at all — its run settles as
+// `run_settled` and the usage rides RunEvent.usage — so a capture that matched
+// only `result` returned nil for every v2 run, RecordUsage was never called,
+// and the cycle row kept an empty model id and a null cost while the pricing
+// path downstream worked perfectly.
+func TestUsageFromLogReadsAV2RunSettledLine(t *testing.T) {
+	log := `2026-09-04T09:25:39.000000000Z {"v":2,"seq":1,"kind":"run_started","agentId":"lead","ts":"2026-09-04T09:25:39Z"}
+2026-09-04T09:55:02.000000000Z {"v":2,"seq":812,"kind":"run_settled","agentId":"lead","ts":"2026-09-04T09:55:02Z","outcome":"success","usage":{"inputTokens":110,"outputTokens":55,"cacheReadTokens":1000,"cacheCreationTokens":200,"model":"","models":[{"inputTokens":100,"outputTokens":50,"cacheReadTokens":1000,"cacheCreationTokens":200,"model":"claude-sonnet-5"},{"inputTokens":10,"outputTokens":5,"cacheReadTokens":0,"cacheCreationTokens":0,"model":"claude-haiku-4-5"}]}}
+`
+	u := usageFromLog(log)
+	if u == nil {
+		t.Fatal("a v2 run settled with usage captured nothing — the run would be unbilled")
+	}
+	if u.InputTokens != 110 || u.OutputTokens != 55 || u.CacheReadTokens != 1000 || u.CacheCreationTokens != 200 {
+		t.Fatalf("aggregate = %+v", u.TokenUsage)
+	}
+	// The split is what makes a multi-model run priceable: the aggregate's model
+	// id is blank (two models disagree), so pricing has nothing to key on
+	// without it.
+	want := []contracts.TokenUsage{
+		{InputTokens: 100, OutputTokens: 50, CacheReadTokens: 1000, CacheCreationTokens: 200, Model: "claude-sonnet-5"},
+		{InputTokens: 10, OutputTokens: 5, Model: "claude-haiku-4-5"},
+	}
+	if len(u.Models) != len(want) {
+		t.Fatalf("models = %+v, want %+v", u.Models, want)
+	}
+	for i := range want {
+		if u.Models[i] != want[i] {
+			t.Errorf("models[%d] = %+v, want %+v", i, u.Models[i], want[i])
+		}
+	}
+	slices := u.PricingSlices()
+	if len(slices) != 2 || slices[0].Model != "claude-sonnet-5" {
+		t.Errorf("PricingSlices = %+v, want the per-model split", slices)
+	}
+}
+
+// TestUsageFromLogNeverSumsTurnEnded pins the accounting rule the runtime's own
+// reporting forces: usage is CUMULATIVE across a session, so the terminal line
+// already holds the whole run. Folding the turns in on the way past would
+// multiply the bill by roughly the number of turns.
+func TestUsageFromLogNeverSumsTurnEnded(t *testing.T) {
+	log := `{"v":2,"seq":10,"kind":"turn_ended","agentId":"lead","outcome":"success","usage":{"inputTokens":40,"outputTokens":10,"cacheReadTokens":0,"cacheCreationTokens":0,"model":"claude-fable-5"}}
+{"v":2,"seq":20,"kind":"turn_ended","agentId":"lead","outcome":"success","usage":{"inputTokens":90,"outputTokens":25,"cacheReadTokens":0,"cacheCreationTokens":0,"model":"claude-fable-5"}}
+{"v":2,"seq":30,"kind":"run_settled","agentId":"lead","outcome":"success","usage":{"inputTokens":90,"outputTokens":25,"cacheReadTokens":0,"cacheCreationTokens":0,"model":"claude-fable-5"}}
+`
+	u := usageFromLog(log)
+	if u == nil {
+		t.Fatal("expected usage, got nil")
+	}
+	if u.InputTokens != 90 || u.OutputTokens != 25 {
+		t.Fatalf("usage = %+v, want the terminal line's cumulative total, never a sum", u.TokenUsage)
+	}
+}

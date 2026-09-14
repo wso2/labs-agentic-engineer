@@ -399,6 +399,13 @@ type MilestoneRun struct {
 	WaitingReason        string          `gorm:"type:text" json:"waitingReason,omitempty"`
 	BlockingDependencies DependencyNames `gorm:"type:jsonb" json:"blockingDependencies,omitempty"`
 
+	// Failure is the platform's record of the fault this run is failing on —
+	// what TerminalReason only names (RunFailure). Written per attempt by the
+	// activity that met the fault, cleared when a later attempt succeeds, left
+	// in place by settle. Nil for a run that has met none. Same AutoMigrate
+	// story as the two columns above: nullable, no default, no index.
+	Failure *RunFailure `gorm:"type:jsonb" json:"failure,omitempty"`
+
 	// Budget counters. CyclesTotal is checked against CycleCeiling; FixCycles and
 	// ConflictCycles bound the two recovery chains; BuildRetriggers is the
 	// run-wide tally of automatic build re-triggers (the authoritative

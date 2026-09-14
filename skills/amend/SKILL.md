@@ -36,7 +36,10 @@ skipping what the instruction already says. Then:
 - write or extend `specs/requirements/features/<slug>.md` with the depth, and
   link it from the story per the contract — a feature that should not ship yet
   is an Out of Scope line instead,
-- record any new product decisions (org defaults answer silently, as ever).
+- record any new product decisions (org defaults answer silently, as ever; a
+  new external capability follows `prd-contract`'s rule — a Registered External
+  resource or a service the user already uses is a given, anything else stays
+  capability-only).
 
 Done when every new story has a number and an actor the Actors section
 defines.

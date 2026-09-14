@@ -308,6 +308,38 @@ export function upsertQuestionMessage(
 }
 
 /**
+ * Remove a question card by its tool-call id. A batch question streams its
+ * entries onto a card one by one while the input is still being written; when
+ * the SDK then rejects the complete input, that prefix is a question the turn
+ * never asked and must not stay on the log waiting for an answer.
+ */
+export function dropQuestionMessage(key: string, toolCallId: string): void {
+  if (!toolCallId) return;
+  const set = withdrawn.get(key) ?? new Set<string>();
+  set.add(toolCallId);
+  withdrawn.set(key, set);
+  const messages = load(key);
+  const kept = messages.filter((m) => !(m.role === "question" && m.toolCallId === toolCallId));
+  // Notify even when nothing was on the log: the streamed prefix may already
+  // sit in the shared room, and the mirror reads the withdrawn set on notify.
+  persist(key, kept);
+}
+
+// Question cards withdrawn this session, per chat. The room mirror
+// (useRoomQuestion) reads this to delete the shared entry a streamed prefix
+// left behind — the room's own orphan rule waits a day, because from another
+// client's view a missing log message can mean "not rehydrated yet"; only the
+// client that folded the stream knows the question was withdrawn. Tool-call
+// ids are unique, so the set never has to be cleared.
+const withdrawn = new Map<string, Set<string>>();
+
+/** Tool-call ids of question cards this client withdrew (see dropQuestionMessage). */
+export function withdrawnQuestionIds(key: string): ReadonlySet<string> {
+  return withdrawn.get(key) ?? EMPTY_IDS;
+}
+const EMPTY_IDS: ReadonlySet<string> = new Set();
+
+/**
  * Add a plan activity row (#576, ADR-0025) — the declare_plan call surfacing
  * in the chat like any other tool step. Keyed by toolCallId so the belt-and-
  * braces double publish (tool-input-end, then tool-call) lands on one row.

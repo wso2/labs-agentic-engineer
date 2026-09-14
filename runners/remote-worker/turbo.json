@@ -1,0 +1,14 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    // The runner's types come from the SAME committed contract the BFF and the
+    // console generate from — so the task's inputs have to name a file two
+    // packages up. Without this override turbo hashes only what is inside this
+    // package, and a contract edit replays a cached gen that regenerates
+    // nothing (the root turbo.json has the full account of that failure).
+    "gen": {
+      "inputs": ["$TURBO_ROOT$/packages/contracts/api/v1/openapi.yaml"]
+    }
+  }
+}

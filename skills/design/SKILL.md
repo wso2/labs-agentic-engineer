@@ -86,7 +86,10 @@ turn — apply them directly, and load one only if you find you do not have it.
    you invent), description, pinned skills. A dependency is a cell node: a
    database or cache you introduce here goes into design.cell first
    (`component <id> as "…" database`, inside the cell) — the cell is the
-   source of truth, and a design.json naming a node it lacks is refused.
+   source of truth, and a design.json naming a node it lacks is refused. An
+   external dependency is ALSO its own file, written before the component
+   that references it: `specs/design/dependencies/<name>/dependency.json`
+   plus the contract slice beside it (`architecture` owns the shape).
 3. **domain-model.md** — `specs/design/domain-model.md`: an H1 title, one
    or two sentences of intro, then exactly ONE mermaid `erDiagram` (entities,
    key fields, relations — these become the API schemas). Brief entity notes
@@ -162,6 +165,10 @@ architecture.
 `/design` ends at the design and its validation criteria — no task planning,
 no application code. Close with three parts and nothing more: one line per
 component (name, type, one-clause role); a **"Needs your input"** block
-listing only the dependencies still ambiguous or unresolved; and a one-line
-pointer to `specs/design/`. The dependency narration during the turn (the
-`architecture` skill owns its format) already carried the play-by-play.
+listing only the dependencies still unresolved, each as a link to its
+definition (`[<name>](aep://spec/specs/design/dependencies/<name>/dependency.json)`,
+the `architecture` skill's closing form) followed by the one thing you need,
+so the user opens it with a click; and
+a one-line pointer to `specs/design/`. The dependency narration during the
+turn (the `architecture` skill owns its format) already carried the
+play-by-play.

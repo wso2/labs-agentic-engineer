@@ -27,6 +27,7 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { ChevronDown } from "@wso2/oxygen-ui-icons-react";
+import { SectionCaption } from "../../../components/SectionCaption";
 import { StatusChip } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
 import { runStamp } from "../lib/format";
@@ -62,18 +63,7 @@ export function RunHistoryList({
 
   return (
     <Box>
-      <Typography
-        variant="caption"
-        sx={{
-          display: "block",
-          mb: 1,
-          fontWeight: 700,
-          letterSpacing: "0.08em",
-          color: "text.secondary",
-        }}
-      >
-        EARLIER RUNS OF {tag.toUpperCase()}
-      </Typography>
+      <SectionCaption>EARLIER RUNS OF {tag.toUpperCase()}</SectionCaption>
       <Stack spacing={1}>
         {runs.map((run) => (
           <RunRow key={run.id} run={run} />

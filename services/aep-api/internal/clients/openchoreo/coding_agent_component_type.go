@@ -128,6 +128,29 @@ func CodingAgentComponentType() map[string]any {
 							"type": "string", "default": "3Gi",
 							"enum": []any{"1Gi", "2Gi", "3Gi", "4Gi"},
 						},
+						// /dev/shm, which the runner's Chromium needs and which
+						// Kubernetes does not give a pod by default: with no volume
+						// mounted there the container runtime supplies the 64Mi
+						// default, and a headless Chromium on 64Mi of shared memory
+						// does not degrade — it aborts. The other two ways of running
+						// this exact image both size it (`--shm-size=1g` in
+						// runners/remote-worker/local/run-local.sh and in the
+						// playground's docker run), so the cluster was the one place
+						// the image behaved differently from where it is developed.
+						//
+						// It is NOT extra memory. A `medium: Memory` emptyDir is a
+						// tmpfs whose pages are charged to the container's cgroup, so
+						// what the browser puts in /dev/shm comes out of memoryLimit
+						// like anything else; sizeLimit is a ceiling on the tmpfs, not
+						// a reservation. That is exactly why it is enum-bounded here
+						// with the other resource pins rather than left open: an
+						// unbounded memory-backed emptyDir is sized from the NODE's
+						// memory, and a pod that filled one would take the node down
+						// with it rather than being OOM-killed on its own.
+						"shmSize": map[string]any{
+							"type": "string", "default": "1Gi",
+							"enum": []any{"64Mi", "256Mi", "512Mi", "1Gi", "2Gi"},
+						},
 						"imagePullPolicy": map[string]any{
 							"type": "string", "default": "IfNotPresent",
 							"enum": []any{"Always", "IfNotPresent", "Never"},
@@ -196,6 +219,10 @@ func codingAgentComponentTypeResources() []any {
 											"name":      "tmp",
 											"mountPath": "/tmp",
 										},
+										map[string]any{
+											"name":      "dshm",
+											"mountPath": "/dev/shm",
+										},
 									},
 								},
 							},
@@ -207,6 +234,18 @@ func codingAgentComponentTypeResources() []any {
 								map[string]any{
 									"name":     "tmp",
 									"emptyDir": map[string]any{},
+								},
+								// medium: Memory is what makes this a tmpfs, which is
+								// what /dev/shm has to be — Chromium mmaps its shared
+								// buffers there, and a disk-backed emptyDir would give
+								// the path without the semantics. See the shmSize
+								// parameter for why it is bounded.
+								map[string]any{
+									"name": "dshm",
+									"emptyDir": map[string]any{
+										"medium":    "Memory",
+										"sizeLimit": "${parameters.shmSize}",
+									},
 								},
 							},
 						},

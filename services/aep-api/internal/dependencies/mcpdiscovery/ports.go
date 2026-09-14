@@ -138,3 +138,11 @@ type SpecNormalizer func(content string) (normalized string, err error)
 // MCP tool layer only adds a TIGHTER context-safety cap on top, never a looser
 // SSRF posture.
 type SpecFetcher func(ctx context.Context, url string) ([]byte, error)
+
+// SpecSlicer cuts, from a whole OpenAPI document, the operations named by the
+// selectors (operationId, "METHOD /path", or "/path") plus every schema they
+// reference, as a standalone canonical document. Backs slice_openapi_spec.
+// Satisfied by spec.SliceOpenAPI — the deterministic tool that lets a design
+// commit the slice of a provider's document it actually uses, whatever the
+// size of the source.
+type SpecSlicer func(raw []byte, selectors []string) ([]byte, error)

@@ -35,7 +35,6 @@ function status(over: {
     hasDesign: false,
     hasTasks: false,
     specStatus: "",
-    designStatus: "",
     spec: { exists: true, version: "", dirty: false, design: false, agent: "", ...over.spec },
     build: { version: "", status: "idle", ...over.build },
     deploy: {
@@ -160,6 +159,15 @@ describe("the build leg", () => {
     expect(l.state).toBe(expected);
     expect(l.line).toBe(line);
     expect(l.version).toBe("v1");
+  });
+
+  it("says what failed in the build page's own words when the platform recorded it", () => {
+    const l = leg(
+      status({ build: { version: "v1", status: "failed", failureCode: "dependency-unprovisionable" } }),
+      1,
+    );
+    expect(l.state).toBe("failed");
+    expect(l.line).toBe("Build failed · Dependency could not be provisioned");
   });
 });
 

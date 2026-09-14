@@ -41,9 +41,12 @@ vi.mock("./GitHubCredentialCard", () => ({
 vi.mock("./AnthropicCredentialCard", () => ({
   AnthropicCredentialCard: () => <div data-testid="anthropic-card" />,
 }));
+vi.mock("./CodingAgentCard", () => ({
+  CodingAgentCard: () => <div data-testid="coding-agent-card" />,
+}));
 
 let configResult: {
-  data?: { gitProvider: null; llm: null; codingLlm: null };
+  data?: { gitProvider: null; llm: null; codingLlm: null; codingAgent: null };
   isLoading: boolean;
   isError: boolean;
   error?: Error;
@@ -58,16 +61,17 @@ afterEach(() => {
 });
 
 describe("CredentialsSection", () => {
-  it("renders both cards when the config loads with either permission held", () => {
+  it("renders every card when the config loads with either permission held", () => {
     configResult = {
       isLoading: false,
       isError: false,
-      data: { gitProvider: null, llm: null, codingLlm: null },
+      data: { gitProvider: null, llm: null, codingLlm: null, codingAgent: null },
     };
     render(<CredentialsSection />);
 
     expect(screen.getByTestId("github-card")).toBeInTheDocument();
     expect(screen.getByTestId("anthropic-card")).toBeInTheDocument();
+    expect(screen.getByTestId("coding-agent-card")).toBeInTheDocument();
   });
 
   it("shows a loading spinner while config loads", () => {
@@ -94,7 +98,7 @@ describe("CredentialsSection", () => {
     configResult = {
       isLoading: false,
       isError: false,
-      data: { gitProvider: null, llm: null, codingLlm: null },
+      data: { gitProvider: null, llm: null, codingLlm: null, codingAgent: null },
     };
     render(<CredentialsSection />);
 
@@ -103,5 +107,6 @@ describe("CredentialsSection", () => {
     ).toBeInTheDocument();
     expect(screen.queryByTestId("github-card")).not.toBeInTheDocument();
     expect(screen.queryByTestId("anthropic-card")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("coding-agent-card")).not.toBeInTheDocument();
   });
 });

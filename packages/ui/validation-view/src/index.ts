@@ -40,6 +40,8 @@ export {
   METHOD_COLOR,
   METHOD_FALLBACK_COLOR,
   METHOD_LABEL,
+  runAnswers,
+  runWorksOn,
   tallyCriterionMethods,
   tallyCriterionStates,
   uncoveredCount,

@@ -3,6 +3,7 @@ import type { components } from "../../generated/aep-api";
 type ApiError = components["schemas"]["Error"];
 type ApplyRequest = components["schemas"]["ApplyRequest"];
 type ApplyResult = components["schemas"]["ApplyResult"];
+type BuildRunList = components["schemas"]["BuildRunList"];
 import { http, HttpResponse, type JsonBodyType } from "msw";
 import {
   appliedFileContent,
@@ -41,8 +42,10 @@ import {
 } from "../fixtures/task-log";
 import {
   isTerminalRunState,
+  runCancelledEvents,
+  runCycleEvents,
   runCycleLines,
-  runHeartbeatLine,
+  runHeartbeatEvent,
 } from "../fixtures/run-progress";
 import {
   CRITERIA_PATH,
@@ -119,6 +122,14 @@ function criteriaMissing(): boolean {
   return localStorage.getItem("aep:mock:validation-criteria") === "missing";
 }
 
+// Whether the oracle should carry a criterion the pinned report predates
+// (aep:mock:validation-criteria=drifted). Shares the key with `missing` because both
+// describe the criteria FILE rather than a run, and the two are mutually exclusive:
+// a file that is absent cannot also have drifted.
+function criteriaDrifted(): boolean {
+  return localStorage.getItem("aep:mock:validation-criteria") === "drifted";
+}
+
 // The project's files with the two validation artifacts swapped for the ones the
 // overridden verdict implies. Dropping them first is what makes `unreported` and
 // `skipped` reachable: those scenarios contribute FEWER files, not different ones.
@@ -127,7 +138,7 @@ function specFiles(s: Exclude<ProjectScenario, "error">) {
   if (!v) return projectSpecFiles[s];
   return [
     ...projectSpecFiles[s].filter((f) => !VALIDATION_FILE_PATHS.includes(f.path)),
-    ...validationFiles(v, validationAttempt()).filter(
+    ...validationFiles(v, validationAttempt(), criteriaDrifted()).filter(
       (f) => !(criteriaMissing() && f.path === CRITERIA_PATH),
     ),
   ];
@@ -147,6 +158,38 @@ function respond<T extends JsonBodyType>(
 
 // Project-scoped reads backing the overview page (issue #77). The project
 // itself (GET /projects/:projectName) is served by handlers/projects.ts.
+// Runs the reader cancelled in THIS browser session, by id.
+//
+// Session-scoped and deliberately not persisted: a mock scenario is a story you
+// start over by reloading, and a cancellation that outlived the page would make
+// the `building` scenario permanently uncancellable.
+const cancelledRuns = new Set<string>();
+
+/**
+ * The run story with the reader's cancellations applied.
+ *
+ * The real supervisor acts on the signal and the row flips; the mock has no
+ * supervisor, so this is where "somebody stopped it" becomes true. Applied to
+ * BOTH the run list and the progress stream, because a feed saying cancelled
+ * under a header saying running is a fixture contradicting itself.
+ */
+function withCancellations(story: BuildRunList): BuildRunList {
+  if (cancelledRuns.size === 0) return story;
+  return {
+    ...story,
+    runs: story.runs.map((run) =>
+      cancelledRuns.has(run.id)
+        ? {
+            ...run,
+            state: "cancelled" as const,
+            terminalReason: "cancelled" as const,
+            endedAt: new Date().toISOString(),
+          }
+        : run,
+    ),
+  };
+}
+
 export const projectHandlers = [
   http.get("*/api/v1/projects/:projectName/status", () =>
     respond((s) => {
@@ -176,6 +219,24 @@ export const projectHandlers = [
   http.get("*/api/v1/projects/:projectName/dependencies/readiness", () =>
     respond((s) => projectDependencyReadiness(s)),
   ),
+  // The dependency definition view's two writes (ADR-0028): a document lands in the
+  // dependency's directory; an assumption is accepted. Neither echoes anything
+  // the page needs beyond success, so the mock acknowledges and the page
+  // refetches the dependencies read model.
+  http.post("*/api/v1/projects/:projectName/dependencies/:name/contract", ({ params }) => {
+    if (scenario() === "error") {
+      return HttpResponse.json(projectSectionError, { status: 500 });
+    }
+    return HttpResponse.json({
+      contract: `specs/design/dependencies/${String(params["name"])}/openapi.yaml`,
+    });
+  }),
+  http.post("*/api/v1/projects/:projectName/dependencies/:name/assumption", () => {
+    if (scenario() === "error") {
+      return HttpResponse.json(projectSectionError, { status: 500 });
+    }
+    return HttpResponse.json({ status: "accepted" });
+  }),
   // Re-collect an external connection's values (#395 follow-up). Values are
   // write-only on the real platform (secrets go to the secret manager and
   // never echo), so the mock just acknowledges.
@@ -225,9 +286,10 @@ export const projectHandlers = [
       const tag = String(params.tag);
       // Keyed BY TAG: a run story stamped with another version's identity is a
       // fixture that contradicts its own envelope.
-      return v
+      const story = v
         ? { ...validationRuns(v, validationAttempt()), tag }
         : buildRunsForTag(s, tag);
+      return withCancellations(story);
     }),
   ),
   // A build session's fan-out. Derived from the cluster on the real server, so
@@ -239,10 +301,17 @@ export const projectHandlers = [
   ),
   // Cancel: 202 means the SIGNAL was sent — the run row flips to `cancelled`
   // when the supervisor acts on it, which is why there is no body to return.
-  http.post("*/api/v1/projects/:projectName/runs/:runId/cancel", () => {
+  //
+  // The mock then ACTS on it (see `cancelledRuns`). It used to answer 202 and
+  // change nothing, so the one button on this page that stops a run had no
+  // observable effect in mock mode — and the cancelled ending, which is a
+  // distinct thing from a failure everywhere else in the product, could not be
+  // seen at all.
+  http.post("*/api/v1/projects/:projectName/runs/:runId/cancel", ({ params }) => {
     if (scenario() === "error") {
       return HttpResponse.json(projectSectionError, { status: 503 });
     }
+    cancelledRuns.add(String(params.runId));
     return new HttpResponse(null, { status: 202 });
   }),
   // The run feed: ONE SSE stream for the whole run, frames grouped by cycle.
@@ -250,7 +319,7 @@ export const projectHandlers = [
   // the property the console's reconnect logic is written against.
   http.get(
     "*/api/v1/projects/:projectName/runs/:runId/progress",
-    ({ request }) => {
+    ({ request, params }) => {
       const s = scenario();
       if (s === "error") {
         return HttpResponse.json(projectSectionError, { status: 500 });
@@ -264,6 +333,11 @@ export const projectHandlers = [
         ? validationRuns(v, validationAttempt()).runs
         : projectBuildRuns[s].runs;
       const run = runs[0];
+      // Cancellation is checked against the id the CLIENT asked for, not the
+      // fixture's own: `buildRunsForTag` restamps run ids per version so a run
+      // story cannot contradict its envelope, and the console therefore cancels
+      // an id this list has never heard of.
+      const cancelled = cancelledRuns.has(String(params.runId));
       const encoder = new TextEncoder();
       let timer: ReturnType<typeof setInterval> | undefined;
 
@@ -274,24 +348,51 @@ export const projectHandlers = [
           const delay = (ms: number) =>
             new Promise((resolve) => setTimeout(resolve, ms));
 
+          // `event` frames, the v2 feed. The cycle and the attempt are stamped
+          // by the SERVER as it relays — a runner knows what it is doing but not
+          // which cycle of which run it turned out to be — so the mock stamps
+          // them here rather than baking them into the fixture.
           let seq = 0;
-          for (const [i, cycle] of (run?.cycles ?? []).entries()) {
+          for (const cycle of run?.cycles ?? []) {
             if (request.signal.aborted) return controller.close();
             send(JSON.stringify({ type: "cycle", cycle }));
-            for (const line of runCycleLines(cycle, i, seq)) {
+            for (const event of runCycleEvents(cycle, seq)) {
               if (request.signal.aborted) return controller.close();
-              send(JSON.stringify({ type: "line", line }));
-              seq = (line.seq ?? seq) + 1;
+              send(
+                JSON.stringify({
+                  type: "event",
+                  cycleId: cycle.id,
+                  attempt: cycle.attempts,
+                  event,
+                }),
+              );
+              seq = (event.seq ?? seq) + 1;
               await delay(MOCK_LINE_MS);
             }
           }
-          if (!run || isTerminalRunState(run.state)) {
-            send(JSON.stringify({ type: "done", state: run?.state ?? "succeeded" }));
+          if (!run || cancelled || isTerminalRunState(run.state)) {
+            if (cancelled) {
+              for (const event of runCancelledEvents(seq)) {
+                const last = run?.cycles[run.cycles.length - 1];
+                if (!last) break;
+                send(JSON.stringify({ type: "event", cycleId: last.id, attempt: last.attempts, event }));
+                seq = (event.seq ?? seq) + 1;
+              }
+            }
+            send(JSON.stringify({ type: "done", state: cancelled ? "cancelled" : (run?.state ?? "succeeded") }));
             send("[DONE]");
             controller.close();
             return;
           }
-          // Live run: heartbeat lines on the newest cycle until disconnect.
+          // Live run: heartbeats on the newest cycle until disconnect. They paint
+          // no row — the silence explained is the agent's status line — which is
+          // exactly the property a mock should keep exercising.
+          //
+          // …unless the reader cancels it, which is the ONE thing that ends a
+          // live mock run. The ending is a fact about the run, so it is appended
+          // here rather than baked into a cycle's fixture: the agent it
+          // interrupted stops (`stopped`, a cancellation and not a failure) and
+          // the run settles `cancelled`.
           const last = run.cycles[run.cycles.length - 1];
           let tick = 1;
           timer = setInterval(() => {
@@ -300,10 +401,30 @@ export const projectHandlers = [
               controller.close();
               return;
             }
+            if (cancelledRuns.has(String(params.runId))) {
+              clearInterval(timer);
+              for (const event of runCancelledEvents(seq)) {
+                send(
+                  JSON.stringify({
+                    type: "event",
+                    cycleId: last.id,
+                    attempt: last.attempts,
+                    event,
+                  }),
+                );
+                seq = (event.seq ?? seq) + 1;
+              }
+              send(JSON.stringify({ type: "done", state: "cancelled" }));
+              send("[DONE]");
+              controller.close();
+              return;
+            }
             send(
               JSON.stringify({
-                type: "line",
-                line: runHeartbeatLine(last, run.cycles.length - 1, seq++, tick++),
+                type: "event",
+                cycleId: last.id,
+                attempt: last.attempts,
+                event: runHeartbeatEvent(seq++, tick++),
               }),
             );
           }, 4000);
@@ -325,6 +446,9 @@ export const projectHandlers = [
   // chronological order, each frame carrying the run it belongs to. It settles
   // whenever no run is live — which is NOT "the version is finished", so the
   // frame says `reason`, never a run state.
+  //
+  // Still `line` frames: this stream has not moved to the v2 envelope, and a
+  // mock that moved ahead of it would be testing a contract nothing serves.
   http.get(
     "*/api/v1/projects/:projectName/builds/:tag/progress",
     ({ request }) => {

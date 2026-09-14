@@ -47,8 +47,9 @@ type LLMProjection = components["schemas"]["LLMProjection"];
 
 /**
  * The coding agent's key: an OVERRIDE on the organization's Anthropic key,
- * rendered inside the Anthropic card because it only means anything relative to
- * the key above it.
+ * rendered inside the Coding agent card because it is a coding-agent setting
+ * (ADR-0016) — it only means anything relative to the org key it overrides,
+ * which is why every label names that key rather than pointing at a position.
  *
  * "Reuse" is the ABSENCE of a coding key, not a stored setting — so the radio is
  * local state and nothing is written until a button is pressed. That matches the
@@ -58,8 +59,8 @@ type LLMProjection = components["schemas"]["LLMProjection"];
  * back to the key above), the key itself cannot be read back and would have to
  * be re-fetched from Anthropic.
  *
- * No ae:model-config check of its own: AnthropicCredentialCard, the only
- * mount point, already returns its own no-permission state before this ever
+ * No ae:model-config check of its own: CodingAgentCard, the only mount
+ * point, already returns its own no-permission state before this ever
  * renders — so a permission check here would be unreachable dead code, not
  * defense in depth.
  */
@@ -115,15 +116,19 @@ export function CodingAgentKeySection({
         Bill the coding agent to a separate credential — either another
         Anthropic API key, or a token from <code>claude setup-token</code> to
         bill a Claude subscription instead of API credits. Everything else —
-        requirements, architecture, and task generation — keeps using the key
-        above either way.
+        requirements, architecture, and task generation — keeps using the
+        organization&apos;s Anthropic key either way.
       </Typography>
 
       <RadioGroup
         value={wantsSeparate ? "separate" : "reuse"}
         onChange={(e) => chooseMode(e.target.value)}
       >
-        <FormControlLabel value="reuse" control={<Radio />} label="Reuse the key above" />
+        <FormControlLabel
+          value="reuse"
+          control={<Radio />}
+          label="Reuse the organization's Anthropic key"
+        />
         <FormControlLabel value="separate" control={<Radio />} label="Use a separate key" />
       </RadioGroup>
 

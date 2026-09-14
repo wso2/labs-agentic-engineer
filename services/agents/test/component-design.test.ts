@@ -67,20 +67,9 @@ test("dependencies: kind=org-service is accepted", () => {
   assert.equal(check(doc), null);
 });
 
-test("dependencies: kind=external with spec + config is accepted", () => {
+test("dependencies: kind=external is a bare reference — its definition lives in the dependency file", () => {
   const doc = baseDoc();
-  doc.dependencies = [
-    {
-      kind: "external",
-      name: "stripe",
-      style: "rest-api",
-      specPath: "dependencies/stripe.openapi.yaml",
-      config: [
-        { key: "STRIPE_API_KEY", secret: true, description: "Your Stripe secret API key" },
-        { key: "STRIPE_ACCOUNT", secret: false, defaultValue: "acct_default" },
-      ],
-    },
-  ];
+  doc.dependencies = [{ kind: "external", name: "stripe", description: "charges shipping" }];
   assert.equal(check(doc), null);
 });
 
@@ -102,13 +91,30 @@ test("dependencies: all four kinds together validate", () => {
   doc.dependencies = [
     { kind: "component", name: "cart" },
     { kind: "org-service", name: "billing" },
-    { kind: "external", name: "stripe", style: "rest-api", specPath: "dependencies/stripe.openapi.yaml" },
+    { kind: "external", name: "stripe" },
     { kind: "platform-resource", name: "orders-db", resourceType: "postgres" },
   ];
   assert.equal(check(doc), null);
 });
 
-// --- external-only intent fields (style/package/specPath/candidates) -------
+// --- the definition fields moved to specs/design/dependencies/<name>/dependency.json
+
+for (const [field, value] of [
+  ["style", "rest-api"],
+  ["package", "npm:stripe@^14"],
+  ["specPath", "dependencies/stripe.openapi.yaml"],
+  ["candidates", [{ name: "sendgrid-rest", style: "rest-api" }, { name: "resend-sdk", style: "sdk" }]],
+  ["config", [{ key: "STRIPE_API_KEY", secret: true }]],
+] as const) {
+  test(`dependencies: ${field} on kind=external -> SCHEMA_VIOLATION pointing at the dependency file`, () => {
+    const doc = baseDoc();
+    doc.dependencies = [{ kind: "external", name: "stripe", [field]: value }];
+    const r = check(doc);
+    assert.equal(r?.code, "SCHEMA_VIOLATION");
+    assert.match(r!.message, /specs\/design\/dependencies\/stripe\/dependency\.json/);
+    assert.match(r!.message, new RegExp(`"${field}"`));
+  });
+}
 
 test("dependencies: needsSpec is retired -> unknown key SCHEMA_VIOLATION", () => {
   const doc = baseDoc();
@@ -116,51 +122,9 @@ test("dependencies: needsSpec is retired -> unknown key SCHEMA_VIOLATION", () =>
   assert.equal(check(doc)?.code, "SCHEMA_VIOLATION");
 });
 
-test("dependencies: style + package accepted on kind=external", () => {
-  const doc = baseDoc();
-  doc.dependencies = [
-    {
-      kind: "external",
-      name: "stripe",
-      style: "sdk",
-      package: "npm:stripe@^14",
-    },
-  ];
-  assert.equal(check(doc), null);
-});
-
-test("dependencies: 2+ candidates accepted on kind=external", () => {
-  const doc = baseDoc();
-  doc.dependencies = [
-    {
-      kind: "external",
-      name: "email-provider",
-      candidates: [
-        { name: "sendgrid-rest", style: "rest-api", description: "SendGrid v3 Web API" },
-        { name: "resend-sdk", style: "sdk", package: "npm:resend@^4.0.0" },
-      ],
-    },
-  ];
-  assert.equal(check(doc), null);
-});
-
-test("dependencies: candidates with a single item -> SCHEMA_VIOLATION (minItems 2)", () => {
-  const doc = baseDoc();
-  doc.dependencies = [
-    { kind: "external", name: "email-provider", candidates: [{ name: "sendgrid-rest", style: "rest-api" }] },
-  ];
-  assert.equal(check(doc)?.code, "SCHEMA_VIOLATION");
-});
-
-test("dependencies: candidates: [] -> SCHEMA_VIOLATION (omit, never empty)", () => {
-  const doc = baseDoc();
-  doc.dependencies = [{ kind: "external", name: "email-provider", candidates: [] }];
-  assert.equal(check(doc)?.code, "SCHEMA_VIOLATION");
-});
-
 // specUrl (URL hint) and sources (provenance array) were removed from the
-// schema — the coding agent now researches contracts freely from the web — so
-// both reject as unknown keys (strictObject) even on kind="external".
+// schema long before the definition moved out — both still reject as unknown
+// keys (strictObject).
 test("dependencies: retired specUrl -> unknown key SCHEMA_VIOLATION", () => {
   const doc = baseDoc();
   doc.dependencies = [{ kind: "external", name: "stripe", specUrl: "https://example.com/stripe.yaml" }];
@@ -173,20 +137,14 @@ test("dependencies: retired sources -> unknown key SCHEMA_VIOLATION", () => {
   assert.equal(check(doc)?.code, "SCHEMA_VIOLATION");
 });
 
-test("dependencies: an invalid style value -> SCHEMA_VIOLATION", () => {
-  const doc = baseDoc();
-  doc.dependencies = [{ kind: "external", name: "stripe", style: "graphql" }];
-  assert.equal(check(doc)?.code, "SCHEMA_VIOLATION");
-});
-
-// candidates/style/package/specPath are external-only — mechanically rejected
-// on any other kind (component-design-schema.ts superRefine).
+// The moved fields are unknown keys on every OTHER kind too — no pointer, just
+// the strict schema.
 for (const [field, value] of [
   ["style", "sdk"],
   ["package", "npm:stripe@^14"],
   ["specPath", "dependencies/stripe.openapi.yaml"],
 ] as const) {
-  test(`dependencies: ${field} is external-only -> SCHEMA_VIOLATION on kind=org-service`, () => {
+  test(`dependencies: ${field} is an unknown key on kind=org-service -> SCHEMA_VIOLATION`, () => {
     const doc = baseDoc();
     doc.dependencies = [{ kind: "org-service", name: "identity", [field]: value }];
     const r = check(doc);
@@ -194,23 +152,6 @@ for (const [field, value] of [
     assert.match(r!.message, new RegExp(field));
   });
 }
-
-test("dependencies: candidates is external-only -> SCHEMA_VIOLATION on kind=org-service", () => {
-  const doc = baseDoc();
-  doc.dependencies = [
-    {
-      kind: "org-service",
-      name: "identity",
-      candidates: [
-        { name: "identity-a", style: "rest-api" },
-        { name: "identity-b", style: "sdk" },
-      ],
-    },
-  ];
-  const r = check(doc);
-  assert.equal(r?.code, "SCHEMA_VIOLATION");
-  assert.match(r!.message, /candidates/);
-});
 
 // --- connections is GONE ---------------------------------------------------
 

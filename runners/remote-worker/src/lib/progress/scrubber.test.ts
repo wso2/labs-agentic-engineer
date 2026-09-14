@@ -211,3 +211,19 @@ test("scrub: redacts an OAuth token exactly as it does an API key", () => {
     assert.ok(!out.includes(secret), `${secret} leaked`);
   }
 });
+
+test("scrub: redacts a gh hosts.yml oauth_token, preserving the key", () => {
+  // The credhelper branch writes the GitHub token at rest in the agent's own
+  // workspace as `oauth_token: <token>`; `cat`ting it must not put a live
+  // credential on the feed. Shape-only by necessity — that token is minted
+  // inside bash and never enters the runner process, so nothing can enroll it.
+  const s = fresh();
+  const out = s.scrub("    oauth_token: aQ7fL2mZ9xR4tY6uP1sD3gH5jK8nB0vC");
+  assert.match(out, /oauth_token: \[REDACTED\]/);
+  assert.ok(!out.includes("aQ7fL2mZ9xR4tY6uP1sD3gH5jK8nB0vC"));
+});
+
+test("scrub: leaves an oauth_token key with no value alone", () => {
+  const s = fresh();
+  assert.equal(s.scrub("oauth_token:"), "oauth_token:");
+});

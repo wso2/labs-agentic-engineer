@@ -110,9 +110,16 @@ func (s *designService) persistPlatformResourceDerivation(ctx context.Context, o
 		return false, nil
 	}
 
+	legacy := make(map[string]bool, len(designFile.LegacyCarriers))
+	for _, name := range designFile.LegacyCarriers {
+		legacy[name] = true
+	}
 	var writes []DesignFileWrite
 	for i := range designFile.Components {
-		if derivedStateEqual(before[i], snapshotDerived(designFile.Components[i])) {
+		// A component still carrying an external dependency's definition
+		// fields is re-rendered as a bare reference — that drop is the
+		// migration (ADR-0027), and the lifted definitions are written below.
+		if derivedStateEqual(before[i], snapshotDerived(designFile.Components[i])) && !legacy[designFile.Components[i].Name] {
 			continue
 		}
 		comp := designFile.Components[i]
@@ -134,6 +141,23 @@ func (s *designService) persistPlatformResourceDerivation(ctx context.Context, o
 			return false, fmt.Errorf("component %q design.json missing on disk", comp.Name)
 		}
 		writes = append(writes, DesignFileWrite{Path: designFull, Content: content, BaseSHA: sha})
+	}
+	// Definitions lifted from legacy components have no file yet: write them,
+	// so the directory exists before the next read strips the components.
+	for _, def := range designFile.Dependencies {
+		definitionFull := DesignDir + "/" + dependencyDesignKey(def.Name)
+		_, _, exists, rerr := s.fileCommitter.ReadFile(ctx, orgID, projectID, definitionFull)
+		if rerr != nil {
+			return false, fmt.Errorf("read %q for CAS: %w", definitionFull, rerr)
+		}
+		if exists {
+			continue
+		}
+		body, err := marshalDependencyDefinitionJSON(def.Name, def)
+		if err != nil {
+			return false, fmt.Errorf("render dependency %q: %w", def.Name, err)
+		}
+		writes = append(writes, DesignFileWrite{Path: definitionFull, Content: string(body)})
 	}
 	if len(writes) == 0 {
 		return false, nil

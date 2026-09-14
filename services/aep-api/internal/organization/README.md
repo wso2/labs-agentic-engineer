@@ -45,6 +45,7 @@ services, the raw connect-callback controller, and the S2S credentials-refresh.*
 ## Owns
 - `organizations` (+ `thunder_org_uuid`), `org_credentials`, `org_anthropic_credentials`
   (keyed `(oc_org_id, role)` — one row per `default` / `coding` Anthropic credential),
+  `org_coding_agent_settings` (one row per org, absent = the platform defaults),
   `organization_idp_profiles` + `idp_audit_events` — gorm + entities in this domain (`entity_*.go` over
   `repository_*.go`), single write-authority.
 
@@ -60,6 +61,27 @@ services, the raw connect-callback controller, and the S2S credentials-refresh.*
   `llm=null, codingLlm=set` is unrepresentable. Its ABSENCE is what "reuse the org's key" means; no
   column stores a mode, because one could disagree with row presence. `codingLlm: null` therefore means
   *reuse*, not *not connected* — the one section whose null differs from the rest.
+- **`codingAgent` is the one /config section that is a plain setting, and the only one whose fields
+  are individually optional.** No secret, nothing to probe, and a projection that DOES echo what was
+  written — so its whole probe phase is local validation, and an omitted `runtime` or `model` resolves
+  against what the org actually has rather than against the default (an org tunes its model far more
+  often than it moves runtime). It is **never null on the wire**: every org has an effective runtime
+  and model, so the section carries the platform's defaults until somebody chooses, and `updatedBy`
+  is what tells "on the defaults" from "chose the defaults". `null` on the PATCH **resets** — the row
+  is deleted, not overwritten with the defaults, so that distinction survives. `AgentRuntimes` /
+  `CodingAgentModels` (`platform/orgconfig`) are pinned against the committed contract's enums by a
+  test, because a value that drifts out of an enum is rejected by the request validator far from
+  these lists.
+- **Membership of the `AgentRuntime` enum is NOT availability.** `opencode` is in the contract because
+  the design carries it and a client should be able to render the choice; `SupportedAgentRuntimes` is
+  what this build can run, and choosing anything else is refused with a reason naming what is missing.
+  Never substitute the runtime we do have — that bills an organization for a runtime it did not choose
+  and never tells it. The runner refuses the same name for the same reason
+  (`runtime/registry.ts`); this is that refusal moved to the moment of choosing.
+- **The `CodingAgentModel` enum is the set the platform can PRICE.** `modelcost.SumCost` is
+  all-or-nothing across a cycle's capture, so one model with no `model_rates` row blanks the whole
+  cycle's cost rather than just its own share. Offering a model is a rate row and a contract change
+  together, never one without the other.
 - **Exactly one credential variable reaches a coding run.** `credential_kind` (`api_key` |
   `oauth_token`) is persisted, not re-derived — dispatch reads the row and never the secret bytes — and
   picks `ANTHROPIC_API_KEY` xor `CLAUDE_CODE_OAUTH_TOKEN`. Claude Code ranks the former above the

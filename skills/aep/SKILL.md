@@ -232,6 +232,24 @@ subagent you handed it to, keeps its status line current from start to done
    added for a Ballerina component also swallows a web-app's `src/generated/`,
    which that stack **requires** committed. Anchor the pattern; never `git add -f`
    past it.
+
+   **Crash artefacts are the one category to ignore before you have one.** A
+   compiler, a JVM or a browser that dies hard drops a `core` or an
+   `hs_err_pid*.log` wherever it was running — tens of megabytes of binary,
+   untracked, in a tree you are staging from. Nothing lists it, `git status`
+   shows one unfamiliar name among your own files, and a single `git add -A`
+   puts it in the pull request for good. These belong at the top of the
+   repo-root `.gitignore` of every project, unanchored on purpose — they can
+   land in any directory, and unlike `target/` there is no component that wants
+   one committed:
+
+   ```gitignore
+   # crash artefacts — never wanted, in any component
+   core
+   core.*
+   hs_err_pid*.log
+   replay_pid*.log
+   ```
 5. Re-derive the working set (§1) and pick the next issue.
 
 **Say why before you throw work away.** Before deleting or wholesale-rewriting a
@@ -280,26 +298,55 @@ is not the one being worked.
 
 ### Fan-out to subagents
 
-You have a fan-out tool, and **fanning out is the default, not the exception** —
-a provider and its consumer may be built at the same time, by different subagents
-(**Contract-first**). Two tests, and they are the only two:
+You have a **fan-out tool** and a **wait tool** — the tool glossary at the end of
+your instructions names them for this session. **Fanning out is the default, not
+the exception**: a provider and its consumer may be built at the same time, by
+different subagents (**Contract-first**). Two tests, and they are the only two:
 
-- **Disjoint App Paths** — no file and no module written by both. Overlap is the
-  only reason to serialise; work those inline, in ascending order.
+- **Disjoint write boundaries** — no file or module written by both. Separate
+  App Paths qualify; a stack skill may also split one App Path into exclusive
+  subdirectories or files. Pass those narrower boundaries to each worker.
+  Overlapping writes stay inline, in ascending order.
 - **Big enough to be worth a subagent.** A one-file change, a config tweak, a
   small fix issue: work those inline. A subagent for small work costs more than it
   saves and makes the run harder to follow.
 
-**Issue every subagent for a wave in ONE turn, and wait for them.** Several
-fan-out calls in a single message is what makes them run at the same time, and
-short prompts are what make one message possible. Do not use `run_in_background`:
-it does not add concurrency — it detaches the subagent, so its steps stop reaching
-the progress feed and the person watching sees an empty section where a component
-was built.
+**Dispatch every builder of a wave in the background, in ONE turn.**
+Backgrounding is what lets you keep working while they build — resolve the next
+component's wiring, review one that has come back — instead of spending the whole
+wave inside one blocked tool call. Short prompts are what make one message
+possible.
+
+**Wait for every one of them with the wait tool before you stage or commit
+anything.** A subagent that has not reported is not done, whatever the tree looks
+like: the files it is still writing are already on disk, so a commit taken early
+ships half an issue.
+
+**Inside a subagent, every command runs in the foreground** — a subagent never
+backgrounds a shell call. A build left running in the background lets the
+subagent report "clean" while it is still compiling, and whatever is still
+running when the session ends is recorded as an orphan. It is item 8 of the
+dispatch below, because a rule you do not pass on is a rule the subagent does
+not have.
+
+**A subagent may fan out itself** when its own work meets the two tests above; it
+inherits every rule in this section.
+
+**Pick the model for the job.** A walk or a small fix runs well on the fast model,
+a build on the default one. Name the model on the fan-out call — the glossary
+lists the aliases this session accepts.
+
+**Keep your plan in the task list.** One entry per issue you work, moved to
+in_progress when you or a subagent starts it, and to completed when its work is
+committed. The person watching this run reads that list, so it is the one place
+your plan has to be true.
 
 **A subagent starts from its prompt and nothing else.** It does not have this
-skill. This list is a **build** dispatch — a walk's prompt is the literal one in
-step 3, and nothing else. Name **exactly these**, and nothing else:
+skill, and it must not load it: the skill is listed in its mirror by
+description, so left unsaid, a subagent loads the umbrella and re-derives the
+cycle it is not running — 24 KB it then carries for the whole build. This list
+is a **build** dispatch — a walk's prompt is the literal one in step 3, and
+nothing else. Name **exactly these**, and nothing else:
 
 1. its issue — the number, and to read it in full;
 2. its App Paths — the only paths it may write;
@@ -311,7 +358,9 @@ step 3, and nothing else. Name **exactly these**, and nothing else:
    readable, while nothing may be written outside its App Paths;
 5. the stack skills it must load, by name — and that where a stack skill's own
    flow contradicts the component contract, the contract wins (a stack skill may
-   end its flow at "open a PR", which this subagent may not do);
+   end its flow at "open a PR", which this subagent may not do). In the same
+   line, that it loads **no other skill and not `aep`**: this prompt is its
+   whole procedure;
 6. **the artefacts only you could resolve** — and say which is which: the
    component's `workload.yaml` when you hold a resolved one, pasted verbatim and
    not to be changed; **or** that no wiring was resolved, so it authors the file
@@ -321,9 +370,13 @@ step 3, and nothing else. Name **exactly these**, and nothing else:
 7. **its write boundary** — `Edit`/`Write`, and only inside its App Paths.
    **It never runs `git`**: the branch, the commits and the pull request are
    yours;
-8. what to report back to you when it finishes: what it changed and whether the
+8. **that every command it runs stays in the foreground** — it never backgrounds
+   a shell call, however long the build takes. A command still running when its
+   session ends is recorded as an orphan, and it will otherwise report "clean"
+   while its build is still compiling;
+9. what to report back to you when it finishes: what it changed and whether the
    verify command passed.
-9. **its issue's status line** — the `gh issue comment` command above with **its**
+10. **its issue's status line** — the `gh issue comment` command above with **its**
    issue number filled in, and the rule that goes with it (**The status line**):
    one line, at both ends of its work and whenever the answer changes between
    them. That command is the only `gh` it may run, and its own issue is the only
@@ -463,7 +516,6 @@ web search. The rest belongs to the run:
 - **Hold back or skip an issue because a component it depends on is not built
   yet.** Code against the contract.
 - Let a subagent run `git`, or any `gh` its prompt did not give it.
-- Fan out with `run_in_background` (**Fan-out to subagents**).
 
 ## Git and GitHub
 

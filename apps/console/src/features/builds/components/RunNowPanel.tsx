@@ -21,7 +21,7 @@ import { Box, ButtonBase, Collapse, Link, Stack, Typography } from "@wso2/oxygen
 import { ChevronRight } from "@wso2/oxygen-ui-icons-react";
 import type { components } from "../../../generated/aep-api";
 import type { RunProgressCycle, RunProgressPhase } from "../hooks/useRunProgress";
-import { formatLine } from "../../tasks/lib/timeline";
+import { formatEvent } from "@aep/progress-view";
 import { aheadSentence, glanceHeadline, type RunGlance } from "../lib/runGlance";
 import { AgentLogPanel, agentLogEmptyNote } from "./AgentLogLines";
 import { IssueChips } from "./IssueChips";
@@ -42,7 +42,7 @@ export function RunNowPanel({
   glance,
   issues,
   issuesCaption,
-  lines,
+  events,
   logPhase,
   showLog,
   onOpenLog,
@@ -52,8 +52,8 @@ export function RunNowPanel({
   /** The issues the current build session is working. */
   issues: TaskView[];
   issuesCaption?: string;
-  /** The current session's log lines, newest last. */
-  lines: RunProgressCycle["lines"];
+  /** The current session's feed, newest last. */
+  events: RunProgressCycle["events"];
   logPhase: RunProgressPhase;
   /** Whether the run feed is attached at all — a settled run opens none. */
   showLog: boolean;
@@ -121,7 +121,7 @@ export function RunNowPanel({
         />
 
         <AgentLogDrawer
-          lines={lines}
+          events={events}
           phase={logPhase}
           showLog={showLog}
           onOpenLog={onOpenLog}
@@ -154,24 +154,25 @@ const PHASE_LABEL: Record<RunProgressPhase, string> = {
  * panel's job is the current moment, and the whole log is one click below it.
  */
 function AgentLogDrawer({
-  lines,
+  events,
   phase,
   showLog,
   onOpenLog,
 }: {
-  lines: RunProgressCycle["lines"];
+  events: RunProgressCycle["events"];
   phase: RunProgressPhase;
   showLog: boolean;
   onOpenLog: () => void;
 }) {
   const [open, setOpen] = useState(false);
 
-  const newest = lines.at(-1);
+  // The newest event that has anything to SAY: the silent kinds (a heartbeat, a
+  // work item repaint) would otherwise blank the preview for as long as the run
+  // spends waiting, which is exactly when a reader looks at it.
+  const newest = [...events].reverse().map((e) => formatEvent(e).text).find(Boolean);
   const preview = !showLog
     ? "Not attached — open to replay this run's log."
-    : newest
-      ? formatLine(newest).text
-      : agentLogEmptyNote(phase);
+    : (newest ?? agentLogEmptyNote(phase));
 
   return (
     <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, overflow: "hidden" }}>
@@ -216,7 +217,7 @@ function AgentLogDrawer({
 
       <Collapse in={open} unmountOnExit>
         <Box sx={{ px: 1.5, pb: 1.5 }}>
-          <AgentLogPanel lines={lines} phase={phase} maxHeight={320} />
+          <AgentLogPanel events={events} phase={phase} maxHeight={320} />
         </Box>
       </Collapse>
     </Box>

@@ -38,6 +38,12 @@ import (
 //go:embed component-design.schema.json
 var schemaJSON []byte
 
+// dependency-design.schema.json is the same vendored embed for the dependency
+// definition (packages/contracts/schemas/dependency-design.schema.json).
+//
+//go:embed dependency-design.schema.json
+var dependencySchemaJSON []byte
+
 // Error codes (mirroring the agent's write gate).
 const (
 	CodeInvalidJSON     = "INVALID_JSON"
@@ -56,6 +62,9 @@ func (e *ValidationError) Error() string { return e.Code + ": " + e.Message }
 // componentSchema is the parsed embedded schema, loaded once at init. The schema
 // is small and fixed, so a package-level parse is fine.
 var componentSchema = jsonschema.MustParse(schemaJSON)
+
+// dependencySchema is the parsed embedded dependency-design schema.
+var dependencySchema = jsonschema.MustParse(dependencySchemaJSON)
 
 // ValidateComponentDesign checks raw component design.json bytes against the
 // embedded schema. Returns nil when valid, or a *ValidationError.
@@ -87,6 +96,30 @@ func ValidateComponentDesignInDir(raw []byte, dirName string) error {
 		return &ValidationError{
 			Code:    CodeSchemaViolation,
 			Message: fmt.Sprintf("name %q must equal the component directory name %q", name, dirName),
+		}
+	}
+	return nil
+}
+
+// ValidateDependencyDesignInDir checks raw dependency.json bytes against the
+// embedded dependency-design schema plus the rule the schema cannot express:
+// `name` must equal the dependency directory name (mirrors the agent's
+// checkDependencyDesign). dirName is the <name> segment of
+// specs/design/dependencies/<name>/dependency.json.
+func ValidateDependencyDesignInDir(raw []byte, dirName string) error {
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return &ValidationError{Code: CodeInvalidJSON, Message: "content is not valid JSON: " + err.Error()}
+	}
+	if msgs := jsonschema.Validate(v, dependencySchema); len(msgs) > 0 {
+		return &ValidationError{Code: CodeSchemaViolation, Message: msgs[0]}
+	}
+	obj, _ := v.(map[string]any)
+	name, _ := obj["name"].(string)
+	if name != dirName {
+		return &ValidationError{
+			Code:    CodeSchemaViolation,
+			Message: fmt.Sprintf("name %q must equal the dependency directory name %q", name, dirName),
 		}
 	}
 	return nil

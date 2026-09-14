@@ -30,8 +30,8 @@ type Dependency = components["schemas"]["Dependency"];
 const dep: Dependency = {
   kind: "external",
   name: "email-provider",
-  status: "ambiguous",
-  reason: "2 candidates available",
+  status: "unresolved",
+  reason: "needs-input",
 };
 
 describe("useResolveDependencyViaChat — the Task 9 seam (#252 Task 5)", () => {

@@ -5,7 +5,9 @@
   "scripts": {
     "start": "tsx src/oneshot.ts",
     "build": "tsc",
+    "gen": "openapi-typescript ../../packages/contracts/api/v1/openapi.yaml -o src/generated/aep-api.d.ts",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
     "test": "tsx --test 'src/**/*.test.ts'"
   },
   "dependencies": {

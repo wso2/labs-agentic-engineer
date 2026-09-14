@@ -41,9 +41,13 @@ import { SpecView } from "../features/spec/components/SpecView";
 export const Route = createFileRoute("/projects/$projectName_/spec")({
   validateSearch: (
     search: Record<string, unknown>,
-  ): { generate?: "design"; view?: "architecture" } => ({
+  ): { generate?: "design"; view?: "architecture"; file?: string } => ({
     ...(search.generate === "design" ? { generate: "design" as const } : {}),
     ...(search.view === "architecture" ? { view: "architecture" as const } : {}),
+    // `?file=specs/…` — a link from the chat into one document (ADR-0028: the
+    // design turn's closing list links each open dependency's definition).
+    // Stripped once followed, like `generate`: it names a moment, not a view.
+    ...(typeof search.file === "string" && search.file.startsWith("specs/") ? { file: search.file } : {}),
   }),
   component: SpecRoute,
 });

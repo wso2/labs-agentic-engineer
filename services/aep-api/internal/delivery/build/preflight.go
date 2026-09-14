@@ -18,6 +18,7 @@ package build
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
@@ -73,7 +74,7 @@ type ConfigKeyView struct {
 //
 // Two families, with very different urgency:
 //
-//   - RESOLUTION blockers — external-ambiguous, external-unresolved,
+//   - RESOLUTION blockers — external-unresolved,
 //     external-spec, org-service — are things the design itself cannot
 //     answer. They gate the version cut: nothing downstream can be authored
 //     while the dependency has no identity.
@@ -83,7 +84,7 @@ type ConfigKeyView struct {
 type PreflightItem struct {
 	Component   string `json:"component" doc:"Owning component name"`
 	Dependency  string `json:"dependency" doc:"Dependency name"`
-	Kind        string `json:"kind" enum:"external-config,external-spec,external-ambiguous,external-unresolved,platform-resource,org-service"`
+	Kind        string `json:"kind" enum:"external-config,external-spec,external-unresolved,platform-resource,org-service"`
 	Description string `json:"description"`
 	// external-config only: the key/secret schema whose values are collected
 	// while the build runs — views only, never values.
@@ -106,13 +107,35 @@ type BuildPreflight struct {
 	NeedsInput      bool            `json:"needsInput"`
 	NeedsResolution bool            `json:"needsResolution"`
 	Items           []PreflightItem `json:"items"`
+	// The version half of the same answer (console ADR-0029/ADR-0030): what the
+	// newest version is called, what to prefill the name field with, whether the
+	// tree has moved at all, and what this version would change. Empty when the
+	// version read could not be made — a degraded dialog, never a refused build.
+	CurrentVersion   string        `json:"currentVersion,omitempty"`
+	SuggestedVersion string        `json:"suggestedVersion,omitempty"`
+	SpecUnchanged    bool          `json:"specUnchanged,omitempty"`
+	Changes          []BuildChange `json:"changes,omitempty"`
+}
+
+// BuildChange is one row of the Start build dialog's change list: what this
+// version does to one component, dependency, resource, or to the requirements.
+type BuildChange struct {
+	Name  string `json:"name"`
+	Kind  string `json:"kind" enum:"component,external,platform-resource,requirements"`
+	State string `json:"state" enum:"new,changed,removed"`
+}
+
+// VersionFactsReader reports what the next version would be called and carry.
+// Satisfied by the app-root adapter over spec.ArtifactService. Nil leaves the
+// version half of the preflight empty — the feature unwired, not broken.
+type VersionFactsReader interface {
+	BuildVersionFacts(ctx context.Context, orgID, projectID string) (spec.VersionFacts, error)
 }
 
 // resolutionBlockerKinds are the item kinds that gate the version cut: the
 // design cannot name the dependency yet, so nothing downstream can be authored
 // for it. Every other kind is collected-later, deploy-gated work.
 var resolutionBlockerKinds = map[string]bool{
-	"external-ambiguous":  true,
 	"external-unresolved": true,
 	"external-spec":       true,
 	"org-service":         true,
@@ -120,9 +143,10 @@ var resolutionBlockerKinds = map[string]bool{
 
 // PreflightDeps carries the preflight service's ports.
 type PreflightDeps struct {
-	Design  PreflightDesignReader
-	Status  ProvisionStatusReader
-	Catalog OrgCatalogReader
+	Design   PreflightDesignReader
+	Status   ProvisionStatusReader
+	Catalog  OrgCatalogReader
+	Versions VersionFactsReader
 }
 
 // PreflightService computes the build preflight from the design at HEAD —
@@ -131,14 +155,15 @@ type PreflightDeps struct {
 // collects: resolution blockers gate the version cut, while external config
 // values are gathered on the Builds page and enforced at the deploy gate.
 type PreflightService struct {
-	design  PreflightDesignReader
-	status  ProvisionStatusReader
-	catalog OrgCatalogReader
+	design   PreflightDesignReader
+	status   ProvisionStatusReader
+	catalog  OrgCatalogReader
+	versions VersionFactsReader
 }
 
 // NewPreflightService wires the preflight service.
 func NewPreflightService(d PreflightDeps) *PreflightService {
-	return &PreflightService{design: d.Design, status: d.Status, catalog: d.Catalog}
+	return &PreflightService{design: d.Design, status: d.Status, catalog: d.Catalog, versions: d.Versions}
 }
 
 // Preflight walks every component's dependencies at HEAD — service AND
@@ -148,8 +173,8 @@ func NewPreflightService(d PreflightDeps) *PreflightService {
 // emits consumed-spec instructions for it) — and emits an item for each
 // dependency that is not yet settled and not already provisioned or in-flight:
 //
-//   - external: a blocker item — "external-ambiguous" (2+ candidates),
-//     "external-unresolved" (needs information only the user can supply), or
+//   - external: a blocker item — "external-unresolved" (the user has not
+//     chosen a service, or must accept an assumption), or
 //     "external-spec" (no API spec yet) — when the dependency's already
 //     computed Status/Reason (spec.ComputeDependencyStatus, via
 //     dependencyBlocker) says so; this is the dependency-management proceed
@@ -159,7 +184,7 @@ func NewPreflightService(d PreflightDeps) *PreflightService {
 //     should re-collect secrets that live on the org record).
 //   - platform-resource: a "platform-resource" item when not yet Ready.
 //   - org-service: an "org-service" item when Status is one of the three
-//     non-resolved resolution states (unresolved | blocked | ambiguous);
+//     non-resolved resolution states (unresolved | blocked);
 //     resolved dependencies never surface here.
 //   - component (sibling components): never emitted — not provisioned per
 //     project.
@@ -195,7 +220,31 @@ func (s *PreflightService) Preflight(ctx context.Context, orgID, projectID strin
 		}
 	}
 
-	return BuildPreflight{NeedsInput: len(items) > 0, NeedsResolution: needsResolution, Items: items}, nil
+	out := BuildPreflight{NeedsInput: len(items) > 0, NeedsResolution: needsResolution, Items: items}
+
+	// What the click is about to DO, beside what it still needs. It is the same
+	// answer to the same press, so it rides the same response rather than a
+	// second request the console would have to wait on (console ADR-0029).
+	//
+	// Best-effort: a version read that fails costs the dialog its name field and
+	// its change list, which is a degraded dialog — refusing the whole preflight
+	// would instead refuse the BUILD, over a list nobody has to act on.
+	if s.versions != nil {
+		facts, ferr := s.versions.BuildVersionFacts(ctx, orgID, projectID)
+		if ferr != nil {
+			slog.WarnContext(ctx, "preflight: version facts read failed",
+				"project", projectID, "error", ferr)
+			return out, nil
+		}
+		out.CurrentVersion = facts.CurrentVersion
+		out.SuggestedVersion = facts.SuggestedVersion
+		out.SpecUnchanged = facts.SpecUnchanged
+		out.Changes = make([]BuildChange, 0, len(facts.Changes))
+		for _, c := range facts.Changes {
+			out.Changes = append(out.Changes, BuildChange{Name: c.Name, Kind: c.Kind, State: c.State})
+		}
+	}
+	return out, nil
 }
 
 // itemsFor computes the 0, 1, or 2 preflight items a single dependency raises.
@@ -216,11 +265,11 @@ func (s *PreflightService) itemsFor(ctx context.Context, orgID, projectID, compo
 
 // externalItems computes the preflight item(s) for one external dependency.
 // dependencyBlocker (the single mapping the build hard-gate also uses) checks
-// FIRST: an ambiguous/unresolved dependency raises exactly one blocker item
-// (external-ambiguous / external-unresolved / external-spec) with a
+// FIRST: an unresolved dependency raises exactly one blocker item
+// (external-unresolved / external-spec) with a
 // plain-language Description, and config collection is skipped — there is
 // nothing meaningful to collect until the dependency itself resolves (a
-// still-ambiguous/unresolved dependency has no derived config keys yet). Once
+// still-unresolved dependency has no derived config keys yet). Once
 // resolved (or when no resolver was ever wired — the fail-open empty Status),
 // the pre-existing external-config item (key/secret views only) is emitted
 // when the dependency is not yet Ready and is not Registered (org catalog
@@ -277,7 +326,7 @@ func (s *PreflightService) platformResourceItems(ctx context.Context, orgID, pro
 
 func orgServiceItems(componentName string, d spec.Dependency) []PreflightItem {
 	switch d.Status {
-	case spec.DependencyStatusUnresolved, spec.DependencyStatusBlocked, spec.DependencyStatusAmbiguous:
+	case spec.DependencyStatusUnresolved, spec.DependencyStatusBlocked:
 		return []PreflightItem{{
 			Kind:        "org-service",
 			Component:   componentName,

@@ -54,8 +54,9 @@ func (c crtTypeCatalog) ResourceTypesByName(ctx context.Context) (map[string]spe
 
 // designFilesCommitter adapts the Files API (feature/files) to design's narrow
 // designFileCommitter port — the committed-truth single-commit write surface
-// design.CollectSpec uses to persist a consumed OpenAPI spec + the design.json
-// specPath edit atomically to main. It lives at the composition root so the
+// the design service uses to persist a dependency's contract + its
+// dependency.json (and the user's acceptance of an assumed contract) atomically
+// to main. It lives at the composition root so the
 // design feature imports only artifacts (arch boundary), never the files service directly.
 type designFilesCommitter struct {
 	files spec.FilesService

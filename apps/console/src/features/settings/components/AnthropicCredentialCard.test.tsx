@@ -40,8 +40,6 @@ vi.mock("../../../components/NoPermissionIllustration", () => ({
 vi.mock("../api/queries", () => ({
   useConnectAnthropic: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
   useDisconnectAnthropic: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
-  useConnectCodingAnthropic: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
-  useRemoveCodingAnthropic: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
 }));
 
 const connectedLlm: LLMProjection = {
@@ -56,7 +54,7 @@ const connectedLlm: LLMProjection = {
 function renderCard(llm: LLMProjection | null) {
   render(
     <OxygenUIThemeProvider theme={OxygenTheme}>
-      <AnthropicCredentialCard llm={llm} codingLlm={null} />
+      <AnthropicCredentialCard llm={llm} />
     </OxygenUIThemeProvider>,
   );
 }
@@ -76,8 +74,7 @@ describe("AnthropicCredentialCard — permission gate", () => {
 
   // Without ae:model-config, nothing about the key — connected or not — is
   // shown at all, not merely disabled: the form, the key prefix/dates, and
-  // the connect/disconnect actions (and the nested CodingAgentKeySection)
-  // are all absent.
+  // the connect/disconnect actions are all absent.
   it("shows no Anthropic info at all without ae:model-config, connected", () => {
     modelConfigPermission.current = false;
     renderCard(connectedLlm);
@@ -86,7 +83,6 @@ describe("AnthropicCredentialCard — permission gate", () => {
     expect(screen.queryByRole("button", { name: "Replace key" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Disconnect" })).not.toBeInTheDocument();
     expect(screen.queryByText(/sk-ant-api03-ABC/)).not.toBeInTheDocument();
-    expect(screen.queryByText("Coding agent key")).not.toBeInTheDocument();
   });
 
   it("shows no Anthropic info at all without ae:model-config, not connected", () => {

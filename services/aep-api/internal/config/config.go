@@ -353,7 +353,7 @@ type AgentsSvcConfig struct {
 type WorkspaceConfig struct {
 	// Root is the workspace mount root (AEP_WORKSPACE_ROOT). Layout under it:
 	// repos/<orgId>/<projectId>/<repoSlug>/{git,repo.lock,snapshots/<sha>},
-	// trash/<ulid>, tmp/.
+	// trash/<ulid>, tmp/, runs/<orgId>/<cycleId>.
 	Root string
 	// ReapInterval is the background reaper sweep cadence (trash purge,
 	// snapshot age-reap, orphan reconciliation, quota/LRU eviction).
@@ -364,6 +364,17 @@ type WorkspaceConfig struct {
 	// TrashMaxAge — trash/<ulid> entries (phase 1 of the two-phase delete)
 	// older than this are purged.
 	TrashMaxAge time.Duration
+	// RecordingMaxAge — runs/<orgId>/<cycleId> coding-agent feed recordings
+	// older than this are removed by the reaper. Days, not hours: unlike every
+	// other tree on this mount a recording cannot be rebuilt, so the window is
+	// how long a run stays inspectable rather than how long a cache stays warm
+	// (ADR-0027).
+	RecordingMaxAge time.Duration
+	// RecordingMaxBytes caps ONE cycle's recording. Zero — the default — is no
+	// cap: a 55-minute run wrote about 300KB, so this is a safety valve for a
+	// pathological producer, not an operating limit. A run that trips it records
+	// a notice saying so and keeps running without recording.
+	RecordingMaxBytes int64
 	// OrgQuotaBytes is the per-org disk quota before LRU eviction kicks in.
 	OrgQuotaBytes int64
 	// DiskHighPct / DiskLowPct are the statfs water marks (%): usage above

@@ -51,7 +51,7 @@ func TestListSpecVersionTags_NoTags(t *testing.T) {
 func TestListSpecVersionTags_LatestCleanAtTag(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, seedSpec())
-	r.remote.Tag(t, "v1", "spec v1")
+	r.remote.Tag(t, "v1", specTagSubject+"v1")
 
 	got, err := r.svc.ListSpecVersionTags(context.Background(), r.org, r.proj)
 	if err != nil {
@@ -68,7 +68,7 @@ func TestListSpecVersionTags_LatestCleanAtTag(t *testing.T) {
 func TestListSpecVersionTags_DirtyWhenSpecsMovedAfterTag(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, seedSpec())
-	r.remote.Tag(t, "v1", "spec v1")
+	r.remote.Tag(t, "v1", specTagSubject+"v1")
 	r.remote.Seed(t, map[string]string{
 		"specs/requirements/prd.md": "# Reqs — edited after v1\n",
 	}, "post-tag spec edit")
@@ -85,7 +85,7 @@ func TestListSpecVersionTags_DirtyWhenSpecsMovedAfterTag(t *testing.T) {
 func TestListSpecVersionTags_NonSpecCommitStaysClean(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, seedSpec())
-	r.remote.Tag(t, "v1", "spec v1")
+	r.remote.Tag(t, "v1", specTagSubject+"v1")
 	r.remote.Seed(t, map[string]string{
 		"src/main.go": "package main // agents wrote code\n",
 	}, "post-tag code commit")
@@ -102,12 +102,12 @@ func TestListSpecVersionTags_NonSpecCommitStaysClean(t *testing.T) {
 func TestListSpecVersionTags_SequenceAndLegacyExclusion(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, seedSpec())
-	r.remote.Tag(t, "v1", "spec v1")
+	r.remote.Tag(t, "v1", specTagSubject+"v1")
 	r.remote.Tag(t, "v1-1", "legacy design revision")
 	r.remote.Seed(t, map[string]string{
 		"specs/design/domain-model.md": "# Design r2\n",
 	}, "spec change")
-	r.remote.Tag(t, "v2", "spec v2")
+	r.remote.Tag(t, "v2", specTagSubject+"v2")
 
 	got, err := r.svc.ListSpecVersionTags(context.Background(), r.org, r.proj)
 	if err != nil {
