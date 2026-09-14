@@ -16,11 +16,11 @@
  * under the License.
  */
 
-// An unlocked-padlock-with-denial-mark illustration for "you can't see this"
-// states — reads as access revoked rather than a plain closed lock. Pure
-// `currentColor` strokes, so it inherits EmptyState's icon-wrapper color
-// (and its opacity treatment) in both themes without its own light/dark
-// branching.
+// A shield-and-lock illustration for "you can't see this" states — one step
+// up from a bare Lock glyph (EmptyState's usual icon slot) where the denial
+// is the whole point of the view, not a footnote on it. Pure `currentColor`
+// strokes/fills, so it inherits EmptyState's icon-wrapper color (and its
+// opacity treatment) in both themes without its own light/dark branching.
 export function NoPermissionIllustration({ size = 96 }: { size?: number }) {
   return (
     <svg
@@ -32,21 +32,31 @@ export function NoPermissionIllustration({ size = 96 }: { size?: number }) {
       aria-hidden="true"
     >
       <path
-        d="M33 48 V34 a10 10 0 0 1 20 0 v6"
+        d="M48 8 L80 20 V46 C80 66 66 80 48 88 C30 80 16 66 16 46 V20 Z"
         stroke="currentColor"
         strokeWidth="3"
-        strokeLinecap="round"
+        strokeLinejoin="round"
       />
-      <rect x="26" y="48" width="34" height="26" rx="5" stroke="currentColor" strokeWidth="3" />
-      <circle cx="40" cy="59" r="3.2" fill="currentColor" />
-      <path d="M40 62.2 V67" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
-      <circle cx="66" cy="66" r="13" stroke="currentColor" strokeWidth="3" />
       <path
-        d="M61 61 L71 71 M71 61 L61 71"
+        d="M40 46 V38 a8 8 0 0 1 16 0 V46"
         stroke="currentColor"
         strokeWidth="3"
         strokeLinecap="round"
       />
+      <rect
+        x="34"
+        y="46"
+        width="28"
+        height="20"
+        rx="3"
+        stroke="currentColor"
+        strokeWidth="3"
+      />
+      <circle cx="48" cy="54" r="2.5" fill="currentColor" />
+      <path d="M48 56.5 V60" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <circle cx="20" cy="14" r="2" fill="currentColor" opacity="0.4" />
+      <circle cx="76" cy="16" r="1.5" fill="currentColor" opacity="0.3" />
+      <circle cx="78" cy="68" r="2.5" fill="currentColor" opacity="0.3" />
     </svg>
   );
 }

@@ -19,7 +19,6 @@
 import { Button, Chip, PageContent, Stack } from "@wso2/oxygen-ui";
 import { ArrowLeft, Lock } from "@wso2/oxygen-ui-icons-react";
 import { EmptyState } from "./EmptyState";
-import { NoPermissionIllustration } from "./NoPermissionIllustration";
 
 // The full-page block for a caller lacking view access to a whole section
 // (Spec/Design, Builds, Deployments, …) — as opposed to disabling individual
@@ -41,7 +40,7 @@ export function PermissionRestrictedPage({
   return (
     <PageContent>
       <EmptyState
-        icon={<NoPermissionIllustration size={48} />}
+        icon={<Lock size={48} />}
         title={title}
         description={description}
         action={
