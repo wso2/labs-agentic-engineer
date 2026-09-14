@@ -23,8 +23,16 @@ package authz
 type Permission string
 
 const (
-	PermissionBuild             Permission = "ae:build"
-	PermissionBuildView         Permission = "ae:build-view"
+	PermissionBuild     Permission = "ae:build"
+	PermissionBuildView Permission = "ae:build-view"
+	// PermissionDesign is the console-side gate for the Overview track's Spec
+	// leg (apps/console's OverviewTrack), paired with PermissionDesignView the
+	// same way every other surface pairs a write permission with its view-only
+	// sibling. No OC action maps to it (yet): the spec editor's actual write
+	// path (ApplyFiles/ReadFileBundle, services/collab) is still a
+	// permission_gate.go carve-out pending a permission design for
+	// non-console callers, so this permission currently backs UI gating only.
+	PermissionDesign            Permission = "ae:design"
 	PermissionDesignView        Permission = "ae:design-view"
 	PermissionGitHubConfig      Permission = "ae:github-config"
 	PermissionModelConfig       Permission = "ae:model-config"
@@ -34,7 +42,6 @@ const (
 	PermissionSkillView         Permission = "ae:skill-view"
 	PermissionUsageView         Permission = "ae:usage-view"
 	PermissionObservabilityView Permission = "ae:observability-view"
-	PermissionAiChat            Permission = "ae:ai-chat"
 	PermissionResourceView      Permission = "ae:resource-view"
 	PermissionResourceConfig    Permission = "ae:resource-config"
 )
@@ -43,6 +50,7 @@ const (
 var AllPermissions = []Permission{
 	PermissionBuild,
 	PermissionBuildView,
+	PermissionDesign,
 	PermissionDesignView,
 	PermissionGitHubConfig,
 	PermissionModelConfig,
@@ -52,7 +60,6 @@ var AllPermissions = []Permission{
 	PermissionSkillView,
 	PermissionUsageView,
 	PermissionObservabilityView,
-	PermissionAiChat,
 	PermissionResourceView,
 	PermissionResourceConfig,
 }
@@ -61,6 +68,7 @@ var rolePermissionsCatalog = map[string][]string{
 	"ae-admin": {
 		string(PermissionBuild),
 		string(PermissionBuildView),
+		string(PermissionDesign),
 		string(PermissionDesignView),
 		string(PermissionGitHubConfig),
 		string(PermissionModelConfig),
@@ -70,21 +78,24 @@ var rolePermissionsCatalog = map[string][]string{
 		string(PermissionSkillView),
 		string(PermissionUsageView),
 		string(PermissionObservabilityView),
-		string(PermissionAiChat),
 		string(PermissionResourceView),
 		string(PermissionResourceConfig),
 	},
-	// ae:ai-chat is included: the chat panel is mounted globally whenever a
-	// project is open, so withholding it would leave ae-developer unable to
-	// talk to the coding agent at all. ae:usage-view/ae:observability-view
-	// are NOT — those read org spend and incident/alert reports, which reads
-	// as an admin-facing concern absent a decision to extend it.
+	// ae:usage-view/ae:observability-view are NOT included — those read org
+	// spend and incident/alert reports, which reads as an admin-facing
+	// concern absent a decision to extend it. ae:design pairs with the
+	// ae:design-view already held here — same full write/view pair as
+	// ae:build/ae:build-view below, since ae-developer is the role that
+	// actually authors specs; it's also what keeps this role able to use
+	// the AI chat panel (permission_gate.go's CreateTurn/GetActiveTurn/etc.
+	// gate on ae:design, not a dedicated chat permission — the panel is a
+	// facet of the design workspace, not a separate feature).
 	"ae-developer": {
 		string(PermissionRequirementView),
+		string(PermissionDesign),
 		string(PermissionDesignView),
 		string(PermissionBuild),
 		string(PermissionBuildView),
-		string(PermissionAiChat),
 	},
 }
 

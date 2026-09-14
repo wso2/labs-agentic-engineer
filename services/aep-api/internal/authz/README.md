@@ -37,8 +37,8 @@ flowchart LR
 
 | | |
 |---|---|
-| `role_permissions_catalog.go` | `Permission` — the typed AE permission key vocabulary (8 constants) — and `rolePermissionsCatalog`, mapping an AE role name to the permissions it holds. Two roles: `ae-admin` (all 8) and `ae-developer` (`ae:requirement-view`, `ae:design-view`, `ae:build`). |
-| `oc_permissions_catalog.go` | `OcActionCatalog`, mapping an AE `Permission` to the OC actions it resolves to. **Placeholder** (#743): only `ae:model-config` and `ae:skill-config` are mapped, both to the same starter pair (`component:view`, `component:create`), pending a real per-permission OC action design. |
+| `role_permissions_catalog.go` | `Permission` — the typed AE permission key vocabulary (`AllPermissions`) — and `rolePermissionsCatalog`, mapping an AE role name to the permissions it holds. Two roles: `ae-admin` (all of them) and `ae-developer` (a working subset — see the catalog's own comments for which, and why). |
+| `oc_permissions_catalog.go` | `OcActionCatalog`, mapping an AE `Permission` to the OC actions it resolves to. Several permissions — `ae:design-view`, `ae:design`, `ae:skill-view`, `ae:usage-view`, `ae:observability-view` — carry no entry at all: either they gate a surface that never reaches OC (git-backed reads, agent/turn orchestration, or console-only UI gating), or (per the `PermissionSkillConfig`/`PermissionBuild` placeholder noted in the catalog's own comments, #743) a real per-permission OC action design is still pending. |
 | `authz_bridge.go` | `AuthZBridge` — implements `PermissionResolver`; dedupes AE→OC translation across a permission set. |
 | `authz_service.go` | `AuthZService` — `EnsureAuthzRole` (idempotent create-if-missing OC role + binding, entitled on the `groups` JWT claim) and `ModifyRolePermissions` (updates OC role actions per AE role, with rollback on partial failure). |
 | `ports.go` | `PermissionResolver`, `OCAuthZClient` (the OC CRUD narrowing), the sentinel errors, and the domain-shaped `CreatedAuthzRole`/`CreatedAuthzRoleBinding`/`EntitlementClaim` types. |
@@ -61,8 +61,9 @@ A misconfigured `OcActionCatalog` mapping therefore blocks every user, not
 just an admin surface — this is why `oc_permissions_catalog.go` carries an
 explicit PLACEHOLDER warning rather than being extended casually.
 
-**Two roles exist:** `ae-admin` (all 8 permissions) and `ae-developer`
-(`ae:requirement-view`, `ae:design-view`, `ae:build`). Thunder provisions the
+**Two roles exist:** `ae-admin` (every permission) and `ae-developer` (a
+working subset — see `rolePermissionsCatalog` for the exact list and the
+reasoning behind each inclusion/exclusion). Thunder provisions the
 matching resource server, actions, groups, and roles (`tools/aectl/internal/thunder`
 for the real cluster; `deployments/dev-thunder-setup/bootstrap/61-ae-roles.yaml`
 for local dev), but no real *user*-provisioning path exists yet — no

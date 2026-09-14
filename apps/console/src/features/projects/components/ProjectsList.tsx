@@ -45,7 +45,7 @@ import {
   Trash2,
 } from "@wso2/oxygen-ui-icons-react";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useHasAnyPermission, useHasPermission } from "../../../auth/permissions";
+import { useHasPermission } from "../../../auth/permissions";
 import { EmptyState } from "../../../components/EmptyState";
 import { NoPermissionIllustration } from "../../../components/NoPermissionIllustration";
 import { PageHeader } from "../../../components/PageHeader";
@@ -207,18 +207,17 @@ function CreateProjectButton({ canCreate }: { canCreate: boolean }) {
 
 export function ProjectsList() {
   const hasRequirementUpdate = useHasPermission("ae:requirement-update");
-  // Either permission gets you onto the page (create-only implies you'll
-  // want to find the project you just made) — the Projects sidebar item
-  // itself is never disabled (unlike Alerts/Endpoints/Resources/Credentials):
-  // it's the default landing page, always reachable, and this page's own
-  // denied state is what a caller holding neither permission actually sees.
-  // The same OR also gates opening a card (canOpen below): GetProject is
-  // OR-gated the same way on the backend, since a requirement-update-only
-  // caller must still be able to open the project they just created.
-  const hasProjectsAccess = useHasAnyPermission([
-    "ae:requirement-view",
-    "ae:requirement-update",
-  ]);
+  // Exact-match ae:requirement-view, mirroring ListProjects/GetProject's own
+  // exact-match backend gate (permission_gate.go) — not an OR with
+  // ae:requirement-update. A caller holding only ae:requirement-update can
+  // still create a project (CreateProjectButton below, gated on
+  // hasRequirementUpdate alone), but cannot see the list or open one: this
+  // whole page renders the denied state for them, same as it does for a
+  // caller holding neither permission — the Projects sidebar item itself is
+  // never disabled (unlike Alerts/Endpoints/Resources/Credentials): it's the
+  // default landing page, always reachable, and this page's own denied
+  // state is what a view-less caller actually sees.
+  const hasProjectsAccess = useHasPermission("ae:requirement-view");
   const [search, setSearch] = useState("");
   // The project awaiting delete confirmation; one dialog serves the grid.
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
@@ -252,11 +251,15 @@ export function ProjectsList() {
       />
 
       {!hasProjectsAccess ? (
-        // Checked before the loading/error states below: without either
-        // permission there is nothing here to load — the projects query
-        // itself never fires (useProjectsList(..., hasProjectsAccess)) —
-        // and a direct-URL visit must never flash real project content
-        // before this check runs.
+        // Checked before the loading/error states below: without
+        // ae:requirement-view there is nothing here to load — the projects
+        // query itself never fires (useProjectsList(..., hasProjectsAccess))
+        // — and a direct-URL visit must never flash real project content
+        // before this check runs. A caller holding only
+        // ae:requirement-update lands here too, even though they could
+        // create a project (CreateProjectButton, gated separately on
+        // hasRequirementUpdate): they can't see this list or open a card,
+        // so the page itself doesn't render past this point.
         <EmptyState
           icon={<NoPermissionIllustration size={120} />}
           title="No projects access"

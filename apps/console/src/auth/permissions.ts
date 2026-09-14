@@ -29,6 +29,7 @@ export type Permission =
   | "ae:github-config"
   | "ae:requirement-update"
   | "ae:requirement-view"
+  | "ae:design"
   | "ae:design-view"
   | "ae:build"
   | "ae:build-view"
@@ -47,6 +48,7 @@ const ALL_PERMISSIONS: readonly Permission[] = [
   "ae:github-config",
   "ae:requirement-update",
   "ae:requirement-view",
+  "ae:design",
   "ae:design-view",
   "ae:build",
   "ae:build-view",

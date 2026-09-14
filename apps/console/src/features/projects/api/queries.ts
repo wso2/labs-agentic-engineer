@@ -37,8 +37,9 @@ type BuildRequest = components["schemas"]["BuildRequest"];
 
 // `enabled` defaults true — HeaderSwitchers' project switcher always wants
 // this; only ProjectsList withholds it for a caller without
-// ae:requirement-view/ae:requirement-update (the BFF gates ListProjects on
-// either — see permission_gate.go).
+// ae:requirement-view, matching the BFF's own exact-match gate on
+// ListProjects (permission_gate.go) — see ProjectsList's hasProjectsAccess
+// comment for why ae:requirement-update alone does not count.
 export function useProjectsList(search = "", limit?: number, enabled = true) {
   return useInfiniteQuery({
     queryKey: projectKeys.list(search, limit),

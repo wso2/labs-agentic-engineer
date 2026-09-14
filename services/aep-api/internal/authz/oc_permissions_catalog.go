@@ -40,12 +40,16 @@ package authz
 // rejects project:create outright, since no project exists yet at create
 // time.
 //
-// It also carries project:view: ListProjects and GetProject (permission_gate.go)
-// are both OR-gated on ae:requirement-view OR ae:requirement-update, since a
-// requirement-update caller needs to find AND open the project they just
-// created — reaching OC via the same Service.ListProjects/GetProject ->
-// s.client.ListProjects/GetProject calls, so both need the same action
-// GetProject already carries under PermissionRequirementView below.
+// It carries none of PermissionRequirementView's read actions
+// (project:view/workload:view/releasebinding:view/component:view): every
+// ae:requirement-view row in permission_gate.go (GetProject, ListProjects,
+// ListOrgEndpoints, GetProjectStatus, ListComponents, ListDeployments,
+// GetComponentOpenapi, ListProjectTags) is exact-match, not OR-gated with
+// ae:requirement-update — same call as ae:resource-view/ae:resource-config
+// below, and for the same reason: no role in rolePermissionsCatalog holds
+// ae:requirement-update without also holding ae:requirement-view, so an OR
+// (and the OC actions it would require here) would grant a branch nothing
+// exercises.
 //
 // PermissionGitHubConfig is traced to the GitHub PAT connect/disconnect flow
 // (internal/organization/secret_ref_writer.go's WriteGitHubPAT/
@@ -69,27 +73,32 @@ package authz
 // disconnect flow itself, not something this permission mapping should paper
 // over by granting delete for a call that's never made.
 //
-// PermissionRequirementView carries project:view, traced to GetProject
-// (permission_gate.go OR-gates it with PermissionRequirementUpdate — both
-// ae-admin and ae-developer hold this permission, matching project:create's
-// placement under PermissionRequirementUpdate above).
+// PermissionRequirementView is ProjectOverview's own permission: every read
+// the page's shell and its non-resource sections make traces here.
+//   - project:view, traced to GetProject (the page's own shell read).
+//   - workload:view, traced to ListOrgEndpoints (ListWorkloadEndpoints ->
+//     GET /workloads).
+//   - releasebinding:view, traced to GetProjectStatus and ListDeployments
+//     (internal/projects/project_service.go's status aggregate and
+//     component_service.go's ListDeployments both read OC's
+//     ProjectReleaseBinding list via bindingsReader.ListProjectReleaseBindings
+//     -> GET /releasebindings — distinct from the ResourceReleaseBinding CR
+//     PermissionBuildView's own entry below reads).
+//   - component:view, traced to ListComponents (component_service.go's
+//     ListComponents -> s.client.ListComponents -> GET /components).
 //
-// The same permission also carries workload:view/resource:view/
-// resourcetype:view, traced to ListWorkloadDependencies
-// (internal/dependencies/provisioning/workload_deps.go): ListWorkloadConsumerDeps
-// reads OC's Workload list, and resolveResourceRow reads back each dependency's
-// Resource and (for org-catalog-typed ones) ResourceType — three separate OC
-// reads for ProjectOverview's Dependencies section. ListOrgEndpoints reuses
-// workload:view already listed above (it reads the same OC Workload list
-// ListWorkloadDependencies does).
+// GetComponentOpenapi/ListProjectTags share this permission too
+// (permission_gate.go) but reach no OC action: the former reads a git-backed
+// design.json via the ArtifactStore, the latter a git-backed ArtifactService
+// tag list, so neither needs an entry here.
 //
-// It does NOT carry environment:view or clusterresourcetype:view: those once
-// backed ListOrgEnvironments/ListPlatformResourceTypes reachability via this
-// permission, but both operations dropped ae:requirement-view from their OR
-// (permission_gate.go) once their only requirement-view-reached console
-// caller — ProjectOverview's Dependencies section — started requiring a
-// resource permission too, same as every other caller. Those two actions now
-// live only under PermissionResourceView/PermissionResourceConfig below.
+// It does NOT carry workload:view's siblings resource:view/resourcetype:view,
+// or environment:view/clusterresourcetype:view: those back
+// ListWorkloadDependencies/ListOrgEnvironments/ListPlatformResourceTypes,
+// which all now require a resource permission instead (ProjectOverview's
+// Dependencies section is resource data, gated the same as the org Resources
+// catalog page rather than folded into the page's own shell permission) —
+// see PermissionResourceView/PermissionResourceConfig below.
 //
 // PermissionBuildView carries resourcereleasebinding:view, traced to
 // GetProjectDependencyReadiness (internal/dependencies/provisioning/
@@ -98,15 +107,24 @@ package authz
 // Resources panel. GetBuildLogs/StreamRunProgress/StreamTaskLog also gate on
 // this permission but never reach OC, so they need no matching action here.
 //
-// PermissionResourceView/PermissionResourceConfig back the org Resources
-// catalog page (settings > Resources) and its register/edit flow —
-// ListPlatformResourceTypes and ListExternalResources are OR-gated on either
-// (see permission_gate.go), so a view-only holder still needs the same OC
-// reads a config holder does: clusterresourcetype:view (ListPlatformResourceTypes
-// -> the org resource catalog's ClusterResourceType read, shared with
-// PermissionRequirementView's own entry above) and resourcetype:view
+// PermissionResourceView backs every resource read reachable from a
+// console page — ProjectOverview's Dependencies section, DeploymentsPage,
+// the org Resources catalog page, and RegisterFormPage's edit-mode prefill —
+// now that ListWorkloadDependencies/ListPlatformResourceTypes/
+// ListExternalResources (permission_gate.go) are all exact-match
+// ae:resource-view rather than OR-gated with ae:requirement-view or
+// ae:resource-config: workload:view/resource:view (ListWorkloadDependencies
+// -> workload_deps.go's ListWorkloadConsumerDeps/resolveResourceRow, three
+// OC reads), clusterresourcetype:view (ListPlatformResourceTypes -> the org
+// resource catalog's ClusterResourceType read) and resourcetype:view
 // (ListExternalResources -> dependencies.ExternalResourceCatalog.List reads
-// OC's namespaced ResourceType list). PermissionResourceConfig adds
+// OC's namespaced ResourceType list).
+//
+// PermissionResourceConfig no longer duplicates clusterresourcetype:view/
+// resourcetype:view: those existed here only for ListPlatformResourceTypes/
+// ListExternalResources' now-removed OR branch, and no role in
+// rolePermissionsCatalog holds this permission without also holding
+// PermissionResourceView, so nothing loses reachability. What remains is
 // resourcetype:create/update/delete, traced to RegisterExternalResource/
 // UpdateExternalResource/DeleteExternalResource (internal/dependencies/
 // provisioning's ExternalRTCatalog.Ensure/Update/Delete — Ensure is a
@@ -126,7 +144,6 @@ var OcActionCatalog = map[string][]string{
 		"resourcereleasebinding:view",
 	},
 	string(PermissionRequirementUpdate): {
-		"project:view",
 		"project:create",
 		"project:delete",
 		"deploymentpipeline:view",
@@ -135,8 +152,8 @@ var OcActionCatalog = map[string][]string{
 	string(PermissionRequirementView): {
 		"project:view",
 		"workload:view",
-		"resource:view",
-		"resourcetype:view",
+		"releasebinding:view",
+		"component:view",
 	},
 	string(PermissionGitHubConfig): {
 		"secretreference:view",
@@ -145,12 +162,12 @@ var OcActionCatalog = map[string][]string{
 		"secretreference:delete",
 	},
 	string(PermissionResourceView): {
+		"workload:view",
+		"resource:view",
 		"clusterresourcetype:view",
 		"resourcetype:view",
 	},
 	string(PermissionResourceConfig): {
-		"clusterresourcetype:view",
-		"resourcetype:view",
 		"resourcetype:create",
 		"resourcetype:update",
 		"resourcetype:delete",

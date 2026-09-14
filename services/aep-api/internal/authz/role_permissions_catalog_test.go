@@ -25,6 +25,7 @@ func TestAllPermissions_MatchesConstants(t *testing.T) {
 	constants := []Permission{
 		PermissionBuild,
 		PermissionBuildView,
+		PermissionDesign,
 		PermissionDesignView,
 		PermissionGitHubConfig,
 		PermissionModelConfig,
@@ -34,7 +35,6 @@ func TestAllPermissions_MatchesConstants(t *testing.T) {
 		PermissionSkillView,
 		PermissionUsageView,
 		PermissionObservabilityView,
-		PermissionAiChat,
 		PermissionResourceView,
 		PermissionResourceConfig,
 	}
@@ -117,9 +117,9 @@ func TestRolePermissions_AeDeveloperHasExactlyFivePermissions(t *testing.T) {
 	want := []string{
 		string(PermissionBuild),
 		string(PermissionBuildView),
+		string(PermissionDesign),
 		string(PermissionDesignView),
 		string(PermissionRequirementView),
-		string(PermissionAiChat),
 	}
 	sort.Strings(want)
 

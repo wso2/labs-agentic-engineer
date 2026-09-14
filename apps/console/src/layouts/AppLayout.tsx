@@ -112,6 +112,12 @@ export function AppLayout() {
   const hasObservabilityAccess = useHasPermission("ae:observability-view");
   const hasRequirementView = useHasPermission("ae:requirement-view");
   const hasResourceAccess = useHasAnyPermission(["ae:resource-view", "ae:resource-config"]);
+  // Exact-match ae:design, not an OR with ae:design-view: the panel is an
+  // interactive write surface (it sends turns), not a read one, so the
+  // weaker view permission does not cover it — same split as the Overview
+  // track's Spec leg, whose click-lock DOES accept either (open the read
+  // surface) while this panel (the write surface behind it) does not.
+  const hasDesignAccess = useHasPermission("ae:design");
 
   // Project AI panel (#130): available on every project route — mounted here
   // because the full-screen spec route bypasses ProjectLayout. Same
@@ -254,14 +260,25 @@ export function AppLayout() {
           <Header.Spacer />
           <Header.Actions>
             {projectName && (
-              <Tooltip title={chatOpen ? "Close agent chat" : "Agent chat"}>
-                <IconButton
-                  aria-label="Toggle agent chat"
-                  color={chatOpen ? "primary" : "default"}
-                  onClick={() => setChatOpen((v) => !v)}
-                >
-                  <Sparkles size={20} />
-                </IconButton>
+              <Tooltip
+                title={
+                  hasDesignAccess
+                    ? chatOpen
+                      ? "Close agent chat"
+                      : "Agent chat"
+                    : "You don't have permission to use the agent chat."
+                }
+              >
+                <span>
+                  <IconButton
+                    aria-label="Toggle agent chat"
+                    color={chatOpen ? "primary" : "default"}
+                    disabled={!hasDesignAccess}
+                    onClick={() => setChatOpen((v) => !v)}
+                  >
+                    <Sparkles size={20} />
+                  </IconButton>
+                </span>
               </Tooltip>
             )}
             <ColorSchemeToggle />
@@ -483,8 +500,13 @@ export function AppLayout() {
             <Outlet />
           </Box>
           {/* Horizontal Collapse gives the sidebar-style slide; unmountOnExit
-              keeps the closed panel out of the tree (no idle polling). */}
-          {projectName && (
+              keeps the closed panel out of the tree (no idle polling).
+              Gated on ae:design too, not just projectName — chatOpen can
+              flip true from several triggers that don't check permission
+              themselves (the ?chat=open/?generate=design signals, a pending
+              seed, a Discuss request), so the panel's own mount is the one
+              place that has to hold the line. */}
+          {projectName && hasDesignAccess && (
             <Collapse
               in={chatOpen}
               orientation="horizontal"

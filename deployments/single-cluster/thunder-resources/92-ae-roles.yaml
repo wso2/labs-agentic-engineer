@@ -78,6 +78,9 @@ resources:
       - name: Build View
         handle: build-view
         description: View builds without triggering
+      - name: Design
+        handle: design
+        description: Open/edit the spec workspace
       - name: Design View
         handle: design-view
         description: View design/spec artifacts
@@ -105,9 +108,6 @@ resources:
       - name: Observability View
         handle: observability-view
         description: View alerts and RCA reports
-      - name: AI Chat
-        handle: ai-chat
-        description: Use the AI chat panel
       - name: Resource View
         handle: resource-view
         description: View the org resource catalog without configuring it
@@ -172,6 +172,7 @@ permissions:
     permissions:
       - "ae:build"
       - "ae:build-view"
+      - "ae:design"
       - "ae:design-view"
       - "ae:github-config"
       - "ae:model-config"
@@ -181,7 +182,6 @@ permissions:
       - "ae:skill-view"
       - "ae:usage-view"
       - "ae:observability-view"
-      - "ae:ai-chat"
       - "ae:resource-view"
       - "ae:resource-config"
 assignments:
@@ -198,10 +198,10 @@ permissions:
   - resourceServerId: 01900000-0000-7000-8000-0000000000b0
     permissions:
       - "ae:requirement-view"
+      - "ae:design"
       - "ae:design-view"
       - "ae:build"
       - "ae:build-view"
-      - "ae:ai-chat"
 assignments:
   - id: 01900000-0000-7000-8000-0000000000ba
     type: group

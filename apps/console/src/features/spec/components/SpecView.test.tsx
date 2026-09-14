@@ -112,7 +112,7 @@ beforeEach(() => {
   mockSpecAgent = "";
   mockSpecFlow = "";
   mockSearch.current = {};
-  sessionPermissions.current = new Set(["ae:design-view", "ae:build"]);
+  sessionPermissions.current = new Set(["ae:design-view", "ae:design", "ae:build"]);
 });
 
 // --- CellDiagramPanel: its own behavior is covered by
@@ -122,10 +122,11 @@ vi.mock("./CellDiagramPanel", () => ({
   CellDiagramPanel: () => <div data-testid="cell-diagram-panel" />,
 }));
 
-// Every existing test in this file assumes the design view AND build are
-// otherwise reachable — only the dedicated "no permission" tests flip this.
+// Every existing test in this file assumes the design view, design-generation,
+// AND build are otherwise reachable — only the dedicated "no permission" tests
+// flip this.
 const sessionPermissions = vi.hoisted(() => ({
-  current: new Set(["ae:design-view", "ae:build"]),
+  current: new Set(["ae:design-view", "ae:design", "ae:build"]),
 }));
 vi.mock("../../../auth/SessionContext", () => ({
   useSession: () => ({
@@ -1574,6 +1575,22 @@ describe("SpecView while the agent is waiting on answers", () => {
     expect(
       screen.getByRole("button", { name: /Generate design/ }),
     ).toBeDisabled();
+  });
+
+  // Generate design's own gate is exact-match ae:design, not the
+  // ae:design-view that gets a caller onto this page at all — the button
+  // triggers agent work (generate-design), so the weaker view permission
+  // that renders the page doesn't also unlock it.
+  it("stands Generate design down without ae:design, with an explanatory tooltip, even though the page itself is reachable", async () => {
+    sessionPermissions.current = new Set(["ae:design-view", "ae:build"]);
+    render(<SpecView projectName="proj1" />);
+
+    const button = screen.getByRole("button", { name: /Generate design/ });
+    expect(button).toBeDisabled();
+    fireEvent.mouseOver(button.closest("span") ?? button);
+    expect(
+      await screen.findByText("You don't have permission to generate the design."),
+    ).toBeInTheDocument();
   });
 });
 

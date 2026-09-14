@@ -46,9 +46,16 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 // Every test but the dedicated permission-denial ones below holds every
-// sidebar-relevant permission, so every item reads as reachable by default.
+// sidebar-relevant permission, plus ae:design (the agent chat toggle/panel),
+// so every item reads as reachable by default.
 const heldPermissions = vi.hoisted(
-  () => new Set(["ae:observability-view", "ae:requirement-view", "ae:resource-view"]),
+  () =>
+    new Set([
+      "ae:observability-view",
+      "ae:requirement-view",
+      "ae:resource-view",
+      "ae:design",
+    ]),
 );
 vi.mock("../auth/SessionContext", () => ({
   useSession: () => ({
@@ -102,6 +109,7 @@ beforeEach(() => {
   heldPermissions.add("ae:observability-view");
   heldPermissions.add("ae:requirement-view");
   heldPermissions.add("ae:resource-view");
+  heldPermissions.add("ae:design");
   // The panel's open state persists (#666); without this a test that opened
   // it would leak an open panel into every test after it.
   localStorage.removeItem("aep.chat.panelOpen");
@@ -318,6 +326,40 @@ describe("AppLayout — a stale chat-open request does not replay", () => {
     expect(screen.queryByTestId("agent-chat-panel")).not.toBeInTheDocument();
     act(() => requestChatOpen(CHAT_KEY));
     expect(screen.getByTestId("agent-chat-panel")).toBeInTheDocument();
+  });
+});
+
+// The panel is a write surface (it sends turns), so ae:design-view alone —
+// unlike everywhere a read/view permission would do — must not satisfy it;
+// only the stronger ae:design does.
+describe("AppLayout — agent chat requires ae:design", () => {
+  it("disables the toggle, with an explanatory tooltip, without ae:design", async () => {
+    heldPermissions.delete("ae:design");
+    render();
+
+    const toggle = screen.getByRole("button", { name: "Toggle agent chat" });
+    expect(toggle).toBeDisabled();
+
+    fireEvent.mouseOver(toggle.closest("span") ?? toggle);
+    expect(
+      await screen.findByText("You don't have permission to use the agent chat."),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the toggle disabled holding only ae:design-view (not ae:design)", () => {
+    heldPermissions.delete("ae:design");
+    heldPermissions.add("ae:design-view");
+    render();
+
+    expect(screen.getByRole("button", { name: "Toggle agent chat" })).toBeDisabled();
+  });
+
+  it("never mounts the panel without ae:design, even when the open signal fires", () => {
+    heldPermissions.delete("ae:design");
+    mockSearch = { chat: "open" };
+    render();
+
+    expect(screen.queryByTestId("agent-chat-panel")).not.toBeInTheDocument();
   });
 });
 

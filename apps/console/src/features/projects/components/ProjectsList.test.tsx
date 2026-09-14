@@ -136,28 +136,24 @@ describe("ProjectsList — permission gate", () => {
     expect(screen.queryByPlaceholderText("Search projects...")).not.toBeInTheDocument();
   });
 
-  it("reaches the page holding only ae:requirement-update (no ae:requirement-view), with Create project enabled", () => {
+  // Exact-match ae:requirement-view now (not an OR with ae:requirement-update):
+  // a create-only caller can't see this list or open a card, so the whole
+  // page renders the denied state for them — same as holding neither
+  // permission — even though they could create a project from elsewhere.
+  it("shows the no-access illustration holding only ae:requirement-update (no ae:requirement-view)", () => {
     heldPermissions.clear();
     heldPermissions.add("ae:requirement-update");
     listItems = [project({})];
     render(<ProjectsList />);
 
-    expect(screen.queryByText(noAccessText)).not.toBeInTheDocument();
-    expect(screen.getByText("Todo app")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Create project" })).toBeInTheDocument();
+    expect(screen.getByText(noAccessText)).toBeInTheDocument();
+    expect(screen.queryByText("Todo app")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Create project" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create project" })).not.toBeInTheDocument();
   });
 
   it("keeps a project card open (canOpen) for a requirement-view-only holder", () => {
     heldPermissions.delete("ae:requirement-update");
-    listItems = [project({})];
-    render(<ProjectsList />);
-
-    expect(screen.getByText("Todo app").closest("button")).not.toBeDisabled();
-  });
-
-  it("keeps a project card open (canOpen) for a requirement-update-only holder (no ae:requirement-view)", () => {
-    heldPermissions.clear();
-    heldPermissions.add("ae:requirement-update");
     listItems = [project({})];
     render(<ProjectsList />);
 

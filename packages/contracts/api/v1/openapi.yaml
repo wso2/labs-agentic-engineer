@@ -877,6 +877,58 @@ paths:
       summary: Start a generation/chat turn (202 — runs detached; attach via the turn stream)
       tags:
       - GenAI
+  /projects/{projectName}/agents/{conversationId}/design:
+    post:
+      operationId: generate-design
+      description: Starts the `/design` turn on the caller's current conversation.
+        A dedicated operation (distinct from create-turn) purely so it can carry
+        its own AE permission — ae:design and nothing else, no OR with any
+        permission create-turn also accepts — rather than authorizing a
+        design-generation turn on any permission that happens to satisfy the
+        generic chat surface. Takes no request body, since the instruction is
+        fixed server-side, the same way the project-creation kickoff's
+        `/start` turn is.
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          description: Project name (DNS-label slug)
+          type: string
+      - description: FE-chosen conversation uuid
+        in: path
+        name: conversationId
+        required: true
+        schema:
+          description: FE-chosen conversation uuid
+          type: string
+      responses:
+        '202':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnOutputBody'
+          description: Accepted
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnConflict'
+          description: A turn is already running for this project, the design
+            use-case has no requirements yet, or the addressed conversation is
+            no longer the project's current thread (conversation_rotated).
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: Start the design-generation turn (202 — runs detached; attach via the turn stream)
+      tags:
+      - GenAI
   /projects/{projectName}/build:
     post:
       operationId: build-project

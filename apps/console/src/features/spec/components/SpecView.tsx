@@ -165,6 +165,12 @@ function SpecViewContent({ projectName }: { projectName: string }) {
   // the same key Task 5's turn-end freshness invalidation targets).
   const dependencies = useDesignDependencies(projectName);
   const hasBuild = useHasPermission("ae:build");
+  // Generate design's own gate — exact-match ae:design, not the ae:design-view
+  // this whole view already requires (SpecView's own wrapper below): the
+  // button starts a design-generation turn (generate-design, gated on
+  // ae:design alone, no OR), so the weaker view permission that gets a
+  // caller INTO this page doesn't also unlock triggering agent work from it.
+  const hasDesign = useHasPermission("ae:design");
   const { user, orgHandle } = useSession();
   // Rooms are org-scoped (`spec-<org>-<project>`); without an org claim fall
   // back to the collab mock BFF's default org so mock mode keeps working.
@@ -1135,13 +1141,15 @@ function SpecViewContent({ projectName }: { projectName: string }) {
             <>
               <Tooltip
                 title={
-                  agentBusy
-                    ? "An agent is still working — Generate design is available once it finishes"
-                    : awaitingAnswers
-                      ? "The agent is waiting on your answers — finish the questions below first"
-                      : hasRequirementsFiles
-                        ? "Derive the component design from your requirements"
-                        : "Generate requirements first"
+                  !hasDesign
+                    ? "You don't have permission to generate the design."
+                    : agentBusy
+                      ? "An agent is still working — Generate design is available once it finishes"
+                      : awaitingAnswers
+                        ? "The agent is waiting on your answers — finish the questions below first"
+                        : hasRequirementsFiles
+                          ? "Derive the component design from your requirements"
+                          : "Generate requirements first"
                 }
               >
                 {/* span so the tooltip works while the button is disabled */}
@@ -1151,7 +1159,7 @@ function SpecViewContent({ projectName }: { projectName: string }) {
                     variant="contained"
                     startIcon={<Sparkles size={16} />}
                     disabled={
-                      !hasRequirementsFiles || agentBusy || awaitingAnswers
+                      !hasDesign || !hasRequirementsFiles || agentBusy || awaitingAnswers
                     }
                     onClick={generateDesign}
                   >
@@ -1364,6 +1372,7 @@ function SpecViewContent({ projectName }: { projectName: string }) {
                 onSelect={selectManually}
                 onRegenerateDesign={generateDesign}
                 regenerateDisabled={agentBusy}
+                canRegenerateDesign={hasDesign}
                 sections={railSections}
                 plan={planEntries}
                 onReason={onRailReason}
