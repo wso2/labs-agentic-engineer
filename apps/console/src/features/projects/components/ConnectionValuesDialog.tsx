@@ -27,6 +27,7 @@ import {
   DialogTitle,
   IconButton,
   TextField,
+  Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
 import { X } from "@wso2/oxygen-ui-icons-react";
@@ -139,28 +140,35 @@ export function ConnectionValuesDialog({
         <Button onClick={onClose} variant="outlined" color="inherit">
           Cancel
         </Button>
-        <span
-          {...(!hasBuild
-            ? { title: "You don't have permission to configure this connection." }
-            : !complete && { title: "Enabled when every value is set" })}
+        <Tooltip
+          title={
+            !hasBuild
+              ? "You don't have permission to configure this connection."
+              : !complete
+                ? "Enabled when every value is set"
+                : ""
+          }
         >
-          <Button
-            variant="contained"
-            disabled={!complete || save.isPending || !hasBuild}
-            onClick={() =>
-              save.mutate(
-                {
-                  name: connection.name,
-                  environment,
-                  values,
-                },
-                { onSuccess: onSaved },
-              )
-            }
-          >
-            {save.isPending ? "Saving…" : "Save values"}
-          </Button>
-        </span>
+          {/* span so the tooltip works while the button is disabled */}
+          <span>
+            <Button
+              variant="contained"
+              disabled={!complete || save.isPending || !hasBuild}
+              onClick={() =>
+                save.mutate(
+                  {
+                    name: connection.name,
+                    environment,
+                    values,
+                  },
+                  { onSuccess: onSaved },
+                )
+              }
+            >
+              {save.isPending ? "Saving…" : "Save values"}
+            </Button>
+          </span>
+        </Tooltip>
       </DialogActions>
     </Dialog>
   );

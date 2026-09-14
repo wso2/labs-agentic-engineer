@@ -26,10 +26,12 @@ import {
   CircularProgress,
   Divider,
   Stack,
+  Tooltip,
   Typography,
   alpha,
 } from "@wso2/oxygen-ui";
 import { X } from "@wso2/oxygen-ui-icons-react";
+import { useHasPermission } from "../../../auth/permissions";
 import { StatusChip } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
 import { useCancelRun, useCycleBuilds } from "../api/queries";
@@ -122,6 +124,10 @@ export function RunStory({
   milestone?: { gates: TaskView[]; work: TaskView[] };
 }) {
   const cancel = useCancelRun(projectName, tag);
+  // Exact-match ae:build, matching the BFF's own CancelRun gate
+  // (permission_gate.go) — a build-view-only reader can watch this run to
+  // completion but not cut it short.
+  const hasBuild = useHasPermission("ae:build");
   // Cancel is ACCEPTED, not performed: the endpoint answers 202 the moment the
   // signal is queued, and the run only turns cancelled when the supervisor
   // processes it and the runs poll observes that — seconds later. isPending
@@ -253,31 +259,38 @@ export function RunStory({
             // hatch, not the thing a reader came to do. A filled button here
             // competed with the stage strip for the eye and read as the page's
             // primary action.
-            <Button
-              size="small"
-              color="inherit"
-              variant="outlined"
-              startIcon={<X size={16} />}
-              disabled={cancelling}
-              onClick={() => {
-                setCancelRequested(true);
-                cancel.mutate(run.id);
-              }}
-              // Neutral edge, taking its colour from the text: near-white on a
-              // dark theme, near-black on a light one. A warning-coloured
-              // outline made an escape hatch look like an alarm, and put a
-              // second orange on a card that already has an orange accent.
-              sx={{
-                borderRadius: 999,
-                color: "text.primary",
-                borderColor: (t) => alpha(t.palette.text.primary, 0.3),
-                "&:hover": {
-                  borderColor: (t) => alpha(t.palette.text.primary, 0.55),
-                },
-              }}
+            <Tooltip
+              title={!hasBuild ? "You don't have permission to cancel this run." : ""}
             >
-              {cancelling ? "Cancelling…" : "Cancel run"}
-            </Button>
+              {/* span so the tooltip works while the button is disabled */}
+              <span>
+                <Button
+                  size="small"
+                  color="inherit"
+                  variant="outlined"
+                  startIcon={<X size={16} />}
+                  disabled={!hasBuild || cancelling}
+                  onClick={() => {
+                    setCancelRequested(true);
+                    cancel.mutate(run.id);
+                  }}
+                  // Neutral edge, taking its colour from the text: near-white on a
+                  // dark theme, near-black on a light one. A warning-coloured
+                  // outline made an escape hatch look like an alarm, and put a
+                  // second orange on a card that already has an orange accent.
+                  sx={{
+                    borderRadius: 999,
+                    color: "text.primary",
+                    borderColor: (t) => alpha(t.palette.text.primary, 0.3),
+                    "&:hover": {
+                      borderColor: (t) => alpha(t.palette.text.primary, 0.55),
+                    },
+                  }}
+                >
+                  {cancelling ? "Cancelling…" : "Cancel run"}
+                </Button>
+              </span>
+            </Tooltip>
           )}
         </Stack>
 

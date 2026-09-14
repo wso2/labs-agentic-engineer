@@ -30,6 +30,7 @@ import {
   MenuItem,
   Skeleton,
   Stack,
+  Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
 import {
@@ -534,26 +535,42 @@ function BuildActions({
       </IconButton>
       <Menu anchorEl={anchor} open={Boolean(anchor)} onClose={close}>
         {/* Cancel is offered only while there is something to cancel — a menu
-            item that cannot act is worse than an absent one. */}
-        <MenuItem
-          disabled={!hasBuild || !live || !runId || cancel.isPending}
-          onClick={() => {
-            if (runId) cancel.mutate(runId);
-            close();
-          }}
+            item that cannot act is worse than an absent one. Permission is
+            checked first, same precedence as every other disabled-not-hidden
+            control in this console: a state reason is only worth explaining
+            once the caller could act on it at all. */}
+        <Tooltip
+          title={!hasBuild ? "You don't have permission to cancel this build." : ""}
         >
-          <X size={15} style={{ marginRight: 10 }} />
-          Cancel build
-        </MenuItem>
-        <LinkMenuItem
-          to="/projects/$projectName/spec"
-          params={{ projectName }}
-          onClick={close}
-          disabled={!hasBuild}
+          {/* span so the tooltip works while the item is disabled */}
+          <span>
+            <MenuItem
+              disabled={!hasBuild || !live || !runId || cancel.isPending}
+              onClick={() => {
+                if (runId) cancel.mutate(runId);
+                close();
+              }}
+            >
+              <X size={15} style={{ marginRight: 10 }} />
+              Cancel build
+            </MenuItem>
+          </span>
+        </Tooltip>
+        <Tooltip
+          title={!hasBuild ? "You don't have permission to retry this build." : ""}
         >
-          <RotateCcw size={15} style={{ marginRight: 10 }} />
-          Retry this build
-        </LinkMenuItem>
+          <span>
+            <LinkMenuItem
+              to="/projects/$projectName/spec"
+              params={{ projectName }}
+              onClick={close}
+              disabled={!hasBuild}
+            >
+              <RotateCcw size={15} style={{ marginRight: 10 }} />
+              Retry this build
+            </LinkMenuItem>
+          </span>
+        </Tooltip>
         <Divider />
         <MenuItem
           component="a"

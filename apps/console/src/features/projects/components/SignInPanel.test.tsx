@@ -25,6 +25,14 @@ import type { PublishedTestUser } from "../lib/publishedTestUsers";
 import { SignInPanel } from "./SignInPanel";
 import { MASK } from "./TestUsersDialog";
 
+// TestUsersDialog's Reveal/Copy controls read ae:build through
+// useHasPermission — held by default so this file's existing tests (written
+// before either control carried a permission check) keep seeing them
+// enabled.
+vi.mock("../../../auth/permissions", () => ({
+  useHasPermission: () => true,
+}));
+
 const THUNDER_URL = "http://localhost:8097";
 const THUNDER_CONSOLE_USERS = "http://localhost:8097/console/users";
 const MOCK_PASSWORD = "mocknotreal";

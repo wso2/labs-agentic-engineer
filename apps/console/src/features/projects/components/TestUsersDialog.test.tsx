@@ -19,9 +19,22 @@
 // @vitest-environment jsdom
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PublishedTestUser } from "../lib/publishedTestUsers";
 import { MASK, TestUsersDialog } from "./TestUsersDialog";
+
+// Reveal/Copy read ae:build through useHasPermission — a single toggle,
+// defaulting to held so every existing test below (written before either
+// control carried a permission check) keeps seeing them enabled; the
+// dedicated "no permission" test flips this.
+const hasBuild = vi.hoisted(() => ({ current: true }));
+vi.mock("../../../auth/permissions", () => ({
+  useHasPermission: () => hasBuild.current,
+}));
+
+afterEach(() => {
+  hasBuild.current = true;
+});
 
 const MOCK_PASSWORD = "mocknotreal";
 
@@ -195,5 +208,34 @@ describe("TestUsersDialog", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(onClose).toHaveBeenCalled();
+  });
+
+  // Exact-match ae:build, matching the BFF's own RevealTestUserPassword gate
+  // — deliberately stronger than the page's own ae:build/ae:build-view view
+  // gate, since this discloses a live credential.
+  it("disables Reveal and Copy, with an explanatory tooltip, without ae:build", async () => {
+    hasBuild.current = false;
+    const { revealPassword } = renderDialog();
+
+    const reveal = screen.getByRole("button", {
+      name: "Reveal the password for test-viewer",
+    });
+    const copy = screen.getByRole("button", {
+      name: "Copy the password for test-viewer",
+    });
+    expect(reveal).toBeDisabled();
+    expect(copy).toBeDisabled();
+
+    fireEvent.mouseOver(reveal.closest("span") ?? reveal);
+    expect(
+      await screen.findByText("You don't have permission to reveal this password."),
+    ).toBeInTheDocument();
+
+    fireEvent.mouseOver(copy.closest("span") ?? copy);
+    expect(
+      await screen.findByText("You don't have permission to copy this password."),
+    ).toBeInTheDocument();
+
+    expect(revealPassword).not.toHaveBeenCalled();
   });
 });

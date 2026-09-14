@@ -30,6 +30,7 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { Copy, Eye, EyeOff, X } from "@wso2/oxygen-ui-icons-react";
+import { useHasPermission } from "../../../auth/permissions";
 import { StatusChip } from "../../../components/StatusChip";
 import type { PublishedTestUser } from "../lib/publishedTestUsers";
 
@@ -63,6 +64,12 @@ function TestUserRow({
   const [shown, setShown] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Exact-match ae:build, matching the BFF's own RevealTestUserPassword gate
+  // (permission_gate.go) — deliberately the stronger permission, not the
+  // page's own ae:build/ae:build-view view gate, since this discloses a live
+  // credential. Copy shares the same reveal path (ensurePassword), so it
+  // needs the identical gate.
+  const hasBuild = useHasPermission("ae:build");
 
   /**
    * The password itself, read once and kept for the row's life.
@@ -128,11 +135,19 @@ function TestUserRow({
           >
             {shown && password !== null ? password : MASK}
           </Typography>
-          <Tooltip title={shown ? "Hide password" : "Reveal password"}>
+          <Tooltip
+            title={
+              !hasBuild
+                ? "You don't have permission to reveal this password."
+                : shown
+                  ? "Hide password"
+                  : "Reveal password"
+            }
+          >
             <span>
               <IconButton
                 size="small"
-                disabled={busy}
+                disabled={!hasBuild || busy}
                 aria-label={
                   shown
                     ? `Hide the password for ${login.username}`
@@ -150,11 +165,17 @@ function TestUserRow({
               </IconButton>
             </span>
           </Tooltip>
-          <Tooltip title="Copy password">
+          <Tooltip
+            title={
+              !hasBuild
+                ? "You don't have permission to copy this password."
+                : "Copy password"
+            }
+          >
             <span>
               <IconButton
                 size="small"
-                disabled={busy}
+                disabled={!hasBuild || busy}
                 aria-label={`Copy the password for ${login.username}`}
                 onClick={() => void copy()}
               >

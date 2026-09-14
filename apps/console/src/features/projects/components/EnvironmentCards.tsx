@@ -23,6 +23,7 @@ import {
   CardContent,
   Divider,
   Stack,
+  Tooltip,
   Typography,
   alpha,
 } from "@wso2/oxygen-ui";
@@ -178,23 +179,27 @@ export function EnvironmentCards({
             spacing={1.5}
             sx={{ alignItems: "center", flexWrap: "wrap", rowGap: 1, mt: 1.5 }}
           >
-            <span
-              {...(!hasBuild
-                ? { title: "You don't have permission to promote this project." }
-                : !canPromote(deploy) && {
-                    title:
-                      "Enabled once the dev deployment settles and validation has its say",
-                  })}
+            <Tooltip
+              title={
+                !hasBuild
+                  ? "You don't have permission to promote this project."
+                  : !canPromote(deploy)
+                    ? "Enabled once the dev deployment settles and validation has its say"
+                    : ""
+              }
             >
-              <Button
-                variant="contained"
-                disabled={!canPromote(deploy) || !hasBuild}
-                onClick={onPromote}
-                endIcon={<ArrowRight size={16} aria-hidden />}
-              >
-                Promote {deploy.version} to production
-              </Button>
-            </span>
+              {/* span so the tooltip works while the button is disabled */}
+              <span>
+                <Button
+                  variant="contained"
+                  disabled={!canPromote(deploy) || !hasBuild}
+                  onClick={onPromote}
+                  endIcon={<ArrowRight size={16} aria-hidden />}
+                >
+                  Promote {deploy.version} to production
+                </Button>
+              </span>
+            </Tooltip>
             <Typography variant="caption" color="text.secondary">
               Opens a dialog to collect live configuration.
             </Typography>

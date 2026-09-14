@@ -23,6 +23,7 @@ import {
   Button,
   CircularProgress,
   Stack,
+  Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
 import { FileText, ScrollText, X } from "@wso2/oxygen-ui-icons-react";
@@ -38,6 +39,7 @@ import {
   type CriterionTally,
   type ValidationCriteria,
 } from "@aep/ui-validation-view";
+import { useHasPermission } from "../../../auth/permissions";
 import { PageHeader, type PageHeaderStatus } from "../../../components/PageHeader";
 import type { StatusTone } from "../../../components/StatusChip";
 import { EmptyState } from "../../../components/EmptyState";
@@ -398,6 +400,11 @@ export function ValidationPage({
     ? runList.find((r) => !isTerminalRun(r.state))
     : undefined;
   const cancel = useCancelRun(projectName, version || undefined);
+  // Exact-match ae:build, matching the BFF's own CancelRun gate
+  // (permission_gate.go) and RunStory's identical button on the Builds
+  // page — same endpoint, same hook, same permission either place this
+  // escape hatch appears.
+  const hasBuild = useHasPermission("ae:build");
   // Cancel is ACCEPTED, not performed: the endpoint answers 202 the moment the
   // signal is queued, and the run turns cancelled only once the supervisor acts
   // and the runs poll observes it. isPending covers the HTTP round trip alone, so
@@ -502,27 +509,34 @@ export function ValidationPage({
               has no other expiry, and a run that has answered — or has not reached
               the question yet — has nothing here left to expire. */}
           {liveRun && (
-            <Button
-              size="small"
-              color="inherit"
-              variant="outlined"
-              startIcon={<X size={16} />}
-              disabled={cancelling}
-              onClick={() => {
-                setCancelRequestedFor(liveRun.id);
-                cancel.mutate(liveRun.id);
-              }}
-              sx={{
-                borderRadius: 999,
-                color: "text.primary",
-                borderColor: (t) => alpha(t.palette.text.primary, 0.3),
-                "&:hover": {
-                  borderColor: (t) => alpha(t.palette.text.primary, 0.55),
-                },
-              }}
+            <Tooltip
+              title={!hasBuild ? "You don't have permission to cancel this run." : ""}
             >
-              {cancelling ? "Cancelling…" : "Cancel run"}
-            </Button>
+              {/* span so the tooltip works while the button is disabled */}
+              <span>
+                <Button
+                  size="small"
+                  color="inherit"
+                  variant="outlined"
+                  startIcon={<X size={16} />}
+                  disabled={!hasBuild || cancelling}
+                  onClick={() => {
+                    setCancelRequestedFor(liveRun.id);
+                    cancel.mutate(liveRun.id);
+                  }}
+                  sx={{
+                    borderRadius: 999,
+                    color: "text.primary",
+                    borderColor: (t) => alpha(t.palette.text.primary, 0.3),
+                    "&:hover": {
+                      borderColor: (t) => alpha(t.palette.text.primary, 0.55),
+                    },
+                  }}
+                >
+                  {cancelling ? "Cancelling…" : "Cancel run"}
+                </Button>
+              </span>
+            </Tooltip>
           )}
           {/* Before the pull request, because the issue frames the work and the PR
               answers it — GitHub's own ordering. Absent when no cycle has minted an

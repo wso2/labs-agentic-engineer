@@ -31,6 +31,15 @@ vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children?: React.ReactNode }) => <a>{children}</a>,
 }));
 
+// The header's Cancel run button reads ae:build through useHasPermission —
+// same shape as BuildsPage.test.tsx's mock, since it's the identical button.
+// Defaults to held so every existing test here (written before the button
+// carried a permission check) keeps seeing it enabled.
+const hasBuild = vi.hoisted(() => ({ current: true }));
+vi.mock("../../../auth/permissions", () => ({
+  useHasPermission: () => hasBuild.current,
+}));
+
 // The live log is the RUN feed filtered to the validation cycle, and it opens
 // an SSE stream. Stub it to a marker so we can assert which lifecycle states
 // show the log vs. the report, without a stream.
@@ -330,6 +339,7 @@ afterEach(() => {
   mockIssueUrl = "https://github.com/acme/demo/issues/30";
   mockIssueComments = [];
   mockIssueLive = undefined;
+  hasBuild.current = true;
 });
 
 // A milestone sees SEQUENTIAL runs across its life and only some of them
@@ -359,6 +369,34 @@ describe("ValidationPage cancel", () => {
     // The LIVE run, not the one answering for the version: only one run on a
     // milestone can be live, and it need not be the one holding the verdict.
     expect(mockCancelMutate).toHaveBeenCalledWith("run-live");
+  });
+
+  // Exact-match ae:build, matching the BFF's own CancelRun gate and
+  // RunStory's identical button on the Builds page — same endpoint, same
+  // hook, same permission either place this escape hatch appears.
+  it("disables cancel, with an explanatory tooltip, without ae:build", async () => {
+    hasBuild.current = false;
+    mockValidation = "running";
+    mockRun = run({ cycles: [validationCycle] });
+    mockNewerRuns = [
+      {
+        ...run({ cycles: [validationCycle] }),
+        id: "run-live",
+        kind: "validation",
+        origin: "revalidate",
+        state: "running",
+      },
+    ];
+
+    renderPage(undefined);
+    const button = screen.getByRole("button", { name: /Cancel run/ });
+    expect(button).toBeDisabled();
+    fireEvent.mouseOver(button.closest("span") ?? button);
+    expect(
+      await screen.findByText("You don't have permission to cancel this run."),
+    ).toBeInTheDocument();
+    fireEvent.click(button);
+    expect(mockCancelMutate).not.toHaveBeenCalled();
   });
 
   // The repair loop is validation's, even though the cycle in flight is coding: the

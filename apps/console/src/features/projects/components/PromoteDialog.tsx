@@ -27,6 +27,7 @@ import {
   IconButton,
   Stack,
   TextField,
+  Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
 import { ArrowUpRight, X } from "@wso2/oxygen-ui-icons-react";
@@ -263,21 +264,26 @@ export function PromoteDialog({
         <Button onClick={onClose} variant="outlined" color="inherit">
           Cancel
         </Button>
-        {/* A disabled control swallows its title, so the tooltip that explains
-            WHY it is disabled lives on a wrapper the pointer still reaches. */}
-        <span
-          {...(!hasBuild
-            ? { title: "You don't have permission to promote this project." }
-            : !ready && { title: "Enabled when all required values are set" })}
+        <Tooltip
+          title={
+            !hasBuild
+              ? "You don't have permission to promote this project."
+              : !ready
+                ? "Enabled when all required values are set"
+                : ""
+          }
         >
-          <Button
-            variant="contained"
-            disabled={!ready || !hasBuild}
-            onClick={onPromote}
-          >
-            Promote
-          </Button>
-        </span>
+          {/* span so the tooltip works while the button is disabled */}
+          <span>
+            <Button
+              variant="contained"
+              disabled={!ready || !hasBuild}
+              onClick={onPromote}
+            >
+              Promote
+            </Button>
+          </span>
+        </Tooltip>
       </DialogActions>
     </Dialog>
   );
