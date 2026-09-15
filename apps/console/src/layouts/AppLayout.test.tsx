@@ -55,6 +55,8 @@ const heldPermissions = vi.hoisted(
       "ae:requirement-view",
       "ae:resource-view",
       "ae:design",
+      "ae:design-view",
+      "ae:build-view",
     ]),
 );
 vi.mock("../auth/SessionContext", () => ({
@@ -110,6 +112,8 @@ beforeEach(() => {
   heldPermissions.add("ae:requirement-view");
   heldPermissions.add("ae:resource-view");
   heldPermissions.add("ae:design");
+  heldPermissions.add("ae:design-view");
+  heldPermissions.add("ae:build-view");
   // The panel's open state persists (#666); without this a test that opened
   // it would leak an open panel into every test after it.
   localStorage.removeItem("aep.chat.panelOpen");
@@ -238,6 +242,75 @@ describe("AppLayout — org sidebar", () => {
     expect(screen.queryByRole("button", { name: "Resources" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Endpoints" })).not.toBeInTheDocument();
   });
+});
+
+// Spec/Builds/Deployments/Validation gate on the SAME permission each of
+// those pages' own PermissionRestrictedPage checks — disabling the item here
+// is what keeps a caller who lacks it from ever reaching that page's denial
+// screen in the first place, mirroring the org sidebar's Resources/Endpoints
+// pattern above.
+describe("AppLayout — project sidebar", () => {
+  it("makes Spec navigable when the caller holds ae:design-view", () => {
+    render();
+    expect(sidebarItem("Spec").closest("a")).not.toBeNull();
+  });
+
+  it("makes Spec non-navigable without ae:design-view, with an explanatory tooltip", async () => {
+    heldPermissions.delete("ae:design-view");
+    render();
+
+    const spec = sidebarItem("Spec");
+    expect(spec.closest("a")).toBeNull();
+
+    fireEvent.mouseOver(spec.closest("span") ?? spec);
+    expect(
+      await screen.findByText("You don't have permission to view the spec."),
+    ).toBeInTheDocument();
+  });
+
+  // Exact-match, not OR'd with ae:design: SpecView's own page gate is
+  // exact-match ae:design-view alone, so holding only ae:design must still
+  // disable this item — an enabled item that lands on SpecViewRestricted is
+  // the exact dead end this gate exists to prevent.
+  it("does NOT make Spec navigable on ae:design alone", () => {
+    heldPermissions.delete("ae:design-view");
+    render();
+    expect(sidebarItem("Spec").closest("a")).toBeNull();
+  });
+
+  it.each(["Builds", "Deployments", "Validation"])(
+    "makes %s navigable when the caller holds ae:build-view",
+    (label) => {
+      render();
+      expect(sidebarItem(label).closest("a")).not.toBeNull();
+    },
+  );
+
+  it.each(["Builds", "Deployments", "Validation"])(
+    "keeps %s navigable holding only ae:build (not ae:build-view)",
+    (label) => {
+      heldPermissions.delete("ae:build-view");
+      heldPermissions.add("ae:build");
+      render();
+      expect(sidebarItem(label).closest("a")).not.toBeNull();
+    },
+  );
+
+  it.each(["Builds", "Deployments", "Validation"])(
+    "makes %s non-navigable holding NEITHER build permission, with an explanatory tooltip",
+    async (label) => {
+      heldPermissions.delete("ae:build-view");
+      render();
+
+      const item = sidebarItem(label);
+      expect(item.closest("a")).toBeNull();
+
+      fireEvent.mouseOver(item.closest("span") ?? item);
+      expect(
+        await screen.findByText(`You don't have permission to view ${label.toLowerCase()}.`),
+      ).toBeInTheDocument();
+    },
+  );
 });
 
 describe("AppLayout — landing from project creation", () => {
