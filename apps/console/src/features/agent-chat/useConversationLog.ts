@@ -36,6 +36,7 @@
 
 import { useCallback, useEffect } from "react";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useHasPermission } from "../../auth/permissions";
 import {
   canReplaceLog,
   chatKeyFor,
@@ -125,13 +126,23 @@ export function useConversationLog(
   const queryClient = useQueryClient();
   const chatKey = projectName ? chatKeyFor(org, projectName) : null;
 
+  // ListConversations (this query) is one of the seven turn/conversation
+  // endpoints the BFF gates on ae:design OR ae:resource-config — one shared
+  // panel for both the design track and the unrelated Resources-registration
+  // chat (permission_gate.go). A caller holding neither will always 403 here;
+  // without this, every surface that mounts this hook (SpecView, the project
+  // Overview) fired the request anyway on every visit, for no possible payoff.
+  const hasDesign = useHasPermission("ae:design");
+  const hasResourceConfig = useHasPermission("ae:resource-config");
+  const canReadConversations = hasDesign || hasResourceConfig;
+
   // Same query as `useAgentChat`'s, so the id resolves once per project however
   // many surfaces are mounted. `refetchOnWindowFocus: "always"` is the recovery
   // path when the resolve failed outright: with no id there is nothing to read.
   const conversation = useQuery({
     queryKey: conversationKeys.current(projectName ?? ""),
     queryFn: () => fetchCurrentConversationId(projectName!),
-    enabled: Boolean(projectName),
+    enabled: Boolean(projectName) && canReadConversations,
     staleTime: Infinity,
     refetchOnWindowFocus: "always",
   });

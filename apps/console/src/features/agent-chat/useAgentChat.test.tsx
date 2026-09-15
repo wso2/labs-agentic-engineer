@@ -35,6 +35,7 @@ import {
   replaceMessages,
   upsertQuestionMessage,
 } from "./chatStore";
+import { SessionContext } from "../../auth/SessionContext";
 import { useAgentChat } from "./useAgentChat";
 import { useConversationLog } from "./useConversationLog";
 
@@ -88,7 +89,24 @@ function createWrapper() {
     defaultOptions: { queries: { retry: false } },
   });
   return function Wrapper({ children }: { children: React.ReactNode }) {
-    return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+    return (
+      <QueryClientProvider client={qc}>
+        {/* useConversationLog (mounted directly below, alongside useAgentChat)
+            reads ae:design/ae:resource-config to decide whether to read the
+            shared conversation panel at all — give it a session so it doesn't
+            throw outside AuthGuard. */}
+        <SessionContext.Provider
+          value={{
+            user: { name: "Test User", email: "test@example.com" },
+            orgHandle: ORG,
+            permissions: new Set(["ae:design"]),
+            signOut: vi.fn(),
+          }}
+        >
+          {children}
+        </SessionContext.Provider>
+      </QueryClientProvider>
+    );
   };
 }
 

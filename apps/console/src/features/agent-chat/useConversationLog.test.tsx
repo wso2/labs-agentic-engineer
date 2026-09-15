@@ -29,6 +29,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { SessionContext } from "../../auth/SessionContext";
 import {
   addMessage,
   chatKeyFor,
@@ -56,10 +57,27 @@ vi.mock("./api/turns", async (importOriginal) => {
   return { ...real, getConversationMessages: (...a: unknown[]) => mockGetHistory(...a) };
 });
 
-function createWrapper() {
+// Every existing test here assumes the caller can read conversations at all —
+// only the dedicated permission tests below pass a narrower set. `ae:design`
+// is the plain "holds the design track" case; ListConversations's own OR with
+// ae:resource-config is exercised separately.
+function createWrapper(permissions: Set<string> = new Set(["ae:design"])) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return function Wrapper({ children }: { children: React.ReactNode }) {
-    return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+    return (
+      <QueryClientProvider client={qc}>
+        <SessionContext.Provider
+          value={{
+            user: { name: "Test User", email: "test@example.com" },
+            orgHandle: ORG,
+            permissions,
+            signOut: vi.fn(),
+          }}
+        >
+          {children}
+        </SessionContext.Provider>
+      </QueryClientProvider>
+    );
   };
 }
 
@@ -244,5 +262,27 @@ describe("useConversationLog — a log without the chat panel (#606)", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(mockFetchCurrent).not.toHaveBeenCalled();
     expect(mockGetHistory).not.toHaveBeenCalled();
+  });
+
+  // ListConversations is one of the seven turn/conversation endpoints the BFF
+  // gates on ae:design OR ae:resource-config (permission_gate.go). A caller
+  // holding neither will always 403 here — asking anyway just spends a
+  // request and a WARN log line on every mount, for no possible payoff.
+  it("asks for nothing when the caller holds neither ae:design nor ae:resource-config", async () => {
+    renderHook(() => useConversationLog(ORG, PROJECT), {
+      wrapper: createWrapper(new Set(["ae:design-view"])),
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockFetchCurrent).not.toHaveBeenCalled();
+    expect(mockGetHistory).not.toHaveBeenCalled();
+  });
+
+  // The OR is real: ae:resource-config alone (the Resources-registration
+  // track, unrelated to design) is still enough to read the shared panel.
+  it("still reads conversations when only ae:resource-config is held", async () => {
+    renderHook(() => useConversationLog(ORG, PROJECT), {
+      wrapper: createWrapper(new Set(["ae:resource-config"])),
+    });
+    await waitFor(() => expect(mockFetchCurrent).toHaveBeenCalled());
   });
 });

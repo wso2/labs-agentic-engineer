@@ -444,6 +444,44 @@ describe("SpecView while the kickoff is still writing", () => {
     expect(screen.getByText("Nothing written yet")).toBeInTheDocument();
   });
 
+  // A project can be CREATED on ae:requirement-update alone, so a caller
+  // without ae:design can land on a freshly created project whose kickoff
+  // already 403'd once. Retry would just 403 again; the empty state should
+  // say why instead of inviting it.
+  it("explains the permission gap instead of offering a dead-end Retry", () => {
+    sessionPermissions.current = new Set(["ae:design-view"]);
+    mockSpecAgent = "";
+    mockSpecFlow = "";
+    empty();
+    render(<SpecView projectName="proj1" />);
+
+    expect(
+      screen.getByText("You don't have permission to generate a spec"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Nothing written yet")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Retry" }),
+    ).not.toBeInTheDocument();
+  });
+
+  // CreateTurn's own backend gate is an OR with ae:resource-config, but that
+  // permission belongs to the unrelated Resources-registration chat — it must
+  // NOT stand down this page's permission empty state. A caller who can view
+  // this page (ae:design-view) and can register resources (ae:resource-config)
+  // but genuinely cannot generate a spec (no ae:design) must still be told so.
+  it("still explains the permission gap when the caller only holds the unrelated ae:resource-config", () => {
+    sessionPermissions.current = new Set(["ae:design-view", "ae:resource-config"]);
+    mockSpecAgent = "";
+    mockSpecFlow = "";
+    empty();
+    render(<SpecView projectName="proj1" />);
+
+    expect(
+      screen.getByText("You don't have permission to generate a spec"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Nothing written yet")).not.toBeInTheDocument();
+  });
+
   // A failure has its own banner with its own way out; spinning underneath it
   // would promise work that already stopped.
   it("stops spinning once the turn has failed", () => {
