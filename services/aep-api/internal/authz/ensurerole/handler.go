@@ -18,10 +18,12 @@ package ensurerole
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/wso2/aep/aep-api/internal/authz"
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
+	authn "github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 )
 
@@ -36,7 +38,12 @@ func (h *Handler) EnsureAuthzRole(ctx context.Context, _ gen.EnsureAuthzRoleRequ
 		return nil, apierr.ServiceUnavailable("the authz service is not configured")
 	}
 	orgHandle := tenant.BoundOrgFromContext(ctx)
-	if err := h.svc.EnsureAuthzRole(ctx, orgHandle); err != nil {
+	// A first-time user has no OC-side grants yet, so bootstrapping their own
+	// AE roles cannot run under their forwarded JWT; use the BFF's service
+	// identity, impersonating this org, for this call only.
+	svcCtx := authn.WithServiceIdentity(ctx)
+	if err := h.svc.EnsureAuthzRole(svcCtx, orgHandle); err != nil {
+		slog.ErrorContext(ctx, "authz: ensure role failed", "orgHandle", orgHandle, "err", err)
 		return nil, apierr.Internal("failed to ensure authz role")
 	}
 	return gen.EnsureAuthzRole200JSONResponse{Status: "ok"}, nil
