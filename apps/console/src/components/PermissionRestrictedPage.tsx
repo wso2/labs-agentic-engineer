@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { Button, Chip, PageContent, Stack } from "@wso2/oxygen-ui";
+import { Button, PageContent } from "@wso2/oxygen-ui";
 import { ArrowLeft, Lock } from "@wso2/oxygen-ui-icons-react";
 import { EmptyState } from "./EmptyState";
 
@@ -24,16 +24,19 @@ import { EmptyState } from "./EmptyState";
 // (Spec/Design, Builds, Deployments, …) — as opposed to disabling individual
 // controls for a caller who can view but not edit. One shared shape so every
 // section's denial reads the same way.
+//
+// No chip row naming what's restricted: the description already says so in
+// prose, and repeating it as a row of tags underneath was redundant clutter
+// nobody reads twice — dropped from every caller, not just hidden behind an
+// unused prop.
 export function PermissionRestrictedPage({
   title,
   description,
-  restricted,
   backLabel,
   onBack,
 }: {
   title: string;
   description: string;
-  restricted: string[];
   backLabel: string;
   onBack: () => void;
 }) {
@@ -44,32 +47,9 @@ export function PermissionRestrictedPage({
         title={title}
         description={description}
         action={
-          <Stack spacing={3} sx={{ alignItems: "center" }}>
-            <Stack
-              direction="row"
-              spacing={1}
-              sx={{
-                p: 1.5,
-                border: 1,
-                borderStyle: "dashed",
-                borderColor: "divider",
-                borderRadius: 4,
-              }}
-            >
-              {restricted.map((label) => (
-                <Chip
-                  key={label}
-                  icon={<Lock size={12} />}
-                  label={label}
-                  size="small"
-                  variant="outlined"
-                />
-              ))}
-            </Stack>
-            <Button variant="contained" startIcon={<ArrowLeft size={18} />} onClick={onBack}>
-              {backLabel}
-            </Button>
-          </Stack>
+          <Button variant="contained" startIcon={<ArrowLeft size={18} />} onClick={onBack}>
+            {backLabel}
+          </Button>
         }
       />
     </PageContent>

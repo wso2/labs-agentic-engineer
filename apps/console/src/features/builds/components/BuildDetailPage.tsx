@@ -188,7 +188,6 @@ export function BuildDetailPage({
       <PermissionRestrictedPage
         title="You don't have access to this project's builds"
         description="Build progress, tasks, and logs are restricted for your role. Ask a project admin to grant access."
-        restricted={["Build progress", "Tasks", "Logs"]}
         backLabel="Back to project overview"
         onBack={() =>
           void navigate({ to: "/projects/$projectName", params: { projectName } })

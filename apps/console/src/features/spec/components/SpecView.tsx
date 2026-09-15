@@ -1710,7 +1710,6 @@ function SpecViewRestricted({ projectName }: { projectName: string }) {
     <PermissionRestrictedPage
       title="You don't have access to this project's design"
       description="Architecture diagrams, wireframes, and component specs are restricted for your role. Ask a project admin to grant access."
-      restricted={["Architecture", "Wireframes", "Component specs"]}
       backLabel="Back to project overview"
       onBack={() =>
         void navigate({ to: "/projects/$projectName", params: { projectName } })

@@ -117,7 +117,6 @@ export function DeploymentDetailPage({
       <PermissionRestrictedPage
         title="You don't have access to this project's deployments"
         description="Environment status, connections, and promotion are restricted for your role. Ask a project admin to grant access."
-        restricted={["Environments", "Connections", "Promotion"]}
         backLabel="Back to project overview"
         onBack={() =>
           void navigate({ to: "/projects/$projectName", params: { projectName } })

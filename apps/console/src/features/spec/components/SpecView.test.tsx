@@ -1978,9 +1978,6 @@ describe("SpecView — permission gate", () => {
     expect(
       screen.getByText("You don't have access to this project's design"),
     ).toBeInTheDocument();
-    expect(screen.getByText("Architecture")).toBeInTheDocument();
-    expect(screen.getByText("Wireframes")).toBeInTheDocument();
-    expect(screen.getByText("Component specs")).toBeInTheDocument();
     // Nothing from the real page renders — not a tab, not a file, not the
     // Build button — confirming this is a full replacement, not an overlay.
     expect(screen.queryByRole("tab")).not.toBeInTheDocument();
