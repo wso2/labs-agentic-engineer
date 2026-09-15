@@ -28,10 +28,16 @@ export function CollabTextArea({
   ytext,
   path,
   isLocalTransaction,
+  readOnly,
 }: {
   ytext: Y.Text;
   path: string;
   isLocalTransaction: (transaction: Y.Transaction) => boolean;
+  /** Whether THIS caller lacks ae:design (read-only viewer). Blocks the
+   *  native textarea's own input handling AND the onChange write-through —
+   *  belt and suspenders, since a readOnly input can still receive a
+   *  programmatic value change some browsers' autofill/extensions trigger. */
+  readOnly: boolean;
 }) {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -49,11 +55,19 @@ export function CollabTextArea({
       minRows={20}
       inputRef={inputRef}
       defaultValue={ytext.toString()}
-      onChange={(e) => applyTextareaValue(ytext, e.target.value)}
+      onChange={(e) => {
+        if (readOnly) return;
+        applyTextareaValue(ytext, e.target.value);
+      }}
       aria-label={`Content of ${path}`}
-      helperText={`${path} — live collaborative draft; commits to GitHub arrive with the committer (#86 phase 3).`}
+      helperText={
+        readOnly
+          ? `${path} — read-only (no design permission).`
+          : `${path} — live collaborative draft; commits to GitHub arrive with the committer (#86 phase 3).`
+      }
       slotProps={{
         input: {
+          readOnly,
           sx: { fontFamily: "monospace", fontSize: "0.875rem" },
         },
       }}

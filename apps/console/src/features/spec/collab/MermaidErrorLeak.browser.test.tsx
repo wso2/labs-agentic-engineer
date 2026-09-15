@@ -65,6 +65,7 @@ async function mountWith(content: string) {
           provider={fakeProvider(doc)}
           self={{ name: "Tester", color: "#64b5f6" }}
           agentStreaming
+          editable
         />
       </div>
     </OxygenUIThemeProvider>,

@@ -82,6 +82,7 @@ export function SpecMdEditor({
   links,
   aim,
   revealUnsettled = 0,
+  editable,
 }: {
   fragment: Y.XmlFragment;
   provider: HocuspocusProvider;
@@ -105,6 +106,16 @@ export function SpecMdEditor({
    * scrolls twice. Zero or absent asks for nothing.
    */
   revealUnsettled?: number | undefined;
+  /**
+   * Whether THIS caller may edit this document (ae:design). `editable: false`
+   * on the Tiptap editor itself only blocks DOM-originated input (typing,
+   * paste, drop) — it does NOT stop a programmatic `view.dispatch`, which is
+   * exactly how the toolbar's formatting commands and the accept/reject
+   * review actions (agentReview.ts) mutate the doc. So every control that can
+   * dispatch a transaction is hidden below, not merely disabled — the prop
+   * name covers both halves of "this caller cannot edit", not just typing.
+   */
+  editable: boolean;
 }) {
   // The extension list is built once per (fragment, provider) — a file swap
   // remounts this component under a new key — so the plugin reaches the CURRENT
@@ -120,6 +131,10 @@ export function SpecMdEditor({
   });
   const editor = useEditor(
     {
+      // Blocks DOM-originated input (typing, paste, drop) only — see the
+      // `editable` prop doc above for why every dispatch-capable control is
+      // ALSO hidden below rather than left to this flag alone.
+      editable,
       extensions: [
         // codeBlock is disabled in StarterKit and re-added mermaid-aware:
         // ```mermaid blocks render as live diagrams, click to edit source.
@@ -132,7 +147,7 @@ export function SpecMdEditor({
         SpecLinks.configure({ binding: () => linkRef.current }),
         AimHighlight,
         UndoScrollGuard,
-        ...(lenses
+        ...(editable && lenses
           ? [
               PrdLenses.configure({
                 run: (command: string) => lensRef.current?.run(command),
@@ -161,6 +176,16 @@ export function SpecMdEditor({
     },
     [fragment, provider],
   );
+
+  // `useEditor`'s own `editable` option is only read at construction — it is
+  // not in the dependency array above (the same key that remounts this
+  // component per file also freezes lens wiring at construction, matching
+  // the existing pattern). Tiptap's documented way to change it afterwards is
+  // `editor.setEditable`, so a permission that changes without a remount
+  // still takes effect.
+  useEffect(() => {
+    editor?.setEditable(editable);
+  }, [editor, editable]);
 
   // Whether a lens is clickable is console state, not document state, so a
   // change to it has to ask ProseMirror to re-render the widgets. The ref
@@ -323,7 +348,7 @@ export function SpecMdEditor({
         "&:focus-within": { borderColor: "primary.main" },
       }}
     >
-      {editor && (
+      {editor && editable && (
         <>
           <SpecMdToolbar editor={editor} />
           {pending > 0 && (
@@ -368,7 +393,7 @@ export function SpecMdEditor({
           )}
         </>
       )}
-      {editor && (
+      {editor && editable && (
         <BubbleMenu
           editor={editor}
           shouldShow={({ state }) =>
@@ -575,7 +600,7 @@ export function SpecMdEditor({
       {/* Rendered last so it paints over the document, and OUTSIDE the
           scroller so it is positioned against the frame — the surface follows
           the text by re-measuring, not by scrolling with it. */}
-      {editor && aim && (
+      {editor && editable && aim && (
         <SpecAimMenu
           editor={editor}
           aim={aim}
