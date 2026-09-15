@@ -224,9 +224,9 @@ describe("OverviewTrack", () => {
     });
   });
 
-  // Spec and Deploy each gate on their own permission pair; Build has none
-  // and is always open — the whole point of a per-leg check rather than a
-  // page-level one.
+  // Spec gates on its own permission pair; Build and Deploy share ONE
+  // (ae:build-view/ae:build) — there is no separate deployment permission in
+  // this console, so the two always lock and unlock together.
   describe("locked legs", () => {
     it("locks Spec without ae:design-view/ae:design, leaves Build and Deploy open", () => {
       permissions.current = new Set(["ae:build-view"]);
@@ -247,37 +247,38 @@ describe("OverviewTrack", () => {
       );
     });
 
-    it("locks Deploy without ae:build-view/ae:build, leaves Spec and Build open", () => {
+    it("locks Build and Deploy together without ae:build-view/ae:build, leaves Spec open", () => {
       permissions.current = new Set(["ae:design-view"]);
       draw(status({}));
+      expect(legFor("Build")).toHaveAttribute("aria-disabled", "true");
+      expect(legFor("Build")).toHaveAccessibleName(
+        "Build: You don't have permission to view builds.",
+      );
       expect(legFor("Deploy")).toHaveAttribute("aria-disabled", "true");
       expect(legFor("Deploy")).toHaveAccessibleName(
         "Deploy: You don't have permission to view deployments.",
       );
       expect(legFor("Spec")).toHaveAttribute("href", "/projects/demo-shop/spec");
-      expect(legFor("Build")).toHaveAttribute("href", "/projects/demo-shop/builds");
     });
 
-    it("unlocks Spec on either ae:design-view or ae:design alone", () => {
+    // Exact-match, not OR'd: SpecView's own page gate is exact-match
+    // ae:design-view alone, so holding only ae:design (a real, if unusual,
+    // role shape) must still lock this leg — an unlocked leg that lands on
+    // SpecViewRestricted is the exact dead end the lock exists to prevent.
+    it("does NOT unlock Spec on ae:design alone", () => {
       permissions.current = new Set(["ae:design"]);
       draw(status({}));
-      expect(legFor("Spec")).toHaveAttribute("href", "/projects/demo-shop/spec");
+      expect(legFor("Spec")).toHaveAttribute("aria-disabled", "true");
     });
 
-    it("unlocks Deploy on either ae:build-view or ae:build alone", () => {
+    it("unlocks Build and Deploy together on either ae:build-view or ae:build alone", () => {
       permissions.current = new Set(["ae:build"]);
       draw(status({}));
+      expect(legFor("Build")).toHaveAttribute("href", "/projects/demo-shop/builds");
       expect(legFor("Deploy")).toHaveAttribute(
         "href",
         "/projects/demo-shop/deployments",
       );
-    });
-
-    it("never locks Build — it has no permission of its own", () => {
-      permissions.current = new Set();
-      draw(status({}));
-      expect(legFor("Build")).toHaveAttribute("href", "/projects/demo-shop/builds");
-      expect(legFor("Build")).not.toHaveAttribute("aria-disabled", "true");
     });
   });
 

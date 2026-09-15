@@ -379,19 +379,25 @@ function Leg({
  */
 /**
  * Which permission pair unlocks each leg, and what the lock says while it's
- * held short — only Spec and Deploy gate on anything; Build has no permission
- * of its own to check against, so it's always open.
+ * held short. Build and Deploy share one check (ae:build-view/ae:build) —
+ * there is no separate deployment permission in this console, deployments
+ * are a build's own consequence — so clicking through to either page from a
+ * locked leg would only land on that page's own PermissionRestrictedPage
+ * anyway; the leg lock exists so that dead end is never reached in the
+ * first place.
  */
 const SPEC_LOCK_REASON = "You don't have permission to view the spec.";
+const BUILD_LOCK_REASON = "You don't have permission to view builds.";
 const DEPLOY_LOCK_REASON = "You don't have permission to view deployments.";
 
 function legLock(
   name: string,
   hasSpecAccess: boolean,
-  hasDeployAccess: boolean,
+  hasBuildAccess: boolean,
 ): { locked: boolean; reason: string } {
   if (name === "Spec") return { locked: !hasSpecAccess, reason: SPEC_LOCK_REASON };
-  if (name === "Deploy") return { locked: !hasDeployAccess, reason: DEPLOY_LOCK_REASON };
+  if (name === "Build") return { locked: !hasBuildAccess, reason: BUILD_LOCK_REASON };
+  if (name === "Deploy") return { locked: !hasBuildAccess, reason: DEPLOY_LOCK_REASON };
   return { locked: false, reason: "" };
 }
 
@@ -422,12 +428,18 @@ export function OverviewTrack({
   useConversationLog(org, conversationProject);
   const engaged = useAgentEngaged(org, conversationProject);
   const { legs, summary } = trackView(status, engaged);
-  // Same write/view-OR every other locked surface in this console uses
-  // (ProjectsList's canOpen, DeploymentsPage's canViewDeployments) — holding
-  // either permission is enough, so a design/build-only editor and a
-  // design-view/build-view-only reader both still get in.
-  const hasSpecAccess = useHasAnyPermission(["ae:design-view", "ae:design"]);
-  const hasDeployAccess = useHasAnyPermission(["ae:build-view", "ae:build"]);
+  // The Spec leg's lock reuses hasDesignView above rather than a second call:
+  // NOT OR'd with ae:design, because SpecView's own page gate is exact-match
+  // ae:design-view alone, so a caller holding only ae:design would see this
+  // leg unlocked and land on SpecViewRestricted anyway — the leg lock exists
+  // so that dead end is never reached (OverviewArchitecture.tsx carries the
+  // same reasoning for the same underlying backend gate, ListFiles/ReadFile).
+  const hasSpecAccess = hasDesignView;
+  // Build and Deploy genuinely DO share a write/view OR — ListProjectBuilds
+  // itself is gated on {ae:build, ae:build-view} server-side (unlike
+  // ListFiles above), so a design/build-only editor and a build-view-only
+  // reader both belong here.
+  const hasBuildAccess = useHasAnyPermission(["ae:build-view", "ae:build"]);
 
   return (
     <Box>
@@ -441,7 +453,7 @@ export function OverviewTrack({
         }}
       >
         {legs.map((leg, i) => {
-          const { locked, reason } = legLock(leg.name, hasSpecAccess, hasDeployAccess);
+          const { locked, reason } = legLock(leg.name, hasSpecAccess, hasBuildAccess);
           return (
             <Leg
               key={leg.name}
