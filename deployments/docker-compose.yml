@@ -427,7 +427,12 @@ services:
       AEP_API_PROXY_URL: "http://aep-api:9090"
       VITE_THUNDER_URL: "${PUBLIC_THUNDER_URL}"
       VITE_THUNDER_CLIENT_ID: "${VITE_THUNDER_CLIENT_ID:-aep-console-client}"
-      VITE_THUNDER_SCOPES: "${VITE_THUNDER_SCOPES:-openid profile email}"
+      # Default lists every ae:* permission the platform recognizes
+      # (services/aep-api/internal/authz/role_permissions_catalog.go's
+      # AllPermissions) — Thunder narrows the grant to whatever the caller's
+      # actual role holds, so the client must ask for all of them or no
+      # caller, however privileged, can ever be granted the omitted one.
+      VITE_THUNDER_SCOPES: "${VITE_THUNDER_SCOPES:-openid profile email ae:build ae:build-view ae:design ae:design-view ae:github-config ae:model-config ae:requirement-update ae:requirement-view ae:skill-config ae:skill-view ae:usage-view ae:observability-view ae:resource-view ae:resource-config}"
       # RFC 8707 resource indicator for the `ae` resource server — required
       # for any ae:* entry in VITE_THUNDER_SCOPES to actually land on the
       # token; see JWT_AUDIENCE's comment above for why aep-api also needs
