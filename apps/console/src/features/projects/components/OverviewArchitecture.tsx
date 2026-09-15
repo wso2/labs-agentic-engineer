@@ -20,6 +20,7 @@ import { Alert, Box, Button, Card, CircularProgress, Skeleton } from "@wso2/oxyg
 import { ArrowUpRight } from "@wso2/oxygen-ui-icons-react";
 import { createLink } from "@tanstack/react-router";
 import { CellDiagramView } from "@aep/ui-cell-diagram-view";
+import { useHasPermission } from "../../../auth/permissions";
 import { EmptyState } from "../../../components/EmptyState";
 import { SectionTitle } from "../../../components/SectionTitle";
 import { DESIGN_CELL_PATH } from "../../spec/api/designTree";
@@ -119,7 +120,16 @@ const DIAGRAM_STACKED_HEIGHT = 560;
  * in the browser from the authored source, render read-only, commit nothing).
  */
 export function OverviewArchitecture({ projectName }: { projectName: string }) {
-  const files = useSpecFiles(projectName);
+  // Exact-match ae:design-view, NOT OR'd with ae:design: the backend's own
+  // gate on ListFiles/ReadFile (this panel's two reads) is exact-match
+  // ae:design-view alone (permission_gate.go), same as SpecView's own page
+  // gate (hasDesignView). A caller holding ae:design without ae:design-view
+  // is a real, if unusual, role shape (they're bundled in every built-in
+  // role today, but nothing enforces that) — an OR here would let the panel
+  // ATTEMPT the read for such a caller and land right back in the "generic
+  // failure" bug this check exists to prevent, just via a different gap.
+  const hasSpecAccess = useHasPermission("ae:design-view");
+  const files = useSpecFiles(hasSpecAccess ? projectName : undefined);
   // A sha of "" means the metadata row exists but the blob does not — not
   // something to fetch.
   const cell =
@@ -184,6 +194,7 @@ export function OverviewArchitecture({ projectName }: { projectName: string }) {
       >
         <Box sx={drawn ? READ_ONLY_SX : { flex: 1, minWidth: 0, display: "flex" }}>
           <Body
+            hasSpecAccess={hasSpecAccess}
             filesPending={files.isPending}
             filesError={files.isError}
             hasCell={cell !== null}
@@ -199,6 +210,7 @@ export function OverviewArchitecture({ projectName }: { projectName: string }) {
 }
 
 function Body({
+  hasSpecAccess,
   filesPending,
   filesError,
   hasCell,
@@ -207,6 +219,7 @@ function Body({
   source,
   projectName,
 }: {
+  hasSpecAccess: boolean;
   filesPending: boolean;
   filesError: boolean;
   hasCell: boolean;
@@ -215,6 +228,21 @@ function Body({
   source: string | undefined;
   projectName: string;
 }) {
+  // Checked before filesPending: useSpecFiles is disabled (not merely slow)
+  // without the permission, so its query would otherwise read isPending
+  // forever and this panel would spin on a Skeleton indefinitely instead of
+  // saying why.
+  if (!hasSpecAccess) {
+    return (
+      <Centered>
+        <EmptyState
+          compact
+          title="No permission to view the architecture"
+          description="Ask a project admin to grant design access."
+        />
+      </Centered>
+    );
+  }
   if (filesPending) {
     return <Skeleton variant="rectangular" width="100%" height="100%" />;
   }

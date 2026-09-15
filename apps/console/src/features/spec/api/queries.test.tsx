@@ -30,7 +30,7 @@ vi.mock("../../../api/client", () => ({
 }));
 
 // Imported AFTER the mock so the module under test picks up the stub client.
-const { useDesignDependencies } = await import("./queries");
+const { useDesignDependencies, useSpecFiles } = await import("./queries");
 
 function wrapper(queryClient: QueryClient) {
   return function Wrapper({ children }: { children: ReactNode }) {
@@ -102,5 +102,40 @@ describe("useDesignDependencies (#252 Task 9)", () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.data).toBeUndefined();
     expect(result.current.error?.message).toContain("boom");
+  });
+});
+
+// `projectName` is optional so a caller withholding it on a permission gate
+// (OverviewArchitecture's hasSpecAccess ? projectName : undefined) never
+// fires a doomed request — see queries.ts's own doc comment on this hook.
+describe("useSpecFiles", () => {
+  beforeEach(() => {
+    mockGET.mockReset();
+  });
+
+  it("asks for nothing and stays pending, never erroring, without a project", async () => {
+    const queryClient = new QueryClient();
+    const { result } = renderHook(() => useSpecFiles(undefined), {
+      wrapper: wrapper(queryClient),
+    });
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockGET).not.toHaveBeenCalled();
+    expect(result.current.isPending).toBe(true);
+    expect(result.current.isError).toBe(false);
+  });
+
+  it("fetches once a project is supplied", async () => {
+    mockGET.mockResolvedValue({ data: [], error: undefined });
+    const queryClient = new QueryClient();
+
+    const { result } = renderHook(() => useSpecFiles("proj1"), {
+      wrapper: wrapper(queryClient),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockGET).toHaveBeenCalledWith("/projects/{projectName}/files", {
+      params: { path: { projectName: "proj1" } },
+    });
   });
 });
