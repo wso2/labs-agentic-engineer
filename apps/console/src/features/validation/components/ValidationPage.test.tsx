@@ -27,16 +27,29 @@ type RunValidation = components["schemas"]["RunValidation"];
 
 // Router replaced so the PageHeader back-link renders as a plain anchor — no
 // RouterProvider needed (mirrors DeploymentsPage.test.tsx / NotFound.test.tsx).
+// useNavigate is the permission gate's "Back to project overview" target.
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children?: React.ReactNode }) => <a>{children}</a>,
+  useNavigate: () => navigate,
 }));
+
+const navigate = vi.fn();
 
 // The header's Cancel run button reads ae:build through useHasPermission —
 // same shape as BuildsPage.test.tsx's mock, since it's the identical button.
 // Defaults to held so every existing test here (written before the button
-// carried a permission check) keeps seeing it enabled.
+// carried a permission check) keeps seeing it enabled. Kept SEPARATE from the
+// page-level gate below: a caller can hold ae:build-view (page reachable)
+// without ae:build (Cancel disabled), and one existing test exercises exactly
+// that split.
 const hasBuild = vi.hoisted(() => ({ current: true }));
+// The page-level gate reads ae:build/ae:build-view through
+// useHasAnyPermission (same shape as DeploymentsPage.test.tsx's mock, since
+// it's the identical gate). Defaults to held so every existing test here
+// (written before the page carried this check) keeps seeing the page.
+const canViewValidation = vi.hoisted(() => ({ current: true }));
 vi.mock("../../../auth/permissions", () => ({
+  useHasAnyPermission: () => canViewValidation.current,
   useHasPermission: () => hasBuild.current,
 }));
 
@@ -360,6 +373,7 @@ afterEach(() => {
   mockIssueComments = [];
   mockIssueLive = undefined;
   hasBuild.current = true;
+  canViewValidation.current = true;
 });
 
 // A milestone sees SEQUENTIAL runs across its life and only some of them
@@ -1767,5 +1781,19 @@ describe("ValidationPage agent status line", () => {
 
     expect(screen.getByText("Authoring the last three specs.")).toBeInTheDocument();
     expect(screen.getByTestId("working-pulse")).toBeInTheDocument();
+  });
+});
+
+// Same gate BuildsLedger/DeploymentsPage carry: validation reads run data
+// off the same surface (list-build-runs, gated {ae:build, ae:build-view}
+// server-side), so it needs the same page-level permission.
+describe("ValidationPage — permission gate", () => {
+  it("blocks the whole page for a user lacking ae:build/ae:build-view", () => {
+    canViewValidation.current = false;
+    renderPage(undefined);
+
+    expect(
+      screen.getByText("You don't have access to this project's validation"),
+    ).toBeInTheDocument();
   });
 });
