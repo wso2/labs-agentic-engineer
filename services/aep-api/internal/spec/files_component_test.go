@@ -42,6 +42,7 @@ import (
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/edge"
+	"github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/platform/componenttest"
 	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
 	"github.com/wso2/aep/aep-api/internal/platform/gitfs/workspacetest"
@@ -551,6 +552,26 @@ func TestFiles_NoAuth_401(t *testing.T) {
 	r := newFilesRig(t, map[string]string{"specs/requirements/prd.md": "x"})
 	if rec := r.h.NoAuth().Get(apiBase); rec.Code != http.StatusUnauthorized {
 		t.Errorf("no-auth list: code %d, want 401", rec.Code)
+	}
+}
+
+// ApplyFiles (this is services/collab's git-commit flush, forwarding the
+// connecting console user's own JWT) needs ae:design specifically — holding
+// only the view permission (or the unrelated Resources-registration
+// permission) must not let a caller commit into the project's spec.
+func TestFiles_ApplyDeniedWithoutDesign_403(t *testing.T) {
+	r := newFilesRig(t, map[string]string{"specs/requirements/prd.md": "old"})
+	reqSHA := r.readSHA(t, "specs/requirements/prd.md")
+	body := mustJSON(t, spec.ApplyRequest{
+		Writes:  []spec.WriteOp{{Path: "specs/requirements/prd.md", Content: "new", BaseSHA: reqSHA}},
+		Message: "from test",
+	})
+
+	for _, scope := range []string{"openid ae:design-view", "openid ae:resource-config"} {
+		req := r.h.AsOrg(filesTestOrg).With(func(c *auth.Claims) { c.Scope = scope })
+		if rec := req.Post(apiBase+"/apply", body); rec.Code != http.StatusForbidden {
+			t.Errorf("apply with scope %q: code %d, want 403 (%s)", scope, rec.Code, rec.Body.String())
+		}
 	}
 }
 

@@ -222,6 +222,31 @@ var operationPermissions = map[string][]authz.Permission{
 	"ProvideDependencyContract":  {authz.PermissionDesign},
 	"AcceptDependencyAssumption": {authz.PermissionDesign},
 
+	// services/collab (the spec editor's Yjs collaboration server) calls all
+	// three of these server-to-server, forwarding the connecting console
+	// user's own JWT — so this gate sees exactly the same claims it would for
+	// a direct console call, and denies/allows on the same basis.
+	//
+	// ValidateCollabAccess (room join, every joiner) and ReadFileBundle (the
+	// room's seed read, first joiner only) both need ae:design-view: without
+	// it on ValidateCollabAccess specifically, a caller could join an
+	// already-warm room and read its full live document via Yjs sync without
+	// ReadFileBundle ever running for them (ReadFileBundle only fires once,
+	// for whoever seeds the room) — so the join-time check is the one that
+	// actually closes the read gap, not the seed-read check alone.
+	//
+	// ApplyFiles (the room's git-commit flush) needs the stronger ae:design,
+	// exact-match like ProvideDependencyContract/AcceptDependencyAssumption
+	// above and GenerateDesign below — viewing the live room must not imply
+	// permission to commit into it. Deliberately NOT OR'd with
+	// ae:resource-config the way CreateTurn/StreamTurn's shared chat panel
+	// is: the spec collab room is design-track content, and resource
+	// registration (a separate feature/route) has no legitimate reason to
+	// write here.
+	"ValidateCollabAccess": {authz.PermissionDesignView},
+	"ReadFileBundle":       {authz.PermissionDesignView},
+	"ApplyFiles":           {authz.PermissionDesign},
+
 	// Org usage/spend (settings > Usage page). New permission, no existing
 	// analog — this is an org-financial view, not a project one.
 	"ListProjectUsage": {authz.PermissionUsageView},
@@ -310,17 +335,6 @@ var permissionGateCarveOuts = map[string]struct{}{
 	"CreateIssue":          {},
 	"ListIssues":           {},
 	"PromoteTaskFromIssue": {},
-	// ReadFileBundle, ApplyFiles, ValidateCollabAccess: services/collab
-	// (the spec editor's Yjs collaboration server), forwarding the
-	// console user's own JWT server-to-server on every room load
-	// (ReadFileBundle), edit flush (ApplyFiles), and room join
-	// (ValidateCollabAccess). ValidateCollabAccess's handler already does
-	// its own org+ownership check inline (spec/collab/handler.go) — same
-	// circularity reasoning as EnsureAuthzRole above — so its carve-out is
-	// deliberate, not deferred, unlike the other two here.
-	"ReadFileBundle":       {},
-	"ApplyFiles":           {},
-	"ValidateCollabAccess": {},
 
 	// --- Zero callers anywhere: fully dead, not just console-unused ------
 	// Verified with the same rigor as the group above — checked every

@@ -218,3 +218,32 @@ func TestReqComponent_CollabValidate_ReturnsProjectName(t *testing.T) {
 		t.Fatalf("collab-validate: want projectName demo-shop, got %q body=%s", body.ProjectName, rec.Body.String())
 	}
 }
+
+// TestReqComponent_CollabValidate_DeniedWithoutDesignView proves the
+// permission gate — not just the handler's own org/ownership check — refuses
+// a caller who holds no ae:design-view: the gate runs BEFORE the handler, so
+// this 403s even though the room/project would otherwise resolve cleanly
+// (same repos fake as the success test above).
+func TestReqComponent_CollabValidate_DeniedWithoutDesignView(t *testing.T) {
+	t.Parallel()
+	repos := &fakeCollabRepos{
+		GetRepoFunc: func(_ context.Context, orgID, projectID string) (*sourcecontrol.GitRepository, error) {
+			if orgID != "acme" || projectID != "demo-shop" {
+				return nil, nil
+			}
+			return &sourcecontrol.GitRepository{Status: "ready"}, nil
+		},
+	}
+	h := newReqHarness(t, repos)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/collab/validate", nil)
+	key, value := componenttest.ClaimsHeaderWithScope(t, "acme", "openid ae:resource-config")
+	req.Header.Set(key, value)
+	req.Header.Set("X-Room-Id", "spec-acme-demo-shop")
+	rec := httptest.NewRecorder()
+	h.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("collab-validate without ae:design-view: want 403, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}

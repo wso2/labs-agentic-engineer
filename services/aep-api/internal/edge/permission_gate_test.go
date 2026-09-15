@@ -569,6 +569,75 @@ func TestPermissionGate_DenyByDefault(t *testing.T) {
 			}
 		})
 	}
+
+	// services/collab's three server-to-server operations: ValidateCollabAccess
+	// (room join) and ReadFileBundle (seed read) need ae:design-view; ApplyFiles
+	// (git-commit flush) needs the stronger ae:design, and none of the three are
+	// OR'd with ae:resource-config — that OR belongs to the unrelated
+	// Resources-registration chat sharing CreateTurn/StreamTurn, not to this room.
+	for _, op := range []string{"ValidateCollabAccess", "ReadFileBundle"} {
+		t.Run(op+": ae:design-view alone satisfies it", func(t *testing.T) {
+			called = false
+			ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:design-view"})
+			if _, err := permissionGate(next, op)(ctx, nil, req, nil); err != nil {
+				t.Fatalf("ae:design-view alone should satisfy %s, got %v", op, err)
+			}
+			if !called {
+				t.Fatal("handler must run")
+			}
+		})
+
+		t.Run(op+": ae:resource-config alone does NOT satisfy it", func(t *testing.T) {
+			called = false
+			ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:resource-config"})
+			_, err := permissionGate(next, op)(ctx, nil, req, nil)
+			var ae *apiError
+			if !errors.As(err, &ae) || ae.Status != http.StatusForbidden {
+				t.Fatalf("want 403 holding only ae:resource-config, got %v", err)
+			}
+			if called {
+				t.Fatal("handler must not run")
+			}
+		})
+
+		t.Run(op+": no claims at all → 403", func(t *testing.T) {
+			called = false
+			_, err := permissionGate(next, op)(context.Background(), nil, req, nil)
+			var ae *apiError
+			if !errors.As(err, &ae) || ae.Status != http.StatusForbidden {
+				t.Fatalf("want 403, got %v", err)
+			}
+			if called {
+				t.Fatal("handler must not run")
+			}
+		})
+	}
+
+	t.Run("ApplyFiles: ae:design alone satisfies it", func(t *testing.T) {
+		called = false
+		ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:design"})
+		if _, err := permissionGate(next, "ApplyFiles")(ctx, nil, req, nil); err != nil {
+			t.Fatalf("ae:design alone should satisfy ApplyFiles, got %v", err)
+		}
+		if !called {
+			t.Fatal("handler must run")
+		}
+	})
+
+	for _, perm := range []string{"ae:design-view", "ae:resource-config"} {
+		t.Run("ApplyFiles: "+perm+" alone does NOT satisfy it (view must not imply commit)", func(t *testing.T) {
+			called = false
+			ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: perm})
+			_, err := permissionGate(next, "ApplyFiles")(ctx, nil, req, nil)
+			var ae *apiError
+			if !errors.As(err, &ae) || ae.Status != http.StatusForbidden {
+				t.Fatalf("want 403 holding only %s, got %v", perm, err)
+			}
+			if called {
+				t.Fatal("handler must not run")
+			}
+		})
+	}
 }
 
 // TestPermissionGate_UpdateConfig unit-tests the field-aware special case:

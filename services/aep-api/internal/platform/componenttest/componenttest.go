@@ -133,11 +133,21 @@ func (h *Harness) NoAuth() *Req { return &Req{h: h, claims: nil} }
 // instead of the recorder. Mirrors AsOrg's claims exactly.
 func ClaimsHeader(t testing.TB, org string) (key, value string) {
 	t.Helper()
+	return ClaimsHeaderWithScope(t, org, allPermissionsScope)
+}
+
+// ClaimsHeaderWithScope is ClaimsHeader with a caller-chosen scope, for a raw
+// request that needs BOTH a header the Req builder can't set (e.g. X-Room-Id)
+// AND a narrowed permission grant — the permission-gate denial equivalent of
+// Req.With(func(c *auth.Claims) { c.Scope = "..." }) for the httptest.Server
+// path ClaimsHeader itself serves.
+func ClaimsHeaderWithScope(t testing.TB, org, scope string) (key, value string) {
+	t.Helper()
 	raw, err := json.Marshal(&auth.Claims{
 		OuHandle: org,
 		OuId:     org + "-ouid",
 		Subject:  "componenttest-user",
-		Scope:    allPermissionsScope,
+		Scope:    scope,
 	})
 	if err != nil {
 		t.Fatalf("componenttest: marshal claims: %v", err)

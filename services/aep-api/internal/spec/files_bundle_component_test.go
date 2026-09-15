@@ -39,6 +39,7 @@ import (
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/edge"
+	"github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/platform/componenttest"
 	"github.com/wso2/aep/aep-api/internal/platform/gitfs/workspacetest"
 	"github.com/wso2/aep/aep-api/internal/platform/gittest"
@@ -84,6 +85,17 @@ func (b wireFileBundle) byPath() map[string]wireFileContent {
 }
 
 // ---- tests ----
+
+// ReadFileBundle is services/collab's room-seed read, forwarding the
+// connecting console user's own JWT — ae:design-view is required, same as
+// list-files/read-file, the fan-out this bundle replaces.
+func TestBundle_DeniedWithoutDesignView_403(t *testing.T) {
+	r := newFilesRig(t, map[string]string{"specs/requirements/prd.md": "x"})
+	req := r.h.AsOrg(filesTestOrg).With(func(c *auth.Claims) { c.Scope = "openid ae:resource-config" })
+	if rec := req.Get(bundleBase + "?prefix=specs/"); rec.Code != http.StatusForbidden {
+		t.Errorf("bundle without ae:design-view: code %d, want 403 (%s)", rec.Code, rec.Body.String())
+	}
+}
 
 // The bundle must be substitutable for the fan-out it replaces: same content,
 // same blob shas (they become the caller's baseSha preconditions), same commit
