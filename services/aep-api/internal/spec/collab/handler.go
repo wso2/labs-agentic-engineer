@@ -20,6 +20,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/wso2/aep/aep-api/internal/authz"
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
@@ -62,6 +63,12 @@ func (h *Handler) GetSpecCollabSession(ctx context.Context, request gen.GetSpecC
 // the room exists. The claims check stays even though the tenant gate 401s
 // claimless requests in ENFORCE: in LOG mode the gate passes them through, and
 // this handler must still refuse (the collab server relies on it).
+//
+// Admission needs ae:design-view (permission_gate.go); the answer also reports
+// whether this joiner holds the stronger ae:design. That split is what stops a
+// viewer from editing through the socket: the permission gate can only answer
+// "may this request happen", and every participant's edits arrive as Yjs
+// updates on a connection the gate never sees again.
 func (h *Handler) ValidateCollabAccess(ctx context.Context, request gen.ValidateCollabAccessRequestObject) (gen.ValidateCollabAccessResponseObject, error) {
 	claims := auth.ClaimsFromContext(ctx)
 	org := auth.ResolveOuHandle(claims)
@@ -92,5 +99,18 @@ func (h *Handler) ValidateCollabAccess(ctx context.Context, request gen.Validate
 		Name:        name,
 		Email:       email,
 		ProjectName: project,
+		CanWrite:    holdsDesignWrite(claims),
 	}), nil
+}
+
+// holdsDesignWrite reports whether the joiner holds ae:design — the same
+// permission ApplyFiles requires — as opposed to the ae:design-view that got
+// them into the room.
+func holdsDesignWrite(claims *auth.Claims) bool {
+	for _, p := range claims.Permissions() {
+		if p == authz.PermissionDesign {
+			return true
+		}
+	}
+	return false
 }

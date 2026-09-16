@@ -4012,6 +4012,14 @@ components:
     CollabValidateOutputBody:
       additionalProperties: false
       properties:
+        canWrite:
+          description: Whether this joiner may change the room's document — they hold
+            `ae:design`, not merely the `ae:design-view` that admits them. The collab
+            service marks a read-only connection's socket read-only and keeps its token
+            out of the commit path, so viewing a live room never implies committing to
+            it. Hiding the editor's controls is the console's half of the same rule, not
+            a substitute for this one.
+          type: boolean
         email:
           type: string
         name:
@@ -4024,6 +4032,7 @@ components:
       - name
       - email
       - projectName
+      - canWrite
       type: object
     Component:
       additionalProperties: false

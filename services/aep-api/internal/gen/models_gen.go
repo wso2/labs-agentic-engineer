@@ -1527,8 +1527,10 @@ type CollabSessionOutputBody struct {
 
 // CollabValidateOutputBody defines model for CollabValidateOutputBody.
 type CollabValidateOutputBody struct {
-	Email string `json:"email"`
-	Name  string `json:"name"`
+	// CanWrite Whether this joiner may change the room's document — they hold `ae:design`, not merely the `ae:design-view` that admits them. The collab service marks a read-only connection's socket read-only and keeps its token out of the commit path, so viewing a live room never implies committing to it. Hiding the editor's controls is the console's half of the same rule, not a substitute for this one.
+	CanWrite bool   `json:"canWrite"`
+	Email    string `json:"email"`
+	Name     string `json:"name"`
 
 	// ProjectName The room's project, resolved by the oracle from `spec-<org>-<project>`; the collab service uses it for the seed read (#114).
 	ProjectName string `json:"projectName"`
