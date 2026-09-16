@@ -17,7 +17,10 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 	"testing"
 
 	authn "github.com/wso2/aep/aep-api/internal/platform/auth"
@@ -31,9 +34,39 @@ func TestDirectOCStrategy_ForwardsUserJWTWhenPresent(t *testing.T) {
 	}
 }
 
-func TestDirectOCStrategy_M2MWhenNoUserJWT(t *testing.T) {
+// A tokenless, unmarked call still resolves to the BFF's own identity — the
+// webhook and dispatch paths depend on it — but it is the fail-open branch, so
+// it must announce itself. The WARN is what will tell us the branch is unused
+// before it is turned into a refusal; a silent fallback would leave that
+// unknowable.
+func TestDirectOCStrategy_M2MWhenNoUserJWT_WarnsAboutTheFallback(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
 	if got := (DirectOCStrategy{}).Decide(context.Background()); got != ocauth.AuthModeServiceM2M {
 		t.Fatalf("got %v, want AuthModeServiceM2M", got)
+	}
+	if !strings.Contains(buf.String(), "no service-identity marker") {
+		t.Fatalf("the fail-open fallback must warn; log was %q", buf.String())
+	}
+}
+
+// ...and the deliberate service-identity path must NOT warn, or the signal is
+// buried under every watcher tick.
+func TestDirectOCStrategy_MarkedServiceIdentityIsSilent(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	ctx := authn.WithServiceIdentity(context.Background())
+	if got := (DirectOCStrategy{}).Decide(ctx); got != ocauth.AuthModeServiceM2M {
+		t.Fatalf("got %v, want AuthModeServiceM2M", got)
+	}
+	if buf.Len() != 0 {
+		t.Fatalf("an explicitly marked service-identity call must not warn; log was %q", buf.String())
 	}
 }
 
