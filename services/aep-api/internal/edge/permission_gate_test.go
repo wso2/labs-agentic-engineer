@@ -26,6 +26,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/authz"
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
+	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
 // TestPermissionGateCoverage asserts every operation of the generated strict
@@ -63,6 +64,50 @@ func TestPermissionGateCarveOutsNameContractOperations(t *testing.T) {
 	for op := range operationPermissions {
 		if !iface[op] {
 			t.Errorf("operationPermissions names %q, which is not an operation of the generated strict interface", op)
+		}
+	}
+}
+
+// chatRequestFor builds the real generated request object for a chat
+// operation, carrying the given project name. The concrete types matter:
+// chatPermissions reads the project off them by type switch, so a stand-in
+// would test nothing.
+func chatRequestFor(op, project string) any {
+	switch op {
+	case "CreateTurn":
+		return gen.CreateTurnRequestObject{ProjectName: project}
+	case "GetActiveTurn":
+		return gen.GetActiveTurnRequestObject{ProjectName: project}
+	case "GetConversation":
+		return gen.GetConversationRequestObject{ProjectName: project}
+	case "GetTurn":
+		return gen.GetTurnRequestObject{ProjectName: project}
+	case "ListConversations":
+		return gen.ListConversationsRequestObject{ProjectName: project}
+	case "RotateConversation":
+		return gen.RotateConversationRequestObject{ProjectName: project}
+	case "StreamTurn":
+		return gen.StreamTurnRequestObject{ProjectName: project}
+	}
+	panic("chatRequestFor: unknown chat operation " + op)
+}
+
+// TestChatOperationsCoverTheirRows keeps the project-scoped set and the rows it
+// applies to from drifting apart: a chat operation added to one and not the
+// other would either lose its marketplace branch or silently keep the old OR.
+func TestChatOperationsCoverTheirRows(t *testing.T) {
+	t.Parallel()
+	for op := range chatOperations {
+		perms, ok := operationPermissions[op]
+		if !ok {
+			t.Errorf("chat operation %q has no operationPermissions row", op)
+			continue
+		}
+		if len(perms) != 1 || perms[0] != authz.PermissionDesign {
+			t.Errorf("chat operation %q must declare ae:design as its real-project fallback, got %v", op, perms)
+		}
+		if chatRequestFor(op, "x") == nil {
+			t.Errorf("chat operation %q has no request shape in chatRequestFor", op)
 		}
 	}
 }
@@ -591,38 +636,80 @@ func TestPermissionGate_DenyByDefault(t *testing.T) {
 		}
 	})
 
-	// AI chat panel operations: OR-gated on ae:design (the project spec
-	// chat, mounted by AppLayout) and ae:resource-config (the marketplace
-	// registration-form assistant, mounted by RegisterFormPage) — two
-	// unrelated console callers sharing one set of BFF operations, each
-	// satisfied through its own page's own permission. ae:design-view alone
-	// must NOT satisfy it: the panel sends turns, a write action, so the
-	// weaker view permission doesn't cover it (unlike the Overview track's
-	// Spec leg, which only needs to open a read surface).
+	// AI chat panel operations. One panel, two mount points, and the
+	// requirement follows WHICH project the request addresses — because the
+	// two mount points differ by path, not by operation.
+	//
+	// ae:resource-config satisfies these only for the marketplace registration
+	// assistant's synthetic project. It must NOT satisfy them for a real one:
+	// a turn's instruction carries `/<skill>` flow commands verbatim for the
+	// server to expand, so a caller who could send any turn at a real project
+	// could send `/design` — which is exactly what generate-design's ae:design
+	// gate exists to control.
+	//
+	// ae:design-view satisfies neither: the panel sends turns, a write action.
 	for _, op := range []string{
 		"CreateTurn", "GetActiveTurn", "GetConversation", "GetTurn",
 		"ListConversations", "RotateConversation", "StreamTurn",
 	} {
-		for _, perm := range []string{"ae:design", "ae:resource-config"} {
-			t.Run(op+": "+perm+" alone satisfies it", func(t *testing.T) {
-				called = false
-				ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: perm})
-				if _, err := permissionGate(next, op)(ctx, nil, req, nil); err != nil {
-					t.Fatalf("%s alone should satisfy %s, got %v", perm, op, err)
-				}
-				if !called {
-					t.Fatalf("%s: handler must run", op)
-				}
-			})
-		}
+		t.Run(op+": ae:design satisfies it on a real project", func(t *testing.T) {
+			called = false
+			ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:design"})
+			if _, err := permissionGate(next, op)(ctx, nil, req, chatRequestFor(op, "shop")); err != nil {
+				t.Fatalf("%s: ae:design should satisfy a real project, got %v", op, err)
+			}
+			if !called {
+				t.Fatalf("%s: handler must run", op)
+			}
+		})
+
+		t.Run(op+": ae:resource-config does NOT satisfy it on a real project", func(t *testing.T) {
+			called = false
+			ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:resource-config"})
+			_, err := permissionGate(next, op)(ctx, nil, req, chatRequestFor(op, "shop"))
+			var ae *apiError
+			if !errors.As(err, &ae) || ae.Status != http.StatusForbidden {
+				t.Fatalf("%s: want 403 for ae:resource-config on a real project, got %v", op, err)
+			}
+			if called {
+				t.Fatalf("%s: handler must not run", op)
+			}
+		})
+
+		t.Run(op+": ae:resource-config satisfies it on the marketplace project", func(t *testing.T) {
+			called = false
+			ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:resource-config"})
+			marketplace := chatRequestFor(op, spec.MarketplaceRegisterProjectID)
+			if _, err := permissionGate(next, op)(ctx, nil, req, marketplace); err != nil {
+				t.Fatalf("%s: the marketplace assistant must still work, got %v", op, err)
+			}
+			if !called {
+				t.Fatalf("%s: handler must run", op)
+			}
+		})
 
 		t.Run(op+": ae:design-view alone does NOT satisfy it", func(t *testing.T) {
 			called = false
 			ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:design-view"})
-			_, err := permissionGate(next, op)(ctx, nil, req, nil)
+			_, err := permissionGate(next, op)(ctx, nil, req, chatRequestFor(op, "shop"))
 			var ae *apiError
 			if !errors.As(err, &ae) || ae.Status != http.StatusForbidden {
 				t.Fatalf("%s: want 403 holding only ae:design-view, got %v", op, err)
+			}
+			if called {
+				t.Fatalf("%s: handler must not run", op)
+			}
+		})
+
+		// An unrecognized request shape must not widen the requirement to the
+		// marketplace's permission — the gate falls back to the stricter one.
+		t.Run(op+": an unreadable request denies ae:resource-config", func(t *testing.T) {
+			called = false
+			ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:resource-config"})
+			_, err := permissionGate(next, op)(ctx, nil, req, nil)
+			var ae *apiError
+			if !errors.As(err, &ae) || ae.Status != http.StatusForbidden {
+				t.Fatalf("%s: want 403 for an unreadable request, got %v", op, err)
 			}
 			if called {
 				t.Fatalf("%s: handler must not run", op)

@@ -24,6 +24,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/authz"
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
+	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
 // This file is the AE permission gate's decision table. Every contract
@@ -31,7 +32,7 @@ import (
 // TestPermissionGateCoverage fails the build otherwise — so an operation can
 // never ship without a permission decision having been made about it.
 //
-// Four rules govern the table; entry comments record only what a row adds to
+// Five rules govern the table; entry comments record only what a row adds to
 // them.
 //
 //  1. A row lists the permission(s) that satisfy the operation. Several are
@@ -48,7 +49,13 @@ import (
 //     sibling. Where one appears it spans FEATURES: one surface legitimately
 //     reached from two places, each bringing its own permission.
 //
-//  4. A permission whose operations reach OpenChoreo needs matching actions in
+//  4. An OR is also the wrong tool when the two features differ by PATH rather
+//     than by operation, because it grants each one's permission everywhere the
+//     other reaches. The chat panel is that case and resolves its requirement
+//     per request instead (chatPermissions); UpdateConfig is the other, keyed
+//     on body sections.
+//
+//  5. A permission whose operations reach OpenChoreo needs matching actions in
 //     authz.OcActionCatalog, or the BFF admits a caller that OC then refuses.
 var operationPermissions = map[string][]authz.Permission{
 	// --- Skills (Settings › Skills) -------------------------------------
@@ -152,22 +159,29 @@ var operationPermissions = map[string][]authz.Permission{
 	"ApplyFiles":           {authz.PermissionDesign},
 
 	// --- AI chat panel ---------------------------------------------------
-	// Rule 3 again: one panel, two mount points — the project spec chat
-	// (ae:design) and the marketplace registration assistant, which runs
-	// against its own pseudo-project and carries its page's ae:resource-config.
-	// No read/write split within either, since the panel is one feature both
-	// ways.
-	"CreateTurn":         {authz.PermissionDesign, authz.PermissionResourceConfig},
-	"GetActiveTurn":      {authz.PermissionDesign, authz.PermissionResourceConfig},
-	"GetConversation":    {authz.PermissionDesign, authz.PermissionResourceConfig},
-	"GetTurn":            {authz.PermissionDesign, authz.PermissionResourceConfig},
-	"ListConversations":  {authz.PermissionDesign, authz.PermissionResourceConfig},
-	"RotateConversation": {authz.PermissionDesign, authz.PermissionResourceConfig},
-	"StreamTurn":         {authz.PermissionDesign, authz.PermissionResourceConfig},
-	// Outside that OR deliberately: its content is fixed server-side (the
-	// `/design` command), so it is the one operation where "may this caller
-	// generate a design" can be asked exactly, without the marketplace
-	// assistant's permission riding along.
+	// One panel, two mount points: the project spec chat and the marketplace
+	// registration assistant, which runs against its own pseudo-project. The
+	// rows below are the FALLBACK for a real project; the marketplace
+	// pseudo-project is answered on ae:resource-config instead, resolved per
+	// request in chatPermissions because the two differ by path, not by
+	// operation.
+	//
+	// Not an OR — that was the bug. A turn's instruction carries `/<skill>`
+	// flow commands verbatim for the server to expand, so an OR let a caller
+	// holding only ae:resource-config send `/design` at a real project and get
+	// exactly what generate-design's ae:design gate exists to control. Giving
+	// the marketplace its own project scope is what lets the real-project case
+	// be ae:design alone without taking the assistant's chat away with it.
+	"CreateTurn":         {authz.PermissionDesign},
+	"GetActiveTurn":      {authz.PermissionDesign},
+	"GetConversation":    {authz.PermissionDesign},
+	"GetTurn":            {authz.PermissionDesign},
+	"ListConversations":  {authz.PermissionDesign},
+	"RotateConversation": {authz.PermissionDesign},
+	"StreamTurn":         {authz.PermissionDesign},
+	// Its content is fixed server-side, so no instruction a caller supplies can
+	// redirect it. It needs no project-scoped branch: the marketplace assistant
+	// has no design to generate.
 	"GenerateDesign": {authz.PermissionDesign},
 
 	// --- Org usage & observability ---------------------------------------
@@ -266,8 +280,13 @@ func permissionGate(f gen.StrictHandlerFunc, operationID string) gen.StrictHandl
 	if _, ok := permissionGateCarveOuts[operationID]; ok {
 		return f
 	}
-	required := operationPermissions[operationID]
+	declared := operationPermissions[operationID]
+	_, projectScoped := chatOperations[operationID]
 	return func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error) {
+		required := declared
+		if projectScoped {
+			required = chatPermissions(request, declared)
+		}
 		claims := auth.ClaimsFromContext(ctx)
 		if !hasAnyPermission(claims, required) {
 			logMissingPermission(ctx, operationID, claims.Permissions(), required)
@@ -275,6 +294,66 @@ func permissionGate(f gen.StrictHandlerFunc, operationID string) gen.StrictHandl
 		}
 		return f(ctx, w, r, request)
 	}
+}
+
+// chatOperations are the turn/conversation operations whose requirement
+// depends on WHICH project they address — see operationPermissions' chat
+// section. Kept as its own set rather than inferred from the request type so
+// that adding an operation to the panel is a deliberate edit here.
+var chatOperations = map[string]struct{}{
+	"CreateTurn":         {},
+	"GetActiveTurn":      {},
+	"GetConversation":    {},
+	"GetTurn":            {},
+	"ListConversations":  {},
+	"RotateConversation": {},
+	"StreamTurn":         {},
+}
+
+// chatPermissions narrows a chat operation to the permission its project
+// warrants. The marketplace registration assistant runs against a synthetic
+// project with no git repo behind it (spec.MarketplaceRegisterProjectID), and
+// that page's own permission is ae:resource-config; every other project is a
+// real one, where the panel is the design workspace's write surface.
+//
+// A request whose type is not listed — a new chat operation, or a changed
+// generated shape — falls through to `declared`, the stricter ae:design. An
+// omission here costs a legitimate marketplace caller a 403, which is visible
+// and reported; the other direction would hand a real project's design
+// controls to a permission that should not reach them.
+func chatPermissions(request any, declared []authz.Permission) []authz.Permission {
+	marketplace := []authz.Permission{authz.PermissionResourceConfig}
+	switch req := request.(type) {
+	case gen.CreateTurnRequestObject:
+		if req.ProjectName == spec.MarketplaceRegisterProjectID {
+			return marketplace
+		}
+	case gen.GetActiveTurnRequestObject:
+		if req.ProjectName == spec.MarketplaceRegisterProjectID {
+			return marketplace
+		}
+	case gen.GetConversationRequestObject:
+		if req.ProjectName == spec.MarketplaceRegisterProjectID {
+			return marketplace
+		}
+	case gen.GetTurnRequestObject:
+		if req.ProjectName == spec.MarketplaceRegisterProjectID {
+			return marketplace
+		}
+	case gen.ListConversationsRequestObject:
+		if req.ProjectName == spec.MarketplaceRegisterProjectID {
+			return marketplace
+		}
+	case gen.RotateConversationRequestObject:
+		if req.ProjectName == spec.MarketplaceRegisterProjectID {
+			return marketplace
+		}
+	case gen.StreamTurnRequestObject:
+		if req.ProjectName == spec.MarketplaceRegisterProjectID {
+			return marketplace
+		}
+	}
+	return declared
 }
 
 // logMissingPermission logs the AE-permission-gate denial: the caller reached
