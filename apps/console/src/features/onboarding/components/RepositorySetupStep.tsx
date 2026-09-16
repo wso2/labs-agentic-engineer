@@ -29,64 +29,74 @@ const AUTHZ_ESCALATE_AFTER_ATTEMPTS = 3;
 
 type RowStatus = "pending" | "active" | "done" | "error";
 
-// Two independent phases run in sequence (#743, splitting #102's single
-// bootstrap step): repository/skills setup (unchanged), then workspace authz
-// configuration. Phase 2 is a hard gate — the org's OpenChoreo AuthzRole must
-// exist before the console is usable, so unlike phase 1 there is no "Continue
-// anyway" for it.
+// Two phases run in sequence (#743, splitting #102's single bootstrap step):
+// workspace authz configuration, then repository/skills setup.
+//
+// Authz goes FIRST because skills setup depends on it. Syncing the skills
+// catalogue creates the org's skills component in OpenChoreo, and OC authorizes
+// that against the org's AuthzRole — which is precisely what this step creates.
+// Run the other way round, a first-time org's very first action 403s at OC and
+// surfaces as "the skills catalogue couldn't be set up", which describes the
+// symptom and hides the cause.
+//
+// Authz is also the hard gate: the org's AuthzRole must exist before the
+// console is usable, so unlike skills there is no "Continue anyway" for it.
 export function RepositorySetupStep({ onComplete }: { onComplete: () => void }) {
-  const sync = useSyncSkills();
   const authz = useEnsureAuthzRole();
+  const sync = useSyncSkills();
   const [skillsSkipped, setSkillsSkipped] = useState(false);
   const [authzAttempts, setAuthzAttempts] = useState(0);
 
-  // Phase 1 auto-fires on mount, unchanged from #102's SkillsBootstrapStep.
-  // Deferred one-shot, not a bare mutate() in the effect: firing synchronously
-  // binds the mutation's result delivery to the StrictMode-doubled
-  // subscription React is about to tear down — the mutation succeeds in the
-  // cache but this component never re-renders (stuck spinner). The
-  // cleanup-cancelled timeout fires exactly once, after the subscription is
+  // Phase 1 auto-fires on mount. Deferred one-shot, not a bare mutate() in the
+  // effect: firing synchronously binds the mutation's result delivery to the
+  // StrictMode-doubled subscription React is about to tear down — the mutation
+  // succeeds in the cache but this component never re-renders (stuck spinner).
+  // The cleanup-cancelled timeout fires exactly once, after the subscription is
   // stable, in both dev and prod.
-  const { mutate: syncMutate } = sync;
-  useEffect(() => {
-    const t = setTimeout(() => syncMutate(), 0);
-    return () => clearTimeout(t);
-  }, [syncMutate]);
-
-  const phase1Done = sync.isSuccess || skillsSkipped;
-
-  // Phase 2 auto-fires once phase 1 resolves (success or skipped) — same
-  // deferred-timeout StrictMode guard as phase 1, keyed on phase1Done instead
-  // of mount.
   const { mutate: authzMutate } = authz;
   useEffect(() => {
-    if (!phase1Done) return;
     const t = setTimeout(() => {
       setAuthzAttempts((n) => n + 1);
       authzMutate();
     }, 0);
     return () => clearTimeout(t);
-  }, [phase1Done, authzMutate]);
+  }, [authzMutate]);
+
+  const authzDone = authz.isSuccess;
+
+  // Phase 2 auto-fires once authz lands — same deferred-timeout StrictMode
+  // guard, keyed on authzDone instead of mount. It waits for SUCCESS, not
+  // merely for the attempt to settle: running the skills sync against an org
+  // whose AuthzRole failed to apply just produces the 403 this ordering exists
+  // to avoid.
+  const { mutate: syncMutate } = sync;
+  useEffect(() => {
+    if (!authzDone) return;
+    const t = setTimeout(() => syncMutate(), 0);
+    return () => clearTimeout(t);
+  }, [authzDone, syncMutate]);
 
   function retryAuthz() {
     setAuthzAttempts((n) => n + 1);
     authz.mutate();
   }
 
-  const phase1Status: RowStatus = sync.isError
+  const skillsDone = sync.isSuccess || skillsSkipped;
+
+  const authzStatus: RowStatus = authz.isError
     ? "error"
-    : phase1Done
+    : authzDone
       ? "done"
       : "active";
-  const phase2Status: RowStatus = !phase1Done
+  const skillsStatus: RowStatus = !authzDone
     ? "pending"
-    : authz.isError
+    : sync.isError
       ? "error"
-      : authz.isSuccess
+      : skillsDone
         ? "done"
         : "active";
 
-  const allDone = phase1Status === "done" && phase2Status === "done";
+  const allDone = authzStatus === "done" && skillsStatus === "done";
   const authzEscalated = authzAttempts >= AUTHZ_ESCALATE_AFTER_ATTEMPTS;
 
   return (
@@ -109,19 +119,19 @@ export function RepositorySetupStep({ onComplete }: { onComplete: () => void }) 
         }}
       >
         <ChecklistRow
-          status={phase1Status}
-          label="Create repository"
-          description="Creating your organization's skills repository"
-        />
-        <ChecklistRow
-          status={phase2Status}
+          status={authzStatus}
           label="Configure workspace"
           description="Applying access roles for your organization"
+        />
+        <ChecklistRow
+          status={skillsStatus}
+          label="Create repository"
+          description="Creating your organization's skills repository"
           divider
         />
       </Box>
 
-      {!allDone && phase1Status !== "error" && phase2Status !== "error" && (
+      {!allDone && authzStatus !== "error" && skillsStatus !== "error" && (
         <Typography variant="caption" color="text.secondary" sx={{ textAlign: "center" }}>
           This usually takes a few seconds.
         </Typography>
