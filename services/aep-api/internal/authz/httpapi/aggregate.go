@@ -19,16 +19,18 @@ package httpapi
 import (
 	"github.com/wso2/aep/aep-api/internal/authz"
 	"github.com/wso2/aep/aep-api/internal/authz/ensurerole"
-	"github.com/wso2/aep/aep-api/internal/authz/rolepermissions"
 )
 
-type rolepermissionsHandler = rolepermissions.Handler
 type ensureroleHandler = ensurerole.Handler
 
 // Handlers is the authz domain's slice handlers, embedded so Go promotes each
 // operation exactly once into the edge's composite. It declares nothing.
+//
+// Per-role permission editing is served by authz.AuthZService.ModifyRolePermissions,
+// which carries no route: the domain exposes a role's permissions to OC, and the
+// surface that lets an operator change them has not been designed. See that
+// method for what a future route would call.
 type Handlers struct {
-	*rolepermissionsHandler
 	*ensureroleHandler
 }
 
@@ -38,8 +40,7 @@ func New(d authz.Deps) (*Handlers, error) {
 		return nil, err
 	}
 	return &Handlers{
-		rolepermissionsHandler: rolepermissions.New(d.AuthZ),
-		ensureroleHandler:      ensurerole.New(d.AuthZ),
+		ensureroleHandler: ensurerole.New(d.AuthZ),
 	}, nil
 }
 
@@ -47,7 +48,6 @@ func New(d authz.Deps) (*Handlers, error) {
 // authz get 503 from every op rather than a nil-embed panic.
 func NewEmpty() *Handlers {
 	return &Handlers{
-		rolepermissionsHandler: rolepermissions.New(nil),
-		ensureroleHandler:      ensurerole.New(nil),
+		ensureroleHandler: ensurerole.New(nil),
 	}
 }

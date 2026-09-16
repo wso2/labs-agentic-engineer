@@ -372,12 +372,8 @@ var permissionGateCarveOuts = map[string]struct{}{
 	"StartGitProviderConnect": {},
 	"RotateIdpClientSecret":   {},
 	"DiscoverIdp":             {},
-	// Same correction: assumed deliberate (paired with EnsureAuthzRole's
-	// circularity reasoning) but never independently verified. No caller
-	// anywhere, including no console call to POST /authz/role-permissions.
-	"ModifyAuthzRolePermissions": {},
-	"ProvisionPlatformResource":  {},
-	"RequestOrgServiceAccess":    {},
+	"ProvisionPlatformResource": {},
+	"RequestOrgServiceAccess":   {},
 	// GetDependencyStatus's HTTP route has no direct caller, but its
 	// underlying service method (provisioning.Service.Status) is reused
 	// internally by GetBuildPreflight's dependency-readiness check

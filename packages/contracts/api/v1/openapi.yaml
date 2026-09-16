@@ -29,37 +29,6 @@ paths:
       summary: Ensure an AuthzRole exists for the organization's namespace
       tags:
       - Identity
-  /authz/role-permissions:
-    post:
-      description: Apply a map of AE roles to their AE permissions by translating
-        each role's permissions to their OC equivalents and updating the
-        organization's OC AuthzRole actions accordingly. A partial failure rolls
-        back every role touched in the same request.
-      operationId: modify-authz-role-permissions
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AERolePermissionsMap'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StatusMsg'
-          description: OK
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Error
-      security:
-      - userJWT: []
-      summary: Apply AE role permission mappings to their OC AuthzRoles
-      tags:
-      - Identity
   /collab/validate:
     get:
       operationId: validate-collab-access
@@ -3432,14 +3401,6 @@ components:
       required:
       - id
       - displayName
-      type: object
-    AERolePermissionsMap:
-      additionalProperties:
-        items:
-          type: string
-        type: array
-        uniqueItems: true
-      description: A map of AE role names to their AE permissions.
       type: object
     AccessRequest:
       additionalProperties: false

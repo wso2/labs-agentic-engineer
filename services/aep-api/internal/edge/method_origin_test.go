@@ -133,7 +133,6 @@ var opOwner = map[string]string{
 	"ListSkills":                    embedSpec,
 	"ListTasks":                     embedDelivery,
 	"ListWorkloadDependencies":      embedDependencies,
-	"ModifyAuthzRolePermissions":    embedAuthz,
 	"PromoteTaskFromIssue":          embedDelivery,
 	"ProvisionPlatformResource":     embedDependencies,
 	"PutProjectReferences":          embedSpec,

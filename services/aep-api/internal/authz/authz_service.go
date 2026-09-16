@@ -35,6 +35,18 @@ func NewAuthZService(resolver PermissionResolver, client OCAuthZClient) *AuthZSe
 	return &AuthZService{resolver: resolver, client: client}
 }
 
+// ModifyRolePermissions retranslates each named role's AE permissions into OC
+// actions and updates the org's AuthzRole to match. A failure part-way rolls
+// back every role already touched in the same call, so the org's roles never
+// land in a half-applied state.
+//
+// No route reaches this: changing a role's permissions is an operator action
+// with no designed surface, and an endpoint that rewrites the org's
+// authorization model is not something to leave reachable ahead of one. The
+// translation and rollback logic lives here so that surface, when it lands,
+// wires to a service rather than reimplementing this.
+//
+//deadcode:keep unwired infra — per-role permission editing, pending its operator surface.
 func (s *AuthZService) ModifyRolePermissions(ctx context.Context, orgHandle string, rolePermissions map[string][]string) error {
 	previousStates := make(map[string][]string, len(rolePermissions))
 
@@ -57,6 +69,12 @@ func (s *AuthZService) ModifyRolePermissions(ctx context.Context, orgHandle stri
 	return nil
 }
 
+// restoreRoles puts each role back to the actions it held before the failed
+// call. Best-effort: a role that cannot be restored is logged, never retried —
+// the caller is already returning an error, and a rollback that itself loops
+// on failure would hide the original one.
+//
+//deadcode:keep unwired infra — ModifyRolePermissions' rollback arm; see that method.
 func (s *AuthZService) restoreRoles(ctx context.Context, orgHandle string, previousStates map[string][]string) {
 	for name, actions := range previousStates {
 		if _, err := s.client.UpdateAuthzRole(ctx, orgHandle, name, actions); err != nil {

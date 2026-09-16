@@ -1237,9 +1237,6 @@ func (e ListTasksParamsState) Valid() bool {
 	}
 }
 
-// AERolePermissionsMap A map of AE role names to their AE permissions.
-type AERolePermissionsMap map[string][]string
-
 // AcceptAssumptionBody defines model for AcceptAssumptionBody.
 type AcceptAssumptionBody struct {
 	// Note Optional note recorded with the acceptance; defaults to the agent's own note of what it was unsure about.
@@ -3528,9 +3525,6 @@ type ImportSkillMultipartBody struct {
 type SetSkillEnabledJSONBody struct {
 	Enabled bool `json:"enabled"`
 }
-
-// ModifyAuthzRolePermissionsJSONRequestBody defines body for ModifyAuthzRolePermissions for application/json ContentType.
-type ModifyAuthzRolePermissionsJSONRequestBody = AERolePermissionsMap
 
 // UpdateConfigJSONRequestBody defines body for UpdateConfig for application/json ContentType.
 type UpdateConfigJSONRequestBody = ConfigPatch
