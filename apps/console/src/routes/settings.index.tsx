@@ -52,7 +52,9 @@ export function resolveSettingsLandingPath(perms: {
 
 export function SettingsIndexPage() {
   const credentials = useHasAnyPermission(["ae:github-config", "ae:model-config"]);
-  const skills = useHasAnyPermission(["ae:skill-view", "ae:skill-config"]);
+  // Exact-match ae:skill-view, NOT OR'd with ae:skill-config — matches
+  // SettingsLayout's identical hasSkillsAccess gate.
+  const skills = useHasPermission("ae:skill-view");
   const usage = useHasPermission("ae:usage-view");
 
   const target = resolveSettingsLandingPath({ credentials, skills, usage });

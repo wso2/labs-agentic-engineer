@@ -56,7 +56,7 @@ import {
   useRouterState,
   useSearch,
 } from "@tanstack/react-router";
-import { useHasAnyPermission, useHasPermission } from "../auth/permissions";
+import { useHasPermission } from "../auth/permissions";
 import { useSession } from "../auth/SessionContext";
 import { OrgSwitcher, ProjectSwitcher } from "./HeaderSwitchers";
 import { ProjectStatusBadge } from "./ProjectStatusBadge";
@@ -111,12 +111,15 @@ export function AppLayout() {
   const { user, signOut, orgHandle } = useSession();
   const hasObservabilityAccess = useHasPermission("ae:observability-view");
   const hasRequirementView = useHasPermission("ae:requirement-view");
-  const hasResourceAccess = useHasAnyPermission(["ae:resource-view", "ae:resource-config"]);
+  // Exact-match ae:resource-view, NOT OR'd with ae:resource-config: a write
+  // permission gates mutations (Register/Update/Delete), never page entry
+  // on its own — a resource-config-only caller (no view grant) is still
+  // fully blocked, same rule as every other write/view pair in this console.
+  const hasResourceAccess = useHasPermission("ae:resource-view");
   // Exact-match ae:design, not an OR with ae:design-view: the panel is an
   // interactive write surface (it sends turns), not a read one, so the
-  // weaker view permission does not cover it — same split as the Overview
-  // track's Spec leg, whose click-lock DOES accept either (open the read
-  // surface) while this panel (the write surface behind it) does not.
+  // weaker view permission does not cover it — same split as every other
+  // write/view pair in this console.
   const hasDesignAccess = useHasPermission("ae:design");
   // The Spec sidebar item's own gate: exact-match ae:design-view, matching
   // SpecView's own page gate (hasDesignView there) — NOT hasDesignAccess
@@ -125,11 +128,13 @@ export function AppLayout() {
   // SpecViewRestricted in the first place (OverviewTrack's Spec leg carries
   // the identical reasoning for the overview's own link to this same route).
   const hasSpecNavAccess = useHasPermission("ae:design-view");
-  // The Builds/Deployments/Validation sidebar items share one gate: all
-  // three pages' own PermissionRestrictedPage checks (BuildsLedger,
-  // DeploymentsPage, ValidationPage) are this exact OR, matching the
-  // backend's ListProjectBuilds/ListBuildRuns gate ({ae:build, ae:build-view}).
-  const hasBuildNavAccess = useHasAnyPermission(["ae:build-view", "ae:build"]);
+  // The Builds/Deployments/Validation sidebar items share one gate:
+  // exact-match ae:build-view, matching all three pages' own page-entry
+  // checks (BuildsLedger, DeploymentsPage, ValidationPage) and the backend's
+  // ListProjectBuilds/ListBuildRuns gate — NOT OR'd with ae:build, which
+  // gates mutations (BuildProject, CancelRun, …) within those pages, never
+  // entry into them.
+  const hasBuildNavAccess = useHasPermission("ae:build-view");
 
   // Project AI panel (#130): available on every project route — mounted here
   // because the full-screen spec route bypasses ProjectLayout. Same

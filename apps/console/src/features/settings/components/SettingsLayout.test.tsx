@@ -133,7 +133,7 @@ describe("SettingsLayout", () => {
     ).toBeInTheDocument();
   });
 
-  it("enables the Skills tab when the caller holds either ae:skill-view or ae:skill-config", () => {
+  it("enables the Skills tab when the caller holds ae:skill-view", () => {
     render();
     expect(screen.getByRole("tab", { name: "Skills" })).not.toHaveAttribute(
       "aria-disabled",
@@ -148,6 +148,19 @@ describe("SettingsLayout", () => {
       "aria-disabled",
       "true",
     );
+  });
+
+  it("disables the Skills tab holding only ae:skill-config (not ae:skill-view), with an explanatory tooltip", async () => {
+    heldPermissions.delete("ae:skill-view");
+    render();
+
+    const skillsTab = screen.getByRole("tab", { name: "Skills" });
+    expect(skillsTab).toHaveAttribute("aria-disabled", "true");
+
+    fireEvent.mouseOver(skillsTab.closest("span") ?? skillsTab);
+    expect(
+      await screen.findByText("You don't have permission to view skills."),
+    ).toBeInTheDocument();
   });
 
   it("disables the Skills tab holding NEITHER ae:skill-view nor ae:skill-config, with an explanatory tooltip", async () => {

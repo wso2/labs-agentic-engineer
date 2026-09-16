@@ -26,7 +26,7 @@ import {
   Stack,
 } from "@wso2/oxygen-ui";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useHasAnyPermission } from "../../../auth/permissions";
+import { useHasPermission } from "../../../auth/permissions";
 import { EmptyState } from "../../../components/EmptyState";
 import { PageHeader } from "../../../components/PageHeader";
 import { PermissionRestrictedPage } from "../../../components/PermissionRestrictedPage";
@@ -69,11 +69,8 @@ import { PromoteDialog } from "./PromoteDialog";
  */
 export function DeploymentsPage({ projectName }: { projectName: string }) {
   const navigate = useNavigate();
-  const canViewDeployments = useHasAnyPermission(["ae:build", "ae:build-view"]);
-  const hasResourceAccess = useHasAnyPermission([
-    "ae:resource-view",
-    "ae:resource-config",
-  ]);
+  const canViewDeployments = useHasPermission("ae:build-view");
+  const hasResourceAccess = useHasPermission("ae:resource-view");
   const components = useProjectComponents(projectName);
   const componentNames = (components.data?.items ?? []).map((c) => c.name);
   const deployments = useComponentsDeployments(projectName, componentNames);

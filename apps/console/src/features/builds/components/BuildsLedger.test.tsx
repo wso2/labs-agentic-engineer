@@ -28,7 +28,7 @@ type BuildSummary = components["schemas"]["BuildSummary"];
 // only a dedicated "no permission" test flips this.
 const canViewBuilds = vi.hoisted(() => ({ current: true }));
 vi.mock("../../../auth/permissions", () => ({
-  useHasAnyPermission: () => canViewBuilds.current,
+  useHasPermission: () => canViewBuilds.current,
 }));
 
 const navigate = vi.fn();
@@ -319,7 +319,7 @@ describe("BuildsLedger", () => {
     expect(screen.getByText("Back to Overview")).toBeTruthy();
   });
 
-  it("blocks the whole page for a user lacking ae:build/ae:build-view", () => {
+  it("blocks the whole page for a user lacking ae:build-view", () => {
     canViewBuilds.current = false;
     renderLedger();
 

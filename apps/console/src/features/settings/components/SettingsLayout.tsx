@@ -60,7 +60,7 @@ export function SettingsLayout() {
     "ae:github-config",
     "ae:model-config",
   ]);
-  const hasSkillsAccess = useHasAnyPermission(["ae:skill-view", "ae:skill-config"]);
+  const hasSkillsAccess = useHasPermission("ae:skill-view");
   const hasUsageAccess = useHasPermission("ae:usage-view");
   const sectionAccess: Partial<
     Record<(typeof SECTIONS)[number]["path"], { allowed: boolean; deniedTooltip: string }>

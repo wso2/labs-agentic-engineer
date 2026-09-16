@@ -979,7 +979,7 @@ describe("DeploymentsPage — Test users", () => {
 });
 
 describe("DeploymentsPage — permission gate", () => {
-  it("blocks the whole page for a user lacking ae:build/ae:build-view", () => {
+  it("blocks the whole page for a user lacking ae:build-view", () => {
     hasBuild.current = false;
     render(<DeploymentsPage projectName="acme" />);
 

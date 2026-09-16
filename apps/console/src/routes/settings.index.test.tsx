@@ -87,6 +87,20 @@ describe("SettingsIndexPage", () => {
     expect(screen.getByTestId("navigate")).toHaveAttribute("data-to", "/settings/skills");
   });
 
+  // Exact-match ae:skill-view, NOT OR'd with ae:skill-config: a config-only
+  // holder (no separate view grant) has nothing reachable and sees the
+  // blocked page, same rule as SettingsLayout's tab gating.
+  it("does NOT navigate to Skills when only ae:skill-config is held", () => {
+    heldPermissions.add("ae:skill-config");
+    render(<SettingsIndexPage />);
+    expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "You don't have permission to change settings that affect the entire organization.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("navigates to Usage when only ae:usage-view is held", () => {
     heldPermissions.add("ae:usage-view");
     render(<SettingsIndexPage />);

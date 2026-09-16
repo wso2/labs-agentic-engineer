@@ -21,7 +21,7 @@ import { ChevronRight, Lock } from "@wso2/oxygen-ui-icons-react";
 import { createLink } from "@tanstack/react-router";
 import type { Theme } from "@wso2/oxygen-ui";
 import type { components } from "../../../generated/aep-api";
-import { useHasAnyPermission, useHasPermission } from "../../../auth/permissions";
+import { useHasPermission } from "../../../auth/permissions";
 import { useSession } from "../../../auth/SessionContext";
 import { useAgentEngaged } from "../../agent-chat/useAgentEngaged";
 import { useConversationLog } from "../../agent-chat/useConversationLog";
@@ -378,8 +378,8 @@ function Leg({
  * broken target anyway — so the whole leg is the affordance.
  */
 /**
- * Which permission pair unlocks each leg, and what the lock says while it's
- * held short. Build and Deploy share one check (ae:build-view/ae:build) —
+ * Which permission unlocks each leg, and what the lock says while it's held
+ * short. Build and Deploy share one check (exact-match ae:build-view) —
  * there is no separate deployment permission in this console, deployments
  * are a build's own consequence — so clicking through to either page from a
  * locked leg would only land on that page's own PermissionRestrictedPage
@@ -435,11 +435,7 @@ export function OverviewTrack({
   // so that dead end is never reached (OverviewArchitecture.tsx carries the
   // same reasoning for the same underlying backend gate, ListFiles/ReadFile).
   const hasSpecAccess = hasDesignView;
-  // Build and Deploy genuinely DO share a write/view OR — ListProjectBuilds
-  // itself is gated on {ae:build, ae:build-view} server-side (unlike
-  // ListFiles above), so a design/build-only editor and a build-view-only
-  // reader both belong here.
-  const hasBuildAccess = useHasAnyPermission(["ae:build-view", "ae:build"]);
+  const hasBuildAccess = useHasPermission("ae:build-view");
 
   return (
     <Box>

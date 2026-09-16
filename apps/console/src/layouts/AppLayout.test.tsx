@@ -195,12 +195,15 @@ describe("AppLayout — org sidebar", () => {
     expect(sidebarItem("Resources").closest("a")).not.toBeNull();
   });
 
-  it("keeps Resources navigable holding only ae:resource-config (not ae:resource-view)", () => {
+  // Exact-match ae:resource-view, NOT OR'd with ae:resource-config: a write
+  // permission gates mutations (Register/Update/Delete), never page entry —
+  // a config-only holder (no separate view grant) is still non-navigable.
+  it("does NOT make Resources navigable on ae:resource-config alone (not ae:resource-view)", () => {
     heldPermissions.delete("ae:resource-view");
     heldPermissions.add("ae:resource-config");
     mockPathname = "/";
     render();
-    expect(sidebarItem("Resources").closest("a")).not.toBeNull();
+    expect(sidebarItem("Resources").closest("a")).toBeNull();
   });
 
   it("makes Resources non-navigable holding NEITHER resource permission, with an explanatory tooltip", async () => {
@@ -286,13 +289,17 @@ describe("AppLayout — project sidebar", () => {
     },
   );
 
+  // Exact-match ae:build-view, NOT OR'd with ae:build: a write permission
+  // gates mutations (BuildProject, CancelRun, …), never page entry — a
+  // build-only holder (no separate view grant) is still non-navigable, same
+  // rule as Spec above.
   it.each(["Builds", "Deployments", "Validation"])(
-    "keeps %s navigable holding only ae:build (not ae:build-view)",
+    "does NOT make %s navigable on ae:build alone (not ae:build-view)",
     (label) => {
       heldPermissions.delete("ae:build-view");
       heldPermissions.add("ae:build");
       render();
-      expect(sidebarItem(label).closest("a")).not.toBeNull();
+      expect(sidebarItem(label).closest("a")).toBeNull();
     },
   );
 

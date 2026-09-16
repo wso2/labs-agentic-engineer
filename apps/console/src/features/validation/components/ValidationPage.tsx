@@ -38,7 +38,7 @@ import {
   type CriterionTally,
   type ValidationCriteria,
 } from "@aep/ui-validation-view";
-import { useHasAnyPermission, useHasPermission } from "../../../auth/permissions";
+import { useHasPermission } from "../../../auth/permissions";
 import { PageHeader, type PageHeaderStatus } from "../../../components/PageHeader";
 import type { StatusTone } from "../../../components/StatusChip";
 import { EmptyState } from "../../../components/EmptyState";
@@ -387,13 +387,14 @@ export function ValidationPage({
   // page — same endpoint, same hook, same permission either place this
   // escape hatch appears.
   const hasBuild = useHasPermission("ae:build");
-  // The page-level view gate — same OR as BuildsLedger's own canViewBuilds,
-  // matching the BFF's ListBuildRuns gate ({ae:build, ae:build-view},
-  // permission_gate.go): validation lives on the deployment/build surface
-  // (this page's own opening comment), reading list-build-runs plus the
-  // criteria/report Files-API reads that ride the same run data, so it needs
-  // the same permission as the page whose runs it is reporting on.
-  const canViewValidation = useHasAnyPermission(["ae:build", "ae:build-view"]);
+  // The page-level view gate — exact-match ae:build-view, NOT OR'd with
+  // ae:build (a write permission gates mutations, never page entry on its
+  // own), matching the BFF's ListBuildRuns gate (permission_gate.go):
+  // validation lives on the deployment/build surface (this page's own
+  // opening comment), reading list-build-runs plus the criteria/report
+  // Files-API reads that ride the same run data, so it needs the same
+  // permission as the page whose runs it is reporting on.
+  const canViewValidation = useHasPermission("ae:build-view");
   // Cancel is ACCEPTED, not performed: the endpoint answers 202 the moment the
   // signal is queued, and the run turns cancelled only once the supervisor acts
   // and the runs poll observes it. isPending covers the HTTP round trip alone, so

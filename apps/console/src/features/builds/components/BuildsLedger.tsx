@@ -33,7 +33,7 @@ import {
 } from "@wso2/oxygen-ui";
 import { ListChecks } from "@wso2/oxygen-ui-icons-react";
 import { Link, createLink, useNavigate } from "@tanstack/react-router";
-import { useHasAnyPermission } from "../../../auth/permissions";
+import { useHasPermission } from "../../../auth/permissions";
 import { EmptyState } from "../../../components/EmptyState";
 import { PageHeader } from "../../../components/PageHeader";
 import { PermissionRestrictedPage } from "../../../components/PermissionRestrictedPage";
@@ -127,7 +127,7 @@ const COLUMNS = [
 
 export function BuildsLedger({ projectName }: { projectName: string }) {
   const navigate = useNavigate();
-  const canViewBuilds = useHasAnyPermission(["ae:build", "ae:build-view"]);
+  const canViewBuilds = useHasPermission("ae:build-view");
 
   const builds = useBuilds(projectName);
   const [filter, setFilter] = useState<StatusFilter>("all");

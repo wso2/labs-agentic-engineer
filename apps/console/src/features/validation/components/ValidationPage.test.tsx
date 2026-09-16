@@ -43,14 +43,15 @@ const navigate = vi.fn();
 // without ae:build (Cancel disabled), and one existing test exercises exactly
 // that split.
 const hasBuild = vi.hoisted(() => ({ current: true }));
-// The page-level gate reads ae:build/ae:build-view through
-// useHasAnyPermission (same shape as DeploymentsPage.test.tsx's mock, since
-// it's the identical gate). Defaults to held so every existing test here
-// (written before the page carried this check) keeps seeing the page.
+// The page-level gate reads ae:build-view (exact-match, not OR'd with
+// ae:build) through the SAME useHasPermission hook, so the mock has to be
+// permission-name-aware rather than one shared boolean — hasBuild and
+// canViewValidation are genuinely independent (see above). Defaults to held
+// so every existing test here keeps seeing the page.
 const canViewValidation = vi.hoisted(() => ({ current: true }));
 vi.mock("../../../auth/permissions", () => ({
-  useHasAnyPermission: () => canViewValidation.current,
-  useHasPermission: () => hasBuild.current,
+  useHasPermission: (permission: string) =>
+    permission === "ae:build" ? hasBuild.current : canViewValidation.current,
 }));
 
 // The live log is the RUN feed filtered to the validation cycle, and it opens
@@ -1788,7 +1789,7 @@ describe("ValidationPage agent status line", () => {
 // off the same surface (list-build-runs, gated {ae:build, ae:build-view}
 // server-side), so it needs the same page-level permission.
 describe("ValidationPage — permission gate", () => {
-  it("blocks the whole page for a user lacking ae:build/ae:build-view", () => {
+  it("blocks the whole page for a user lacking ae:build-view", () => {
     canViewValidation.current = false;
     renderPage(undefined);
 

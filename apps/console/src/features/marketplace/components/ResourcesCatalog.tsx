@@ -34,7 +34,7 @@ import {
 } from "@wso2/oxygen-ui";
 import { Boxes, Plus } from "@wso2/oxygen-ui-icons-react";
 import { createLink } from "@tanstack/react-router";
-import { useHasAnyPermission, useHasPermission } from "../../../auth/permissions";
+import { useHasPermission } from "../../../auth/permissions";
 import { EmptyState } from "../../../components/EmptyState";
 import { NoPermissionIllustration } from "../../../components/NoPermissionIllustration";
 import { PageHeader } from "../../../components/PageHeader";
@@ -112,7 +112,7 @@ function CatalogCard({
 
 export function ResourcesCatalog() {
   const hasResourceConfig = useHasPermission("ae:resource-config");
-  const hasResourceAccess = useHasAnyPermission(["ae:resource-view", "ae:resource-config"]);
+  const hasResourceAccess = useHasPermission("ae:resource-view");
   const platform = usePlatformResourceTypes(hasResourceAccess);
   const external = useExternalResources(hasResourceAccess);
   const [selection, setSelection] = useState<CatalogSelection | null>(null);

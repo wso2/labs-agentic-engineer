@@ -92,10 +92,7 @@ const STATUS_META = {
 export function SkillsSection() {
   const hasSkillView = useHasPermission("ae:skill-view");
   const hasSkillConfig = useHasPermission("ae:skill-config");
-  // Either permission gets you onto the page — ae:skill-config is a superset
-  // of what ae:skill-view grants, never less, so a config-only holder (no
-  // separate view grant) must not be locked out of their own mutating page.
-  const canViewSkills = hasSkillView || hasSkillConfig;
+  const canViewSkills = hasSkillView;
   const {
     data: config,
     isLoading: configLoading,

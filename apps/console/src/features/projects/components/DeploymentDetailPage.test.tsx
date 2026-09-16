@@ -54,7 +54,7 @@ vi.mock("@tanstack/react-router", () => ({
 // only a dedicated "no permission" test flips this.
 const canViewDeployments = vi.hoisted(() => ({ current: true }));
 vi.mock("../../../auth/permissions", () => ({
-  useHasAnyPermission: () => canViewDeployments.current,
+  useHasPermission: () => canViewDeployments.current,
 }));
 
 let mockDeploy: DeployStage = {
@@ -307,7 +307,7 @@ describe("DeploymentDetailPage", () => {
 });
 
 describe("DeploymentDetailPage — permission gate", () => {
-  it("blocks the whole page for a user lacking ae:build/ae:build-view", () => {
+  it("blocks the whole page for a user lacking ae:build-view", () => {
     canViewDeployments.current = false;
     render(<DeploymentDetailPage projectName="expense" environment="development" />);
 

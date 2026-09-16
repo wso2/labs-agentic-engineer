@@ -132,7 +132,7 @@ func TestPermissionGate_DenyByDefault(t *testing.T) {
 		}
 	})
 
-	t.Run("multi-permission requirement: either satisfies (OR)", func(t *testing.T) {
+	t.Run("ListProjectBuilds: ae:build-view alone satisfies it", func(t *testing.T) {
 		called = false
 		ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:build-view"})
 		if _, err := permissionGate(next, "ListProjectBuilds")(ctx, nil, req, nil); err != nil {
@@ -142,6 +142,67 @@ func TestPermissionGate_DenyByDefault(t *testing.T) {
 			t.Fatal("handler must run")
 		}
 	})
+
+	// Exact-match, not OR'd: a write permission gates mutations (BuildProject,
+	// CancelRun, …), never page entry on its own — a build-only caller (no
+	// view grant) must be blocked from every build/deployment read surface.
+	for _, op := range []string{
+		"ListProjectBuilds", "ListBuildRuns", "ListTasks", "GetTask",
+		"ListCycleBuilds", "GetProjectRoles",
+	} {
+		t.Run(op+": ae:build alone does NOT satisfy it", func(t *testing.T) {
+			called = false
+			ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:build"})
+			_, err := permissionGate(next, op)(ctx, nil, req, nil)
+			var ae *apiError
+			if !errors.As(err, &ae) || ae.Status != http.StatusForbidden {
+				t.Fatalf("want 403 holding only ae:build, got %v", err)
+			}
+			if called {
+				t.Fatal("handler must not run")
+			}
+		})
+
+		t.Run(op+": ae:build-view alone satisfies it", func(t *testing.T) {
+			called = false
+			ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:build-view"})
+			if _, err := permissionGate(next, op)(ctx, nil, req, nil); err != nil {
+				t.Fatalf("ae:build-view alone should satisfy %s, got %v", op, err)
+			}
+			if !called {
+				t.Fatal("handler must run")
+			}
+		})
+	}
+
+	// ListDesignDependencies: a genuine cross-category OR (either page's own
+	// view permission), unlike the same-category write/view ORs eliminated
+	// above — ae:build (the write permission) must NOT satisfy it on its own.
+	t.Run("ListDesignDependencies: ae:build alone does NOT satisfy it", func(t *testing.T) {
+		called = false
+		ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:build"})
+		_, err := permissionGate(next, "ListDesignDependencies")(ctx, nil, req, nil)
+		var ae *apiError
+		if !errors.As(err, &ae) || ae.Status != http.StatusForbidden {
+			t.Fatalf("want 403 holding only ae:build, got %v", err)
+		}
+		if called {
+			t.Fatal("handler must not run")
+		}
+	})
+
+	for _, perm := range []string{"ae:design-view", "ae:build-view"} {
+		t.Run("ListDesignDependencies: "+perm+" alone satisfies it", func(t *testing.T) {
+			called = false
+			ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: perm})
+			if _, err := permissionGate(next, "ListDesignDependencies")(ctx, nil, req, nil); err != nil {
+				t.Fatalf("%s alone should satisfy ListDesignDependencies, got %v", perm, err)
+			}
+			if !called {
+				t.Fatal("handler must run")
+			}
+		})
+	}
 
 	t.Run("GetSkill: ae:skill-view alone satisfies it", func(t *testing.T) {
 		called = false
@@ -154,14 +215,19 @@ func TestPermissionGate_DenyByDefault(t *testing.T) {
 		}
 	})
 
-	t.Run("GetSkill: ae:skill-config alone also satisfies it", func(t *testing.T) {
+	// Exact-match, not OR'd: a write permission gates mutations, never page
+	// entry on its own — a skill-config-only caller (no view grant) must be
+	// blocked from GetSkill the same as any other write-without-view case.
+	t.Run("GetSkill: ae:skill-config alone does NOT satisfy it", func(t *testing.T) {
 		called = false
 		ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:skill-config"})
-		if _, err := permissionGate(next, "GetSkill")(ctx, nil, req, nil); err != nil {
-			t.Fatalf("ae:skill-config alone should satisfy GetSkill (config implies view), got %v", err)
+		_, err := permissionGate(next, "GetSkill")(ctx, nil, req, nil)
+		var ae *apiError
+		if !errors.As(err, &ae) || ae.Status != http.StatusForbidden {
+			t.Fatalf("want 403 holding only ae:skill-config, got %v", err)
 		}
-		if !called {
-			t.Fatal("handler must run")
+		if called {
+			t.Fatal("handler must not run")
 		}
 	})
 
@@ -172,6 +238,30 @@ func TestPermissionGate_DenyByDefault(t *testing.T) {
 		var ae *apiError
 		if !errors.As(err, &ae) || ae.Status != http.StatusForbidden {
 			t.Fatalf("want 403 holding neither ae:skill-view nor ae:skill-config, got %v", err)
+		}
+		if called {
+			t.Fatal("handler must not run")
+		}
+	})
+
+	t.Run("ListSkills: ae:skill-view alone satisfies it", func(t *testing.T) {
+		called = false
+		ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:skill-view"})
+		if _, err := permissionGate(next, "ListSkills")(ctx, nil, req, nil); err != nil {
+			t.Fatalf("ae:skill-view alone should satisfy ListSkills, got %v", err)
+		}
+		if !called {
+			t.Fatal("handler must run")
+		}
+	})
+
+	t.Run("ListSkills: ae:skill-config alone does NOT satisfy it", func(t *testing.T) {
+		called = false
+		ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:skill-config"})
+		_, err := permissionGate(next, "ListSkills")(ctx, nil, req, nil)
+		var ae *apiError
+		if !errors.As(err, &ae) || ae.Status != http.StatusForbidden {
+			t.Fatalf("want 403 holding only ae:skill-config, got %v", err)
 		}
 		if called {
 			t.Fatal("handler must not run")

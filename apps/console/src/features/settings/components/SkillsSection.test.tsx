@@ -310,17 +310,22 @@ describe("SkillsSection — view/config permission gate", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("renders the page for a config-only user (ae:skill-config, no ae:skill-view — config implies view)", () => {
+  // Exact-match ae:skill-view, NOT OR'd with ae:skill-config: a write
+  // permission gates mutations, never page entry on its own — a config-only
+  // user (no separate view grant) is a real, if unusual, role shape and must
+  // be blocked from the page the same as anyone else lacking ae:skill-view.
+  it("blocks the whole page for a config-only user (ae:skill-config, no ae:skill-view)", () => {
     resetMocks();
     skillPermissions.view = false;
     skillsData = { skills: [skill({ name: "go" })] };
 
     render(<SkillsSection />);
 
-    expect(screen.getByText("go")).toBeInTheDocument();
-    // Config holds every capability view does, plus mutation — nothing here
-    // should be disabled just because the view grant itself is absent.
-    expect(screen.getByRole("button", { name: "Import" })).not.toBeDisabled();
+    expect(
+      screen.getByText("You don't have permission to view skills."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("go")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Import" })).not.toBeInTheDocument();
   });
 
   it("shows an insufficient-permissions message and renders no skill content with neither permission", () => {

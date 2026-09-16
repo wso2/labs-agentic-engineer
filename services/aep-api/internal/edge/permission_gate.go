@@ -45,15 +45,17 @@ var operationPermissions = map[string][]authz.Permission{
 	"CreateSkill":     {authz.PermissionSkillConfig},
 	// The list itself — a separate permission from ae:skill-config, since
 	// viewing the skills panel shouldn't require the edit permission every
-	// mutation above needs. ae:skill-config also satisfies it (OR, same
-	// pattern as ListProjectBuilds below): a config holder can always do
-	// everything a view-only holder can, never less. No OC dependency (reads
-	// the org's git-backed skills repo via h.skills, not OpenChoreo), so no
-	// OcActionCatalog entry is needed for it.
-	"ListSkills": {authz.PermissionSkillView, authz.PermissionSkillConfig},
+	// mutation above needs. Exact-match ae:skill-view, NOT OR'd with
+	// ae:skill-config: a write permission gates mutations, never page entry
+	// on its own — a config-only holder (no view grant) is a real, if
+	// unusual, role shape and must be blocked from the panel the same as
+	// every other write-without-view case in this file. No OC dependency
+	// (reads the org's git-backed skills repo via h.skills, not OpenChoreo),
+	// so no OcActionCatalog entry is needed for it.
+	"ListSkills": {authz.PermissionSkillView},
 	// Same reasoning — SkillViewerDialog/EditSkillDialog, both reachable only
 	// from the same Skills panel ListSkills backs.
-	"GetSkill": {authz.PermissionSkillView, authz.PermissionSkillConfig},
+	"GetSkill": {authz.PermissionSkillView},
 	// Platform-update status badges on each skill row — gated by the config
 	// permission rather than skill-view, matching every mutation above.
 	"ListSkillUpdates": {authz.PermissionSkillConfig},
@@ -171,20 +173,27 @@ var operationPermissions = map[string][]authz.Permission{
 	"RotateTestUserPassword": {authz.PermissionBuild},
 	"DeleteTestUser":         {authz.PermissionBuild},
 
-	// Build/deployment read surfaces: viewable with either the write or the
-	// view-only permission.
-	"ListProjectBuilds": {authz.PermissionBuild, authz.PermissionBuildView},
-	"ListBuildRuns":     {authz.PermissionBuild, authz.PermissionBuildView},
-	"ListTasks":         {authz.PermissionBuild, authz.PermissionBuildView},
-	"GetTask":           {authz.PermissionBuild, authz.PermissionBuildView},
-	"ListCycleBuilds":   {authz.PermissionBuild, authz.PermissionBuildView},
+	// Build/deployment read surfaces. Exact-match ae:build-view, NOT OR'd
+	// with ae:build: a write permission gates mutations (BuildProject,
+	// CancelRun, … above), never page entry on its own — same rule as
+	// ListSkills/GetSkill above and ListFiles/ReadFile below. OC-level
+	// access is unaffected: it's a property of the caller's full permission
+	// set, not which permission gates a given aep-api operation, and both
+	// built-in roles that hold ae:build-view already hold ae:build too
+	// (role_permissions_catalog.go) — this only closes the gap for a
+	// build-only role that was never supposed to see build state anyway.
+	"ListProjectBuilds": {authz.PermissionBuildView},
+	"ListBuildRuns":     {authz.PermissionBuildView},
+	"ListTasks":         {authz.PermissionBuildView},
+	"GetTask":           {authz.PermissionBuildView},
+	"ListCycleBuilds":   {authz.PermissionBuildView},
 	// Read from two console call sites — DeploymentsPage and the org
 	// Resources catalog page — exact-match ae:resource-view now, not an OR
 	// with ae:resource-config: no role holds the config permission without
 	// the view one (see ListPlatformResourceTypes above for the same
 	// reasoning), so this narrows nothing a real caller has today.
 	"ListExternalResources": {authz.PermissionResourceView},
-	"GetProjectRoles":       {authz.PermissionBuild, authz.PermissionBuildView},
+	"GetProjectRoles":       {authz.PermissionBuildView},
 	// Gates the pre-build dependency/approval check (SpecView's "Build"
 	// action) — write-only, not the view permission, since this is part of
 	// triggering a build rather than reading its state.
@@ -211,8 +220,13 @@ var operationPermissions = map[string][]authz.Permission{
 	"ListFiles": {authz.PermissionDesignView},
 	"ReadFile":  {authz.PermissionDesignView},
 	// Reachable from both the design workspace and the build/deployment
-	// pages (DeploymentsPage also loads it); any of the three satisfies it.
-	"ListDesignDependencies": {authz.PermissionDesignView, authz.PermissionBuild, authz.PermissionBuildView},
+	// pages (DeploymentsPage also loads it) — a genuine cross-category OR
+	// (either page's own view permission satisfies it), unlike the
+	// same-category write/view ORs eliminated elsewhere in this file:
+	// ae:build (the write permission) is deliberately absent here, since
+	// this is a read and neither page's own entry gate accepts its write
+	// permission alone either.
+	"ListDesignDependencies": {authz.PermissionDesignView, authz.PermissionBuildView},
 	// DependencyView/ProvideInterfaceDialog's two writes into
 	// specs/design/dependencies/<name>/ — committing a contract, or signing
 	// off on the one the design agent wrote. Same reasoning as GenerateDesign:

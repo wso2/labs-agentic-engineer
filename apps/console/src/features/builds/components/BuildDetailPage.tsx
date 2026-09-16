@@ -43,7 +43,7 @@ import {
   X,
 } from "@wso2/oxygen-ui-icons-react";
 import { createLink, Link, useNavigate } from "@tanstack/react-router";
-import { useHasAnyPermission, useHasPermission } from "../../../auth/permissions";
+import { useHasPermission } from "../../../auth/permissions";
 import { EmptyState } from "../../../components/EmptyState";
 import { LogSection } from "../../../components/LogSection";
 import { PageHeader } from "../../../components/PageHeader";
@@ -114,7 +114,7 @@ export function BuildDetailPage({
   tag: string;
 }) {
   const navigate = useNavigate();
-  const canViewBuilds = useHasAnyPermission(["ae:build", "ae:build-view"]);
+  const canViewBuilds = useHasPermission("ae:build-view");
 
   const builds = useBuilds(projectName);
   const build = builds.data?.find((b) => b.tag === tag);

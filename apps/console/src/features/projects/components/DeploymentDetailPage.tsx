@@ -36,7 +36,7 @@ import {
   GitHub,
 } from "@wso2/oxygen-ui-icons-react";
 import { createLink, Link, useNavigate } from "@tanstack/react-router";
-import { useHasAnyPermission } from "../../../auth/permissions";
+import { useHasPermission } from "../../../auth/permissions";
 import { EmptyState } from "../../../components/EmptyState";
 import { PageHeader } from "../../../components/PageHeader";
 import { PermissionRestrictedPage } from "../../../components/PermissionRestrictedPage";
@@ -86,7 +86,7 @@ export function DeploymentDetailPage({
   environment: string;
 }) {
   const navigate = useNavigate();
-  const canViewDeployments = useHasAnyPermission(["ae:build", "ae:build-view"]);
+  const canViewDeployments = useHasPermission("ae:build-view");
   const environment = parseEnvironment(segment);
   const components = useProjectComponents(projectName);
   const componentNames = (components.data?.items ?? []).map((c) => c.name);
