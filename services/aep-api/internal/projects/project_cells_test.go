@@ -90,6 +90,29 @@ func TestCreateProject_BindsEveryPipelineEnvironment(t *testing.T) {
 	}
 }
 
+// Build v1 always mints platform resources into DevEnvironmentName ("default"),
+// even when the OpenChoreo pipeline is development/staging/production and does
+// not list that environment. Without this binding the cell namespace is never
+// created and apply fails with namespaces "dp-…-default-…" not found.
+func TestCreateProject_BindsDevEnvironmentWhenPipelineOmitsIt(t *testing.T) {
+	t.Parallel()
+	oc := createdProjectOC("default")
+	cells := &fakeCells{envs: []string{"development", "staging", "production"}}
+	svc := NewProjectService(oc, nil, nil, nil, nil)
+	svc.SetProjectCellProvisioner(cells)
+
+	if _, err := svc.CreateProject(context.Background(), "acme",
+		&gen.CreateProjectRequest{Name: "shop"}); err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	for _, env := range []string{"development", "staging", "production", "default"} {
+		if got := cells.bound[env]; got != "shop" {
+			t.Errorf("%s binding: got %q, want %q", env, got, "shop")
+		}
+	}
+}
+
 // A binding failure leaves an undeployable project behind, and retrying the
 // create cannot fix it (OpenChoreo answers 409). So the project is compensated
 // away and the error surfaces.

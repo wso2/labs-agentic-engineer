@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -566,9 +567,13 @@ func translateHTTPError(err error) error {
 }
 
 // provisionProjectCells creates the ProjectReleaseBinding for each environment
-// the project's deployment pipeline promotes through. Idempotent per
-// environment, so a partially-applied earlier attempt converges rather than
-// conflicting.
+// the project's deployment pipeline promotes through, plus DevEnvironmentName
+// when that name is absent from the pipeline. Build v1 always mints platform
+// resources into DevEnvironmentName; a pipeline of development/staging/
+// production would otherwise leave that cell namespace uncreated. Idempotent
+// per environment, so a partially-applied earlier attempt converges rather
+// than conflicting. EnsureProjectReleaseBinding must not overwrite an
+// existing binding's spec.projectRelease.
 //
 // A project with no resolvable pipeline is an error, not an empty list: the
 // caller compensates on error, and silently returning "zero environments" would
@@ -584,6 +589,9 @@ func (s *Service) provisionProjectCells(ctx context.Context, orgName, projectNam
 	}
 	if len(envs) == 0 {
 		return fmt.Errorf("deployment pipeline %q promotes through no environments", pipelineName)
+	}
+	if !slices.Contains(envs, openchoreo.DevEnvironmentName) {
+		envs = append(envs, openchoreo.DevEnvironmentName)
 	}
 	for _, env := range envs {
 		if bindErr := s.cells.EnsureProjectReleaseBinding(ctx, orgName, projectName, env); bindErr != nil {
