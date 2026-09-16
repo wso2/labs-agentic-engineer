@@ -467,23 +467,32 @@ func containsPermission(held []authz.Permission, want authz.Permission) bool {
 	return false
 }
 
-// updateConfigPermissions resolves the permission(s) UpdateConfig requires
-// from which section(s) of the patch body are actually populated —
-// gitProvider needs ae:github-config, llm/codingLlm/codingAgent need
-// ae:model-config (the runtime/model pair CodingAgentCard writes is grouped
-// with the credential it bills, per ADR-0016). A patch touching both
-// sections needs BOTH permissions (unlike operationPermissions' OR
-// semantics, permissionGate requires every entry this function returns).
+// updateConfigPermissions resolves the permission(s) UpdateConfig requires from
+// which section(s) of the patch body are actually populated — gitProvider needs
+// ae:github-config, llm/codingLlm/codingAgent need ae:model-config (the
+// runtime/model pair CodingAgentCard writes is grouped with the credential it
+// bills, per ADR-0016). A patch touching both needs BOTH: unlike
+// operationPermissions' OR semantics, permissionGate requires every permission
+// this function returns.
 //
-// idp is NOT yet mapped to a permission — no AE permission concept for IdP
-// config exists today — so an idp-only patch is presently allowed to any
-// authenticated org member.
-// TODO(authz): decide idp's permission before relying on this gate for IdP
-// config protection.
+// An idp section is refused outright rather than mapped to a permission. It
+// repoints the issuer the org's protected APIs pin JWT validation to (the
+// deploy path reads it through DeploymentService.resolveIssuers) and, on a kind
+// switch, deletes the org's Thunder publisher app — but no AE permission
+// describes identity configuration, and nothing in the platform writes the
+// section today, so there is no grant to check and no caller to break. A
+// permission belongs here when the surface that writes it is designed; until
+// then the gate refuses rather than waves it through.
+//
+// A request that is not an UpdateConfig body at all is likewise an error, not a
+// free pass: this file's whole posture is that an unrecognized shape denies.
 func updateConfigPermissions(request any) ([]authz.Permission, error) {
 	req, ok := request.(gen.UpdateConfigRequestObject)
 	if !ok || req.Body == nil {
-		return nil, nil
+		return nil, errForbidden("malformed config patch")
+	}
+	if req.Body.IDP.Sent {
+		return nil, errForbidden("the idp section cannot be changed through this API")
 	}
 	var required []authz.Permission
 	if req.Body.GitProvider.Sent {

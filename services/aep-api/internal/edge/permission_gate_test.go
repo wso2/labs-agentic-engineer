@@ -814,10 +814,52 @@ func TestPermissionGate_UpdateConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("idp-only patch is presently unrestricted", func(t *testing.T) {
-		ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: ""})
-		if _, err := permissionGate(next, "UpdateConfig")(ctx, nil, req, idpOnly); err != nil {
-			t.Fatalf("idp section has no assigned permission yet, want pass, got %v", err)
+	// The idp section repoints the issuer the org's protected APIs pin JWT
+	// validation to. No AE permission describes identity config, so the gate
+	// refuses the section outright — including for a caller holding every
+	// permission there is, since no grant can express consent to this.
+	t.Run("idp section is refused, however privileged the caller", func(t *testing.T) {
+		for _, scope := range []string{"", "ae:github-config ae:model-config"} {
+			ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: scope})
+			_, err := permissionGate(next, "UpdateConfig")(ctx, nil, req, idpOnly)
+			var ae *apiError
+			if !errors.As(err, &ae) || ae.Status != http.StatusForbidden {
+				t.Fatalf("scope %q: want 403 for an idp section, got %v", scope, err)
+			}
+		}
+	})
+
+	// An idp section refuses the WHOLE patch, not just its own half: sections
+	// are applied together, so letting the rest through would half-apply a
+	// request the caller may not have wanted split.
+	t.Run("idp alongside a permitted section still refuses", func(t *testing.T) {
+		mixed := gen.UpdateConfigRequestObject{Body: &gen.ConfigPatch{}}
+		mixed.Body.GitProvider.Sent = true
+		mixed.Body.IDP.Sent = true
+		ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:github-config ae:model-config"})
+		_, err := permissionGate(next, "UpdateConfig")(ctx, nil, req, mixed)
+		var ae *apiError
+		if !errors.As(err, &ae) || ae.Status != http.StatusForbidden {
+			t.Fatalf("want 403 when idp rides along with gitProvider, got %v", err)
+		}
+	})
+
+	// Deny-by-default extends to the request shape itself: a body the gate
+	// cannot read is refused rather than treated as "no sections, nothing to
+	// check". The route's validator rejects a bodyless PATCH first, so this
+	// pins the posture, not a reachable path.
+	t.Run("an unreadable request body is refused", func(t *testing.T) {
+		ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:github-config ae:model-config"})
+		for name, bad := range map[string]any{
+			"nil body":    gen.UpdateConfigRequestObject{Body: nil},
+			"wrong type":  "not an UpdateConfigRequestObject",
+			"nil request": nil,
+		} {
+			_, err := permissionGate(next, "UpdateConfig")(ctx, nil, req, bad)
+			var ae *apiError
+			if !errors.As(err, &ae) || ae.Status != http.StatusForbidden {
+				t.Fatalf("%s: want 403, got %v", name, err)
+			}
 		}
 	})
 }

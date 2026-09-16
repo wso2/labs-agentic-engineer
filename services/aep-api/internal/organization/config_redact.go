@@ -29,10 +29,21 @@ import (
 // projection as their response body, and both are gated to require only ONE
 // of ae:github-config/ae:model-config (an OR, so either half's caller is
 // answered at all) — this is what turns that coarse allow into "only the
-// section you actually hold permission for". idp has no permission mapped
-// yet (a documented gap, not an oversight — see updateConfigPermissions'
-// own comment on the write-gate side) and is left untouched for any caller
-// who reaches either handler at all.
+// section you actually hold permission for".
+//
+// codingAgent is trimmed rather than cleared. The section is always present by
+// contract, and its runtime/model pair is enum-constrained state the console
+// renders; what it should not disclose is updatedAt/updatedBy, the audit fields
+// that exist precisely BECAUSE this endpoint's permissions are coarse (see
+// OrgCodingAgentSetting.UpdatedBy). Writing the section needs ae:model-config,
+// so a caller without it has no business reading who last changed it.
+//
+// idp is left whole: no AE permission describes identity configuration, so
+// there is nothing to redact it against. Its write path is refused outright at
+// the gate (see the edge's updateConfigPermissions), and the section discloses
+// no credential — the live publisher secret is never projected, only whether
+// one exists. Redacting it becomes possible, and worth doing, when identity
+// config gets a permission.
 func RedactConfigForPermissions(proj *orgconfig.ConfigProjection, held []authz.Permission) {
 	if !slices.Contains(held, authz.PermissionGitHubConfig) {
 		proj.GitProvider = nil
@@ -40,5 +51,7 @@ func RedactConfigForPermissions(proj *orgconfig.ConfigProjection, held []authz.P
 	if !slices.Contains(held, authz.PermissionModelConfig) {
 		proj.LLM = nil
 		proj.CodingLLM = nil
+		proj.CodingAgent.UpdatedAt = nil
+		proj.CodingAgent.UpdatedBy = nil
 	}
 }
