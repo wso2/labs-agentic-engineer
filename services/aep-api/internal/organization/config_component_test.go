@@ -846,9 +846,12 @@ func TestConfigComponent_E4_WholesaleReplaceClearsOmitted(t *testing.T) {
 func TestConfigComponent_F1_PatchOnlyLLMLeavesOthers(t *testing.T) {
 	t.Parallel()
 	c := newConfigHarness(t)
-	// Establish a custom idp first.
-	if r := c.h.AsOrg("acme").Patch(configPath, `{"idp":{"kind":"custom","issuer":"https://byo.example","jwksUrl":"https://byo.example/jwks"}}`); r.Code != 200 {
-		t.Fatalf("seed idp: %d %s", r.Code, r.Body.String())
+	// Establish a custom idp first. Seeded through the orchestrator because the
+	// route refuses an idp section (see the E group); the point of this test is
+	// what the LLM patch leaves alone, not how the idp got there.
+	if _, err := c.svc.Patch(context.Background(), "acme", "tester",
+		idpPatch("custom", "https://byo.example", "https://byo.example/jwks")); err != nil {
+		t.Fatalf("seed idp: %v", err)
 	}
 	beforeIDP := sectionOf(t, c.h.AsOrg("acme").Get(configPath).Body.Bytes(), "idp")
 
@@ -889,10 +892,15 @@ func TestConfigComponent_F1b_PatchResponseRedactsUnheldSection(t *testing.T) {
 	}
 }
 
+// Two sections in one body both land. llm + gitProvider rather than the idp
+// pairing this used to use: the route refuses an idp section now, and F3 below
+// covers the same two sections on the failure side, so success and atomicity
+// are stated over the same pair.
 func TestConfigComponent_F2_MultiSectionSuccess(t *testing.T) {
 	t.Parallel()
 	c := newConfigHarness(t)
-	resp := c.h.AsOrg("acme").Patch(configPath, `{"llm":{"kind":"anthropic","apiKey":"`+goodAnthKey+`"},"idp":{"kind":"custom","issuer":"https://byo.example","jwksUrl":"https://byo.example/jwks"}}`)
+	c.gh.patHappy()
+	resp := c.h.AsOrg("acme").Patch(configPath, `{"llm":{"kind":"anthropic","apiKey":"`+goodAnthKey+`"},"gitProvider":{"kind":"github","mode":"pat","pat":"ghp_live","githubLogin":"ada"}}`)
 	if resp.Code != 200 {
 		t.Fatalf("multi-section: want 200, got %d body=%s", resp.Code, resp.Body.String())
 	}
@@ -900,8 +908,8 @@ func TestConfigComponent_F2_MultiSectionSuccess(t *testing.T) {
 	if m["llm"].(map[string]any)["status"] != "active" {
 		t.Fatalf("llm not applied: %v", m["llm"])
 	}
-	if m["idp"].(map[string]any)["kind"] != "custom" {
-		t.Fatalf("idp not applied: %v", m["idp"])
+	if m["gitProvider"].(map[string]any)["githubLogin"] != "ada" {
+		t.Fatalf("gitProvider not applied: %v", m["gitProvider"])
 	}
 }
 
