@@ -27,7 +27,11 @@ import { useEnsureAuthzRole, useSyncSkills } from "../../settings/api/queries";
 // unlimited-silent).
 const AUTHZ_ESCALATE_AFTER_ATTEMPTS = 3;
 
-type RowStatus = "pending" | "active" | "done" | "error";
+// "skipped" is distinct from both "done" and "error": the step did not
+// succeed, but the user chose to proceed and the org is usable without it.
+// Collapsing it into either one loses that — "done" would claim the skills
+// landed, "error" would hold the user on a screen they have already left.
+type RowStatus = "pending" | "active" | "done" | "error" | "skipped";
 
 // Two phases run in sequence (#743, splitting #102's single bootstrap step):
 // workspace authz configuration, then repository/skills setup.
@@ -88,15 +92,27 @@ export function RepositorySetupStep({ onComplete }: { onComplete: () => void }) 
     : authzDone
       ? "done"
       : "active";
+  // `skillsSkipped` is read BEFORE `sync.isError`, and the two are different
+  // questions. The mutation's error is sticky — "Continue anyway" does not
+  // clear it — so an error-first reading would keep the step incomplete for
+  // the rest of the session, leaving the user on a screen whose only exit they
+  // have already taken. Settled-ness is what gates progress here.
   const skillsStatus: RowStatus = !authzDone
     ? "pending"
-    : sync.isError
-      ? "error"
-      : skillsDone
-        ? "done"
-        : "active";
+    : skillsSkipped
+      ? "skipped"
+      : sync.isError
+        ? "error"
+        : skillsDone
+          ? "done"
+          : "active";
 
-  const allDone = authzStatus === "done" && skillsStatus === "done";
+  // Skipping completes the step without claiming the skills landed — the row
+  // says so, and so does the closing copy. Only the workspace row has to be
+  // genuinely "done": it is the hard gate.
+  const allDone =
+    authzStatus === "done" &&
+    (skillsStatus === "done" || skillsStatus === "skipped");
   const authzEscalated = authzAttempts >= AUTHZ_ESCALATE_AFTER_ATTEMPTS;
 
   return (
@@ -137,7 +153,10 @@ export function RepositorySetupStep({ onComplete }: { onComplete: () => void }) 
         </Typography>
       )}
 
-      {sync.isError && (
+      {/* Withdrawn once skipped: the error is sticky, so leaving the panel up
+          would offer a choice the user has already made, next to the button
+          that acts on it. */}
+      {sync.isError && !skillsSkipped && (
         <>
           <Alert severity="error">{sync.error.message}</Alert>
           <Typography variant="body2" color="text.secondary">
@@ -239,6 +258,11 @@ function ChecklistRow({
         )}
         {status === "error" && (
           <AlertCircle size={18} color="var(--oxygen-palette-error-main, currentColor)" />
+        )}
+        {status === "skipped" && (
+          <Box sx={{ color: "text.secondary", display: "flex" }}>
+            <AlertCircle size={18} />
+          </Box>
         )}
       </Box>
       <Box>

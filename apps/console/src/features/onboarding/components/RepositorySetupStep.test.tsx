@@ -18,7 +18,7 @@
 
 // @vitest-environment jsdom
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RepositorySetupStep } from "./RepositorySetupStep";
 
@@ -122,5 +122,36 @@ describe("RepositorySetupStep", () => {
     expect(
       screen.getByRole("button", { name: /continue anyway/i }),
     ).toBeTruthy();
+  });
+
+  // ...and the skip has to actually let them out. The failure is sticky —
+  // sync.isError stays true after "Continue anyway" — so a status derivation
+  // that reads the error before the skip leaves the user on a step whose only
+  // exit they already took.
+  it("completes after skipping a failed skills sync", async () => {
+    mocks.authz.isSuccess = true;
+    mocks.sync.isError = true;
+    mocks.sync.error = new Error("sync failed");
+    const onComplete = vi.fn();
+    render(<RepositorySetupStep onComplete={onComplete} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /continue anyway/i }));
+
+    const go = await screen.findByRole("button", { name: /go to console/i });
+    fireEvent.click(go);
+    expect(onComplete).toHaveBeenCalledOnce();
+  });
+
+  // The skipped state is reported honestly rather than as success: the row
+  // stays an error, and the closing copy says skills were skipped.
+  it("still shows the skills row as failed after skipping", async () => {
+    mocks.authz.isSuccess = true;
+    mocks.sync.isError = true;
+    mocks.sync.error = new Error("sync failed");
+    render(<RepositorySetupStep onComplete={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /continue anyway/i }));
+
+    await screen.findByText(/skills catalogue setup was skipped/i);
   });
 });
