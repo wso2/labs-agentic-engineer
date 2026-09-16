@@ -25,13 +25,14 @@ type Permission string
 const (
 	PermissionBuild     Permission = "ae:build"
 	PermissionBuildView Permission = "ae:build-view"
-	// PermissionDesign is the console-side gate for the Overview track's Spec
-	// leg (apps/console's OverviewTrack), paired with PermissionDesignView the
-	// same way every other surface pairs a write permission with its view-only
-	// sibling. No OC action maps to it (yet): the spec editor's actual write
-	// path (ApplyFiles/ReadFileBundle, services/collab) is still a
-	// permission_gate.go carve-out pending a permission design for
-	// non-console callers, so this permission currently backs UI gating only.
+	// PermissionDesign authorizes changing a project's design: the spec
+	// editor's writes (ApplyFiles, the collab room's git flush), design
+	// generation, and dependency-contract commits. Paired with
+	// PermissionDesignView the same way every other surface pairs a write
+	// permission with its view-only sibling — viewing a spec room never implies
+	// committing into it, which is enforced on the socket as well as the route
+	// (see the collab handler's canWrite). No OC action maps to it: the design
+	// tree is git-backed, so nothing here reaches OpenChoreo.
 	PermissionDesign            Permission = "ae:design"
 	PermissionDesignView        Permission = "ae:design-view"
 	PermissionGitHubConfig      Permission = "ae:github-config"

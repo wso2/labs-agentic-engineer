@@ -26,262 +26,137 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
 )
 
-// operationPermissions maps each contract operationID to the AE permission(s)
-// that satisfy it. A caller holding ANY listed permission may call the
-// operation — this mirrors the console's useHasAnyPermission semantics for
-// read surfaces shared by a write and a view-only permission (e.g. a build
-// page readable by either ae:build or ae:build-view).
+// This file is the AE permission gate's decision table. Every contract
+// operationID appears in exactly one of the two maps below, and
+// TestPermissionGateCoverage fails the build otherwise — so an operation can
+// never ship without a permission decision having been made about it.
 //
-// Every operationID is required to appear in EITHER this map OR
-// permissionGateCarveOuts — TestPermissionGateCoverage pins that — so a new
-// contract operation can never ship silently ungated.
+// Four rules govern the table; entry comments record only what a row adds to
+// them.
+//
+//  1. A row lists the permission(s) that satisfy the operation. Several are
+//     OR'd: holding any one suffices.
+//
+//  2. Entry to a surface is gated on its VIEW permission exactly. A write
+//     permission (ae:build, ae:design, ae:skill-config, …) authorizes
+//     mutations; it never admits its holder to a page on its own. So a row
+//     reading ae:build-view is NOT satisfied by ae:build, even though every
+//     built-in role that holds one holds the other — the gate describes what a
+//     permission means, not which roles happen to exist.
+//
+//  3. An OR therefore never pairs a write permission with its own view
+//     sibling. Where one appears it spans FEATURES: one surface legitimately
+//     reached from two places, each bringing its own permission.
+//
+//  4. A permission whose operations reach OpenChoreo needs matching actions in
+//     authz.OcActionCatalog, or the BFF admits a caller that OC then refuses.
 var operationPermissions = map[string][]authz.Permission{
-	// Skills (settings > Skills panel).
-	"SyncSkills":      {authz.PermissionSkillConfig},
-	"SetSkillEnabled": {authz.PermissionSkillConfig},
-	"DeleteSkill":     {authz.PermissionSkillConfig},
-	"UpdateSkill":     {authz.PermissionSkillConfig},
-	"ImportSkill":     {authz.PermissionSkillConfig},
-	"CreateSkill":     {authz.PermissionSkillConfig},
-	// The list itself — a separate permission from ae:skill-config, since
-	// viewing the skills panel shouldn't require the edit permission every
-	// mutation above needs. Exact-match ae:skill-view, NOT OR'd with
-	// ae:skill-config: a write permission gates mutations, never page entry
-	// on its own — a config-only holder (no view grant) is a real, if
-	// unusual, role shape and must be blocked from the panel the same as
-	// every other write-without-view case in this file. No OC dependency
-	// (reads the org's git-backed skills repo via h.skills, not OpenChoreo),
-	// so no OcActionCatalog entry is needed for it.
-	"ListSkills": {authz.PermissionSkillView},
-	// Same reasoning — SkillViewerDialog/EditSkillDialog, both reachable only
-	// from the same Skills panel ListSkills backs.
-	"GetSkill": {authz.PermissionSkillView},
-	// Platform-update status badges on each skill row — gated by the config
-	// permission rather than skill-view, matching every mutation above.
+	// --- Skills (Settings › Skills) -------------------------------------
+	"SyncSkills":       {authz.PermissionSkillConfig},
+	"SetSkillEnabled":  {authz.PermissionSkillConfig},
+	"DeleteSkill":      {authz.PermissionSkillConfig},
+	"UpdateSkill":      {authz.PermissionSkillConfig},
+	"ImportSkill":      {authz.PermissionSkillConfig},
+	"CreateSkill":      {authz.PermissionSkillConfig},
 	"ListSkillUpdates": {authz.PermissionSkillConfig},
+	"ListSkills":       {authz.PermissionSkillView},
+	"GetSkill":         {authz.PermissionSkillView},
 
-	// GitHub connection (settings > GitHubCredentialCard). UpdateConfig also
-	// requires this permission for its gitProvider section — see
-	// updateConfigPermissions, not this map; UpdateConfig itself is a
-	// permissionGateCarveOuts entry.
+	// --- Org config (Settings › Credentials) ----------------------------
 	"DisconnectGitProvider": {authz.PermissionGitHubConfig},
-	// Settings > Credentials (both cards, read from the same GET /config).
-	// OR here only decides whether the call is answered AT ALL: a caller
-	// holding just one of the two still gets the OTHER section redacted to
-	// null inside the handler itself (getconfig.Handler.GetConfig) — the
-	// gate can't express "half a response", only a request-level allow/deny.
-	// GetConfigStatus (permissionGateCarveOuts) is the permission-free
-	// sibling for OnboardingGate's own bootstrap need.
+	// Both credential cards read this one response, so either permission is
+	// answered — and the handler then redacts the half the caller does not
+	// hold (organization.RedactConfigForPermissions). The gate can only allow
+	// or deny a request; it cannot return half of one.
 	"GetConfig": {authz.PermissionGitHubConfig, authz.PermissionModelConfig},
 
-	// Project lifecycle & requirements authoring.
+	// --- Projects & requirements ----------------------------------------
 	"CreateProject":        {authz.PermissionRequirementUpdate},
 	"DeleteProject":        {authz.PermissionRequirementUpdate},
 	"PutProjectReferences": {authz.PermissionRequirementUpdate},
-	// Matches the OcActionCatalog mapping backing OC's own project:view
-	// action — the BFF gate and OC's AuthzRole agree on who can view a
-	// project instead of the BFF allowing anyone through and OC silently
-	// narrowing it. Exact-match ae:requirement-view, not an OR with
-	// ae:requirement-update: same call as ae:resource-view/ae:resource-config
-	// below — no role in rolePermissionsCatalog holds ae:requirement-update
-	// without also holding ae:requirement-view (only ae-admin holds either,
-	// and it holds both), so an OR here would narrow nothing a real caller
-	// has, only add a branch nothing exercises. ProjectOverview's whole shell
-	// (ProjectLayout, the track, every section) reads through this one call,
-	// the same surface GetProjectStatus/ListComponents/ListDeployments/
-	// GetComponentOpenapi below now share.
-	"GetProject": {authz.PermissionRequirementView},
-	// The projects grid and the header's project switcher — same exact-match
-	// reasoning as GetProject above.
-	"ListProjects": {authz.PermissionRequirementView},
-	// Endpoints page — reaches OC (ListWorkloadEndpoints -> GET /workloads;
-	// see OcActionCatalog's PermissionRequirementView entry for the
-	// matching workload:view action).
-	"ListOrgEndpoints": {authz.PermissionRequirementView},
-	// The rest of ProjectOverview's own reads (its status poll, its
-	// Components section, a component's Deployments/OpenAPI drill-downs) —
-	// exact-match ae:requirement-view, same as GetProject above, not the
-	// borrowed ae:build/ae:build-view or ae:design-view gates they used
-	// before. GetProjectStatus/ListDeployments reach OC
-	// (ListProjectReleaseBindings -> GET /releasebindings; see
-	// OcActionCatalog's PermissionRequirementView entry for the matching
-	// releasebinding:view action) and ListComponents reaches OC too
-	// (ListComponents -> GET /components; component:view, same entry).
-	// GetComponentOpenapi does not reach OC at all — it reads a git-backed
-	// design.json via the ArtifactStore — so it carries no OC action either
-	// way; it moves here because ProjectOverview and ComponentsList are its
-	// only console callers, both already requirement-view-gated for
-	// everything else on the page.
+	// The project shell and everything that hangs off it: the projects grid,
+	// the header switcher, the overview's own reads, and a component's
+	// drill-downs.
+	"GetProject":          {authz.PermissionRequirementView},
+	"ListProjects":        {authz.PermissionRequirementView},
+	"ListOrgEndpoints":    {authz.PermissionRequirementView},
 	"GetProjectStatus":    {authz.PermissionRequirementView},
 	"ListComponents":      {authz.PermissionRequirementView},
 	"ListDeployments":     {authz.PermissionRequirementView},
 	"GetComponentOpenapi": {authz.PermissionRequirementView},
-	// SpecView's version/tag references — git-backed (ArtifactService), no
-	// OC. Same exact-match reasoning as the rows above.
-	"ListProjectTags": {authz.PermissionRequirementView},
-	// Resource-registration form's environment picker — reaches OC
-	// (EnvironmentClient.ListNames -> GET /environments; OcActionCatalog gets
-	// a new environment:view entry under this permission for it). Its only
-	// console caller is RegisterFormPage (the Resources register/edit form),
-	// whose content only renders once its own outer wrapper confirms
-	// ae:resource-config — no path reaches this holding ae:requirement-view
-	// alone, so that permission doesn't belong in the OR (a past over-grant,
-	// caught with the same shared-read reasoning as ListExternalResources).
-	"ListOrgEnvironments": {authz.PermissionResourceConfig},
-	// ProjectOverview's Dependencies section — exact-match ae:resource-view
-	// now, not ae:requirement-view: it's resource data, gated the same as
-	// every other resource read on this page (ListPlatformResourceTypes/
-	// ListExternalResources below), not folded into the page's own
-	// requirement-view shell permission. Reaches OC three ways
-	// (ListWorkloadConsumerDeps/GetResource/GetResourceType — see
-	// OcActionCatalog's PermissionResourceView entry for the matching
-	// workload:view/resource:view/resourcetype:view actions).
-	"ListWorkloadDependencies": {authz.PermissionResourceView},
-	// Read from two console call sites — Project Overview's Dependencies
-	// section and the org Resources catalog page — exact-match
-	// ae:resource-view now, not an OR with ae:resource-config: no role in
-	// rolePermissionsCatalog holds ae:resource-config without also holding
-	// ae:resource-view (only ae-admin holds either, and it holds both), so
-	// dropping the config branch narrows nothing a real caller has today.
-	// ResourcesCatalog's own read (usePlatformResourceTypes) and
-	// RegisterFormPage's edit-mode prefill (useExternalResources, on the
-	// matching entry below) both still assume a config-only holder can list
-	// — degrading gracefully to an empty/unprefilled state rather than
-	// erroring, same as DeploymentsPage's own supporting-lookup pattern —
-	// should a config-without-view role ever get introduced. Reaches OC
-	// (catalog.List -> ClusterResourceType read; see OcActionCatalog's
-	// PermissionResourceView entry).
+	"ListProjectTags":     {authz.PermissionRequirementView},
+
+	// --- Resources (Settings › Resources, and the overview's Dependencies)
+	"ListWorkloadDependencies":  {authz.PermissionResourceView},
 	"ListPlatformResourceTypes": {authz.PermissionResourceView},
+	"ListExternalResources":     {authz.PermissionResourceView},
+	"RegisterExternalResource":  {authz.PermissionResourceConfig},
+	"UpdateExternalResource":    {authz.PermissionResourceConfig},
+	"DeleteExternalResource":    {authz.PermissionResourceConfig},
+	// Config, not view: its only caller is the registration form's environment
+	// picker, and that form renders only for a caller who already holds
+	// ae:resource-config. Nothing reaches it with the view permission alone.
+	"ListOrgEnvironments": {authz.PermissionResourceConfig},
 
-	// Org resource catalog (settings > Resources, register/edit flow) —
-	// exclusively RegisterFormPage/ResourcesCatalog's own mutations, no
-	// other console caller, so these are ae:resource-config only, not an OR
-	// with ae:build (their previous, borrowed gate).
-	"RegisterExternalResource": {authz.PermissionResourceConfig},
-	"UpdateExternalResource":   {authz.PermissionResourceConfig},
-	"DeleteExternalResource":   {authz.PermissionResourceConfig},
-
-	// Build execution (write).
+	// --- Builds & deployments -------------------------------------------
 	"BuildProject":                  {authz.PermissionBuild},
 	"CollectExternalResourceValues": {authz.PermissionBuild},
 	"CancelRun":                     {authz.PermissionBuild},
-	// Discloses a live test-user credential — deliberately requires the
-	// stronger ae:build rather than mirroring the console's current
-	// ae:build/ae:build-view page-level gate (DeploymentsPage), which reads
-	// as an unintentional scoping gap rather than a deliberate design choice.
+	// Triggering a build, not reading one: the pre-build dependency/approval
+	// check is part of starting the build it precedes.
+	"GetBuildPreflight": {authz.PermissionBuild},
+	// Discloses a live test-user credential, so it takes the write permission
+	// rather than the view permission its page is entered on.
 	"RevealTestUserPassword": {authz.PermissionBuild},
 	"RotateTestUserPassword": {authz.PermissionBuild},
 	"DeleteTestUser":         {authz.PermissionBuild},
 
-	// Build/deployment read surfaces. Exact-match ae:build-view, NOT OR'd
-	// with ae:build: a write permission gates mutations (BuildProject,
-	// CancelRun, … above), never page entry on its own — same rule as
-	// ListSkills/GetSkill above and ListFiles/ReadFile below. OC-level
-	// access is unaffected: it's a property of the caller's full permission
-	// set, not which permission gates a given aep-api operation, and both
-	// built-in roles that hold ae:build-view already hold ae:build too
-	// (role_permissions_catalog.go) — this only closes the gap for a
-	// build-only role that was never supposed to see build state anyway.
-	"ListProjectBuilds": {authz.PermissionBuildView},
-	"ListBuildRuns":     {authz.PermissionBuildView},
-	"ListTasks":         {authz.PermissionBuildView},
-	"GetTask":           {authz.PermissionBuildView},
-	"ListCycleBuilds":   {authz.PermissionBuildView},
-	// Read from two console call sites — DeploymentsPage and the org
-	// Resources catalog page — exact-match ae:resource-view now, not an OR
-	// with ae:resource-config: no role holds the config permission without
-	// the view one (see ListPlatformResourceTypes above for the same
-	// reasoning), so this narrows nothing a real caller has today.
-	"ListExternalResources": {authz.PermissionResourceView},
-	"GetProjectRoles":       {authz.PermissionBuildView},
-	// Gates the pre-build dependency/approval check (SpecView's "Build"
-	// action) — write-only, not the view permission, since this is part of
-	// triggering a build rather than reading its state.
-	"GetBuildPreflight": {authz.PermissionBuild},
-	// Exact-match ae:build-view, not the OR pair the rows above use — a pure
-	// read, so the view-only permission alone is the correct gate. ae-developer
-	// didn't hold ae:build-view before this change (role_permissions_catalog.go);
-	// it's added there alongside this so the role isn't newly locked out of
-	// build logs it already had access to via ae:build's OR semantics elsewhere.
-	"GetBuildLogs": {authz.PermissionBuildView},
-	// Same read-only reasoning as GetBuildLogs — the live agent-run progress
-	// feed on BuildDetailPage/ValidationPage (RunFeed/RunStory/RunSpine and
-	// useValidationLive all wrap this one stream).
-	"StreamRunProgress": {authz.PermissionBuildView},
-	// Same reasoning again — TaskPage's log viewer, no OC dependency.
-	"StreamTaskLog": {authz.PermissionBuildView},
-	// BuildDetailPage's External Resources panel (ExternalResources.tsx) —
-	// unlike the three rows above, this DOES reach OC (GetBinding reads a
-	// ResourceReleaseBinding), so it needs a matching OcActionCatalog entry
-	// (see PermissionBuildView there) for resourcereleasebinding:view.
+	"ListProjectBuilds":             {authz.PermissionBuildView},
+	"ListBuildRuns":                 {authz.PermissionBuildView},
+	"ListTasks":                     {authz.PermissionBuildView},
+	"GetTask":                       {authz.PermissionBuildView},
+	"ListCycleBuilds":               {authz.PermissionBuildView},
+	"GetProjectRoles":               {authz.PermissionBuildView},
+	"GetBuildLogs":                  {authz.PermissionBuildView},
+	"StreamRunProgress":             {authz.PermissionBuildView},
+	"StreamTaskLog":                 {authz.PermissionBuildView},
 	"GetProjectDependencyReadiness": {authz.PermissionBuildView},
 
-	// Design/spec workspace.
+	// --- Design & spec ---------------------------------------------------
 	"ListFiles": {authz.PermissionDesignView},
 	"ReadFile":  {authz.PermissionDesignView},
-	// Reachable from both the design workspace and the build/deployment
-	// pages (DeploymentsPage also loads it) — a genuine cross-category OR
-	// (either page's own view permission satisfies it), unlike the
-	// same-category write/view ORs eliminated elsewhere in this file:
-	// ae:build (the write permission) is deliberately absent here, since
-	// this is a read and neither page's own entry gate accepts its write
-	// permission alone either.
+	// Rule 3's cross-feature OR: the dependency list is read from the design
+	// workspace AND from the deployments page. ae:build is deliberately absent
+	// — this is a read, and neither page is entered on a write permission.
 	"ListDesignDependencies": {authz.PermissionDesignView, authz.PermissionBuildView},
-	// DependencyView/ProvideInterfaceDialog's two writes into
-	// specs/design/dependencies/<name>/ — committing a contract, or signing
-	// off on the one the design agent wrote. Same reasoning as GenerateDesign:
-	// exact-match ae:design, not OR'd with ae:design-view — a caller who can
-	// only VIEW the design tree does not get to commit into it or accept an
-	// assumption on the project's behalf just because the page renders.
+	// Committing a contract, or accepting an assumption on the project's
+	// behalf. Viewing the design tree does not confer either.
 	"ProvideDependencyContract":  {authz.PermissionDesign},
 	"AcceptDependencyAssumption": {authz.PermissionDesign},
 
-	// services/collab (the spec editor's Yjs collaboration server) calls all
-	// three of these server-to-server, forwarding the connecting console
-	// user's own JWT — so this gate sees exactly the same claims it would for
-	// a direct console call, and denies/allows on the same basis.
+	// services/collab calls these three server-to-server, forwarding the
+	// connecting user's own JWT — so the gate sees the same claims it would
+	// for a direct console call.
 	//
-	// ValidateCollabAccess (room join, every joiner) and ReadFileBundle (the
-	// room's seed read, first joiner only) both need ae:design-view: without
-	// it on ValidateCollabAccess specifically, a caller could join an
-	// already-warm room and read its full live document via Yjs sync without
-	// ReadFileBundle ever running for them (ReadFileBundle only fires once,
-	// for whoever seeds the room) — so the join-time check is the one that
-	// actually closes the read gap, not the seed-read check alone.
+	// The join check is the one that closes the read: ReadFileBundle seeds a
+	// room only for its FIRST joiner, so without a check on the join itself a
+	// caller could enter an already-warm room and read the whole live document
+	// over Yjs without the seed read ever running for them.
 	//
-	// ApplyFiles (the room's git-commit flush) needs the stronger ae:design,
-	// exact-match like ProvideDependencyContract/AcceptDependencyAssumption
-	// above and GenerateDesign below — viewing the live room must not imply
-	// permission to commit into it. Deliberately NOT OR'd with
-	// ae:resource-config the way CreateTurn/StreamTurn's shared chat panel
-	// is: the spec collab room is design-track content, and resource
-	// registration (a separate feature/route) has no legitimate reason to
-	// write here.
+	// Being admitted to a room is not permission to change it, and this gate
+	// cannot enforce that alone — it sees the join, never the Yjs updates that
+	// follow. validate-collab-access also answers canWrite, and the collab
+	// server marks a viewer's socket read-only on the strength of it.
 	"ValidateCollabAccess": {authz.PermissionDesignView},
 	"ReadFileBundle":       {authz.PermissionDesignView},
 	"ApplyFiles":           {authz.PermissionDesign},
 
-	// Org usage/spend (settings > Usage page). New permission, no existing
-	// analog — this is an org-financial view, not a project one.
-	"ListProjectUsage": {authz.PermissionUsageView},
-
-	// Alerts/RCA reports: header notification bell (global) + the Alerts list
-	// and detail pages. New permission — no existing alert/incident concept.
-	"ListRcaAgentReports": {authz.PermissionObservabilityView},
-	"GetRcaAgentReport":   {authz.PermissionObservabilityView},
-
-	// AI chat panel (AgentChatPanel) — two distinct console callers share
-	// this same component and these same seven operations, each reached
-	// through its own permission rather than a cross-project ae:ai-chat
-	// permission (retired): AppLayout mounts it for the project spec chat
-	// (gated on ae:design — the panel is a write surface, so ae:design-view
-	// alone does not satisfy it there, same read/write split as every other
-	// permission pair in this console) and RegisterFormPage mounts it for
-	// the marketplace registration-form assistant, pointed at a separate
-	// MARKETPLACE_CHAT_PROJECT pseudo-project (gated on ae:resource-config,
-	// its own page's existing permission — nothing to do with design). All
-	// seven gate on the same OR pair (no read/write split within either
-	// context) since the panel is one feature either way.
+	// --- AI chat panel ---------------------------------------------------
+	// Rule 3 again: one panel, two mount points — the project spec chat
+	// (ae:design) and the marketplace registration assistant, which runs
+	// against its own pseudo-project and carries its page's ae:resource-config.
+	// No read/write split within either, since the panel is one feature both
+	// ways.
 	"CreateTurn":         {authz.PermissionDesign, authz.PermissionResourceConfig},
 	"GetActiveTurn":      {authz.PermissionDesign, authz.PermissionResourceConfig},
 	"GetConversation":    {authz.PermissionDesign, authz.PermissionResourceConfig},
@@ -289,104 +164,76 @@ var operationPermissions = map[string][]authz.Permission{
 	"ListConversations":  {authz.PermissionDesign, authz.PermissionResourceConfig},
 	"RotateConversation": {authz.PermissionDesign, authz.PermissionResourceConfig},
 	"StreamTurn":         {authz.PermissionDesign, authz.PermissionResourceConfig},
-	// GenerateDesign is NOT part of the OR above, deliberately: it's the one
-	// operation whose entire content is fixed server-side (the `/design`
-	// command — see spec.StartDesignTurn), so it's the one place "may this
-	// caller trigger design generation" can be asked exactly, without the
-	// marketplace assistant's ae:resource-config riding along. Exact-match
-	// ae:design — no other permission satisfies it.
+	// Outside that OR deliberately: its content is fixed server-side (the
+	// `/design` command), so it is the one operation where "may this caller
+	// generate a design" can be asked exactly, without the marketplace
+	// assistant's permission riding along.
 	"GenerateDesign": {authz.PermissionDesign},
+
+	// --- Org usage & observability ---------------------------------------
+	"ListProjectUsage":    {authz.PermissionUsageView},
+	"ListRcaAgentReports": {authz.PermissionObservabilityView},
+	"GetRcaAgentReport":   {authz.PermissionObservabilityView},
 }
 
-// permissionGateCarveOuts enumerates operations that run WITHOUT a specific
-// AE permission requirement, grouped below by reason. Every operationID not
-// in operationPermissions must appear here — TestPermissionGateCoverage pins
-// that — so leaving a new operation unclassified fails the build rather than
-// shipping silently ungated (still requires a valid JWT + tenant binding from
-// tenantGate).
+// permissionGateCarveOuts are the operations that run without an AE permission
+// requirement. They still require a valid JWT and a bound tenant from
+// tenantGate; what they skip is the per-operation check.
+//
+// An operation belongs here for one of two reasons, and the comment on each
+// group says which. Nothing lands here by default: an operation absent from
+// both maps fails TestPermissionGateCoverage.
 var permissionGateCarveOuts = map[string]struct{}{
-	// --- Deliberate carve-outs: correct as-is, not gaps ------------------
-	// Every entry here is confirmed console-reachable (verified against
-	// apps/console/src, not assumed from the original comment framing).
-
-	// Pre-org-selection / bootstrap, mirrors tenantGateCarveOuts.
+	// Runs before the caller's permissions can be known or provisioned.
+	// ListOrganizations precedes org selection; GetConfigStatus answers the
+	// onboarding gate's two booleans, carrying none of GetConfig's identity or
+	// key detail; EnsureAuthzRole provisions the org's OC role, which cannot
+	// require a grant that provisioning is what establishes.
 	"ListOrganizations": {},
+	"GetConfigStatus":   {},
+	"EnsureAuthzRole":   {},
 
-	// The AE->OC RBAC bridge's own onboarding surface (internal/authz):
-	// gating this behind an AE permission would be circular, since the
-	// org's AuthzRole may not exist yet when it runs. Console caller:
-	// features/settings/api/queries.ts's GET /authz/ensure.
-	"EnsureAuthzRole": {},
-
-	// UpdateConfig is gated by field-aware logic in permissionGate
-	// (updateConfigPermissions), checked BEFORE this carve-out map is even
-	// consulted. This entry exists only so TestPermissionGateCoverage
-	// doesn't also demand a flat operationPermissions row for it. Console
-	// caller: queries.ts's PATCH /config (settings' credential/model cards).
+	// Gated by field-aware logic in permissionGate rather than a flat row —
+	// its permissions depend on which sections the patch touches. This entry
+	// exists so the coverage test does not also demand a row above; it is not
+	// a bypass. See updateConfigPermissions.
 	"UpdateConfig": {},
 
-	// GetConfigStatus is the permission-free sibling GetConfig itself no
-	// longer is (see operationPermissions below): just the two "is it
-	// connected" booleans, with none of GetConfig's identity/key detail —
-	// safe at app bootstrap (OnboardingGate), before a caller's AE
-	// permissions are necessarily provisioned. Console caller: queries.ts's
-	// GET /config/status.
-	"GetConfigStatus": {},
-
-	// --- Has a real caller, just not the console -------------------------
-	// Each of these is genuinely exercised in production — verified against
-	// apps/console/src, services/aep-mcp-server, services/collab,
-	// services/agents, tools/aectl, and internal Go call graphs — but the
-	// caller is a server-to-server or agent-tool path, not a console
-	// component. A permission decision is deferred pending a design for
-	// what "authorized" means for a non-console caller (e.g. should the
-	// forwarded user JWT's own ae:* permissions gate these, or is a
-	// different model needed for agent/S2S callers).
-	//
-	// CreateIssue, ListIssues, PromoteTaskFromIssue: services/aep-mcp-server's
-	// ae_create_issue / ae_search_related_issues / ae_dispatch_coding_agent
-	// tools (used by the SRE agent), forwarding the caller's bearer as-is.
+	// Reached only by a non-console caller: the SRE agent's MCP tools, which
+	// forward their caller's bearer as-is. What authorization means for an
+	// agent rather than a person is undecided, and guessing a permission here
+	// would break a working flow on a role that merely lacks the guess.
 	"CreateIssue":          {},
 	"ListIssues":           {},
 	"PromoteTaskFromIssue": {},
 
-	// --- Zero callers anywhere: fully dead, not just console-unused ------
-	// Verified with the same rigor as the group above — checked every
-	// caller category and found NONE: no console component, no MCP tool
-	// (aep-mcp-server or aep-api's own dependency-discovery server), no
-	// services/collab or services/agents caller, no webhook handler, no
-	// aectl reference, and — one level below the HTTP handler — no other
-	// internal Go caller of the service method it calls either. These are
-	// either built ahead of a frontend feature that hasn't shipped, or
-	// genuinely orphaned; a permission decision (or removal) is deferred
-	// until a real caller exists.
-	// TODO(authz): assign a permission, wire a real caller, or remove.
+	// No caller anywhere — console, MCP, collab, agents, aectl, or another Go
+	// caller of the same service method. Each is either built ahead of a
+	// feature that has not shipped or genuinely orphaned, and a permission
+	// invented for a surface that does not exist would be a guess about a
+	// design nobody has done.
 	//
-	// StartGitProviderConnect serves the GitHub App OAuth connect-session
-	// flow. The console connects with a PAT instead (PATCH /config), so
-	// nothing calls this — but GitProviderWrite schema-rejects mode=app
-	// precisely to point App-mode callers here, so the route stays.
-	"StartGitProviderConnect": {},
+	// StartGitProviderConnect is the one with a known future: GitProviderWrite
+	// schema-rejects mode=app precisely to point App-mode callers at it.
+	// GetDependencyStatus's route is unused, but the service method behind it
+	// runs constantly via GetBuildPreflight's readiness check.
+	// TODO(authz): assign a permission, wire a caller, or remove.
+	"StartGitProviderConnect":   {},
 	"ProvisionPlatformResource": {},
 	"RequestOrgServiceAccess":   {},
-	// GetDependencyStatus's HTTP route has no direct caller, but its
-	// underlying service method (provisioning.Service.Status) is reused
-	// internally by GetBuildPreflight's dependency-readiness check
-	// (internal/app/build_adapters.go's buildProvisionStatus.Ready) — the
-	// logic runs constantly, just never through this route.
-	"GetDependencyStatus":   {},
-	"ListAccessRequests":    {},
-	"CreateRcaAgentReport":  {},
-	"TriggerBuild":          {},
-	"RevalidateBuild":       {},
-	"UpdateComponentConfig": {},
-	"GetComponent":          {},
-	"GetComponentConfig":    {},
-	"ListBuilds":            {},
-	"GetSpecCollabSession":  {},
-	"ListActivity":          {},
-	"StreamActivity":        {},
-	"StreamBuildProgress":   {},
+	"GetDependencyStatus":       {},
+	"ListAccessRequests":        {},
+	"CreateRcaAgentReport":      {},
+	"TriggerBuild":              {},
+	"RevalidateBuild":           {},
+	"UpdateComponentConfig":     {},
+	"GetComponent":              {},
+	"GetComponentConfig":        {},
+	"ListBuilds":                {},
+	"GetSpecCollabSession":      {},
+	"ListActivity":              {},
+	"StreamActivity":            {},
+	"StreamBuildProgress":       {},
 }
 
 // permissionGate is the deny-by-default AE-permission gate, applied to every
