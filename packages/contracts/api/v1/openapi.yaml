@@ -172,56 +172,6 @@ paths:
       summary: Disconnect the git provider (cascade) for the org
       tags:
       - Org Config
-  /config/idp/client-secret:
-    post:
-      operationId: rotate-idp-client-secret
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ClientSecretOutputBody'
-          description: OK
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Error
-      security:
-      - userJWT: []
-      summary: Rotate the IDP publisher client secret (returned once)
-      tags:
-      - Org Config
-  /config/idp/discovery:
-    get:
-      operationId: discover-idp
-      parameters:
-      - description: OIDC issuer URL to fetch the discovery document for
-        explode: false
-        in: query
-        name: issuer
-        schema:
-          description: OIDC issuer URL to fetch the discovery document for
-          type: string
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DiscoverOutputBody'
-          description: OK
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Error
-      security:
-      - userJWT: []
-      summary: Discover an OIDC issuer's metadata
-      tags:
-      - Org Config
   /config/status:
     get:
       operationId: get-config-status
@@ -4042,14 +3992,6 @@ components:
       - runtime
       - model
       type: object
-    ClientSecretOutputBody:
-      additionalProperties: false
-      properties:
-        clientSecret:
-          type: string
-      required:
-      - clientSecret
-      type: object
     CollabSessionOutputBody:
       additionalProperties: false
       properties:
@@ -4891,17 +4833,6 @@ components:
           type: string
       required:
       - status
-      type: object
-    DiscoverOutputBody:
-      additionalProperties: false
-      properties:
-        issuer:
-          type: string
-        jwksUrl:
-          type: string
-      required:
-      - issuer
-      - jwksUrl
       type: object
     EnvVar:
       # Hand-written in models/ (the gorm-persisted EnvVarSlice embeds it);

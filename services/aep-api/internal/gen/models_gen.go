@@ -1505,11 +1505,6 @@ type BuildSummaryStatus string
 // BuildSummaryWaitingReason Why an in-progress version is waiting rather than moving. Empty for the ordinary between-cycles park, which needs no explanation. `external-values` is the deploy gate — the run is built and ready to deploy, and every remaining blocker is a value only a human can supply. It is carried here so a ledger row can say the version is waiting on the reader instead of reading as a run an agent is still working; the dependency NAMES stay on MilestoneRunView, where the run read that has them is already being made.
 type BuildSummaryWaitingReason string
 
-// ClientSecretOutputBody defines model for ClientSecretOutputBody.
-type ClientSecretOutputBody struct {
-	ClientSecret string `json:"clientSecret"`
-}
-
 // CodingAgentModel The model an organization's coding runs bill to.
 //
 // Narrower than the list any runtime can serve, and narrow for one reason: the platform stamps a run's cost from a per-model rate table, and that stamp is ALL-OR-NOTHING across a cycle's capture — one model with no rate blanks the cost of the whole cycle, not just its own share. So a model is offered here only once the platform can price it. Adding one is a rate row and a contract change together, never one without the other.
@@ -1813,12 +1808,6 @@ type DeploymentList struct {
 // DisconnectOutputBody defines model for DisconnectOutputBody.
 type DisconnectOutputBody struct {
 	Status string `json:"status"`
-}
-
-// DiscoverOutputBody defines model for DiscoverOutputBody.
-type DiscoverOutputBody struct {
-	Issuer  string `json:"issuer"`
-	JwksURL string `json:"jwksUrl"`
 }
 
 // EnvValueCellDTO One org-held env cell. Secrets never include value.
@@ -3382,12 +3371,6 @@ type ValidateCollabAccessParams struct {
 type DisconnectGitProviderParams struct {
 	// Uninstall App-mode only: when false, leave the install on GitHub for later re-adoption (defaults true)
 	Uninstall *bool `form:"uninstall,omitempty" json:"uninstall,omitempty"`
-}
-
-// DiscoverIdpParams defines parameters for DiscoverIdp.
-type DiscoverIdpParams struct {
-	// Issuer OIDC issuer URL to fetch the discovery document for
-	Issuer string `form:"issuer,omitempty" json:"issuer,omitempty"`
 }
 
 // ListProjectsParams defines parameters for ListProjects.

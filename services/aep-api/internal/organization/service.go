@@ -403,11 +403,24 @@ func (s *Service) DisconnectGitProvider(ctx context.Context, org string, uninsta
 }
 
 // RotateIDPClientSecret mints a fresh publisher client secret (returned once).
+//
+// No route reaches this. The org's publisher credential is provisioned and
+// re-provisioned by the platform itself (idpService.EnsureOrgPublisher, called
+// from the deploy path); rotating it on demand is an operator action with no
+// designed surface.
+//
+//deadcode:keep unwired infra — operator-facing publisher-secret rotation, pending its surface.
 func (s *Service) RotateIDPClientSecret(ctx context.Context, org, actor string) (string, error) {
 	return s.idpSvc.RegenerateClientSecret(ctx, org, actor)
 }
 
 // DiscoverIDP resolves an OIDC issuer's discovery document.
+//
+// No route reaches this. It exists for the BYO-IDP configuration flow — probing
+// an issuer to fill in its jwksUrl before the profile is written — which has no
+// console surface today; the org's IDP profile is platform-written.
+//
+//deadcode:keep unwired infra — BYO-IDP issuer probing, pending its configuration surface.
 func (s *Service) DiscoverIDP(ctx context.Context, issuer string) (issuerOut, jwksURL string, err error) {
 	md, err := oidc.DiscoverFromIssuer(ctx, issuer)
 	if err != nil {

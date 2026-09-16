@@ -1094,7 +1094,7 @@ func normalizeTimes(body string) string {
 // configOpsBlock returns just the lines belonging to path blocks whose key
 // starts with "/config", so the additionalProperties check can't false-positive
 // on a legacy map-bodied op under a different path. Path headers are 2-space
-// indented under `paths:` (e.g. "  /config:", "  /config/idp/discovery:").
+// indented under `paths:` (e.g. "  /config:", "  /config/status:").
 func configOpsBlock(spec string) string {
 	var out strings.Builder
 	inConfig := false

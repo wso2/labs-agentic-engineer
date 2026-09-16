@@ -362,16 +362,11 @@ var permissionGateCarveOuts = map[string]struct{}{
 	// until a real caller exists.
 	// TODO(authz): assign a permission, wire a real caller, or remove.
 	//
-	// StartGitProviderConnect/RotateIdpClientSecret/DiscoverIdp were
-	// originally filed as a deliberate "runs before permissions exist"
-	// carve-out (by analogy with EnsureAuthzRole), but that was never
-	// actually verified — the console's GitHub connection uses the PAT flow
-	// (PATCH /config) exclusively, not this OAuth-App connect-session flow,
-	// and no IdP-related UI exists in the console at all. Confirmed no
-	// caller anywhere (console, MCP, collab, agents, aectl, internal Go).
+	// StartGitProviderConnect serves the GitHub App OAuth connect-session
+	// flow. The console connects with a PAT instead (PATCH /config), so
+	// nothing calls this — but GitProviderWrite schema-rejects mode=app
+	// precisely to point App-mode callers here, so the route stays.
 	"StartGitProviderConnect": {},
-	"RotateIdpClientSecret":   {},
-	"DiscoverIdp":             {},
 	"ProvisionPlatformResource": {},
 	"RequestOrgServiceAccess":   {},
 	// GetDependencyStatus's HTTP route has no direct caller, but its
