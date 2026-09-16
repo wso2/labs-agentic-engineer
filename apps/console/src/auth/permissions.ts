@@ -41,7 +41,7 @@ export type Permission =
 // Runtime twin of the Permission union — TS types don't exist at runtime, so
 // deriving a Set from the access token's scope claim (AuthGuard) needs an
 // actual array to filter against. Keep in lockstep with the union above.
-const ALL_PERMISSIONS: readonly Permission[] = [
+export const ALL_PERMISSIONS: readonly Permission[] = [
   "ae:skill-config",
   "ae:skill-view",
   "ae:model-config",
@@ -76,9 +76,16 @@ export function useHasPermission(permission: Permission): boolean {
   return useSession().permissions.has(permission);
 }
 
-// For a "-view" permission that's a strictly weaker sibling of an editing one
-// (ae:build-view alongside ae:build): holding the editing permission always
-// satisfies the view check too, so callers never need to grant both.
+// True when the caller holds ANY of the listed permissions.
+//
+// For surfaces genuinely reachable from two different features, each with its
+// own permission — Settings' Credentials panel, which either ae:github-config
+// or ae:model-config admits you to, since each card is separately redacted by
+// the BFF. It is NOT the way to pair a write permission with its view-only
+// sibling: entry to a page is gated on the view permission exactly, so that a
+// role holding only the write half is not admitted to a surface nobody
+// intended it to see. Mirrors the backend's operationPermissions, which draws
+// the same line.
 export function useHasAnyPermission(permissions: Permission[]): boolean {
   const held = useSession().permissions;
   return permissions.some((permission) => held.has(permission));

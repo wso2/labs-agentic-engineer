@@ -16,6 +16,8 @@
  * under the License.
  */
 
+import { ALL_PERMISSIONS } from "./permissions";
+
 // The mock-auth identity for default dev (VITE_API_MODE=mock): a fixed
 // user and org, no Thunder required. The org matches the collab mock
 // BFF's default so spec rooms resolve the same way in both places.
@@ -50,9 +52,12 @@ export const MOCK_ORG = "acme";
 
 // Independent of `aep:mock:user` above — permissions are data, not identity,
 // so switching teammates never changes what the mock session can do. Absent
-// key => the default grant (mirrors the real-mode stub in AuthGuard.tsx);
-// present-but-empty => an explicit "no permissions" override, to make the
-// denied state demoable: `sessionStorage.setItem('aep:mock:permissions', '')`.
+// key => every permission; present-but-empty => an explicit "no permissions"
+// override, and any comma-separated subset works in between, which is how a
+// restricted surface is demoed without a real Thunder role:
+//
+//   sessionStorage.setItem('aep:mock:permissions', '')                 // denied
+//   sessionStorage.setItem('aep:mock:permissions', 'ae:design-view')   // read-only spec
 function mockPermissionsOverride(): Set<string> | null {
   try {
     const raw =
@@ -70,11 +75,14 @@ function mockPermissionsOverride(): Set<string> | null {
   }
 }
 
+// Every permission by default. Mock mode exists to develop the console without
+// a BFF, so it must not hide surfaces: a partial grant reads as a broken build
+// rather than as a permission demo, and view permissions are exact-matched —
+// holding ae:build does not admit you to a page gated on ae:build-view — so
+// any subset silently locks pages that have nothing to do with what is being
+// worked on. Use the override above to see a restricted state on purpose.
 export function mockPermissions(): Set<string> {
-  return (
-    mockPermissionsOverride() ??
-    new Set(["ae:skill-config", "ae:requirement-update", "ae:design-view", "ae:build"])
-  );
+  return mockPermissionsOverride() ?? new Set<string>(ALL_PERMISSIONS);
 }
 
 // JWT-shaped but unsigned — enough for the collab mock BFF, which decodes
