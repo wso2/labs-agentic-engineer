@@ -108,9 +108,16 @@ eval-ui:
 eval-bal:
 	$(PNPM) --filter @aep/ballerina-evals eval $(if $(ARGS),-- $(ARGS),)
 
+# GOTOOLCHAIN is forced when RUNNING golangci-lint, not just when installing it
+# (`tools`, below). The binary embeds the go/types version it was built with,
+# but resolves the standard library through whichever `go` is on PATH — so a
+# contributor whose Go is newer than the project's directive gets the linter
+# type-checking a stdlib it cannot parse, and every package fails with spurious
+# `(typecheck)` errors (or, under concurrency, a goroutine dump). CI never sees
+# it because setup-go installs only the pinned version.
 lint:
 	$(TURBO) run lint
-	@rc=0; for d in $(GO_MODULE_DIRS); do echo ">> golangci-lint $$d"; ( cd "$$d" && $(GOLANGCI) run ./... ) || rc=1; done; exit $$rc
+	@rc=0; for d in $(GO_MODULE_DIRS); do echo ">> golangci-lint $$d"; ( cd "$$d" && GOTOOLCHAIN=$(GO_TOOLCHAIN) $(GOLANGCI) run ./... ) || rc=1; done; exit $$rc
 
 typecheck: gen
 	$(TURBO) run typecheck
