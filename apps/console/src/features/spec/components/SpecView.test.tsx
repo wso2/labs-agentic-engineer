@@ -113,6 +113,7 @@ beforeEach(() => {
   mockSpecAgent = "";
   mockSpecFlow = "";
   mockSearch.current = {};
+  sessionPermissions.current = new Set(["ae:design-view", "ae:design", "ae:build"]);
 });
 
 // --- CellDiagramPanel: its own behavior is covered by
@@ -122,10 +123,17 @@ vi.mock("./CellDiagramPanel", () => ({
   CellDiagramPanel: () => <div data-testid="cell-diagram-panel" />,
 }));
 
+// Every existing test in this file assumes the design view, design-generation,
+// AND build are otherwise reachable — only the dedicated "no permission" tests
+// flip this.
+const sessionPermissions = vi.hoisted(() => ({
+  current: new Set(["ae:design-view", "ae:design", "ae:build"]),
+}));
 vi.mock("../../../auth/SessionContext", () => ({
   useSession: () => ({
     user: { name: "Test User", email: "test@example.com" },
     orgHandle: "acme",
+    permissions: sessionPermissions.current,
     signOut: vi.fn(),
   }),
 }));
@@ -451,6 +459,44 @@ describe("SpecView while the kickoff is still writing", () => {
       screen.queryByText("Agent is working on the requirements document"),
     ).not.toBeInTheDocument();
     expect(screen.getByText("Nothing written yet")).toBeInTheDocument();
+  });
+
+  // A project can be CREATED on ae:requirement-update alone, so a caller
+  // without ae:design can land on a freshly created project whose kickoff
+  // already 403'd once. Retry would just 403 again; the empty state should
+  // say why instead of inviting it.
+  it("explains the permission gap instead of offering a dead-end Retry", () => {
+    sessionPermissions.current = new Set(["ae:design-view"]);
+    mockSpecAgent = "";
+    mockSpecFlow = "";
+    empty();
+    render(<SpecView projectName="proj1" />);
+
+    expect(
+      screen.getByText("You don't have permission to generate a spec"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Nothing written yet")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Retry" }),
+    ).not.toBeInTheDocument();
+  });
+
+  // CreateTurn's own backend gate is an OR with ae:resource-config, but that
+  // permission belongs to the unrelated Resources-registration chat — it must
+  // NOT stand down this page's permission empty state. A caller who can view
+  // this page (ae:design-view) and can register resources (ae:resource-config)
+  // but genuinely cannot generate a spec (no ae:design) must still be told so.
+  it("still explains the permission gap when the caller only holds the unrelated ae:resource-config", () => {
+    sessionPermissions.current = new Set(["ae:design-view", "ae:resource-config"]);
+    mockSpecAgent = "";
+    mockSpecFlow = "";
+    empty();
+    render(<SpecView projectName="proj1" />);
+
+    expect(
+      screen.getByText("You don't have permission to generate a spec"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Nothing written yet")).not.toBeInTheDocument();
   });
 
   // A failure has its own banner with its own way out; spinning underneath it
@@ -1631,6 +1677,22 @@ describe("SpecView while the agent is waiting on answers", () => {
       screen.getByRole("button", { name: /Generate design/ }),
     ).toBeDisabled();
   });
+
+  // Generate design's own gate is exact-match ae:design, not the
+  // ae:design-view that gets a caller onto this page at all — the button
+  // triggers agent work (generate-design), so the weaker view permission
+  // that renders the page doesn't also unlock it.
+  it("stands Generate design down without ae:design, with an explanatory tooltip, even though the page itself is reachable", async () => {
+    sessionPermissions.current = new Set(["ae:design-view", "ae:build"]);
+    render(<SpecView projectName="proj1" />);
+
+    const button = screen.getByRole("button", { name: /Generate design/ });
+    expect(button).toBeDisabled();
+    fireEvent.mouseOver(button.closest("span") ?? button);
+    expect(
+      await screen.findByText("You don't have permission to generate the design."),
+    ).toBeInTheDocument();
+  });
 });
 
 // Designing against the agent's own guesses is ordinary use, not a mistake —
@@ -1922,6 +1984,33 @@ describe("SpecView validation criteria explanation", () => {
     expect(screen.getByText("b")).toBeInTheDocument();
     expect(screen.queryByText("AC-001-a")).not.toBeInTheDocument();
     expect(screen.queryByText("REQ-001")).not.toBeInTheDocument();
+  });
+});
+
+describe("SpecView — permission gate", () => {
+  it("blocks the whole page for a user lacking ae:design-view, firing none of the spec/collab hooks", () => {
+    sessionPermissions.current = new Set();
+    render(<SpecView projectName="proj1" />);
+
+    expect(
+      screen.getByText("You don't have access to this project's design"),
+    ).toBeInTheDocument();
+    // Nothing from the real page renders — not a tab, not a file, not the
+    // Build button — confirming this is a full replacement, not an overlay.
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    expect(screen.queryByText("Build")).not.toBeInTheDocument();
+  });
+
+  it("navigates to the project overview from the restricted page", () => {
+    sessionPermissions.current = new Set();
+    render(<SpecView projectName="proj1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Back to project overview" }));
+
+    expect(mockNavigate).toHaveBeenCalledWith({
+      to: "/projects/$projectName",
+      params: { projectName: "proj1" },
+    });
   });
 });
 

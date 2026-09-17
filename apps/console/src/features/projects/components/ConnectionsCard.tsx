@@ -23,8 +23,10 @@ import {
   Card,
   CardContent,
   Stack,
+  Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
+import { useHasPermission } from "../../../auth/permissions";
 import type { ConnectionRow } from "../lib/promotion";
 import { AccentPill } from "./AccentPill";
 
@@ -79,6 +81,7 @@ export function ConnectionsCard({
   catalogError?: { message: string; retry: () => void };
   onConfigure: (row: ConnectionRow) => void;
 }) {
+  const hasBuild = useHasPermission("ae:build");
   return (
     <Card variant="outlined">
       <CardContent>
@@ -115,12 +118,23 @@ export function ConnectionsCard({
                     // holds the connection name; the button's accessible name
                     // must too, or every row reads "Configure" to a screen
                     // reader (#401 review).
-                    <AccentPill
-                      aria-label={`Configure ${row.name}`}
-                      onClick={() => onConfigure(row)}
+                    <Tooltip
+                      title={
+                        hasBuild
+                          ? ""
+                          : "You don't have permission to configure connections."
+                      }
                     >
-                      Configure
-                    </AccentPill>
+                      <span>
+                        <AccentPill
+                          aria-label={`Configure ${row.name}`}
+                          onClick={() => onConfigure(row)}
+                          disabled={!hasBuild}
+                        >
+                          Configure
+                        </AccentPill>
+                      </span>
+                    </Tooltip>
                   ) : row.provisioned ? (
                     <Typography variant="caption" color="success.main">
                       provisioned

@@ -38,8 +38,10 @@ import { Plus, Trash2 } from "@wso2/oxygen-ui-icons-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import type { AskQuestionInput } from "@aep/agent-stream";
 import { REGISTER_EXTERNAL_RESOURCE_COMMAND } from "@aep/contracts/commands";
+import { useHasPermission } from "../../../auth/permissions";
 import { useSession } from "../../../auth/SessionContext";
 import { EmptyState } from "../../../components/EmptyState";
+import { NoPermissionIllustration } from "../../../components/NoPermissionIllustration";
 import { PageHeader } from "../../../components/PageHeader";
 import type { components } from "../../../generated/aep-api";
 import {
@@ -145,7 +147,31 @@ function fieldErr(message: string | undefined): { error: true; helperText: strin
   return message ? { error: true, helperText: message } : {};
 }
 
-export function RegisterFormPage({
+// This form exists to mutate the resource catalog (register or edit), so it
+// needs ae:resource-config specifically — checked in a thin wrapper, before
+// any of the form's own hooks (several with side effects: chat-conversation
+// rotation, draft-seeding), so a denied caller's render never touches them.
+export function RegisterFormPage(props: { prompt?: string; name?: string }) {
+  const hasResourceConfig = useHasPermission("ae:resource-config");
+  if (!hasResourceConfig) {
+    return (
+      <PageContent>
+        <PageHeader
+          title="Register External resource"
+          backTo={{ link: <Link to="/resources" />, label: "Back to Resources" }}
+        />
+        <EmptyState
+          icon={<NoPermissionIllustration size={120} />}
+          title="No resources access"
+          description="You don't have permission to register or edit resources."
+        />
+      </PageContent>
+    );
+  }
+  return <RegisterFormContent {...props} />;
+}
+
+function RegisterFormContent({
   prompt = "",
   name: editName,
 }: {

@@ -38,6 +38,9 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { Eye, EyeOff, GitHub, Lightbulb } from "@wso2/oxygen-ui-icons-react";
+import { useHasPermission } from "../../../auth/permissions";
+import { EmptyState } from "../../../components/EmptyState";
+import { NoPermissionIllustration } from "../../../components/NoPermissionIllustration";
 import type { components } from "../../../generated/aep-api";
 import { useConnectGitHubPat, useDisconnectGitProvider } from "../api/queries";
 import { GitHubPatScopeGuide } from "./GitHubPatScopeGuide";
@@ -49,6 +52,7 @@ export function GitHubCredentialCard({
 }: {
   gitProvider: GitProviderProjection | null;
 }) {
+  const hasGitHubConfig = useHasPermission("ae:github-config");
   const [pat, setPat] = useState("");
   // Pre-fill the org when already connected so a token rotation is PAT-only;
   // the field is required (below), so an empty org can't reach the BE.
@@ -61,6 +65,28 @@ export function GitHubCredentialCard({
   const disconnect = useDisconnectGitProvider();
 
   const connected = gitProvider !== null;
+
+  // Without ae:github-config there is nothing here to show — not even
+  // whether GitHub is connected, since that's itself org-sensitive
+  // information.
+  if (!hasGitHubConfig) {
+    return (
+      <Card variant="outlined">
+        <CardContent sx={{ p: 3 }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mb: 2 }}>
+            <GitHub size={22} />
+            <Typography variant="h6">GitHub</Typography>
+          </Box>
+          <Divider sx={{ mb: 3 }} />
+          <EmptyState
+            icon={<NoPermissionIllustration size={72} />}
+            description="You don't have permission to view GitHub settings."
+            compact
+          />
+        </CardContent>
+      </Card>
+    );
+  }
 
   const submit = () => {
     const org = githubLogin.trim();

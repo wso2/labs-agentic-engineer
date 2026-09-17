@@ -27,13 +27,16 @@ import {
 } from "@wso2/oxygen-ui";
 import { Radio } from "@wso2/oxygen-ui-icons-react";
 import { useNavigate } from "@tanstack/react-router";
+import { useHasPermission } from "../../../auth/permissions";
 import { EmptyState } from "../../../components/EmptyState";
+import { NoPermissionIllustration } from "../../../components/NoPermissionIllustration";
 import { PageHeader } from "../../../components/PageHeader";
 import { useOrgEndpoints } from "../api/queries";
 
 export function EndpointsPage() {
   const navigate = useNavigate();
-  const { data, isPending, isError, error, refetch } = useOrgEndpoints();
+  const hasRequirementView = useHasPermission("ae:requirement-view");
+  const { data, isPending, isError, error, refetch } = useOrgEndpoints(hasRequirementView);
   const items = data ?? [];
 
   return (
@@ -43,7 +46,18 @@ export function EndpointsPage() {
         subtitle="Marketplace Endpoints other projects offer. Offering a new API happens inside a project."
       />
 
-      {isPending ? (
+      {!hasRequirementView ? (
+        // Checked before the loading/error states below: without
+        // ae:requirement-view there is nothing here to load — the endpoints
+        // query itself never fires (useOrgEndpoints(hasRequirementView)) —
+        // and a direct-URL visit must never flash real endpoint content
+        // before this check runs.
+        <EmptyState
+          icon={<NoPermissionIllustration size={120} />}
+          title="No endpoints access"
+          description="You don't have permission to view endpoints."
+        />
+      ) : isPending ? (
         <Box sx={{ display: "flex", justifyContent: "center", p: 6 }}>
           <CircularProgress aria-label="Loading endpoints" />
         </Box>

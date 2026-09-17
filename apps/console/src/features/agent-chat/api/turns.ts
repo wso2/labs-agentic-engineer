@@ -141,6 +141,38 @@ export async function startCollabTurn(
   return data.turnId;
 }
 
+/**
+ * Start the design-generation turn — the console's "Generate design" button
+ * (SpecView) and its Overview-track counterpart (AppLayout's `?generate=design`
+ * signal). A dedicated BFF operation, not `startCollabTurn` with the literal
+ * `/design` command: create-turn is gated on ae:design OR ae:resource-config
+ * (it also carries the marketplace registration assistant's chat), so routing
+ * design generation through it would authorize the action on a permission
+ * that has nothing to do with design. generate-design takes no body — the
+ * instruction is fixed server-side (spec.Service.StartDesignTurn) — and is
+ * gated on ae:design alone.
+ */
+export async function startDesignTurn(
+  projectName: string,
+  conversationId: string,
+): Promise<string> {
+  const { data, error, response } = await client.POST(
+    "/projects/{projectName}/agents/{conversationId}/design",
+    { params: { path: { projectName, conversationId } } },
+  );
+  if (error || data === undefined) {
+    if (response.status === 409) {
+      // Same pinned TurnConflict shape create-turn's 409 carries (#430).
+      if ((error as { code?: string } | undefined)?.code === "conversation_rotated") {
+        throw new ConversationRotatedError();
+      }
+      throw new Error("An agent turn is already running for this project — wait for it to finish.");
+    }
+    throw new Error(apiErrorMessage(error, "Failed to start the design turn"));
+  }
+  return data.turnId;
+}
+
 export interface ConversationMessageAuthor {
   id: string;
   displayName: string;

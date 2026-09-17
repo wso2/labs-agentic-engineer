@@ -218,3 +218,86 @@ func TestReqComponent_CollabValidate_ReturnsProjectName(t *testing.T) {
 		t.Fatalf("collab-validate: want projectName demo-shop, got %q body=%s", body.ProjectName, rec.Body.String())
 	}
 }
+
+// TestReqComponent_CollabValidate_DeniedWithoutDesignView proves the
+// permission gate — not just the handler's own org/ownership check — refuses
+// a caller who holds no ae:design-view: the gate runs BEFORE the handler, so
+// this 403s even though the room/project would otherwise resolve cleanly
+// (same repos fake as the success test above).
+func TestReqComponent_CollabValidate_DeniedWithoutDesignView(t *testing.T) {
+	t.Parallel()
+	repos := &fakeCollabRepos{
+		GetRepoFunc: func(_ context.Context, orgID, projectID string) (*sourcecontrol.GitRepository, error) {
+			if orgID != "acme" || projectID != "demo-shop" {
+				return nil, nil
+			}
+			return &sourcecontrol.GitRepository{Status: "ready"}, nil
+		},
+	}
+	h := newReqHarness(t, repos)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/collab/validate", nil)
+	key, value := componenttest.ClaimsHeaderWithScope(t, "acme", "openid ae:resource-config")
+	req.Header.Set(key, value)
+	req.Header.Set("X-Room-Id", "spec-acme-demo-shop")
+	rec := httptest.NewRecorder()
+	h.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("collab-validate without ae:design-view: want 403, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestReqComponent_CollabValidate_CanWriteTracksDesignPermission pins the
+// answer the collab server acts on. Admission needs only ae:design-view, so a
+// legitimate joiner can have no right to edit — and nothing downstream can work
+// that out alone: the gate never sees the Yjs updates that follow the join, and
+// the committer sees a token without knowing whose edits it carries. canWrite
+// is the one place the distinction is drawn.
+func TestReqComponent_CollabValidate_CanWriteTracksDesignPermission(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		scope string
+		want  bool
+	}{
+		{"viewer holds only design-view", "openid ae:design-view", false},
+		{"author holds design", "openid ae:design-view ae:design", true},
+		// ae:design alone still admits (the gate ORs nothing here — design-view
+		// is required — so this case cannot reach the handler); the pairing
+		// above is the real role shape, per role_permissions_catalog.
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			repos := &fakeCollabRepos{
+				GetRepoFunc: func(_ context.Context, orgID, projectID string) (*sourcecontrol.GitRepository, error) {
+					if orgID != "acme" || projectID != "demo-shop" {
+						return nil, nil
+					}
+					return &sourcecontrol.GitRepository{Status: "ready"}, nil
+				},
+			}
+			h := newReqHarness(t, repos)
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/collab/validate", nil)
+			key, value := componenttest.ClaimsHeaderWithScope(t, "acme", tc.scope)
+			req.Header.Set(key, value)
+			req.Header.Set("X-Room-Id", "spec-acme-demo-shop")
+			rec := httptest.NewRecorder()
+			h.Handler.ServeHTTP(rec, req)
+
+			if rec.Code != 200 {
+				t.Fatalf("scope %q: want 200, got %d body=%s", tc.scope, rec.Code, rec.Body.String())
+			}
+			var body struct {
+				CanWrite bool `json:"canWrite"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("unmarshal: %v body=%s", err, rec.Body.String())
+			}
+			if body.CanWrite != tc.want {
+				t.Fatalf("scope %q: want canWrite=%v, got %v (body=%s)", tc.scope, tc.want, body.CanWrite, rec.Body.String())
+			}
+		})
+	}
+}

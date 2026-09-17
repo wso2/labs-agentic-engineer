@@ -23,9 +23,10 @@ import {
   Button,
   CircularProgress,
   Stack,
+  Tooltip,
 } from "@wso2/oxygen-ui";
 import { FileText, ScrollText, X } from "@wso2/oxygen-ui-icons-react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { Fragment, useMemo, useState } from "react";
 import {
   parseValidationCriteria,
@@ -37,10 +38,12 @@ import {
   type CriterionTally,
   type ValidationCriteria,
 } from "@aep/ui-validation-view";
+import { useHasPermission } from "../../../auth/permissions";
 import { PageHeader, type PageHeaderStatus } from "../../../components/PageHeader";
 import type { StatusTone } from "../../../components/StatusChip";
 import { EmptyState } from "../../../components/EmptyState";
 import { GitHubRefChip } from "../../../components/GitHubRefChip";
+import { PermissionRestrictedPage } from "../../../components/PermissionRestrictedPage";
 import { SectionCaption } from "../../../components/SectionCaption";
 import { useProjectStatus } from "../../projects/api/queries";
 import { useBuildRuns, useCancelRun } from "../../builds/api/queries";
@@ -181,6 +184,7 @@ export function ValidationPage({
   view: "logs" | undefined;
   onViewChange: (view: "logs" | undefined) => void;
 }) {
+  const navigate = useNavigate();
   const status = useProjectStatus(projectName);
   const deploy = status.data?.deploy;
 
@@ -378,6 +382,19 @@ export function ValidationPage({
     ? runList.find((r) => !isTerminalRun(r.state))
     : undefined;
   const cancel = useCancelRun(projectName, version || undefined);
+  // Exact-match ae:build, matching the BFF's own CancelRun gate
+  // (permission_gate.go) and RunStory's identical button on the Builds
+  // page — same endpoint, same hook, same permission either place this
+  // escape hatch appears.
+  const hasBuild = useHasPermission("ae:build");
+  // The page-level view gate — exact-match ae:build-view, NOT OR'd with
+  // ae:build (a write permission gates mutations, never page entry on its
+  // own), matching the BFF's ListBuildRuns gate (permission_gate.go):
+  // validation lives on the deployment/build surface (this page's own
+  // opening comment), reading list-build-runs plus the criteria/report
+  // Files-API reads that ride the same run data, so it needs the same
+  // permission as the page whose runs it is reporting on.
+  const canViewValidation = useHasPermission("ae:build-view");
   // Cancel is ACCEPTED, not performed: the endpoint answers 202 the moment the
   // signal is queued, and the run turns cancelled only once the supervisor acts
   // and the runs poll observes it. isPending covers the HTTP round trip alone, so
@@ -423,6 +440,23 @@ export function ValidationPage({
   // that run's newest validation cycle is still OPEN, so a repair cycle busy
   // writing code contributes no statuses and the previous report stands.
   const live = useValidationLive(projectName, liveRun?.id, !showLogs);
+
+  // Every hook above must run first — React's rule against conditional hooks
+  // — so the gate sits here, after all of them, rather than before any (same
+  // placement rule BuildsLedger/DeploymentsPage follow for their own gate).
+  if (!canViewValidation) {
+    return (
+      <PermissionRestrictedPage
+        title="You don't have access to this project's validation"
+        description="Validation results and logs are restricted for your role. Ask a project admin to grant access."
+        backLabel="Back to project overview"
+        onBack={() =>
+          void navigate({ to: "/projects/$projectName", params: { projectName } })
+        }
+      />
+    );
+  }
+
   // Said above the rows, and only in the two windows where the rows say nothing:
   // before any criterion has been picked up, and after they have all settled but
   // the report has not landed. Derived from the rows so it cannot contradict them.
@@ -480,27 +514,34 @@ export function ValidationPage({
               has no other expiry, and a run that has answered — or has not reached
               the question yet — has nothing here left to expire. */}
           {liveRun && (
-            <Button
-              size="small"
-              color="inherit"
-              variant="outlined"
-              startIcon={<X size={16} />}
-              disabled={cancelling}
-              onClick={() => {
-                setCancelRequestedFor(liveRun.id);
-                cancel.mutate(liveRun.id);
-              }}
-              sx={{
-                borderRadius: 999,
-                color: "text.primary",
-                borderColor: (t) => alpha(t.palette.text.primary, 0.3),
-                "&:hover": {
-                  borderColor: (t) => alpha(t.palette.text.primary, 0.55),
-                },
-              }}
+            <Tooltip
+              title={!hasBuild ? "You don't have permission to cancel this run." : ""}
             >
-              {cancelling ? "Cancelling…" : "Cancel run"}
-            </Button>
+              {/* span so the tooltip works while the button is disabled */}
+              <span>
+                <Button
+                  size="small"
+                  color="inherit"
+                  variant="outlined"
+                  startIcon={<X size={16} />}
+                  disabled={!hasBuild || cancelling}
+                  onClick={() => {
+                    setCancelRequestedFor(liveRun.id);
+                    cancel.mutate(liveRun.id);
+                  }}
+                  sx={{
+                    borderRadius: 999,
+                    color: "text.primary",
+                    borderColor: (t) => alpha(t.palette.text.primary, 0.3),
+                    "&:hover": {
+                      borderColor: (t) => alpha(t.palette.text.primary, 0.55),
+                    },
+                  }}
+                >
+                  {cancelling ? "Cancelling…" : "Cancel run"}
+                </Button>
+              </span>
+            </Tooltip>
           )}
           {/* Before the pull request, because the issue frames the work and the PR
               answers it — GitHub's own ordering. Absent when no cycle has minted an

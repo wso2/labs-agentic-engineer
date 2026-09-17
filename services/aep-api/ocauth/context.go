@@ -34,15 +34,13 @@ type Claims struct {
 
 // IsServiceIdentity reports whether ctx was marked as an orchestration / async
 // call that must authenticate with the BFF's own service identity (M2M).
-//
-//deadcode:keep public overlay seam — private PAS strategy imports this; OSS main does not call it.
+// Used by both DirectOCStrategy (OSS) and the private PAS strategy.
 func IsServiceIdentity(ctx context.Context) bool {
 	return auth.IsServiceIdentity(ctx)
 }
 
 // GetAuthToken retrieves the inbound Bearer token stored in the context.
-//
-//deadcode:keep public overlay seam — private PAS strategy imports this; OSS main does not call it.
+// Used by both DirectOCStrategy (OSS) and the private PAS strategy.
 func GetAuthToken(ctx context.Context) string {
 	return auth.GetAuthToken(ctx)
 }

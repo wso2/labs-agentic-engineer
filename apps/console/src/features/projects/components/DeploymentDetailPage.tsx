@@ -35,9 +35,11 @@ import {
   FlaskConical,
   GitHub,
 } from "@wso2/oxygen-ui-icons-react";
-import { createLink, Link } from "@tanstack/react-router";
+import { createLink, Link, useNavigate } from "@tanstack/react-router";
+import { useHasPermission } from "../../../auth/permissions";
 import { EmptyState } from "../../../components/EmptyState";
 import { PageHeader } from "../../../components/PageHeader";
+import { PermissionRestrictedPage } from "../../../components/PermissionRestrictedPage";
 import { StatusChip } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
 import { useBuildRuns, useBuilds } from "../../builds/api/queries";
@@ -83,6 +85,8 @@ export function DeploymentDetailPage({
   projectName: string;
   environment: string;
 }) {
+  const navigate = useNavigate();
+  const canViewDeployments = useHasPermission("ae:build-view");
   const environment = parseEnvironment(segment);
   const components = useProjectComponents(projectName);
   const componentNames = (components.data?.items ?? []).map((c) => c.name);
@@ -105,6 +109,21 @@ export function DeploymentDetailPage({
   );
 
   const [contractComponent, setContractComponent] = useState<string | null>(null);
+
+  // Every hook above must run first — React's rule against conditional hooks
+  // — so the gate sits here, after all of them, rather than before any.
+  if (!canViewDeployments) {
+    return (
+      <PermissionRestrictedPage
+        title="You don't have access to this project's deployments"
+        description="Environment status, connections, and promotion are restricted for your role. Ask a project admin to grant access."
+        backLabel="Back to project overview"
+        onBack={() =>
+          void navigate({ to: "/projects/$projectName", params: { projectName } })
+        }
+      />
+    );
+  }
 
   const title = environment
     ? version

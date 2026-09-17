@@ -43,15 +43,27 @@ vi.mock("@tanstack/react-router", () => ({
     },
 }));
 
+// A per-test permission set, read by useHasAnyPermission (permissions.ts),
+// which itself reads useSession().permissions — mocking it here, rather than
+// the permissions module, keeps one mock doing the whole job. Defaults to
+// holding both design-view and build-view so every pre-existing test below
+// (written before the track's legs could lock) keeps seeing unlocked legs;
+// the "locked legs" tests further down override it per case.
+const permissions = vi.hoisted(
+  () => ({ current: new Set(["ae:design-view", "ae:build-view"]) }),
+);
 vi.mock("../../../auth/SessionContext", () => ({
-  useSession: () => ({ orgHandle: "default" }),
+  useSession: () => ({ orgHandle: "default", permissions: permissions.current }),
 }));
 
 // The track reads the LOCAL chat log for the one state no server field can
 // produce: a turn that ended on a question. The log's fetch is not what this
-// file is about, and `engaged` is a per-test input.
+// file is about, and `engaged` is a per-test input. A spy, not a plain stub,
+// so the "gated on ae:design-view" tests can pin exactly what project (if
+// any) OverviewTrack asks it to rehydrate.
+const useConversationLogSpy = vi.hoisted(() => vi.fn());
 vi.mock("../../agent-chat/useConversationLog", () => ({
-  useConversationLog: () => undefined,
+  useConversationLog: (...args: unknown[]) => useConversationLogSpy(...args),
 }));
 const engaged = vi.hoisted(() => ({ current: false }));
 vi.mock("../../agent-chat/useAgentEngaged", () => ({
@@ -118,6 +130,8 @@ function isLit(el: HTMLElement): boolean {
 
 beforeEach(() => {
   engaged.current = false;
+  permissions.current = new Set(["ae:design-view", "ae:build-view"]);
+  useConversationLogSpy.mockClear();
 });
 
 describe("OverviewTrack", () => {
@@ -207,6 +221,83 @@ describe("OverviewTrack", () => {
         }),
       );
       expect(isLit(legFor("Deploy"))).toBe(false);
+    });
+  });
+
+  // Spec gates on its own permission pair; Build and Deploy share ONE
+  // (ae:build-view/ae:build) — there is no separate deployment permission in
+  // this console, so the two always lock and unlock together.
+  describe("locked legs", () => {
+    it("locks Spec without ae:design-view/ae:design, leaves Build and Deploy open", () => {
+      permissions.current = new Set(["ae:build-view"]);
+      draw(status({}));
+      // TanStack Router's real Link strips `href` for a disabled link
+      // (link.js's getHrefOption) — this file's router mock renders a plain
+      // anchor and does not replicate that, so `aria-disabled` (which MUI's
+      // ButtonBase itself sets for a non-native-button disabled element) and
+      // the accessible name are the two things this test can actually pin.
+      expect(legFor("Spec")).toHaveAttribute("aria-disabled", "true");
+      expect(legFor("Spec")).toHaveAccessibleName(
+        "Spec: You don't have permission to view the spec.",
+      );
+      expect(legFor("Build")).toHaveAttribute("href", "/projects/demo-shop/builds");
+      expect(legFor("Deploy")).toHaveAttribute(
+        "href",
+        "/projects/demo-shop/deployments",
+      );
+    });
+
+    it("locks Build and Deploy together without ae:build-view/ae:build, leaves Spec open", () => {
+      permissions.current = new Set(["ae:design-view"]);
+      draw(status({}));
+      expect(legFor("Build")).toHaveAttribute("aria-disabled", "true");
+      expect(legFor("Build")).toHaveAccessibleName(
+        "Build: You don't have permission to view builds.",
+      );
+      expect(legFor("Deploy")).toHaveAttribute("aria-disabled", "true");
+      expect(legFor("Deploy")).toHaveAccessibleName(
+        "Deploy: You don't have permission to view deployments.",
+      );
+      expect(legFor("Spec")).toHaveAttribute("href", "/projects/demo-shop/spec");
+    });
+
+    // Exact-match, not OR'd: SpecView's own page gate is exact-match
+    // ae:design-view alone, so holding only ae:design (a real, if unusual,
+    // role shape) must still lock this leg — an unlocked leg that lands on
+    // SpecViewRestricted is the exact dead end the lock exists to prevent.
+    it("does NOT unlock Spec on ae:design alone", () => {
+      permissions.current = new Set(["ae:design"]);
+      draw(status({}));
+      expect(legFor("Spec")).toHaveAttribute("aria-disabled", "true");
+    });
+
+    it("unlocks Build and Deploy together on either ae:build-view or ae:build alone", () => {
+      permissions.current = new Set(["ae:build"]);
+      draw(status({}));
+      expect(legFor("Build")).toHaveAttribute("href", "/projects/demo-shop/builds");
+      expect(legFor("Deploy")).toHaveAttribute(
+        "href",
+        "/projects/demo-shop/deployments",
+      );
+    });
+  });
+
+  // The chat-log rehydrate (useConversationLog/useAgentEngaged) is a passive
+  // read, gated on ae:design-view alone — unlike the interactive chat panel
+  // itself (AppLayout's own hasDesignAccess), which needs the stronger
+  // ae:design. This is independent of the Spec leg's own click-lock, which
+  // stays OR'd on design-view/design.
+  describe("chat-log rehydrate", () => {
+    it("rehydrates the real project when the caller holds ae:design-view", () => {
+      permissions.current = new Set(["ae:design-view", "ae:build-view"]);
+      draw(status({}));
+      expect(useConversationLogSpy).toHaveBeenCalledWith("default", "demo-shop");
+    });
+
+    it("withholds the rehydrate without ae:design-view, even holding ae:design", () => {
+      permissions.current = new Set(["ae:design", "ae:build-view"]);
+      draw(status({}));
+      expect(useConversationLogSpy).toHaveBeenCalledWith("default", undefined);
     });
   });
 });

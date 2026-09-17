@@ -70,6 +70,15 @@ vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({ invalidateQueries }),
 }));
 
+// RunStory's Cancel run button reads ae:build through useHasPermission — a
+// single toggle, defaulting to held, so every existing test here (written
+// before the button carried a permission check) keeps seeing it enabled; the
+// dedicated "no permission" tests flip this.
+const hasBuild = vi.hoisted(() => ({ current: true }));
+vi.mock("../../../auth/permissions", () => ({
+  useHasPermission: () => hasBuild.current,
+}));
+
 // The issue plane the run card reads to tell its holds apart. `undefined` is
 // the list not having arrived yet, which is a different thing from an empty
 // milestone.
@@ -210,6 +219,7 @@ afterEach(() => {
   cancelState.error = null;
   cancelMutate.mockClear();
   invalidateQueries.mockClear();
+  hasBuild.current = true;
 });
 
 function renderPage(tag?: string, onTagChange = vi.fn()) {
@@ -316,6 +326,27 @@ describe("BuildsPage — one version's story", () => {
     // primary action.
     fireEvent.click(screen.getByRole("button", { name: /Cancel run/ }));
     expect(cancelMutate).toHaveBeenCalledWith("run-1");
+  });
+
+  // Exact-match ae:build, matching the BFF's own CancelRun gate — a
+  // build-view-only reader can watch this run to completion but not cut it
+  // short, so the button stays visible (not hidden) but disabled and
+  // explained, the same convention every other locked control here follows.
+  it("disables cancel, with an explanatory tooltip, without ae:build", async () => {
+    hasBuild.current = false;
+    mockBuilds = [build("v2", "in_progress")];
+    mockRuns = [run({ state: "waiting" })];
+    mockIssues = withOpenWork();
+    renderPage();
+
+    const button = screen.getByRole("button", { name: /Cancel run/ });
+    expect(button).toBeDisabled();
+    fireEvent.mouseOver(button.closest("span") ?? button);
+    expect(
+      await screen.findByText("You don't have permission to cancel this run."),
+    ).toBeInTheDocument();
+    fireEvent.click(button);
+    expect(cancelMutate).not.toHaveBeenCalled();
   });
 
   // The reported bug: a build busy writing its milestone announced itself as

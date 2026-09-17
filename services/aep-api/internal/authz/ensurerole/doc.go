@@ -14,10 +14,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package discoveridp probes an OIDC issuer's discovery document.
+// Package ensurerole serves the GET /authz/ensure endpoint.
+// It resolves the requesting organization from the tenant-bound JWT context
+// and delegates to authz.AuthZService to check whether an OC AuthzRole is
+// applied for that organization's namespace.
 //
-// Trigger: GET /config/idp/discover (discover-idp).
-// In→out:  issuer query param → the canonical issuer + JWKS URL.
-// Ports:   organization.Service.
-// Invariant: a missing issuer is a 400; an upstream failure is a 502.
-package discoveridp
+// Triggers: ensure-authz-role.
+// Ports:    authz.AuthZService.
+package ensurerole

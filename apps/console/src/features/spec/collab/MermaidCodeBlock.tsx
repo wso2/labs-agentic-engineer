@@ -139,7 +139,14 @@ function MermaidNodeView({ node, editor, getPos }: ReactNodeViewProps) {
   return (
     <NodeViewWrapper>
       <Box sx={{ position: "relative" }}>
-        {!streaming && (
+        {/* editor.isEditable, not a prop: this node view already receives the
+            live editor instance, and SpecMdEditor keeps it in sync with the
+            caller's ae:design permission via editor.setEditable — reading it
+            here instead of threading a second permission prop through the
+            node view keeps the one flag authoritative for both. A caller
+            without ae:design gets no Edit/Done control at all, matching the
+            toolbar and bubble menu (SpecMdEditor.tsx). */}
+        {!streaming && editor.isEditable && (
           <Button
             size="small"
             variant="text"

@@ -1505,11 +1505,6 @@ type BuildSummaryStatus string
 // BuildSummaryWaitingReason Why an in-progress version is waiting rather than moving. Empty for the ordinary between-cycles park, which needs no explanation. `external-values` is the deploy gate — the run is built and ready to deploy, and every remaining blocker is a value only a human can supply. It is carried here so a ledger row can say the version is waiting on the reader instead of reading as a run an agent is still working; the dependency NAMES stay on MilestoneRunView, where the run read that has them is already being made.
 type BuildSummaryWaitingReason string
 
-// ClientSecretOutputBody defines model for ClientSecretOutputBody.
-type ClientSecretOutputBody struct {
-	ClientSecret string `json:"clientSecret"`
-}
-
 // CodingAgentModel The model an organization's coding runs bill to.
 //
 // Narrower than the list any runtime can serve, and narrow for one reason: the platform stamps a run's cost from a per-model rate table, and that stamp is ALL-OR-NOTHING across a cycle's capture — one model with no rate blanks the cost of the whole cycle, not just its own share. So a model is offered here only once the platform can price it. Adding one is a rate row and a contract change together, never one without the other.
@@ -1532,8 +1527,10 @@ type CollabSessionOutputBody struct {
 
 // CollabValidateOutputBody defines model for CollabValidateOutputBody.
 type CollabValidateOutputBody struct {
-	Email string `json:"email"`
-	Name  string `json:"name"`
+	// CanWrite Whether this joiner may change the room's document — they hold `ae:design`, not merely the `ae:design-view` that admits them. The collab service marks a read-only connection's socket read-only and keeps its token out of the commit path, so viewing a live room never implies committing to it. Hiding the editor's controls is the console's half of the same rule, not a substitute for this one.
+	CanWrite bool   `json:"canWrite"`
+	Email    string `json:"email"`
+	Name     string `json:"name"`
 
 	// ProjectName The room's project, resolved by the oracle from `spec-<org>-<project>`; the collab service uses it for the seed read (#114).
 	ProjectName string `json:"projectName"`
@@ -1610,6 +1607,12 @@ type ConfigPatch = orgconfig.ConfigPatch
 
 // ConfigProjection defines model for ConfigProjection.
 type ConfigProjection = orgconfig.ConfigProjection
+
+// ConfigStatus Minimal, permission-free connectivity signal (get-config-status) — whether gitProvider/llm are connected, with none of ConfigProjection's identity/key detail. Exists so the onboarding gate can decide whether to show the wizard without needing ae:github-config/ae:model-config itself, which the org's very first admin may not hold yet.
+type ConfigStatus struct {
+	GitProviderConnected bool `json:"gitProviderConnected"`
+	LlmConnected         bool `json:"llmConnected"`
+}
 
 // ConfigValue defines model for ConfigValue.
 type ConfigValue struct {
@@ -1807,12 +1810,6 @@ type DeploymentList struct {
 // DisconnectOutputBody defines model for DisconnectOutputBody.
 type DisconnectOutputBody struct {
 	Status string `json:"status"`
-}
-
-// DiscoverOutputBody defines model for DiscoverOutputBody.
-type DiscoverOutputBody struct {
-	Issuer  string `json:"issuer"`
-	JwksURL string `json:"jwksUrl"`
 }
 
 // EnvValueCellDTO One org-held env cell. Secrets never include value.
@@ -3412,12 +3409,6 @@ type ValidateCollabAccessParams struct {
 type DisconnectGitProviderParams struct {
 	// Uninstall App-mode only: when false, leave the install on GitHub for later re-adoption (defaults true)
 	Uninstall *bool `form:"uninstall,omitempty" json:"uninstall,omitempty"`
-}
-
-// DiscoverIdpParams defines parameters for DiscoverIdp.
-type DiscoverIdpParams struct {
-	// Issuer OIDC issuer URL to fetch the discovery document for
-	Issuer string `form:"issuer,omitempty" json:"issuer,omitempty"`
 }
 
 // ListProjectsParams defines parameters for ListProjects.

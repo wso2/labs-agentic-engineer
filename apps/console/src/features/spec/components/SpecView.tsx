@@ -35,6 +35,8 @@ import {
 } from "@wso2/oxygen-ui";
 import { ArrowLeft, Hammer, Sparkles } from "@wso2/oxygen-ui-icons-react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
+import { useHasPermission } from "../../../auth/permissions";
+import { PermissionRestrictedPage } from "../../../components/PermissionRestrictedPage";
 import { StatusChip } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
 import {
@@ -79,6 +81,7 @@ import {
 import { useConversationLog } from "../../agent-chat/useConversationLog";
 import { useLocalTurnActivity } from "../../agent-chat/useLocalTurnActivity";
 import { EmptyState } from "../../../components/EmptyState";
+import { NoPermissionIllustration } from "../../../components/NoPermissionIllustration";
 import { ProblemsDialog } from "./ProblemsDialog";
 import { CommittedFileView } from "./CommittedFileView";
 import { useResolveDependencyViaChat } from "../../agent-chat/useResolveDependencyViaChat";
@@ -161,7 +164,7 @@ export function designWarningIntro(reasons: ReadonlyArray<{ key: string }>): str
   );
 }
 
-export function SpecView({ projectName }: { projectName: string }) {
+function SpecViewContent({ projectName }: { projectName: string }) {
   const navigate = useNavigate();
   const { actions } = useAppShell();
   const status = useProjectStatus(projectName);
@@ -171,6 +174,23 @@ export function SpecView({ projectName }: { projectName: string }) {
   // Architecture/design.json cards below (keyed off specKeys.dependencies —
   // the same key Task 5's turn-end freshness invalidation targets).
   const dependencies = useDesignDependencies(projectName);
+  const hasBuild = useHasPermission("ae:build");
+  // Generate design's own gate — exact-match ae:design, not the ae:design-view
+  // this whole view already requires (SpecView's own wrapper below): the
+  // button starts a design-generation turn (generate-design, gated on
+  // ae:design alone, no OR), so the weaker view permission that gets a
+  // caller INTO this page doesn't also unlock triggering agent work from it.
+  const hasDesign = useHasPermission("ae:design");
+  // The kickoff turn (auto-seeded `/start`) that actually derives the spec
+  // shares CreateTurn with the unrelated Resources-registration chat, whose
+  // backend gate is ae:design OR ae:resource-config (that OR is CreateTurn's
+  // own concern, not this page's — see the Generate-design gate note above).
+  // A project can be CREATED on ae:requirement-update alone, so a caller
+  // without ae:design can land on a freshly created, empty project whose
+  // kickoff will 403 every time it's retried; holding ae:resource-config for
+  // the unrelated Resources feature doesn't change that for THIS page, so it
+  // is deliberately not read here.
+  const canKickoff = hasDesign;
   const { user, orgHandle } = useSession();
   // Rooms are org-scoped (`spec-<org>-<project>`); without an org claim fall
   // back to the collab mock BFF's default org so mock mode keeps working.
@@ -1113,9 +1133,11 @@ export function SpecView({ projectName }: { projectName: string }) {
             <>
               <Tooltip
                 title={
-                  agentBusy
-                    ? "An agent is still working — Build is available once it finishes"
-                    : "Commit your latest changes and start building"
+                  !hasBuild
+                    ? "You don't have permission to build this project."
+                    : agentBusy
+                      ? "An agent is still working — Build is available once it finishes"
+                      : "Commit your latest changes and start building"
                 }
               >
                 {/* span so the tooltip works while the button is disabled */}
@@ -1124,7 +1146,7 @@ export function SpecView({ projectName }: { projectName: string }) {
                     size="small"
                     variant="contained"
                     startIcon={<Hammer size={16} />}
-                    disabled={agentBusy || buildPhase !== null}
+                    disabled={!hasBuild || agentBusy || buildPhase !== null}
                     loading={buildPhase !== null}
                     onClick={onBuild}
                   >
@@ -1143,13 +1165,15 @@ export function SpecView({ projectName }: { projectName: string }) {
             <>
               <Tooltip
                 title={
-                  agentBusy
-                    ? "An agent is still working — Generate design is available once it finishes"
-                    : awaitingAnswers
-                      ? "The agent is waiting on your answers — finish the questions below first"
-                      : hasRequirementsFiles
-                        ? "Derive the component design from your requirements"
-                        : "Generate requirements first"
+                  !hasDesign
+                    ? "You don't have permission to generate the design."
+                    : agentBusy
+                      ? "An agent is still working — Generate design is available once it finishes"
+                      : awaitingAnswers
+                        ? "The agent is waiting on your answers — finish the questions below first"
+                        : hasRequirementsFiles
+                          ? "Derive the component design from your requirements"
+                          : "Generate requirements first"
                 }
               >
                 {/* span so the tooltip works while the button is disabled */}
@@ -1159,7 +1183,7 @@ export function SpecView({ projectName }: { projectName: string }) {
                     variant="contained"
                     startIcon={<Sparkles size={16} />}
                     disabled={
-                      !hasRequirementsFiles || agentBusy || awaitingAnswers
+                      !hasDesign || !hasRequirementsFiles || agentBusy || awaitingAnswers
                     }
                     onClick={generateDesign}
                   >
@@ -1262,7 +1286,9 @@ export function SpecView({ projectName }: { projectName: string }) {
 
         {/* What the Build click does, before it does it (#749): the version's
             name — the tag this cuts — and what it changes. The names come from
-            preflight, which the click already waited on. */}
+            preflight, which the click already waited on. Also stands the
+            primary action down without ae:build — the entry button above is
+            disabled too, but this dialog has its own submit path. */}
         <StartBuildDialog
           open={buildDialog === "build"}
           currentVersion={preview?.currentVersion ?? ""}
@@ -1271,6 +1297,7 @@ export function SpecView({ projectName }: { projectName: string }) {
           changes={preview?.changes ?? []}
           takenVersions={tags.data?.tags ?? []}
           submitting={buildPhase === "building"}
+          disabled={!hasBuild}
           onClose={() => setBuildDialog(null)}
           onBuild={runBuild}
         />
@@ -1351,6 +1378,7 @@ export function SpecView({ projectName }: { projectName: string }) {
                 onSelect={selectManually}
                 onRegenerateDesign={generateDesign}
                 regenerateDisabled={agentBusy}
+                canRegenerateDesign={hasDesign}
                 sections={railSections}
                 plan={planEntries}
                 onReason={onRailReason}
@@ -1518,6 +1546,7 @@ export function SpecView({ projectName }: { projectName: string }) {
                     provider={collab.provider}
                     self={collab.self}
                     agentStreaming={agentBusy}
+                    editable={hasDesign}
                     lenses={
                       selectedFile.path === PRD_PATH
                         ? { run: seedChat, busyReason: lensBusyReason }
@@ -1546,6 +1575,7 @@ export function SpecView({ projectName }: { projectName: string }) {
                     ytext={ytext}
                     path={selectedFile.path}
                     isLocalTransaction={collab.isLocalTransaction}
+                    readOnly={!hasDesign}
                   />
                 ) : (
                   /* The room is not the source for this file — it is
@@ -1571,21 +1601,38 @@ export function SpecView({ projectName }: { projectName: string }) {
                    failure and carries the one Retry. A body beneath it would
                    either repeat that offer or, as it did, invite the user to
                    "select a file" in a workspace that has none. */ : nothingToShow ? (
-                /* Nothing written and nothing running — a project whose
-                   kickoff never landed, or one sitting between turns with no
-                   document yet. Either way the workspace will not fill itself,
-                   so it offers the same Retry the failure banner does: one way
-                   out, one word for it. Guarded, so the panel drops it if the
-                   agent turns out to be mid-exchange. */
-                <EmptyState
-                  title="Nothing written yet"
-                  description="Your requirements and design appear here as the agent writes them."
-                  action={
-                    <Button variant="contained" onClick={retryStart}>
-                      Retry
-                    </Button>
-                  }
-                />
+                !canKickoff ? (
+                  /* Same emptiness as the branch below, but Retry cannot help:
+                     the kickoff turn 403s server-side without ae:design (its
+                     ae:resource-config alternative belongs to the unrelated
+                     Resources-registration chat, not this page — see canKickoff
+                     above), and it already did once — that's how this project
+                     ended up empty. Offering Retry here is a dead end that
+                     reads as the platform being broken; naming the real reason
+                     (as the Generate design tooltip already does once
+                     requirements exist) is the honest empty state. */
+                  <EmptyState
+                    icon={<NoPermissionIllustration size={48} />}
+                    title="You don't have permission to generate a spec"
+                    description="Creating a project doesn't require design access, but writing its requirements and design does. Ask a project admin to run the initial generation, or request design permission for this project."
+                  />
+                ) : (
+                  /* Nothing written and nothing running — a project whose
+                     kickoff never landed, or one sitting between turns with no
+                     document yet. Either way the workspace will not fill itself,
+                     so it offers the same Retry the failure banner does: one way
+                     out, one word for it. Guarded, so the panel drops it if the
+                     agent turns out to be mid-exchange. */
+                  <EmptyState
+                    title="Nothing written yet"
+                    description="Your requirements and design appear here as the agent writes them."
+                    action={
+                      <Button variant="contained" onClick={retryStart}>
+                        Retry
+                      </Button>
+                    }
+                  />
+                )
               ) : requirementsActive || (files.length === 0 && deriving) ? (
                 /* An agent is writing the requirements right now — the same
                    fact the rail pulses on, so the two surfaces cannot
@@ -1670,4 +1717,29 @@ export function SpecView({ projectName }: { projectName: string }) {
       />
     </PageContent>
   );
+}
+
+// Renders instead of SpecViewContent when the caller lacks ae:design-view —
+// no requirements/design/validation query, no collab room connection, no
+// dependency fetch. The gate lives here, one level up, specifically so a
+// denied user's browser never fires any of SpecViewContent's data hooks.
+function SpecViewRestricted({ projectName }: { projectName: string }) {
+  const navigate = useNavigate();
+
+  return (
+    <PermissionRestrictedPage
+      title="You don't have access to this project's design"
+      description="Architecture diagrams, wireframes, and component specs are restricted for your role. Ask a project admin to grant access."
+      backLabel="Back to project overview"
+      onBack={() =>
+        void navigate({ to: "/projects/$projectName", params: { projectName } })
+      }
+    />
+  );
+}
+
+export function SpecView({ projectName }: { projectName: string }) {
+  const hasDesignView = useHasPermission("ae:design-view");
+  if (!hasDesignView) return <SpecViewRestricted projectName={projectName} />;
+  return <SpecViewContent projectName={projectName} />;
 }

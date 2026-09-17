@@ -16,8 +16,9 @@
  * under the License.
  */
 
-import { Button, Chip, CircularProgress } from "@wso2/oxygen-ui";
+import { Button, Chip, CircularProgress, Tooltip } from "@wso2/oxygen-ui";
 import { RefreshCw } from "@wso2/oxygen-ui-icons-react";
+import { useHasPermission } from "../../../auth/permissions";
 
 // Sync is all-or-nothing: the BE's POST /skills/sync takes no body and
 // reconciles every embedded skill in one commit (`Reconcile`). So this is a
@@ -31,6 +32,8 @@ export function SyncUpdatesControl({
   pending: boolean;
   onSync: () => void;
 }) {
+  const hasSkillConfig = useHasPermission("ae:skill-config");
+
   if (count === 0) return null;
 
   return (
@@ -40,16 +43,24 @@ export function SyncUpdatesControl({
         color="warning"
         label={`${count} org skill update${count === 1 ? "" : "s"} available`}
       />
-      <Button
-        variant="outlined"
-        startIcon={
-          pending ? <CircularProgress size={16} /> : <RefreshCw size={18} />
+      <Tooltip
+        title={
+          hasSkillConfig ? "" : "You don't have permission to configure skills."
         }
-        onClick={onSync}
-        disabled={pending}
       >
-        {pending ? "Syncing…" : "Sync org skills"}
-      </Button>
+        <span>
+          <Button
+            variant="outlined"
+            startIcon={
+              pending ? <CircularProgress size={16} /> : <RefreshCw size={18} />
+            }
+            onClick={onSync}
+            disabled={pending || !hasSkillConfig}
+          >
+            {pending ? "Syncing…" : "Sync org skills"}
+          </Button>
+        </span>
+      </Tooltip>
     </>
   );
 }

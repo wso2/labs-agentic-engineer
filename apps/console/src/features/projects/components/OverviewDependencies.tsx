@@ -19,6 +19,7 @@
 import { useMemo, useState } from "react";
 import { Alert, Box, Button, Card, Chip, Skeleton } from "@wso2/oxygen-ui";
 import { Plug } from "@wso2/oxygen-ui-icons-react";
+import { useHasPermission } from "../../../auth/permissions";
 import { OverviewRow } from "./OverviewRow";
 import { SectionTitle } from "../../../components/SectionTitle";
 import { EmptyState } from "../../../components/EmptyState";
@@ -82,8 +83,9 @@ function rowChipLabel(row: WorkloadDependencyDTO): string {
  */
 export function OverviewDependencies({ projectName }: { projectName: string }) {
   const deps = useWorkloadDependencies(projectName);
-  const platform = usePlatformResourceTypes();
-  const external = useExternalResources();
+  const hasResourceAccess = useHasPermission("ae:resource-view");
+  const platform = usePlatformResourceTypes(hasResourceAccess);
+  const external = useExternalResources(hasResourceAccess);
   const [selection, setSelection] = useState<ResourceSelection>({
     kind: null,
     resource: null,

@@ -21,6 +21,7 @@ import type { components } from "../../generated/aep-api";
 
 type ApiError = components["schemas"]["Error"];
 import {
+  authzEnsureError,
   codingAgentDefaultsFixture,
   codingAgentRuntimeUnavailable,
   codingLlmValidationError,
@@ -397,6 +398,14 @@ export const settingsHandlers = [
     skillUpdates = [];
 
     return HttpResponse.json({ status: "synced", updated });
+  }),
+
+  // Always fails under "authz-error" (no attempt-count state server-side —
+  // the wizard's retry-escalation counting is purely client-side, #743).
+  http.get("*/api/v1/authz/ensure", () => {
+    ensureInitialized();
+    if (scenario() === "authz-error") return errorJson(authzEnsureError, 500);
+    return HttpResponse.json({ status: "ok" });
   }),
 
   http.get("*/api/v1/skills/updates", () => {

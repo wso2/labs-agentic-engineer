@@ -173,7 +173,12 @@ services:
       # tokens (same Thunder issuer, ouHandle=default) so the AE-handoff stage can
       # call the issue/dispatch endpoints via aep-mcp-server. See
       # AE-HANDOFF-DESIGN.md §9 in openchoreo/agents/sre-agent.
-      JWT_AUDIENCE: "${BFF_AUDIENCE:-aep-*,openchoreo-rca-agent}"
+      # ${PUBLIC_THUNDER_URL}/ae: the console's real login carries this as aud
+      # once it requests an ae:* scope with a matching `resource` indicator
+      # (see the console service's VITE_THUNDER_RESOURCE below) — without this
+      # entry every such token 401s here as "invalid audience", confirmed live
+      # against the k3d cluster before this default was added.
+      JWT_AUDIENCE: "${BFF_AUDIENCE:-aep-*,openchoreo-rca-agent,${PUBLIC_THUNDER_URL}/ae}"
 
       # ── Phase 3 of api-platform-integration — Thunder admin client
       # for per-org publisher OAuth app lifecycle. The aep-system-client
@@ -422,7 +427,17 @@ services:
       AEP_API_PROXY_URL: "http://aep-api:9090"
       VITE_THUNDER_URL: "${PUBLIC_THUNDER_URL}"
       VITE_THUNDER_CLIENT_ID: "${VITE_THUNDER_CLIENT_ID:-aep-console-client}"
-      VITE_THUNDER_SCOPES: "${VITE_THUNDER_SCOPES:-openid profile email}"
+      # Default lists every ae:* permission the platform recognizes
+      # (services/aep-api/internal/authz/role_permissions_catalog.go's
+      # AllPermissions) — Thunder narrows the grant to whatever the caller's
+      # actual role holds, so the client must ask for all of them or no
+      # caller, however privileged, can ever be granted the omitted one.
+      VITE_THUNDER_SCOPES: "${VITE_THUNDER_SCOPES:-openid profile email ae:build ae:build-view ae:design ae:design-view ae:github-config ae:model-config ae:requirement-update ae:requirement-view ae:skill-config ae:skill-view ae:usage-view ae:observability-view ae:resource-view ae:resource-config}"
+      # RFC 8707 resource indicator for the `ae` resource server — required
+      # for any ae:* entry in VITE_THUNDER_SCOPES to actually land on the
+      # token; see JWT_AUDIENCE's comment above for why aep-api also needs
+      # to know about this same identifier.
+      VITE_THUNDER_RESOURCE: "${VITE_THUNDER_RESOURCE:-${PUBLIC_THUNDER_URL}/ae}"
     networks:
       - aep
 

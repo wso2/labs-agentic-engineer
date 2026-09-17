@@ -1,0 +1,92 @@
+/**
+ * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+ *
+ * WSO2 LLC. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+import { useSession } from "./SessionContext";
+
+// Mirrors services/aep-api's role_permissions_catalog.go by hand until the
+// backend exposes permission keys as a generated contract type. Gating always
+// checks the key itself, never a role name — the console has no reliable
+// role signal and no reason to want one.
+export type Permission =
+  | "ae:skill-config"
+  | "ae:skill-view"
+  | "ae:model-config"
+  | "ae:github-config"
+  | "ae:requirement-update"
+  | "ae:requirement-view"
+  | "ae:design"
+  | "ae:design-view"
+  | "ae:build"
+  | "ae:build-view"
+  | "ae:usage-view"
+  | "ae:observability-view"
+  | "ae:resource-view"
+  | "ae:resource-config";
+
+// Runtime twin of the Permission union — TS types don't exist at runtime, so
+// deriving a Set from the access token's scope claim (AuthGuard) needs an
+// actual array to filter against. Keep in lockstep with the union above.
+export const ALL_PERMISSIONS: readonly Permission[] = [
+  "ae:skill-config",
+  "ae:skill-view",
+  "ae:model-config",
+  "ae:github-config",
+  "ae:requirement-update",
+  "ae:requirement-view",
+  "ae:design",
+  "ae:design-view",
+  "ae:build",
+  "ae:build-view",
+  "ae:usage-view",
+  "ae:observability-view",
+  "ae:resource-view",
+  "ae:resource-config",
+];
+
+// Mirrors the BFF's filterPermissions (services/aep-api/internal/platform/auth/jwt.go):
+// the access token's space-delimited scope claim carries ae:* permission keys
+// alongside unrelated scopes (openid, profile, email, ...) — this is the only
+// place the console derives a caller's real permissions from.
+export function permissionsFromScope(scope: unknown): Set<Permission> {
+  const known = new Set<string>(ALL_PERMISSIONS);
+  const held = new Set<Permission>();
+  if (typeof scope !== "string") return held;
+  for (const token of scope.split(/\s+/)) {
+    if (known.has(token)) held.add(token as Permission);
+  }
+  return held;
+}
+
+export function useHasPermission(permission: Permission): boolean {
+  return useSession().permissions.has(permission);
+}
+
+// True when the caller holds ANY of the listed permissions.
+//
+// For surfaces genuinely reachable from two different features, each with its
+// own permission — Settings' Credentials panel, which either ae:github-config
+// or ae:model-config admits you to, since each card is separately redacted by
+// the BFF. It is NOT the way to pair a write permission with its view-only
+// sibling: entry to a page is gated on the view permission exactly, so that a
+// role holding only the write half is not admitted to a surface nobody
+// intended it to see. Mirrors the backend's operationPermissions, which draws
+// the same line.
+export function useHasAnyPermission(permissions: Permission[]): boolean {
+  const held = useSession().permissions;
+  return permissions.some((permission) => held.has(permission));
+}

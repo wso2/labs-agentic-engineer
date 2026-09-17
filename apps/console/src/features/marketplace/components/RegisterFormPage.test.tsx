@@ -88,6 +88,13 @@ vi.mock("../../../auth/SessionContext", () => ({
   }),
 }));
 
+// Every test but the dedicated "no permission" one below holds
+// ae:resource-config, so the form reads as reachable by default.
+const hasResourceConfig = vi.hoisted(() => ({ current: true }));
+vi.mock("../../../auth/permissions", () => ({
+  useHasPermission: () => hasResourceConfig.current,
+}));
+
 vi.mock("../../agent-chat/components/AgentChatPanel", () => ({
   AgentChatPanel: ({ onClose }: { onClose: () => void }) => (
     <div data-testid="agent-chat-panel">
@@ -236,6 +243,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockRotate.mockResolvedValue("fresh-conversation-id");
   resetState();
+  hasResourceConfig.current = true;
   consumePendingSeed(registerChatKey());
   clearRegisterDraft(registerChatKey());
   replaceMessages(registerChatKey(), []);
@@ -674,5 +682,16 @@ describe("RegisterFormPage edit mode", () => {
     expect(screen.getByTestId("chat-question-form")).toBeInTheDocument();
     expect(screen.getByText("Drafting the catalog form from your answers.")).toBeInTheDocument();
     expect(screen.queryByLabelText(/^Name/)).not.toBeInTheDocument();
+  });
+
+  it("shows an insufficient-permissions message and renders no form without ae:resource-config", () => {
+    hasResourceConfig.current = false;
+    renderPage(<RegisterFormPage prompt="" />);
+
+    expect(
+      screen.getByText("You don't have permission to register or edit resources."),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Name/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("agent-chat-panel")).not.toBeInTheDocument();
   });
 });

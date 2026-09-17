@@ -36,10 +36,12 @@ import {
   type ChatMessage,
   type StartingUserMessage,
 } from "./chatStore.js";
+import { DESIGN_COMMAND } from "@aep/contracts/commands";
 import {
   ConversationRotatedError,
   getActiveTurn,
   startCollabTurn,
+  startDesignTurn,
   type TurnStatus,
 } from "./api/turns.js";
 import {
@@ -161,6 +163,17 @@ export interface AgentChat {
    * STARTS, not when it finishes — the stream is folded in the background.
    */
   send: (instruction: string, files?: File[]) => Promise<boolean>;
+  /**
+   * Start the design-generation turn through its own dedicated BFF operation
+   * (generate-design, gated on ae:design alone) rather than `send`'s
+   * generic create-turn path (ae:design OR ae:resource-config) — the whole
+   * reason this is a separate function instead of `send(DESIGN_COMMAND)`.
+   * Same resolve/reject shape as `send`: resolves TRUE once accepted, FALSE
+   * on refusal (already sending, no resolved conversation, a 409, or a
+   * network failure) — the caller (AgentChatPanel's auto-generate effect)
+   * needs no more than that.
+   */
+  sendDesignCommand: () => Promise<boolean>;
   /** Rotate to a fresh PROJECT-WIDE thread (header action, D4). The caller
    *  owns the confirmation — this just performs the rotation. */
   newConversation: () => void;
@@ -469,16 +482,24 @@ export function useAgentChat(
     };
   }, [chatKey, org, projectName, conversationId, onTurnCommitted, queryClient, markAttached, markSending]);
 
-  const send = useCallback(
-    async (instruction: string, files: File[] = []): Promise<boolean> => {
-      const text = instruction.trim();
-      if (!text || isSending || !conversationId) return false;
+  // Shared by `send` and `sendDesignCommand`: everything from "the row goes
+  // up" through the detached attach/fold, parametrized only by what the
+  // transcript should show (`displayText`) and how to mint the turn
+  // (`startTurn`) — the two things that actually differ between a typed
+  // message (create-turn, free text) and the design-generation button
+  // (generate-design, no text at all). Both callers have already checked
+  // `isSending`/`conversationId` before calling this — it trusts them rather
+  // than re-checking, so the guard lives in exactly one place per caller
+  // (the point where the caller also knows what to return early with).
+  const startTurnAndFold = useCallback(
+    async (
+      displayText: string,
+      startTurn: () => Promise<string>,
+      attachments?: string[],
+    ): Promise<boolean> => {
       setIsSending(true);
       markSending(true);
-      // Names only, and only when there are any: a message without attachments
-      // must persist exactly the row shape it did before this feature.
-      const attachments = files.length > 0 ? files.map((f) => f.name) : undefined;
-      // The row goes up NOW, not after the dispatch answers. `startCollabTurn`
+      // The row goes up NOW, not after the dispatch answers. `startTurn`
       // resolves the repo, the workspace ref, the org's Anthropic key, two git
       // heads and two snapshot extracts before it returns a turn id — and the
       // user watching their own message not appear for all of that cannot tell
@@ -487,7 +508,7 @@ export function useAgentChat(
       // when it cannot link by id, which is exactly this window.
       const messageId = addMessage(chatKey, {
         role: "user",
-        content: text,
+        content: displayText,
         status: "in_flight",
         author,
         createdAt: Date.now(),
@@ -495,7 +516,7 @@ export function useAgentChat(
       });
       let turnId: string;
       try {
-        turnId = await startCollabTurn(projectName, conversationId, text, files, collab);
+        turnId = await startTurn();
       } catch (err) {
         // The row the user is already looking at becomes the failed one —
         // adding a second copy beside it would read as two sends.
@@ -563,8 +584,29 @@ export function useAgentChat(
       })();
       return true;
     },
-    [chatKey, projectName, conversationId, isSending, author, onTurnCommitted, queryClient, collab, markAttached, markSending],
+    [chatKey, projectName, author, onTurnCommitted, queryClient, markAttached, markSending],
   );
+
+  const send = useCallback(
+    async (instruction: string, files: File[] = []): Promise<boolean> => {
+      const text = instruction.trim();
+      if (!text || isSending || !conversationId) return false;
+      // Names only, and only when there are any: a message without attachments
+      // must persist exactly the row shape it did before this feature.
+      const attachments = files.length > 0 ? files.map((f) => f.name) : undefined;
+      return startTurnAndFold(
+        text,
+        () => startCollabTurn(projectName, conversationId, text, files, collab),
+        attachments,
+      );
+    },
+    [startTurnAndFold, projectName, conversationId, isSending, collab],
+  );
+
+  const sendDesignCommand = useCallback((): Promise<boolean> => {
+    if (isSending || !conversationId) return Promise.resolve(false);
+    return startTurnAndFold(DESIGN_COMMAND, () => startDesignTurn(projectName, conversationId));
+  }, [startTurnAndFold, projectName, conversationId, isSending]);
 
   // Rotation (D4): a PROJECT-WIDE act — the demoted thread stops being current
   // for every member; theirs catch up via the 409 fence + their own triggers.
@@ -592,6 +634,7 @@ export function useAgentChat(
     historyReady,
     conversationError: conversation.isError,
     send,
+    sendDesignCommand,
     newConversation,
   };
 }

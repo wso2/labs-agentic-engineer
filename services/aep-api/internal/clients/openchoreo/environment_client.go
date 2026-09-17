@@ -115,7 +115,7 @@ func (c *environmentClient) ListNames(ctx context.Context, orgID string) ([]stri
 		return nil, fmt.Errorf("failed to list environments: %w", err)
 	}
 	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
-		return nil, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		return nil, handleErrorResponse(ctx, http.MethodGet, nsBase(orgID)+"/environments", resp.StatusCode(), ErrorResponses{
 			JSON400: resp.JSON400,
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
@@ -144,7 +144,7 @@ func (c *environmentClient) GetThunderBinding(ctx context.Context, orgID, enviro
 		return ThunderBinding{}, fmt.Errorf("failed to get environment %s/%s: %w", orgID, environment, err)
 	}
 	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
-		return ThunderBinding{}, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		return ThunderBinding{}, handleErrorResponse(ctx, http.MethodGet, nsBase(orgID)+"/environments/"+environment, resp.StatusCode(), ErrorResponses{
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
 			JSON404: resp.JSON404,
@@ -214,7 +214,7 @@ func (c *environmentClient) GetGatewayAssertion(ctx context.Context, orgID, envi
 		return GatewayAssertion{}, fmt.Errorf("failed to get environment %s/%s: %w", orgID, environment, err)
 	}
 	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
-		return GatewayAssertion{}, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		return GatewayAssertion{}, handleErrorResponse(ctx, http.MethodGet, nsBase(orgID)+"/environments/"+environment, resp.StatusCode(), ErrorResponses{
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
 			JSON404: resp.JSON404,

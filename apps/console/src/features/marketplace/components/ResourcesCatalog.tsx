@@ -29,11 +29,14 @@ import {
   Grid,
   PageContent,
   Stack,
+  Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
 import { Boxes, Plus } from "@wso2/oxygen-ui-icons-react";
 import { createLink } from "@tanstack/react-router";
+import { useHasPermission } from "../../../auth/permissions";
 import { EmptyState } from "../../../components/EmptyState";
+import { NoPermissionIllustration } from "../../../components/NoPermissionIllustration";
 import { PageHeader } from "../../../components/PageHeader";
 import type { components } from "../../../generated/aep-api";
 import { useExternalResources, usePlatformResourceTypes } from "../../settings/api/queries";
@@ -108,15 +111,29 @@ function CatalogCard({
 }
 
 export function ResourcesCatalog() {
-  const platform = usePlatformResourceTypes();
-  const external = useExternalResources();
+  const hasResourceConfig = useHasPermission("ae:resource-config");
+  const hasResourceAccess = useHasPermission("ae:resource-view");
+  const platform = usePlatformResourceTypes(hasResourceAccess);
+  const external = useExternalResources(hasResourceAccess);
   const [selection, setSelection] = useState<CatalogSelection | null>(null);
 
   const platformItems = platform.data ?? [];
   const externalItems = external.data ?? [];
 
   let body;
-  if (platform.isLoading || external.isLoading) {
+  if (!hasResourceAccess) {
+    // Checked before the loading/error states below: without either
+    // permission there is nothing here to load — both queries never fire
+    // (usePlatformResourceTypes/useExternalResources(hasResourceAccess)) —
+    // and a direct-URL visit must never flash real catalog content.
+    body = (
+      <EmptyState
+        icon={<NoPermissionIllustration size={120} />}
+        title="No resources access"
+        description="You don't have permission to view resources."
+      />
+    );
+  } else if (platform.isLoading || external.isLoading) {
     body = (
       <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
         <CircularProgress aria-label="Loading resources" />
@@ -186,15 +203,25 @@ export function ResourcesCatalog() {
       <PageHeader
         title="Resources"
         subtitle="Platform types and third-party resources in this organization."
-        actions={
-          <RegisterLink
-            variant="contained"
-            startIcon={<Plus size={20} />}
-            to="/resources/register"
-          >
-            Register
-          </RegisterLink>
-        }
+        {...(hasResourceAccess && {
+          actions: hasResourceConfig ? (
+            <RegisterLink
+              variant="contained"
+              startIcon={<Plus size={20} />}
+              to="/resources/register"
+            >
+              Register
+            </RegisterLink>
+          ) : (
+            <Tooltip title="You don't have permission to register resources.">
+              <span>
+                <Button variant="contained" startIcon={<Plus size={20} />} disabled>
+                  Register
+                </Button>
+              </span>
+            </Tooltip>
+          ),
+        })}
       />
       {body}
       <CatalogTypeDrawer

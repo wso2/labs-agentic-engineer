@@ -43,6 +43,7 @@ const ctx: CollabContext = {
   user: { name: "Mark", email: "mark@x.io", kind: "user" },
   token: "tok",
   projectName: "shop",
+  canWrite: true,
 };
 
 interface RecordedApply {
@@ -98,6 +99,62 @@ test("clean room: no apply", async () => {
   const { bff, applies } = fakeBff();
   await flushRoom({ bff }, ROOM, doc, ctx);
   assert.equal(applies.length, 0);
+});
+
+// A read-only participant still drives onStoreDocument — their arrival and
+// their awareness updates are traffic like anyone else's — so a flush can be
+// triggered while THEIR context is the latest one. Committing as them would
+// 403 at ApplyFiles (it gates on ae:design) and strand the authors' work, so
+// the room's last writer authenticates instead.
+test("a viewer-triggered flush commits as the room's writer, not the viewer", async () => {
+  const doc = seededDoc();
+  setDocFile(doc, "design/arch.excalidraw", '{"v":2}');
+  const state = ensureRoomState(ROOM, "shop");
+  state.lastToken = "writer-token";
+
+  const tokensUsed: string[] = [];
+  const { bff } = fakeBff({
+    applyFiles: async (token, _p, batch) => {
+      tokensUsed.push(token);
+      return {
+        commitSha: "abc123",
+        files: batch.writes.map((w) => ({ path: w.path, sha: `new-${w.path}` })),
+      };
+    },
+  });
+
+  const viewerCtx: CollabContext = {
+    user: { name: "Vi", email: "vi@x.io", kind: "user" },
+    token: "viewer-token",
+    projectName: "shop",
+    canWrite: false,
+  };
+  await flushRoom({ bff }, ROOM, doc, viewerCtx);
+
+  assert.deepEqual(
+    tokensUsed,
+    ["writer-token"],
+    "the authors' change must still commit, authenticated as the writer",
+  );
+});
+
+// ...and with no writer token on record there is nothing to commit AS, so the
+// flush is skipped rather than attempted with credentials that cannot work.
+test("a viewer-triggered flush with no writer on record does not apply", async () => {
+  const doc = seededDoc();
+  setDocFile(doc, "design/arch.excalidraw", '{"v":3}');
+  ensureRoomState(ROOM, "shop").lastToken = null;
+
+  const { bff, applies } = fakeBff();
+  const viewerCtx: CollabContext = {
+    user: { name: "Vi", email: "vi@x.io", kind: "user" },
+    token: "viewer-token",
+    projectName: "shop",
+    canWrite: false,
+  };
+  await flushRoom({ bff }, ROOM, doc, viewerCtx);
+
+  assert.equal(applies.length, 0, "a viewer's token must never authenticate an apply");
 });
 
 test("flushes only changed files with baseShas and co-author trailers", async () => {

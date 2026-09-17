@@ -34,8 +34,10 @@ func NewM2MAuthProvider(tokenURL, clientID, clientSecret, hostHeader string) oca
 
 // NewOSSOptions loads and validates config, then returns Options for the OSS
 // direct-OC entry: M2M AuthProvider when service-auth env is set,
-// DirectOCStrategy, a nil impersonation resolver, and an OpenBao-direct
-// SecretsProvider when OPENBAO_ADDR is configured (nil = delivery off).
+// DirectOCStrategy (forwards the console user's JWT to OC, falling back to
+// that M2M identity for watcher/webhook/service-identity-marked calls), a nil
+// impersonation resolver, and an OpenBao-direct SecretsProvider when
+// OPENBAO_ADDR is configured (nil = delivery off).
 func NewOSSOptions() (Options, error) {
 	cfg, err := config.Load()
 	if err != nil {

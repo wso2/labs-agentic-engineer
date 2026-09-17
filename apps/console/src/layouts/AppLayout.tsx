@@ -56,6 +56,7 @@ import {
   useRouterState,
   useSearch,
 } from "@tanstack/react-router";
+import { useHasPermission } from "../auth/permissions";
 import { useSession } from "../auth/SessionContext";
 import { OrgSwitcher, ProjectSwitcher } from "./HeaderSwitchers";
 import { ProjectStatusBadge } from "./ProjectStatusBadge";
@@ -108,6 +109,32 @@ const CHAT_OPEN_KEY = "aep.chat.panelOpen";
 export function AppLayout() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { user, signOut, orgHandle } = useSession();
+  const hasObservabilityAccess = useHasPermission("ae:observability-view");
+  const hasRequirementView = useHasPermission("ae:requirement-view");
+  // Exact-match ae:resource-view, NOT OR'd with ae:resource-config: a write
+  // permission gates mutations (Register/Update/Delete), never page entry
+  // on its own — a resource-config-only caller (no view grant) is still
+  // fully blocked, same rule as every other write/view pair in this console.
+  const hasResourceAccess = useHasPermission("ae:resource-view");
+  // Exact-match ae:design, not an OR with ae:design-view: the panel is an
+  // interactive write surface (it sends turns), not a read one, so the
+  // weaker view permission does not cover it — same split as every other
+  // write/view pair in this console.
+  const hasDesignAccess = useHasPermission("ae:design");
+  // The Spec sidebar item's own gate: exact-match ae:design-view, matching
+  // SpecView's own page gate (hasDesignView there) — NOT hasDesignAccess
+  // above, which is the chat panel's stricter write-only check. Disabling
+  // the item here is what keeps a design-view-less caller from ever reaching
+  // SpecViewRestricted in the first place (OverviewTrack's Spec leg carries
+  // the identical reasoning for the overview's own link to this same route).
+  const hasSpecNavAccess = useHasPermission("ae:design-view");
+  // The Builds/Deployments/Validation sidebar items share one gate:
+  // exact-match ae:build-view, matching all three pages' own page-entry
+  // checks (BuildsLedger, DeploymentsPage, ValidationPage) and the backend's
+  // ListProjectBuilds/ListBuildRuns gate — NOT OR'd with ae:build, which
+  // gates mutations (BuildProject, CancelRun, …) within those pages, never
+  // entry into them.
+  const hasBuildNavAccess = useHasPermission("ae:build-view");
 
   // Project AI panel (#130): available on every project route — mounted here
   // because the full-screen spec route bypasses ProjectLayout. Same
@@ -250,14 +277,25 @@ export function AppLayout() {
           <Header.Spacer />
           <Header.Actions>
             {projectName && (
-              <Tooltip title={chatOpen ? "Close agent chat" : "Agent chat"}>
-                <IconButton
-                  aria-label="Toggle agent chat"
-                  color={chatOpen ? "primary" : "default"}
-                  onClick={() => setChatOpen((v) => !v)}
-                >
-                  <Sparkles size={20} />
-                </IconButton>
+              <Tooltip
+                title={
+                  hasDesignAccess
+                    ? chatOpen
+                      ? "Close agent chat"
+                      : "Agent chat"
+                    : "You don't have permission to use the agent chat."
+                }
+              >
+                <span>
+                  <IconButton
+                    aria-label="Toggle agent chat"
+                    color={chatOpen ? "primary" : "default"}
+                    disabled={!hasDesignAccess}
+                    onClick={() => setChatOpen((v) => !v)}
+                  >
+                    <Sparkles size={20} />
+                  </IconButton>
+                </span>
               </Tooltip>
             )}
             <ColorSchemeToggle />
@@ -301,62 +339,114 @@ export function AppLayout() {
                   </Sidebar.ItemIcon>
                   <Sidebar.ItemLabel>Overview</Sidebar.ItemLabel>
                 </Sidebar.Item>
-                <Sidebar.Item
-                  id="spec"
-                  link={
-                    <Link
-                      to="/projects/$projectName/spec"
-                      params={{ projectName }}
-                    />
-                  }
-                >
-                  <Sidebar.ItemIcon>
-                    <FileText />
-                  </Sidebar.ItemIcon>
-                  <Sidebar.ItemLabel>Spec</Sidebar.ItemLabel>
-                </Sidebar.Item>
-                <Sidebar.Item
-                  id="builds"
-                  link={
-                    <Link
-                      to="/projects/$projectName/builds"
-                      params={{ projectName }}
-                    />
-                  }
-                >
-                  <Sidebar.ItemIcon>
-                    <ListChecks />
-                  </Sidebar.ItemIcon>
-                  <Sidebar.ItemLabel>Builds</Sidebar.ItemLabel>
-                </Sidebar.Item>
-                <Sidebar.Item
-                  id="deployments"
-                  link={
-                    <Link
-                      to="/projects/$projectName/deployments"
-                      params={{ projectName }}
-                    />
-                  }
-                >
-                  <Sidebar.ItemIcon>
-                    <Rocket />
-                  </Sidebar.ItemIcon>
-                  <Sidebar.ItemLabel>Deployments</Sidebar.ItemLabel>
-                </Sidebar.Item>
-                <Sidebar.Item
-                  id="validation"
-                  link={
-                    <Link
-                      to="/projects/$projectName/validation"
-                      params={{ projectName }}
-                    />
-                  }
-                >
-                  <Sidebar.ItemIcon>
-                    <CircleCheck />
-                  </Sidebar.ItemIcon>
-                  <Sidebar.ItemLabel>Validation</Sidebar.ItemLabel>
-                </Sidebar.Item>
+                {hasSpecNavAccess ? (
+                  <Sidebar.Item
+                    id="spec"
+                    link={
+                      <Link
+                        to="/projects/$projectName/spec"
+                        params={{ projectName }}
+                      />
+                    }
+                  >
+                    <Sidebar.ItemIcon>
+                      <FileText />
+                    </Sidebar.ItemIcon>
+                    <Sidebar.ItemLabel>Spec</Sidebar.ItemLabel>
+                  </Sidebar.Item>
+                ) : (
+                  <Tooltip title="You don't have permission to view the spec.">
+                    <span>
+                      <Sidebar.Item id="spec" sx={{ opacity: 0.5, pointerEvents: "none" }}>
+                        <Sidebar.ItemIcon>
+                          <FileText />
+                        </Sidebar.ItemIcon>
+                        <Sidebar.ItemLabel>Spec</Sidebar.ItemLabel>
+                      </Sidebar.Item>
+                    </span>
+                  </Tooltip>
+                )}
+                {hasBuildNavAccess ? (
+                  <Sidebar.Item
+                    id="builds"
+                    link={
+                      <Link
+                        to="/projects/$projectName/builds"
+                        params={{ projectName }}
+                      />
+                    }
+                  >
+                    <Sidebar.ItemIcon>
+                      <ListChecks />
+                    </Sidebar.ItemIcon>
+                    <Sidebar.ItemLabel>Builds</Sidebar.ItemLabel>
+                  </Sidebar.Item>
+                ) : (
+                  <Tooltip title="You don't have permission to view builds.">
+                    <span>
+                      <Sidebar.Item id="builds" sx={{ opacity: 0.5, pointerEvents: "none" }}>
+                        <Sidebar.ItemIcon>
+                          <ListChecks />
+                        </Sidebar.ItemIcon>
+                        <Sidebar.ItemLabel>Builds</Sidebar.ItemLabel>
+                      </Sidebar.Item>
+                    </span>
+                  </Tooltip>
+                )}
+                {hasBuildNavAccess ? (
+                  <Sidebar.Item
+                    id="deployments"
+                    link={
+                      <Link
+                        to="/projects/$projectName/deployments"
+                        params={{ projectName }}
+                      />
+                    }
+                  >
+                    <Sidebar.ItemIcon>
+                      <Rocket />
+                    </Sidebar.ItemIcon>
+                    <Sidebar.ItemLabel>Deployments</Sidebar.ItemLabel>
+                  </Sidebar.Item>
+                ) : (
+                  <Tooltip title="You don't have permission to view deployments.">
+                    <span>
+                      <Sidebar.Item id="deployments" sx={{ opacity: 0.5, pointerEvents: "none" }}>
+                        <Sidebar.ItemIcon>
+                          <Rocket />
+                        </Sidebar.ItemIcon>
+                        <Sidebar.ItemLabel>Deployments</Sidebar.ItemLabel>
+                      </Sidebar.Item>
+                    </span>
+                  </Tooltip>
+                )}
+                {hasBuildNavAccess ? (
+                  <Sidebar.Item
+                    id="validation"
+                    link={
+                      <Link
+                        to="/projects/$projectName/validation"
+                        params={{ projectName }}
+                      />
+                    }
+                  >
+                    <Sidebar.ItemIcon>
+                      <CircleCheck />
+                    </Sidebar.ItemIcon>
+                    <Sidebar.ItemLabel>Validation</Sidebar.ItemLabel>
+                  </Sidebar.Item>
+                ) : (
+                  <Tooltip title="You don't have permission to view validation.">
+                    <span>
+                      <Sidebar.Item id="validation" sx={{ opacity: 0.5, pointerEvents: "none" }}>
+                        <Sidebar.ItemIcon>
+                          <CircleCheck />
+                        </Sidebar.ItemIcon>
+                        <Sidebar.ItemLabel>Validation</Sidebar.ItemLabel>
+                      </Sidebar.Item>
+                    </span>
+                  </Tooltip>
+                )}
                 <Sidebar.Item
                   id="issues"
                   link={
@@ -380,25 +470,68 @@ export function AppLayout() {
                   </Sidebar.ItemIcon>
                   <Sidebar.ItemLabel>Projects</Sidebar.ItemLabel>
                 </Sidebar.Item>
-                <Sidebar.Item id="resources" link={<Link to="/resources" />}>
-                  <Sidebar.ItemIcon>
-                    <Boxes />
-                  </Sidebar.ItemIcon>
-                  <Sidebar.ItemLabel>Resources</Sidebar.ItemLabel>
-                </Sidebar.Item>
-                <Sidebar.Item id="endpoints" link={<Link to="/endpoints" />}>
-                  <Sidebar.ItemIcon>
-                    <Radio />
-                  </Sidebar.ItemIcon>
-                  <Sidebar.ItemLabel>Endpoints</Sidebar.ItemLabel>
-                </Sidebar.Item>
+                {hasResourceAccess ? (
+                  <Sidebar.Item id="resources" link={<Link to="/resources" />}>
+                    <Sidebar.ItemIcon>
+                      <Boxes />
+                    </Sidebar.ItemIcon>
+                    <Sidebar.ItemLabel>Resources</Sidebar.ItemLabel>
+                  </Sidebar.Item>
+                ) : (
+                  <Tooltip title="You don't have permission to view resources.">
+                    <span>
+                      <Sidebar.Item id="resources" sx={{ opacity: 0.5, pointerEvents: "none" }}>
+                        <Sidebar.ItemIcon>
+                          <Boxes />
+                        </Sidebar.ItemIcon>
+                        <Sidebar.ItemLabel>Resources</Sidebar.ItemLabel>
+                      </Sidebar.Item>
+                    </span>
+                  </Tooltip>
+                )}
+                {hasRequirementView ? (
+                  <Sidebar.Item id="endpoints" link={<Link to="/endpoints" />}>
+                    <Sidebar.ItemIcon>
+                      <Radio />
+                    </Sidebar.ItemIcon>
+                    <Sidebar.ItemLabel>Endpoints</Sidebar.ItemLabel>
+                  </Sidebar.Item>
+                ) : (
+                  <Tooltip title="You don't have permission to view endpoints.">
+                    <span>
+                      <Sidebar.Item id="endpoints" sx={{ opacity: 0.5, pointerEvents: "none" }}>
+                        <Sidebar.ItemIcon>
+                          <Radio />
+                        </Sidebar.ItemIcon>
+                        <Sidebar.ItemLabel>Endpoints</Sidebar.ItemLabel>
+                      </Sidebar.Item>
+                    </span>
+                  </Tooltip>
+                )}
                 {/* Global Alerts section (#155) — RCA-agent reports across every project. */}
-                <Sidebar.Item id="alerts" link={<Link to="/alerts" />}>
-                  <Sidebar.ItemIcon>
-                    <Siren />
-                  </Sidebar.ItemIcon>
-                  <Sidebar.ItemLabel>Alerts</Sidebar.ItemLabel>
-                </Sidebar.Item>
+                {hasObservabilityAccess ? (
+                  <Sidebar.Item id="alerts" link={<Link to="/alerts" />}>
+                    <Sidebar.ItemIcon>
+                      <Siren />
+                    </Sidebar.ItemIcon>
+                    <Sidebar.ItemLabel>Alerts</Sidebar.ItemLabel>
+                  </Sidebar.Item>
+                ) : (
+                  // SidebarItem has no disabled prop of its own — omitting
+                  // `link` already makes it non-navigating; pointerEvents:none
+                  // + reduced opacity finishes the job (blocks hover/click,
+                  // matches the Tab-disabled treatment in SettingsLayout).
+                  <Tooltip title="You don't have permission to view alerts.">
+                    <span>
+                      <Sidebar.Item id="alerts" sx={{ opacity: 0.5, pointerEvents: "none" }}>
+                        <Sidebar.ItemIcon>
+                          <Siren />
+                        </Sidebar.ItemIcon>
+                        <Sidebar.ItemLabel>Alerts</Sidebar.ItemLabel>
+                      </Sidebar.Item>
+                    </span>
+                  </Tooltip>
+                )}
               </Sidebar.Category>
             )}
           </Sidebar.Nav>
@@ -436,8 +569,13 @@ export function AppLayout() {
             <Outlet />
           </Box>
           {/* Horizontal Collapse gives the sidebar-style slide; unmountOnExit
-              keeps the closed panel out of the tree (no idle polling). */}
-          {projectName && (
+              keeps the closed panel out of the tree (no idle polling).
+              Gated on ae:design too, not just projectName — chatOpen can
+              flip true from several triggers that don't check permission
+              themselves (the ?chat=open/?generate=design signals, a pending
+              seed, a Discuss request), so the panel's own mount is the one
+              place that has to hold the line. */}
+          {projectName && hasDesignAccess && (
             <Collapse
               in={chatOpen}
               orientation="horizontal"

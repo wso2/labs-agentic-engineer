@@ -34,7 +34,9 @@ package organization_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -50,9 +52,11 @@ import (
 	"github.com/wso2/aep/aep-api/internal/edge"
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/organization/httpapi"
+	"github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/platform/componenttest"
 	"github.com/wso2/aep/aep-api/internal/platform/contracttest"
 	"github.com/wso2/aep/aep-api/internal/platform/dbtest"
+	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
@@ -168,6 +172,12 @@ type configHarness struct {
 	db   *gorm.DB
 	gh   *cfgFakeGH
 	anth *anthropicFake
+	// svc is the same orchestrator the handlers hold. The idp section is
+	// refused at the edge's permission gate (no AE permission describes
+	// identity config, and nothing writes it yet), so its write semantics are
+	// exercised here rather than over HTTP — the code stays live and covered
+	// for whenever the section gets a surface and a permission.
+	svc *organization.Service
 }
 
 // newConfigHarness assembles the real orgconfig.Service over one shared dbtest
@@ -211,7 +221,7 @@ func newConfigHarnessOpts(t *testing.T, thunder thundersvc.Client, appClientID s
 	// The harness wires the DOMAIN, not a loose service: the edge embeds
 	// organization's handlers, so this assembles the same graph production does.
 	h := componenttest.New(t, componenttest.Options{Deps: edge.Deps{Organization: mustNewOrgHandlers(t, organization.Deps{Config: svc})}})
-	return &configHarness{h: h, db: db, gh: gh, anth: anth}
+	return &configHarness{h: h, db: db, gh: gh, anth: anth, svc: svc}
 }
 
 // mustNewOrgHandlers assembles the real organization domain around the given
@@ -314,6 +324,111 @@ func TestConfigComponent_B2_AllConnectedNoSecrets(t *testing.T) {
 	for _, secret := range []string{goodAnthKey, "ghp_live", "the-stored-secret"} {
 		if strings.Contains(body, secret) {
 			t.Fatalf("GET /config leaks secret material %q: %s", secret, body)
+		}
+	}
+}
+
+// GetConfig requires holding EITHER ae:github-config or ae:model-config to be
+// answered at all, but a caller holding only one still gets the OTHER
+// section redacted to null — the OR-gate decides whether the call is
+// answered, not which half of the answer is theirs (getconfig.Handler).
+
+func TestConfigComponent_B2b_GitHubConfigOnlySeesGitProviderNotLLM(t *testing.T) {
+	t.Parallel()
+	c := newConfigHarness(t)
+	c.gh.patHappy()
+	if r := c.h.AsOrg("acme").Patch(configPath, llmConnect(goodAnthKey)); r.Code != 200 {
+		t.Fatalf("llm connect: %d %s", r.Code, r.Body.String())
+	}
+	if r := c.h.AsOrg("acme").Patch(configPath, `{"gitProvider":{"kind":"github","mode":"pat","pat":"ghp_live","githubLogin":"ada"}}`); r.Code != 200 {
+		t.Fatalf("gitProvider connect: %d %s", r.Code, r.Body.String())
+	}
+
+	resp := c.h.AsOrg("acme").
+		With(func(cl *auth.Claims) { cl.Scope = "ae:github-config" }).
+		Get(configPath)
+	if resp.Code != 200 {
+		t.Fatalf("get with ae:github-config only: want 200, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	m := decodeCfg(t, resp.Body.Bytes())
+	if m["gitProvider"] == nil {
+		t.Fatalf("holding ae:github-config must still see gitProvider: %v", m)
+	}
+	if m["llm"] != nil {
+		t.Fatalf("without ae:model-config, llm must be redacted to null: %v", m["llm"])
+	}
+	if m["codingLlm"] != nil {
+		t.Fatalf("without ae:model-config, codingLlm must be redacted to null: %v", m["codingLlm"])
+	}
+}
+
+func TestConfigComponent_B2c_ModelConfigOnlySeesLLMNotGitProvider(t *testing.T) {
+	t.Parallel()
+	c := newConfigHarness(t)
+	c.gh.patHappy()
+	if r := c.h.AsOrg("acme").Patch(configPath, llmConnect(goodAnthKey)); r.Code != 200 {
+		t.Fatalf("llm connect: %d %s", r.Code, r.Body.String())
+	}
+	if r := c.h.AsOrg("acme").Patch(configPath, `{"gitProvider":{"kind":"github","mode":"pat","pat":"ghp_live","githubLogin":"ada"}}`); r.Code != 200 {
+		t.Fatalf("gitProvider connect: %d %s", r.Code, r.Body.String())
+	}
+
+	resp := c.h.AsOrg("acme").
+		With(func(cl *auth.Claims) { cl.Scope = "ae:model-config" }).
+		Get(configPath)
+	if resp.Code != 200 {
+		t.Fatalf("get with ae:model-config only: want 200, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	m := decodeCfg(t, resp.Body.Bytes())
+	if m["llm"] == nil {
+		t.Fatalf("holding ae:model-config must still see llm: %v", m)
+	}
+	if m["gitProvider"] != nil {
+		t.Fatalf("without ae:github-config, gitProvider must be redacted to null: %v", m["gitProvider"])
+	}
+}
+
+func TestConfigComponent_B2d_NeitherPermissionIsForbidden(t *testing.T) {
+	t.Parallel()
+	c := newConfigHarness(t)
+
+	resp := c.h.AsOrg("acme").
+		With(func(cl *auth.Claims) { cl.Scope = "" }).
+		Get(configPath)
+	if resp.Code != http.StatusForbidden {
+		t.Fatalf("get holding neither permission: want 403, got %d body=%s", resp.Code, resp.Body.String())
+	}
+}
+
+// --- B2e. GET /config/status: the permission-free sibling. Any authenticated,
+// tenant-bound caller — including one holding NEITHER ae:github-config nor
+// ae:model-config, the onboarding gate's own bootstrap case — gets just the
+// two connectivity booleans. ------------------------------------------------
+
+func TestConfigComponent_B2e_StatusNeedsNoPermission(t *testing.T) {
+	t.Parallel()
+	c := newConfigHarness(t)
+	if r := c.h.AsOrg("acme").Patch(configPath, llmConnect(goodAnthKey)); r.Code != 200 {
+		t.Fatalf("llm connect: %d %s", r.Code, r.Body.String())
+	}
+
+	resp := c.h.AsOrg("acme").
+		With(func(cl *auth.Claims) { cl.Scope = "" }).
+		Get(configPath + "/status")
+	if resp.Code != 200 {
+		t.Fatalf("get config status holding no permission: want 200, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	m := decodeCfg(t, resp.Body.Bytes())
+	if m["llmConnected"] != true {
+		t.Fatalf("llmConnected must be true: %v", m)
+	}
+	if m["gitProviderConnected"] != false {
+		t.Fatalf("gitProviderConnected must be false (never connected): %v", m)
+	}
+	// None of GetConfig's identity/key detail leaks through the status route.
+	for _, field := range []string{"keyPrefix", "keyLast4", "identityLogin", "githubLogin"} {
+		if strings.Contains(resp.Body.String(), field) {
+			t.Fatalf("config/status must carry no detail field %q: %s", field, resp.Body.String())
 		}
 	}
 }
@@ -620,74 +735,109 @@ func TestConfigComponent_D5_PatOverAppIsConflict(t *testing.T) {
 	}
 }
 
-// --- E. PATCH /config — idp -------------------------------------------------
+// --- E. idp ------------------------------------------------------------------
+//
+// The idp section is refused at the edge's permission gate: it repoints the
+// issuer the org's protected APIs pin JWT validation to, and no AE permission
+// describes identity configuration. E0 pins that refusal at the HTTP tier; the
+// rows below drive the orchestrator directly, so the write semantics stay
+// covered for whenever the section gets a surface and a permission.
+
+func TestConfigComponent_E0_IdpSectionRefusedOverHTTP(t *testing.T) {
+	t.Parallel()
+	c := newConfigHarness(t)
+	resp := c.h.AsOrg("acme").Patch(configPath, `{"idp":{"kind":"custom","issuer":"https://byo.example"}}`)
+	if resp.Code != 403 {
+		t.Fatalf("idp over HTTP: want 403, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	// Refused before any write: the profile must still be the platform default.
+	g := decodeCfg(t, c.h.AsOrg("acme").Get(configPath).Body.Bytes())["idp"].(map[string]any)
+	if g["kind"] != "platform" {
+		t.Fatalf("a refused patch must not have written: %v", g)
+	}
+}
+
+// idpPatch builds a ConfigPatch carrying only the idp section.
+func idpPatch(kind, issuer, jwksURL string) orgconfig.ConfigPatch {
+	var p orgconfig.ConfigPatch
+	p.IDP.Sent = true
+	p.IDP.Value = orgconfig.IDPWrite{Kind: kind, Issuer: issuer, JWKSURL: jwksURL}
+	return p
+}
 
 func TestConfigComponent_E1_SwitchToCustom(t *testing.T) {
 	t.Parallel()
 	c := newConfigHarness(t)
-	resp := c.h.AsOrg("acme").Patch(configPath, `{"idp":{"kind":"custom","issuer":"https://byo.example","jwksUrl":"https://byo.example/jwks"}}`)
-	if resp.Code != 200 {
-		t.Fatalf("switch custom: want 200, got %d body=%s", resp.Code, resp.Body.String())
+	ctx := context.Background()
+
+	proj, err := c.svc.Patch(ctx, "acme", "tester", idpPatch("custom", "https://byo.example", "https://byo.example/jwks"))
+	if err != nil {
+		t.Fatalf("switch custom: %v", err)
 	}
-	idpSec := decodeCfg(t, resp.Body.Bytes())["idp"].(map[string]any)
-	if idpSec["kind"] != "custom" || idpSec["issuer"] != "https://byo.example" {
-		t.Fatalf("custom switch drifted: %v", idpSec)
+	if proj.IDP.Kind != "custom" || proj.IDP.Issuer != "https://byo.example" {
+		t.Fatalf("custom switch drifted: %+v", proj.IDP)
 	}
-	// Persisted.
-	g := decodeCfg(t, c.h.AsOrg("acme").Get(configPath).Body.Bytes())["idp"].(map[string]any)
-	if g["kind"] != "custom" || g["jwksUrl"] != "https://byo.example/jwks" {
-		t.Fatalf("custom switch did not persist: %v", g)
+	// Persisted — a fresh read sees it.
+	got, err := c.svc.Get(ctx, "acme")
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if got.IDP.Kind != "custom" || got.IDP.JWKSURL != "https://byo.example/jwks" {
+		t.Fatalf("custom switch did not persist: %+v", got.IDP)
 	}
 }
 
 func TestConfigComponent_E2_ResetToPlatform(t *testing.T) {
 	t.Parallel()
 	c := newConfigHarness(t)
-	// Start custom, then reset.
-	if r := c.h.AsOrg("acme").Patch(configPath, `{"idp":{"kind":"custom","issuer":"https://byo.example","jwksUrl":"https://byo.example/jwks"}}`); r.Code != 200 {
-		t.Fatalf("to custom: %d %s", r.Code, r.Body.String())
+	ctx := context.Background()
+
+	if _, err := c.svc.Patch(ctx, "acme", "tester", idpPatch("custom", "https://byo.example", "https://byo.example/jwks")); err != nil {
+		t.Fatalf("to custom: %v", err)
 	}
-	resp := c.h.AsOrg("acme").Patch(configPath, `{"idp":{"kind":"platform"}}`)
-	if resp.Code != 200 {
-		t.Fatalf("reset: want 200, got %d body=%s", resp.Code, resp.Body.String())
+	proj, err := c.svc.Patch(ctx, "acme", "tester", idpPatch("platform", "", ""))
+	if err != nil {
+		t.Fatalf("reset: %v", err)
 	}
-	idpSec := decodeCfg(t, resp.Body.Bytes())["idp"].(map[string]any)
-	if idpSec["kind"] != "platform" || idpSec["issuer"] != platformIss || idpSec["jwksUrl"] != platformJWKS {
-		t.Fatalf("platform reset must restore cluster defaults: %v", idpSec)
+	if proj.IDP.Kind != "platform" || proj.IDP.Issuer != platformIss || proj.IDP.JWKSURL != platformJWKS {
+		t.Fatalf("platform reset must restore cluster defaults: %+v", proj.IDP)
 	}
 }
 
 func TestConfigComponent_E3_NullRejected(t *testing.T) {
 	t.Parallel()
 	c := newConfigHarness(t)
-	resp := c.h.AsOrg("acme").Patch(configPath, `{"idp":null}`)
-	if resp.Code != 400 {
-		t.Fatalf("idp null: want 400, got %d body=%s", resp.Code, resp.Body.String())
-	}
-	if p := componenttest.DecodeEnvelope(t, resp.Body.String()); len(p.Details) == 0 || p.Details[0].Field != "body.idp" {
-		t.Fatalf("400 must point at body.idp: %s", resp.Body.String())
+
+	var p orgconfig.ConfigPatch
+	p.IDP.Sent, p.IDP.Null = true, true
+
+	_, err := c.svc.Patch(context.Background(), "acme", "tester", p)
+	var se *organization.SectionError
+	if !errors.As(err, &se) || se.Section != "idp" {
+		t.Fatalf("idp null must fail pointing at the idp section, got %v", err)
 	}
 }
 
 func TestConfigComponent_E4_WholesaleReplaceClearsOmitted(t *testing.T) {
 	t.Parallel()
 	c := newConfigHarness(t)
+	ctx := context.Background()
+
 	// Establish a custom idp WITH a jwksUrl.
-	if r := c.h.AsOrg("acme").Patch(configPath, `{"idp":{"kind":"custom","issuer":"https://byo.example","jwksUrl":"https://byo.example/jwks"}}`); r.Code != 200 {
-		t.Fatalf("seed: %d %s", r.Code, r.Body.String())
+	if _, err := c.svc.Patch(ctx, "acme", "tester", idpPatch("custom", "https://byo.example", "https://byo.example/jwks")); err != nil {
+		t.Fatalf("seed: %v", err)
 	}
 	// Re-send the section WITHOUT jwksUrl → wholesale replace clears it (no
 	// legacy empty-means-keep carry-over).
-	resp := c.h.AsOrg("acme").Patch(configPath, `{"idp":{"kind":"custom","issuer":"https://byo2.example"}}`)
-	if resp.Code != 200 {
-		t.Fatalf("replace: %d %s", resp.Code, resp.Body.String())
+	proj, err := c.svc.Patch(ctx, "acme", "tester", idpPatch("custom", "https://byo2.example", ""))
+	if err != nil {
+		t.Fatalf("replace: %v", err)
 	}
-	idpSec := decodeCfg(t, resp.Body.Bytes())["idp"].(map[string]any)
-	if idpSec["issuer"] != "https://byo2.example" {
-		t.Fatalf("issuer not replaced: %v", idpSec)
+	if proj.IDP.Issuer != "https://byo2.example" {
+		t.Fatalf("issuer not replaced: %+v", proj.IDP)
 	}
-	if idpSec["jwksUrl"] != "" {
-		t.Fatalf("omitted jwksUrl must be CLEARED (wholesale replace), got %v", idpSec["jwksUrl"])
+	if proj.IDP.JWKSURL != "" {
+		t.Fatalf("omitted jwksUrl must be CLEARED (wholesale replace), got %q", proj.IDP.JWKSURL)
 	}
 }
 
@@ -696,9 +846,12 @@ func TestConfigComponent_E4_WholesaleReplaceClearsOmitted(t *testing.T) {
 func TestConfigComponent_F1_PatchOnlyLLMLeavesOthers(t *testing.T) {
 	t.Parallel()
 	c := newConfigHarness(t)
-	// Establish a custom idp first.
-	if r := c.h.AsOrg("acme").Patch(configPath, `{"idp":{"kind":"custom","issuer":"https://byo.example","jwksUrl":"https://byo.example/jwks"}}`); r.Code != 200 {
-		t.Fatalf("seed idp: %d %s", r.Code, r.Body.String())
+	// Establish a custom idp first. Seeded through the orchestrator because the
+	// route refuses an idp section (see the E group); the point of this test is
+	// what the LLM patch leaves alone, not how the idp got there.
+	if _, err := c.svc.Patch(context.Background(), "acme", "tester",
+		idpPatch("custom", "https://byo.example", "https://byo.example/jwks")); err != nil {
+		t.Fatalf("seed idp: %v", err)
 	}
 	beforeIDP := sectionOf(t, c.h.AsOrg("acme").Get(configPath).Body.Bytes(), "idp")
 
@@ -711,10 +864,43 @@ func TestConfigComponent_F1_PatchOnlyLLMLeavesOthers(t *testing.T) {
 	}
 }
 
+// PATCH's response echoes the FULL projection regardless of which section
+// the body touched, so it needs the same redaction GET does (both call
+// organization.RedactConfigForPermissions) — otherwise a caller holding only
+// ae:github-config could patch gitProvider and get the org's llm detail
+// (already connected by another admin) back for free.
+func TestConfigComponent_F1b_PatchResponseRedactsUnheldSection(t *testing.T) {
+	t.Parallel()
+	c := newConfigHarness(t)
+	if r := c.h.AsOrg("acme").Patch(configPath, llmConnect(goodAnthKey)); r.Code != 200 {
+		t.Fatalf("llm connect: %d %s", r.Code, r.Body.String())
+	}
+	c.gh.patHappy()
+
+	resp := c.h.AsOrg("acme").
+		With(func(cl *auth.Claims) { cl.Scope = "ae:github-config" }).
+		Patch(configPath, `{"gitProvider":{"kind":"github","mode":"pat","pat":"ghp_live","githubLogin":"ada"}}`)
+	if resp.Code != 200 {
+		t.Fatalf("patch gitProvider with ae:github-config only: want 200, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	m := decodeCfg(t, resp.Body.Bytes())
+	if m["gitProvider"] == nil {
+		t.Fatalf("holding ae:github-config must still see the section just patched: %v", m)
+	}
+	if m["llm"] != nil {
+		t.Fatalf("without ae:model-config, llm must be redacted from the PATCH response too, got %v", m["llm"])
+	}
+}
+
+// Two sections in one body both land. llm + gitProvider rather than the idp
+// pairing this used to use: the route refuses an idp section now, and F3 below
+// covers the same two sections on the failure side, so success and atomicity
+// are stated over the same pair.
 func TestConfigComponent_F2_MultiSectionSuccess(t *testing.T) {
 	t.Parallel()
 	c := newConfigHarness(t)
-	resp := c.h.AsOrg("acme").Patch(configPath, `{"llm":{"kind":"anthropic","apiKey":"`+goodAnthKey+`"},"idp":{"kind":"custom","issuer":"https://byo.example","jwksUrl":"https://byo.example/jwks"}}`)
+	c.gh.patHappy()
+	resp := c.h.AsOrg("acme").Patch(configPath, `{"llm":{"kind":"anthropic","apiKey":"`+goodAnthKey+`"},"gitProvider":{"kind":"github","mode":"pat","pat":"ghp_live","githubLogin":"ada"}}`)
 	if resp.Code != 200 {
 		t.Fatalf("multi-section: want 200, got %d body=%s", resp.Code, resp.Body.String())
 	}
@@ -722,8 +908,8 @@ func TestConfigComponent_F2_MultiSectionSuccess(t *testing.T) {
 	if m["llm"].(map[string]any)["status"] != "active" {
 		t.Fatalf("llm not applied: %v", m["llm"])
 	}
-	if m["idp"].(map[string]any)["kind"] != "custom" {
-		t.Fatalf("idp not applied: %v", m["idp"])
+	if m["gitProvider"].(map[string]any)["githubLogin"] != "ada" {
+		t.Fatalf("gitProvider not applied: %v", m["gitProvider"])
 	}
 }
 
@@ -960,7 +1146,7 @@ func normalizeTimes(body string) string {
 // configOpsBlock returns just the lines belonging to path blocks whose key
 // starts with "/config", so the additionalProperties check can't false-positive
 // on a legacy map-bodied op under a different path. Path headers are 2-space
-// indented under `paths:` (e.g. "  /config:", "  /config/idp/discovery:").
+// indented under `paths:` (e.g. "  /config:", "  /config/status:").
 func configOpsBlock(spec string) string {
 	var out strings.Builder
 	inConfig := false

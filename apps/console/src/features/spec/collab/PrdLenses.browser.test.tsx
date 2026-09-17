@@ -77,6 +77,7 @@ async function mountPrd(busyReason = "") {
           provider={fakeProvider(doc)}
           self={{ name: "Tester", color: "#64b5f6" }}
           agentStreaming={false}
+          editable
           lenses={{ run: () => {}, busyReason }}
         />
       </div>
@@ -185,6 +186,7 @@ describe("the PRD's lens surface, on screen", () => {
             provider={fakeProvider(doc)}
             self={{ name: "Tester", color: "#64b5f6" }}
             agentStreaming={false}
+            editable
             lenses={{ run: () => {}, busyReason: "" }}
             aim={{
               path: PATH,
@@ -258,6 +260,7 @@ describe("revealing the first unsettled line", () => {
             provider={provider}
             self={{ name: "Tester", color: "#64b5f6" }}
             agentStreaming={false}
+            editable
             lenses={{ run: () => {}, busyReason: "" }}
             revealUnsettled={reveal}
           />
@@ -304,6 +307,7 @@ describe("the add-lenses ask before they fire", () => {
             provider={fakeProvider(doc)}
             self={{ name: "Tester", color: "#64b5f6" }}
             agentStreaming={false}
+            editable
             lenses={{ run, busyReason: "" }}
             aim={{ path: PATH, busyReason: "", send: async () => true }}
           />
@@ -355,6 +359,7 @@ describe("the add-lenses ask before they fire", () => {
             provider={fakeProvider(doc)}
             self={{ name: "Tester", color: "#64b5f6" }}
             agentStreaming={false}
+            editable
             lenses={{ run, busyReason: "" }}
             aim={{ path: PATH, busyReason: "", send: async () => true }}
           />

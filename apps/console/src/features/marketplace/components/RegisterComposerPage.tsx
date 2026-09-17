@@ -29,6 +29,9 @@ import {
 } from "@wso2/oxygen-ui";
 import { CreditCard, Mail, MessageSquare } from "@wso2/oxygen-ui-icons-react";
 import { Link, useNavigate } from "@tanstack/react-router";
+import { useHasPermission } from "../../../auth/permissions";
+import { EmptyState } from "../../../components/EmptyState";
+import { NoPermissionIllustration } from "../../../components/NoPermissionIllustration";
 import { PageHeader } from "../../../components/PageHeader";
 import { PromptComposer } from "../../projects/components/PromptComposer";
 
@@ -52,7 +55,30 @@ const EXAMPLES = [
   },
 ] as const;
 
+// This whole flow exists to mutate the resource catalog, so it needs
+// ae:resource-config specifically — checked in a thin wrapper, before any of
+// the composer's own state, so a denied caller's render never touches it.
 export function RegisterComposerPage() {
+  const hasResourceConfig = useHasPermission("ae:resource-config");
+  if (!hasResourceConfig) {
+    return (
+      <PageContent>
+        <PageHeader
+          title="Register an External resource"
+          backTo={{ link: <Link to="/resources" />, label: "Back to Resources" }}
+        />
+        <EmptyState
+          icon={<NoPermissionIllustration size={120} />}
+          title="No resources access"
+          description="You don't have permission to register or edit resources."
+        />
+      </PageContent>
+    );
+  }
+  return <RegisterComposerForm />;
+}
+
+function RegisterComposerForm() {
   const navigate = useNavigate();
   const [prompt, setPrompt] = useState("");
   const [files, setFiles] = useState<File[]>([]);

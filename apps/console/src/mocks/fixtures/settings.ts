@@ -37,12 +37,16 @@ type ApiError = components["schemas"]["Error"];
 // "error": GET /config and GET /skills fail (load-error state).
 // "sync-error": config empty and POST /skills/sync fails — exercises the
 // wizard's bootstrap-failure step (Retry / Continue anyway, #102).
+// "authz-error": config empty and GET /authz/ensure always fails — exercises
+// the wizard's workspace-configuration hard gate (Retry only, escalating
+// message past 3 attempts, #743).
 export type SettingsScenario =
   | "empty"
   | "partial"
   | "connected"
   | "error"
-  | "sync-error";
+  | "sync-error"
+  | "authz-error";
 
 // Typing this exact value into a PAT/API-key field simulates the BFF's
 // synchronous probe-before-persist validation failing against the real
@@ -197,6 +201,15 @@ export const skillsLoadError: ApiError = {
 export const skillsSyncError: ApiError = {
   code: "bad_gateway",
   message: "Failed to create the skills repository on GitHub",
+};
+
+// Workspace-configuration failure for the onboarding wizard's hard gate
+// (#743): GET /authz/ensure failed to ensure the org's OpenChoreo AuthzRole.
+// Mirrors the real BFF's generic apierr.Internal envelope — EnsureAuthzRole
+// is idempotent, so the only remedy is retry, and there is no skip.
+export const authzEnsureError: ApiError = {
+  code: "internal",
+  message: "failed to ensure authz role",
 };
 
 // Covers all three kinds (org | platform | imported — the BE's real

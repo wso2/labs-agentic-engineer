@@ -26,6 +26,17 @@ const setMutate = vi.fn();
 const saveState: { isPending: boolean; isError: boolean; error: Error | null } =
   { isPending: false, isError: false, error: null };
 
+// Every existing test in this file assumes the card is otherwise operable —
+// only the dedicated "no permission" tests below flip this to false.
+const modelConfigPermission = vi.hoisted(() => ({ current: true }));
+vi.mock("../../../auth/permissions", () => ({
+  useHasPermission: () => modelConfigPermission.current,
+}));
+
+vi.mock("../../../components/NoPermissionIllustration", () => ({
+  NoPermissionIllustration: () => <svg data-testid="no-permission-illustration" />,
+}));
+
 vi.mock("../api/queries", () => ({
   useSetCodingAgent: () => ({ mutate: setMutate, ...saveState }),
   // The card mounts the coding-agent KEY section when the org key is
@@ -76,6 +87,7 @@ beforeEach(() => {
   saveState.isPending = false;
   saveState.isError = false;
   saveState.error = null;
+  modelConfigPermission.current = true;
 });
 afterEach(cleanup);
 
@@ -166,5 +178,36 @@ describe("CodingAgentCard", () => {
 
     expect(runtimeSelect()).toHaveAttribute("aria-disabled", "true");
     expect(modelSelect()).toHaveAttribute("aria-disabled", "true");
+  });
+});
+
+describe("CodingAgentCard — permission gate", () => {
+  // The runtime/model pair and the key it bills are one setting group
+  // (ADR-0016) writing through PATCH /config's codingAgent section, which
+  // needs ae:model-config same as llm/codingLlm — so the card gates on it
+  // itself rather than assuming the parent's coarser check covers it.
+  it("shows no coding-agent info at all without ae:model-config", () => {
+    modelConfigPermission.current = false;
+    renderCard();
+
+    expect(screen.queryByRole("combobox", { name: "Runtime" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Model" })).not.toBeInTheDocument();
+    expect(screen.queryByText("platform defaults")).not.toBeInTheDocument();
+  });
+
+  it("shows the no-permission illustration and message instead", () => {
+    modelConfigPermission.current = false;
+    renderCard();
+
+    expect(screen.getByTestId("no-permission-illustration")).toBeInTheDocument();
+    expect(
+      screen.getByText("You don't have permission to view coding agent settings."),
+    ).toBeInTheDocument();
+  });
+
+  it("still shows the Coding agent header even when denied", () => {
+    modelConfigPermission.current = false;
+    renderCard();
+    expect(screen.getByText("Coding agent")).toBeInTheDocument();
   });
 });

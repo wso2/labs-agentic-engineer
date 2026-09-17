@@ -27,8 +27,31 @@ type RunValidation = components["schemas"]["RunValidation"];
 
 // Router replaced so the PageHeader back-link renders as a plain anchor — no
 // RouterProvider needed (mirrors DeploymentsPage.test.tsx / NotFound.test.tsx).
+// useNavigate is the permission gate's "Back to project overview" target.
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children?: React.ReactNode }) => <a>{children}</a>,
+  useNavigate: () => navigate,
+}));
+
+const navigate = vi.fn();
+
+// The header's Cancel run button reads ae:build through useHasPermission —
+// same shape as BuildsPage.test.tsx's mock, since it's the identical button.
+// Defaults to held so every existing test here (written before the button
+// carried a permission check) keeps seeing it enabled. Kept SEPARATE from the
+// page-level gate below: a caller can hold ae:build-view (page reachable)
+// without ae:build (Cancel disabled), and one existing test exercises exactly
+// that split.
+const hasBuild = vi.hoisted(() => ({ current: true }));
+// The page-level gate reads ae:build-view (exact-match, not OR'd with
+// ae:build) through the SAME useHasPermission hook, so the mock has to be
+// permission-name-aware rather than one shared boolean — hasBuild and
+// canViewValidation are genuinely independent (see above). Defaults to held
+// so every existing test here keeps seeing the page.
+const canViewValidation = vi.hoisted(() => ({ current: true }));
+vi.mock("../../../auth/permissions", () => ({
+  useHasPermission: (permission: string) =>
+    permission === "ae:build" ? hasBuild.current : canViewValidation.current,
 }));
 
 // The live log is the RUN feed filtered to the validation cycle, and it opens
@@ -350,6 +373,8 @@ afterEach(() => {
   mockIssueUrl = "https://github.com/acme/demo/issues/30";
   mockIssueComments = [];
   mockIssueLive = undefined;
+  hasBuild.current = true;
+  canViewValidation.current = true;
 });
 
 // A milestone sees SEQUENTIAL runs across its life and only some of them
@@ -379,6 +404,34 @@ describe("ValidationPage cancel", () => {
     // The LIVE run, not the one answering for the version: only one run on a
     // milestone can be live, and it need not be the one holding the verdict.
     expect(mockCancelMutate).toHaveBeenCalledWith("run-live");
+  });
+
+  // Exact-match ae:build, matching the BFF's own CancelRun gate and
+  // RunStory's identical button on the Builds page — same endpoint, same
+  // hook, same permission either place this escape hatch appears.
+  it("disables cancel, with an explanatory tooltip, without ae:build", async () => {
+    hasBuild.current = false;
+    mockValidation = "running";
+    mockRun = run({ cycles: [validationCycle] });
+    mockNewerRuns = [
+      {
+        ...run({ cycles: [validationCycle] }),
+        id: "run-live",
+        kind: "validation",
+        origin: "revalidate",
+        state: "running",
+      },
+    ];
+
+    renderPage(undefined);
+    const button = screen.getByRole("button", { name: /Cancel run/ });
+    expect(button).toBeDisabled();
+    fireEvent.mouseOver(button.closest("span") ?? button);
+    expect(
+      await screen.findByText("You don't have permission to cancel this run."),
+    ).toBeInTheDocument();
+    fireEvent.click(button);
+    expect(mockCancelMutate).not.toHaveBeenCalled();
   });
 
   // The repair loop is validation's, even though the cycle in flight is coding: the
@@ -1729,5 +1782,19 @@ describe("ValidationPage agent status line", () => {
 
     expect(screen.getByText("Authoring the last three specs.")).toBeInTheDocument();
     expect(screen.getByTestId("working-pulse")).toBeInTheDocument();
+  });
+});
+
+// Same gate BuildsLedger/DeploymentsPage carry: validation reads run data
+// off the same surface (list-build-runs, gated {ae:build, ae:build-view}
+// server-side), so it needs the same page-level permission.
+describe("ValidationPage — permission gate", () => {
+  it("blocks the whole page for a user lacking ae:build-view", () => {
+    canViewValidation.current = false;
+    renderPage(undefined);
+
+    expect(
+      screen.getByText("You don't have access to this project's validation"),
+    ).toBeInTheDocument();
   });
 });

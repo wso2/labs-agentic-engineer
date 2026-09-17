@@ -36,6 +36,9 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { ExternalLink, Eye, EyeOff, Key } from "@wso2/oxygen-ui-icons-react";
+import { useHasPermission } from "../../../auth/permissions";
+import { EmptyState } from "../../../components/EmptyState";
+import { NoPermissionIllustration } from "../../../components/NoPermissionIllustration";
 import type { components } from "../../../generated/aep-api";
 import { useConnectAnthropic, useDisconnectAnthropic } from "../api/queries";
 
@@ -46,6 +49,7 @@ export function AnthropicCredentialCard({
 }: {
   llm: LLMProjection | null;
 }) {
+  const hasModelConfig = useHasPermission("ae:model-config");
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
   const [disconnectOpen, setDisconnectOpen] = useState(false);
@@ -54,6 +58,28 @@ export function AnthropicCredentialCard({
   const disconnect = useDisconnectAnthropic();
 
   const connected = llm !== null;
+
+  // Without ae:model-config there is nothing here to show — not even whether
+  // a key is connected, since that's itself org-sensitive information. Every
+  // check below this point can assume the permission is held.
+  if (!hasModelConfig) {
+    return (
+      <Card variant="outlined">
+        <CardContent sx={{ p: 3 }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mb: 2 }}>
+            <Key size={22} />
+            <Typography variant="h6">Anthropic</Typography>
+          </Box>
+          <Divider sx={{ mb: 3 }} />
+          <EmptyState
+            icon={<NoPermissionIllustration size={72} />}
+            description="You don't have permission to view Anthropic settings."
+            compact
+          />
+        </CardContent>
+      </Card>
+    );
+  }
 
   const submit = () => {
     connect.mutate(apiKey, {

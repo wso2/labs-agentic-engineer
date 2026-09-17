@@ -27,6 +27,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DESIGN_COMMAND } from "@aep/contracts/commands";
 import {
   addMessage,
   chatKeyFor,
@@ -34,6 +35,7 @@ import {
   replaceMessages,
   upsertQuestionMessage,
 } from "./chatStore";
+import { SessionContext } from "../../auth/SessionContext";
 import { useAgentChat } from "./useAgentChat";
 import { useConversationLog } from "./useConversationLog";
 
@@ -57,6 +59,7 @@ vi.mock("./api/conversations", async (importOriginal) => {
 const mockGetHistory = vi.fn();
 const mockGetActive = vi.fn();
 const mockStartTurn = vi.fn();
+const mockStartDesignTurn = vi.fn();
 vi.mock("./api/turns", async (importOriginal) => {
   const real = await importOriginal<typeof import("./api/turns")>();
   return {
@@ -64,6 +67,7 @@ vi.mock("./api/turns", async (importOriginal) => {
     getConversationMessages: (...a: unknown[]) => mockGetHistory(...a),
     getActiveTurn: (...a: unknown[]) => mockGetActive(...a),
     startCollabTurn: (...a: unknown[]) => mockStartTurn(...a),
+    startDesignTurn: (...a: unknown[]) => mockStartDesignTurn(...a),
   };
 });
 
@@ -85,7 +89,24 @@ function createWrapper() {
     defaultOptions: { queries: { retry: false } },
   });
   return function Wrapper({ children }: { children: React.ReactNode }) {
-    return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+    return (
+      <QueryClientProvider client={qc}>
+        {/* useConversationLog (mounted directly below, alongside useAgentChat)
+            reads ae:design/ae:resource-config to decide whether to read the
+            shared conversation panel at all — give it a session so it doesn't
+            throw outside AuthGuard. */}
+        <SessionContext.Provider
+          value={{
+            user: { name: "Test User", email: "test@example.com" },
+            orgHandle: ORG,
+            permissions: new Set(["ae:design"]),
+            signOut: vi.fn(),
+          }}
+        >
+          {children}
+        </SessionContext.Provider>
+      </QueryClientProvider>
+    );
   };
 }
 
@@ -189,6 +210,37 @@ describe("useAgentChat — the shared thread (#430)", () => {
       await result.current.send("too early");
     });
     expect(mockStartTurn).not.toHaveBeenCalled();
+  });
+
+  // sendDesignCommand's own BFF call (generate-design) is distinct from
+  // send's (create-turn) — the whole point of the two being separate
+  // functions rather than `send(DESIGN_COMMAND)` (permission_gate.go gates
+  // them differently: ae:design alone vs. ae:design OR ae:resource-config).
+  it("sends the design command against the resolved id, through its own endpoint", async () => {
+    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.conversationReady).toBe(true));
+
+    mockStartDesignTurn.mockResolvedValue("turn-1");
+    await act(async () => {
+      await result.current.sendDesignCommand();
+    });
+
+    await waitFor(() => expect(mockStartDesignTurn).toHaveBeenCalledWith(PROJECT, "conv-1"));
+    expect(mockStartTurn).not.toHaveBeenCalled();
+    expect(
+      getMessages(KEY).some((m) => "content" in m && m.content === DESIGN_COMMAND),
+    ).toBe(true);
+  });
+
+  it("holds the design command until the thread id resolves", async () => {
+    mockFetchCurrent.mockReturnValue(new Promise(() => {})); // never resolves
+    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+
+    expect(result.current.conversationReady).toBe(false);
+    await act(async () => {
+      await result.current.sendDesignCommand();
+    });
+    expect(mockStartDesignTurn).not.toHaveBeenCalled();
   });
 
   it("heals a rotated thread: 409 → failed row → re-resolve → fresh history", async () => {

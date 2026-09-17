@@ -24,14 +24,20 @@ import {
   PageContent,
   Tab,
   Tabs,
+  Tooltip,
   useMediaQuery,
   useTheme,
 } from "@wso2/oxygen-ui";
 import { Coins, KeyRound, Sparkles } from "@wso2/oxygen-ui-icons-react";
 import { PageHeader } from "../../../components/PageHeader";
+import { useHasAnyPermission, useHasPermission } from "../../../auth/permissions";
 
 // Each section is its own route (issue #143): deep-linkable and back/forward
-// correct, matching the legacy console's settings/<section> URLs.
+// correct, matching the legacy console's settings/<section> URLs. Every
+// section here has nothing at all to show a caller holding none of its
+// permissions, so every one of them gets its tab disabled in that case —
+// SkillsSection's own internal ae:skill-view/-config check is a second,
+// belt-and-suspenders gate for direct URL access, not a substitute for this.
 const SECTIONS = [
   { path: "/settings/credentials", label: "Credentials", Icon: KeyRound },
   { path: "/settings/skills", label: "Skills", Icon: Sparkles },
@@ -46,6 +52,32 @@ export function SettingsLayout() {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
   const { pathname } = useLocation();
+  // Either permission makes Credentials worth landing on (GitHubCredentialCard/
+  // AnthropicCredentialCard each gate their own half independently) — hooks
+  // can't be called from the map below, so every gated section's check lives
+  // here and feeds the sectionAccess lookup instead.
+  const hasCredentialsAccess = useHasAnyPermission([
+    "ae:github-config",
+    "ae:model-config",
+  ]);
+  const hasSkillsAccess = useHasPermission("ae:skill-view");
+  const hasUsageAccess = useHasPermission("ae:usage-view");
+  const sectionAccess: Partial<
+    Record<(typeof SECTIONS)[number]["path"], { allowed: boolean; deniedTooltip: string }>
+  > = {
+    "/settings/credentials": {
+      allowed: hasCredentialsAccess,
+      deniedTooltip: "You don't have permission to view credentials.",
+    },
+    "/settings/skills": {
+      allowed: hasSkillsAccess,
+      deniedTooltip: "You don't have permission to view skills.",
+    },
+    "/settings/usage": {
+      allowed: hasUsageAccess,
+      deniedTooltip: "You don't have permission to view usage.",
+    },
+  };
 
   const active =
     SECTIONS.find((s) => pathname.startsWith(s.path))?.path ?? SECTIONS[0].path;
@@ -80,17 +112,32 @@ export function SettingsLayout() {
               variant={isMobile ? "fullWidth" : "standard"}
               value={active}
             >
-              {SECTIONS.map(({ path, label, Icon }) => (
-                <Tab
-                  key={path}
-                  value={path}
-                  component={Link}
-                  to={path}
-                  icon={<Icon size={18} />}
-                  iconPosition="start"
-                  label={label}
-                />
-              ))}
+              {SECTIONS.map(({ path, label, Icon }) => {
+                const gate = sectionAccess[path];
+                const denied = gate !== undefined && !gate.allowed;
+                const tab = (
+                  <Tab
+                    key={path}
+                    value={path}
+                    component={Link}
+                    to={path}
+                    icon={<Icon size={18} />}
+                    iconPosition="start"
+                    label={label}
+                    disabled={denied}
+                  />
+                );
+                // Tooltip needs a real DOM node ref even while disabled, so
+                // it wraps the Tab rather than replacing it — MUI's disabled
+                // Tab already blocks the click/navigation via pointer-events.
+                return denied ? (
+                  <Tooltip key={path} title={gate.deniedTooltip}>
+                    <span>{tab}</span>
+                  </Tooltip>
+                ) : (
+                  tab
+                );
+              })}
             </Tabs>
           </CardContent>
         </Card>
