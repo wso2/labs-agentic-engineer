@@ -1,7 +1,7 @@
 import type { components } from "../../generated/aep-api";
 import { taskUsage } from "./usage";
 import {
-  DEFAULT_VALIDATION_CRITERIA,
+  DEFAULT_ACCEPTANCE_FEATURES,
   DEFAULT_VALIDATION_REPORT,
 } from "./validation";
 
@@ -1005,7 +1005,7 @@ const settledRun: BuildRunList = {
       validation: {
         verdict: "partial",
         issue: 30,
-        reportPath: "tests/validation/report.json",
+        reportPath: "tests/acceptance/report.json",
       },
       cycles: [
         {
@@ -1651,12 +1651,11 @@ const fullFiles: MockSpecFile[] = [
     path: "specs/design/components/orders-api/design.json",
     content: ordersApiDesignJson,
   },
-  {
-    path: "specs/validation/validation-criteria.json",
-    content: DEFAULT_VALIDATION_CRITERIA,
-  },
+  // One file per capability, which is what the acceptance skill authors and what
+  // the Validations page reads back as a set.
+  ...DEFAULT_ACCEPTANCE_FEATURES,
   // Runner artifact outside specs/ — reachable via the read-file allow-list.
-  { path: "tests/validation/report.json", content: DEFAULT_VALIDATION_REPORT },
+  { path: "tests/acceptance/report.json", content: DEFAULT_VALIDATION_REPORT },
 ];
 
 export const projectSpecFiles: Record<

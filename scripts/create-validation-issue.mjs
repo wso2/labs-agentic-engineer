@@ -19,8 +19,8 @@
 // Interim VALIDATION-phase task creator for the LOCAL harness (in production the
 // platform mints the issue — see services/aep-api/internal/delivery/README.md).
 //
-// Reads `specs/validation/validation-criteria.json` from a project repo
-// (authored there by the spec agent's `validation-criteria` skill) and
+// Reads the `.feature` files under `specs/acceptance/` from a project repo
+// (authored there by the spec agent's `acceptance-criteria` skill) and
 // creates the GitHub validation issue the coding agent will be dispatched
 // against. Stands in for the platform trigger + issue builder until that
 // lands in aep-api (tech-lead-style generation may replace the rendering
@@ -36,7 +36,7 @@ import { execFileSync } from "node:child_process";
 
 // ---------------------------------------------------------------------------
 // Target repo — the deployed project's repo (expected structure:
-// specs/validation/validation-criteria.json committed, specs/design/** for
+// specs/acceptance/*.feature committed, specs/design/** for
 // component design docs). Required via --repo (or the REPO env var) so the
 // issue is never created against a stale hardcoded default.
 // ---------------------------------------------------------------------------
@@ -50,13 +50,13 @@ function resolveRepo() {
   if (!repo || !/^[^/\s]+\/[^/\s]+$/.test(repo)) {
     console.error(
       "create-validation-issue: pass --repo <owner/repo> (or set REPO) — " +
-        "the project repo holding specs/validation/validation-criteria.json",
+        "the project repo holding specs/acceptance/*.feature",
     );
     process.exit(1);
   }
   return repo;
 }
-const CRITERIA_PATH = "specs/validation/validation-criteria.json";
+const CRITERIA_DIR = "specs/acceptance";
 const LABELS = ["aep", "validation"];
 
 // Deployed endpoint URLs + test credentials are NOT written into the issue: the
@@ -65,8 +65,6 @@ const LABELS = ["aep", "validation"];
 // them from token-stub.mjs.
 
 // ---------------------------------------------------------------------------
-
-const METHODS = new Set(["e2e", "scenario", "manual"]);
 
 function gh(args, input) {
   return execFileSync("gh", args, {
@@ -77,47 +75,52 @@ function gh(args, input) {
 }
 
 function fetchCriteria() {
-  const raw = gh([
-    "api",
-    `repos/${REPO}/contents/${CRITERIA_PATH}`,
-    "-H",
-    "Accept: application/vnd.github.raw",
-  ]);
-  return JSON.parse(raw);
+  const listing = JSON.parse(gh(["api", `repos/${REPO}/contents/${CRITERIA_DIR}`]));
+  const files = [];
+  for (const entry of listing) {
+    if (entry.type !== "file" || !entry.name.endsWith(".feature")) continue;
+    files.push({
+      path: `${CRITERIA_DIR}/${entry.name}`,
+      content: gh(["api", entry.url, "-H", "Accept: application/vnd.github.raw"]),
+    });
+  }
+  return { files };
 }
 
-// Structural validation mirroring skills/validation-criteria/SKILL.md. The
-// oracle drives everything downstream, so a malformed file fails loudly here.
+// Structural validation mirroring skills/acceptance-criteria/SKILL.md. The
+// oracle drives everything downstream, so an unusable set fails loudly here.
+//
+// A line scan, not a parse: this is a local-dev harness with no Gherkin
+// dependency, and the real gate on shape is the linter the skill names. What it
+// catches is the case that would otherwise mint a validation task with nothing
+// to drive.
 function validateCriteria(doc) {
   const fail = (msg) => {
-    throw new Error(`validation-criteria.json invalid: ${msg}`);
+    throw new Error(`specs/acceptance/ invalid: ${msg}`);
   };
-  if (!Array.isArray(doc.requirements) || doc.requirements.length === 0) {
-    fail("requirements must be a non-empty array");
+  if (doc.files.length === 0) fail("no .feature files");
+  for (const f of doc.files) {
+    if (!/^\s*Feature:/m.test(f.content)) fail(`${f.path} has no Feature:`);
   }
-  for (const req of doc.requirements) {
-    if (!/^REQ-\d{3}$/.test(req.id ?? "")) fail(`bad requirement id ${JSON.stringify(req.id)}`);
-    if (!req.statement) fail(`requirement ${req.id} has no statement`);
-    if (!Array.isArray(req.criteria) || req.criteria.length === 0) {
-      fail(`requirement ${req.id} has no criteria`);
-    }
-    for (const c of req.criteria) {
-      if (!/^AC-\d{3}-[a-z]+$/.test(c.id ?? "")) fail(`bad criterion id ${JSON.stringify(c.id)} under ${req.id}`);
-      if (!c.must) fail(`criterion ${c.id} has no must`);
-      if (!METHODS.has(c.method)) fail(`criterion ${c.id} has unknown method ${JSON.stringify(c.method)}`);
-    }
-  }
+  if (summarize(doc).scenarios === 0) fail("no scenarios across any feature file");
 }
 
+// `Scenario:` and `Example:` are synonyms in the Gherkin grammar, so both count.
 function summarize(doc) {
-  const sum = { e2e: 0, scenario: 0, manual: 0 };
-  for (const req of doc.requirements) {
-    for (const c of req.criteria) {
-      if (c.method === "e2e") sum.e2e++;
-      else sum[c.method]++;
+  const sum = { files: doc.files.length, rules: 0, scenarios: 0 };
+  for (const f of doc.files) {
+    for (const line of f.content.split("\n")) {
+      const t = line.trim();
+      if (t.startsWith("Rule:")) sum.rules++;
+      else if (t.startsWith("Scenario:") || t.startsWith("Example:")) sum.scenarios++;
     }
   }
   return sum;
+}
+
+/** "1 rule" / "2 rules" — the body is read by a person. */
+function plural(n, noun) {
+  return n === 1 ? `${n} ${noun}` : `${n} ${noun}s`;
 }
 
 // issueNumber is 0 at creation time; the body is re-rendered and edited once
@@ -127,41 +130,30 @@ function renderBody(doc, issueNumber) {
   const lines = [];
 
   lines.push(
-    "Validate the deployed system against its validation criteria: author end-to-end tests, run them against the deployed system, and open a PR containing the tests and a validation report.",
+    "Drive every scenario in this project's acceptance criteria against the deployed system, and open a PR containing the run's report.",
     "",
     "The deployed endpoint URLs and any test credentials are provided to the validation runner by the platform at dispatch time — they are not in this issue.",
     "",
-    "## Validation criteria",
-    `The source of truth is \`${CRITERIA_PATH}\` in this repo. It is read-only input for this task — do not modify it or anything else under \`specs/\`.`,
+    "## Acceptance criteria",
+    `The source of truth is \`${CRITERIA_DIR}/\` in this repo — ${plural(sum.scenarios, "scenario")} across ${plural(sum.rules, "rule")}. It is read-only input for this task — do not modify it or anything else under \`specs/\`.`,
     "",
-    `- \`e2e\` — ${sum.e2e} criteria: a committed spec already at \`tests/e2e/specs/<AC-ID>.spec.ts\` runs as regression; author specs for the rest.`,
-    `- \`manual\` — ${sum.manual} criteria: render as an unchecked human checklist in the report.`,
-    `- \`scenario\` — ${sum.scenario} criteria: out of scope for automation in this run; list as not-yet-validated in the report.`,
+    "There is no test code to author. The scenario text IS the test: drive each one through the deployed app and record what settled it.",
     ""
   );
 
-  for (const req of doc.requirements) {
-    lines.push(`### ${req.id} — ${req.statement}`, "", "| Criterion | Method | Must |", "|---|---|---|");
-    for (const c of req.criteria) {
-      lines.push(`| ${c.id} | ${c.method} | ${c.must.replaceAll("|", "\\|")} |`);
-    }
-    lines.push("");
-  }
+  for (const f of doc.files) lines.push(`- \`${f.path}\``);
+  lines.push("");
 
   lines.push(
     "Per-component design docs: `specs/design/components/<name>/design.md` (OpenAPI contract, when present, alongside as `openapi.yaml`); system overview: `specs/design/design.md`.",
     "",
-    "## Test layout",
-    "- Playwright package at repo root `tests/e2e/` (own `package.json`; do not touch application source under any component app path).",
-    "- One spec file per criterion: `tests/e2e/specs/<AC-ID>.spec.ts`; test title MUST start with `<AC-ID>: ` — that prefix is the join key for the report.",
-    "- UI criteria: browser specs (`@playwright/test`). API criteria: the built-in `request` fixture. Explore with `playwright-cli` first; never commit exploration sessions.",
-    "",
     "## Report",
-    "- Commit `tests/validation/report.md` (summary, per-criterion results, manual checklist, scenario not-yet-validated list) and `tests/validation/report.json`.",
+    "- Commit `tests/acceptance/report.json` — one entry per scenario in the feature files, including the ones you could not drive.",
+    '- Check it before opening the PR: `node "$AEP_SKILLS_DIR/acceptance-run/scripts/check-report.mjs" "$(git rev-parse --show-toplevel)"`. It exits 2 if a scenario has no entry, if a `passed` is not backed by a command that could have said no, or if a `failed` does not record what the page was doing when it failed.',
     "- Post a summary comment on this issue when done.",
     "",
     "---",
-    `When you open the PR, include \`Validates #${issueNumber}\` in its body so the platform links the PR back to this task. \`Validates\` is deliberately NOT one of GitHub's closing keywords: the platform owns this task's close. One PR; tests and report only.`
+    `When you open the PR, include \`Validates #${issueNumber}\` in its body so the platform links the PR back to this task. \`Validates\` is deliberately NOT one of GitHub's closing keywords: the platform owns this task's close. One PR; the report only.`
   );
 
   return lines.join("\n");

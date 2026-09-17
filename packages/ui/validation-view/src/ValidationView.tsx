@@ -623,10 +623,12 @@ function ValidationBody({
   fullWidth,
   hideDescription,
   awaitingReport,
+  rawReport,
 }: {
   criteria: ValidationCriteria;
   statuses: ValidationReport | undefined;
   live: LiveStatuses | undefined;
+  rawReport: string | undefined;
   /** Required, not optional: `exactOptionalPropertyTypes` is on, so the public
    *  props are defaulted at the boundary rather than forwarded as `undefined`. */
   noPadding: boolean;
@@ -700,6 +702,35 @@ function ValidationBody({
             ))
           )}
         </Box>
+
+        {rawReport !== undefined && (
+          <Box sx={{ mt: 4 }}>
+            <Typography variant="h6" sx={{ fontWeight: 700 }}>
+              Acceptance run report
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              What the last run drove, and what settled each scenario.
+            </Typography>
+            <Box
+              component="pre"
+              sx={{
+                mt: 2,
+                p: 2,
+                borderRadius: 1,
+                bgcolor: "action.hover",
+                // The report carries a command per step, so lines are long and
+                // wrapping them would hide where one ends. Scroll the block, not
+                // the page.
+                overflowX: "auto",
+                fontSize: 13,
+                lineHeight: 1.6,
+                m: 0,
+              }}
+            >
+              {rawReport}
+            </Box>
+          </Box>
+        )}
       </Box>
     </Box>
   );
@@ -709,11 +740,27 @@ export interface ValidationViewProps {
   /** Raw validation-criteria.json text (the acceptance oracle). */
   criteria: string;
   /**
-   * Raw tests/validation/report.json text. When present, per-criterion run
+   * Raw tests/acceptance/report.json text. When present, per-criterion run
    * state is joined onto the oracle by criterion id and rendered as state chips
    * plus failure detail. Absent → the plain oracle (the Spec-view preview).
    */
   report?: string;
+  /**
+   * The acceptance run's report, rendered verbatim below the oracle.
+   *
+   * Deliberately raw, and deliberately NOT joined onto the criteria above: the
+   * acceptance run answers per SCENARIO, and the criteria are a different
+   * decomposition of the same requirement, so there is no id to join on. A
+   * shaped view of that report is real design work and the right time to do it
+   * is after reading a real one — this shows the evidence in the meantime
+   * rather than showing nothing.
+   *
+   * Pass it INSTEAD of `report`, not alongside: supplying `report` (or
+   * `awaitingReport`) makes every criterion row render a state chip, and with
+   * no statuses to fill them that chip reads `Not validated` — which is a
+   * verdict ("we checked and declined to judge"), not an empty state.
+   */
+  rawReport?: string;
   /**
    * The consumer owns the padding. Default off, because this view's first home is
    * the Spec view's file pane, which hands each renderer an unpadded box — the
@@ -781,6 +828,7 @@ export function ValidationView({
   hideDescription = false,
   awaitingReport = false,
   live,
+  rawReport,
 }: ValidationViewProps) {
   const parsed = useMemo(() => parseValidationCriteria(criteria), [criteria]);
   // The report is optional and tolerant: a bad report never blocks the oracle —
@@ -820,6 +868,7 @@ export function ValidationView({
         fullWidth={fullWidth}
         hideDescription={hideDescription}
         awaitingReport={awaitingReport}
+        rawReport={rawReport}
       />
     </>
   );

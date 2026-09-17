@@ -778,7 +778,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		Workloads: workloadReader{files: filesSvc},
 		// The revalidate trigger's last guard: refuse a version with no oracle
 		// rather than starting a run that could only conclude `skipped`.
-		Criteria: validationCriteria{files: filesSvc},
+		Criteria: acceptanceCriteria{files: filesSvc},
 		Signaler: runSupervisor,
 		Starter:  runSupervisor,
 		// A first-ever component has no OpenChoreo Component CR, and a merged
@@ -1219,7 +1219,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	validationSvc := validation.NewService(validation.Deps{
 		Issues:   issueService,
 		Writer:   deliveryIssues,
-		Criteria: validationCriteria{files: filesSvc},
+		Criteria: acceptanceCriteria{files: filesSvc},
 	})
 	// A planned Task's prose body names the App Path the agent works in — the
 	// same component → appPath read the merged-PR build fan-out matches against.

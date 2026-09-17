@@ -40,10 +40,10 @@ An absent kind means `org`, which is a real decision, not a default to lean on:
   `cell-design`, `architecture`, `security-design`, `openapi-conventions`,
   `wireframes`, `validation-criteria`, `task-planning`), the `console`
   narration policy, the coding run's own workflow skills (`aep`,
-  `aep-validation`, `mock-verification`) and the browser CLIs they drive
-  (`playwright-cli`, `agent-browser`), and one reference skill both sides
-  read: `authorization-model`, the platform's authorization invariants stated
-  once (ADR-0030 to ADR-0033) so no design or stack skill restates them.
+  `acceptance-run`, `mock-verification`) and the browser CLI they drive
+  (`agent-browser`), and one reference skill both sides read:
+  `authorization-model`, the platform's authorization invariants stated once
+  (ADR-0030 to ADR-0033) so no design or stack skill restates them.
 - **`org`** — the org-visible stack skills (`go`, `ballerina`, `react-webapp`,
   `oxygen-ui-design-system`, `astryx-design-system`, `api-management`,
   `thunder-authentication`). Editable and deletable by an org.
@@ -68,7 +68,7 @@ appended to the coding run's system prompt. Everything else in the mirror is
 listed by description and loaded on demand, so a run's startup context does not
 grow with the number of components a project designed.
 
-Two names in this library cannot be disabled — `aep` and `aep-validation`
+Two names in this library cannot be disabled — `aep` and `acceptance-run`
 (`spec.RequiredSkills`). They carry the coding run's procedure, the mirror only
 copies enabled skills, and the runner refuses to start without them, so a toggle
 would take every build in the org down. `PATCH /skills/{name}` returns 409 and

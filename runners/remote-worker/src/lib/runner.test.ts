@@ -24,14 +24,12 @@ import path from "node:path";
 import {
   alwaysOnSkills,
   contractReferencePath,
-  validationStatusLineFor,
   onDemandSkills,
   promptWithProjectRoot,
   systemPromptAppend,
 } from "./runner.js";
 import { toolGlossary } from "./tool_glossary.js";
 import { MissingWorkflowSkillError, requireWorkflowBodies } from "./skills_presence.js";
-import { createValidationProgressTracker } from "./validation_progress.js";
 import type { DispatchRequest } from "./types.js";
 
 // What is NOT here any more: the MCP option builder, the deny list, the setting
@@ -42,69 +40,6 @@ import type { DispatchRequest } from "./types.js";
 
 // --- the issue status line: three ways to have none, all of them normal ------
 
-function validationDispatch(overrides: Partial<DispatchRequest> = {}): DispatchRequest {
-  return {
-    taskId: "11111111-1111-1111-1111-111111111111",
-    orgId: "acme",
-    projectId: "widgets",
-    componentName: "aep-validation",
-    repoUrl: "https://github.com/acme/widgets.git",
-    bearer: "",
-    identity: { name: "AEP", email: "aep@example.com" },
-    gitServiceUrl: "https://git.example.com",
-    prompt: "validation task",
-    taskKind: "validation",
-    validationIssue: 7,
-    ...overrides,
-  };
-}
-
-const progressTracker = () => createValidationProgressTracker(() => {});
-
-// The workspace's own wrapper and child env, as provisionWorkspace leaves them.
-const gh = { path: "/ws/.aep/gh", env: { GH_CONFIG_DIR: "/ws/.gh-config" } };
-
-// A coding run has no validation issue to speak on, and registering the hook
-// anyway would put a GitHub round trip on the Write and Bash calls of every
-// build to derive nothing.
-test("validationStatusLineFor: a run with no per-criterion tracker keeps no line", async () => {
-  const line = validationStatusLineFor(
-    validationDispatch({ taskKind: "implementation", validationIssue: undefined }),
-    undefined,
-    gh,
-    () => assert.fail("a coding run must not warn about a status line it never wanted"),
-  );
-  assert.equal(line, undefined);
-});
-
-// A validation dispatch that carried no issue number — an older BFF, or one that
-// could not resolve it — runs exactly as it did before, minus the line. Silent
-// is the old behaviour; failing here would trade two hours of work for the
-// commentary on it.
-test("validationStatusLineFor: a validation run with no issue number keeps no line", async () => {
-  const line = validationStatusLineFor(
-    validationDispatch({ validationIssue: undefined }),
-    progressTracker(),
-    gh,
-    () => assert.fail("an absent issue number is a normal dispatch, not a fault to report"),
-  );
-  assert.equal(line, undefined);
-});
-
-// The whole point: a validation run that CAN name its issue gets the line.
-test("validationStatusLineFor: a validation run that names its issue keeps a line", () => {
-  const line = validationStatusLineFor(
-    validationDispatch(),
-    progressTracker(),
-    gh,
-    () => assert.fail("a wired run must not warn"),
-  );
-  // Both halves, because the report generator's OUTCOME is what the repair line
-  // keys on and a tracker missing `settle` would report the loop as progress.
-  assert.equal(typeof line?.observe, "function");
-  assert.equal(typeof line?.settle, "function");
-});
-
 // --- alwaysOnSkills: the run's own workflow is not the design's to choose ----
 
 // Every other skill a build reads is a `skillsPinned` entry someone put in a
@@ -113,23 +48,23 @@ test("validationStatusLineFor: a validation run that names its issue keeps a lin
 // adding to it.
 test("alwaysOnSkills: an implementation run is steered by aep, a validation run by both", () => {
   assert.deepEqual(alwaysOnSkills("implementation"), ["aep"]);
-  assert.deepEqual(alwaysOnSkills("validation"), ["aep", "aep-validation"]);
+  assert.deepEqual(alwaysOnSkills("validation"), ["aep", "acceptance-run"]);
 });
 
-// playwright-cli carries the browser mechanics a validation run reaches for, and
-// `aep-validation` names it by description. Paying for its body on every turn of
+// agent-browser carries the browser mechanics a validation run reaches for, and
+// `acceptance-run` names it by description. Paying for its body on every turn of
 // every validation run is what NOT listing it here buys.
-test("alwaysOnSkills: playwright-cli is left to on-demand loading", () => {
-  assert.ok(!alwaysOnSkills("validation").includes("playwright-cli"));
+test("alwaysOnSkills: agent-browser is left to on-demand loading", () => {
+  assert.ok(!alwaysOnSkills("validation").includes("agent-browser"));
 });
 
 // The other half of that sentence. `skills:` is an allowlist, so a skill in
 // NEITHER list is not deferred — it is unreachable, and the Skill tool rejects
-// the load `aep-validation` instructs. Absent from always-on AND present here is
+// the load `acceptance-run` instructs. Absent from always-on AND present here is
 // the pair that means "loadable, but not on every turn".
-test("onDemandSkills: a validation run may load playwright-cli", () => {
-  assert.deepEqual(onDemandSkills("validation"), ["playwright-cli"]);
-  assert.ok(!alwaysOnSkills("validation").includes("playwright-cli"));
+test("onDemandSkills: a validation run may load agent-browser", () => {
+  assert.deepEqual(onDemandSkills("validation"), ["agent-browser"]);
+  assert.ok(!alwaysOnSkills("validation").includes("agent-browser"));
 });
 
 // An implementation run gets the whole mirror instead (oneshot's else branch):
@@ -171,10 +106,10 @@ test("requireWorkflowBodies: a mirror with no aep skill is fatal", () => {
   });
 });
 
-test("requireWorkflowBodies: a validation run missing only aep-validation is still fatal", () => {
+test("requireWorkflowBodies: a validation run missing only acceptance-run is still fatal", () => {
   withMirror({ aep: "---\nname: aep\n---\n\nThe run\n" }, (workspace) => {
     assert.throws(
-      () => requireWorkflowBodies(workspace, ["aep", "aep-validation"]),
+      () => requireWorkflowBodies(workspace, ["aep", "acceptance-run"]),
       (err: unknown) => err instanceof MissingWorkflowSkillError && err.missing.length === 1,
     );
   });
@@ -186,14 +121,14 @@ test("requireWorkflowBodies: present skills come back fenced and labelled as loa
   withMirror(
     {
       aep: "---\nname: aep\n---\n\nCODEWORD-RUN\n",
-      "aep-validation": "---\nname: aep-validation\n---\n\nCODEWORD-VALIDATION\n",
+      "acceptance-run": "---\nname: acceptance-run\n---\n\nCODEWORD-VALIDATION\n",
     },
     (workspace) => {
-      const out = requireWorkflowBodies(workspace, ["aep", "aep-validation"]);
+      const out = requireWorkflowBodies(workspace, ["aep", "acceptance-run"]);
       assert.match(out, /CODEWORD-RUN/);
       assert.match(out, /CODEWORD-VALIDATION/);
       assert.match(out, /<skill name="aep">/);
-      assert.match(out, /<skill name="aep-validation">/);
+      assert.match(out, /<skill name="acceptance-run">/);
       // Without this the agent re-invokes the Skill tool for guidance it already
       // has and pays for the body twice.
       assert.match(out, /ALREADY in your context/);
@@ -305,12 +240,12 @@ const STAGED_SECRET = "staged-secret-value-123456";
 /**
  * A workspace whose mirror carries both workflow skills, and nothing else.
  *
- * Both, because `alwaysOnSkills` names `aep-validation` for a validation run and
+ * Both, because `alwaysOnSkills` names `acceptance-run` for a validation run and
  * a mirror missing it is fatal by design — see requireWorkflowBodies.
  */
 function mirrorWorkspace(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aep-policy-"));
-  for (const name of ["aep", "aep-validation"]) {
+  for (const name of ["aep", "acceptance-run"]) {
     const skill = path.join(dir, ".claude", "skills", name);
     fs.mkdirSync(skill, { recursive: true });
     fs.writeFileSync(path.join(skill, "SKILL.md"), `# ${name}\nWORKFLOW BODY\n`, "utf8");
@@ -480,11 +415,15 @@ test("startCodingRun: the model is the org's setting, or the runtime's default",
 
 // Watching the authoring tools costs a hook on every call, so it is registered
 // only where something reads it.
-test("startCodingRun: only a validation run carries the per-criterion watchers", async () => {
+// The `observe` seam is deliberately unregistered on BOTH kinds while real-time
+// validation progress is deferred. The watchers it used to carry matched
+// Playwright file writes and spec names, so against an agent driving a browser
+// they matched nothing at all and every criterion rendered `not_validated` —
+// which reads as a verdict, not as an empty state. Pinned so re-registering one
+// is a deliberate act rather than a merge's side effect.
+test("startCodingRun: no run registers tool watchers while progress is deferred", async () => {
   assert.equal((await policyFor(dispatch())).observe, undefined);
-  const validation = await policyFor(dispatch({ taskKind: "validation" }));
-  assert.equal(typeof validation.observe?.toolUse, "function");
-  assert.equal(typeof validation.observe?.toolOutcome, "function");
+  assert.equal((await policyFor(dispatch({ taskKind: "validation" }))).observe, undefined);
 });
 
 // A URL with no token must omit the server rather than register it

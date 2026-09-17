@@ -25,12 +25,11 @@ type RunVerdict = NonNullable<
 // Two companion keys narrow the `running` scenario further — which ATTEMPT is in
 // flight (see ValidationAttempt below) and whether the repo has an oracle at all:
 //   localStorage.setItem('aep:mock:validation-criteria', 'missing')
-// which drops validation-criteria.json from the file list, so the read 404s the way
-// it does for a version whose spec authored none (handlers/project.ts). The same key
-// also takes:
+// which drops every specs/acceptance/*.feature from the file list, so the page sees
+// a version whose spec authored none (handlers/project.ts). The same key also takes:
 //   localStorage.setItem('aep:mock:validation-criteria', 'drifted')
-// which adds a criterion to the ORACLE that the report does not speak for — see
-// DRIFTED below.
+// which adds a SCENARIO to the feature files that the pinned report does not speak
+// for — see DRIFTED below.
 //
 // Setting it alone is enough: with no `aep:mock:project` chosen, the base scenario
 // becomes `deployed` rather than the usual `building`, because a verdict only
@@ -53,9 +52,7 @@ export const VALIDATION_SCENARIOS: ValidationScenario[] = [
 
 // The paths this module owns. The handler drops them from the project scenario's
 // file list before splicing in the ones a verdict override implies.
-export const CRITERIA_PATH = "specs/validation/validation-criteria.json";
-export const REPORT_PATH = "tests/validation/report.json";
-export const VALIDATION_FILE_PATHS = [CRITERIA_PATH, REPORT_PATH];
+export const REPORT_PATH = "tests/acceptance/report.json";
 
 // Same repo the project fixtures use. Duplicated rather than imported so this
 // module stays a LEAF — ./project.ts imports the default artifacts from here, and
@@ -66,353 +63,510 @@ const REPO_URL = "https://github.com/acme-dev/demo-shop";
 // The oracle and the report, built together from one catalogue
 // ---------------------------------------------------------------------------
 
-// Every scenario draws its criteria from this one list, so a reader comparing two
-// verdicts sees only the OUTCOMES move: a criterion's id, requirement, wording and
-// method are the same everywhere they appear.
-interface CatalogueEntry {
-  req: string;
-  statement: string;
-  id: string;
-  must: string;
-  method: "e2e" | "scenario" | "manual";
+// Every scenario draws from this one catalogue, so a reader comparing two verdicts
+// sees only the OUTCOMES move: a feature's name, its rules, its wording and its
+// steps are the same everywhere they appear.
+
+interface ScenarioSpec {
+  name: string;
+  /** `@negative` — the product refuses, rejects or limits. */
+  negative?: boolean;
+  steps: { keyword: string; text: string }[];
 }
 
-const REQ_001 =
-  "Shoppers can browse and search the catalog by name and category.";
-const REQ_002 = "Cart contents persist across browser sessions.";
-const REQ_003 =
-  "Checkout produces an order visible in the shopper's order history.";
+interface RuleSpec {
+  story: number;
+  text: string;
+  scenarios: ScenarioSpec[];
+}
 
-const CATALOGUE: CatalogueEntry[] = [
+interface FeatureSpec {
+  slug: string;
+  name: string;
+  rules: RuleSpec[];
+}
+
+const CATALOGUE: FeatureSpec[] = [
   {
-    req: "REQ-001",
-    statement: REQ_001,
-    id: "AC-001-a",
-    must: "A shopper can search products by name and see matching results",
-    method: "e2e",
+    slug: "browsing-the-catalog",
+    name: "Browsing the catalog",
+    rules: [
+      {
+        story: 1,
+        text: "A shopper can find a product by name",
+        scenarios: [
+          {
+            name: "Searching for a product by name",
+            steps: [
+              { keyword: "Given", text: 'the catalog has a product named "Cedar Desk Lamp"' },
+              { keyword: "When", text: 'Priya searches for "Cedar Desk"' },
+              { keyword: "Then", text: 'the results include "Cedar Desk Lamp"' },
+            ],
+          },
+        ],
+      },
+      {
+        story: 1,
+        text: "A shopper can narrow the catalog to one category",
+        scenarios: [
+          {
+            name: "Filtering the catalog by category",
+            steps: [
+              { keyword: "Given", text: "the catalog has products in Lighting and in Accessories" },
+              { keyword: "When", text: "Priya filters the catalog to Accessories" },
+              { keyword: "Then", text: "every product shown is in Accessories" },
+            ],
+          },
+          // Deliberately LAST in the last rule of its feature — see DRIFTED below.
+          {
+            name: "A search that matches nothing explains itself",
+            negative: true,
+            steps: [
+              { keyword: "Given", text: "the catalog has no product named \"Zeppelin\"" },
+              { keyword: "When", text: 'Priya searches for "Zeppelin"' },
+              { keyword: "Then", text: "she is shown that nothing matched, and no products" },
+            ],
+          },
+        ],
+      },
+    ],
   },
   {
-    req: "REQ-001",
-    statement: REQ_001,
-    id: "AC-001-b",
-    must: "A shopper can filter the catalog by category",
-    method: "e2e",
+    slug: "the-cart",
+    name: "The cart",
+    rules: [
+      {
+        story: 2,
+        text: "A cart's contents survive a browser restart",
+        scenarios: [
+          {
+            name: "Reopening the shop with items in the cart",
+            steps: [
+              { keyword: "Given", text: 'Priya has "Cedar Desk Lamp" in her cart' },
+              { keyword: "When", text: "she closes the browser and opens the shop again" },
+              { keyword: "Then", text: 'her cart still holds "Cedar Desk Lamp"' },
+            ],
+          },
+        ],
+      },
+      {
+        story: 2,
+        text: "The cart total tracks what is in it",
+        scenarios: [
+          {
+            name: "Adding an item updates the total",
+            steps: [
+              { keyword: "Given", text: "Priya has an empty cart" },
+              { keyword: "When", text: 'she adds "Cedar Desk Lamp" at "42.00"' },
+              { keyword: "Then", text: 'the cart total is "42.00"' },
+            ],
+          },
+          {
+            name: "A cart cannot hold more of an item than the shop has",
+            negative: true,
+            steps: [
+              { keyword: "Given", text: '"Cedar Desk Lamp" has 2 left in stock' },
+              { keyword: "When", text: "Priya tries to add 3 of them to her cart" },
+              { keyword: "Then", text: 'her cart holds 2 of "Cedar Desk Lamp"' },
+            ],
+          },
+        ],
+      },
+    ],
   },
   {
-    req: "REQ-002",
-    statement: REQ_002,
-    id: "AC-002-a",
-    must: "A cart's contents survive a browser restart for the same shopper",
-    method: "e2e",
-  },
-  {
-    req: "REQ-002",
-    statement: REQ_002,
-    id: "AC-002-b",
-    must: "The cart total updates promptly as items are added or removed",
-    method: "scenario",
-  },
-  {
-    req: "REQ-003",
-    statement: REQ_003,
-    id: "AC-003-a",
-    must: "Completing checkout creates an order visible in order history",
-    method: "e2e",
-  },
-  {
-    req: "REQ-003",
-    statement: REQ_003,
-    id: "AC-003-b",
-    must: "Payment details are transmitted over an encrypted connection",
-    method: "manual",
+    slug: "checkout",
+    name: "Checkout",
+    rules: [
+      {
+        story: 3,
+        text: "Completing checkout creates an order in the shopper's history",
+        scenarios: [
+          {
+            name: "Placing an order",
+            steps: [
+              { keyword: "Given", text: 'Priya has "Cedar Desk Lamp" in her cart' },
+              { keyword: "When", text: "she completes checkout" },
+              { keyword: "Then", text: 'her order history includes an order for "Cedar Desk Lamp"' },
+            ],
+          },
+        ],
+      },
+      {
+        story: 3,
+        text: "Payment details are transmitted over an encrypted connection",
+        scenarios: [
+          {
+            name: "The payment step is encrypted",
+            steps: [
+              { keyword: "Given", text: "Priya is at the payment step" },
+              { keyword: "When", text: "she submits her card details" },
+              { keyword: "Then", text: "the details leave the browser encrypted" },
+            ],
+          },
+        ],
+      },
+    ],
   },
 ];
 
 /**
- * A criterion the oracle carries and the pinned report does not.
+ * A scenario the feature files carry and the pinned report does not.
  *
- * Deliberately OUTSIDE the catalogue. build() derives both files from one outcome
- * map, so every entry it can see lands in both — and drift is precisely the case
- * where the two files disagree, which is why this is spliced into the oracle after
- * the pair is built.
+ * It is the one that sits LAST in the last rule of its feature, so including it
+ * moves no other scenario's line number — the report's `line` values stay true of
+ * the files shipped beside them, drifted or not.
  *
- * Not a contrived state: the console reads the criteria at the branch tip and the
- * report at the merge commit of the attempt that wrote it, so any criterion
+ * Not a contrived state: the console reads the feature files at the branch tip and
+ * the report at the merge commit of the attempt that wrote it, so any scenario
  * authored since that attempt looks exactly like this. Asking the agent for one
- * more criterion after reading a failure is the ordinary way to get here.
+ * more scenario after reading a failure is the ordinary way to get here.
  */
-const DRIFTED: CatalogueEntry = {
-  req: "REQ-001",
-  statement: REQ_001,
-  id: "AC-001-c",
-  must: "A search with no matches explains that nothing was found",
-  method: "e2e",
-};
+const DRIFTED = "A search that matches nothing explains itself";
 
-/** The oracle with DRIFTED appended to its requirement; the report is left alone. */
-function withDrift(criteria: string): string {
-  const doc = JSON.parse(criteria) as {
-    requirements: {
-      id: string;
-      statement: string;
-      criteria: Record<string, unknown>[];
-    }[];
-  };
-  const entry = { id: DRIFTED.id, must: DRIFTED.must, method: DRIFTED.method };
-  const req = doc.requirements.find((r) => r.id === DRIFTED.req);
-  if (req) req.criteria.push(entry);
-  else {
-    doc.requirements.push({
-      id: DRIFTED.req,
-      statement: DRIFTED.statement,
-      criteria: [entry],
-    });
-  }
-  return JSON.stringify(doc, null, 2);
+/** What a run made of one scenario, and the evidence it recorded step by step. */
+interface Step {
+  command?: string;
+  exit?: number;
+  observed?: string;
 }
 
-/** One criterion's outcome in a run report — the only thing a scenario varies. */
+/**
+ * The failure-time capture — what the SYSTEM was doing when a scenario failed,
+ * read while the page was still open. Only a `failed` outcome carries one, and
+ * the checker requires it there: after the run neither half can be recovered.
+ */
+interface Capture {
+  network: { method: string; url: string; status: number }[];
+  console: string[];
+  snapshot?: string;
+}
+
 interface Outcome {
-  status: "pass" | "fail" | "not_run" | "not_validated" | "manual";
-  spec?: string;
-  // The real shape the runner writes: an object, not a bare string. A
-  // string-shaped mock is what let the view's failure block look fine while dead.
-  failure?: { message: string; location: string };
-  flaky?: boolean;
-  healed?: boolean;
-  durationMs?: number;
+  outcome: "passed" | "failed" | "blocked" | "unjudgeable";
+  /**
+   * Aligned to the scenario's steps, and allowed to be SHORTER: a blocked run
+   * stops where it was stopped, and the steps past that point are specification
+   * the run never reached.
+   */
+  steps: Step[];
+  /** Required on `failed`, meaningless anywhere else. */
+  capture?: Capture;
 }
 
 interface Artifacts {
-  /** validation-criteria.json — absent when the project authored no oracle. */
-  criteria?: string;
-  /** report.json — absent when the run committed none (`unreported`). */
-  report?: string;
+  /** The outcome map, or undefined when the project authored no feature files. */
+  outcomes?: Record<string, Outcome>;
+  /** Whether the run committed a report — `unreported` is the absence of one. */
+  reported: boolean;
 }
 
-// build derives BOTH files from one outcome map, which is what keeps a scenario
-// honest: the oracle can only list criteria the report speaks for, and the
-// report's totals are counted rather than typed. Criteria absent from the map are
-// absent from the oracle — that is how `passed` gets an all-automatable oracle
-// while `inconclusive` gets one with nothing automatable in it.
-function build(outcomes: Record<string, Outcome>): {
-  criteria: string;
-  report: string;
-} {
-  const chosen: { entry: CatalogueEntry; outcome: Outcome }[] = [];
-  for (const entry of CATALOGUE) {
-    const outcome = outcomes[entry.id];
-    if (outcome) chosen.push({ entry, outcome });
-  }
-
-  const byReq = new Map<
-    string,
-    { statement: string; entries: CatalogueEntry[] }
-  >();
-  for (const { entry } of chosen) {
-    const group = byReq.get(entry.req);
-    if (group) group.entries.push(entry);
-    else byReq.set(entry.req, { statement: entry.statement, entries: [entry] });
-  }
-
-  const criteria = JSON.stringify(
-    {
-      requirements: [...byReq].map(([id, group]) => ({
-        id,
-        statement: group.statement,
-        criteria: group.entries.map((c) => ({
-          id: c.id,
-          must: c.must,
-          method: c.method,
-        })),
-      })),
-    },
-    null,
-    2,
-  );
-
-  const e2e = { total: 0, pass: 0, fail: 0, notRun: 0 };
-  let manual = 0;
-  let scenario = 0;
-  for (const { entry, outcome } of chosen) {
-    if (entry.method === "manual") manual += 1;
-    else if (entry.method === "scenario") scenario += 1;
-    else {
-      e2e.total += 1;
-      if (outcome.status === "pass") e2e.pass += 1;
-      else if (outcome.status === "fail") e2e.fail += 1;
-      else e2e.notRun += 1;
-    }
-  }
-
-  const report = JSON.stringify(
-    {
-      schemaVersion: 1,
-      issue: 30,
-      commit: "a1b2c3d",
-      generatedAt: "2026-07-20T10:00:00.000Z",
-      playwrightVersion: "1.55.0",
-      totals: { e2e, manual, scenario },
-      criteria: chosen.map(({ entry, outcome }) => ({
-        id: entry.id,
-        requirementId: entry.req,
-        // The generator echoes the `must` into the report, so a reader (and a
-        // repair issue) never needs the oracle to know what the criterion demanded.
-        must: entry.must,
-        method: entry.method,
-        status: outcome.status,
-        spec: outcome.spec ?? null,
-        healed: outcome.healed ?? false,
-        healAttempts: outcome.healed ? 1 : 0,
-        flaky: outcome.flaky ?? false,
-        durationMs: outcome.durationMs ?? 0,
-        failure: outcome.failure ?? null,
-      })),
-    },
-    null,
-    2,
-  );
-
-  return { criteria, report };
+/** `bought-items` -> `specs/acceptance/bought-items.feature`. */
+function featurePath(slug: string): string {
+  return `specs/acceptance/${slug}.feature`;
 }
 
-// A representative Playwright failure: multi-line, with the locator that timed
-// out, so the failure block is exercised at a realistic size.
-const TIMEOUT_FAILURE = {
-  message:
-    "TimeoutError: locator.click: Timeout 5000ms exceeded.\n  waiting for getByRole('option', { name: 'Accessories' })",
-  location: "tests/e2e/specs/AC-001-b.spec.ts:31",
-};
-
-// Everything automated, everything green. The oracle is the four e2e criteria
-// ONLY: a `passed` verdict over an oracle carrying a manual criterion is
-// unreachable, because the runner reports that criterion `manual` and an uncovered
-// criterion is precisely what makes a run `partial`.
-const PASSED = build({
-  "AC-001-a": {
-    status: "pass",
-    spec: "tests/e2e/specs/AC-001-a.spec.ts",
-    durationMs: 1840,
-  },
-  "AC-001-b": {
-    status: "pass",
-    spec: "tests/e2e/specs/AC-001-b.spec.ts",
-    healed: true,
-    durationMs: 2210,
-  },
-  "AC-002-a": {
-    status: "pass",
-    spec: "tests/e2e/specs/AC-002-a.spec.ts",
-    durationMs: 980,
-  },
-  "AC-003-a": {
-    status: "pass",
-    spec: "tests/e2e/specs/AC-003-a.spec.ts",
-    flaky: true,
-    durationMs: 3120,
-  },
-});
-
-// Something passed, nothing failed, and three criteria were never answered — one
-// e2e that never ran plus the two methods no runner executes. Exercises every
-// state chip except `fail`.
-const PARTIAL = build({
-  "AC-001-a": {
-    status: "pass",
-    spec: "tests/e2e/specs/AC-001-a.spec.ts",
-    durationMs: 1840,
-  },
-  "AC-001-b": {
-    status: "pass",
-    spec: "tests/e2e/specs/AC-001-b.spec.ts",
-    durationMs: 2600,
-  },
-  "AC-002-a": { status: "not_run" },
-  "AC-002-b": { status: "not_validated" },
-  "AC-003-a": {
-    status: "pass",
-    spec: "tests/e2e/specs/AC-003-a.spec.ts",
-    healed: true,
-    durationMs: 3120,
-  },
-  "AC-003-b": { status: "manual" },
-});
-
-// The same oracle with one criterion lost. `fail` wins the verdict outright, which
-// is why this scenario keeps the uncovered criteria: the tile has to count the
-// failure against the whole set, not against the criteria that ran.
-const FAILED = build({
-  "AC-001-a": {
-    status: "pass",
-    spec: "tests/e2e/specs/AC-001-a.spec.ts",
-    durationMs: 1840,
-  },
-  "AC-001-b": {
-    status: "fail",
-    spec: "tests/e2e/specs/AC-001-b.spec.ts",
-    failure: TIMEOUT_FAILURE,
-    flaky: true,
-    durationMs: 2600,
-  },
-  "AC-002-a": { status: "not_run" },
-  "AC-002-b": { status: "not_validated" },
-  "AC-003-a": {
-    status: "pass",
-    spec: "tests/e2e/specs/AC-003-a.spec.ts",
-    healed: true,
-    durationMs: 3120,
-  },
-  "AC-003-b": { status: "manual" },
-});
-
-// Nothing failed because nothing ran: an oracle whose criteria are all manual or
-// scenario, plus an e2e whose spec was never written. Zero passes is what makes it
-// inconclusive rather than partial.
-const INCONCLUSIVE = build({
-  "AC-002-a": { status: "not_run" },
-  "AC-002-b": { status: "not_validated" },
-  "AC-003-b": { status: "manual" },
-});
+interface Located {
+  file: string;
+  feature: string;
+  rule: string;
+  line: number;
+}
 
 /**
- * The default oracle: the full six, mixed across all three methods. It is what the
- * Spec view previews (criteria only, no report), so it stays the widest one.
+ * The feature files for a set of scenario names, and where each one landed.
+ *
+ * Emitting the text and recording the line in one pass is what keeps the report's
+ * `line` honest: typed line numbers go stale the moment a step is reworded, and a
+ * stale one is exactly the breach `check-report.mjs` fails a real run for.
  */
-export const DEFAULT_VALIDATION_CRITERIA = PARTIAL.criteria;
+function featureFiles(names: ReadonlySet<string>): {
+  files: { path: string; content: string }[];
+  located: Map<string, Located>;
+} {
+  const files: { path: string; content: string }[] = [];
+  const located = new Map<string, Located>();
+
+  for (const feature of CATALOGUE) {
+    const lines: string[] = [`Feature: ${feature.name}`];
+    let wrote = false;
+    for (const rule of feature.rules) {
+      const scenarios = rule.scenarios.filter((s) => names.has(s.name));
+      if (scenarios.length === 0) continue;
+      wrote = true;
+      lines.push("", `  @story-${rule.story}`, `  Rule: ${rule.text}`);
+      for (const scenario of scenarios) {
+        lines.push("");
+        if (scenario.negative) lines.push("    @negative");
+        lines.push(`    Scenario: ${scenario.name}`);
+        located.set(scenario.name, {
+          file: featurePath(feature.slug),
+          feature: feature.name,
+          rule: rule.text,
+          line: lines.length,
+        });
+        for (const step of scenario.steps) lines.push(`      ${step.keyword} ${step.text}`);
+      }
+    }
+    if (wrote) files.push({ path: featurePath(feature.slug), content: `${lines.join("\n")}\n` });
+  }
+  return { files, located };
+}
+
+/** Every step a scenario declares, by name. */
+const STEPS_OF = new Map<string, { keyword: string; text: string }[]>(
+  CATALOGUE.flatMap((f) => f.rules.flatMap((r) => r.scenarios.map((s) => [s.name, s.steps] as const))),
+);
+
+/** Whether a scenario carries `@negative`, by name. */
+const NEGATIVE_OF = new Set(
+  CATALOGUE.flatMap((f) =>
+    f.rules.flatMap((r) => r.scenarios.filter((s) => s.negative).map((s) => s.name)),
+  ),
+);
+
+/** The isolation note. A paragraph, as a real one is — the view gives it room. */
+const ISOLATION =
+  "Every scenario creates the cart or the order it asserts on through the shop's own " +
+  "interface, with a run-unique suffix on any product name it adds, and asserts only " +
+  "within it. The two catalog scenarios have no container to own, so they assert on " +
+  "the change in the result count rather than on an absolute total — sound because " +
+  "the platform runs one validation at a time per version.";
+
+/** schemaVersion 2, keyed by scenario, as `report.go` and the run's checker read it. */
+function reportFor(
+  outcomes: Record<string, Outcome>,
+  located: Map<string, Located>,
+): string {
+  return JSON.stringify(
+    {
+      schemaVersion: 2,
+      generatedAt: "2026-07-20T10:00:00.000Z",
+      commit: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+      baseUrl: "https://demo-shop--development.openchoreoapis.localhost:19080/",
+      isolation: ISOLATION,
+      scenarios: Object.entries(outcomes).map(([name, outcome]) => {
+        const where = located.get(name);
+        const steps = STEPS_OF.get(name) ?? [];
+        return {
+          feature: where?.feature ?? "",
+          featureFile: where?.file ?? "",
+          line: where?.line ?? 0,
+          rule: where?.rule ?? "",
+          scenario: name,
+          tags: NEGATIVE_OF.has(name) ? ["@negative"] : [],
+          outcome: outcome.outcome,
+          // Only as far as the run got. The steps past the end are specification,
+          // and the view renders them as never reached.
+          steps: outcome.steps.map((e, i) => ({
+            text: steps[i]?.text ?? "",
+            keyword: steps[i]?.keyword ?? "",
+            ...(e.command !== undefined ? { command: e.command } : {}),
+            ...(e.exit !== undefined ? { exit: e.exit } : {}),
+            ...(e.observed !== undefined ? { observed: e.observed } : {}),
+          })),
+          ...(outcome.capture !== undefined ? { evidence: outcome.capture } : {}),
+        };
+      }),
+    },
+    null,
+    2,
+  );
+}
+
+// Settled three ways, so the evidence on screen is the shape a real run writes:
+// a `wait` whose exit code IS the verdict, a `get count` that exits 0 because the
+// command RAN and therefore has to record the value the agent read, and a step
+// with no command at all, which has to say why.
+const found = (what: string): Step => ({
+  command: `agent-browser wait --text ${JSON.stringify(what)} --timeout 3000`,
+  exit: 0,
+});
+const counted = (selector: string, observed: string): Step => ({
+  command: `agent-browser get count ${JSON.stringify(selector)}`,
+  exit: 0,
+  observed,
+});
+const clicked = (name: string): Step => ({
+  command: `agent-browser find role button click --name ${JSON.stringify(name)}`,
+  exit: 0,
+});
+
+const PASS_SEARCH: Outcome = {
+  outcome: "passed",
+  steps: [
+    { command: 'POST /products {"name":"Cedar Desk Lamp-vr8821","category":"Lighting"}', exit: 0 },
+    { command: 'agent-browser find label "Search" fill "Cedar Desk"; agent-browser press Enter', exit: 0 },
+    found("Cedar Desk Lamp-vr8821"),
+  ],
+};
+const PASS_FILTER: Outcome = {
+  outcome: "passed",
+  steps: [
+    { command: "POST /products x2 (Lighting, Accessories)", exit: 0 },
+    clicked("Accessories"),
+    counted('[data-testid="product"]:not([data-category="Accessories"])', "0 — every row shown is in Accessories"),
+  ],
+};
+const PASS_PERSIST: Outcome = {
+  outcome: "passed",
+  steps: [
+    { command: "POST /cart/items {\"name\":\"Cedar Desk Lamp-vr8821\"}", exit: 0 },
+    { command: "agent-browser close; agent-browser open https://demo-shop…/", exit: 0 },
+    found("Cedar Desk Lamp-vr8821"),
+  ],
+};
+const PASS_TOTAL: Outcome = {
+  outcome: "passed",
+  steps: [
+    { command: "agent-browser get count \"[data-testid=cart-row]\"", exit: 0, observed: "0 — the cart starts empty" },
+    clicked("Add to cart"),
+    found("42.00"),
+  ],
+};
+const PASS_ORDER: Outcome = {
+  outcome: "passed",
+  steps: [
+    { command: 'POST /cart/items {"name":"Cedar Desk Lamp-vr8821"}', exit: 0 },
+    clicked("Place order"),
+    found("Cedar Desk Lamp-vr8821"),
+  ],
+};
+
+// A refusal the shop gets WRONG: it accepts three of a product it has two of.
+const FAIL_STOCK: Outcome = {
+  outcome: "failed",
+  steps: [
+    { command: 'POST /products {"name":"Cedar Desk Lamp-vr8821","stock":2}', exit: 0 },
+    {
+      command: 'agent-browser find label "Quantity" fill "3"; agent-browser find role button click --name "Add to cart"',
+      exit: 0,
+      observed: "the form accepted the quantity and returned to the cart",
+    },
+    {
+      command: 'agent-browser get value "[data-testid=cart-qty]"',
+      exit: 1,
+      observed: '3 — the cart holds three of a product the shop has two of',
+    },
+  ],
+  // The request LEFT and the server said yes. That is what makes this a stock
+  // rule the shop does not enforce, rather than a form that failed to submit —
+  // and the step trace above reads identically for both.
+  capture: {
+    network: [{ method: "POST", url: "/cart/items", status: 201 }],
+    console: [],
+    snapshot: '- row "Cedar Desk Lamp-vr8821"\n  - textbox "Quantity": "3"',
+  },
+};
+
+// Blocked, not failed: the control the When needs is ABSENT, so the behaviour was
+// never reached. A person has to say whether that is the shop correctly refusing
+// or the shop being broken, which is why no repair is filed for it.
+const BLOCKED_STOCK: Outcome = {
+  outcome: "blocked",
+  steps: [
+    { command: 'POST /products {"name":"Cedar Desk Lamp-vr8821","stock":2}', exit: 0 },
+    {
+      command: 'agent-browser snapshot -i',
+      observed:
+        'The quantity control on the product page is a select whose options stop at the stock count — it offers "1" and "2" and nothing else, and the free-text box the desktop layout used is absent here. There is no enabled control through which a quantity of 3 can be entered, so the action this step describes cannot be attempted through the UI. `agent-browser network requests` confirms no POST /cart/items left the page.',
+    },
+  ],
+};
+
+// Unjudgeable: the answer lives outside the running app. Honest, and not a defect.
+const UNJUDGEABLE_TLS: Outcome = {
+  outcome: "unjudgeable",
+  steps: [
+    { command: "agent-browser open https://demo-shop…/checkout/payment", exit: 0 },
+    clicked("Pay"),
+    {
+      observed:
+        "Whether the details left the browser encrypted is a property of the transport, not of anything the shop renders: the page shows a confirmation either way, and the development deployment terminates TLS at the gateway ahead of the app. Nothing in the running system can settle this, so it is reported rather than guessed at.",
+    },
+  ],
+};
+
+// Everything settled, everything green. The two scenarios a run cannot settle are
+// absent from the oracle entirely — a `passed` verdict over a spec containing one
+// is unreachable, because an unsettled scenario is precisely what makes a run
+// `partial`.
+const PASSED: Record<string, Outcome> = {
+  "Searching for a product by name": PASS_SEARCH,
+  "Filtering the catalog by category": PASS_FILTER,
+  "Reopening the shop with items in the cart": PASS_PERSIST,
+  "Adding an item updates the total": PASS_TOTAL,
+  "Placing an order": PASS_ORDER,
+};
+
+// Everything that ran passed, and two scenarios could not be settled — one blocked
+// by an absent control, one whose truth lives outside the app. Exercises every
+// outcome chip except `Failed`.
+const PARTIAL: Record<string, Outcome> = {
+  ...PASSED,
+  "A cart cannot hold more of an item than the shop has": BLOCKED_STOCK,
+  "The payment step is encrypted": UNJUDGEABLE_TLS,
+};
+
+// One real defect, beside one scenario nobody could settle — the pair the page has
+// to keep apart, because one says the behaviour is wrong and the other says it was
+// never reached.
+const FAILED: Record<string, Outcome> = {
+  ...PASSED,
+  "A cart cannot hold more of an item than the shop has": FAIL_STOCK,
+  "The payment step is encrypted": UNJUDGEABLE_TLS,
+};
+
+// Nothing passed: every scenario was blocked or unanswerable, which is what
+// `inconclusive` means — the run produced no verdict anyone can act on.
+const INCONCLUSIVE: Record<string, Outcome> = {
+  "A cart cannot hold more of an item than the shop has": BLOCKED_STOCK,
+  "The payment step is encrypted": UNJUDGEABLE_TLS,
+};
+
+/**
+ * The default oracle: the widest set, which the Spec view previews with no report.
+ */
+export const DEFAULT_ACCEPTANCE_FEATURES = featureFiles(
+  new Set([...Object.keys(PARTIAL), DRIFTED]),
+).files;
 
 /**
  * The default report, paired with the default verdict on ./project.ts's settled
  * run. It is the `partial` one because that is the only verdict this oracle can
- * honestly reach: two of its six criteria are methods no runner executes, so a
- * green report over it would be claiming a result for criteria nobody checked.
+ * honestly reach: two of its scenarios are ones a run cannot settle, so a green
+ * report over it would be claiming a result nobody produced.
  */
-export const DEFAULT_VALIDATION_REPORT = PARTIAL.report;
+export const DEFAULT_VALIDATION_REPORT = (() => {
+  const { located } = featureFiles(new Set(Object.keys(PARTIAL)));
+  return reportFor(PARTIAL, located);
+})();
 
-// Per verdict: the pair of files a project in that state actually has on disk.
-// Chosen together, because a verdict is a statement ABOUT the pair — `unreported`
-// is not an empty report, it is the absence of one, and `skipped` has no oracle at
-// all, which is why it was skipped.
+// Per verdict: what a project in that state actually has on disk. Chosen together,
+// because a verdict is a statement ABOUT the pair — `unreported` is not an empty
+// report, it is the absence of one, and `skipped` has no oracle at all, which is
+// why it was skipped.
 const ARTIFACTS: Record<ValidationScenario, Artifacts> = {
-  passed: PASSED,
-  partial: PARTIAL,
-  failed: FAILED,
-  inconclusive: INCONCLUSIVE,
+  passed: { outcomes: PASSED, reported: true },
+  partial: { outcomes: PARTIAL, reported: true },
+  failed: { outcomes: FAILED, reported: true },
+  inconclusive: { outcomes: INCONCLUSIVE, reported: true },
   // The run reached its validation cycle's merge commit and found nothing there.
-  unreported: { criteria: PARTIAL.criteria },
-  // No acceptance oracle was ever authored — that IS the reason it was skipped.
-  skipped: {},
+  unreported: { outcomes: PARTIAL, reported: false },
+  // No acceptance criteria were ever authored — that IS the reason it was skipped.
+  skipped: { reported: false },
   // The oracle exists; the report does not yet, because the attempt is still
-  // running or has not started. A REPEAT attempt does have one — see REPEAT_ARTIFACTS.
-  running: { criteria: PARTIAL.criteria },
-  none: { criteria: PARTIAL.criteria },
-  // Same pair as `none`: the oracle was authored, and the attempt that would have
-  // written a report against it was stopped before it committed one. The absence
-  // here is why the page must not read `cancelled` as "no criteria" — the criteria
+  // running or has not started. A REPEAT attempt does have one — see below.
+  running: { outcomes: PARTIAL, reported: false },
+  none: { outcomes: PARTIAL, reported: false },
+  // Same pair as `none`: the criteria were authored, and the attempt that would
+  // have written a report against them was stopped before it committed one. The
+  // absence here is why the page must not read `cancelled` as "no criteria" — they
   // are right there, unanswered.
-  cancelled: { criteria: PARTIAL.criteria },
+  cancelled: { outcomes: PARTIAL, reported: false },
   // Mid-repair: the failed attempt's report is committed and stays readable, which
   // is what lets the page show WHAT is being fixed while the fix is in flight.
-  "awaiting-fix": FAILED,
+  "awaiting-fix": { outcomes: FAILED, reported: true },
 };
 
 /** The validation artifacts a scenario puts in the repo, as Files-API entries. */
@@ -423,17 +577,30 @@ export function validationFiles(
 ): { path: string; content: string }[] {
   // A repeat attempt is running OVER a failed one whose report is still committed —
   // which is what its copy counts. A first attempt has the oracle and nothing else.
-  const { criteria, report } = isRepeat(scenario, attempt)
-    ? FAILED
+  const { outcomes, reported } = isRepeat(scenario, attempt)
+    ? { outcomes: FAILED, reported: true }
     : ARTIFACTS[scenario];
-  // Only the oracle moves: a report is written once and pinned, so drift can only
-  // ever come from the criteria side.
-  const oracle = criteria && drifted ? withDrift(criteria) : criteria;
+  if (!outcomes) return [];
+
+  // Only the SPECIFICATION moves: a report is written once and pinned, so drift can
+  // only ever come from the feature-file side.
+  const names = new Set(Object.keys(outcomes));
+  const { located } = featureFiles(names);
+  if (drifted) names.add(DRIFTED);
+  const { files } = featureFiles(names);
+
   return [
-    ...(oracle ? [{ path: CRITERIA_PATH, content: oracle }] : []),
-    ...(report ? [{ path: REPORT_PATH, content: report }] : []),
+    ...files,
+    ...(reported ? [{ path: REPORT_PATH, content: reportFor(outcomes, located) }] : []),
   ];
 }
+
+/**
+ * Every path this module can put in the repo — what the handler swaps out before
+ * splicing in the ones a verdict override implies.
+ */
+export const ACCEPTANCE_PATHS = CATALOGUE.map((f) => featurePath(f.slug));
+export const VALIDATION_FILE_PATHS = [...ACCEPTANCE_PATHS, REPORT_PATH];
 
 // ---------------------------------------------------------------------------
 // The run story behind each verdict

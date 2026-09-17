@@ -24,6 +24,7 @@ import {
   followSelection,
   isDependencyDefinition,
   isFlow,
+  selectionKey,
 } from "./designTree";
 import type { SpecFileEntry } from "./mapping";
 
@@ -198,3 +199,42 @@ describe("dependencies — one directory, one definition", () => {
     expect(isDependencyDefinition("specs/design/components/orders/design.json")).toBe(false);
   });
 });
+
+// followSelection is the single definition of "where does a written path open",
+// so the write-watcher can never land somewhere a rail click would not have
+// gone. With no per-capability row, an acceptance path has to route to the set.
+describe("followSelection — acceptance paths open the set", () => {
+  it("routes any capability to the one entry", () => {
+    expect(followSelection("specs/acceptance/bought-items.feature")).toEqual({
+      kind: "acceptance",
+    });
+    expect(followSelection("specs/acceptance/adding-items.feature")).toEqual({
+      kind: "acceptance",
+    });
+  });
+
+  it("leaves the other validation document a file, since it has its own row", () => {
+    expect(followSelection("specs/validation/validation-criteria.json")).toEqual({
+      kind: "file",
+      path: "specs/validation/validation-criteria.json",
+    });
+  });
+
+  it("does not claim a nested or differently-suffixed path", () => {
+    for (const path of [
+      "specs/acceptance/nested/deep.feature",
+      "specs/acceptance/notes.md",
+      "specs/design/flows/checkout.feature",
+    ]) {
+      expect(followSelection(path), path).toEqual({ kind: "file", path });
+    }
+  });
+
+  it("gives the set a stable identity of its own", () => {
+    expect(selectionKey({ kind: "acceptance" })).toBe("acceptance");
+    expect(selectionKey({ kind: "acceptance" })).not.toBe(
+      selectionKey({ kind: "file", path: "specs/acceptance/bought-items.feature" }),
+    );
+  });
+});
+

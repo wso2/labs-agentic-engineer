@@ -30,7 +30,6 @@
 // written the same way for a second runtime. If it names a tool, a hook or an
 // SDK option, it does not belong here.
 
-import fs from "node:fs";
 import path from "node:path";
 import type { TaskLog } from "./logger.js";
 import type { DispatchRequest } from "./types.js";
@@ -51,16 +50,12 @@ export type { RunResult } from "./run_loop.js";
 import { createRunWatchdog } from "./progress/watchdog.js";
 import { stagedSecretValues, webSearchDenial } from "./websearch_dlp.js";
 import { allowsWriteOutsideProject } from "./workspace_guard.js";
-import { createValidationProgressTracker } from "./validation_progress.js";
-import type { ValidationProgressTracker } from "./validation_progress.js";
-import { createValidationStatusLine, ghCommentPoster } from "./validation_status_line.js";
-import type { GhInvocation, ValidationStatusLine } from "./validation_status_line.js";
 import { staticTokenSource, type AccessTokenSource } from "./auth_retry.js";
 import { webFetchDenial } from "./webfetch_guard.js";
 import { SKILLS_MIRROR_DIR, requireWorkflowBodies } from "./skills_presence.js";
 import { DENIED_CAPABILITIES, type Runtime, type RuntimePolicy, type RuntimeSession } from "../runtime/port.js";
 import { createRuntime, modelFromEnv, runtimeNameFromEnv } from "../runtime/registry.js";
-import { curlConfigHome, playwrightCliConfigPath } from "./endpoint_access.js";
+import { curlConfigHome } from "./endpoint_access.js";
 
 /**
  * The mirror the BFF wrote into the project clone, as an absolute path.
@@ -222,22 +217,22 @@ export interface McpAuthOpts {
  * `design.json`, and that is the design's call. This list is not: no design
  * decides whether a coding run follows the coding workflow.
  *
- * `playwright-cli` is deliberately absent. It carries the browser mechanics a
- * validation run reaches for, and `aep-validation` names it — a description
+ * `agent-browser` is deliberately absent. It carries the browser mechanics a
+ * validation run reaches for, and `acceptance-run` names it — a description
  * -triggered load is the right shape for mechanics a run may or may not need,
  * and paying for its body on every turn of every validation run is not.
  */
 export function alwaysOnSkills(taskKind: DispatchRequest["taskKind"]): string[] {
-  return taskKind === "validation" ? ["aep", "aep-validation"] : ["aep"];
+  return taskKind === "validation" ? ["aep", "acceptance-run"] : ["aep"];
 }
 
 /**
  * The skills a run may LOAD on demand — the other half of the sentence above.
  *
- * The allowlist gates the Skill tool, so leaving `playwright-cli` out of the
+ * The allowlist gates the Skill tool, so leaving `agent-browser` out of the
  * always-on set is only half a decision: absent from BOTH lists it is not
  * deferred, it is unreachable. That is what shipped — a validation run passed an
- * empty allowlist, so the load `aep-validation` instructs could never succeed
+ * empty allowlist, so the load `acceptance-run` instructs could never succeed
  * and the agent grepped the mirror's files by hand instead.
  *
  * Named rather than "the whole mirror" as an implementation run gets: that run
@@ -249,58 +244,7 @@ export function alwaysOnSkills(taskKind: DispatchRequest["taskKind"]): string[] 
  * a cap someone has to work around.
  */
 export function onDemandSkills(taskKind: DispatchRequest["taskKind"]): string[] {
-  return taskKind === "validation" ? ["playwright-cli"] : [];
-}
-
-/**
- * The status line for THIS dispatch, or undefined when the run cannot or should
- * not keep one.
- *
- * Validation-specific, and named for it: only a validation cycle is anchored to
- * an issue, so only a validation cycle has a line to keep. It answers with the
- * whole tracker rather than a hook — the report generator's OUTCOME is half the
- * mechanism, and a caller handed only the hook would report the exit-2 loop as
- * progress and back again.
- *
- * Two conditions, and each absence is a NORMAL run rather than a fault: a coding
- * run has no validation issue to speak on, and a validation dispatch that
- * carried no issue number (an older BFF, or one that could not resolve it) works
- * exactly as it did before, minus the line. Never throws for either — a status
- * line is how a run is WATCHED, and failing a two-hour validation because it
- * could not be watched would trade the work for the commentary.
- *
- * It shares the per-criterion tracker's state so both derive one run's history
- * once — see ValidationProgressTracker.state.
- *
- * `gh` is passed rather than resolved here because the answer is the WORKSPACE's,
- * not this machine's: the wrapper the run's own `gh` calls go through, and the
- * child environment that makes it authenticate. Resolving a binary off PATH
- * instead — the first attempt — posted as nobody in the mode where no token is
- * mounted, and could not be tested without a `gh` on the test machine.
- */
-export function validationStatusLineFor(
-  req: DispatchRequest,
-  progress: ValidationProgressTracker | undefined,
-  gh: GhInvocation,
-  warn: (reason: string) => void,
-): ValidationStatusLine | undefined {
-  const issue = req.validationIssue ?? 0;
-  if (!progress || issue <= 0) return undefined;
-  return createValidationStatusLine(progress.state, ghCommentPoster(gh, req.repoUrl, issue), warn);
-}
-
-/**
- * `PLAYWRIGHT_MCP_CONFIG`, but only when there is a config to point at.
- *
- * Spread into the child env so the variable is absent rather than empty when the
- * preflight wrote nothing: playwright-cli reads it eagerly and its daemon dies
- * on a path that does not resolve, so an unset variable is the only safe way to
- * say "no override needed". Synchronous on purpose — this runs once, at spawn,
- * after the preflight that writes the file has already returned.
- */
-function playwrightCliConfigEnv(): Record<string, string> {
-  const file = playwrightCliConfigPath();
-  return fs.existsSync(file) ? { PLAYWRIGHT_MCP_CONFIG: file } : {};
+  return taskKind === "validation" ? ["agent-browser"] : [];
 }
 
 /**
@@ -356,17 +300,10 @@ export async function startCodingRun(
     // to look for is indistinguishable from no config at all. Harmless on a
     // coding run, which writes no such file.
     CURL_HOME: curlConfigHome(),
-    // And where playwright-cli looks for its own — the browser half of the same
-    // endpoint override (endpoint_access.ts). Set from the file's EXISTENCE, not
-    // unconditionally like CURL_HOME above: curl treats a missing `.curlrc` as
-    // no config, but this variable is fatal when it points at nothing (the
-    // daemon exits on ENOENT), so a coding run and a cloud validation run — both
-    // of which write no such file — must not see it at all.
-    ...playwrightCliConfigEnv(),
   };
 
   // Where the skills are, for the one skill that has to name a file inside them:
-  // `aep-validation` runs the platform's report generator rather than a copy the
+  // `acceptance-run` runs the platform's report checker rather than a copy the
   // repo committed. The runner is still the only layer that knows the path.
   childEnv.AEP_SKILLS_DIR = mirrorDir(layout.workspace);
   const skills = perTaskSkills?.availableSkillNames ?? [];
@@ -382,37 +319,6 @@ export async function startCodingRun(
   // is the single source of truth for "what's secret in this run" without a
   // second, drift-prone channel. Both egress guards are built from it.
   const stagedSecrets = stagedSecretValues(childEnv);
-
-  // Per-criterion progress — see validation_progress.ts. Validation only: a
-  // coding run has no validation criteria to report on, and registering the
-  // matchers anyway would put a watcher on every Write, Edit and Bash call of
-  // every run to derive nothing.
-  const validationProgress =
-    req.taskKind === "validation"
-      ? createValidationProgressTracker((update) => {
-          // A criterion is a `work_item` in v2, same statuses and the same
-          // inference (ADR-0009) in a new envelope. `source` is what tells a
-          // consumer these are the platform's criteria rather than the lead's
-          // own plan entries, which share the kind.
-          emit({ kind: "work_item", source: "criterion", itemId: update.itemId, itemStatus: update.status });
-        })
-      : undefined;
-
-  // The RUN's own line on its issue — see validationStatusLineFor above.
-  const validationStatusLine = validationStatusLineFor(
-    req,
-    validationProgress,
-    // The wrapper and env the agent's own `gh` calls use — see ghCommentPoster
-    // for why the raw binary is not enough.
-    { path: layout.ghWrapper, env: childEnv },
-    (reason) => {
-      // Uncoded on purpose: the notice codes are a contract enum whose labels
-      // `@aep/progress-view` owns (RunEvent.code), and adding one is a contract
-      // change rather than a merge's to make. The reason already reads as a
-      // sentence, which is what an uncoded notice renders.
-      emit({ kind: "notice", level: "warn", detail: reason });
-    },
-  );
 
   const deadline = runDeadlineFromEnv(process.env);
   // The one way anything in this file ends a run early. It is handed to the MCP
@@ -459,27 +365,6 @@ export async function startCodingRun(
       ),
     },
     ...buildMcpPolicy(req, layout, terminator, mcpAuth),
-    ...(validationProgress || validationStatusLine
-      ? {
-          observe: {
-            // Fanned out here rather than chained inside either watcher, so
-            // neither can swallow the other's call. The rows move first: the
-            // status line awaits a GitHub round trip, and a row is cheaper to
-            // be right about than a comment.
-            toolUse: async (toolName: string, toolInput: unknown, toolUseId: string) => {
-              validationProgress?.observe(toolName, toolInput, toolUseId);
-              await validationStatusLine?.observe(toolName, toolInput, toolUseId);
-            },
-            // Both settle from the SAME `ok` the feed reports, rather than
-            // re-deriving success from the tool result a second time: the rows
-            // settle a spec run, the status line settles the report generator.
-            toolOutcome: (toolUseId: string, ok: boolean) => {
-              validationProgress?.settle(toolUseId, ok);
-              validationStatusLine?.settle(toolUseId, ok);
-            },
-          },
-        }
-      : {}),
   };
 
   const session = await runtime.start(

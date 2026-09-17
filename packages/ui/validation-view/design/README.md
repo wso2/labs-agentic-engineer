@@ -1,13 +1,11 @@
 # Design notes — `@aep/ui-validation-view`
 
 This package renders `specs/validation/validation-criteria.json` — the acceptance
-oracle — optionally joined against a run's `tests/validation/report.json`. Two
-consumers, one component:
+oracle — optionally joined against a run's `tests/acceptance/report.json`:
 
 | Consumer | What it passes | What the reader is doing there |
 |---|---|---|
 | Spec view's file pane (`SpecView.tsx`) | `criteria` only | Reading the document, before any run exists |
-| Validations page (`ValidationPage.tsx`) | `criteria`, `report`, `live`, `awaitingReport` | Reading run results |
 
 ## Two marks, at opposite ends of the row
 

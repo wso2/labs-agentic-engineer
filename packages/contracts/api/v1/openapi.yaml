@@ -2030,12 +2030,12 @@ paths:
           type: string
       - description: 'Repo-relative file path (trailing wildcard: may span multiple segments, i.e. contain
           slashes). Reads are scoped to specs/ plus a small read-only allow-list — currently the
-          runner-authored validation report at tests/validation/report.json.'
+          runner-authored validation report at tests/acceptance/report.json.'
         in: path
         name: path
         required: true
         schema:
-          description: Repo-relative file path — specs/ or an allow-listed read-only path (tests/validation/report.json)
+          description: Repo-relative file path — specs/ or an allow-listed read-only path (tests/acceptance/report.json)
           type: string
       - description: >-
           Commit to read the file AT. Omitted reads the default-branch tip.
@@ -7344,7 +7344,7 @@ components:
         required:
           description: >-
             True when the coding runner reads this skill on every run and cannot
-            start without it (`aep`, and `aep-validation` for a validation task).
+            start without it (`aep`, and `acceptance-run` for a validation task).
             The mirror only copies enabled skills, so disabling one of these would
             take the procedure away from every build in the org — `PATCH
             /skills/{name}` refuses it with 409. The console renders the
@@ -7385,7 +7385,7 @@ components:
         required:
           description: >-
             True when the coding runner reads this skill on every run and cannot
-            start without it (`aep`, and `aep-validation` for a validation task).
+            start without it (`aep`, and `acceptance-run` for a validation task).
             The mirror only copies enabled skills, so disabling one of these would
             take the procedure away from every build in the org — `PATCH
             /skills/{name}` refuses it with 409. The console renders the

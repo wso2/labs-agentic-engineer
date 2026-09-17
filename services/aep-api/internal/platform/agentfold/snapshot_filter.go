@@ -68,20 +68,26 @@ func isAdmittedSpecPath(p string) bool {
 const securityDesignPath = "specs/design/security.json"
 
 // KeepInTurnSnapshot mirrors keepInTurnSnapshot: keep agent-authored sources
-// (*.md, *.dsl, *.cell, a design.json or validation-criteria.json basename,
-// the project security design specs/design/security.json, the two OpenAPI
-// contract shapes above) and drop everything else. *.cell is the
-// project-level cell-diagram DSL (design.cell). validation-criteria.json
-// is kept so a design regeneration can see the existing acceptance oracle and
-// reuse its criterion ids (keeping committed e2e specs, which are keyed by
-// criterion id, mapped) instead of renumbering. Arbitrary *.yaml (e.g.
+// (*.md, *.dsl, *.cell, *.feature, a design.json or validation-criteria.json
+// basename, the project security design specs/design/security.json, the two
+// OpenAPI contract shapes above) and drop everything else. *.cell is the
+// project-level cell-diagram DSL (design.cell). Arbitrary *.yaml (e.g.
 // workload.yaml) stays excluded — only the two exact shapes are admitted.
+//
+// Both acceptance oracles are kept so a design regeneration can SEE what it is
+// regenerating: validation-criteria.json so criterion ids stay stable rather
+// than being renumbered (committed e2e specs are keyed by them), and *.feature
+// so the acceptance-criteria skill can reuse a capability's existing file name
+// and keep the rules that still hold. Without the feature files that skill
+// renames a capability it would phrase differently this time, which leaves the
+// old file on disk and states its rules twice.
 //
 // The two filters are ONE rule implemented twice, and snapshot_filter_test.go
 // pins the same fixed accept/reject table as the agents service's
 // test/load-workspace.test.ts.
 func KeepInTurnSnapshot(path string) bool {
-	if strings.HasSuffix(path, ".md") || strings.HasSuffix(path, ".dsl") || strings.HasSuffix(path, ".cell") {
+	if strings.HasSuffix(path, ".md") || strings.HasSuffix(path, ".dsl") ||
+		strings.HasSuffix(path, ".cell") || strings.HasSuffix(path, ".feature") {
 		return true
 	}
 	if isAdmittedSpecPath(path) {

@@ -44,12 +44,13 @@ type IssueClient interface {
 	ListMilestoneIssues(ctx context.Context, orgID, projectID string, filter sourcecontrol.MilestoneIssuesFilter) ([]sourcecontrol.IssueInfo, error)
 }
 
-// CriteriaReader reads the acceptance oracle (specs/validation/validation-criteria.json)
-// at HEAD. found=false when the file does not exist yet (the design agent has
-// not authored it) — the minter then skips, and a later planning pass re-mints
-// once it exists. The composition root adapts the files feature's Read.
+// CriteriaReader reads the acceptance oracle — the `.feature` files under
+// specs/acceptance/ — at HEAD. found=false when the directory holds none yet
+// (the design agent has not authored them) — the minter then skips, and a later
+// planning pass re-mints once they exist. The composition root adapts the files
+// feature's Bundle, which reads a whole directory at one commit.
 type CriteriaReader interface {
-	ReadValidationCriteria(ctx context.Context, orgID, projectID string) (raw []byte, found bool, err error)
+	ReadAcceptanceCriteria(ctx context.Context, orgID, projectID string) (files []AcceptanceFile, found bool, err error)
 }
 
 // ContextProvider is the internal validation-context endpoint's view of the

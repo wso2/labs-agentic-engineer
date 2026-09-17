@@ -17,91 +17,97 @@
 package validation_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/delivery/validation"
 )
 
-// TestVerdictFromReport pins the rule that turns the runner's committed report
+// TestVerdictFromReport pins the rule that turns the agent's committed report
 // into a run property.
 //
 // The load-bearing case is `partial`: a report where something passed, nothing
-// failed, and some criteria were never covered. Calling that `passed` — as it was
-// called before — claims a result for criteria nobody checked, which is the whole
-// reason this vocabulary grew.
+// failed, and some scenarios were never judged. Calling that `passed` claims a
+// result for scenarios nobody drove, which is the whole reason this vocabulary
+// grew.
 func TestVerdictFromReport(t *testing.T) {
 	cases := []struct {
 		name string
 		raw  string
 		want string
 	}{
-		// ---- passed: full coverage, all green -------------------------------
+		// ---- passed: every scenario judged, all green -----------------------
 		{
-			"every criterion was automated and passed",
-			`{"criteria":[{"id":"AC-1","method":"e2e","status":"pass"},{"id":"AC-2","method":"e2e","status":"pass"}]}`,
+			"every scenario passed",
+			`{"scenarios":[{"scenario":"A","outcome":"passed"},{"scenario":"B","outcome":"passed"}]}`,
 			delivery.ValidationVerdictPassed,
 		},
 		{
-			"a single passing criterion is full coverage",
-			`{"criteria":[{"id":"AC-1","method":"e2e","status":"pass"}]}`,
+			"a single passing scenario",
+			`{"scenarios":[{"scenario":"A","outcome":"passed"}]}`,
 			delivery.ValidationVerdictPassed,
 		},
 
-		// ---- failed: an assertion lost, and it wins over everything ---------
+		// ---- failed: an assertion lost, and it wins outright -----------------
+		// It is the one thing the report says about the SOFTWARE rather than
+		// about the run, so it outranks any coverage gap.
 		{
-			"one real failure is the verdict",
-			`{"criteria":[{"id":"AC-1","status":"pass"},{"id":"AC-2","status":"fail"}]}`,
+			"one scenario failed among passes",
+			`{"scenarios":[{"scenario":"A","outcome":"passed"},{"scenario":"B","outcome":"failed"}]}`,
 			delivery.ValidationVerdictFailed,
 		},
 		{
-			"a failure outranks uncovered criteria",
-			`{"criteria":[{"id":"AC-1","status":"fail"},{"id":"AC-2","status":"manual"}]}`,
+			"a failure outranks a block",
+			`{"scenarios":[{"scenario":"A","outcome":"failed"},{"scenario":"B","outcome":"blocked"}]}`,
 			delivery.ValidationVerdictFailed,
 		},
 		{
-			"a failure outranks having no passes at all",
-			`{"criteria":[{"id":"AC-1","status":"fail"},{"id":"AC-2","status":"not_run"}]}`,
+			"a failure outranks an unjudgeable",
+			`{"scenarios":[{"scenario":"A","outcome":"failed"},{"scenario":"B","outcome":"unjudgeable"}]}`,
 			delivery.ValidationVerdictFailed,
 		},
 
-		// ---- partial: real evidence, but gaps ------------------------------
+		// ---- partial: something passed, nothing failed, something unjudged ---
 		{
-			"passes plus a manual checklist item is PARTIAL, not passed",
-			`{"criteria":[{"id":"AC-1","method":"e2e","status":"pass"},{"id":"AC-2","method":"manual","status":"manual"}]}`,
+			"a block leaves the run partial",
+			`{"scenarios":[{"scenario":"A","outcome":"passed"},{"scenario":"B","outcome":"blocked"}]}`,
 			delivery.ValidationVerdictPartial,
 		},
 		{
-			"passes plus an unwritten spec is partial",
-			`{"criteria":[{"id":"AC-1","status":"pass"},{"id":"AC-2","status":"not_run"}]}`,
+			"an unjudgeable leaves the run partial",
+			`{"scenarios":[{"scenario":"A","outcome":"passed"},{"scenario":"B","outcome":"unjudgeable"}]}`,
 			delivery.ValidationVerdictPartial,
 		},
 		{
-			"passes plus an out-of-scope scenario is partial",
-			`{"criteria":[{"id":"AC-1","status":"pass"},{"id":"AC-2","method":"scenario","status":"not_validated"}]}`,
+			// An outcome word this build does not know is evidence we cannot
+			// interpret. Counting it towards full coverage would let a typo buy a
+			// `passed`, so it degrades to a gap.
+			"an unrecognised outcome counts as a gap, not as coverage",
+			`{"scenarios":[{"scenario":"A","outcome":"passed"},{"scenario":"B","outcome":"skipped-ish"}]}`,
 			delivery.ValidationVerdictPartial,
 		},
 
-		// ---- inconclusive: no test results at all --------------------------
+		// ---- inconclusive: read the evidence, nothing was judged -------------
 		{
-			"nothing ran and nothing failed",
-			`{"criteria":[{"id":"AC-1","status":"not_run"},{"id":"AC-2","status":"manual"}]}`,
+			"every scenario blocked",
+			`{"scenarios":[{"scenario":"A","outcome":"blocked"},{"scenario":"B","outcome":"blocked"}]}`,
 			delivery.ValidationVerdictInconclusive,
 		},
 		{
-			"an oracle of only manual criteria",
-			`{"criteria":[{"id":"AC-1","method":"manual","status":"manual"},{"id":"AC-2","method":"manual","status":"manual"}]}`,
+			"every scenario unjudgeable",
+			`{"scenarios":[{"scenario":"A","outcome":"unjudgeable"}]}`,
 			delivery.ValidationVerdictInconclusive,
 		},
 
-		// ---- unreported: no usable report ----------------------------------
+		// ---- unreported: no usable report ------------------------------------
 		// Distinct from inconclusive: there we can read the evidence and it says
 		// nothing ran; here there is nothing to read, so the run learned nothing
 		// and the agent broke its contract.
 		{"no report at all", "", delivery.ValidationVerdictUnreported},
 		{"an unparseable report", "{not json", delivery.ValidationVerdictUnreported},
-		{"a report with no criteria", `{"criteria":[]}`, delivery.ValidationVerdictUnreported},
-		{"a report missing its criteria key", `{"schemaVersion":1}`, delivery.ValidationVerdictUnreported},
+		{"a report with no scenarios", `{"scenarios":[]}`, delivery.ValidationVerdictUnreported},
+		{"a report missing its scenarios key", `{"schemaVersion":2}`, delivery.ValidationVerdictUnreported},
 	}
 	for _, c := range cases {
 		if got := validation.VerdictFromReport([]byte(c.raw)); got != c.want {
@@ -115,10 +121,10 @@ func TestVerdictFromReport(t *testing.T) {
 // time. This is the seam the two halves are most likely to drift across.
 func TestVerdictFromReportOnlyProducesStorableVerdicts(t *testing.T) {
 	raws := []string{
-		`{"criteria":[{"id":"AC-1","status":"pass"}]}`,
-		`{"criteria":[{"id":"AC-1","status":"fail"}]}`,
-		`{"criteria":[{"id":"AC-1","status":"pass"},{"id":"AC-2","status":"manual"}]}`,
-		`{"criteria":[{"id":"AC-1","status":"manual"}]}`,
+		`{"scenarios":[{"outcome":"passed"}]}`,
+		`{"scenarios":[{"outcome":"failed"}]}`,
+		`{"scenarios":[{"outcome":"passed"},{"outcome":"blocked"}]}`,
+		`{"scenarios":[{"outcome":"unjudgeable"}]}`,
 		"",
 	}
 	for _, raw := range raws {
@@ -154,122 +160,247 @@ func TestValidationVerdictFailsRun(t *testing.T) {
 	}
 }
 
-// TestFailedCriteria covers the read a repair issue is built from. The shape of
-// `failure` is the whole risk: generate-report.mjs writes an OBJECT, and reports
-// already merged into project repos carry a bare string — a report is read long
-// after it was written, so both have to work.
-func TestFailedCriteria(t *testing.T) {
-	cases := []struct {
-		name string
-		raw  string
-		want []validation.FailedCriterion
-	}{
-		{"no report at all", "", nil},
-		{"unparseable", `{`, nil},
-		{"nothing failed", `{"criteria":[{"id":"AC-1","status":"pass"}]}`, nil},
-		{
-			"object-shaped failure — what the generator writes",
-			`{"criteria":[
-			  {"id":"AC-1","method":"e2e","status":"pass"},
-			  {"id":"AC-2","method":"e2e","status":"fail","spec":"tests/e2e/greet.spec.ts",
-			   "failure":{"message":"expected Hello, Ada","location":"greet.spec.ts:14"}}
-			]}`,
-			[]validation.FailedCriterion{{
-				ID: "AC-2", Method: "e2e", Message: "expected Hello, Ada",
-				Location: "greet.spec.ts:14", Spec: "tests/e2e/greet.spec.ts",
-			}},
-		},
-		{
-			"string-shaped failure — the older on-disk shape",
-			`{"criteria":[{"id":"AC-9","method":"e2e","status":"fail","failure":"timed out"}]}`,
-			[]validation.FailedCriterion{{ID: "AC-9", Method: "e2e", Message: "timed out"}},
-		},
-		{
-			"a failure shaped like neither degrades to no detail, not to a dropped criterion",
-			`{"criteria":[{"id":"AC-9","method":"e2e","status":"fail","failure":42}]}`,
-			[]validation.FailedCriterion{{ID: "AC-9", Method: "e2e"}},
-		},
-		{
-			"every failure is returned, in report order",
-			`{"criteria":[
-			  {"id":"AC-3","status":"fail","failure":{"message":"one"}},
-			  {"id":"AC-1","status":"not_run"},
-			  {"id":"AC-2","status":"fail","failure":{"message":"two"}}
-			]}`,
-			[]validation.FailedCriterion{
-				{ID: "AC-3", Message: "one"},
-				{ID: "AC-2", Message: "two"},
-			},
-		},
+// TestFailedScenarios covers the read a repair issue is built from.
+//
+// Two rules carry the risk. A `blocked` scenario must NOT appear: the agent
+// cannot tell an app that correctly refuses an action from one too broken to
+// perform it, so filing repair work on a block would have a coding run add an
+// affordance the requirement never asked for. And the step that SETTLED the
+// scenario has to be found even when its exit code was 0, because a command that
+// prints a value exits 0 merely by running.
+func TestFailedScenarios(t *testing.T) {
+	t.Run("nothing failed", func(t *testing.T) {
+		if got := validation.FailedScenarios([]byte(`{"scenarios":[{"outcome":"passed"}]}`)); got != nil {
+			t.Errorf("got %+v, want nil", got)
+		}
+	})
+
+	t.Run("a block is reported but never filed", func(t *testing.T) {
+		raw := `{"scenarios":[
+		  {"scenario":"A","outcome":"blocked","steps":[{"keyword":"When","text":"x","observed":"the button was [disabled]"}]}
+		]}`
+		if got := validation.FailedScenarios([]byte(raw)); got != nil {
+			t.Errorf("a blocked scenario was filed for repair: %+v", got)
+		}
+	})
+
+	t.Run("a failure carries its identity, its text and what settled it", func(t *testing.T) {
+		raw := `{"scenarios":[
+		  {"scenario":"A","outcome":"passed"},
+		  {"feature":"Lists","featureFile":"specs/acceptance/lists.feature","line":24,
+		   "rule":"A duplicate is rejected","scenario":"Adding a duplicate","outcome":"failed",
+		   "steps":[
+		     {"keyword":"When","text":"Dan adds \"Milk\" again","command":"agent-browser click"},
+		     {"keyword":"Then","text":"the list still has one item","command":"agent-browser wait --text x","exit":1,
+		      "observed":"the list held two items"}]}
+		]}`
+		got := validation.FailedScenarios([]byte(raw))
+		if len(got) != 1 {
+			t.Fatalf("got %d failures, want 1", len(got))
+		}
+		f := got[0]
+		if f.ID != "Lists / A duplicate is rejected / Adding a duplicate" {
+			t.Errorf("ID = %q", f.ID)
+		}
+		if f.FeatureFile != "specs/acceptance/lists.feature" || f.Line != 24 {
+			t.Errorf("location = %s:%d", f.FeatureFile, f.Line)
+		}
+		// EVERY step, not just the one that settled it: only the whole trace
+		// separates "the When never happened" from "the When happened and the app
+		// disagreed", and those need opposite fixes.
+		if len(f.Steps) != 2 {
+			t.Fatalf("Steps = %d; the whole trace has to survive the read", len(f.Steps))
+		}
+		if f.Steps[0].Keyword != "When" || f.Steps[0].Command != "agent-browser click" {
+			t.Errorf("first step = %+v; want the When and the command that ran it", f.Steps[0])
+		}
+		if f.Deciding != 1 {
+			t.Errorf("Deciding = %d; the nonzero exit is at index 1", f.Deciding)
+		}
+		if f.Steps[f.Deciding].Observed != "the list held two items" {
+			t.Errorf("deciding step observed %q", f.Steps[f.Deciding].Observed)
+		}
+	})
+
+	t.Run("the failure-time capture survives the read", func(t *testing.T) {
+		raw := `{"scenarios":[
+		  {"scenario":"Adding a duplicate","outcome":"failed",
+		   "steps":[{"keyword":"Then","text":"one item","command":"c","exit":1}],
+		   "evidence":{
+		     "network":[{"method":"POST","url":"/api/items","status":201}],
+		     "console":["TypeError: items.map is not a function"],
+		     "snapshot":"- list \"Milk\"\n- list \" milk \""}}
+		]}`
+		got := validation.FailedScenarios([]byte(raw))
+		if len(got) != 1 {
+			t.Fatalf("got %d failures, want 1", len(got))
+		}
+		e := got[0].Evidence
+		if len(e.Network) != 1 || e.Network[0].Status != 201 || e.Network[0].URL != "/api/items" {
+			t.Errorf("Network = %+v", e.Network)
+		}
+		if len(e.Console) != 1 || !strings.Contains(e.Console[0], "items.map") {
+			t.Errorf("Console = %v", e.Console)
+		}
+		if e.Snapshot == "" {
+			t.Error("the snapshot is the one piece kept out of the issue body; it has to reach the report read")
+		}
+	})
+
+	t.Run("an empty request list is a finding, not a blank", func(t *testing.T) {
+		// "nothing left the page" and "we did not look" are different answers, and
+		// only the first is evidence. The read must not flatten them.
+		raw := `{"scenarios":[
+		  {"scenario":"A","outcome":"failed",
+		   "steps":[{"keyword":"Then","text":"x","command":"c","exit":1}],
+		   "evidence":{"network":[],"console":[]}}
+		]}`
+		got := validation.FailedScenarios([]byte(raw))
+		if len(got) != 1 || len(got[0].Evidence.Network) != 0 {
+			t.Fatalf("got %+v", got)
+		}
+		if got[0].Evidence.NotCaptured != "" {
+			t.Error("an empty capture must not read as an absent one")
+		}
+	})
+
+	t.Run("a value-returning command settles the scenario at exit 0", func(t *testing.T) {
+		// `get count` exits 0 because the command RAN. The agent read the printed
+		// value and judged, so the observation is the only evidence there is.
+		raw := `{"scenarios":[
+		  {"scenario":"Adding a duplicate","outcome":"failed","steps":[
+		    {"keyword":"Then","text":"the list still has exactly one item",
+		     "command":"agent-browser get count \".item\"","exit":0,"observed":"2"}]}
+		]}`
+		got := validation.FailedScenarios([]byte(raw))
+		if len(got) != 1 || got[0].Deciding != 0 || got[0].Steps[0].Observed != "2" {
+			t.Fatalf("got %+v, want the observation to settle it", got)
+		}
+	})
+
+	t.Run("report order is preserved", func(t *testing.T) {
+		raw := `{"scenarios":[
+		  {"scenario":"B","outcome":"failed"},
+		  {"scenario":"A","outcome":"passed"},
+		  {"scenario":"C","outcome":"failed"}]}`
+		got := validation.FailedScenarios([]byte(raw))
+		if len(got) != 2 || got[0].Scenario != "B" || got[1].Scenario != "C" {
+			t.Errorf("got %+v, want B then C", got)
+		}
+	})
+
+	t.Run("an unreadable report files nothing", func(t *testing.T) {
+		for _, raw := range []string{"", "{not json", `{"scenarios":[]}`} {
+			if got := validation.FailedScenarios([]byte(raw)); got != nil {
+				t.Errorf("FailedScenarios(%q) = %+v, want nil", raw, got)
+			}
+		}
+	})
+}
+
+// TestReportDigest pins the fingerprint the repair loop compares attempts with.
+// It must cover WHAT WAS CONCLUDED and nothing else: a whole-file hash would
+// change on every attempt (the report stamps `commit` and `generatedAt`) and the
+// identical-answer check would become dead code that silently never fires.
+func TestReportDigest(t *testing.T) {
+	t.Run("empty for anything unreadable", func(t *testing.T) {
+		for _, raw := range []string{"", "{not json", `{"scenarios":[]}`} {
+			if got := validation.ReportDigest([]byte(raw)); got != "" {
+				t.Errorf("ReportDigest(%q) = %q, want empty", raw, got)
+			}
+		}
+	})
+
+	t.Run("order does not change the answer", func(t *testing.T) {
+		a := `{"scenarios":[{"scenario":"A","outcome":"passed"},{"scenario":"B","outcome":"failed"}]}`
+		b := `{"scenarios":[{"scenario":"B","outcome":"failed"},{"scenario":"A","outcome":"passed"}]}`
+		if validation.ReportDigest([]byte(a)) != validation.ReportDigest([]byte(b)) {
+			t.Error("the same outcomes in a different order produced different digests")
+		}
+	})
+
+	t.Run("the same scenario failing differently is a different answer", func(t *testing.T) {
+		a := `{"scenarios":[{"scenario":"A","outcome":"failed","steps":[{"keyword":"Then","text":"t","exit":1,"observed":"one"}]}]}`
+		b := `{"scenarios":[{"scenario":"A","outcome":"failed","steps":[{"keyword":"Then","text":"t","exit":1,"observed":"two"}]}]}`
+		if validation.ReportDigest([]byte(a)) == validation.ReportDigest([]byte(b)) {
+			t.Error("a repair that changed the failure still read as the same answer")
+		}
+	})
+
+	t.Run("the timestamp and commit are not part of the answer", func(t *testing.T) {
+		a := `{"commit":"aaa","generatedAt":"2026-01-01T00:00:00Z","scenarios":[{"scenario":"A","outcome":"passed"}]}`
+		b := `{"commit":"bbb","generatedAt":"2026-02-02T00:00:00Z","scenarios":[{"scenario":"A","outcome":"passed"}]}`
+		if validation.ReportDigest([]byte(a)) != validation.ReportDigest([]byte(b)) {
+			t.Error("a re-run with the same conclusions produced a different digest")
+		}
+	})
+
+	t.Run("a changed outcome is a different answer", func(t *testing.T) {
+		a := `{"scenarios":[{"scenario":"A","outcome":"failed"}]}`
+		b := `{"scenarios":[{"scenario":"A","outcome":"passed"}]}`
+		if validation.ReportDigest([]byte(a)) == validation.ReportDigest([]byte(b)) {
+			t.Error("a fixed scenario read as the same answer")
+		}
+	})
+}
+
+// A scenario where NO step exits nonzero is the ordinary case, not an edge one:
+// the run skill tells the agent to settle assertions with value-returning
+// commands like `get count`, which exit 0 because the command RAN.
+//
+// This fixture is taken from a real p56 run. Every step exited 0, and the `When`
+// had recorded the POST it made on the way past — so "the first step carrying an
+// observation" picked the `When`, two steps before the `Then` that actually lost.
+// That put the trace marker on the wrong line and, worse, made ReportDigest
+// fingerprint the REQUEST rather than the ASSERTION: a repair that changed what
+// the `Then` saw would have digested identically and stopped the repair chain as
+// "the same answer twice".
+func TestFailedScenarios_ADecidingStepIsAThen(t *testing.T) {
+	raw := `{"scenarios":[
+	  {"scenario":"Adding a todo","outcome":"failed","steps":[
+	    {"keyword":"Given","text":"Priya is signed in","command":"(already signed in)","exit":0},
+	    {"keyword":"When","text":"she adds a todo","command":"agent-browser click @e4","exit":0,
+	     "observed":"POST /api/todos returned 201; the new row appeared"},
+	    {"keyword":"Then","text":"her list includes it","command":"agent-browser eval ...","exit":0,
+	     "observed":"false — no such row exists"}]}
+	]}`
+	got := validation.FailedScenarios([]byte(raw))
+	if len(got) != 1 {
+		t.Fatalf("got %d failures, want 1", len(got))
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := validation.FailedCriteria([]byte(tc.raw))
-			if len(got) != len(tc.want) {
-				t.Fatalf("FailedCriteria() = %+v; want %+v", got, tc.want)
-			}
-			for i := range tc.want {
-				if got[i] != tc.want[i] {
-					t.Errorf("FailedCriteria()[%d] = %+v; want %+v", i, got[i], tc.want[i])
-				}
-			}
-		})
+	if got[0].Deciding != 2 {
+		t.Errorf("Deciding = %d (%q); the Then is what settles a scenario, not the first step that happened to observe something",
+			got[0].Deciding, got[0].Steps[got[0].Deciding].Keyword)
 	}
 }
 
-// TestReportDigest is the live-or-dead test for the identical-report rule.
-//
-// The rule stops a repeat attempt that learned nothing. It can only ever fire if the
-// digest ignores everything about a report except what it concluded — and the runner
-// stamps every report with the commit it was generated at, so a whole-file hash
-// would differ on every attempt and the rule would be dead code that always passes.
-func TestReportDigest(t *testing.T) {
-	const outcomes = `"criteria":[{"id":"AC-1","status":"fail","failure":{"message":"boom"}},{"id":"AC-2","status":"pass"}]`
+// `And` and `But` inherit the keyword above them — that is what Gherkin means by
+// them and what the run skill tells the agent they mean. A scenario whose
+// assertion is continued by `And` must still resolve to a Then, or the
+// continuation that actually settled it is invisible.
+func TestFailedScenarios_AContinuedThenStillDecides(t *testing.T) {
+	raw := `{"scenarios":[
+	  {"scenario":"Adding a todo","outcome":"failed","steps":[
+	    {"keyword":"When","text":"she adds a todo","command":"c","exit":0,"observed":"the POST was accepted"},
+	    {"keyword":"Then","text":"the row appears","command":"c","exit":0},
+	    {"keyword":"And","text":"it shows today's date","command":"c","exit":0,"observed":"the cell was empty"}]}
+	]}`
+	got := validation.FailedScenarios([]byte(raw))
+	if len(got) != 1 || got[0].Deciding != 2 {
+		t.Fatalf("Deciding = %+v; an `And` continuing a `Then` is still a Then", got)
+	}
+}
 
-	t.Run("same outcomes digest the same, despite a different commit stamp", func(t *testing.T) {
-		first := validation.ReportDigest([]byte(`{"commit":"aaaaaaa","generatedAt":"2026-01-01T00:00:00Z",` + outcomes + `}`))
-		second := validation.ReportDigest([]byte(`{"commit":"bbbbbbb","generatedAt":"2026-02-02T00:00:00Z",` + outcomes + `}`))
-		if first == "" {
-			t.Fatal("digest is empty for a usable report")
-		}
-		if first != second {
-			t.Error("the commit stamp changed the digest — the identical-report rule can never fire")
-		}
-	})
-
-	t.Run("criterion order is not part of the answer", func(t *testing.T) {
-		a := validation.ReportDigest([]byte(`{"criteria":[{"id":"AC-1","status":"pass"},{"id":"AC-2","status":"fail"}]}`))
-		b := validation.ReportDigest([]byte(`{"criteria":[{"id":"AC-2","status":"fail"},{"id":"AC-1","status":"pass"}]}`))
-		if a != b {
-			t.Error("report order changed the digest; it is the runner's discovery order, not a promise")
-		}
-	})
-
-	t.Run("a repaired criterion is a changed answer", func(t *testing.T) {
-		red := validation.ReportDigest([]byte(`{"criteria":[{"id":"AC-1","status":"fail"}]}`))
-		green := validation.ReportDigest([]byte(`{"criteria":[{"id":"AC-1","status":"pass"}]}`))
-		if red == green {
-			t.Error("a repaired criterion must not digest the same as a failing one")
-		}
-	})
-
-	t.Run("the same criterion failing for a different reason is a changed answer", func(t *testing.T) {
-		a := validation.ReportDigest([]byte(`{"criteria":[{"id":"AC-1","status":"fail","failure":{"message":"timeout"}}]}`))
-		b := validation.ReportDigest([]byte(`{"criteria":[{"id":"AC-1","status":"fail","failure":{"message":"404"}}]}`))
-		if a == b {
-			t.Error("the repair moved the failure; that is progress and must not read as unchanged")
-		}
-	})
-
-	t.Run("no comparable evidence digests empty, so two of them never match", func(t *testing.T) {
-		for name, raw := range map[string]string{
-			"absent":      "",
-			"unparseable": `{`,
-			"no criteria": `{"criteria":[]}`,
-		} {
-			if got := validation.ReportDigest([]byte(raw)); got != "" {
-				t.Errorf("%s: digest = %q; want empty so it cannot compare equal", name, got)
-			}
-		}
-	})
+// With nothing asserting, the scenario still has to be answerable rather than
+// silent — a reason recorded anywhere beats no reason at all.
+func TestFailedScenarios_FallsBackWhenNoThenObserved(t *testing.T) {
+	raw := `{"scenarios":[
+	  {"scenario":"A","outcome":"failed","steps":[
+	    {"keyword":"When","text":"she tries","command":"c","exit":0,"observed":"the control was absent"},
+	    {"keyword":"Then","text":"it holds","command":"c","exit":0}]}
+	]}`
+	got := validation.FailedScenarios([]byte(raw))
+	if len(got) != 1 || got[0].Deciding != 0 {
+		t.Fatalf("Deciding = %+v; want the only observation there was", got)
+	}
 }

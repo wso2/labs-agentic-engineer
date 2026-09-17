@@ -78,7 +78,7 @@ export AEP_GIT_SERVICE_URL="http://host.docker.internal:${STUB_PORT}"
 export PUBLISHER_TOKEN_URL="http://host.docker.internal:${STUB_PORT}/oauth2/token"
 # AEP_PLATFORM_URL: for an implementation run it stays unset (oneshot.ts skips
 # the per-task skills pull; credhelper/gh fall back to AEP_GIT_SERVICE_URL). A
-# validation run points it at the same stub so the aep-validation skill can
+# validation run points it at the same stub so the acceptance-run skill can
 # fetch its validation-context; the stub answers that path too. The skills-pull
 # to the stub 404s and is a harmless best-effort warning.
 if [ "${AEP_TASK_KIND}" = "validation" ]; then

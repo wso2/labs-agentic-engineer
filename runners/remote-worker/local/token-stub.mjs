@@ -31,7 +31,7 @@
 //     -> { endpoints:[{component,url}], credentials:null, criteriaPath }
 //
 // The endpoints point at localhost dev servers the agent starts in-container
-// (the local-dev-servers path in the aep-validation skill); credentials are
+// (the local-dev-servers path in the acceptance-run skill); credentials are
 // null (auth-gated criteria then land not_run). Override the endpoints with
 // VALIDATION_CONTEXT_JSON to validate a different sample.
 //

@@ -275,6 +275,11 @@ type loop struct {
 	// chain stops instead of spending the rest of the allowance on the same
 	// answer.
 	lastReportDigest string
+	// filedRepairs are the repair issues this attempt produced, held for the
+	// comment the validation task's close leaves behind. Held on the loop rather
+	// than passed, because the mint and the close sit either side of settleJudged,
+	// which every other ending reaches without minting anything.
+	filedRepairs []int
 
 	// workedValidationRepair records that some boundary poll saw open
 	// `src/validation` work in this milestone. It LATCHES: set on the first poll

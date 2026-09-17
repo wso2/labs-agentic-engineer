@@ -48,7 +48,7 @@ import {
   runHeartbeatEvent,
 } from "../fixtures/run-progress";
 import {
-  CRITERIA_PATH,
+  ACCEPTANCE_PATHS,
   VALIDATION_ATTEMPTS,
   VALIDATION_FILE_PATHS,
   VALIDATION_SCENARIOS,
@@ -122,7 +122,7 @@ function criteriaMissing(): boolean {
   return localStorage.getItem("aep:mock:validation-criteria") === "missing";
 }
 
-// Whether the oracle should carry a criterion the pinned report predates
+// Whether the oracle should carry a scenario the pinned report predates
 // (aep:mock:validation-criteria=drifted). Shares the key with `missing` because both
 // describe the criteria FILE rather than a run, and the two are mutually exclusive:
 // a file that is absent cannot also have drifted.
@@ -139,7 +139,7 @@ function specFiles(s: Exclude<ProjectScenario, "error">) {
   return [
     ...projectSpecFiles[s].filter((f) => !VALIDATION_FILE_PATHS.includes(f.path)),
     ...validationFiles(v, validationAttempt(), criteriaDrifted()).filter(
-      (f) => !(criteriaMissing() && f.path === CRITERIA_PATH),
+      (f) => !(criteriaMissing() && ACCEPTANCE_PATHS.includes(f.path)),
     ),
   ];
 }

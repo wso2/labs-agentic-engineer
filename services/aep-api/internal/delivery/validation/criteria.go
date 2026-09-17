@@ -17,89 +17,56 @@
 package validation
 
 import (
-	"encoding/json"
 	"fmt"
+	"strings"
 )
 
-// criteriaDoc is the acceptance oracle authored by the validation-criteria
-// skill at specs/validation/validation-criteria.json. The minter parses it only
-// to render the human summary in the issue; the runner reads the file directly
-// for the actual test partitioning.
-type criteriaDoc struct {
-	Requirements []requirement `json:"requirements"`
+// AcceptanceFile is one `specs/acceptance/<slug>.feature` as committed.
+type AcceptanceFile struct {
+	Path    string
+	Content string
 }
 
-type requirement struct {
-	ID        string `json:"id"`
-	Statement string `json:"statement"`
-	// Stories are the PRD story numbers this requirement traces to (#369) —
-	// carried for the traceability surfaces; absent in older oracles.
-	Stories  []int       `json:"stories,omitempty"`
-	Criteria []criterion `json:"criteria"`
+// acceptanceSummary is the tally rendered in the issue's one-line rationale.
+type acceptanceSummary struct {
+	Files     int
+	Rules     int
+	Scenarios int
 }
 
-type criterion struct {
-	ID     string `json:"id"`
-	Must   string `json:"must"`
-	Method string `json:"method"` // e2e | scenario | manual
-}
-
-// criteriaSummary is the per-method tally rendered in the issue's acceptance
-// oracle section.
-type criteriaSummary struct {
-	E2E      int
-	Scenario int
-	Manual   int
-}
-
-// parseCriteria decodes and minimally validates the oracle: it must have at
-// least one requirement carrying at least one criterion. A malformed file is an
-// error the caller treats as "skip minting" (never fail the design save).
-func parseCriteria(raw []byte) (*criteriaDoc, error) {
-	var doc criteriaDoc
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return nil, fmt.Errorf("parse validation-criteria.json: %w", err)
-	}
-	total := 0
-	for _, r := range doc.Requirements {
-		total += len(r.Criteria)
-	}
-	if total == 0 {
-		return nil, fmt.Errorf("validation-criteria.json has no criteria")
-	}
-	return &doc, nil
-}
-
-// mustByID flattens the oracle to criterion id → its `must` text. Used to give a
-// repair issue the requirement the failed criterion was asserting, which the run
-// report does not carry.
-func (d *criteriaDoc) mustByID() map[string]string {
-	out := make(map[string]string)
-	for _, r := range d.Requirements {
-		for _, c := range r.Criteria {
-			if c.ID != "" {
-				out[c.ID] = c.Must
+// summarize counts what the oracle contains, for DISPLAY only.
+//
+// Deliberately a line scan and not a parse: Go has no vendored Gherkin parser,
+// the number exists to put a size in a sentence, and a miscount costs a reader a
+// slightly wrong figure. Judging the scenarios is the agent's job, and the agent
+// reads the files themselves. `Scenario:` and `Example:` are synonyms in the
+// Gherkin grammar, so both count.
+func summarize(files []AcceptanceFile) acceptanceSummary {
+	sum := acceptanceSummary{Files: len(files)}
+	for _, f := range files {
+		for _, line := range strings.Split(f.Content, "\n") {
+			switch t := strings.TrimSpace(line); {
+			case strings.HasPrefix(t, "Rule:"):
+				sum.Rules++
+			case strings.HasPrefix(t, "Scenario:"), strings.HasPrefix(t, "Example:"):
+				sum.Scenarios++
 			}
 		}
 	}
-	return out
+	return sum
 }
 
-// summarize tallies criteria by method — mirrors
-// scripts/create-validation-issue.mjs:summarize.
-func (d *criteriaDoc) summarize() criteriaSummary {
-	var s criteriaSummary
-	for _, r := range d.Requirements {
-		for _, c := range r.Criteria {
-			switch c.Method {
-			case "e2e":
-				s.E2E++
-			case "scenario":
-				s.Scenario++
-			case "manual":
-				s.Manual++
-			}
-		}
+// validateAcceptance minimally checks the oracle is usable: at least one feature
+// file carrying at least one scenario. An oracle with none is the agent's bug,
+// not a reason to fail the save — the caller treats the error as "skip minting"
+// and a corrected pass re-mints.
+func validateAcceptance(files []AcceptanceFile) (acceptanceSummary, error) {
+	sum := summarize(files)
+	if sum.Files == 0 {
+		return sum, fmt.Errorf("specs/acceptance/ holds no .feature files")
 	}
-	return s
+	if sum.Scenarios == 0 {
+		return sum, fmt.Errorf("specs/acceptance/ holds no scenarios")
+	}
+	return sum, nil
 }

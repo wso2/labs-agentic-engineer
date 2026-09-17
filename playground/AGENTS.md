@@ -61,7 +61,7 @@ and `react-webapp`'s `references/mock-mode.md` for the mock itself). In docker
 mode that is all inside the container. **In `--host` mode it is your machine**:
 the run binds a localhost port and drives a real browser under
 bypassPermissions. Nothing is installed — `agent-browser` and the browser are
-resolved off your `PATH`, the same way `playwright-cli` already is — but a run
+resolved off your `PATH`, the same way the browser CLI already is — but a run
 that dies badly can leave a `vite` process holding its port, and the next run's
 `--strictPort` will say so rather than quietly reading the old server.
 

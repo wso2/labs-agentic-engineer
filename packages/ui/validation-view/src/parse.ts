@@ -27,7 +27,7 @@
  *
  * The oracle is READ-ONLY: per-criterion run outcomes are NOT written back into
  * it. Coverage/pass/fail lives in the runner's separate report
- * (tests/validation/report.json — see report.ts), which the view joins onto
+ * (tests/acceptance/report.json — see report.ts), which the view joins onto
  * this structure by criterion id. The authored shape is defined server-side by
  * `criteriaDoc` in services/aep-api/internal/delivery/validation/criteria.go.
  */

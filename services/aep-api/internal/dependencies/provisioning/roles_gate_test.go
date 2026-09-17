@@ -490,7 +490,7 @@ func TestRolesGate_AnUnfilableTicketFailsTheBuild(t *testing.T) {
 }
 
 // The label and the marker are HALF A CONTRACT: the other half is a `gh issue
-// list --label` query and a table scan in skills/aep-validation/SKILL.md, which
+// list --label` query and a table scan in skills/acceptance-run/SKILL.md, which
 // no Go test can execute. So they are asserted as LITERALS here. Asserted
 // against their own constants they can never fail, and renaming either one
 // silently breaks credential delivery for every project with every test green.

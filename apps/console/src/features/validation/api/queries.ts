@@ -16,8 +16,9 @@
  * under the License.
  */
 
-import { useQuery } from "@tanstack/react-query";
-import { fetchSpecFileContent } from "../../spec/api/queries";
+import { useQueries, useQuery } from "@tanstack/react-query";
+import { isAcceptanceFeaturePath } from "../../spec/api/mapping";
+import { fetchSpecFileContent, useSpecFiles } from "../../spec/api/queries";
 import { validationKeys } from "./keys";
 
 // The two files the Validation page joins, read through the Files API
@@ -26,8 +27,7 @@ import { validationKeys } from "./keys";
 // The report's path is also carried on the RUN (RunValidation.reportPath), which
 // is authoritative — the runner writes the path it actually committed. This
 // constant is the fallback for a run that recorded no path.
-export const CRITERIA_PATH = "specs/validation/validation-criteria.json";
-export const REPORT_PATH = "tests/validation/report.json";
+export const REPORT_PATH = "tests/acceptance/report.json";
 
 // Fetch one validation artifact's content. Reuses the spec Files reader
 // (path-agnostic; `sha` only feeds its cache key, never the request — we key our
@@ -58,15 +58,6 @@ function useValidationFile(
   });
 }
 
-/** The acceptance oracle (specs/validation/validation-criteria.json). */
-export function useValidationCriteria(
-  projectName: string,
-  version: string,
-  enabled: boolean,
-) {
-  return useValidationFile(projectName, CRITERIA_PATH, version, enabled);
-}
-
 /**
  * The runner's run report, at the path the run recorded (or the default), read at
  * the validation cycle's merge commit.
@@ -89,4 +80,51 @@ export function useValidationReport(
     enabled,
     mergeSha,
   );
+}
+
+/**
+ * Every `specs/acceptance/<slug>.feature` — the oracle the run actually drives.
+ *
+ * Read at the BRANCH TIP, deliberately, while the report is pinned to the merge
+ * commit of the attempt that wrote it. That asymmetry is the design: a scenario
+ * authored since the run has no entry in the report and is shown as `No result`,
+ * which is the ordinary authoring loop rather than a fault. Pinning both would
+ * hide it; pinning neither would hand an older run the newest results.
+ *
+ * One query per file, because the Files API reads one path at a time. A project
+ * carries a handful of capabilities, not hundreds.
+ */
+export function useAcceptanceFeatures(projectName: string, enabled: boolean) {
+  const files = useSpecFiles(projectName);
+  const paths = (files.data ?? [])
+    .map((f) => f.path)
+    .filter(isAcceptanceFeaturePath)
+    .sort();
+
+  const contents = useQueries({
+    queries: paths.map((path) => ({
+      queryKey: validationKeys.file(projectName, path, "tip"),
+      enabled: enabled && files.isSuccess,
+      retry: false,
+      staleTime: 30_000,
+      queryFn: () => fetchSpecFileContent(projectName, { path, sha: "" }),
+    })),
+  });
+
+  return {
+    // Only the files that arrived. A half-loaded set still renders the
+    // capabilities it has, rather than blocking all of them on the slowest read.
+    features: contents
+      .map((q) => q.data)
+      .filter((d): d is NonNullable<typeof d> => d !== undefined)
+      .map((d) => ({ path: d.path, content: d.content })),
+    isPending: files.isPending || contents.some((q) => q.isPending),
+    isError: files.isError || (contents.length > 0 && contents.every((q) => q.isError)),
+    refetch: () => {
+      void files.refetch();
+      for (const q of contents) void q.refetch();
+    },
+    /** No feature files at this version — the run will settle as `skipped`. */
+    isAbsent: files.isSuccess && paths.length === 0,
+  };
 }

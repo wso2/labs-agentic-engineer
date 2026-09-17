@@ -63,6 +63,22 @@ type fakeIssues struct {
 	// whole assertion in the race tests below: which of the two landed last is
 	// what decides whether the reconcile sweep starts another validation run.
 	lifecycle []string
+	// openByDedupe models the host's server-side dedupe: a create whose key is
+	// already carried by an OPEN issue files nothing and reports that issue back.
+	// Keyed the way the host keys it — by the caller's key, before the lossy
+	// label transform — because what this package has to get right is which key
+	// it composes, not how GitHub spells it.
+	openByDedupe map[string]int
+	// comments records every comment posted on an issue that was NOT being
+	// closed. A recurrence is the only thing this package comments, so an entry
+	// here is a defect that outlived a repair.
+	comments []issueComment
+}
+
+// issueComment is one posted comment, with the issue it landed on.
+type issueComment struct {
+	number int
+	body   string
 }
 
 // writer is the fake wearing the domain's issue-write surface, which is what
@@ -90,7 +106,10 @@ func (f *fakeIssues) setState(number int, state string) {
 	}
 }
 
-func (f *fakeIssues) CommentIssue(context.Context, string, string, int, string) error { return nil }
+func (f *fakeIssues) CommentIssue(_ context.Context, _, _ string, number int, body string) error {
+	f.comments = append(f.comments, issueComment{number: number, body: body})
+	return nil
+}
 
 func (f *fakeIssues) AddLabels(_ context.Context, _, _ string, number int, labels []string) error {
 	for _, l := range labels {
@@ -134,6 +153,15 @@ func (f *fakeIssues) ListMilestoneIssues(_ context.Context, _, _ string, filter 
 }
 
 func (f *fakeIssues) CreateIssue(_ context.Context, _, _ string, req sourcecontrol.CreateIssueRequest) (*sourcecontrol.IssueResult, error) {
+	// Ahead of the append, like the host: a deduped create files NOTHING, which is
+	// exactly what `created` has to stay empty to prove.
+	if n, ok := f.openByDedupe[req.DedupeKey]; ok && req.DedupeKey != "" {
+		return &sourcecontrol.IssueResult{
+			Number:  n,
+			URL:     fmt.Sprintf("https://example/issues/%d", n),
+			Deduped: true,
+		}, nil
+	}
 	f.created = append(f.created, req)
 	if f.numberless {
 		return &sourcecontrol.IssueResult{URL: "https://example/issues/unknown"}, nil
@@ -174,21 +202,31 @@ type fakeCriteria struct {
 	found bool
 }
 
-func (f fakeCriteria) ReadValidationCriteria(_ context.Context, _, _ string) ([]byte, bool, error) {
-	return f.raw, f.found, nil
+// The fixture is carried as raw bytes so a test can hand in a deliberately
+// unusable oracle (empty, or a file with no scenarios) as easily as a good one.
+func (f fakeCriteria) ReadAcceptanceCriteria(_ context.Context, _, _ string) ([]AcceptanceFile, bool, error) {
+	if !f.found {
+		return nil, false, nil
+	}
+	return []AcceptanceFile{{Path: "specs/acceptance/greeting.feature", Content: string(f.raw)}}, true, nil
 }
 
-const sampleCriteria = `{
-  "requirements": [
-    { "id": "REQ-001", "statement": "Greets by name",
-      "criteria": [
-        { "id": "AC-001-a", "must": "A text box is visible", "method": "e2e" },
-        { "id": "AC-001-b", "must": "Says Hello, name", "method": "e2e" }
-      ] },
-    { "id": "REQ-002", "statement": "Copy is clear",
-      "criteria": [ { "id": "AC-002-a", "must": "Greeting is friendly", "method": "manual" } ] }
-  ]
-}`
+const sampleCriteria = `Feature: Greeting
+
+  @story-1
+  Rule: The page greets the visitor by name
+
+    Scenario: Greeting a known visitor
+      Given Ada has opened a new session
+      When she enters her name
+      Then the page greets her by name
+
+    @negative
+    Scenario: A blank name is refused
+      Given Ada has opened a new session
+      When she submits a blank name
+      Then no greeting is shown
+`
 
 func newSvc(iss *fakeIssues, crit fakeCriteria) *Service {
 	return NewService(Deps{Issues: iss, Writer: iss.writer(), Criteria: crit})
@@ -241,25 +279,40 @@ func TestEnsureValidationIssue_CreatesFormattedIssue(t *testing.T) {
 		t.Errorf("dedupe key = %q; want the milestone-scoped %q", got.DedupeKey, "validation:proj:5")
 	}
 
-	// The body is PROSE: the consumer contract the aep-validation skill reads,
+	// The body is PROSE: the consumer contract the acceptance-run skill reads,
 	// with no machine block, and NO deployed endpoints or credentials — the
 	// runner fetches endpoints from the secure validation-context endpoint, and
 	// a login is published on the roles gate ticket.
 	if strings.Contains(got.Body, "aep:task/v1") {
 		t.Errorf("a validation issue body must carry no machine block:\n%s", got.Body)
 	}
-	for _, want := range []string{"## Validation criteria", "## Test layout", "## Report", "AC-001-a", "specs/validation/validation-criteria.json"} {
+	for _, want := range []string{
+		"## Acceptance criteria",
+		"## Report",
+		"specs/acceptance/greeting.feature", // the file is NAMED
+		"tests/acceptance/report.json",      // where the answer goes
+		"There is no test code to author",   // the load-bearing difference
+		// The false-pass guard has to be REACHABLE from the issue: it ships
+		// inside the skill, so the body names the one path that resolves in a
+		// pod. Without this line the guard exists and nothing ever runs it.
+		"acceptance-run/scripts/check-report.mjs",
+		"not backed by a command that could have said no",
+	} {
 		if !strings.Contains(got.Body, want) {
 			t.Errorf("body missing %q", want)
 		}
 	}
+	// The scenario text is the specification, and the issue must not carry a
+	// second copy of it that can disagree with the file.
+	if strings.Contains(got.Body, "Given Ada has opened a new session") {
+		t.Errorf("the issue inlined the scenarios instead of naming the files:\n%s", got.Body)
+	}
 	if strings.Contains(got.Body, "## Deployed endpoints") {
 		t.Error("body must NOT carry a Deployed endpoints section (runner fetches endpoints from validation-context)")
 	}
-	// e2e count reflects the oracle (2 e2e). Coverage is no longer a field —
-	// it is derived from committed-spec presence, so the oracle summary just
-	// counts by method.
-	if !strings.Contains(got.Body, "`e2e` — 2 criteria") {
+	// The fixture holds one rule and two scenarios; the tally is display only,
+	// but a wrong one puts a wrong number in front of a reader.
+	if !strings.Contains(got.Body, "2 scenarios across 1 rule") {
 		t.Errorf("acceptance-oracle counts wrong; body:\n%s", got.Body)
 	}
 }
@@ -469,7 +522,7 @@ func TestValidationTaskLifecycle_ReopenThenCloseWalksOneIssue(t *testing.T) {
 	// The mint has to land in the fake's index, or the second attempt is looking at
 	// a milestone the platform never filed into.
 	iss.byMilestone = map[int][]sourcecontrol.IssueInfo{thisMilestone: {validationIssue(first)}}
-	if err := svc.CloseValidationIssue(ctx, "org", "proj", first, delivery.ValidationVerdictFailed); err != nil {
+	if err := svc.CloseValidationIssue(ctx, "org", "proj", first, delivery.ValidationVerdictFailed, nil); err != nil {
 		t.Fatalf("CloseValidationIssue(attempt 1): %v", err)
 	}
 
@@ -481,7 +534,7 @@ func TestValidationTaskLifecycle_ReopenThenCloseWalksOneIssue(t *testing.T) {
 	if second != first {
 		t.Fatalf("attempt 2 judged issue %d, attempt 1 judged %d — the task is the VERSION's handle", second, first)
 	}
-	if err := svc.CloseValidationIssue(ctx, "org", "proj", second, delivery.ValidationVerdictPassed); err != nil {
+	if err := svc.CloseValidationIssue(ctx, "org", "proj", second, delivery.ValidationVerdictPassed, nil); err != nil {
 		t.Fatalf("CloseValidationIssue(attempt 2): %v", err)
 	}
 
@@ -523,11 +576,11 @@ func TestValidationTaskLifecycle_CloseBeforeTheMergeStandsAndDoesNotDuplicate(t 
 	svc := newSvc(iss, fakeCriteria{raw: []byte(sampleCriteria), found: true})
 
 	// The run settles and closes the task…
-	if err := svc.CloseValidationIssue(ctx, "org", "proj", 7, ""); err != nil {
+	if err := svc.CloseValidationIssue(ctx, "org", "proj", 7, "", nil); err != nil {
 		t.Fatalf("CloseValidationIssue: %v", err)
 	}
 	// …and the same close is delivered again (an activity retry).
-	if err := svc.CloseValidationIssue(ctx, "org", "proj", 7, ""); err != nil {
+	if err := svc.CloseValidationIssue(ctx, "org", "proj", 7, "", nil); err != nil {
 		t.Fatalf("CloseValidationIssue(retry): %v", err)
 	}
 
@@ -586,5 +639,50 @@ func TestValidationTaskLifecycle_AClosedTaskIsReopenedNotRefiled(t *testing.T) {
 	// own summary comment is what makes the thread readable across attempts.
 	if len(iss.created) != 0 {
 		t.Fatal("the reopen rewrote the task's body")
+	}
+}
+
+// The close comment is the ONLY edge between a repair issue and the run that
+// found it, and it points this way on purpose (ADR-0029).
+func TestCloseValidationIssue_NamesTheRepairWorkTheAttemptFiled(t *testing.T) {
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		name    string
+		verdict string
+		repairs []int
+		want    string
+		absent  string
+	}{
+		{name: "one", verdict: "failed", repairs: []int{52}, want: "Filed #52 for the scenarios"},
+		{name: "two", verdict: "failed", repairs: []int{52, 53}, want: "Filed #52 and #53"},
+		{name: "three", verdict: "failed", repairs: []int{52, 53, 54}, want: "Filed #52, #53 and #54"},
+		// A green attempt files nothing, and must not say it filed nothing — the
+		// sentence exists to be followed, not to report an empty set.
+		{name: "none", verdict: "passed", absent: "Filed"},
+		// No verdict is its own sentence and carries no repair work by construction:
+		// the attempt never reached the mint.
+		{name: "no verdict", verdict: "", absent: "Filed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			iss := &fakeIssues{byMilestone: map[int][]sourcecontrol.IssueInfo{
+				thisMilestone: {validationIssue(7)},
+			}}
+			svc := newSvc(iss, fakeCriteria{raw: []byte(sampleCriteria), found: true})
+
+			if err := svc.CloseValidationIssue(ctx, "org", "proj", 7, tc.verdict, tc.repairs); err != nil {
+				t.Fatalf("CloseValidationIssue: %v", err)
+			}
+			if len(iss.closeComments) != 1 {
+				t.Fatalf("posted %d close comments; want 1", len(iss.closeComments))
+			}
+			got := iss.closeComments[0]
+			if tc.want != "" && !strings.Contains(got, tc.want) {
+				t.Errorf("close comment is missing %q:\n%s", tc.want, got)
+			}
+			if tc.absent != "" && strings.Contains(got, tc.absent) {
+				t.Errorf("close comment claims repair work where none was filed:\n%s", got)
+			}
+		})
 	}
 }

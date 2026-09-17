@@ -17,7 +17,7 @@
  */
 
 /**
- * Parser for `tests/validation/report.json` — the deterministic run report the
+ * Parser for `tests/acceptance/report.json` — the deterministic run report the
  * e2e validation runner commits (generate-report.mjs, schemaVersion 1). Turns
  * the raw file text into a per-criterion status map the ValidationView overlays
  * onto the authored oracle (specs/validation/validation-criteria.json), joined
@@ -26,8 +26,12 @@
  * Intentionally permissive: a report is generated FROM the oracle, so every
  * criterion should appear, but a criterion absent from the report simply renders
  * with no state; a malformed file degrades to a ParseError the view surfaces as a
- * non-blocking warning (the oracle still renders). The authored shape is produced
- * by skills/aep-validation/scripts/generate-report.mjs.
+ * non-blocking warning (the oracle still renders).
+ *
+ * NOTE: nothing writes this shape on this branch — the acceptance run answers
+ * per scenario, and `ValidationView` renders that report raw through `rawReport`
+ * instead. This parser is kept because reports already merged into project repos
+ * carry the criteria shape and are read long after they were written.
  */
 
 import type { ParseError } from "./parse.js";

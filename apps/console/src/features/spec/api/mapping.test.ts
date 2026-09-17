@@ -94,4 +94,17 @@ describe("toSpecEntries", () => {
       ]).map((e) => e.path),
     ).toEqual(["specs/requirements/prd.md", "specs/validation/plan.md"]);
   });
+
+  // The acceptance criteria file under its own folder, deliberately in the SAME
+  // group as the validation criteria: validation is the phase, an acceptance
+  // criterion the unit it grades, and a separate group would put two headers on
+  // one phase.
+  it("files the acceptance criteria under validation, not a fourth section", () => {
+    expect(
+      toSpecEntries([
+        { path: "specs/acceptance/bought-items.feature", sha: "a" },
+        { path: "specs/validation/validation-criteria.json", sha: "b" },
+      ]).map((e) => e.group),
+    ).toEqual(["validation", "validation"]);
+  });
 });

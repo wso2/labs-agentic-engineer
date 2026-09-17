@@ -281,6 +281,19 @@ vi.mock("../hooks/useSecurityEntry", () => ({
   useSecurityEntry: (...args: unknown[]) => mockUseSecurityEntry(...args),
 }));
 
+// The acceptance entry reads N documents through useQueries, and these tests
+// render with no QueryClientProvider — the same reason useSecurityEntry is
+// stubbed. `mockAcceptance` is settable so a test can hand the pane a document
+// set; the hook's own reading is covered in useAcceptanceEntry.test.tsx.
+let mockAcceptance: {
+  features: { path: string; content: string }[];
+  isPending: boolean;
+  isError: boolean;
+} = { features: [], isPending: false, isError: false };
+vi.mock("../hooks/useAcceptanceEntry", () => ({
+  useAcceptanceEntry: () => mockAcceptance,
+}));
+
 // What the API view is decorated with — the catalog's granting roles and the
 // project's resource server. Stubbed for the same reason (it reads the spec
 // tree and the platform's role record through react-query); the assertions
@@ -2143,5 +2156,132 @@ describe("SpecView — the API view's granting roles and audience", () => {
     expect(screen.getByText("Orders API")).toBeInTheDocument();
     expect(screen.queryByText(/^aud /)).not.toBeInTheDocument();
     expect(screen.queryByText(/Shopper/)).not.toBeInTheDocument();
+  });
+});
+
+// A `.feature` file is neither `.md` nor one of the structured JSON/YAML types, so
+// before this it fell through the whole branch tree to CollabTextArea: an editable
+// monospace box over a document nobody edits by hand. That is exactly the
+// dishonesty CommittedFileView's doc comment says was fixed for every other type.
+describe("SpecView acceptance criteria", () => {
+  const FEATURE = [
+    "Feature: Bought items",
+    "",
+    "  @story-6",
+    "  Rule: A bought item is locked from further edits",
+    "",
+    "    @negative",
+    "    Scenario: Editing a bought item is refused",
+    '      Given the shared list has a bought item named "Eggs"',
+    '      When Dev tries to change the quantity of "Eggs" to "2"',
+    '      Then the quantity of "Eggs" is still "1"',
+  ].join("\n");
+
+  const ADDING = [
+    "Feature: Adding items",
+    "",
+    "  @story-2",
+    "  Rule: An item is added with a name and a quantity",
+    "",
+    "    Scenario: Adding a new item",
+    '      When Priya adds "Milk"',
+    '      Then the list shows "Milk"',
+  ].join("\n");
+
+  beforeEach(() => {
+    mockUseSpecFiles.mockReturnValue({
+      data: [
+        { path: "specs/acceptance/adding-items.feature", sha: "a", group: "validation" },
+        { path: "specs/acceptance/bought-items.feature", sha: "b", group: "validation" },
+      ],
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    mockAcceptance = {
+      features: [
+        { path: "specs/acceptance/adding-items.feature", content: ADDING },
+        { path: "specs/acceptance/bought-items.feature", content: FEATURE },
+      ],
+      isPending: false,
+      isError: false,
+    };
+  });
+
+  // One rail entry for the set, so the reader picks the pane and then searches
+  // it — rather than picking the right file and then searching that.
+  function openAcceptance() {
+    render(<SpecView projectName="proj1" />);
+    fireEvent.click(screen.getByText("Acceptance criteria"));
+  }
+
+  it("lists every capability under one entry", () => {
+    openAcceptance();
+
+    expect(screen.getByText("Bought items")).toBeInTheDocument();
+    expect(screen.getByText("Adding items")).toBeInTheDocument();
+    // The rail carries the entry, not the capabilities: each name appears once,
+    // in the pane.
+    expect(screen.getAllByText("Bought items")).toHaveLength(1);
+  });
+
+  it("renders the structure as a document, not the file as editable text", () => {
+    openAcceptance();
+
+    expect(screen.getByText("A bought item is locked from further edits")).toBeInTheDocument();
+    expect(screen.getByText("Editing a bought item is refused")).toBeInTheDocument();
+    // The document takes no typing: CollabTextArea rendered it as a multiline
+    // field, so a textarea anywhere on the pane is the regression.
+    expect(document.querySelector("textarea")).toBeNull();
+    // The one input is the view's own filter, which edits nothing.
+    expect(screen.getAllByRole("textbox")).toHaveLength(1);
+    expect(screen.getByRole("textbox")).toHaveAccessibleName("Filter scenarios");
+  });
+
+  // The point of collapsing the rail: one search now reaches every capability.
+  it("filters across capabilities, which per-file rows could not", () => {
+    openAcceptance();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Filter scenarios" }), {
+      target: { value: "milk" },
+    });
+    expect(screen.getByText("Adding a new item")).toBeInTheDocument();
+    expect(screen.queryByText("Editing a bought item is refused")).not.toBeInTheDocument();
+  });
+
+  it("opens a scenario's steps on a click, and not before", () => {
+    const step = (text: string) => (_: string, el: Element | null) =>
+      el?.tagName === "SPAN" && el.textContent === text;
+    const when = 'Dev tries to change the quantity of "Eggs" to "2"';
+
+    openAcceptance();
+
+    expect(screen.queryByText(step(when))).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Editing a bought item is refused"));
+    expect(screen.getByText(step(when))).toBeInTheDocument();
+  });
+
+  it("marks a refusal with its tag", () => {
+    openAcceptance();
+
+    expect(screen.getAllByText("@negative").length).toBeGreaterThan(0);
+  });
+
+  it("waits rather than claiming the criteria are empty", () => {
+    mockAcceptance = { features: [], isPending: true, isError: false };
+    openAcceptance();
+
+    expect(
+      screen.getByRole("progressbar", { name: "Loading the acceptance criteria" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("No acceptance criteria yet")).not.toBeInTheDocument();
+  });
+
+  it("says the criteria have not been written when nothing is in flight", () => {
+    mockAcceptance = { features: [], isPending: false, isError: false };
+    openAcceptance();
+
+    expect(screen.getByText("No acceptance criteria yet")).toBeInTheDocument();
   });
 });

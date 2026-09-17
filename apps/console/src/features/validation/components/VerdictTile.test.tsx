@@ -20,34 +20,29 @@
 
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import type { CriterionTally } from "@aep/ui-validation-view";
 import { VerdictTile } from "./VerdictTile";
 
-function tally(
-  total: number,
-  states: Record<string, number> = {},
-): CriterionTally {
-  return {
-    total,
-    states: Object.entries(states).map(([status, count]) => ({ status, count })),
-  };
+// The two halves the tile takes: the numbers its sentence needs, and the words
+// the acceptance package already wrote from the same report.
+function counts(total: number, passed = 0, failed = 0) {
+  return { total, passed, failed, uncovered: total - passed - failed };
 }
 
 describe("VerdictTile", () => {
   it("leads with the shared mapper's label as its headline", () => {
-    render(<VerdictTile verdict="partial" tally={tally(40, { pass: 35, manual: 5 })} />);
+    render(<VerdictTile verdict="partial" counts={counts(40, 35)} />);
     // "validated*" in the mapper — the mark hedges what the sentence below spells
     // out; a headline leads, so it is capitalized here.
     expect(screen.getByText("Validated*")).toBeInTheDocument();
   });
 
   it("renders the counts under the sentence", () => {
-    render(<VerdictTile verdict="passed" tally={tally(40, { pass: 40 })} />);
+    render(<VerdictTile verdict="passed" counts={counts(40, 40)} countsLine="40 passed" />);
     expect(screen.getByText("40 passed")).toBeInTheDocument();
   });
 
   // Both green since #401: nothing about a partial run FAILED, and the tile's
-  // own sentence + counts ("35 passed / 5 manual") carry the uncovered-criteria
+  // own sentence + counts ("35 of 40 passed · 5 blocked") carry the unsettled
   // hedge the old info tone and asterisk did.
   it("tones partial and passed as a success", () => {
     const { unmount } = render(<VerdictTile verdict="partial" />);
@@ -64,10 +59,10 @@ describe("VerdictTile", () => {
     expect(screen.getByRole("alert").className).toMatch(/Error/);
   });
 
-  it("renders without a tally, before the report loads", () => {
+  it("renders without counts, before the report loads", () => {
     render(<VerdictTile verdict="failed" />);
     expect(screen.getByText("Validation failed")).toBeInTheDocument();
-    expect(screen.getByText(/At least one criterion failed/)).toBeInTheDocument();
+    expect(screen.getByText(/At least one scenario failed/)).toBeInTheDocument();
   });
 
   // The headline comes from `state` and the copy from `verdict`, because they answer
@@ -79,14 +74,15 @@ describe("VerdictTile", () => {
       <VerdictTile
         verdict="failed"
         state="awaiting-fix"
-        tally={tally(40, { fail: 2, pass: 38 })}
+        counts={counts(40, 38, 2)}
+        countsLine="38 of 40 passed · 2 failed"
       />,
     );
     expect(screen.getByText("Awaiting fix")).toBeInTheDocument();
     expect(screen.queryByText("Validation failed")).not.toBeInTheDocument();
-    expect(screen.getByText(/2 of 40 criteria failed/)).toBeInTheDocument();
+    expect(screen.getByText(/2 of 40 scenarios failed/)).toBeInTheDocument();
     // The counts stay: they are the evidence of what is being fixed.
-    expect(screen.getByText("2 failed · 38 passed")).toBeInTheDocument();
+    expect(screen.getByText("38 of 40 passed · 2 failed")).toBeInTheDocument();
   });
 
   // Warning, not error. The verdict is real but not final, and `error` here would
@@ -105,7 +101,7 @@ describe("VerdictTile", () => {
   });
 
   // skipped has its own empty state on the page — there is no report and no
-  // criteria to put a tile above — and an unknown value must not render a shell.
+  // scenarios to put a tile above — and an unknown value must not render a shell.
   it("renders nothing for skipped, running, empty or unknown verdicts", () => {
     for (const v of ["skipped", "running", "", "something-new"]) {
       const { container, unmount } = render(<VerdictTile verdict={v} />);
@@ -117,7 +113,7 @@ describe("VerdictTile", () => {
   // No Pass/Fail controls: the earlier design had them, and the no-human-gate
   // decision retired them. A verdict never waits on a person.
   it("offers no verdict controls", () => {
-    render(<VerdictTile verdict="partial" tally={tally(40, { pass: 35, manual: 5 })} />);
+    render(<VerdictTile verdict="partial" counts={counts(40, 35)} />);
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 });

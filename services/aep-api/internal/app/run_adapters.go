@@ -215,16 +215,16 @@ func (a runValidation) Verdict(ctx context.Context, orgID, projectID, at string)
 	return validation.VerdictFromReport(raw), validation.ReportDigest(raw), nil
 }
 
-func (a runValidation) CloseValidationIssue(ctx context.Context, orgID, projectID string, issue int, verdict string) error {
-	return a.svc.CloseValidationIssue(ctx, orgID, projectID, issue, verdict)
+func (a runValidation) CloseValidationIssue(ctx context.Context, orgID, projectID string, issue int, verdict string, repairs []int) error {
+	return a.svc.CloseValidationIssue(ctx, orgID, projectID, issue, verdict, repairs)
 }
 
-func (a runValidation) MintRepairIssues(ctx context.Context, orgID, projectID string, milestoneNumber int, at, cycleID string) ([]int, error) {
+func (a runValidation) MintRepairIssues(ctx context.Context, orgID, projectID string, milestoneNumber int, at string) ([]int, error) {
 	raw, err := a.report(ctx, orgID, projectID, at)
 	if err != nil {
 		return nil, err
 	}
-	return a.svc.MintRepairIssues(ctx, orgID, projectID, milestoneNumber, raw, cycleID)
+	return a.svc.MintRepairIssues(ctx, orgID, projectID, milestoneNumber, raw)
 }
 
 // report reads the runner's committed report at a pinned commit. It is the ONE

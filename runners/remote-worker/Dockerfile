@@ -162,44 +162,31 @@ RUN groupadd -r aep \
     && mkdir -p /home/aep/aep-workspace \
     && chown -R aep:aep /home/aep
 
-# Playwright toolchain, pinned as a pair: AEP_PLAYWRIGHT_VERSION is the
-# contract the aep-validation skill pins tests/e2e/package.json to, so
-# the browsers baked here always match the version the specs run with.
+# Playwright is here for ONE reason: its chromium. Nothing in this image runs
+# `playwright test` any more — a validation run drives `agent-browser`, whose
+# executable path is derived from this package below (see the
+# AGENT_BROWSER_EXECUTABLE_PATH block). So `@playwright/test` is a browser
+# DELIVERY mechanism, not a test runner, and removing it would leave
+# agent-browser with no browser to launch.
+#
+# Kept as a Playwright download rather than a distro chromium because this
+# chromium is the one whose system libraries `--with-deps` installed, and
+# because the Debian base (see the header) exists for exactly these glibc-linked
+# builds.
 ARG PLAYWRIGHT_VERSION=1.61.1
-ARG PLAYWRIGHT_CLI_VERSION=0.1.15
-# PLAYWRIGHT_MCP_BROWSER names the browser TYPE for playwright-cli, whose own
-# default is the pair (chromium, channel `chrome`) — one branch sets both, so
-# the default engine cannot be had without Google's branded build at the system
-# path /opt/google/chrome/chrome, which this image neither carries (Chrome is a
-# vendor install, not a Playwright download) nor may redistribute. Naming the
-# type selects the chromium baked below, and with it the sandbox default that
-# can start as the non-root `aep` user. A `--browser=` flag still wins, so this
-# is the default rather than a lid.
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
-    AEP_PLAYWRIGHT_VERSION=${PLAYWRIGHT_VERSION} \
-    PLAYWRIGHT_MCP_BROWSER=chromium
-RUN npm install -g "@playwright/test@${PLAYWRIGHT_VERSION}" "@playwright/cli@${PLAYWRIGHT_CLI_VERSION}" \
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN npm install -g "@playwright/test@${PLAYWRIGHT_VERSION}" \
     && playwright install --with-deps chromium \
-    # playwright-cli bundles a different playwright build, and browser
-    # revisions are pinned per build (it wants chromium 1229 where
-    # @playwright/test above wants 1228), so this second install is not
-    # redundant — it is what keeps the CLI's first use at task time offline.
-    # Named explicitly: with no argument it also fetches firefox and webkit,
-    # ~546MB whose system dependencies the chromium-only line above never
-    # installs, so they could be downloaded but never launched. Non-fatal:
-    # worst case it downloads at runtime.
-    && (playwright-cli install-browser chromium || true) \
     # OWNED by the runtime user, not merely readable by it. `playwright install`
     # takes a LOCK in this directory before it can decide there is nothing to
     # download, so a read-only tree does not make the command a no-op — it makes
     # it BLOCK, silently, until the caller's timeout severs it. A validation run
-    # reached for it (the two clients pin different revisions, so asking is
-    # reasonable) and lost two hours to the hang. Owned, the same command exits 0
-    # immediately.
+    # reached for it and lost two hours to the hang. Owned, the same command
+    # exits 0 immediately.
     #
     # In THIS layer, beside the download, for the reason the `--chown` on the
     # app COPY below records: a trailing `chown -R` rewrites every file it
-    # touches into a fresh layer, and this tree is two chromium revisions.
+    # touches into a fresh layer, and this tree is a whole chromium.
     && chown -R aep:aep /ms-playwright
 
 # The agent-browser CLI — what a CODING run opens a page with and reads the
@@ -218,17 +205,12 @@ RUN npm install -g "@playwright/test@${PLAYWRIGHT_VERSION}" "@playwright/cli@${P
 # NO THIRD BROWSER IS DOWNLOADED. The CLI's own `agent-browser install` would
 # fetch one; instead AGENT_BROWSER_EXECUTABLE_PATH names a chromium that is
 # already in this image — the image deciding which binary launches, for the same
-# reason ADR-0007 has the image and not the skill name playwright-cli's browser.
+# reason ADR-0007 has the image and not a skill name the browser.
 #
-# WHICH of the two baked revisions: @playwright/test's, not playwright-cli's.
-# Three reasons that agree — it is the only chromium this build REQUIRES (the
-# `playwright-cli install-browser` above is `|| true`, so naming its revision
-# would make this variable a promise the build does not keep); it is the one
-# whose system libraries `--with-deps` installed; and it is the build the e2e
-# specs are later asserted in, so a locator the agent reads while coding is read
-# in the chromium that will assert it. Left unset the CLI's own discovery picks
-# the OTHER one — it takes the highest version it finds under /ms-playwright —
-# which is the drift this line closes.
+# It is @playwright/test's chromium: the only one this build installs, and the
+# one whose system libraries `--with-deps` installed. Left unset, the CLI's own
+# discovery takes the highest version it finds under /ms-playwright, which is a
+# promise this image would rather make explicitly than inherit.
 #
 # Resolved FROM playwright through a fixed symlink rather than spelled out: the
 # revision is decided by PLAYWRIGHT_VERSION above, and a literal `chromium-1228`

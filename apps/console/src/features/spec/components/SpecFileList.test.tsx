@@ -22,8 +22,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 import type { SpecFileEntry } from "../api/mapping";
+import type { SpecSelection } from "../api/designTree";
 import { SpecFileList } from "./SpecFileList";
-import { railSections, type RailInput, type RailSection } from "../lib/railSections";
+import {
+  railSections,
+  type RailInput,
+  type RailPlanEntry,
+  type RailSection,
+} from "../lib/railSections";
 
 // A settled project: the rail states are exercised in railSections.test.ts, so
 // these render tests only need it out of the way.
@@ -435,3 +441,120 @@ describe("SpecFileList — a dependency's group", () => {
     });
   });
 });
+
+// One entry stands for every specs/acceptance/*.feature, because the pane reads
+// them as one set — so the rail cannot carry a row per capability, and the two
+// things `row` derives from a single path have to be folded for a set.
+describe("SpecFileList — Acceptance criteria is one entry", () => {
+  function validationEntries(...paths: string[]): SpecFileEntry[] {
+    return paths
+      .map((path) => ({ path, sha: "sha", group: "validation" as const }))
+      .sort((a, b) => a.path.localeCompare(b.path));
+  }
+
+  function renderValidation(
+    files: SpecFileEntry[],
+    plan?: RailPlanEntry[],
+    onSelect: (sel: SpecSelection) => void = () => {},
+  ) {
+    render(
+      <OxygenUIThemeProvider theme={OxygenTheme}>
+        <SpecFileList
+          files={files}
+          selection={null}
+          onSelect={onSelect}
+          onRegenerateDesign={() => {}}
+          sections={railSections(RAIL_INPUT)}
+          {...(plan ? { plan } : {})}
+          onReason={() => {}}
+        />
+      </OxygenUIThemeProvider>,
+    );
+    return screen.getByRole("navigation", { name: "Spec files" });
+  }
+
+  const THREE = validationEntries(
+    "specs/acceptance/adding-items.feature",
+    "specs/acceptance/bought-items.feature",
+    "specs/acceptance/shared-list-access.feature",
+    "specs/validation/validation-criteria.json",
+  );
+
+  it("collapses every capability into one row, beside the criteria", () => {
+    const nav = renderValidation(THREE);
+    const rows = within(nav)
+      .getAllByRole("button")
+      .map((b) => b.textContent);
+
+    expect(rows).toContain("Acceptance criteria");
+    expect(rows).toContain("Validation criteria");
+    for (const capability of ["Adding items", "Bought items", "Shared list access"]) {
+      expect(rows, capability).not.toContain(capability);
+    }
+  });
+
+  it("selects the set, not a file", () => {
+    const onSelect = vi.fn();
+    renderValidation(THREE, undefined, onSelect);
+    fireEvent.click(screen.getByText("Acceptance criteria"));
+    expect(onSelect).toHaveBeenCalledWith({ kind: "acceptance" });
+  });
+
+  it("is absent when the project has no acceptance criteria", () => {
+    const nav = renderValidation(validationEntries("specs/validation/validation-criteria.json"));
+    expect(within(nav).queryByText("Acceptance criteria")).not.toBeInTheDocument();
+  });
+
+  // `row` reads its plan status from ONE path and this stands for many, so the
+  // pulse is folded: it marks the entry while ANY capability is being written.
+  it("pulses while the agent writes any capability", () => {
+    renderValidation(
+      validationEntries("specs/acceptance/adding-items.feature"),
+      [
+        { path: "specs/acceptance/adding-items.feature", status: "done", section: "validation" },
+        { path: "specs/acceptance/bought-items.feature", status: "writing", section: "validation" },
+      ],
+    );
+    // The pulse is the console's one "an agent is working" dot, rendered
+    // beside the row whose status is `writing`.
+    const entry = screen.getByText("Acceptance criteria").closest("div[role], li, a, button");
+    expect(entry?.querySelector("svg, span")).not.toBeNull();
+    expect(screen.getByText("Acceptance criteria")).toBeInTheDocument();
+  });
+
+  // A ghost row is disabled, and a set is only a ghost when NOT ONE of its
+  // documents exists — with two written and a third planned the entry is real.
+  it("stays live while one capability is still planned", () => {
+    const nav = renderValidation(
+      validationEntries("specs/acceptance/adding-items.feature"),
+      [
+        { path: "specs/acceptance/adding-items.feature", status: "done", section: "validation" },
+        { path: "specs/acceptance/bought-items.feature", status: "planned", section: "validation" },
+      ],
+    );
+    const entry = within(nav)
+      .getAllByRole("button", { hidden: true })
+      .find((b) => b.textContent === "Acceptance criteria");
+    expect(
+      entry!.hasAttribute("disabled") || entry!.getAttribute("aria-disabled") === "true",
+    ).toBe(false);
+  });
+
+  it("is a disabled ghost before any capability has been written", () => {
+    const nav = renderValidation(
+      validationEntries("specs/validation/validation-criteria.json"),
+      [{ path: "specs/acceptance/bought-items.feature", status: "planned", section: "validation" }],
+    );
+    // The attribute, not a click: MUI disables a ListItemButton with
+    // `pointer-events: none`, which jsdom does not enforce — so asserting on a
+    // click would pass whatever the row did.
+    const entry = within(nav)
+      .getAllByRole("button", { hidden: true })
+      .find((b) => b.textContent === "Acceptance criteria");
+    expect(entry).toBeDefined();
+    expect(
+      entry!.hasAttribute("disabled") || entry!.getAttribute("aria-disabled") === "true",
+    ).toBe(true);
+  });
+});
+

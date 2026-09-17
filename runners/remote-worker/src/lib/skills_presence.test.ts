@@ -37,32 +37,32 @@ async function tmpTree(files: Record<string, string>): Promise<string> {
 // The composition oneshot's validation branch performs. Asserted here rather
 // than left to the entrypoint because the empty allowlist that shipped was
 // invisible in exactly this gap: each half was correct alone.
-test("validation allowlist: the mirror's playwright-cli becomes the allowlist", async () => {
+test("validation allowlist: the mirror's agent-browser becomes the allowlist", async () => {
   const ws = await tmpTree({
-    ".claude/skills/playwright-cli/SKILL.md": "---\nname: playwright-cli\n---\n\n# cli\n",
+    ".claude/skills/agent-browser/SKILL.md": "---\nname: agent-browser\n---\n\n# browser\n",
     ".claude/skills/go/SKILL.md": "---\nname: go\n---\n\n# go\n",
   });
   const { present, dangling } = await resolveSkillPresence(ws, onDemandSkills("validation"));
   // `go` is in the mirror and still NOT allowed: a validation run builds nothing.
-  assert.deepEqual(present, ["playwright-cli"]);
+  assert.deepEqual(present, ["agent-browser"]);
   assert.deepEqual(dangling, []);
 });
 
 // An org that has the skill disabled gets no mirror copy (skill_mirror.go), so
 // the name can be absent. It must be said out loud — silence is what let the
 // allowlist bug survive weeks of green runs.
-test("validation allowlist: a mirror without playwright-cli warns and allows nothing", async () => {
+test("validation allowlist: a mirror without agent-browser warns and allows nothing", async () => {
   const ws = await tmpTree({
-    ".claude/skills/aep-validation/SKILL.md": "---\nname: aep-validation\n---\n\n# v\n",
+    ".claude/skills/acceptance-run/SKILL.md": "---\nname: acceptance-run\n---\n\n# v\n",
   });
   const lines: string[] = [];
   const { present, dangling } = await resolveSkillPresence(ws, onDemandSkills("validation"), (l) =>
     lines.push(l),
   );
   assert.deepEqual(present, []);
-  assert.deepEqual(dangling, ["playwright-cli"]);
+  assert.deepEqual(dangling, ["agent-browser"]);
   assert.ok(
-    lines.some((l) => l.includes("playwright-cli") && l.includes("not in the mirror")),
+    lines.some((l) => l.includes("agent-browser") && l.includes("not in the mirror")),
     `expected a named miss, got ${JSON.stringify(lines)}`,
   );
 });

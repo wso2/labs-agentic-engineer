@@ -1841,6 +1841,8 @@ func TestValidationRun_Passes(t *testing.T) {
 	require.Len(t, h.taskCloses, 1, "the platform closes the task it adopted")
 	require.Equal(t, 77, h.taskCloses[0].Issue)
 	require.Equal(t, delivery.ValidationVerdictPassed, h.taskCloses[0].Verdict)
+	require.Empty(t, h.taskCloses[0].Repairs,
+		"an attempt that filed no repair work must not claim any in its close")
 	// The GREEN ENDING is where the version's milestone closes — zero open
 	// working-set issues and a terminal verdict on the newest validation run. A
 	// succeeded validation run is a green ending by construction: every fatal
@@ -1897,13 +1899,13 @@ func TestDevRun_CodingCycleCarriesNoValidationIssue(t *testing.T) {
 	}
 }
 
-// TestValidationRun_FailedFilesOneIssuePerCriterion is the repair hand-off. The
-// failure becomes ORDINARY WORK in the milestone — one issue per failed criterion
+// TestValidationRun_FailedFilesOneIssuePerScenario is the repair hand-off. The
+// failure becomes ORDINARY WORK in the milestone — one issue per failed scenario
 // — and the run then settles on the verdict it reached.
 //
-// One per criterion and never one omnibus issue: the no-progress rule compares
+// One per scenario and never one omnibus issue: the no-progress rule compares
 // working-set SIZES, so repairing two of three failures has to read as progress.
-func TestValidationRun_FailedFilesOneIssuePerCriterion(t *testing.T) {
+func TestValidationRun_FailedFilesOneIssuePerScenario(t *testing.T) {
 	h := newHarness(t)
 	h.validationIs(77, delivery.ValidationVerdictFailed)
 	h.repairMintsAre([]int{testRepairIssue, testRepairIssue + 1})
@@ -1921,9 +1923,11 @@ func TestValidationRun_FailedFilesOneIssuePerCriterion(t *testing.T) {
 	require.Len(t, h.repairMints, 1, "the mint is asked once")
 	require.Equal(t, testMergeSHA, h.repairMints[0].At,
 		"repair issues come from the report at the attempt's OWN merge commit")
-	require.Equal(t, testCycleID, h.repairMints[0].CycleID,
-		"THIS attempt's cycle id is the issues' dedupe key, so the next attempt files fresh work")
 	require.Len(t, h.taskCloses, 1, "the task closes even on a failing verdict")
+	require.Equal(t, []int{testRepairIssue, testRepairIssue + 1}, h.taskCloses[0].Repairs,
+		"the task's close names the repair work — the only edge from a repair issue "+
+			"back to the run that found it, and it points this way so a coding agent "+
+			"is never sent to read a brief written for the validation agent")
 }
 
 // TestValidationRun_UnreportedRedispatchesInsideTheWorkflow covers the one

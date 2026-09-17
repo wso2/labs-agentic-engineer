@@ -48,7 +48,8 @@ import {
   useSpecFileContent,
   useSpecFiles,
 } from "../api/queries";
-import { PRD_PATH, specGroupOf, toSpecEntry } from "../api/mapping";
+import {
+  isAcceptanceFeaturePath, PRD_PATH, specGroupOf, toSpecEntry } from "../api/mapping";
 import { fileLabel } from "../api/labels";
 import { computeDependencyUsedBy } from "../lib/dependencyUsedBy";
 import { useCollabSpec } from "../collab/useCollabSpec";
@@ -99,6 +100,8 @@ import { WireframePanel } from "./WireframePanel";
 import { OpenApiView } from "@aep/ui-openapi-view";
 import { DesignView } from "@aep/ui-design-view";
 import type { DependencyStatusInfo } from "@aep/ui-design-view";
+import { AcceptanceView } from "@aep/ui-acceptance-view";
+import { useAcceptanceEntry } from "../hooks/useAcceptanceEntry";
 import { ValidationView } from "@aep/ui-validation-view";
 import {
   type SpecSelection,
@@ -338,7 +341,9 @@ export function SpecView({ projectName }: { projectName: string }) {
   const linkedFile = search.file;
   useEffect(() => {
     if (!linkedFile) return;
-    setSelection({ kind: "file", path: linkedFile });
+    // Through followSelection, so a link to a path whose rail row is not a file
+    // row — an acceptance .feature — lands where a click would have.
+    setSelection(followSelection(linkedFile));
     void navigate({
       to: "/projects/$projectName/spec",
       params: { projectName },
@@ -526,13 +531,26 @@ export function SpecView({ projectName }: { projectName: string }) {
     /^specs\/validation\/validation-criteria\.json$/.test(
       selectedFile?.path ?? "",
     );
+  // The Gherkin acceptance criteria render as a read-only structured view.
+  // Without this they are neither .md nor structured, so they fall through to
+  // CollabTextArea — an editable monospace box over a document nobody edits by
+  // hand, which is the dishonesty CommittedFileView was written to remove.
+  // Nothing should now produce a FILE selection for an acceptance path — the
+  // rail has one entry for the set and followSelection routes to it. This stays
+  // as the guard: without it such a selection falls through to CollabTextArea,
+  // an editable textarea over a generated document, silently.
+  const isAcceptanceFeatureFile = isAcceptanceFeaturePath(selectedFile?.path ?? "");
   // A dependency's definition renders as its own structured view (ADR-0028)
   // — the same path a component's design.json takes.
   const isDependencyDefinitionFile = isDependencyDefinition(selectedFile?.path ?? "");
   // The structured files share the read-only render path (no collab editor,
   // sourced from the live doc or the committed fetch).
   const isStructuredFile =
-    isOpenApiFile || isComponentDesignFile || isValidationCriteriaFile || isDependencyDefinitionFile;
+    isOpenApiFile ||
+    isComponentDesignFile ||
+    isValidationCriteriaFile ||
+    isAcceptanceFeatureFile ||
+    isDependencyDefinitionFile;
   // Canvas-based views (cell diagram, Excalidraw) need a flex-column,
   // overflow-hidden ancestor so their own `flex: 1` roots get a real
   // measured height to stretch into — a plain overflow:auto block (used for
@@ -574,6 +592,14 @@ export function SpecView({ projectName }: { projectName: string }) {
       : null;
   // The Security entry's own wiring lives in its hook — see useSecurityEntry
   // for why this page does not carry it.
+  const isAcceptanceView = effectiveSelection.kind === "acceptance";
+  const acceptance = useAcceptanceEntry({
+    projectName,
+    active: isAcceptanceView,
+    files,
+    collab,
+    agentInRoom,
+  });
   const isSecurityView = effectiveSelection.kind === "security";
   const security = useSecurityEntry({
     projectName,
@@ -1390,6 +1416,22 @@ export function SpecView({ projectName }: { projectName: string }) {
                   writeSecurityJson={security.writeSecurityJson}
                   dependencies={dependencies.data}
                 />
+              ) : effectiveSelection.kind === "acceptance" ? (
+                acceptance.features.length > 0 ? (
+                  <AcceptanceView features={acceptance.features} />
+                ) : acceptance.isPending ? (
+                  <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
+                    <CircularProgress aria-label="Loading the acceptance criteria" />
+                  </Box>
+                ) : acceptance.isError ? (
+                  <Alert severity="error">
+                    The acceptance criteria couldn&apos;t be loaded.
+                  </Alert>
+                ) : (
+                  // No documents and nothing in flight: the design turn has not
+                  // written them yet. The view's own empty state says so.
+                  <AcceptanceView features={[]} />
+                )
               ) : effectiveSelection.kind === "wireframe" ? (
                 <WireframePanel
                   projectName={projectName}
@@ -1414,6 +1456,10 @@ export function SpecView({ projectName }: { projectName: string }) {
                       />
                     ) : isValidationCriteriaFile ? (
                       <ValidationView criteria={structuredLive} />
+                    ) : isAcceptanceFeatureFile ? (
+                      <AcceptanceView
+                        features={[{ path: selectedFile.path, content: structuredLive }]}
+                      />
                     ) : isDependencyDefinitionFile ? (
                       <DependencyView
                         projectName={projectName}
@@ -1445,6 +1491,13 @@ export function SpecView({ projectName }: { projectName: string }) {
                       <ValidationView
                         key={content.data.sha}
                         criteria={content.data.content}
+                      />
+                    ) : isAcceptanceFeatureFile ? (
+                      <AcceptanceView
+                        key={content.data.sha}
+                        features={[
+                          { path: selectedFile.path, content: content.data.content },
+                        ]}
                       />
                     ) : isDependencyDefinitionFile ? (
                       <DependencyView

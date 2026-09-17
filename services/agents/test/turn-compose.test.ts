@@ -304,6 +304,7 @@ test("the design flow inlines its whole lineup, in lineup order", () => {
     "openapi-conventions",
     "wireframes",
     "validation-criteria",
+    "acceptance-criteria",
   ]);
 });
 

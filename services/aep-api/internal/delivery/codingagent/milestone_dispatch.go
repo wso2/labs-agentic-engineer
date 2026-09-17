@@ -112,7 +112,7 @@ func (e *CodingExecutor) Dispatch(ctx context.Context, req delivery.MilestoneDis
 // milestoneDispatchShape picks the runner's prompt, skill and deadline for a
 // cycle kind.
 //
-// Validation is the only anchored kind: it swaps in the `aep-validation` skill
+// Validation is the only anchored kind: it swaps in the `acceptance-run` skill
 // (via AEP_TASK_KIND) and points the agent at its single issue. Every other kind
 // — coding, fix, conflict — is the ordinary milestone loop, deliberately NOT
 // anchored: a fix or a conflict issue is ordinary work that joins the working

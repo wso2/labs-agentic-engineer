@@ -36,6 +36,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  ClipboardCheck,
   Database,
   FileText,
   RefreshCw,
@@ -47,7 +48,7 @@ import {
   Workflow,
 } from "@wso2/oxygen-ui-icons-react";
 import { WorkingPulse } from "../../agent-chat/components/WorkingIndicator";
-import { PRD_PATH, type SpecFileEntry } from "../api/mapping";
+import { isAcceptanceFeaturePath, PRD_PATH, type SpecFileEntry } from "../api/mapping";
 import { fileLabel } from "../api/labels";
 import {
   mostSignificant,
@@ -148,6 +149,29 @@ export function SpecFileList({
     .filter((f) => f.group === "requirements")
     .sort((a, b) => Number(b.path === PRD_PATH) - Number(a.path === PRD_PATH));
   const validation = allFiles.filter((f) => f.group === "validation");
+  // ONE entry for every specs/acceptance/*.feature, because the pane reads them
+  // as one document set — which is what lets a reader search across
+  // capabilities instead of picking the right file first.
+  //
+  // `row` derives its plan status from a single path, and this stands for many,
+  // so the two things it needs are folded here: it pulses while the agent is
+  // writing ANY of them, and it is a ghost only when NOT ONE is committed yet —
+  // with two capabilities written and a third planned the entry is real and has
+  // to stay clickable.
+  const acceptancePaths = (plan ?? [])
+    .map((e) => e.path)
+    .filter(isAcceptanceFeaturePath);
+  const acceptanceWriting = acceptancePaths.find(
+    (path) => planByPath.get(path) === "writing",
+  );
+  const acceptanceCommitted = validation.some(
+    (f) => isAcceptanceFeaturePath(f.path) && committed.has(f.path),
+  );
+  const hasAcceptance =
+    validation.some((f) => isAcceptanceFeaturePath(f.path)) || acceptancePaths.length > 0;
+  /** What `row` should read the plan status from — see above. */
+  const acceptanceStatusPath =
+    acceptanceWriting ?? (acceptanceCommitted ? undefined : acceptancePaths[0]);
   const design = buildDesignSection(allFiles);
 
   // Per-component expand/collapse — default expanded, remembered by name so
@@ -416,11 +440,16 @@ export function SpecFileList({
     );
   };
 
-  const flatGroup = (section: RailSection, groupFiles: SpecFileEntry[]) => (
+  const flatGroup = (
+    section: RailSection,
+    groupFiles: SpecFileEntry[],
+    lead?: React.ReactNode,
+  ) => (
     <Box sx={{ mb: 1 }}>
       {sectionHeader(section)}
-      {groupFiles.length > 0 ? (
+      {groupFiles.length > 0 || lead !== undefined ? (
         <List dense disablePadding>
+          {lead}
           {groupFiles.map((f) =>
             row(fileSel(f.path), fileLabel(f.path), <FileText size={16} />),
           )}
@@ -572,7 +601,19 @@ export function SpecFileList({
         )}
       </Box>
 
-      {flatGroup(sectionOf("validation"), validation)}
+      {flatGroup(
+        sectionOf("validation"),
+        validation.filter((f) => !isAcceptanceFeaturePath(f.path)),
+        hasAcceptance
+          ? row(
+              { kind: "acceptance" },
+              "Acceptance criteria",
+              <ClipboardCheck size={16} />,
+              false,
+              acceptanceStatusPath,
+            )
+          : undefined,
+      )}
 
       <ProblemsDialog
         open={problemsFor !== null}

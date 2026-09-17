@@ -508,7 +508,7 @@ func buildPrompt(milestoneNumber int, milestoneTitle string) string {
 const validationComponentSentinel = "aep-validation"
 
 // validationTaskKind is the runner's AEP_TASK_KIND for a validation cycle: it
-// is what makes the runner preload the `aep-validation` skill instead of `aep`.
+// is what makes the runner preload the `acceptance-run` skill instead of `aep`.
 const validationTaskKind = "validation"
 
 // envValidationIssue names the validation issue to the pod. A validation run
@@ -567,7 +567,7 @@ type dispatchShape struct {
 }
 
 // buildValidationPrompt is the validation-runner directive: it points at the
-// validation issue and defers the workflow to the aep-validation skill (the
+// validation issue and defers the workflow to the acceptance-run skill (the
 // runner preloads it because AEP_TASK_KIND=validation).
 //
 // It names NO milestone, and that is load-bearing: a validation cycle is
@@ -585,5 +585,5 @@ type dispatchShape struct {
 // in the milestone, so a body referencing nothing is read as somebody else's work
 // and never merges. See eventcore/resolves.go.
 func buildValidationPrompt(issueURL string, issueNumber int) string {
-	return fmt.Sprintf("This is a validation task. Work on this GitHub validation issue: %s\n\nFollow the `aep-validation` skill's workflow: read the validation context, author and run the e2e tests against the deployed system, commit the tests and report, and open a PR whose body includes `Validates #%d` so the platform links it back. Use `Validates`, never a closing keyword such as `Closes` or `Fixes`: the platform closes this task itself.", issueURL, issueNumber)
+	return fmt.Sprintf("This is a validation task. Work on this GitHub validation issue: %s\n\nFollow the `acceptance-run` skill's workflow: read the validation context, drive every scenario in the acceptance criteria against the deployed system, commit the report, and open a PR whose body includes `Validates #%d` so the platform links it back. Use `Validates`, never a closing keyword such as `Closes` or `Fixes`: the platform closes this task itself.", issueURL, issueNumber)
 }

@@ -17,14 +17,13 @@
  */
 
 import { Alert, AlertTitle, Typography } from "@wso2/oxygen-ui";
-import type { CriterionTally } from "@aep/ui-validation-view";
 import { validationView, type StageTone } from "../../projects/lib/pipeline";
-import { countsFromTally, verdictCounts, verdictSentence } from "../lib/verdict";
+import { verdictCounts, verdictSentence, type ValidationCounts } from "../lib/verdict";
 import { FULL_WIDTH_ALERT_MESSAGE, LiveNote } from "./LiveNote";
 import type { StatusLine } from "../../tasks/lib/statusLine";
 
 // The verdicts this tile speaks for. `skipped` is absent on purpose: the page
-// answers it with an empty state, because there is no report and no criteria to
+// answers it with an empty state, because there is no report and no scenarios to
 // put a tile above. Anything else — "", "running", a value from a newer server —
 // renders nothing rather than an empty box.
 const TILE_VERDICTS = new Set([
@@ -48,7 +47,7 @@ const SEVERITY: Record<StageTone, "success" | "info" | "warning" | "error"> = {
 };
 
 /**
- * The verdict tile: what the validation run concluded, above the per-criterion
+ * The verdict tile: what the validation run concluded, above the per-scenario
  * evidence. It exists because a chip label cannot finish the sentence for the
  * verdicts that matter most — "Validated*" begs *which part*, "Validation?" begs
  * *why is that a question*, "Validation error" begs *what broke* — and
@@ -70,7 +69,8 @@ export function VerdictTile({
   verdict,
   state = verdict,
   repairing = false,
-  tally,
+  counts,
+  countsLine,
   note,
 }: {
   verdict: string;
@@ -81,8 +81,11 @@ export function VerdictTile({
   state?: string;
   /** The attempt in flight repairs this verdict rather than re-asking it. */
   repairing?: boolean;
-  tally?: CriterionTally;
-  /** What a REPEAT attempt is doing while no criterion has anything to say — see
+  /** The run's four numbers, for the sentence. */
+  counts?: ValidationCounts;
+  /** The per-outcome tally as words — `7 of 9 passed · 2 blocked`. */
+  countsLine?: string;
+  /** What a REPEAT attempt is doing while no scenario has anything to say — see
    *  LiveNote. Absent whenever nothing is in flight, which is the usual case for
    *  this tile: it mostly reports a verdict that has settled. */
   note?: string | StatusLine;
@@ -90,7 +93,7 @@ export function VerdictTile({
   const view = validationView(state);
   if (!view || !TILE_VERDICTS.has(verdict)) return null;
 
-  const counts = verdictCounts(tally, state);
+  const line = verdictCounts(countsLine, state);
   return (
     // No margins: the page's body container owns the gap below and PageTitle owns
     // the space above. A tile that insets itself put the page's one 24px-inset
@@ -101,11 +104,11 @@ export function VerdictTile({
         {view.label.charAt(0).toUpperCase() + view.label.slice(1)}
       </AlertTitle>
       <Typography variant="body2">
-        {verdictSentence(verdict, tally && countsFromTally(tally), state, repairing)}
+        {verdictSentence(verdict, counts, state, repairing)}
       </Typography>
-      {counts && (
+      {line && (
         <Typography variant="body2" sx={{ mt: 0.5, fontWeight: 500 }}>
-          {counts}
+          {line}
         </Typography>
       )}
       {note && <LiveNote note={note} />}

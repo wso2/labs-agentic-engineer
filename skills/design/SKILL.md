@@ -144,9 +144,15 @@ turn — apply them directly, and load one only if you find you do not have it.
    the step only when step 5 wrote no security.json at all. No gate refuses a
    role that is one handle short — the build's mock walk is what catches it, as
    a hidden screen — so this pass is where it is cheap.
-8. **Validation criteria** (`validation-criteria`) — mint
-   `specs/validation/validation-criteria.json` LAST. A design without its
-   acceptance oracle is unfinished — never skip this.
+8. **The acceptance oracle** — mint it LAST, and mint BOTH halves. A design
+   without one is unfinished — never skip this.
+   - `validation-criteria` → `specs/validation/validation-criteria.json`
+   - `acceptance-criteria` → `specs/acceptance/<slug>.feature`
+
+   Two documents, deliberately: the same requirement decomposed two ways. Both
+   are authored from the PRD alone, so they are independent of each other and of
+   everything above — emit them in one step. A design that produced only one of
+   them is incomplete.
 
 Order binds only where a step reads an earlier one's result: the cell before
 enrichment (the platform scaffolds each design.json from it),

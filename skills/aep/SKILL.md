@@ -30,7 +30,7 @@ open, are the record of this cycle — not the working tree.
 obstacle to work around.** Say so in one line and stop the run. 
 
 > **Validation runs**: if your prompt says this is a **validation task** and
-> points at a single validation issue, the `aep-validation` skill's workflow
+> points at a single validation issue, the `acceptance-run` skill's workflow
 > REPLACES **The run** below — load it. Everything else here still applies.
 
 ## This skill, and the stack skills

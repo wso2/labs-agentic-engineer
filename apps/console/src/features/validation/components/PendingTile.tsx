@@ -16,59 +16,16 @@
  * under the License.
  */
 
-import { Alert, AlertTitle, alpha, Box, Typography } from "@wso2/oxygen-ui";
-import {
-  METHOD_COLOR,
-  METHOD_FALLBACK_COLOR,
-  METHOD_LABEL,
-  type CriterionMethodCount,
-} from "@aep/ui-validation-view";
+import { Alert, AlertTitle, Typography } from "@wso2/oxygen-ui";
 import { validationView } from "../../projects/lib/pipeline";
 import { FULL_WIDTH_ALERT_MESSAGE, LiveNote } from "./LiveNote";
 import type { StatusLine } from "../../tasks/lib/statusLine";
-
-// A method named inside a sentence, marked as a term rather than left as ordinary
-// prose — otherwise nothing tells the reader that "auto" and "manual" are the two
-// halves this page is about to split the criteria into.
-//
-// The rows below carry a glyph rather than a word, so this is the only place the
-// words appear — which is the argument for marking them, not against it.
-//
-// A wash and not a fill: a filled pill mid-sentence stops the line dead, while a
-// tint carries the mark and lets the words keep flowing. `text.primary` over an
-// alpha fill rather than the raw colour as text, so it holds in both themes — the
-// idiom StatusChip's soft tones and ValidationView's failure block both use.
-//
-// Word and colour both come from the shared vocabulary (counts.ts), so renaming or
-// recolouring a method carries this sentence and the tally below it along.
-function Method({ method }: { method: string }) {
-  return (
-    <Box
-      component="span"
-      sx={{
-        px: 0.5,
-        py: 0.125,
-        borderRadius: 0.75,
-        fontFamily: "monospace",
-        fontSize: "0.6875rem",
-        fontWeight: 700,
-        letterSpacing: "0.06em",
-        textTransform: "uppercase",
-        whiteSpace: "nowrap",
-        bgcolor: alpha(METHOD_COLOR[method] ?? METHOD_FALLBACK_COLOR, 0.16),
-        color: "text.primary",
-      }}
-    >
-      {METHOD_LABEL[method] ?? method}
-    </Box>
-  );
-}
 
 // The oracle was never authored, which is also why this run will settle as skipped.
 // Said in the tile rather than as a note above the log because the tile is then the
 // whole body — there are no criteria to put under it.
 const NO_CRITERIA =
-  "This version has no validation criteria, so there is nothing to check the deployment against.";
+  "This version has no acceptance criteria, so there is nothing to check the deployment against.";
 
 /**
  * The tile over a FIRST validation attempt in flight: what is being checked, by
@@ -82,17 +39,23 @@ const NO_CRITERIA =
  * The headline comes from the shared mapper (projects/lib/pipeline) exactly as
  * VerdictTile's does, so the tile and the header chip above it cannot drift.
  *
- * `methods` is the oracle's per-method tally, absent while the criteria are still
- * loading — the counts line is then simply not drawn, rather than the tile waiting
- * for numbers to explain a run that is already under way.
+ * `scenarios` is how many the feature files declare, absent while they are still
+ * loading — the count line is then simply not drawn, rather than the tile waiting
+ * for a number to explain a run that is already under way.
+ *
+ * There is no method split here, and that is the path's doing rather than an
+ * omission: a validation criterion declared at design time whether an agent or a
+ * person would check it, and an acceptance scenario does not. Every one of them is
+ * driven against the deployed system, and whether a person has to finish the job
+ * is something the RUN discovers — `blocked`, `unjudgeable` — and says afterwards.
  */
 export function PendingTile({
-  methods,
+  scenarios,
   noCriteria = false,
   note,
 }: {
-  methods?: CriterionMethodCount[];
-  /** The criteria read came back `not_found`: none were ever authored. */
+  scenarios?: number;
+  /** No feature files at this version: none were ever authored. */
   noCriteria?: boolean;
   /** What the run is doing while no criterion has anything to say — see LiveNote. */
   note?: string | StatusLine;
@@ -100,12 +63,6 @@ export function PendingTile({
   const view = validationView("running");
   if (!view) return null;
 
-  const manual = methods?.find((m) => m.method === "manual")?.count ?? 0;
-  // "12 auto · 3 manual" — the same words as the sentence above, because
-  // both read METHOD_LABEL.
-  const counts = (methods ?? [])
-    .map(({ method, count }) => `${count} ${METHOD_LABEL[method] ?? method}`)
-    .join(" · ");
 
   return (
     // No margins, same as VerdictTile: the page's body container owns the gap below.
@@ -115,29 +72,13 @@ export function PendingTile({
         {view.label.charAt(0).toUpperCase() + view.label.slice(1)}
       </AlertTitle>
       <Typography variant="body2">
-        {noCriteria ? (
-          NO_CRITERIA
-        ) : (
-          <>
-            {/* The two words the tally beneath counts by, so they are marked as
-                terms rather than left as ordinary prose. */}
-            <Method method="e2e" /> criteria are being validated end to end
-            against the deployed system.
-            {/* Only when there ARE manual criteria: this half is an instruction, and
-                an instruction to check criteria that do not exist sends the reader
-                looking for an empty list. */}
-            {manual > 0 && (
-              <>
-                {" "}
-                Please validate the <Method method="manual" /> criteria yourself.
-              </>
-            )}
-          </>
-        )}
+        {noCriteria
+          ? NO_CRITERIA
+          : "Every acceptance scenario is being driven against the deployed system."}
       </Typography>
-      {!noCriteria && counts && (
+      {!noCriteria && scenarios !== undefined && scenarios > 0 && (
         <Typography variant="body2" sx={{ mt: 0.5, fontWeight: 500 }}>
-          {counts}
+          {`${scenarios} ${scenarios === 1 ? "scenario" : "scenarios"}`}
         </Typography>
       )}
       {note && <LiveNote note={note} />}

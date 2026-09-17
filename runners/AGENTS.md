@@ -194,28 +194,6 @@ into the runner pod at `/app/skills` for live skill edits (see
   either alone re-creates a log that says reasoning happened without saying what
   it was. ADR-0002 decisions 14–16 have the measurements, including why stderr
   is *not* where retry detail lives.
-- **A validation run keeps its own issue's status line, and the platform writes
-  it.** `lib/validation_status_line.ts` is a WATCHER on
-  `RuntimePolicy.observe.toolUse` beside the per-criterion one, sharing its
-  `ValidationProgressState` so a row and the line above it cannot disagree (the
-  two are fanned out in `runner.ts`, rows first, so neither can swallow the
-  other's call). Two things make it unlike every other watcher here.
-  It performs **I/O on the agent's path** — an awaited `gh issue comment`
-  through the REAL `gh` (`resolveRealGhPath`, never the `.aep/gh` wrapper) —
-  because the whole value is that the line lands BEFORE the silence it explains;
-  a detached post during a twenty-minute exploration could land after it, and
-  `RuntimeObservers.toolUse` is awaited for exactly this one caller (ADR-0012).
-  And it reads the **outcome** as well as the call, through the same
-  `observe.toolOutcome` seam the rows settle on, because the report generator
-  FAILING is what puts a run into its repair mode. A failure is warned and swallowed: two hours of work
-  must never die because it could not be watched. The issue number arrives as
-  `AEP_VALIDATION_ISSUE`, stamped by the BFF — nothing else in the pod answers
-  "which issue", since `AEP_TASK_ID` is the cycle's uuid and the number reaches
-  the agent only as prose inside `AEP_PROMPT`. Rungs are one-way and the repair
-  mode absorbs the exit-2 loop, which is what keeps a lapping run to six lines
-  instead of three per criterion; `design/decisions/ADR-0011-the-platform-writes-a-validation-runs-status-line.md`
-  has the measurements, including the p44 run that produced two wrong lines
-  before either rule existed.
 - **Fan-out is NOT forced into the foreground any more, and the hook that did it
   is deleted.** `lib/fanout_foreground.ts` rewrote `run_in_background` to `false`
   on every `Agent`/`Task` call, for two measured reasons. The first — that a
@@ -369,7 +347,7 @@ into the runner pod at `/app/skills` for live skill edits (see
   components — there is no single one to name.
 - **There are NO plugins, and the mirror is the only skill source.** The runner
   once loaded two — one it assembled from the library, one it materialised per
-  task — and both are gone. `aep`, `aep-validation` and `playwright-cli` are
+  task — and both are gone. `aep`, `acceptance-run` and `agent-browser` are
   library skills carrying `audience: [coding]`, so the BFF mirrors them into the
   project repo exactly like `go`, and a coding session reads one directory. What
   reaches a build is therefore decided in one place, by the BFF: `design`'s
@@ -378,18 +356,18 @@ into the runner pod at `/app/skills` for live skill edits (see
   a library. ADR:
   `remote-worker/design/decisions/ADR-0005-the-workflow-rides-the-project-mirror.md`.
 - **The always-on set is the runner's, not the design's.** `alwaysOnSkills`
-  (`lib/runner.ts`) names `aep` for every run and `aep-validation` for a
+  (`lib/runner.ts`) names `aep` for every run and `acceptance-run` for a
   validation task; `requireWorkflowBodies` reads those bodies out of the mirror
   and appends them to the `claude_code` preset. Everything else a component needs
   is a `skillsPinned` entry someone put in a `design.json` — but no design decides
-  whether a coding run follows the coding workflow. `playwright-cli` is
-  deliberately NOT always-on: `aep-validation` names it, and mechanics a run may
+  whether a coding run follows the coding workflow. `agent-browser` is
+  deliberately NOT always-on: `acceptance-run` names it, and mechanics a run may
   not reach for should cost a load, not every turn. **That decision only works
   in pairs** — `onDemandSkills` (same file) must then ALLOW it, because `skills:`
   gates the Skill tool and a skill in neither list is unreachable rather than
   deferred. It was in neither for three weeks: validation runs looked healthy
   (their workflow arrives as prompt text, not through the tool) while every
-  `Skill playwright-cli` call was rejected and the agent grepped the mirror's
+  `Skill agent-browser` call was rejected and the agent grepped the mirror's
   files by hand.
 - **The workflow names tool ROLES; `lib/tool_glossary.ts` binds them.** The `aep`
   skill says "the fan-out tool", "the wait tool", "the task list" rather than
@@ -416,8 +394,8 @@ into the runner pod at `/app/skills` for live skill edits (see
   entrypoint can start a procedure-less session.
 - **Anything a skill must invoke by absolute path reads `$AEP_SKILLS_DIR`**, now
   `<workspace>/.claude/skills`. The runner stamps it (`lib/runner.ts`) because it
-  is still the only layer that knows the value. `aep-validation` runs the
-  platform's report generator through it, and the component contract a lead hands
+  is still the only layer that knows the value. `acceptance-run` runs the
+  platform's report checker through it, and the component contract a lead hands
   to fan-out subagents (`contractReferencePath`) resolves the same way. A
   hardcoded path is wrong somewhere — it was, and it named `/app/plugin`.
 - **`lib/workflow_skill.ts` composes ONE file**: `skills/aep/SKILL.md` for a mode.

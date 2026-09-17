@@ -41,7 +41,7 @@ var (
 
 // RequiredSkills names the skills the coding runner reads out of the project
 // mirror on EVERY run, whatever the design pinned. `aep` is the run's procedure
-// and `aep-validation` replaces its run section for a validation task.
+// and `acceptance-run` replaces its run section for a validation task.
 //
 // Availability is deliberately not gated on `editable` — an org admin may
 // withhold a read-only platform skill from their own library, and that is the
@@ -55,7 +55,7 @@ var (
 // build loaded it, which makes the flag a lie; a refusal tells the admin why.
 var RequiredSkills = map[string]bool{
 	"aep":            true,
-	"aep-validation": true,
+	"acceptance-run": true,
 }
 
 // maxSkillBytes caps total skill size (SKILL.md + references). Matches the

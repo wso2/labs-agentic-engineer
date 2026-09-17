@@ -19,7 +19,7 @@
 // The validation run's PREFLIGHT: where the deployed system actually is.
 //
 // This is a platform fact, so platform code fetches it — before the agent
-// starts, and fatally. It used to be a `curl` in the aep-validation skill, with
+// starts, and fatally. It used to be a `curl` in the validation skill, with
 // prose telling the agent to stop if the fetch failed. The agent did not stop: on
 // a 404 it spent half an hour scanning the pod network and reading an Envoy admin
 // config dump trying to infer the URL itself. An unanswerable platform question
@@ -29,7 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fetchWith401Retry, staticTokenSource, type AccessTokenSource } from "./auth_retry.js";
 
-// The file the aep-validation skill reads. Deliberately under /tmp and NOT under
+// The file the validation skill reads. Deliberately under /tmp and NOT under
 // the workspace's `.aep/` — the base skill forbids the agent from looking in
 // there at all, and it must not need to break that rule to find its targets.
 // Outside the work tree either way, so it can never be committed.

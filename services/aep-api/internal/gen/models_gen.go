@@ -2889,7 +2889,7 @@ type SkillDetailBody struct {
 	OrgID            string            `json:"orgId"`
 	References       map[string]string `json:"references"`
 
-	// Required True when the coding runner reads this skill on every run and cannot start without it (`aep`, and `aep-validation` for a validation task). The mirror only copies enabled skills, so disabling one of these would take the procedure away from every build in the org — `PATCH /skills/{name}` refuses it with 409. The console renders the availability toggle as unavailable rather than letting the call fail.
+	// Required True when the coding runner reads this skill on every run and cannot start without it (`aep`, and `acceptance-run` for a validation task). The mirror only copies enabled skills, so disabling one of these would take the procedure away from every build in the org — `PATCH /skills/{name}` refuses it with 409. The console renders the availability toggle as unavailable rather than letting the call fail.
 	Required  bool      `json:"required"`
 	SkillMd   string    `json:"skillMd"`
 	UpdatedAt time.Time `json:"updatedAt"`
@@ -2905,7 +2905,7 @@ type SkillSummary struct {
 	Kind        string `json:"kind"`
 	Name        string `json:"name"`
 
-	// Required True when the coding runner reads this skill on every run and cannot start without it (`aep`, and `aep-validation` for a validation task). The mirror only copies enabled skills, so disabling one of these would take the procedure away from every build in the org — `PATCH /skills/{name}` refuses it with 409. The console renders the availability toggle as unavailable rather than letting the call fail.
+	// Required True when the coding runner reads this skill on every run and cannot start without it (`aep`, and `acceptance-run` for a validation task). The mirror only copies enabled skills, so disabling one of these would take the procedure away from every build in the org — `PATCH /skills/{name}` refuses it with 409. The console renders the availability toggle as unavailable rather than letting the call fail.
 	Required bool `json:"required"`
 }
 

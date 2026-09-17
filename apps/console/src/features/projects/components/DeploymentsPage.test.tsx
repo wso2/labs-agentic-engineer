@@ -190,7 +190,7 @@ vi.mock("../../settings/api/queries", () => ({
   }),
 }));
 
-// The criteria/report join (#395 decision 3) — counts undefined by default (the
+// The report's own counts (#395 decision 3) — undefined by default (the
 // fallback path); individual tests set them to assert the "n/m passed" upgrade. The
 // VERDICT rides with them because `deploy.validation` folds `failed` and `unreported`
 // into one `awaiting-fix`, and the banner's sentence differs for each.
@@ -245,7 +245,7 @@ describe("DeploymentsPage — validation", () => {
 
     expect(
       screen.getByText(
-        "2 of 6 criteria failed. The implementation is being fixed. Validation will run again.",
+        "2 of 6 scenarios failed. The implementation is being fixed. Validation will run again.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/verdict: awaiting fix/)).not.toBeInTheDocument();
@@ -258,7 +258,7 @@ describe("DeploymentsPage — validation", () => {
   });
 
   // A SETTLED failure. The banner wrote its own sentence for these and led with the
-  // count that PASSED ("Validation failed — 4 of 6 criteria passed on this
+  // count that PASSED ("Validation failed — 4 of 6 scenarios passed on this
   // deployment"), while the tile on the Validation page led with the failures — one
   // outcome, two voices and two headline numbers, depending which surface you were on.
   it("leads a settled failure with the failures, in the tile's own words", () => {
@@ -274,10 +274,10 @@ describe("DeploymentsPage — validation", () => {
 
     expect(
       screen.getByText(
-        "2 of 6 criteria failed. The run stopped here, so the milestone stays open for the fix.",
+        "2 of 6 scenarios failed. The run stopped here, so the milestone stays open for the fix.",
       ),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/criteria passed on this deployment/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/scenarios passed on this deployment/)).not.toBeInTheDocument();
   });
 
   // Re-running validation on an already-PASSED version. The verdict lives on an
@@ -296,7 +296,7 @@ describe("DeploymentsPage — validation", () => {
     render(<DeploymentsPage projectName="acme" />);
 
     expect(
-      screen.getByText("All 6 criteria passed in the last attempt. Validation is running again."),
+      screen.getByText("All 6 scenarios passed in the last attempt. Validation is running again."),
     ).toBeInTheDocument();
     expect(screen.queryByText(/validation agent is running/)).not.toBeInTheDocument();
     // Nothing was fixed — that clause belongs to a repair, not a re-ask.
@@ -437,7 +437,7 @@ describe("DeploymentsPage — environment board", () => {
     });
   });
 
-  it("upgrades the validation cell and banner with criteria counts", () => {
+  it("upgrades the validation cell and banner with scenario counts", () => {
     mockDeploy = {
       version: "v1",
       status: "deployed",
@@ -452,7 +452,7 @@ describe("DeploymentsPage — environment board", () => {
     // The tile's own sentence, word for word — the banner used to write its own,
     // which is how a settled FAILURE came to lead with the count that passed.
     expect(
-      screen.getByText("All 12 criteria were covered by a test and passed."),
+      screen.getByText("All 12 scenarios were settled and passed."),
     ).toBeInTheDocument();
   });
 

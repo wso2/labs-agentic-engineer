@@ -97,17 +97,27 @@ func RunPhase15IdentityPerEnvironment(ctx context.Context, db *gorm.DB) error {
 
 	// 2. discard — every row that names an object on the platform identity
 	//    provider. They are exactly the rows with no environment.
+	//
+	//    NULL counts as "no environment", and that is not belt-and-braces. On a
+	//    database that predates these columns, AutoMigrate adds them from the
+	//    models BEFORE this migration runs — and it adds them NULLABLE, so step
+	//    1's `ADD COLUMN IF NOT EXISTS … NOT NULL DEFAULT ''` is a silent no-op
+	//    and every surviving row carries NULL rather than ''. A `= ''` predicate
+	//    then matches none of them, they survive the discard, and step 3's
+	//    composite key fails with "column org_id contains null values" — the boot
+	//    aborts and the service never starts. Normalising first makes the discard
+	//    see them whichever way the column was created.
 	var roles, users, refs int64
 	if err := db.WithContext(ctx).Raw(
-		`SELECT count(*) FROM idp_roles WHERE environment = ''`).Scan(&roles).Error; err != nil {
+		`SELECT count(*) FROM idp_roles WHERE environment IS NULL OR environment = ''`).Scan(&roles).Error; err != nil {
 		return fmt.Errorf("phase15 count roles: %w", err)
 	}
 	if err := db.WithContext(ctx).Raw(
-		`SELECT count(*) FROM test_users WHERE environment = ''`).Scan(&users).Error; err != nil {
+		`SELECT count(*) FROM test_users WHERE environment IS NULL OR environment = ''`).Scan(&users).Error; err != nil {
 		return fmt.Errorf("phase15 count test users: %w", err)
 	}
 	if err := db.WithContext(ctx).Raw(
-		`SELECT count(*) FROM test_user_refs WHERE environment = ''`).Scan(&refs).Error; err != nil {
+		`SELECT count(*) FROM test_user_refs WHERE environment IS NULL OR environment = ''`).Scan(&refs).Error; err != nil {
 		return fmt.Errorf("phase15 count refs: %w", err)
 	}
 	if roles+users+refs > 0 {
@@ -119,9 +129,9 @@ func RunPhase15IdentityPerEnvironment(ctx context.Context, db *gorm.DB) error {
 	}
 	// Refs first: they reference the accounts.
 	for _, stmt := range []string{
-		`DELETE FROM test_user_refs WHERE environment = ''`,
-		`DELETE FROM test_users     WHERE environment = ''`,
-		`DELETE FROM idp_roles      WHERE environment = ''`,
+		`DELETE FROM test_user_refs WHERE environment IS NULL OR environment = ''`,
+		`DELETE FROM test_users     WHERE environment IS NULL OR environment = ''`,
+		`DELETE FROM idp_roles      WHERE environment IS NULL OR environment = ''`,
 	} {
 		if err := db.WithContext(ctx).Exec(stmt).Error; err != nil {
 			return fmt.Errorf("phase15 discard: %w", err)

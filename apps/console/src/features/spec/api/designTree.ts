@@ -16,13 +16,17 @@
  * under the License.
  */
 
-import type { SpecFileEntry } from "./mapping";
+import { isAcceptanceFeaturePath, type SpecFileEntry } from "./mapping";
 
 /** What the content pane should render for the current sidebar selection. */
 export type SpecSelection =
   | { kind: "file"; path: string }
   | { kind: "cell-diagram" }
   | { kind: "security" }
+  // Every specs/acceptance/*.feature at once, not one of them: the pane reads
+  // them as one document set, which is what lets a reader search across
+  // capabilities instead of guessing which one holds the scenario.
+  | { kind: "acceptance" }
   | { kind: "wireframe"; component: string; dslPath: string };
 
 /**
@@ -204,13 +208,16 @@ export function buildDesignSection(files: SpecFileEntry[]): DesignSection {
  * security.json opens the Security entry, a wireframe `.dsl` opens as its
  * component's diagram, and everything else is the file itself (a structured
  * file — a component's design.json, a dependency's dependency.json — is a
- * file selection too; the pane picks its renderer by path). One definition,
+ * file selection too; the pane picks its renderer by path). An acceptance
+ * `.feature` opens the Acceptance criteria entry, which is the whole set, since
+ * the rail no longer has a row for one of them. One definition,
  * so follow-the-write can never land somewhere a click on the rail would not
  * have gone.
  */
 export function followSelection(path: string): SpecSelection {
   if (path === DESIGN_CELL_PATH) return { kind: "cell-diagram" };
   if (path === SECURITY_JSON_PATH) return { kind: "security" };
+  if (isAcceptanceFeaturePath(path)) return { kind: "acceptance" };
   const component = componentOf(path);
   if (component && isDsl(path)) {
     return { kind: "wireframe", component, dslPath: path };
@@ -227,6 +234,8 @@ export function selectionKey(sel: SpecSelection): string {
       return "cell-diagram";
     case "security":
       return "security";
+    case "acceptance":
+      return "acceptance";
     case "wireframe":
       return `wireframe:${sel.component}`;
   }

@@ -266,7 +266,7 @@ test("mock-verification walks and repairs a line at a time", () => {
     "## 1 · Stand it up",
     "## 2 · Plan",
     // The dev server — process group, free port, browser close — is the skill's
-    // script, reached through the runner-stamped path like aep-validation's
+    // script, reached through the runner-stamped path like acceptance-run's
     // report generator. The walker never re-derives it.
     'bash "$AEP_SKILLS_DIR/mock-verification/scripts/walk.sh" up',
     'bash "$AEP_SKILLS_DIR/mock-verification/scripts/walk.sh" down',
@@ -519,7 +519,7 @@ test("the mirror carries the coding-audience skills, composed for the mode", asy
 
     // The runner's own skills arrive the SAME way every other coding skill does.
     // There is no plugin any more, so if they are not here they reach no session.
-    for (const name of ["aep", "aep-validation", "playwright-cli"]) {
+    for (const name of ["aep", "acceptance-run", "agent-browser"]) {
       assert.ok(fs.existsSync(path.join(skills, name, "SKILL.md")), `mirror is missing ${name}`);
     }
     // Design-only skills stay out: their descriptions would sit in a coding
@@ -614,10 +614,10 @@ test("a skill's references, assets and scripts come along", async () => {
       path.join("aep", "references", "external-dependency-research.md"),
       path.join("aep", "references", "component-contract.md"),
       path.join("aep", "references", "workload-and-wiring.md"),
-      path.join("aep-validation", "references", "authoring.md"),
-      path.join("aep-validation", "assets", "playwright.config.template.ts"),
-      path.join("aep-validation", "scripts", "generate-report.mjs"),
-      path.join("playwright-cli", "LICENSE"),
+      // The false-pass guard. It ships INSIDE the skill precisely so the mirror
+      // carries it into the project clone — a validation pod has no checkout of
+      // this repo, so a guard left at the repo root is a guard that never runs.
+      path.join("acceptance-run", "scripts", "check-report.mjs"),
       // Mock mode is the harness (two verbatim templates plus the reference
       // that wires them, under react-webapp) and the authorization half it
       // imports by path (the gateway layer, the session substitute and the
@@ -646,72 +646,13 @@ test("a skill's references, assets and scripts come along", async () => {
 // mirror). `/app/plugin` was such a path, and it stopped existing when the plugin
 // did; the report generator was still being invoked through it.
 test("no library skill hardcodes a runner path", () => {
-  for (const skill of ["aep", "aep-validation", "playwright-cli", "mock-verification"]) {
+  for (const skill of ["aep", "acceptance-run", "agent-browser", "mock-verification"]) {
     const body = fs.readFileSync(path.join(LIBRARY, skill, "SKILL.md"), "utf8");
     assert.ok(!body.includes("/app/plugin"), `${skill} names the retired /app/plugin`);
     assert.ok(
       !/\/app\/skills/.test(body),
       `${skill} hardcodes /app/skills — use $AEP_SKILLS_DIR, which is right in every mode`,
     );
-  }
-});
-
-// The Bash tool keeps ONE shell for a whole run, so a bare relative `cd` is
-// correct exactly once. #49: the RUN block was re-entered after a heal wave and
-// `cd tests/e2e` landed in `tests/e2e/tests/e2e`. Every other path the
-// validation workflow names is repo-root relative, so the one command that
-// moves the shell has to be self-locating. Scoped to aep-validation on purpose:
-// `cd <project-name>` in the ballerina skill is a placeholder after `bal new`,
-// not a fixed path.
-// From the repo root a bare `npx playwright test` is the QUIET failure: it
-// discovers the specs, passes, and exits 0 without loading the config — so no
-// reporter, no results.json, and none of the launch args the deployed endpoints
-// need. Verified against the pinned 1.61.1. Every invocation therefore goes
-// through the package's own `test` script, which `npm --prefix` runs with the
-// package as its working directory — that is what removed the last `cd` from
-// this workflow.
-test("the validation workflow never runs playwright test bare", () => {
-  const docs = ["SKILL.md", "references/authoring.md", "references/healing.md"].map(
-    (rel) => [rel, fs.readFileSync(path.join(LIBRARY, "aep-validation", rel), "utf8")] as const,
-  );
-  for (const [rel, body] of docs) {
-    for (const line of body.split("\n")) {
-      // Start-of-line only: prose may name the form it is warning against.
-      if (!/^\s*npx\s+playwright\s+test\b/.test(line)) continue;
-      assert.ok(
-        line.includes("--config"),
-        `aep-validation/${rel}: \`${line.trim()}\` — bare from the repo root this ` +
-          `passes and writes no results.json; use \`npm test --prefix tests/e2e\``,
-      );
-    }
-  }
-  const skill = docs[0][1];
-  assert.match(
-    skill,
-    /"scripts":\s*\{\s*"test":\s*"playwright test"\s*\}/,
-    "the scaffolded package.json lost its `test` script — every invocation depends on it",
-  );
-  assert.ok(
-    skill.includes("npm test --prefix tests/e2e"),
-    "SKILL.md no longer runs the suite through the package script",
-  );
-});
-
-test("the validation workflow never cds to a bare relative path", () => {
-  for (const rel of ["SKILL.md", "references/authoring.md", "references/healing.md"]) {
-    const body = fs.readFileSync(path.join(LIBRARY, "aep-validation", rel), "utf8");
-    for (const line of body.split("\n")) {
-      // The whole argument, not the first token: `cd "$(git rev-parse …)/x"`
-      // contains spaces, and splitting on them would read as a bare path.
-      const target = /^\s*cd\s+(.+)$/.exec(line)?.[1]?.trim();
-      if (!target) continue;
-      assert.ok(
-        target.replace(/^["']/, "").startsWith("/") ||
-          target.includes("$(git rev-parse --show-toplevel)"),
-        `aep-validation/${rel}: \`${line.trim()}\` — the shell persists across calls, so a ` +
-          `cd must be self-locating (absolute, or rooted at $(git rev-parse --show-toplevel))`,
-      );
-    }
   }
 });
 
@@ -733,45 +674,6 @@ test("no skill licenses a force-push without the lease", () => {
       );
     }
   }
-});
-
-// The half a reader misses: the deny-list can go on governing a force-push
-// after the step that needed one has lost it.
-test("aep-validation still names the force-push its push step needs", () => {
-  const body = fs.readFileSync(path.join(LIBRARY, "aep-validation", "SKILL.md"), "utf8");
-  assert.ok(
-    body.includes("git push --force-with-lease"),
-    "step 10 lost its lease form while the deny-list still governs one",
-  );
-});
-
-// The two comments a validation run has always posted are STEP-anchored, and
-// that is why they are the two that reliably happen — ADR-0010's own rule, that
-// an obligation stated beside a numbered sequence gets skipped while one inside
-// it lands. The platform now writes the middle, so nothing else is asked for;
-// lose either of these and the issue has no opening claim or no closing verdict.
-test("aep-validation keeps the two comments its steps ask for", () => {
-  const body = fs.readFileSync(path.join(LIBRARY, "aep-validation", "SKILL.md"), "utf8");
-  assert.ok(body.includes("Post a brief opening comment"), "step 1 lost its opening comment");
-  assert.ok(
-    body.includes("Post an issue comment with the summary counts"),
-    "step 10 lost its closing summary",
-  );
-});
-
-// …and asks for NOTHING else. The skill carried a `## The status line` section
-// telling the agent to keep the middle current; it never did, and the platform
-// now writes those lines itself (ADR-0011). Restoring the section would put two
-// writers on one line — the `aep` body is always-on for a validation run too, so
-// its own keep-it-current rule is already in the prompt and needs no second
-// voice here.
-test("aep-validation asks for no status line of its own", () => {
-  const body = fs.readFileSync(path.join(LIBRARY, "aep-validation", "SKILL.md"), "utf8");
-  const headings = body.split("\n").filter((l) => /^#{1,6}\s+\S/.test(l));
-  assert.ok(
-    !headings.some((h) => /status line/i.test(h)),
-    `aep-validation grew a status-line section back: ${headings.filter((h) => /status line/i.test(h)).join(", ")}`,
-  );
 });
 
 test("re-mirroring the same workspace replaces the previous mode's body", async () => {

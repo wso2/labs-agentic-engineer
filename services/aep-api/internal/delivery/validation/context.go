@@ -37,7 +37,7 @@ type ComponentEndpoint struct {
 
 // ValidationContextResponse is the secure runtime-inputs payload the runner
 // fetches at dispatch time (never carried in the public issue): the deployed
-// endpoint URLs and the criteria file path.
+// endpoint URLs and the acceptance-criteria directory.
 //
 // No test account rides here, not even a username. The build publishes the whole
 // roster — logins included — on the roles gate ticket, and the agent reads it
@@ -101,6 +101,6 @@ func (s *ContextService) ValidationContext(ctx context.Context, cycleID, orgHand
 	}
 	return &ValidationContextResponse{
 		Endpoints:    eps,
-		CriteriaPath: criteriaFilePath,
+		CriteriaPath: criteriaDirPath,
 	}, nil
 }

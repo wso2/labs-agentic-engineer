@@ -51,7 +51,25 @@ const GROUP_BY_FOLDER: Record<string, SpecGroup> = {
   requirements: "requirements",
   design: "designs",
   validation: "validation",
+  // The acceptance criteria are a second folder in the SAME section, not a
+  // fourth section: validation is the phase, and an acceptance criterion is the
+  // unit it grades (docs/glossary.md — different axes, both words correct). A
+  // group of its own would put two headers on one phase and force a rail
+  // ordering decision that means nothing to a reader.
+  acceptance: "validation",
 };
+
+/**
+ * One acceptance-criteria document, `specs/acceptance/<capability>.feature`.
+ *
+ * The single definition, because three places were carrying the same regex —
+ * the pane's read-only routing, the Validations page's oracle read, and the
+ * rail. A fourth copy is how one of them comes to disagree with the others
+ * about what an acceptance file is.
+ */
+export function isAcceptanceFeaturePath(path: string): boolean {
+  return /^specs\/acceptance\/[^/]+\.feature$/.test(path);
+}
 
 // Reference documents (#383) are transient turn inputs, never committed
 // (ADR-0017), so nothing under here should ever reach the spec view. The guard

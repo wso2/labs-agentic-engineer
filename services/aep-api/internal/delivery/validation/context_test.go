@@ -80,8 +80,8 @@ func TestValidationContext_ResolvesEndpoints(t *testing.T) {
 	}
 	// Credentials are not bundled in the context, and no callback serves them:
 	// the agent reads a test user's login from the roles gate ticket (ADR-0022).
-	if resp.CriteriaPath != criteriaFilePath {
-		t.Errorf("criteriaPath = %q; want %q", resp.CriteriaPath, criteriaFilePath)
+	if resp.CriteriaPath != criteriaDirPath {
+		t.Errorf("criteriaPath = %q; want %q", resp.CriteriaPath, criteriaDirPath)
 	}
 	// The id the runner presents is a CYCLE id, resolved under the verified org.
 	// Looking it up anywhere else is the bug this replaces.

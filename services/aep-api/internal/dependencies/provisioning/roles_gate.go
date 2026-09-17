@@ -26,7 +26,7 @@ package provisioning
 // **The ticket is also the credential channel.** Before closing, the gate posts a
 // comment carrying every test account's username and password: that comment is
 // where the validation agent reads the login it signs in with
-// (skills/aep-validation, ADR-0022). Two rules follow, and both are enforced
+// (skills/acceptance-run, ADR-0022). Two rules follow, and both are enforced
 // below. A ticket that cannot be filed, or a comment that cannot be posted,
 // FAILS THE BUILD — an account nothing can read is the silent degradation this
 // gate exists to prevent. And a password reaches the issue comment and nothing
