@@ -22,6 +22,26 @@ Anything not below is open: interview for it normally.
 Every web app signs its users in via SSO through Thunder, the platform IDP.
 Thunder is available as a dependency.
 
+## Security & compliance
+
+`security-design` owns how a permission catalog is derived and what
+`specs/design/security.json` may say. **This section is a pointer, not a
+specification:** it holds only the calls that skill deliberately leaves to the
+organization, because they are about the org's own shared directory rather than
+about one project. A filled line is settled and is never asked at design time;
+an empty one leaves the call to `security-design`.
+
+| The call | This organization's answer |
+|---|---|
+| May a design introduce a **new org group**? | Yes, but only where `list_groups` shows no existing group is already those people. |
+| **Groups to prefer**, by name. | *(none — the directory is the list)* |
+| **Groups a role may never be assigned to.** | `Administrators`. It administers the platform, not any generated app. |
+| Is **self-service enrolment** permitted? | Only where the PRD describes people who sign themselves up. |
+
+Changing how a design derives groups, roles and scopes starts here: this is the
+org-editable surface, and `security-design` is platform-owned and read-only in
+the console. A change it cannot express is a change to that skill.
+
 ## Technology stack
 
 - Web apps: TypeScript + React, single-page app.

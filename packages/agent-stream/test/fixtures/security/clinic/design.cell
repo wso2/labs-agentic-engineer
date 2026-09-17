@@ -1,0 +1,5 @@
+cell "Clinic Appointments" {
+  component booking-site as "Patient Booking Site" webapp
+  component staff-webapp as "Clinic Staff App" webapp
+  component appointments-api as "Appointments API" service
+}

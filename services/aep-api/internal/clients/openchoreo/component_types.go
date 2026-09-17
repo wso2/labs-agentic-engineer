@@ -152,14 +152,20 @@ type ComponentTrait struct {
 
 // -- Deployment (ReleaseBinding) ---------------------------------------------
 
-// DevEnvironmentName is the platform's fixed environment — the OC environment
-// every project auto-deploys to. The single shared constant for what was
-// previously pinned per-feature (runtimeconfig, provisioning, codingagent,
-// project status). Where Agent Manager is deployed alongside AEP this is the
-// same Environment object Agent Manager's platform-resources chart owns, so
-// both products share one environment, one environment Thunder and one
-// gateway.
-const DevEnvironmentName = "default"
+// DevEnvironmentName is the process write-target: the OpenChoreo environment
+// every project auto-deploys to. ResolvePlatformWriteTarget sets it at boot
+// from DeploymentPipeline/default's unique source environment. The initial
+// "default" matches setup-aep.sh so unit tests that never boot Run keep
+// working; Assemble refuses to start if Infra.WriteTarget is empty, so a
+// live process never serves the initial value by accident.
+var DevEnvironmentName = "default"
+
+func SetDevEnvironmentName(name string) {
+	if name == "" {
+		panic("openchoreo: empty write-target")
+	}
+	DevEnvironmentName = name
+}
 
 // ComponentSpecDesired is the platform-owned half of a Component's spec: the
 // trait shape and the build/deploy policy.

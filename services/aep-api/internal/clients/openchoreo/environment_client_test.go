@@ -215,3 +215,85 @@ func TestEnvironmentClient_GetThunderBinding_AdminURLIsOptional(t *testing.T) {
 		t.Fatalf("adminURL = %q, want empty", got.AdminURL)
 	}
 }
+
+// ---- the gateway assertion --------------------------------------------------
+
+// Read off the SAME projection as the Thunder binding, for the same reason: the
+// annotations are the only copy of an environment-level fact this process can
+// see. setup-environment-gateway.sh writes them when it provisions the
+// environment gateway's signing keypair.
+func TestEnvironmentClient_GetGatewayAssertion_ReadsTheAnnotations(t *testing.T) {
+	const cert = "-----BEGIN CERTIFICATE-----\nMIIDazCCAlOgAwIB\n-----END CERTIFICATE-----"
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		writeJSON(t, w, http.StatusOK, map[string]any{
+			"metadata": map[string]any{
+				"name": "default",
+				"annotations": map[string]string{
+					"aep.wso2.com/gateway-assertion-issuer":      "aep-gateway-acme-default",
+					"aep.wso2.com/gateway-assertion-header":      "x-jwt-assertion",
+					"aep.wso2.com/gateway-assertion-certificate": cert,
+					"aep.wso2.com/thunder-issuer":                "an unrelated annotation",
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	got, err := newTestEnvironmentClient(t, srv).GetGatewayAssertion(context.Background(), "acme", "default")
+	if err != nil {
+		t.Fatalf("GetGatewayAssertion: %v", err)
+	}
+	if gotPath != "/api/v1/namespaces/acme/environments/default" {
+		t.Fatalf("path = %q", gotPath)
+	}
+	want := GatewayAssertion{
+		OrgID: "acme", Environment: "default",
+		Issuer:      "aep-gateway-acme-default",
+		Header:      "x-jwt-assertion",
+		Certificate: cert,
+	}
+	if got != want {
+		t.Fatalf("assertion =\n%+v\nwant\n%+v", got, want)
+	}
+	if !got.Configured() {
+		t.Fatal("a published certificate must report Configured")
+	}
+}
+
+// An environment that publishes none is NOT an error, unlike a missing Thunder
+// binding: every environment provisioned before assertions existed is in this
+// state, and failing the deploy there would make the feature a breaking change.
+func TestEnvironmentClient_GetGatewayAssertion_UnpublishedIsNotAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusOK, map[string]any{
+			"metadata": map[string]any{"name": "staging"},
+		})
+	}))
+	defer srv.Close()
+
+	got, err := newTestEnvironmentClient(t, srv).GetGatewayAssertion(context.Background(), "acme", "staging")
+	if err != nil {
+		t.Fatalf("an unpublished assertion must not be an error, got %v", err)
+	}
+	if got.Configured() {
+		t.Fatal("nothing published, yet Configured")
+	}
+}
+
+// A certificate with no issuer is reported ABSENT, not partial. A service
+// handed one with no issuer to pin would accept any assertion that key happens
+// to verify — the one outcome publishing the pair together is meant to prevent.
+func TestGatewayAssertionFromAnnotations_CertWithoutIssuerIsAbsent(t *testing.T) {
+	got := gatewayAssertionFromAnnotations("acme", "default", map[string]string{
+		"aep.wso2.com/gateway-assertion-certificate": "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----",
+		"aep.wso2.com/gateway-assertion-header":      "x-jwt-assertion",
+	})
+	if got.Configured() {
+		t.Fatalf("a certificate with no issuer must read as absent, got %+v", got)
+	}
+	if got.Certificate != "" || got.Header != "" {
+		t.Fatalf("an absent assertion must carry nothing, got %+v", got)
+	}
+}

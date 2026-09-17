@@ -48,7 +48,7 @@ LICENSE_HEADER := .github/license-header.txt
 LICENSE_MATCH = grep -E '\.(go|ts|tsx|sh)$$|(^|/)Dockerfile$$' | \
 	grep -vE '\.gen\.(go|ts)$$|_mock\.go$$|/mocks/|/node_modules/|/dist/|/generated/|(^|/)\.(agents|claude)/'
 
-.PHONY: install gen build dev test lint eval-ui typecheck license license-check tools clean eval cover build-runner workflow-skill deadcode-ts deadcode-ts-check setup-local dev-cluster deploy-local bal-library-tool
+.PHONY: install gen build dev test lint eval-ui typecheck license license-check tools clean eval cover build-runner workflow-skill deadcode-ts deadcode-ts-check manifests-check setup-local dev-cluster deploy-local bal-library-tool
 
 install:
 	$(PNPM) install
@@ -75,11 +75,21 @@ dev:
 # module but the last was reported as a green verb — which is exactly how a red
 # `go vet` in aep-api passed as a clean `make typecheck`. The loops still run every
 # module, because knowing about one broken module should not hide the next.
-test: gen
+# manifests-check is a PREREQUISITE, not a recipe line: the `exit $$rc` below
+# ends the recipe, so anything appended after it never runs.
+test: gen manifests-check
 	$(TURBO) run test
 	@rc=0; for d in $(GO_MODULE_DIRS); do echo ">> go test $$d"; ( cd "$$d" && go test ./... ) || rc=1; done; exit $$rc
-	@files=$$(find $(ROOT)/skills -name '*.test.mjs' | sort); \
-	  if [ -n "$$files" ]; then echo ">> node --test skills"; node --test $$files; fi
+	@files=$$(find $(ROOT)/skills $(ROOT)/deployments/scripts -name '*.test.mjs' | sort); \
+	  if [ -n "$$files" ]; then echo ">> node --test skills + deployments/scripts"; node --test $$files; fi
+
+# Platform manifests that exist twice: once under deployments/manifests (applied
+# by the setup scripts with kubectl) and once as a verbatim copy in the platform
+# Helm chart (what a real installation renders). Nothing derives one from the
+# other, so only a check keeps them honest. Runs as part of `make test`, which
+# is what CI runs.
+manifests-check:
+	@bash $(ROOT)/deployments/scripts/check-trait-copies.sh
 
 # Local coverage summary — coverage is not gated in CI. Go: the aep-api module's fast-lane
 # cover target (-short, no Docker). TS: @aep/agents via node:test's

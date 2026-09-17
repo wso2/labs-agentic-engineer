@@ -1,6 +1,6 @@
 ---
 name: wireframes
-description: Use when creating or updating UI wireframes for a webapp component (design), or when implementing a web-application component that has a wireframes.dsl (coding) — the DSL is the screen contract the pages must honour, screen for screen and element for element.
+description: "Use when creating or updating UI wireframes for a webapp component (design), or when implementing a web-application component that has a wireframes.dsl (coding) — the DSL is the screen contract the pages must honour, screen for screen and element for element."
 metadata:
   aep:
     kind: platform
@@ -182,7 +182,10 @@ flow's home screen, and keep it out of the other flows.
   the journey is, like a screen's description says what the view is. Both are
   keyword lines inside the block, at most one of each (a duplicate rejects the
   write). Give every role-serving flow its `role`; a genuinely role-less
-  journey (a public checkout) may omit it.
+  journey (a public checkout) omits it — and that omission **means public**:
+  the coding run routes a role-less flow's screens above the sign-in guard, so
+  a visitor with no session reaches them. Leave `role` off only for a journey
+  the PRD gives to a visitor.
 - A screen in no flow is allowed, but ask yourself who reaches it.
 
 Syntax is validated at write time: an unknown keyword, a misplaced

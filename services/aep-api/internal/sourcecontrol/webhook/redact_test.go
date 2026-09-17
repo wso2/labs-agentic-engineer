@@ -29,8 +29,8 @@ import (
 // is stored. These tests are the gate between the two.
 
 const publishedComment = "<!-- aep:machine -->\n### Test user logins\n\n" +
-	"<!-- aep:test-users -->\n\n| Username | Password | Role | Cold start |\n" +
-	"| --- | --- | --- | --- |\n| `test-trainer` | `Aep1!SecretValue-123` | Trainer | no |\n"
+	"<!-- aep:test-users -->\n\n| Username | Password | Role |\n" +
+	"| --- | --- | --- |\n| `test-trainer` | `Aep1!SecretValue-123` | Trainer |\n"
 
 func TestRedactRemovesAPublishedPasswordFromAnIssueComment(t *testing.T) {
 	body, err := json.Marshal(map[string]any{

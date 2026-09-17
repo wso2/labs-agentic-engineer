@@ -1395,34 +1395,91 @@ sequenceDiagram
 `;
 
 // The security design (#665): ONE document, and the Security rail entry reads
-// it alone. The roles it declares are the ones `fixtures/roles.ts` reconciles
-// against — `Compliance Admin` exists on the directory, `Viewer` does not yet
-// ("New at Build") — so the panel's live half has something to disagree with.
+// it alone. v2 — a permission catalog the roles grant from.
+//
+// Shaped on the canonical Expense Tracker fixture
+// (`packages/agent-stream/test/fixtures/security/expense-tracker.json`) and
+// renamed onto this project's own components, so the mock exercises the same
+// matrix the design pictures: two resources on two components, an own/any
+// split, a `read-all` widener, and one action (`catalog:export`) no role grants
+// — the matrix's "granted by nobody" row.
+//
+// Every state the Security page can reach is reachable from here, because none
+// of them is reachable on demand against a real identity provider:
+//
+//  - the three group badges, against `fixtures/roles.ts`: `Compliance` is
+//    absent from the live catalog ("New at Build"), `Administrators` is there
+//    but not the platform's ("Not ours"), `Finance` is the platform's and holds
+//    roles in two projects ("Reused");
+//  - `Shopper` is SELF-SERVICE — a user-kind column that is still a column, with
+//    no group and no promised login;
+//  - `Viewer` names no test user, so the panel promises `test-viewer` and the
+//    live half agrees;
+//  - `jsmith` holds TWO roles, which is what v2 changed;
+//  - `ledger-sync` is SERVICE-kind — no login, no group, its own list.
 const securityJson = `{
-  "version": 1,
-  "coldStartRole": "Compliance Admin",
-  "publicComponents": ["storefront"],
-  "roles": [
+  "version": 3,
+  "permissions": [
     {
-      "name": "Compliance Admin",
-      "description": "Approves and audits submitted claims.",
-      "stories": [1, 2],
-      "grantedBy": "Platform IdP",
-      "permissions": [
-        { "component": "orders-api", "actions": ["approve", "refund"] },
-        { "component": "storefront", "screens": ["Orders", "Audit log"] }
+      "resource": "orders",
+      "component": "orders-api",
+      "description": "Customer orders and the money moved against them",
+      "actions": [
+        { "handle": "read", "description": "See own orders" },
+        { "handle": "read-all", "description": "See every order" },
+        { "handle": "place", "description": "Place an order" },
+        { "handle": "approve", "description": "Approve a held order" },
+        { "handle": "refund", "description": "Refund a paid order" }
       ]
     },
     {
-      "name": "Viewer",
-      "description": "Reads the catalog and their own order history.",
-      "stories": [3],
-      "grantedBy": "Platform IdP",
-      "permissions": [{ "component": "catalog-api", "actions": ["read"] }]
+      "resource": "catalog",
+      "component": "catalog-api",
+      "description": "The product catalogue",
+      "actions": [
+        { "handle": "read", "description": "Browse the product catalogue" },
+        { "handle": "export", "description": "Download the catalogue as CSV" }
+      ]
     }
   ],
-  "testUsers": [{ "username": "test-compliance-admin", "role": "Compliance Admin" }],
-  "thunder": { "name": "demo-shop", "type": "browser" }
+  "groups": [
+    { "name": "Compliance", "description": "People who audit and approve orders" }
+  ],
+  "roles": [
+    {
+      "name": "Shopper",
+      "description": "Browses the catalogue and follows their own orders.",
+      "stories": [1, 2],
+      "grants": ["catalog:read", "orders:read", "orders:place"],
+      "enrolment": "self-service"
+    },
+    {
+      "name": "Compliance Admin",
+      "description": "Approves held orders, refunds paid ones and audits the rest.",
+      "stories": [3, 7],
+      "grants": ["orders:read", "orders:read-all", "orders:approve", "orders:refund"],
+      "assignTo": ["Compliance", "Administrators"],
+      "assignableBy": ["Compliance Admin"]
+    },
+    {
+      "name": "Viewer",
+      "description": "Reads the catalogue and every order, and changes nothing.",
+      "stories": [4],
+      "grants": ["catalog:read", "orders:read", "orders:read-all"],
+      "assignTo": ["Finance"]
+    },
+    {
+      "name": "ledger-sync",
+      "description": "Reconciles paid orders against the ledger nightly, with nobody signed in.",
+      "stories": [9],
+      "kind": "service",
+      "grants": ["orders:read-all"]
+    }
+  ],
+  "testUsers": [
+    { "username": "test-compliance-admin", "roles": ["Compliance Admin"] },
+    { "username": "jsmith", "roles": ["Compliance Admin", "Shopper"] }
+  ]
 }
 `;
 

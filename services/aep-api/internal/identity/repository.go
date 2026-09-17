@@ -106,6 +106,68 @@ type Store interface {
 	// identity provider served the cluster, which is why this used to be a
 	// name-returning read plus a bare cross-org count.
 	ProjectsReferencing(ctx context.Context, scope Scope, username string) ([]TestUserRef, error)
+
+	// -- project-owned directory objects ----------------------------------
+	//
+	// Everything above this line records a SHARED object and is additive: the
+	// platform may create it and may refresh a cached id, but never removes it,
+	// because a second project naming it means the same object. Everything below
+	// records a PROJECT-OWNED one — the project's resource server and its own
+	// `<project>/<Role>` roles — which exactly one project creates, so the
+	// ensure may converge the set and a project delete may remove it outright.
+
+	// UpsertResourceServer records the resource server the ensure created or
+	// found for a project, or refreshes the identifier and directory id on the
+	// row that is already there. The row carries its own scope and project.
+	UpsertResourceServer(ctx context.Context, rs IdPResourceServer) error
+	// GetResourceServer returns a project's resource server on this scope's
+	// directory, or nil when the platform did not create one there. As with
+	// GetRole the nil is the ownership answer, not an error.
+	GetResourceServer(ctx context.Context, scope Scope, projectID string) (*IdPResourceServer, error)
+	// DeleteResourceServer forgets a project's resource server. It is called
+	// after the directory objects are gone, by the ensure that dropped them or
+	// by a project delete; forgetting a row that is not there is not an error,
+	// because a best-effort cleanup re-runs.
+	DeleteResourceServer(ctx context.Context, scope Scope, projectID string) error
+
+	// ReplaceRoleBindings makes bindings the complete set of this project's
+	// role bindings on this scope, in ONE transaction: rows whose (role, group)
+	// the set no longer names are deleted, and the rest are upserted.
+	//
+	// It converges rather than clearing and re-inserting so a rebuild of the
+	// same tag changes nothing a reader can observe — created_at on an unchanged
+	// binding stays where it was, which is what lets the console say how long a
+	// group has held a role.
+	ReplaceRoleBindings(ctx context.Context, scope Scope, projectID string, bindings []IdPRoleBinding) error
+	// ListRoleBindings returns a project's role bindings on this scope, ordered
+	// by role then group. It is both the console's read and the delete path's
+	// worklist, which is why a role assigned to nobody is still a row.
+	ListRoleBindings(ctx context.Context, scope Scope, projectID string) ([]IdPRoleBinding, error)
+	// CountProjectsBindingGroup counts the DISTINCT projects that assign any
+	// role to a group on this scope — the `projects` number beside a group in
+	// the directory panel's `list_groups`, and the reason a human can tell a
+	// group that is reused from one that is not.
+	//
+	// The scope fences it for the same reason it fences ProjectsReferencing: a
+	// group exists on exactly one environment's directory, so every project that
+	// can name it belongs to that scope. An empty group name counts nothing — it
+	// is the "assigned to nobody" marker, not a group.
+	//
+	// The name is compared WITHOUT CASE, like every other group comparison in
+	// this domain: the rows carry the directory's spelling and the caller asks
+	// with whatever the design authored, and one group must not read as two.
+	CountProjectsBindingGroup(ctx context.Context, scope Scope, groupName string) (int, error)
+	// CountProjectsBindingGroups is the same count for EVERY group on the scope
+	// at once, keyed by the lowercased group name.
+	//
+	// It exists for the catalog, which asks the question for every group the
+	// directory holds: one query beats one round trip per group, and a directory
+	// with a few hundred groups makes that the difference between a listing and
+	// a stall. A group no project binds is simply absent from the map.
+	CountProjectsBindingGroups(ctx context.Context, scope Scope) (map[string]int, error)
+	// DeleteRoleBindings forgets every role binding a project owns. Like
+	// DeleteResourceServer it is idempotent: deleting nothing is success.
+	DeleteRoleBindings(ctx context.Context, scope Scope, projectID string) error
 }
 
 // ErrNoPassword is returned when an account's sealed password is absent — a row
@@ -301,6 +363,160 @@ func (s *store) ProjectsReferencing(ctx context.Context, scope Scope, username s
 		return nil, fmt.Errorf("list projects referencing %q on %s: %w", username, scope, err)
 	}
 	return rows, nil
+}
+
+// ---- project-owned directory objects ---------------------------------------
+
+func (s *store) UpsertResourceServer(ctx context.Context, rs IdPResourceServer) error {
+	err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "org_id"}, {Name: "environment"}, {Name: "project_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"identifier", "directory_id", "updated_at"}),
+	}).Create(&rs).Error
+	if err != nil {
+		return fmt.Errorf("upsert resource server for %s/%s: %w", rs.scope(), rs.ProjectID, err)
+	}
+	return nil
+}
+
+func (s *store) GetResourceServer(ctx context.Context, scope Scope, projectID string) (*IdPResourceServer, error) {
+	var row IdPResourceServer
+	err := s.scoped(ctx, scope).Where("project_id = ?", projectID).First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get resource server for %s/%s: %w", scope, projectID, err)
+	}
+	return &row, nil
+}
+
+func (s *store) DeleteResourceServer(ctx context.Context, scope Scope, projectID string) error {
+	err := s.scoped(ctx, scope).Where("project_id = ?", projectID).
+		Delete(&IdPResourceServer{}).Error
+	if err != nil {
+		return fmt.Errorf("delete resource server for %s/%s: %w", scope, projectID, err)
+	}
+	return nil
+}
+
+func (s *store) ReplaceRoleBindings(ctx context.Context, scope Scope, projectID string, bindings []IdPRoleBinding) error {
+	now := time.Now().UTC()
+	wanted := make(map[[2]string]struct{}, len(bindings))
+	rows := make([]IdPRoleBinding, 0, len(bindings))
+	for _, b := range bindings {
+		b.OrgID, b.Environment, b.ProjectID = scope.OrgID, scope.Environment, projectID
+		b.UpdatedAt = now
+		// A payload that names the same (role, group) twice is one row, not a
+		// conflict inside a single statement — Postgres refuses an ON CONFLICT
+		// batch that touches one row twice, and the caller expanding a design
+		// has no reason to notice a duplicate assignTo entry.
+		if _, seen := wanted[b.key()]; seen {
+			continue
+		}
+		wanted[b.key()] = struct{}{}
+		rows = append(rows, b)
+	}
+
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		project := func() *gorm.DB {
+			return tx.Where("org_id = ? AND environment = ? AND project_id = ?",
+				scope.OrgID, scope.Environment, projectID)
+		}
+
+		// Converge, rather than clear-and-insert: read what is there, delete only
+		// what the set no longer names, and let the upsert below leave the rest
+		// (created_at above all) untouched.
+		var existing []IdPRoleBinding
+		if err := project().Find(&existing).Error; err != nil {
+			return fmt.Errorf("read role bindings for %s/%s: %w", scope, projectID, err)
+		}
+		for _, old := range existing {
+			if _, keep := wanted[old.key()]; keep {
+				continue
+			}
+			err := project().Where("role = ? AND group_name = ?", old.Role, old.GroupName).
+				Delete(&IdPRoleBinding{}).Error
+			if err != nil {
+				return fmt.Errorf("drop role binding %s/%s %q->%q: %w",
+					scope, projectID, old.Role, old.GroupName, err)
+			}
+		}
+
+		if len(rows) == 0 {
+			return nil
+		}
+		err := tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{
+				{Name: "org_id"}, {Name: "environment"},
+				{Name: "project_id"}, {Name: "role"}, {Name: "group_name"},
+			},
+			DoUpdates: clause.AssignmentColumns([]string{"directory_role_id", "updated_at"}),
+		}).Create(&rows).Error
+		if err != nil {
+			return fmt.Errorf("write role bindings for %s/%s: %w", scope, projectID, err)
+		}
+		return nil
+	})
+}
+
+func (s *store) ListRoleBindings(ctx context.Context, scope Scope, projectID string) ([]IdPRoleBinding, error) {
+	var rows []IdPRoleBinding
+	err := s.scoped(ctx, scope).Where("project_id = ?", projectID).
+		Order("role, group_name").Find(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("list role bindings for %s/%s: %w", scope, projectID, err)
+	}
+	return rows, nil
+}
+
+func (s *store) CountProjectsBindingGroup(ctx context.Context, scope Scope, groupName string) (int, error) {
+	// The empty name is the "assigned to nobody" marker rather than a group, so
+	// it is answered without a query: counting it would report every project
+	// that has a self-service role as a member of a group that does not exist.
+	if groupName == "" {
+		return 0, nil
+	}
+	var count int64
+	err := s.scoped(ctx, scope).Model(&IdPRoleBinding{}).
+		Where("lower(group_name) = lower(?)", groupName).
+		Distinct("project_id").Count(&count).Error
+	if err != nil {
+		return 0, fmt.Errorf("count projects binding group %q on %s: %w", groupName, scope, err)
+	}
+	return int(count), nil
+}
+
+func (s *store) CountProjectsBindingGroups(ctx context.Context, scope Scope) (map[string]int, error) {
+	var rows []struct {
+		GroupName string
+		Projects  int
+	}
+	// Keyed by the LOWERCASED name, because that is the only key two spellings
+	// of one group agree on — the same fold CountProjectsBindingGroup applies to
+	// its argument. The empty name is excluded for the same reason it is
+	// answered without a query there: it marks "assigned to nobody".
+	err := s.scoped(ctx, scope).Model(&IdPRoleBinding{}).
+		Select("lower(group_name) AS group_name, COUNT(DISTINCT project_id) AS projects").
+		Where("group_name <> ''").
+		Group("lower(group_name)").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("count projects binding groups on %s: %w", scope, err)
+	}
+	out := make(map[string]int, len(rows))
+	for _, row := range rows {
+		out[row.GroupName] = row.Projects
+	}
+	return out, nil
+}
+
+func (s *store) DeleteRoleBindings(ctx context.Context, scope Scope, projectID string) error {
+	err := s.scoped(ctx, scope).Where("project_id = ?", projectID).
+		Delete(&IdPRoleBinding{}).Error
+	if err != nil {
+		return fmt.Errorf("delete role bindings for %s/%s: %w", scope, projectID, err)
+	}
+	return nil
 }
 
 // seal encrypts a password for storage. An empty password seals to empty, which

@@ -25,8 +25,21 @@ import (
 type ThunderApplicationSpec struct {
 	// DisplayName shown in the Thunder console. Defaults to the CR name.
 	DisplayName string `json:"displayName,omitempty"`
-	// Scopes is the space-separated OIDC scope set (e.g. "openid profile email group ou").
+	// Scopes is the space-separated scope set this client is expected to request
+	// — the OIDC scopes plus the project's API permission handles. The operator
+	// splits it and writes it to the application's
+	// inboundAuthConfig[oauth2].config.scopes (a JSON array on the wire).
+	//
+	// It is a truthful RECORD, not a gate: ThunderID 1.0.0 stores the list and
+	// never enforces it (spike P1 §6). What narrows a token is group → role →
+	// permissions, intersected with the resource server the request names.
 	Scopes string `json:"scopes,omitempty"`
+	// ValidityPeriod is the ACCESS token lifetime in seconds. Empty/zero leaves
+	// the operator's 24h default, which is what every app wants; a short value
+	// exists so a fixture app can exercise the silent renew in minutes instead
+	// of a day (spike P6 used 300).
+	// +kubebuilder:validation:Minimum=0
+	ValidityPeriod int `json:"validityPeriod,omitempty"`
 	// RedirectURIs is a comma-separated list of allowed OAuth redirect URIs.
 	// Platform-managed: aep-api patches it via binding environmentConfigs once
 	// the consuming SPA's public URL resolves. May be empty at creation.

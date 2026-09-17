@@ -1,0 +1,7 @@
+{
+  // Separate from tsconfig.json (used for typecheck + vitest, which DO need to
+  // see test files) so `pnpm build`'s dist/ never contains compiled test files —
+  // mirrors packages/ui/design-view/tsconfig.build.json.
+  "extends": "./tsconfig.json",
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test-setup.ts"]
+}

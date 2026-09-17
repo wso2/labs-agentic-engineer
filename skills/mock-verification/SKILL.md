@@ -1,6 +1,6 @@
 ---
 name: mock-verification
-description: Smoke-walk a `web-application` in a real browser once it builds clean — stand it up in mock mode, walk every flow its wireframes draw, fix each failure where you find it, post progress item by item. Required for every change to a webapp component. Judging a DEPLOYED system is `aep-validation`'s job instead.
+description: "Smoke-walk a `web-application` in a real browser once it builds clean — stand it up in mock mode, walk every flow its wireframes draw, fix each failure where you find it, post progress item by item. Required for every change to a webapp component. Judging a DEPLOYED system is `aep-validation`'s job instead."
 metadata:
   aep:
     kind: platform
@@ -49,9 +49,34 @@ smoke.
 
 ### Once per app
 
-- **Roles** (`mock/roles.ts` exists): each flow's entry screen under its own
-  role, and once under a role the DSL gives no flow there. Both directions are
-  defects.
+- **Roles** (`mock/authz/roles.gen.ts` exists): each flow's entry screen under its own
+  role (`?role=<name>`), and once under a role the DSL gives no flow there.
+  Both directions are defects. Then three more, which the scope model makes
+  walkable and which no build can see:
+  - **Every role, and the no-role visitor.** Walk `?role=<name>` for each role
+    in `mock/authz/roles.gen.ts`, then `?role=` (empty — signed in, holding nothing).
+    The empty one must give **`NoAccess` replacing the shell**, naming the
+    groups to ask to be added to. A shell with an empty nav around it is a
+    defect; so is being let into a screen.
+  - **Forbidden, by hand.** Open one screen a role must NOT reach, by URL,
+    under that role. Expect that screen's **`Forbidden` state INSIDE the app
+    shell** — the rail the role can use still there — naming the role that
+    would unlock it. Never a redirect to sign-in, never a blank page, never the
+    screen itself.
+  - **The mock must have refused something.** None of this means anything
+    unless the mock's gateway layer is actually enforcing. It reads the handles
+    out of `openapi.yaml`, so they cannot be wrong — but it can be OFF, and an
+    app where it is off is green everywhere and proves nothing. Two checks, and
+    both are cheap: the dev server prints how many operations it enforces and
+    from which contracts at startup, and one refusal shows in
+    `agent-browser network requests` as a bare **401** with the reason on the
+    console (`[mock gateway] 401 GET /claims — …`). See one before you trust
+    the rest.
+
+  A screen a role is *meant* to reach but cannot, because the design does not
+  grant it the handle the operation declares, is **open**, naming the role, the
+  screen and the handle. It is a design defect, not a code one: do not widen a
+  mock handler or a route guard to make it pass.
 - **Session** (an auth dependency): `?auth=out` on one entry screen runs the
   app's own guard and `signIn()` brings you back; then **Sign out** where the
   navbar draws it leaves the screen through `signOut()`. The mock signs the
@@ -60,6 +85,11 @@ smoke.
 - **Probes**: submit one form empty; open one detail route with an id that does
   not exist. The wireframe draws the happy path; these are the two states it
   implies.
+- **Deep entry**: load one nested route as a fresh page load in the address
+  bar, not by clicking into it. Clicking never leaves the first document, so
+  only this exercises the app booting at that URL — the path a bookmark, a
+  shared link and F5 all take. A blank page is the finding; `agent-browser
+  errors` names it.
 - **Console** (`agent-browser console`, read whole, once, before you stop): a
   page that renders and throws is broken for whoever touches it next, and the
   error text is the finding.
@@ -72,9 +102,11 @@ Every item ends in exactly one:
 - **fixed** — what was wrong; what you changed; what it does now, re-walked.
 - **open** — what happens, after three attempts.
 - **outside** — the truth lives outside the app: a computed total, a generated
-  checklist, a 403. The mock answers to `openapi.yaml`, so it proves the request
-  went out, never that the number is right; `aep-validation` judges that against
-  the deployed system.
+  checklist, what the real IdP grants a real account. The mock answers to
+  `openapi.yaml`, so it proves the request went out, never that the number is
+  right; `aep-validation` judges that against the deployed system. A **refusal
+  is not outside** — the mock's gateway layer answers it from the contract's own
+  handle, so `Forbidden` is something you walk and see.
 
 An unreachable screen is **open**, naming the navigation that failed, never
 **done** read off the source.
@@ -128,7 +160,7 @@ it and run `up` again.
 
 Before the browser opens, post the plan from the map alone: one numbered item
 per screen in each flow, in walking order under its role, then screens in no
-flow, then Roles (with `mock/roles.ts`), Session (with an auth dependency),
+flow, then Roles (with `mock/authz/roles.gen.ts`), Session (with an auth dependency),
 Probes, and Console. Posting it first puts your coverage in front of the
 person watching while there is still time to say a screen is missing.
 
@@ -185,6 +217,12 @@ in your reply.
   else. A handler bent until a screen passes hides the defect from the deployed
   system too. A `501` is a handler you never wrote: write it against the
   contract.
+- **Widen a scope to make a walk pass.** Not in `mock/authz/roles.gen.ts`, not in a route
+  guard, and not by adding a check to a handler that overrides the gateway
+  layer. Scope comparison is a whole-string match at the gateway, so a mock bent
+  to accept a sibling handle passes a walk the deployed system 401s. A role that
+  cannot reach its own screen is a **design defect**: post it open, naming the
+  role, the screen and the handle.
 - **Run `git`, commit, or open a pull request.** The record belongs to the agent
   that dispatched you. Progress, where your prompt says it goes, is the only
   writing you do outside the App Path.

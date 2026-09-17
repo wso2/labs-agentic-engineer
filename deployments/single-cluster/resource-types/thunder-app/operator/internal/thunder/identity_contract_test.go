@@ -100,7 +100,7 @@ func TestTokenClaimConfig_UsesTheSamePathsAsTheConsoleDocument(t *testing.T) {
 	// Build what this package sends, then read it back with the same accessors
 	// the read-back verification uses, so the test exercises the real paths
 	// rather than re-describing them.
-	cfg := map[string]any{"token": jsonRoundTrip(t, tokenClaimConfig())}
+	cfg := map[string]any{"token": jsonRoundTrip(t, tokenClaimConfig(0))}
 
 	if got := accessTokenAttributes(cfg); len(got) == 0 {
 		t.Error("tokenClaimConfig writes no access-token attributes at " +

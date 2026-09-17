@@ -23,26 +23,51 @@
  * planned-user helpers the panel needs to promise usernames. The panel does
  * the rendering; the design agent writes the document in chat.
  *
- * Incomplete JSON objects are empty, not a parse error. JSON is not streamed.
+ * The parse answers four states because the panel owes the reader four
+ * different sentences. A JSON object that parses but does not satisfy the
+ * schema is EMPTY, not a parse error — `{}` and a half-authored document read
+ * the same. Text that cannot parse YET, because the room is streaming it in a
+ * line at a time, is `unfinished`: it is a prefix, and the closing brace is on
+ * its way. Text that cannot parse at all is `invalid`. Both of the last two
+ * cost the reader the whole page, findings included, so the two are told apart
+ * here rather than shown as one error the reader cannot act on.
  *
  * The shape is `SecurityDesign` from `@aep/agent-stream` — the same definition
  * the design agent's write gate and the BFF's save gate validate against, so
  * the console cannot invent a fourth idea of what the file looks like.
  */
 
-import { securityDesignSchema, type SecurityDesign } from "@aep/agent-stream";
+import {
+  checkSecurityDesign,
+  PRD_PATH,
+  roleGrants,
+  securityDesignSchema,
+  type SecurityDesign,
+} from "@aep/agent-stream";
+
+import { DESIGN_CELL_PATH } from "./designTree";
 
 export type { SecurityDesign };
+
+/** The one authored security document, as the write gate addresses it. */
+const SECURITY_DESIGN_PATH = "specs/design/security.json";
 
 export type ParsedSecurity =
   | { kind: "ok"; doc: SecurityDesign }
   | { kind: "empty" }
+  /** Not JSON yet, but a prefix of something that could be — mid-stream. */
+  | { kind: "unfinished" }
   | { kind: "invalid"; message: string };
 
 /**
  * Parse the document text. Missing or blank content is `empty` (a rail concern);
  * a present but incomplete object (e.g. `{}`) is also `empty`, and the panel
  * explains that in words rather than showing a parse failure.
+ *
+ * A document that DECLARES a version this console cannot read is neither: a
+ * version-1 file is finished, it is just the previous schema, so it is
+ * `invalid` and carries the write gate's own migration sentence — the reader is
+ * told exactly what the design agent is told when it writes one.
  */
 export function parseSecurityDesign(
   text: string | null | undefined,
@@ -53,6 +78,7 @@ export function parseSecurityDesign(
   try {
     raw = JSON.parse(text);
   } catch (e) {
+    if (isJsonPrefix(text)) return { kind: "unfinished" };
     return {
       kind: "invalid",
       message: e instanceof Error ? e.message : String(e),
@@ -61,9 +87,55 @@ export function parseSecurityDesign(
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     return { kind: "empty" };
   }
+  if ("version" in raw && (raw as { version?: unknown }).version !== 3) {
+    const problem = checkSecurityDesign(SECURITY_DESIGN_PATH, text);
+    if (problem) {
+      return { kind: "invalid", message: unprefixed(problem.message) };
+    }
+  }
   const res = securityDesignSchema.safeParse(raw);
   if (!res.success) return { kind: "empty" };
   return { kind: "ok", doc: res.data };
+}
+
+/**
+ * Whether `text` is a PREFIX of a JSON document — one more keystroke could
+ * still make it parse — as opposed to a document that is simply wrong.
+ *
+ * Structural only, and deliberately so: an engine's parse message is not a
+ * contract, and the one fact that separates "the agent is still typing" from
+ * "this file is broken" is whether the text merely stops early. A string still
+ * open or a bracket still unclosed means it stops early; a closer that does not
+ * match its opener, or anything after the last one, is a mistake no amount of
+ * further typing repairs.
+ */
+function isJsonPrefix(text: string): boolean {
+  const open: string[] = [];
+  let inString = false;
+  let escaped = false;
+  for (const ch of text) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{" || ch === "[") open.push(ch);
+    else if (ch === "}" || ch === "]") {
+      if (open.pop() !== (ch === "}" ? "{" : "[")) return false;
+    }
+  }
+  return inString || open.length > 0;
+}
+
+/**
+ * The gate prefixes its messages with the path it checked; the panel already
+ * names the document it failed to read, so the prefix is dropped.
+ */
+function unprefixed(message: string): string {
+  const prefix = `${SECURITY_DESIGN_PATH}: `;
+  return message.startsWith(prefix) ? message.slice(prefix.length) : message;
 }
 
 /** Serialise a document back to the on-disk form: 2-space indent, trailing newline. */
@@ -71,7 +143,11 @@ export function serializeSecurityDesign(doc: SecurityDesign): string {
   return `${JSON.stringify(doc, null, 2)}\n`;
 }
 
-/** One test user as the panel shows it, including the ones the build will supply. */
+/**
+ * One test user as the panel shows it, under ONE of its roles. A v2 test user
+ * may hold several, so the same username appears once per role it holds — the
+ * panel lists users inside role cards, not the other way round.
+ */
 export interface PlannedUser {
   username: string;
   role: string;
@@ -81,7 +157,8 @@ export interface PlannedUser {
 
 /**
  * The complete set of test users this design will have after Build — the
- * authored ones, plus one generated name for every role the design gave none.
+ * authored ones, plus one generated name for every role that OWES a login and
+ * was given none (see `needsTestUser`).
  *
  * This is a LINE-FOR-LINE mirror of `securityspec.Plan` in the BFF, and it has
  * to be: the panel promises the user a username, and the build has to create
@@ -94,26 +171,68 @@ export interface PlannedUser {
  */
 export function planUsers(doc: SecurityDesign): PlannedUser[] {
   const taken = new Set(doc.testUsers.map((u) => u.username));
-  const byRole = new Map<string, typeof doc.testUsers>();
+  const byRole = new Map<string, string[]>();
   for (const u of doc.testUsers) {
-    const key = u.role.toLowerCase();
-    byRole.set(key, [...(byRole.get(key) ?? []), u]);
+    for (const roleName of u.roles) {
+      const key = roleName.toLowerCase();
+      byRole.set(key, [...(byRole.get(key) ?? []), u.username]);
+    }
   }
 
   const out: PlannedUser[] = [];
+  // The forEach index is the ordinal the collision suffix uses, so it counts
+  // DECLARED roles — including the ones that owe no login — exactly as the Go
+  // `for i, role := range doc.Roles` does.
   doc.roles.forEach((role, i) => {
     const authored = byRole.get(role.name.toLowerCase()) ?? [];
     if (authored.length > 0) {
-      for (const u of authored) {
-        out.push({ username: u.username, role: role.name, supplied: false });
+      for (const username of authored) {
+        out.push({ username, role: role.name, supplied: false });
       }
       return;
     }
+    if (!needsTestUser(role)) return;
     const name = supplyUsername(role.name, i, taken);
     taken.add(name);
     out.push({ username: name, role: role.name, supplied: true });
   });
   return out;
+}
+
+/** One role of the document, spelled out so the selectors below can name it. */
+export type SecurityRole = SecurityDesign["roles"][number];
+
+/** What a role is assigned TO. Absent in the document means `user`. */
+export type RoleKind = "user" | "service";
+
+/** How somebody comes to hold a role. Absent in the document means `admin`. */
+export type Enrolment = "admin" | "self-service";
+
+/**
+ * The role's kind with the default applied — `securityspec.Role.RoleKind`.
+ * Exported because the default lives in ONE place: a panel comparing
+ * `role.kind === "user"` would silently drop every role that omitted the field.
+ */
+export function roleKind(role: SecurityRole): RoleKind {
+  return role.kind ?? "user";
+}
+
+/** How somebody comes to hold the role — `securityspec.Role.EnrolmentKind`. */
+export function roleEnrolment(role: SecurityRole): Enrolment {
+  return role.enrolment ?? "admin";
+}
+
+/**
+ * Whether the build owes this role a login — `securityspec.Role.NeedsTestUser`
+ * in the BFF, with the same defaults applied.
+ *
+ * Only an admin-enrolment user role: a self-service role's accounts come from
+ * the application's own registration flow, and a service role's principal is an
+ * application, not a person. Promising either a `test-…` name would name an
+ * account the build never creates.
+ */
+export function needsTestUser(role: SecurityRole): boolean {
+  return roleKind(role) === "user" && roleEnrolment(role) === "admin";
 }
 
 /** The planned users for one role. */
@@ -162,4 +281,210 @@ export function roleSlug(name: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return s === "" ? "role" : s;
+}
+
+// ---------------------------------------------------------------------------
+// The Security page's matrix, derived
+// ---------------------------------------------------------------------------
+//
+// Rows are the permission catalog; columns are the roles; a cell is a grant.
+// Everything below is a pure fold over one parsed document, so the panel is a
+// renderer and the shape of the page is testable without React.
+
+/** One catalog action as a matrix row. */
+export interface MatrixRow {
+  /** The full catalog handle — `claims:read`. This is what a token carries. */
+  handle: string;
+  /** The resource half — `claims`. */
+  resource: string;
+  /** The action half — `read`. */
+  action: string;
+  /** The component that OWNS the resource, as `design.cell` names it. */
+  component: string;
+  /** The document's prose, or "" when it authored none (the schema forbids ""). */
+  description: string;
+  /**
+   * The roles that grant this handle, in DECLARATION order, service roles
+   * included — so a service column reads off the same row as a user column.
+   * Empty is the matrix's own "granted by nobody"; the build gate's
+   * `securityReferenceFindings` is what turns that into a warning sentence,
+   * because only the gate can see the sibling specs a handle might be used by.
+   */
+  grantedBy: string[];
+}
+
+/** One resource of the catalog, with its actions — a banded group of rows. */
+export interface MatrixResourceGroup {
+  /** The resource handle — `claims`. */
+  resource: string;
+  /** The component that owns it. */
+  component: string;
+  /** The document's prose, or "" when it authored none. */
+  description: string;
+  rows: MatrixRow[];
+}
+
+/** One role as a matrix column. */
+export interface MatrixColumn {
+  /** The role name, verbatim — the key `MatrixRow.grantedBy` holds. */
+  name: string;
+  kind: RoleKind;
+  enrolment: Enrolment;
+  /** The declaration itself, for the role card the column heads. */
+  role: SecurityRole;
+}
+
+/** The whole matrix: banded rows, the columns they are scored against. */
+export interface SecurityMatrix {
+  /** The catalog, grouped by resource, in declaration order. */
+  groups: MatrixResourceGroup[];
+  /**
+   * The user-kind roles, in declaration order — the matrix's columns. A
+   * self-service role is user-kind and IS a column; how somebody comes to hold
+   * it changes the role card, not what the role may do.
+   */
+  columns: MatrixColumn[];
+  /**
+   * The service-kind roles, in declaration order. Kept apart because they have
+   * no login and no group, so a role card renders them differently — the panel
+   * may still append them to the grid (the design's Vendor Portal picture
+   * does), which works because `MatrixRow.grantedBy` scores every role.
+   */
+  serviceColumns: MatrixColumn[];
+}
+
+/**
+ * Fold one document into the matrix the Security page draws.
+ *
+ * The catalog is projected straight through with no folding: a resource
+ * declared twice and an action repeated under one resource are refused by the
+ * write gate, where the author can still fix them, so nothing here has to
+ * reconcile a document that got past it.
+ *
+ * Two roles with the same name are refused there too, which is what lets the
+ * columns be keyed by the verbatim name. A document that somehow carried both
+ * would draw two identical columns and score them together — the gate's error
+ * is the fix, not a reconciliation here.
+ */
+export function securityMatrix(doc: SecurityDesign): SecurityMatrix {
+  // The shared fold, so "does this role hold that handle?" is answered the same
+  // way here, in the write gate and in the build gate.
+  const grants = roleGrants(doc);
+
+  const groups = doc.permissions.map((permission) => ({
+    resource: permission.resource,
+    component: permission.component,
+    description: permission.description ?? "",
+    rows: permission.actions.map((action) => {
+      const handle = `${permission.resource}:${action.handle}`;
+      return {
+        handle,
+        resource: permission.resource,
+        action: action.handle,
+        component: permission.component,
+        description: action.description ?? "",
+        grantedBy: doc.roles
+          .filter((role) => grants.get(role.name)?.has(handle) === true)
+          .map((role) => role.name),
+      };
+    }),
+  }));
+
+  const columns: MatrixColumn[] = [];
+  const serviceColumns: MatrixColumn[] = [];
+  for (const role of doc.roles) {
+    const kind = roleKind(role);
+    const column: MatrixColumn = {
+      name: role.name,
+      kind,
+      enrolment: roleEnrolment(role),
+      role,
+    };
+    (kind === "service" ? serviceColumns : columns).push(column);
+  }
+
+  return { groups, columns, serviceColumns };
+}
+
+/**
+ * Whether `column` grants `row` — the cell. A separate function rather than an
+ * `includes` at the call site so the panel never has to know that the score is
+ * kept on the row and keyed by the role's verbatim name.
+ */
+export function isGranted(row: MatrixRow, column: MatrixColumn): boolean {
+  return row.grantedBy.includes(column.name);
+}
+
+/**
+ * Whether this cell is the ONLY grant its role holds — the one mark the page
+ * must not let a click take away.
+ *
+ * The schema declares `grants` as `min(1)`, and `parseSecurityDesign` reports
+ * any schema failure as "empty or incomplete". So un-granting a role's last
+ * handle does not produce a document with a hole in it; it produces a document
+ * the page cannot read, replacing the matrix with an info box and removing the
+ * cell that could put the grant back. The rule is asked here, next to
+ * `isGranted`, so the matrix and `patchGrants` are answering the same question.
+ *
+ * It counts the role's AUTHORED grants, not the marks in the grid: a role may
+ * grant a handle the catalog does not declare, and the schema counts that one
+ * too.
+ */
+export function isLastGrant(row: MatrixRow, column: MatrixColumn): boolean {
+  return isGranted(row, column) && column.role.grants.length === 1;
+}
+
+/**
+ * The handles a role grants, as authored and in authored order.
+ *
+ * Nothing is widened: `X:read-all` implying `X:read` is a GATE rule, checked
+ * and reported against the authored list (and the gateway matches scopes
+ * exactly), so applying it silently here would draw a mark the token will not
+ * carry. An unknown role name reads as an empty list.
+ */
+export function grantsOf(doc: SecurityDesign, roleName: string): string[] {
+  const key = roleName.toLowerCase();
+  const role = doc.roles.find((r) => r.name.toLowerCase() === key);
+  return role ? [...role.grants] : [];
+}
+
+/** The roles granting `handle`, in declaration order, service roles included. */
+export function rolesGranting(doc: SecurityDesign, handle: string): string[] {
+  const grants = roleGrants(doc);
+  return doc.roles
+    .filter((role) => grants.get(role.name)?.has(handle) === true)
+    .map((role) => role.name);
+}
+
+/**
+ * The sibling spec files the referential cross-checks read for THIS document.
+ *
+ * `securityReferenceFindings` needs a `{ read(path) }` over the rest of the
+ * design, and which files that is depends on the document: `design.cell`
+ * always, and the OpenAPI contract of every component that OWNS a resource —
+ * that is the spec a catalog handle can be judged against, because a handle is
+ * used by being named on an operation. No wireframe is read: a screen's gate is
+ * the scope of the operation the screen loads (ADR-0033), so nothing about
+ * screens is authored in this document or checked against the DSL. Deriving the
+ * list here rather than inside the hook keeps "which files does this document
+ * depend on?" a question answerable without React, and testable.
+ *
+ * Both OpenAPI spellings are listed because the rules try `.yaml` then `.yml`;
+ * a caller resolves whichever exists and answers `undefined` for the other.
+ * Paths come back deduplicated, in a stable order.
+ *
+ * The PRD rides along although no field of this document names it: the page
+ * shows the actors a reader compares the roles against.
+ */
+export function referencePaths(doc: SecurityDesign): string[] {
+  const paths = new Set<string>([DESIGN_CELL_PATH, PRD_PATH]);
+  for (const component of new Set(doc.permissions.map((p) => p.component))) {
+    paths.add(`${componentDir(component)}/openapi.yaml`);
+    paths.add(`${componentDir(component)}/openapi.yml`);
+  }
+  return [...paths];
+}
+
+function componentDir(component: string): string {
+  return `specs/design/components/${component}`;
 }

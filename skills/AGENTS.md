@@ -39,9 +39,11 @@ An absent kind means `org`, which is a real decision, not a default to lean on:
   (`start`, `amend`, `settle`, `grilling`, `prd-contract`, `design`,
   `cell-design`, `architecture`, `security-design`, `openapi-conventions`,
   `wireframes`, `validation-criteria`, `task-planning`), the `console`
-  narration policy, and the coding run's own workflow skills (`aep`,
+  narration policy, the coding run's own workflow skills (`aep`,
   `aep-validation`, `mock-verification`) and the browser CLIs they drive
-  (`playwright-cli`, `agent-browser`).
+  (`playwright-cli`, `agent-browser`), and one reference skill both sides
+  read: `authorization-model`, the platform's authorization invariants stated
+  once (ADR-0030 to ADR-0033) so no design or stack skill restates them.
 - **`org`** — the org-visible stack skills (`go`, `ballerina`, `react-webapp`,
   `oxygen-ui-design-system`, `astryx-design-system`, `api-management`,
   `thunder-authentication`). Editable and deletable by an org.

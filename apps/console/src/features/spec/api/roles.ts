@@ -37,15 +37,62 @@ import { apiErrorMessage } from "../../../api/errors";
 import type { components } from "../../../generated/aep-api";
 
 export type ProjectRoleState = components["schemas"]["ProjectRoleState"];
+/** One role THIS project owns — a different object from the shared org group. */
+export type ProjectRole = components["schemas"]["ProjectRole"];
+/** One group a project role is bound to, with how many projects share it. */
+export type ProjectRoleAssignment =
+  components["schemas"]["ProjectRoleAssignment"];
 export type ProjectTestUserState =
   components["schemas"]["ProjectTestUserState"];
 export type TestUserPassword = components["schemas"]["TestUserPassword"];
 
-/** The panel's live state, with the nullable wire arrays normalised away. */
+/**
+ * The panel's live state, with the nullable wire arrays normalised away.
+ *
+ * The two role lists stay TWO lists, exactly as the contract keeps them:
+ * `roles` is the whole shared org-group catalog (so the panel can say which
+ * existing group a design reuses) and `projectRoles` is what this project owns
+ * and its builds converge. Folding them would lose the ownership difference the
+ * page renders.
+ */
 export interface ProjectRolesLiveState {
   directoryAvailable: boolean;
   roles: ProjectRoleState[];
+  /**
+   * Derived from the platform's own records, so these survive a directory
+   * outage with everything but their `scopes` — which then read empty meaning
+   * "unknown", never "grants nothing".
+   */
+  projectRoles: ProjectRole[];
   testUsers: ProjectTestUserState[];
+  /**
+   * The resource server this project's grants are on. A fact about the
+   * PROJECT, so the platform answers it before the first Build has created any
+   * role; absent only when the panel could not be scoped at all.
+   */
+  resourceServer?: string | undefined;
+}
+
+/**
+ * The resource server this project's roles are granted on — the access token's
+ * `aud`, the audience the gateway checks, and the `resource` a scoped token is
+ * asked for.
+ *
+ * The view's own answer, which the platform derives from (org, project) and can
+ * therefore give before any role exists. A project's roles all carry the same
+ * string, so a state assembled from roles alone still answers. Nothing is
+ * guessed here: without either, the readers say nothing rather than print a URL
+ * the gateway would not accept. Asked in one place because two pages show it —
+ * the Security page's header line and the API view's.
+ */
+export function resourceServerOf(
+  live: ProjectRolesLiveState | undefined,
+): string | undefined {
+  return (
+    live?.resourceServer ||
+    live?.projectRoles.find((role) => role.resourceServer !== "")
+      ?.resourceServer
+  );
 }
 
 export const rolesKeys = {
@@ -71,7 +118,9 @@ export function useProjectRoles(projectName: string, enabled: boolean) {
       return {
         directoryAvailable: data?.directoryAvailable ?? false,
         roles: data?.roles ?? [],
+        projectRoles: data?.projectRoles ?? [],
         testUsers: data?.testUsers ?? [],
+        resourceServer: data?.resourceServer,
       };
     },
     // Short, not Infinity: a Build in another tab changes this, and the panel

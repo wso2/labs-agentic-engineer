@@ -33,6 +33,8 @@ self-correctable error instead, so the model fixes it in the same turn:
 | `wireframes.dsl` | flow-dialect syntax (invalid lines would be silently dropped) | `INVALID_DSL` |
 | `components/*/openapi.yaml` | OpenAPI 3.x, has paths, has operations | `INVALID_OPENAPI` |
 | `components/*/design.json` | every dependency names a node `design.cell` declares | `UNKNOWN_DEPENDENCY` |
+| `security.json` | `checkSecurityDesign` (v3 schema + the referential rules: a grant names a catalog handle, a role is not also a group, a test user names a declared role) | `INVALID_JSON`, `SCHEMA_VIOLATION` |
+| `dependencies/*/dependency.json` | `checkDependencyDesign` (schema + the user's authorization record rides through) | `INVALID_JSON`, `SCHEMA_VIOLATION` |
 | `domain-model.md` | exactly one mermaid `erDiagram`, in the prescribed subset | `INVALID_DIAGRAM` |
 | `flows/*.md` | exactly one mermaid `sequenceDiagram`; every participant resolves — by its id or by its `as` alias — to a node `design.cell` declares or an actor the PRD names | `INVALID_DIAGRAM`, `UNKNOWN_PARTICIPANT` |
 

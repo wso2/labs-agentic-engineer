@@ -101,6 +101,15 @@ func NewRemote(t *testing.T, opts ...Option) *Remote {
 		t.Fatalf("gittest: init bare repo: %v", err)
 	}
 	r := &Remote{dir: dir}
+	// Every push into this repo makes receive-pack run `git gc --auto`, which
+	// with gc.autoDetach (on by default) forks a process that outlives the
+	// push. A test that pushes hard enough finishes while that child is still
+	// writing under objects/, and t.TempDir's RemoveAll then fails the test
+	// with "directory not empty" — after the body passed. A fixture repo lives
+	// for one test and never needs maintenance, so switch both off.
+	for _, kv := range [][2]string{{"gc.auto", "0"}, {"maintenance.auto", "false"}} {
+		r.mustExec(t, nil, nil, "config", kv[0], kv[1])
+	}
 	msg := cfg.seedMsg
 	if msg == "" {
 		msg = "initial commit"

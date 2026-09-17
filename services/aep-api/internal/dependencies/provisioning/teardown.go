@@ -51,14 +51,14 @@ func (s *Service) DeprovisionProject(ctx context.Context, orgID, projectID strin
 			case spec.DependencyKindExternal:
 				seen[key] = true
 				if s.extProv != nil {
-					if derr := s.extProv.Deprovision(ctx, orgID, projectID, d.Name, []string{defaultEnv}); derr != nil {
+					if derr := s.extProv.Deprovision(ctx, orgID, projectID, d.Name, []string{defaultEnv()}); derr != nil {
 						errs = append(errs, fmt.Errorf("deprovision external %q: %w", d.Name, derr))
 					}
 				}
 			case spec.DependencyKindPlatformResource:
 				seen[key] = true
 				if s.platProv != nil {
-					if derr := s.platProv.Deprovision(ctx, orgID, projectID, d.Name, []string{defaultEnv}); derr != nil {
+					if derr := s.platProv.Deprovision(ctx, orgID, projectID, d.Name, []string{defaultEnv()}); derr != nil {
 						errs = append(errs, fmt.Errorf("deprovision platform-resource %q: %w", d.Name, derr))
 					}
 				}

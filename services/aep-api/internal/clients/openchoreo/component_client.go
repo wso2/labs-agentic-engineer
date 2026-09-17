@@ -554,11 +554,11 @@ func (c *componentClient) CreateComponent(ctx context.Context, orgName, projectN
 	// zone does not read. Catch it here, where the cause is still known.
 	if req != nil && req.Type == CodingAgentComponentTypeRef {
 		scoped := ScopedComponentName(projectName, req.Name)
-		if len(scoped) > CodingAgentComponentNameBudget {
+		if len(scoped) > CodingAgentComponentNameBudget() {
 			return nil, fmt.Errorf(
 				"create component: coding-agent name %q is %d chars after project scoping, over the %d-char budget "+
 					"(OpenChoreo appends -%s-<hash8> into a pod label, so this Component would be accepted and then never schedule a runner)",
-				scoped, len(scoped), CodingAgentComponentNameBudget, DevEnvironmentName)
+				scoped, len(scoped), CodingAgentComponentNameBudget(), DevEnvironmentName)
 		}
 	}
 

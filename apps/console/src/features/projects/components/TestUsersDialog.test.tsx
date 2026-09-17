@@ -21,7 +21,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PublishedTestUser } from "../lib/publishedTestUsers";
-import { MASK, TestUsersDialog } from "./TestUsersDialog";
+import { MASK, TestUsersDialog, UNKNOWN_SCOPES } from "./TestUsersDialog";
 
 // Reveal/Copy read ae:build through useHasPermission — a single toggle,
 // defaulting to held so every existing test below (written before either
@@ -39,8 +39,16 @@ afterEach(() => {
 const MOCK_PASSWORD = "mocknotreal";
 
 const TWO: PublishedTestUser[] = [
-  { username: "test-viewer", role: "Viewer", coldStart: true },
-  { username: "test-compliance-admin", role: "Compliance Admin", coldStart: false },
+  {
+    username: "test-viewer",
+    roles: ["Viewer"],
+    scopes: ["claims:read"],
+  },
+  {
+    username: "test-compliance-admin",
+    roles: ["Compliance Admin"],
+    scopes: ["claims:read", "claims:approve", "reports:read"],
+  },
 ];
 
 function renderDialog(
@@ -75,19 +83,83 @@ function rowOf(username: string): HTMLElement {
 }
 
 describe("TestUsersDialog", () => {
-  it("gives every account its role, and marks the cold-start one", () => {
+  it("gives every account its roles", () => {
     renderDialog();
 
     // The role used to live in a tooltip on the username. It is a column now,
     // which is the whole reason the table earns a dialog.
     expect(within(rowOf("test-viewer")).getByText("Viewer")).toBeInTheDocument();
-    expect(within(rowOf("test-viewer")).getByText("Cold start")).toBeInTheDocument();
     expect(
       within(rowOf("test-compliance-admin")).getByText("Compliance Admin"),
     ).toBeInTheDocument();
+  });
+
+  // v2 lets one login hold several roles: the one it was created for, plus
+  // every other role of this project whose group it is a member of.
+  it("shows every role a login holds, not just the first", () => {
+    renderDialog({
+      logins: [
+        {
+          username: "test-approver",
+          roles: ["Approver", "Employee"],
+          scopes: ["claims:approve", "claims:read"],
+        },
+      ],
+    });
+
+    const row = within(rowOf("test-approver"));
+    expect(row.getByText("Approver")).toBeInTheDocument();
+    expect(row.getByText("Employee")).toBeInTheDocument();
+  });
+
+  it("shows the scope union the login's token will carry", () => {
+    renderDialog();
+
+    const row = within(rowOf("test-compliance-admin"));
+    for (const scope of ["claims:read", "claims:approve", "reports:read"]) {
+      expect(row.getByText(scope)).toBeInTheDocument();
+    }
+    // Each login's own union, not the table's: the other row holds one handle.
     expect(
-      within(rowOf("test-compliance-admin")).queryByText("Cold start"),
+      within(rowOf("test-viewer")).queryByText("reports:read"),
     ).not.toBeInTheDocument();
+  });
+
+  // The live roles read answers with no scopes when the identity provider
+  // could not be asked. That is "unknown", and a row must still render.
+  it("renders a login whose roles the live response does not describe", () => {
+    renderDialog({
+      logins: [
+        { username: "test-ghost", roles: ["Retired Role"], scopes: [] },
+      ],
+    });
+
+    const row = within(rowOf("test-ghost"));
+    expect(row.getByText("Retired Role")).toBeInTheDocument();
+    expect(row.getByText(UNKNOWN_SCOPES)).toBeInTheDocument();
+  });
+
+  it("renders a login holding no role at all", () => {
+    renderDialog({
+      logins: [{ username: "test-orphan", roles: [], scopes: [] }],
+    });
+
+    expect(rowOf("test-orphan")).toBeInTheDocument();
+  });
+
+  // v2 has no cold-start role — the account served when a caller asked for
+  // credentials without naming one. The wire field outlives the concept for a
+  // release, so the table must not show a column that is now always "no".
+  it("carries the ticket's columns and no cold-start column", () => {
+    renderDialog();
+
+    expect(screen.queryByText("Cold start")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("columnheader").map((c) => c.textContent)).toEqual([
+      "Username",
+      "Password",
+      "Roles",
+      "Scopes",
+    ]);
   });
 
   it("masks every password, with both controls, before any reveal", () => {

@@ -1,6 +1,6 @@
 ---
 name: aep-validation
-description: Load when working a VALIDATION task dispatched by WSO2 Labs Agentic Engineer (the prompt says "validation task"; the issue is labelled `aep` + `validation`). The cwd is a clone of the project's repo on its default branch. You validate the deployed system against specs/validation/validation-criteria.json by authoring and running Playwright e2e tests, then open a PR containing the tests plus a validation report. This workflow REPLACES the implementation workflow in the `aep` skill; the auth model, git/gh conventions, and deny-list there still apply. The phase-specific discipline lives in this skill's `references/authoring.md` (explore + write specs) and `references/healing.md` (repair brittle specs); the `playwright-cli` companion skill carries the CLI mechanics.
+description: "Load when working a VALIDATION task dispatched by WSO2 Labs Agentic Engineer (the prompt says \"validation task\"; the issue is labelled `aep` + `validation`). The cwd is a clone of the project's repo on its default branch. You validate the deployed system against specs/validation/validation-criteria.json by authoring and running Playwright e2e tests, then open a PR containing the tests plus a validation report. This workflow REPLACES the implementation workflow in the `aep` skill; the auth model, git/gh conventions, and deny-list there still apply. The phase-specific discipline lives in this skill's `references/authoring.md` (explore + write specs) and `references/healing.md` (repair brittle specs); the `playwright-cli` companion skill carries the CLI mechanics."
 metadata:
   aep:
     kind: platform
@@ -145,20 +145,66 @@ yourself; the URL is not something you can work out from inside the cluster.
   marker — the LAST such comment if the ticket carries more than one, since an
   earlier one is a superseded build's. One row per account:
 
-  | Username | Password | Role | Cold start |
+  | Username | Password | Roles | Scopes |
   |---|---|---|---|
-  | `test-trainer` | `tdyjkfmq5t` | Trainer | no |
-  | `test-team-member` | `n3pe5cw8s4` | Team Member | yes |
+  | `test-trainer` | `tdyjkfmq5t` | Trainer | workouts:read workouts:write |
+  | `test-team-member` | `n3pe5cw8s4` | Team Member | workouts:read |
 
-  Read the table, never the prose around it — a human may rewrite that at any
-  time, and the marker is what the platform guarantees.
+  `Roles` is comma-separated (an account may hold several) and `Scopes` is
+  space-separated — the same spelling the access token's own `scope` claim
+  uses. The scopes are the union of what that account's roles grant: they are
+  exactly what this login may do, so a criterion needing a permission that is
+  not in the row will fail no matter how the app behaves.
 
-  **Which row.** Match the criterion's role to the `Role` column and use that
-  row. For a criterion that needs *a* signed-in user but names no role, use
-  the row with **Cold start: yes** — that is the role a person holds before
-  anyone grants them one. Do not reuse one role's login to exercise another
-  role's screens; that is the difference between judging a permission and
-  judging a page.
+  Under the table is a short trailer. It names the **issuer** to sign in at
+  (one identity provider per environment; the same username on another one is
+  a different account), the **resource** — the project's resource-server
+  identifier, which a token request must send as its `resource` parameter, and
+  which is the audience the gateway checks — and one rule: *a new grant needs
+  a fresh sign-in; a refresh narrows a token but never widens it*. If a call
+  401s for a scope the row lists, sign in again rather than refreshing. Signing
+  in through the app carries the `resource` for you; a token you request
+  yourself must send `resource=<that value>` on the authorize call, or the
+  audience is wrong and every API call 401s while sign-in itself looks perfectly
+  healthy.
+
+  Read the table and the trailer, never the prose around them — a human may
+  rewrite that at any time, and the marker is what the platform guarantees.
+
+  **Which row.** Match the criterion's role to the `Roles` column and use that
+  row; when two rows both hold the role, take the one whose `Scopes` are
+  narrower. For a criterion that needs *a* signed-in user but names no role,
+  use the least-privileged row the criterion implies. Do not reuse one role's
+  login to exercise another role's screens; that is the difference between
+  judging a permission and judging a page.
+
+  **Judge the grants BEFORE you sign in.** Take each row's `Scopes` and walk the
+  criteria first: which criterion can this login reach, and which one does it
+  not hold the permission for? A criterion whose operation needs a handle the
+  row does not list cannot pass no matter how the app behaves — that is a design
+  finding, decided from the table, not something to discover by driving a
+  browser at it.
+
+  **What a refusal looks like, and what you may conclude from it.** When a login
+  lacks the permission an operation requires, the **gateway** — which is what
+  the deployed app talks to — answers **401**, and it answers the same 401, with
+  the same body and no `WWW-Authenticate`, for every other token failure too (no
+  token, expired, wrong audience). No generated service answers 403; a row that
+  is not the caller's is a 404. So a 401 seen through the app does not tell
+  you WHY, and you must never report one as "missing permission" on its own.
+  Assert the user-visible outcome the criterion states — the Forbidden view
+  (inside the app's own shell, with the navigation the account CAN use still
+  there), the action that is not offered, the row that is not listed — and name
+  the scope you read from the table as the reason. An account that unlocks
+  nothing at all sees a "no access" page **instead of** the shell, naming the
+  groups to ask for; a rail with no items in it is a defect, not that page.
+
+  **Sign in FRESH after any grant change.** A refresh narrows but never widens:
+  a permission removed from a role disappears at the next silent renew, while a
+  permission ADDED never appears until a full new sign-in. So never carry a
+  stored session (`storageState`, a context left open) across a rebuild or a
+  roles change — sign the account in again, or you are judging the app on a
+  token that predates the grant.
 
   Export the pair in-session, per role, as you need it:
 
@@ -187,8 +233,8 @@ yourself; the URL is not something you can work out from inside the cluster.
   | A ticket, but no login table | Every role the design declares is one the platform does not own, so it could provision no usable account | A provisioning problem — say so |
   | The ticket is OPEN and carries a failure comment | Provisioning failed; quote the cause | A provisioning problem — say so |
   | A table, but no row for the role you need | That account was refused or could not be enrolled — the ticket's other comment says which | A provisioning problem — name the role |
+  | A row for the role, but the scope the criterion needs is not in its `Scopes` | The design does not grant that role the permission the criterion assumes | A design finding — name the role and the handle |
   | A row whose password says *unavailable* | The platform holds the account but could not publish its password | A platform problem — name the account |
-  | No row has **Cold start: yes** | The design says a caller with no role reaches nothing. Use the least-privileged role the criterion implies; if it implies none, the criterion is unreachable by design | Expected; explain the reasoning |
 - **Local dev servers (experimental runs only):** if the fetched
   endpoints are `localhost` dev servers you must start (the local
   harness), this overrides the base "never start servers" rule: start

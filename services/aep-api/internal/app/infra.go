@@ -51,6 +51,10 @@ type Infra struct {
 	// from model_rates after migration. Assemble threads it into the turn +
 	// execution repositories; nil ⇒ no stamping (cost_usd stays null).
 	RateStamper *modelcost.Stamper
+	// WriteTarget is the OpenChoreo environment this process applies into,
+	// resolved from DeploymentPipeline/default's source. Required: Assemble
+	// returns an error when it is empty. Fake sets "default".
+	WriteTarget string
 }
 
 // Resolve performs every boot side effect and returns the resolved Infra: it

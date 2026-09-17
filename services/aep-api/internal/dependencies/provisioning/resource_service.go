@@ -20,8 +20,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/dependencies"
+	"github.com/wso2/aep/aep-api/internal/identity"
 	"github.com/wso2/aep/aep-api/internal/platform/securityspec"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
@@ -69,7 +71,7 @@ func (s *Service) provisionResource(ctx context.Context, orgID, projectID, depNa
 	for k, v := range params {
 		merged[k] = v
 	}
-	merged, err = s.overlayThunderParams(ctx, orgID, projectID, tag, dep.ResourceType, merged)
+	merged, err = s.overlayThunderParams(ctx, orgID, projectID, tag, dep.ResourceType, depName, merged)
 	if err != nil {
 		return err
 	}
@@ -104,7 +106,7 @@ func (s *Service) provisionResource(ctx context.Context, orgID, projectID, depNa
 	// readiness watcher observes Ready and finishes it. Without a start the
 	// watcher cannot pick it up, so a start failure is a real (logged) problem.
 	if execID != "" {
-		ref := result.BindingByEnv[defaultEnv]
+		ref := result.BindingByEnv[defaultEnv()]
 		if ref == "" {
 			ref = result.ResourceName
 		}
@@ -115,16 +117,45 @@ func (s *Service) provisionResource(ctx context.Context, orgID, projectID, depNa
 	return nil
 }
 
-// overlayThunderParams copies authored thunder onto CRT parameters when the
-// resource type carries the end-user-auth marker. It never keys on a type name.
+// overlayThunderParams derives the sign-in client's CRT parameters from the
+// project's own facts when the resource type carries the end-user-auth marker.
+// It never keys on a type name.
 //
-// Before overlay it deletes `scopes` so design.json / request parameters.scopes
-// cannot reach the provisioner. displayName is always set from thunder.name;
-// scopes is set only when thunder.scopes is non-empty. thunder.type is not a
-// CRT parameter and is never copied. Nil catalog or reader, a type that is
-// not end-user-auth, or an absent security.json: no overlay (and no invented
-// defaults). A present-but-unparseable file fails provision.
-func (s *Service) overlayThunderParams(ctx context.Context, orgID, projectID, tag, resourceType string, merged map[string]any) (map[string]any, error) {
+// Every parameter here is DERIVED, never authored: security.json v2 removed the
+// `thunder` block because none of these values was ever a design decision.
+//
+//   - `displayName` is what a person reads on the login screen, so it is the
+//     project's display name — suffixed `· <web app>` when the project has more
+//     than one web application and this client belongs to one of them, which is
+//     the only case where the project name alone would be ambiguous. An
+//     API-only project still gets a client (the Test tab and the validation
+//     agent sign in with it), which is why the name cannot come from a web app.
+//   - `scopes` is the OIDC scopes every access token carries plus every catalog
+//     handle, space-joined. It is a truthful RECORD of what the client is
+//     expected to ask for, not a gate: ThunderID 1.0.0 stores the list and
+//     never enforces it, silently dropping an unknown or ungranted scope, so
+//     the write gate is what keeps a stale handle out.
+//   - `resource` is the project's resource-server identifier — the audience its
+//     API tokens carry. The binding emits it so the generated SPA can read
+//     `<DEP>_RESOURCE` from `window._env_` and send it on /authorize.
+//
+// `resource` is DERIVED (identity.ResourceServerIdentifier), not read from the
+// `idp_resource_servers` row, and that is the design, not a shortcut:
+// provisioning can run before the roles gate has created the row, and the
+// identifier is a pure function of (org, project) anyway. Reading the row would
+// make the SPA's audience depend on which of two independent flows happened to
+// run first.
+//
+// `validityPeriod` is deliberately NOT overlaid: the CRT's 86400 default is
+// what every project wants, and there is no design surface that would say
+// otherwise. A short-lived fixture app is made by patching its
+// ThunderApplication CR directly.
+//
+// Before the overlay it deletes `scopes` so a design.json or request parameter
+// cannot reach the provisioner. A nil catalog or reader, a type that is not
+// end-user-auth, or an absent security.json: no overlay, and no invented
+// defaults. A present-but-unparseable file fails provision.
+func (s *Service) overlayThunderParams(ctx context.Context, orgID, projectID, tag, resourceType, depName string, merged map[string]any) (map[string]any, error) {
 	if s.markers == nil || s.securityJSON == nil {
 		return merged, nil
 	}
@@ -136,6 +167,7 @@ func (s *Service) overlayThunderParams(ctx context.Context, orgID, projectID, ta
 		return merged, nil
 	}
 	delete(merged, "scopes")
+	delete(merged, "resource")
 	raw, err := s.securityJSON.ReadSecurityJSON(ctx, orgID, projectID, tag)
 	if err != nil {
 		return nil, fmt.Errorf("provisioning: read security.json: %w", err)
@@ -147,9 +179,50 @@ func (s *Service) overlayThunderParams(ctx context.Context, orgID, projectID, ta
 	if err != nil {
 		return nil, fmt.Errorf("provisioning: parse security.json: %w", err)
 	}
-	merged["displayName"] = doc.Thunder.Name
-	if doc.Thunder.Scopes != "" {
-		merged["scopes"] = doc.Thunder.Scopes
-	}
+	merged["displayName"] = s.clientDisplayName(ctx, orgID, projectID, depName)
+	merged["scopes"] = securityspec.ClientScopes(doc)
+	merged["resource"] = identity.ResourceServerIdentifier(orgID, projectID)
 	return merged, nil
 }
+
+// clientDisplayName is the project's display name, disambiguated by the web
+// application that declares this dependency when the project has several.
+//
+// Every read it makes is best-effort: the display name is a LABEL, and failing
+// a provision because a name could not be read would trade a working sign-in
+// for a cosmetic one. The project id is the fallback, which is what the console
+// shows for a project that never set a display name anyway.
+func (s *Service) clientDisplayName(ctx context.Context, orgID, projectID, depName string) string {
+	name := projectID
+	if s.projectNames != nil {
+		if display, err := s.projectNames.ProjectDisplayName(ctx, orgID, projectID); err != nil {
+			slog.WarnContext(ctx, "provisioning: project display name unreadable; using the project id",
+				"org", orgID, "project", projectID, "error", err)
+		} else if strings.TrimSpace(display) != "" {
+			name = strings.TrimSpace(display)
+		}
+	}
+	comps, err := s.design.ReadDesignComponents(ctx, orgID, projectID)
+	if err != nil {
+		return name
+	}
+	var webApps int
+	var owner string
+	for _, c := range comps {
+		if strings.EqualFold(strings.TrimSpace(c.ComponentType), webApplicationType) {
+			webApps++
+			for _, d := range c.Dependencies {
+				if strings.EqualFold(d.Name, depName) {
+					owner = c.Name
+				}
+			}
+		}
+	}
+	if webApps > 1 && owner != "" {
+		return name + " · " + owner
+	}
+	return name
+}
+
+// webApplicationType is design.cell's canonical spelling for a browser app.
+const webApplicationType = "web-application"

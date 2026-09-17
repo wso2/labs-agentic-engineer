@@ -37,6 +37,7 @@ function inputLabel(input: unknown): string {
   const v = (input ?? {}) as Record<string, unknown>;
   if (typeof v.path === "string") return v.path;
   if (Array.isArray(v.names)) return v.names.filter((n) => typeof n === "string").join(", ");
+  if (Array.isArray(v.paths)) return v.paths.filter((p) => typeof p === "string").join(", "); // declare_plan
   if (typeof v.name === "string") return v.name;
   if (typeof v.question === "string") return v.question; // ask_question
   if (Array.isArray(v.questions)) return `${v.questions.length} question(s)`; // ask_questions
@@ -45,6 +46,14 @@ function inputLabel(input: unknown): string {
 
 /** The status the HITL question tools resolve with (services/agents tools/files.ts). */
 const AWAITING_USER_RESPONSE = "awaiting_user_response";
+
+/**
+ * The status the fire-and-forget tools resolve with. `declare_plan` carries no
+ * `ok` — it is not a write op, so it has no `OpResult` shape — and without this
+ * the error fall-through below painted every resolved plan declaration as a red
+ * `✗ error`.
+ */
+const OK = "ok";
 
 interface ResultShape {
   ok?: boolean;
@@ -79,6 +88,8 @@ export function renderPart(part: StreamPart): void {
         // a `/start` interview shows on its very first turn.
         stdout.write(`  ${dim("…")} awaiting your answer\n`);
       } else if (r?.ok) stdout.write(`  ${green("✓")} ${r.op ?? "loaded"} ${dim(r.status ?? "")}\n`);
+      // A fire-and-forget tool resolves with `status: "ok"` and no `ok` flag.
+      else if (r?.status === OK) stdout.write(`  ${green("✓")} ${r.op ?? OK}\n`);
       else if (r) stdout.write(`  ${red("✗")} ${r.code ?? "error"}${r.message ? `: ${r.message}` : ""}\n`);
       break;
     }

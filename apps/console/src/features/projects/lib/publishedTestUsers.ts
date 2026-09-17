@@ -18,10 +18,33 @@
 
 import type { ProjectTestUserState } from "../../spec/api/roles";
 
+/**
+ * One login the dialog can put on screen: who it is, what it holds, and what
+ * that adds up to.
+ *
+ * `roles` is plural because security.json v2 lets one account hold several —
+ * the role it was created for, plus any other role of this project whose group
+ * it is a member of. `scopes` is the union of those roles' grants, and it is
+ * NOT recomputed here: the platform reads the grants from the identity
+ * provider and returns the union already deduplicated, so deriving it a second
+ * time on the client would only let the two answers disagree. Empty scopes
+ * mean the directory could not be asked — "unknown", not "grants nothing".
+ *
+ * There is no cold-start field: version 1 served one account to a caller who
+ * asked for credentials without naming a role, and version 2 has no such
+ * thing.
+ */
 export interface PublishedTestUser {
   username: string;
-  role: string;
-  coldStart: boolean;
+  roles: string[];
+  scopes: string[];
+}
+
+/** First-seen order, no repeats. The platform already deduplicates both
+ *  lists; doing it again here is what lets the table key its cells on the
+ *  value itself rather than on a position that means nothing. */
+function unique(values: readonly string[]): string[] {
+  return [...new Set(values)];
 }
 
 /** Accounts the sealed store can reveal. `owned` is ADR-0022: the platform holds the password. */
@@ -32,7 +55,7 @@ export function publishedTestUsers(
     .filter((u) => u.owned)
     .map((u) => ({
       username: u.username,
-      role: u.roleName,
-      coldStart: u.coldStart,
+      roles: unique(u.roles ?? []),
+      scopes: unique(u.scopes ?? []),
     }));
 }

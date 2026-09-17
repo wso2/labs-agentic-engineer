@@ -135,9 +135,92 @@ func keysOfAny[T any](m map[string]T) []string {
 	return out
 }
 
-// desiredAPIConfigurationTraitForTest is the no-issuers shape these table
-// tests exercise. Production (DesiredDeploymentFor) passes issuers when the
-// org has a BYO-IDP profile.
+// desiredAPIConfigurationTraitForTest is the no-issuers, no-audience,
+// no-operations shape these table tests exercise — a component with no sign-in
+// dependency, which keeps the trait's own `/*` default. Production
+// (DesiredDeploymentFor) passes issuers when the org has a BYO-IDP profile, and
+// an audience + an operation table when the component is behind sign-in.
 func desiredAPIConfigurationTraitForTest(componentName, endpointName string, enabled bool) ([]openchoreo.ComponentTrait, map[string]map[string]interface{}) {
-	return DesiredAPIConfigurationTraitWithIssuers(componentName, endpointName, enabled, nil)
+	return DesiredAPIConfigurationTrait(APIConfigurationDesired{
+		ComponentName: componentName,
+		EndpointName:  endpointName,
+		Enabled:       enabled,
+	})
+}
+
+// ---- the gateway assertion --------------------------------------------------
+
+const testAssertionCert = "-----BEGIN CERTIFICATE-----\nMIIDazCCAlOgAwIB\n-----END CERTIFICATE-----"
+
+// A published assertion turns backend-jwt on AND carries the verification half.
+// Both halves in one block on purpose: the trait's Deployment patch is gated on
+// a non-empty certificate, so enabling the policy without publishing it would
+// mint an assertion nothing downstream can check.
+func TestDesiredAPIConfigurationTrait_PublishesTheAssertion(t *testing.T) {
+	_, configs := DesiredAPIConfigurationTrait(APIConfigurationDesired{
+		ComponentName: "svc",
+		Enabled:       true,
+		Assertion: openchoreo.GatewayAssertion{
+			Issuer:      "aep-gateway-acme-default",
+			Header:      "x-jwt-assertion",
+			Certificate: testAssertionCert,
+		},
+	})
+	got, ok := configs["svc-http"]["backendJwt"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("no backendJwt block; got %#v", configs["svc-http"])
+	}
+	want := map[string]interface{}{
+		"enabled":     true,
+		"certificate": testAssertionCert,
+		"issuer":      "aep-gateway-acme-default",
+		"header":      "x-jwt-assertion",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("backendJwt = %#v, want %#v", got, want)
+	}
+}
+
+// An environment that publishes nothing emits NO backendJwt block at all — not
+// a disabled one carrying an empty string. The whole config map is replaced on
+// every write, so absence reverts to the trait's `enabled: false` default,
+// while an explicit empty certificate is the one state the trait's gate exists
+// to keep out of a container.
+func TestDesiredAPIConfigurationTrait_NoAssertionEmitsNoBlock(t *testing.T) {
+	_, configs := desiredAPIConfigurationTraitForTest("svc", "", true)
+	if _, present := configs["svc-http"]["backendJwt"]; present {
+		t.Fatalf("backendJwt emitted for an environment that publishes none: %#v", configs["svc-http"])
+	}
+}
+
+// A certificate with no issuer never reaches the trait: Configured() is
+// the one gate, and the client reports such a pair as absent (see
+// gatewayAssertionFromAnnotations). Asserted here too because this is the side
+// that would hand it to a container.
+func TestDesiredAPIConfigurationTrait_UnconfiguredAssertionIsIgnored(t *testing.T) {
+	_, configs := DesiredAPIConfigurationTrait(APIConfigurationDesired{
+		ComponentName: "svc",
+		Enabled:       true,
+		Assertion:     openchoreo.GatewayAssertion{Issuer: "aep-gateway-acme-default"},
+	})
+	if _, present := configs["svc-http"]["backendJwt"]; present {
+		t.Fatalf("backendJwt emitted without a certificate: %#v", configs["svc-http"])
+	}
+}
+
+// The header is emitted only when the environment names one, so the trait's own
+// schema stays the single place that spells `x-jwt-assertion`.
+func TestDesiredAPIConfigurationTrait_AssertionHeaderDefaultsToTheTrait(t *testing.T) {
+	_, configs := DesiredAPIConfigurationTrait(APIConfigurationDesired{
+		ComponentName: "svc",
+		Enabled:       true,
+		Assertion: openchoreo.GatewayAssertion{
+			Issuer:      "aep-gateway-acme-default",
+			Certificate: testAssertionCert,
+		},
+	})
+	got := configs["svc-http"]["backendJwt"].(map[string]interface{})
+	if _, present := got["header"]; present {
+		t.Fatalf("header emitted although the environment names none: %#v", got)
+	}
 }

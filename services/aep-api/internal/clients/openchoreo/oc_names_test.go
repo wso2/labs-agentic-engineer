@@ -83,9 +83,9 @@ func TestNewCodingAgentRunNameFitsOCJobLabelBudget(t *testing.T) {
 			if !strings.HasPrefix(friendly, "ca-") {
 				t.Errorf("NewCodingAgentRunName = %q, want ca- prefix", friendly)
 			}
-			if len(scoped) > CodingAgentComponentNameBudget {
+			if len(scoped) > CodingAgentComponentNameBudget() {
 				t.Errorf("scoped name %q is %d chars, over CodingAgentComponentNameBudget=%d",
-					scoped, len(scoped), CodingAgentComponentNameBudget)
+					scoped, len(scoped), CodingAgentComponentNameBudget())
 			}
 			jobLabel := scoped + "-" + DevEnvironmentName + "-" + strings.Repeat("a", ocJobNameHashLen)
 			if len(jobLabel) > k8sname.MaxLabelValueLen {
@@ -93,6 +93,41 @@ func TestNewCodingAgentRunNameFitsOCJobLabelBudget(t *testing.T) {
 					jobLabel, len(jobLabel), k8sname.MaxLabelValueLen)
 			}
 		})
+	}
+}
+
+func TestCodingAgentComponentNameBudgetFollowsWriteTarget(t *testing.T) {
+	orig := DevEnvironmentName
+	t.Cleanup(func() { SetDevEnvironmentName(orig) })
+
+	SetDevEnvironmentName("default")
+	wantDefault := k8sname.MaxLabelValueLen - (1 + len("default") + 1 + ocJobNameHashLen) // 46
+	if got := CodingAgentComponentNameBudget(); got != wantDefault {
+		t.Fatalf("default budget = %d, want %d", got, wantDefault)
+	}
+
+	SetDevEnvironmentName("development")
+	wantDev := k8sname.MaxLabelValueLen - (1 + len("development") + 1 + ocJobNameHashLen) // 42
+	if got := CodingAgentComponentNameBudget(); got != wantDev {
+		t.Fatalf("development budget = %d, want %d", got, wantDev)
+	}
+}
+
+func TestSetDevEnvironmentNameEmptyPanics(t *testing.T) {
+	orig := DevEnvironmentName
+	t.Cleanup(func() { SetDevEnvironmentName(orig) })
+
+	var panicked bool
+	func() {
+		defer func() {
+			if recover() != nil {
+				panicked = true
+			}
+		}()
+		SetDevEnvironmentName("")
+	}()
+	if !panicked {
+		t.Fatal("SetDevEnvironmentName(\"\") did not panic")
 	}
 }
 
@@ -121,7 +156,7 @@ func TestCreateComponentRejectsOverlongCodingAgentName(t *testing.T) {
 	defer srv.Close()
 
 	c := NewComponentClient(Config{BaseURL: srv.URL}).(*componentClient)
-	overlong := strings.Repeat("x", CodingAgentComponentNameBudget) // friendly alone fills the scoped budget once project is prefixed
+	overlong := strings.Repeat("x", CodingAgentComponentNameBudget()) // friendly alone fills the scoped budget once project is prefixed
 	_, err := c.CreateComponent(context.Background(), "default", "hello-world-api-4", &CreateComponentRequest{
 		Name: overlong,
 		Type: CodingAgentComponentTypeRef,

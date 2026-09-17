@@ -279,6 +279,10 @@ func TestBuildScopeAtTag(t *testing.T) {
 	seed["specs/design/components/notify-svc/design.json"] = `{"name":"notify-svc","type":"service","version":"1.0.0","language":"go",` +
 		`"buildpack":"go","appPath":".","entrypoint":"main.go","exposure":"internet",` +
 		`"stories":[7],"dependencies":[],"description":"a service"}`
+	// A declared service owes the same artifacts as svc, or the layout gate
+	// refuses the save before any scope is read.
+	seed["specs/design/components/notify-svc/design.md"] = "---\ntype: service\n---\n# notify-svc\n"
+	seed["specs/design/components/notify-svc/openapi.yaml"] = "openapi: 3.0.3\n"
 	r := newRig(t, seed)
 	if _, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{}); err != nil {
 		t.Fatalf("save: %v", err)

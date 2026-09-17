@@ -1,0 +1,38 @@
+{
+  "name": "expense-api",
+  "type": "service",
+  "version": "0.1.0",
+  "language": "Go",
+  "buildpack": "docker",
+  "appPath": "expense-api",
+  "entrypoint": "deployment/service",
+  "exposure": "intranet",
+  "stories": [1, 2, 3, 4, 5, 6, 7],
+  "description": "Go service owning expense claims and their approval lifecycle. Accepts a claim from an employee, serves an employee their own claims and an approver every claim, records an approve or reject decision once, and computes the monthly total of approved claims. Holds no role of its own: it enforces the scope each operation declares and applies the catalog's ownership rule to the rows it returns.",
+  "dependencies": [
+    {
+      "kind": "platform-resource",
+      "name": "user-auth",
+      "resourceType": "thunder-app",
+      "wiring": {
+        "ref": "spike-p6-expense-tracker-user-auth",
+        "envBindings": {
+          "client_id": "USER_AUTH_CLIENT_ID",
+          "issuer": "USER_AUTH_ISSUER",
+          "jwks_url": "USER_AUTH_JWKS_URL",
+          "scopes": "USER_AUTH_SCOPES",
+          "resource": "USER_AUTH_RESOURCE"
+        }
+      }
+    }
+  ],
+  "exposesAPI": {
+    "auth": "end-user-required"
+  },
+  "skillsPinned": [
+    "openapi-conventions",
+    "go",
+    "api-management",
+    "thunder-authentication"
+  ]
+}

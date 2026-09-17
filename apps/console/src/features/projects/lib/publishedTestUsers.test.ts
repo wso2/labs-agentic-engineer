@@ -22,34 +22,102 @@ import { publishedTestUsers } from "./publishedTestUsers";
 
 function user(
   over: Partial<ProjectTestUserState> &
-    Pick<ProjectTestUserState, "username" | "roleName" | "owned">,
+    Pick<ProjectTestUserState, "username" | "owned"> & { role?: string },
 ): ProjectTestUserState {
+  const { role, ...rest } = over;
   return {
     supplied: false,
-    coldStart: false,
     exists: true,
     rotatedAt: null,
     referencingProjects: null,
     referencingCount: 1,
-    ...over,
+    roles: role === undefined ? [] : [role],
+    scopes: [],
+    ...rest,
   };
 }
 
 describe("publishedTestUsers", () => {
-  it("includes owned users with username, role, and coldStart", () => {
+  it("includes owned users with their roles and scopes", () => {
+    expect(
+      publishedTestUsers([
+        user({
+          username: "test-approver",
+          role: "Approver",
+          owned: true,
+          exists: true,
+          roles: ["Approver", "Employee"],
+          scopes: ["claims:approve", "claims:read"],
+        }),
+      ]),
+    ).toEqual([
+      {
+        username: "test-approver",
+        roles: ["Approver", "Employee"],
+        scopes: ["claims:approve", "claims:read"],
+      },
+    ]);
+  });
+
+  // The wire's order IS the answer: the platform holds the roles in the
+  // project's own order and returns the scope union already deduplicated.
+  // Re-deriving or re-sorting here would only let the two disagree.
+  it("passes roles and scopes through in the order the platform gave them", () => {
+    const [row] = publishedTestUsers([
+      user({
+        username: "test-approver",
+        role: "Approver",
+        owned: true,
+        roles: ["Approver", "Employee"],
+        scopes: ["reports:read", "claims:read"],
+      }),
+    ]);
+    expect(row?.roles).toEqual(["Approver", "Employee"]);
+    expect(row?.scopes).toEqual(["reports:read", "claims:read"]);
+  });
+
+  // A row the platform could not attach any role to is still a login somebody
+  // can sign in as, so it is published with an empty Roles column rather than
+  // dropped.
+  it("reads an absent roles array as empty", () => {
     expect(
       publishedTestUsers([
         user({
           username: "test-viewer",
-          roleName: "Viewer",
+          role: "Viewer",
           owned: true,
-          exists: true,
-          coldStart: true,
+          roles: null,
         }),
       ]),
-    ).toEqual([
-      { username: "test-viewer", role: "Viewer", coldStart: true },
+    ).toEqual([{ username: "test-viewer", roles: [], scopes: [] }]);
+  });
+
+  // Two roles can grant the same handle. The union is what the login's token
+  // carries, and it carries it once.
+  it("de-duplicates the roles and the scope union", () => {
+    const [row] = publishedTestUsers([
+      user({
+        username: "test-approver",
+        role: "Approver",
+        owned: true,
+        roles: ["Approver", "Employee", "Approver"],
+        scopes: ["claims:read", "claims:approve", "claims:read"],
+      }),
     ]);
+    expect(row?.roles).toEqual(["Approver", "Employee"]);
+    expect(row?.scopes).toEqual(["claims:read", "claims:approve"]);
+  });
+
+  it("reads an absent scopes array as empty", () => {
+    const [row] = publishedTestUsers([
+      user({
+        username: "test-viewer",
+        role: "Viewer",
+        owned: true,
+        scopes: null,
+      }),
+    ]);
+    expect(row?.scopes).toEqual([]);
   });
 
   it("includes owned: true even when exists is false", () => {
@@ -57,12 +125,12 @@ describe("publishedTestUsers", () => {
       publishedTestUsers([
         user({
           username: "test-viewer",
-          roleName: "Viewer",
+          role: "Viewer",
           owned: true,
           exists: false,
         }),
       ]),
-    ).toEqual([{ username: "test-viewer", role: "Viewer", coldStart: false }]);
+    ).toEqual([{ username: "test-viewer", roles: ["Viewer"], scopes: [] }]);
   });
 
   it("omits owned: false (taken username / not ours)", () => {
@@ -70,7 +138,7 @@ describe("publishedTestUsers", () => {
       publishedTestUsers([
         user({
           username: "jsmith",
-          roleName: "Compliance Admin",
+          role: "Compliance Admin",
           owned: false,
           exists: true,
         }),
@@ -83,10 +151,9 @@ describe("publishedTestUsers", () => {
       publishedTestUsers([
         user({
           username: "test-viewer",
-          roleName: "Viewer",
+          role: "Viewer",
           owned: false,
           exists: false,
-          coldStart: true,
         }),
       ]),
     ).toEqual([]);
@@ -95,29 +162,21 @@ describe("publishedTestUsers", () => {
   it("keeps only owned rows and preserves order", () => {
     expect(
       publishedTestUsers([
-        user({
-          username: "first-owned",
-          roleName: "Viewer",
-          owned: true,
-        }),
-        user({
-          username: "not-ours",
-          roleName: "Admin",
-          owned: false,
-        }),
+        user({ username: "first-owned", role: "Viewer", owned: true }),
+        user({ username: "not-ours", role: "Admin", owned: false }),
         user({
           username: "second-owned",
-          roleName: "Compliance Admin",
+          role: "Compliance Admin",
           owned: true,
-          coldStart: true,
+          scopes: ["audit:read"],
         }),
       ]),
     ).toEqual([
-      { username: "first-owned", role: "Viewer", coldStart: false },
+      { username: "first-owned", roles: ["Viewer"], scopes: [] },
       {
         username: "second-owned",
-        role: "Compliance Admin",
-        coldStart: true,
+        roles: ["Compliance Admin"],
+        scopes: ["audit:read"],
       },
     ]);
   });
@@ -128,11 +187,7 @@ describe("publishedTestUsers", () => {
 
   it("return value has no password field", () => {
     const [row] = publishedTestUsers([
-      user({
-        username: "test-viewer",
-        roleName: "Viewer",
-        owned: true,
-      }),
+      user({ username: "test-viewer", role: "Viewer", owned: true }),
     ]);
     expect(row).toBeDefined();
     expect(Object.keys(row!)).not.toContain("password");

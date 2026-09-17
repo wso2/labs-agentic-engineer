@@ -121,7 +121,17 @@ export async function runSpecTurn(session: TurnSession, turn: TurnSpec, opts: Sp
   const fold = opts.foldToDisk !== false;
   const view = filterTurnSnapshot(before);
   const bundle = new FileBundle(view);
-  const after: Record<string, string> = { ...before };
+  // `after` tracks the FILTERED view as the fold advances — never the raw disk
+  // read. The reconcile below diffs `after[path]` against the bundle, and the
+  // bundle only ever holds what the filter admitted: seeded from `before`, a
+  // path the filter hid reads as present here and absent from the bundle, which
+  // reconcileFile reads as a deletion and rmSync's off disk. That is how a chat
+  // turn whose only write was REFUSED still ended with
+  // `− specs/design/security.json` and the file gone. Seeding from the view
+  // makes both sides of every diff the same state the agent actually saw, so a
+  // path outside it is untouched (undefined → undefined → no change) whatever
+  // the turn does.
+  const after: Record<string, string> = { ...view };
   const changes: FileChange[] = [];
   // Derived-artifact notes keyed by output so a source touched twice in a turn
   // (or the aggregate cell-diagram rebuilt on every design change) collapses to
@@ -192,7 +202,8 @@ export async function runSpecTurn(session: TurnSession, turn: TurnSpec, opts: Sp
   }
 
   // `after`, `changes`, and `derived` were all built incrementally in the
-  // stream loop above: files the turn filter hid were never touched, deletions
+  // stream loop above over the FILTERED view: files the turn filter hid are
+  // absent from both sides of every diff and so were never touched, deletions
   // applied only to files the agent could see (via removeFile tool-calls), and
   // every derived view (.excalidraw / cell-diagram.gen.json) was refreshed as
   // its source landed.

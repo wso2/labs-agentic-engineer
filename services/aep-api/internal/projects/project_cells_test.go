@@ -90,6 +90,28 @@ func TestCreateProject_BindsEveryPipelineEnvironment(t *testing.T) {
 	}
 }
 
+func TestCreateProject_DoesNotBindOffPipelineEnvironments(t *testing.T) {
+	t.Parallel()
+	oc := createdProjectOC("default")
+	cells := &fakeCells{envs: []string{"development", "staging", "production"}}
+	svc := NewProjectService(oc, nil, nil, nil, nil)
+	svc.SetProjectCellProvisioner(cells)
+
+	if _, err := svc.CreateProject(context.Background(), "acme",
+		&gen.CreateProjectRequest{Name: "shop"}); err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	for _, env := range []string{"development", "staging", "production"} {
+		if got := cells.bound[env]; got != "shop" {
+			t.Errorf("%s binding: got %q, want shop", env, got)
+		}
+	}
+	if _, ok := cells.bound["default"]; ok {
+		t.Errorf("bound unexpected default cell; write-target is resolved at boot, not appended here")
+	}
+}
+
 // A binding failure leaves an undeployable project behind, and retrying the
 // create cannot fix it (OpenChoreo answers 409). So the project is compensated
 // away and the error surfaces.

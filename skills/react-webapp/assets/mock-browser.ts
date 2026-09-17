@@ -18,9 +18,18 @@
 
 // Mock mode — copied verbatim to <app-path>/mock/browser.ts, never edited.
 // The handlers beside it are the app's; this file only starts them.
+//
+// THE ORDER IS THE DESIGN. MSW takes the first handler that matches AND
+// answers; a resolver that returns nothing falls through to the next one. So
+// the three layers below are the deployed request path, in the deployed order:
+//
+//   gatewayHandlers  the API gateway — may this caller call this at all? (401)
+//   handlers         the service — the app's own data, ownership and 404s
+//   unhandledApi     nothing answered: the mock's own gap, said out loud (501)
 
 import { http, HttpResponse, type RequestHandler } from "msw";
 import { setupWorker } from "msw/browser";
+import { gatewayHandlers } from "./authz/gateway";
 import { handlers } from "./handlers";
 
 // Closes the API surface, and it has to be closed explicitly: MSW passes an
@@ -38,8 +47,7 @@ const unhandledApi: RequestHandler = http.all("/api/*", ({ request }) => {
   );
 });
 
-// Last, so every handler the app authored wins over it.
-export const worker = setupWorker(...handlers, unhandledApi);
+export const worker = setupWorker(...gatewayHandlers, ...handlers, unhandledApi);
 
 export async function startMockWorker(): Promise<void> {
   // Everything else the page asks for — modules, assets, HMR — is the dev

@@ -31,8 +31,9 @@ const (
 	chainTestComp    = "ca-run"
 	chainTestImage   = "ghcr.io/wso2/aep/remote-worker:latest"
 	chainTestRelease = "widgets-ca-run-release"
-	chainTestEnv     = DevEnvironmentName
 )
+
+var chainTestEnv = DevEnvironmentName
 
 func newTestComponentClient(t *testing.T, srv *httptest.Server) ComponentClient {
 	t.Helper()

@@ -180,8 +180,27 @@ func (s *componentService) EnsureComponent(ctx context.Context, orgName, project
 	// The trait SHAPE only — the per-environment config half of the same
 	// projection lands on the ReleaseBinding at deploy, because it needs a
 	// release to bind to. One function computes both so they cannot disagree.
+	//
+	// The operation table is part of the SHAPE (a trait parameter, one value
+	// for every environment), so it is written HERE, before the build cuts the
+	// release that freezes the Component's trait list.
+	desired := DesiredDeploymentFor(DeploymentInputs{
+		Component:     *comp,
+		ComponentName: k8sName,
+		Audience:      ProjectAudience(orgName, projectName),
+	})
+	if desired.APIOperationsProblem != "" {
+		slog.WarnContext(ctx, "ensure component: OpenAPI contract not projected onto gateway operations; "+
+			"the API keeps the trait's /* default (every operation needs a token, none needs a scope)",
+			"org", orgName, "project", projectName, "component", comp.Name,
+			"problem", desired.APIOperationsProblem)
+	}
+	for _, note := range desired.APIOperationsNotes {
+		slog.InfoContext(ctx, "ensure component: operation left out of the gateway table",
+			"org", orgName, "project", projectName, "component", comp.Name, "note", note)
+	}
 	desiredSpec := openchoreo.ComponentSpecDesired{
-		Traits:     DesiredDeploymentFor(DeploymentInputs{Component: *comp, ComponentName: k8sName}).Traits,
+		Traits:     desired.Traits,
 		AutoBuild:  false,
 		AutoDeploy: false,
 	}

@@ -1,0 +1,22 @@
+{
+  "duplicate_resource": "resource \"{resource}\" is declared twice — a resource name identifies one resource within the project, and exactly one component owns it.",
+  "duplicate_action": "resource \"{resource}\" declares action \"{handle}\" twice — action handles are unique within their resource. (\"claims:read\" and \"reports:read\" legally coexist; \"claims:read\" twice does not.)",
+  "resource_component_unknown": "resource \"{resource}\" is owned by component \"{component}\", which specs/design/design.cell does not declare — the cell is the design's source of truth: add the node first, or name the service that really owns the resource.",
+  "duplicate_role_name": "role \"{role}\" is declared twice — a role name identifies one role within the project (compared without case), so it appears once.",
+  "role_name_whitespace": "role \"{role}\" has leading or trailing whitespace — the name becomes \"<project>/{role}\" on the directory verbatim.",
+  "role_name_invalid": "role \"{role}\" is not a usable role name — use letters, digits, spaces, \"-\", \"_\" or \".\". The name is published in the build ticket's markdown table and becomes \"<project>/{role}\" on the directory, so \"|\", \"/\" and line breaks cannot appear in it.",
+  "role_name_is_group_name": "role \"{role}\" is also declared in groups[] — a role is project-scoped (it becomes \"<project>/{role}\" on the directory) and a group is org-owned and shared, so one name cannot be both. Rename the role.",
+  "grant_unknown_handle": "role \"{role}\" grants \"{handle}\", which permissions[] does not declare — add the action to its resource, or grant a declared handle.",
+  "assignable_by_unknown_role": "role \"{role}\" names \"{ref}\" in assignableBy, which no roles[] entry declares — assignableBy names project roles, never org groups.",
+  "admin_role_needs_assign_to": "role \"{role}\" is an admin-enrolment user role with no assignTo — name at least one org group the role is assigned to (declare it in groups[] if this project introduces it), or set \"enrolment\": \"self-service\".",
+  "non_admin_role_has_assign_to": "role \"{role}\" is a {kind} role and carries assignTo — remove it: a {kind} role is never assigned to an org group.",
+  "assign_to_directory_checked": "role \"{role}\" is assigned to group \"{group}\", which groups[] does not declare — that is legal for a group the org directory already holds; the build gate resolves it against list_groups and refuses it there if it does not exist.",
+  "invalid_test_username": "test user \"{username}\" is not a usable directory username — use lowercase letters, digits, \".\", \"_\" or \"-\", starting with a letter or digit.",
+  "duplicate_test_user": "test user \"{username}\" is listed twice.",
+  "test_user_unknown_role": "test user \"{username}\" holds role \"{role}\", which no roles[] entry declares.",
+  "test_user_role_not_user_kind": "test user \"{username}\" holds role \"{role}\", which is not an admin-enrolment user role — a service role belongs to an app principal and a self-service role is taken at registration, so neither gets a test account.",
+  "handle_used_nowhere": "catalog handle \"{handle}\" is declared, used nowhere — no operation requires it. Remove it, or require it from the operation it was meant to guard.",
+  "handle_unreachable": "catalog handle \"{handle}\" is unreachable by any role — an operation requires it and no roles[].grants holds it. Grant it to the role that needs it, or make the operation public.",
+  "v1_document": "security.json v1 is not accepted: {fields}. Version 3 declares the permission catalog in permissions[] (resource, component, actions[{handle, description}]), roles grant handles from it in roles[].grants and name their org groups in assignTo, and testUsers[].roles is a list.",
+  "v2_document": "security.json v2 is not accepted: remove actions[].ownership and screens[], and set version to 3. Version 3 carries no row axis and no screen table — which rows an operation reaches is its PATH in openapi.yaml (/me/… the caller's rows, /me/<relation>/… a relation's, anything else every row), and which screens a role reaches follows from the operations those screens load. A handle says what a caller may do, never how far; two reaches are two operations guarded by two handles (GET /me/claims claims:read, GET /claims claims:read-all)."
+}

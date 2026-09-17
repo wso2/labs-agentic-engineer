@@ -614,15 +614,19 @@ test("a skill's references, assets and scripts come along", async () => {
       path.join("aep-validation", "assets", "playwright.config.template.ts"),
       path.join("aep-validation", "scripts", "generate-report.mjs"),
       path.join("playwright-cli", "LICENSE"),
-      // Mock mode is three verbatim templates plus the reference that wires
-      // them; a mirror that dropped one leaves the webapp skill pointing at
-      // nothing, and the verification round with no app to open. All three sit
-      // under react-webapp on purpose — an org that swaps its IDP must not take
-      // the mock harness with it.
+      // Mock mode is the harness (two verbatim templates plus the reference
+      // that wires them, under react-webapp) and the authorization half it
+      // imports by path (the gateway layer, the session substitute and the
+      // generator, under thunder-authentication's app tree — ADR-0033). A
+      // mirror that dropped any of them leaves the webapp skill pointing at
+      // nothing, and the verification round with no app to open.
       path.join("react-webapp", "references", "mock-mode.md"),
       path.join("react-webapp", "assets", "mock-plugin.ts"),
       path.join("react-webapp", "assets", "mock-browser.ts"),
-      path.join("react-webapp", "assets", "mock-auth.ts"),
+      path.join("thunder-authentication", "assets", "app", "mock", "authz", "session.ts"),
+      path.join("thunder-authentication", "assets", "app", "mock", "authz", "gateway.ts"),
+      path.join("thunder-authentication", "assets", "app", "mock", "authz", "contract.ts"),
+      path.join("thunder-authentication", "assets", "app", "scripts", "gen-authz.mjs"),
       path.join("mock-verification", "SKILL.md"),
       path.join("mock-verification", "scripts", "walk.sh"),
       path.join("agent-browser", "SKILL.md"),

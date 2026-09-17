@@ -236,7 +236,7 @@ func (s *Service) completeReadyGate(ctx context.Context, orgID, projectID, depNa
 		// A provision run is already active for this gate (e.g. a concurrent settle).
 		return nil
 	}
-	ref := ocname.ExternalResourceBindingName(projectID, depName, defaultEnv)
+	ref := ocname.ExternalResourceBindingName(projectID, depName, defaultEnv())
 	if _, serr := s.execs.StartWithRun(ctx, row.ID, ref); serr != nil {
 		slog.WarnContext(ctx, "provisioning: start settle provision run failed", "execution", row.ID, "error", serr)
 	}
@@ -310,7 +310,7 @@ func (s *Service) authorExternalPrepared(ctx context.Context, orgID, ocOrgID, pr
 	}
 
 	if execID != "" {
-		ref := result.BindingByEnv[defaultEnv]
+		ref := result.BindingByEnv[defaultEnv()]
 		if ref == "" {
 			ref = result.ResourceName
 		}
@@ -381,6 +381,6 @@ func designPreparedValues(keys []spec.ConfigKey) map[string]dependencies.Prepare
 		}
 	}
 	return map[string]dependencies.PreparedEnvValues{
-		defaultEnv: {Plain: plain},
+		defaultEnv(): {Plain: plain},
 	}
 }

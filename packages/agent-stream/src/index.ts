@@ -94,10 +94,13 @@ export {
 } from "./contracts/sse-events.js";
 export type {
   SecurityDesign,
-  ThunderClient,
-  RoleDeclaration,
-  RolePermission,
-  TestUserDeclaration,
+  Permission,
+  Action,
+  Group,
+  Enrolment,
+  RoleKind,
+  Role,
+  TestUser,
 } from "./contracts/security-design.js";
 export type {
   ComponentDesign,
@@ -146,7 +149,7 @@ export {
   COMPONENT_DESIGN_JSON_RE,
 } from "./component-design-schema.js";
 export type { ComponentDesignProblem } from "./component-design-schema.js";
-export { checkDesignDiagram, cellNodeIds, prdActors, DOMAIN_MODEL_PATH } from "./design-diagrams.js";
+export { checkDesignDiagram, cellNodeIds, prdActors, DOMAIN_MODEL_PATH, PRD_PATH } from "./design-diagrams.js";
 export type { DesignDiagramProblem, DiagramBundleReader, CellNodes } from "./design-diagrams.js";
 export { checkComponentDependencies } from "./component-dependencies.js";
 export type { ComponentDependencyProblem } from "./component-dependencies.js";
@@ -178,12 +181,32 @@ export type {
 // --- The security.json write-gate ------------------------------------------
 export {
   checkSecurityDesign,
-  checkSecurityReferences,
   securityDesignSchema,
   SECURITY_DESIGN_JSON_RE,
   TEST_USERNAME_RE,
+  HANDLE_SEGMENT_RE,
+  isHandle,
 } from "./security-design-schema.js";
 export type { SecurityDesignProblem } from "./security-design-schema.js";
+export {
+  catalogHandles,
+  roleGrants,
+  OIDC_RESERVED_SCOPES,
+} from "./security-design-catalog.js";
+export {
+  checkSecurityReferences,
+  securityReferenceFindings,
+} from "./security-design-references.js";
+export type {
+  SecurityReferenceFinding,
+  SecurityReferenceContext,
+  SecurityFindingSeverity,
+} from "./security-design-references.js";
+export {
+  SECURITY_DESIGN_MESSAGES,
+  securityMessage,
+} from "./security-design-messages.js";
+export type { SecurityMessageKey } from "./security-design-messages.js";
 
 // --- JSON Schema publication (the BFF validates the same definitions) --------
 export {

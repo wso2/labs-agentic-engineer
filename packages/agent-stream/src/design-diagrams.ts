@@ -48,7 +48,7 @@ export interface DiagramBundleReader {
 
 export const DOMAIN_MODEL_PATH = "specs/design/domain-model.md";
 export const DESIGN_CELL_PATH = "specs/design/design.cell";
-const PRD_PATH = "specs/requirements/prd.md";
+export const PRD_PATH = "specs/requirements/prd.md";
 const FLOW_RE = /^specs\/design\/flows\/[^/]+\.md$/;
 
 type DiagramKind = "erDiagram" | "sequenceDiagram";

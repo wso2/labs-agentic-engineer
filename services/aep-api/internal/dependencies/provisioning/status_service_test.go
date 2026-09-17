@@ -241,7 +241,7 @@ func TestDeploymentReadiness_DefaultsTheEnvironment(t *testing.T) {
 		{Kind: spec.DependencyKindExternal, Name: "stripe", Config: []spec.ConfigKey{{Key: "BASE_URL"}}},
 	}}}}
 	bindings := &fakeBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{
-		ocname.ExternalResourceBindingName("proj", "stripe", defaultEnv): bindingConfig(t, map[string]string{"BASE_URL": "https://api"}),
+		ocname.ExternalResourceBindingName("proj", "stripe", defaultEnv()): bindingConfig(t, map[string]string{"BASE_URL": "https://api"}),
 	}}
 	svc := NewService(Deps{Design: design, Bindings: bindings})
 
@@ -250,7 +250,7 @@ func TestDeploymentReadiness_DefaultsTheEnvironment(t *testing.T) {
 		t.Fatalf("DeploymentReadiness: %v", err)
 	}
 	if len(got.Unconfigured) != 0 {
-		t.Fatalf("Unconfigured = %v, want empty — an empty env must resolve to %q", got.Unconfigured, defaultEnv)
+		t.Fatalf("Unconfigured = %v, want empty — an empty env must resolve to %q", got.Unconfigured, defaultEnv())
 	}
 }
 

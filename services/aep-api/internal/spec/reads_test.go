@@ -56,22 +56,23 @@ func TestListDesignFiles_AtHead(t *testing.T) {
 // the version it had just cut.
 func TestGetDesignAtTag_PinsAVersionTheUserNamed(t *testing.T) {
 	t.Parallel()
-	r := newRig(t, map[string]string{
-		"specs/requirements/prd.md":               "spec\n",
-		"specs/design/design.cell":                "# m1\n",
-		"specs/design/components/svc/design.json": validComponentDesignJSON("svc"),
-	})
+	// A buildable spec, because SaveSpec runs the gates: the marker that tells
+	// the pinned cell from HEAD rides on a comment line, which parseCellFacts
+	// skips, so it changes the bytes without changing the facts.
+	seed := validSpecSeed()
+	seed["specs/design/design.cell"] = "# m1\ncomponent svc service\n"
+	r := newRig(t, seed)
 	ctx := context.Background()
 	if _, err := r.svc.SaveSpec(ctx, r.org, r.proj, SaveRequest{Name: "m1"}); err != nil {
 		t.Fatalf("save spec: %v", err)
 	}
-	r.seed(map[string]string{"specs/design/design.cell": "# later\n"}, "draft")
+	r.seed(map[string]string{"specs/design/design.cell": "# later\ncomponent svc service\n"}, "draft")
 
 	at, err := r.svc.GetDesignAtTag(ctx, r.org, r.proj, "m1")
 	if err != nil {
 		t.Fatalf("GetDesignAtTag(m1): %v", err)
 	}
-	if at["design.cell"] != "# m1\n" {
+	if at["design.cell"] != "# m1\ncomponent svc service\n" {
 		t.Errorf("at m1 = %q, want the pinned design, not HEAD", at["design.cell"])
 	}
 }

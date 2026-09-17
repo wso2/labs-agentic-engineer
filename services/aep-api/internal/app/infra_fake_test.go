@@ -42,5 +42,6 @@ func Fake() Infra {
 		Minter:          minter,
 		AppClientSecret: "",
 		Workspace:       nil,
+		WriteTarget:     "default",
 	}
 }

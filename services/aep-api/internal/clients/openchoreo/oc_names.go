@@ -74,8 +74,10 @@ const ocJobNameHashLen = 8
 // "Waiting for a runner to be scheduled…" dark zone.
 //
 // Coding-agent cycles always bind into DevEnvironmentName, so the decoration
-// width is fixed here rather than parameterised.
-const CodingAgentComponentNameBudget = k8sname.MaxLabelValueLen - (1 + len(DevEnvironmentName) + 1 + ocJobNameHashLen) // 46
+// width follows the current write-target rather than a compile-time default.
+func CodingAgentComponentNameBudget() int {
+	return k8sname.MaxLabelValueLen - (1 + len(DevEnvironmentName) + 1 + ocJobNameHashLen)
+}
 
 // minCodingAgentRunNameLen is "ca-" + an 8-char digest — the shortest Bounded
 // output that still carries the ca- watcher discriminator.
@@ -95,7 +97,7 @@ const minCodingAgentRunNameLen = 3 + ocJobNameHashLen // "ca-" + digest
 func NewCodingAgentRunName(projectName, cycleID string) string {
 	// Length must match ScopedComponentName(projectName, runName) byte-for-byte —
 	// CreateComponent scopes with the raw project id, not a re-sanitized form.
-	room := CodingAgentComponentNameBudget - len(projectName) - 1
+	room := CodingAgentComponentNameBudget() - len(projectName) - 1
 	if room < minCodingAgentRunNameLen {
 		// Still emit a ca-… JobRef so watchers recognise it; CreateComponent
 		// refuses before OC can accept a Component whose Job label cannot

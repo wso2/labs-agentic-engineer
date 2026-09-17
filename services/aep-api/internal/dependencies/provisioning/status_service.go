@@ -127,7 +127,7 @@ func (s *Service) bindingStatus(ctx context.Context, orgID, projectID, depName, 
 
 func normalizedEnv(env string) string {
 	if env == "" {
-		return defaultEnv
+		return defaultEnv()
 	}
 	return env
 }

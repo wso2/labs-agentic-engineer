@@ -1,7 +1,25 @@
 # ADR-0022 — Roles and test users are shared directory objects the BFF ensures at build
 
 Status: accepted. Revisited: one `security.json` instead of a two-file split;
-the identity model is unchanged. **Scope amended 2026-09-05** — see below.
+the identity model is unchanged. **Scope amended 2026-09-05, and the role half
+superseded by [ADR-0030](ADR-0030-scopes-are-the-authorization-authority-for-a-generated-app.md)**
+— see below.
+
+> **The role half is superseded by
+> [ADR-0030](ADR-0030-scopes-are-the-authorization-authority-for-a-generated-app.md)
+> — roles are PROJECT-OWNED, and scopes decide what one may do.** Two of the
+> three object kinds below are unchanged: directory **groups** and **test users**
+> remain shared, org-owned, ADDITIVE objects a build only ever adds to. **Roles
+> are not.** A role belongs to the project that declares it, is named
+> `<project>/<Role>` on the directory, and the build CONVERGES it to the
+> `security.json` at the version tag — created, updated and removed to match —
+> because a role is an access decision inside one project's API and nothing
+> outside that project may hold it. What stays shared is WHO holds it:
+> `roles[].assignTo` names org groups, and the design-time catalog of those
+> groups is the `list_groups` tool (`list_roles`, the alias it replaced, is
+> gone). Read this one as the identity-object model ADR-0030 edits; where the
+> two differ about a role, ADR-0030 wins. The credential table it describes
+> below has no cold-start column: there is no cold-start account.
 
 > **Amendment · 2026-09-05 · the sharing scope is an ENVIRONMENT, not the
 > cluster.** The decision below stands in every part: one `security.json`, the
@@ -26,7 +44,7 @@ the identity model is unchanged. **Scope amended 2026-09-05** — see below.
 >   objects that are not there. The next build's ensure recreates them on the
 >   right directory and republishes the logins.
 > * **Cross-org role visibility is CLOSED**, which is the resolution the
->   Consequences section below anticipated. `list_roles` reads the catalog of
+>   Consequences section below anticipated. `list_groups` reads the catalog of
 >   the caller's own `(org, default)` directory, and the panel's
 >   "referencing projects" column and its delete warning are now one query — an
 >   account exists on exactly one org's directory, so every project that can
@@ -70,7 +88,7 @@ directly, through `thundersvc`, which already holds Thunder `Administrator`. It
 runs synchronously inside `ProvisionForBuild`, resolved by its own `provision`
 gate ("Provision roles and test users", `aep:gate/roles`), minted per version.
 **No model is in the loop below the version tag**: a model authors
-`security.json` and reads the `list_roles` catalog, and everything from the tag
+`security.json` and reads the `list_groups` catalog, and everything from the tag
 down is deterministic code. These calls mint credentials.
 
 Passwords are platform-generated and sealed with `secrets.ColumnCipher` under
@@ -184,9 +202,10 @@ exists to prevent. The panel patches the room's `Y.Text`; the committer lands it
 
 ## Consequences
 
-**Cross-org role visibility.** With one IdP serving the cluster, `list_roles`
-shows one org's design agent the role names another org created, and role names
-can carry business meaning. Accepted; it resolves when the IdP becomes
+**Cross-org role visibility.** With one IdP serving the cluster, the catalog
+tool (`list_groups` since 2026-09-12; `list_roles` when this was written) shows
+one org's design agent the names another org created, and those names can carry
+business meaning. Accepted; it resolves when the IdP becomes
 namespace-scoped. The panel's "referencing projects" column is org-fenced, and
 the cross-org figure is a bare count with no names.
 

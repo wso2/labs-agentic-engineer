@@ -108,7 +108,7 @@ func (s *Service) SaveValues(ctx context.Context, orgID, ocOrgID, projectID, dep
 	}
 
 	if execID != "" {
-		ref := result.BindingByEnv[defaultEnv]
+		ref := result.BindingByEnv[defaultEnv()]
 		if ref == "" {
 			ref = result.ResourceName
 		}

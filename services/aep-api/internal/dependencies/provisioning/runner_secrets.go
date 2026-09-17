@@ -37,7 +37,7 @@ func (s *Service) ResolveComponentRunnerSecrets(ctx context.Context, orgID, proj
 		return nil, nil
 	}
 	if strings.TrimSpace(env) == "" {
-		env = defaultEnv
+		env = defaultEnv()
 	}
 	comps, err := s.design.ReadDesignComponents(ctx, orgID, projectID)
 	if err != nil {

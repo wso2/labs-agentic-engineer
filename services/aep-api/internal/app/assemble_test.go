@@ -25,8 +25,10 @@ package app
 
 import (
 	"context"
+	"strings"
 	"testing"
 
+	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
 	"github.com/wso2/aep/aep-api/internal/config"
 )
@@ -75,6 +77,29 @@ func (stubSecretsClient) GetSecretWithValue(context.Context, secretmanagersvc.Se
 	return nil, nil
 }
 func (stubSecretsClient) Close(context.Context) error { return nil }
+
+func TestAssemble_RequiresWriteTarget(t *testing.T) {
+	in := Fake()
+	in.WriteTarget = ""
+	_, err := Assemble(baseCfg(), in, Seam{})
+	if err == nil || !strings.Contains(err.Error(), "write-target") {
+		t.Fatalf("Assemble err = %v, want write-target required", err)
+	}
+}
+
+func TestAssemble_SetsDevEnvironmentName(t *testing.T) {
+	orig := openchoreo.DevEnvironmentName
+	t.Cleanup(func() { openchoreo.SetDevEnvironmentName(orig) })
+
+	in := Fake()
+	in.WriteTarget = "development"
+	if _, err := Assemble(baseCfg(), in, Seam{}); err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	if openchoreo.DevEnvironmentName != "development" {
+		t.Fatalf("DevEnvironmentName = %q, want development", openchoreo.DevEnvironmentName)
+	}
+}
 
 func TestAssemble_MinimalConfigBuildsTheGraph(t *testing.T) {
 	app, err := Assemble(baseCfg(), Fake(), Seam{})

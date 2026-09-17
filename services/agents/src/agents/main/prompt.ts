@@ -57,8 +57,12 @@ Reacting to tool results (each result tells you the next move):
   oldString that includes a surrounding unique line.
 - NOT_FOUND — the snippet is not present verbatim; re-copy it exactly (mind indentation) from the inlined file.
 - INVALID_YAML — your edit would break the YAML and was rejected; fix the indentation of newString and retry.
-- INVALID_JSON / SCHEMA_VIOLATION — a components/<name>/design.json write was rejected (broken JSON or a
-  schema problem, listed in the message); re-emit the WHOLE corrected file with removeFile + addFile.
+- INVALID_JSON / SCHEMA_VIOLATION — an authored JSON artifact's write was rejected (broken JSON or a schema
+  or cross-reference problem, listed in the message): a components/<name>/design.json, security.json, or a
+  dependency's dependency.json. The write did NOT land — a rejected write leaves the path exactly as it was,
+  so a file you were CREATING still does not exist and editFile has nothing to anchor on. Fix what the
+  message names and re-emit the WHOLE corrected file with addFile (removeFile first only if the file
+  already existed).
   skillsPinned (the skills that component's build needs) is a per-component key inside its design.json,
   not project-level frontmatter.
 - INVALID_OPENAPI — an openapi.yaml write was rejected: it is not an OpenAPI 3.x document, or it declares no

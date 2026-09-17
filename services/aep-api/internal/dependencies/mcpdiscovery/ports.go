@@ -63,37 +63,47 @@ type ResourceTypeLister interface {
 	List(ctx context.Context) ([]dependencies.PlatformResourceType, error)
 }
 
-// RoleCatalogLister reads the roles that already exist on the identity provider
-// of the org's environment — the Role catalog the design agent consults before
-// inventing a name. Roles are SHARED across that org's projects, which is
-// precisely what makes reuse meaningful, and it is why the rows carry a name and
-// a description and nothing about who uses them.
+// GroupCatalogLister reads the GROUPS that already exist on the environment
+// directory of the org — the catalog the design agent consults before naming a
+// group in `security.json`'s `roles[].assignTo`. A group is a set of people and
+// is owned by the organisation, which is precisely what makes reuse meaningful,
+// and it is why the rows carry who is in it and who already depends on it and
+// nothing about what it can do.
 //
 // It takes the ORG HANDLE because the catalog is per (org, environment): every
-// environment has its own identity provider, so "which roles exist" has no
+// environment has its own identity provider, so "which groups exist" has no
 // cluster-wide answer. The handle is the verified `ocOrgId` claim and never a
-// tool argument — a model naming the org would be a model choosing whose roles
-// it sees.
+// tool argument — a model naming the org would be a model choosing whose
+// directory it sees.
 //
 // Satisfied by *identity.CatalogService. Read-only with no write counterpart
-// anywhere on this surface — roles are created at BUILD time, deterministically,
+// anywhere on this surface — groups are created at BUILD time, deterministically,
 // never by a model.
-type RoleCatalogLister interface {
-	ListRoleCatalog(ctx context.Context, orgHandle string) ([]RoleCatalogEntry, error)
+//
+// The type says GROUP and not "role" deliberately: a directory group is a set of
+// PEOPLE the org owns, while a role is project-owned (`<project>/<Role>`) and is
+// converged to the tag by the build. Only the first is a catalog to reuse from.
+type GroupCatalogLister interface {
+	ListGroupCatalog(ctx context.Context, orgHandle string) ([]GroupCatalogEntry, error)
 }
 
-// RoleCatalogEntry is one row of the role catalog as the tool renders it. It is
+// GroupCatalogEntry is one row of the group catalog as the tool renders it. It is
 // mcpdiscovery's own view type — the projection every other tool here goes
 // through — so a field added to the identity domain cannot leak into an LLM
 // prompt by accident.
-type RoleCatalogEntry struct {
+type GroupCatalogEntry struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
-	// PlatformCreated is true when the platform created this role and may
+	// PlatformCreated is true when the platform created this group and may
 	// therefore give it test users. False means somebody else made the group;
 	// the platform will leave it alone.
 	PlatformCreated bool `json:"platformCreated"`
-	MemberCount     int  `json:"memberCount"`
+	// MemberCount is how many users are in the group today.
+	MemberCount int `json:"memberCount"`
+	// Projects is how many DISTINCT projects already bind a role to this group —
+	// the signal that reusing the name is a decision about people who already
+	// hold roles elsewhere. 0 means nobody has bound a role to it yet.
+	Projects int `json:"projects"`
 }
 
 // PlatformResourceConsumerLister derives, per installed platform ResourceType,

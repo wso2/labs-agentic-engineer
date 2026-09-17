@@ -11,7 +11,14 @@
     // edit hashed identically and turbo replayed a FULL TURBO hit without
     // regenerating anything. A whole uncached run is ~3s; correctness is worth
     // more than that.
+    //
+    // `dependsOn: ["^build"]` because a gen script is ordinary TypeScript that
+    // may import a workspace sibling — @aep/agent-stream's reaches into
+    // @aep/excalidraw-dsl — and tsx resolves that import through the sibling's
+    // `main`, i.e. its dist/. Without this, a clean checkout (CI, every time)
+    // runs gen before the sibling is built and dies on ERR_MODULE_NOT_FOUND.
     "gen": {
+      "dependsOn": ["^build"],
       "cache": false
     },
     "build": {

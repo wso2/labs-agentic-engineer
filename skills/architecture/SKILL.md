@@ -1,6 +1,6 @@
 ---
 name: architecture
-description: Reuse org catalog resources when deriving or enriching a component's design — deciding the component decomposition, filling a scaffolded design.json (language, dependencies, description, pinned skills), or resolving/reconsidering any dependency.
+description: "Reuse org catalog resources when deriving or enriching a component's design — deciding the component decomposition, filling a scaffolded design.json (language, dependencies, description, pinned skills), or resolving/reconsidering any dependency."
 metadata:
   aep:
     kind: platform
@@ -53,12 +53,15 @@ Never substitute a design system the organization defaults do not name.
 **Pin the design system; do not consult it.** A design system is built against,
 not designed with — it is the coding run's to load, and its theming is a settled
 organization decision that no design-time question reopens. Never ask the user
-about colors, themes, or look and feel. Add `"api-management"` to any service
-that sits behind the gateway, and `"thunder-authentication"` to **both** sides
-of sign-in — the SPA *and* every
-protected backend it calls, since that skill owns how each resolves the caller's
-role. It is a JSON key on the component's design object, so include it when you
-write that `design.json` (addFile/editFile) — `design.json` is its only home.
+about colors, themes, or look and feel. **Pin the auth skills the same way,
+never leave them to a description:** `"thunder-authentication"` on **both**
+sides of sign-in — every component that declares the `thunder-app` dependency,
+the SPA *and* each protected backend it calls — and `"api-management"` on every
+service that sits behind the gateway. The first owns the SPA's sign-in, its
+screen gates and the backend's verification of the gateway's assertion; the
+second owns the gateway's contract. It is a JSON key on the component's design
+object, so include it when you write that `design.json` (addFile/editFile) —
+`design.json` is its only home.
 Each component carries only the skills its own build needs.
 
 Writing the whole enriched file yourself (removeFile + addFile with every
@@ -265,11 +268,14 @@ operations its contract actually exposes:
   the spec implies users sign in, declare it on BOTH the SPA and each protected
   service under the SAME dependency `name` — that shared name is what ties
   sign-in to token-carrying API calls. With no such dependency the SPA deploys
-  unable to sign in. `thunder-app` takes no `parameters`: `security-design`
-  authors the Thunder client on `security.json`, and the platform registers the
-  callback URI (`redirectUris` — platform-managed, never proposed here).
+  unable to sign in. `thunder-app` takes no `parameters` and **nothing about the
+  sign-in client is authored by hand**: its display name, its redirect URIs and
+  its scope list are all derived by the platform (the scopes from the permission
+  catalog `security-design` writes on `security.json`). A project with no web
+  application still declares the dependency on its API — the client is what the
+  console's Test tab and the validation agent sign in through.
   `thunder-authentication` owns the coding-time rule, and `security-design`
-  owns which roles sign in through it.
+  owns which roles sign in through it and what they may do.
 
 ### Resolving an `external` dependency
 

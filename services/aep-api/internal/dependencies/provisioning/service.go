@@ -32,7 +32,7 @@ import (
 // defaultEnv is the single environment provisioning pins in v1 — the watcher and
 // the declarative-wiring comment both read the `development` binding (upstream
 // parity: the two naming schemes are deliberately identical).
-const defaultEnv = openchoreo.DevEnvironmentName
+func defaultEnv() string { return openchoreo.DevEnvironmentName }
 
 // Service coordinates dependency provisioning on the `provision` gate funnel: it
 // mints gate issues, collects external values, provisions platform resources,
@@ -83,6 +83,9 @@ type Service struct {
 	// markers is the CRT marker catalog the end-user-auth overlay keys on.
 	// Nil skips overlay.
 	markers ResourceMarkerCatalog
+	// projectNames resolves the project's display name for the overlay. Nil
+	// falls back to the project id.
+	projectNames ProjectNamer
 	// securityJSON reads security.json at HEAD (empty tag) or a spec tag.
 	// Nil skips overlay.
 	securityJSON SecurityJSONReader
@@ -134,6 +137,9 @@ type Deps struct {
 	// SecurityJSON reads security.json at HEAD (empty tag) or a spec tag.
 	// Nil skips overlay.
 	SecurityJSON SecurityJSONReader
+	// ProjectNames resolves the project's display name for the end-user-auth
+	// overlay. Nil falls back to the project id.
+	ProjectNames ProjectNamer
 }
 
 // NewService wires the provisioning service from its collaborator set.
@@ -158,6 +164,7 @@ func NewService(d Deps) *Service {
 		orgResourceDocs:   d.OrgResourceDocs,
 		markers:           d.Markers,
 		securityJSON:      d.SecurityJSON,
+		projectNames:      d.ProjectNames,
 	}
 }
 
@@ -327,7 +334,7 @@ func envList(reqEnvs []string) []string {
 		}
 	}
 	if len(out) == 0 {
-		return []string{defaultEnv}
+		return []string{defaultEnv()}
 	}
 	return out
 }

@@ -17,7 +17,7 @@
  */
 
 export { OpenApiView } from './OpenApiView.js';
-export type { OpenApiViewProps } from './OpenApiView.js';
+export type { OpenApiViewProps, ScopeGrant, ScopeRoles } from './OpenApiView.js';
 export { parseOpenApi } from './parse.js';
 export type {
   ParsedOpenApi,
@@ -29,6 +29,7 @@ export type {
   Schema,
   SchemaField,
   Method,
+  Protection,
   ParseError,
   ParseResult,
 } from './parse.js';

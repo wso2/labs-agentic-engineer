@@ -253,7 +253,7 @@ export class FileBundle {
     // roles, test users, and the Thunder client), so a malformed one must be
     // caught while the model can still fix it, not when the build gate refuses
     // the tag.
-    const securityProblem = checkSecurityDesign(path, content);
+    const securityProblem = checkSecurityDesign(path, content, this);
     if (securityProblem) {
       return err(path, op, securityProblem.code, securityProblem.message);
     }
@@ -267,7 +267,10 @@ export class FileBundle {
     // A component's openapi.yaml is structure-gated on the same terms, which is
     // what makes asking a separate tool to validate it unnecessary — that ask
     // cost a round trip plus a full re-emission of the document as tool input.
-    const specProblem = checkOpenapiSpec(path, content);
+    // `this` because the security half of that gate is cross-file: whether the
+    // component depends on the sign-in client (its design.json) and whether a
+    // scope it requires is a catalog handle this component owns (security.json).
+    const specProblem = checkOpenapiSpec(path, content, this);
     if (specProblem) {
       return err(path, op, specProblem.code, specProblem.message);
     }

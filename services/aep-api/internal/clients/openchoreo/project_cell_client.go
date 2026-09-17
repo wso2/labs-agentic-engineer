@@ -48,6 +48,10 @@ import (
 // Ready=True, a ProjectRelease in place — and then every component deploy into
 // it fails with "namespace ... not found".
 //
+// Cell bindings follow each pipeline's promotion order only — read the pipeline,
+// not every Environment in the namespace. The boot-resolved write-target is not
+// appended here.
+//
 // The generated `gen` client is pinned to a spec version that predates all of
 // this (see services/aep-api/Makefile, OC_SPEC_VERSION), so this is hand-rolled
 // over the same authenticated transport, exactly like ResourceClient.
@@ -111,7 +115,7 @@ type projectCellClient struct {
 	editor  func(ctx context.Context, req *http.Request) error
 }
 
-func NewProjectCellClient(cfg Config) ProjectCellClient {
+func newProjectCellClient(cfg Config) *projectCellClient {
 	if cfg.BaseURL == "" {
 		panic(errors.New("init openchoreo project cell client: Config.BaseURL is required"))
 	}
@@ -121,6 +125,22 @@ func NewProjectCellClient(cfg Config) ProjectCellClient {
 		http:    requests.NewRetryableHTTPClient(inner, buildRetryConfig(cfg)),
 		editor:  authRequestEditor(cfg),
 	}
+}
+
+func NewProjectCellClient(cfg Config) ProjectCellClient {
+	return newProjectCellClient(cfg)
+}
+
+func (c *projectCellClient) getPipeline(ctx context.Context, namespace, pipelineName string) (*deploymentPipeline, error) {
+	if namespace == "" || pipelineName == "" {
+		return nil, fmt.Errorf("pipeline: namespace and pipeline name are required")
+	}
+	pipeline := &deploymentPipeline{}
+	if _, err := c.do(ctx, http.MethodGet,
+		nsBase(namespace)+"/deploymentpipelines/"+pipelineName, nil, pipeline); err != nil {
+		return nil, fmt.Errorf("get deployment pipeline %q: %w", pipelineName, err)
+	}
+	return pipeline, nil
 }
 
 // do issues a single authenticated request and returns the HTTP status
@@ -170,13 +190,9 @@ func (c *projectCellClient) do(ctx context.Context, method, path string, body, o
 }
 
 func (c *projectCellClient) PipelineEnvironments(ctx context.Context, namespace, pipelineName string) ([]string, error) {
-	if namespace == "" || pipelineName == "" {
-		return nil, fmt.Errorf("pipeline environments: namespace and pipeline name are required")
-	}
-	pipeline := &deploymentPipeline{}
-	if _, err := c.do(ctx, http.MethodGet,
-		nsBase(namespace)+"/deploymentpipelines/"+pipelineName, nil, pipeline); err != nil {
-		return nil, fmt.Errorf("get deployment pipeline %q: %w", pipelineName, err)
+	pipeline, err := c.getPipeline(ctx, namespace, pipelineName)
+	if err != nil {
+		return nil, err
 	}
 
 	// Promotion order, de-duplicated: a source in one path is a target in

@@ -187,6 +187,78 @@ else
     echo "   ✅ gateway encryption key created"
 fi
 
+# ── The gateway's backend-JWT assertion keypair ─────────────────────────────
+# What a service downstream of this gateway verifies. The `backend-jwt` policy
+# makes the gateway mint an RS256-signed JWT of the AUTHENTICATED caller into
+# `x-jwt-assertion` on every upstream request; the service verifies it against
+# the public half and thereby knows the request came through the gateway and
+# not from a pod that reached it directly. That is the one thing a gateway
+# cannot prove with a header, and the reason a generated service no longer
+# needs a scope table of its own.
+#
+# One keypair per (org, environment), for the same reason there is one gateway:
+# a shared key would let any environment's gateway mint an assertion any other
+# environment's service believes.
+#
+# Generated once and left alone on re-runs. Rotating it is a deliberate act —
+# every service in the environment has the old public key in its environment
+# until it is redeployed, so a rotation that is not followed by a redeploy of
+# every protected component is an outage.
+#
+# The verification half is published as a self-signed X.509 CERTIFICATE, not as
+# a bare SPKI public key, because that is the shape both target stacks can read:
+# Ballerina's `crypto:decodeRsaPublicKeyFromContent` takes certificate content
+# and nothing else, and Go's `x509.ParseCertificate` gets the key out of one in
+# a line. The certificate carries no trust of its own — it is a container for
+# the public key, verified by nothing and pinned by the platform that published
+# it. Ten years, because it is not the expiry that retires this key: rotating
+# the keypair is (see above).
+#
+# The SECRET is the source of truth; the values below feed the private half to
+# the gateway from it. It is read back rather than held from the generating
+# branch so both paths — fresh and preserved — take the same one. Typed
+# kubernetes.io/tls with the conventional tls.key/tls.crt keys, so the day the
+# gateway chart exposes a volume pass-through it can be mounted as-is.
+#
+# ⚠️  The private half reaches the gateway as `signingkey.inline`, which the
+#     gateway-extension chart renders into a ConfigMap in this namespace IN
+#     PLAINTEXT. The policy also accepts `signingkey.path` (a PEM file), and
+#     the gateway chart has `gatewayRuntime.deployment.extraVolumes` /
+#     `extraVolumeMounts` to mount this Secret at one — but the extension chart
+#     (1.0.0-rc2) passes neither through, exposing only `systemExtraEnv`. Until
+#     it does, anyone with namespace read here can read the signing key. Do not
+#     treat this environment's assertions as a security boundary against an
+#     attacker who already has that access.
+BJWT_SECRET="${RELEASE}-backend-jwt"
+if kubectl get secret "$BJWT_SECRET" -n "$NS" --context "$CLUSTER_CONTEXT" &>/dev/null; then
+    echo "   ✅ backend-JWT signing keypair already present (preserved)"
+else
+    bjwt_dir="$(mktemp -d)"
+    openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 \
+        -subj "/CN=aep-gateway-${ORG_NAME}-${ENV_NAME}" \
+        -keyout "${bjwt_dir}/tls.key" -out "${bjwt_dir}/tls.crt" 2>/dev/null
+    kubectl create secret tls "$BJWT_SECRET" -n "$NS" --context "$CLUSTER_CONTEXT" \
+        "--key=${bjwt_dir}/tls.key" "--cert=${bjwt_dir}/tls.crt" >/dev/null
+    rm -rf "$bjwt_dir"   # never leave the private key on disk
+    echo "   ✅ backend-JWT signing keypair created"
+fi
+bjwt_secret_value() {
+    kubectl get secret "$BJWT_SECRET" -n "$NS" --context "$CLUSTER_CONTEXT" \
+        -o "jsonpath={.data.$1}" 2>/dev/null | base64 -d
+}
+BJWT_PRIVATE_PEM="$(bjwt_secret_value 'tls\.key')"
+BJWT_CERT_PEM="$(bjwt_secret_value 'tls\.crt')"
+if [ -z "$BJWT_PRIVATE_PEM" ] || [ -z "$BJWT_CERT_PEM" ]; then
+    echo "❌ Secret ${NS}/${BJWT_SECRET} carries no tls.key/tls.crt pair." >&2
+    echo "   Delete it and re-run to have this script generate one." >&2
+    exit 1
+fi
+# The `iss` the gateway stamps on every assertion it mints. Names the GATEWAY,
+# not the IdP — a service pins this, and pinning the IdP's issuer here would be
+# the JWKS coupling the assertion exists to remove.
+ASSERTION_ISSUER="aep-gateway-${ORG_NAME}-${ENV_NAME}"
+ASSERTION_HEADER="x-jwt-assertion"
+
 # ── The control-plane registration token ────────────────────────────────────
 # The chart's APIGateway CR always names a token Secret, and the gateway
 # controller reads it as a NON-optional env var (APIP_GW_CONTROLLER_CONTROLPLANE_TOKEN)
@@ -249,6 +321,21 @@ apiGateway:
               remote:
                 uri: ${T2_JWKS_URL}
                 skipTlsVerify: true
+      # The assertion the upstream service verifies. tokencaching is the
+      # policy's default and is left on: the cache is keyed by the claims, so a
+      # different caller never reads another's assertion.
+      backendjwt_v1:
+        algorithm: SHA256withRSA
+        issuer: ${ASSERTION_ISSUER}
+        tokenexpiry: 15m
+        tokencaching: true
+        signingkey:
+          inline: |
+YAML
+    # Indented into the block scalar opened above. Written this way rather than
+    # inline in the heredoc because a PEM is multi-line and YAML would fold it.
+    printf '%s\n' "$BJWT_PRIVATE_PEM" | sed 's/^/            /'
+    cat <<YAML
 bootstrap:
   enabled: ${BOOTSTRAP}
 YAML
@@ -264,6 +351,9 @@ YAML
 } > "$VALUES_FILE"
 
 # ── CREATE or BIND ──────────────────────────────────────────────────────────
+# Whether the gateway that is actually deployed signs assertions with the
+# keypair above. Only then is the public half published to services.
+ASSERTION_LIVE=false
 # helm_release_deployed, not a bare `helm status`: a release left `failed` by an
 # earlier run must be re-driven, not bound to.
 if helm_release_deployed "$RELEASE" "$NS"; then
@@ -287,6 +377,30 @@ print((json.load(sys.stdin) or {}).get("gateway", {}).get("vhost", ""))')"
         echo "      Tokens from this environment's Thunder will be rejected at this gateway."
         echo "      Re-create the release deliberately, or fix the binding — this script will not upgrade it."
     fi
+    # The assertion half, checked the same way and for the same reason: a
+    # release this script did not install may carry no backend-jwt signing key,
+    # or one from a keypair whose public half is not the Secret above. Either
+    # way the certificate this script would publish to services would verify
+    # nothing, so it publishes none — a service that needs an assertion then
+    # fails closed instead of trusting one it cannot check.
+    live_signing_key="$(printf '%s' "$live_values" | python3 -c 'import json,sys
+v = json.load(sys.stdin) or {}
+print(v.get("apiGateway", {}).get("config", {}).get("policyConfigurations", {})
+       .get("backendjwt_v1", {}).get("signingkey", {}).get("inline", ""))')"
+    if [ -z "$live_signing_key" ]; then
+        ASSERTION_LIVE=false
+        echo "   ⚠️  The release has no backend-jwt signing key configured."
+        echo "      Services in this environment get no gateway assertion to verify."
+        echo "      Re-create the release deliberately — this script will not upgrade it."
+    elif [ "$(printf '%s' "$live_signing_key" | tr -d '[:space:]')" \
+         != "$(printf '%s' "$BJWT_PRIVATE_PEM" | tr -d '[:space:]')" ]; then
+        ASSERTION_LIVE=false
+        echo "   ⚠️  The release signs assertions with a key that is NOT ${NS}/${BJWT_SECRET}."
+        echo "      The certificate this script publishes would verify nothing, so it publishes none."
+    else
+        ASSERTION_LIVE=true
+        echo "   ✅ backend-jwt signs with ${NS}/${BJWT_SECRET}"
+    fi
     if [ "$live_vhost" != "$GATEWAY_VHOST" ]; then
         echo "   ⚠️  Registered vhost is '${live_vhost:-<unset>}', this environment serves on '${GATEWAY_VHOST}'."
         echo "      The vhost is write-once in Agent Manager, so an upgrade would only log a drift"
@@ -301,6 +415,7 @@ print((json.load(sys.stdin) or {}).get("gateway", {}).get("vhost", ""))')"
             "aep.wso2.com/release-created-by=external" >/dev/null
     fi
 else
+    ASSERTION_LIVE=true
     echo ""
     echo "📦 Installing ${RELEASE} in ${NS}"
     helm upgrade --install "$RELEASE" \
@@ -335,6 +450,42 @@ kubectl wait --for=condition=Available "deployment/${RUNTIME_SVC}" \
 kubectl wait --for=condition=Programmed "restapi/${RELEASE}-otel-restapi" \
     -n "$NS" --context "$CLUSTER_CONTEXT" --timeout="$WAIT_TIMEOUT"
 
+# ── Publishing the assertion's verification half ────────────────────────────
+# Onto the Environment's ANNOTATIONS, which is the one projection of an
+# environment-level fact that aep-api can read: it runs outside the cluster and
+# sees only the OpenChoreo API (the Thunder binding reaches it the same way —
+# see setup-environment-thunder.sh). aep-api copies these into the
+# api-configuration trait's `backendJwt` environment config, and the trait puts
+# them in the service container's environment.
+#
+# The certificate is not a secret; it is the half anyone may hold. The private
+# key never leaves the Secret and the gateway's own config.
+#
+# Removed, not left stale, when the deployed gateway does not sign with this
+# keypair: an annotation that outlives the key it describes makes every service
+# in the environment reject every assertion, with nothing saying why.
+if kubectl get environment "$ENV_NAME" -n "$ORG_NAME" --context "$CLUSTER_CONTEXT" >/dev/null 2>&1; then
+    if [ "$ASSERTION_LIVE" = true ]; then
+        kubectl annotate environment "$ENV_NAME" -n "$ORG_NAME" --context "$CLUSTER_CONTEXT" --overwrite \
+            "aep.wso2.com/gateway-assertion-issuer=${ASSERTION_ISSUER}" \
+            "aep.wso2.com/gateway-assertion-header=${ASSERTION_HEADER}" \
+            "aep.wso2.com/gateway-assertion-certificate=${BJWT_CERT_PEM}" >/dev/null
+        echo ""
+        echo "   ✅ assertion verification half published on Environment ${ORG_NAME}/${ENV_NAME}"
+    else
+        kubectl annotate environment "$ENV_NAME" -n "$ORG_NAME" --context "$CLUSTER_CONTEXT" \
+            "aep.wso2.com/gateway-assertion-issuer-" \
+            "aep.wso2.com/gateway-assertion-header-" \
+            "aep.wso2.com/gateway-assertion-certificate-" >/dev/null 2>&1 || true
+        echo ""
+        echo "   ⚠️  no assertion verification half published — see the warning above"
+    fi
+else
+    echo ""
+    echo "   ℹ️  no Environment ${ORG_NAME}/${ENV_NAME} yet — re-run after it exists to publish"
+    echo "      the assertion verification half onto it."
+fi
+
 echo ""
 echo "============================================"
 echo "  ✅ Environment gateway ready — ${ORG_NAME}/${ENV_NAME}"
@@ -344,4 +495,5 @@ echo "  RestApi label:  gateway.api-platform.wso2.com/restapi-target=${GATEWAY_N
 echo "  Runtime:        ${RUNTIME_SVC}.${NS}:22893"
 echo "  Public vhost:   ${GATEWAY_VHOST}"
 echo "  ThunderKeyManager issuer: ${T2_ISSUER}"
+echo "  Assertion issuer: ${ASSERTION_ISSUER} (signing key ${NS}/${BJWT_SECRET})"
 echo "  Registered in Agent Manager: ${BOOTSTRAP}"

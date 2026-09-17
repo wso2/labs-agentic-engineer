@@ -1,6 +1,6 @@
 ---
 name: openapi-conventions
-description: Use when creating or editing an openapi.yaml for a service component — designing endpoints, request/response schemas, errors, pagination, or security for a REST API.
+description: "Use when creating or editing an openapi.yaml for a service component — designing endpoints, request/response schemas, errors, pagination, or security for a REST API."
 metadata:
   aep:
     kind: platform
@@ -87,36 +87,114 @@ Filtering and searching are query parameters on the collection GET
 
 ## Security
 
-When the requirements mention login, roles, or per-user data, declare it:
+**This block is the gateway's configuration, and the ONLY place the rule
+lives.** Deploy renders one gateway route per operation from it: the audience it
+pins and the single scope it requires. The service holds no copy of it — a
+request that fails this check never reaches the service at all. Get it right
+here and there is nothing else to configure anywhere.
+
+A component that depends on the sign-in resource type declares one scheme, one
+document-level default, and per-operation overrides:
 
 ```yaml
 components:
   securitySchemes:
-    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+    oauth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: /oauth2/authorize
+          tokenUrl: /oauth2/token
+          scopes:
+            claims:read: See own claims
+            claims:submit: Create and send a claim
 security:
-  - bearerAuth: []
+  - oauth2: []        # document default: any signed-in user
 ```
 
-On a service the gateway protects, the gateway sets `X-User-Id` from the
-validated token and a client never sends it. Define it once under
-`components/parameters`, then `$ref` it from every **path item's**
-`parameters` — path level, not per operation, so one reference covers every
-method on that path. A definition nothing references is not in the spec:
+Every scope key, here and on an operation, is a handle from
+`specs/design/security.json` — `<resource>:<action>` — for a resource THIS
+component owns. Never invent one.
+
+`openid`, `profile`, `email`, `group` and `ou` are **reserved** OIDC scopes that
+ride every access token, so one of them on an operation would admit every
+signed-in person in the organisation — silently, and wide open. The gate refuses
+all five as an operation scope and as a `flows.*.scopes` key.
+
+**Three states, and only three.** Each operation is exactly one of:
+
+| `security` on the operation | Means | Gateway | Service |
+|---|---|---|---|
+| absent (inherits the document default) | any signed-in user | token required; signed assertion forwarded | 401 when the assertion is missing or does not verify |
+| `security: []` | public | no token checked; no assertion minted | reads no identity at all |
+| `security: [{oauth2: ["<handle>"]}]` | that permission | scope enforced, whole-string; 401 otherwise | no scope check — a request that arrives has passed it |
+
+The gateway answers **401** for every refusal (no token, expired, wrong
+audience, missing scope) with the same body and no `WWW-Authenticate`. No
+generated service answers 403: the only authorization question left to it is
+"is this row the caller's", and that answer is 404 (`api-management`).
+
+**Exactly one scope per operation.** No two-element list, no second scheme
+object, no `allOf`/`anyOf` question for the gateway and the service to answer
+differently.
+
+## Reach is the path
+
+Which **rows** an operation reaches is its path, and nothing else says it:
+
+| Path | Reaches | Guarded by |
+|---|---|---|
+| `/me/<resource>` | the caller's own rows | the resource's own-rows action — `claims:read`, `claims:submit` |
+| `/me/<relation>/<resource>` | rows of a relation of the caller's — `/me/team/claims`, `/me/company/orders` | its own action — `claims:review-manager` |
+| anything else | **every row** | the every-row action — `claims:read-all`, `claims:approve` |
+
+The `<relation>` is a noun the domain model has (`team` because `Employee` has a
+`managerId`), never a role or a group name — `/me/team/claims`, not
+`/manager/claims`. The handler behind a `/me/…` path resolves the rows through
+the gateway assertion's `sub` and nothing the client sends; a row that is not
+the caller's does not exist there, so the answer is 404, never 403.
+
+Two consequences, both mechanical:
+
+- **One reach per handle.** A handle guards operations under `/me/` or outside
+  it, never both — the same grant cannot mean "your rows" on one operation and
+  "every row" on another. The gate refuses the document that mixes them, naming
+  both operations. A capability with two reaches is two operations with two
+  handles: `GET /me/claims` on `claims:read`, `GET /claims` on `claims:read-all`.
+- **Nothing widens.** There is no handler-side check that turns one list into a
+  bigger one. A caller who may see every claim calls `GET /claims`; the SPA
+  picks the operation for the screen, and the gateway is the whole of the
+  decision. A role that needs both views holds both handles.
+
+Say the reach in the operation's `summary` too — "The caller's claims", "Every
+claim" — so a reader of the contract does not have to parse the path for it.
+
+`bearerAuth` is not used on this platform. A component with no sign-in
+dependency declares no security scheme at all.
+
+**Declare no identity header.** The gateway hands the service the caller as a
+signed `x-jwt-assertion`; the unsigned `X-User-*` headers it also sets are not
+an authority and nothing reads them (`api-management`). Neither belongs in the
+contract: the assertion is a property of the deployment, not of the API, and a
+declared `X-User-Id` parameter invites a handler to bind one. The write gate
+refuses a `required: true` identity header and any identity header on a public
+operation; the correct document simply has none.
 
 ```yaml
-components:
-  parameters:
-    UserId:
-      name: X-User-Id
-      in: header
-      required: true
-      description: caller identity injected by the gateway from the validated token
-      schema: { type: string }
 paths:
-  /expense-claims/{claimId}:
-    parameters:
-      - $ref: '#/components/parameters/ClaimId'
-      - $ref: '#/components/parameters/UserId'
+  /me/claims:
+    get:
+      summary: The caller's claims
+      security:
+        - oauth2: [claims:read]
+  /claims:
+    get:
+      summary: Every claim
+      security:
+        - oauth2: [claims:read-all]
+  /health:
+    get:
+      security: []
 ```
 
 **Never spec an auth endpoint.** No `/auth/login`, `/auth/register`,

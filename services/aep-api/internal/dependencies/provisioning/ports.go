@@ -72,6 +72,16 @@ type ResourceMarkerCatalog interface {
 	MarkersByName(ctx context.Context) (map[string]dependencies.TypeMarkers, error)
 }
 
+// ProjectNamer resolves a project's display name for the end-user-auth
+// overlay. Nil (or an error) falls back to the project id.
+type ProjectNamer interface {
+	// ProjectDisplayName is the project's human name, as the console shows it.
+	// It becomes the sign-in client's display name — what a person reads on the
+	// generated app's consent and login screens — so a project with no display
+	// name of its own falls back to its id rather than to anything invented.
+	ProjectDisplayName(ctx context.Context, orgID, projectID string) (string, error)
+}
+
 // SecurityJSONReader returns the project's security.json bytes. Empty tag is
 // HEAD (HTTP drawer provision); a spec tag is the build's version. A missing
 // file is (nil, nil) — no overlay, no invented defaults. Nil reader skips
@@ -287,6 +297,12 @@ type RolesEnsureOutcome struct {
 	// and the same username on another environment is a different account.
 	Issuer      string
 	Environment string
+	// ResourceIdentifier is the project's OAuth resource server — the absolute
+	// URI that is the access token's `aud`. It is published beside the logins
+	// because a login alone cannot mint a usable token: the client has to ask
+	// for this `resource`, and asking for another one (or none) produces a
+	// token the gateway rejects.
+	ResourceIdentifier string
 }
 
 // RolesCredential is one published test-account login.
@@ -295,10 +311,15 @@ type RolesEnsureOutcome struct {
 // seal. The comment says so per row rather than printing a blank, so a reader —
 // human or agent — is never handed an empty string that looks like a password.
 type RolesCredential struct {
-	Username  string
-	Password  string
-	Role      string
-	ColdStart bool
+	Username string
+	Password string
+	// Roles are every project role this login holds, and Scopes the union of
+	// what those roles grant. Both are plural because v2 lets one account hold
+	// several roles, and the ticket's reader needs the union: it is what the
+	// account's token will actually carry, and therefore which criteria it can
+	// exercise.
+	Roles  []string
+	Scopes []string
 }
 
 // RolesEnsurer makes the roles and test users a project's design declares real

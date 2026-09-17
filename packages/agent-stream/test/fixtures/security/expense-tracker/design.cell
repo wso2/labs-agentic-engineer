@@ -1,0 +1,8 @@
+cell "Expense Tracker" {
+  component expense-webapp as "Expense Web App" webapp
+  component expense-api as "Expense API" service
+  component expense-db as "Expense DB" database
+
+  expense-webapp -> expense-api
+  expense-api -> expense-db
+}
