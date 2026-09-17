@@ -18,102 +18,52 @@
 
 import { useEffect, useState } from "react";
 import { Alert, Box, Button, CircularProgress, Typography } from "@wso2/oxygen-ui";
-import { AlertCircle, Check, Circle, Folder } from "@wso2/oxygen-ui-icons-react";
-import { useEnsureAuthzRole, useSyncSkills } from "../../settings/api/queries";
-
-// After this many total attempts (the automatic first one included), the
-// workspace-configuration failure message escalates from a plain retry
-// prompt to one acknowledging the delay (#743 decision — capped, not
-// unlimited-silent).
-const AUTHZ_ESCALATE_AFTER_ATTEMPTS = 3;
+import { AlertCircle, Check, Folder } from "@wso2/oxygen-ui-icons-react";
+import { useSyncSkills } from "../../settings/api/queries";
 
 // "skipped" is distinct from both "done" and "error": the step did not
 // succeed, but the user chose to proceed and the org is usable without it.
 // Collapsing it into either one loses that — "done" would claim the skills
 // landed, "error" would hold the user on a screen they have already left.
-type RowStatus = "pending" | "active" | "done" | "error" | "skipped";
+type RowStatus = "active" | "done" | "error" | "skipped";
 
-// Two phases run in sequence (#743, splitting #102's single bootstrap step):
-// workspace authz configuration, then repository/skills setup.
-//
-// Authz goes FIRST because skills setup depends on it. Syncing the skills
-// catalogue creates the org's skills component in OpenChoreo, and OC authorizes
-// that against the org's AuthzRole — which is precisely what this step creates.
-// Run the other way round, a first-time org's very first action 403s at OC and
-// surfaces as "the skills catalogue couldn't be set up", which describes the
-// symptom and hides the cause.
-//
-// Authz is also the hard gate: the org's AuthzRole must exist before the
-// console is usable, so unlike skills there is no "Continue anyway" for it.
+// Repository/skills setup. Workspace authz configuration used to be a first
+// phase here (#743), but it has to gate every earlier onboarding step's OC
+// writes too (GitHub/Anthropic Connect mirror secrets into OC), not just this
+// one — so it now runs as its own wizard step ahead of GitHub/Anthropic
+// (WorkspaceAuthzStep) and is guaranteed done by the time this step mounts.
 export function RepositorySetupStep({ onComplete }: { onComplete: () => void }) {
-  const authz = useEnsureAuthzRole();
   const sync = useSyncSkills();
   const [skillsSkipped, setSkillsSkipped] = useState(false);
-  const [authzAttempts, setAuthzAttempts] = useState(0);
 
-  // Phase 1 auto-fires on mount. Deferred one-shot, not a bare mutate() in the
+  // Auto-fires on mount. Deferred one-shot, not a bare mutate() in the
   // effect: firing synchronously binds the mutation's result delivery to the
   // StrictMode-doubled subscription React is about to tear down — the mutation
   // succeeds in the cache but this component never re-renders (stuck spinner).
   // The cleanup-cancelled timeout fires exactly once, after the subscription is
   // stable, in both dev and prod.
-  const { mutate: authzMutate } = authz;
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setAuthzAttempts((n) => n + 1);
-      authzMutate();
-    }, 0);
-    return () => clearTimeout(t);
-  }, [authzMutate]);
-
-  const authzDone = authz.isSuccess;
-
-  // Phase 2 auto-fires once authz lands — same deferred-timeout StrictMode
-  // guard, keyed on authzDone instead of mount. It waits for SUCCESS, not
-  // merely for the attempt to settle: running the skills sync against an org
-  // whose AuthzRole failed to apply just produces the 403 this ordering exists
-  // to avoid.
   const { mutate: syncMutate } = sync;
   useEffect(() => {
-    if (!authzDone) return;
     const t = setTimeout(() => syncMutate(), 0);
     return () => clearTimeout(t);
-  }, [authzDone, syncMutate]);
-
-  function retryAuthz() {
-    setAuthzAttempts((n) => n + 1);
-    authz.mutate();
-  }
+  }, [syncMutate]);
 
   const skillsDone = sync.isSuccess || skillsSkipped;
 
-  const authzStatus: RowStatus = authz.isError
-    ? "error"
-    : authzDone
-      ? "done"
-      : "active";
   // `skillsSkipped` is read BEFORE `sync.isError`, and the two are different
   // questions. The mutation's error is sticky — "Continue anyway" does not
   // clear it — so an error-first reading would keep the step incomplete for
   // the rest of the session, leaving the user on a screen whose only exit they
   // have already taken. Settled-ness is what gates progress here.
-  const skillsStatus: RowStatus = !authzDone
-    ? "pending"
-    : skillsSkipped
-      ? "skipped"
-      : sync.isError
-        ? "error"
-        : skillsDone
-          ? "done"
-          : "active";
+  const skillsStatus: RowStatus = skillsSkipped
+    ? "skipped"
+    : sync.isError
+      ? "error"
+      : skillsDone
+        ? "done"
+        : "active";
 
-  // Skipping completes the step without claiming the skills landed — the row
-  // says so, and so does the closing copy. Only the workspace row has to be
-  // genuinely "done": it is the hard gate.
-  const allDone =
-    authzStatus === "done" &&
-    (skillsStatus === "done" || skillsStatus === "skipped");
-  const authzEscalated = authzAttempts >= AUTHZ_ESCALATE_AFTER_ATTEMPTS;
+  const allDone = skillsStatus === "done" || skillsStatus === "skipped";
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3, py: 1 }}>
@@ -135,19 +85,13 @@ export function RepositorySetupStep({ onComplete }: { onComplete: () => void }) 
         }}
       >
         <ChecklistRow
-          status={authzStatus}
-          label="Configure workspace"
-          description="Applying access roles for your organization"
-        />
-        <ChecklistRow
           status={skillsStatus}
           label="Create repository"
           description="Creating your organization's skills repository"
-          divider
         />
       </Box>
 
-      {!allDone && authzStatus !== "error" && skillsStatus !== "error" && (
+      {!allDone && skillsStatus !== "error" && (
         <Typography variant="caption" color="text.secondary" sx={{ textAlign: "center" }}>
           This usually takes a few seconds.
         </Typography>
@@ -172,26 +116,6 @@ export function RepositorySetupStep({ onComplete }: { onComplete: () => void }) 
               variant="contained"
               onClick={() => sync.mutate()}
               disabled={sync.isPending}
-            >
-              Retry
-            </Button>
-          </Box>
-        </>
-      )}
-
-      {authz.isError && (
-        <>
-          <Alert severity="error">{authz.error.message}</Alert>
-          <Typography variant="body2" color="text.secondary">
-            {authzEscalated
-              ? "This is taking longer than expected. This usually clears on its own — check with your administrator if it persists."
-              : "We couldn't finish configuring your workspace. This step is required before you can continue."}
-          </Typography>
-          <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
-            <Button
-              variant="contained"
-              onClick={retryAuthz}
-              disabled={authz.isPending}
             >
               Retry
             </Button>
@@ -228,34 +152,18 @@ function ChecklistRow({
   status,
   label,
   description,
-  divider,
 }: {
   status: RowStatus;
   label: string;
   description: string;
-  divider?: boolean;
 }) {
   return (
-    <Box
-      sx={{
-        display: "flex",
-        alignItems: "flex-start",
-        gap: 1.5,
-        px: 2,
-        py: 1.75,
-        ...(divider && { borderTop: "1px solid", borderColor: "divider" }),
-      }}
-    >
+    <Box sx={{ display: "flex", alignItems: "flex-start", gap: 1.5, px: 2, py: 1.75 }}>
       <Box sx={{ display: "flex", pt: "1px", flexShrink: 0 }}>
         {status === "done" && (
           <Check size={18} color="var(--oxygen-palette-success-main, currentColor)" />
         )}
         {status === "active" && <CircularProgress size={18} thickness={5} />}
-        {status === "pending" && (
-          <Box sx={{ color: "text.disabled", display: "flex" }}>
-            <Circle size={18} />
-          </Box>
-        )}
         {status === "error" && (
           <AlertCircle size={18} color="var(--oxygen-palette-error-main, currentColor)" />
         )}
@@ -266,12 +174,7 @@ function ChecklistRow({
         )}
       </Box>
       <Box>
-        <Typography
-          variant="body2"
-          color={status === "pending" ? "text.disabled" : "text.primary"}
-        >
-          {label}
-        </Typography>
+        <Typography variant="body2">{label}</Typography>
         <Typography variant="caption" color="text.secondary">
           {description}
         </Typography>

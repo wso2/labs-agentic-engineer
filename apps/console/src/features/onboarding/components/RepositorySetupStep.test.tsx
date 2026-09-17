@@ -22,14 +22,9 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RepositorySetupStep } from "./RepositorySetupStep";
 
-// Both mutations are replaced wholesale rather than driven through MSW: what
-// this file is about is the ORDER of the two bootstrap calls and the dependency
-// between them, which is this component's own logic — the request shapes are
-// the queries module's business.
-//
-// `mutate` is a module-level constant on each, matching React Query, where it
-// is stable across renders. The component's effects depend on that identity, so
-// a fresh closure per render would re-fire them forever — an artifact of the
+// `mutate` is a module-level constant, matching React Query, where it is
+// stable across renders. The component's effect depends on that identity, so
+// a fresh closure per render would re-fire it forever — an artifact of the
 // mock rather than anything the component does.
 const mocks = vi.hoisted(() => {
   const idle = () => ({
@@ -38,83 +33,35 @@ const mocks = vi.hoisted(() => {
     isPending: false,
     error: null as Error | null,
   });
-  const order: string[] = [];
+  const calls: string[] = [];
   return {
-    order,
-    authz: { ...idle(), mutate: () => void order.push("authz") },
-    sync: { ...idle(), mutate: () => void order.push("skills") },
+    calls,
+    sync: { ...idle(), mutate: () => void calls.push("skills") },
     idle,
   };
 });
 
 vi.mock("../../settings/api/queries", () => ({
-  useEnsureAuthzRole: () => mocks.authz,
   useSyncSkills: () => mocks.sync,
 }));
 
 function reset() {
-  mocks.order.length = 0;
-  Object.assign(mocks.authz, mocks.idle());
+  mocks.calls.length = 0;
   Object.assign(mocks.sync, mocks.idle());
 }
 
 describe("RepositorySetupStep", () => {
   beforeEach(reset);
 
-  // Skills sync creates the org's skills component in OpenChoreo, which OC
-  // authorizes against the AuthzRole the workspace step creates. Run the other
-  // way round, a first-time org's first action 403s and the user is told the
-  // skills catalogue failed — which is the symptom, not the cause.
-  it("configures the workspace before touching the skills repository", async () => {
+  // Workspace authz is a separate, earlier wizard step now (WorkspaceAuthzStep)
+  // — by the time this step mounts it's guaranteed done, so skills sync fires
+  // immediately rather than waiting on anything.
+  it("starts the skills sync on mount", async () => {
     render(<RepositorySetupStep onComplete={() => {}} />);
-
-    await waitFor(() => expect(mocks.order).toEqual(["authz"]));
-    expect(mocks.order).not.toContain("skills");
+    await waitFor(() => expect(mocks.calls).toEqual(["skills"]));
   });
 
-  it("starts the skills sync once the workspace is configured", async () => {
-    const { rerender } = render(<RepositorySetupStep onComplete={() => {}} />);
-    await waitFor(() => expect(mocks.order).toEqual(["authz"]));
-
-    mocks.authz.isSuccess = true;
-    rerender(<RepositorySetupStep onComplete={() => {}} />);
-
-    await waitFor(() => expect(mocks.order).toEqual(["authz", "skills"]));
-  });
-
-  // It waits for authz to SUCCEED, not merely to settle: syncing skills against
-  // an org whose AuthzRole failed to apply reproduces exactly the 403 this
-  // ordering exists to avoid.
-  it("does not start the skills sync when the workspace step failed", async () => {
-    const { rerender } = render(<RepositorySetupStep onComplete={() => {}} />);
-    await waitFor(() => expect(mocks.order).toEqual(["authz"]));
-
-    mocks.authz.isError = true;
-    mocks.authz.error = new Error("authz failed");
-    rerender(<RepositorySetupStep onComplete={() => {}} />);
-
-    await screen.findByText(/couldn't finish configuring your workspace/i);
-    expect(mocks.order).toEqual(["authz"]);
-  });
-
-  // The workspace row is the hard gate — no "Continue anyway" — so its failure
-  // must not offer the skip that the skills failure does.
-  it("offers no way past a failed workspace step", async () => {
-    const { rerender } = render(<RepositorySetupStep onComplete={() => {}} />);
-    await waitFor(() => expect(mocks.order).toEqual(["authz"]));
-
-    mocks.authz.isError = true;
-    mocks.authz.error = new Error("authz failed");
-    rerender(<RepositorySetupStep onComplete={() => {}} />);
-
-    expect(screen.queryByRole("button", { name: /continue anyway/i })).toBeNull();
-    expect(screen.getByRole("button", { name: /retry/i })).toBeTruthy();
-  });
-
-  // Skills, by contrast, is skippable: agents lose their skills until it is
-  // retried, but the org is usable.
   it("lets a failed skills sync be skipped", async () => {
-    mocks.authz.isSuccess = true;
     mocks.sync.isError = true;
     mocks.sync.error = new Error("sync failed");
     render(<RepositorySetupStep onComplete={() => {}} />);
@@ -129,7 +76,6 @@ describe("RepositorySetupStep", () => {
   // that reads the error before the skip leaves the user on a step whose only
   // exit they already took.
   it("completes after skipping a failed skills sync", async () => {
-    mocks.authz.isSuccess = true;
     mocks.sync.isError = true;
     mocks.sync.error = new Error("sync failed");
     const onComplete = vi.fn();
@@ -145,7 +91,6 @@ describe("RepositorySetupStep", () => {
   // The skipped state is reported honestly rather than as success: the row
   // stays an error, and the closing copy says skills were skipped.
   it("still shows the skills row as failed after skipping", async () => {
-    mocks.authz.isSuccess = true;
     mocks.sync.isError = true;
     mocks.sync.error = new Error("sync failed");
     render(<RepositorySetupStep onComplete={() => {}} />);
@@ -153,5 +98,15 @@ describe("RepositorySetupStep", () => {
     fireEvent.click(screen.getByRole("button", { name: /continue anyway/i }));
 
     await screen.findByText(/skills catalogue setup was skipped/i);
+  });
+
+  it("completes once skills sync succeeds", async () => {
+    mocks.sync.isSuccess = true;
+    const onComplete = vi.fn();
+    render(<RepositorySetupStep onComplete={onComplete} />);
+
+    const go = await screen.findByRole("button", { name: /go to console/i });
+    fireEvent.click(go);
+    expect(onComplete).toHaveBeenCalledOnce();
   });
 });
