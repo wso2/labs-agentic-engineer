@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -352,8 +353,11 @@ func TestFindAppByClientID_TerminatesOnShortPage(t *testing.T) {
 	}
 }
 
-// TestAssignAdminRole_AlreadyAssigned verifies that AssignAdminRole returns nil
-// without issuing a PUT when the app is already in the role's assignments.
+// TestAssignAdminRole_AlreadyAssigned verifies that AssignAdminRole returns
+// nil without calling the assignments/add endpoint when the app is already
+// in the role's assignments (read from GET /roles/{id}/assignments — its own
+// sub-resource on ThunderID 1.0.0, not a field on the role object returned by
+// GET /roles/{id}; see ensureAppInRole's comment).
 func TestAssignAdminRole_AlreadyAssigned(t *testing.T) {
 	const (
 		appID    = "app-id-sys"
@@ -363,15 +367,13 @@ func TestAssignAdminRole_AlreadyAssigned(t *testing.T) {
 
 	appList, _ := json.Marshal([]appSummary{{ID: appID, Name: clientID, ClientID: clientID}})
 	roleList, _ := json.Marshal([]map[string]any{{"id": roleID, "name": "aep-system"}})
-	roleDetail, _ := json.Marshal(map[string]any{
-		"id":   roleID,
-		"name": "aep-system",
+	assignments, _ := json.Marshal(map[string]any{
 		"assignments": []any{
 			map[string]any{"id": appID, "type": "app"},
 		},
 	})
 
-	var putCalled bool
+	var addCalled bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -379,11 +381,11 @@ func TestAssignAdminRole_AlreadyAssigned(t *testing.T) {
 			_, _ = w.Write(appList)
 		case r.Method == http.MethodGet && r.URL.Path == "/roles":
 			_, _ = w.Write(roleList)
-		case r.Method == http.MethodGet && r.URL.Path == "/roles/"+roleID:
-			_, _ = w.Write(roleDetail)
-		case r.Method == http.MethodPut && r.URL.Path == "/roles/"+roleID:
-			putCalled = true
-			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/roles/"+roleID+"/assignments":
+			_, _ = w.Write(assignments)
+		case r.Method == http.MethodPost && r.URL.Path == "/roles/"+roleID+"/assignments/add":
+			addCalled = true
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -395,14 +397,15 @@ func TestAssignAdminRole_AlreadyAssigned(t *testing.T) {
 	if err := c.AssignAdminRole(context.Background(), clientID); err != nil {
 		t.Fatalf("AssignAdminRole: %v", err)
 	}
-	if putCalled {
-		t.Error("PUT /roles should not be called when app is already assigned")
+	if addCalled {
+		t.Error("assignments/add should not be called when app is already assigned")
 	}
 }
 
-// TestAssignAdminRole_RoleExistsMissingApp verifies that AssignAdminRole issues
-// PUT /roles/{id} to add the app when the role exists but doesn't include it,
-// and that the PUT body contains the new assignment.
+// TestAssignAdminRole_RoleExistsMissingApp verifies that AssignAdminRole calls
+// POST /roles/{id}/assignments/add to add the app when the role exists but
+// its assignments (from GET /roles/{id}/assignments) don't include it yet,
+// and that the request body carries the new assignment.
 func TestAssignAdminRole_RoleExistsMissingApp(t *testing.T) {
 	const (
 		appID    = "app-id-sys"
@@ -412,14 +415,10 @@ func TestAssignAdminRole_RoleExistsMissingApp(t *testing.T) {
 
 	appList, _ := json.Marshal([]appSummary{{ID: appID, Name: clientID, ClientID: clientID}})
 	roleList, _ := json.Marshal([]map[string]any{{"id": roleID, "name": "aep-system"}})
-	roleDetail, _ := json.Marshal(map[string]any{
-		"id":          roleID,
-		"name":        "aep-system",
-		"assignments": []any{},
-	})
+	assignments, _ := json.Marshal(map[string]any{"assignments": []any{}})
 
-	var putCalled bool
-	var putAssignments []any
+	var addCalled bool
+	var addedAssignments []any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -427,14 +426,14 @@ func TestAssignAdminRole_RoleExistsMissingApp(t *testing.T) {
 			_, _ = w.Write(appList)
 		case r.Method == http.MethodGet && r.URL.Path == "/roles":
 			_, _ = w.Write(roleList)
-		case r.Method == http.MethodGet && r.URL.Path == "/roles/"+roleID:
-			_, _ = w.Write(roleDetail)
-		case r.Method == http.MethodPut && r.URL.Path == "/roles/"+roleID:
-			putCalled = true
+		case r.Method == http.MethodGet && r.URL.Path == "/roles/"+roleID+"/assignments":
+			_, _ = w.Write(assignments)
+		case r.Method == http.MethodPost && r.URL.Path == "/roles/"+roleID+"/assignments/add":
+			addCalled = true
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
-			putAssignments = toSlice(body["assignments"])
-			w.WriteHeader(http.StatusOK)
+			addedAssignments = toSlice(body["assignments"])
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -446,35 +445,40 @@ func TestAssignAdminRole_RoleExistsMissingApp(t *testing.T) {
 	if err := c.AssignAdminRole(context.Background(), clientID); err != nil {
 		t.Fatalf("AssignAdminRole: %v", err)
 	}
-	if !putCalled {
-		t.Fatal("expected PUT /roles/{id} to add the missing app assignment")
+	if !addCalled {
+		t.Fatal("expected POST /roles/{id}/assignments/add to add the missing app assignment")
 	}
 	found := false
-	for _, item := range putAssignments {
+	for _, item := range addedAssignments {
 		m, _ := item.(map[string]any)
-		if m["id"] == appID {
+		if m["id"] == appID && m["type"] == "app" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("PUT body assignments should contain app %q, got %v", appID, putAssignments)
+		t.Errorf("assignments/add body should contain {id: %q, type: \"app\"}, got %v", appID, addedAssignments)
 	}
 }
 
 // TestAssignAdminRole_RoleMissing verifies that AssignAdminRole creates the
 // aep-system role via POST /roles with the app assignment inline when no such
 // role exists yet.
+//
+// The resource-servers fixture uses an absolute-URI identifier, matching
+// what ThunderID 1.0.0 actually returns — "system" is only the HANDLE of the
+// one resource nested inside the resource server, a different field.
 func TestAssignAdminRole_RoleMissing(t *testing.T) {
 	const (
-		appID    = "app-id-sys"
-		rsID     = "rs-system-id"
-		clientID = "aep-system-client"
+		appID                    = "app-id-sys"
+		rsID                     = "rs-system-id"
+		clientID                 = "aep-system-client"
+		systemResourceIdentifier = "http://thunder.example.com/mcp"
 	)
 
 	appList, _ := json.Marshal([]appSummary{{ID: appID, Name: clientID, ClientID: clientID}})
 	roleList, _ := json.Marshal([]map[string]any{})
-	rsList, _ := json.Marshal([]map[string]any{{"id": rsID, "identifier": "system"}})
+	rsList, _ := json.Marshal([]map[string]any{{"id": rsID, "name": "System", "identifier": systemResourceIdentifier}})
 
 	var postCalled bool
 	var postAssignments []any
@@ -503,6 +507,7 @@ func TestAssignAdminRole_RoleMissing(t *testing.T) {
 	defer srv.Close()
 
 	c := newTestClient(t, srv)
+	c.systemResourceIdentifier = systemResourceIdentifier
 	if err := c.AssignAdminRole(context.Background(), clientID); err != nil {
 		t.Fatalf("AssignAdminRole: %v", err)
 	}
@@ -573,5 +578,140 @@ func TestNew_TokenRequestCarriesResourceIndicator(t *testing.T) {
 	}
 	if _, present := form["resource"]; present {
 		t.Errorf("resource parameter sent without an identifier: %q", form.Get("resource"))
+	}
+}
+
+// TestAppType verifies aectl's ClientType maps to a ThunderID 1.0.0 app
+// `type` value it actually accepts (browser/fullstack/mobile/m2m/mcp/custom).
+func TestAppType(t *testing.T) {
+	if got := appType("confidential"); got != "m2m" {
+		t.Errorf("appType(confidential) = %q, want %q", got, "m2m")
+	}
+	if got := appType("public"); got != "browser" {
+		t.Errorf("appType(public) = %q, want %q", got, "browser")
+	}
+}
+
+// TestTokenClaimConfig verifies the claims nesting ThunderID 1.0.0 actually
+// reads: clientConfig for a confidential/m2m app's access token, userConfig
+// (plus a flat idToken) for a public/browser app's.
+func TestTokenClaimConfig(t *testing.T) {
+	t.Run("confidential nests under clientConfig, omits idToken", func(t *testing.T) {
+		cfg := tokenClaimConfig("confidential")
+		at, ok := cfg["accessToken"].(map[string]any)
+		if !ok {
+			t.Fatalf("accessToken missing or not a map: %v", cfg)
+		}
+		cc, ok := at["clientConfig"].(map[string]any)
+		if !ok {
+			t.Fatalf("accessToken.clientConfig missing or not a map: %v", at)
+		}
+		if cc["validityPeriod"] != tokenValiditySeconds {
+			t.Errorf("clientConfig.validityPeriod = %v, want %v", cc["validityPeriod"], tokenValiditySeconds)
+		}
+		if !reflect.DeepEqual(cc["attributes"], identityUserAttributes) {
+			t.Errorf("clientConfig.attributes = %v, want %v", cc["attributes"], identityUserAttributes)
+		}
+		if _, present := at["userConfig"]; present {
+			t.Errorf("confidential accessToken should not carry userConfig: %v", at)
+		}
+		if _, present := cfg["idToken"]; present {
+			t.Errorf("confidential app should not request an idToken: %v", cfg)
+		}
+	})
+
+	t.Run("public nests under userConfig, keeps a flat idToken", func(t *testing.T) {
+		cfg := tokenClaimConfig("public")
+		at, ok := cfg["accessToken"].(map[string]any)
+		if !ok {
+			t.Fatalf("accessToken missing or not a map: %v", cfg)
+		}
+		uc, ok := at["userConfig"].(map[string]any)
+		if !ok {
+			t.Fatalf("accessToken.userConfig missing or not a map: %v", at)
+		}
+		if uc["validityPeriod"] != tokenValiditySeconds {
+			t.Errorf("userConfig.validityPeriod = %v, want %v", uc["validityPeriod"], tokenValiditySeconds)
+		}
+		if !reflect.DeepEqual(uc["attributes"], identityUserAttributes) {
+			t.Errorf("userConfig.attributes = %v, want %v", uc["attributes"], identityUserAttributes)
+		}
+		idToken, ok := cfg["idToken"].(map[string]any)
+		if !ok {
+			t.Fatalf("idToken missing or not a map: %v", cfg)
+		}
+		if idToken["validityPeriod"] != tokenValiditySeconds {
+			t.Errorf("idToken.validityPeriod = %v, want %v", idToken["validityPeriod"], tokenValiditySeconds)
+		}
+		if !reflect.DeepEqual(idToken["userAttributes"], identityUserAttributes) {
+			t.Errorf("idToken.userAttributes = %v, want %v", idToken["userAttributes"], identityUserAttributes)
+		}
+	})
+}
+
+// TestBuildCreatePayload_SetsType verifies the create payload carries the
+// top-level `type` field ThunderID 1.0.0 requires.
+func TestBuildCreatePayload_SetsType(t *testing.T) {
+	c := &AdminClient{defaultOU: "ou-123"}
+
+	confidential := c.buildCreatePayload(DesiredApp{ClientID: "svc", ClientType: "confidential", ClientSecret: "s"})
+	if confidential["type"] != "m2m" {
+		t.Errorf("confidential payload type = %v, want %q", confidential["type"], "m2m")
+	}
+
+	public := c.buildCreatePayload(DesiredApp{ClientID: "app", ClientType: "public"})
+	if public["type"] != "browser" {
+		t.Errorf("public payload type = %v, want %q", public["type"], "browser")
+	}
+}
+
+// TestFindSystemResourceServerID_MatchesByIdentifier verifies the primary
+// match path: the resource server whose identifier equals the value New()
+// captured (the same one sent as the OAuth `resource` indicator).
+func TestFindSystemResourceServerID_MatchesByIdentifier(t *testing.T) {
+	const identifier = "http://thunder.example.com/mcp"
+	rsList, _ := json.Marshal([]map[string]any{
+		{"id": "rs-other", "name": "Other", "identifier": "http://thunder.example.com/other"},
+		{"id": "rs-system", "name": "System", "identifier": identifier},
+	})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(rsList)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, srv)
+	c.systemResourceIdentifier = identifier
+	id, err := c.findSystemResourceServerID(context.Background())
+	if err != nil {
+		t.Fatalf("findSystemResourceServerID: %v", err)
+	}
+	if id != "rs-system" {
+		t.Errorf("got id %q, want %q", id, "rs-system")
+	}
+}
+
+// TestFindSystemResourceServerID_FallsBackToName verifies that with no
+// systemResourceIdentifier set (New() received no public URL), the lookup
+// falls back to matching name=="System" rather than failing outright.
+func TestFindSystemResourceServerID_FallsBackToName(t *testing.T) {
+	rsList, _ := json.Marshal([]map[string]any{
+		{"id": "rs-system", "name": "System", "identifier": "https://localhost:8090/mcp"},
+	})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(rsList)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, srv) // systemResourceIdentifier left empty
+	id, err := c.findSystemResourceServerID(context.Background())
+	if err != nil {
+		t.Fatalf("findSystemResourceServerID: %v", err)
+	}
+	if id != "rs-system" {
+		t.Errorf("got id %q, want %q", id, "rs-system")
 	}
 }

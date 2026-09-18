@@ -177,10 +177,28 @@ taskSigning:
 
 observer:
   clientId: "openchoreo-observer-resource-reader-client"
+  # In-cluster URL of the OpenChoreo Observer. aectl init passes this from
+  # oc.observability_api_url in ~/.aectl/config.yaml. Empty disables build-log
+  # reading and coding-cycle log archiving (both degrade gracefully — see
+  # computeDegradations in aep-api's app.go).
+  baseURL: "http://observer.openchoreo-observability-plane.svc.cluster.local:8080"
 
 platformAPI:
   # In-cluster URL for the OpenChoreo platform API. aectl init passes this from oc.api_url in ~/.aectl/config.yaml.
   baseURL: "http://openchoreo-api.openchoreo-control-plane.svc.cluster.local:8080"
+
+dataPlaneGateway:
+  # Whether the DATA-PLANE gateway (the one components' external URLs point at)
+  # terminates TLS. Defaults true — the same conservative default
+  # config_loader.go's own DATA_PLANE_GATEWAY_TLS falls back to — because a
+  # plane that genuinely fronts TLS needs aep-api's endpoint-reachability wait
+  # (services/aep-api/internal/projects/endpoint_wait.go) to hold a component
+  # at "converging" until its certificate has actually been issued; skipping
+  # that unconditionally would reintroduce the race it exists to close. aectl
+  # overrides this to false for its own installs via oc.data_plane_gateway_tls
+  # (~/.aectl/config.yaml), since its gateway setup always advertises plain
+  # http:// URLs with no certificate-issuance step to wait for.
+  tls: true
 
 thunder:
   # In-cluster URLs of the platform IdP (release `platform-idp`, namespace

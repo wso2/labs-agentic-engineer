@@ -30,6 +30,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"golang.org/x/term"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -37,6 +38,7 @@ import (
 	"github.com/wso2/aep/aectl/internal/addons"
 	"github.com/wso2/aep/aectl/internal/bootstrap"
 	"github.com/wso2/aep/aectl/internal/config"
+	"github.com/wso2/aep/aectl/internal/envidp"
 	aectlhelm "github.com/wso2/aep/aectl/internal/helm"
 	k8s "github.com/wso2/aep/aectl/internal/kubernetes"
 	"github.com/wso2/aep/aectl/internal/openbao"
@@ -111,6 +113,10 @@ func init() {
 	initCmd.Flags().BoolVar(&initSkipOCVersionCheck, "skip-oc-version-check", false, "Skip the OpenChoreo minimum version check (not recommended)")
 	initCmd.Flags().String("oc-api-url", "", "In-cluster URL of the OpenChoreo platform API (overrides config)")
 	_ = viper.BindPFlag("oc.api_url", initCmd.Flags().Lookup("oc-api-url"))
+	initCmd.Flags().String("oc-observability-api-url", "", "In-cluster URL of the OpenChoreo Observer, for build logs and coding-cycle log archiving (overrides config; empty leaves the chart default)")
+	_ = viper.BindPFlag("oc.observability_api_url", initCmd.Flags().Lookup("oc-observability-api-url"))
+	initCmd.Flags().Bool("data-plane-gateway-tls", false, "Whether the data-plane gateway terminates TLS (overrides config; false is correct for aectl's own plain-HTTP gateway setup, set true only against a gateway that genuinely fronts TLS)")
+	_ = viper.BindPFlag("oc.data_plane_gateway_tls", initCmd.Flags().Lookup("data-plane-gateway-tls"))
 	initCmd.Flags().String("webhook-delivery-url", "", "Public URL registered on each repo's webhook (overrides config)")
 	_ = viper.BindPFlag("webhook.delivery_url", initCmd.Flags().Lookup("webhook-delivery-url"))
 	initCmd.Flags().BoolVar(&initOpenBaoDirect, "openbao-direct", false, "Enable OpenBao-direct secrets delivery — injects OPENBAO_ADDR/TOKEN into aep-api (required for local/OSS installs)")
@@ -199,16 +205,6 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 			ui.Success("Anthropic API key (from env)")
 		}
 
-		if openBaoDirect && os.Getenv("AEP_OPENBAO_TOKEN") == "" {
-			obToken, err := readMaskedInput("OpenBao token (Enter = use default \"root\")")
-			if err != nil {
-				return fmt.Errorf("read OpenBao token: %w", err)
-			}
-			if obToken != "" {
-				viper.Set("openbao.token", obToken)
-			}
-		}
-
 		thunderSecret := strings.TrimSpace(os.Getenv("AEP_THUNDER_ADMIN_CLIENT_SECRET"))
 		if thunderSecret == "" {
 			var err error
@@ -233,8 +229,19 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("thunder.admin_client_secret is not set — set it via AEP_THUNDER_ADMIN_CLIENT_SECRET or re-run without --reuse-secrets")
 		}
 
+		// The value aep-api authenticates to OpenBao with at runtime (see
+		// aep-openbao-secrets in the chart). Not interactive: aectl's own
+		// write access to OpenBao (below) goes through the cluster's
+		// Kubernetes-auth login (GetSAToken + KubernetesLogin), never this
+		// value, so there is nothing to prompt for here — only aep-api reads
+		// it, later, from the ESO-synced Secret this seeds.
+		openBaoToken := os.Getenv("AEP_OPENBAO_TOKEN")
+		if openBaoToken == "" {
+			openBaoToken = "root"
+		}
+
 		fmt.Println()
-		if err := provisionOpenBao(ctx, anthropicKey, adminClientID, adminClientSecret); err != nil {
+		if err := provisionOpenBao(ctx, anthropicKey, adminClientID, adminClientSecret, openBaoToken); err != nil {
 			return fmt.Errorf("provision OpenBao: %w", err)
 		}
 	}
@@ -255,6 +262,7 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		"--set", "thunder.adminURL=" + thunderURL,
 		"--set", "thunder.jwksURL=" + thunderURL + "/oauth2/jwks",
 		"--set", "platformAPI.baseURL=" + viper.GetString("oc.api_url"),
+		"--set", fmt.Sprintf("dataPlaneGateway.tls=%t", viper.GetBool("oc.data_plane_gateway_tls")),
 	}
 	// Chart source: local path takes precedence, otherwise OCI registry.
 	// Must be inserted at index 3: after "upgrade", "--install", <release>.
@@ -272,11 +280,16 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 	if mode := viper.GetString("platform.workspaces.access_mode"); mode != "" {
 		helmArgs = append(helmArgs, "--set", "workspaces.accessMode="+mode)
 	}
+	if u := viper.GetString("oc.observability_api_url"); u != "" {
+		helmArgs = append(helmArgs, "--set", "observer.baseURL="+u)
+	}
 	helmArgs = append(helmArgs, "--set",
 		fmt.Sprintf("codingAgentDispatch.openBaoDirect.enabled=%t", openBaoDirect))
 	if openBaoDirect {
+		// OPENBAO_TOKEN is NOT set here — aep-api reads it from the
+		// ESO-synced aep-openbao-secrets Secret (provisionOpenBao seeds
+		// aep/openbao-token), never a literal Helm value.
 		helmArgs = append(helmArgs, "--set", "openbao.addr="+viper.GetString("openbao.addr"))
-		helmArgs = append(helmArgs, "--set", "openbao.token="+viper.GetString("openbao.token"))
 	}
 	helmArgs = append(helmArgs, "--set",
 		fmt.Sprintf("webhook.localSmee.enabled=%t", viper.GetBool("webhook.local_smee.enabled")))
@@ -284,10 +297,8 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		helmArgs = append(helmArgs, "--set", "webhook.deliveryURL="+u)
 	}
 	helmArgs = append(helmArgs, "--set",
-		fmt.Sprintf("localOrgProvisioning.enabled=%t", viper.GetBool("oc.local_org_provisioning.enabled")))
-	if ns := viper.GetString("oc.org_namespace"); ns != "" {
-		helmArgs = append(helmArgs, "--set", "localOrgProvisioning.orgNamespace="+ns)
-	}
+		fmt.Sprintf("localOrgProvisioning.enabled=%t", viper.GetBool("oc.local_org_provisioning.enabled")),
+		"--set", "localOrgProvisioning.orgNamespace="+ocOrgNamespace())
 
 	helmSp := ui.NewSpinner(fmt.Sprintf("Installing %s", chartLabel))
 	helmSp.Start()
@@ -301,21 +312,52 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 	}
 	helmSp.Success(fmt.Sprintf("%s installed", chartLabel))
 
-	if err := waitForAllPodsReady(ctx, k8sClient, initPlatformNamespace, 10*time.Minute); err != nil {
-		return err
+	if err := syncPostgresPassword(ctx, k8sClient, initPlatformNamespace); err != nil {
+		return fmt.Errorf("sync postgres password: %w", err)
 	}
 
+	// Thunder registration must happen before waiting for pods: aep-api reads
+	// its own SERVICE_AUTH client secret at boot and cannot become Ready until
+	// Thunder has been told that secret (doThunderSetup rotates it on every
+	// run — see aepThunderClients' comment). Waiting for pods first would
+	// deadlock whenever Thunder already has this client registered under a
+	// different secret, e.g. a reinstall against a Thunder that was never
+	// wiped.
 	fmt.Println()
 	ui.Step("Registering Thunder OAuth clients")
 	if err := doThunderSetup(ctx, k8sClient, initPlatformNamespace,
 		viper.GetString("thunder.namespace"),
 		initConsoleURL,
-		viper.GetString("thunder.config_map"),
-		viper.GetString("thunder.deployment"),
 	); err != nil {
 		return err
 	}
 	ui.Success("Thunder configured")
+
+	if err := waitForAllPodsReady(ctx, k8sClient, initPlatformNamespace, 10*time.Minute); err != nil {
+		return err
+	}
+
+	fmt.Println()
+	ui.Step("Installing environment identity provider and gateway")
+	if err := envidp.Install(ctx, k8sClient, envidp.Config{
+		// Org is the Environment CR's NAMESPACE (oc.default_org_namespace via
+		// ocOrgNamespace), Env is its NAME (oc.pipeline_source_environment via
+		// ocPipelineSourceEnvironment) — two different config axes. Both
+		// resolve the same way platform_gateway.go's checkGatewayIngress/
+		// applyGatewayIngressConfig do, so envidp's T2/gateway/binding record
+		// targets the SAME Environment object those functions read and patch.
+		Org: ocOrgNamespace(), Env: ocPipelineSourceEnvironment(),
+		PlatformThunderURL:       thunderURL,
+		PlatformThunderPublicURL: viper.GetString("thunder.public_url"),
+		Kubeconfig:               kubeconfig,
+		OpenBaoNamespace:         ocOpenBaoNamespace,
+		OpenBaoRelease:           ocOpenBaoRelease,
+		OpenBaoServiceAccount:    ocOpenBaoSA,
+		OpenBaoWriteRole:         ocWriteRole,
+	}); err != nil {
+		return fmt.Errorf("install environment identity provider: %w", err)
+	}
+	ui.Success("Environment identity provider and gateway ready")
 
 	platformVersion := initPlatformVersion
 	if platformVersion == "latest" {
@@ -485,10 +527,19 @@ func runAddonInstall(ctx context.Context, platformVersion string, deps addonDeps
 				preSp.Success(fmt.Sprintf("%s prerequisites applied", op.DisplayName))
 			}
 
-			if len(op.WaitForSecrets) > 0 && deps.waitForSecrets != nil {
+			// thunder-app-operator's precondition Secret is named from the
+			// org/env pair (see addons.Available's comment on this addon),
+			// which addons.go cannot know statically — fill in the real name
+			// here rather than duplicating envidp's naming format.
+			waitForSecrets := op.WaitForSecrets
+			if op.ReleaseName == "thunder-app-operator" {
+				waitForSecrets = []string{envidp.BindingName(ocOrgNamespace(), ocPipelineSourceEnvironment())}
+			}
+
+			if len(waitForSecrets) > 0 && deps.waitForSecrets != nil {
 				waitSp := ui.NewSpinner(fmt.Sprintf("Waiting for %s credentials", op.DisplayName))
 				waitSp.Start()
-				if err := deps.waitForSecrets(ctx, op.Namespace, op.WaitForSecrets); err != nil {
+				if err := deps.waitForSecrets(ctx, op.Namespace, waitForSecrets); err != nil {
 					waitSp.Fail(fmt.Sprintf("%s credentials not ready", op.DisplayName))
 					operatorFailed[a.Operator.ReleaseName] = fmt.Errorf("wait for %s secrets: %w", op.ReleaseName, err)
 					continue
@@ -648,6 +699,7 @@ func verifyOpenBaoSecrets(ctx context.Context) error {
 
 	required := []string{
 		"aep/anthropic-api-key",
+		"aep/openbao-token",
 		"aep/postgres-password",
 		"aep/task-signing-key",
 		"aep/oauth-state-key",
@@ -684,7 +736,7 @@ func verifyOpenBaoSecrets(ctx context.Context) error {
 }
 
 // provisionOpenBao seeds all platform secrets into OC's built-in OpenBao instance.
-func provisionOpenBao(ctx context.Context, anthropicKey, thunderAdminClientID, thunderAdminClientSecret string) error {
+func provisionOpenBao(ctx context.Context, anthropicKey, thunderAdminClientID, thunderAdminClientSecret, openBaoToken string) error {
 	sp := ui.NewSpinner("Connecting to OpenBao")
 	sp.Start()
 
@@ -777,6 +829,7 @@ func provisionOpenBao(ctx context.Context, anthropicKey, thunderAdminClientID, t
 
 	secrets := []struct{ path, value string }{
 		{"aep/anthropic-api-key", anthropicKey},
+		{"aep/openbao-token", openBaoToken},
 		{"aep/postgres-password", postgresPassword},
 		{"aep/task-signing-key", signingKey},
 		{"aep/oauth-state-key", oauthStateKey},
@@ -1003,6 +1056,152 @@ func waitForAllPodsReady(ctx context.Context, client *kubernetes.Clientset, name
 			sp.Fail("Cancelled")
 			return ctx.Err()
 		case <-time.After(5 * time.Second):
+		}
+	}
+}
+
+// postgresPod is the chart's fixed StatefulSet pod name — postgres is a plain
+// in-cluster StatefulSet with a single replica, not a configurable release.
+const postgresPod = "postgres-0"
+
+// waitForPodRunning polls until the named pod reaches phase Running, or
+// timeout expires. Running, not Ready: syncPostgresPassword only needs the
+// container process up, not its readiness probe passing.
+func waitForPodRunning(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, podName string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		pod, err := k8sClient.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
+		if err == nil && pod.Status.Phase == corev1.PodRunning {
+			return nil
+		}
+		if err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("get pod %s: %w", podName, err)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out after %s waiting for pod %s to start running", timeout, podName)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(3 * time.Second):
+		}
+	}
+}
+
+// alterPostgresRolePassword reads the new password from STDIN — never argv,
+// which every process on the node can read via ps — then ALTERs the role
+// over Postgres's own local Unix socket, the one connection pg_hba.conf
+// trusts without a password, so this needs no OLD password to authenticate
+// with. The single quote is escaped for the SQL string literal, not the
+// shell: sed runs inside the pod, on the value read from stdin.
+const alterPostgresRolePassword = `
+read -r PW
+ESCAPED=$(printf '%s' "$PW" | sed "s/'/''/g")
+printf "ALTER ROLE aep WITH PASSWORD '%s';\n" "$ESCAPED" | psql -U aep -d aep -h /var/run/postgresql
+`
+
+// alterPostgresPasswordRetryWindow bounds how long syncPostgresPassword
+// retries the ALTER once the pod is Running. This chart's postgres
+// StatefulSet defines no readinessProbe, so Kubernetes reports Ready the
+// instant it reports Running — waiting for Ready would gate on nothing. The
+// real gap is the official postgres image's own cold-start sequence
+// (initdb, then a temporary internal server, then the real one) which keeps
+// the container Running throughout while refusing connections on the
+// socket for a few seconds — so the ALTER is retried, not just attempted
+// once, right after waitForPodRunning returns.
+const alterPostgresPasswordRetryWindow = 60 * time.Second
+
+// runAlterPostgresRolePassword execs the ALTER over kubectl. A package
+// variable so syncPostgresPassword's retry loop is unit-testable against a
+// fake outcome (see platform_test.go) without a live cluster or kubectl
+// binary.
+var runAlterPostgresRolePassword = func(ctx context.Context, namespace, podName, password string) ([]byte, error) {
+	args := []string{"exec", "-i", "-n", namespace, podName, "--", "sh", "-c", alterPostgresRolePassword}
+	if kubeconfig != "" {
+		args = append([]string{"--kubeconfig", kubeconfig}, args...)
+	}
+	cmd := exec.CommandContext(ctx, "kubectl", args...)
+	cmd.Stdin = strings.NewReader(password)
+	return cmd.CombinedOutput()
+}
+
+// syncPostgresPassword makes the live Postgres role's password match whatever
+// is currently in postgres-secrets.
+//
+// Postgres only applies POSTGRES_PASSWORD once, at first init of its data
+// volume. A later install that regenerates the secret (any run without
+// --reuse-secrets, including a retry after a partial failure) never reaches
+// an already-initialized Postgres — so without this, the role's real
+// password silently drifts from what the Secret says, and aep-api and
+// Temporal both fail every connection with "password authentication failed"
+// until someone notices and fixes it by hand. This mirrors doThunderSetup,
+// which does the equivalent push for Thunder's OAuth client secrets.
+//
+// Idempotent — setting the same password twice is a no-op — so this runs on
+// every install, not just a reinstall.
+//
+// postgresSyncTimeout bounds the whole operation (pod wait + Secret wait +
+// ALTER retries — roughly 2m+60s+60s of internal budgets) under one
+// deadline. ctx itself arrives from runAEPInit as an undeadlined
+// context.Background(), so without this a single hung call anywhere in the
+// chain — including the kubectl exec inside runAlterPostgresRolePassword,
+// which inherits this same ctx — would block indefinitely instead of being
+// canceled.
+const postgresSyncTimeout = 5 * time.Minute
+
+func syncPostgresPassword(ctx context.Context, k8sClient *kubernetes.Clientset, namespace string) error {
+	ctx, cancel := context.WithTimeout(ctx, postgresSyncTimeout)
+	defer cancel()
+
+	sp := ui.NewSpinner("Syncing Postgres password")
+	sp.Start()
+
+	if err := waitForPodRunning(ctx, k8sClient, namespace, postgresPod, 2*time.Minute); err != nil {
+		sp.Fail("Postgres pod never started")
+		return fmt.Errorf("wait for %s: %w", postgresPod, err)
+	}
+
+	secret, err := waitForSecretData(ctx, k8sClient, namespace, "postgres-secrets", 60*time.Second)
+	if err != nil {
+		sp.Fail("postgres-secrets not ready")
+		return fmt.Errorf("read postgres-secrets: %w", err)
+	}
+	password := secret["POSTGRES_PASSWORD"]
+	if password == "" {
+		sp.Fail("postgres-secrets has no POSTGRES_PASSWORD key")
+		return fmt.Errorf("postgres-secrets/%s has no POSTGRES_PASSWORD key", namespace)
+	}
+
+	deadline := time.Now().Add(alterPostgresPasswordRetryWindow)
+	if err := retryAlterPostgresRolePassword(ctx, namespace, password, deadline); err != nil {
+		sp.Fail("Postgres password sync failed")
+		return err
+	}
+	sp.Success("Postgres password synced")
+	return nil
+}
+
+// retryAlterPostgresRolePassword retries runAlterPostgresRolePassword until
+// it succeeds or deadline passes — see alterPostgresPasswordRetryWindow's
+// doc comment for why a single attempt right after waitForPodRunning
+// returns is not reliable.
+func retryAlterPostgresRolePassword(ctx context.Context, namespace, password string, deadline time.Time) error {
+	return pollAlterPostgresRolePassword(ctx, namespace, password, deadline, 3*time.Second)
+}
+
+func pollAlterPostgresRolePassword(ctx context.Context, namespace, password string, deadline time.Time, interval time.Duration) error {
+	for {
+		out, err := runAlterPostgresRolePassword(ctx, namespace, postgresPod, password)
+		if err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("alter postgres role: %w\n%s", err, out)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(interval):
 		}
 	}
 }

@@ -14,9 +14,10 @@ go build -o aectl .  # build CLI
 |---------|---------|
 | `cmd/` | Cobra commands for the CLI (init, sre, uninstall) |
 | `internal/openbao/` | HTTP client for OpenBao API |
-| `internal/thunder/` | Thunder admin client (OAuth app registration over HTTP), CORS patch, port-forward |
+| `internal/thunder/` | Thunder admin client (OAuth app registration over HTTP), port-forward |
 | `internal/kubernetes/` | k8s client helpers (Job runner, port-forward) |
 | `internal/config/` | Viper config defaults and init |
+| `internal/envidp/` | Installs the environment (T2) Thunder + its binding record + the environment's API Platform gateway — see deployments/design/two-tier-thunder.md. Org/env come from oc.default_org_namespace/oc.pipeline_source_environment (cmd.ocOrgNamespace/ocPipelineSourceEnvironment); no runtime dependency on Agent Manager |
 
 ## Config
 

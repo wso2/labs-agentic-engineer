@@ -174,3 +174,116 @@ func TestInstallOperator_FailureIncludesOutput(t *testing.T) {
 		t.Errorf("error %q does not include helm output", err.Error())
 	}
 }
+
+var baseChart = ChartSpec{
+	ReleaseName: "test-release",
+	Chart:       "oci://example.com/test-chart",
+	Namespace:   "test-ns",
+}
+
+func TestInstallChart_BaseArgs(t *testing.T) {
+	readArgs := writeFakeHelm(t)
+	if err := InstallChart(context.Background(), "", baseChart); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	args := readArgs()
+	for _, want := range [][]string{
+		{"upgrade", "--install"},
+		{"--install", "test-release", "oci://example.com/test-chart"},
+		{"-n", "test-ns"},
+		{"--create-namespace"},
+		{"--wait"},
+		{"--timeout", "5m"},
+	} {
+		if !containsSeq(args, want) {
+			t.Errorf("args %v missing subsequence %v", args, want)
+		}
+	}
+}
+
+func TestInstallChart_CustomTimeout(t *testing.T) {
+	readArgs := writeFakeHelm(t)
+	spec := baseChart
+	spec.Timeout = "20m"
+	if err := InstallChart(context.Background(), "", spec); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !containsSeq(readArgs(), []string{"--timeout", "20m"}) {
+		t.Errorf("--timeout 20m not found in args")
+	}
+}
+
+// TestInstallChart_ValuesFileWritten verifies --values points at a real file
+// carrying the given content. The fake helm script below copies whatever file
+// follows --values to a known location BEFORE exiting, because InstallChart
+// removes its temp values file via defer as soon as helm returns — reading
+// the original path back afterward would just see it already gone.
+func TestInstallChart_ValuesFileWritten(t *testing.T) {
+	dir := t.TempDir()
+	captured := filepath.Join(dir, "captured-values.yaml")
+	script := "#!/bin/sh\n" +
+		`prev=""
+for a in "$@"; do
+  if [ "$prev" = "--values" ]; then cp "$a" ` + captured + `; fi
+  prev="$a"
+done
+`
+	if err := os.WriteFile(filepath.Join(dir, "helm"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake helm: %v", err)
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+
+	spec := baseChart
+	spec.ValuesYAML = "foo:\n  bar: baz\n"
+	if err := InstallChart(context.Background(), "", spec); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	content, err := os.ReadFile(captured)
+	if err != nil {
+		t.Fatalf("read captured values file: %v", err)
+	}
+	if string(content) != spec.ValuesYAML {
+		t.Errorf("values file content = %q, want %q", content, spec.ValuesYAML)
+	}
+}
+
+func TestInstallChart_SetStringAndSetJSON(t *testing.T) {
+	readArgs := writeFakeHelm(t)
+	spec := baseChart
+	spec.SetStrings = []string{"admin.password=00123"}
+	spec.SetJSON = []string{`bootstrap.configMap.files=["a.yaml","b.yaml"]`}
+	if err := InstallChart(context.Background(), "", spec); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	args := readArgs()
+	if !containsSeq(args, []string{"--set-string", "admin.password=00123"}) {
+		t.Errorf("--set-string not found in %v", args)
+	}
+	if !containsSeq(args, []string{"--set-json", `bootstrap.configMap.files=["a.yaml","b.yaml"]`}) {
+		t.Errorf("--set-json not found in %v", args)
+	}
+}
+
+func TestInstallChart_NoVersionFlagWhenEmpty(t *testing.T) {
+	readArgs := writeFakeHelm(t)
+	if err := InstallChart(context.Background(), "", baseChart); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, a := range readArgs() {
+		if a == "--version" {
+			t.Error("--version flag present but ChartSpec.Version is empty")
+		}
+	}
+}
+
+func TestInstallChart_FailureIncludesOutput(t *testing.T) {
+	writeFakeHelm(t)
+	t.Setenv("HELM_FAIL", "1")
+	err := InstallChart(context.Background(), "", baseChart)
+	if err == nil {
+		t.Fatal("expected error on helm failure, got nil")
+	}
+	if !strings.Contains(err.Error(), "simulated failure") {
+		t.Errorf("error %q does not include helm output", err.Error())
+	}
+}

@@ -24,7 +24,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -129,29 +128,26 @@ const crtSourceDir = "../../../../deployments/single-cluster/resource-types"
 // the two copies of every ClusterResourceType: the authored YAML under
 // deployments/ and the string literal this package ships.
 //
-// The copies are DERIVED, not byte-identical — comments are stripped, and
-// thunder-app's issuer/jwks_url are rendered literals here because `aectl`
-// installs the add-on before any environment binding exists to resolve
-// ${applied.app.status.*} from. Everything that decides BEHAVIOUR has to agree:
-// the parameter schema (names, types, defaults, bounds), the rendered
-// template, and the set of output names. Adding a parameter or an output on one
-// side and forgetting the other is the failure this catches — silently, an
-// `aectl`-installed cluster would render a CR missing a field the platform
-// expects to read back.
+// The copies are DERIVED, not byte-identical — only prose comments are
+// stripped (the source's are for whoever edits the type; this literal is
+// shipped to a cluster). Everything that decides BEHAVIOUR has to agree
+// exactly: the parameter schema (names, types, defaults, bounds), the
+// rendered template, and every output's name AND value. Adding a parameter or
+// an output on one side and forgetting the other is the failure this
+// catches — silently, an `aectl`-installed cluster would either render a CR
+// missing a field the platform expects to read back, or (thunder-app's
+// issuer/jwks_url once did exactly this) carry a stale literal that never
+// agrees with what the source now computes.
 func TestEmbeddedResourceTypes_MatchTheAuthoredSource(t *testing.T) {
 	for _, tc := range []struct {
 		id       string
 		embedded string
 		source   string
-		// literalOutputs are output names whose VALUE legitimately differs
-		// (see the doc comment); their presence is still checked.
-		literalOutputs []string
 	}{
 		{
-			id:             "thunder-app",
-			embedded:       thunderAppResourceType,
-			source:         "thunder-app/resourcetype.yaml",
-			literalOutputs: []string{"issuer", "jwks_url"},
+			id:       "thunder-app",
+			embedded: thunderAppResourceType,
+			source:   "thunder-app/resourcetype.yaml",
 		},
 		{
 			id:       "postgres-cnpg",
@@ -177,9 +173,6 @@ func TestEmbeddedResourceTypes_MatchTheAuthoredSource(t *testing.T) {
 				if !ok {
 					t.Errorf("embedded %s is missing output %q — add it here as well as in %s",
 						tc.id, name, tc.source)
-					continue
-				}
-				if slices.Contains(tc.literalOutputs, name) {
 					continue
 				}
 				if gotValue != wantValue {

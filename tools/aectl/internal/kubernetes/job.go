@@ -31,7 +31,12 @@ import (
 
 // RunJob creates the Job, waits for it to finish, prints all logs, then
 // deletes the Job. Returns nil on success, non-nil on failure.
-func RunJob(ctx context.Context, client *kubernetes.Clientset, job *batchv1.Job, out io.Writer) error {
+//
+// Takes kubernetes.Interface rather than the concrete *Clientset so callers
+// that hold only the interface (e.g. for fake-clientset testability) can use
+// it without an unnecessary type assertion — every *kubernetes.Clientset
+// already satisfies it.
+func RunJob(ctx context.Context, client kubernetes.Interface, job *batchv1.Job, out io.Writer) error {
 	ns := job.Namespace
 
 	created, err := client.BatchV1().Jobs(ns).Create(ctx, job, metav1.CreateOptions{})
@@ -57,7 +62,7 @@ func RunJob(ctx context.Context, client *kubernetes.Clientset, job *batchv1.Job,
 	return jobErr
 }
 
-func getPodName(ctx context.Context, client *kubernetes.Clientset, ns, jobName string) (string, error) {
+func getPodName(ctx context.Context, client kubernetes.Interface, ns, jobName string) (string, error) {
 	deadline := time.Now().Add(2 * time.Minute)
 	for time.Now().Before(deadline) {
 		pods, err := client.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{
@@ -80,7 +85,7 @@ func getPodName(ctx context.Context, client *kubernetes.Clientset, ns, jobName s
 	return "", fmt.Errorf("pod for job %q not found", jobName)
 }
 
-func dumpLogs(ctx context.Context, client *kubernetes.Clientset, ns, podName string, out io.Writer) error {
+func dumpLogs(ctx context.Context, client kubernetes.Interface, ns, podName string, out io.Writer) error {
 	req := client.CoreV1().Pods(ns).GetLogs(podName, &corev1.PodLogOptions{})
 	stream, err := req.Stream(ctx)
 	if err != nil {
@@ -91,7 +96,7 @@ func dumpLogs(ctx context.Context, client *kubernetes.Clientset, ns, podName str
 	return err
 }
 
-func waitForJobDone(ctx context.Context, client *kubernetes.Clientset, ns, jobName string) error {
+func waitForJobDone(ctx context.Context, client kubernetes.Interface, ns, jobName string) error {
 	watcher, err := client.BatchV1().Jobs(ns).Watch(ctx, metav1.ListOptions{
 		FieldSelector: "metadata.name=" + jobName,
 	})

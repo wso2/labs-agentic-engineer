@@ -264,7 +264,7 @@ func TestRunAddonInstall_SecretSyncTimeout(t *testing.T) {
 		multiSelect: selectByID(t, "thunder-app"),
 		confirm:     func(string) bool { return true },
 		waitForSecrets: func(_ context.Context, _ string, _ []string) error {
-			return errors.New("timed out waiting for thunder-app-operator-credentials")
+			return errors.New("timed out waiting for thunder-binding-default-default")
 		},
 		installOperator: func(context.Context, string, addons.OperatorSpec) error {
 			installCalled = true

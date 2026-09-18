@@ -107,7 +107,6 @@ func runConfigImport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("ensure namespace %s: %w", aepNamespace, err)
 	}
 
-
 	existing, err := client.CoreV1().ConfigMaps(aepNamespace).Get(ctx, config.ConfigMapName, metav1.GetOptions{})
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
@@ -147,4 +146,3 @@ func runConfigImport(cmd *cobra.Command, args []string) error {
 	ui.Detail("Run 'aectl platform install' to apply.")
 	return nil
 }
-
