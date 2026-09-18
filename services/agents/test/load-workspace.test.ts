@@ -28,6 +28,7 @@ import {
   loadSkillsFromSnapshot,
   readReferenceAttachments,
   overlayReferenceTexts,
+  overlayRequirementsTexts,
   MAX_REFERENCE_ATTACHMENT_ENCODED_BYTES,
   SkillReadError,
 } from "../src/conversation/load-workspace.js";
@@ -663,6 +664,55 @@ test("overlayReferenceTexts: no references → the room files return unchanged",
   const room = { "specs/requirements/prd.md": "# PRD" };
   const merged = overlayReferenceTexts(room, { "README.md": "hi" });
   assert.deepEqual(merged, room);
+});
+
+test("overlayRequirementsTexts: git requirements fill a room that has no PRD", () => {
+  const room = { "specs/design/design.md": "# Design" };
+  const git = {
+    "specs/requirements/prd.md": "# PRD\n\n1. As a user I want checkout",
+    "specs/requirements/domain-model.md": "# Domain",
+  };
+  const merged = overlayRequirementsTexts(room, git);
+  assert.equal(merged["specs/requirements/prd.md"], git["specs/requirements/prd.md"]);
+  assert.equal(merged["specs/requirements/domain-model.md"], git["specs/requirements/domain-model.md"]);
+  assert.equal(merged["specs/design/design.md"], "# Design");
+});
+
+test("overlayRequirementsTexts: git replaces a kickoff stub that has no stories", () => {
+  const room = { "specs/requirements/prd.md": "# Product requirements\n\n" };
+  const git = {
+    "specs/requirements/prd.md": "# Product requirements\n\n1. As a shopper I want a cart",
+  };
+  const merged = overlayRequirementsTexts(room, git);
+  assert.equal(merged["specs/requirements/prd.md"], git["specs/requirements/prd.md"]);
+});
+
+test("overlayRequirementsTexts: live room edits with stories win over git", () => {
+  const room = {
+    "specs/requirements/prd.md": "# PRD\n\n1. As a user I want the room version",
+  };
+  const git = {
+    "specs/requirements/prd.md": "# PRD\n\n1. As a user I want the git version",
+  };
+  const merged = overlayRequirementsTexts(room, git);
+  assert.equal(merged["specs/requirements/prd.md"], room["specs/requirements/prd.md"]);
+});
+
+// The story-based stub replacement is PRD-only (#onboard follow-up): only
+// prd.md gets a kickoff stub, so a numbered-looking snapshot on any other
+// requirements document must never displace a live, non-blank room edit.
+test("overlayRequirementsTexts: a non-PRD room edit is never replaced by a numbered snapshot", () => {
+  const room = {
+    "specs/requirements/domain-model.md": "# Domain\n\nEdited live in the room, no numbers here.",
+  };
+  const git = {
+    "specs/requirements/domain-model.md": "# Domain\n\n1. Order\n2. Customer",
+  };
+  const merged = overlayRequirementsTexts(room, git);
+  assert.equal(
+    merged["specs/requirements/domain-model.md"],
+    room["specs/requirements/domain-model.md"],
+  );
 });
 
 test("readReferenceAttachments: image references become native image-typed file parts (#383 follow-up)", () => {

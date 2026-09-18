@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Y from "yjs";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import { listDocPaths } from "@aep/collab-doc";
@@ -87,6 +87,8 @@ export interface CollabSpec {
   flushError: string | null;
   /** Dismiss the flush-error banner. */
   clearFlushError: () => void;
+  /** Drop the local doc and rejoin so the server reseeds from git HEAD. */
+  resyncRoom: () => void;
 }
 
 // A forced flush is one files/apply commit — quick, but allow slack for the
@@ -153,6 +155,9 @@ export function useCollabSpec(
   const pendingFlushes = useRef(
     new Map<string, { resolve: () => void; reject: (e: Error) => void }>(),
   );
+  const resyncRoom = useCallback(() => {
+    setEpoch((e) => e + 1);
+  }, []);
 
   useEffect(() => {
     const doc = new Y.Doc();
@@ -413,6 +418,7 @@ export function useCollabSpec(
       version,
       flushError,
       clearFlushError: () => setFlushError(null),
+      resyncRoom,
       getFileText: (path: string) =>
         status === "connected"
           ? (docRef.current?.getMap<Y.Text>("files").get(path) ?? null)
@@ -475,6 +481,6 @@ export function useCollabSpec(
     // A rebuild always moves `status` (offline → connecting → connected), so
     // the refs are re-read and consumers holding a fragment from the discarded
     // doc are handed the new one. No `epoch` dependency is needed for that.
-    [status, peers, version, user.name, docReady, flushError],
+    [status, peers, version, user.name, docReady, flushError, resyncRoom],
   );
 }

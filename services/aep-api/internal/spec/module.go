@@ -45,6 +45,8 @@ type Deps struct {
 	SkillMut *SkillMutationService
 	// SkillImport is the AgentSkills-tarball import service.
 	SkillImport *SkillImportService
+	// RequirementsImport is the requirements-bundle tarball import service.
+	RequirementsImport *RequirementsImportService
 	// CollabRepo is the project-ownership oracle behind the two collab ops.
 	CollabRepo sourcecontrol.RepoService
 	// Design backs the dependency definition view's two writes (provide a contract,

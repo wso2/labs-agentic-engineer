@@ -87,6 +87,7 @@ import type { Anchor } from "../lib/anchor";
 import type { DependencyResolutionIntent } from "../../projects/lib/dependencyResolutionMessage.js";
 import { usePlan } from "../../agent-chat/usePlan";
 import { approvalInputsFor } from "../lib/buildInputs";
+import { ImportRequirementsDialog } from "./ImportRequirementsDialog";
 import { ResolveDependenciesDialog } from "./ResolveDependenciesDialog";
 import { StartBuildDialog } from "./StartBuildDialog";
 import { blockingDependencies } from "../lib/blockingDependencies";
@@ -161,7 +162,13 @@ export function designWarningIntro(reasons: ReadonlyArray<{ key: string }>): str
   );
 }
 
-export function SpecView({ projectName }: { projectName: string }) {
+export function SpecView({
+  projectName,
+  openImportOnMount = false,
+}: {
+  projectName: string;
+  openImportOnMount?: boolean;
+}) {
   const navigate = useNavigate();
   const { actions } = useAppShell();
   const status = useProjectStatus(projectName);
@@ -202,6 +209,22 @@ export function SpecView({ projectName }: { projectName: string }) {
     projectName,
   );
   const [selection, setSelection] = useState<SpecSelection | null>(null);
+  const [importRequirementsOpen, setImportRequirementsOpen] = useState(false);
+  // `?import=requirements` (ADR-0020) is a one-shot trigger like `?file=`
+  // below: open the dialog, then strip the param so a later reload — whether
+  // the user closed the dialog or is still mid-upload — never reopens it for
+  // a project that may already have requirements.
+  useEffect(() => {
+    if (!openImportOnMount) return;
+    setImportRequirementsOpen(true);
+    void navigate({
+      to: "/projects/$projectName/spec",
+      params: { projectName },
+      search: (prev: Record<string, unknown>) =>
+        Object.fromEntries(Object.entries(prev).filter(([k]) => k !== "import")),
+      replace: true,
+    });
+  }, [openImportOnMount, navigate, projectName]);
   // Build (#162): commit-then-build. buildPhase drives the button label /
   // loading; an agent peer in the room means a turn is writing → block Build.
   const build = useBuildProject(projectName);
@@ -854,6 +877,8 @@ export function SpecView({ projectName }: { projectName: string }) {
   // reachable mid-interview — and firing one supersedes the live questions,
   // handing the agent's own assumptions back as the user's answers.
   const awaitingAnswers = Boolean(roomQuestion && roomDoc);
+  const canImportRequirements =
+    !hasRequirementsFiles && !deriving && !localTurnActivity && !awaitingAnswers;
   // A lens fired while the agent already holds the turn would be refused by the
   // composer anyway, and firing one mid-interview supersedes the live question
   // form for the whole room — so the lenses go inert for the same two reasons
@@ -1349,6 +1374,11 @@ export function SpecView({ projectName }: { projectName: string }) {
                 files={files}
                 selection={effectiveSelection}
                 onSelect={selectManually}
+                {...(canImportRequirements
+                  ? {
+                      onImportRequirements: () => setImportRequirementsOpen(true),
+                    }
+                  : {})}
                 onRegenerateDesign={generateDesign}
                 regenerateDisabled={agentBusy}
                 sections={railSections}
@@ -1660,6 +1690,13 @@ export function SpecView({ projectName }: { projectName: string }) {
           </Box>
         )}
       </Box>
+
+      <ImportRequirementsDialog
+        open={importRequirementsOpen}
+        onClose={() => setImportRequirementsOpen(false)}
+        projectName={projectName}
+        onImported={() => collab.resyncRoom()}
+      />
 
       <ResolveDependenciesDialog
         open={buildDialog === "resolve"}

@@ -697,4 +697,59 @@ export const projectHandlers = [
       } satisfies ApplyResult);
     },
   ),
+  http.post(
+    "*/api/v1/projects/:projectName/requirements/import",
+    async ({ request, params }) => {
+      let fileName = "";
+      try {
+        const formData = await request.formData();
+        const file = formData.get("file");
+        fileName = file instanceof File ? file.name : "";
+      } catch {
+        fileName = "";
+      }
+      if (!fileName || fileName.includes("invalid")) {
+        return HttpResponse.json(
+          {
+            code: "validation_failed",
+            message: "requirements import failed: MISSING_USER_STORIES: no stories",
+            details: [
+              {
+                field: "prd.md",
+                message:
+                  "MISSING_USER_STORIES: the PRD yields no stories to cover",
+              },
+            ],
+          } satisfies ApiError,
+          { status: 400 },
+        );
+      }
+      const projectName = String(params.projectName ?? "project");
+      // Persisted through the same store `files/apply` writes to, so the
+      // import is visible to the file list and the requirements-presence
+      // check on the very next fetch — mirroring the real gate committing
+      // under specs/requirements/ before it cuts a version.
+      const applied = recordAppliedFiles(projectName, [
+        {
+          path: "specs/requirements/prd.md",
+          content:
+            "# Imported PRD\n\n## User Stories\n\n1. As a user, I want the imported flow to work, so that onboarding is proven.\n",
+        },
+        {
+          path: "specs/requirements/domain-model.md",
+          content: "# Domain model\n\nImported from the legacy application.\n",
+        },
+      ]);
+      return HttpResponse.json(
+        {
+          files: applied.map((f) => f.path),
+          tag: "v1",
+          warnings: fileName.includes("warn")
+            ? [`imported into ${projectName} with a soft size warning`]
+            : [],
+        },
+        { status: 201 },
+      );
+    },
+  ),
 ];
