@@ -239,18 +239,33 @@ subagent you handed it to, keeps its status line current from start to done
    `hs_err_pid*.log` wherever it was running — tens of megabytes of binary,
    untracked, in a tree you are staging from. Nothing lists it, `git status`
    shows one unfamiliar name among your own files, and a single `git add -A`
-   puts it in the pull request for good. These belong at the top of the
-   repo-root `.gitignore` of every project, unanchored on purpose — they can
-   land in any directory, and unlike `target/` there is no component that wants
-   one committed:
+   puts it in the pull request for good. Two rules keep them out of the tree
+   without reaching into source:
+
+   **The component that can crash owns the rule**, in its own `.gitignore`
+   beside the ones its toolchain ships (`target/`, `node_modules`). A JVM writes
+   its dump in the directory the process ran in, which for a build is that
+   component's root. A web app cannot emit an `hs_err_pid`, so it does not carry
+   the rule — and a repo-root copy is what reaches into every component at once.
+
+   **Where a rule must stay unanchored, make it the SHAPE of a dump, not a
+   name.** Linux writes `core` or `core.<pid>`, so the digits are what separate
+   a dump from a source file: `core.[0-9]*` ignores `core.1234` and leaves
+   `src/authz/core.ts` alone. A bare `core.*` swallows that file, and the
+   failure is silent — `git add` skips an ignored path without a word, the
+   working tree still compiles, and the build fails minutes later in CI on a
+   file that is missing from the commit but present on your disk.
 
    ```gitignore
-   # crash artefacts — never wanted, in any component
+   # <component>/.gitignore — the component that can crash owns this
    core
-   core.*
+   core.[0-9]*
    hs_err_pid*.log
    replay_pid*.log
    ```
+
+   If a file you wrote is being ignored, the rule is wrong: fix the rule, never
+   `git add -f` past it.
 5. Re-derive the working set (§1) and pick the next issue.
 
 **Say why before you throw work away.** Before deleting or wholesale-rewriting a

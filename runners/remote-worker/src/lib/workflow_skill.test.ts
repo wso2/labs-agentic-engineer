@@ -756,6 +756,29 @@ test("no skill licenses a force-push without the lease", () => {
 
 // The half a reader misses: the deny-list can go on governing a force-push
 // after the step that needed one has lost it.
+// A crash-artefact rule that matches by NAME rather than by the shape of a dump
+// swallows source files: `core.*` also matches `src/authz/core.ts`, which the
+// thunder-authentication assets ship. git add skips an ignored path silently, so
+// the working tree compiles and CI fails on a file missing from the commit.
+test("the crash-artefact ignore cannot swallow a source file", () => {
+  const skill = fs.readFileSync(AEP_SKILL, "utf8");
+  assert.ok(
+    !/^\s*core\.\*\s*$/m.test(skill),
+    "core.* matches core.ts — the pattern must be the shape of a dump (core.[0-9]*)",
+  );
+  assert.ok(skill.includes("core.[0-9]*"), "the dump suffix is digits, not any suffix");
+  // And the rule belongs to the component that can crash, not to the repo root,
+  // where one copy reaches into every component at once.
+  assert.ok(
+    !skill.includes("repo-root `.gitignore` of every project, unanchored on purpose"),
+    "the repo-root placement is what reached into the web app",
+  );
+  assert.ok(
+    skill.includes("The component that can crash owns the rule"),
+    "say where the rule lives",
+  );
+});
+
 test("aep-validation still names the force-push its push step needs", () => {
   const body = fs.readFileSync(path.join(LIBRARY, "aep-validation", "SKILL.md"), "utf8");
   assert.ok(
