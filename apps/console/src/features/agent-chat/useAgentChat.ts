@@ -25,6 +25,7 @@ import {
   chatKeyFor,
   dropTurnOutput,
   ensureUserMessage,
+  flushRoomBeforeDispatch,
   getMessages,
   replaceMessages,
   claimSendInFlight,
@@ -493,6 +494,11 @@ export function useAgentChat(
         createdAt: Date.now(),
         ...(attachments ? { attachments } : {}),
       });
+      // Land what the room is holding before the turn pins its base ref, so
+      // the tip the platform records IS the text the agent is about to read
+      // (see flushRoomBeforeDispatch). Best-effort and bounded: the row above
+      // is already on screen, and a slow committer must not hold the send.
+      await flushRoomBeforeDispatch(chatKey);
       let turnId: string;
       try {
         turnId = await startCollabTurn(projectName, conversationId, text, files, collab);

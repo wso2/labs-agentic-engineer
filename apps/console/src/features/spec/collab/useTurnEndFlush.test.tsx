@@ -23,7 +23,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import { useTurnEndFlush } from "./useTurnEndFlush";
-import { notifyTurnEnd } from "../../agent-chat/chatStore";
+import { flushRoomBeforeDispatch, notifyTurnEnd } from "../../agent-chat/chatStore";
 import { specKeys } from "../api/keys";
 import { projectKeys } from "../../projects/api/keys";
 import { FRESHNESS_POLL_DELAY_MS } from "../api/dependencyFreshness";
@@ -61,6 +61,28 @@ describe("useTurnEndFlush — deterministic room-flush closure (#252 Task 5)", (
     // No follow-up poll needed on the happy path.
     vi.advanceTimersByTime(FRESHNESS_POLL_DELAY_MS);
     expect(spy.mock.calls.length).toBe(callsRightAfterFlush);
+  });
+
+  // The room lives here and the sender does not (the chat panel is a sibling
+  // subtree), so this registration is the only way a turn about to be
+  // dispatched can land the room first. Registering the CLAIM without the
+  // flush would leave that path silently inert (#575 follow-up).
+  it("registers the flush the pre-dispatch path calls", async () => {
+    const queryClient = new QueryClient();
+    const flush = vi.fn().mockResolvedValue(undefined);
+    const { unmount } = renderHook(
+      () => useTurnEndFlush(KEY, "proj1", { status: "connected", flush }),
+      { wrapper: wrapper(queryClient) },
+    );
+
+    await flushRoomBeforeDispatch(KEY);
+    expect(flush).toHaveBeenCalledTimes(1);
+
+    // And it goes with the view: a send from a route with no room waits for
+    // nothing.
+    unmount();
+    await flushRoomBeforeDispatch(KEY);
+    expect(flush).toHaveBeenCalledTimes(1);
   });
 
   it("flush rejects: falls back to refetch-on-turn-done + a short poll", async () => {

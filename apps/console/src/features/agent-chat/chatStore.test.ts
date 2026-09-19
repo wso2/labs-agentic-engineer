@@ -41,6 +41,7 @@ import {
   consumePendingSeed,
   dropTurnOutput,
   ensureUserMessage,
+  flushRoomBeforeDispatch,
   getMessages,
   hasDeterministicFlush,
   notifyTurnEnd,
@@ -347,6 +348,79 @@ describe("deterministic-flush registration", () => {
     expect(hasDeterministicFlush(key)).toBe(true); // one registration still live
     unregisterB();
     expect(hasDeterministicFlush(key)).toBe(false);
+  });
+});
+
+// The other direction (#575 follow-up): a turn about to be dispatched lands
+// the room first, so the base ref it pins is the text the agent will read
+// rather than whatever the committer last got round to.
+describe("the pre-dispatch flush", () => {
+  it("runs the owner's flush", async () => {
+    const key = freshKey();
+    const flush = vi.fn(async () => {});
+    const unregister = registerDeterministicFlush(key, flush);
+
+    await flushRoomBeforeDispatch(key);
+
+    expect(flush).toHaveBeenCalledTimes(1);
+    unregister();
+  });
+
+  // Every surface but the spec workspace has no room at all, and a send there
+  // must not wait for anything.
+  it("is a no-op with no owner registered", async () => {
+    await expect(flushRoomBeforeDispatch(freshKey())).resolves.toBeUndefined();
+  });
+
+  // A remount overlaps two registrations for one key; the newest is the live
+  // component, and the stale one's room is the one being torn down.
+  it("uses the newest owner", async () => {
+    const key = freshKey();
+    const stale = vi.fn(async () => {});
+    const live = vi.fn(async () => {});
+    const unregisterStale = registerDeterministicFlush(key, stale);
+    const unregisterLive = registerDeterministicFlush(key, live);
+
+    await flushRoomBeforeDispatch(key);
+
+    expect(live).toHaveBeenCalledTimes(1);
+    expect(stale).not.toHaveBeenCalled();
+    unregisterStale();
+    unregisterLive();
+  });
+
+  // The room's own banner (D6) reports a committer that cannot land. A send
+  // does not: the user pressed Enter, and the worst this costs is the reading
+  // the turn would have had without the flush at all.
+  it("does not fail a send when the room will not land", async () => {
+    const key = freshKey();
+    const unregister = registerDeterministicFlush(key, async () => {
+      throw new Error("the committer is down");
+    });
+
+    await expect(flushRoomBeforeDispatch(key)).resolves.toBeUndefined();
+    unregister();
+  });
+
+  it("gives up on a flush that hangs, rather than holding the message", async () => {
+    vi.useFakeTimers();
+    try {
+      const key = freshKey();
+      const unregister = registerDeterministicFlush(key, () => new Promise<void>(() => {}));
+
+      let settled = false;
+      const pending = flushRoomBeforeDispatch(key).then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(2_999);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await pending;
+      expect(settled).toBe(true);
+      unregister();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

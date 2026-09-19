@@ -208,6 +208,24 @@ describe("the PRD's lens surface", () => {
       expect(lensButtons(el).map((b) => b.textContent)).not.toContain("Agree");
     });
 
+    // The PRD contract writes the flag INSIDE the sentence it qualifies, so
+    // what follows the run is that sentence's own punctuation rather than a
+    // space or the end of the line. Leaving the space standing there is an
+    // edit to the requirements: it reaches git on the room's next flush and
+    // the design then reads as derived from requirements that have moved.
+    it("leaves no gap when the flag sits before the sentence's punctuation", () => {
+      const el = mount("");
+      editor!.commands.setContent(
+        markdownToNode(
+          "# Rates — PRD\n\n## Product Decisions\n\n- Rate freshness: rates are fetched live at conversion time *assumed*.\n",
+        ).toJSON(),
+      );
+      byLabel(el, "Agree").click();
+      expect(editor!.getMarkdown().trim()).toBe(
+        "# Rates — PRD\n\n## Product Decisions\n\n- Rate freshness: rates are fetched live at conversion time.",
+      );
+    });
+
     // A widget whose key matches is REUSED, click handler and all, so the lens
     // it closed over carries positions from before the paragraph above grew.
     // The edit has to act on where the line is NOW.

@@ -919,6 +919,16 @@ answerable for projects that predate the check. Coarse on purpose: it reports th
 moved, never which components are affected. Over-marking costs one re-derivation the agent mostly
 no-ops through; under-marking ships a design the user has already changed their mind about.
 
+**That recorded commit is only true because the send lands the room first.** The agent reads the
+live doc; the recorded commit is the committed one, and the committer is up to a minute behind. An
+edit made just before Enter — agreeing with an `*assumed*` flag, rewriting a sentence — is therefore
+in what the agent reads and not in what the platform recorded, and it lands afterwards looking
+exactly like the requirements moving after the design: the project reports stale requirements the
+moment it finishes designing, with nobody having touched them. So a send flushes the room before it
+dispatches, which is the same forced flush Build awaits, on the other side of the turn. Best-effort:
+if the committer cannot land, the message still goes — the flush-failure banner owns that, and the
+worst a skipped flush costs is the reading the turn would have had anyway.
+
 ### Artifact state
 
 Built as [#576](https://github.com/wso2/labs-agentic-engineer/issues/576): the skill declares what
@@ -1447,8 +1457,10 @@ renaming; it needed to stop being visible.
 ([#652](https://github.com/wso2/labs-agentic-engineer/issues/652)). An assumption is a decision
 the agent already made, and the user's response to it is a judgement, not a request — so the line
 carries **Agree · Discuss**. *Agree* is a **direct edit**: it strips the flag and keeps the decision —
-no agent turn, no model, one undo — and it stays live while an agent holds the turn, which is exactly
-when a reviewer is reading flagged lines. *Discuss* opens the aim box on the line. Two, deliberately:
+no agent turn, no model, one undo — and it stays live while an agent holds the turn, which is
+exactly when a reviewer is reading flagged lines. It takes the space before the flag with it, so a
+flag written inside the sentence it qualifies (`… on a schedule *assumed*.`) leaves no gap before
+the full stop: the leftover is a change to the requirements, and it reaches git on the next flush. *Discuss* opens the aim box on the line. Two, deliberately:
 a line with four controls on it stops reading as a line. *Remove* and *Reopen* were built and cut for
 that reason — dropping or reopening a decision is a sentence away in Discuss, and the editor deletes a
 bullet as well as any control could. The word is **Agree**, not *Accept* — *Accept* is what the
