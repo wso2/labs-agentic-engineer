@@ -94,8 +94,13 @@
 #     `csp` server_config document for it (see that file for the mechanism).
 #
 # Usage: bash deployments/scripts/setup-env-for-aectl.sh
-#   WITH_BUILD=0          skip the workflow plane (Step 6, optional upstream)
-#   WITH_OBSERVABILITY=0  skip the observability plane (Step 7, optional upstream)
+#   WITH_BUILD=0            skip the workflow plane (Step 6, optional upstream)
+#   WITH_OBSERVABILITY=0    skip the observability plane (Step 7, optional upstream)
+#   WITH_SKAFFOLD_CLIENT=1  also bootstrap ae-install-client (see step 3b) — the
+#                           `make dev-env` local-dev path's own admin client for
+#                           `aectl platform install`. Off by default: a bare
+#                           `aectl` install brings its own bootstrap client some
+#                           other way and must not silently pick this one up.
 
 set -euo pipefail
 
@@ -116,6 +121,7 @@ THUNDER_ADMIN_PASSWORD="Admin@123"
 
 WITH_BUILD="${WITH_BUILD:-1}"
 WITH_OBSERVABILITY="${WITH_OBSERVABILITY:-1}"
+WITH_SKAFFOLD_CLIENT="${WITH_SKAFFOLD_CLIENT:-0}"
 
 RAW="https://raw.githubusercontent.com/openchoreo/openchoreo/${OC_BRANCH}"
 
@@ -763,6 +769,69 @@ value:
     - "http://openchoreo.localhost:8080"
     - "http://localhost:7007"
 YAML
+
+# ── 3c. ae-install-client — make dev-env's own Thunder admin client ─────────
+#
+# `aectl platform install` authenticates to Thunder as thunder.admin_client_id
+# (skaffold/defaults.yaml: "ae-install-client") to register every OTHER AEP
+# OAuth app — see tools/aectl/internal/thunder/client.go's New(), which mints
+# a client_credentials token before it can call any admin endpoint. That
+# client therefore has to exist, and already hold Thunder's `system` scope
+# plus its built-in Administrator role, BEFORE aectl ever runs — a
+# chicken-and-egg aectl itself cannot resolve (there is no privileged token
+# yet to create the first privileged client). Bootstrapping it here, as one
+# more declarative document loaded in-process at chart install, needs no
+# auth at all, which is what breaks the cycle.
+#
+# The role assignment below targets ThunderID's OWN built-in "Administrator"
+# role (fixed id, same pattern as deployments/single-cluster/thunder-resources/
+# 84-aep-system-role.yaml) rather than a role AEP owns, so ae-install-client
+# holds every permission that role carries — not a hand-picked copy of them.
+if [ "$WITH_SKAFFOLD_CLIENT" = "1" ]; then
+cat > "${BOOTSTRAP_DIR}/86-ae-install-client.yaml" <<YAML
+resource_type: application
+id: ae-install-client
+type: m2m
+name: "AE Install Client"
+description: "Bootstrap admin client for aectl platform install (make dev-env / skaffold/defaults.yaml thunder.admin_client_id)"
+ouId: "${DEFAULT_OU_ID}"
+inboundAuthConfig:
+  - type: oauth2
+    config:
+      clientId: "ae-install-client"
+      clientSecret: "ae-install-client-secret"
+      grantTypes: ["client_credentials"]
+      tokenEndpointAuthMethod: "client_secret_post"
+      pkceRequired: false
+      publicClient: false
+      scopes: ["openid", "profile", "email", "system"]
+      token:
+        accessToken:
+          clientConfig:
+            validityPeriod: 3600
+            attributes: ["ouId", "ouHandle"]
+YAML
+
+cat > "${BOOTSTRAP_DIR}/87-ae-install-client-admin-role.yaml" <<YAML
+# id/name/description/permissions restate ThunderID's built-in Administrator
+# role's own fixed values verbatim — the importer REPLACES those fields
+# wholesale on update, so restating them keeps this a no-op re-assertion
+# rather than an accidental rename. Assignments are additive, so this only
+# adds ae-install-client alongside whatever else is already assigned.
+resource_type: role
+id: "01900000-0000-7000-8000-000000000050"
+name: Administrator
+description: System administrator role with full permissions
+ouHandle: default
+permissions:
+  - resourceServerId: "01900000-0000-7000-8000-000000000020"
+    permissions:
+      - system
+assignments:
+  - id: ae-install-client
+    type: app
+YAML
+fi
 
 BOOTSTRAP_CM="openchoreo-thunderid-bootstrap"
 kubectl create namespace thunder --dry-run=client -o yaml | kubectl apply -f - >/dev/null

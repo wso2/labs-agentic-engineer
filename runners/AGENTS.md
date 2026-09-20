@@ -8,9 +8,12 @@ Skills are **authored in `<repo>/skills/`, not here** (`skills/AGENTS.md` has
 the authoring rules) and **delivered by the BFF, not here either**: a run reads
 the `.claude/skills/` mirror in its own clone. What this package owns is
 consuming that mirror correctly — the always-on workflow, the allowlist, and the
-playground's stand-in for the BFF write. The dev flow bind-mounts the library
-into the runner pod at `/app/skills` for live skill edits (see
-`deployments/scripts/setup-k3d.sh`), which is what the playground mirrors from.
+playground's stand-in for the BFF write. There is no live bind-mount into the
+runner pod for a local edit to skip: a skill reaches a real run only through
+the org's git-mirror clone (same as production), and reaches `aep-api`'s own
+copy (which seeds that mirror) only via `make dev-update` in the aectl-based
+local-dev flow (`deployments/README.md`). The playground is the one path that
+stays live (`pnpm play`), since it writes the mirror itself.
 
 ## Conventions
 
@@ -497,10 +500,8 @@ into the runner pod at `/app/skills` for live skill edits (see
   because Playwright's browsers are glibc-linked; do not reintroduce a second,
   slimmer image without moving the Helm/compose/release/`AGENT_RUNNER_IMAGE`
   consumers with it. Build + k3d-import it locally with `make build-runner`.
-  Full `deployments/scripts/setup.sh` pre-builds it in the background (off the
-  critical path) and imports it in `setup-aep.sh`; `PREBUILD_RUNNER=0` reverts
-  to a serial build. The build is skipped when the tag exists, so use
-  `FORCE=1 make build-runner` after changing the Dockerfile or `src/`.
+  The build is skipped when the tag exists, so use `FORCE=1 make build-runner`
+  after changing the Dockerfile or `src/`.
 - **The imported tag is pinned in containerd** — `build-runner.sh` calls
   `pin_node_image` (`deployments/scripts/utils.sh`) after a successful
   `k3d image import`. `aep-runner:dev` is local-only, so there is no registry to

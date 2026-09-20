@@ -5,8 +5,9 @@ single command.
 
 What lives here acts on **projects the platform created** — their BFF API and
 their GitHub repos. Nothing that builds or runs the platform itself belongs here:
-the local plane's lifecycle (`setup`/`start`/`stop`/`teardown`) and the runner
-image build live in `deployments/scripts/`, driven by the root `Makefile`.
+the local plane's lifecycle (`make dev-env` to install, `make dev-update` to
+redeploy after a source edit) and the runner image build (`make build-runner`)
+live in `deployments/scripts/`, driven by the root `Makefile`.
 
 ## Conventions
 
