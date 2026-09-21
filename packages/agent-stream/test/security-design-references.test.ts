@@ -244,16 +244,31 @@ test("a test user naming a role nobody declared", () => {
   });
 });
 
-test("a test user for a role that is not an admin-enrolment user role", () => {
+test("a test user for a service role", () => {
   const doc = expense((d) => {
     const employee = role(d, "Employee");
-    employee.enrolment = "self-service";
+    employee.kind = "service";
     delete employee.assignTo;
   });
   assertOnlyError(
     securityReferenceFindings(doc, contextFor("expense-tracker")),
     "test_user_role_not_user_kind",
     { username: "test-employee", role: "Employee" },
+  );
+});
+
+// The counterpart, and the point of the rule's narrowing: a self-service role
+// is a USER role, so a test user for it is legal — the build owes it a login
+// like any other, bound straight to the role rather than through a group.
+test("a test user for a self-service role is accepted", () => {
+  const doc = expense((d) => {
+    const employee = role(d, "Employee");
+    employee.enrolment = "self-service";
+    delete employee.assignTo;
+  });
+  assert.deepEqual(
+    securityReferenceFindings(doc, contextFor("expense-tracker")).filter((f) => f.severity === "error"),
+    [],
   );
 });
 

@@ -183,7 +183,15 @@ function printProps(label, entry, indent, fallbackType) {
   }
 }
 
-/** Print one component; true when it resolved. */
+/**
+ * Print one component; true when the question was ANSWERED.
+ *
+ * "Answered" is not the same as "found in Oxygen". `Dialog` and `Chip` are
+ * real components that Oxygen re-exports from MUI with the theme applied, and
+ * naming them as such WITH their API page is the correct, complete answer —
+ * so it returns true. Only a request this script cannot answer at all (a
+ * sub-component of a composite that has no such member) is false.
+ */
 function describe(componentsDir, request) {
   const [name, sub] = request.split(".");
   if (NAMESPACES[name]) {
@@ -194,7 +202,7 @@ function describe(componentsDir, request) {
   if (!existsSync(dir)) {
     const kebab = name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
     console.log(`${request}: not an Oxygen composite. If it is a Material UI component it keeps MUI v7's API, re-exported from ${OXYGEN} with the theme applied: https://mui.com/material-ui/api/${kebab}/`);
-    return false;
+    return true;
   }
   const files = declarationFiles(dir);
   const index = indexProps(files);
@@ -242,12 +250,19 @@ function main() {
   }
   const version = JSON.parse(readFileSync(path.join(appDir, "node_modules", OXYGEN, "package.json"), "utf8")).version;
   console.log(`${OXYGEN}@${version} — props from the installed .d.ts`);
-  let missing = 0;
+  // The exit code answers "could I answer you", not "was every name an Oxygen
+  // composite". A MUI re-export named as such IS the answer, so it exits 0:
+  // exiting 1 on a correct 7.5 KB listing renders in an agent's feed as
+  // `✗ Bash exit 1 · iconColor? 'primary' | …` — a prop line dressed as an
+  // error — which teaches a reader to skip red rows and invites the next run
+  // to repeat a call that already succeeded. Only an unanswerable request
+  // (a sub-component the composite does not have) still fails.
+  let unanswered = 0;
   for (const name of names) {
     console.log("");
-    if (!describe(componentsDir, name)) missing++;
+    if (!describe(componentsDir, name)) unanswered++;
   }
-  process.exit(missing === 0 ? 0 : 1);
+  process.exit(unanswered === 0 ? 0 : 1);
 }
 
 main();

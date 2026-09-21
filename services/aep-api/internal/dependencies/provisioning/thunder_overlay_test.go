@@ -199,6 +199,29 @@ func TestProvision_DisplayNameNamesTheWebAppWhenAProjectHasSeveral(t *testing.T)
 	}
 }
 
+// Two web apps on ONE dependency share the CLIENT it provisions — cell-design
+// models `user-auth` as a single external several components edge into. A shared
+// client has no single owner, so it keeps the plain project name: suffixing it
+// with whichever app the design happens to list last tells an operator the client
+// belongs to an app that is only half its users.
+func TestProvision_DisplayNameHasNoOwnerWhenWebAppsShareTheDependency(t *testing.T) {
+	dep := []spec.Dependency{
+		{Kind: spec.DependencyKindPlatformResource, Name: "idp", ResourceType: "thunder-app"},
+	}
+	design := []spec.DesignComponent{
+		{Name: "guest-web", ComponentType: "web-application", Dependencies: dep},
+		{Name: "admin-web", ComponentType: "web-application", Dependencies: dep},
+	}
+	plat := &fakePlatProv{}
+	svc := thunderOverlayService(design, plat, &fakeSecurityJSON{raw: securityJSONV2(t)})
+	if err := svc.Provision(context.Background(), "org", "proj", "idp", nil, nil); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if got := plat.params["displayName"]; got != "Expense Tracker" {
+		t.Fatalf("displayName = %v, want the plain project name for a shared client", got)
+	}
+}
+
 // The client's allowlist is derived from the catalog: the OIDC scopes plus every
 // declared handle. It is a truthful record of what the client will ask for —
 // ThunderID stores it and never enforces it.

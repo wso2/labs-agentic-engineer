@@ -78,6 +78,21 @@
 // last live task settles after a `result` and nothing wakes the lead within a
 // grace period — then. Ending it is what lets the CLI exit and the source close.
 //
+// **Anything that proves the run is still alive disarms that grace**, and the
+// hole left when it did not is the same failure a second time. Streaming the
+// prompt fixed the 2026-09-07 case; on 2026-09-19 (`simplest-crud-blog`) the
+// lead's last subagent settled at 07:40:30 and armed the grace, the lead was
+// generating throughout — `heartbeat waitingOn:model` at 07:40:30 and 07:40:40 —
+// but liveness frames were `continue`d before they could reach the disarm, the
+// grace expired at ~07:40:45, and the lead's next Edit at 07:40:55 met the same
+// cancelled hook. It abandoned two fully-built components and settled green.
+// Unhooked tools kept working right through it (two Reads succeeded at 07:41:10,
+// an Edit failed at 07:41:13), which is what makes this look like a model that
+// changed its mind rather than a channel that was closed under it. So the grace
+// is armed only by task bookkeeping and is disarmed by ANY message that says
+// this run is still working — including the liveness frames the watchdog
+// deliberately ignores.
+//
 // **A run that never ends is not a settle**, which is what the deadline guard
 // below is for: a pod is killed from outside when its Job's deadline passes, and
 // a killed pod explains nothing. See `createRunDeadline`.
@@ -442,8 +457,24 @@ export async function consumeRun(stream: RunStream, opts: RunLoopOptions): Promi
       // the stall the heartbeat is reporting. Note that this must hold for the
       // ones the rate limiter DROPS too, which is why the routing is by message
       // rather than by whether an event came back.
+      //
+      // The INPUT grace is the opposite call on the same frames, and the two
+      // were conflated here until a live run paid for it (see the header). They
+      // answer different questions. The watchdog asks "is progress happening?",
+      // and a heartbeat is not progress — that stays exactly as it was. The
+      // grace asks "is this run still alive?", and a heartbeat is positive proof
+      // that it is: the runtime emits one only while a turn or a tool of this
+      // run is in flight. So a liveness frame disarms the grace, a tool's as
+      // much as the model's — a tool the runtime is still ticking is work this
+      // run is doing, and closing stdin under it cancels the hook the write at
+      // the end of that work would have answered on. Disarming on proof of life
+      // cannot hang a run: a lead with nothing left to say emits a `result`, and
+      // the `isResult` path below ends input there when nothing is live. The
+      // grace exists only for a lead that is never woken at all, and
+      // `createRunDeadline` remains the backstop for a run that never ends.
       const modelWait = streaming || isModelWaitFrame(message);
       if (modelWait || isToolProgressFrame(message)) {
+        disarmInputGrace();
         // Only a token frame says the model is producing; a slow tool says
         // nothing about the model at all.
         if (modelWait) watchdog.observeStream();

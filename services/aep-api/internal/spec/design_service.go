@@ -307,34 +307,34 @@ func (s *designService) collectContract(ctx context.Context, orgID, projectID, c
 	// record goes with the assumption it accepted.
 	def, found := definitionByName(design.Dependencies, depName)
 	if !found {
-		def = DependencyDefinition{Name: depName, Description: design.Components[compIdx].Dependencies[depIdx].Description}
+		def = DependencyDefinition{Name: depName, Resource: ResourceDefinition{Name: depName, Description: design.Components[compIdx].Dependencies[depIdx].Description}}
 	}
 	// Handing over a document is choosing the service: a definition with no
 	// provider yet takes the document's own name for it (`info.title`) — and
 	// is refused when the document names none, since the platform never
 	// invents a provider. Any suggestions still open close, so the file this
 	// writes passes the agent's own gates afterwards (suggestions never beside
-	// a provider). An OpenAPI document lands only on a dependency whose style
-	// takes one.
-	if def.Provider == "" && def.Source != DependencySourceOrg {
-		def.Provider = contractTitle(string(rawSpec))
-		if def.Provider == "" {
+	// a provider). An OpenAPI document lands only on a dependency whose
+	// contract takes one; a copy from the registry keeps the organization's
+	// provider and gets the project's own document beside it (origin
+	// provider), which is what a user handing one over asked for.
+	if def.Resource.Provider == "" && def.Resource.Ref == "" {
+		def.Resource.Provider = contractTitle(string(rawSpec))
+		if def.Resource.Provider == "" {
 			return "", fmt.Errorf("%w: %q", ErrDependencyNotChosen, depName)
 		}
 	}
 	def.Suggestions = nil
-	if def.Style == DependencyStyleGraphQL {
+	if def.Resource.Contract != nil && def.Resource.Contract.Type == DependencyContractTypeGraphQL {
 		return "", fmt.Errorf("%w: dependency %q is a GraphQL API; its contract is a schema, not an OpenAPI document", ErrDependencyWrongKind, depName)
 	}
-	if def.Style == "" {
-		def.Style = DependencyStyleRestAPI
-	}
-	def.Contract = ConsumedContractFile
-	def.Assumed = nil
-	def.Provenance = &DependencyProvenance{
+	// A user-provided document replaces an assumed one outright: the
+	// acceptance record goes with the assumption it accepted.
+	def.Resource.Contract = &ResourceContract{Type: DependencyContractTypeOpenAPI, Path: ConsumedContractFile, Origin: DependencyContractOriginProvider}
+	def.Provenance = &ResourceProvenance{
 		SourceURL: specURL,
 		SHA256:    fmt.Sprintf("%x", sha256.Sum256(rawSpec)),
-		FetchedAt: time.Now().UTC().Format(time.RFC3339),
+		ReadOn:    time.Now().UTC().Format(time.RFC3339),
 	}
 	comp := design.Components[compIdx]
 	rendered, rerr := SplitDesign(&DesignFile{Components: []DesignComponent{comp}, Dependencies: []DependencyDefinition{def}})
@@ -444,13 +444,14 @@ func (s *designService) AcceptDependencyAssumption(ctx context.Context, orgID, p
 		if contractOnDisk == "" && edge.SDK != "" {
 			contractOnDisk = edge.SDK
 		}
-	} else if def.Contract != "" {
-		raw, _, exists, rerr := s.fileCommitter.ReadFile(ctx, orgID, projectID, ContractPath(depName, def.Contract))
+	} else if c := def.Resource.Contract; c != nil && c.Path != "" {
+		raw, _, exists, rerr := s.fileCommitter.ReadFile(ctx, orgID, projectID, ContractPath(depName, c.Path))
 		if rerr != nil {
 			return fmt.Errorf("read contract for %q: %w", depName, rerr)
 		}
 		if exists {
-			contractOnDisk, assumedOnDisk = def.Contract, contractMarkedAssumed(raw)
+			contractOnDisk = c.Path
+			assumedOnDisk = c.Origin == DependencyContractOriginAssumed || (c.Origin == "" && contractMarkedAssumed(raw))
 		}
 	}
 	if contractOnDisk != "" && !assumedOnDisk {
@@ -465,7 +466,13 @@ func (s *designService) AcceptDependencyAssumption(ctx context.Context, orgID, p
 	if a := journalAuthorFrom(ctx); a != nil && a.DisplayName != "" {
 		by = a.DisplayName
 	}
-	def.Assumed = &DependencyAssumption{By: by, At: time.Now().UTC().Format(time.RFC3339), Note: note}
+	// The acceptance lives on the contract. Accepted before the interface
+	// exists, the record needs a contract object to sit on: the agent's coming
+	// write names the file and keeps the record (the gate carries it).
+	if def.Resource.Contract == nil {
+		def.Resource.Contract = &ResourceContract{Type: DependencyContractTypeOpenAPI, Path: ConsumedContractFile, Origin: DependencyContractOriginAssumed}
+	}
+	def.Resource.Contract.Accepted = &DependencyAssumption{By: by, At: time.Now().UTC().Format(time.RFC3339), Note: note}
 
 	body, err := marshalDependencyDefinitionJSON(depName, def)
 	if err != nil {

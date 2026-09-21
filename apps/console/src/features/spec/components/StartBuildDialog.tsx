@@ -36,6 +36,13 @@
  * deprovisions nothing, so the resource behind a removed dependency stays
  * until somebody takes it down from Resources.
  *
+ * One external dependency is new to this project without being new to the
+ * organization: a copy of a Registered External resource. `new` would promise
+ * a resource this build stands up and a set of values somebody owes, and both
+ * are already the organization's — so that row reads `reused · organization`
+ * instead. The preflight cannot say it (it diffs names against a tag), so the
+ * design read model says it: an edge with `resourceRef` set is a copy.
+ *
  * The requirements are not a row. Every row names something that exists once
  * the version is built, and the requirements are the input to that — they also
  * move on nearly every version, so the row carried no signal.
@@ -76,6 +83,9 @@ const GROUPS: { kind: BuildChange["kind"]; title: string }[] = [
   { kind: "platform-resource", title: "Platform resources" },
 ];
 
+/** The chip on an external dependency that reuses a Registered External resource. */
+export const REUSED_FROM_ORGANIZATION = "reused · organization";
+
 /** What the group of rows is called, which depends on what the project has. */
 function changesHeading(currentVersion: string, specUnchanged: boolean): string {
   if (specUnchanged) return `No spec changes since ${currentVersion}`;
@@ -83,7 +93,10 @@ function changesHeading(currentVersion: string, specUnchanged: boolean): string 
   return `What changed since ${currentVersion}`;
 }
 
-function ChangeRow({ change }: { change: BuildChange }) {
+function ChangeRow({ change, reused }: { change: BuildChange; reused: boolean }) {
+  // Reuse only ever replaces `new`: a removed copy is still removed, and a
+  // changed one changed here whoever owns the resource.
+  const label = reused && change.state === "new" ? REUSED_FROM_ORGANIZATION : change.state;
   return (
     <Stack
       direction="row"
@@ -93,7 +106,7 @@ function ChangeRow({ change }: { change: BuildChange }) {
     >
       <Typography variant="body2">{change.name}</Typography>
       {change.state !== "changed" && (
-        <Chip size="small" variant="outlined" label={change.state} />
+        <Chip size="small" variant="outlined" label={label} />
       )}
     </Stack>
   );
@@ -103,9 +116,12 @@ function ChangeRow({ change }: { change: BuildChange }) {
 function ChangeGroup({
   title,
   changes,
+  reused,
 }: {
   title: string;
   changes: BuildChange[];
+  /** Names of external dependencies that reuse a registered resource. */
+  reused: ReadonlySet<string>;
 }) {
   if (changes.length === 0) return null;
   return (
@@ -115,7 +131,11 @@ function ChangeGroup({
       </Typography>
       <Stack spacing={1} sx={{ pl: 1.5 }}>
         {changes.map((change) => (
-          <ChangeRow key={`${change.kind}:${change.name}`} change={change} />
+          <ChangeRow
+            key={`${change.kind}:${change.name}`}
+            change={change}
+            reused={change.kind === "external" && reused.has(change.name)}
+          />
         ))}
       </Stack>
     </Stack>
@@ -129,6 +149,7 @@ export function StartBuildDialog({
   specUnchanged,
   changes,
   takenVersions,
+  reusedExternals = [],
   submitting = false,
   disabled = false,
   onClose,
@@ -144,6 +165,11 @@ export function StartBuildDialog({
   changes: BuildChange[];
   /** Every version name already in use, so a collision is caught before submit. */
   takenVersions: string[];
+  /**
+   * External dependencies whose design edge carries a `resourceRef` — copies of
+   * a Registered External resource. Their rows say so instead of `new`.
+   */
+  reusedExternals?: string[];
   submitting?: boolean;
   /** True when the caller lacks ae:build — the primary action stands down. */
   disabled?: boolean;
@@ -170,6 +196,7 @@ export function StartBuildDialog({
     ? `Rebuild ${currentVersion}`
     : `Build ${name.trim()}`;
   const removed = changes.some((c) => c.state === "removed");
+  const reused = new Set(reusedExternals);
 
   return (
     <Dialog
@@ -230,6 +257,7 @@ export function StartBuildDialog({
                   key={group.kind}
                   title={group.title}
                   changes={changes.filter((c) => c.kind === group.kind)}
+                  reused={reused}
                 />
               ))}
             </Stack>

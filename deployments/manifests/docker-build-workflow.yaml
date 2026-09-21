@@ -256,7 +256,10 @@ spec:
             fi
 
             echo ">> Building image"
-            podman build -t $IMAGE -f $WORKDIR/$DOCKERFILE_PATH $ENV_ARGS $BUILD_ARG_ARGS $WORKDIR/$DOCKER_CONTEXT
+            # Nested podman otherwise has no egress to Ballerina Central, so
+            # `bal build` fails with `cannot resolve module 'ballerina/http'`
+            # instead of downloading packages (measured on local k3d 2026-09-17).
+            podman build --network=host -t $IMAGE -f $WORKDIR/$DOCKERFILE_PATH $ENV_ARGS $BUILD_ARG_ARGS $WORKDIR/$DOCKER_CONTEXT
             echo ">> Image built successfully"
             echo ">> Saving image"
             podman save -o /mnt/vol/app-image.tar $IMAGE

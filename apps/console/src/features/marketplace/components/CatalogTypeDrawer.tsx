@@ -18,6 +18,7 @@
 
 import {
   Box,
+  Button,
   Chip,
   Divider,
   Drawer,
@@ -41,6 +42,7 @@ import {
   ParametersSection,
 } from "../../settings/components/resource-inspect-sections";
 import { isRegisteredExternal } from "../kind";
+import { encodePromoteTarget } from "../lib/promoteTarget";
 
 type PlatformResourceTypeDTO = components["schemas"]["PlatformResourceTypeDTO"];
 type ExternalResourceDTO = components["schemas"]["ExternalResourceDTO"];
@@ -51,14 +53,25 @@ type ResourceInstanceDTO = components["schemas"]["ResourceInstanceDTO"];
 export type CatalogTypeDrawerProps = {
   open: boolean;
   onClose: () => void;
+  /**
+   * Names the organization already holds a record for. A project's row of
+   * such a name cannot be promoted (the name is taken); the project reuses
+   * the record instead.
+   */
+  recordNames?: string[];
 } & (
   | { kind: "platform"; resource: PlatformResourceTypeDTO }
   | { kind: "external"; resource: ExternalResourceDTO }
   | { kind: null; resource: null }
 );
 
+// A project's own resource: its values live on the project's builds. The
+// organization takes them over by promoting the resource — from here, not from
+// the project (the person who curates the registry does the promoting).
 const PROJECT_EXTERNAL_ENV_NOTE =
-  "Environment values for this Project External resource are set on the project Connection values dialog.";
+  "Environment values are the project's. Promote the resource to hold them for the organization.";
+const NAME_ALREADY_A_RECORD_NOTE =
+  "The organization already holds a record with this name. Have the project reuse it instead.";
 
 function EnvCellsSection({ cells }: { cells: EnvValueCellDTO[] }) {
   return (
@@ -143,19 +156,51 @@ function InstancesSection({ instances }: { instances: ResourceInstanceDTO[] }) {
 
 function ExternalResourceBody({
   resource,
+  recordNames,
   onClose,
 }: {
   resource: ExternalResourceDTO;
+  recordNames: string[];
   onClose: () => void;
 }) {
+  const navigate = useNavigate();
   const config = resource.config ?? [];
   const consumers = resource.consumers ?? [];
   const docs = resource.resourceDocs ?? [];
   const instances = resource.instances ?? [];
   const registered = isRegisteredExternal(resource);
+  const heldBy = resource.project;
 
   return (
     <Box sx={{ mt: 2 }}>
+      {heldBy ? (
+        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 2 }}>
+          held by {heldBy}
+        </Typography>
+      ) : null}
+      {resource.provider && (
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+            Provider
+          </Typography>
+          <Typography variant="body2">{resource.provider}</Typography>
+        </Box>
+      )}
+      {resource.contract && (
+        // The one document a project copies when it reuses this resource. The
+        // path is the org docs repo's, so it is a fact and not a link.
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+            Contract
+          </Typography>
+          <Stack direction="row" spacing={1} alignItems="center">
+            <Chip size="small" variant="outlined" label={resource.contract.type} />
+            <Typography component="code" variant="body2">
+              {resource.contract.path}
+            </Typography>
+          </Stack>
+        </Box>
+      )}
       {resource.consumptionInstructions && (
         <Box sx={{ mb: 2 }}>
           <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
@@ -172,10 +217,33 @@ function ExternalResourceBody({
           {PROJECT_EXTERNAL_ENV_NOTE}
         </Typography>
       )}
-      <ResourceDocsSection docs={docs} />
+      {registered ? <ResourceDocsSection docs={docs} /> : null}
       <ConsumersSection consumers={consumers} />
       {instances.length > 0 && <InstancesSection instances={instances} />}
-      <DeleteResourceSection resource={resource} consumers={consumers} onClose={onClose} />
+      {registered ? (
+        <DeleteResourceSection resource={resource} consumers={consumers} onClose={onClose} />
+      ) : heldBy ? (
+        <>
+          <Divider sx={{ my: 2 }} />
+          {recordNames.includes(resource.name) ? (
+            <Typography variant="body2" color="text.secondary">
+              {NAME_ALREADY_A_RECORD_NOTE}
+            </Typography>
+          ) : (
+            <Button
+              variant="contained"
+              onClick={() => {
+                void navigate({
+                  to: "/resources/register/form",
+                  search: { promote: encodePromoteTarget({ project: heldBy, name: resource.name }) },
+                });
+              }}
+            >
+              Promote to organization
+            </Button>
+          )}
+        </>
+      ) : null}
     </Box>
   );
 }
@@ -257,7 +325,11 @@ export function CatalogTypeDrawer(props: CatalogTypeDrawerProps) {
           </Typography>
         )}
         {props.kind === "external" && (
-          <ExternalResourceBody resource={props.resource} onClose={onClose} />
+          <ExternalResourceBody
+            resource={props.resource}
+            recordNames={props.recordNames ?? []}
+            onClose={onClose}
+          />
         )}
         {props.kind === "platform" && <PlatformResourceBody resource={props.resource} />}
       </Box>

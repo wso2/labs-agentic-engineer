@@ -40,7 +40,6 @@ import {
 } from "./agentReview";
 import { SpecMdToolbar } from "./SpecMdToolbar";
 import { PrdLenses, refreshPrdLenses, type PrdLensBinding } from "./prdLensPlugin";
-import { SpecLinks, refreshSpecLinks, type SpecLinkBinding } from "./specLinkPlugin";
 import { SpecAimMenu, type AimRequest, type SpecAimBinding } from "./SpecAimMenu";
 import { AimHighlight, AIM_SELECTED_CLASS } from "./aimHighlightPlugin";
 import { UndoScrollGuard } from "./undoScrollGuard";
@@ -79,7 +78,6 @@ export function SpecMdEditor({
   self,
   agentStreaming,
   lenses,
-  links,
   aim,
   revealUnsettled = 0,
   editable,
@@ -92,8 +90,6 @@ export function SpecMdEditor({
   agentStreaming: boolean;
   /** The PRD's code lenses (#579) — passed for that file only, absent elsewhere. */
   lenses?: PrdLensBinding | undefined;
-  /** Cross-references to sibling spec documents; every markdown file carries them. */
-  links?: SpecLinkBinding | undefined;
   /**
    * Aiming the agent at a selection (#666). Every markdown file carries it —
    * unlike the lenses, which are the PRD's own: a selection is a thing any
@@ -121,13 +117,11 @@ export function SpecMdEditor({
   // remounts this component under a new key — so the plugin reaches the CURRENT
   // binding through a ref rather than the closure it was configured with.
   const lensRef = useRef(lenses);
-  const linkRef = useRef(links);
   // A Discuss lens (#652) opens the aim surface on its block. The setter is
   // stable, so the extension — built once — can hold it directly.
   const [aimRequest, setAimRequest] = useState<AimRequest | null>(null);
   useEffect(() => {
     lensRef.current = lenses;
-    linkRef.current = links;
   });
   const editor = useEditor(
     {
@@ -144,7 +138,6 @@ export function SpecMdEditor({
         AgentInsertion,
         Collaboration.configure({ fragment }),
         CollaborationCaret.configure({ provider, user: self }),
-        SpecLinks.configure({ binding: () => linkRef.current }),
         AimHighlight,
         UndoScrollGuard,
         ...(editable && lenses
@@ -195,15 +188,6 @@ export function SpecMdEditor({
   useEffect(() => {
     if (editor && lensRef.current) refreshPrdLenses(editor.view);
   }, [editor, busyReason]);
-
-  // Same for the project's file list: which references resolve is console
-  // state, and a feature doc the agent just wrote makes one more of them live.
-  // Compared by value — the caller rebuilds the array on every render, and a
-  // rebuild per keystroke would be a decoration sweep for nothing.
-  const knownPaths = (links?.knownPaths ?? []).join("\n");
-  useEffect(() => {
-    if (editor && linkRef.current) refreshSpecLinks(editor.view);
-  }, [editor, knownPaths]);
 
   // "Review them first" lands the user ON the first flagged line, not at the
   // top of a document they then have to search. The flags are decorations, so
@@ -508,14 +492,6 @@ export function SpecMdEditor({
             { opacity: 1 },
           "& .tiptap li:hover .prd-lens--line:disabled, & .tiptap p:hover .prd-lens--line:disabled":
             { opacity: 0.4 },
-          // A reference to a sibling spec document reads as a link and acts
-          // like one; an ordinary external link keeps the editor's default.
-          "& .spec-link": {
-            cursor: "pointer",
-            color: "primary.main",
-            textDecoration: "underline",
-            textUnderlineOffset: "2px",
-          },
           // The two kinds of unsettled read differently because they ARE
           // different: an assumption is one word of an otherwise-settled
           // decision, an open question is a whole entry nobody has answered.

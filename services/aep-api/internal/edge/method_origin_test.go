@@ -137,6 +137,7 @@ var opOwner = map[string]string{
 	"PutProjectReferences":          embedSpec,
 	"ReadFile":                      embedSpec,
 	"ReadFileBundle":                embedSpec,
+	"PromoteExternalResource":       embedDependencies,
 	"RegisterExternalResource":      embedDependencies,
 	"RequestOrgServiceAccess":       embedDependencies,
 	"RevealTestUserPassword":        embedIdentity,

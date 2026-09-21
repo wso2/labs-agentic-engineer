@@ -11,6 +11,7 @@ For tests, see [tests.md](tests.md) — write them only when the user asks.
   - Never assign hardcoded default values to configurables — reading an environment variable via `os:getEnv` (see Environment Variables below) is not a hardcoded default and is the expected pattern for platform-injected values.
   - A configurable with no default is written `configurable string apiKey = ?;` — `= ?` which means during the runtime, this value must be provided.
 - Initialize clients at module level, before any function or service declarations: `final foo:Client fooClient = check new (config);`. A constructor is allowed there; but connector calls are not, wrap those in function body and call them if needed.
+- **Do not reach for `isolated`.** A function earns that qualifier only when its body touches isolated-safe state and calls nothing that lacks it. A connector client is plain mutable state, so a function that reads one cannot be `isolated`, and neither can a caller of a helper that is not. The compiler says *"invalid access of mutable storage in an 'isolated' function"* or *"invalid invocation of a non-isolated function in an 'isolated' function"* — both mean delete the qualifier, not wrap the client in a `lock`.
 - Declare listeners with the `listener` keyword (`listener foo:Listener lsn = new (config);`), not a `final` variable — `service ... on lsn` attachment requires it; a `final foo:Listener` fails to compile.
 - An event/streaming listener (change-data-capture, message topic/queue, etc.) attaches its service to a vendor channel/topic string that sits **between the service type and `on`**: `service <pkg>:<ServiceType> "<channel>" on <listener>` — e.g. a Salesforce CDC service binds to a channel like `service salesforce:CdcService "/data/LeadChangeEvent" on lsn`. The channel goes on the **`service` declaration** (its attach path) — **not** as a listener constructor argument; the listener `new (...)` takes only its config. This string isn't in the library API — get it from the connector's readme (`bal library guide <org/name>`) or the vendor docs, and wire it in **before** writing the service. If neither has it, **ask the user — never invent one**: without it the code usually still compiles and the service silently receives nothing. Never ship an event service without its channel.
 - Only some of a package's `service object` types are attachable to its listener. `bal library api` is what answers that (its own `--help` says how to read the answer): **never write `on new Listener(...)` for a type the document could not confirm.** An interceptor is the common case — it reaches the runtime as a `createInterceptors()` return from an interceptable service, not as an attachment.
@@ -47,7 +48,17 @@ For tests, see [tests.md](tests.md) — write them only when the user asks.
 - Declare types explicitly in all variable declarations and `foreach` statements.
 - To narrow a union or optional type: assign to a separate typed variable first, then use it in the `if` condition.
 - Narrow with **sequential early-return `if`s, never an `else if` chain** — for any union, not just `T|error`, a narrowing does not survive an `if`/`else if` that has no final `else`: afterwards the value is still the whole union and `x.field` fails (*"does not support field access"*) even though every branch returned.
-- Better still, guard for what you want and return the rest in one line — `if r !is Success { return r; }` — so a helper that maps failures to results returns the whole union and each caller narrows once before the happy path.
+- Better still, guard for what you want and return the rest in one line — `if r !is Success { return r; }` — so a helper that maps failures to results returns the whole union and each caller narrows once before the happy path. This is the shape to reach for when a helper returns a value **or** one of several HTTP error records, which is the common case in a service:
+  ```ballerina
+  function caller(http:Request req) returns Claim|http:Unauthorized|http:InternalServerError {
+      string|http:Unauthorized|http:InternalServerError user = callerOf(req);
+      if user !is string {          // one guard for EVERY error arm, not one per arm
+          return user;              // the union minus string — returns as-is
+      }
+      return load(user);            // `user` is a plain string from here on
+  }
+  ```
+  Narrowing arm by arm (`if user is http:Unauthorized { ... } else if ...`) leaves the value as the whole union afterwards and the next line fails with *"incompatible types"* even though every branch returned.
 - An **optional field** (`field?: T` — what every non-required OpenAPI property generates) needs optional field access: `payload?.dueDate`, often `payload?.priority ?: "medium"`. Plain `payload.dueDate` fails to compile with *"field access cannot be used to access an optional field of a type that includes nil"*.
 - Do not invoke methods on json access expressions — always use a separate statement.
 
@@ -96,7 +107,7 @@ resource function post items(@http:Header string x\-user\-id, ItemInput payload)
 - Values interpolate into a `sql:ParameterizedQuery` backtick template — that *is* the parameter binding, so never assemble SQL by string concatenation.
 - Add a conditional clause with `sql:queryConcat(q, ` AND status = ${status}`)`.
 - `dbClient->query(q)` returns `stream<RowType, sql:Error?>`. `queryRow(q)` returns one row, or `sql:NoRowsError` when nothing matched — that is a 404, never a 500. `execute(q)` returns `sql:ExecutionResult` (`affectedRowCount`, `lastInsertId`).
-- A `timestamptz` column binds to `time:Utc` (`sql:TimestampValue` wraps `string|time:Utc?`); a plain `timestamp` binds to `time:Civil` (`sql:DateTimeValue`).
+- A `timestamptz` column binds to `time:Utc`; a plain `timestamp` binds to `time:Civil` (`sql:DateTimeValue`). **Bind the time value itself, never a string of it.** `sql:TimestampValue` also accepts a `string`, and that is the trap: `new sql:TimestampValue(time:utcToString(t))` compiles clean and then fails against the database at runtime — *"column is of type timestamp with time zone but expression is of type character varying"*. The RFC3339 round trip is for the JSON payload, not for the bind.
 
 ## Time
 

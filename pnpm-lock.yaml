@@ -601,6 +601,9 @@ importers:
       '@aep/progress-view':
         specifier: workspace:*
         version: link:../packages/progress-view
+      '@anthropic-ai/claude-agent-sdk':
+        specifier: 0.3.247
+        version: 0.3.247(@anthropic-ai/sdk@0.93.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
       '@clack/prompts':
         specifier: ^1.6.0
         version: 1.7.0

@@ -91,6 +91,11 @@ function external(name: string, keys: string[], description?: string) {
   };
 }
 
+/** An external that COPIES a Registered External resource. */
+function copied(name: string, keys: string[], description?: string) {
+  return { ...external(name, keys, description), source: "org", resourceRef: name };
+}
+
 function design(...deps: ReturnType<typeof external>[]): ComponentDependencies[] {
   return [{ componentName: "catalog-api", dependencies: deps }];
 }
@@ -143,6 +148,40 @@ describe("ExternalResources", () => {
     expect(screen.getByText("Payments")).toBeInTheDocument();
     expect(screen.getByText("sendgrid")).toBeInTheDocument();
     expect(screen.getByText("1 setting outstanding")).toBeInTheDocument();
+  });
+
+  // A copy of a Registered External resource has keys on its dependency page
+  // but nothing to configure here: the row says where the values live, so the
+  // page never leaves that unanswered.
+  it("lists a dependency whose values the organization holds, with nothing to press", () => {
+    mockDesign = design(
+      external("stripe", ["api_key"]),
+      copied("currency-service", ["OPENEXCHANGERATES_APP_ID"], "Exchange rates"),
+    );
+    mockReadiness = readiness({ name: "stripe", state: "unset", missingKeys: ["api_key"] });
+    renderSection();
+
+    expect(screen.getByText("currency-service")).toBeInTheDocument();
+    expect(screen.getByText("Values held by the organization")).toBeInTheDocument();
+    expect(screen.getByText("Nothing to configure here.")).toBeInTheDocument();
+    // Its own description would read as a promise of something to do here.
+    expect(screen.queryByText("Exchange rates")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /currency-service/i }),
+    ).not.toBeInTheDocument();
+    // The count is about what a person still owes, which is stripe alone.
+    expect(screen.getByText("1 of 1 need configuration")).toBeInTheDocument();
+  });
+
+  it("keeps the section for a project whose only external is the organization's", () => {
+    mockDesign = design(copied("currency-service", ["OPENEXCHANGERATES_APP_ID"]));
+    mockReadiness = readiness();
+    renderSection();
+
+    expect(screen.getByText("External resources")).toBeInTheDocument();
+    expect(screen.getByText("Nothing to configure")).toBeInTheDocument();
+    expect(screen.getByText("Values held by the organization")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /configure/i })).not.toBeInTheDocument();
   });
 
   // THE regression this section exists to avoid: a dependency no build has

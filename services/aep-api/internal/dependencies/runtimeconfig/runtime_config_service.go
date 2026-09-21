@@ -136,7 +136,7 @@ func (s *RuntimeConfigService) FilesForComponent(ctx context.Context, orgID, pro
 		return nil, true, nil
 	}
 
-	envValues, ready := s.buildEnvValues(ctx, orgID, projectID, match)
+	envValues, ready := s.buildEnvValues(ctx, orgID, projectID, design, match)
 	if !ready {
 		slog.InfoContext(ctx, "runtime_config: required keys not yet ready; deferring env-config.js",
 			"orgID", orgID, "projectID", projectID, "component", componentName, "keys", sortedKeys(envValues))
@@ -168,7 +168,7 @@ func (s *RuntimeConfigService) FilesForComponent(ctx context.Context, orgID, pro
 // SPA URL not yet resolved for an OIDC consumer-URL patch, etc.). The
 // caller must NOT write a partial env-config.js on `!ready` — see
 // FilesForComponent.
-func (s *RuntimeConfigService) buildEnvValues(ctx context.Context, orgID, projectID string, webapp *spec.DesignComponent) (out map[string]interface{}, ready bool) {
+func (s *RuntimeConfigService) buildEnvValues(ctx context.Context, orgID, projectID string, design *spec.DesignFile, webapp *spec.DesignComponent) (out map[string]interface{}, ready bool) {
 	out = map[string]interface{}{}
 	ready = true
 
@@ -176,7 +176,7 @@ func (s *RuntimeConfigService) buildEnvValues(ctx context.Context, orgID, projec
 	// No resource-type name is hardcoded — an OIDC dependency and a database
 	// dependency flow through the identical path (see layerPlatformResources).
 	if deps := platformResourceDeps(webapp); len(deps) > 0 {
-		if ok := s.layerPlatformResources(ctx, orgID, projectID, webapp, deps, out); !ok {
+		if ok := s.layerPlatformResources(ctx, orgID, projectID, design, webapp, deps, out); !ok {
 			ready = false
 		}
 	}
@@ -235,7 +235,7 @@ func platformResourceDeps(c *spec.DesignComponent) []spec.Dependency {
 // and the caller then skips the whole write — a deferring dependency contributes
 // NO keys of its own, and keys already in `out` are never shipped because the
 // write is gated. The SPA is thus never handed a partial window._env_.
-func (s *RuntimeConfigService) layerPlatformResources(ctx context.Context, orgID, projectID string, webapp *spec.DesignComponent, deps []spec.Dependency, out map[string]interface{}) bool {
+func (s *RuntimeConfigService) layerPlatformResources(ctx context.Context, orgID, projectID string, design *spec.DesignFile, webapp *spec.DesignComponent, deps []spec.Dependency, out map[string]interface{}) bool {
 	if s.resourceClient == nil {
 		slog.WarnContext(ctx, "runtime_config: resourceClient not wired; deferring platform-resource outputs",
 			"projectID", projectID, "component", webapp.Name)
@@ -252,10 +252,19 @@ func (s *RuntimeConfigService) layerPlatformResources(ctx context.Context, orgID
 		return false
 	}
 
-	// Resolve the SPA's public origin lazily + once — only the annotation-driven
-	// patch needs it (the OC ReleaseBinding status fills the external URL after
-	// the first reconcile).
-	spaOrigin, spaResolved := "", false
+	// Resolve public origins lazily and once each — only the annotation-driven
+	// patch needs them (the OC ReleaseBinding status fills the external URL after
+	// the first reconcile). Memoised across dependencies AND across the peer web
+	// apps the consumer-URL set below has to enumerate.
+	origins := map[string]string{}
+	originOf := func(componentName string) string {
+		if o, ok := origins[componentName]; ok {
+			return o
+		}
+		o := strings.TrimRight(s.componentExternalURL(ctx, orgID, projectID, componentName), "/")
+		origins[componentName] = o
+		return o
+	}
 
 	ready := true
 	for i := range deps {
@@ -272,19 +281,22 @@ func (s *RuntimeConfigService) layerPlatformResources(ctx context.Context, orgID
 		// and holding the file back for it would keep a startable SPA off the air
 		// for a fact it does not read.
 		if m.ConsumerURLEnvConfig != "" {
-			if !spaResolved {
-				spaOrigin = strings.TrimRight(s.componentExternalURL(ctx, orgID, projectID, webapp.Name), "/")
-				spaResolved = true
-			}
-			switch {
-			case spaOrigin == "":
+			// The WHOLE project's set, not this web app's URL. A dependency is
+			// project-scoped and several web apps can declare it, so writing one
+			// component's URL into the single field makes each emission pass
+			// replace the last — leaving only the web app that happened to compose
+			// last registered, and every other one permanently unable to sign in.
+			callbacks := consumerCallbackSet(design, dep.Name, m.ConsumerURLPath, originOf)
+			if originOf(webapp.Name) == "" {
 				slog.InfoContext(ctx, "runtime_config: SPA external URL not yet resolved; consumer URL registers on the converge pass",
 					"projectID", projectID, "component", webapp.Name, "dep", dep.Name)
-			default:
+			}
+			if len(callbacks) > 0 {
 				// Idempotent inside the client (no-op when already present), so
-				// re-running on every cascade doesn't churn the CR.
+				// re-running on every cascade doesn't churn the CR — which holds
+				// only because the set is SORTED and therefore byte-stable.
 				if perr := s.resourceClient.PatchBindingEnvironmentConfigs(ctx, orgID, bindingName,
-					map[string]string{m.ConsumerURLEnvConfig: spaOrigin + m.ConsumerURLPath}); perr != nil {
+					map[string]string{m.ConsumerURLEnvConfig: strings.Join(callbacks, ",")}); perr != nil {
 					slog.WarnContext(ctx, "runtime_config: patch binding consumer URL failed; will retry on the next converge",
 						"projectID", projectID, "component", webapp.Name, "dep", dep.Name,
 						"binding", bindingName, "envConfig", m.ConsumerURLEnvConfig, "error", perr)
@@ -313,6 +325,69 @@ func (s *RuntimeConfigService) layerPlatformResources(ctx context.Context, orgID
 		}
 	}
 	return ready
+}
+
+// consumerCallbackSet is the value a consumer-URL dependency's env-config key
+// holds: the SORTED, deduplicated set of consumer URLs every web app in the
+// design that declares `depName` has resolved so far.
+//
+// A dependency is PROJECT-scoped. `cell-design` models `user-auth` as one
+// external that several components edge into, so two web apps legitimately share
+// one sign-in client and therefore one redirect-URI field. Deriving the value
+// from the design rather than from the component being composed is what stops
+// the two from overwriting each other.
+//
+// SORTED is part of the contract, not tidiness: the binding client skips a write
+// whose value is unchanged, and Go randomises map iteration, so a set joined in
+// encounter order would differ between two otherwise identical passes and turn
+// every cascade into a real write against objects OpenChoreo's own controllers
+// are reconciling.
+//
+// A web app whose URL has not resolved contributes nothing — the set grows as
+// each one comes up, and never regresses to a placeholder.
+//
+// The deploy-verdict wait in the projects domain computes the same value from
+// the same design for the same field (projects.thunderPass). Two writers are
+// tolerable only because both are pure functions of the design and therefore
+// agree; collapsing them to one is the follow-up.
+func consumerCallbackSet(design *spec.DesignFile, depName, path string, originOf func(string) string) []string {
+	if design == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for i := range design.Components {
+		comp := &design.Components[i]
+		if comp.ComponentType != spec.ComponentTypeWebApplication {
+			continue
+		}
+		if !declaresPlatformResource(comp, depName) {
+			continue
+		}
+		origin := originOf(comp.Name)
+		if origin == "" {
+			continue
+		}
+		callback := origin + path
+		if seen[callback] {
+			continue
+		}
+		seen[callback] = true
+		out = append(out, callback)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// declaresPlatformResource reports whether the component declares `depName` as a
+// platform-resource dependency.
+func declaresPlatformResource(c *spec.DesignComponent, depName string) bool {
+	for i := range c.Dependencies {
+		if c.Dependencies[i].Kind == spec.DependencyKindPlatformResource && c.Dependencies[i].Name == depName {
+			return true
+		}
+	}
+	return false
 }
 
 // catalogMarkers reads the PE-authored CRT marker map once. A nil catalog is a

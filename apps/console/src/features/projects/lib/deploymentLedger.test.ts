@@ -18,16 +18,15 @@
 
 import { describe, expect, it } from "vitest";
 import type { components } from "../../../generated/aep-api";
-import type { DeploymentCard } from "./deploymentRows";
+import { groupDeploymentCards, type DeploymentCard } from "./deploymentRows";
+import type { EnvironmentInfo } from "./environments";
 import {
   agoLabel,
   commitUrl,
   environmentRows,
   environmentStatus,
   latestDeployedAt,
-  ledgerRows,
   milestoneFor,
-  parseEnvironment,
   shortSha,
   validationCell,
 } from "./deploymentLedger";
@@ -58,107 +57,133 @@ const deploy = (over: Partial<DeployStage> = {}): DeployStage => ({
   ...over,
 });
 
-describe("parseEnvironment", () => {
-  it("accepts the two platform environments and nothing else", () => {
-    expect(parseEnvironment("development")).toBe("development");
-    expect(parseEnvironment("production")).toBe("production");
-    expect(parseEnvironment("staging")).toBeNull();
-    expect(parseEnvironment("")).toBeNull();
-  });
-});
+// The pipeline as the platform serves it: names and order are its business,
+// not the console's.
+const development: EnvironmentInfo = {
+  name: "development",
+  displayName: "Development",
+  isProduction: false,
+  validation: "on",
+  position: 0,
+  promotesTo: "production",
+};
+const production: EnvironmentInfo = {
+  name: "production",
+  displayName: "Production",
+  isProduction: true,
+  validation: "off",
+  position: 1,
+};
 
 describe("environmentStatus", () => {
   it("lets the deploy aggregate speak for development", () => {
     // Bindings still converging, but the platform says deployed — the
     // aggregate is the word the Builds ledger reads too, so it wins here.
     const cards = [card({ kind: "transitional" })];
-    expect(environmentStatus("development", cards, deploy())).toEqual({
+    expect(environmentStatus(development, cards, deploy())).toEqual({
       label: "Deployed",
       tone: "success",
       live: false,
     });
     expect(
-      environmentStatus("development", cards, deploy({ status: "deploying" })).live,
+      environmentStatus(development, cards, deploy({ status: "deploying" })).live,
     ).toBe(true);
     expect(
-      environmentStatus("development", cards, deploy({ status: "failed" })).label,
+      environmentStatus(development, cards, deploy({ status: "failed" })).label,
     ).toBe("Deploy failed");
     expect(
-      environmentStatus("development", [], deploy({ status: "none", version: "" }))
+      environmentStatus(development, [], deploy({ status: "none", version: "" }))
         .label,
     ).toBe("Nothing deployed");
+    // …but bound cards under a `none` aggregate fold like production's do
+    // (these carry one still converging), never "Nothing deployed".
+    expect(
+      environmentStatus(development, cards, deploy({ status: "none", version: "" }))
+        .label,
+    ).toBe("Deploying");
   });
 
   it("folds production from its bindings, loudest first", () => {
-    expect(environmentStatus("production", []).label).toBe("Nothing deployed");
+    expect(environmentStatus(production, []).label).toBe("Nothing deployed");
     expect(
-      environmentStatus("production", [
+      environmentStatus(production, [
         card({ kind: "success" }),
         card({ kind: "error" }),
         card({ kind: "transitional" }),
       ]),
     ).toEqual({ label: "Deploy failed", tone: "error", live: false });
     expect(
-      environmentStatus("production", [
+      environmentStatus(production, [
         card({ kind: "success" }),
         card({ kind: "transitional" }),
       ]),
     ).toEqual({ label: "Deploying", tone: "info", live: true });
-    expect(environmentStatus("production", [card({ kind: "success" })]).label).toBe(
+    expect(environmentStatus(production, [card({ kind: "success" })]).label).toBe(
       "Deployed",
     );
     expect(
-      environmentStatus("production", [card({ kind: "undeployed" })]).label,
+      environmentStatus(production, [card({ kind: "undeployed" })]).label,
     ).toBe("Undeployed");
   });
 
   it("falls back to the bindings for development while the poll is out", () => {
-    expect(environmentStatus("development", [card({ kind: "success" })]).label).toBe(
+    expect(environmentStatus(development, [card({ kind: "success" })]).label).toBe(
       "Deployed",
     );
   });
 });
 
-describe("environmentRows / ledgerRows", () => {
-  it("always seats development, and production only once bound", () => {
+describe("environmentRows", () => {
+  it("seats every environment the pipeline names, bound or not", () => {
+    // Intent changed with the N-environment board (task 6): production used
+    // to get a row only once something was bound to it. Absence is now
+    // information on the board, so it has a row either way.
     const rows = environmentRows(
-      { development: [card({ kind: "notDeployed" })], production: [] },
+      new Map([["development", [card({ kind: "notDeployed" })]]]),
+      [development, production],
       deploy({ status: "none", version: "" }),
     );
-    expect(rows.map((r) => r.environment)).toEqual(["development"]);
-    // Nothing is bound anywhere, so the ledger has no row to show.
-    expect(ledgerRows(rows)).toEqual([]);
+    expect(rows.map((r) => r.environment)).toEqual(["development", "production"]);
+    expect(rows[1]?.status.label).toBe("Nothing deployed");
+    expect(rows.every((r) => r.cards.every((c) => !c.deployment))).toBe(true);
   });
 
-  it("carries the dev version, the live count and the newest stamp", () => {
+  it("carries the first environment's version, the live count and the newest stamp", () => {
     const rows = environmentRows(
-      {
-        development: [
-          card({ kind: "success" }),
-          card({
-            kind: "transitional",
-            componentName: "web",
-            deployment: {
+      new Map([
+        [
+          "development",
+          [
+            card({ kind: "success" }),
+            card({
+              kind: "transitional",
               componentName: "web",
-              environment: "development",
-              status: "Progressing",
-              createdAt: "2026-08-14T17:10:00Z",
-            },
-          }),
-          card({ kind: "notDeployed", componentName: "worker" }),
+              deployment: {
+                componentName: "web",
+                environment: "development",
+                status: "Progressing",
+                createdAt: "2026-08-14T17:10:00Z",
+              },
+            }),
+            card({ kind: "notDeployed", componentName: "worker" }),
+          ],
         ],
-        production: [
-          card({
-            kind: "success",
-            deployment: {
-              componentName: "api",
-              environment: "production",
-              status: "Ready",
-              createdAt: "2026-08-15T09:00:00Z",
-            },
-          }),
+        [
+          "production",
+          [
+            card({
+              kind: "success",
+              deployment: {
+                componentName: "api",
+                environment: "production",
+                status: "Ready",
+                createdAt: "2026-08-15T09:00:00Z",
+              },
+            }),
+          ],
         ],
-      },
+      ]),
+      [development, production],
       deploy({ status: "deploying" }),
     );
     expect(rows).toHaveLength(2);
@@ -168,14 +193,57 @@ describe("environmentRows / ledgerRows", () => {
     expect(dev?.total).toBe(3);
     expect(dev?.deployedAt).toBe("2026-08-14T17:10:00Z");
     expect(dev?.status.live).toBe(true);
-    // The aggregate names development's version only — production's is a
-    // guess the console does not make.
+    // The aggregate names one version, the one a build rolled out — every
+    // later environment's is a guess the console does not make.
     expect(prod?.version).toBeUndefined();
     expect(prod?.status.label).toBe("Deployed");
-    expect(ledgerRows(rows).map((r) => r.environment)).toEqual([
-      "development",
-      "production",
+  });
+});
+
+describe("environmentRows across N environments", () => {
+  const envs: EnvironmentInfo[] = [
+    { name: "development", displayName: "Development", isProduction: false, validation: "on", position: 0, promotesTo: "staging" },
+    { name: "staging", displayName: "Staging", isProduction: false, validation: "off", position: 1, promotesTo: "production" },
+    { name: "production", displayName: "Production", isProduction: true, validation: "off", position: 2 },
+  ];
+
+  it("gives every environment a row, in the order the platform served", () => {
+    const board = groupDeploymentCards(
+      [{ name: "api", displayName: "API", type: "service" }],
+      [{ componentName: "api", environment: "staging", status: "Ready", createdAt: "2026-09-12T10:00:00Z" }],
+    );
+    const rows = environmentRows(board, envs, deploy());
+    expect(rows.map((r) => [r.environment, r.label])).toEqual([
+      ["development", "Development"],
+      ["staging", "Staging"],
+      ["production", "Production"],
     ]);
+  });
+
+  it("gives an environment with no bindings a row too — absence is information on the board", () => {
+    const board = groupDeploymentCards([{ name: "api", displayName: "API", type: "service" }], []);
+    const rows = environmentRows(board, envs, deploy());
+    expect(rows).toHaveLength(3);
+    expect(rows[2]?.status.label).toBe("Nothing deployed");
+  });
+
+  it("never re-derives the order — the list's own order is the board's", () => {
+    // Deliberately scrambled against `position`: the rows must come back in
+    // the order the argument came in, so a sort by position (or by name) is a
+    // failure, not an equivalent.
+    const scrambled = [envs[2]!, envs[0]!, envs[1]!];
+    const board = groupDeploymentCards([{ name: "api", displayName: "API", type: "service" }], []);
+    expect(environmentRows(board, scrambled, deploy()).map((r) => r.environment)).toEqual([
+      "production",
+      "development",
+      "staging",
+    ]);
+  });
+
+  it("renders a single-environment pipeline without inventing a second", () => {
+    const board = groupDeploymentCards([{ name: "api", displayName: "API", type: "service" }], []);
+    const rows = environmentRows(board, [envs[0]!], deploy());
+    expect(rows).toHaveLength(1);
   });
 });
 
@@ -215,12 +283,12 @@ describe("milestoneFor", () => {
 
 describe("validationCell", () => {
   it("is development's alone", () => {
-    expect(validationCell("production", "passed")).toBeNull();
+    expect(validationCell(production, "passed")).toBeNull();
   });
 
   it("prefers the counts once the join resolved them", () => {
     expect(
-      validationCell("development", "passed", {
+      validationCell(development, "passed", {
         passed: 24,
         failed: 0,
         uncovered: 0,
@@ -230,7 +298,7 @@ describe("validationCell", () => {
   });
 
   it("keeps the hedge audible on a partial verdict", () => {
-    const cell = validationCell("development", "partial", {
+    const cell = validationCell(development, "partial", {
       passed: 22,
       failed: 0,
       uncovered: 2,
@@ -242,14 +310,14 @@ describe("validationCell", () => {
 
   it("names the lifecycle while a cycle is in flight, counts or not", () => {
     expect(
-      validationCell("development", "running", {
+      validationCell(development, "running", {
         passed: 18,
         failed: 0,
         uncovered: 6,
         total: 24,
       }),
     ).toEqual({ label: "validating", tone: "info", live: true });
-    expect(validationCell("development", "awaiting-fix")).toEqual({
+    expect(validationCell(development, "awaiting-fix")).toEqual({
       label: "awaiting fix",
       tone: "warning",
       live: false,
@@ -257,12 +325,12 @@ describe("validationCell", () => {
   });
 
   it("reads Not run before anything has been asked", () => {
-    expect(validationCell("development", "none")).toEqual({
+    expect(validationCell(development, "none")).toEqual({
       label: "Not run",
       tone: "neutral",
       live: false,
     });
-    expect(validationCell("development", undefined)?.label).toBe("Not run");
+    expect(validationCell(development, undefined)?.label).toBe("Not run");
   });
 });
 
@@ -279,3 +347,4 @@ describe("shortSha / commitUrl", () => {
     expect(commitUrl("https://github.com/acme/demo", "")).toBeUndefined();
   });
 });
+

@@ -273,8 +273,22 @@ services:
       OBSERVER_OAUTH_CLIENT_ID: "${OBSERVER_OAUTH_CLIENT_ID:-openchoreo-observer-resource-reader-client}"
       OBSERVER_OAUTH_CLIENT_SECRET: "${OBSERVER_OAUTH_CLIENT_SECRET:-openchoreo-observer-resource-reader-client-secret}"
       OBSERVER_OAUTH_HOST_HEADER: "${OBSERVER_OAUTH_HOST_HEADER:-thunder.openchoreo.localhost}"
+
+      # ── ThunderApplication CR reader (the sign-in deploy-wait). OFF by default.
+      # The BFF runs as a container here, not a pod, so there is no in-cluster
+      # apiserver, SA token or CA to fall back on — with these empty the reader
+      # stays nil and a web app's deploy verdict never waits for Thunder to carry
+      # its callback. `scripts/enable-local-thunder-wait.sh` mints a read-only
+      # ServiceAccount in k3d, writes the cluster CA to keys/, and prints the
+      # three values to paste into .env.
+      KUBE_API_BASE_URL: "${KUBE_API_BASE_URL:-}"
+      KUBE_API_BEARER: "${KUBE_API_BEARER:-}"
+      KUBE_API_CA_FILE: "${KUBE_API_CA_FILE:-}"
     volumes:
-      - ./keys/task-signing.pem:/app/keys/task-signing.pem:ro
+      # The whole (gitignored) keys dir rather than the one signing key: the
+      # optional cluster CA above lands here too, and a per-file mount of a file
+      # that may not exist fails the whole stack at `up`.
+      - ./keys:/app/keys:ro
       - ./github-app-private-key.pem:/etc/github-app/private-key.pem:ro
       - aep-workspaces:/workspaces
     networks:

@@ -328,6 +328,14 @@ const draftExternalResourceInputSchema = z.object({
     .string()
     .optional()
     .describe("How a consuming project should use it — not a restatement of description."),
+  provider: z.string().optional().describe("The concrete system the resource is (\"Open Exchange Rates\", \"Stripe\")."),
+  contract: z
+    .object({
+      type: z.enum(["openapi", "graphql", "sdk", "asyncapi", "protobuf", "documentation"]),
+      url: z.string().describe("The provider's published document. The platform fetches and copies it; never a file body."),
+    })
+    .optional()
+    .describe("The resource's contract document, by URL. The platform fetches it into the organization's registry."),
   config: z
     .array(
       z.object({
@@ -358,8 +366,8 @@ export function buildRegisterDraftTools(): Record<string, Tool> {
   return {
     [DRAFT_EXTERNAL_RESOURCE_TOOL]: tool({
       description:
-        "Draft the Registered External resource form (name, description, consumption instructions, " +
-        "config keys, optional URL resource-docs). Never include environment values or secret bytes. " +
+        "Draft the Registered External resource form (name, description, provider, consumption instructions, " +
+        "config keys, the contract document's URL, optional URL resource-docs). Never include environment values or secret bytes. " +
         "Call this when you know enough to fill the form; ask_question first when you do not.",
       inputSchema: draftExternalResourceInputSchema,
       execute: async (input) => ({ status: "ok" as const, ...input }),

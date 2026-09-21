@@ -22,6 +22,8 @@ pnpm play <dir> requirements --idea "…"
 pnpm play <dir> design | tasks | check | undo
 pnpm play <dir> code [--restore] [--yes]   # ONE coding-agent session works the
                                             # whole project — no per-issue run
+pnpm play <dir> wire [--role X] [--seed]   # run what was built: compose backend +
+                                            # the app in a browser, as a role
 pnpm play help | -h | --help           # same usage help
 ```
 
@@ -264,19 +266,43 @@ out of the same library (only the GitHub-shaped passages are swapped, by
 and asserts neither mode leaks the other's procedure; ADR-0004 in
 remote-worker).
 
-## Scope ends when the code lands
+## Scope ends before the platform, not before the app runs
 
-The playground covers requirements → design → tasks → code, ending when the
-coding-agent session stops (some issues may stay open — a later run picks them
-up, same as prod). There is NO build/deploy half and none should be
-added: no image builds, no `docker build` of the authored Dockerfile, no
-deploy attempt, no validation-task runs. Two things that look build-ish stay
-deliberately — the agent's local toolchain verification (`go build`,
+The playground covers requirements → design → tasks → code, and then `wire`:
+running what was built, on this machine, so a person can click through it.
+**It builds and runs locally; it never deploys.** No cluster, no push, no
+validation-task run, no platform anything — taking a project further is a
+HANDOFF: the project is a plain directory with production-layout `specs/`, so
+push it to a repo and let the platform's normal flow build and deploy it.
+
+`wire` is where the image build lives, and it is deliberate: compose builds each
+service from the Dockerfile the agent authored, which is the first check that
+the file works at all, and it removes any per-stack "how do I run this" table
+(see `design/decisions/ADR-0002-wired-mode.md`). Two other things that look
+build-ish are the agent's own: local toolchain verification (`go build`,
 `tsc --noEmit`; code quality, not a platform build) and `workload.yaml` +
 `Dockerfile` authoring (the component's shape; what you hone here must stay
-platform-ready). Taking a project further is a HANDOFF, not a playground
-feature: the project is a plain directory with production-layout `specs/` —
-push it to a repo and let the platform's normal flow build/deploy it.
+platform-ready).
+
+## `wire` — run it, as somebody
+
+```bash
+pnpm play <dir> wire                     # plan → compose up → pick a role → browser → panel
+pnpm play <dir> wire --role HRCoordinator --no-open   # for a script or an agent: prints READY <url>
+```
+
+One verb, one foreground process, and **quitting is the cleanup**: `q`, Ctrl-C
+or SIGTERM takes the compose project and the dev server down, and a session that
+died hard is reaped by the next start. There is no `up`/`down`/`status`.
+
+Flags: `--role <name>` (`""` = signed in holding nothing), `--seed`, `--fresh`
+(drop the database volume — the remedy when the schema and the volume have
+diverged), `--no-open`, `--no-triage`, `--skip <dep>`, `--yes`. State lives in
+`<project>/.aep-playground/wire/`.
+
+What it stands up and why it is shaped this way is
+`design/decisions/ADR-0002-wired-mode.md`; the app's half of the contract is
+`skills/react-webapp/references/mock-mode.md`.
 
 ## Documented divergences from production (do not mistake for platform behavior)
 
@@ -289,6 +315,7 @@ push it to a repo and let the platform's normal flow build/deploy it.
 | Design/tasks gates are playground-side UX | production has no server gate on the console's spec paths | advisory only |
 | No status field on an issue file | prod's own `derivedStatus` is read from GitHub issue state, never cached; the playground has no such oracle, so it re-derives "is this done" from whether the App Path looks implemented, every run | none needed — deleting a component's code puts its issue back in the working set |
 | Coding agent runs in a throwaway `docker run` of the runner image, not a pod | no cluster; the image and the session options are production's | mandatory undo snapshot + first-run consent. `--host` opts out of the container entirely and runs bypassPermissions ON THE HOST against the developer's own toolchain **and the developer's own Claude credentials** — weaker parity, so point it at scratch/git-tracked projects. A project with a `web-application` widens that further: verifying one binds a localhost port and drives a real browser on your machine (see below) |
+| `wire` builds images and runs containers on your machine | there is no cluster, and an app nobody can click through is not verified | first-run consent per project, the same shape as the coding run's; it never deploys, and everything it writes is inside the project's `.aep-playground/wire/` |
 | No GitHub-shaped steps in the workflow skill (issue files, no branch, no PR) | there is no remote to discover issues from or open a PR against | the deliberate one: the same authored `aep` skill, assembled for `mode: "local"`; only the passages `skills/aep/overlays/local.md` anchors are swapped, everything else is production's text verbatim |
 
 ## Layout

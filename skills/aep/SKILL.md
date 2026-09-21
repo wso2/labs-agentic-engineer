@@ -192,9 +192,11 @@ subagent you handed it to, keeps its status line current from start to done
 2. **Make the change it asks for**, holding to
    `references/component-contract.md` and the stack skills of every component it
    touches.
-3. **A `web-application` is finished by a walk, not a build.** Once its build is
-   clean, dispatch **one more subagent** for that component with exactly this
-   prompt, and nothing about how to walk:
+3. **A `web-application` is finished by a walk, not a build.** Once its builder
+   reports clean — not waiting on the rest of the wave — and **no other walk is
+   live**, dispatch **one more subagent** for that component with exactly this
+   prompt, and nothing about how to walk. One walk at a time: a live Chromium is
+   the largest thing in the pod.
 
    ```text
    Walk <component> at <App Path>. Load `mock-verification` and
@@ -239,17 +241,30 @@ subagent you handed it to, keeps its status line current from start to done
    untracked, in a tree you are staging from. Nothing lists it, `git status`
    shows one unfamiliar name among your own files, and a single `git add -A`
    puts it in the pull request for good. These belong at the top of the
-   repo-root `.gitignore` of every project, unanchored on purpose — they can
-   land in any directory, and unlike `target/` there is no component that wants
-   one committed:
+   repo-root `.gitignore` of every project. They are the one category that stays
+   unanchored: a crash lands wherever the process was running, and unlike
+   `target/` there is no component that wants one committed.
 
    ```gitignore
    # crash artefacts — never wanted, in any component
    core
-   core.*
+   !core/
+   core.[0-9]*
    hs_err_pid*.log
    replay_pid*.log
    ```
+
+   **Copy those five lines exactly.** Unanchored is not the same as loose, and
+   the shapes matter more here than anywhere else in the file: a crash picks
+   names people pick too. `core.[0-9]*` is the kernel's `core.%p` dump and
+   nothing else — a plain `core.*` would swallow `core.ts`, `core.css` and
+   `core.go`, and `src/authz/core.ts` exists in every web app you generate.
+   `!core/` re-includes a *directory* named core, which the bare `core` line
+   above it would otherwise ignore whole; the trailing slash is the only thing
+   separating `src/core/` from a dump file, so do not tidy that line away. A
+   `.gitignore` that eats real source is worse than none: the files vanish from
+   `git status`, `git add -A` skips them in silence, and a component you built
+   is simply not in the commit.
 5. Re-derive the working set (§1) and pick the next issue.
 
 **Say why before you throw work away.** Before deleting or wholesale-rewriting a
@@ -317,10 +332,18 @@ component's wiring, review one that has come back — instead of spending the wh
 wave inside one blocked tool call. Short prompts are what make one message
 possible.
 
-**Wait for every one of them with the wait tool before you stage or commit
-anything.** A subagent that has not reported is not done, whatever the tree looks
-like: the files it is still writing are already on disk, so a commit taken early
-ships half an issue.
+**Wait for one at a time, and act on each report as it lands.** A wait placed on
+two builders in one turn returns when the slower one does, and the report that
+came back first sits unread while it builds. Do not guess which that will be —
+end the turn once the wave is dispatched and let each subagent's own settlement
+wake you, so the report you act on is whichever actually finished. If you do
+block, keep the window short: a long one can spend a sibling's entire build
+before you learn the other went clean. Either way, when a report lands, do what
+it unlocks before waiting again — a `web-application` that reports clean gets
+its walk dispatched then (step 3), with its siblings still building. Only the **commit** waits for the whole issue:
+a subagent that has not reported is not done, whatever the tree looks like, and
+the files it is still writing are already on disk, so a commit taken early ships
+half an issue.
 
 **Inside a subagent, every command runs in the foreground** — a subagent never
 backgrounds a shell call. A build left running in the background lets the

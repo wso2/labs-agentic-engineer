@@ -17,11 +17,13 @@
  */
 
 /**
- * The coding-agent first-run consent (§12): the coding path runs
- * bypassPermissions ON THE HOST, so the very first run must be confirmed
- * interactively (a restorable undo snapshot is taken regardless). Shared by the
- * CLI driver and the chat loop so the prompt wording can't drift; refuses in
- * headless mode, where `--yes` is the only consent channel.
+ * First-run consent for the two verbs that reach outside the spec files: the
+ * coding agent (§12) runs bypassPermissions ON THE HOST and writes the project,
+ * and `wire` builds the project's container images and runs them. Both are
+ * confirmed interactively once per project (a restorable undo snapshot is taken
+ * for a coding run regardless). Shared by the CLI driver and the chat loop so
+ * the prompt wording can't drift; both refuse in headless mode, where `--yes`
+ * is the only consent channel.
  */
 
 import * as clack from "@clack/prompts";
@@ -32,6 +34,17 @@ export function confirmCodingDir(projectDir: string): () => Promise<boolean> {
     if (!process.stdin.isTTY) return false;
     const ok = await clack.confirm({
       message: `The coding agent runs with permissions BYPASSED and will write inside ${projectDir}. A restorable undo snapshot is taken first. Continue?`,
+    });
+    return !clack.isCancel(ok) && ok;
+  };
+}
+
+/** A `confirmDir` callback for `wireCommand`. */
+export function confirmWireDir(projectDir: string): () => Promise<boolean> {
+  return async () => {
+    if (!process.stdin.isTTY) return false;
+    const ok = await clack.confirm({
+      message: `wire builds this project's images with Docker and runs them on your machine, with a database container beside them. Nothing is deployed and nothing outside ${projectDir} is written. Continue?`,
     });
     return !clack.isCancel(ok) && ok;
   };

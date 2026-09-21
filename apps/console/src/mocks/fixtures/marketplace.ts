@@ -29,9 +29,10 @@ type ApiError = components["schemas"]["Error"];
 // states). Toggle in the browser devtools:
 //   localStorage.setItem('aep:mock:marketplace', 'empty' | 'some' | 'error')
 // Shared by Resources catalog GETs, Marketplace Endpoints GETs, and register.
-// "empty": no platform types, external resources, org environments, or endpoints (default).
+// "empty": no platform types, external resources, org environments, or endpoints.
 // "some": postgres-cnpg, Registered External stripe, Project External github,
-//         org environments development + staging-local, and seed org endpoints.
+//         org environments development + staging-local, and seed org endpoints (default,
+//         so mock mode shows a working environment pipeline out of the box).
 // "error": GET list endpoints fail (load-error state). POST register still uses the
 //         in-memory catalog.
 export type MarketplaceScenario = "empty" | "some" | "error";
@@ -86,7 +87,11 @@ const stripeEnvCells: EnvValueCellDTO[] = [
 export const seedExternalResources: ExternalResourceDTO[] = [
   {
     name: "stripe",
+    provider: "Stripe",
+    scope: "org",
     description: "Stripe payments API",
+    contract: { type: "openapi", path: "stripe/openapi.yaml" },
+    provenance: { sourceUrl: "https://example.com/stripe/openapi.yaml", readOn: "2026-09-16" },
     config: [
       { key: "api_key", secret: true, description: "Secret API key" },
       { key: "region", secret: false, description: "Stripe account region" },
@@ -104,10 +109,37 @@ export const seedExternalResources: ExternalResourceDTO[] = [
   },
   {
     name: "github",
+    provider: "GitHub",
+    // A project's own resource: listed with its project under "Held by
+    // projects"; its values live on the project until the organization
+    // promotes it.
+    scope: "project",
+    project: "demo-shop",
     description: "GitHub API token for repository access",
     config: [{ key: "token", secret: true, description: "Personal access token" }],
-    consumers: [],
+    consumers: [{ projectId: "demo-shop", componentName: "release-bot" }],
     envCells: [],
+  },
+  {
+    name: "fx-rates",
+    provider: "Open Exchange Rates",
+    scope: "project",
+    project: "team-expenses",
+    description: "Live foreign-exchange rates used to convert amounts to USD.",
+    contract: { type: "openapi", path: "openapi.yaml" },
+    config: [
+      { key: "OPENEXCHANGERATES_APP_ID", secret: true, description: "The App ID." },
+      { key: "FX_BASE", secret: false, description: "Base currency." },
+    ],
+    consumers: [{ projectId: "team-expenses", componentName: "expenses-api" }],
+    // The project holds development values (a Promote carries them over);
+    // staging-local has none yet.
+    envCells: [
+      { environment: "development", key: "OPENEXCHANGERATES_APP_ID", status: "configured" },
+      { environment: "development", key: "FX_BASE", status: "configured" },
+      { environment: "staging-local", key: "OPENEXCHANGERATES_APP_ID", status: "unset" },
+      { environment: "staging-local", key: "FX_BASE", status: "unset" },
+    ],
   },
 ];
 
@@ -124,8 +156,20 @@ export const seedPlatformResourceTypes: PlatformResourceTypeDTO[] = [
 // OpenChoreo Environment names for Registered External env-value columns.
 // Pair is development + staging-local, not a hardcoded Dev/Staging/Production trio.
 export const seedOrgEnvironments: EnvironmentDTO[] = [
-  { name: "development" },
-  { name: "staging-local" },
+  {
+    name: "development",
+    displayName: "Development",
+    isProduction: false,
+    validation: "off",
+    position: 0,
+  },
+  {
+    name: "staging-local",
+    displayName: "Staging (Local)",
+    isProduction: false,
+    validation: "off",
+    position: 1,
+  },
 ];
 
 // In-memory catalog for GET list + POST register. Starts as a slice copy of

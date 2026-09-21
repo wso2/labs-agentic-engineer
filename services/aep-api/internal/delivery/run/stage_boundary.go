@@ -232,6 +232,11 @@ type loop struct {
 	// predicates: workable is "the dispatch gate opened", this is "a credential
 	// arrived".
 	valuesSaved workflow.ReceiveChannel
+	// agentDied wakes the LANDING wait when the pod-truth watcher closed the
+	// cycle without a pull request. It is the only wake-up that wait has besides
+	// its 2h deadline, which is why a dead agent used to cost the full deadline
+	// twice over.
+	agentDied workflow.ReceiveChannel
 
 	// lastResult is what the previous cycle produced — it selects the next
 	// cycle's kind and feeds the no-progress rule.
@@ -318,6 +323,7 @@ func newLoop(ctx workflow.Context, in RunInput) *loop {
 		builds:                workflow.GetSignalChannel(ctx, delivery.SigRunBuildTerminal),
 		conflict:              workflow.GetSignalChannel(ctx, delivery.SigRunConflict),
 		valuesSaved:           workflow.GetSignalChannel(ctx, delivery.SigRunValuesSaved),
+		agentDied:             workflow.GetSignalChannel(ctx, delivery.SigRunAgentDied),
 		st: delivery.RunStatus{
 			RunID:           in.RunID,
 			MilestoneNumber: in.MilestoneNumber,

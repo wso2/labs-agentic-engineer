@@ -135,8 +135,12 @@ that work unfinished.
 ## Never
 
 - **Edit, add to, or delete anything under the repo-root `specs/`.** It is the
-  design-time contract and your consumers are reading it. If it is wrong, or
-  contradicts an issue, implement what the issue asks and say so in one line.
+  design-time contract and your consumers are reading it. Where an issue
+  contradicts it, **the contract wins**: the issue was derived from the design
+  and can be wrong about it, while a consumer is being written against the spec
+  right now. Build nothing the spec does not declare — a dependency, an
+  operation, a field — and say so in one line, so the design is re-authored
+  rather than worked around.
 - **Hold back work because a component it depends on is not built yet.** Code
   against the contract.
 - **Substitute your own technology for a declared dependency.** A

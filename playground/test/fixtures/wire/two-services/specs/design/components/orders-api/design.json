@@ -1,0 +1,45 @@
+{
+  "name": "orders-api",
+  "type": "service",
+  "version": "0.1.0",
+  "language": "Go",
+  "buildpack": "docker",
+  "appPath": "orders-api",
+  "entrypoint": "deployment/service",
+  "exposure": "intranet",
+  "description": "Owns orders. Calls billing-api to charge for one. Does not own customers.",
+  "dependencies": [
+    {
+      "kind": "platform-resource",
+      "name": "orders-db",
+      "resourceType": "postgres-cnpg",
+      "wiring": {
+        "ref": "two-services-orders-db",
+        "envBindings": {
+          "dbname": "ORDERS_DB_DBNAME",
+          "host": "ORDERS_DB_HOST",
+          "password": "ORDERS_DB_PASSWORD",
+          "port": "ORDERS_DB_PORT",
+          "user": "ORDERS_DB_USER"
+        }
+      }
+    },
+    {
+      "kind": "component",
+      "name": "billing-api",
+      "wiring": {
+        "endpoint": {
+          "component": "two-services-billing-api",
+          "name": "http",
+          "visibility": "project",
+          "envBindings": { "address": "BILLING_API_URL" }
+        }
+      }
+    },
+    {
+      "kind": "external",
+      "name": "stripe",
+      "wiring": { "ref": "stripe", "envBindings": { "api_key": "STRIPE_API_KEY" } }
+    }
+  ]
+}

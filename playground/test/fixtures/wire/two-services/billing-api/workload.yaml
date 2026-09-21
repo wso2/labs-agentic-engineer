@@ -1,0 +1,21 @@
+apiVersion: openchoreo.dev/v1alpha1
+metadata:
+  name: billing-api
+
+endpoints:
+  - name: http
+    type: HTTP
+    port: 9090
+    basePath: /
+    visibility:
+      - project
+
+dependencies:
+  resources:
+    - ref: billing-db
+      envBindings:
+        host: BILLING_DB_HOST
+        port: BILLING_DB_PORT
+        user: BILLING_DB_USER
+        password: BILLING_DB_PASSWORD
+        dbname: BILLING_DB_DBNAME

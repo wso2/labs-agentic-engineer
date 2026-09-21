@@ -73,7 +73,7 @@ export const SECURITY_DESIGN_MESSAGES = {
   test_user_unknown_role:
     'test user "{username}" holds role "{role}", which no roles[] entry declares.',
   test_user_role_not_user_kind:
-    'test user "{username}" holds role "{role}", which is not an admin-enrolment user role — a service role belongs to an app principal and a self-service role is taken at registration, so neither gets a test account.',
+    'test user "{username}" holds role "{role}", which is a service role — its principal is an application, not a person, so it gets no test account. Every user role gets one, whatever its enrolment.',
 
   // --- warnings ------------------------------------------------------------
   handle_used_nowhere:

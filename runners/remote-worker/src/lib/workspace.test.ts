@@ -69,3 +69,36 @@ test("installCrashArtefactExclude: a core dump cannot be staged, even by `git ad
     await fs.promises.rm(dir, { recursive: true, force: true });
   }
 });
+
+// The other half of the same guarantee, and the half that was wrong. Same
+// discipline: asserted through `git add -A` against a real repository, because
+// what the exclude file SAYS and what git does with it are not the same claim.
+//
+// `core` + `core.*` ignored `src/authz/core.ts` — which the
+// `thunder-authentication` skill writes into every generated web app — and
+// `src/core/` whole. A live run (2026-09-19) built two components whose sources
+// git then skipped in silence, and it committed neither.
+test("installCrashArtefactExclude: source named core is still staged by `git add -A`", async () => {
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "aep-exclude-"));
+  const git = (...args: string[]): string =>
+    execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+  try {
+    git("init", "--quiet");
+    await installCrashArtefactExclude(dir);
+
+    // A generated web app, as the skills actually lay one out.
+    await fs.promises.mkdir(path.join(dir, "blog-webapp", "src", "authz"), { recursive: true });
+    await fs.promises.mkdir(path.join(dir, "blog-webapp", "src", "core"), { recursive: true });
+    await fs.promises.writeFile(path.join(dir, "blog-webapp", "src", "authz", "core.ts"), "export const x = 1;");
+    await fs.promises.writeFile(path.join(dir, "blog-webapp", "src", "core", "index.ts"), "export const y = 2;");
+    // …and, beside it, the two things that must still be ignored.
+    await fs.promises.writeFile(path.join(dir, "blog-webapp", "core"), "not really a core");
+    await fs.promises.writeFile(path.join(dir, "core.4711"), "not really a core");
+
+    git("add", "-A");
+    const staged = git("diff", "--cached", "--name-only").trim().split("\n").filter(Boolean);
+    assert.deepEqual(staged, ["blog-webapp/src/authz/core.ts", "blog-webapp/src/core/index.ts"]);
+  } finally {
+    await fs.promises.rm(dir, { recursive: true, force: true });
+  }
+});

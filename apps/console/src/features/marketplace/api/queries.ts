@@ -24,6 +24,8 @@ import { marketplaceKeys, resourceKeys } from "./keys";
 
 type RegisterExternalResourceRequest =
   components["schemas"]["RegisterExternalResourceRequest"];
+type PromoteExternalResourceRequest =
+  components["schemas"]["PromoteExternalResourceRequest"];
 
 // `enabled` withholds the request for a caller without ae:requirement-view
 // (the BFF gates this endpoint on that permission) rather than let it fire
@@ -99,3 +101,29 @@ export function useUpdateExternalResource(name: string) {
 }
 
 export { useExternalResources } from "../../settings/api/queries";
+
+/**
+ * Promote a project's own external resource: the organization takes the
+ * project's block as its record, adds instructions and every environment's
+ * value, and the project's dependency becomes a copy of that record.
+ */
+export function usePromoteExternalResource(project: string, name: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: PromoteExternalResourceRequest) => {
+      const { data, error } = await client.POST(
+        "/projects/{projectName}/dependencies/external-resources/{name}/promote",
+        { params: { path: { projectName: project, name } }, body },
+      );
+      if (error) {
+        throw new Error(
+          apiErrorMessage(error, "Failed to promote the resource to the organization"),
+        );
+      }
+      return data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: resourceKeys.external });
+    },
+  });
+}

@@ -345,8 +345,10 @@ func (s *DeploymentService) deployOne(ctx context.Context, orgID, projectID, com
 //
 // After folding OpenChoreo Ready, a web-application whose platform-resource
 // CRT carries ConsumerURLEnvConfig is not Ready until the ThunderApplication
-// CR has the SPA callback (see applyThunderWait). Nil wait ports keep today's
-// OC-only verdict.
+// CR has the SPA callback (see applyThunderWait). Registering those callbacks
+// is a PROJECT-wide write that happens once per read, ahead of the loop, because
+// web apps sharing one dependency share one callback field. Nil wait ports keep
+// today's OC-only verdict.
 //
 // Then a component that advertises an external URL is not Ready until that URL
 // ANSWERS (see applyEndpointWait). OpenChoreo reports the binding Ready when the
@@ -357,17 +359,41 @@ func (s *DeploymentService) DeploymentState(ctx context.Context, orgID, projectI
 	if s == nil || s.components == nil {
 		return nil, fmt.Errorf("deployment: not configured")
 	}
-	out := make([]delivery.ComponentDeploy, 0, len(components))
-	for _, name := range components {
+	// Bindings first, because the consumer-URL registration below needs to know
+	// which components OpenChoreo is taking down before it decides what the
+	// project's callback set is.
+	summaries := make([]*openchoreo.ReleaseBindingSummary, len(components))
+	withdrawing := make(map[string]bool, len(components))
+	for i, name := range components {
 		summary, err := s.components.GetReleaseBindingStatus(ctx, orgID, projectID, name, openchoreo.DevEnvironmentName)
 		if err != nil {
 			return nil, fmt.Errorf("deployment: read binding for %q: %w", name, err)
 		}
-		st := componentDeployFrom(name, summary)
-		if err := s.applyThunderWait(ctx, orgID, projectID, name, summary, &st); err != nil {
+		summaries[i] = summary
+		if summary != nil && summary.Undeploy {
+			withdrawing[name] = true
+		}
+	}
+
+	// The consumer-URL wiring is resolved and written ONCE for the project,
+	// before any component's verdict is folded. A dependency several web apps
+	// share holds one callback field, so a per-component write would have each
+	// component replace the last (see thunderPass).
+	pass, err := s.newThunderPass(ctx, orgID, projectID, withdrawing)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.registerConsumerCallbacks(ctx, orgID, projectID, pass); err != nil {
+		return nil, err
+	}
+
+	out := make([]delivery.ComponentDeploy, 0, len(components))
+	for i, name := range components {
+		st := componentDeployFrom(name, summaries[i])
+		if err := s.applyThunderWait(ctx, orgID, projectID, name, pass, summaries[i], &st); err != nil {
 			return nil, err
 		}
-		s.applyEndpointWait(ctx, orgID, projectID, name, summary, &st)
+		s.applyEndpointWait(ctx, orgID, projectID, name, summaries[i], &st)
 		out = append(out, st)
 	}
 	return out, nil

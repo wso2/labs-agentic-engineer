@@ -82,11 +82,6 @@ buildable with them outstanding.>
 - **No acceptance criteria.** Validation criteria live in
   `specs/validation/validation-criteria.json` — the single acceptance oracle.
   The PRD never duplicates them.
-- **Depth lives in feature files, and the PRD links to it.** When a feature
-  needs more than its stories can carry, write
-  `specs/requirements/features/<slug>.md` and keep the PRD body lean; the
-  feature file elaborates, it never contradicts. Name it from the PRD as a
-  markdown link on the story it deepens — `[<feature name>](features/<slug>.md)`
-  — so a reader following the document arrives at the depth instead of being
-  told it exists somewhere. The link text is the feature's NAME, never the
-  path: the console renders the PRD, and it opens the file in place.
+- **The PRD body stays lean.** A story is one line; what the product does
+  is the story list, not an elaboration of it. There is no separate
+  per-feature document — the PRD is the whole requirements document.

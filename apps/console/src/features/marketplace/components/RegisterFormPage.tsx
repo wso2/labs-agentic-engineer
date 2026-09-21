@@ -66,6 +66,7 @@ import { ChatQuestionForm } from "../../spec/components/ChatQuestionForm";
 import {
   useExternalResources,
   useOrgEnvironments,
+  usePromoteExternalResource,
   useRegisterExternalResource,
   useUpdateExternalResource,
 } from "../api/queries";
@@ -82,6 +83,14 @@ import {
   ResourceDocsFields,
   type ResourceDocRow,
 } from "./ResourceDocsFields";
+import {
+  ContractFields,
+  contractRowError,
+  contractWriteFromRow,
+  emptyContractRow,
+  rowFromContract,
+  type ContractRow,
+} from "./ContractFields";
 
 type ConfigKeyDTO = components["schemas"]["ConfigKeyDTO"];
 type EnvValueCellDTO = components["schemas"]["EnvValueCellDTO"];
@@ -115,10 +124,12 @@ function cellStatus(
 
 function prefillFrom(record: ExternalResourceDTO): {
   name: string;
+  provider: string;
   description: string;
   consumptionInstructions: string;
   keys: ConfigKeyDTO[];
   values: Record<string, string>;
+  contract: ContractRow;
   docs: ResourceDocRow[];
 } {
   const keys = (record.config ?? []).map((k) => ({
@@ -135,10 +146,12 @@ function prefillFrom(record: ExternalResourceDTO): {
   }
   return {
     name: record.name,
+    provider: record.provider ?? "",
     description: record.description ?? "",
     consumptionInstructions: record.consumptionInstructions ?? "",
     keys,
     values,
+    contract: rowFromContract(record.contract),
     docs: rowsFromPointers(record.resourceDocs ?? []),
   };
 }
@@ -151,7 +164,11 @@ function fieldErr(message: string | undefined): { error: true; helperText: strin
 // needs ae:resource-config specifically — checked in a thin wrapper, before
 // any of the form's own hooks (several with side effects: chat-conversation
 // rotation, draft-seeding), so a denied caller's render never touches them.
-export function RegisterFormPage(props: { prompt?: string; name?: string }) {
+export function RegisterFormPage(props: {
+  prompt?: string;
+  name?: string;
+  promote?: { project: string; name: string };
+}) {
   const hasResourceConfig = useHasPermission("ae:resource-config");
   if (!hasResourceConfig) {
     return (
@@ -174,21 +191,33 @@ export function RegisterFormPage(props: { prompt?: string; name?: string }) {
 function RegisterFormContent({
   prompt = "",
   name: editName,
+  promote,
 }: {
   prompt?: string;
   name?: string;
+  /**
+   * Promote mode: the project's own resource the organization takes over.
+   * Name, provider, keys and contract come from the project's copy and are
+   * locked; the person adds instructions and environment values.
+   */
+  promote?: { project: string; name: string };
 }) {
   const isEdit = Boolean(editName);
+  const isPromote = Boolean(promote);
+  const frozen = isEdit || isPromote;
   const promptTrimmed = prompt.trim();
-  const seedRegister = !isEdit && Boolean(promptTrimmed);
+  const seedRegister = !isEdit && !isPromote && Boolean(promptTrimmed);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { orgHandle } = useSession();
   const environments = useOrgEnvironments();
   const register = useRegisterExternalResource();
   const update = useUpdateExternalResource(editName ?? "");
+  const promoteMutation = usePromoteExternalResource(promote?.project ?? "", promote?.name ?? "");
   const resources = useExternalResources();
-  const [chatOpen, setChatOpen] = useState(true);
+  // The register brief's agent drafts a NEW record; a Promote has its facts
+  // already, so the chat stays closed.
+  const [chatOpen, setChatOpen] = useState(!isPromote);
   const seededRef = useRef(false);
   const [awaitingAgent, setAwaitingAgent] = useState(
     () => !isEdit && Boolean(promptTrimmed),
@@ -199,6 +228,15 @@ function RegisterFormContent({
   const record = (resources.data ?? []).find((r) => r.name === editName);
   const editing =
     isEdit && record != null && isRegisteredExternal(record) ? record : undefined;
+  const promoting = promote
+    ? (resources.data ?? []).find(
+        (r) =>
+          !isRegisteredExternal(r) && r.project === promote.project && r.name === promote.name,
+      )
+    : undefined;
+  // The record the form is pre-filled from: the one being edited, or the
+  // project's own resource being promoted.
+  const prefillSource = editing ?? promoting;
 
   const [name, setName] = useState(
     isEdit ? (editName ?? "") : seedRegister ? "" : slugFrom(prompt),
@@ -206,6 +244,7 @@ function RegisterFormContent({
   const [description, setDescription] = useState(
     isEdit || seedRegister ? "" : prompt,
   );
+  const [provider, setProvider] = useState("");
   const [consumptionInstructions, setConsumptionInstructions] = useState("");
   const [keys, setKeys] = useState<ConfigKeyDTO[]>(
     isEdit || seedRegister
@@ -213,6 +252,7 @@ function RegisterFormContent({
       : [{ key: "API_KEY", description: "API secret", secret: true }],
   );
   const [values, setValues] = useState<Record<string, string>>({});
+  const [contract, setContract] = useState<ContractRow>(emptyContractRow);
   const [docs, setDocs] = useState<ResourceDocRow[]>([]);
   const [prefilledName, setPrefilledName] = useState<string | null>(null);
 
@@ -228,36 +268,42 @@ function RegisterFormContent({
   );
   const formRef = useRef({
     name,
+    provider,
     description,
     consumptionInstructions,
     keys,
     values,
+    contract,
     docs,
   });
   formRef.current = {
     name,
+    provider,
     description,
     consumptionInstructions,
     keys,
     values,
+    contract,
     docs,
   };
 
   useEffect(() => {
     if (!draft) return;
     const next = applyRegisterDraft(formRef.current, draft, {
-      freezeName: isEdit,
-      freezeKeys: isEdit,
+      freezeName: frozen,
+      freezeKeys: frozen,
     });
     setName(next.name);
+    setProvider(next.provider);
     setDescription(next.description);
     setConsumptionInstructions(next.consumptionInstructions);
     setKeys(next.keys);
     setValues(next.values);
+    setContract(next.contract);
     setDocs(next.docs);
     setHeldQuestions(null);
     setAwaitingAgent(false);
-  }, [draft, isEdit]);
+  }, [draft, frozen]);
 
   useEffect(() => {
     if (pendingQuestion) setHeldQuestions(null);
@@ -301,19 +347,30 @@ function RegisterFormContent({
   }, [chatKey, navigate, promptTrimmed, queryClient, seedRegister]);
 
   useEffect(() => {
-    if (!editing || prefilledName === editing.name) return;
-    const next = prefillFrom(editing);
+    if (!prefillSource || prefilledName === prefillSource.name) return;
+    const next = prefillFrom(prefillSource);
     setName(next.name);
+    setProvider(next.provider);
     setDescription(next.description);
     setConsumptionInstructions(next.consumptionInstructions);
     setKeys(next.keys);
     setValues(next.values);
+    setContract(next.contract);
     setDocs(next.docs);
-    setPrefilledName(editing.name);
-  }, [editing, prefilledName]);
+    setPrefilledName(prefillSource.name);
+  }, [prefillSource, prefilledName]);
 
   const envNames = (environments.data ?? []).map((e) => e.name);
   const envCells = editing?.envCells;
+  // On a Promote, an environment the project already holds every value for
+  // is carried over by the platform; its fields may stay blank.
+  const carriedEnvs = promoting
+    ? envNames.filter(
+        (env) =>
+          keys.length > 0 &&
+          keys.every((k) => cellStatus(promoting.envCells, env, k.key) === "configured"),
+      )
+    : [];
   const inFlight = messages.some((m) => m.role === "user" && m.status === "in_flight");
   const showQuestions = pendingQuestion?.questions ?? heldQuestions;
   const questionsSubmitting = Boolean(heldQuestions) && !pendingQuestion && !draft;
@@ -326,12 +383,14 @@ function RegisterFormContent({
   const errors = attemptedSubmit
     ? validateRegisterForm({
         name,
+        provider,
         description,
         consumptionInstructions,
         keys,
         values,
         envNames,
         isEdit,
+        carriedEnvs,
         ...(envCells ? { envCells } : {}),
       })
     : null;
@@ -340,36 +399,60 @@ function RegisterFormContent({
     environments.isLoading ||
     environments.isError ||
     envNames.length === 0 ||
-    (isEdit && !editing);
+    (isEdit && !editing) ||
+    (isPromote && !promoting);
 
-  const submitError = isEdit
-    ? update.error instanceof Error
-      ? update.error.message
-      : null
-    : register.error instanceof Error
-      ? register.error.message
-      : null;
-  const submitPending = isEdit ? update.isPending : register.isPending;
+  const activeMutation = isPromote ? promoteMutation : isEdit ? update : register;
+  const submitError = activeMutation.error instanceof Error ? activeMutation.error.message : null;
+  const submitPending = activeMutation.isPending;
 
   const submit = () => {
     if (submitBlocked || submitPending) return;
     const invalid = validateRegisterForm({
       name,
+      provider,
       description,
       consumptionInstructions,
       keys,
       values,
       envNames,
       isEdit,
+      carriedEnvs,
       ...(envCells ? { envCells } : {}),
     });
-    if (invalid) {
+    if (invalid || contractRowError(contract)) {
       setAttemptedSubmit(true);
       return;
     }
+    const onSuccess = () => {
+      void navigate({ to: "/resources" });
+    };
+    if (isPromote) {
+      // The record's facts come from the project's copy on the server; the
+      // body carries only what the organization adds. A blank value is an
+      // environment left to be carried over.
+      promoteMutation.mutate(
+        {
+          consumptionInstructions: consumptionInstructions.trim(),
+          description: description.trim(),
+          envValues: keys.flatMap((cfg) =>
+            envNames.flatMap((environment) => {
+              const value = values[envValueCellKey(environment, cfg.key)] ?? "";
+              return value.trim() ? [{ environment, key: cfg.key, value }] : [];
+            }),
+          ),
+        },
+        { onSuccess },
+      );
+      return;
+    }
     const resourceDocs = writesFromRows(docs);
+    // No contract block filled in leaves the record's document alone — on a
+    // register there is none, and on an edit the one already on file stands.
+    const contractWrite = contractWriteFromRow(contract);
     const body = {
       name: name.trim(),
+      provider: provider.trim(),
       description: description.trim(),
       consumptionInstructions: consumptionInstructions.trim(),
       config: keys,
@@ -380,10 +463,8 @@ function RegisterFormContent({
           value: values[envValueCellKey(environment, cfg.key)] ?? "",
         })),
       ),
+      ...(contractWrite ? { contract: contractWrite } : {}),
       ...(resourceDocs.length > 0 ? { resourceDocs } : {}),
-    };
-    const onSuccess = () => {
-      void navigate({ to: "/resources" });
     };
     if (isEdit) {
       update.mutate(body, { onSuccess });
@@ -419,13 +500,17 @@ function RegisterFormContent({
           }}
         >
           <PageHeader
-            title="Register External resource"
-            subtitle="Environment values are form-only."
+            title={isPromote ? "Promote to organization" : "Register External resource"}
+            subtitle={
+              isPromote && promote
+                ? `${promote.project}'s ${promote.name} becomes the organization's. The project keeps a copy that reuses it.`
+                : "Environment values are form-only."
+            }
             backTo={{
               link: <Link to="/resources" />,
               label: "Back to Resources",
             }}
-            {...(!chatOpen
+            {...(!chatOpen && !isPromote
               ? {
                   actions: (
                     <Button onClick={() => setChatOpen(true)}>Open agent chat</Button>
@@ -475,8 +560,19 @@ function RegisterFormContent({
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
-              disabled={isEdit}
+              disabled={frozen}
               {...fieldErr(errors?.name)}
+            />
+            <TextField
+              label="Provider"
+              value={provider}
+              onChange={(e) => setProvider(e.target.value)}
+              required
+              disabled={isPromote}
+              helperText={
+                errors?.provider ?? "The concrete system this is — Stripe, Open Exchange Rates."
+              }
+              error={Boolean(errors?.provider)}
             />
             <TextField
               label="Description"
@@ -491,7 +587,7 @@ function RegisterFormContent({
             <Box>
               <Stack direction="row" sx={{ justifyContent: "space-between", mb: 1 }}>
                 <Typography variant="subtitle1">Config keys</Typography>
-                {!isEdit && (
+                {!frozen && (
                   <Button
                     type="button"
                     size="small"
@@ -531,7 +627,7 @@ function RegisterFormContent({
                         )
                       }
                       sx={{ flex: 1 }}
-                      disabled={isEdit}
+                      disabled={frozen}
                       {...fieldErr(errors?.keys[index]?.key)}
                     />
                     <TextField
@@ -547,13 +643,14 @@ function RegisterFormContent({
                         )
                       }
                       sx={{ flex: 2 }}
+                      disabled={isPromote}
                       {...fieldErr(errors?.keys[index]?.description)}
                     />
                     <FormControlLabel
                       control={
                         <Checkbox
                           checked={Boolean(cfg.secret)}
-                          disabled={isEdit}
+                          disabled={frozen}
                           onChange={(e) =>
                             setKeys((prev) =>
                               prev.map((row, i) =>
@@ -567,7 +664,7 @@ function RegisterFormContent({
                       }
                       label="Secret"
                     />
-                    {!isEdit && (
+                    {!frozen && (
                       <IconButton
                         aria-label="Remove key"
                         disabled={keys.length === 1}
@@ -615,6 +712,7 @@ function RegisterFormContent({
                           const status = cellStatus(envCells, environment, cfg.key);
                           const valueErr =
                             errors?.values[envValueCellKey(environment, cfg.key)];
+                          const carried = isPromote && carriedEnvs.includes(environment);
                           return (
                             <Stack
                               key={environment}
@@ -636,7 +734,11 @@ function RegisterFormContent({
                                 error={Boolean(valueErr)}
                                 helperText={
                                   valueErr ??
-                                  (isEdit && cfg.secret ? KEEP_SECRET_HELPER : undefined)
+                                  (isEdit && cfg.secret
+                                    ? KEEP_SECRET_HELPER
+                                    : carried && promote
+                                      ? `Carried over from ${promote.project} unless you type a value`
+                                      : undefined)
                                 }
                               />
                               {isEdit && (
@@ -673,7 +775,26 @@ function RegisterFormContent({
               {...fieldErr(errors?.consumptionInstructions)}
             />
 
-            <ResourceDocsFields docs={docs} onChange={setDocs} />
+            {isPromote && promote ? (
+              // The document is the project's; it is committed under the
+              // record's name as it stands, so there is nothing to choose.
+              <Box>
+                <Typography variant="subtitle1" gutterBottom>
+                  Contract
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {contract.path
+                    ? `${contract.type} · ${contract.path} · copied from ${promote.project}`
+                    : `No document yet. ${promote.project} must provide one before the resource can be promoted.`}
+                </Typography>
+              </Box>
+            ) : (
+              <>
+                <ContractFields contract={contract} onChange={setContract} />
+
+                <ResourceDocsFields docs={docs} onChange={setDocs} />
+              </>
+            )}
 
             <Stack direction="row" spacing={2} sx={{ justifyContent: "flex-end" }}>
               <Button type="button" onClick={() => void navigate({ to: "/resources" })}>
@@ -689,13 +810,13 @@ function RegisterFormContent({
                   submit();
                 }}
               >
-                {isEdit ? "Save" : "Register"}
+                {isPromote ? "Promote" : isEdit ? "Save" : "Register"}
               </Button>
             </Stack>
           </Stack>
           )}
         </Box>
-        {chatOpen ? (
+        {chatOpen && !isPromote ? (
           <Collapse
             in
             orientation="horizontal"

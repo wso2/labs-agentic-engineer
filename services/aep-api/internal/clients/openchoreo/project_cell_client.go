@@ -56,6 +56,12 @@ import (
 // this (see services/aep-api/Makefile, OC_SPEC_VERSION), so this is hand-rolled
 // over the same authenticated transport, exactly like ResourceClient.
 type ProjectCellClient interface {
+	// ListPipelineNames returns the names of every DeploymentPipeline in the
+	// namespace. Used when no project is in scope to resolve the org's own
+	// pipeline by convention (the "default" pipeline setup creates, or the
+	// sole pipeline present) — see provisioning.PipelineLister.
+	ListPipelineNames(ctx context.Context, namespace string) ([]string, error)
+
 	// PipelineEnvironments returns the environment names a deployment pipeline
 	// promotes through, in promotion order and de-duplicated.
 	//
@@ -107,6 +113,16 @@ type deploymentPipeline struct {
 			} `json:"targetEnvironmentRefs"`
 		} `json:"promotionPaths"`
 	} `json:"spec"`
+}
+
+// deploymentPipelineList is the read-only slice of the paginated list needed
+// to enumerate pipeline names.
+type deploymentPipelineList struct {
+	Items []struct {
+		Metadata struct {
+			Name string `json:"name"`
+		} `json:"metadata"`
+	} `json:"items"`
 }
 
 type projectCellClient struct {
@@ -187,6 +203,23 @@ func (c *projectCellClient) do(ctx context.Context, method, path string, body, o
 		}
 	}
 	return resp.StatusCode, nil
+}
+
+func (c *projectCellClient) ListPipelineNames(ctx context.Context, namespace string) ([]string, error) {
+	if namespace == "" {
+		return nil, fmt.Errorf("list pipeline names: namespace is required")
+	}
+	list := &deploymentPipelineList{}
+	if _, err := c.do(ctx, http.MethodGet, nsBase(namespace)+"/deploymentpipelines", nil, list); err != nil {
+		return nil, fmt.Errorf("list deployment pipelines: %w", err)
+	}
+	names := make([]string, 0, len(list.Items))
+	for _, item := range list.Items {
+		if item.Metadata.Name != "" {
+			names = append(names, item.Metadata.Name)
+		}
+	}
+	return names, nil
 }
 
 func (c *projectCellClient) PipelineEnvironments(ctx context.Context, namespace, pipelineName string) ([]string, error) {

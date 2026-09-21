@@ -31,9 +31,15 @@ Call `draftExternalResource` with:
 
 - **name** — the resource identity
 - **description** — what the resource is
+- **provider** — the concrete system it is ("Open Exchange Rates", "Stripe")
 - **consumption instructions** — how a consuming project should use it;
   distinct from description, never a restatement of it
 - **config keys** — each with `key`, `description`, and `secret`
+- **contract** — the provider's published contract document, as a `type`
+  (openapi, graphql, sdk, asyncapi, protobuf, documentation) and its URL.
+  The platform fetches the document once and keeps a copy in the
+  organization's registry; projects that reuse the resource get that copy.
+  Never paste the document itself
 - **resource-docs** — optional, URL-only
 
 ## Secrets stay off this channel
@@ -44,5 +50,5 @@ narration. Environment values are form-only.
 ## Edit
 
 On edit, **never** change `name` or config key identities. You may refine
-description, consumption instructions, existing key descriptions, and URL
-resource-docs. Do not add or rename keys.
+description, provider, consumption instructions, the contract document,
+existing key descriptions, and URL resource-docs. Do not add or rename keys.

@@ -127,7 +127,7 @@ func TestProvision_OrchestratesResourceModel(t *testing.T) {
 
 	// ResourceType built from the schema + ensured, under the deterministic
 	// hash + version-pinned name.
-	wantRT := openchoreo.ExternalResourceRTName("openweather", toRTConfigKeys(er.ConfigKeys))
+	wantRT := openchoreo.ExternalResourceRTNameForProject("openweather", "weatherproj", toRTConfigKeys(er.ConfigKeys))
 	rtCalls := rc.EnsureResourceTypeCalls()
 	if len(rtCalls) != 1 || rtCalls[0].Rt.Metadata.Name != wantRT {
 		t.Fatalf("resourcetype not ensured under %q: %+v", wantRT, rtCalls)
@@ -623,5 +623,29 @@ func TestAuthorPreparedValues_SchemaFaultIsPermanent(t *testing.T) {
 	_, err = p.Provision(context.Background(), "default", "oc-org-1", "proj", er, nil)
 	if !errors.Is(err, ErrProvisionPermanent) {
 		t.Fatalf("Provision: schema fault must be permanent, got %v", err)
+	}
+}
+
+// A copy of the organization's resource binds to the organization's type:
+// the spec is org-scoped and the name is the bare one register authors, so
+// EnsureResourceType's get-or-create lands on the record instead of minting a
+// project type beside it.
+func TestProjectExternalTypeSpec_RegisteredCopyBindsToTheOrgType(t *testing.T) {
+	er := &ExternalResource{Name: "fx-rates", Provider: "Open Exchange Rates", ConfigKeys: ConfigKeySlice{{Key: "FX_APP_ID", Secret: true}}}
+	own := projectExternalTypeSpec("spend-report", er)
+	if own.Scope != openchoreo.ExternalResourceScopeProject || own.Project != "spend-report" {
+		t.Fatalf("a project's own resource must be project-scoped: %+v", own)
+	}
+	er.Registered = true
+	cp := projectExternalTypeSpec("spend-report", er)
+	if cp.Scope != openchoreo.ExternalResourceScopeOrg || cp.Project != "" {
+		t.Fatalf("a copy must bind to the org type: %+v", cp)
+	}
+	rt, err := openchoreo.BuildExternalResourceType(cp)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if want := openchoreo.ExternalResourceRTName("fx-rates", toRTConfigKeys(er.ConfigKeys)); rt.Metadata.Name != want {
+		t.Fatalf("copy type name = %q, want the registered name %q", rt.Metadata.Name, want)
 	}
 }

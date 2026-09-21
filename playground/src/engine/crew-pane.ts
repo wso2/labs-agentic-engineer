@@ -50,33 +50,10 @@
 import { renderCrewBlock, type BlockRow, type CrewBlockOptions } from "./crew-block.js";
 import { buildCrew, type RunEventView } from "@aep/progress-view";
 import type { AgentTags } from "./agent-tags.js";
+import { openPinnedPane, type PaneOutput } from "./pinned-pane.js";
 
 /** At most once a second, per the redraw discipline above. */
 const REBUILD_MS = 1000;
-
-/** What a terminal is assumed to be when it will not say. */
-const FALLBACK_COLUMNS = 100;
-const FALLBACK_ROWS = 30;
-
-/** Cursor up N lines, then erase from the cursor to the end of the screen. */
-const up = (n: number): string => `\x1b[${String(n)}A`;
-const ERASE_BELOW = "\x1b[0J";
-
-/** Semantic tone → SGR code. The block never picks a colour by hand. */
-const TONE_CODES: Record<string, string> = {
-  muted: "2",
-  info: "36",
-  success: "32",
-  warn: "33",
-  error: "31",
-};
-
-/** The write sink — `process.stdout`, or a buffer in a test. */
-export interface PaneOutput {
-  write(chunk: string): unknown;
-  columns?: number | undefined;
-  rows?: number | undefined;
-}
 
 export interface CrewPaneOptions {
   out: PaneOutput;
@@ -103,74 +80,26 @@ export interface CrewPane {
 }
 
 /**
- * A pane that only prints. What a piped run gets, and what the whole harness got
- * before the block existed.
- */
-function plainPane(out: PaneOutput): CrewPane {
-  return {
-    line(text: string): void {
-      out.write(`${text}\n`);
-    },
-    update(): void {
-      // Nothing is pinned, so there is nothing to repaint.
-    },
-    close(): void {
-      // and nothing to take down.
-    },
-  };
-}
-
-/**
  * Open the crew block over `out`, or a plain printer when there is no terminal
- * to pin it to.
+ * to pin it to (./pinned-pane.ts owns both halves of that).
  *
- * The returned pane OWNS every write to `out` for the life of the run: a write
- * that goes around it lands inside the block and the next erase takes the
- * transcript with it.
+ * This module's own job is WHEN to rebuild: `buildCrew` walks the whole event
+ * array, and a 40-minute run's array is long enough that rebuilding per line
+ * would be quadratic — so content is rebuilt at most once a second, and a
+ * ticker repaints in between because the ages are the point.
  */
 export function openCrewPane(opts: CrewPaneOptions): CrewPane {
-  if (!opts.isTTY) return plainPane(opts.out);
-
-  const out = opts.out;
+  const pane = openPinnedPane(opts.out, opts.isTTY);
   const now = opts.now ?? Date.now;
-  /** What the block should say. */
-  let content: BlockRow[] = [];
-  /** What is actually on screen right now — the cursor arithmetic's only input. */
-  let drawn = 0;
   let builtAt = -Infinity;
   let latest: readonly RunEventView[] = [];
 
-  const paint = (row: BlockRow): string => {
-    const code = TONE_CODES[row.tone];
-    return code ? `\x1b[${code}m${row.text}\x1b[0m\n` : `${row.text}\n`;
-  };
-
-  const clear = (): void => {
-    if (drawn === 0) return;
-    out.write(up(drawn) + ERASE_BELOW);
-    drawn = 0;
-  };
-
-  const draw = (): void => {
-    if (content.length === 0) return;
-    out.write(content.map(paint).join(""));
-    drawn = content.length;
-  };
-
   const rebuild = (): void => {
     const at = now();
-    const blockOpts: CrewBlockOptions = {
-      columns: out.columns ?? FALLBACK_COLUMNS,
-      // Two lines of headroom: the shell's own prompt has to fit under the block
-      // when the run ends, and a block exactly as tall as the screen scrolls
-      // itself off the top the moment anything else is printed.
-      maxRows: Math.max(3, (out.rows ?? FALLBACK_ROWS) - 2),
-      tag: opts.tag,
-    };
-    content = renderCrewBlock(buildCrew(latest, at), at, blockOpts);
+    const blockOpts: CrewBlockOptions = { columns: pane.width(), maxRows: pane.height(), tag: opts.tag };
+    const content: BlockRow[] = renderCrewBlock(buildCrew(latest, at), at, blockOpts);
     builtAt = at;
-    clear();
-    draw();
+    pane.set(content);
   };
 
   // Ticks the ages while nothing arrives. Unref'd: a run that has otherwise
@@ -182,9 +111,7 @@ export function openCrewPane(opts: CrewPaneOptions): CrewPane {
 
   return {
     line(text: string): void {
-      clear();
-      out.write(`${text}\n`);
-      draw();
+      pane.line(text);
     },
     update(events: readonly RunEventView[]): void {
       latest = events;
@@ -193,8 +120,7 @@ export function openCrewPane(opts: CrewPaneOptions): CrewPane {
     },
     close(): void {
       clearInterval(ticker);
-      clear();
-      content = [];
+      pane.close();
     },
   };
 }

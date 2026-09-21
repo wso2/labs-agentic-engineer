@@ -219,10 +219,32 @@ spec:
             - name: TEMPORAL_TASKQUEUE
               value: {{ .Values.temporal.taskQueue | quote }}
             {{- end }}
+            {{- with .Values.aepApi.kubeAPI }}
+            {{- if .baseURL }}
+            - name: KUBE_API_BASE_URL
+              value: {{ .baseURL | quote }}
+            {{- end }}
+            {{- if .tokenSecret }}
+            - name: KUBE_API_TOKEN_FILE
+              value: /var/run/dp-kube/token
+            - name: KUBE_API_CA_FILE
+              value: /var/run/dp-kube/ca.crt
+            {{- end }}
+            {{- end }}
           volumeMounts:
             - name: workspaces
               mountPath: /workspaces
+            {{- if and .Values.aepApi.kubeAPI .Values.aepApi.kubeAPI.tokenSecret }}
+            - name: dp-kube
+              mountPath: /var/run/dp-kube
+              readOnly: true
+            {{- end }}
       volumes:
         - name: workspaces
           persistentVolumeClaim:
             claimName: aep-workspaces
+        {{- if and .Values.aepApi.kubeAPI .Values.aepApi.kubeAPI.tokenSecret }}
+        - name: dp-kube
+          secret:
+            secretName: {{ .Values.aepApi.kubeAPI.tokenSecret | quote }}
+        {{- end }}

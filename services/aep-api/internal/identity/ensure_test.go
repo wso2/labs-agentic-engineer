@@ -79,6 +79,45 @@ func rolesJSONReusingGroups(t *testing.T, roles []string, users ...userFixture) 
 	return buildRolesJSON(t, roles, false, users...)
 }
 
+// rolesJSONSelfService renders roles whose enrolment is `self-service`: no
+// assignTo, and so no groups[] at all. It is the shape a public actor takes —
+// the Merchant of a payments app, the Patient of a clinic — and the one whose
+// test login can only be bound to the role directly, since there is no group to
+// join and the gate refuses an assignTo on such a role.
+func rolesJSONSelfService(t *testing.T, roles []string, users ...userFixture) string {
+	t.Helper()
+	roleEntries := make([]any, 0, len(roles))
+	for _, name := range roles {
+		roleEntries = append(roleEntries, map[string]any{
+			"name": name, "description": name + " may read.", "stories": []int{1},
+			"grants":    []string{"claims:read"},
+			"enrolment": "self-service",
+		})
+	}
+	userEntries := make([]any, 0, len(users))
+	for _, u := range users {
+		userEntries = append(userEntries, map[string]any{"username": u.username, "roles": []string{u.role}})
+	}
+	doc := map[string]any{
+		"version": 3,
+		"permissions": []any{map[string]any{
+			"resource": "claims", "component": "expense-api",
+			"actions": []any{map[string]any{"handle": "read"}},
+		}},
+		"groups":    []any{},
+		"roles":     roleEntries,
+		"testUsers": userEntries,
+	}
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("marshal fixture: %v", err)
+	}
+	if _, err := securityspec.Parse(raw); err != nil {
+		t.Fatalf("fixture is not a valid security.json: %v", err)
+	}
+	return string(raw)
+}
+
 // groupFor is the org group the declaring fixture assigns a role to.
 func groupFor(role string) string { return role + "s" }
 
@@ -467,9 +506,17 @@ func TestEnsureLeavesAPreExistingDirectoryGroupAlone(t *testing.T) {
 // test_users row belongs to somebody. It is refused, never adopted: no create,
 // no password reset, no enrolment. Otherwise a design naming `jsmith` would
 // reset a real person's login and hand it to a validation runner.
+//
+// A collision alone is not enough to refuse any more (see
+// TestEnsureRenamesAnAccountWhoseDeclaredNameIsTaken) — every numbered
+// alternate up to maxUsernameAttempts has to belong to somebody else too, so
+// this seeds all of them.
 func TestEnsureRefusesAnAccountThePlatformDoesNotOwn(t *testing.T) {
 	h := newHarness(rolesJSON(t, []string{"Viewer"}, userFixture{"jsmith", "Viewer"}))
 	person := h.dir.seedUser("jsmith")
+	for attempt := 2; attempt <= maxUsernameAttempts; attempt++ {
+		h.dir.seedUser(usernameCandidate("jsmith", attempt))
+	}
 
 	result := h.run(t)
 
@@ -509,6 +556,101 @@ func TestEnsureRefusesAnAccountThePlatformDoesNotOwn(t *testing.T) {
 	}
 	if !strings.Contains(result.Summary(), "jsmith") {
 		t.Fatalf("summary does not surface the refusal: %q", result.Summary())
+	}
+}
+
+// ---- 7b: renaming around a collision, instead of refusing -----------------
+
+// A collision with an account the platform does not own no longer needs a
+// human on its own: the ensure tries a numbered alternate first, and only
+// refuses once every alternate up to maxUsernameAttempts is ALSO somebody
+// else's. This is the shape the currency-convert573 incident surfaced — a
+// role-derived username ("test-user") already belonged to another project's
+// test account, recorded under a stale environment scope.
+func TestEnsureRenamesAnAccountWhoseDeclaredNameIsTaken(t *testing.T) {
+	h := newHarness(rolesJSON(t, []string{"Viewer"}, userFixture{"jsmith", "Viewer"}))
+	person := h.dir.seedUser("jsmith") // somebody else's account; jsmith-2 is free
+
+	result := h.run(t)
+
+	if result.HasRefusals() {
+		t.Fatalf("HasRefusals = true, want the collision resolved by a rename: %v", result.UsersRefused)
+	}
+	if !contains(result.UsersCreated, "jsmith-2") {
+		t.Fatalf("UsersCreated = %v, want jsmith-2", result.UsersCreated)
+	}
+	wantRenames := []UsernameRename{{Declared: "jsmith", Actual: "jsmith-2"}}
+	if !reflect.DeepEqual(result.UsersRenamed, wantRenames) {
+		t.Fatalf("UsersRenamed = %+v, want %+v", result.UsersRenamed, wantRenames)
+	}
+	if !strings.Contains(result.Summary(), "jsmith → jsmith-2") {
+		t.Fatalf("summary does not surface the rename: %q", result.Summary())
+	}
+	// jsmith itself is still completely untouched — the safety property this
+	// whole feature must not trade away for the convenience of a rename.
+	if n := h.dir.countOp("SetUserPassword"); n != 0 {
+		t.Fatalf("SetUserPassword called %d times on a real person's account", n)
+	}
+	if pw, held := h.dir.passwords[person.ID]; held {
+		t.Fatalf("a password was written for jsmith (%q)", pw)
+	}
+	if _, owned := h.store.user(testScope, "jsmith"); owned {
+		t.Fatalf("a test_users row was written for jsmith")
+	}
+	// jsmith-2 holds the role instead.
+	account, exists := h.dir.users["jsmith-2"]
+	if !exists {
+		t.Fatalf("jsmith-2 was not created")
+	}
+	if got := h.dir.memberSet(groupFor("Viewer")); !slices.Contains(got, account.ID) {
+		t.Fatalf("%s members = %v, want jsmith-2's account %q", groupFor("Viewer"), got, account.ID)
+	}
+	// The project references, and the gate publishes a login for, the ACTUAL
+	// account — under the role and scopes the DECLARED name would have carried.
+	if len(h.store.replaceCalls) != 1 || len(h.store.replaceCalls[0]) != 1 ||
+		h.store.replaceCalls[0][0].Username != "jsmith-2" {
+		t.Fatalf("refs = %v, want exactly one for jsmith-2", h.store.replaceCalls)
+	}
+	var cred *Credential
+	for i := range result.Credentials {
+		if result.Credentials[i].Username == "jsmith-2" {
+			cred = &result.Credentials[i]
+		}
+	}
+	if cred == nil {
+		t.Fatalf("no credential published for jsmith-2: %+v", result.Credentials)
+	}
+	if !contains(cred.Roles, "Viewer") {
+		t.Fatalf("jsmith-2's credential roles = %v, want Viewer", cred.Roles)
+	}
+	if cred.Password == "" {
+		t.Fatalf("jsmith-2 was published with no password")
+	}
+}
+
+// A rebuild of the same design must land on the SAME alternate, not probe
+// again and pick a different one — the ensure owns jsmith-2 now, and finds it
+// on attempt 2 exactly as the first build did.
+func TestEnsureRenameIsIdempotentAcrossRebuilds(t *testing.T) {
+	h := newHarness(rolesJSON(t, []string{"Viewer"}, userFixture{"jsmith", "Viewer"}))
+	h.dir.seedUser("jsmith")
+	first := h.run(t)
+	if !contains(first.UsersCreated, "jsmith-2") {
+		t.Fatalf("first build created %v, want jsmith-2", first.UsersCreated)
+	}
+	h.dir.calls = nil
+
+	second := h.run(t)
+
+	if !contains(second.UsersReused, "jsmith-2") {
+		t.Fatalf("second build = %v, want jsmith-2 reused", second.UsersReused)
+	}
+	if n := h.dir.countOp("CreateUser"); n != 0 {
+		t.Fatalf("CreateUser called %d times on a rebuild, want zero", n)
+	}
+	wantRenames := []UsernameRename{{Declared: "jsmith", Actual: "jsmith-2"}}
+	if !reflect.DeepEqual(second.UsersRenamed, wantRenames) {
+		t.Fatalf("UsersRenamed = %+v, want %+v", second.UsersRenamed, wantRenames)
 	}
 }
 
@@ -675,10 +817,16 @@ func TestEnsureRecreatesAVanishedRoleAndKeepsItsOriginalProvenance(t *testing.T)
 // Exactly one ref per USABLE planned user, with the supplied flag the console
 // renders. A refused account produces no ref: the project does not reference an
 // account the platform did not provision for it.
+//
+// Every numbered alternate up to maxUsernameAttempts is seeded too, so jsmith
+// is genuinely unresolvable here rather than renamed — see
+// TestEnsureRenamesAnAccountWhoseDeclaredNameIsTaken for that case.
 func TestEnsureWritesOneRefPerUsablePlannedUser(t *testing.T) {
 	h := newHarness(rolesJSON(t, []string{"Viewer", "Compliance Admin", "Auditor"},
 		userFixture{"test-viewer", "Viewer"}, userFixture{"jsmith", "Auditor"}))
-	h.dir.seedUser("jsmith") // refused: a real person's account
+	for attempt := 1; attempt <= maxUsernameAttempts; attempt++ {
+		h.dir.seedUser(usernameCandidate("jsmith", attempt)) // refused: a real person's account
+	}
 
 	h.run(t)
 
@@ -859,10 +1007,17 @@ func TestEnsurePublishesOnlyRoleHoldingAccounts(t *testing.T) {
 // refused username — one that belongs to a real person — would put a password
 // beside somebody else's login in a ticket, for an account whose password the
 // platform never set.
+//
+// Every numbered alternate is also somebody else's, so jsmith is genuinely
+// unresolvable rather than renamed.
 func TestEnsurePublishesNoLoginForARefusedOrSkippedAccount(t *testing.T) {
 	h := newHarness(rolesJSON(t, []string{"Viewer"}, userFixture{"jsmith", "Viewer"}))
-	// A real person's account, already on the directory and not ours.
-	h.dir.users["jsmith"] = DirectoryAccount{ID: "usr-jsmith", Username: "jsmith"}
+	// A real person's account, already on the directory and not ours — and so
+	// is every numbered alternate up to the bound.
+	for attempt := 1; attempt <= maxUsernameAttempts; attempt++ {
+		name := usernameCandidate("jsmith", attempt)
+		h.dir.users[name] = DirectoryAccount{ID: "usr-" + name, Username: name}
+	}
 	result := h.run(t)
 
 	if !contains(result.UsersRefused, "jsmith") {
@@ -1249,6 +1404,25 @@ func (d *fakeDirectory) assignedGroups(t *testing.T, roleName string) []string {
 	return out
 }
 
+// assignedUsers is the usernames of the USER principals holding a role, sorted
+// — the accounts bound straight to the role because no group would grant it.
+func (d *fakeDirectory) assignedUsers(t *testing.T, roleName string) []string {
+	t.Helper()
+	role, ok := d.roleByName(roleName)
+	if !ok {
+		t.Fatalf("no role %q on the fake directory", roleName)
+	}
+	out := []string{}
+	for _, principal := range role.Assignments {
+		if principal.Kind != PrincipalUser {
+			continue
+		}
+		out = append(out, d.principalDisplay(principal))
+	}
+	sort.Strings(out)
+	return out
+}
+
 // credentialsByName indexes a result's published logins.
 func credentialsByName(result Result) map[string]Credential {
 	out := map[string]Credential{}
@@ -1260,8 +1434,9 @@ func credentialsByName(result Result) map[string]Credential {
 
 // The whole object tree, for each of the design's three worked examples. One
 // table rather than three tests because the property is the same in all three
-// and the differences are the point: a reused group, a self-service role with no
-// assignment and no login, and a service role held by nobody yet.
+// and the differences are the point: a reused group, a self-service role held by
+// its test login alone as a user principal, and a service role held by nobody
+// yet.
 func TestEnsureLeavesTheObjectTreeTheDesignDeclares(t *testing.T) {
 	identifier := ResourceServerIdentifier(testOrg, testProject)
 	role := func(name string) string { return RoleName(testProject, name) }
@@ -1270,10 +1445,13 @@ func TestEnsureLeavesTheObjectTreeTheDesignDeclares(t *testing.T) {
 		fixture string
 		// seed are groups an assignTo names that the document does not declare,
 		// so the org directory must already hold them.
-		seed        []string
-		catalog     map[string][]string
-		grants      map[string][]string
+		seed    []string
+		catalog map[string][]string
+		grants  map[string][]string
+		// assignments is GROUPS holding a role; directUsers is the accounts
+		// holding it as user principals.
 		assignments map[string][]string
+		directUsers map[string][]string
 		scopes      map[string][]string
 	}{
 		{
@@ -1304,19 +1482,27 @@ func TestEnsureLeavesTheObjectTreeTheDesignDeclares(t *testing.T) {
 				"records":      {"read"},
 			},
 			grants: map[string][]string{
-				// A self-service role is still a ROLE on the directory: the
-				// registration flow assigns it per account, so it has to exist
-				// before the first account registers.
+				// A self-service role is still a ROLE on the directory. It has
+				// to exist before any account holds it — the registration flow
+				// would assign it per account, and the build's own test login
+				// is bound straight to it (see `directUsers` below).
 				role("Patient"):      {"appointments:book", "appointments:cancel", "appointments:read"},
 				role("Receptionist"): {"appointments:manage", "appointments:read", "appointments:read-all", "schedule:publish", "schedule:read"},
 				role("Doctor"):       {"appointments:read", "records:read", "schedule:read"},
 			},
+			// GROUP assignments. Patient has none and never will: a
+			// self-service role carries no assignTo, which is why its login
+			// holds it as a user principal instead.
 			assignments: map[string][]string{
 				role("Patient"):      {},
 				role("Receptionist"): {"Clinic Reception"},
 				role("Doctor"):       {"Clinic Doctors"},
 			},
+			directUsers: map[string][]string{
+				role("Patient"): {"test-patient"},
+			},
 			scopes: map[string][]string{
+				"test-patient":      {"appointments:book", "appointments:cancel", "appointments:read"},
 				"test-receptionist": {"appointments:manage", "appointments:read", "appointments:read-all", "schedule:publish", "schedule:read"},
 				"test-doctor":       {"appointments:read", "records:read", "schedule:read"},
 			},
@@ -1378,9 +1564,21 @@ func TestEnsureLeavesTheObjectTreeTheDesignDeclares(t *testing.T) {
 					t.Errorf("role %q is assigned to %v, want %v", name, got, want)
 				}
 			}
+			// Exhaustive, not spot-checked: a role NOT in directUsers must hold
+			// no user principal at all. Without that arm a change that bound
+			// every role directly would pass this table.
+			for name := range tc.grants {
+				want := tc.directUsers[name]
+				if want == nil {
+					want = []string{}
+				}
+				if got := h.dir.assignedUsers(t, name); !reflect.DeepEqual(got, want) {
+					t.Errorf("role %q is held by the user principals %v, want %v", name, got, want)
+				}
+			}
 			creds := credentialsByName(result)
 			if len(creds) != len(tc.scopes) {
-				t.Errorf("published logins = %v, want one per admin-enrolment role", result.Credentials)
+				t.Errorf("published logins = %v, want one per user role", result.Credentials)
 			}
 			for username, want := range tc.scopes {
 				if got := creds[username].Scopes; !reflect.DeepEqual(got, want) {
@@ -1527,6 +1725,176 @@ func TestEnsureRebuildDoesNotReassignTheAccountBoundDirectly(t *testing.T) {
 	if writes := h.dir.writeLines(); len(writes) != 0 {
 		t.Fatalf("the rebuild wrote to the directory:\n  %s", strings.Join(writes, "\n  "))
 	}
+}
+
+// ---- the self-service shape ----------------------------------------------
+
+// A role assigned to NO group is the one that must bind directly: nothing else
+// would ever give its login the role.
+func TestDirectRolesBindsARoleAssignedToNoGroup(t *testing.T) {
+	enrolable := map[string]bool{"employees": true}
+	assignTo := map[string][]string{
+		"Employee": {"Employees"}, // a group the platform owns
+		"Approver": {"Finance"},   // somebody else's group
+		"Patient":  nil,           // self-service: no group at all
+	}
+	for _, tc := range []struct {
+		name  string
+		roles []string
+		want  []string
+	}{
+		{"self-service binds directly", []string{"Patient"}, []string{"Patient"}},
+		{"an owned group grants by enrolment", []string{"Employee"}, nil},
+		{"an unowned group still binds directly", []string{"Approver"}, []string{"Approver"}},
+		{"plan order is kept", []string{"Employee", "Patient", "Approver"}, []string{"Patient", "Approver"}},
+		// Distinguishes "declared, assigns to nothing" from "not declared at
+		// all", which the map's zero value would otherwise conflate. Pass 5
+		// walks the declared roles, so binding an undeclared one is impossible
+		// and reporting it would be a lie.
+		{"a role the plan does not declare is not bound", []string{"Ghost"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := directRoles(securityspec.PlannedUser{Roles: tc.roles}, assignTo, enrolable)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("directRoles(%v) = %v, want %v", tc.roles, got, tc.want)
+			}
+		})
+	}
+}
+
+// End to end for the self-service shape: it yields an account, joins it to NO
+// group, and binds the role to it as a user principal. A role standing on the
+// directory holding nobody is one validation cannot sign in as, so every
+// criterion it serves grades against the wrong account or not at all.
+func TestEnsureBindsASelfServiceRoleToItsTestLogin(t *testing.T) {
+	h := newHarness(rolesJSONSelfService(t, []string{"Merchant"},
+		userFixture{"test-merchant", "Merchant"}))
+
+	result := h.run(t)
+
+	if !contains(result.UsersCreated, "test-merchant") {
+		t.Fatalf("UsersCreated = %v, want test-merchant", result.UsersCreated)
+	}
+	if len(result.UsersSkipped) != 0 {
+		t.Errorf("UsersSkipped = %v, want none — a direct bind grants the role", result.UsersSkipped)
+	}
+	// No group anywhere: not created, not reused, not left alone.
+	if n := len(result.GroupsCreated) + len(result.GroupsReused) + len(result.GroupsPreExisting); n != 0 {
+		t.Errorf("a self-service design touched %d groups, want none: %+v", n, result)
+	}
+
+	merchant := RoleName(testProject, "Merchant")
+	if got := h.dir.assignedGroups(t, merchant); len(got) != 0 {
+		t.Errorf("the role is assigned to the groups %v, want none", got)
+	}
+	if got := h.dir.assignedUsers(t, merchant); !reflect.DeepEqual(got, []string{"test-merchant"}) {
+		t.Errorf("the role's user principals = %v, want [test-merchant]", got)
+	}
+
+	// Reported on the gate ticket, so an operator reading a project role
+	// assigned straight to a person knows the platform meant it.
+	if !reflect.DeepEqual(result.UsersBoundDirectly, []string{"test-merchant"}) {
+		t.Errorf("UsersBoundDirectly = %v, want [test-merchant]", result.UsersBoundDirectly)
+	}
+	if !strings.Contains(result.Summary(), "bound straight to their role") {
+		t.Errorf("the gate comment does not say how the login holds its role:\n%s", result.Summary())
+	}
+
+	// And the login is publishable WITH the role's scopes — the thing the
+	// validation agent reads before it opens a browser.
+	cred := credentialsByName(result)["test-merchant"]
+	if cred.Password == "" {
+		t.Errorf("no password published for test-merchant: %+v", result.Credentials)
+	}
+	if !reflect.DeepEqual(cred.Scopes, []string{"claims:read"}) {
+		t.Errorf("published scopes = %v, want the role's grants", cred.Scopes)
+	}
+}
+
+// A role the design left without a test user still gets one — supplied — and it
+// binds the same way. The common case: a design that names no test user for its
+// self-service role.
+func TestEnsureSuppliesAndBindsALoginForASelfServiceRoleTheDesignLeftWithout(t *testing.T) {
+	h := newHarness(rolesJSONSelfService(t, []string{"Merchant"}))
+
+	result := h.run(t)
+
+	if !contains(result.UsersCreated, "test-merchant") {
+		t.Fatalf("UsersCreated = %v, want the supplied test-merchant", result.UsersCreated)
+	}
+	if got := h.dir.assignedUsers(t, RoleName(testProject, "Merchant")); !reflect.DeepEqual(got, []string{"test-merchant"}) {
+		t.Errorf("the role's user principals = %v, want [test-merchant]", got)
+	}
+}
+
+// The rebuild property for the direct bind with no group in sight: the second
+// build re-reads the assignments, sees the account already holds the role and
+// writes nothing.
+func TestEnsureRebuildDoesNotReassignASelfServiceLogin(t *testing.T) {
+	h := newHarness(rolesJSONSelfService(t, []string{"Merchant"},
+		userFixture{"test-merchant", "Merchant"}))
+	h.run(t)
+	h.dir.calls = nil
+	h.dir.Calls = nil
+
+	h.run(t)
+
+	if writes := h.dir.writeLines(); len(writes) != 0 {
+		t.Fatalf("the rebuild wrote to the directory:\n  %s", strings.Join(writes, "\n  "))
+	}
+}
+
+// The converge, both ways.
+//
+// admin → self-service: the group comes OFF the role and the login picks it up
+// directly, so the account never loses the role across the change.
+//
+// self-service → admin: the group goes on, and the direct principal is LEFT
+// where it is. That is convergeAssignments' documented rule — a user principal
+// is never removed, because deciding which ones are the platform's would be a
+// second ownership rule for a row that grants exactly what the group now grants
+// anyway. The assertion pins the behaviour rather than assuming it.
+func TestEnsureConvergesARoleWhoseEnrolmentChanged(t *testing.T) {
+	admin := rolesJSON(t, []string{"Merchant"}, userFixture{"test-merchant", "Merchant"})
+	selfService := rolesJSONSelfService(t, []string{"Merchant"}, userFixture{"test-merchant", "Merchant"})
+	merchant := RoleName(testProject, "Merchant")
+
+	t.Run("admin to self-service", func(t *testing.T) {
+		h := newHarness(admin)
+		h.run(t)
+		if got := h.dir.assignedGroups(t, merchant); !reflect.DeepEqual(got, []string{"Merchants"}) {
+			t.Fatalf("groups before = %v, want [Merchants]", got)
+		}
+
+		h.setDoc(selfService)
+		h.run(t)
+
+		if got := h.dir.assignedGroups(t, merchant); len(got) != 0 {
+			t.Errorf("the group survived the change to self-service: %v", got)
+		}
+		if got := h.dir.assignedUsers(t, merchant); !reflect.DeepEqual(got, []string{"test-merchant"}) {
+			t.Errorf("the login did not pick the role up directly: %v", got)
+		}
+	})
+
+	t.Run("self-service to admin", func(t *testing.T) {
+		h := newHarness(selfService)
+		h.run(t)
+		if got := h.dir.assignedUsers(t, merchant); !reflect.DeepEqual(got, []string{"test-merchant"}) {
+			t.Fatalf("user principals before = %v, want [test-merchant]", got)
+		}
+
+		h.setDoc(admin)
+		h.run(t)
+
+		if got := h.dir.assignedGroups(t, merchant); !reflect.DeepEqual(got, []string{"Merchants"}) {
+			t.Errorf("groups after = %v, want [Merchants]", got)
+		}
+		// Left alone, deliberately: same account, same role, same grants.
+		if got := h.dir.assignedUsers(t, merchant); !reflect.DeepEqual(got, []string{"test-merchant"}) {
+			t.Errorf("user principals after = %v — convergeAssignments never removes one", got)
+		}
+	})
 }
 
 // THE REBUILD PROPERTY, for the converging half. The same tag built twice makes

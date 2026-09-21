@@ -226,13 +226,14 @@ export function roleEnrolment(role: SecurityRole): Enrolment {
  * Whether the build owes this role a login — `securityspec.Role.NeedsTestUser`
  * in the BFF, with the same defaults applied.
  *
- * Only an admin-enrolment user role: a self-service role's accounts come from
- * the application's own registration flow, and a service role's principal is an
- * application, not a person. Promising either a `test-…` name would name an
- * account the build never creates.
+ * Every user role, whatever its enrolment: a test user is a disposable agent
+ * account, not a model of how a person signs up, and a role nobody can sign in
+ * as cannot be validated. Only a service role gets none — its principal is an
+ * application, so promising it a `test-…` name would name an account the build
+ * never creates.
  */
 export function needsTestUser(role: SecurityRole): boolean {
-  return roleKind(role) === "user" && roleEnrolment(role) === "admin";
+  return roleKind(role) === "user";
 }
 
 /** The planned users for one role. */

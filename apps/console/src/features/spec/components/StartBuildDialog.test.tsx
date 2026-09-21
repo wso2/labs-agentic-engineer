@@ -103,6 +103,36 @@ describe("StartBuildDialog", () => {
     expect(screen.queryByText("changed")).not.toBeInTheDocument();
   });
 
+  // `new` on an external dependency promises a resource this build stands up
+  // and values somebody owes. A copy of a Registered External resource is
+  // neither: both are already the organization's.
+  it("says an external that reuses a registered resource is reused, not new", () => {
+    open({
+      changes: [
+        { name: "currency-service", kind: "external", state: "new" },
+        { name: "sendgrid", kind: "external", state: "new" },
+      ],
+      reusedExternals: ["currency-service"],
+    });
+
+    expect(screen.getByText("reused · organization")).toBeInTheDocument();
+    expect(screen.getAllByText("new")).toHaveLength(1);
+  });
+
+  it("leaves a removed copy removed, and never marks a component reused", () => {
+    open({
+      changes: [
+        { name: "currency-service", kind: "external", state: "removed" },
+        { name: "currency-service", kind: "component", state: "new" },
+      ],
+      reusedExternals: ["currency-service"],
+    });
+
+    expect(screen.queryByText("reused · organization")).not.toBeInTheDocument();
+    expect(screen.getByText("removed")).toBeInTheDocument();
+    expect(screen.getByText("new")).toBeInTheDocument();
+  });
+
   // A bare list of names cannot say what a name IS: a database the platform
   // stands up reads exactly like a third-party API the user must go and sign up
   // for. The headings are the whole of the difference the dialog draws.

@@ -74,7 +74,7 @@ func newExternalCatalogFixture(listErr error, rts ...openchoreo.ResourceType) *e
 // t.Fatalf).
 func mustBuildExternalRT(t *testing.T, name, description string, keys ...openchoreo.ExternalResourceConfigKey) openchoreo.ResourceType {
 	t.Helper()
-	rt, err := openchoreo.BuildExternalResourceType(name, description, keys, "", nil)
+	rt, err := openchoreo.BuildExternalResourceType(openchoreo.ExternalResourceTypeSpec{Name: name, Description: description, Keys: keys, Scope: openchoreo.ExternalResourceScopeOrg})
 	if err != nil {
 		t.Fatalf("build external RT fixture %q: %v", name, err)
 	}
@@ -442,11 +442,13 @@ func TestMCP_ListExternalResources_PortError(t *testing.T) {
 // list_external_resources with consumptionInstructions and resourceDocs pointers
 // — not secret values or file bodies. MCP view has no consumers field today.
 func TestMCP_ListExternalResources_RegisteredBeforeConsumers(t *testing.T) {
-	rt, err := openchoreo.BuildExternalResourceType("stripe", "Payments",
-		[]openchoreo.ExternalResourceConfigKey{{Key: "STRIPE_KEY", Secret: true}},
-		"Send the secret as Bearer.",
-		[]openchoreo.ResourceDoc{{Type: "openapi", URL: "https://example.com/stripe/openapi.yaml"}},
-	)
+	rt, err := openchoreo.BuildExternalResourceType(openchoreo.ExternalResourceTypeSpec{
+		Name: "stripe", Description: "Payments",
+		Keys:                    []openchoreo.ExternalResourceConfigKey{{Key: "STRIPE_KEY", Secret: true}},
+		Scope:                   openchoreo.ExternalResourceScopeOrg,
+		ConsumptionInstructions: "Send the secret as Bearer.",
+		ResourceDocs:            []openchoreo.ResourceDoc{{Type: "openapi", URL: "https://example.com/stripe/openapi.yaml"}},
+	})
 	if err != nil {
 		t.Fatalf("BuildExternalResourceType: %v", err)
 	}
@@ -1344,4 +1346,70 @@ func TestMCP_SliceOpenAPISpec_Errors(t *testing.T) {
 	nilPort := NewMCPHandler(newExternalCatalogFixture(nil), nil, nil, nil, nil, nil, nil, nil, nil)
 	resp := decodeRPC(t, postRPC(t, nilPort, "org-1", callBody("slice_openapi_spec", `{"content":"x","operations":["a"]}`)))
 	toolText(t, resp, true)
+}
+
+// TestMCP_ExternalResources_ProjectTypeDoesNotShadowRegistered pins the
+// scope rule at the catalog: a project's own type — same logical name,
+// NEWER than the organization's record — is not a catalog entry, so it must
+// neither appear in list_external_resources nor win the per-name dedupe and
+// hide the registered record from get_external_resource_schema. Both orders.
+func TestMCP_ExternalResources_ProjectTypeDoesNotShadowRegistered(t *testing.T) {
+	keys := []openchoreo.ExternalResourceConfigKey{{Key: "FX_APP_ID", Secret: true}}
+	registered, err := openchoreo.BuildExternalResourceType(openchoreo.ExternalResourceTypeSpec{
+		Name: "fx-rates", Description: "Live FX rates", Provider: "Open Exchange Rates", Keys: keys,
+		Scope: openchoreo.ExternalResourceScopeOrg, ConsumptionInstructions: "Call /latest.json once per event.",
+	})
+	if err != nil {
+		t.Fatalf("build registered: %v", err)
+	}
+	registered.Metadata.CreationTimestamp = time.Date(2026, 9, 17, 7, 55, 0, 0, time.UTC)
+	project, err := openchoreo.BuildExternalResourceType(openchoreo.ExternalResourceTypeSpec{
+		Name: "fx-rates", Description: "Live FX rates", Provider: "Open Exchange Rates", Keys: keys,
+		Scope: openchoreo.ExternalResourceScopeProject, Project: "spend-report",
+	})
+	if err != nil {
+		t.Fatalf("build project: %v", err)
+	}
+	project.Metadata.CreationTimestamp = time.Date(2026, 9, 17, 8, 5, 0, 0, time.UTC)
+	if registered.Metadata.Name == project.Metadata.Name {
+		t.Fatalf("fixture bug: a project type must not share the registered type's name, got %q", project.Metadata.Name)
+	}
+
+	assertRegisteredWins := func(t *testing.T, rts ...openchoreo.ResourceType) {
+		t.Helper()
+		er := newExternalCatalogFixture(nil, rts...)
+		h := NewMCPHandler(er, nil, nil, nil, nil, nil, nil, nil, nil)
+
+		resp := decodeRPC(t, postRPC(t, h, "org-1", callBody("list_external_resources", `{}`)))
+		var listPayload struct {
+			ExternalResources []externalResourceView `json:"externalResources"`
+		}
+		if err := json.Unmarshal([]byte(toolText(t, resp, false)), &listPayload); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if len(listPayload.ExternalResources) != 1 || listPayload.ExternalResources[0].ConsumptionInstructions == "" {
+			t.Fatalf("list = %+v, want exactly the registered record (with its instructions)", listPayload.ExternalResources)
+		}
+		getResp := decodeRPC(t, postRPC(t, h, "org-1", callBody("get_external_resource_schema", `{"name":"fx-rates"}`)))
+		var getPayload struct {
+			Found            bool                 `json:"found"`
+			ExternalResource externalResourceView `json:"externalResource"`
+		}
+		if err := json.Unmarshal([]byte(toolText(t, getResp, false)), &getPayload); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if !getPayload.Found || getPayload.ExternalResource.ConsumptionInstructions == "" {
+			t.Fatalf("get = %+v, want the registered record, not the project's newer type", getPayload)
+		}
+	}
+	t.Run("registered then project", func(t *testing.T) { assertRegisteredWins(t, *registered, *project) })
+	t.Run("project then registered", func(t *testing.T) { assertRegisteredWins(t, *project, *registered) })
+
+	// A project type alone is no catalog entry at all.
+	er := newExternalCatalogFixture(nil, *project)
+	h := NewMCPHandler(er, nil, nil, nil, nil, nil, nil, nil, nil)
+	resp := decodeRPC(t, postRPC(t, h, "org-1", callBody("get_external_resource_schema", `{"name":"fx-rates"}`)))
+	if !strings.Contains(toolText(t, resp, false), `"found":false`) {
+		t.Fatalf("a project's type must not read as a registered resource: %s", toolText(t, resp, false))
+	}
 }

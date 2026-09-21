@@ -32,6 +32,7 @@ import {
   addMessage,
   chatKeyFor,
   getMessages,
+  registerDeterministicFlush,
   replaceMessages,
   upsertQuestionMessage,
 } from "./chatStore";
@@ -183,6 +184,52 @@ describe("useAgentChat — the shared thread (#430)", () => {
     await waitFor(() =>
       expect(mockStartTurn).toHaveBeenCalledWith(PROJECT, "conv-1", "hello", [], true),
     );
+  });
+
+  // #575 follow-up: the turn pins the main tip as its base ref, but the agent
+  // reads the LIVE doc, and the committer is up to a minute behind it. An
+  // edit made just before Enter is therefore in what the agent reads and not
+  // in the base ref — and lands afterwards looking like the requirements
+  // moving after the design. Landing the room first makes the two the same.
+  it("lands the room before the turn pins its base ref", async () => {
+    const order: string[] = [];
+    const unregister = registerDeterministicFlush(KEY, async () => {
+      order.push("flush");
+    });
+    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.conversationReady).toBe(true));
+
+    mockStartTurn.mockImplementation(async () => {
+      order.push("dispatch");
+      return "turn-1";
+    });
+    await act(async () => {
+      await result.current.send("hello");
+    });
+
+    expect(order).toEqual(["flush", "dispatch"]);
+    unregister();
+  });
+
+  // The room's own banner (D6) is what reports a committer that cannot land.
+  // The send goes out regardless: refusing it would turn a stale base ref —
+  // a spurious staleness warning at worst — into a lost message.
+  it("dispatches anyway when the room will not land", async () => {
+    const unregister = registerDeterministicFlush(KEY, async () => {
+      throw new Error("the committer is down");
+    });
+    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.conversationReady).toBe(true));
+
+    mockStartTurn.mockResolvedValue("turn-1");
+    await act(async () => {
+      await result.current.send("hello");
+    });
+
+    await waitFor(() =>
+      expect(mockStartTurn).toHaveBeenCalledWith(PROJECT, "conv-1", "hello", [], true),
+    );
+    unregister();
   });
 
   it("omits collab when this chat is not a spec workspace", async () => {

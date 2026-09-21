@@ -112,17 +112,30 @@ describe("TestUsersDialog", () => {
     expect(row.getByText("Employee")).toBeInTheDocument();
   });
 
-  it("shows the scope union the login's token will carry", () => {
+  // The scopes are detail on demand — the row holds a count and a way in, and
+  // the handles themselves open in their own dialog. A row stays a row whether
+  // the account carries three scopes or thirty.
+  it("counts each login's scopes in its row and opens them on demand", () => {
     renderDialog();
 
-    const row = within(rowOf("test-compliance-admin"));
-    for (const scope of ["claims:read", "claims:approve", "reports:read"]) {
-      expect(row.getByText(scope)).toBeInTheDocument();
-    }
-    // Each login's own union, not the table's: the other row holds one handle.
     expect(
-      within(rowOf("test-viewer")).queryByText("reports:read"),
-    ).not.toBeInTheDocument();
+      within(rowOf("test-viewer")).getByRole("button", {
+        name: "Show 1 scope for test-viewer",
+      }),
+    ).toHaveTextContent("Scopes \u00b7 1");
+
+    const open = within(rowOf("test-compliance-admin")).getByRole("button", {
+      name: "Show 3 scopes for test-compliance-admin",
+    });
+    expect(open).toHaveTextContent("Scopes \u00b7 3");
+    fireEvent.click(open);
+
+    const scopes = within(
+      screen.getByRole("dialog", { name: /test-compliance-admin/ }),
+    );
+    for (const scope of ["claims:read", "claims:approve", "reports:read"]) {
+      expect(scopes.getByText(scope)).toBeInTheDocument();
+    }
   });
 
   // The live roles read answers with no scopes when the identity provider
@@ -137,6 +150,10 @@ describe("TestUsersDialog", () => {
     const row = within(rowOf("test-ghost"));
     expect(row.getByText("Retired Role")).toBeInTheDocument();
     expect(row.getByText(UNKNOWN_SCOPES)).toBeInTheDocument();
+    // Nothing to list, so nothing to open.
+    expect(
+      row.queryByRole("button", { name: /scope/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders a login holding no role at all", () => {

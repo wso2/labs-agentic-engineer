@@ -34,7 +34,7 @@
 #   kgateway vhost  <env>-<org>.gateway.localhost, served on the shared
 #                   data-plane Gateway `gateway-default` at :19080
 #
-# Every one of those five names is the CHART's derivation, not this script's
+# Every one of those five names is the CHART's derivation, not this script'sn
 # invention — see the chart's _helpers.tpl (apiGatewayName, restApiTarget,
 # gatewayHostname, runtimeUrl). Three other places in this repo must agree with
 # them and are commented to say so:

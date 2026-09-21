@@ -147,6 +147,24 @@ export function tokenIsValid(
   return (expiresAt + skewSeconds) * 1000 > now;
 }
 
+/** What `currentUser()` should do with whatever the user store holds. */
+export type SessionAction = "use" | "renew" | "none";
+
+/**
+ * Decides it from the stored session alone — no network, so it is testable here
+ * rather than in ./session.
+ *
+ * `renew` is only for a session that EXISTS and has expired: it renews on the
+ * refresh grant, invisibly. With NO stored session there is nothing to refresh,
+ * and `signinSilent()` would fall back to a hidden iframe whose only possible
+ * answer is `login_required` — a full silent-request timeout behind the splash
+ * before sign-in even starts. Answer `none` and let the caller sign in.
+ */
+export function sessionAction(stored: { expired?: boolean } | null | undefined): SessionAction {
+  if (!stored) return "none";
+  return stored.expired ? "renew" : "use";
+}
+
 /** What an API response means for the caller's session. */
 export type ApiFailure = "forbidden" | "signin" | "ok";
 

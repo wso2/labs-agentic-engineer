@@ -18,7 +18,9 @@ package codingagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -100,12 +102,38 @@ func (c *watchedCycles) FinishAgentFailed(_ context.Context, id, reason string) 
 	}
 	c.finished[id] = reason
 	now := time.Now().UTC()
+	// The repository re-reads the whole row after the update, so the double
+	// returns the listed row rather than a stub — a lossy double here would let
+	// a caller depend on columns the real write does populate, or miss one it
+	// does not.
+	for _, row := range c.rows {
+		if row.ID == id {
+			row.AgentReason, row.EndedAt = reason, &now
+			return &row, nil
+		}
+	}
 	return &delivery.RunCycle{ID: id, AgentReason: reason, EndedAt: &now}, nil
 }
 
 func (c *watchedCycles) RecordUsage(_ context.Context, id string, u contracts.CapturedUsage) error {
 	c.usage[id] = u
 	return nil
+}
+
+// deathNotice is one AgentDied call, recorded whole so a test can assert the
+// run it would wake and not merely that something fired.
+type deathNotice struct {
+	orgID, runID, reason string
+}
+
+type recordingDeaths struct {
+	notices []deathNotice
+	err     error
+}
+
+func (d *recordingDeaths) AgentDied(_ context.Context, orgID, runID, reason string) error {
+	d.notices = append(d.notices, deathNotice{orgID, runID, reason})
+	return d.err
 }
 
 // ---- harness ---------------------------------------------------------------
@@ -147,6 +175,75 @@ func TestTick_FailedPodClosesTheCycleWithItsReason(t *testing.T) {
 
 	if cycles.finished["c2"] != ReasonTimedOut {
 		t.Fatalf("finished = %+v, want c2 -> %s", cycles.finished, ReasonTimedOut)
+	}
+}
+
+// A dead agent is TOLD to its run, not waited out. Without this the run holds
+// its 2h landing deadline, re-dispatches, and holds another — four hours for a
+// pod that OOMed in twenty minutes.
+func TestTick_FailedPodTellsTheRunItsAgentDied(t *testing.T) {
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{
+		Found: true, Name: "p1", Phase: "Failed", TerminatedReason: "OOMKilled",
+	}}
+	cycles := newWatchedCycles(dispatchedCycle("c2", time.Minute))
+	deaths := &recordingDeaths{}
+
+	newTestWatcher(rt, cycles).WithAgentDeathNotifier(deaths).Tick(context.Background())
+
+	want := []deathNotice{{"acme", "run-1", "agent_failed:OOMKilled"}}
+	if !reflect.DeepEqual(deaths.notices, want) {
+		t.Fatalf("notices = %+v, want %+v", deaths.notices, want)
+	}
+}
+
+// The notice rides the repository's once-only fence, so the second replica to
+// reach the same dead pod closes nothing and wakes nobody. A run woken twice
+// would spend a re-dispatch it was not owed.
+func TestTick_AgentDeathIsToldOnceAcrossReplicas(t *testing.T) {
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{
+		Found: true, Name: "p1", Phase: "Failed", TerminatedReason: "OOMKilled",
+	}}
+	cycles := newWatchedCycles(dispatchedCycle("c2", time.Minute))
+	deaths := &recordingDeaths{}
+	w := newTestWatcher(rt, cycles).WithAgentDeathNotifier(deaths)
+
+	w.Tick(context.Background())
+	w.Tick(context.Background())
+
+	if len(deaths.notices) != 1 {
+		t.Fatalf("notices = %+v, want exactly one", deaths.notices)
+	}
+}
+
+// Waking the run is best-effort by the port's contract: the cycle's terminal
+// reason is already durable, and the run still settles on its landing deadline.
+// A notifier that fails must not unwind the write or stop the tick.
+func TestTick_AgentDeathNotifyFailureStillClosesTheCycle(t *testing.T) {
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{
+		Found: true, Name: "p1", Phase: "Failed", TerminatedReason: "OOMKilled",
+	}}
+	cycles := newWatchedCycles(dispatchedCycle("c2", time.Minute))
+	deaths := &recordingDeaths{err: errors.New("temporal is down")}
+
+	newTestWatcher(rt, cycles).WithAgentDeathNotifier(deaths).Tick(context.Background())
+
+	if cycles.finished["c2"] != "agent_failed:OOMKilled" {
+		t.Fatalf("finished = %+v, want the cycle closed regardless", cycles.finished)
+	}
+}
+
+// Every other watcher test constructs without a notifier, and so does a
+// degraded boot. nil must stay a valid state.
+func TestTick_NoNotifierIsStillAValidWatcher(t *testing.T) {
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{
+		Found: true, Name: "p1", Phase: "Failed", TerminatedReason: "OOMKilled",
+	}}
+	cycles := newWatchedCycles(dispatchedCycle("c2", time.Minute))
+
+	newTestWatcher(rt, cycles).Tick(context.Background())
+
+	if cycles.finished["c2"] != "agent_failed:OOMKilled" {
+		t.Fatalf("finished = %+v, want the cycle closed with no notifier wired", cycles.finished)
 	}
 }
 

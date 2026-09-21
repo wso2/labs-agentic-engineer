@@ -126,10 +126,12 @@ func (s *Service) provisionResource(ctx context.Context, orgID, projectID, depNa
 //
 //   - `displayName` is what a person reads on the login screen, so it is the
 //     project's display name — suffixed `· <web app>` when the project has more
-//     than one web application and this client belongs to one of them, which is
-//     the only case where the project name alone would be ambiguous. An
-//     API-only project still gets a client (the Test tab and the validation
-//     agent sign in with it), which is why the name cannot come from a web app.
+//     than one web application and this client belongs to exactly ONE of them,
+//     which is the only case where the project name alone would be ambiguous.
+//     A dependency that several web apps share has no single owner to name, so
+//     it keeps the plain project name. An API-only project still gets a client
+//     (the Test tab and the validation agent sign in with it), which is why the
+//     name cannot come from a web app.
 //   - `scopes` is the OIDC scopes every access token carries plus every catalog
 //     handle, space-joined. It is a truthful RECORD of what the client is
 //     expected to ask for, not a gate: ThunderID 1.0.0 stores the list and
@@ -207,19 +209,26 @@ func (s *Service) clientDisplayName(ctx context.Context, orgID, projectID, depNa
 		return name
 	}
 	var webApps int
-	var owner string
+	var owners []string
 	for _, c := range comps {
-		if strings.EqualFold(strings.TrimSpace(c.ComponentType), webApplicationType) {
-			webApps++
-			for _, d := range c.Dependencies {
-				if strings.EqualFold(d.Name, depName) {
-					owner = c.Name
-				}
+		if !strings.EqualFold(strings.TrimSpace(c.ComponentType), webApplicationType) {
+			continue
+		}
+		webApps++
+		for _, d := range c.Dependencies {
+			if strings.EqualFold(d.Name, depName) {
+				owners = append(owners, c.Name)
+				break
 			}
 		}
 	}
-	if webApps > 1 && owner != "" {
-		return name + " · " + owner
+	// Exactly one owner, or none. Several web apps sharing this dependency share
+	// the CLIENT it provisions — cell-design models `user-auth` as one external
+	// that many components edge into — so naming the client after whichever one
+	// the design happens to list last tells an operator it belongs to an app that
+	// is only half its users.
+	if webApps > 1 && len(owners) == 1 {
+		return name + " · " + owners[0]
 	}
 	return name
 }

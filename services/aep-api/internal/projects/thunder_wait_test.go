@@ -19,6 +19,7 @@ package projects
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
@@ -186,6 +187,40 @@ func assertRedirectPatch(t *testing.T, rc *mocks.ResourceClientMock, wantCallbac
 	}
 }
 
+// patchedCallbacks returns the callback set the LAST registration wrote, split
+// back out of the comma-joined field.
+func patchedCallbacks(t *testing.T, h *thunderWaitHarness) []string {
+	t.Helper()
+	calls := h.rc.PatchBindingEnvironmentConfigsCalls()
+	if len(calls) == 0 {
+		return nil
+	}
+	raw := calls[len(calls)-1].Configs["redirectUris"]
+	if raw == "" {
+		return nil
+	}
+	return strings.Split(raw, ",")
+}
+
+// assertVerdictDidNotConsultThunder is the narrower claim for a component whose
+// OpenChoreo verdict already decided the answer: the WAIT never reads the CR.
+//
+// It does not claim the callback registration was skipped, and that is the
+// point. Registration is PROJECT-scoped — it writes the whole set of web-app
+// callbacks onto a shared dependency — so it cannot be gated on one component's
+// verdict. A failed release in particular must not de-register anything: the
+// previous release is usually still serving at the same URL, and dropping its
+// callback would sign users out of an app that works.
+func assertVerdictDidNotConsultThunder(t *testing.T, h *thunderWaitHarness) {
+	t.Helper()
+	if h.thunder.gets != 0 {
+		t.Errorf("Thunder GET called %d time(s); the verdict must not consult the CR", h.thunder.gets)
+	}
+}
+
+// assertNoThunderConsult is the total claim: nothing about this dependency was
+// read or written. Only a WITHDRAWING component earns it — it is leaving, so it
+// is neither registered nor waited on.
 func assertNoThunderConsult(t *testing.T, h *thunderWaitHarness) {
 	t.Helper()
 	if n := len(h.rc.PatchBindingEnvironmentConfigsCalls()); n != 0 {
@@ -415,6 +450,41 @@ func TestDeploymentState_ThunderGetErrorSurfaces(t *testing.T) {
 	assertRedirectPatch(t, h.rc, thunderWaitCallback, 1)
 }
 
+// Split-plane: the CRD is not on this kube API. The wait still patches the
+// callback onto the binding, then lets OpenChoreo Ready stand.
+func TestDeploymentState_ThunderAPIMissingIsReady(t *testing.T) {
+	t.Parallel()
+	h := newThunderWaitHarness(t, thunderWaitOpts{
+		component:  thunderWaitWeb,
+		designBody: webAppWithPlatformResource(thunderWaitWeb, thunderWaitDep, "thunder-app"),
+		origin:     thunderWaitOrigin,
+		thunderErr: ErrThunderApplicationAPIMissing,
+	})
+	ready, failed := h.state(t, thunderWaitWeb)
+	if !ready || failed {
+		t.Fatalf("ready/failed = %v/%v; missing ThunderApplication API must not block OC Ready", ready, failed)
+	}
+	assertRedirectPatch(t, h.rc, thunderWaitCallback, 1)
+}
+
+// OpenChoreo advertises https://host:443/; the CR / browser omit the default port.
+func TestDeploymentState_WebAppThunderDefaultPortCallbackMatches(t *testing.T) {
+	t.Parallel()
+	const origin = "https://web.example.com:443/"
+	const callback = "https://web.example.com:443/callback"
+	h := newThunderWaitHarness(t, webAppThunderOpts(origin, &ThunderApplicationView{
+		RedirectURIs:       "https://web.example.com/callback",
+		Ready:              true,
+		Generation:         2,
+		ObservedGeneration: 2,
+	}))
+	ready, failed := h.state(t, thunderWaitWeb)
+	if !ready || failed {
+		t.Fatalf("ready/failed = %v/%v; :443 callback must match portless CR", ready, failed)
+	}
+	assertRedirectPatch(t, h.rc, callback, 1)
+}
+
 func TestDeploymentState_FailedOCDoesNotConsultThunder(t *testing.T) {
 	t.Parallel()
 	h := newThunderWaitHarness(t, thunderWaitOpts{
@@ -428,7 +498,13 @@ func TestDeploymentState_FailedOCDoesNotConsultThunder(t *testing.T) {
 	if ready || !failed {
 		t.Fatalf("ready/failed = %v/%v; OC Failed must stay Failed", ready, failed)
 	}
-	assertNoThunderConsult(t, h)
+	assertVerdictDidNotConsultThunder(t, h)
+	// The project-scoped registration still runs, and still carries this app's
+	// callback: a release that failed to render has not taken the previous one
+	// off the air.
+	if got := patchedCallbacks(t, h); len(got) != 1 || got[0] != thunderWaitCallback {
+		t.Fatalf("registered callbacks = %v; a failed release must not de-register the live one", got)
+	}
 }
 
 func TestDeploymentState_UndeployDoesNotConsultThunder(t *testing.T) {

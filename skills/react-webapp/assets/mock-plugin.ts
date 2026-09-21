@@ -30,6 +30,12 @@
 //                           never enters public/ and never reaches dist/
 //   the operation table     read out of the sibling's openapi.yaml, which is a
 //                           file on disk the browser cannot open
+//   the role list           read out of security.json, for the in-page role
+//                           badge — same reason: a file, not a request
+//
+// And one mode: with AEP_WIRED_API set (the playground's `wire` verb) the app
+// talks to a REAL service instead of MSW, and this plugin becomes the gateway in
+// front of it — see ./wired.ts.
 //
 // It is added under `--mode mock` only and runs in Node at dev-server time, so
 // nothing here reaches the production bundle.
@@ -41,6 +47,7 @@ import type { Plugin } from "vite";
 import { mockEnv } from "./env";
 import { projectOperations } from "./authz/contract";
 import type { MockOperation, MockOperationTable } from "./authz/gateway";
+import { securityPath, wiredFromEnv, wiredMiddleware, wiredProxy, type WiredOptions } from "./wired";
 
 export interface MockModeOptions {
   /**
@@ -59,6 +66,8 @@ export interface MockModeOptions {
 export function mockMode(options: MockModeOptions = {}): Plugin {
   let root = process.cwd();
   let operations: MockOperationTable | null = null;
+  let roleNames: string[] | null = null;
+  let wired: WiredOptions | null = null;
   return {
     name: "aep-mock-mode",
     enforce: "pre",
@@ -75,6 +84,29 @@ export function mockMode(options: MockModeOptions = {}): Plugin {
     async config(userConfig) {
       root = path.resolve(userConfig.root ?? process.cwd());
       operations = await readOperationTable(root, options);
+      roleNames = readRoleNames(root);
+
+      // WIRED MODE. The dev server stops being the app's API and becomes the
+      // gateway in front of the real one: this returns the proxy, and
+      // configureServer below puts the scope check in front of it. Refused
+      // rather than degraded when there is no table, because a wired run with
+      // no gateway would forward every call unauthenticated and the service
+      // would answer 401s that look like application bugs.
+      wired = wiredFromEnv(root);
+      if (wired && !operations) {
+        throw new Error(
+          "AEP_WIRED_API is set but no contract declares an `oauth2` scheme — " +
+            "there is no operation table to enforce, so this app cannot stand in for the gateway.",
+        );
+      }
+      if (wired && operations) {
+        console.info(
+          `[wired gateway] ${operations.prefix} -> ${wired.target}; ` +
+            `${String(operations.operations.length)} operation(s) enforced, assertion signed with ${wired.keyPath}`,
+        );
+        return { server: { proxy: wiredProxy(operations, wired) } };
+      }
+      return undefined;
     },
 
     configResolved(config) {
@@ -95,16 +127,24 @@ export function mockMode(options: MockModeOptions = {}): Plugin {
     },
 
     configureServer(server) {
-      // Two globals on one script, because both have the same requirement: set
+      // Four globals on one script, because they share one requirement: set
       // before the bundle runs. index.html loads this ahead of the module
       // script exactly as the platform's own /env-config.js is loaded in a pod.
+      // `__AEP_WIRED__` is read by mock/browser.ts (do not start the worker —
+      // the API is real) and by mock/badge.ts (say so on the badge).
       server.middlewares.use("/env-config.js", (_req, res) => {
         res.setHeader("Content-Type", "application/javascript; charset=utf-8");
         res.end(
           `window._env_ = ${JSON.stringify(mockEnv, null, 2)};\n` +
-            `window.__AEP_MOCK_GATEWAY__ = ${JSON.stringify(operations)};\n`,
+            `window.__AEP_MOCK_GATEWAY__ = ${JSON.stringify(operations)};\n` +
+            `window.__AEP_MOCK_ROLES__ = ${JSON.stringify(roleNames)};\n` +
+            `window.__AEP_WIRED__ = ${wired ? "true" : "false"};\n`,
         );
       });
+
+      // Before Vite's own proxy middleware, which is what makes the scope check
+      // a gate rather than a suggestion: a forwarded request has passed it.
+      if (wired && operations) server.middlewares.use(wiredMiddleware(operations, wired));
 
       // `msw init` would copy this into public/, where it would be committed and
       // then shipped inside every production image. Resolving it from the
@@ -210,4 +250,28 @@ async function readOperationTable(
     `[mock gateway] enforcing ${operations.length} operation(s) from ${read.join(", ")}`,
   );
   return { prefix: options.apiPrefix ?? "/api", operations };
+}
+
+/**
+ * The role names the in-page badge offers, straight from the design.
+ *
+ * `mock/authz/roles.gen.ts` carries the same names with their grants, but only
+ * apps with an auth dependency have that file, and the badge ships with
+ * `mock/browser.ts` to every app. Reading `security.json` here is the same move
+ * the operation table makes: the file is on disk, the browser cannot open it,
+ * and the plugin already serves the one script that runs before the bundle.
+ *
+ * Null when there is no security.json or it names no roles — then there is no
+ * role to switch to and no badge is mounted.
+ */
+function readRoleNames(root: string): string[] | null {
+  try {
+    const security = JSON.parse(fs.readFileSync(securityPath(root), "utf-8")) as { roles?: { name?: unknown }[] };
+    const names = (security.roles ?? [])
+      .map((role) => role.name)
+      .filter((name): name is string => typeof name === "string" && name !== "");
+    return names.length > 0 ? names : null;
+  } catch {
+    return null;
+  }
 }

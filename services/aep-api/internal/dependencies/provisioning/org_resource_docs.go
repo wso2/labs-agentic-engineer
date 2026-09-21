@@ -65,3 +65,19 @@ func (s *gitOrgResourceDocs) CommitUTF8(ctx context.Context, orgID, logicalName,
 	}
 	return path, nil
 }
+
+func (s *gitOrgResourceDocs) ReadUTF8(ctx context.Context, orgID, path string) (string, error) {
+	repo, err := s.repos.EnsureBareRepo(ctx, orgID, resourceDocsProjectID, resourceDocsRepoName)
+	if err != nil {
+		return "", fmt.Errorf("ensure org-resource-docs repo: %w", err)
+	}
+	ref, err := sourcecontrol.ResolveWorkspaceRef(ctx, s.git.Resolver(), orgID, repo)
+	if err != nil {
+		return "", fmt.Errorf("resolve org-resource-docs workspace: %w", err)
+	}
+	content, _, err := s.git.Workspace().ReadFile(ctx, ref, "", path)
+	if err != nil {
+		return "", fmt.Errorf("read org-resource-docs %q: %w", path, err)
+	}
+	return string(content), nil
+}

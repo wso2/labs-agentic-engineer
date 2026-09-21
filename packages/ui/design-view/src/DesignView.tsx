@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Box,
@@ -25,6 +25,7 @@ import {
   IconButton,
   Menu,
   MenuItem,
+  Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
 import { EllipsisVertical, Lock, TriangleAlert } from "@wso2/oxygen-ui-icons-react";
@@ -199,30 +200,51 @@ export type DependencyResolutionIntent = "resolve" | "reconsider";
 // opens a one-item menu ("Discuss in chat & modify", the RECONSIDER intent).
 // Never rendered alongside the non-resolved "Resolve in chat" button (see
 // DependencyCard: exactly one of the two renders, based on `isResolved`).
-function ReconsiderMenu({ dependencyName, onReconsider }: {
+//
+// Inert while a turn holds the room (`busyReason` non-empty): the one item
+// fires a turn, and the reason is the tooltip on the disabled button. A menu
+// already open when the turn starts closes, and its item stops firing, so
+// the anchor cannot outlive the gate and pop the menu back open later.
+function ReconsiderMenu({ dependencyName, onReconsider, busyReason }: {
   dependencyName: string;
   onReconsider: () => void;
+  busyReason: string;
 }) {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+  const inert = busyReason !== "";
+  useEffect(() => {
+    if (inert) setAnchorEl(null);
+  }, [inert]);
+  const button = (
+    <IconButton
+      aria-label={`Actions for ${dependencyName}`}
+      size="small"
+      disabled={inert}
+      onClick={(e) => setAnchorEl(e.currentTarget)}
+      sx={{ ml: "auto" }}
+    >
+      <EllipsisVertical size={16} />
+    </IconButton>
+  );
   return (
     <>
-      <IconButton
-        aria-label={`Actions for ${dependencyName}`}
-        size="small"
-        onClick={(e) => setAnchorEl(e.currentTarget)}
-        sx={{ ml: "auto" }}
-      >
-        <EllipsisVertical size={16} />
-      </IconButton>
+      {inert ? (
+        // The span carries the tooltip: a disabled button swallows pointer events.
+        <Tooltip title={busyReason}>
+          <span style={{ marginLeft: "auto" }}>{button}</span>
+        </Tooltip>
+      ) : (
+        button
+      )}
       <Menu
         anchorEl={anchorEl}
-        open={anchorEl !== null}
+        open={anchorEl !== null && !inert}
         onClose={() => setAnchorEl(null)}
       >
         <MenuItem
           onClick={() => {
             setAnchorEl(null);
-            onReconsider();
+            if (!inert) onReconsider();
           }}
         >
           Discuss in chat & modify
@@ -252,13 +274,16 @@ function ConfigChip({ entry }: { entry: DesignConfigEntry }) {
 // (candidates/config) and a state-based affordance (#252 Task 17):
 // a non-resolved dependency gets the reason plus a "Resolve in chat" button;
 // a resolved one gets a hamburger → "Discuss in chat & modify" instead. Never
-// both for the same dependency — `isResolved` gates which one renders.
+// both for the same dependency — `isResolved` gates which one renders. Both
+// fire a turn, so both go inert while one already holds the room
+// (`busyReason`), saying why.
 function DependencyCard({
   dep,
   status,
   usedBy,
   onResolve,
   onReconsider,
+  busyReason,
 }: {
   dep: Dependency;
   status?: DependencyStatusInfo | undefined;
@@ -278,6 +303,7 @@ function DependencyCard({
    * org-service / external / platform-resource) — never gated by `dep.kind`.
    */
   onReconsider?: (() => void) | undefined;
+  busyReason: string;
 }) {
   const color = KIND_COLOR[dep.kind] ?? FALLBACK;
   const kindLabel = KIND_LABEL[dep.kind] ?? dep.kind;
@@ -309,7 +335,11 @@ function DependencyCard({
           />
         )}
         {isResolved && onReconsider && (
-          <ReconsiderMenu dependencyName={dep.name} onReconsider={onReconsider} />
+          <ReconsiderMenu
+            dependencyName={dep.name}
+            onReconsider={onReconsider}
+            busyReason={busyReason}
+          />
         )}
       </Box>
       {dep.description && (
@@ -355,11 +385,21 @@ function DependencyCard({
               {REASON_LABEL[status.reason] ?? status.reason}
             </Typography>
           )}
-          {onResolve && (
-            <Button size="small" variant="outlined" onClick={onResolve}>
-              Resolve in chat
-            </Button>
-          )}
+          {onResolve &&
+            (busyReason === "" ? (
+              <Button size="small" variant="outlined" onClick={onResolve}>
+                Resolve in chat
+              </Button>
+            ) : (
+              // The span carries the tooltip: a disabled button swallows pointer events.
+              <Tooltip title={busyReason}>
+                <span>
+                  <Button size="small" variant="outlined" disabled>
+                    Resolve in chat
+                  </Button>
+                </span>
+              </Tooltip>
+            ))}
         </Box>
       )}
     </Box>
@@ -371,6 +411,7 @@ function DesignBody({
   dependencyStatus,
   dependencyUsedBy,
   onResolveDependency,
+  busyReason,
 }: {
   design: ComponentDesign;
   dependencyStatus?: Record<string, DependencyStatusInfo> | undefined;
@@ -378,6 +419,7 @@ function DesignBody({
   onResolveDependency?:
     | ((dependencyName: string, intent: DependencyResolutionIntent) => void)
     | undefined;
+  busyReason: string;
 }) {
   const typeColor = TYPE_COLOR[design.type] ?? FALLBACK;
   return (
@@ -439,6 +481,7 @@ function DesignBody({
                   ? () => onResolveDependency(dep.name, "reconsider")
                   : undefined
               }
+              busyReason={busyReason}
             />
           ))
         )}
@@ -495,6 +538,15 @@ export interface DesignViewProps {
   onResolveDependency?:
     | ((dependencyName: string, intent: DependencyResolutionIntent) => void)
     | undefined;
+  /**
+   * OPTIONAL: why a dependency's chat turn would be refused right now — an
+   * agent already holds the room — or `""` (the default) when the affordances
+   * are live. Non-empty disables both "Resolve in chat" and the resolved
+   * card's hamburger and becomes their tooltip. The caller computes it from
+   * the same gate as the rest of its spec view, so the wording matches; this
+   * package has no notion of a turn of its own.
+   */
+  busyReason?: string | undefined;
 }
 
 export function DesignView({
@@ -502,6 +554,7 @@ export function DesignView({
   dependencyStatus,
   dependencyUsedBy,
   onResolveDependency,
+  busyReason = "",
 }: DesignViewProps) {
   const parsed = useMemo(() => parseComponentDesign(design), [design]);
   if ("kind" in parsed) {
@@ -519,6 +572,7 @@ export function DesignView({
       dependencyStatus={dependencyStatus}
       dependencyUsedBy={dependencyUsedBy}
       onResolveDependency={onResolveDependency}
+      busyReason={busyReason}
     />
   );
 }

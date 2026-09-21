@@ -1,0 +1,29 @@
+apiVersion: openchoreo.dev/v1alpha1
+metadata:
+  name: onboarding-api
+
+endpoints:
+  - name: http
+    type: HTTP
+    port: 9090
+    basePath: /
+    visibility:
+      - project
+      - external
+
+dependencies:
+  resources:
+    - ref: onboarding-db
+      envBindings:
+        host: ONBOARDING_DB_HOST
+        port: ONBOARDING_DB_PORT
+        user: ONBOARDING_DB_USER
+        password: ONBOARDING_DB_PASSWORD
+        dbname: ONBOARDING_DB_DBNAME
+    - ref: user-auth
+      envBindings:
+        client_id: USER_AUTH_CLIENT_ID
+        issuer: USER_AUTH_ISSUER
+        jwks_url: USER_AUTH_JWKS_URL
+        scopes: USER_AUTH_SCOPES
+        resource: USER_AUTH_RESOURCE

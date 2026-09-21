@@ -70,19 +70,16 @@ describe("prdAffordances — the PRD's own launchers", () => {
     expect(sections[1]!.at).toBe(blocks[2]!.contentEnd);
   });
 
-  it("gives every story its own /expand, carrying the story as the subject, and a Discuss", () => {
+  // A story offers a conversation and nothing else. The per-story `/expand`
+  // ("Go deeper") lens is gone with the feature files it wrote.
+  it("gives every story a Discuss and no command of its own", () => {
     const blocks = fresh(() => [
       heading("User Stories"),
       block("listItem", "As an Employee, I want to file an expense."),
       block("listItem", "As a Manager, I want to approve one."),
     ]);
     const lines = prdAffordances(blocks).lenses.filter((l) => l.placement === "line");
-    expect(lines.map(nameOf)).toEqual([
-      "/expand As an Employee, I want to file an expense.",
-      "discuss",
-      "/expand As a Manager, I want to approve one.",
-      "discuss",
-    ]);
+    expect(lines.map(nameOf)).toEqual(["discuss", "discuss"]);
   });
 
   it("flags each open question and offers /settle over the point", () => {
@@ -145,7 +142,7 @@ describe("prdAffordances — the PRD's own launchers", () => {
     expect(discuss.map((lens) => lens.block)).toEqual([blocks[1], blocks[2]]);
   });
 
-  it("outranks a story's /expand with the verdicts when the story is flagged", () => {
+  it("offers the verdicts, not Discuss alone, when a story is flagged", () => {
     const blocks = fresh(() => [
       heading("User Stories"),
       assumed("listItem", "As a Manager, I approve within a day —"),
@@ -164,10 +161,10 @@ describe("prdAffordances — the PRD's own launchers", () => {
 
   it("collapses a wrapped subject onto one line", () => {
     const blocks = fresh(() => [
-      heading("User Stories"),
-      block("listItem", "As an Employee,\n  I want\tto file an expense."),
+      heading("Open Questions"),
+      block("listItem", "Which Slack\n  workspace,\tif any?"),
     ]);
-    expect(commands(blocks)).toContain("/expand As an Employee, I want to file an expense.");
+    expect(commands(blocks)).toContain("/settle Which Slack workspace, if any?");
   });
 
   // A conversation is something any line can start (#652), so a bullet under a
@@ -193,12 +190,7 @@ describe("prdAffordances — the PRD's own launchers", () => {
       block("heading", "Later", { level: 3 }),
       block("listItem", "Not a story."),
     ]);
-    expect(commands(blocks)).toEqual([
-      "/feature",
-      "/expand As an Employee, I want to file an expense.",
-      "discuss",
-      "discuss",
-    ]);
+    expect(commands(blocks)).toEqual(["/feature", "discuss", "discuss"]);
   });
 
   it("finds nothing in a document that has no PRD sections", () => {

@@ -311,7 +311,7 @@ func (s *Service) resolveDependenciesYAML(ctx context.Context, orgID, projectID 
 	// whether or not the connection is bound yet.
 	for _, d := range comp.Dependencies {
 		if d.Kind == spec.DependencyKindExternal && d.Contract != "" {
-			contractSections = append(contractSections, externalSpecContractSection(d.Name, spec.ContractPath(d.Name, d.Contract), d.Assumed != nil, d.ContractDerived))
+			contractSections = append(contractSections, externalSpecContractSection(d.Name, spec.ContractPath(d.Name, d.Contract), d.ContractAssumed && d.Assumed != nil, d.ContractDerived))
 		}
 	}
 

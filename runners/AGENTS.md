@@ -254,10 +254,13 @@ into the runner pod at `/app/skills` for live skill edits (see
   Bash is not gated either; a build writes where it writes, and the pod is the
   containment boundary. The guard catches the one expensive mistake, it is not a
   sandbox.
-- **`allowedTools` restricts nothing here.** `bypassPermissions` +
-  `allowDangerouslySkipPermissions` allow every harness tool regardless, so
-  `BASE_ALLOWED_TOOLS` documents intent while the DENY list is the boundary
-  that holds. Both live in `runtime/claude/tools.ts`, and the deny list is
+- **`allowedTools` restricts nothing here, but it can ADD.** `bypassPermissions` +
+  `allowDangerouslySkipPermissions` allow every harness tool regardless, so the
+  DENY list is the boundary that holds. `BASE_ALLOWED_TOOLS` is still
+  load-bearing the other way: a tool the CLI holds behind a rollout gate (the
+  task list, on the sonnet-5 / opus-4.8 families in CLI 2.1.247) is registered
+  only when named there — so it is the surface the platform asks for, not
+  documentation. Both live in `runtime/claude/tools.ts`, and the deny list is
   derived: the port states CAPABILITY CLASSES (`interactive_prompt`,
   `scheduling`, `durable_session`, `peer_messaging`, `artifact_publishing`) and
   that file maps each to this runtime's names. There are no runtime-neutral tool
@@ -278,8 +281,13 @@ into the runner pod at `/app/skills` for live skill edits (see
   watching this one. A lead's plan is the only statement of intent a run
   produces, and v2 puts it on the feed as `work_item {source: "plan"}` rows a
   console folds by item — so the plan being true is worth more than the turn it
-  costs. Corollary: a typo in `BASE_ALLOWED_TOOLS` cannot fail loudly — it named
-  `Task` for a whole SDK generation after the tool became `Agent`.
+  costs. Taking them off the deny list was not enough, though: three real runs
+  started with no task tool in their `init` list, because the CLI gates them
+  per model, and only naming them in `BASE_ALLOWED_TOOLS` registers them
+  (probed against the SDK directly, 2026-09-17). Corollary: a typo in
+  `BASE_ALLOWED_TOOLS` cannot fail loudly — it named `Task` for a whole SDK
+  generation after the tool became `Agent`, and the task list was "allowed" for
+  weeks without existing.
 - **`settingSources` is `["project"]`, and that is load-bearing.** It lives in
   `runtime/claude/runtime.ts` now, with the other two invariants that are
   conditions of running this platform's workload rather than policy anyone
@@ -491,7 +499,15 @@ into the runner pod at `/app/skills` for live skill edits (see
   covers the JVM's own `hs_err_pid*.log`, which no rlimit suppresses), and
   neither is redundant with the patterns `skills/aep/SKILL.md` names — that is
   the only copy a reader meets when they wonder why `core` is not in
-  `git status`.
+  `git status`. **The SHAPE of each pattern is load-bearing, and getting it
+  wrong costs more than the dump does.** A crash picks names people pick too:
+  the list read `core` + `core.*` until 2026-09-19, which ignored `core.ts`,
+  `core.css` and every `src/core/` directory — so a live run built two
+  components that `git add -A` skipped in silence and never committed them. The
+  patterns are now `core` / `!core/` / `core.[0-9]*`, argued at the constant and
+  proven against a real `git init` in `workspace.test.ts`, which asserts the
+  NEGATIVE cases (a `core.ts` and a `src/core/` still stage) beside the positive
+  one. Both copies have to move together.
 - **One image**, `remote-worker/Dockerfile`, serves BOTH task kinds
   (`AEP_TASK_KIND=implementation` and `=validation`). It is Debian-based
   because Playwright's browsers are glibc-linked; do not reintroduce a second,

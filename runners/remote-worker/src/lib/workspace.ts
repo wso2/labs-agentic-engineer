@@ -150,7 +150,32 @@ async function installCommitIdentity(
 // process, and the JVM's two post-mortem logs (`bal build` runs one). Not a
 // general-purpose ignore list — these are the files that are never wanted, in
 // any component, in any language, and that nobody puts there on purpose.
-const CRASH_ARTEFACT_PATTERNS = ["core", "core.*", "hs_err_pid*.log", "replay_pid*.log"];
+//
+// THE SHAPE OF EACH PATTERN IS THE WHOLE PROBLEM, because a name a crash picks
+// is a name a person picks too. The list read `core.*` for a while, which is
+// unanchored and extension-blind, so it ignored `core.ts`, `core.css` and
+// `core.go` — and `src/authz/core.ts` is written into EVERY generated web app by
+// the `thunder-authentication` skill, so it fired on every project. A bare
+// `core` matches a DIRECTORY of that name as well as a file, and `src/core/` is
+// about as common as a directory name gets. That combination cost a live run
+// (`ae-demo/simplest-crud-blog`, 2026-09-19) two fully-built components: their
+// sources were invisible to `git status` and unstageable by `git add -A`, and
+// nothing anywhere said why.
+//
+// So each pattern now says what it means:
+//   `core`         — a dump file at any depth. Unanchored deliberately: a JVM
+//                    dumps where it was running, which is any component.
+//   `!core/`       — …but a DIRECTORY named core is somebody's source. The
+//                    trailing slash is what distinguishes the two, and the
+//                    negation only has something to re-include because the line
+//                    above it is unanchored. Do not "simplify" it away.
+//   `core.[0-9]*`  — the kernel's `core.%p` / `core.%p.%t` shape, which is what
+//                    a suffixed dump actually looks like. No source file's
+//                    extension starts with a digit.
+// Proven the only way that counts, against a real `git init` in
+// `workspace.test.ts`: `core.ts`, `src/core/index.ts` and `session.ts` stay
+// stageable, `core` and `core.4711` stay unstageable.
+const CRASH_ARTEFACT_PATTERNS = ["core", "!core/", "core.[0-9]*", "hs_err_pid*.log", "replay_pid*.log"];
 
 // installCrashArtefactExclude writes those patterns into the clone's
 // `.git/info/exclude` — git's per-clone ignore file, which behaves exactly like
@@ -180,8 +205,9 @@ const CRASH_ARTEFACT_PATTERNS = ["core", "core.*", "hs_err_pid*.log", "replay_pi
 // will later clone themselves, learns it from the skill. Deleting either half
 // costs something the other does not provide.
 // Exported for `workspace.test.ts`, which drives it against a real `git init`
-// and asserts a `core` file stays unstageable through `git add -A` — the only
-// assertion that proves the guarantee rather than the file's contents.
+// and asserts through `git add -A` that a dump stays unstageable AND that
+// `core.ts` and a `src/core/` directory do not — the only assertions that prove
+// the guarantee rather than the file's contents.
 export async function installCrashArtefactExclude(workspace: string): Promise<void> {
   // `.git/info/` is not created by every clone (a worktree or a `--separate-git-dir`
   // layout puts the real git dir elsewhere), so resolve it from git rather than

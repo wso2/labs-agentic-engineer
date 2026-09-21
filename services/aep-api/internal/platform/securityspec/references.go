@@ -28,7 +28,7 @@ package securityspec
 // Three kinds of rule, in the order they are checked:
 //
 //  1. **Within the document.** A grant names a catalog handle; a test user
-//     names a declared admin-enrolment user role; a role name is not a group
+//     names a declared user role; a role name is not a group
 //     name. These need nothing but the parsed document, so Parse runs them on
 //     every read of the file.
 //  2. **Against a sibling the bundle may hold.** A permission's component is a

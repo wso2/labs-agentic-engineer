@@ -226,6 +226,27 @@ func (w *SecretRefWriter) WriteExternalResourceSecret(ctx context.Context, ocOrg
 // WriteExternalResourceSecret path.
 const orgCatalogProjectName = "org-catalog"
 
+// CopyOrgCatalogSecret reads the secret fields at fromVaultKey — a project's
+// own external-resource secret, whose vault key its per-environment binding
+// carries as secretStorePath — and writes them as an org-catalog entity. The
+// values move vault to vault; nothing is echoed to the caller.
+func (w *SecretRefWriter) CopyOrgCatalogSecret(ctx context.Context, ocOrgID, fromVaultKey, entityName string) (string, error) {
+	if !w.Enabled() {
+		return "", nil
+	}
+	if strings.TrimSpace(fromVaultKey) == "" {
+		return "", errors.New("secret-ref writer: no vault key to copy from")
+	}
+	data, err := w.client.GetSecretWithValue(ctx, fromVaultKey)
+	if err != nil {
+		return "", fmt.Errorf("secret-ref writer: read %s for the org catalog: %w", fromVaultKey, err)
+	}
+	if len(data) == 0 {
+		return "", fmt.Errorf("secret-ref writer: %s holds no secret data", fromVaultKey)
+	}
+	return w.WriteOrgCatalogSecret(ctx, ocOrgID, entityName, data)
+}
+
 // WriteOrgCatalogSecret uploads Registered External secret fields using the
 // existing vault layout with projectName "org-catalog" and returns the vault
 // key the ResourceType CEL reads from the binding (secretStorePath).

@@ -53,3 +53,17 @@ Related: ADR-0003 (resolution is read-time), ADR-0007 (resource-type behavior
 keys on `aep.wso2.com/*` markers, not names), ADR-0021 (a **Registered External
 resource** is authored at register, marked by consumption instructions on this
 RT — not only at first provision).
+
+## Amended 2026-09-17 — the record is the shared resource shape, and it says whose it is
+
+[ADR-0030](ADR-0030-a-dependency-holds-a-full-copy-of-its-resource.md). The
+ResourceType now carries the whole resource record — provider
+(`aep.wso2.com/provider`), the contract document as a `{type, path}` pointer
+into the org docs repo (`aep.wso2.com/contract`), its provenance
+(`aep.wso2.com/provenance`) — in the same shape a project's `dependency.json`
+holds in its `resource` block, so a registration copies into a project and a
+project promotes into a registration without loss. It also carries a scope
+marker (`aep.wso2.com/scope: org | project`, plus the project's name for the
+latter); the type a project's build authors folds the project into its NAME, so
+"the registry" — `List`, Register's uniqueness check, `Delete` — is the org-scoped
+types only. A project's type is not a registry entry.

@@ -133,9 +133,10 @@ type Config struct {
 	// Anything but `binding` reads as `issuer`.
 	ThunderEnvAdminRoute string
 
-	// KubeAPI is the in-cluster (or override) Kubernetes API the Thunder
-	// Application CR GET uses. BaseURL empty ⇒ thunder wait stays unwired
-	// (local compose has no kube API). See KubeAPIConfig.
+	// KubeAPI is the Kubernetes API the Thunder Application CR LIST uses.
+	// Set KUBE_API_BASE_URL to the dataplane apiserver on a split-plane
+	// install; otherwise the in-cluster host is used. BaseURL empty ⇒
+	// thunder wait stays unwired (local compose has no kube API).
 	KubeAPI KubeAPIConfig
 
 	// APIGatewayHost is an OVERRIDE for host:port of the API Platform gateway
@@ -303,12 +304,16 @@ type ThunderAdminConfig struct {
 // KubeAPIConfig is the Kubernetes API endpoint used to LIST ThunderApplication
 // CRs (plain net/http — not controller-runtime). Resolved at Load:
 //
-//	BaseURL — https://$KUBERNETES_SERVICE_HOST:$KUBERNETES_SERVICE_PORT when
-//	both are set (Helm pods); else optional KUBE_API_BASE_URL.
+//	BaseURL — KUBE_API_BASE_URL when set (dataplane apiserver on a split
+//	install); else https://$KUBERNETES_SERVICE_HOST:$KUBERNETES_SERVICE_PORT
+//	when both are set (Helm pods on the same cluster as the CRD).
 //	BearerToken — KUBE_API_BEARER static override (not a rotating SA token).
-//	TokenFile — in-cluster service-account token path when no bearer override;
-//	the client reads the file per request so projected rotations are picked up.
-//	CAFile — in-cluster service-account ca.crt when present.
+//	TokenFile — KUBE_API_TOKEN_FILE when set; else the in-cluster SA token
+//	when BaseURL is not an override. The client reads the file per request
+//	so a projected rotation is picked up.
+//	CAFile — KUBE_API_CA_FILE when set; else the in-cluster SA ca.crt when
+//	BaseURL is not an override. An override without this file uses system
+//	roots, which will not verify an EKS cluster CA.
 type KubeAPIConfig struct {
 	BaseURL     string
 	BearerToken string

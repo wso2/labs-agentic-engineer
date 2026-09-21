@@ -186,7 +186,7 @@ func TestPanel_ProjectRolesCarryAssignmentsTheirScopesAndTheResourceServer(t *te
 		withRole("Finance").
 		// This project's three roles: one assigned to a group only it uses, one
 		// to a group another project also leans on, and one self-service role
-		// recorded with no group at all.
+		// bound to no group at all.
 		withRoleBinding("acme", "expenses", "Approver", "Finance", "rol-approver").
 		withRoleBinding("acme", "expenses", "Employee", "Employees", "rol-employee").
 		withRoleBinding("acme", "expenses", "Patient", "", "rol-patient").
@@ -238,9 +238,11 @@ func TestPanel_ProjectRolesCarryAssignmentsTheirScopesAndTheResourceServer(t *te
 		t.Errorf("Employee assignedTo = %+v, want Employees held by 1 project", employee.AssignedTo)
 	}
 
-	// The self-service role: recorded, assigned to nobody. The empty group name
-	// is the marker that lets a delete find the role — reporting it as an
-	// assignment would invent a group called "".
+	// The self-service role: no GROUP holds it. The empty group name on the
+	// binding row is the marker that lets a delete find the role — reporting it
+	// as an assignment would invent a group called "". Its test login holds it
+	// as a user principal, which this list does not carry: `assignedTo` is
+	// about groups.
 	patient := view.ProjectRoles[2]
 	if patient.Name != "Patient" || len(patient.AssignedTo) != 0 {
 		t.Errorf("a self-service role must report no assignment: %+v", patient)

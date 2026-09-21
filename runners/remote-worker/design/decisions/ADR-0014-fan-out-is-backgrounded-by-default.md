@@ -79,6 +79,12 @@ fail at startup the way a missing anchor does.
    statement of intent a run produces that a person watching can read — which is
    also why those tools came off the deny list (ADR-0002 v2 amendment, entry 8).
 
+   *Amended 2026-09-17.* Coming off the deny list registered nothing: CLI
+   2.1.247 holds the task-list tools behind a per-model rollout gate, so every
+   run on the pinned model started without them and no plan row ever reached a
+   feed. They are now named in `BASE_ALLOWED_TOOLS`, which is what registers a
+   gated tool (`runtime/claude/tools.ts` carries the probe).
+
 6. **The skill names ROLES; the runner binds them.** The body says "the fan-out
    tool", "the wait tool", "the task list", and `lib/tool_glossary.ts` appends a
    per-runtime glossary that resolves each one for the session. The glossary is

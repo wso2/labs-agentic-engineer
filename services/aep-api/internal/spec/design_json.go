@@ -300,7 +300,7 @@ func assembleDependencies(dir string, in []dependencyJSON) ([]Dependency, error)
 			dep.Suggestions = toModelCandidates(d.Candidates)
 			dep.Config = toModelConfigKeys(d.Config)
 			if d.SpecPath != "" {
-				dep.Provenance = &DependencyProvenance{SourceURL: d.SpecPath}
+				dep.Provenance = &ResourceProvenance{SourceURL: d.SpecPath}
 			}
 		}
 		out = append(out, dep)

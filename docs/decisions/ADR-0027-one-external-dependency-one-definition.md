@@ -132,3 +132,16 @@ button that runs the flow over all of them.
   same file; the `assumed` record is echoed by the agent but only written by
   the platform.
 - `specPath` is retired. A URL was never a contract.
+
+## Amended 2026-09-17 — the definition holds a resource block and a whole document
+
+[ADR-0030](ADR-0030-a-dependency-holds-a-full-copy-of-its-resource.md). The
+definition is now `{ name, resource, provenance, suggestions }`: the `resource`
+block is the External resource in the one shape it has everywhere (a full copy
+of the organization's record when `ref` is set, or one the project defined), and
+the contract beside the file is the provider's WHOLE document — `{ type, path,
+origin, accepted }` — never a slice and never a URL. `style` is computed from the
+contract's type and no longer stored; `source` is the presence of `ref`; the
+`assumed` record moved to `contract.accepted`; `provenance` is `{ sourceUrl |
+registry, sha256, readOn }`. The directory-per-dependency rule, the name-only
+reference from components, and read-time resolution stand.

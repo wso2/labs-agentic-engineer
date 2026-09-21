@@ -69,6 +69,14 @@ export const DEFAULT_IDLE_MS = 120_000;
 // which runtime produced it.
 const AGENT_LABEL = "agent";
 
+// The kinds that OPEN a tool call, keyed by `toolUseId`. `tool_use` is the
+// ordinary one; `task_started` re-announces an SDK-backgrounded command with
+// the id the runtime minted for it; `git_commit`, `git_push` and `gh_action`
+// are the adapter's rewrites of a Bash call into the effect it had. Every
+// other kind the contract carries a `toolUseId` on — `tool_result` and
+// `task_settled` — closes a call instead.
+const CALL_KINDS = new Set(["tool_use", "task_started", "git_commit", "git_push", "gh_action"]);
+
 interface InFlight {
   tool: string;
   summary: string;
@@ -252,12 +260,20 @@ export function createRunWatchdog(opts?: RunWatchdogOptions): RunWatchdog {
           continue;
         }
         if (!e.toolUseId) continue;
-        if (e.kind === "tool_result") {
+        // The two kinds that CLOSE a call, both keyed by the call's own id. A
+        // backgrounded command settles after its `tool_result` has already
+        // come back, so `task_settled` is an outcome arriving late — never a
+        // second call going out.
+        if (e.kind === "tool_result" || e.kind === "task_settled") {
           inFlight.delete(e.toolUseId);
           continue;
         }
-        // Every other kind carrying a call id IS a call going out — including
-        // the git_commit/git_push/gh_action rewrites of a Bash command.
+        // A call going out, named explicitly rather than inferred from "every
+        // other kind carrying a call id". The contract can add kinds that carry
+        // a `toolUseId`, and the default for one this module has not been
+        // taught has to be "not a new call": an entry inserted after its own
+        // `tool_result` already deleted it is a phantom nothing can ever close.
+        if (!CALL_KINDS.has(e.kind)) continue;
         const tool = typeof e.tool === "string" ? e.tool : e.kind;
         const summary = typeof e.summary === "string" ? e.summary : "";
         const ownerLabel = e.agentId && e.agentId !== LEAD_AGENT_ID ? agentLabels.get(e.agentId) : undefined;

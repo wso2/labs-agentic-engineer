@@ -51,19 +51,15 @@ import {
   type CrewPlanItem,
   type CrewState,
   type CrewTask,
-  type LineTone,
   type RunEventView,
 } from "@aep/progress-view";
 import type { AgentTags } from "./agent-tags.js";
+import { fit, type PaneRow } from "./pinned-pane.js";
 
-/** One drawn line: its text, and the semantic weight the pane colours it by. */
-export interface BlockRow {
-  text: string;
-  tone: LineTone;
-}
+export type BlockRow = PaneRow;
 
 export interface CrewBlockOptions {
-  /** The terminal's width. Every row is truncated to fit inside it. */
+  /** The width every row is cut to — the pane's, never the raw terminal's. */
   columns: number;
   /** The most lines the block may occupy, so it cannot outgrow the screen. */
   maxRows: number;
@@ -128,12 +124,9 @@ function flat(text: string): string {
   return text.replace(/[\r\n]+/g, " ");
 }
 
-/** Cut to width, saying so — a silently cut line reads as a line that ended. */
 function trunc(raw: string, width: number): string {
   const text = flat(raw);
-  if (width <= 0) return "";
-  if (text.length <= width) return text;
-  return `${text.slice(0, Math.max(0, width - 1))}…`;
+  return fit(text, width);
 }
 
 /**
@@ -259,10 +252,7 @@ export function renderCrewBlock<E extends RunEventView>(
   now: number,
   opts: CrewBlockOptions,
 ): BlockRow[] {
-  // One column short of the terminal's width. A row that reaches the last column
-  // wraps, and a wrapped row makes the block one line taller than the pane
-  // believes it is — which is how a redraw eats the transcript above it.
-  const width = Math.max(20, opts.columns - 1);
+  const width = opts.columns;
   const rows: BlockRow[] = [ruleRow(crew, width)];
   for (const member of crew.members) {
     rows.push(memberRow(member, opts, width));

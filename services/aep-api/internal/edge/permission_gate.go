@@ -100,6 +100,7 @@ var operationPermissions = map[string][]authz.Permission{
 	"RegisterExternalResource":  {authz.PermissionResourceConfig},
 	"UpdateExternalResource":    {authz.PermissionResourceConfig},
 	"DeleteExternalResource":    {authz.PermissionResourceConfig},
+	"PromoteExternalResource":   {authz.PermissionResourceConfig},
 	// Config, not view: its only caller is the registration form's environment
 	// picker, and that form renders only for a caller who already holds
 	// ae:resource-config. Nothing reaches it with the view permission alone.

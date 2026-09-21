@@ -164,7 +164,7 @@ func TestCollectSpec_CommitsContractDefinitionAndDesignEdit(t *testing.T) {
 	}
 	// The definition records the contract file and where it came from; that
 	// is what clears the needs-contract gate on the next read.
-	for _, want := range []string{`"name": "stripe"`, `"style": "rest-api"`, `"contract": "openapi.yaml"`, `"sha256": "`} {
+	for _, want := range []string{`"name": "stripe"`, `"contract": {`, `"type": "openapi"`, `"path": "openapi.yaml"`, `"origin": "provider"`, `"sha256": "`} {
 		if !strings.Contains(defW.Content, want) {
 			t.Fatalf("dependency.json did not record %s:\n%s", want, defW.Content)
 		}
@@ -225,7 +225,7 @@ func TestCollectDependencyContract_WritesTheDirectoryWithoutAConsumer(t *testing
 			defW = &fc.writes[i]
 		}
 	}
-	if defW == nil || !strings.Contains(defW.Content, `"contract": "openapi.yaml"`) || strings.Contains(defW.Content, `"assumed"`) {
+	if defW == nil || !strings.Contains(defW.Content, `"path": "openapi.yaml"`) || strings.Contains(defW.Content, `"accepted"`) {
 		t.Fatalf("dependency.json = %+v", defW)
 	}
 	if _, err := svc.CollectDependencyContract(context.Background(), "acme", "web", "ghost", []byte(validOpenAPI), ""); !errors.Is(err, ErrDependencyNotFound) {
@@ -259,7 +259,7 @@ func TestAcceptDependencyAssumption_RecordsTheUsersPermission(t *testing.T) {
 		t.Fatalf("writes = %+v", fc.writes)
 	}
 	body := fc.writes[0].Content
-	for _, want := range []string{`"assumed": {`, `"by": "admin"`, `"at": "`, `"note": "Written by the design agent from https://stripe.com/docs"`, `"contract": "openapi.yaml"`} {
+	for _, want := range []string{`"accepted": {`, `"by": "admin"`, `"at": "`, `"note": "Written by the design agent from https://stripe.com/docs"`, `"path": "openapi.yaml"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("dependency.json missing %s:\n%s", want, body)
 		}
@@ -283,7 +283,7 @@ func TestAcceptDependencyAssumption_BeforeTheInterfaceAndWithoutAConsumer(t *tes
 	if err := svc.AcceptDependencyAssumption(context.Background(), "acme", "web", "stripe", "admin", ""); err != nil {
 		t.Fatalf("before the interface: %v", err)
 	}
-	if len(fc.writes) != 1 || !strings.Contains(fc.writes[0].Content, `"assumed": {`) {
+	if len(fc.writes) != 1 || !strings.Contains(fc.writes[0].Content, `"accepted": {`) {
 		t.Fatalf("writes = %+v", fc.writes)
 	}
 	// No consumer: an assumed interface on disk is accepted, a real one refused.
@@ -336,7 +336,7 @@ func TestCollectDependencyContract_DocumentNamesTheServiceAndRefusesGraphQL(t *t
 	t.Parallel()
 	files := designFilesWithDeps(`[{"kind":"external","name":"mail"},{"kind":"external","name":"shop"}]`)
 	files["dependencies/mail/dependency.json"] = `{"name":"mail","suggestions":[{"name":"sendgrid","style":"rest-api"},{"name":"postmark","style":"rest-api"}]}`
-	files["dependencies/shop/dependency.json"] = `{"name":"shop","provider":"Shopify","style":"graphql"}`
+	files["dependencies/shop/dependency.json"] = `{"name":"shop","resource":{"name":"shop","provider":"Shopify","contract":{"type":"graphql","path":"schema.graphql"}}}`
 	svc := newService(readsFor(t, files))
 	fc := &fakeCommitter{}
 	svc.fileCommitter = fc

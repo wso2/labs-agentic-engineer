@@ -335,6 +335,23 @@ export function isDeployable(
 }
 
 /**
+ * Is there a DEPLOYMENT of this version to go and look at? The deploy
+ * aggregate names it and reports a rollout — live or converging. A merge
+ * alone is not one (`isDeployable`): the board would show nothing for the
+ * version yet, and a failed rollout is a fact the build page states itself.
+ * This is the gate on the build page's primary way forward (ADR-0032).
+ */
+export function hasDeployment(
+  build: BuildSummary,
+  deploy?: DeployStage | undefined,
+): boolean {
+  return (
+    deploy?.version === build.tag &&
+    (deploy.status === "deployed" || deploy.status === "deploying")
+  );
+}
+
+/**
  * "18m 04s" — the precise span the ledger and the summary card show.
  *
  * Deliberately finer than `runDuration`'s "18 min": on this surface the number

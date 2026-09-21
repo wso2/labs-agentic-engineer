@@ -56,6 +56,20 @@ type DeployObserver interface {
 	OnComponentDeployed(ctx context.Context, orgID, projectID, component string) error
 }
 
+// AgentDeathNotifier is told that a dispatched cycle's agent ended without a
+// pull request. The run supervisor satisfies it, so the watcher can wake a run
+// without holding a workflow engine — the same split, and for the same reason,
+// as eventcore.RunSignaler.
+//
+// It takes primitives rather than the run row because the watcher has a CYCLE in
+// hand: resolving (org, run) to the row that carries the milestone number and
+// the run's KIND — the workflow id's prefix, and a different vocabulary from a
+// cycle's kind — is the composition root's job. Best-effort; nil → the run
+// settles on its landing deadline as before.
+type AgentDeathNotifier interface {
+	AgentDied(ctx context.Context, orgID, runID, reason string) error
+}
+
 // SecretRef is one org credential's refs-only SM-API triplet.
 type SecretRef struct {
 	SecretRefName string

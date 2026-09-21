@@ -787,7 +787,7 @@ describe("SecurityPanel — role cards", () => {
     expect(screen.getByText("Platform-supplied")).toBeInTheDocument();
   });
 
-  it("says a self-service role is self-service instead of naming a group", () => {
+  it("says a self-service role is self-service instead of naming a group, and still names its login", () => {
     setup({
       securityJson: design({
         roles: [{ ...role("Shopper"), enrolment: "self-service" }],
@@ -796,13 +796,17 @@ describe("SecurityPanel — role cards", () => {
 
     expect(
       screen.getByText(
-        "Self-service — the application assigns it when an account is created.",
+        "Self-service — real accounts take it at registration; its test login is bound straight to the role.",
       ),
     ).toBeInTheDocument();
     // Its enrolment is the application's, so it puts no group on the page at
     // all — no Held by chip and no Groups row to chip.
     expect(screen.queryByText("Held by")).not.toBeInTheDocument();
     expect(screen.queryByTestId("group-row")).not.toBeInTheDocument();
+    // It DOES get a login, which is the whole point: no group to join is not
+    // the same as nothing to sign in as.
+    expect(screen.getByText("test-shopper")).toBeInTheDocument();
+    expect(screen.getByText("Platform-supplied")).toBeInTheDocument();
   });
 
   it("no longer repeats the grants the matrix already draws", () => {

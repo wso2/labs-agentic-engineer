@@ -20,10 +20,17 @@ import type { components } from "../../generated/aep-api";
 
 type ExternalResourceDTO = components["schemas"]["ExternalResourceDTO"];
 
-// Registered External resources carry org value-plane cells (one per config
-// key × environment). Project External resources omit the field or leave it
-// empty. The catalog grid does not tag that split — only platform types get
-// a Chip — but the drawer (Task 6) and tests use this discriminator.
+// A Registered External resource says so itself: `scope` is "org" on a registry
+// record and "project" on a type a project's build authored. That is the
+// discriminator — the drawer, the Edit affordance and the Deployments board all
+// ask this one question.
+//
+// The org value-plane cells (one per config key × environment) are the older
+// way of telling the two apart, kept as a FALLBACK for a response that predates
+// `scope`: a record with cells is a registry record. It is not a second rule —
+// once `scope` is present it is the whole answer, so a registry record with no
+// environments configured yet still reads as registered.
 export function isRegisteredExternal(resource: ExternalResourceDTO): boolean {
+  if (resource.scope) return resource.scope === "org";
   return Array.isArray(resource.envCells) && resource.envCells.length > 0;
 }

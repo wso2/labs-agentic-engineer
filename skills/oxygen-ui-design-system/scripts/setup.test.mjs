@@ -118,7 +118,15 @@ test("a scaffold gets React pinned exactly, Oxygen added, and one npm install", 
   assert.equal(pkg.dependencies["react-dom"], "19.2.3");
   assert.equal(pkg.dependencies["@wso2/oxygen-ui"], "^0.13.1");
   assert.equal(pkg.dependencies["@wso2/oxygen-ui-icons-react"], "^0.13.1");
-  assert.equal(pkg.dependencies["react-router"], "^7.18.3", "not 8.3.1, whose React peer the pinned React fails");
+  // react-router-dom, NOT react-router: it is the DOM entry the generated app
+  // imports (thunder-authentication's gates.tsx / App.example.tsx), and it
+  // brings react-router with it. Installing only react-router left an app
+  // importing a package npm had never installed (measured 2026-09-17).
+  assert.equal(pkg.dependencies["react-router-dom"], "^7.18.3", "not 8.3.1, whose React peer the pinned React fails");
+  assert.equal(pkg.dependencies["react-router"], undefined, "react-router-dom carries it; a second pin can drift");
+  // react-dom/client has no types of its own — without these, tsc fails TS7016.
+  assert.equal(pkg.devDependencies["@types/react"], "^19");
+  assert.equal(pkg.devDependencies["@types/react-dom"], "^19");
   assert.equal(pkg.dependencies["openapi-fetch"], "^0.14.0", "the scaffold's own dependencies stay");
   assert.equal(pkg.devDependencies.vite, "^6.0.0");
   assert.equal(pkg.scripts.build, "tsc --noEmit && vite build");
@@ -146,7 +154,7 @@ test("the router is the newest release whose React peer range the pinned React s
     const f = fixture();
     writeFileSync(path.join(f.data, "router.json"), routerJson);
     const { status, out, pkg } = run(f, ["--no-install"]);
-    return { status, out, router: pkg?.dependencies?.["react-router"] };
+    return { status, out, router: pkg?.dependencies?.["react-router-dom"] };
   };
   // `||` alternatives, a caret, and a bare major all read correctly.
   assert.equal(pick(releases([["7.5.0", "^18.0.0 || ^19.0.0"], ["7.9.0", "^18.0.0 || >=19.2.7"]])).router, "^7.5.0");
@@ -174,7 +182,7 @@ test("npm 12's array-wrapped results resolve the same versions as npm 10's", () 
   assert.equal(pkg.dependencies.react, "19.2.3");
   assert.equal(pkg.dependencies["@wso2/oxygen-ui"], "^0.13.1");
   assert.equal(pkg.dependencies["@wso2/oxygen-ui-icons-react"], "^0.13.1");
-  assert.equal(pkg.dependencies["react-router"], "^7.18.3");
+  assert.equal(pkg.dependencies["react-router-dom"], "^7.18.3");
 });
 
 // The registry can echo a dist-tag or a malformed entry into a version list;
@@ -191,7 +199,7 @@ test("a router release whose version is not x.y.z is skipped", () => {
   );
   const { status, out, pkg } = run(f, ["--no-install"]);
   assert.equal(status, 0, out);
-  assert.equal(pkg.dependencies["react-router"], "^7.18.3");
+  assert.equal(pkg.dependencies["react-router-dom"], "^7.18.3");
 });
 
 test("react-dom follows its own exact peer when Oxygen pins one, and React's version otherwise", () => {

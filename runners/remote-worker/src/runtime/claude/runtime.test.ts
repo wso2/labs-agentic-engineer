@@ -37,7 +37,12 @@ import { DENIED_CAPABILITIES, type DeniedCapability } from "../port.js";
 // It is `Agent`, not `Task`: SDK 0.3.220 declares AgentInput and no TaskInput,
 // so the old name named nothing — and because bypassPermissions ignores this
 // list entirely, that mismatch could not fail loudly. Hence the pin.
-const BASE_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch", "Agent"];
+// The task-list four are here because the CLI gates them per model and
+// registers them only when asked for by name (tools.ts, above BASE_ALLOWED_TOOLS).
+const BASE_TOOLS = [
+  "Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch", "Agent",
+  "TaskCreate", "TaskUpdate", "TaskGet", "TaskList",
+];
 // The bare names the platform's MCP server exposes, as `lib/runner.ts` states
 // them on the policy. Namespacing them is this adapter's convention, which is
 // the whole reason the port passes them bare.
@@ -99,6 +104,18 @@ test("buildMcpOptions: omits mcpServers and MCP tools when both are undefined", 
 
   assert.equal(result.mcpServers, undefined);
   assert.deepEqual(result.allowedTools, BASE_TOOLS);
+});
+
+// The task-list tools are gated per model inside the CLI and register only when
+// named in the allowlist — a session that merely does not deny them starts
+// without them (three real runs, 2026-09-17), while the glossary tells the lead
+// they are there. This is the pin against "documentation only" drift: every name
+// the glossary promises for the task list is asked for.
+test("buildMcpOptions: the task-list tools the glossary promises are asked for by name", () => {
+  const result = buildMcpOptions(undefined, undefined);
+  for (const tool of ["TaskCreate", "TaskUpdate", "TaskGet", "TaskList"]) {
+    assert.ok(result.allowedTools.includes(tool), `${tool} must be in the allowlist — the CLI registers it only when asked`);
+  }
 });
 
 test("buildMcpOptions: allowedTools includes both WebSearch and WebFetch (D9)", () => {

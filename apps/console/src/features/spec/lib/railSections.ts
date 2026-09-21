@@ -127,7 +127,6 @@ const SECTION_FOR_FLOW: Record<string, RailSection["id"]> = {
   amend: "requirements",
   feature: "requirements",
   actor: "requirements",
-  expand: "requirements",
   design: "design",
 };
 

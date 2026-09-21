@@ -72,7 +72,7 @@ function enrolmentLine(role: Role): string | null {
     return "Held by a service, not by a person.";
   }
   if (role.enrolment === "self-service") {
-    return "Self-service — the application assigns it when an account is created.";
+    return "Self-service — real accounts take it at registration; its test login is bound straight to the role.";
   }
   if ((role.assignTo ?? []).length > 0) return null;
   return "Assigned by an administrator.";

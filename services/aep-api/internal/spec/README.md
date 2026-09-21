@@ -53,21 +53,32 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
 - git spec content (`prd.md`, `specs/design/**`), the annotated version tag (the version store),
   the org-skills repo, `AgentTurn` (turn lifecycle) + the resumable-turn SSE broker (in-memory seam).
 - **One external dependency, one definition** (ADR-0027). An external dependency lives in
-  `specs/design/dependencies/<name>/` — `dependency.json` (provider, style, config keys, open
-  suggestions, provenance, the user's `assumed` record) beside the committed contract it points at
-  (an OpenAPI/GraphQL slice, an `sdk.json` manifest). A component's `design.json` references it by
-  name only; `AssembleDesign` hydrates every reference from the directory (`dependency_json.go`), so
-  downstream readers keep the flat `Dependency`, and `SplitDesign` writes both halves back. A design
-  from before the directory existed is lifted into one at its next save (the legacy fields on the
-  component are decoded, never re-encoded). `ComputeDependencyStatus` reads the state off the
-  hydrated edge — org/registry → resolved+registered; no provider (the user has not chosen a
-  service; `suggestions` may be open) → needs-input; a style with no contract or manifest on disk
-  → needs-contract; an agent-written
-  contract (`x-aep-assumed: true` in the file) with no acceptance → needs-acceptance; else resolved,
-  flagged assumed / derived (`x-aep-derived: true` — written from the provider's own reference) /
-  sdk-only — and the build gate blocks on nothing else. The write-gates (zod in
-  `@aep/agent-stream`, `agentfold/dependencygate.go`, `designspec` at save) validate the file; the
-  `assumed` record is the one field only the platform writes (`designdeps`).
+  `specs/design/dependencies/<name>/` — `dependency.json` holds a full `resource` block in the one
+  shape a resource has everywhere (name, description, provider, config keys, `contract {type, path,
+  origin, accepted}`, the organization's consumption instructions when it is a copy — `ref` set),
+  plus this project's `provenance` and open `suggestions` — beside the contract DOCUMENT it points at
+  (a whole OpenAPI/GraphQL document or an `sdk.json` manifest; never a slice, never a URL). Style is
+  computed from the contract type, not stored. A component's `design.json` references the dependency
+  by name only; `AssembleDesign` hydrates every reference from the directory (`dependency_json.go`),
+  so downstream readers keep the flat `Dependency`, and `SplitDesign` writes both halves back. A file
+  in the previous flat shape, or a design from before the directory existed, is lifted into the nested
+  shape in memory and rewritten at its next save. `ComputeDependencyStatus` reads the state off the
+  hydrated edge plus ONE registry lookup for a copy — `ref` set and the org has a REGISTERED resource
+  of that name → the copy stands; `ref` set and none → needs-input; no provider → needs-input; no
+  contract file on disk → needs-contract; an assumed contract with no acceptance → needs-acceptance;
+  else resolved, flagged registered / assumed / derived / sdk-only / stale (the copy's document hash
+  no longer matches the registry's) — and the build gate blocks on nothing else. The write-gates
+  (zod in `@aep/agent-stream`, `agentfold/dependencygate.go`, `designspec` at save) validate the
+  file; `consumptionInstructions` and `contract.accepted` are the fields only the platform writes
+  (the registry copy, `designdeps`). **The platform copies at the design write** (`registry_copy.go`,
+  inside `FilesService.Apply`): a stub `{ name, resource: { ref, name } }` is completed from the org
+  record — block, document, provenance — and a `contract` of origin `provider` with a
+  `provenance.sourceUrl` and no hash has its document fetched (https, 5 MiB) and landed beside it.
+  Both read the registry / the URL BEFORE `Workspace.Mutate` and never fail the apply: a miss lands the
+  stub with a warning and the dependency reads needs-input / needs-contract. **Promote reuses the
+  same renderer** (`promote.go`): `ReadProjectResource` hands the project's own block and document to
+  the registry side, and `RewriteAsRegistryCopy` lands `renderRegistryCopy` of a stub over the
+  existing files under their CAS tokens — so a promoted dependency and a reused one are the same bytes.
 - **The Skill library.** One flat authored library at repo-root `skills/`, COPY'd into the image and read
   at runtime from `config.SkillsDir` (default `/app/skills`) — not go:embed'd. A skill dir is `SKILL.md`
   plus the [Agent Skills standard structure](https://agentskills.io/specification) — `scripts/`,

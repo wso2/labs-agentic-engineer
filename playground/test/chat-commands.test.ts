@@ -48,9 +48,18 @@ test("control words win first", () => {
 
 test("phase-runners map to their phase, before the skill loader", () => {
   assert.deepEqual(classifyChatInput("/task"), { kind: "phase", name: "task" });
+  assert.deepEqual(classifyChatInput("/wire"), { kind: "phase", name: "wire" });
   assert.deepEqual(classifyChatInput("/validate"), { kind: "phase", name: "validate" });
   assert.deepEqual(classifyChatInput("/undo"), { kind: "phase", name: "undo" });
   assert.deepEqual(classifyChatInput("/code"), { kind: "phase", name: "code" });
+});
+
+test("/wire takes an optional role", () => {
+  assert.deepEqual(classifyChatInput("/wire HRCoordinator"), {
+    kind: "phase",
+    name: "wire",
+    arg: "HRCoordinator",
+  });
 });
 
 test("/code takes an optional issue argument", () => {

@@ -29,7 +29,7 @@ import { client } from "../../../api/client";
 import { useConfig } from "../../settings/api/queries";
 import { firstEndpointUrl } from "../lib/deploymentUrl";
 import { deploymentsAreMoving } from "../lib/deploymentRows";
-import { projectKeys } from "./keys";
+import { projectKeys, environmentKeys } from "./keys";
 import { ApiRequestError, apiErrorMessage } from "../../../api/errors";
 
 type CreateProjectRequest = components["schemas"]["CreateProjectRequest"];
@@ -552,4 +552,24 @@ export function useGithubOrg() {
   return {
     data: data?.gitProvider?.githubLogin ?? data?.gitProvider?.identityLogin ?? null,
   };
+}
+
+// The org's environments, in the platform pipeline's promotion order. Every
+// surface that draws a flow reads this list as-is — the order IS the
+// promotion order, so this hook must never sort, filter or otherwise
+// transform it. Changes only when a platform admin edits the pipeline, not
+// during a user's session, hence the long staleTime. Null body is a valid
+// empty list, same as useWorkloadDependencies above.
+export function useEnvironments() {
+  return useQuery({
+    queryKey: environmentKeys.all,
+    queryFn: async () => {
+      const { data, error } = await client.GET("/dependencies/environments");
+      if (error) {
+        throw new Error(apiErrorMessage(error, "Failed to load environments"));
+      }
+      return data ?? [];
+    },
+    staleTime: 5 * 60 * 1000,
+  });
 }

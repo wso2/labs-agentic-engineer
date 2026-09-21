@@ -24,7 +24,7 @@
  * Three kinds of rule live here, in the order they are checked:
  *
  *  1. **Within the document.** A grant names a catalog handle; a test user
- *     names a declared, admin-enrolment user role; a role name is not a group
+ *     names a declared user role; a role name is not a group
  *     name. These need nothing but the parsed document, so they run on every
  *     write of security.json.
  *  2. **Against a sibling the bundle may hold.** A permission's component is a
@@ -358,7 +358,7 @@ export function securityReferenceFindings(
         found.add("error", "test_user_unknown_role", { username: user.username, role: roleName });
         continue;
       }
-      if (kindOf(role) !== "user" || enrolmentOf(role) !== "admin") {
+      if (kindOf(role) !== "user") {
         found.add("error", "test_user_role_not_user_kind", {
           username: user.username,
           role: roleName,

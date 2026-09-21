@@ -167,6 +167,28 @@ const (
 	// Dependency.Source / DependencyDefinition.Source values.
 	DependencySourceProject = "project"
 	DependencySourceOrg     = "org"
+
+	// DependencyFlagStale marks a copied resource whose contract document no
+	// longer matches the registry's (the hashes differ). A flag, not a
+	// status: the build proceeds on the project's copy; the definition offers
+	// a refresh.
+	DependencyFlagStale = "stale"
+
+	// Contract types a PROJECT contract may have (StyleForContractType maps
+	// each to a consumption style). The registry additionally admits
+	// asyncapi, protobuf and documentation for a whole reference.
+	DependencyContractTypeOpenAPI  = "openapi"
+	DependencyContractTypeGraphQL  = "graphql"
+	DependencyContractTypeSDK      = "sdk"
+	DependencyContractTypeAsyncAPI = "asyncapi"
+	DependencyContractTypeProtobuf = "protobuf"
+	DependencyContractTypeDocs     = "documentation"
+
+	// Where a project's contract file came from (ResourceContract.Origin).
+	DependencyContractOriginRegistry = "registry"
+	DependencyContractOriginProvider = "provider"
+	DependencyContractOriginDerived  = "derived"
+	DependencyContractOriginAssumed  = "assumed"
 )
 
 // DependencyStyle is the closed set of external dependency shapes (mirrors the
@@ -209,10 +231,19 @@ type ConfigKey = contracts.ConfigKey
 // the contracts leaf.
 type DependencyDefinition = contracts.DependencyDefinition
 
-// DependencyProvenance / DependencyAssumption / SdkManifest: wire shapes in the
+// ResourceDefinition is an External resource in the one shape it has at both
+// levels — the org registry record and a dependency's `resource` block (see
+// dependency_json.go). Wire shape in the contracts leaf.
+type ResourceDefinition = contracts.ResourceDefinition
+
+// ResourceContract is the contract as held at one level: `{ type, path }` plus,
+// on a project copy, its origin and acceptance. Wire shape in the contracts leaf.
+type ResourceContract = contracts.ResourceContract
+
+// ResourceProvenance / DependencyAssumption / SdkManifest: wire shapes in the
 // contracts leaf, re-exported for the codec and the hydration.
 type (
-	DependencyProvenance = contracts.DependencyProvenance
+	ResourceProvenance   = contracts.ResourceProvenance
 	DependencyAssumption = contracts.DependencyAssumption
 	SdkManifest          = contracts.SdkManifest
 )

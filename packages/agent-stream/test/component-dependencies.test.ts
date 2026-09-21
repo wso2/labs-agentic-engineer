@@ -102,12 +102,12 @@ test("an external dependency the cell draws but no dependency.json defines is re
   const p = checkComponentDependencies(API, design([{ kind: "external", name: "slack" }]), b);
   assert.equal(p?.code, "UNKNOWN_DEPENDENCY");
   assert.match(p!.message, /`slack` → specs\/design\/dependencies\/slack\/dependency\.json/);
-  assert.match(p!.message, /"source": "org"/);
+  assert.match(p!.message, /"resource": \{ "ref"/);
 });
 
 test("an external dependency with its dependency.json on disk passes", () => {
   const b = bundle(CELL_WITH_SLACK);
-  assert.equal(b.addFile(SLACK_DEP, JSON.stringify({ name: "slack", source: "org" })).ok, true);
+  assert.equal(b.addFile(SLACK_DEP, JSON.stringify({ name: "slack", resource: { ref: "slack", name: "slack" } })).ok, true);
   assert.equal(checkComponentDependencies(API, design([{ kind: "external", name: "slack" }]), b), null);
 });
 

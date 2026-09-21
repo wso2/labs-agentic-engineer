@@ -46,6 +46,8 @@ export interface ProjectState {
   lastFoldedHash?: string;
   /** The user confirmed coding runs may write this directory (§12 first-run confirm). */
   codingConfirmed?: boolean;
+  /** The user confirmed `wire` may build and run this project's images locally. */
+  wireConfirmed?: boolean;
 }
 
 export function stateDir(projectDir: string): string {
@@ -71,6 +73,7 @@ export function loadProjectState(projectDir: string, slug: string): ProjectState
       nextIssueNumber: raw.nextIssueNumber ?? 1,
       ...(raw.lastFoldedHash ? { lastFoldedHash: raw.lastFoldedHash } : {}),
       ...(raw.codingConfirmed ? { codingConfirmed: true } : {}),
+      ...(raw.wireConfirmed ? { wireConfirmed: true } : {}),
     };
   }
   return { slug, conversationUuid: randomUUID(), nextIssueNumber: 1 };

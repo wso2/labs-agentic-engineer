@@ -24,6 +24,7 @@ import {
   claimSendInFlight,
   claimStreamFold,
   clearFailedSends,
+  flushRoomBeforeDispatch,
   hasStreamFold,
   requestChatOpen,
   setTurnStatus,
@@ -107,6 +108,10 @@ export function useAnchoredTurn(
       // truth, and this row is not in it yet: the user's own message would
       // vanish inside the second it takes to answer.
       const release = claimSendInFlight(chatKey);
+      // Same reason as the panel's send: the base ref must be the text the
+      // agent will read, and an aimed turn is dispatched straight from the
+      // document the user is editing.
+      await flushRoomBeforeDispatch(chatKey);
       try {
         const turnId = await startCollabTurn(
           projectName,

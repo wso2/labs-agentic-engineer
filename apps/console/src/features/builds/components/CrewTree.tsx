@@ -26,20 +26,25 @@ import {
   type CrewState,
 } from "@aep/progress-view";
 import { toneColor } from "../../../components/logTone";
-import { PlanRow } from "./AgentPlan";
 import type { StampedRunEvent } from "../hooks/useRunProgress";
 
 // The tree holds AGENTS and nothing else: a name, a state, what the runtime says
-// it is doing, and how long it has been going. It deliberately does NOT list an
-// agent's commands.
+// it is doing, and how long it has been going. It deliberately lists neither an
+// agent's commands nor its plan.
 //
-// It used to. Every backgrounded shell command got a row of its own, and a live
-// run produced 47 of them — so the column that answers "who is working" was
-// mostly raw command lines, and the answer was buried in its own evidence. The
-// commands did not go anywhere: the inspector beside this holds each agent's
-// whole feed, which is where a reader goes once they have picked the agent this
-// column is for. `CrewMember.tasks` is still computed and still true; nothing
-// here renders it.
+// It used to list both, and each was removed for the same reason. Every
+// backgrounded shell command got a row of its own, and a live run produced 47 of
+// them — so the column that answers "who is working" was mostly raw command
+// lines, and the answer was buried in its own evidence. An agent's task list
+// then did it again from the other side: a lead writes one entry per component
+// and holds every one of them `in progress` for most of the run, so the rows
+// directly under the busiest agent were the rows that changed least, and a
+// reader scanning for a stall scanned past them every time.
+//
+// Neither went anywhere. The inspector beside this holds each agent's whole feed
+// AND its plan under a heading, which is where a reader goes once they have
+// picked the agent this column is for. `CrewMember.tasks` and `CrewMember.plan`
+// are both still computed and still true; nothing here renders either.
 
 // WHO IS DOING WHAT RIGHT NOW. One row per agent, nested as the runtime declared
 // the tree, each row carrying its own liveness rather than deferring it to a
@@ -95,54 +100,94 @@ function CrewRow({
   const state = crewStateLabel(member.state);
   const captionLeads = member.caption.startsWith(state);
   return (
-    <>
-      <ListItemButton
-        dense
-        disableGutters
-        selected={selected}
-        onClick={() => {
-          onSelect(member.id);
-        }}
-        // The accessible name is the whole row's meaning, in the order it is
-        // drawn: a reader who cannot see the tree still hears which agent, how
-        // it stands, and what it says it is doing.
-        aria-label={`${member.agent.label}: ${crewStateLabel(member.state)}${member.caption ? `. ${member.caption}` : ""}`}
-        sx={{
-          display: "block",
-          // Indented by the depth the runtime DECLARED, so a depth-2 agent sits
-          // under the agent that spawned it however late it joined the feed.
-          pl: 1 + member.depth * 2,
-          pr: 1,
-          py: 0.5,
-          borderRadius: 1,
-        }}
-      >
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-          <StateDot state={member.state} />
+    <ListItemButton
+      dense
+      disableGutters
+      selected={selected}
+      onClick={() => {
+        onSelect(member.id);
+      }}
+      // The accessible name is the whole row's meaning, in the order it is
+      // drawn: a reader who cannot see the tree still hears which agent, how
+      // it stands, and what it says it is doing.
+      aria-label={`${member.agent.label}: ${crewStateLabel(member.state)}${member.caption ? `. ${member.caption}` : ""}`}
+      sx={{
+        display: "block",
+        // Indented by the depth the runtime DECLARED, so a depth-2 agent sits
+        // under the agent that spawned it however late it joined the feed.
+        pl: 1 + member.depth * 2,
+        pr: 1,
+        py: 0.5,
+        borderRadius: 1,
+      }}
+    >
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+        <StateDot state={member.state} />
+        <Typography
+          component="span"
+          title={member.agent.label}
+          sx={{
+            font: "inherit",
+            color: "grey.200",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            minWidth: 0,
+          }}
+        >
+          {member.agent.label}
+        </Typography>
+        {/* Printed only when the runtime said TRUE, which is the ordinary case
+            for a builder: fan-out is backgrounded by default and the skill is
+            what decides its shape (ADR-0011). `false` means the parent is
+            blocked inside this agent's call, and the row says so in words
+            instead — so only the true case needs a chip. */}
+        {member.background && (
+          <Typography component="span" sx={{ font: "inherit", color: "grey.500", flexShrink: 0 }}>
+            background
+          </Typography>
+        )}
+        <Typography
+          component="span"
+          sx={{
+            font: "inherit",
+            color: "grey.500",
+            ml: "auto",
+            flexShrink: 0,
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {member.elapsedMs === undefined ? "" : formatDuration(member.elapsedMs)}
+        </Typography>
+      </Box>
+      <Box sx={{ display: "flex", alignItems: "baseline", gap: 1, pl: 2 }}>
+        {!captionLeads && (
+          <Typography component="span" sx={{ font: "inherit", color: tone, flexShrink: 0 }}>
+            {state}
+          </Typography>
+        )}
+        {member.caption && (
           <Typography
             component="span"
-            title={member.agent.label}
+            title={member.caption}
             sx={{
               font: "inherit",
-              color: "grey.200",
+              color: captionLeads ? tone : "grey.400",
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
               minWidth: 0,
             }}
           >
-            {member.agent.label}
+            {captionLeads ? member.caption : `· ${member.caption}`}
           </Typography>
-          {/* Printed only when the runtime said TRUE, which is the ordinary case
-              for a builder: fan-out is backgrounded by default and the skill is
-              what decides its shape (ADR-0011). `false` means the parent is
-              blocked inside this agent's call, and the row says so in words
-              instead — so only the true case needs a chip. */}
-          {member.background && (
-            <Typography component="span" sx={{ font: "inherit", color: "grey.500", flexShrink: 0 }}>
-              background
-            </Typography>
-          )}
+        )}
+        {/* The age, and the reason this surface owns a clock: it has to tick
+            while NOTHING arrives. A frozen "3s ago" on a wedged run is the
+            precise lie this view exists to stop telling. Shown only while the
+            agent is live — on a settled one it would count how long ago the
+            build was, which the page header already says. */}
+        {live && member.silentForMs !== undefined && (
           <Typography
             component="span"
             sx={{
@@ -153,61 +198,11 @@ function CrewRow({
               fontVariantNumeric: "tabular-nums",
             }}
           >
-            {member.elapsedMs === undefined ? "" : formatDuration(member.elapsedMs)}
+            {formatDuration(member.silentForMs)} ago
           </Typography>
-        </Box>
-        <Box sx={{ display: "flex", alignItems: "baseline", gap: 1, pl: 2 }}>
-          {!captionLeads && (
-            <Typography component="span" sx={{ font: "inherit", color: tone, flexShrink: 0 }}>
-              {state}
-            </Typography>
-          )}
-          {member.caption && (
-            <Typography
-              component="span"
-              title={member.caption}
-              sx={{
-                font: "inherit",
-                color: captionLeads ? tone : "grey.400",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                minWidth: 0,
-              }}
-            >
-              {captionLeads ? member.caption : `· ${member.caption}`}
-            </Typography>
-          )}
-          {/* The age, and the reason this surface owns a clock: it has to tick
-              while NOTHING arrives. A frozen "3s ago" on a wedged run is the
-              precise lie this view exists to stop telling. Shown only while the
-              agent is live — on a settled one it would count how long ago the
-              build was, which the page header already says. */}
-          {live && member.silentForMs !== undefined && (
-            <Typography
-              component="span"
-              sx={{
-                font: "inherit",
-                color: "grey.500",
-                ml: "auto",
-                flexShrink: 0,
-                fontVariantNumeric: "tabular-nums",
-              }}
-            >
-              {formatDuration(member.silentForMs)} ago
-            </Typography>
-          )}
-        </Box>
-      </ListItemButton>
-      {/* The agent's own plan, under the agent whose plan it is — including the
-          entries a LEAD wrote and handed to this one, since "what was this one
-          sent to do" is the question a reader has about its row. Shown on a
-          settled agent too: the list is what it set out to do and whether it got
-          there, which only becomes a record once the run is over. */}
-      {member.plan.map((item) => (
-        <PlanRow key={item.id} item={item} depth={member.depth} />
-      ))}
-    </>
+        )}
+      </Box>
+  </ListItemButton>
   );
 }
 

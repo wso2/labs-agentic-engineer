@@ -23,6 +23,7 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/dependencies"
+	"github.com/wso2/aep/aep-api/internal/platform/ocname"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
@@ -34,8 +35,18 @@ import (
 // production; tests inject a fake). Secret cell values are never copied
 // onto the wire DTO.
 type ExternalResourceView struct {
-	Name                    string
-	Description             string
+	Name        string
+	Description string
+	// Provider, Contract, Provenance and Scope are the record fields the
+	// type carries (see openchoreo.ExternalResourceDefinition). Scope is
+	// "org" on a record and "project" on a project's own resource, which
+	// List appends after the records.
+	Provider   string
+	Contract   *openchoreo.ResourceContractPointer
+	Provenance *openchoreo.ResourceRecordProvenance
+	Scope      string
+	// Project is the project that holds a scope-project row; "" on a record.
+	Project                 string
 	Config                  []spec.ConfigKey
 	Consumers               []dependencies.ExternalResourceConsumer
 	ConsumptionInstructions string
@@ -96,18 +107,22 @@ func (s *Service) ListExternalResources(ctx context.Context, orgID string) ([]Ex
 	if err != nil {
 		return nil, fmt.Errorf("provisioning: list external resources: %w", err)
 	}
-	consumersByName, err := s.externalConsumersByName(ctx, orgID)
+	sweep, err := s.sweepProjectExternals(ctx, orgID)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]ExternalResourceView, 0, len(defs))
+	out := make([]ExternalResourceView, 0, len(defs)+len(sweep.projectRows))
 	for i := range defs {
 		def := &defs[i]
 		view := ExternalResourceView{
 			Name:                    def.Name,
 			Description:             def.Description,
+			Provider:                def.Provider,
+			Contract:                def.Contract,
+			Provenance:              def.Provenance,
+			Scope:                   viewScope(*def),
 			Config:                  toConfigKeys(def.Config),
-			Consumers:               consumersByName[strings.ToLower(def.Name)],
+			Consumers:               sweep.consumersByName[strings.ToLower(def.Name)],
 			ConsumptionInstructions: def.ConsumptionInstructions,
 			ResourceDocs:            def.ResourceDocs,
 		}
@@ -117,15 +132,67 @@ func (s *Service) ListExternalResources(ctx context.Context, orgID string) ([]Ex
 		view.EnvCells = s.registeredEnvCells(ctx, orgID, def.Name)
 		out = append(out, view)
 	}
+	// A project's own resources follow the organization's records so the
+	// Resources page can offer Promote on them. They are listed from the
+	// designs, not the RT catalog: a resource is a project's from the moment
+	// its design names one, built or not.
+	envInfos, err := s.ListOrgEnvironments(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	envNames := environmentNames(envInfos)
+	for i := range sweep.projectRows {
+		row := sweep.projectRows[i]
+		row.EnvCells = s.projectRowCells(ctx, orgID, row.Project, row.Name, row.Config, envNames)
+		out = append(out, row)
+	}
 	return out, nil
 }
 
+// projectRowCells reports, per key × environment, whether the project's own
+// binding holds a value — what Promote can carry over. Values are never
+// copied onto the row; only the status is.
+func (s *Service) projectRowCells(ctx context.Context, orgID, projectID, name string, keys []spec.ConfigKey, envNames []string) []EnvCell {
+	if s.bindings == nil || len(keys) == 0 {
+		return nil
+	}
+	cells := make([]EnvCell, 0, len(keys)*len(envNames))
+	for _, env := range envNames {
+		binding, err := s.bindings.GetBinding(ctx, orgID, ocname.ExternalResourceBindingName(projectID, name, env))
+		if err != nil {
+			binding = nil
+		}
+		_, missing, verr := externalValueState(binding, keys)
+		unset := make(map[string]bool, len(missing))
+		for _, k := range missing {
+			unset[k] = true
+		}
+		for _, k := range keys {
+			status := "configured"
+			if verr != nil || unset[k.Key] {
+				status = "unset"
+			}
+			cells = append(cells, EnvCell{Environment: env, Key: k.Key, Status: status})
+		}
+	}
+	return cells
+}
+
 // isRegisteredExternalDef reports whether an RT-backed catalog row is a
-// Registered External (org value plane) rather than a Project External.
-// Register always writes consumption instructions; project provision
-// authors the RT with them empty (see ExternalResourceProvisioner).
+// Registered External (org value plane) rather than a Project External: the
+// scope marker decides, with consumption instructions as the fallback for a
+// type from before the marker existed (ADR-0021).
 func isRegisteredExternalDef(def openchoreo.ExternalResourceDefinition) bool {
-	return strings.TrimSpace(def.ConsumptionInstructions) != ""
+	return def.Registered()
+}
+
+// viewScope is the wire scope of a catalog row: the marker when present,
+// else what Registered() concludes.
+func viewScope(def openchoreo.ExternalResourceDefinition) string {
+	if def.Registered() {
+		return openchoreo.ExternalResourceScopeOrg
+	}
+	return openchoreo.ExternalResourceScopeProject
 }
 
 // HasOrgEnvCells reports whether `name` is a Registered External in this org
@@ -190,8 +257,8 @@ func (s *Service) registeredEnvCells(ctx context.Context, orgID, name string) []
 // be derived from the request JWT.
 func (s *Service) synthesizeRegisteredEnvCells(ctx context.Context, orgID string, def openchoreo.ExternalResourceDefinition) []EnvCell {
 	envs := []string{defaultEnv()}
-	if names, err := s.ListOrgEnvironments(ctx, orgID); err == nil && len(names) > 0 {
-		envs = names
+	if infos, err := s.ListOrgEnvironments(ctx, orgID); err == nil && len(infos) > 0 {
+		envs = environmentNames(infos)
 	}
 	keys := toConfigKeys(def.Config)
 	if len(keys) == 0 {
@@ -311,42 +378,76 @@ func (s *Service) DeleteExternalResource(ctx context.Context, orgID, name string
 // `external` dependency of the given name. Best-effort per project (a design read
 // error skips that project). Returns nil when no project lister is wired.
 func (s *Service) consumersOf(ctx context.Context, orgID, externalName string) ([]dependencies.ExternalResourceConsumer, error) {
-	byName, err := s.externalConsumersByName(ctx, orgID)
+	sweep, err := s.sweepProjectExternals(ctx, orgID)
 	if err != nil {
 		return nil, err
 	}
-	return byName[strings.ToLower(externalName)], nil
+	return sweep.consumersByName[strings.ToLower(externalName)], nil
 }
 
-// externalConsumersByName builds, in one project sweep, the consumers of every
-// external dependency name in the org (lowercased name → consumers). One sweep
-// serves both the list (all entries) and a single-name delete guard.
-func (s *Service) externalConsumersByName(ctx context.Context, orgID string) (map[string][]dependencies.ExternalResourceConsumer, error) {
-	out := map[string][]dependencies.ExternalResourceConsumer{}
+// projectExternalSweep is one pass over every project's committed design:
+// the consumers of every external dependency name (lowercased name →
+// consumers) and, for every dependency that is a project's OWN resource
+// (no `resource.ref`), a catalog row of scope project. One sweep serves the
+// list, the delete guard and Promote's uniqueness check alike.
+type projectExternalSweep struct {
+	consumersByName map[string][]dependencies.ExternalResourceConsumer
+	projectRows     []ExternalResourceView
+}
+
+func (s *Service) sweepProjectExternals(ctx context.Context, orgID string) (projectExternalSweep, error) {
+	out := projectExternalSweep{consumersByName: map[string][]dependencies.ExternalResourceConsumer{}}
 	if s.projects == nil {
 		return out, nil
 	}
 	refs, err := s.projects.ListProjects(ctx, orgID)
 	if err != nil {
-		return nil, fmt.Errorf("provisioning: list projects: %w", err)
+		return out, fmt.Errorf("provisioning: list projects: %w", err)
 	}
 	for _, ref := range refs {
 		comps, derr := s.design.ReadDesignComponents(ctx, ref.OrgID, ref.ProjectID)
 		if derr != nil {
 			continue // best-effort: a project without a readable design has no consumers
 		}
+		rowsByName := map[string]int{}
 		for _, c := range comps {
 			for _, d := range c.Dependencies {
 				if d.Kind != spec.DependencyKindExternal {
 					continue
 				}
 				key := strings.ToLower(d.Name)
-				out[key] = append(out[key], dependencies.ExternalResourceConsumer{
-					ProjectID:     ref.ProjectID,
-					ComponentName: c.Name,
-				})
+				consumer := dependencies.ExternalResourceConsumer{ProjectID: ref.ProjectID, ComponentName: c.Name}
+				out.consumersByName[key] = append(out.consumersByName[key], consumer)
+				if d.ResourceRef != "" {
+					continue // a copy of a record is the record's consumer, not a row of its own
+				}
+				if i, seen := rowsByName[key]; seen {
+					out.projectRows[i].Consumers = append(out.projectRows[i].Consumers, consumer)
+					continue
+				}
+				rowsByName[key] = len(out.projectRows)
+				out.projectRows = append(out.projectRows, projectRowFromDependency(ref.ProjectID, d, consumer))
 			}
 		}
 	}
 	return out, nil
+}
+
+// projectRowFromDependency is a project's own resource as a catalog row: the
+// block the project holds, scope project, and the project's name so the row is
+// addressable (two projects may each hold a resource of the same name).
+func projectRowFromDependency(projectID string, d spec.Dependency, consumer dependencies.ExternalResourceConsumer) ExternalResourceView {
+	row := ExternalResourceView{
+		Name:        d.Name,
+		Description: d.Description,
+		Provider:    d.Provider,
+		Scope:       openchoreo.ExternalResourceScopeProject,
+		Project:     projectID,
+		Config:      append([]spec.ConfigKey(nil), d.Config...),
+		Consumers:   []dependencies.ExternalResourceConsumer{consumer},
+	}
+	if d.Contract != "" && d.ContractType != "" {
+		row.Contract = &openchoreo.ResourceContractPointer{Type: d.ContractType, Path: d.Contract}
+	}
+	return row
 }

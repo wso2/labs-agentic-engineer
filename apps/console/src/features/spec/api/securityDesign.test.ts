@@ -247,9 +247,9 @@ describe("plannedUsersFor", () => {
     ]);
   });
 
-  // `securityspec.Role.NeedsTestUser`: only an admin-enrolment USER role owes a
-  // login. Promising a `test-…` name for the other two would name an account
-  // the build never creates.
+  // `securityspec.Role.NeedsTestUser`: every USER role owes a login, of either
+  // enrolment. Only a service role does not — promising it a `test-…` name
+  // would name an account the build never creates.
   it("supplies no user for a service role", () => {
     const d = doc({ roles: [role("Admin"), { ...role("Ledger Sync"), kind: "service" }] });
 
@@ -259,14 +259,20 @@ describe("plannedUsersFor", () => {
     ]);
   });
 
-  it("supplies no user for a self-service role", () => {
+  // A self-service role is a USER role: the build owes it a login like any
+  // other. Only how the login HOLDS it differs — no group to join, so the build
+  // binds it straight to the role.
+  it("supplies a user for a self-service role", () => {
     const d = doc({
       roles: [role("Admin"), { ...role("Shopper"), enrolment: "self-service" }],
     });
 
-    expect(plannedUsersFor(d, "Shopper")).toEqual([]);
+    expect(plannedUsersFor(d, "Shopper")).toEqual([
+      { username: "test-shopper", role: "Shopper", supplied: true },
+    ]);
     expect(planUsers(d)).toEqual([
       { username: "test-admin", role: "Admin", supplied: true },
+      { username: "test-shopper", role: "Shopper", supplied: true },
     ]);
   });
 
@@ -440,8 +446,11 @@ describe("roleKind / roleEnrolment", () => {
     const shopper = { ...role("Shopper"), enrolment: "self-service" as const };
     expect(roleKind(service)).toBe("service");
     expect(roleEnrolment(shopper)).toBe("self-service");
+    // Only a service role goes without: its principal is an application. A
+    // self-service role is a USER role, so the build owes it a login like any
+    // other — bound straight to the role, since it has no group to join.
     expect(needsTestUser(service)).toBe(false);
-    expect(needsTestUser(shopper)).toBe(false);
+    expect(needsTestUser(shopper)).toBe(true);
   });
 });
 

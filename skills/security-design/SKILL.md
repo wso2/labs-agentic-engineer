@@ -144,7 +144,7 @@ one more entry in `grants`.
 propose listing alternatives on an operation, and never ask for a handle to
 imply another.
 
-## Every admin-enrolment role gets a test user
+## Every user role gets a test user
 
 A test user is an account that exists so a role's behaviour can be exercised —
 the validation agent signs in as one to judge role-gated acceptance criteria.
@@ -154,14 +154,17 @@ validation agent reads its login. A test user is a **disposable account for
 automated agents**, readable by anyone who can read the repository — never a
 person's account.
 
-Emit one per role with `enrolment: admin`, named `test-<role-slug>` (`Compliance
-Admin` → `test-compliance-admin`), so the user sees them in Security and can
-rename them before Build. **The platform supplies any you omit**, so a missing
-test user is never a blocked build — but naming them yourself is what lets the
-user recognise and change them. `roles` is a list: a user holding two roles is
-how the design exercises somebody who both files and approves.
+Emit one per `kind: user` role, whatever its enrolment, named `test-<role-slug>`
+(`Compliance Admin` → `test-compliance-admin`), so the user sees them in
+Security and can rename them before Build. **The platform supplies any you
+omit**, so a missing test user is never a blocked build — but naming them
+yourself is what lets the user recognise and change them. `roles` is a list: a
+user holding two roles is how the design exercises somebody who both files and
+approves.
 
-Self-service roles and `kind: service` roles get no test user.
+**A self-service role gets one too** — `enrolment` says how real accounts
+arrive, never whether the role can be exercised (`authorization-model`).
+Only `kind: service` roles get none: their principal is an application.
 
 A username the platform did not create (`jsmith`) is a refusal, not a password
 reset: that role has no working login, and a real person's name lands in a
@@ -245,7 +248,17 @@ SPA gates each one on the operation it loads.
 | `roles[].assignableBy` | Optional role names, validated against `roles[]`. Records who may hand this role out. |
 | `roles[].kind` | Optional. `user` (default) or `service`. A service role is assigned to an application principal, never to a group, and gets no test user. |
 | `testUsers[].username` | Lowercase letters, digits, `.`, `_`, `-`. |
-| `testUsers[].roles` | One or more declared `kind: user` roles. The account is enrolled in every `assignTo` group of every role listed. |
+| `testUsers[].roles` | One or more declared `kind: user` roles, of either enrolment. The account is enrolled in every `assignTo` group of every role listed; a role with no `assignTo` is bound to the account directly. |
+
+**A role that reaches rows by path gets two test users, not one.** Where a role
+grants a `/me/` operation, the thing worth proving is that one caller cannot see
+another's rows — and a single account per role makes that unprovable everywhere
+downstream: the mock walk, a wired run and validation alike can only ever check
+the caller against themselves. A second account is what gives the isolation
+something to fail against.
+
+A self-service role is usually the `/me/` actor, and the platform supplies only
+one login per role — so the pair is yours to author or isolation goes unproven.
 
 Nothing else goes in the file. There is no `screens[]`, no `ownership`, no
 `coldStartRole`, no `publicComponents`, no `thunder` block, no `grantedBy`:
@@ -280,13 +293,19 @@ self-registered.
 
 An actor the organisation does not enrol — a Patient booking an appointment, a
 customer opening an account — gets `"enrolment": "self-service"` and **no**
-`assignTo`. The registration flow assigns the role at account creation, which is
+`assignTo`. A registration flow assigns the role at account creation, which is
 the legitimate cold start and a concept every identity provider has. Such a role
-gets no test user and no group binding.
+gets no group binding.
+
+It still gets test users, two where the role reaches `/me/` rows.
 
 Use it only where the PRD genuinely describes people who sign themselves up,
 and only where `organization`'s **Security & compliance** section permits it.
 Everything else is `admin`.
+
+**The platform provisions no registration flow today**, so those test logins are
+the role's only principals and no sign-up affordance appears on the sign-in
+page. `authorization-model` invariant 11 has the consequence for criteria.
 
 ## What the user has to know about a grant change
 

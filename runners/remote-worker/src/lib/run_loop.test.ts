@@ -896,6 +896,65 @@ test("consumeRun: a woken lead disarms the grace", async () => {
   assert.deepEqual(endedAt, [6]);
 });
 
+// The liveness frames the watchdog ignores, which the grace must NOT ignore.
+const MODEL_WAIT = { type: "system", subtype: "thinking_tokens" };
+const TOOL_PROGRESS = { type: "tool_progress", tool_use_id: "toolu_9", elapsed_time_seconds: 7 };
+
+/**
+ * Drip `liveness` frames through the grace window and assert input survives
+ * them: the run reaches the lead's own next turn and ends input there, not on
+ * the timer partway through.
+ *
+ * The frames are spaced in real time because the thing under test is a timer.
+ * Six of them at 10 ms against a 30 ms grace means the window closes twice over
+ * while the lead is demonstrably working.
+ */
+async function replayThroughGrace(liveness: unknown): Promise<number[]> {
+  let cursor = 0;
+  const endedAt: number[] = [];
+  async function* source(): AsyncGenerator<unknown> {
+    for (const m of [INIT, TASK_STARTED, RESULT, TASK_DONE]) {
+      cursor++;
+      yield m;
+    }
+    for (let i = 0; i < 6; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+      cursor++;
+      yield liveness;
+    }
+    for (const m of [LEAD_SPEAKS, RESULT]) {
+      cursor++;
+      yield m;
+    }
+  }
+  await consumeRun(
+    { messages: source(), stopTask: async () => {}, endInput: () => endedAt.push(cursor) },
+    {
+      translate: createClaudeAdapter({ taskKind: "implementation" }).translate,
+      watchdog: createRunWatchdog({ emit: () => {} }),
+      emit: () => {},
+      inputGraceMs: 30,
+    },
+  );
+  return endedAt;
+}
+
+test("consumeRun: a lead that is still generating disarms the grace", async () => {
+  // Regression, `simplest-crud-blog` 2026-09-19. The last subagent settled and
+  // armed the grace; the lead was generating throughout and said so on the feed
+  // (`heartbeat waitingOn:model`), but those frames were routed round the
+  // disarm, so stdin closed under a working lead and its next Edit met a
+  // cancelled hook. Input must survive for as long as the lead is alive.
+  assert.deepEqual(await replayThroughGrace(MODEL_WAIT), [12], "ended at the lead's own result (message 12)");
+});
+
+test("consumeRun: a tool the runtime is still ticking disarms the grace too", async () => {
+  // The same rule from the other side: a running tool is this run working, and
+  // closing stdin under it cancels the hook the write that ends that work would
+  // have answered on.
+  assert.deepEqual(await replayThroughGrace(TOOL_PROGRESS), [12]);
+});
+
 test("consumeRun: on the probe 2 recording, input ends by the grace after the orphaned shell task is stopped", async () => {
   // At the second result (message 37) the lead's backgrounded `sleep` is still
   // live, so input stays open; it is reported stopped at message 40, and with

@@ -20,8 +20,8 @@ design-generation turn** — in both cases the requirement-only input rule below
 
 ## Input — the requirement ONLY
 
-Read `specs/requirements/prd.md` — the numbered User Stories are the spine,
-with `specs/requirements/features/<slug>.md` for depth. **Do not read
+Read `specs/requirements/prd.md` — the numbered User Stories are the spine.
+**Do not read
 the design bundle (design.cell, domain-model.md, flows/), `openapi.yaml`, or
 any source code** to derive criteria — the
 oracle must be independent of the work it will grade. Base every criterion

@@ -123,9 +123,10 @@ type ProjectRole struct {
 	// and sorted. Empty when the directory could not be asked — no table holds
 	// them, so absence here is "unknown", the same as Exists on an account.
 	Scopes []string
-	// AssignedTo are the groups holding the role, in binding order. Empty is
-	// meaningful: it is the normal shape for a self-service role, whose accounts
-	// the app's own registration flow assigns.
+	// AssignedTo are the GROUPS holding the role, in binding order. Empty is
+	// meaningful: it is the normal shape for a self-service role, which carries
+	// no assignTo. Such a role is held by its test logins as user principals
+	// instead, which this list does not show.
 	AssignedTo []RoleAssignment
 }
 

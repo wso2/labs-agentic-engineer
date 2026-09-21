@@ -694,6 +694,14 @@ kind: Environment
 metadata:
   name: default
   namespace: default
+  annotations:
+    # Whether the console draws a Validation step for this environment. The
+    # console reads it per environment and treats ABSENT as "off", so an
+    # environment nobody annotates silently loses the step — which is what
+    # happened to every cluster built before this line existed. "default" is
+    # the entry environment here: it is where AEP builds, deploys and
+    # validates, so it is the one that has always had the step.
+    aep.wso2.com/validation: "on"
 spec:
   dataPlaneRef:
     kind: ClusterDataPlane

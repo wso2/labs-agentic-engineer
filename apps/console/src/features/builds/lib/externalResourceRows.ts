@@ -54,9 +54,16 @@ type ValueState = components["schemas"]["ExternalDependencyValueState"];
 // platform authors its credentials itself — and its progress is already
 // reported by the run's own provisioning gates. Listing one here would offer a
 // button that opens a dialog with nothing to type in.
+//
+// ONE EXCEPTION to "readiness decides which rows exist": a dependency that
+// COPIES a Registered External resource (`resourceRef` set). Readiness omits it
+// because the project cannot supply it — its values are the organization's —
+// yet the dependency page shows its keys, so this page must say where their
+// values live. The design alone renders it, as a row that states that and
+// offers no button.
 
 /** How a row reads to a person: is there anything left to do about it? */
-export type ExternalResourceDisplay = "configured" | "needs-values";
+export type ExternalResourceDisplay = "configured" | "needs-values" | "org-held";
 
 /** One external dependency, and whether its values have arrived. */
 export interface ExternalResourceRow {
@@ -68,11 +75,14 @@ export interface ExternalResourceRow {
   /** The keys the dialog collects, straight off the design's config schema. */
   config: ConfigKey[];
   /** The readiness read's own word, kept verbatim so a row can be traced back
-   *  to what the platform actually said. */
-  state: ValueState;
+   *  to what the platform actually said. Absent on an `org-held` row, which
+   *  readiness does not report on at all. */
+  state?: ValueState;
   display: ExternalResourceDisplay;
   /** How many of its keys the platform is still missing. */
   missingCount: number;
+  /** The registry name this dependency copies — set only on an `org-held` row. */
+  resourceRef?: string;
 }
 
 /**
@@ -139,7 +149,10 @@ function declaredExternals(
     for (const dep of comp.dependencies ?? []) {
       if (dep.kind !== "external") continue;
       const config = dep.config ?? [];
-      if (config.length === 0) continue;
+      // A dependency with no keys has nothing to collect — except a copy of a
+      // registered resource, whose row exists to say that nothing is collected
+      // here at all.
+      if (config.length === 0 && !dep.resourceRef) continue;
       const slug = key(dep.name);
       const seen = byName.get(slug);
       if (!seen) {
@@ -179,7 +192,9 @@ function declaredExternals(
 export function declaredExternalCount(
   design: ComponentDependencies[] | null | undefined,
 ): number {
-  return declaredExternals(design).size;
+  // A copy is not an ask: nobody can be asked for values the organization
+  // holds, so it is not part of what this count is a fallback for.
+  return [...declaredExternals(design).values()].filter((dep) => !dep.resourceRef).length;
 }
 
 /**
@@ -197,11 +212,18 @@ export function externalResourceRows(
   if (!readiness) return [];
   const declared = declaredExternals(design);
   const rows: ExternalResourceRow[] = [];
+  const seen = new Set<string>();
   for (const reported of readiness.dependencies) {
-    const dep = declared.get(key(reported.name));
+    const slug = key(reported.name);
+    const dep = declared.get(slug);
     // Readiness enumerates from the design, so this is the design lagging the
     // platform (a dependency just removed) — not a row to invent a schema for.
     if (!dep) continue;
+    seen.add(slug);
+    if (dep.resourceRef) {
+      rows.push(orgHeldRow(dep));
+      continue;
+    }
     rows.push({
       // The DESIGN's spelling is what a person reads; the platform slugs it.
       name: dep.name,
@@ -213,15 +235,40 @@ export function externalResourceRows(
       missingCount: reported.missingKeys.length,
     });
   }
+  // The copies readiness deliberately left out. The design alone proves both
+  // that the dependency exists and that its values are somewhere else, which is
+  // exactly what the row says.
+  for (const [slug, dep] of declared) {
+    if (seen.has(slug) || !dep.resourceRef) continue;
+    rows.push(orgHeldRow(dep));
+  }
   return rows.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** The section's headline: what is still wanted, in one line. */
+/** A copy of a Registered External resource: a row with nothing to collect. */
+function orgHeldRow(dep: Dependency): ExternalResourceRow {
+  return {
+    name: dep.name,
+    ...(dep.description && { description: dep.description }),
+    config: dep.config ?? [],
+    display: "org-held",
+    missingCount: 0,
+    resourceRef: dep.resourceRef ?? dep.name,
+  };
+}
+
+/**
+ * The section's headline: what is still wanted, in one line. It counts the
+ * SUPPLIABLE rows only — a copy is in the list to be explained, not to be
+ * counted against a person.
+ */
 export function externalResourceHeadline(rows: ExternalResourceRow[]): string {
-  const outstanding = rows.filter((row) => row.display === "needs-values").length;
+  const suppliable = rows.filter((row) => row.display !== "org-held");
+  if (suppliable.length === 0) return "Nothing to configure";
+  const outstanding = suppliable.filter((row) => row.display === "needs-values").length;
   return outstanding === 0
-    ? `${rows.length} of ${rows.length} configured`
-    : `${outstanding} of ${rows.length} need configuration`;
+    ? `${suppliable.length} of ${suppliable.length} configured`
+    : `${outstanding} of ${suppliable.length} need configuration`;
 }
 
 /**

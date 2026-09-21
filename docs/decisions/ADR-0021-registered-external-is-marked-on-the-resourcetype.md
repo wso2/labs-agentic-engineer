@@ -42,3 +42,12 @@ identity.
   not the RT scan that answers it after restart.
 - Rebuild of aep-api still needs the request JWT’s `ouId` to reconstruct the
   vault path; a missing claim cannot invent one.
+
+## Amended 2026-09-17 — the scope marker decides; instructions are the fallback
+
+[ADR-0030](ADR-0030-a-dependency-holds-a-full-copy-of-its-resource.md). A
+Registered External resource is now marked by `aep.wso2.com/scope: org`, and a
+project's type by `scope: project`. Consumption instructions remain the
+discriminator only for a type authored before the marker existed. The reason
+the marker was needed: a project's type surfaced in the catalog as reusable,
+and a design that reused it read resolved with nothing to build from.

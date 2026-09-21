@@ -65,13 +65,25 @@ func (h *Handler) ListOrgEnvironments(ctx context.Context, _ gen.ListOrgEnvironm
 	if h.svc == nil {
 		return nil, errProvisioningUnavailable()
 	}
-	names, err := h.svc.ListOrgEnvironments(ctx, org)
+	infos, err := h.svc.ListOrgEnvironments(ctx, org)
 	if err != nil {
 		return nil, mapProvisionError(err)
 	}
-	out := make([]gen.EnvironmentDTO, 0, len(names))
-	for _, n := range names {
-		out = append(out, gen.EnvironmentDTO{Name: n})
+	// infos already arrives ordered and filtered by ListOrgEnvironments (the
+	// org's deployment pipeline, or OC's own list order when no pipeline
+	// resolves) — this loop only assembles the DTO. Position is the slice
+	// index; PromotesTo is copied verbatim, including the "" the service
+	// deliberately leaves on every environment when no pipeline resolved.
+	out := make([]gen.EnvironmentDTO, 0, len(infos))
+	for i, e := range infos {
+		out = append(out, gen.EnvironmentDTO{
+			Name:         e.Name,
+			DisplayName:  e.DisplayName,
+			IsProduction: e.IsProduction,
+			Validation:   gen.EnvironmentDTOValidation(e.Validation),
+			Position:     int32(i),
+			PromotesTo:   e.PromotesTo,
+		})
 	}
 	return gen.ListOrgEnvironments200JSONResponse(out), nil
 }
@@ -106,6 +118,22 @@ func (h *Handler) UpdateExternalResource(ctx context.Context, request gen.Update
 	}
 	dtos := toExternalResourceDTOs([]ExternalResourceView{view})
 	return gen.UpdateExternalResource200JSONResponse(dtos[0]), nil
+}
+
+func (h *Handler) PromoteExternalResource(ctx context.Context, request gen.PromoteExternalResourceRequestObject) (gen.PromoteExternalResourceResponseObject, error) {
+	org := tenant.BoundOrgFromContext(ctx)
+	if h.svc == nil {
+		return nil, errProvisioningUnavailable()
+	}
+	if request.Body == nil {
+		return nil, apierr.BadRequest("request body is required")
+	}
+	view, err := h.svc.PromoteExternalResource(ctx, org, request.ProjectName, request.Name, *request.Body)
+	if err != nil {
+		return nil, mapProvisionError(err)
+	}
+	dtos := toExternalResourceDTOs([]ExternalResourceView{view})
+	return gen.PromoteExternalResource201JSONResponse(dtos[0]), nil
 }
 
 func (h *Handler) ListExternalResources(ctx context.Context, _ gen.ListExternalResourcesRequestObject) (gen.ListExternalResourcesResponseObject, error) {
@@ -333,16 +361,26 @@ func toExternalResourceDTOs(views []ExternalResourceView) []gen.ExternalResource
 				Status:      inst.Status,
 			})
 		}
-		out = append(out, gen.ExternalResourceDTO{
+		dto := gen.ExternalResourceDTO{
 			Name:                    v.Name,
 			Description:             v.Description,
+			Provider:                v.Provider,
+			Scope:                   gen.ExternalResourceDTOScope(v.Scope),
+			Project:                 v.Project,
 			Config:                  keys,
 			Consumers:               consumers,
 			ConsumptionInstructions: v.ConsumptionInstructions,
 			EnvCells:                envCells,
 			ResourceDocs:            docs,
 			Instances:               instances,
-		})
+		}
+		if v.Contract != nil {
+			dto.Contract = &gen.ResourceContract{Type: v.Contract.Type, Path: v.Contract.Path}
+		}
+		if v.Provenance != nil {
+			dto.Provenance = &gen.ResourceProvenance{SourceURL: v.Provenance.SourceURL, SHA256: v.Provenance.SHA256, ReadOn: v.Provenance.ReadOn}
+		}
+		out = append(out, dto)
 	}
 	return out
 }

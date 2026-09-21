@@ -69,7 +69,7 @@ export function useValidationEvidence(
   projectName: string,
   version: string,
   deployValidation: string,
-): { verdict: string; repairing: boolean; counts?: ValidationCounts } {
+): { verdict: string; repairing: boolean; counts?: ValidationCounts; pending: boolean } {
   const wanted = COUNTABLE.has(deployValidation);
   const runs = useBuildRuns(projectName, wanted && version ? version : undefined);
   // Both selections are the Validation page's, shared rather than restated. Reading
@@ -109,9 +109,19 @@ export function useValidationEvidence(
     return countsFromTally(tallyCriterionStates(oracle, parsed));
   }, [settled, criteriaContent, reportContent]);
 
+  // Still out: the run story, or the two files behind a settled verdict. A
+  // surface can hold a skeleton on this rather than paint a chip that changes
+  // its mind a second later (ADR-0032).
+  const pending =
+    wanted &&
+    Boolean(version) &&
+    (runs.isPending ||
+      (settled && (criteria.isPending || (!missingReport && report.isPending))));
+
   return {
     verdict: rawVerdict,
     repairing: isRepairing(runList),
     ...(counts ? { counts } : {}),
+    pending,
   };
 }

@@ -106,3 +106,20 @@ answer.
   modal; `contract` remains the definition's field naming the file.
 - Two endpoints back the view: `POST …/dependencies/{name}/contract` and
   `POST …/dependencies/{name}/assumption`.
+
+## Amended 2026-09-17 — the definition renders a resource block
+
+Platform [ADR-0030](../../../../docs/decisions/ADR-0030-a-dependency-holds-a-full-copy-of-its-resource.md).
+The file now holds a `resource` block (a full copy of the organization's
+registered resource when `ref` is set, or one the project defined), so the
+labelled facts are *Consumed as* (computed from the contract's type — there is
+no stored *Style*), *Source* (Organization registry, for a copy) and *Package*;
+the provider is shown by NAME even for a copy, and the copied keys,
+instructions and document carry a *from the organization* mark. A copy whose
+registry record no longer exists says so — "The organization has no registered
+resource with this name" — and offers **Select a provider**; a copy whose
+document no longer matches the organization's is flagged *Stale*. The Start
+build dialog labels a copy `reused · organization`, and the build page's
+External resources section lists it as "Values held by the organization" with
+nothing to configure. A flat file from before the block is lifted for display
+the way the platform lifts it on read.

@@ -68,6 +68,7 @@ type Dependency struct {
 	// chose one; never beside Suggestions.
 	Provider string `json:"provider,omitempty"`
 	// Style: how the component talks to it — rest-api | graphql | sdk.
+	// COMPUTED at hydration from the contract type; never stored in a file.
 	Style DependencyStyle `json:"style,omitempty"`
 	// Contract: the contract FILE NAME in the dependency's directory
 	// (openapi.yaml / schema.graphql); ContractPath joins it. Absent ⇒ the
@@ -80,8 +81,9 @@ type Dependency struct {
 	// THIS component's implementation language, picked from the SDK manifest
 	// (sdk.json) at hydration. Empty when the manifest has no entry for it.
 	Package string `json:"package,omitempty"`
-	// Provenance: where the contract came from (see DependencyProvenance).
-	Provenance *DependencyProvenance `json:"provenance,omitempty"`
+	// Provenance: where this project's contract copy came from (see
+	// ResourceProvenance).
+	Provenance *ResourceProvenance `json:"provenance,omitempty"`
 	// Suggestions: services the user might choose, while no provider is
 	// chosen. Choosing one REMOVES the field and sets Provider.
 	Suggestions []DependencySuggestion `json:"suggestions,omitempty"`
@@ -100,8 +102,20 @@ type Dependency struct {
 	// contract (see DependencyAssumption). Read-only for the agent.
 	Assumed *DependencyAssumption `json:"assumed,omitempty"`
 	// Flags: read-time qualifiers on a resolved dependency — "registered",
-	// "assumed", "sdk-only". Never authored.
+	// "assumed", "derived", "sdk-only", "stale". Never authored.
 	Flags []string `json:"flags,omitempty"`
+	// ResourceRef: the registry name the definition's resource block was
+	// copied from (ResourceDefinition.Ref); empty for a Project External
+	// resource. Source is "org" exactly when this is set.
+	ResourceRef string `json:"resourceRef,omitempty"`
+	// ConsumptionInstructions: the organization's instructions, carried on a
+	// copied resource block. Hydrated; never on a project-defined resource.
+	ConsumptionInstructions string `json:"consumptionInstructions,omitempty"`
+	// ContractType / ContractOrigin: the definition's contract object, flat.
+	// Style is computed from ContractType; ContractDerived / ContractAssumed
+	// from ContractOrigin.
+	ContractType   string `json:"contractType,omitempty"`
+	ContractOrigin string `json:"contractOrigin,omitempty"`
 	// external: the config key schema the consuming component codes against.
 	Config []ConfigKey `json:"config,omitempty"`
 	// platform-resource: the registered (Cluster)ResourceType + provisioning params.
@@ -198,22 +212,6 @@ type ConfigKey struct {
 	DefaultValue string `json:"defaultValue,omitempty"`
 }
 
-// DependencyProvenance records where a committed contract came from, so a
-// reader can tell a slice of the provider's published document from something
-// typed by hand, and re-derive the slice when the source moves. Mirrors the
-// agent-stream TS `DependencyProvenance`.
-type DependencyProvenance struct {
-	// SourceURL is the document the contract was taken from — a URL, or the
-	// name of an uploaded file.
-	SourceURL string `json:"sourceUrl,omitempty"`
-	// SHA256 (hex) of the FULL source document, not of the slice.
-	SHA256 string `json:"sha256,omitempty"`
-	// FetchedAt is the RFC 3339 instant the source was read.
-	FetchedAt string `json:"fetchedAt,omitempty"`
-	// Sliced is true when the committed contract is a slice of the source.
-	Sliced bool `json:"sliced,omitempty"`
-}
-
 // DependencyAssumption is the user's permission to build against a contract
 // the agent wrote from research rather than the provider's document. The
 // platform writes it when the user accepts the agent's proposal; the agent may
@@ -228,22 +226,95 @@ type DependencyAssumption struct {
 	Note string `json:"note,omitempty"`
 }
 
+// ResourceContract is the contract as held at ONE level: `{ type, path }`,
+// the path relative to that level's store — the `org-resource-docs` repo for
+// a registry record, the dependency's own directory for a project copy. There
+// is deliberately no URL form: an internet address is provenance, never a
+// contract, and the coding agent must find nothing in the repo it could follow
+// off it. Mirrors the agent-stream TS `ResourceContract`.
+type ResourceContract struct {
+	// Type: openapi | graphql | sdk on a project copy; the registry also
+	// admits asyncapi | protobuf | documentation for a whole reference. The
+	// style of consumption (REST client, GraphQL client, vendor library) is
+	// computed from it and never stored.
+	Type string `json:"type"`
+	// Path: the file, relative to the level's store. On a project copy a bare
+	// file name in the dependency directory (openapi.yaml, schema.graphql,
+	// sdk.json).
+	Path string `json:"path"`
+	// Origin (project copy only): where the file came from — registry (copied
+	// byte for byte from the org record's document), provider (the provider's
+	// own document, fetched or uploaded whole), derived (written by the design
+	// agent from the provider's developer reference), assumed (written from
+	// less than that; counts only once Accepted).
+	Origin string `json:"origin,omitempty"`
+	// Accepted: the user's permission to build against an assumed contract.
+	// Written by the platform only; the agent echoes it, never authors it.
+	Accepted *DependencyAssumption `json:"accepted,omitempty"`
+}
+
+// ResourceProvenance says where a copy came from, at either level. On a
+// registry record: the internet address the org copy was fetched from. On a
+// project copy: the registry file it was copied from, or the provider address
+// it was fetched from. SHA256 is over the whole document at the source, so a
+// changed source is detectable by comparison and a refresh is a re-copy.
+// Mirrors the agent-stream TS `ResourceProvenance`.
+type ResourceProvenance struct {
+	SourceURL string `json:"sourceUrl,omitempty"`
+	// Registry is the org-resource-docs path (`<name>/<file>`) a project copy
+	// was taken from. Never a URL.
+	Registry string `json:"registry,omitempty"`
+	SHA256   string `json:"sha256,omitempty"`
+	// ReadOn is the RFC 3339 instant the source was read.
+	ReadOn string `json:"readOn,omitempty"`
+}
+
+// ResourceDefinition is an External resource — what the thing is — in the ONE
+// shape it has at both levels: the org registry record (stored on the
+// OpenChoreo ResourceType) and the `resource` block of a project dependency
+// (a full copy, or one the project defined itself). A resource becomes a
+// dependency only when a project uses it. Mirrors the agent-stream TS
+// `ResourceDefinition`.
+type ResourceDefinition struct {
+	// Ref (project copy only): the registry name this block was copied from.
+	// Present ⇒ a Registered External resource is reused here; it must equal
+	// the dependency's Name. Absent ⇒ a Project External resource.
+	Ref         string `json:"ref,omitempty"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	// Provider: the concrete system ("Stripe"). Absent on a project block only
+	// while the user has not chosen one (Suggestions open on the dependency).
+	Provider string `json:"provider,omitempty"`
+	// Config: the env-var keys every consumer codes against. Values are never
+	// here, at either level.
+	Config   []ConfigKey       `json:"config,omitempty"`
+	Contract *ResourceContract `json:"contract,omitempty"`
+	// ConsumptionInstructions: how the organization wants the resource used.
+	// Written by an organization at register; a project block carries it only
+	// as part of a copy (Ref set), never on a resource it defined itself.
+	ConsumptionInstructions string `json:"consumptionInstructions,omitempty"`
+	// Provenance (registry record only): where the org copy of the document
+	// came from. A project copy's provenance sits on the dependency.
+	Provenance *ResourceProvenance `json:"provenance,omitempty"`
+}
+
 // DependencyDefinition is the one definition of an external dependency — the
 // wire shape of specs/design/dependencies/<name>/dependency.json (agent-stream
-// TS `DependencyDesign`). Components reference it by Name; the spec domain
-// hydrates each reference from it at read time.
+// TS `DependencyDesign`): one project's use of a resource. Components
+// reference it by Name; the spec domain hydrates each reference from it at
+// read time.
 type DependencyDefinition struct {
-	Name        string                 `json:"name"`
-	Description string                 `json:"description,omitempty"`
-	Source      string                 `json:"source,omitempty"`
-	Provider    string                 `json:"provider,omitempty"`
-	Style       DependencyStyle        `json:"style,omitempty"`
-	Contract    string                 `json:"contract,omitempty"`
-	SDK         string                 `json:"sdk,omitempty"`
-	Provenance  *DependencyProvenance  `json:"provenance,omitempty"`
+	Name string `json:"name"`
+	// Resource: the full resource block — a copy from the registry (Ref set)
+	// or one this project defined. The coding agent reads everything it needs
+	// from here and follows no link.
+	Resource ResourceDefinition `json:"resource"`
+	// Provenance: where this project's copy of the contract document came from
+	// (registry file, or provider address) and its hash at the time.
+	Provenance *ResourceProvenance `json:"provenance,omitempty"`
+	// Suggestions: services the user might choose, while no provider is
+	// chosen. Choosing one REMOVES the field and sets Resource.Provider.
 	Suggestions []DependencySuggestion `json:"suggestions,omitempty"`
-	Config      []ConfigKey            `json:"config,omitempty"`
-	Assumed     *DependencyAssumption  `json:"assumed,omitempty"`
 }
 
 // SdkManifest is the wire shape of specs/design/dependencies/<name>/sdk.json:

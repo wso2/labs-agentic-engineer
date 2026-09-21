@@ -47,7 +47,7 @@ import {
   Workflow,
 } from "@wso2/oxygen-ui-icons-react";
 import { WorkingPulse } from "../../agent-chat/components/WorkingIndicator";
-import { PRD_PATH, type SpecFileEntry } from "../api/mapping";
+import type { SpecFileEntry } from "../api/mapping";
 import { fileLabel } from "../api/labels";
 import {
   mostSignificant,
@@ -146,15 +146,7 @@ export function SpecFileList({
   // enough for every group.
   const allFiles = [...files, ...ghosts].sort((a, b) => a.path.localeCompare(b.path));
 
-
-  // The PRD leads, whatever it sorts as. Everything else under Requirements
-  // elaborates it — a feature file is depth on a story the PRD defines — and on
-  // path alone `features/…` sorts ABOVE `prd.md`, burying the document the
-  // whole flow is written against beneath its own footnotes. `files` arrives
-  // path-sorted and sort is stable, so the rest keeps that order.
-  const requirements = allFiles
-    .filter((f) => f.group === "requirements")
-    .sort((a, b) => Number(b.path === PRD_PATH) - Number(a.path === PRD_PATH));
+  const requirements = allFiles.filter((f) => f.group === "requirements");
   const validation = allFiles.filter((f) => f.group === "validation");
   const design = buildDesignSection(allFiles);
 

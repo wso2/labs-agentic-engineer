@@ -58,6 +58,10 @@ type fakeSMClient struct {
 	createRef string // returned by CreateSecret on success; defaults to "ref-name"
 	createErr error
 	deleteErr error
+
+	readPaths []string          // GetSecretWithValue calls, by vault key
+	readData  map[string]string // what GetSecretWithValue hands back
+	readErr   error
 }
 
 type smCreateCall struct {
@@ -96,8 +100,12 @@ func (f *fakeSMClient) GetSecret(context.Context, string) (*secretmanagersvc.Sec
 	panic("fakeSMClient: GetSecret is not on SecretRefWriter's path")
 }
 
-func (f *fakeSMClient) GetSecretWithValue(context.Context, string) (map[string]string, error) {
-	panic("fakeSMClient: GetSecretWithValue is not on SecretRefWriter's path")
+func (f *fakeSMClient) GetSecretWithValue(_ context.Context, kvPath string) (map[string]string, error) {
+	f.readPaths = append(f.readPaths, kvPath)
+	if f.readErr != nil {
+		return nil, f.readErr
+	}
+	return f.readData, nil
 }
 
 // --- Enabled / nil-safety -----------------------------------------------------
@@ -311,6 +319,33 @@ func TestSecretRefWriter_WriteOrgCatalogSecret(t *testing.T) {
 	wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", ControlPlaneNamespace: "acme", ProjectName: "org-catalog", EntityName: "stripe-default"}
 	if call.loc != wantLoc {
 		t.Fatalf("SecretLocation = %+v; want %+v", call.loc, wantLoc)
+	}
+}
+
+// Promote carries a project's own secret into the org catalog vault to
+// vault: read by the binding's vault key, written as an org-catalog entity,
+// the bytes never leaving the writer.
+func TestSecretRefWriter_CopyOrgCatalogSecret(t *testing.T) {
+	t.Parallel()
+	fake := &fakeSMClient{readData: map[string]string{"OPENEXCHANGERATES_APP_ID": "dev-app-id"}}
+	w := organization.NewSecretRefWriter(fake, nil, nil, nil)
+	key, err := w.CopyOrgCatalogSecret(claimsCtx("ou-acme-uuid"), "acme", "secret/data/org-x/extres-fx-rates-development", "fx-rates-development")
+	if err != nil {
+		t.Fatalf("CopyOrgCatalogSecret: %v", err)
+	}
+	if len(fake.readPaths) != 1 || fake.readPaths[0] != "secret/data/org-x/extres-fx-rates-development" {
+		t.Fatalf("read paths = %v", fake.readPaths)
+	}
+	if len(fake.createCalls) != 1 || fake.createCalls[0].loc.ProjectName != "org-catalog" || fake.createCalls[0].loc.EntityName != "fx-rates-development" || fake.createCalls[0].data["OPENEXCHANGERATES_APP_ID"] != "dev-app-id" {
+		t.Fatalf("create calls = %+v, want the same bytes under the org-catalog entity", fake.createCalls)
+	}
+	if key == "" {
+		t.Fatal("want the org-catalog vault key back")
+	}
+
+	empty := &fakeSMClient{readData: map[string]string{}}
+	if _, err := organization.NewSecretRefWriter(empty, nil, nil, nil).CopyOrgCatalogSecret(claimsCtx("ou-acme-uuid"), "acme", "secret/data/x", "e"); err == nil || len(empty.createCalls) != 0 {
+		t.Fatalf("an empty source must be refused before anything is written: err=%v creates=%d", err, len(empty.createCalls))
 	}
 }
 

@@ -357,6 +357,8 @@ per-version answer the platform does not have.
 | Body, some outstanding | *The agent builds while you supply these. The version is not deployed until every one of them has its development configuration.* |
 | A row that is configured | **`Configured`** + **Edit configuration** |
 | A row that is not | **`Needs configuration`** + **Configure now** |
+| A row the organization holds | **`Values held by the organization`**, second line *Nothing to configure here.*, and no button |
+| Its chip, when every row is the organization's | **`Nothing to configure`**, body *Every external dependency here is the organization's to configure.* |
 | A row's second line, no description | *2 settings outstanding* / *2 settings stored* |
 | After a save | *Configuration saved — the deployment no longer waits on this one.* |
 
@@ -371,6 +373,13 @@ drawer before it said "credentials", which is only true of the subset that are
 secrets — a webhook URL is neither. *Configuration* covers every key the dialog
 collects and is the word the buttons already used. The individual keys are
 **settings** when they have to be counted.
+
+**A dependency that reuses a Registered External resource still gets a row.** Its
+values live on the organization's record, so there is nothing here to type and no
+button — but leaving it out was worse: its keys are on its dependency page, and
+this page said nothing at all about where their values were. **`Values held by
+the organization`** answers exactly the question the missing row raised, and the
+row is left out of the chip's count on both sides — a person is not owed it.
 
 **The row's status is plain toned text, not a second pill.** The section header
 already carries a chip; a chip on every row competes with the button it is meant
@@ -696,21 +705,6 @@ step bar and no second progress indicator competing with the overview's cards. D
 [#527](https://github.com/wso2/labs-agentic-engineer/issues/527);
 [drawn here](https://claude.ai/code/artifact/fe3fc0c0-6ecd-49ed-9f75-ed65c2220cb1).
 
-**A reference between spec documents is a link, and it opens in place.** The PRD names its feature
-docs — depth lives in `features/<slug>.md` and the body stays lean — so the document is full of
-pointers to files sitting two rows away in the same rail. The shared schema parses a markdown link
-as an EXTERNAL one, which is wrong twice: a plain click inside the editor only places a caret, and
-a click that did follow the href would leave the console for a path it does not serve. A reference
-that resolves to a file the project HAS is styled as a link and selects that file; one naming a
-document nobody has written yet stays plain text, because a control that selects nothing is worse
-than prose. The link's text is the feature's **name** — the path is the href, never the label.
-
-**The PRD leads Requirements.** Everything else in that group elaborates it — a feature file is
-depth on a story the PRD defines — so the document the whole flow is written against cannot sit
-below its own footnotes. Path order alone puts `features/…` above `prd.md`, which
-[#579](https://github.com/wso2/labs-agentic-engineer/issues/579) made routine by giving `/expand` a
-lens on every story; the list pins the PRD instead, and everything behind it keeps path order.
-
 ### A dependency's group, and its definition
 
 Decided in [ADR-0028](decisions/ADR-0028-a-dependency-is-a-directory-in-the-rail.md). An
@@ -721,17 +715,20 @@ its definition is one file with a view of its own.
 |---|---|
 | Rail group | one per dependency, plug glyph, between Flows and the components; rows are its files — **Definition** · **API** · **SDK** |
 | A header that blocks the build | an amber mark after the name; the words on hover and as its label: **Choose a provider** · **Needs a contract** · **Needs your acceptance** |
-| A header that is resolved, with a qualifier | quiet text after the name: **Assumed** · **Derived from docs** · **Registered** · **SDK only** |
+| A header that is resolved, with a qualifier | quiet text after the name: **Assumed** · **Derived from docs** · **Registered** · **SDK only** · **Stale** |
 | The definition's eyebrow chips | **External dependency**, the qualifiers, and either the todo or **Resolved** |
-| Its facts | **Provider** · **Style** (**REST API** / **GraphQL** / **SDK**) · **Source** · **Package** — labelled rows under the name, never a subtitle repeating it |
-| Its sections | **Description** · **Used by** · **Provider** · **Interface** (once a provider is chosen) · **Configuration** (once keys exist) |
-| The Provider section | the provider's name (*Registered by the organization* for an org resource), or *None chosen yet. Select one and the agent sets it up: its interface, then the configuration keys.* with the button **Select a provider** beside the heading, which runs `/resolve-dependency <name>` |
+| Its facts | **Consumed as** (**REST API** / **GraphQL** / **SDK**) · **Source** (**Organization registry**) · **Package** — labelled rows under the name, never a subtitle repeating it |
+| Its sections | **Description** · **Used by** · **Provider** · **How the organization uses it** (a copy only) · **Interface** (once a provider is chosen) · **Configuration** (once keys exist) |
+| The Provider section | the provider's name, or *None chosen yet. Select one and the agent sets it up: its interface, then the configuration keys.* with the button **Select a provider** beside the heading, which runs `/resolve-dependency <name>` |
+| A copy of a registered resource | the chip **from the organization** beside the instructions, the interface and the configuration; the Configuration line reads *The settings every consumer reads. The organization holds their values.* |
+| The organization has no such resource | warning *The organization has no registered resource with this name*, with **Select a provider** beside it |
+| The organization's document has moved on | warning *The organization's document changed since this copy was made* |
 | The flow's first card | *Which provider?* — the definition's suggestions as options, **Another provider** as free text (a name or a link to its API document), **Find one for me** |
 | The flow's second card | *How should I get its interface?* — **Give a link** (free text), **Upload one** (opens the upload modal over the card; the answer is sent once the document lands), **Proceed on your assumption** (records the authorization on the definition when the answer is sent; the agent then writes the interface — nothing further is asked) |
 | Its primary button | **Resolve** (runs the guided flow), shown once a provider is chosen — **Reconsider** once resolved |
 | Providing a document | button **Provide interface** (**Replace interface** once one is on file) beside the Interface heading; it opens a modal — field **OpenAPI document URL** + **Fetch**; drop zone *Drop an OpenAPI document (YAML or JSON) here, or click to choose one.*; **Cancel** |
-| Once a document is on file | the Interface section links to it in place, with its **Source**, what was **Kept** and when it was **Read on** |
-| An interface derived from the provider's documentation | line *Derived from the provider's documentation — every operation cites its page; no published document exists to check it against.*, then the file link and its Source; nothing to accept |
+| Once a document is on file | the Interface section links to it in place, with its **Origin**, its **Source** (the address it was fetched from, or the registry path it was copied from) and when it was **Read on** |
+| **Origin**, one of four | *copied from the organization's registry* · *the provider's published document* · *derived from the provider's documentation* · *written by the agent, accepted by `<user>` on `<date>`* (*written by the agent, not yet accepted* until then) |
 | An agent-written interface nobody authorized | box titled *The agent wrote this interface from research*; button **Accept the assumption**; link **Read it first** |
 
 **The todo names what the reader must do, never the state machine's word.** *Needs a
@@ -750,6 +747,22 @@ the user answers.
 **A link in the chat opens a document, nothing more.** The design turn's closing list links each
 open dependency's definition; the click lands on it, and the user presses **Select a
 provider** themselves.
+
+**"Consumed as", not "Style".** How a component talks to the system is computed from
+the contract document's kind and is never stored — so the fact is phrased as an
+answer to *how do I use this*, in the three words a person already knows: **REST
+API**, **GraphQL**, **SDK**.
+
+**A contract is a whole document, so nothing is *Kept*.** The definition never
+says which operations a document covers: the document is copied entire, and the
+coding agent takes what its component calls from it.
+
+**"from the organization", never "registered by the organization".** A copy of a
+Registered External resource names the PROVIDER like any other dependency —
+*Open Exchange Rates*, not the organization that registered it. What the
+organization contributed is marked in the margin instead: the quiet chip **from
+the organization** on the keys, the instructions and the document it copied, and
+the **Source** fact **Organization registry**.
 
 **Assumed is a qualifier, not a warning.** An accepted assumption builds. It is shown as quiet
 text so the reader knows what kind of resolved this is, and stays shown everywhere the
@@ -775,7 +788,10 @@ named `<name>` already exists.* Then the heading **What changed since `<version>
 rebuild — over three groups, in this order and never merged, each unrendered when empty:
 **Components** · **External dependencies** · **Platform resources**. The headings are bold and
 carry no explanatory line; the list sits on its own surface, which is what makes the scrolling
-frame read as one. A row is a name and a chip — **new** or **removed**, no chip for a change. The requirements are
+frame read as one. A row is a name and a chip — **new** or **removed**, no chip for a change;
+an external dependency that reuses a Registered External resource reads
+**reused · organization** instead of **new**, because nothing is stood up for it and nobody
+owes it values. The requirements are
 never a row: every row names something that exists once the version is built. Under the list, when
 anything was removed: *A removed dependency keeps its resource. Take it down from Resources.*
 **Cancel** / **Build `<name>`**, which reads **Rebuild `<name>`** when the spec tree has not
@@ -887,6 +903,16 @@ there to compare against. Nothing is stored, so nothing can fall out of sync, an
 answerable for projects that predate the check. Coarse on purpose: it reports that the requirements
 moved, never which components are affected. Over-marking costs one re-derivation the agent mostly
 no-ops through; under-marking ships a design the user has already changed their mind about.
+
+**That recorded commit is only true because the send lands the room first.** The agent reads the
+live doc; the recorded commit is the committed one, and the committer is up to a minute behind. An
+edit made just before Enter — agreeing with an `*assumed*` flag, rewriting a sentence — is therefore
+in what the agent reads and not in what the platform recorded, and it lands afterwards looking
+exactly like the requirements moving after the design: the project reports stale requirements the
+moment it finishes designing, with nobody having touched them. So a send flushes the room before it
+dispatches, which is the same forced flush Build awaits, on the other side of the turn. Best-effort:
+if the committer cannot land, the message still goes — the flush-failure banner owns that, and the
+worst a skipped flush costs is the reading the turn would have had anyway.
 
 ### Artifact state
 
@@ -1407,7 +1433,6 @@ renaming; it needed to stop being visible.
 | start from an idea | `/start with <idea>` | fired at project creation ([#522](https://github.com/wso2/labs-agentic-engineer/issues/522)); the idea rides along, cropped, so the user can see the agent is working from **their** words rather than a bare command ([#528](https://github.com/wso2/labs-agentic-engineer/issues/528)) |
 | add a feature | `/feature <idea>` | code lens on the story list — opens the aim box to collect the idea, and sends the command plus their words |
 | add an actor | `/actor <who>` | code lens on Actors — same collecting box |
-| go deeper on a feature | `/expand <story>` | code lens on the story, which carries itself as the subject |
 | answer an open question | `/settle <the point>` | code lens on the question |
 | take up the open questions | `/settle` over the section | code lens on **Open Questions** |
 | talk a line through | *Discuss* — no command; opens the aim box on the line, Enter sends Discuss | code lens on any bullet |
@@ -1416,8 +1441,10 @@ renaming; it needed to stop being visible.
 ([#652](https://github.com/wso2/labs-agentic-engineer/issues/652)). An assumption is a decision
 the agent already made, and the user's response to it is a judgement, not a request — so the line
 carries **Agree · Discuss**. *Agree* is a **direct edit**: it strips the flag and keeps the decision —
-no agent turn, no model, one undo — and it stays live while an agent holds the turn, which is exactly
-when a reviewer is reading flagged lines. *Discuss* opens the aim box on the line. Two, deliberately:
+no agent turn, no model, one undo — and it stays live while an agent holds the turn, which is
+exactly when a reviewer is reading flagged lines. It takes the space before the flag with it, so a
+flag written inside the sentence it qualifies (`… on a schedule *assumed*.`) leaves no gap before
+the full stop: the leftover is a change to the requirements, and it reaches git on the next flush. *Discuss* opens the aim box on the line. Two, deliberately:
 a line with four controls on it stops reading as a line. *Remove* and *Reopen* were built and cut for
 that reason — dropping or reopening a decision is a sentence away in Discuss, and the editor deletes a
 bullet as well as any control could. The word is **Agree**, not *Accept* — *Accept* is what the
@@ -1460,12 +1487,6 @@ how a command is discovered at all, so it cannot hide; a twenty-story list with 
 line would be twenty controls competing with the prose they annotate. The flag itself never hides —
 an `*assumed*` run and an open question read as unsettled at rest, and only the control that acts
 on them waits for the pointer.
-
-That hover is what settled **`/expand` per story rather than one lens on the list**: a feature has
-no block of its own in the PRD — the contract keeps depth in feature files — so the nearest thing
-to "a feature" is the story line, and per-story is the only placement where the subject comes from
-the document instead of the user's memory. Decided against the rendered document, where the cost
-of per-line is a control that is only there while the pointer is.
 
 **The lens is a control beside the line, not the line made clickable.** The PRD is a collaborative
 editor: a line that fires a command on click is a line the user can no longer put a caret in.
@@ -1521,3 +1542,48 @@ projects reuse them. Not a Settings page.
 
 A later project's Build does not ask again for secrets the org already holds on
 that name.
+
+### Held by projects
+
+Below the organization's records the page lists **Held by projects**: every
+resource a project defined for itself (its dependency has no `ref`), one card per
+project and name, captioned *held by \<project\>*. They are not records — the design
+agent's catalog never sees them — but the organization can take one over from here.
+
+| | |
+|---|---|
+| Section lead | *Resources a project defined for itself. Promote one to hold its values for the organization and let other projects reuse it.* |
+| Card caption | *held by \<project\>* |
+| Drawer note | *Environment values are the project's. Promote the resource to hold them for the organization.* |
+| Primary action | **Promote to organization** — opens the Register form pre-filled from the project's copy |
+| Name already a record | the button gives way to *The organization already holds a record with this name. Have the project reuse it instead.* |
+| Not offered | Edit, Delete (those act on records) |
+
+**Promote lives on the registry, not on the project.** The definition view and
+the overview's Dependencies panel offer no Promote: the person who curates the
+registry decides what the organization holds, and does it where the records are.
+
+**The Promote form is the Register form with the project's facts locked.** Its
+heading is **Promote to organization**, its lead *\<project\>'s \<name\> becomes
+the organization's. The project keeps a copy that reuses it.* Name, provider,
+keys and the contract document come from the project's copy and cannot be
+edited here; the description is pre-filled and may be reworded for the
+organization. The contract row reads *\<type\> · \<file\> · copied from
+\<project\>*, or *No document yet. \<project\> must provide one before the
+resource can be promoted.* The person adds what only the organization can:
+**Consumption instructions** and a value for every environment. An environment
+the project already holds every value for is captioned *Carried over from
+\<project\> unless you type a value*, and may stay blank. The submit says
+**Promote**; success returns to Resources, where the card now sits with the
+records and the project's own card is gone (its dependency is now a copy,
+reading **Registered**).
+
+| Refusal | Copy |
+|---|---|
+| The organization already registered the name | *external resource \<name\> is already registered — have the project reuse it instead* |
+| The project has no value and none was typed | *missing env value for key "\<key\>" in environment "\<env\>"* |
+| The dependency already reuses a record | *\<name\> already reuses the organization's record* |
+| The project never chose a provider | *\<name\> names no provider yet — choose one in the project first* |
+| The block declares no keys | *\<name\> declares no config keys — the organization has nothing to hold values for* |
+| The block names a document the project does not hold | *contract: \<name\> names \<file\> but the project holds no such document — provide it in the project first* |
+| A secret typed beside a carried-over environment | *environment "\<env\>": give every secret value, or leave them all to be carried over from the project* |

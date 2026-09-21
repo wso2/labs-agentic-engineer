@@ -613,25 +613,76 @@ export function subscribeTurnEnd(
 // This registry lets the fallback hook ask "is a deterministic flush owner
 // live for this key right now?" and skip its own immediate invalidate when
 // so, leaving that to the deterministic path's post-flush invalidate.
-// Ref-counted (not a plain Set) so two overlapping registrations for the
-// same key (e.g. a remount) can't have one's cleanup clear the other's.
+//
+// The owner registers the flush ITSELF, not just a claim, because the other
+// direction needs it too: a turn about to be dispatched has to land the room
+// first (`flushRoomBeforeDispatch`). Registrations are held in arrival order
+// so two overlapping ones for the same key (a remount) can't have one's
+// cleanup clear the other's, and the newest is the live owner.
 
-const deterministicFlushKeys = new Map<string, number>();
+type RoomFlush = () => Promise<void>;
 
-/** Mark a deterministic flush listener as live for `key`. Call the returned
- *  function on unmount/cleanup. */
-export function registerDeterministicFlush(key: string): () => void {
-  deterministicFlushKeys.set(key, (deterministicFlushKeys.get(key) ?? 0) + 1);
+const deterministicFlushOwners = new Map<string, RoomFlush[]>();
+
+/** Register `key`'s deterministic flush owner. Call the returned function on
+ *  unmount/cleanup. `flush` is omitted by owners that only claim the key. */
+export function registerDeterministicFlush(key: string, flush: RoomFlush = async () => {}): () => void {
+  const owners = deterministicFlushOwners.get(key) ?? [];
+  owners.push(flush);
+  deterministicFlushOwners.set(key, owners);
+  let released = false;
   return () => {
-    const remaining = (deterministicFlushKeys.get(key) ?? 1) - 1;
-    if (remaining <= 0) deterministicFlushKeys.delete(key);
-    else deterministicFlushKeys.set(key, remaining);
+    if (released) return; // idempotent: cleanup may run twice (StrictMode)
+    released = true;
+    const live = deterministicFlushOwners.get(key);
+    if (!live) return;
+    const at = live.lastIndexOf(flush);
+    if (at >= 0) live.splice(at, 1);
+    if (live.length === 0) deterministicFlushOwners.delete(key);
   };
 }
 
 /** True while at least one deterministic flush listener is registered for `key`. */
 export function hasDeterministicFlush(key: string): boolean {
-  return (deterministicFlushKeys.get(key) ?? 0) > 0;
+  return (deterministicFlushOwners.get(key)?.length ?? 0) > 0;
+}
+
+// How long a send waits for the room to land before dispatching anyway.
+// Short on purpose: this is a correctness nicety on the turn's base ref, and
+// the user pressed Enter. The forced flush the Build path awaits is allowed
+// 30s because a wrong answer there blocks a build; here, giving up early
+// costs at most the reading the turn would have had without this at all.
+const PRE_DISPATCH_FLUSH_MS = 3_000;
+
+/**
+ * Land the room's pending writes before a turn is dispatched (#575 follow-up).
+ *
+ * The turn records the main tip it started from as its base ref, and the
+ * platform reads the requirements there to answer "have they moved since the
+ * design?". But the agent does not read that commit — a room-scoped turn
+ * reads the LIVE doc — and the committer is up to a minute behind it. So
+ * anything edited just before the send (an `*assumed*` flag agreed with, a
+ * sentence rewritten) is in what the agent reads and not in the base ref, and
+ * lands afterwards looking exactly like the requirements moving after the
+ * design.
+ *
+ * Flushing first makes the base ref true: the tip IS what the agent is about
+ * to read. Best-effort by design — a flush that fails or is slow falls back to
+ * the pre-flush reading rather than holding up the user's message, and the
+ * room's own error banner (D6) is what surfaces a broken committer.
+ */
+export async function flushRoomBeforeDispatch(key: string): Promise<void> {
+  const owners = deterministicFlushOwners.get(key);
+  const flush = owners?.[owners.length - 1];
+  if (!flush) return; // no room on this surface — nothing is pending anywhere
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    flush().catch(() => {}), // the banner owns flush failures; a send never fails on one
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, PRE_DISPATCH_FLUSH_MS);
+    }),
+  ]);
+  if (timer !== undefined) clearTimeout(timer);
 }
 
 // --- Log-write guards (#606) ---------------------------------------------

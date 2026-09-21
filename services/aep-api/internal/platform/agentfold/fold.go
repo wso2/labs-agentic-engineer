@@ -211,7 +211,7 @@ func (f *Fold) AddFile(ctx context.Context, path, content string) (OpResult, err
 	}
 	// A definition removed this turn to be re-added wholesale is still judged
 	// against what was on disk: the user's authorization record rides through
-	// (preserveAssumption), and an altered record is still refused.
+	// (preservePlatformFields), and an altered record is still refused.
 	prior, err := f.removedThisTurn(ctx, path)
 	if err != nil {
 		return OpResult{}, err
@@ -327,8 +327,8 @@ func (f *Fold) commit(path string, op Op, content string, prior *string, rejectM
 		return opErr(path, op, code, msg)
 	}
 	// The user's authorization record on a dependency's definition rides
-	// through every agent write of the file (preserveAssumption).
-	content = preserveAssumption(path, content, prior)
+	// through every agent write of the file (preservePlatformFields).
+	content = preservePlatformFields(path, content, prior)
 	if code, msg := checkDependencyDesignGuard(path, content, prior); code != "" {
 		return opErr(path, op, code, msg)
 	}

@@ -171,19 +171,20 @@ test("addFile: any component type string is accepted at design time (support-gat
   assert.equal(expectOk(b.addFile(CD_PATH, JSON.stringify(task))).status, "applied");
 });
 
-test("a dependency definition re-emitted wholesale keeps the user's assumed record", () => {
+test("a dependency definition re-emitted wholesale keeps the user's acceptance record", () => {
   const path = "specs/design/dependencies/mail/dependency.json";
   const record = { by: "admin", at: "2026-09-08T10:15:00Z" };
-  const prior = JSON.stringify({ name: "mail", provider: "Postmark", style: "rest-api", assumed: record });
+  const contract = { type: "openapi", path: "openapi.yaml", origin: "assumed" };
+  const prior = JSON.stringify({ name: "mail", resource: { name: "mail", provider: "Postmark", contract: { ...contract, accepted: record } } });
   const b = new FileBundle({ ...SEED_FILES, [path]: prior });
   // removeFile then addFile without the record — the way a model replaces a file.
   assert.equal(b.removeFile(path).status, "applied");
-  const res = b.addFile(path, JSON.stringify({ name: "mail", provider: "Postmark", style: "rest-api", contract: "openapi.yaml" }));
+  const res = b.addFile(path, JSON.stringify({ name: "mail", resource: { name: "mail", provider: "Postmark", contract } }));
   assert.equal(res.status, "applied", JSON.stringify(res));
-  assert.deepEqual(JSON.parse(b.read(path)!).assumed, record);
+  assert.deepEqual(JSON.parse(b.read(path)!).resource.contract.accepted, record);
   // An altered record on the re-add is still refused.
   const b2 = new FileBundle({ ...SEED_FILES, [path]: prior });
   b2.removeFile(path);
-  const altered = b2.addFile(path, JSON.stringify({ name: "mail", provider: "Postmark", style: "rest-api", assumed: { by: "agent", at: record.at } }));
+  const altered = b2.addFile(path, JSON.stringify({ name: "mail", resource: { name: "mail", provider: "Postmark", contract: { ...contract, accepted: { by: "agent", at: record.at } } } }));
   assert.equal(altered.ok, false);
 });

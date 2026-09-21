@@ -221,6 +221,64 @@ describe("ResourcesCatalog", () => {
     expect(screen.queryByRole("button", { name: /edit/i })).not.toBeInTheDocument();
   });
 
+  // The name is the organization's word for the resource; the provider is the
+  // system it actually is, and a card that shows only the name hides it.
+  it("names the provider on an external card, and platform types have none", () => {
+    resetState();
+    platformState = { ...platformState, data: [platformType()] };
+    externalState = {
+      ...externalState,
+      data: [externalResource({ provider: "Stripe" })],
+    };
+
+    render(<ResourcesCatalog />);
+
+    const stripeCard = screen.getByText("stripe").closest(".MuiCard-root");
+    expect(within(stripeCard as HTMLElement).getByText("Stripe")).toBeInTheDocument();
+    const postgresCard = screen.getByText("postgres-cnpg").closest(".MuiCard-root");
+    expect(within(postgresCard as HTMLElement).queryByText("Stripe")).not.toBeInTheDocument();
+  });
+
+  // A project's own resources are not records: they follow the records in
+  // their own section, each naming its project, so the organization can take
+  // one over from here.
+  it("lists a project's own resources under Held by projects, naming the project", () => {
+    resetState();
+    externalState = {
+      ...externalState,
+      data: [
+        externalResource({ provider: "Stripe", scope: "org" }),
+        externalResource({
+          name: "fx-rates",
+          provider: "Open Exchange Rates",
+          scope: "project",
+          project: "team-expenses",
+          envCells: [],
+        }),
+      ],
+    };
+
+    render(<ResourcesCatalog />);
+
+    const held = screen.getByRole("region", { name: "Held by projects" });
+    expect(within(held).getByText("fx-rates")).toBeInTheDocument();
+    expect(within(held).getByText("held by team-expenses")).toBeInTheDocument();
+    expect(within(held).queryByText("stripe")).not.toBeInTheDocument();
+    expect(screen.getByText("stripe")).toBeInTheDocument();
+  });
+
+  it("shows no Held by projects section when every external row is a record", () => {
+    resetState();
+    externalState = {
+      ...externalState,
+      data: [externalResource({ scope: "org" })],
+    };
+
+    render(<ResourcesCatalog />);
+
+    expect(screen.queryByRole("region", { name: "Held by projects" })).not.toBeInTheDocument();
+  });
+
   it("clamps a long card description to two lines and keeps the full text on title", () => {
     resetState();
     const long =

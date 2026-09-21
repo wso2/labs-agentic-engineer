@@ -77,35 +77,6 @@ function renderList(files: SpecFileEntry[], sections?: RailSection[], onReason =
     .filter((t): t is string => Boolean(t) && t !== "");
 }
 
-describe("SpecFileList — the PRD leads Requirements", () => {
-  it("puts the PRD first even though features/ sorts above it by path", () => {
-    const rows = renderList(
-      entries(
-        "specs/requirements/features/approvals.md",
-        "specs/requirements/prd.md",
-        "specs/requirements/features/receipts.md",
-      ),
-    );
-    expect(rows.slice(0, 3)).toEqual(["Product requirements", "approvals", "receipts"]);
-  });
-
-  it("keeps the rest in path order behind it", () => {
-    const rows = renderList(
-      entries(
-        "specs/requirements/zebra.md",
-        "specs/requirements/prd.md",
-        "specs/requirements/alpha.md",
-      ),
-    );
-    expect(rows.slice(0, 3)).toEqual(["Product requirements", "alpha", "zebra"]);
-  });
-
-  it("is untroubled by a project whose PRD has not been written yet", () => {
-    const rows = renderList(entries("specs/requirements/features/receipts.md"));
-    expect(rows[0]).toBe("receipts");
-  });
-});
-
 // The rail is the flow (#575): the sections carry state, and an amber one
 // explains itself in rows rather than a hover.
 describe("SpecFileList — the rail carries state", () => {

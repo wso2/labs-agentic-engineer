@@ -79,15 +79,22 @@ it. The cost, stated plainly: a subagent's commands are one click away rather
 than on screen from the start, and for the lead — the default selection — they
 are already on screen.
 
-Under those sit the agent's **plan** entries — the lead's own task list, which
-reaches the feed as `work_item {source: "plan"}` and is folded onto its owner by
-`buildCrew`. An entry the lead handed to a spawned agent draws under *that*
-agent, because "what was this one sent to do" is the question a reader has about
-its row; an entry naming an agent no event ever declared falls back to the lead
-rather than vanishing. They stay on a settled agent: the list is what it set out
-to do and whether it got there, which only becomes a record once the run is over.
-Deliberately quiet — only the glyph carries the entry's weight, so a fifteen-entry
-list cannot outshout the one question this view exists to answer.
+The agent's **plan** entries went the same way, and for the same reason at the
+other end. The lead's own task list reaches the feed as `work_item {source:
+"plan"}` and is folded onto its owner by `buildCrew`; it used to draw as rows
+under that owner. But a lead writes one entry per component and holds every one
+of them `in progress` for most of a run, so the rows sitting directly under the
+busiest agent were the rows that changed *least* — dead weight in the column
+whose entire job is "is anything moving". They are now drawn in the **inspector**
+only, under a heading, for the agent a reader picked.
+
+The model is unchanged and still carries them: an entry the lead handed to a
+spawned agent belongs to *that* agent, because "what was this one sent to do" is
+the question a reader has once they click its row; an entry naming an agent no
+event ever declared falls back to the lead rather than vanishing; and they stay
+on a settled agent, because the list is what it set out to do and whether it got
+there, which only becomes a record once the run is over. `CrewMember.plan` is
+still computed and still true; nothing in the tree renders it.
 
 **Inspector.** The selected agent's steps, with each outcome merged onto the
 action row it answers (the same `mergeOutcomes` rule the flat feed used, on the
@@ -96,11 +103,8 @@ duration, tool count, lines written — because the runtime measured the agent's
 whole life including the parts that never reached this feed. Under it, the
 agent's closing report: a spawned agent's transcript dies with its pod, so this
 is the only copy. Then its **plan**, above its steps — what it set out to do,
-above what it did. That repeats the tree's rows for the selected agent, the same
-way a settled agent's report is both its tree sub-line and the note here — the
-labelled copy, where the tree's rows sit unlabelled under the agent whose list
-they are. Nothing here is invented; there is no narration tab and no file
-list.
+above what it did, and the only place it is drawn at all. Nothing here is
+invented; there is no narration tab and no file list.
 
 **Timeline.** One lane per agent on one axis, the cycle's first word to its last.
 A lane is coloured by its agent's state and split into **solid** (working) and
@@ -167,9 +171,9 @@ imports it too.
 | | |
 |---|---|
 | `components/RunCrew.tsx` | the toggle, the hint, the clock, the selection |
-| `components/CrewTree.tsx` | one row per agent, with its tasks and its plan |
+| `components/CrewTree.tsx` | one row per agent — its tasks and its plan are the inspector's |
 | `components/CrewInspector.tsx` | one agent's header, report, plan and steps |
-| `components/AgentPlan.tsx` | a plan entry's row, and the inspector's list |
+| `components/AgentPlan.tsx` | a plan entry's row, and the inspector's list — the only surface that draws one |
 | `components/CrewTimeline.tsx` | one lane per agent |
 | `components/AgentSteps.tsx` | the shared row, report note and empty copy |
 | `hooks/useRunView.ts` | the remembered choice, shared across the page |

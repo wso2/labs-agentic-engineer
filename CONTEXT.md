@@ -153,23 +153,24 @@ _Avoid_: connection (in OpenChoreo that names a consumed endpoint — the
 opposite side of the wire).
 
 **External dependency**:
-A project's need for a third-party API or SDK — the *service* the product
-needs, named `<capability>-service` (`currency-service`); the system chosen to
-supply it is its *provider* — defined **once** in its own directory,
-`specs/design/dependencies/<name>/` — `dependency.json` (the
-provider the user chose, `style: rest-api | graphql | sdk`, the config keys
-every consumer codes against, or — while no service is chosen — `suggestions`,
-services commonly used for the capability, named from the design agent's
-knowledge for the user to pick from, never a choice the agent made) beside the
-committed **contract** it points at (an OpenAPI or GraphQL slice, an `sdk.json`
-manifest). A component **references** it by name only, as a `kind: external`
-entry in its `design.json` `dependencies[]`; the platform hydrates the
-reference from the file when it reads the design. Resolved when the contract
-is on disk (read-time, ADR-0003, never a stored flag); a Registered External
-resource is a platform-stamped `source: org` copy of the same shape.
-_Avoid_: `specPath` (a URL was never a contract), `needsSpec`, `specUrl`,
-`sources`, `candidates` (researched fits the agent could not decide between —
-the agent no longer decides at all) — retired fields, rejected on write.
+One project's use of an External resource — the *service* the product needs,
+named `<capability>-service` (`currency-service`) — defined **once** in its
+own directory, `specs/design/dependencies/<name>/`: `dependency.json` holds
+the resource (a full copy of the organization's registered one, or one the
+project defined itself), this project's provenance, and — while no service is
+chosen — `suggestions`, services commonly used for the capability, named from
+the design agent's knowledge for the user to pick from, never a choice the
+agent made; the contract document sits beside it. A component **references**
+it by name only, as a `kind: external` entry in its `design.json`
+`dependencies[]`; the platform hydrates the reference from the file when it
+reads the design. Resolved when the contract document is on disk, or the copy
+names a resource the organization registered (read-time, ADR-0003, never a
+stored flag). A resource becomes a dependency only when a project uses it.
+_Avoid_: `style` (computed from the contract's type, never stored), `source`
+(a copy is the presence of `ref`), `specPath` (a URL was never a contract),
+`needsSpec`, `specUrl`, `sources`, `candidates` (researched fits the agent
+could not decide between — the agent no longer decides at all) — retired
+fields, rejected on write.
 
 **Given (external service)**:
 A provider requirements records because the business already holds it: a
@@ -182,49 +183,89 @@ _Avoid_: proposal, recommendation (the agent never proposes a provider),
 `*assumed*` on a provider line.
 
 **Derived interface**:
-A dependency's contract the design agent wrote from the provider's own
-developer reference — pages that name every operation the design calls, with
-parameters and responses — because no document is published. The file carries
-`x-aep-derived: true` and every operation an `x-aep-source` page; the
-dependency reads resolved, flagged *derived* wherever it appears, and no
-authorization is asked. Less than that reference (marketing pages, a partial
-one, a third-party tutorial) is an Assumed contract, which asks.
+A dependency's contract document the design agent wrote from the provider's
+own developer reference — pages that name every operation the design calls,
+with parameters and responses — because no document is published. Its origin
+is *derived* and every operation names its source page; the dependency reads
+resolved, flagged *derived* wherever it appears, and no authorization is
+asked. Less than that reference (marketing pages, a partial one, a
+third-party tutorial) is an Assumed contract, which asks.
 _Avoid_: assumed (that one asks), reverse-engineered.
 
 **Assumed contract**:
-A dependency's contract the design agent wrote from the provider's
-documentation because no published document could be found or supplied. It
-counts as resolved only under the user's authorization (the `assumed` record
-in `dependency.json`, written by the platform, never by the agent — recorded
+A dependency's contract document the design agent wrote from the provider's
+documentation because no published document could be found or supplied. Its
+origin is *assumed*, and it counts as resolved only under the user's
+**acceptance** (recorded on the contract by the platform, never by the agent —
 when the user answers *proceed on your assumption* in the resolve flow, or
-from the definition's acceptance box for one nobody authorized) and stays
-flagged wherever the dependency appears until a real contract replaces it.
-_Avoid_: stub, mock (those are code; this is a contract the code is built to).
+from the definition's acceptance box for one nobody authorized); it stays
+flagged wherever the dependency appears until a real document replaces it.
+_Avoid_: stub (that word is the ref-only file that asks for a registry copy),
+mock (code; this is a contract the code is built to).
 
 **External resource**:
-The org-level shared record of one third-party integration — name, description,
-config-key schema — so many components reuse it by name instead of each
-redefining it. Listed on **Resources**. Two kinds below. The OpenChoreo
-`ResourceType` *is* the record (ADR-0009).
+What a third-party integration *is* — name, description, provider, config-key
+schema, its contract document, and (when the organization owns it) consumption
+instructions — in the one shape it has everywhere: the organization's registry
+record and the `resource` block inside a dependency are the same object. Two
+kinds below. The OpenChoreo `ResourceType` *is* the record (ADR-0009).
 _Avoid_: "external_resources table" (removed); connection.
 
 **Registered External resource**:
-An External resource the org registered once, with org-held environment values
-and **consumption instructions**, so a later project that needs the same API
-reuses that name instead of collecting the values again.
-_Avoid_: org API, shared secret (the resource is the integration, not the secret).
+An External resource the organization registered once, with org-held
+environment values and **consumption instructions**, so a later project that
+needs the same API reuses that name instead of collecting the values again.
+A project reuses it by writing a **stub** — the name and a `ref` to it — and
+the platform **copies** the record into the project at save, `ref` kept, so
+the coding agent reads everything from the repo and follows no link.
+_Avoid_: org API, shared secret (the resource is the integration, not the
+secret), reference-only dependency (the project holds a full copy).
 
 **Project External resource**:
-An External resource invented for one project's design when nothing in the
-catalog fits, or the user asks to reconsider. Its environment values are that
-project's.
-_Avoid_: unregistered external, local external.
+An External resource defined inline in one project's design when nothing in
+the registry fits, or the user asks to reconsider. It belongs to that project:
+its environment values are the project's, and it is never offered to other
+projects for reuse or counted as a taken name. The organization's Resources
+page lists it beside the records, **held by** its project, so the organization
+can see what projects define for themselves. Every designed dependency is
+project level by default; **Promote to organization** makes it Registered later.
+_Avoid_: unregistered external, local external, squatted name.
+
+**Promote to organization**:
+The act by which a Project External resource becomes a Registered External
+resource. Done from the organization's Resources page, never from the project:
+the organization takes the project's resource as its record — name, provider,
+keys, description, contract document — and adds consumption instructions and
+a value for every environment (a value the project already holds is carried
+over). The project's dependency then holds a copy of the record, `ref` kept,
+exactly as if it had reused it from the start.
+_Avoid_: publish, share, register the project's resource (Register is for a
+resource the organization defines from scratch).
 
 **Consumption instructions**:
 How a consuming project should use a Registered External resource — distinct
-from what the resource *is* (description), never a restatement of it. Their
-presence on the catalog record is what makes the resource Registered (ADR-0021).
+from what the resource *is* (description), never a restatement of it. Only an
+organization writes them; a project's copy carries them as a field the coding
+agent reads.
 _Avoid_: usage notes, description (a different field).
+
+**Contract document**:
+The whole document that describes a resource's interface — an OpenAPI or
+GraphQL document, or an `sdk.json` manifest — held as a file at each level:
+in the organization's registry for a registered resource, beside the
+definition for a dependency. Always `{ type, path }`, never a URL: an internet
+address is provenance, the place a copy came from. Its **origin** says how the
+project's copy arose — from the registry, from the provider's published
+document, derived from the provider's documentation, or assumed under the
+user's acceptance. The coding agent cuts what its component calls from it at
+coding time.
+_Avoid_: slice (the design no longer cuts one), spec, interface file.
+
+**Resource scope**:
+Whose an External resource is: the organization's (registered, shared) or one
+project's (defined inline, invisible outside that project). Chosen late —
+project by default, promoted later — never asked at design or configure time.
+_Avoid_: visibility, ownership level.
 
 **Resource-type marker**:
 A declaration a platform engineer attaches to a resource type in the catalog,

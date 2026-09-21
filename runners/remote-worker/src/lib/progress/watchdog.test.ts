@@ -131,6 +131,60 @@ test("watchdog: a Bash call rewritten to git_commit is still tracked as in fligh
   assert.match(h.summaries()[0] ?? "", /waiting on git_push \(git push origin main\)/);
 });
 
+test("watchdog: a backgrounded command's task_settled closes it instead of resurrecting it", () => {
+  // The live regression (run track-each-hire9665, 2026-09-17). An SDK-backgrounded
+  // `npm install` produces four events for ONE call: tool_use, task_started,
+  // tool_result, then task_settled — and the settle carries the launching
+  // `toolUseId` so a surface can fold it onto the row it already drew. Treating
+  // every id-carrying kind as "a call going out" re-inserted the entry AFTER its
+  // own tool_result had deleted it, and nothing could ever close it again.
+  // Because describe() names the OLDEST entry, that phantom then outranked every
+  // real call: twelve warnings, escalating 7m37s → 46m12s, all naming an install
+  // that had finished — printed straight through two genuine 16-minute stalls.
+  const h = harness();
+  h.watchdog.observe([{ kind: "tool_use", tool: "Bash", summary: "node setup.mjs", toolUseId: "t1" }]);
+  h.watchdog.observe([{ kind: "task_started", summary: "node setup.mjs", toolUseId: "t1", taskId: "bm476k1gk" }]);
+  h.watchdog.observe([{ kind: "tool_result", ok: true, toolUseId: "t1" }]);
+  h.watchdog.observe([{ kind: "task_settled", status: "completed", toolUseId: "t1", taskId: "bm476k1gk" }]);
+
+  h.advance(IDLE + 1);
+  h.watchdog.check();
+  assert.match(
+    h.summaries()[0] ?? "",
+    /^\[watchdog\] no tool in flight — waiting on the model for 2m0s$/,
+    "the settled command must not be reported as still in flight",
+  );
+});
+
+test("watchdog: a genuinely slow call is still named once a phantom cannot outrank it", () => {
+  // The other half of the same fix: closing the settled call must not make the
+  // watchdog blind. The real in-flight Bash is what the reader needed all along.
+  const h = harness();
+  h.watchdog.observe([{ kind: "tool_use", tool: "Bash", summary: "node setup.mjs", toolUseId: "t1" }]);
+  h.watchdog.observe([{ kind: "tool_result", ok: true, toolUseId: "t1" }]);
+  h.watchdog.observe([{ kind: "task_settled", status: "completed", toolUseId: "t1", taskId: "bm476k1gk" }]);
+  h.watchdog.observe([{ kind: "tool_use", tool: "Bash", summary: "bal build", toolUseId: "t2" }]);
+
+  h.advance(IDLE + 1);
+  h.watchdog.check();
+  assert.match(h.summaries()[0] ?? "", /waiting on Bash \(bal build\)/);
+});
+
+test("watchdog: an unknown id-carrying kind does not open a call nothing can close", () => {
+  // The default for a kind this module has not been taught is "not a new call".
+  // The contract can add kinds that carry a toolUseId; inferring from "every
+  // other kind" is what produced the phantom above. The cast goes through
+  // `unknown` because `kind` is a closed enum — which is exactly why this has
+  // to be tested at runtime: the feed is NDJSON off the wire, and the contract
+  // requires a producer one version ahead to degrade, never to crash.
+  const h = harness();
+  h.watchdog.observe([{ kind: "some_future_kind", summary: "whatever", toolUseId: "t1" } as unknown as RunEventInput]);
+
+  h.advance(IDLE + 1);
+  h.watchdog.check();
+  assert.match(h.summaries()[0] ?? "", /^\[watchdog\] no tool in flight — waiting on the model for 2m0s$/);
+});
+
 test("watchdog: describe() is usable before anything has happened", () => {
   // The SIGTERM path calls it at arbitrary times, including during startup.
   assert.match(createRunWatchdog().describe(), /no tool in flight/);

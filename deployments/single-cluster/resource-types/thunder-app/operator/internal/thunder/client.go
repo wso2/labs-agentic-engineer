@@ -184,15 +184,22 @@ type Config struct {
 const placeholderRedirectURI = "https://pending.invalid/callback"
 
 // wireRedirectURIs adapts the desired redirect-URI set for Thunder's wire:
-// the exact desired values when present, [placeholderRedirectURI] when empty
+// canonical http(s) URIs (default ports stripped) when present, so they match
+// what a browser sends as redirect_uri, or [placeholderRedirectURI] when empty
 // (see that constant's doc comment).
 func wireRedirectURIs(desired []string) []any {
 	if len(desired) == 0 {
 		return []any{placeholderRedirectURI}
 	}
 	uris := make([]any, 0, len(desired))
+	seen := map[string]struct{}{}
 	for _, u := range desired {
-		uris = append(uris, u)
+		canon := CanonicalWebURL(u)
+		if _, dup := seen[canon]; dup {
+			continue
+		}
+		seen[canon] = struct{}{}
+		uris = append(uris, canon)
 	}
 	return uris
 }

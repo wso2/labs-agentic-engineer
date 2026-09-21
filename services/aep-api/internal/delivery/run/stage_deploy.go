@@ -494,7 +494,14 @@ func (l *loop) awaitDeployments(ctx workflow.Context, components []string,
 			// come up — and ONLY those: a pass can expire with some components
 			// serving and others still rolling out, and filing fix work against
 			// one that deployed fine would send an agent after nothing.
+			//
+			// The last poll's reasons come with them. A component pending on a
+			// platform-side hold knows exactly why it is waiting, and the expiry is
+			// the only place that fact can still reach the issue — failDeploy takes
+			// no cause here because the deadline is not itself an error anyone can
+			// be filed against.
 			l.failDeploy(state.Pending, version, nil)
+			l.deployFailures = state.Reasons
 			return cycleDeployFailed, nil
 		}
 

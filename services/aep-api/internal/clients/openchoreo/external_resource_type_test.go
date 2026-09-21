@@ -32,7 +32,7 @@ func TestBuildExternalResourceType_PlainAndSecret(t *testing.T) {
 		{Key: "OPENWEATHER_API_KEY", Secret: true, Description: "API key"},
 	}
 	// OpenWeather shape: a plain base URL + a secret API key.
-	rt, err := BuildExternalResourceType("openweather", "Weather data provider", keys, "", nil)
+	rt, err := BuildExternalResourceType(ExternalResourceTypeSpec{Name: "openweather", Description: "Weather data provider", Keys: keys, Scope: ExternalResourceScopeOrg, ConsumptionInstructions: "", ResourceDocs: nil})
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -132,9 +132,7 @@ func TestBuildExternalResourceType_PlainAndSecret(t *testing.T) {
 func TestBuildExternalResourceType_AllPlain_NoExternalSecret(t *testing.T) {
 	t.Parallel()
 
-	rt, err := BuildExternalResourceType("plainsvc", "", []ExternalResourceConfigKey{
-		{Key: "BASE_URL", Secret: false},
-	}, "", nil)
+	rt, err := BuildExternalResourceType(ExternalResourceTypeSpec{Name: "plainsvc", Keys: []ExternalResourceConfigKey{{Key: "BASE_URL", Secret: false}}, Scope: ExternalResourceScopeOrg})
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -151,14 +149,74 @@ func TestBuildExternalResourceType_AllPlain_NoExternalSecret(t *testing.T) {
 func TestBuildExternalResourceType_Errors(t *testing.T) {
 	t.Parallel()
 
-	if _, err := BuildExternalResourceType("", "", []ExternalResourceConfigKey{{Key: "X"}}, "", nil); err == nil {
+	if _, err := BuildExternalResourceType(ExternalResourceTypeSpec{Keys: []ExternalResourceConfigKey{{Key: "X"}}, Scope: ExternalResourceScopeOrg}); err == nil {
 		t.Error("want error on empty name")
 	}
-	if _, err := BuildExternalResourceType("r", "", nil, "", nil); err == nil {
+	if _, err := BuildExternalResourceType(ExternalResourceTypeSpec{Name: "r", Scope: ExternalResourceScopeOrg}); err == nil {
 		t.Error("want error on no keys")
 	}
-	if _, err := BuildExternalResourceType("r", "", []ExternalResourceConfigKey{{Key: ""}}, "", nil); err == nil {
+	if _, err := BuildExternalResourceType(ExternalResourceTypeSpec{Name: "r", Keys: []ExternalResourceConfigKey{{Key: ""}}, Scope: ExternalResourceScopeOrg}); err == nil {
 		t.Error("want error on empty config key")
+	}
+	if _, err := BuildExternalResourceType(ExternalResourceTypeSpec{Name: "r", Keys: []ExternalResourceConfigKey{{Key: "X"}}}); err == nil {
+		t.Error("want error on a missing scope")
+	}
+	if _, err := BuildExternalResourceType(ExternalResourceTypeSpec{Name: "r", Keys: []ExternalResourceConfigKey{{Key: "X"}}, Scope: ExternalResourceScopeProject}); err == nil {
+		t.Error("want error on a project scope with no project")
+	}
+}
+
+// A project's type is scoped to its project: it carries the markers, folds
+// the project into its name so it can never collide with a registered type
+// of the same logical name, and never reads as registered. A registered type
+// carries the record fields and reads as registered; a type from before the
+// markers is judged by its consumption instructions.
+func TestBuildExternalResourceType_ScopeMarkersAndRecord(t *testing.T) {
+	t.Parallel()
+	keys := []ExternalResourceConfigKey{{Key: "OPENEXCHANGERATES_APP_ID", Secret: true}}
+
+	project, err := BuildExternalResourceType(ExternalResourceTypeSpec{Name: "currency-service", Provider: "Open Exchange Rates", Keys: keys, Scope: ExternalResourceScopeProject, Project: "expense-tracker"})
+	if err != nil {
+		t.Fatalf("project build: %v", err)
+	}
+	other, _ := BuildExternalResourceType(ExternalResourceTypeSpec{Name: "currency-service", Keys: keys, Scope: ExternalResourceScopeProject, Project: "team-expenses"})
+	registered, err := BuildExternalResourceType(ExternalResourceTypeSpec{
+		Name: "currency-service", Provider: "Open Exchange Rates", Keys: keys, Scope: ExternalResourceScopeOrg,
+		Contract:                &ResourceContractPointer{Type: "openapi", Path: "currency-service/openapi.yaml"},
+		Provenance:              &ResourceRecordProvenance{SourceURL: "https://docs.openexchangerates.org/", SHA256: "9f2c", ReadOn: "2026-09-17T10:00:00Z"},
+		ConsumptionInstructions: "Call /latest.json once per approval.",
+	})
+	if err != nil {
+		t.Fatalf("org build: %v", err)
+	}
+	names := map[string]bool{project.Metadata.Name: true, other.Metadata.Name: true, registered.Metadata.Name: true}
+	if len(names) != 3 {
+		t.Fatalf("a project type, another project's type and the registered type must have three distinct names, got %v", names)
+	}
+	if project.Metadata.Annotations[externalScopeAnnotation] != ExternalResourceScopeProject || project.Metadata.Annotations[externalProjectAnnotation] != "expense-tracker" {
+		t.Fatalf("project markers missing: %v", project.Metadata.Annotations)
+	}
+	pd, ok := ExternalDefinitionFromRT(project)
+	if !ok || pd.Registered() || pd.Scope != ExternalResourceScopeProject || pd.Project != "expense-tracker" || pd.Provider != "Open Exchange Rates" {
+		t.Fatalf("project type must read back scoped and unregistered: %+v ok=%v", pd, ok)
+	}
+	rd, ok := ExternalDefinitionFromRT(registered)
+	if !ok || !rd.Registered() || rd.Contract == nil || rd.Contract.Path != "currency-service/openapi.yaml" || rd.DocumentSHA256() != "9f2c" || rd.Provider != "Open Exchange Rates" {
+		t.Fatalf("registered type must read back its record: %+v ok=%v", rd, ok)
+	}
+	// Same project, same schema → the same name (a stable get-or-create target).
+	again, _ := BuildExternalResourceType(ExternalResourceTypeSpec{Name: "currency-service", Keys: keys, Scope: ExternalResourceScopeProject, Project: "expense-tracker"})
+	if again.Metadata.Name != project.Metadata.Name {
+		t.Fatalf("same project + schema must yield the same name: %q vs %q", again.Metadata.Name, project.Metadata.Name)
+	}
+	// Pre-marker types: consumption instructions decide.
+	legacy := &ResourceType{Metadata: OCObjectMeta{Annotations: map[string]string{externalNameAnnotation: "x", consumptionInstructionsAnnotation: "use it"}}, Spec: registered.Spec}
+	if d, ok := ExternalDefinitionFromRT(legacy); !ok || !d.Registered() {
+		t.Fatalf("a pre-marker type with instructions must read as registered: %+v", d)
+	}
+	delete(legacy.Metadata.Annotations, consumptionInstructionsAnnotation)
+	if d, _ := ExternalDefinitionFromRT(legacy); d.Registered() {
+		t.Fatalf("a pre-marker type without instructions must not read as registered: %+v", d)
 	}
 }
 
@@ -224,7 +282,7 @@ func TestExternalDefinitionFromRT_RoundTrips(t *testing.T) {
 		{Key: "SF_REGION", Secret: false, Description: "deployment region", DefaultValue: "us-east-1"},
 		{Key: "SF_TOKEN", Secret: true, Description: "API token"},
 	}
-	rt, err := BuildExternalResourceType("salesforce", "Salesforce CRM", keys, "", nil)
+	rt, err := BuildExternalResourceType(ExternalResourceTypeSpec{Name: "salesforce", Description: "Salesforce CRM", Keys: keys, Scope: ExternalResourceScopeOrg, ConsumptionInstructions: "", ResourceDocs: nil})
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -262,7 +320,7 @@ func TestExternalDefinitionFromRT_ReadsConsumptionAnnotations(t *testing.T) {
 		{Type: "openapi", URL: "https://example.com/openapi.yaml"},
 		{Type: "documentation", Path: "docs/README.md"},
 	}
-	rt, err := BuildExternalResourceType("salesforce", "Salesforce CRM", keys, "Call REST with the token.", docs)
+	rt, err := BuildExternalResourceType(ExternalResourceTypeSpec{Name: "salesforce", Description: "Salesforce CRM", Keys: keys, Scope: ExternalResourceScopeOrg, ConsumptionInstructions: "Call REST with the token.", ResourceDocs: docs})
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -277,7 +335,7 @@ func TestExternalDefinitionFromRT_ReadsConsumptionAnnotations(t *testing.T) {
 		t.Fatalf("resource-docs pointers = %+v, want %+v (type+url/path only, no spec bodies)", gotDocs, docs)
 	}
 
-	empty, err := BuildExternalResourceType("salesforce", "Salesforce CRM", keys, "", nil)
+	empty, err := BuildExternalResourceType(ExternalResourceTypeSpec{Name: "salesforce", Description: "Salesforce CRM", Keys: keys, Scope: ExternalResourceScopeOrg, ConsumptionInstructions: "", ResourceDocs: nil})
 	if err != nil {
 		t.Fatalf("build empty: %v", err)
 	}
@@ -310,6 +368,7 @@ func TestExternalDefinitionFromRT_ReadsConsumptionAnnotations(t *testing.T) {
 		Config:                  def.Config,
 		ConsumptionInstructions: def.ConsumptionInstructions,
 		ResourceDocs:            def.ResourceDocs,
+		Scope:                   ExternalResourceScopeOrg,
 	}
 	if !reflect.DeepEqual(def, want) {
 		t.Errorf("ExternalDefinitionFromRT must not invent envCells, got %+v", def)
@@ -319,7 +378,7 @@ func TestExternalDefinitionFromRT_ReadsConsumptionAnnotations(t *testing.T) {
 func TestExternalDefinitionFromRT_IgnoresMalformedResourceDocs(t *testing.T) {
 	t.Parallel()
 
-	rt, err := BuildExternalResourceType("salesforce", "", []ExternalResourceConfigKey{{Key: "TOKEN", Secret: true}}, "", nil)
+	rt, err := BuildExternalResourceType(ExternalResourceTypeSpec{Name: "salesforce", Keys: []ExternalResourceConfigKey{{Key: "TOKEN", Secret: true}}, Scope: ExternalResourceScopeOrg})
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -337,7 +396,7 @@ func TestExternalDefinitionFromRT_IgnoresMalformedResourceDocs(t *testing.T) {
 func TestExternalDefinitionFromRT_DropsUnsupportedResourceDocTypes(t *testing.T) {
 	t.Parallel()
 
-	rt, err := BuildExternalResourceType("salesforce", "", []ExternalResourceConfigKey{{Key: "TOKEN", Secret: true}}, "", nil)
+	rt, err := BuildExternalResourceType(ExternalResourceTypeSpec{Name: "salesforce", Keys: []ExternalResourceConfigKey{{Key: "TOKEN", Secret: true}}, Scope: ExternalResourceScopeOrg})
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}

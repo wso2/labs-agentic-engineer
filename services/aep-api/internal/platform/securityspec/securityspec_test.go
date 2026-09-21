@@ -546,24 +546,48 @@ func TestPlanSuppliesALoginForARoleTheDesignLeftWithout(t *testing.T) {
 	}
 }
 
-// A self-service role's accounts come from the app's registration flow and a
-// service role is held by an application principal, so neither owes a login.
-func TestPlanSuppliesNoLoginForSelfServiceOrServiceRoles(t *testing.T) {
-	for _, tc := range []struct{ name, fixture, role string }{
-		{"self-service", clinic, "Patient"},
-		{"service", vendorPortal, "reconciliation-job"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			doc, err := Parse(fixture(t, tc.fixture))
-			if err != nil {
-				t.Fatalf("Parse: %v", err)
-			}
-			for _, u := range Plan(doc).Users {
-				if slices.Contains(u.Roles, tc.role) {
-					t.Fatalf("%s role %q got the login %q", tc.name, tc.role, u.Username)
-				}
-			}
-		})
+// A service role is held by an application principal, so it owes no login and
+// a `test-…` name for it would name an account the build never creates.
+func TestPlanSuppliesNoLoginForAServiceRole(t *testing.T) {
+	doc, err := Parse(fixture(t, vendorPortal))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	for _, u := range Plan(doc).Users {
+		if slices.Contains(u.Roles, "reconciliation-job") {
+			t.Fatalf("service role %q got the login %q", "reconciliation-job", u.Username)
+		}
+	}
+}
+
+// A self-service role DOES owe a login. Its accounts would come from the app's
+// registration flow, but the validation agent cannot register itself and a role
+// nobody can sign in as cannot be exercised — so the build supplies one, and
+// ensure binds it straight to the role, since the account has no group to join.
+func TestPlanSuppliesALoginForASelfServiceRole(t *testing.T) {
+	doc, err := Parse(fixture(t, clinic))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	plan := Plan(doc)
+	var got *PlannedUser
+	for i, u := range plan.Users {
+		if slices.Contains(u.Roles, "Patient") {
+			got = &plan.Users[i]
+		}
+	}
+	if got == nil {
+		t.Fatalf("self-service role \"Patient\" got no login")
+	}
+	if !got.Supplied || got.Username != "test-patient" {
+		t.Fatalf("want a supplied test-patient, got %+v", *got)
+	}
+	// The whole reason the bind has to be direct: there is no group to join.
+	if len(got.Groups) != 0 {
+		t.Fatalf("a self-service account joins no group, got %v", got.Groups)
+	}
+	if len(got.Scopes) == 0 {
+		t.Fatalf("the account still carries the role's grants, got none")
 	}
 }
 
@@ -587,9 +611,8 @@ func TestPlanDisambiguatesAGeneratedNameThatCollidesWithAnAuthoredOne(t *testing
 }
 
 // The property the whole expansion exists for: every role the platform owes a
-// login gets one — so nothing reachable is unexercisable. A self-service role
-// is the deliberate exception: its accounts come from the app's own
-// registration flow, not from the build.
+// login gets one — so nothing reachable is unexercisable. A service role is the
+// only exception: its principal is an application, not a person.
 func TestPlanGivesEveryReachableScopeARoleAndEveryRoleALogin(t *testing.T) {
 	for _, name := range []string{expenseTracker, clinic, vendorPortal} {
 		t.Run(name, func(t *testing.T) {

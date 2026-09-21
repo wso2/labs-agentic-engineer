@@ -981,6 +981,47 @@ describe("SpecView onBuild routing (#164)", () => {
     ).toBeInTheDocument();
   });
 
+  // The preflight diffs names against the last tag, so it calls a copy of a
+  // Registered External resource `new` like anything else. The design read
+  // model is what knows better, and the dialog takes it from there.
+  it("says an external that reuses a registered resource is reused, not new", async () => {
+    mockUseDesignDependencies.mockReturnValue({
+      data: [
+        {
+          componentName: "checkout-api",
+          dependencies: [
+            {
+              kind: "external",
+              name: "currency-service",
+              status: "resolved",
+              source: "org",
+              resourceRef: "currency-service",
+            },
+          ],
+        },
+      ],
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    mockPreflightRefetch.mockResolvedValue({
+      data: ready({
+        changes: [
+          { name: "currency-service", kind: "external", state: "new" },
+          { name: "reports-web", kind: "component", state: "new" },
+        ],
+      }),
+    });
+
+    render(<SpecView projectName="proj1" />);
+    clickBuild();
+
+    const dialog = await screen.findByTestId("start-build-dialog");
+    expect(within(dialog).getByText("reused · organization")).toBeInTheDocument();
+    // The component beside it is still new.
+    expect(within(dialog).getByText("new")).toBeInTheDocument();
+  });
+
   // `tag` is optional on BuildResponse, so the version page it names may not
   // exist. The ledger is the honest fallback — never the overview, which is
   // where a reader would have to leave to reach either.

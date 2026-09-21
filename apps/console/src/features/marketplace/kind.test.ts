@@ -34,6 +34,24 @@ function resource(
 }
 
 describe("isRegisteredExternal", () => {
+  it("is true when scope says org, whatever the value plane holds", () => {
+    expect(isRegisteredExternal(resource({ scope: "org", envCells: [] }))).toBe(true);
+  });
+
+  it("is false when scope says project, even with org cells on the record", () => {
+    expect(
+      isRegisteredExternal(
+        resource({
+          scope: "project",
+          envCells: [
+            { environment: "development", key: "api_key", status: "configured" },
+          ],
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  // The fallback for a response written before `scope` existed.
   it("is true when envCells is a non-empty array", () => {
     expect(
       isRegisteredExternal(

@@ -96,6 +96,34 @@ which is also what closes its issue. Newest first; links go to the feature's
 GitHub issue plus any ADRs it produced. Features still being built aren't
 here: they're the open `console` + `feature` issues.
 
+- Deployments — the Development card reads as the flow: **Deployed →
+  Validation → Promote to Production** as three numbered steps on one rail,
+  each with its one action. Step 1 holds the rollout sentence, the components
+  and the connections as grouped lists (Set / Provisioned / Missing +
+  Configure) and a primary **Try it now** into the environment page, where the
+  **Test users** panel now lives; step 2 holds the shared verdict sentence and
+  a status chip with its counts; step 3 holds Promote with its reason and, once
+  validation allows, one blocker line per missing production value with
+  Configure opening the promote dialog. A run parked at the deploy gate reads
+  **On hold** here — chip *Waiting for configuration*, a notice naming the
+  value and the component that depends on it, Try it now disabled. The
+  Production card lists its components and connections the same way; the
+  standalone Connections card is retired. The environment page becomes two:
+  **Deployment Try Out** at `/deployments/$env/try-out` — a panel per
+  component: a web app with Visit, URL copy, who it talks to and the **test
+  users** inline; a service with its **endpoints** off the contract (search,
+  method filter, a curl per row with a token placeholder, Try into the
+  viewer); and **a page per deployed version** at
+  `/deployments/$env/$version` (milestone, built, commit, verdict, the build,
+  what it runs now or what superseded it, and the **Connections** table —
+  type, used by, keys masked, readiness word, Edit in development). The
+  board's **ledger lists every version the project built**, newest first,
+  plus production's current row, each opening its page; the bare environment
+  URL redirects to Try Out. **No contract change**
+  ([ADR-0032](design/decisions/ADR-0032-the-development-card-is-the-flow.md),
+  amending ADR-0027) —
+  [#775](https://github.com/wso2/labs-agentic-engineer/issues/775),
+  [#779](https://github.com/wso2/labs-agentic-engineer/issues/779)
 - Build asks in a dialog — one click, one surface, never a drawer for some
   projects and a modal for the rest. An open dependency opens **Resolve
   dependencies** (the names, and one **Resolve** that runs the guided flow over
@@ -291,8 +319,7 @@ here: they're the open `console` + `feature` issues.
   (contract: `TurnStatus.instruction` / `authorId` / `authorDisplayName`)
 - Spec view — the PRD is the interface: each PRD section carries a **code
   lens** firing the command that belongs there — `/actor` on Actors,
-  `/feature` on the story list, `/expand` on each story, `/settle` over Open
-  Questions — and every flagged line (an `*assumed*` decision, an open
+  `/feature` on the story list, `/settle` over Open Questions — and every flagged line (an `*assumed*` decision, an open
   question) carries its own `/settle`, so the subject comes from what the user
   clicked instead of their memory. Section lenses show at rest, line lenses on
   hover, and all of them go inert while an agent holds the turn. The lenses stay

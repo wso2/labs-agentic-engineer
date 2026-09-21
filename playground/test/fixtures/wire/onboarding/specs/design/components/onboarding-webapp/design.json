@@ -1,0 +1,61 @@
+{
+  "name": "onboarding-webapp",
+  "type": "web-application",
+  "version": "0.1.0",
+  "language": "TypeScript",
+  "buildpack": "docker",
+  "appPath": "onboarding-webapp",
+  "entrypoint": "deployment/web-application",
+  "exposure": "internet",
+  "stories": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    11,
+    12
+  ],
+  "description": "Single-page app used by HR Coordinators, IT Staff, Facilities Staff and Hiring Managers to add new hires, work each department's onboarding checklist, set due dates, and view onboarding progress. All data comes from onboarding-api; this app holds no business logic or persistence of its own.",
+  "dependencies": [
+    {
+      "kind": "component",
+      "name": "onboarding-api",
+      "wiring": {
+        "endpoint": {
+          "component": "track-each-hire9665-onboarding-api",
+          "name": "http",
+          "visibility": "project",
+          "envBindings": {
+            "address": "ONBOARDING_API_URL"
+          }
+        }
+      }
+    },
+    {
+      "kind": "platform-resource",
+      "name": "user-auth",
+      "resourceType": "thunder-app",
+      "wiring": {
+        "ref": "track-each-hire96-e321d814",
+        "envBindings": {
+          "client_id": "USER_AUTH_CLIENT_ID",
+          "issuer": "USER_AUTH_ISSUER",
+          "jwks_url": "USER_AUTH_JWKS_URL",
+          "resource": "USER_AUTH_RESOURCE",
+          "scopes": "USER_AUTH_SCOPES"
+        }
+      }
+    }
+  ],
+  "skillsPinned": [
+    "wireframes",
+    "react-webapp",
+    "oxygen-ui-design-system",
+    "thunder-authentication"
+  ]
+}

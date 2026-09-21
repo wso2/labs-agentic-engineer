@@ -75,52 +75,49 @@ func (s *Service) UpdateExternalResource(ctx context.Context, orgID, name string
 	if err != nil {
 		return ExternalResourceView{}, err
 	}
+	// The contract document is replaced only when the request carries one;
+	// otherwise the record keeps its pointer and provenance.
+	contractWrite, err := validateContractWrite(req.Contract)
+	if err != nil {
+		return ExternalResourceView{}, err
+	}
+	contract, provenance := found.Contract, found.Provenance
+	if contractWrite != nil {
+		if contract, provenance, err = s.commitResourceContract(ctx, orgID, canonical, contractWrite); err != nil {
+			return ExternalResourceView{}, err
+		}
+	}
+	provider := strings.TrimSpace(req.Provider)
+	if provider == "" {
+		provider = found.Provider
+	}
 
-	rt, err := openchoreo.BuildExternalResourceType(canonical, strings.TrimSpace(req.Description), keys, strings.TrimSpace(req.ConsumptionInstructions), docs)
+	rt, err := openchoreo.BuildExternalResourceType(openchoreo.ExternalResourceTypeSpec{
+		Name:                    canonical,
+		Description:             strings.TrimSpace(req.Description),
+		Keys:                    keys,
+		Scope:                   openchoreo.ExternalResourceScopeOrg,
+		Provider:                provider,
+		Contract:                contract,
+		Provenance:              provenance,
+		ConsumptionInstructions: strings.TrimSpace(req.ConsumptionInstructions),
+		ResourceDocs:            docs,
+	})
 	if err != nil {
 		return ExternalResourceView{}, apierr.BadRequest(err.Error())
 	}
 
-	cells := make([]EnvCell, 0, len(keys)*len(envNames))
-	for _, env := range envNames {
-		for _, k := range keys {
-			cells = append(cells, EnvCell{
-				Environment: env,
-				Key:         k.Key,
-				Status:      "configured",
-				Value:       valueByEnvKey[envValueKey(env, k.Key)],
-			})
-		}
-	}
-	vaultByEnv := map[string]string{}
+	existingVaultByEnv := map[string]string{}
 	for _, c := range currentCells {
 		if c.SecretStorePath != "" {
-			vaultByEnv[c.Environment] = c.SecretStorePath
+			existingVaultByEnv[c.Environment] = c.SecretStorePath
 		}
 	}
-	if s.orgSecrets != nil {
-		for _, env := range envNames {
-			secrets := map[string]string{}
-			for _, k := range keys {
-				if k.Secret {
-					secrets[k.Key] = valueByEnvKey[envValueKey(env, k.Key)]
-				}
-			}
-			if len(secrets) == 0 {
-				continue
-			}
-			vaultKey, err := s.orgSecrets.WriteOrgCatalogSecret(ctx, orgID, canonical+"-"+env, secrets)
-			if err != nil {
-				return ExternalResourceView{}, fmt.Errorf("provisioning: write org-catalog secret %q: %w", canonical+"-"+env, err)
-			}
-			if vaultKey != "" {
-				vaultByEnv[env] = vaultKey
-			}
-		}
-	}
-	stampSecretStorePath(cells, vaultByEnv)
-	if s.catalogValuePlane != nil {
-		s.catalogValuePlane.PutEnvCells(orgID, canonical, cells)
+	cells, err := s.writeOrgValuePlane(ctx, orgID, orgValuePlaneWrite{
+		Name: canonical, Keys: keys, EnvNames: envNames, ValueByEnvKey: valueByEnvKey, ExistingVaultByEnv: existingVaultByEnv,
+	})
+	if err != nil {
+		return ExternalResourceView{}, err
 	}
 	if err := s.rtCatalog.Update(ctx, orgID, rt); err != nil {
 		return ExternalResourceView{}, fmt.Errorf("provisioning: update external resource type %q: %w", canonical, err)
@@ -129,7 +126,11 @@ func (s *Service) UpdateExternalResource(ctx context.Context, orgID, name string
 	return ExternalResourceView{
 		Name:                    canonical,
 		Description:             strings.TrimSpace(req.Description),
+		Provider:                provider,
 		Config:                  toConfigKeys(keys),
+		Contract:                contract,
+		Provenance:              provenance,
+		Scope:                   openchoreo.ExternalResourceScopeOrg,
 		ConsumptionInstructions: strings.TrimSpace(req.ConsumptionInstructions),
 		EnvCells:                cells,
 		ResourceDocs:            docs,
@@ -183,10 +184,11 @@ func (s *Service) validateUpdateRequest(
 		return nil, nil, nil, nil, err
 	}
 
-	envNames, err = s.ListOrgEnvironments(ctx, orgID)
+	envInfos, err := s.ListOrgEnvironments(ctx, orgID)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
+	envNames = environmentNames(envInfos)
 
 	currentByEnvKey := make(map[string]EnvCell, len(currentCells))
 	for _, c := range currentCells {

@@ -177,6 +177,17 @@ function codeCopy(f: RunFailure, retrying: boolean): Omit<FailureCopy, "tone" | 
 }
 
 /** A run that failed before the record existed, or in a phase no producer records yet. */
+// How many times the agent was actually launched. Not always the whole budget:
+// a cycle the pod-truth watcher has CLOSED cannot be re-dispatched, so a death
+// it recorded settles the run on the first attempt.
+function dispatchesPhrase(attempts: number | undefined): string {
+  if (attempts === undefined || attempts <= 1) {
+    return "The platform dispatched it once and it stopped without opening one.";
+  }
+  if (attempts === 2) return "The platform dispatched it twice and it stopped both times.";
+  return `The platform dispatched it ${attempts} times and it stopped every time.`;
+}
+
 function reasonCopy(run: MilestoneRunView): Omit<FailureCopy, "tone" | "details"> {
   const reason = run.terminalReason;
   const newest = run.cycles.at(-1);
@@ -190,7 +201,7 @@ function reasonCopy(run: MilestoneRunView): Omit<FailureCopy, "tone" | "details"
     case "redispatch-budget":
       return {
         title: "The coding agent stopped without opening a pull request",
-        body: `The platform dispatched it twice and it stopped both times.${agentReason} Open the coding agent log for what it did before it stopped.`,
+        body: `${dispatchesPhrase(newest?.attempts)}${agentReason} Open the coding agent log for what it did before it stopped.`,
       };
     case "fix-chain-budget":
     case "cycle-ceiling":

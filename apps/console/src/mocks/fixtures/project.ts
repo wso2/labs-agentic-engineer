@@ -87,7 +87,7 @@ const noDeploy: DeployStage = {
  * selected, exactly as the validation override does, rather than adding rungs
  * to a ladder twelve fixture records are keyed on.
  */
-export const TRACK_SCENARIOS = ["amending", "drifting", "build-failed"] as const;
+export const TRACK_SCENARIOS = ["amending", "drifting", "build-failed", "on-hold"] as const;
 
 export type TrackScenario = (typeof TRACK_SCENARIOS)[number];
 
@@ -122,6 +122,14 @@ export const trackOverrides: Record<TrackScenario, TrackAggregates> = {
       components: { total: 3, ready: 3 },
       validation: "passed",
     },
+  },
+  // Parked at the deploy gate (ADR-0032, artboard 9c): the version built and
+  // nothing deployed, because a person still owes stripe its values. The run
+  // story for it is `heldRun` — the runs handler serves it under this track.
+  "on-hold": {
+    spec: { exists: true, version: "v1", dirty: false, design: true, agent: "" },
+    build: { version: "v1", status: "running" },
+    deploy: noDeploy,
   },
 };
 
@@ -323,6 +331,14 @@ const deployedComponents: ComponentList = builtComponents;
 // component). Per component × scenario; components absent from a scenario
 // render as greyed "Not deployed" cards on the board, and the distinguished
 // status "Undeployed" marks an intentional spec.state == Undeploy binding.
+//
+// Every binding names `development` — the FIRST environment of the pipeline
+// `*/api/v1/dependencies/environments` serves (fixtures/marketplace.ts,
+// `seedOrgEnvironments`: development -> staging-local). The Deployments board
+// groups bindings by environment name and then walks that served list, so a
+// binding named anything the list does not carry lands in no row at all: the
+// board draws environment cards with nothing on them. Keep the two halves
+// spelled the same.
 const deploymentsByScenario: Partial<
   Record<
     Exclude<ProjectScenario, "error">,
@@ -335,9 +351,9 @@ const deploymentsByScenario: Partial<
   deploying: {
     storefront: [
       {
-        name: "demo-shop-storefront-default",
+        name: "demo-shop-storefront-development",
         componentName: "storefront",
-        environment: "default",
+        environment: "development",
         status: "Progressing",
         releaseName: "demo-shop-storefront-a1b2c3",
         createdAt: "2026-07-12T05:04:00Z",
@@ -345,9 +361,9 @@ const deploymentsByScenario: Partial<
     ],
     "catalog-api": [
       {
-        name: "demo-shop-catalog-api-default",
+        name: "demo-shop-catalog-api-development",
         componentName: "catalog-api",
-        environment: "default",
+        environment: "development",
         status: "Ready",
         releaseName: "demo-shop-catalog-api-d4e5f6",
         endpointUrl: "https://catalog-api.dev.acme-aep.io",
@@ -356,9 +372,9 @@ const deploymentsByScenario: Partial<
     ],
     "orders-api": [
       {
-        name: "demo-shop-orders-api-default",
+        name: "demo-shop-orders-api-development",
         componentName: "orders-api",
-        environment: "default",
+        environment: "development",
         createdAt: "2026-07-12T05:05:30Z",
       },
     ],
@@ -366,9 +382,9 @@ const deploymentsByScenario: Partial<
   deployed: {
     storefront: [
       {
-        name: "demo-shop-storefront-default",
+        name: "demo-shop-storefront-development",
         componentName: "storefront",
-        environment: "default",
+        environment: "development",
         status: "Ready",
         releaseName: "demo-shop-storefront-a1b2c3",
         endpointUrl: "https://storefront.dev.acme-aep.io",
@@ -377,9 +393,9 @@ const deploymentsByScenario: Partial<
     ],
     "catalog-api": [
       {
-        name: "demo-shop-catalog-api-default",
+        name: "demo-shop-catalog-api-development",
         componentName: "catalog-api",
-        environment: "default",
+        environment: "development",
         status: "Ready",
         releaseName: "demo-shop-catalog-api-d4e5f6",
         endpointUrl: "https://catalog-api.dev.acme-aep.io",
@@ -390,9 +406,9 @@ const deploymentsByScenario: Partial<
     // all-settled while still showing the Undeployed chip.
     "orders-api": [
       {
-        name: "demo-shop-orders-api-default",
+        name: "demo-shop-orders-api-development",
         componentName: "orders-api",
-        environment: "default",
+        environment: "development",
         status: "Undeployed",
         createdAt: "2026-07-12T05:01:00Z",
       },
@@ -401,9 +417,9 @@ const deploymentsByScenario: Partial<
   "deploy-failed": {
     storefront: [
       {
-        name: "demo-shop-storefront-default",
+        name: "demo-shop-storefront-development",
         componentName: "storefront",
-        environment: "default",
+        environment: "development",
         status: "ReleaseFailed",
         releaseName: "demo-shop-storefront-a1b2c3",
         createdAt: "2026-07-12T05:04:00Z",
@@ -411,9 +427,9 @@ const deploymentsByScenario: Partial<
     ],
     "catalog-api": [
       {
-        name: "demo-shop-catalog-api-default",
+        name: "demo-shop-catalog-api-development",
         componentName: "catalog-api",
-        environment: "default",
+        environment: "development",
         status: "Ready",
         releaseName: "demo-shop-catalog-api-d4e5f6",
         endpointUrl: "https://catalog-api.dev.acme-aep.io",
@@ -424,9 +440,9 @@ const deploymentsByScenario: Partial<
     // mid-rollout picture (error + success + transitional).
     "orders-api": [
       {
-        name: "demo-shop-orders-api-default",
+        name: "demo-shop-orders-api-development",
         componentName: "orders-api",
-        environment: "default",
+        environment: "development",
         status: "Progressing",
         releaseName: "demo-shop-orders-api-g7h8i9",
         createdAt: "2026-07-12T05:01:00Z",
@@ -967,6 +983,45 @@ const waitingRun: BuildRunList = {
   milestoneNumber: 1,
   runs: [milestoneRun({ state: "waiting" })],
 };
+// A run parked at the DEPLOY GATE: it built, reached the gate short of stripe's
+// values, and stopped in `waiting` naming what it waits on — the state the
+// Deployments board reads as "on hold" (ADR-0032). Served under the `on-hold`
+// track override, whichever project scenario is selected.
+export const heldRun: BuildRunList = {
+  tag: "v1",
+  milestoneNumber: 1,
+  runs: [
+    milestoneRun({
+      state: "waiting",
+      waitingReason: "external-values",
+      blockingDependencies: ["stripe"],
+    }),
+  ],
+};
+
+/**
+ * `heldRun` stamped with THIS tag's identity — envelope, run id, milestone —
+ * the way `buildRunsForTag` stamps every other story, so a v2 or v3 asked for
+ * under the `on-hold` track does not answer with a run that calls itself v1.
+ */
+export function heldRunForTag(
+  s: Exclude<ProjectScenario, "error">,
+  tag: string,
+): BuildRunList {
+  const known = (projectBuilds[s].builds ?? []).find((b) => b.tag === tag);
+  const milestoneNumber = known?.milestoneNumber ?? heldRun.milestoneNumber;
+  return {
+    ...heldRun,
+    tag,
+    milestoneNumber,
+    runs: (heldRun.runs ?? []).map((run, i) => ({
+      ...run,
+      id: `run-${tag}-${i + 1}`,
+      milestoneNumber,
+      milestoneTitle: tag,
+    })),
+  };
+}
 // A run that SELF-HEALED: its first validation attempt failed, the platform filed
 // the failed criterion as ordinary work, a coding cycle repaired it, and the second
 // attempt came back clean. Four cycles — coding, validation, coding, validation —

@@ -257,23 +257,41 @@ func (r *configReader) thunderEnvAdminRoute() string {
 
 // kubeAPI resolves the Kubernetes API endpoint for ThunderApplication CR LISTs.
 // Empty BaseURL is valid (local compose) — Assemble leaves the thunder reader nil.
+//
+// KUBE_API_BASE_URL wins over the in-cluster apiserver. Split-plane installs
+// render ThunderApplication on the data-plane cluster; aep-api runs on the
+// control-plane cluster, so the in-cluster host 404s the CRD. When the
+// override is set, in-cluster SA token/CA are NOT used — they belong to the
+// other cluster. Pair the override with KUBE_API_BEARER or KUBE_API_TOKEN_FILE
+// and KUBE_API_CA_FILE.
 func (r *configReader) kubeAPI() KubeAPIConfig {
 	cfg := KubeAPIConfig{}
+	override := os.Getenv("KUBE_API_BASE_URL")
 	host := os.Getenv("KUBERNETES_SERVICE_HOST")
 	port := os.Getenv("KUBERNETES_SERVICE_PORT")
 	switch {
+	case override != "":
+		cfg.BaseURL = override
 	case host != "" && port != "":
 		cfg.BaseURL = "https://" + net.JoinHostPort(host, port)
-	default:
-		cfg.BaseURL = r.readOptionalString("KUBE_API_BASE_URL", "")
 	}
+
 	if v := os.Getenv("KUBE_API_BEARER"); v != "" {
 		cfg.BearerToken = v
-	} else if _, err := os.Stat(kubeSATokenPath); err == nil {
-		cfg.TokenFile = kubeSATokenPath
+	} else if v := os.Getenv("KUBE_API_TOKEN_FILE"); v != "" {
+		cfg.TokenFile = v
+	} else if override == "" {
+		if _, err := os.Stat(kubeSATokenPath); err == nil {
+			cfg.TokenFile = kubeSATokenPath
+		}
 	}
-	if _, err := os.Stat(kubeSACAPath); err == nil {
-		cfg.CAFile = kubeSACAPath
+
+	if v := os.Getenv("KUBE_API_CA_FILE"); v != "" {
+		cfg.CAFile = v
+	} else if override == "" {
+		if _, err := os.Stat(kubeSACAPath); err == nil {
+			cfg.CAFile = kubeSACAPath
+		}
 	}
 	return cfg
 }

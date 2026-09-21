@@ -92,6 +92,13 @@ For each criterion:
   checklist.
 - `method: scenario` → no automation in this run; the report lists them
   as not validated.
+- **Any criterion that asserts an identity-provider affordance** — signing
+  up, resetting a password, MFA, social login, or the sign-in page's own
+  markup → **`not_run`, and never authored**, under ONE finding however many
+  criteria depend on it, filed against the platform and never the app. That
+  surface is the identity provider's (`authorization-model` invariant 11).
+  Sign in with the published test login and grade whatever the criterion
+  covers after the sign-up step.
 
 ### 4. Read the validation context, then confirm the app is reachable
 
@@ -235,6 +242,9 @@ yourself; the URL is not something you can work out from inside the cluster.
   | A table, but no row for the role you need | That account was refused or could not be enrolled — the ticket's other comment says which | A provisioning problem — name the role |
   | A row for the role, but the scope the criterion needs is not in its `Scopes` | The design does not grant that role the permission the criterion assumes | A design finding — name the role and the handle |
   | A row whose password says *unavailable* | The platform holds the account but could not publish its password | A platform problem — name the account |
+
+  Every role in the design has a row, self-service included; sign in with it
+  like any other.
 - **Local dev servers (experimental runs only):** if the fetched
   endpoints are `localhost` dev servers you must start (the local
   harness), this overrides the base "never start servers" rule: start

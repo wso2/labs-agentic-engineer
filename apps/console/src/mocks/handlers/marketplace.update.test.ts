@@ -47,6 +47,7 @@ function stripeSeedUpdateBody(
 ): RegisterExternalResourceRequest {
   return {
     name: "stripe",
+    provider: "Stripe",
     description: "Stripe payments API",
     consumptionInstructions: "Use the secret key as Bearer.",
     config: [
@@ -71,6 +72,7 @@ function registerBody(
 ): RegisterExternalResourceRequest {
   return {
     name: "twilio",
+    provider: "Twilio",
     description: "Twilio SMS",
     consumptionInstructions: "Use the auth token as Bearer.",
     config: [

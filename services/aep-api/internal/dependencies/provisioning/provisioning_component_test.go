@@ -33,6 +33,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -228,14 +229,46 @@ func (f *cValuePlane) PutInstances(orgID, name string, instances []provisioning.
 	f.instances[orgID][name] = append([]provisioning.ResourceInstance(nil), instances...)
 }
 
-// cEnvs fakes provisioning.EnvironmentLister — ListNames returns the
-// injected names (nil names is an empty list, not an error).
+// cEnvs fakes provisioning.EnvironmentLister — List returns the injected
+// infos when set; otherwise it synthesizes bare-name infos from the injected
+// names (nil names is an empty list, not an error), so the older, name-only
+// fixtures in this file keep working unchanged.
 type cEnvs struct {
 	names []string
+	infos []provisioning.EnvironmentInfo
 }
 
-func (f *cEnvs) ListNames(context.Context, string) ([]string, error) {
-	return f.names, nil
+func (f *cEnvs) List(context.Context, string) ([]provisioning.EnvironmentInfo, error) {
+	if f.infos != nil {
+		return f.infos, nil
+	}
+	out := make([]provisioning.EnvironmentInfo, 0, len(f.names))
+	for _, n := range f.names {
+		out = append(out, provisioning.EnvironmentInfo{Name: n})
+	}
+	return out, nil
+}
+
+// cPipeline fakes provisioning.PipelineLister. ListPipelineNames defaults to
+// ["default"] (the platform convention) when names is unset, so a test that
+// only cares about promotion order (via `order`) does not also have to spell
+// out pipeline discovery. Set names explicitly to exercise the resolution
+// fallbacks (no "default" pipeline, more than one candidate, or none at all).
+type cPipeline struct {
+	names []string
+	order []string
+	err   error
+}
+
+func (c *cPipeline) ListPipelineNames(context.Context, string) ([]string, error) {
+	if c.names != nil {
+		return c.names, nil
+	}
+	return []string{"default"}, nil
+}
+
+func (c *cPipeline) PipelineEnvironments(_ context.Context, _, _ string) ([]string, error) {
+	return c.order, c.err
 }
 
 func readyBindingWith(outputs ...string) *openchoreo.ResourceReleaseBinding {
@@ -374,11 +407,20 @@ func TestProvisioningComponent_ListExternalResources(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &got); err != nil {
 		t.Fatalf("body: %v\n%s", err, resp.Body.String())
 	}
-	if len(got) != 2 {
-		t.Fatalf("resources = %+v, want stripe and github", got)
+	// Two records from the RT catalog, plus one row for the project's OWN
+	// stripe: proj's design names a `stripe` with no `resource.ref`, so it is
+	// the project's resource (it never reused the record), listed with its
+	// project so the organization can see it beside the record of that name.
+	if len(got) != 3 {
+		t.Fatalf("resources = %+v, want stripe, github and proj's own stripe", got)
 	}
 	byName := make(map[string]gen.ExternalResourceDTO, len(got))
-	for _, r := range got {
+	var projectRow *gen.ExternalResourceDTO
+	for i, r := range got {
+		if r.Scope == gen.ExternalResourceDTOScopeProject && r.Project != "" {
+			projectRow = &got[i]
+			continue
+		}
 		byName[r.Name] = r
 	}
 	stripe, ok := byName["stripe"]
@@ -388,6 +430,9 @@ func TestProvisioningComponent_ListExternalResources(t *testing.T) {
 	github, ok := byName["github"]
 	if !ok {
 		t.Fatalf("resources = %+v, want the github Project External entry", got)
+	}
+	if projectRow == nil || projectRow.Name != "stripe" || projectRow.Project != "proj" || len(projectRow.Consumers) != 1 {
+		t.Fatalf("resources = %+v, want proj's own stripe as a scope-project row with its consumer", got)
 	}
 	if len(stripe.Config) != 2 || stripe.Config[0].Key != "api_key" || !stripe.Config[0].Secret {
 		t.Errorf("config schema = %+v", stripe.Config)
@@ -904,7 +949,7 @@ func TestProvisioningComponent_ListWorkloadDependencies_ExternalFallsBackToTypeN
 func TestProvisioningComponent_ListOrgEnvironments_Empty(t *testing.T) {
 	t.Parallel()
 	svc := provisioning.NewService(provisioning.Deps{
-		Environments: &cEnvs{names: nil}, // implement ListNames → nil, nil
+		Environments: &cEnvs{names: nil}, // List → empty
 	})
 	h := newProvHarness(t, svc)
 	resp := h.AsOrg("acme").Get("/api/v1/dependencies/environments")
@@ -944,6 +989,134 @@ func TestProvisioningComponent_ListOrgEnvironments_NamesFromOC(t *testing.T) {
 	}
 }
 
+func TestProvisioningComponent_ListOrgEnvironments_PipelineOrderAndFlow(t *testing.T) {
+	t.Parallel()
+	svc := provisioning.NewService(provisioning.Deps{
+		// Returned deliberately OUT of promotion order — the pipeline decides.
+		Environments: &cEnvs{infos: []provisioning.EnvironmentInfo{
+			{Name: "production", DisplayName: "Production", IsProduction: true, Validation: "off"},
+			{Name: "development", DisplayName: "Development", Validation: "on"},
+			{Name: "staging", DisplayName: "Staging", Validation: "off"},
+		}},
+		Pipeline: &cPipeline{order: []string{"development", "staging", "production"}},
+	})
+	h := newProvHarness(t, svc)
+	resp := h.AsOrg("acme").Get("/api/v1/dependencies/environments")
+	if resp.Code != 200 {
+		t.Fatalf("want 200, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	var got []gen.EnvironmentDTO
+	if err := json.Unmarshal(resp.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	wantNames := []string{"development", "staging", "production"}
+	for i, want := range wantNames {
+		if got[i].Name != want {
+			t.Fatalf("position %d = %q, want %q", i, got[i].Name, want)
+		}
+		if got[i].Position != int32(i) {
+			t.Errorf("%s position = %d, want %d", want, got[i].Position, i)
+		}
+	}
+	if got[0].PromotesTo != "staging" {
+		t.Errorf("development promotesTo = %q, want staging", got[0].PromotesTo)
+	}
+	// The last environment promotes nowhere, and must say so by omission.
+	if got[2].PromotesTo != "" {
+		t.Errorf("production promotesTo = %q, want omitted", got[2].PromotesTo)
+	}
+}
+
+func TestProvisioningComponent_ListOrgEnvironments_EnvironmentOutsidePipelineIsDropped(t *testing.T) {
+	t.Parallel()
+	svc := provisioning.NewService(provisioning.Deps{
+		Environments: &cEnvs{infos: []provisioning.EnvironmentInfo{
+			{Name: "development", DisplayName: "Development", Validation: "on"},
+			{Name: "someone-elses-env", DisplayName: "Someone Elses Env"},
+		}},
+		Pipeline: &cPipeline{order: []string{"development"}},
+	})
+	h := newProvHarness(t, svc)
+	resp := h.AsOrg("acme").Get("/api/v1/dependencies/environments")
+	var got []gen.EnvironmentDTO
+	_ = json.Unmarshal(resp.Body.Bytes(), &got)
+	if len(got) != 1 || got[0].Name != "development" {
+		t.Fatalf("a converged cluster's foreign environment leaked into the pipeline: %+v", got)
+	}
+}
+
+// TestProvisioningComponent_ListOrgEnvironments_NoResolvablePipeline covers
+// resolution branch 3: the org has no pipeline named "default" and more than
+// one candidate, so which one governs promotion is genuinely unknown. The
+// service must not guess — it serves OpenChoreo's own list order with every
+// PromotesTo left empty, rather than inventing a promotion chain the platform
+// does not have.
+func TestProvisioningComponent_ListOrgEnvironments_NoResolvablePipeline(t *testing.T) {
+	t.Parallel()
+	svc := provisioning.NewService(provisioning.Deps{
+		Environments: &cEnvs{infos: []provisioning.EnvironmentInfo{
+			{Name: "staging", DisplayName: "Staging", Validation: "off"},
+			{Name: "development", DisplayName: "Development", Validation: "on"},
+		}},
+		// Two candidate pipelines, neither named "default" — unresolvable.
+		Pipeline: &cPipeline{names: []string{"team-a", "team-b"}},
+	})
+	h := newProvHarness(t, svc)
+	resp := h.AsOrg("acme").Get("/api/v1/dependencies/environments")
+	if resp.Code != 200 {
+		t.Fatalf("want 200, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	var got []gen.EnvironmentDTO
+	if err := json.Unmarshal(resp.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	wantNames := []string{"staging", "development"} // OC's own list order, unchanged
+	if len(got) != len(wantNames) {
+		t.Fatalf("got %+v, want %d environments in list order", got, len(wantNames))
+	}
+	for i, want := range wantNames {
+		if got[i].Name != want {
+			t.Fatalf("position %d = %q, want %q (list order)", i, got[i].Name, want)
+		}
+		if got[i].Position != int32(i) {
+			t.Errorf("%s position = %d, want %d", want, got[i].Position, i)
+		}
+		if got[i].PromotesTo != "" {
+			t.Errorf("%s promotesTo = %q, want empty — no resolvable pipeline means no invented promotion chain", want, got[i].PromotesTo)
+		}
+	}
+}
+
+func TestProvisioning_EnvironmentInfo_AnnotationsAndFallbacks(t *testing.T) {
+	t.Parallel()
+	svc := provisioning.NewService(provisioning.Deps{
+		Environments: &cEnvs{infos: []provisioning.EnvironmentInfo{
+			{Name: "development", DisplayName: "Development", IsProduction: false, Validation: "on"},
+			{Name: "staging-local", DisplayName: "", IsProduction: false, Validation: ""},
+			{Name: "production", DisplayName: "Production", IsProduction: true, Validation: "off"},
+		}},
+	})
+	got, err := svc.ListOrgEnvironments(context.Background(), "acme")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("want 3 environments, got %d", len(got))
+	}
+	// An absent display-name annotation falls back to a titlecased name.
+	if got[1].DisplayName != "Staging Local" {
+		t.Errorf("display name fallback = %q, want %q", got[1].DisplayName, "Staging Local")
+	}
+	// An absent validation annotation is OFF — a new environment does not
+	// silently start running validation.
+	if got[1].Validation != "off" {
+		t.Errorf("absent validation annotation = %q, want %q", got[1].Validation, "off")
+	}
+	if !got[2].IsProduction {
+		t.Error("production environment lost its isProduction flag")
+	}
+}
+
 func TestProvisioningComponent_ListOrgEnvironments_NoClaims401(t *testing.T) {
 	t.Parallel()
 	h := newProvHarness(t, provisioning.NewService(provisioning.Deps{}))
@@ -958,6 +1131,7 @@ func TestProvisioningComponent_ListExternalResources_DTOGrowth(t *testing.T) {
 	  {
 	    "name": "stripe",
 	    "description": "payments",
+	    "provider": "Stripe",
 	    "consumptionInstructions": "Use the secret key as Bearer.",
 	    "config": [{"key": "api_key", "secret": true}],
 	    "consumers": [{"projectId": "shop", "componentName": "checkout"}],
@@ -998,16 +1172,13 @@ func registerBody() gen.RegisterExternalResourceJSONRequestBody {
 	return gen.RegisterExternalResourceJSONRequestBody{
 		Name:                    "stripe",
 		Description:             "Stripe payments",
+		Provider:                "Stripe",
 		ConsumptionInstructions: "Use the secret as Bearer.",
 		Config: []gen.ConfigKeyDTO{
 			{Key: "api_key", Description: "Secret API key", Secret: true},
 			{Key: "region", Description: "Account region", Secret: false},
 		},
-		EnvValues: []struct {
-			Environment string `json:"environment"`
-			Key         string `json:"key"`
-			Value       string `json:"value"`
-		}{
+		EnvValues: []gen.EnvValueWriteDTO{
 			{Environment: "default", Key: "api_key", Value: "sk_live"},
 			{Environment: "default", Key: "region", Value: "us"},
 			{Environment: "staging-local", Key: "api_key", Value: "sk_test"},
@@ -1040,6 +1211,15 @@ type recordingDocs struct {
 func (r *recordingDocs) CommitUTF8(_ context.Context, orgID, logicalName, fileName, content string) (string, error) {
 	r.commits = append(r.commits, struct{ orgID, logicalName, fileName, content string }{orgID, logicalName, fileName, content})
 	return logicalName + "/" + fileName, nil
+}
+
+func (r *recordingDocs) ReadUTF8(_ context.Context, _, path string) (string, error) {
+	for _, c := range r.commits {
+		if c.logicalName+"/"+c.fileName == path {
+			return c.content, nil
+		}
+	}
+	return "", fmt.Errorf("not found: %s", path)
 }
 
 func newRegisterHarnessWithDocs(t *testing.T, catalog *cRTCatalog, plane *cValuePlane, docs provisioning.OrgResourceDocs) *componenttest.Harness {
@@ -1487,16 +1667,8 @@ func TestProvisioningComponent_UpdateExternalResource_AcceptsFileRow(t *testing.
 	}
 }
 
-func envValue(env, key, value string) struct {
-	Environment string `json:"environment"`
-	Key         string `json:"key"`
-	Value       string `json:"value"`
-} {
-	return struct {
-		Environment string `json:"environment"`
-		Key         string `json:"key"`
-		Value       string `json:"value"`
-	}{Environment: env, Key: key, Value: value}
+func envValue(env, key, value string) gen.EnvValueWriteDTO {
+	return gen.EnvValueWriteDTO{Environment: env, Key: key, Value: value}
 }
 
 func keepIfEmptyUpdateBody() gen.RegisterExternalResourceJSONRequestBody {
@@ -1507,11 +1679,7 @@ func keepIfEmptyUpdateBody() gen.RegisterExternalResourceJSONRequestBody {
 		{Key: "api_key", Description: "Secret API key (rotated)", Secret: true},
 		{Key: "region", Description: "Account region (primary)", Secret: false},
 	}
-	body.EnvValues = []struct {
-		Environment string `json:"environment"`
-		Key         string `json:"key"`
-		Value       string `json:"value"`
-	}{
+	body.EnvValues = []gen.EnvValueWriteDTO{
 		envValue("default", "api_key", ""),
 		envValue("default", "region", "ap-southeast"),
 		envValue("staging-local", "api_key", ""),
@@ -1631,11 +1799,7 @@ func TestProvisioningComponent_UpdateExternalResource_400KeyMutation(t *testing.
 			name: "remove key",
 			mut: func(body *gen.RegisterExternalResourceJSONRequestBody) {
 				body.Config = body.Config[:1]
-				body.EnvValues = []struct {
-					Environment string `json:"environment"`
-					Key         string `json:"key"`
-					Value       string `json:"value"`
-				}{
+				body.EnvValues = []gen.EnvValueWriteDTO{
 					envValue("default", "api_key", "sk_live"),
 					envValue("staging-local", "api_key", "sk_test"),
 				}
@@ -1645,11 +1809,7 @@ func TestProvisioningComponent_UpdateExternalResource_400KeyMutation(t *testing.
 			name: "rename key",
 			mut: func(body *gen.RegisterExternalResourceJSONRequestBody) {
 				body.Config[0].Key = "secret_key"
-				body.EnvValues = []struct {
-					Environment string `json:"environment"`
-					Key         string `json:"key"`
-					Value       string `json:"value"`
-				}{
+				body.EnvValues = []gen.EnvValueWriteDTO{
 					envValue("default", "secret_key", "sk_live"),
 					envValue("default", "region", "us"),
 					envValue("staging-local", "secret_key", "sk_test"),

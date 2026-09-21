@@ -61,7 +61,9 @@ func NewExternalResourceCatalog(rc openchoreo.ResourceClient) *ExternalResourceC
 // carry the same aep.wso2.com/external-name annotation. Without
 // deduping, one logical name could surface twice — so results are grouped by
 // the reconstructed logical name first, keeping only the newest RT per name
-// (see newerExternalRT) before sorting.
+// (see newerExternalRT) before sorting. Only REGISTERED resources are listed
+// (ExternalResourceDefinition.Registered): the type a project's build authors
+// for its own resource is scoped to that project.
 func (c *ExternalResourceCatalog) List(ctx context.Context, orgID string) ([]openchoreo.ExternalResourceDefinition, error) {
 	rts, err := c.rc.ListResourceTypes(ctx, orgID)
 	if err != nil {
@@ -73,6 +75,13 @@ func (c *ExternalResourceCatalog) List(ctx context.Context, orgID string) ([]ope
 		rt := &rts[i]
 		def, ok := openchoreo.ExternalDefinitionFromRT(rt)
 		if !ok {
+			continue
+		}
+		// A project's own type is not a catalog entry: it belongs to its
+		// project, is never offered for reuse, and never makes a name taken.
+		// It is dropped BEFORE the per-name dedupe, or a project's newer type
+		// would shadow the organization's record of the same logical name.
+		if !def.Registered() {
 			continue
 		}
 		if cur, exists := chosenRT[def.Name]; !exists || newerExternalRT(rt, cur) {
@@ -88,8 +97,9 @@ func (c *ExternalResourceCatalog) List(ctx context.Context, orgID string) ([]ope
 	return out, nil
 }
 
-// Get returns the named external resource's definition, or (nil, nil) when no
-// authored RT in orgID's namespace carries that logical name. The RT's own
+// Get returns the named REGISTERED external resource's definition, or
+// (nil, nil) when no org-scoped RT in orgID's namespace carries that logical
+// name (a project's own type does not count, exactly as in List). The RT's own
 // metadata.name is a hash of (name, schema) — see
 // openchoreo.ExternalResourceRTName — so it can never be derived from name
 // alone; listing every namespaced RT and matching on the recovered logical
@@ -109,8 +119,8 @@ func (c *ExternalResourceCatalog) Get(ctx context.Context, orgID, name string) (
 	for i := range rts {
 		rt := &rts[i]
 		def, ok := openchoreo.ExternalDefinitionFromRT(rt)
-		if !ok || def.Name != name {
-			continue
+		if !ok || def.Name != name || !def.Registered() {
+			continue // same rule as List: a project's type is not the record
 		}
 		if chosenRT == nil || newerExternalRT(rt, chosenRT) {
 			chosenRT, chosenDef = rt, def
@@ -143,7 +153,7 @@ func (c *ExternalResourceCatalog) Delete(ctx context.Context, orgID, name string
 	for i := range rts {
 		rt := &rts[i]
 		def, ok := openchoreo.ExternalDefinitionFromRT(rt)
-		if !ok || def.Name != name {
+		if !ok || def.Name != name || !def.Registered() {
 			continue
 		}
 		if err := c.rc.DeleteResourceType(ctx, orgID, rt.Metadata.Name); err != nil {
@@ -156,12 +166,29 @@ func (c *ExternalResourceCatalog) Delete(ctx context.Context, orgID, name string
 // Ensure get-or-creates the named ResourceType in orgID's namespace via
 // ResourceClient.EnsureResourceType. Register uses this to author the org
 // catalog RT without ApplyResource / EnsureBinding (no project instance).
+// Ensure lands the record's ResourceType. An org-scoped type's name is a
+// function of the logical name and the key schema, so a type of that name
+// that is NOT yet a record — one a project authored before the scope marker
+// existed — has the same schema and is adopted: it is rewritten as the record
+// rather than left squatting the name while Ensure reports success. A type
+// that already is a record is left as it is (Ensure is idempotent).
 func (c *ExternalResourceCatalog) Ensure(ctx context.Context, orgID string, rt *openchoreo.ResourceType) error {
 	if rt == nil {
 		return fmt.Errorf("external resource catalog: nil ResourceType")
 	}
-	_, err := c.rc.EnsureResourceType(ctx, orgID, rt)
-	return err
+	got, err := c.rc.EnsureResourceType(ctx, orgID, rt)
+	if err != nil {
+		return err
+	}
+	if got == nil {
+		return nil
+	}
+	if existing, ok := openchoreo.ExternalDefinitionFromRT(got); ok && !existing.Registered() {
+		if _, err := c.rc.UpdateResourceType(ctx, orgID, rt); err != nil {
+			return fmt.Errorf("external resource catalog: adopt %q as the record: %w", rt.Metadata.Name, err)
+		}
+	}
+	return nil
 }
 
 // Update replaces an existing namespaced ResourceType via
@@ -174,19 +201,6 @@ func (c *ExternalResourceCatalog) Update(ctx context.Context, orgID string, rt *
 	}
 	_, err := c.rc.UpdateResourceType(ctx, orgID, rt)
 	return err
-}
-
-// IsRegistered reports whether `name` is in the org's ResourceType-backed
-// catalog — the design-read registry-reuse hit (spec.ExternalResourceResolver).
-func (c *ExternalResourceCatalog) IsRegistered(ctx context.Context, orgID, name string) (bool, error) {
-	if c == nil {
-		return false, nil
-	}
-	def, err := c.Get(ctx, orgID, name)
-	if err != nil {
-		return false, err
-	}
-	return def != nil, nil
 }
 
 // newerExternalRT reports whether rt should be preferred over cur as the

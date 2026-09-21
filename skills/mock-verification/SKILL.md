@@ -85,6 +85,11 @@ smoke.
 - **Probes**: submit one form empty; open one detail route with an id that does
   not exist. The wireframe draws the happy path; these are the two states it
   implies.
+- **Short window**: reload ONE screen that has a primary action low on the page
+  at `agent-browser set viewport 1280 600`, and click that action. A layout that
+  only works on a tall window is a layout most laptops do not have, and the way
+  it fails is silent: a sticky footer sits over the button, the content pane does
+  not scroll, and the click lands on the footer. Set the viewport back afterwards.
 - **Deep entry**: load one nested route as a fresh page load in the address
   bar, not by clicking into it. Clicking never leaves the first document, so
   only this exercises the app booting at that URL — the path a bookmark, a
@@ -120,8 +125,10 @@ other: the plan once, one line per item as it settles, the close once.
 Mock verification: <component> — <N> items
 1. <Screen> (<role>): <its controls>; -> <the screens its arrows name>
 2. <Screen>: ...
-<N-2>. Session
-<N-1>. Probes
+<N-4>. Roles
+<N-3>. Session
+<N-2>. Probes
+<N-1>. Short window
 <N>. Console
 ```
 
@@ -142,11 +149,13 @@ as one.
 
 ## 1 · Stand it up
 
-From the App Path:
-
 ```bash
-bash "$AEP_SKILLS_DIR/mock-verification/scripts/walk.sh" up
+cd <App Path> && bash "$AEP_SKILLS_DIR/mock-verification/scripts/walk.sh" up
 ```
+
+The `cd` is part of the command, not advice around it: the script keys its
+state off the working directory, so run from anywhere else it starts a second,
+unrelated server and hangs waiting for one that was never yours.
 
 It starts `npm run dev:mock` on a free port, reaps a stale server from an
 earlier attempt first, and prints `READY <url>`. The url is what you open;
@@ -161,7 +170,7 @@ it and run `up` again.
 Before the browser opens, post the plan from the map alone: one numbered item
 per screen in each flow, in walking order under its role, then screens in no
 flow, then Roles (with `mock/authz/roles.gen.ts`), Session (with an auth dependency),
-Probes, and Console. Posting it first puts your coverage in front of the
+Probes, Short window, and Console. Posting it first puts your coverage in front of the
 person watching while there is still time to say a screen is missing.
 
 **Done when:** every screen and flow in the map has a number, and the plan is

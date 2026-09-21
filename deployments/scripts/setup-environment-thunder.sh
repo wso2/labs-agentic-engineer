@@ -552,6 +552,29 @@ create_release() {
     issuer="$(thunder_issuer "$handle")"
     echo "  Issuer:    ${issuer}"
 
+    # Authorize 302s to gateClient, not server.publicUrl. Hardcoding
+    # http:8080 matches k3d (issuer is http://<env>-idp.amp.localhost:8080)
+    # and breaks a TLS ingress: the browser follows to https://host:8080
+    # and times out. Derive scheme/port from the issuer the same way
+    # load_public_urls does for T1.
+    local gate_scheme gate_port hostport
+    if [[ "$issuer" == https://* ]]; then
+        gate_scheme=https
+        gate_port=443
+    else
+        gate_scheme=http
+        gate_port=80
+    fi
+    hostport="${issuer#*://}"
+    hostport="${hostport%%/*}"
+    # Take an explicit port only from host:port or [ipv6]:port. A bare
+    # [2001:db8::1] matches *:* and would otherwise set gate_port to "1]".
+    if [[ "$hostport" =~ ^\[[^]]+\]:([0-9]+)$ ]]; then
+        gate_port="${BASH_REMATCH[1]}"
+    elif [[ "$hostport" =~ ^[^:]+:([0-9]+)$ ]]; then
+        gate_port="${BASH_REMATCH[1]}"
+    fi
+
     # Ownership markers, on the namespace, written BEFORE the install: they are
     # what remove-environment-thunder.sh reads to decide whether it may
     # uninstall this release and delete this namespace, and an interrupted run
@@ -635,8 +658,8 @@ create_release() {
         --set "configuration.server.httpOnly=true"
         --set-string "configuration.jwt.issuer=${issuer}"
         --set-string "configuration.gateClient.hostname=${host}"
-        --set "configuration.gateClient.port=8080"
-        --set-string "configuration.gateClient.scheme=http"
+        --set "configuration.gateClient.port=${gate_port}"
+        --set-string "configuration.gateClient.scheme=${gate_scheme}"
         --set "configuration.database.config.type=sqlite"
         --set "configuration.database.runtime_transient.type=sqlite"
         --set "configuration.database.entity.type=sqlite"

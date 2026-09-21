@@ -45,7 +45,7 @@ import { checkOpenapiSpec } from "./openapi-spec.js";
 import { checkWireframeLayout } from "./wireframe-layout.js";
 import { checkDesignDiagram } from "./design-diagrams.js";
 import { checkComponentDependencies } from "./component-dependencies.js";
-import { checkDependencyDesign, preserveAssumption } from "./dependency-design-schema.js";
+import { checkDependencyDesign, preservePlatformFields } from "./dependency-design-schema.js";
 import type {
   Op,
   ErrCode,
@@ -198,8 +198,8 @@ export class FileBundle {
     if (!this.files.has(path)) {
       return ok(path, op, "noop"); // idempotent delete
     }
-    // A definition removed to be re-added wholesale still carries the user's
-    // authorization record for the add that follows (preserveAssumption).
+    // A definition removed to be re-added wholesale still carries the
+    // platform's fields for the add that follows (preservePlatformFields).
     const removed = this.files.get(path);
     if (removed !== undefined) this.removedThisTurn.set(path, removed);
     this.files.delete(path);
@@ -237,11 +237,12 @@ export class FileBundle {
     if (dependencyProblem) {
       return err(path, op, dependencyProblem.code, dependencyProblem.message);
     }
-    // The user's authorization record on a dependency's definition rides
+    // The platform's fields on a dependency's definition — a copy's ref, the
+    // organization's instructions, the user's acceptance record — ride
     // through every agent write of the file, whether or not the agent carried
-    // it (see preserveAssumption).
+    // them (see preservePlatformFields).
     const priorDefinition = this.read(path) ?? this.removedThisTurn.get(path);
-    content = preserveAssumption(path, content, priorDefinition);
+    content = preservePlatformFields(path, content, priorDefinition);
     const dependencyDesignProblem = checkDependencyDesign(path, content, {
       read: (p) => (p === path ? priorDefinition : this.read(p)),
     });

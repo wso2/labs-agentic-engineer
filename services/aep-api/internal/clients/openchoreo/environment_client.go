@@ -27,12 +27,32 @@ import (
 )
 
 // EnvironmentClient reads OpenChoreo Environments in an org namespace.
-// ListNames is the provisioning.EnvironmentLister surface; GetThunderBinding is
-// how aep-api finds the environment's own identity provider.
+// List returns this package's own wire-mapping EnvironmentInfo; the
+// environmentLister adapter in internal/app/tasks_adapters.go converts those
+// rows to provisioning's domain type to satisfy provisioning.EnvironmentLister,
+// so neither package depends on the other's type. GetThunderBinding is how
+// aep-api finds the environment's own identity provider.
 type EnvironmentClient interface {
-	ListNames(ctx context.Context, orgID string) ([]string, error)
+	List(ctx context.Context, orgID string) ([]EnvironmentInfo, error)
 	GetThunderBinding(ctx context.Context, orgID, environment string) (ThunderBinding, error)
 	GetGatewayAssertion(ctx context.Context, orgID, environment string) (GatewayAssertion, error)
+}
+
+// EnvironmentInfo is one OpenChoreo Environment as the BFF reads it: name,
+// the openchoreo.dev/display-name annotation (empty when unset — the
+// provisioning service fills the titlecased fallback, not this client),
+// spec.isProduction, and the aep.wso2.com/validation annotation verbatim
+// (empty or unrecognised is normalized to "off" by the provisioning service,
+// not here — this type is a plain read, not a policy decision).
+//
+// provisioning has its own EnvironmentInfo; this one is the wire read, and
+// environmentLister in internal/app/tasks_adapters.go converts between them,
+// which keeps the two types — and the two packages — independent.
+type EnvironmentInfo struct {
+	Name         string
+	DisplayName  string
+	IsProduction bool
+	Validation   string
 }
 
 // Thunder binding annotations, written onto the Environment by
@@ -106,9 +126,14 @@ func NewEnvironmentClient(cfg Config) EnvironmentClient {
 	return &environmentClient{oc: oc}
 }
 
-func (c *environmentClient) ListNames(ctx context.Context, orgID string) ([]string, error) {
+// List reads the org's Environments and maps the display-name and validation
+// annotations and spec.isProduction onto each row. It does not apply the
+// display-name fallback or the absent/unrecognised-is-off validation default
+// — those are policy, applied once in
+// provisioning.Service.ListOrgEnvironments, not here.
+func (c *environmentClient) List(ctx context.Context, orgID string) ([]EnvironmentInfo, error) {
 	if strings.TrimSpace(orgID) == "" {
-		return []string{}, nil
+		return []EnvironmentInfo{}, nil
 	}
 	resp, err := c.oc.ListEnvironmentsWithResponse(ctx, orgID, nil)
 	if err != nil {
@@ -122,11 +147,19 @@ func (c *environmentClient) ListNames(ctx context.Context, orgID string) ([]stri
 			JSON500: resp.JSON500,
 		})
 	}
-	names := make([]string, 0, len(resp.JSON200.Items))
+	infos := make([]EnvironmentInfo, 0, len(resp.JSON200.Items))
 	for _, item := range resp.JSON200.Items {
-		names = append(names, item.Metadata.Name)
+		info := EnvironmentInfo{
+			Name:        item.Metadata.Name,
+			DisplayName: annotation(item.Metadata.Annotations, AnnotationKeyDisplayName),
+			Validation:  annotation(item.Metadata.Annotations, AnnotationKeyValidation),
+		}
+		if item.Spec != nil && item.Spec.IsProduction != nil {
+			info.IsProduction = *item.Spec.IsProduction
+		}
+		infos = append(infos, info)
 	}
-	return names, nil
+	return infos, nil
 }
 
 // GetThunderBinding reads the environment's identity-provider binding off its

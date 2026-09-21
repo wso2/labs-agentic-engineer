@@ -178,6 +178,28 @@ describe("CatalogTypeDrawer", () => {
     expect(screen.getByRole("button", { name: /edit/i })).toBeInTheDocument();
   });
 
+  // The provider says what the resource IS, and the contract is the one
+  // document a project copies when it reuses it — both are facts about the
+  // record rather than another docs row.
+  it("registered: names the provider and the contract document", () => {
+    render(
+      <CatalogTypeDrawer
+        kind="external"
+        resource={registeredExternal({
+          provider: "Stripe",
+          contract: { type: "openapi", path: "stripe/openapi.yaml" },
+        })}
+        open
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Provider")).toBeInTheDocument();
+    expect(screen.getByText("Stripe")).toBeInTheDocument();
+    expect(screen.getByText("Contract")).toBeInTheDocument();
+    expect(screen.getByText("stripe/openapi.yaml")).toBeInTheDocument();
+  });
+
   it("renders a path pointer as text without a file body", () => {
     render(
       <CatalogTypeDrawer
@@ -216,7 +238,59 @@ describe("CatalogTypeDrawer", () => {
     });
   });
 
-  it("project external: Connection-values note, no env-cell matrix, unused Delete, no Edit", () => {
+  // A project's own resource is not a record: no Edit, no Delete (those act on
+  // records), and the one action is to take it over for the organization.
+  it("project's own resource: values note, Promote to organization, no Edit or Delete", () => {
+    render(
+      <CatalogTypeDrawer
+        kind="external"
+        resource={projectExternal({ scope: "project", project: "demo-shop" })}
+        open
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("Configured")).not.toBeInTheDocument();
+    expect(screen.queryByText("Unset")).not.toBeInTheDocument();
+    expect(screen.getByText("held by demo-shop")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Environment values are the project's. Promote the resource to hold them for the organization.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /edit/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete resource" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Promote to organization" }));
+    expect(navigate).toHaveBeenCalledWith({
+      to: "/resources/register/form",
+      search: { promote: "demo-shop/github" },
+    });
+  });
+
+  // A name the organization already registered cannot be promoted: the row
+  // says so and points at reuse.
+  it("project's own resource whose name is already a record: no Promote, a reuse note", () => {
+    render(
+      <CatalogTypeDrawer
+        kind="external"
+        resource={projectExternal({ scope: "project", project: "demo-shop" })}
+        recordNames={["github"]}
+        open
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Promote to organization" })).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "The organization already holds a record with this name. Have the project reuse it instead.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  // A type from before the scope marker names no project: nothing to promote
+  // from, and still nothing to edit or delete.
+  it("project external without a project: the values note and no actions", () => {
     render(
       <CatalogTypeDrawer
         kind="external"
@@ -226,18 +300,14 @@ describe("CatalogTypeDrawer", () => {
       />,
     );
 
-    expect(screen.queryByText("Configured")).not.toBeInTheDocument();
-    expect(screen.queryByText("Unset")).not.toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Environment values for this Project External resource are set on the project Connection values dialog.",
-      ),
-    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Promote to organization" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete resource" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /edit/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Delete resource" })).toBeEnabled();
   });
 
-  it("either External kind with consumers: Delete is disabled", () => {
+  // Delete acts on records only (the server deletes registered types and
+  // nothing else), so a project's own row never offers it.
+  it("registered with consumers: Delete is disabled; a project's row has no Delete at all", () => {
     const consumers = [{ componentName: "checkout-api", projectId: "acme" }];
     const { rerender } = render(
       <CatalogTypeDrawer
@@ -253,13 +323,14 @@ describe("CatalogTypeDrawer", () => {
     rerender(
       <CatalogTypeDrawer
         kind="external"
-        resource={projectExternal({ consumers })}
+        resource={projectExternal({ consumers, scope: "project", project: "acme" })}
         open
         onClose={vi.fn()}
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Delete resource" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Delete resource" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Promote to organization" })).toBeEnabled();
   });
 
   it("unused External: confirm then mutate(name)", () => {

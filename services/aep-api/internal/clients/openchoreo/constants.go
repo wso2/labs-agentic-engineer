@@ -23,6 +23,7 @@ package openchoreo
 const (
 	AnnotationKeyDisplayName = "openchoreo.dev/display-name"
 	AnnotationKeyDescription = "openchoreo.dev/description"
+	AnnotationKeyValidation  = "aep.wso2.com/validation"
 )
 
 // LabelKeys is a typed-string alias for the `openchoreo.dev/*` label set we

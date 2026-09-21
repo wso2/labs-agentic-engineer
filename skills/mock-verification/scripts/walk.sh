@@ -32,11 +32,10 @@
 # that reaps them all — `set -m` makes the background job its own group leader,
 # which is why `$!` below is a group id, on Linux and on a macOS laptop alike.
 # Every walk used to re-derive that, and the one that did not leaked four dev
-# servers into a 3Gi cgroup. The port is searched rather than fixed so two
-# web-application walks in one wave do not fight over 5173 — and because two
-# `up` calls can still pick the same free port in the same instant, a launch
-# that dies on a bind collision moves to the next port by itself. A stale server
-# from this app's earlier attempt is reaped before a new one starts.
+# servers into a 3Gi cgroup. The port is searched rather than fixed because a
+# dev server outlives the walk that started it, so 5173 may still be held; a
+# launch that dies on a bind collision moves to the next port by itself. A stale
+# server from this app's earlier attempt is reaped before a new one starts.
 
 set -euo pipefail
 

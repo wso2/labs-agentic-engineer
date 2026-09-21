@@ -31,9 +31,30 @@
 //   GATEWAY_ASSERTION_ISSUER       the `iss` every assertion carries
 //   GATEWAY_ASSERTION_HEADER       the header it arrives in
 //
-// A missing one PANICS the interceptor's init, which stops the service from
-// starting. That is deliberate: a service that starts without them cannot tell
-// a real caller from a forged one.
+// ┌─────────────────────────────────────────────────────────────────────────┐
+// │ ⚠️  TEMPORARY FALLBACK — READ THIS BEFORE RELYING ON THIS SERVICE       │
+// │                                                                         │
+// │ When those three are ABSENT this file no longer refuses to start. It    │
+// │ falls back to reading the caller's own token out of                     │
+// │ `x-forwarded-authorization` and DECODING IT WITHOUT CHECKING ANY        │
+// │ SIGNATURE.                                                              │
+// │                                                                         │
+// │ In that mode this service has NO trust anchor at all. Anything that can │
+// │ open a socket to this pod — every other pod in the project namespace —  │
+// │ can name itself any user and grant itself any scope:                    │
+// │                                                                         │
+// │   curl http://<service>:<port>/<path> \                                 │
+// │     -H 'x-forwarded-authorization: Bearer <unsigned JWT of your choice>' │
+// │                                                                         │
+// │ The gateway is then the ONLY thing standing between the internet and    │
+// │ this data, and nothing inside the cluster is standing there at all.     │
+// │                                                                         │
+// │ This exists ONLY because environments provisioned before the gateway    │
+// │ grew its `backendjwt_v1` policy publish no keypair, and a service that  │
+// │ cannot start cannot be demonstrated. It is a stop-gap with a known      │
+// │ expiry: provision the environment gateway, and this branch goes away.   │
+// │ Delete the fallback — not the verification — when that lands.           │
+// └─────────────────────────────────────────────────────────────────────────┘
 //
 // WIRING: the generated `service / on ep0` becomes
 //   service http:InterceptableService / on ep0 {
@@ -47,10 +68,27 @@ import ballerina/crypto;
 import ballerina/http;
 import ballerina/jwt;
 import ballerina/lang.regexp;
+import ballerina/log;
 import ballerina/os;
 
 # The key the verified caller is stored under in the `http:RequestContext`.
 const string CALLER_CTX_KEY = "aep_gateway_caller";
+
+# Where the gateway re-presents the caller's own token. `jwt-auth` STRIPS the
+# inbound `Authorization` and forwards the raw JWT under this name (its own
+# default; the `api-configuration` trait exposes it as `forwardedTokenHeader`).
+# Reading `Authorization` instead finds nothing on an authenticated hop.
+const string DEFAULT_FORWARDED_TOKEN_HEADER = "x-forwarded-authorization";
+
+# The unsigned headers the gateway maps the same claims onto. Read ONLY in the
+# fallback mode above, and only to backfill a claim the access token itself did
+# not carry — a Thunder instance that publishes no `username` on the access
+# token would otherwise 500 every `/me`-shaped endpoint. In the verified mode
+# nothing here is ever read: the assertion is the only evidence.
+const string HDR_USER_ID = "x-user-id";
+const string HDR_USER_NAME = "x-user-name";
+const string HDR_USER_OU = "x-user-ou";
+const string HDR_USER_SCOPES = "x-user-scopes";
 
 # The authenticated caller, as the gateway's assertion names them.
 #
@@ -149,6 +187,7 @@ public isolated function requireCallerUsername(GatewayCaller caller)
 #   assertion is never downgraded to "anonymous": that would make forging one
 #   strictly better for an attacker than sending none.
 # - verified -> continue with the caller on the context.
+#
 # The three fields are the PEM text, the issuer and the header — all strings,
 # and that is what keeps this class `isolated` so the listener serves requests
 # concurrently. It does NOT cache the decoded `crypto:PublicKey`, for a reason
@@ -167,6 +206,8 @@ public isolated function requireCallerUsername(GatewayCaller caller)
 public isolated service class AssertionInterceptor {
     *http:RequestInterceptor;
 
+    # false = the TEMPORARY unverified fallback at the top of this file.
+    private final boolean verifying;
     private final string certificate;
     private final string issuer;
     private final string header;
@@ -175,22 +216,53 @@ public isolated service class AssertionInterceptor {
         string cert = os:getEnv("GATEWAY_ASSERTION_CERTIFICATE");
         string iss = os:getEnv("GATEWAY_ASSERTION_ISSUER");
         string hdr = os:getEnv("GATEWAY_ASSERTION_HEADER");
+        // All three absent is the unprovisioned environment the banner
+        // describes. SOME of them absent is a broken deployment and still
+        // panics: falling back there would hide a real misconfiguration
+        // behind a mode that looks like it works.
+        if cert == "" && iss == "" && hdr == "" {
+            string forwarded = os:getEnv("USER_TOKEN_HEADER");
+            self.verifying = false;
+            self.certificate = "";
+            self.issuer = "";
+            self.header = forwarded == "" ? DEFAULT_FORWARDED_TOKEN_HEADER : forwarded;
+            log:printWarn("TEMPORARY: no GATEWAY_ASSERTION_CERTIFICATE/_ISSUER/_HEADER, so this "
+                + "service is reading the caller out of '" + self.header + "' WITHOUT verifying any "
+                + "signature. Any pod that can reach this one can now claim any identity and any "
+                + "scope. Provision the environment gateway's backend-JWT keypair to restore "
+                + "verification.");
+            return;
+        }
         if cert == "" || iss == "" || hdr == "" {
-            panic error("GATEWAY_ASSERTION_CERTIFICATE / _ISSUER / _HEADER must all be set; "
-                + "this service cannot tell a real caller from a forged one without them");
+            panic error("GATEWAY_ASSERTION_CERTIFICATE / _ISSUER / _HEADER must be set "
+                + "together or not at all; a half-configured gateway assertion is a broken "
+                + "deployment, not an unprovisioned environment");
         }
         // Decoded once here only to fail FAST: a certificate this service
         // cannot read must stop it starting, not 401 every caller later.
+        // Still a panic, and deliberately: a certificate that is PRESENT and
+        // unreadable is a broken deployment, not an unprovisioned one, and
+        // silently dropping to the fallback would hide it.
         crypto:PublicKey|crypto:Error decoded = crypto:decodeRsaPublicKeyFromContent(cert.toBytes());
         if decoded is crypto:Error {
             panic error("GATEWAY_ASSERTION_CERTIFICATE is not a readable PEM certificate", decoded);
         }
+        self.verifying = true;
         self.certificate = cert;
         self.issuer = iss;
         self.header = hdr;
     }
 
     isolated resource function 'default [string... path](http:RequestContext ctx, http:Request req)
+            returns http:NextService|http:Unauthorized|error? {
+        if self.verifying {
+            return self.fromAssertion(ctx, req);
+        }
+        return self.fromForwardedToken(ctx, req);
+    }
+
+    # The real path: a signature this service can check, against one certificate.
+    private isolated function fromAssertion(http:RequestContext ctx, http:Request req)
             returns http:NextService|http:Unauthorized|error? {
         string|http:HeaderNotFoundError raw = req.getHeader(self.header);
         if raw is http:HeaderNotFoundError || raw.trim() == "" {
@@ -227,6 +299,82 @@ public isolated service class AssertionInterceptor {
         ctx.set(CALLER_CTX_KEY, caller);
         return ctx.next();
     }
+
+    # ⚠️ The TEMPORARY path. Decodes, never verifies — see the banner at the top.
+    #
+    # It keeps the SHAPE of the verified path so the two cannot drift: a missing
+    # header continues anonymously (a `security: []` operation), a present but
+    # unreadable one is a 401 rather than a downgrade to anonymous, and the
+    # caller lands on the context under the same key. What it does not keep is
+    # the only thing that mattered — evidence.
+    private isolated function fromForwardedToken(http:RequestContext ctx, http:Request req)
+            returns http:NextService|http:Unauthorized|error? {
+        string|http:HeaderNotFoundError raw = req.getHeader(self.header);
+        if raw is http:HeaderNotFoundError || raw.trim() == "" {
+            return ctx.next();
+        }
+        string token = raw.trim();
+        // The gateway forwards `Bearer <jwt>`; a hand-rolled caller may not.
+        if token.length() > 7 && token.substring(0, 7).toLowerAscii() == "bearer " {
+            token = token.substring(7).trim();
+        }
+        [jwt:Header, jwt:Payload]|jwt:Error decoded = jwt:decode(token);
+        if decoded is jwt:Error {
+            return <http:Unauthorized>{body: {message: "unreadable caller token"}};
+        }
+        jwt:Payload payload = decoded[1];
+        string subject = payload.sub ?: "";
+        if subject.trim() == "" {
+            subject = header(req, HDR_USER_ID);
+        }
+        if subject.trim() == "" {
+            return <http:Unauthorized>{body: {message: "caller token names no subject"}};
+        }
+        // Backfill from the gateway's claim-mapped headers. Thunder publishes
+        // `username`/`ouHandle` on the ACCESS token only when the instance is
+        // configured to, and a service that 500s on every `/me` because of it
+        // has gained nothing from this fallback.
+        string username = claim(payload, "username");
+        if username == "" {
+            username = header(req, HDR_USER_NAME);
+        }
+        string orgHandle = claim(payload, "ouHandle");
+        if orgHandle == "" {
+            orgHandle = header(req, HDR_USER_OU);
+        }
+        string[] scopes = splitScopes(payload["scope"]);
+        if scopes.length() == 0 {
+            scopes = splitScopes(header(req, HDR_USER_SCOPES));
+        }
+        GatewayCaller caller = {
+            userId: subject,
+            username: username,
+            scopes: scopes,
+            orgHandle: orgHandle
+        };
+        ctx.set(CALLER_CTX_KEY, caller);
+        return ctx.next();
+    }
+}
+
+# One string claim off a decoded payload, or "" when it is absent or not a string.
+#
+# + payload - the decoded token payload
+# + name - the claim to read
+# + return - the claim as a string, or ""
+isolated function claim(jwt:Payload payload, string name) returns string {
+    anydata value = payload[name];
+    return value is string ? value : "";
+}
+
+# One header, or "" when it is absent.
+#
+# + req - the inbound request
+# + name - the header to read
+# + return - the header value, or ""
+isolated function header(http:Request req, string name) returns string {
+    string|http:HeaderNotFoundError value = req.getHeader(name);
+    return value is string ? value.trim() : "";
 }
 
 # Splits the assertion's `scope` claim, which is space-separated as OAuth 2.0

@@ -301,6 +301,24 @@ func (e EnvValueCellDTOStatus) Valid() bool {
 	}
 }
 
+// Defines values for EnvironmentDTOValidation.
+const (
+	Off EnvironmentDTOValidation = "off"
+	On  EnvironmentDTOValidation = "on"
+)
+
+// Valid indicates whether the value is a known member of the EnvironmentDTOValidation enum.
+func (e EnvironmentDTOValidation) Valid() bool {
+	switch e {
+	case Off:
+		return true
+	case On:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ExternalDependencyValueState.
 const (
 	ExternalDependencyValueStateConfigured     ExternalDependencyValueState = "configured"
@@ -316,6 +334,24 @@ func (e ExternalDependencyValueState) Valid() bool {
 	case ExternalDependencyValueStateNotProvisioned:
 		return true
 	case ExternalDependencyValueStateUnset:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ExternalResourceDTOScope.
+const (
+	ExternalResourceDTOScopeOrg     ExternalResourceDTOScope = "org"
+	ExternalResourceDTOScopeProject ExternalResourceDTOScope = "project"
+)
+
+// Valid indicates whether the value is a known member of the ExternalResourceDTOScope enum.
+func (e ExternalResourceDTOScope) Valid() bool {
+	switch e {
+	case ExternalResourceDTOScopeOrg:
+		return true
+	case ExternalResourceDTOScopeProject:
 		return true
 	default:
 		return false
@@ -481,6 +517,36 @@ func (e ProgressEventEmitter) Valid() bool {
 	case ProgressEventEmitterMain:
 		return true
 	case ProgressEventEmitterSubagent:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ResourceContractType.
+const (
+	ResourceContractTypeAsyncapi      ResourceContractType = "asyncapi"
+	ResourceContractTypeDocumentation ResourceContractType = "documentation"
+	ResourceContractTypeGraphql       ResourceContractType = "graphql"
+	ResourceContractTypeOpenapi       ResourceContractType = "openapi"
+	ResourceContractTypeProtobuf      ResourceContractType = "protobuf"
+	ResourceContractTypeSdk           ResourceContractType = "sdk"
+)
+
+// Valid indicates whether the value is a known member of the ResourceContractType enum.
+func (e ResourceContractType) Valid() bool {
+	switch e {
+	case ResourceContractTypeAsyncapi:
+		return true
+	case ResourceContractTypeDocumentation:
+		return true
+	case ResourceContractTypeGraphql:
+		return true
+	case ResourceContractTypeOpenapi:
+		return true
+	case ResourceContractTypeProtobuf:
+		return true
+	case ResourceContractTypeSdk:
 		return true
 	default:
 		return false
@@ -1732,7 +1798,7 @@ type DeleteOp struct {
 	Path    string `json:"path"`
 }
 
-// Dependency A component's unified, kind-discriminated dependency entry. status/reason/flags are read-time computed by spec.ComputeDependencyStatus — never authored, never persisted (Design.json write-gate rejects them). An external dependency's definition (source, provider, style, contract, sdk, package, provenance, suggestions, config, assumed) is HYDRATED from its own file, specs/design/dependencies/<name>/dependency.json — one dependency, one definition, referenced by name from every component that uses it.
+// Dependency A component's unified, kind-discriminated dependency entry. status/reason/flags are read-time computed by spec.ComputeDependencyStatus — never authored, never persisted (Design.json write-gate rejects them). An external dependency is HYDRATED from its own file, specs/design/dependencies/<name>/dependency.json — one dependency, one definition, holding a full `resource` block (a copy from the org registry when resourceRef is set, else one the project defined). style, contractAssumed and contractDerived are COMPUTED from the contract's type and origin; nothing here is stored as such.
 type Dependency = contracts.Dependency
 
 // DependencyAssumption The user's permission to build against a contract the agent wrote from research — who accepted, when, and the agent's note of what it was unsure about.
@@ -1749,9 +1815,6 @@ type DependencyContractResponse struct {
 	// Contract Repo-relative path of the committed contract file.
 	Contract string `json:"contract"`
 }
-
-// DependencyProvenance Where a committed contract came from — the source document, its full-document hash, when it was read, and whether the committed file is a slice of it.
-type DependencyProvenance = contracts.DependencyProvenance
 
 // DependencyStatus defines model for DependencyStatus.
 type DependencyStatus struct {
@@ -1823,16 +1886,42 @@ type EnvValueCellDTO struct {
 // EnvValueCellDTOStatus defines model for EnvValueCellDTO.Status.
 type EnvValueCellDTOStatus string
 
+// EnvValueWriteDTO One value of one config key in one environment, as written by a form.
+type EnvValueWriteDTO struct {
+	Environment string `json:"environment"`
+	Key         string `json:"key"`
+	Value       string `json:"value"`
+}
+
 // EnvVar defines model for EnvVar.
 type EnvVar struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
 }
 
-// EnvironmentDTO defines model for EnvironmentDTO.
+// EnvironmentDTO One environment in the org's deployment pipeline, in promotion order. `name` is the OpenChoreo Environment's immutable identity; everything else is presentation or flow. `validation` says whether this environment runs a validation step; it is always present in the response, because an Environment whose annotation is missing or unrecognised is served as "off".
 type EnvironmentDTO struct {
+	// DisplayName From the openchoreo.dev/display-name annotation; falls back to a titlecased name.
+	DisplayName string `json:"displayName"`
+
+	// IsProduction From Environment.spec.isProduction. Never inferred from the name.
+	IsProduction bool `json:"isProduction"`
+
+	// Name Immutable OpenChoreo Environment name. Bindings and cell namespaces reference it.
 	Name string `json:"name"`
+
+	// Position 0-based index in promotion order. The array is already ordered; this is a convenience.
+	Position int32 `json:"position"`
+
+	// PromotesTo The next environment's name. Omitted on the last environment, which has no promote step.
+	PromotesTo string `json:"promotesTo,omitempty"`
+
+	// Validation From the aep.wso2.com/validation annotation. Always present in the response: when the annotation is missing or unrecognised on the Environment, the server serves "off".
+	Validation EnvironmentDTOValidation `json:"validation"`
 }
+
+// EnvironmentDTOValidation From the aep.wso2.com/validation annotation. Always present in the response: when the annotation is missing or unrecognised on the Environment, the server serves "off".
+type EnvironmentDTOValidation string
 
 // Error Flat error envelope returned by every non-2xx response.
 type Error struct {
@@ -1879,17 +1968,29 @@ type ExternalDependencyValueState string
 
 // ExternalResourceDTO defines model for ExternalResourceDTO.
 type ExternalResourceDTO struct {
-	Config                  []ConfigKeyDTO `json:"config"`
-	Consumers               []ConsumerDTO  `json:"consumers"`
-	ConsumptionInstructions string         `json:"consumptionInstructions,omitempty"`
-	Description             string         `json:"description,omitempty"`
+	Config                  []ConfigKeyDTO    `json:"config"`
+	Consumers               []ConsumerDTO     `json:"consumers"`
+	ConsumptionInstructions string            `json:"consumptionInstructions,omitempty"`
+	Contract                *ResourceContract `json:"contract,omitempty"`
+	Description             string            `json:"description,omitempty"`
 
 	// EnvCells Org value plane. Present with one cell per config key × OpenChoreo Environment on a Registered External resource. Omitted or empty on a Project External resource. Secrets never include value.
-	EnvCells     []EnvValueCellDTO       `json:"envCells,omitempty"`
-	Instances    []ResourceInstanceDTO   `json:"instances,omitempty"`
-	Name         string                  `json:"name"`
+	EnvCells  []EnvValueCellDTO     `json:"envCells,omitempty"`
+	Instances []ResourceInstanceDTO `json:"instances,omitempty"`
+	Name      string                `json:"name"`
+
+	// Project The project that holds this resource; set on scope project only.
+	Project      string                  `json:"project,omitempty"`
+	Provenance   *ResourceProvenance     `json:"provenance,omitempty"`
+	Provider     string                  `json:"provider,omitempty"`
 	ResourceDocs []ResourceDocPointerDTO `json:"resourceDocs,omitempty"`
+
+	// Scope org — a Registered External resource, held by the organization; project — a project's own resource, listed with its project so the organization can promote it. Org-only readers (the design agent's catalog, Register's uniqueness check) never see project rows.
+	Scope ExternalResourceDTOScope `json:"scope,omitempty"`
 }
+
+// ExternalResourceDTOScope org — a Registered External resource, held by the organization; project — a project's own resource, listed with its project so the organization can promote it. Org-only readers (the design agent's catalog, Register's uniqueness check) never see project rows.
+type ExternalResourceDTOScope string
 
 // FileBundle A set of files read at ONE commit. commitSha names that commit; every entry's sha is a blob of that same tree.
 type FileBundle struct {
@@ -2205,7 +2306,7 @@ type ProjectList struct {
 
 // ProjectRole One role THIS project owns on the identity provider. A different kind of object from ProjectRoleState, which is a SHARED org group. A project role is named `<project>/<Role>`, exactly one project creates it, and that project's builds converge it and its delete removes it.
 type ProjectRole struct {
-	// AssignedTo The groups holding the role, in binding order. EMPTY is meaningful, not missing data - it is the normal shape for a self-service role (the app's registration flow assigns it per account) and for a service role (an application principal holds it).
+	// AssignedTo The GROUPS holding the role, in binding order. EMPTY is meaningful, not missing data - it is the normal shape for a self-service role (which carries no assignTo, and whose test logins hold it as user principals instead) and for a service role (an application principal holds it).
 	AssignedTo []ProjectRoleAssignment `json:"assignedTo,omitempty"`
 
 	// DirectoryName The name the directory carries - `<project>/<Role>`. The prefix is the platform's ownership device; render `name`, not this.
@@ -2345,6 +2446,15 @@ type ProjectUsageList struct {
 	Projects []ProjectUsageCard `json:"projects"`
 }
 
+// PromoteExternalResourceRequest What the organization adds when it takes over a project's own resource: how its consumers should use it and a value for every key in every environment. Name, provider, keys, description and contract come from the project's copy. An environment left out of envValues is carried over from the project's own values when it has them.
+type PromoteExternalResourceRequest struct {
+	ConsumptionInstructions string `json:"consumptionInstructions"`
+
+	// Description Replaces the project's description when set.
+	Description string             `json:"description,omitempty"`
+	EnvValues   []EnvValueWriteDTO `json:"envValues,omitempty"`
+}
+
 // PromoteFromIssueRequest defines model for PromoteFromIssueRequest.
 type PromoteFromIssueRequest struct {
 	// ComponentName Component this issue is about
@@ -2402,17 +2512,36 @@ type RcaAgentReportList struct {
 
 // RegisterExternalResourceRequest defines model for RegisterExternalResourceRequest.
 type RegisterExternalResourceRequest struct {
-	Config                  []ConfigKeyDTO `json:"config"`
-	ConsumptionInstructions string         `json:"consumptionInstructions"`
-	Description             string         `json:"description"`
-	EnvValues               []struct {
-		Environment string `json:"environment"`
-		Key         string `json:"key"`
-		Value       string `json:"value"`
-	} `json:"envValues"`
-	Name         string                `json:"name"`
+	Config                  []ConfigKeyDTO            `json:"config"`
+	ConsumptionInstructions string                    `json:"consumptionInstructions"`
+	Contract                *ResourceContractWriteDTO `json:"contract,omitempty"`
+	Description             string                    `json:"description"`
+	EnvValues               []EnvValueWriteDTO        `json:"envValues"`
+	Name                    string                    `json:"name"`
+
+	// Provider The concrete system this resource is ("Open Exchange Rates").
+	Provider     string                `json:"provider"`
 	ResourceDocs []ResourceDocWriteDTO `json:"resourceDocs,omitempty"`
 }
+
+// ResourceContract The contract as held at one level — `{ type, path }`, the path relative to that level's store (the org docs repo for a registry record, the dependency directory for a project copy). No URL form exists. On a project copy, origin says where the file came from and accepted is the user's permission for an assumed one (platform-written).
+type ResourceContract = contracts.ResourceContract
+
+// ResourceContractType The kind of document a resource's contract is.
+type ResourceContractType string
+
+// ResourceContractWriteDTO The resource's contract document on register/update. Exactly one of url (fetched by the platform, hashed and committed to the org docs repo — the URL is kept only as provenance) or fileName+content (uploaded). At most 5 MiB. Accepted shapes, enforced by the server (any other is a 400 naming the rule): `{type, url}` or `{type, fileName, content}` — never both forms, never type alone. The pair is not expressed as a JSON-Schema oneOf on purpose: the generators this contract feeds turn it into an unusable union (a `json.RawMessage` union field in Go, `unknown` in TypeScript) that hides the three plain fields callers actually set.
+type ResourceContractWriteDTO struct {
+	Content  string `json:"content,omitempty"`
+	FileName string `json:"fileName,omitempty"`
+
+	// Type The kind of document a resource's contract is.
+	Type ResourceContractType `json:"type"`
+	URL  string               `json:"url,omitempty"`
+}
+
+// ResourceDefinition An External resource in the one shape it has at both levels — the org registry record and a dependency's `resource` block. Values are never here.
+type ResourceDefinition = contracts.ResourceDefinition
 
 // ResourceDocPointerDTO Org resource docs pointer (type + URL or repo path), not file bodies.
 type ResourceDocPointerDTO struct {
@@ -2443,6 +2572,9 @@ type ResourceInstanceDTO struct {
 	Project     string `json:"project"`
 	Status      string `json:"status"`
 }
+
+// ResourceProvenance Where a copy of a contract document came from, at either level — the internet address an org copy was fetched from, or the registry file a project copy was taken from — with the whole document's hash at the time and when it was read.
+type ResourceProvenance = contracts.ResourceProvenance
 
 // RevalidateAccepted The run that will answer the question. Its cycles stream on the ordinary run progress endpoint, and its verdict becomes the version's once it settles.
 type RevalidateAccepted struct {
@@ -3579,6 +3711,9 @@ type UpdateComponentConfigJSONRequestBody = UpdateConfigBody
 
 // ProvisionPlatformResourceJSONRequestBody defines body for ProvisionPlatformResource for application/json ContentType.
 type ProvisionPlatformResourceJSONRequestBody = ProvisionBody
+
+// PromoteExternalResourceJSONRequestBody defines body for PromoteExternalResource for application/json ContentType.
+type PromoteExternalResourceJSONRequestBody = PromoteExternalResourceRequest
 
 // CollectExternalResourceValuesJSONRequestBody defines body for CollectExternalResourceValues for application/json ContentType.
 type CollectExternalResourceValuesJSONRequestBody = SaveValuesBody

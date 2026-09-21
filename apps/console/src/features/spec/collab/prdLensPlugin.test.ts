@@ -130,9 +130,7 @@ describe("the PRD's lens surface", () => {
       "Discuss",
       "Discuss",
       "+ Feature",
-      "Go deeper",
       "Discuss",
-      "Go deeper",
       "Discuss",
       "Agree",
       "Discuss",
@@ -154,8 +152,6 @@ describe("the PRD's lens surface", () => {
     expect(commands).toEqual([
       "/actor",
       "/feature",
-      "/expand As an Employee, I want to submit an expense with a receipt photo.",
-      "/expand As a Manager, I want to approve or reject an expense.",
       "/settle",
       "/settle Which accounting system do we export to?",
       "/settle What is the approval limit? Deferred — the user will decide next quarter.",
@@ -206,6 +202,24 @@ describe("the PRD's lens surface", () => {
       expect(run).not.toHaveBeenCalled();
       // And with the flag gone, the line offers what any bullet does.
       expect(lensButtons(el).map((b) => b.textContent)).not.toContain("Agree");
+    });
+
+    // The PRD contract writes the flag INSIDE the sentence it qualifies, so
+    // what follows the run is that sentence's own punctuation rather than a
+    // space or the end of the line. Leaving the space standing there is an
+    // edit to the requirements: it reaches git on the room's next flush and
+    // the design then reads as derived from requirements that have moved.
+    it("leaves no gap when the flag sits before the sentence's punctuation", () => {
+      const el = mount("");
+      editor!.commands.setContent(
+        markdownToNode(
+          "# Rates — PRD\n\n## Product Decisions\n\n- Rate freshness: rates are fetched live at conversion time *assumed*.\n",
+        ).toJSON(),
+      );
+      byLabel(el, "Agree").click();
+      expect(editor!.getMarkdown().trim()).toBe(
+        "# Rates — PRD\n\n## Product Decisions\n\n- Rate freshness: rates are fetched live at conversion time.",
+      );
     });
 
     // A widget whose key matches is REUSED, click handler and all, so the lens

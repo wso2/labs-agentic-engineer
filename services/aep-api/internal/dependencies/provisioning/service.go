@@ -53,8 +53,15 @@ type Service struct {
 	providers         ProviderResolver
 	catalogValuePlane CatalogValuePlane
 	environments      EnvironmentLister
-	orgSecrets        OrgSecretWriter
-	orgResourceDocs   OrgResourceDocs
+	// pipelines resolves the org's own deployment pipeline (the "default" /
+	// sole-pipeline convention — see PipelineLister) so ListOrgEnvironments can
+	// order and filter by promotion order. Nil is a documented degrade: every
+	// environment is served in OpenChoreo's own list order with no PromotesTo,
+	// never a guessed chain.
+	pipelines       PipelineLister
+	orgSecrets      OrgSecretWriter
+	orgResourceDocs OrgResourceDocs
+	promoter        ProjectResourcePromoter
 	// orgPublish commits the exposesAPI.orgPublished durability marker on a
 	// provider component when its access request is granted. Wired via a setter
 	// (SetOrgPublishMarker) at the composition root — it points BACK at the
@@ -127,8 +134,15 @@ type Deps struct {
 	Providers         ProviderResolver
 	CatalogValuePlane CatalogValuePlane
 	Environments      EnvironmentLister
-	OrgSecrets        OrgSecretWriter
-	OrgResourceDocs   OrgResourceDocs
+	// Pipeline resolves the org's own deployment pipeline for
+	// ListOrgEnvironments' promotion ordering. Nil degrades to unordered
+	// list-order service with no PromotesTo (see PipelineLister).
+	Pipeline        PipelineLister
+	OrgSecrets      OrgSecretWriter
+	OrgResourceDocs OrgResourceDocs
+	// Promoter reads and rewrites a project's own resource for Promote.
+	// Nil disables Promote.
+	Promoter ProjectResourcePromoter
 	// Roles is the build-time roles ensure. Nil skips the roles gate.
 	Roles RolesEnsurer
 	// Markers is the CRT marker catalog the end-user-auth overlay keys on.
@@ -159,9 +173,11 @@ func NewService(d Deps) *Service {
 		providers:         d.Providers,
 		catalogValuePlane: d.CatalogValuePlane,
 		environments:      d.Environments,
+		pipelines:         d.Pipeline,
 		roles:             d.Roles,
 		orgSecrets:        d.OrgSecrets,
 		orgResourceDocs:   d.OrgResourceDocs,
+		promoter:          d.Promoter,
 		markers:           d.Markers,
 		securityJSON:      d.SecurityJSON,
 		projectNames:      d.ProjectNames,
@@ -308,21 +324,143 @@ func (s *Service) failProvisionRow(ctx context.Context, orgID, projectID string,
 	}
 }
 
-// ListOrgEnvironments returns OpenChoreo Environment names for the org
-// namespace. A nil lister or empty result is an empty slice (never nil),
-// never a 404.
-func (s *Service) ListOrgEnvironments(ctx context.Context, orgID string) ([]string, error) {
-	if s.environments == nil {
-		return []string{}, nil
+// titleFromName turns an OpenChoreo environment name into a readable label
+// when nobody has set openchoreo.dev/display-name: "staging-local" → "Staging Local".
+func titleFromName(name string) string {
+	parts := strings.FieldsFunc(name, func(r rune) bool { return r == '-' || r == '_' })
+	for i, p := range parts {
+		if p == "" {
+			continue
+		}
+		parts[i] = strings.ToUpper(p[:1]) + p[1:]
 	}
-	names, err := s.environments.ListNames(ctx, orgID)
+	return strings.Join(parts, " ")
+}
+
+// ListOrgEnvironments returns OpenChoreo Environments for the org namespace,
+// ordered and filtered by the org's own deployment pipeline, with the
+// display-name fallback and the absent/unrecognised-is-off validation default
+// applied in this one place. A nil lister or empty result is an empty slice
+// (never nil), never a 404.
+//
+// Ordering and filtering happen HERE, not in the handler: the handler's job
+// is to assemble the DTO off an already-ordered, already-filtered list.
+//
+// When the pipeline resolves (resolvePipeline), environments the pipeline
+// does not name are DROPPED — the same reasoning PipelineEnvironments'
+// own doc comment gives: a converged cluster carries other platforms'
+// environments, and binding a project into those would provision cell
+// namespaces nothing deploys to. The survivors are ordered by the pipeline's
+// promotion order, Position is their index in that order, and PromotesTo is
+// the next environment's name (empty on the last one).
+//
+// When the pipeline does NOT resolve — no lister wired, or the org has no
+// "default" pipeline and more than one candidate — nothing is dropped and
+// nothing is reordered: OpenChoreo's own list order stands, Position is that
+// list index, and PromotesTo is empty on every environment. Emitting a
+// PromotesTo chain here would invent a promotion path the platform does not
+// have.
+func (s *Service) ListOrgEnvironments(ctx context.Context, orgID string) ([]EnvironmentInfo, error) {
+	if s.environments == nil {
+		return []EnvironmentInfo{}, nil
+	}
+	raw, err := s.environments.List(ctx, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("provisioning: list environments: %w", err)
 	}
-	if names == nil {
-		return []string{}, nil
+	byName := make(map[string]EnvironmentInfo, len(raw))
+	for _, e := range raw {
+		if e.DisplayName == "" {
+			e.DisplayName = titleFromName(e.Name)
+		}
+		// Absent means off. Anything we do not recognise also means off —
+		// an unreadable annotation must not switch validation on.
+		if e.Validation != "on" {
+			e.Validation = "off"
+		}
+		e.PromotesTo = ""
+		byName[e.Name] = e
 	}
-	return names, nil
+
+	order, resolved := s.resolvePipelineOrder(ctx, orgID)
+	if !resolved {
+		out := make([]EnvironmentInfo, 0, len(raw))
+		for _, e := range raw {
+			out = append(out, byName[e.Name])
+		}
+		return out, nil
+	}
+
+	out := make([]EnvironmentInfo, 0, len(order))
+	for _, name := range order {
+		info, ok := byName[name]
+		if !ok {
+			continue // the pipeline names an environment OC does not have — never invent one
+		}
+		out = append(out, info)
+	}
+	for i := range out {
+		if i+1 < len(out) {
+			out[i].PromotesTo = out[i+1].Name
+		}
+	}
+	return out, nil
+}
+
+// resolvePipelineOrder resolves the org's own deployment pipeline and returns
+// the environment names it promotes through, in promotion order. resolved is
+// false when no lister is wired, or when the org's pipeline cannot be
+// resolved unambiguously — a nil pipelines port, a listing/read failure, or
+// more than one candidate pipeline with none named "default".
+//
+// Resolution order:
+//  1. The pipeline named "default" — the documented platform convention
+//     (DeploymentPipeline/default per namespace, created by setup and used
+//     whenever a project does not name one).
+//  2. Failing that, the sole pipeline in the namespace, if there is exactly
+//     one.
+//  3. Failing that, unresolved: the caller falls back to OC's own list order
+//     with no promotion info, and this logs why.
+func (s *Service) resolvePipelineOrder(ctx context.Context, orgID string) (order []string, resolved bool) {
+	if s.pipelines == nil {
+		return nil, false
+	}
+	names, err := s.pipelines.ListPipelineNames(ctx, orgID)
+	if err != nil {
+		slog.WarnContext(ctx, "provisioning: list deployment pipelines failed; serving environments in OC list order with no promotion info", "org", orgID, "error", err)
+		return nil, false
+	}
+	pipelineName := ""
+	for _, n := range names {
+		if n == "default" {
+			pipelineName = n
+			break
+		}
+	}
+	if pipelineName == "" && len(names) == 1 {
+		pipelineName = names[0]
+	}
+	if pipelineName == "" {
+		slog.WarnContext(ctx, "provisioning: org has no resolvable deployment pipeline (no \"default\" and not exactly one candidate); serving environments in OC list order with no promotion info", "org", orgID, "candidates", names)
+		return nil, false
+	}
+	order, err = s.pipelines.PipelineEnvironments(ctx, orgID, pipelineName)
+	if err != nil {
+		slog.WarnContext(ctx, "provisioning: read deployment pipeline environments failed; serving environments in OC list order with no promotion info", "org", orgID, "pipeline", pipelineName, "error", err)
+		return nil, false
+	}
+	return order, true
+}
+
+// environmentNames strips EnvironmentInfo down to bare names for the callers
+// that only need identifiers (env-cell synthesis, config-value bookkeeping) —
+// not the full DTO, which is ListOrgEnvironments' assembly.
+func environmentNames(infos []EnvironmentInfo) []string {
+	out := make([]string, 0, len(infos))
+	for _, e := range infos {
+		out = append(out, e.Name)
+	}
+	return out
 }
 
 // envList returns the environments to provision, defaulting to [development].

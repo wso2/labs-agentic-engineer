@@ -1,0 +1,22 @@
+{
+  "name": "billing-api",
+  "type": "service",
+  "version": "0.1.0",
+  "language": "Go",
+  "buildpack": "docker",
+  "appPath": "billing-api",
+  "entrypoint": "deployment/service",
+  "exposure": "intranet",
+  "description": "Owns invoices and charges. Does not own orders.",
+  "dependencies": [
+    {
+      "kind": "platform-resource",
+      "name": "billing-db",
+      "resourceType": "postgres-cnpg",
+      "wiring": {
+        "ref": "two-services-billing-db",
+        "envBindings": { "host": "BILLING_DB_HOST", "port": "BILLING_DB_PORT", "user": "BILLING_DB_USER", "password": "BILLING_DB_PASSWORD", "dbname": "BILLING_DB_DBNAME" }
+      }
+    }
+  ]
+}

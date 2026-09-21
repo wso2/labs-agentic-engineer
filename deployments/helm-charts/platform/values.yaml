@@ -24,6 +24,14 @@ aepApi:
   serviceAuth:
     clientId: "aep-api-client"
   publicURL: "http://aep-api.openchoreo.localhost:8080"
+  # Kubernetes API used to LIST ThunderApplication CRs after OpenChoreo Ready.
+  # Empty baseURL uses the in-cluster apiserver (single-cluster). On a split
+  # control-plane / data-plane install the CRD lives on the dataplane; set
+  # baseURL to that apiserver and tokenSecret to a Secret in this namespace
+  # with keys `token` and `ca.crt`.
+  kubeAPI:
+    baseURL: ""
+    tokenSecret: ""
 
 aepAgents:
   replicas: 1

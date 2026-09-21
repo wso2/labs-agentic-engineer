@@ -222,8 +222,9 @@ func TestClassifyCycleDeploys_PendingNamesOnlyTheUnsettled(t *testing.T) {
 	}
 }
 
-// A failed component is named AND carries OpenChoreo's reason, while a pending
-// one is neither — the three-way split the supervisor branches on.
+// A failed component is NAMED as failed; a pending one is named as pending. Both
+// carry whatever cause they have — the split the supervisor branches on is
+// failed-vs-pending, never whether a reason exists.
 func TestClassifyCycleDeploys_SeparatesFailedFromPending(t *testing.T) {
 	t.Parallel()
 	got := classifyCycleDeploys(2, []delivery.ComponentDeploy{
@@ -238,6 +239,26 @@ func TestClassifyCycleDeploys_SeparatesFailedFromPending(t *testing.T) {
 	}
 	if len(got.Pending) != 1 || got.Pending[0] != "rolling" {
 		t.Errorf("Pending = %v", got.Pending)
+	}
+}
+
+// A PENDING component carries its hold reason too, and that is not symmetry for
+// its own sake: the deadline reports the still-pending set AS the failure, so
+// this is the only channel by which "why was it waiting" can reach the issue
+// that expiry mints. Dropping it mints an issue naming a component and no cause,
+// which is an agent cycle spent auditing a container that was never broken.
+func TestClassifyCycleDeploys_PendingCarriesItsHoldReason(t *testing.T) {
+	t.Parallel()
+	const held = `waiting: dependency "user-auth" has not registered this component's sign-in callback`
+	got := classifyCycleDeploys(2, []delivery.ComponentDeploy{
+		{Component: "guest-webapp", Reason: held},
+		{Component: "hotel-api", Ready: true},
+	})
+	if len(got.Pending) != 1 || got.Pending[0] != "guest-webapp" {
+		t.Fatalf("Pending = %v, want the held component", got.Pending)
+	}
+	if got.Reasons["guest-webapp"] != held {
+		t.Fatalf("Reasons = %v, want the hold reason carried through for a PENDING component", got.Reasons)
 	}
 }
 
