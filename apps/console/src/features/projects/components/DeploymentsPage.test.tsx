@@ -48,6 +48,15 @@ vi.mock("@tanstack/react-router", () => ({
 
 const navigate = vi.fn();
 
+// Every existing test in this file assumes the page and every promote/
+// configure action within it are otherwise reachable — only a dedicated "no
+// permission" test flips this.
+const hasBuild = vi.hoisted(() => ({ current: true }));
+vi.mock("../../../auth/permissions", () => ({
+  useHasAnyPermission: () => hasBuild.current,
+  useHasPermission: () => hasBuild.current,
+}));
+
 // The version ledger, for the Milestone cell — the Builds surfaces' own read.
 let mockBuilds: components["schemas"]["BuildSummary"][] = [];
 // The newest run's story — a run parked at the deploy gate is the board's
@@ -335,6 +344,7 @@ beforeEach(() => {
   mockValidationPending = false;
   evidenceArgs.mockClear();
   navigate.mockClear();
+  hasBuild.current = true;
 });
 
 describe("DeploymentsPage — validation", () => {
@@ -1393,5 +1403,16 @@ describe("DeploymentsPage — the version block", () => {
     expect(screen.getByTestId("version-block-skeleton")).toBeInTheDocument();
     expect(screen.queryByText("Version unknown")).not.toBeInTheDocument();
     expect(screen.queryByTestId("version-block")).not.toBeInTheDocument();
+  });
+});
+
+describe("DeploymentsPage — permission gate", () => {
+  it("blocks the whole page for a user lacking ae:build-view", () => {
+    hasBuild.current = false;
+    render(<DeploymentsPage projectName="acme" />);
+
+    expect(
+      screen.getByText("You don't have access to this project's deployments"),
+    ).toBeInTheDocument();
   });
 });

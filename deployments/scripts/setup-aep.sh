@@ -941,8 +941,15 @@ PUBLIC_THUNDER_URL=http://thunder.openchoreo.localhost:8080
 PUBLIC_CONSOLE_URL=http://localhost:8090
 
 # ── Thunder OAuth client (consumed by the console at runtime) ──────────────
+# Every ae:* permission the platform recognizes (services/aep-api/internal/
+# authz/role_permissions_catalog.go's AllPermissions) — the console must ASK
+# for all of them; Thunder narrows the grant to whatever aeadmin's actual role
+# holds. Omitting one here means no caller, however privileged, can ever get
+# it: RFC 8707's resource indicator (VITE_THUNDER_RESOURCE, PUBLIC_THUNDER_URL
+# above) only controls WHICH resource server ae:* resolves against — it does
+# not add scopes the client never requested.
 VITE_THUNDER_CLIENT_ID=aep-console-client
-VITE_THUNDER_SCOPES=openid profile email
+VITE_THUNDER_SCOPES=openid profile email ae:build ae:build-view ae:design ae:design-view ae:github-config ae:model-config ae:requirement-update ae:requirement-view ae:skill-config ae:skill-view ae:usage-view ae:observability-view ae:resource-view ae:resource-config
 
 # ── Agents service ─────────────────────────────────────────────────────────
 AGENT_MODEL=claude-sonnet-5

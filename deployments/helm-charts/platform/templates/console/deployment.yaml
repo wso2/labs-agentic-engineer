@@ -41,3 +41,10 @@ spec:
               value: {{ .Values.console.thunder.clientId | quote }}
             - name: VITE_THUNDER_SCOPES
               value: {{ .Values.console.thunder.scopes | quote }}
+            # RFC 8707 resource indicator for the `ae` resource server —
+            # required for any ae:* entry in scopes above to actually land on
+            # the token (see values.yaml's console.thunder.resource comment).
+            # aep-api's JWT_AUDIENCE (aep-api/deployment.yaml) must accept
+            # this same identifier as a valid aud.
+            - name: VITE_THUNDER_RESOURCE
+              value: {{ .Values.console.thunder.resource | default (printf "%s/ae" .Values.console.thunderPublicURL) | quote }}

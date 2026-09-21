@@ -27,9 +27,11 @@ import {
   DialogTitle,
   IconButton,
   TextField,
+  Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
 import { X } from "@wso2/oxygen-ui-icons-react";
+import { useHasPermission } from "../../../auth/permissions";
 import { useSaveConnectionValues } from "../api/queries";
 import type { ConnectionRow } from "../lib/promotion";
 
@@ -58,6 +60,7 @@ export function ConnectionValuesDialog({
   connection: ConnectionRow;
   environment: string;
 }) {
+  const hasBuild = useHasPermission("ae:build");
   const save = useSaveConnectionValues(projectName);
   const [values, setValues] = useState<Record<string, string>>({});
   useEffect(() => {
@@ -113,6 +116,7 @@ export function ConnectionValuesDialog({
               onChange={(e) =>
                 setValues((v) => ({ ...v, [key.key]: e.target.value }))
               }
+              disabled={!hasBuild}
               sx={{ "& input": { fontFamily: "monospace" } }}
             />
           ))}
@@ -136,26 +140,35 @@ export function ConnectionValuesDialog({
         <Button onClick={onClose} variant="outlined" color="inherit">
           Cancel
         </Button>
-        <span
-          {...(!complete && { title: "Enabled when every value is set" })}
+        <Tooltip
+          title={
+            !hasBuild
+              ? "You don't have permission to configure this connection."
+              : !complete
+                ? "Enabled when every value is set"
+                : ""
+          }
         >
-          <Button
-            variant="contained"
-            disabled={!complete || save.isPending}
-            onClick={() =>
-              save.mutate(
-                {
-                  name: connection.name,
-                  environment,
-                  values,
-                },
-                { onSuccess: onSaved },
-              )
-            }
-          >
-            {save.isPending ? "Saving…" : "Save values"}
-          </Button>
-        </span>
+          {/* span so the tooltip works while the button is disabled */}
+          <span>
+            <Button
+              variant="contained"
+              disabled={!complete || save.isPending || !hasBuild}
+              onClick={() =>
+                save.mutate(
+                  {
+                    name: connection.name,
+                    environment,
+                    values,
+                  },
+                  { onSuccess: onSaved },
+                )
+              }
+            >
+              {save.isPending ? "Saving…" : "Save values"}
+            </Button>
+          </span>
+        </Tooltip>
       </DialogActions>
     </Dialog>
   );

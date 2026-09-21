@@ -28,14 +28,28 @@
 # public PKCE client, authorization_code + refresh_token, ou* claims on both
 # tokens. Applied by setup.sh after the image's built-in
 # 01-default-resources.yaml, so the default OU / flows / admin already exist.
+#
+# NOT restricted by allowedUserTypes: a user's `type` is checked only by the
+# USER_ONBOARDING flow's UserTypeResolver executor (inviting/auto-provisioning
+# a brand-new account into an app) — confirmed by inspecting the live flow
+# definitions (GET /flows/{id}) on a running Thunder. The plain AUTHENTICATION
+# flow this app uses (AuthAssertExecutor/AuthorizationExecutor/
+# CredentialsAuthExecutor) never consults it, so it does nothing to gate an
+# already-existing account's login. An earlier version of this file relied on
+# allowedUserTypes to keep Thunder's built-in admin/admin out of the console;
+# that did not work, so this bundle no longer attempts login-gating at all —
+# see services/aep-api/internal/authz/README.md for the actual enforcement
+# boundary (the AE permission gate on aep-api's own endpoints).
 
 # resource_type: server_config
+resource_type: server_config
 name: cors
 value:
   allowedOrigins:
     - "http://localhost:8090"
 ---
 # resource_type: application
+resource_type: application
 id: 01900000-0000-7000-8000-0000000000a0
 name: AEP Console
 description: AEP Platform Console (dev-thunder-setup)
@@ -47,8 +61,6 @@ logoUrl: "emoji:🛠️"
 authFlowId: 01900000-0000-7000-8000-000000000061
 registrationFlowId: 01900000-0000-7000-8000-000000000064
 isRegistrationFlowEnabled: false
-allowedUserTypes:
-  - Person
 inboundAuthConfig:
   - type: oauth2
     config:
@@ -105,11 +117,20 @@ inboundAuthConfig:
           - ouHandle
 ---
 # resource_type: user
+#
+# password is set in BOTH attributes and credentials, deliberately: Schema
+# validation checks `attributes` for required+credential fields at create
+# time — omitting it there fails as "missing required field" even though
+# credentials.password is also set. credentials.password is the one that
+# actually stores a usable, hashed login (see Agent Manager's own
+# amp-thunder-bootstrap.yaml comment on this exact pattern).
+resource_type: user
 id: 01900000-0000-7000-8000-0000000000a1
 type: Person
 ouHandle: default
 attributes:
   username: mark
+  password: admin
   sub: mark
   email: mark@testorg.com
   name: Mark Tester
@@ -119,15 +140,41 @@ credentials:
   password: admin
 ---
 # resource_type: user
+resource_type: user
 id: 01900000-0000-7000-8000-0000000000a2
 type: Person
 ouHandle: default
 attributes:
   username: emily
+  password: admin
   sub: emily
   email: emily@testorg.com
   name: Emily Tester
   given_name: Emily
   family_name: Tester
+credentials:
+  password: admin
+---
+# resource_type: user
+#
+# A known AE-admin test account, distinct from Thunder's own built-in
+# admin/admin — sparing anyone from having to hand-enroll that internal
+# superadmin into a product-specific permission group. Declared here, BEFORE
+# bootstrap/61-ae-roles.yaml's ae-admin group, because Thunder only accepts a
+# group's `members` list at group-CREATE time (see
+# services/aep-api/internal/clients/thundersvc/directory.go); this id is what
+# that group's members entry references.
+resource_type: user
+id: 01900000-0000-7000-8000-0000000000a3
+type: Person
+ouHandle: default
+attributes:
+  username: aeadmin
+  password: admin
+  sub: aeadmin
+  email: aeadmin@testorg.com
+  name: AE Admin
+  given_name: AE
+  family_name: Admin
 credentials:
   password: admin

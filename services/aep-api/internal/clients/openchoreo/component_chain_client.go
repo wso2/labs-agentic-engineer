@@ -60,7 +60,7 @@ func (c *componentClient) EnsureWorkload(ctx context.Context, orgName, projectNa
 		return nil
 	}
 	return fmt.Errorf("create workload %q: %w", scoped,
-		handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		handleErrorResponse(ctx, http.MethodPost, nsBase(orgName)+"/workloads", resp.StatusCode(), ErrorResponses{
 			JSON400: resp.JSON400,
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
@@ -113,7 +113,7 @@ func (c *componentClient) EnsureRelease(ctx context.Context, orgName, projectNam
 		}
 	}
 	return "", fmt.Errorf("generate release for %q: %w", scoped,
-		handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		handleErrorResponse(ctx, http.MethodPost, nsBase(orgName)+"/components/"+scoped+"/releases/generate", resp.StatusCode(), ErrorResponses{
 			JSON400: resp.JSON400,
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
@@ -226,7 +226,7 @@ func (c *componentClient) GetReleaseBindingStatus(ctx context.Context, orgName, 
 		return nil, nil
 	}
 	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
-		return nil, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		return nil, handleErrorResponse(ctx, http.MethodGet, nsBase(orgName)+"/releasebindings/"+bindingName, resp.StatusCode(), ErrorResponses{
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
 			JSON404: resp.JSON404,
@@ -252,7 +252,7 @@ func (c *componentClient) createReleaseBinding(ctx context.Context, orgName, bin
 		return false, nil
 	}
 	return false, fmt.Errorf("create release binding %q: %w", bindingName,
-		handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		handleErrorResponse(ctx, http.MethodPost, nsBase(orgName)+"/releasebindings", resp.StatusCode(), ErrorResponses{
 			JSON400: resp.JSON400,
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
@@ -269,7 +269,7 @@ func (c *componentClient) putReleaseBinding(ctx context.Context, orgName, bindin
 		return fmt.Errorf("failed to get release binding %q: %w", bindingName, err)
 	}
 	if getResp.StatusCode() != http.StatusOK || getResp.JSON200 == nil {
-		return handleErrorResponse(getResp.StatusCode(), ErrorResponses{
+		return handleErrorResponse(ctx, http.MethodGet, nsBase(orgName)+"/releasebindings/"+bindingName, getResp.StatusCode(), ErrorResponses{
 			JSON401: getResp.JSON401,
 			JSON403: getResp.JSON403,
 			JSON404: getResp.JSON404,
@@ -288,7 +288,7 @@ func (c *componentClient) putReleaseBinding(ctx context.Context, orgName, bindin
 		return fmt.Errorf("failed to update release binding %q: %w", bindingName, uerr)
 	}
 	if updResp.StatusCode() != http.StatusOK && updResp.StatusCode() != http.StatusCreated {
-		return handleErrorResponse(updResp.StatusCode(), ErrorResponses{
+		return handleErrorResponse(ctx, http.MethodPut, nsBase(orgName)+"/releasebindings/"+bindingName, updResp.StatusCode(), ErrorResponses{
 			JSON400: updResp.JSON400,
 			JSON401: updResp.JSON401,
 			JSON403: updResp.JSON403,

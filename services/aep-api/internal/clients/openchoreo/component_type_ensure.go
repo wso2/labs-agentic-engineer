@@ -65,7 +65,7 @@ func (c *componentClient) EnsureComponentType(ctx context.Context, orgName strin
 	case resp.StatusCode() == http.StatusConflict:
 		return c.convergeComponentType(ctx, orgName, name, raw)
 	default:
-		return fmt.Errorf("ensure componenttype %q: %w", name, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		return fmt.Errorf("ensure componenttype %q: %w", name, handleErrorResponse(ctx, http.MethodPost, nsBase(orgName)+"/componenttypes", resp.StatusCode(), ErrorResponses{
 			JSON400: resp.JSON400,
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
@@ -100,7 +100,7 @@ func (c *componentClient) convergeComponentType(ctx context.Context, orgName, na
 			return fmt.Errorf("ensure componenttype %q: conflict but refetch failed: %w", name, gerr)
 		}
 		if getResp.StatusCode() != http.StatusOK || getResp.JSON200 == nil {
-			return fmt.Errorf("ensure componenttype %q: conflict but refetch failed: %w", name, handleErrorResponse(getResp.StatusCode(), ErrorResponses{
+			return fmt.Errorf("ensure componenttype %q: conflict but refetch failed: %w", name, handleErrorResponse(ctx, http.MethodGet, nsBase(orgName)+"/componenttypes/"+name, getResp.StatusCode(), ErrorResponses{
 				JSON401: getResp.JSON401,
 				JSON403: getResp.JSON403,
 				JSON404: getResp.JSON404,
@@ -125,7 +125,7 @@ func (c *componentClient) convergeComponentType(ctx context.Context, orgName, na
 		if putResp.StatusCode() == http.StatusOK || putResp.StatusCode() == http.StatusCreated {
 			return nil
 		}
-		return fmt.Errorf("ensure componenttype %q: update: %w", name, handleErrorResponse(putResp.StatusCode(), ErrorResponses{
+		return fmt.Errorf("ensure componenttype %q: update: %w", name, handleErrorResponse(ctx, http.MethodPut, nsBase(orgName)+"/componenttypes/"+name, putResp.StatusCode(), ErrorResponses{
 			JSON400: putResp.JSON400,
 			JSON401: putResp.JSON401,
 			JSON403: putResp.JSON403,

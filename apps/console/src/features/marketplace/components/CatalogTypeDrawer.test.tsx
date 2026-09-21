@@ -45,6 +45,17 @@ vi.mock("@tanstack/react-router", () => ({
     },
 }));
 
+// Every test but the dedicated "no permission" ones below holds
+// ae:resource-config, so Edit/Delete read as operable by default — mirrors
+// SkillsSection.test.tsx's per-suite permission toggle. Intercepts both this
+// file's own "../../../auth/permissions" import AND
+// resource-inspect-sections.tsx's (DeleteResourceSection) — vi.mock keys off
+// the resolved module, not the literal specifier, so one mock covers both.
+const hasResourceConfig = vi.hoisted(() => ({ current: true }));
+vi.mock("../../../auth/permissions", () => ({
+  useHasPermission: () => hasResourceConfig.current,
+}));
+
 type ExternalResourceDTO = components["schemas"]["ExternalResourceDTO"];
 type PlatformResourceTypeDTO = components["schemas"]["PlatformResourceTypeDTO"];
 
@@ -126,6 +137,7 @@ describe("CatalogTypeDrawer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetDeleteState();
+    hasResourceConfig.current = true;
   });
 
   it("platform: no Delete resource and no Edit", () => {
@@ -345,5 +357,20 @@ describe("CatalogTypeDrawer", () => {
     const options = mutate.mock.calls[0]?.[1] as { onSuccess?: () => void };
     options.onSuccess?.();
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables Edit and Delete without ae:resource-config", () => {
+    hasResourceConfig.current = false;
+    render(
+      <CatalogTypeDrawer
+        kind="external"
+        resource={registeredExternal()}
+        open
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /edit/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Delete resource" })).toBeDisabled();
   });
 });

@@ -14,10 +14,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package rotateidp regenerates the org's IDP client secret.
+// Package httpapi embeds the authz slices into the one type the edge embeds,
+// and assembles the domain from its Deps.
 //
-// Trigger: POST /config/idp/rotate-secret (rotate-idp-client-secret).
-// In→out:  bound org + actor → the freshly minted client secret.
-// Ports:   organization.Service.
-// Invariant: ErrIDPThunderUnavailable (no Thunder admin client) maps to 503.
-package rotateidp
+// It declares NO methods — a method here sits at depth-1 and silently shadows
+// its slice (TestAggregatorsDeclareNoMethods). The assembly lives here, not in
+// the authz root, so the root keeps naming no HTTP type at all.
+// [Why →] services/aep-api/README.md — the composition-root convention.
+package httpapi

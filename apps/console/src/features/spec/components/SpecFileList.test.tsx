@@ -309,6 +309,33 @@ describe("SpecFileList — the design reads as its parts (#686)", () => {
     ]);
   });
 
+  // The re-generate icon is SpecView's header CTA's other entry point onto
+  // the identical generateDesign call, so it carries the same ae:design
+  // gate — mirrored here via `canRegenerateDesign` since this component has
+  // no permission hook of its own to read.
+  it("disables the re-generate icon, with an explanatory tooltip, when canRegenerateDesign is false", async () => {
+    render(
+      <OxygenUIThemeProvider theme={OxygenTheme}>
+        <SpecFileList
+          files={designEntries("specs/design/domain-model.md")}
+          selection={null}
+          onSelect={() => {}}
+          onRegenerateDesign={() => {}}
+          canRegenerateDesign={false}
+          sections={railSections(RAIL_INPUT)}
+          onReason={() => {}}
+        />
+      </OxygenUIThemeProvider>,
+    );
+
+    const button = screen.getByRole("button", { name: "Re-generate design" });
+    expect(button).toBeDisabled();
+    fireEvent.mouseOver(button.closest("span") ?? button);
+    expect(
+      await screen.findByText("You don't have permission to generate the design."),
+    ).toBeInTheDocument();
+  });
+
   it("shows no Flows group until a flow exists", () => {
     renderList(designEntries("specs/design/domain-model.md", "specs/design/components/api/design.json"));
     expect(screen.queryByRole("button", { name: /Flows$/ })).not.toBeInTheDocument();

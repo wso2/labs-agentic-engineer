@@ -18,6 +18,7 @@
 
 import { Box, IconButton, Stack, Tooltip, Typography } from "@wso2/oxygen-ui";
 import { Settings } from "@wso2/oxygen-ui-icons-react";
+import { useHasPermission } from "../../../auth/permissions";
 import type { StatusTone } from "../../../components/StatusChip";
 import type { ComponentLine, ConnectionLine } from "../lib/deploymentFlow";
 import type { ConnectionRow } from "../lib/promotion";
@@ -154,6 +155,7 @@ export function ConnectionsGroup({
   caption: string;
   onConfigure: (row: ConnectionRow) => void;
 }) {
+  const hasBuild = useHasPermission("ae:build");
   return (
     // "Dependencies" is what this surface calls them; the component and its
     // props keep the contract's word.
@@ -168,19 +170,28 @@ export function ConnectionsGroup({
             <>
               {l.label && <StateWord label={l.label} tone={CONNECTION_TONE[l.state]} />}
               {l.configure && (
-                <Tooltip title="Configure">
-                  <IconButton
-                    size="small"
-                    aria-label={`Configure ${l.row.name}`}
-                    onClick={(event) => {
-                      // The whole environment card is a click target; a gear
-                      // inside it is not a way to navigate.
-                      event.stopPropagation();
-                      onConfigure(l.row);
-                    }}
-                  >
-                    <Settings size={15} />
-                  </IconButton>
+                <Tooltip
+                  title={
+                    hasBuild
+                      ? "Configure"
+                      : "You don't have permission to configure connections."
+                  }
+                >
+                  <span>
+                    <IconButton
+                      size="small"
+                      aria-label={`Configure ${l.row.name}`}
+                      disabled={!hasBuild}
+                      onClick={(event) => {
+                        // The whole environment card is a click target; a gear
+                        // inside it is not a way to navigate.
+                        event.stopPropagation();
+                        onConfigure(l.row);
+                      }}
+                    >
+                      <Settings size={15} />
+                    </IconButton>
+                  </span>
                 </Tooltip>
               )}
             </>

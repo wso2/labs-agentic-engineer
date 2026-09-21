@@ -58,6 +58,11 @@ type LLMProjection = components["schemas"]["LLMProjection"];
  * through a confirm, because although nothing breaks (coding runs simply fall
  * back to the key above), the key itself cannot be read back and would have to
  * be re-fetched from Anthropic.
+ *
+ * No ae:model-config check of its own: CodingAgentCard, the only mount
+ * point, already returns its own no-permission state before this ever
+ * renders — so a permission check here would be unreachable dead code, not
+ * defense in depth.
  */
 export function CodingAgentKeySection({
   codingLlm,
@@ -124,11 +129,7 @@ export function CodingAgentKeySection({
           control={<Radio />}
           label="Reuse the organization's Anthropic key"
         />
-        <FormControlLabel
-          value="separate"
-          control={<Radio />}
-          label="Use a separate key"
-        />
+        <FormControlLabel value="separate" control={<Radio />} label="Use a separate key" />
       </RadioGroup>
 
       {wantsSeparate && (
@@ -196,11 +197,7 @@ export function CodingAgentKeySection({
             disabled={!apiKey || save.isPending}
             sx={{ alignSelf: "flex-start" }}
           >
-            {save.isPending
-              ? "Validating…"
-              : codingLlm
-                ? "Replace key"
-                : "Save key"}
+            {save.isPending ? "Validating…" : codingLlm ? "Replace key" : "Save key"}
           </Button>
         </Box>
       )}

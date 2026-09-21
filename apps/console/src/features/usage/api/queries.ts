@@ -28,7 +28,11 @@ function firstError(error: unknown, fallback: string): Error {
 // Org-wide per-project usage cards (#291), the Settings → Usage read. Costs
 // are write-time stamps that only grow as work lands; a governance page has
 // no liveness needs, so 60s staleness is plenty.
-export function useProjectUsageList() {
+//
+// `enabled` lets a caller withhold the request entirely (e.g. the caller
+// lacks ae:usage-view) rather than let it fire and land on the generic
+// isError branch.
+export function useProjectUsageList(enabled = true) {
   return useQuery({
     queryKey: usageKeys.projects(),
     queryFn: async () => {
@@ -39,5 +43,6 @@ export function useProjectUsageList() {
       return data;
     },
     staleTime: 60_000,
+    enabled,
   });
 }

@@ -5,6 +5,30 @@ info:
 servers:
 - url: /api/v1
 paths:
+  /authz/ensure:
+    get:
+      description: Check whether an OC AuthzRole is applied for the requesting
+        organization's namespace. The organization is resolved from the caller's
+        JWT — no path parameter required.
+      operationId: ensure-authz-role
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusMsg'
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: Ensure an AuthzRole exists for the organization's namespace
+      tags:
+      - Identity
   /collab/validate:
     get:
       operationId: validate-collab-access
@@ -148,44 +172,15 @@ paths:
       summary: Disconnect the git provider (cascade) for the org
       tags:
       - Org Config
-  /config/idp/client-secret:
-    post:
-      operationId: rotate-idp-client-secret
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ClientSecretOutputBody'
-          description: OK
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Error
-      security:
-      - userJWT: []
-      summary: Rotate the IDP publisher client secret (returned once)
-      tags:
-      - Org Config
-  /config/idp/discovery:
+  /config/status:
     get:
-      operationId: discover-idp
-      parameters:
-      - description: OIDC issuer URL to fetch the discovery document for
-        explode: false
-        in: query
-        name: issuer
-        schema:
-          description: OIDC issuer URL to fetch the discovery document for
-          type: string
+      operationId: get-config-status
       responses:
         '200':
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DiscoverOutputBody'
+                $ref: '#/components/schemas/ConfigStatus'
           description: OK
         default:
           content:
@@ -195,7 +190,10 @@ paths:
           description: Error
       security:
       - userJWT: []
-      summary: Discover an OIDC issuer's metadata
+      summary: Whether the org's GitHub and Anthropic connections exist, with
+        none of get-config's identity/key detail — safe for any authenticated
+        org member, including one whose AE permissions aren't provisioned yet
+        (the onboarding gate's own bootstrap case)
       tags:
       - Org Config
   /dependencies/external-resources:
@@ -796,6 +794,58 @@ paths:
       security:
       - userJWT: []
       summary: Start a generation/chat turn (202 — runs detached; attach via the turn stream)
+      tags:
+      - GenAI
+  /projects/{projectName}/agents/{conversationId}/design:
+    post:
+      operationId: generate-design
+      description: Starts the `/design` turn on the caller's current conversation.
+        A dedicated operation (distinct from create-turn) purely so it can carry
+        its own AE permission — ae:design and nothing else, no OR with any
+        permission create-turn also accepts — rather than authorizing a
+        design-generation turn on any permission that happens to satisfy the
+        generic chat surface. Takes no request body, since the instruction is
+        fixed server-side, the same way the project-creation kickoff's
+        `/start` turn is.
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          description: Project name (DNS-label slug)
+          type: string
+      - description: FE-chosen conversation uuid
+        in: path
+        name: conversationId
+        required: true
+        schema:
+          description: FE-chosen conversation uuid
+          type: string
+      responses:
+        '202':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnOutputBody'
+          description: Accepted
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnConflict'
+          description: A turn is already running for this project, the design
+            use-case has no requirements yet, or the addressed conversation is
+            no longer the project's current thread (conversation_rotated).
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: Start the design-generation turn (202 — runs detached; attach via the turn stream)
       tags:
       - GenAI
   /projects/{projectName}/build:
@@ -4002,14 +4052,6 @@ components:
       - runtime
       - model
       type: object
-    ClientSecretOutputBody:
-      additionalProperties: false
-      properties:
-        clientSecret:
-          type: string
-      required:
-      - clientSecret
-      type: object
     CollabSessionOutputBody:
       additionalProperties: false
       properties:
@@ -4030,6 +4072,14 @@ components:
     CollabValidateOutputBody:
       additionalProperties: false
       properties:
+        canWrite:
+          description: Whether this joiner may change the room's document — they hold
+            `ae:design`, not merely the `ae:design-view` that admits them. The collab
+            service marks a read-only connection's socket read-only and keeps its token
+            out of the commit path, so viewing a live room never implies committing to
+            it. Hiding the editor's controls is the console's half of the same rule, not
+            a substitute for this one.
+          type: boolean
         email:
           type: string
         name:
@@ -4042,6 +4092,7 @@ components:
       - name
       - email
       - projectName
+      - canWrite
       type: object
     Component:
       additionalProperties: false
@@ -4343,6 +4394,22 @@ components:
       - codingAgent
       - gitProvider
       - idp
+      type: object
+    ConfigStatus:
+      description: Minimal, permission-free connectivity signal (get-config-status)
+        — whether gitProvider/llm are connected, with none of ConfigProjection's
+        identity/key detail. Exists so the onboarding gate can decide whether to
+        show the wizard without needing ae:github-config/ae:model-config itself,
+        which the org's very first admin may not hold yet.
+      additionalProperties: false
+      properties:
+        gitProviderConnected:
+          type: boolean
+        llmConnected:
+          type: boolean
+      required:
+      - gitProviderConnected
+      - llmConnected
       type: object
     ConfigValue:
       additionalProperties: false
@@ -4909,17 +4976,6 @@ components:
           type: string
       required:
       - status
-      type: object
-    DiscoverOutputBody:
-      additionalProperties: false
-      properties:
-        issuer:
-          type: string
-        jwksUrl:
-          type: string
-      required:
-      - issuer
-      - jwksUrl
       type: object
     EnvVar:
       # Hand-written in models/ (the gorm-persisted EnvVarSlice embeds it);

@@ -29,6 +29,17 @@ vi.mock("@tanstack/react-router", () => ({
   Link: (props: Record<string, unknown>) => <a {...props} />,
 }));
 
+// ae:skill-view and ae:skill-config are independent grants (a real user can
+// hold either, both, or neither) — the mock must distinguish them by the
+// permission key requested, not return one shared flag for every call.
+// Every existing test in this file assumes both are held; only the dedicated
+// permission tests below flip one or the other off.
+const skillPermissions = vi.hoisted(() => ({ view: true, config: true }));
+vi.mock("../../../auth/permissions", () => ({
+  useHasPermission: (permission: string) =>
+    permission === "ae:skill-config" ? skillPermissions.config : skillPermissions.view,
+}));
+
 type SkillSummary = components["schemas"]["SkillSummary"];
 type GitProviderProjection = components["schemas"]["GitProviderProjection"];
 
@@ -109,7 +120,14 @@ vi.mock("../api/queries", () => ({
     reset: vi.fn(),
   }),
   useSetSkillEnabled: () => setSkillEnabled,
-  useSkill: () => ({ data: undefined, isLoading: false, isError: false, error: null }),
+  // Looks up the row by name so the viewer dialog (opened via "View") sees
+  // that skill's own editable/deletable flags, matching the real hook.
+  useSkill: (name: string) => ({
+    data: skillsData.skills.find((s) => s.name === name),
+    isLoading: false,
+    isError: false,
+    error: null,
+  }),
   useUpdateSkill: () => ({
     mutate: vi.fn(),
     isPending: false,
@@ -141,6 +159,8 @@ function resetMocks() {
     skills: [],
     repoUrl: "https://github.com/acme-dev/org-skills",
   };
+  skillPermissions.view = true;
+  skillPermissions.config = true;
 }
 
 describe("SkillsSection — availability toggle", () => {
@@ -237,5 +257,89 @@ describe("SkillsSection — availability toggle", () => {
     // The kind chip stays present and legible on both rows — availability
     // and kind are independent signals, so disabling never hides it.
     expect(screen.getAllByText("Org")).toHaveLength(2);
+  });
+
+  // Lacking ae:skill-config takes every row's toggle out of play, regardless
+  // of that row's own required/enabled state — permission is checked first.
+  // ae:skill-view stays held here (this is the view-only role, not "no
+  // access" — the page itself must still render).
+  it("disables every toggle when the user lacks ae:skill-config", () => {
+    resetMocks();
+    skillPermissions.config = false;
+    skillsData = {
+      skills: [
+        skill({ name: "go", enabled: true }),
+        skill({ name: "aep", kind: "platform", enabled: true, required: true }),
+      ],
+    };
+
+    render(<SkillsSection />);
+
+    expect(screen.getByRole("switch", { name: "Disable go" })).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "Disable aep" })).toBeDisabled();
+  });
+
+  // Beyond the toggle: Import, and Edit/Delete inside the viewer, are the
+  // only other ways to change something on this page — view stays open.
+  it("disables Import and the viewer's Edit/Delete when the user lacks ae:skill-config", () => {
+    resetMocks();
+    skillPermissions.config = false;
+    skillsData = { skills: [skill({ name: "go" })] };
+
+    render(<SkillsSection />);
+
+    expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "View" }));
+    expect(screen.getByRole("button", { name: "Edit" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
+  });
+});
+
+describe("SkillsSection — view/config permission gate", () => {
+  it("renders the page for a view-only user (ae:skill-view, no ae:skill-config)", () => {
+    resetMocks();
+    skillPermissions.config = false;
+    skillsData = { skills: [skill({ name: "go" })] };
+
+    render(<SkillsSection />);
+
+    expect(screen.getByText("go")).toBeInTheDocument();
+    expect(
+      screen.queryByText("You don't have permission to view skills."),
+    ).not.toBeInTheDocument();
+  });
+
+  // Exact-match ae:skill-view, NOT OR'd with ae:skill-config: a write
+  // permission gates mutations, never page entry on its own — a config-only
+  // user (no separate view grant) is a real, if unusual, role shape and must
+  // be blocked from the page the same as anyone else lacking ae:skill-view.
+  it("blocks the whole page for a config-only user (ae:skill-config, no ae:skill-view)", () => {
+    resetMocks();
+    skillPermissions.view = false;
+    skillsData = { skills: [skill({ name: "go" })] };
+
+    render(<SkillsSection />);
+
+    expect(
+      screen.getByText("You don't have permission to view skills."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("go")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Import" })).not.toBeInTheDocument();
+  });
+
+  it("shows an insufficient-permissions message and renders no skill content with neither permission", () => {
+    resetMocks();
+    skillPermissions.view = false;
+    skillPermissions.config = false;
+    skillsData = { skills: [skill({ name: "go" })] };
+
+    render(<SkillsSection />);
+
+    expect(
+      screen.getByText("You don't have permission to view skills."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("go")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Import" })).not.toBeInTheDocument();
   });
 });

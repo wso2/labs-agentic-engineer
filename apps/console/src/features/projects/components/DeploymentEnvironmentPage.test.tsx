@@ -46,6 +46,16 @@ vi.mock("@tanstack/react-router", () => ({
       return <Component component="a" href={href} {...rest} />;
     },
   Link: ({ children }: { children?: React.ReactNode }) => <a>{children}</a>,
+  useNavigate: () => navigate,
+}));
+
+const navigate = vi.fn();
+
+// Every existing test in this file assumes the page is otherwise reachable —
+// only a dedicated "no permission" test flips this.
+const canViewDeployments = vi.hoisted(() => ({ current: true }));
+vi.mock("../../../auth/permissions", () => ({
+  useHasPermission: () => canViewDeployments.current,
 }));
 
 let mockDeploy: DeployStage = {
@@ -301,6 +311,7 @@ beforeEach(() => {
   mockDependenciesPending = false;
   mockSaveValues.mockClear();
   openApiDialog.mockClear();
+  canViewDeployments.current = true;
 });
 
 describe("DeploymentEnvironmentPage", () => {
@@ -743,5 +754,16 @@ describe("DeploymentEnvironmentPage — the environments read", () => {
     expect(screen.getByLabelText("Loading deployments")).toBeInTheDocument();
     expect(screen.queryByText(/Nothing deployed here yet/)).not.toBeInTheDocument();
     expect(screen.queryByText("No environment called production")).not.toBeInTheDocument();
+  });
+});
+
+describe("DeploymentEnvironmentPage — permission gate", () => {
+  it("blocks the whole page for a user lacking ae:build-view", () => {
+    canViewDeployments.current = false;
+    render(<DeploymentEnvironmentPage projectName="expense" environment="development" />);
+
+    expect(
+      screen.getByText("You don't have access to this project's deployments"),
+    ).toBeInTheDocument();
   });
 });

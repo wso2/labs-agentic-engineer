@@ -35,7 +35,12 @@ import { ApiRequestError, apiErrorMessage } from "../../../api/errors";
 type CreateProjectRequest = components["schemas"]["CreateProjectRequest"];
 type BuildRequest = components["schemas"]["BuildRequest"];
 
-export function useProjectsList(search = "", limit?: number) {
+// `enabled` defaults true — HeaderSwitchers' project switcher always wants
+// this; only ProjectsList withholds it for a caller without
+// ae:requirement-view, matching the BFF's own exact-match gate on
+// ListProjects (permission_gate.go) — see ProjectsList's hasProjectsAccess
+// comment for why ae:requirement-update alone does not count.
+export function useProjectsList(search = "", limit?: number, enabled = true) {
   return useInfiniteQuery({
     queryKey: projectKeys.list(search, limit),
     queryFn: async ({ pageParam }) => {
@@ -59,6 +64,7 @@ export function useProjectsList(search = "", limit?: number) {
     // flicker between keystrokes.
     placeholderData: keepPreviousData,
     staleTime: 30_000,
+    enabled,
   });
 }
 

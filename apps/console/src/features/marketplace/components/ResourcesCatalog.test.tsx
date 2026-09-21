@@ -42,6 +42,16 @@ vi.mock("@tanstack/react-router", () => ({
     },
 }));
 
+// Every test but the dedicated permission ones below holds both resource
+// permissions, so the page and its Register action read as fully reachable
+// by default — mirrors SkillsSection.test.tsx's per-suite permission toggle.
+const heldPermissions = vi.hoisted(() => new Set(["ae:resource-view", "ae:resource-config"]));
+vi.mock("../../../auth/permissions", () => ({
+  useHasPermission: (permission: string) => heldPermissions.has(permission),
+  useHasAnyPermission: (permissions: string[]) =>
+    permissions.some((p) => heldPermissions.has(p)),
+}));
+
 type PlatformResourceTypeDTO = components["schemas"]["PlatformResourceTypeDTO"];
 type ExternalResourceDTO = components["schemas"]["ExternalResourceDTO"];
 
@@ -91,6 +101,9 @@ function resetState() {
     isError: false,
     refetch: externalRefetch,
   };
+  heldPermissions.clear();
+  heldPermissions.add("ae:resource-view");
+  heldPermissions.add("ae:resource-config");
 }
 
 function platformType(
@@ -307,5 +320,34 @@ describe("ResourcesCatalog", () => {
     await waitFor(() =>
       expect(screen.queryByLabelText("Close")).not.toBeInTheDocument(),
     );
+  });
+
+  it("shows an insufficient-permissions message and renders no catalog content holding neither resource permission", () => {
+    resetState();
+    heldPermissions.clear();
+    platformState = { ...platformState, data: [platformType()] };
+    externalState = { ...externalState, data: [externalResource()] };
+
+    render(<ResourcesCatalog />);
+
+    expect(
+      screen.getByText("You don't have permission to view resources."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("postgres-cnpg")).not.toBeInTheDocument();
+    expect(screen.queryByText("stripe")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Register" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Register" })).not.toBeInTheDocument();
+  });
+
+  it("renders the catalog for a view-only caller, with Register disabled", () => {
+    resetState();
+    heldPermissions.delete("ae:resource-config");
+    platformState = { ...platformState, data: [platformType()] };
+
+    render(<ResourcesCatalog />);
+
+    expect(screen.getByText("postgres-cnpg")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Register" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Register" })).toBeDisabled();
   });
 });

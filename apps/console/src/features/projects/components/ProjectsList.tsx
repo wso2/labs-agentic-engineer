@@ -33,6 +33,7 @@ import {
   MenuItem,
   PageContent,
   SearchBar,
+  Tooltip,
   Typography,
   useMediaQuery,
   useTheme,
@@ -44,7 +45,9 @@ import {
   Trash2,
 } from "@wso2/oxygen-ui-icons-react";
 import { Link, useNavigate } from "@tanstack/react-router";
+import { useHasPermission } from "../../../auth/permissions";
 import { EmptyState } from "../../../components/EmptyState";
+import { NoPermissionIllustration } from "../../../components/NoPermissionIllustration";
 import { PageHeader } from "../../../components/PageHeader";
 import type { components } from "../../../generated/aep-api";
 import { useProjectsList } from "../api/queries";
@@ -67,9 +70,11 @@ function formatCreatedAt(createdAt?: string): string | null {
 function ProjectCard({
   project,
   onDelete,
+  canOpen,
 }: {
   project: Project;
   onDelete: (project: Project) => void;
+  canOpen: boolean;
 }) {
   const navigate = useNavigate();
   const created = formatCreatedAt(project.createdAt);
@@ -80,7 +85,16 @@ function ProjectCard({
   return (
     <Card variant="outlined" sx={{ height: "100%", position: "relative" }}>
       <CardActionArea
-        sx={{ height: "100%", alignItems: "stretch" }}
+        disabled={!canOpen}
+        sx={{
+          height: "100%",
+          alignItems: "stretch",
+          // CardActionArea's disabled state only strips pointer events —
+          // it never dims the card content (Typography sets its own
+          // explicit colors), so without this a "disabled" card looks
+          // identical to an enabled one.
+          opacity: canOpen ? 1 : 0.5,
+        }}
         onClick={() =>
           void navigate({
             to: "/projects/$projectName",
@@ -159,7 +173,51 @@ function useGridColumns(): number {
 // only ever appears under a completely filled last row (#71 feedback).
 const GRID_ROWS_PER_PAGE = 3;
 
+const NO_CREATE_PERMISSION_TOOLTIP =
+  "You don't have permission to create a new project.";
+
+// Shown wherever "Create project" appears (the page header action and the
+// true-empty state's centered action): visible either way, per ae:requirement-update
+// alone — never hidden, so a view-only caller can see the capability exists
+// and why it's out of reach, matching every other section's disabled-not-hidden
+// treatment this release.
+function CreateProjectButton({ canCreate }: { canCreate: boolean }) {
+  if (canCreate) {
+    return (
+      <Button
+        variant="contained"
+        startIcon={<Plus size={20} />}
+        component={Link}
+        to="/projects/new"
+      >
+        Create project
+      </Button>
+    );
+  }
+  return (
+    <Tooltip title={NO_CREATE_PERMISSION_TOOLTIP}>
+      <span>
+        <Button variant="contained" startIcon={<Plus size={20} />} disabled>
+          Create project
+        </Button>
+      </span>
+    </Tooltip>
+  );
+}
+
 export function ProjectsList() {
+  const hasRequirementUpdate = useHasPermission("ae:requirement-update");
+  // Exact-match ae:requirement-view, mirroring ListProjects/GetProject's own
+  // exact-match backend gate (permission_gate.go) — not an OR with
+  // ae:requirement-update. A caller holding only ae:requirement-update can
+  // still create a project (CreateProjectButton below, gated on
+  // hasRequirementUpdate alone), but cannot see the list or open one: this
+  // whole page renders the denied state for them, same as it does for a
+  // caller holding neither permission — the Projects sidebar item itself is
+  // never disabled (unlike Alerts/Endpoints/Resources/Credentials): it's the
+  // default landing page, always reachable, and this page's own denied
+  // state is what a view-less caller actually sees.
+  const hasProjectsAccess = useHasPermission("ae:requirement-view");
   const [search, setSearch] = useState("");
   // The project awaiting delete confirmation; one dialog serves the grid.
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
@@ -174,7 +232,7 @@ export function ProjectsList() {
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
-  } = useProjectsList(debouncedSearch, columns * GRID_ROWS_PER_PAGE);
+  } = useProjectsList(debouncedSearch, columns * GRID_ROWS_PER_PAGE, hasProjectsAccess);
 
   const items = data?.pages.flatMap((page) => page.items ?? []) ?? [];
   // True-empty (no projects at all, not a fruitless search) hides the page
@@ -186,21 +244,28 @@ export function ProjectsList() {
       <PageHeader
         title="Projects"
         subtitle="Everything Agentic Engineer is building for you, one project per app."
-        {...(!isTrueEmpty && {
-          actions: (
-            <Button
-              variant="contained"
-              startIcon={<Plus size={20} />}
-              component={Link}
-              to="/projects/new"
-            >
-              Create project
-            </Button>
-          ),
-        })}
+        {...(hasProjectsAccess &&
+          !isTrueEmpty && {
+            actions: <CreateProjectButton canCreate={hasRequirementUpdate} />,
+          })}
       />
 
-      {isPending ? (
+      {!hasProjectsAccess ? (
+        // Checked before the loading/error states below: without
+        // ae:requirement-view there is nothing here to load — the projects
+        // query itself never fires (useProjectsList(..., hasProjectsAccess))
+        // — and a direct-URL visit must never flash real project content
+        // before this check runs. A caller holding only
+        // ae:requirement-update lands here too, even though they could
+        // create a project (CreateProjectButton, gated separately on
+        // hasRequirementUpdate): they can't see this list or open a card,
+        // so the page itself doesn't render past this point.
+        <EmptyState
+          icon={<NoPermissionIllustration size={120} />}
+          title="No projects access"
+          description="You don't have permission to view projects."
+        />
+      ) : isPending ? (
         <Box sx={{ display: "flex", justifyContent: "center", p: 6 }}>
           <CircularProgress aria-label="Loading projects" />
         </Box>
@@ -217,16 +282,7 @@ export function ProjectsList() {
           icon={<Folder size={48} />}
           title="No projects yet"
           description="Tell Agentic Engineer what you want to build and it becomes your first project."
-          action={
-            <Button
-              variant="contained"
-              startIcon={<Plus size={20} />}
-              component={Link}
-              to="/projects/new"
-            >
-              Create project
-            </Button>
-          }
+          action={<CreateProjectButton canCreate={hasRequirementUpdate} />}
         />
       ) : (
         <>
@@ -246,7 +302,11 @@ export function ProjectsList() {
               <Grid container spacing={3}>
                 {items.map((project) => (
                   <Grid key={project.name} size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
-                    <ProjectCard project={project} onDelete={setDeleteTarget} />
+                    <ProjectCard
+                      project={project}
+                      onDelete={setDeleteTarget}
+                      canOpen={hasProjectsAccess}
+                    />
                   </Grid>
                 ))}
               </Grid>

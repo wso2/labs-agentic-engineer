@@ -28,7 +28,9 @@ import {
 } from "@wso2/oxygen-ui";
 import { BellOff } from "@wso2/oxygen-ui-icons-react";
 import { useNavigate } from "@tanstack/react-router";
+import { useHasPermission } from "../../../auth/permissions";
 import { EmptyState } from "../../../components/EmptyState";
+import { NoPermissionIllustration } from "../../../components/NoPermissionIllustration";
 import { PageHeader } from "../../../components/PageHeader";
 import { StatusChip } from "../../../components/StatusChip";
 import { useAlertsInfinite } from "../api/queries";
@@ -36,6 +38,7 @@ import { classificationLabel, classificationTone } from "../classification";
 
 export function AlertsList() {
   const navigate = useNavigate();
+  const hasObservabilityAccess = useHasPermission("ae:observability-view");
   const {
     data,
     isPending,
@@ -45,7 +48,7 @@ export function AlertsList() {
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
-  } = useAlertsInfinite();
+  } = useAlertsInfinite(undefined, hasObservabilityAccess);
 
   const items = data?.pages.flatMap((page) => page.items ?? []) ?? [];
 
@@ -56,7 +59,18 @@ export function AlertsList() {
         subtitle="RCA reports from the OpenChoreo SRE-agent handoff, across every project."
       />
 
-      {isPending ? (
+      {!hasObservabilityAccess ? (
+        // Checked before the loading/error states below: without
+        // ae:observability-view there is nothing here to load — the alerts
+        // query itself never fires (useAlertsInfinite(undefined,
+        // hasObservabilityAccess)) — and a direct-URL visit must never flash
+        // real alert content before this check runs.
+        <EmptyState
+          icon={<NoPermissionIllustration size={120} />}
+          title="No alerts access"
+          description="You don't have permission to view alerts."
+        />
+      ) : isPending ? (
         <Box sx={{ display: "flex", justifyContent: "center", p: 6 }}>
           <CircularProgress aria-label="Loading alerts" />
         </Box>

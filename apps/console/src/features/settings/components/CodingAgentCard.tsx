@@ -28,6 +28,9 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { Bot } from "@wso2/oxygen-ui-icons-react";
+import { useHasPermission } from "../../../auth/permissions";
+import { EmptyState } from "../../../components/EmptyState";
+import { NoPermissionIllustration } from "../../../components/NoPermissionIllustration";
 import type { components } from "../../../generated/aep-api";
 import { useSetCodingAgent } from "../api/queries";
 import { CodingAgentKeySection } from "./CodingAgentKeySection";
@@ -117,8 +120,34 @@ export function CodingAgentCard({
   codingLlm: LLMProjection | null;
   llmConnected: boolean;
 }) {
+  const hasModelConfig = useHasPermission("ae:model-config");
   const save = useSetCodingAgent();
   const onPlatformDefaults = !codingAgent.updatedBy;
+
+  // Without ae:model-config there is nothing here to show — the runtime/model
+  // pair and the key it bills are one setting group (ADR-0016), and the write
+  // this card's selects trigger (PATCH /config's codingAgent section) needs
+  // the same permission. Every check below this point (including inside
+  // CodingAgentKeySection, which only ever mounts past this return) can
+  // assume the permission is held.
+  if (!hasModelConfig) {
+    return (
+      <Card variant="outlined">
+        <CardContent sx={{ p: 3 }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mb: 2 }}>
+            <Bot size={22} />
+            <Typography variant="h6">Coding agent</Typography>
+          </Box>
+          <Divider sx={{ mb: 3 }} />
+          <EmptyState
+            icon={<NoPermissionIllustration size={72} />}
+            description="You don't have permission to view coding agent settings."
+            compact
+          />
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card variant="outlined">

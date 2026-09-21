@@ -24,11 +24,13 @@ import {
   Link as UiLink,
   Skeleton,
   Stack,
+  Tooltip,
   Typography,
   alpha,
 } from "@wso2/oxygen-ui";
 import { ArrowRight, ArrowUpRight, CircleAlert } from "@wso2/oxygen-ui-icons-react";
 import { createLink } from "@tanstack/react-router";
+import { useHasPermission } from "../../../auth/permissions";
 import type { components } from "../../../generated/aep-api";
 import { RunHoldNotice } from "../../builds/components/RunHoldNotice";
 import type { ValidationCounts } from "../../validation/lib/verdict";
@@ -307,6 +309,7 @@ export function EnvironmentFlowCard({
   onConfigureConnection,
   onConfigurePromoteTarget,
 }: EnvironmentFlowCardProps) {
+  const hasBuild = useHasPermission("ae:build");
   const { deploy, version, milestone, validation, componentTypes, connections, promote, pending } =
     detail;
   // A hold, the deploy aggregate's validation and the connections read all
@@ -621,17 +624,21 @@ export function EnvironmentFlowCard({
         <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", flexWrap: "wrap", rowGap: 1 }}>
           {/* A disabled control swallows its title, so the reason lives beside
               it as a caption whenever there is one to give. */}
-          <Button
-            variant="contained"
-            disabled={!promote.enabled}
-            onClick={(event) => {
-              event.stopPropagation();
-              onPromote();
-            }}
-            endIcon={<ArrowRight size={16} aria-hidden />}
-          >
-            Promote {cardVersion} to {targetLabel}
-          </Button>
+          <Tooltip title={!hasBuild ? "You don't have permission to promote this project." : ""}>
+            <span>
+              <Button
+                variant="contained"
+                disabled={!promote.enabled || !hasBuild}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onPromote();
+                }}
+                endIcon={<ArrowRight size={16} aria-hidden />}
+              >
+                Promote {cardVersion} to {targetLabel}
+              </Button>
+            </span>
+          </Tooltip>
           {promote.reason && (
             <Typography variant="caption" color="text.secondary">
               {promote.reason}

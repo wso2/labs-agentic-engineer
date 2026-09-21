@@ -86,6 +86,7 @@ function fakeBff(overrides: Partial<BffClient> = {}): BffClient {
       name: "Jo",
       email: "jo@example.com",
       projectName: "shop",
+      canWrite: true,
     }),
     fetchSpecFiles: async () => [
       { path: "requirements/prd.md", content: "# P\n", sha: "s1" },
@@ -93,6 +94,13 @@ function fakeBff(overrides: Partial<BffClient> = {}): BffClient {
     applyFiles: async () => ({ commitSha: "c", files: [] }),
     ...overrides,
   };
+}
+
+// A fresh ConnectionConfiguration per call, the way Hocuspocus hands one to
+// onAuthenticate. Tests read `.readOnly` back to see what the hook decided —
+// that flag is the whole of the server-side read-only enforcement.
+function connCfg(): { readOnly: boolean; isAuthenticated: boolean } {
+  return { readOnly: false, isAuthenticated: false };
 }
 
 beforeEach(() => dropRoomState(ROOM));
@@ -104,12 +112,12 @@ test("auth rejects unknown rooms before hitting the oracle", async () => {
     bff: fakeBff({
       validateAccess: async () => {
         oracleCalled = true;
-        return { name: "x", email: "x", projectName: "x" };
+        return { name: "x", email: "x", projectName: "x", canWrite: true };
       },
     }),
   });
   await assert.rejects(
-    auth({ token: "t", documentName: "not-a-spec-room" }),
+    auth({ token: "t", documentName: "not-a-spec-room", connectionConfig: connCfg() }),
     /unknown room/,
   );
   assert.equal(oracleCalled, false);
@@ -121,16 +129,105 @@ test("auth passes token + room to the oracle; identity and project come back", a
     bff: fakeBff({
       validateAccess: async (token, room) => {
         seen.push(token, room);
-        return { name: "Jo", email: "jo@example.com", projectName: "shop" };
+        return {
+          name: "Jo",
+          email: "jo@example.com",
+          projectName: "shop",
+          canWrite: true,
+        };
       },
     }),
   });
-  const ctx = await auth({ token: "jwt-abc", documentName: "spec-acme-shop" });
+  const ctx = await auth({ token: "jwt-abc", documentName: "spec-acme-shop", connectionConfig: connCfg() });
   assert.deepEqual(seen, ["jwt-abc", "spec-acme-shop"]);
   assert.equal(ctx.user.name, "Jo");
   assert.equal(ctx.user.kind, "user");
   assert.equal(ctx.token, "jwt-abc");
   assert.equal(ctx.projectName, "shop");
+});
+
+// --- read-only participants -------------------------------------------------
+//
+// Admission to a spec room needs ae:design-view; changing the document needs
+// ae:design. Nothing downstream can tell the two apart on its own: the
+// permission gate sees the join, never the Yjs updates that follow, and the
+// committer sees a token without knowing whose edits it is committing. So the
+// oracle's canWrite has to be acted on here, at the only point that sees both.
+
+function readOnlyBff(): BffClient {
+  return fakeBff({
+    validateAccess: async () => ({
+      name: "Vi",
+      email: "vi@example.com",
+      projectName: "shop",
+      canWrite: false,
+    }),
+  });
+}
+
+test("a viewer's socket is marked read-only so Hocuspocus drops their updates", async () => {
+  const auth = buildAuthenticateHook(prodConfig, { bff: readOnlyBff() });
+  const cfg = connCfg();
+  const ctx = await auth({
+    token: "viewer-jwt",
+    documentName: ROOM,
+    connectionConfig: cfg,
+  });
+  assert.equal(cfg.readOnly, true, "the connection must be read-only");
+  assert.equal(ctx.canWrite, false);
+});
+
+test("a writer's socket stays writable", async () => {
+  const auth = buildAuthenticateHook(prodConfig, { bff: fakeBff() });
+  const cfg = connCfg();
+  const ctx = await auth({
+    token: "writer-jwt",
+    documentName: ROOM,
+    connectionConfig: cfg,
+  });
+  assert.equal(cfg.readOnly, false);
+  assert.equal(ctx.canWrite, true);
+});
+
+// The room's lastToken authenticates the unload flush, when no connection
+// context is left to ask. A viewer's token there would 403 at ApplyFiles —
+// which gates on ae:design — so the authors' pending work would never land.
+test("a viewer's token never becomes the room's commit credential", async () => {
+  const writerAuth = buildAuthenticateHook(prodConfig, { bff: fakeBff() });
+  await writerAuth({
+    token: "writer-jwt",
+    documentName: ROOM,
+    connectionConfig: connCfg(),
+  });
+  assert.equal(roomState(ROOM)?.lastToken, "writer-jwt");
+
+  // A viewer joins AFTER the writer — the case that would otherwise clobber it.
+  const viewerAuth = buildAuthenticateHook(prodConfig, { bff: readOnlyBff() });
+  await viewerAuth({
+    token: "viewer-jwt",
+    documentName: ROOM,
+    connectionConfig: connCfg(),
+  });
+  assert.equal(
+    roomState(ROOM)?.lastToken,
+    "writer-jwt",
+    "the later viewer must not displace the writer's token",
+  );
+});
+
+// Co-authored-by trailers name who wrote the commit. Someone who could not
+// write did not co-author it.
+test("a viewer is not recorded as a commit co-author", async () => {
+  const viewerAuth = buildAuthenticateHook(prodConfig, { bff: readOnlyBff() });
+  await viewerAuth({
+    token: "viewer-jwt",
+    documentName: ROOM,
+    connectionConfig: connCfg(),
+  });
+  const emails = [...(roomState(ROOM)?.participants.values() ?? [])].map(
+    (p) => p.email,
+  );
+  assert.deepEqual(emails, [], "a viewer must not appear as a co-author");
 });
 
 test("auth propagates oracle denial", async () => {
@@ -142,7 +239,7 @@ test("auth propagates oracle denial", async () => {
     }),
   });
   await assert.rejects(
-    auth({ token: "t", documentName: "spec-acme-shop" }),
+    auth({ token: "t", documentName: "spec-acme-shop", connectionConfig: connCfg() }),
     BffAccessDeniedError,
   );
 });
@@ -164,7 +261,7 @@ test("an unreachable oracle is tagged transient, not a denial", async () => {
         },
       }),
     });
-    const err = await auth({ token: "t", documentName: ROOM }).then(
+    const err = await auth({ token: "t", documentName: ROOM, connectionConfig: connCfg() }).then(
       () => null,
       (e: unknown) => e,
     );
@@ -188,7 +285,7 @@ test("a rate-limited or timing-out oracle is transient, not a verdict", async ()
         },
       }),
     });
-    const err = await auth({ token: "t", documentName: ROOM }).then(
+    const err = await auth({ token: "t", documentName: ROOM, connectionConfig: connCfg() }).then(
       () => null,
       (e: unknown) => e,
     );
@@ -225,6 +322,7 @@ test("a permanently-unreadable spec is a verdict, a failing one is not", async (
         user: { name: "Jo", email: "j", kind: "user" },
         token: "t",
         projectName: "shop",
+        canWrite: true,
       },
     }).then(
       () => null,
@@ -246,7 +344,7 @@ test("a denial carries no transient reason", async () => {
       },
     }),
   });
-  const err = await auth({ token: "t", documentName: ROOM }).then(
+  const err = await auth({ token: "t", documentName: ROOM, connectionConfig: connCfg() }).then(
     () => null,
     (e: unknown) => e,
   );
@@ -256,21 +354,21 @@ test("a denial carries no transient reason", async () => {
 test("auth rejects a missing token outside dev mode", async () => {
   const auth = buildAuthenticateHook(prodConfig, { bff: fakeBff() });
   await assert.rejects(
-    auth({ token: "", documentName: "spec-acme-shop" }),
+    auth({ token: "", documentName: "spec-acme-shop", connectionConfig: connCfg() }),
     /missing token/,
   );
 });
 
 test("dev mode skips the oracle entirely", async () => {
   const auth = buildAuthenticateHook(devConfig, { bff: null });
-  const ctx = await auth({ token: "", documentName: "spec-acme-shop" });
+  const ctx = await auth({ token: "", documentName: "spec-acme-shop", connectionConfig: connCfg() });
   assert.equal(ctx.user.kind, "dev");
 });
 
 test("dev mode still rejects unknown rooms", async () => {
   const auth = buildAuthenticateHook(devConfig, { bff: null });
   await assert.rejects(
-    auth({ token: "", documentName: "lobby" }),
+    auth({ token: "", documentName: "lobby", connectionConfig: connCfg() }),
     /unknown room/,
   );
 });
@@ -281,7 +379,12 @@ test("load seeds from fixtures in dev mode (md files become fragments)", async (
   await load({
     document: doc,
     documentName: "spec-acme-shop",
-    context: { user: { name: "d", email: "d", kind: "dev" }, token: null, projectName: null },
+    context: {
+      user: { name: "d", email: "d", kind: "dev" },
+      token: null,
+      projectName: null,
+      canWrite: true,
+    },
   });
   for (const file of devSeedFiles) {
     if (file.path.endsWith(".md")) {
@@ -313,6 +416,7 @@ test("load seeds from the BFF's Files API with the joiner's token", async () => 
       user: { name: "Jo", email: "j", kind: "user" },
       token: "jwt-abc",
       projectName: "shop",
+      canWrite: true,
     },
   });
   assert.deepEqual(calls, ["jwt-abc", "shop"]);
@@ -341,6 +445,7 @@ test("load never seeds reference documents into the room", async () => {
       user: { name: "Jo", email: "j", kind: "user" },
       token: "jwt-abc",
       projectName: "shop",
+      canWrite: true,
     },
   });
   assert.match(doc.getXmlFragment("specs/requirements/prd.md").toString(), /PRD/);
@@ -395,6 +500,7 @@ test("a failed files fetch rejects the load rather than opening an empty room", 
         user: { name: "Jo", email: "j", kind: "user" },
         token: "t",
         projectName: "shop",
+        canWrite: true,
       },
     }),
     /files fetch exploded \(500\)/,
@@ -441,7 +547,12 @@ test("no project from the oracle rejects the load too", async () => {
     load({
       document: doc,
       documentName: ROOM,
-      context: { user: { name: "Jo", email: "j", kind: "user" }, token: "t", projectName: null },
+      context: {
+        user: { name: "Jo", email: "j", kind: "user" },
+        token: "t",
+        projectName: null,
+        canWrite: true,
+      },
     }),
     /missing bff\/token\/project/,
   );
@@ -458,7 +569,12 @@ test("a room with no project is refused permanently, not tagged transient", asyn
   const err = await load({
     document: doc,
     documentName: ROOM,
-    context: { user: { name: "Jo", email: "j", kind: "user" }, token: "t", projectName: null },
+    context: {
+        user: { name: "Jo", email: "j", kind: "user" },
+        token: "t",
+        projectName: null,
+        canWrite: true,
+      },
   }).then(
     () => null,
     (e: unknown) => e,
@@ -476,6 +592,7 @@ test("stateless token updates connection context and lastToken", async () => {
     user: { name: "Jo", email: "j", kind: "user" },
     token: "old",
     projectName: "shop",
+    canWrite: true,
   };
   const logs: string[] = [];
   const hook = buildStatelessHook(prodConfig, {
@@ -519,6 +636,7 @@ test("requestFreshToken resolves when a matching token reply arrives", async () 
         user: { name: "Jo", email: "j", kind: "user" },
         token: "stale",
         projectName: "shop",
+        canWrite: true,
       } satisfies CollabContext,
       sendStateless: () => {},
     } as never,

@@ -53,7 +53,7 @@ func (c *namespaceClient) ListNamespaces(ctx context.Context) ([]gen.Organizatio
 		return nil, fmt.Errorf("failed to list namespaces: %w", err)
 	}
 	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
-		return nil, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		return nil, handleErrorResponse(ctx, http.MethodGet, "/api/v1/namespaces", resp.StatusCode(), ErrorResponses{
 			JSON400: resp.JSON400,
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
@@ -78,7 +78,7 @@ func (c *namespaceClient) GetNamespace(ctx context.Context, name string) (*gen.O
 		return nil, fmt.Errorf("failed to get namespace: %w", err)
 	}
 	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
-		return nil, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		return nil, handleErrorResponse(ctx, http.MethodGet, "/api/v1/namespaces/"+name, resp.StatusCode(), ErrorResponses{
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
 			JSON404: resp.JSON404,

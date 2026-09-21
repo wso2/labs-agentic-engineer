@@ -12,7 +12,13 @@
 #
 # No allowedUserTypes: Agent Manager restricts its console to its own
 # `engineer` user type, but AEP has no user-type model — restricting here would
-# lock out the default admin.
+# lock out the default admin. (Confirmed separately that allowedUserTypes
+# would not have achieved that anyway: it's only checked by the
+# USER_ONBOARDING flow's UserTypeResolver executor when a new account is
+# being auto-provisioned/invited into an app, never by the plain
+# AUTHENTICATION flow this client uses — see 92-ae-roles.yaml's header for
+# how that was confirmed. Console access control is enforced by aep-api's AE
+# permission gate, not by Thunder refusing the login.)
 resource_type: application
 id: aep-console-client
 type: browser # public redirect client (authorization_code + PKCE console login)

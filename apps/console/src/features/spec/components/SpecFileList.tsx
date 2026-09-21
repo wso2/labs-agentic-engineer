@@ -77,6 +77,7 @@ export function SpecFileList({
   onSelect,
   onRegenerateDesign,
   regenerateDisabled,
+  canRegenerateDesign = true,
   sections,
   plan,
   onReason,
@@ -96,6 +97,13 @@ export function SpecFileList({
   onRegenerateDesign: () => void;
   /** Disabled while an agent turn runs — a re-generate would be dropped mid-turn. */
   regenerateDisabled?: boolean;
+  /** ae:design (SpecView's own hasDesign) — the same permission gate the
+   *  header CTA applies, mirrored here since this is the header CTA's other
+   *  entry point onto the identical `generateDesign` call. Defaults true so
+   *  every existing caller/test that predates this permission reads as
+   *  reachable, matching the default the header CTA had before its own
+   *  permission check landed. */
+  canRegenerateDesign?: boolean;
   /** The rail's own state per section (#575) — what is ready, being worked on,
    *  wanting attention, or not begun, plus why. */
   sections: RailSection[];
@@ -441,9 +449,11 @@ export function SpecFileList({
           hasDesign && (
             <Tooltip
               title={
-                regenerateDisabled
-                  ? "An agent is still working — re-generate is available once it finishes"
-                  : "Re-generate design from the current requirements"
+                !canRegenerateDesign
+                  ? "You don't have permission to generate the design."
+                  : regenerateDisabled
+                    ? "An agent is still working — re-generate is available once it finishes"
+                    : "Re-generate design from the current requirements"
               }
             >
               {/* span so the tooltip works while the button is disabled */}
@@ -452,7 +462,7 @@ export function SpecFileList({
                   size="small"
                   aria-label="Re-generate design"
                   onClick={onRegenerateDesign}
-                  disabled={regenerateDisabled ?? false}
+                  disabled={!canRegenerateDesign || (regenerateDisabled ?? false)}
                 >
                   <RefreshCw size={16} />
                 </IconButton>

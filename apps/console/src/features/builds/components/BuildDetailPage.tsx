@@ -29,6 +29,7 @@ import {
   MenuItem,
   Skeleton,
   Stack,
+  Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
 import {
@@ -40,10 +41,12 @@ import {
   RotateCcw,
   X,
 } from "@wso2/oxygen-ui-icons-react";
-import { createLink, Link } from "@tanstack/react-router";
+import { createLink, Link, useNavigate } from "@tanstack/react-router";
+import { useHasPermission } from "../../../auth/permissions";
 import { EmptyState } from "../../../components/EmptyState";
 import { LogSection } from "../../../components/LogSection";
 import { PageHeader } from "../../../components/PageHeader";
+import { PermissionRestrictedPage } from "../../../components/PermissionRestrictedPage";
 import { SectionCaption } from "../../../components/SectionCaption";
 import type { components } from "../../../generated/aep-api";
 import { useAllTasks } from "../../tasks/api/queries";
@@ -108,6 +111,9 @@ export function BuildDetailPage({
   projectName: string;
   tag: string;
 }) {
+  const navigate = useNavigate();
+  const canViewBuilds = useHasPermission("ae:build-view");
+
   const builds = useBuilds(projectName);
   const build = builds.data?.find((b) => b.tag === tag);
   const live = build ? isLedgerLive(build) : false;
@@ -172,6 +178,21 @@ export function BuildDetailPage({
   const durationOpen = build ? isDurationOpen(build) : false;
   const rowsCounting = tasks.some((t) => taskElapsedFrom(t, claims) !== null);
   useTicker(durationOpen || rowsCounting);
+
+  // Every hook above must run first — React's rule against conditional hooks
+  // — so the gate sits here, after all of them, rather than before any.
+  if (!canViewBuilds) {
+    return (
+      <PermissionRestrictedPage
+        title="You don't have access to this project's builds"
+        description="Build progress, tasks, and logs are restricted for your role. Ask a project admin to grant access."
+        backLabel="Back to project overview"
+        onBack={() =>
+          void navigate({ to: "/projects/$projectName", params: { projectName } })
+        }
+      />
+    );
+  }
 
   const backTo = {
     link: <Link to="/projects/$projectName/builds" params={{ projectName }} />,
@@ -553,6 +574,7 @@ function BuildActions({
   live: boolean;
 }) {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  const hasBuild = useHasPermission("ae:build");
   const cancel = useCancelRun(projectName, tag);
   const status = useProjectStatus(projectName);
   const repoUrl = status.data?.repoUrl?.replace(/\/+$/, "").replace(/\.git$/, "");
@@ -569,25 +591,42 @@ function BuildActions({
       </IconButton>
       <Menu anchorEl={anchor} open={Boolean(anchor)} onClose={close}>
         {/* Cancel is offered only while there is something to cancel — a menu
-            item that cannot act is worse than an absent one. */}
-        <MenuItem
-          disabled={!live || !runId || cancel.isPending}
-          onClick={() => {
-            if (runId) cancel.mutate(runId);
-            close();
-          }}
+            item that cannot act is worse than an absent one. Permission is
+            checked first, same precedence as every other disabled-not-hidden
+            control in this console: a state reason is only worth explaining
+            once the caller could act on it at all. */}
+        <Tooltip
+          title={!hasBuild ? "You don't have permission to cancel this build." : ""}
         >
-          <X size={15} style={{ marginRight: 10 }} />
-          Cancel build
-        </MenuItem>
-        <LinkMenuItem
-          to="/projects/$projectName/spec"
-          params={{ projectName }}
-          onClick={close}
+          {/* span so the tooltip works while the item is disabled */}
+          <span>
+            <MenuItem
+              disabled={!hasBuild || !live || !runId || cancel.isPending}
+              onClick={() => {
+                if (runId) cancel.mutate(runId);
+                close();
+              }}
+            >
+              <X size={15} style={{ marginRight: 10 }} />
+              Cancel build
+            </MenuItem>
+          </span>
+        </Tooltip>
+        <Tooltip
+          title={!hasBuild ? "You don't have permission to retry this build." : ""}
         >
-          <RotateCcw size={15} style={{ marginRight: 10 }} />
-          Retry this build
-        </LinkMenuItem>
+          <span>
+            <LinkMenuItem
+              to="/projects/$projectName/spec"
+              params={{ projectName }}
+              onClick={close}
+              disabled={!hasBuild}
+            >
+              <RotateCcw size={15} style={{ marginRight: 10 }} />
+              Retry this build
+            </LinkMenuItem>
+          </span>
+        </Tooltip>
         <Divider />
         <MenuItem
           component="a"

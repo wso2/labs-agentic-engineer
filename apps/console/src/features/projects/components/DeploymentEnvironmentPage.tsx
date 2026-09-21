@@ -26,9 +26,11 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { Compass } from "@wso2/oxygen-ui-icons-react";
-import { createLink, Link } from "@tanstack/react-router";
+import { createLink, Link, useNavigate } from "@tanstack/react-router";
+import { useHasPermission } from "../../../auth/permissions";
 import { EmptyState } from "../../../components/EmptyState";
 import { PageHeader } from "../../../components/PageHeader";
+import { PermissionRestrictedPage } from "../../../components/PermissionRestrictedPage";
 import { useBuildRuns, useBuilds } from "../../builds/api/queries";
 import { runStamp } from "../../builds/lib/format";
 import { mergedCycle } from "../../builds/lib/runView";
@@ -96,6 +98,8 @@ export function DeploymentEnvironmentPage({
   projectName: string;
   environment: string;
 }) {
+  const navigate = useNavigate();
+  const canViewDeployments = useHasPermission("ae:build-view");
   // The environment is whatever the pipeline calls it; the list is the only
   // authority on which names exist. While it is still loading the segment is
   // taken at its word — a page that flashed "no such environment" on every
@@ -245,6 +249,21 @@ export function DeploymentEnvironmentPage({
     (row?.total ?? 0) > 0 &&
     row?.live === row?.total;
   const testUsers = useTestUsers(projectName, Boolean(green));
+
+  // Every hook above must run first — React's rule against conditional hooks
+  // — so the gate sits here, after all of them, rather than before any.
+  if (!canViewDeployments) {
+    return (
+      <PermissionRestrictedPage
+        title="You don't have access to this project's deployments"
+        description="Environment status, connections, and promotion are restricted for your role. Ask a project admin to grant access."
+        backLabel="Back to project overview"
+        onBack={() =>
+          void navigate({ to: "/projects/$projectName", params: { projectName } })
+        }
+      />
+    );
+  }
 
   // A failed read is not a verdict on the segment. Without this the page would
   // tell the user there is no such environment — a permanent-sounding fact —

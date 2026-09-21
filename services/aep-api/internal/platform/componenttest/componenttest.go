@@ -44,9 +44,27 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/wso2/aep/aep-api/internal/authz"
 	"github.com/wso2/aep/aep-api/internal/edge"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
 )
+
+// allPermissionsScope is a space-delimited scope claim holding every AE
+// permission — AsOrg's default. The permission gate itself is exercised
+// exhaustively elsewhere (edge.TestPermissionGate_DenyByDefault, its per-op OR
+// cases, and authz's role_permissions_catalog_test.go); a feature's component
+// tests exist to prove ITS business logic, not to re-prove the gate, so
+// requiring every one of them to separately grant scope would only add
+// boilerplate with no extra coverage. A test that specifically wants to
+// exercise a denial (permission-gate 403, not a business-rule 403) narrows
+// this via .With(func(c *auth.Claims) { c.Scope = "..." }).
+var allPermissionsScope = func() string {
+	perms := make([]string, len(authz.AllPermissions))
+	for i, p := range authz.AllPermissions {
+		perms[i] = string(p)
+	}
+	return strings.Join(perms, " ")
+}()
 
 // Options configures the harness. Fill only what the feature under test needs.
 type Options struct {
@@ -91,13 +109,17 @@ type Req struct {
 	claims *auth.Claims
 }
 
-// AsOrg returns a request builder authenticated as a verified token for org.
-// The claims mirror what Thunder would issue (OuHandle drives ResolveOuHandle).
+// AsOrg returns a request builder authenticated as a verified token for org,
+// holding every AE permission (see allPermissionsScope) so a feature's
+// component tests exercise its business logic without also having to think
+// about the permission gate. The claims otherwise mirror what Thunder would
+// issue (OuHandle drives ResolveOuHandle).
 func (h *Harness) AsOrg(org string) *Req {
 	return &Req{h: h, claims: &auth.Claims{
 		OuHandle: org,
 		OuId:     org + "-ouid",
 		Subject:  "componenttest-user",
+		Scope:    allPermissionsScope,
 	}}
 }
 
@@ -111,7 +133,22 @@ func (h *Harness) NoAuth() *Req { return &Req{h: h, claims: nil} }
 // instead of the recorder. Mirrors AsOrg's claims exactly.
 func ClaimsHeader(t testing.TB, org string) (key, value string) {
 	t.Helper()
-	raw, err := json.Marshal(&auth.Claims{OuHandle: org, OuId: org + "-ouid", Subject: "componenttest-user"})
+	return ClaimsHeaderWithScope(t, org, allPermissionsScope)
+}
+
+// ClaimsHeaderWithScope is ClaimsHeader with a caller-chosen scope, for a raw
+// request that needs BOTH a header the Req builder can't set (e.g. X-Room-Id)
+// AND a narrowed permission grant — the permission-gate denial equivalent of
+// Req.With(func(c *auth.Claims) { c.Scope = "..." }) for the httptest.Server
+// path ClaimsHeader itself serves.
+func ClaimsHeaderWithScope(t testing.TB, org, scope string) (key, value string) {
+	t.Helper()
+	raw, err := json.Marshal(&auth.Claims{
+		OuHandle: org,
+		OuId:     org + "-ouid",
+		Subject:  "componenttest-user",
+		Scope:    scope,
+	})
 	if err != nil {
 		t.Fatalf("componenttest: marshal claims: %v", err)
 	}

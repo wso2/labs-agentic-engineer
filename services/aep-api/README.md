@@ -18,7 +18,7 @@ flowchart TB
   SURF(["HTTP surfaces — /api/v1 · /internal/v1 · /mcp · /connect · /collab"])
   subgraph AEPAPI["aep-api"]
     direction TB
-    EDGE["edge — surface composer · tenant gate · composition root"]
+    EDGE["edge — surface composer · tenant gate · permission gate · composition root"]
     subgraph DOMAINS["the eight domains — each self-contained, wired only through ports"]
       direction LR
       ORG["organization"]
@@ -70,7 +70,7 @@ datastore · `(["/surface"])` = an inbound HTTP surface.
   **imports no domain** — the dependency arrow only ever points *into* it.
 - **`edge/`** — the **surface composer / composition root**: the single package that
   wires every domain together, mounts the HTTP surfaces, and runs the deny-by-default
-  **tenant gate**. It is the only place domains meet.
+  **tenant gate** and **permission gate**. It is the only place domains meet.
 - **`clients/`** — outbound adapters to external systems (`openchoreo`, `thundersvc`,
   `thunderapp`, `secretmanagersvc`, `oauth`, `oidc`, `observability`).
   `thunderapp` — Kubernetes GET of ThunderApplication CRs for the web-app deploy wait.
@@ -181,6 +181,12 @@ point at enforcement, they don't restate it.
 - **Deny-by-default tenant gate.** A request's org comes only from a verified JWT claim —
   never from a path, query, or body — so cross-org access is unrepresentable →
   `edge/tenant_gate_test.go` + every domain's `*_component_test.go`
+- **Deny-by-default permission gate.** AE permission keys ride the verified JWT's OAuth
+  `scope` claim (`auth.Claims.Permissions()`); every contract operation must be in either
+  `operationPermissions` (the permission(s) that satisfy it) or `permissionGateCarveOuts`
+  (an explicit, reasoned exception) — an operation in neither, or both, fails the build →
+  `edge/permission_gate_test.go` (`TestPermissionGateCoverage`). See
+  [ADR-0027](../../docs/decisions/ADR-0027-ae-permissions-ride-the-oauth-scope-claim.md).
 - **Phantom-OU trust guard.** A JWT `ouId` is rejected only when a wired validator
   positively reports it does not exist (empty id / no validator / transient error all
   fail open) → `organization/ou_validation_test.go`
@@ -194,3 +200,5 @@ point at enforcement, they don't restate it.
   [ADR-0008](../../docs/decisions/ADR-0008-architecture-in-readme-ladder.md)).
 - Why delivery executes a version as one milestone run, and what that costs →
   [ADR-0011](../../docs/decisions/ADR-0011-milestone-is-the-unit-of-execution.md).
+- Why AE permissions ride the OAuth scope claim and how the inbound permission gate is
+  structured → [ADR-0027](../../docs/decisions/ADR-0027-ae-permissions-ride-the-oauth-scope-claim.md).

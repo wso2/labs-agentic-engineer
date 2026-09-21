@@ -30,6 +30,13 @@ vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigate,
 }));
 
+// Every test but the dedicated "no permission" one below holds
+// ae:requirement-view, so the page reads as reachable by default.
+const hasRequirementView = vi.hoisted(() => ({ current: true }));
+vi.mock("../../../auth/permissions", () => ({
+  useHasPermission: () => hasRequirementView.current,
+}));
+
 let queryState: {
   data?: OrgEndpointDTO[];
   isPending: boolean;
@@ -50,6 +57,7 @@ function resetState() {
     refetch: vi.fn(),
   };
   navigate.mockClear();
+  hasRequirementView.current = true;
 }
 
 describe("EndpointsPage", () => {
@@ -126,5 +134,33 @@ describe("EndpointsPage", () => {
       to: "/projects/$projectName",
       params: { projectName: "billing" },
     });
+  });
+
+  it("shows an insufficient-permissions message and renders no endpoint content without ae:requirement-view", () => {
+    resetState();
+    hasRequirementView.current = false;
+    // A direct-URL visit must never flash real data even if a prior fetch
+    // cached it — the mocked query result deliberately carries data here.
+    queryState = {
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+      data: [
+        {
+          name: "invoice-api",
+          project: "billing",
+          endpoint: "rest",
+          type: "HTTP",
+          namespaceVisible: true,
+        },
+      ],
+    };
+
+    render(<EndpointsPage />);
+
+    expect(
+      screen.getByText("You don't have permission to view endpoints."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("invoice-api")).not.toBeInTheDocument();
   });
 });

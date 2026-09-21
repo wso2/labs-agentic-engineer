@@ -24,6 +24,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const navigate = vi.fn();
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigate,
+  Link: ({ to, ...rest }: { to: string }) => <a href={to} {...rest} />,
 }));
 
 // The mutation doubles below are plain objects the component reads flags
@@ -51,10 +52,16 @@ const uploadReferences = {
 };
 // The create page reads the org handle to address the chat's seed slot when
 // the user abandons their documents; useSession throws outside an AuthGuard.
+// Every existing test in this file assumes the page is otherwise reachable —
+// only the dedicated "no permission" test below flips this to an empty set.
+const sessionPermissions = vi.hoisted(() => ({
+  current: new Set(["ae:requirement-update"]),
+}));
 vi.mock("../../../auth/SessionContext", () => ({
   useSession: () => ({
     user: { name: "Test User", email: "test@example.com" },
     orgHandle: "acme",
+    permissions: sessionPermissions.current,
     signOut: vi.fn(),
   }),
 }));
@@ -95,6 +102,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   uploadReferences.isError = false;
   uploadReferences.error = null;
+  sessionPermissions.current = new Set(["ae:requirement-update"]);
 });
 
 describe("ProjectCreate reference documents (#383)", () => {
@@ -347,5 +355,20 @@ describe("ProjectCreate copy (#561)", () => {
     );
     reachNameStep();
     expect(screen.getByRole("alert")).toHaveTextContent("boom");
+  });
+});
+
+describe("ProjectCreate — permission gate", () => {
+  it("blocks the whole page for a user lacking ae:requirement-update", () => {
+    sessionPermissions.current = new Set();
+    render(<ProjectCreate />);
+
+    expect(
+      screen.getByText("You don't have permission to create a new project."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Back to projects" }),
+    ).toBeInTheDocument();
   });
 });

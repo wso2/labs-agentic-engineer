@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package discoveridp
+package getconfigstatus
 
 import (
 	"context"
@@ -22,26 +22,28 @@ import (
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
+	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 )
 
-// Handler serves discover-idp. It carries no org: the console probes an issuer
-// before committing it to the idp section.
+// Handler serves get-config-status: the same two "is it connected" booleans
+// GetConfig's own callers derive from ConfigProjection.gitProvider/llm being
+// non-nil, with none of the identity/key detail — deliberately permission-free
+// (see edge/permission_gate.go's carve-out) so the onboarding gate can decide
+// whether to show the wizard before the caller's AE permissions are
+// necessarily provisioned, which GetConfig itself can no longer assume.
 type Handler struct{ config *organization.Service }
 
 // New returns the slice's handler.
 func New(config *organization.Service) *Handler { return &Handler{config: config} }
 
-func (h *Handler) DiscoverIdp(ctx context.Context, request gen.DiscoverIdpRequestObject) (gen.DiscoverIdpResponseObject, error) {
-	issuer := ""
-	if request.Params.Issuer != "" {
-		issuer = request.Params.Issuer
-	}
-	if issuer == "" {
-		return nil, apierr.BadRequest("issuer query param required")
-	}
-	issuerOut, jwksURL, err := h.config.DiscoverIDP(ctx, issuer)
+func (h *Handler) GetConfigStatus(ctx context.Context, _ gen.GetConfigStatusRequestObject) (gen.GetConfigStatusResponseObject, error) {
+	org := tenant.BoundOrgFromContext(ctx)
+	proj, err := h.config.Get(ctx, org)
 	if err != nil {
-		return nil, apierr.BadGateway(err.Error())
+		return nil, apierr.Internal("failed to load config status")
 	}
-	return gen.DiscoverIdp200JSONResponse(gen.DiscoverOutputBody{Issuer: issuerOut, JwksURL: jwksURL}), nil
+	return gen.GetConfigStatus200JSONResponse{
+		GitProviderConnected: proj.GitProvider != nil,
+		LlmConnected:         proj.LLM != nil,
+	}, nil
 }

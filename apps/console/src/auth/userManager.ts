@@ -34,6 +34,10 @@ export function getUserManager(): UserManager {
     post_logout_redirect_uri: window.location.origin,
     response_type: "code",
     scope: env.thunderScopes,
+    // See env.ts's thunderResource comment: required for any ae:* scope in
+    // thunderScopes to actually land on the token instead of being silently
+    // dropped (and the token's aud silently redirected elsewhere).
+    ...(env.thunderResource ? { resource: env.thunderResource } : {}),
     // sessionStorage per issue #91 decision (per-tab; Thunder's own session
     // cookie makes new-tab logins silent). Also required so PKCE state
     // survives the redirect.

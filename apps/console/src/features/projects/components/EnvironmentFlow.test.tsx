@@ -64,6 +64,11 @@ vi.mock("@tanstack/react-router", () => ({
   },
 }));
 
+// Every test in this file assumes the promote action is reachable.
+vi.mock("../../../auth/permissions", () => ({
+  useHasPermission: () => true,
+}));
+
 import { environmentRows } from "../lib/deploymentLedger";
 import { promoteStep } from "../lib/deploymentFlow";
 import type { EnvironmentInfo } from "../lib/environments";

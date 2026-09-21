@@ -23,6 +23,7 @@ interface RuntimeEnv {
   VITE_THUNDER_URL?: string;
   VITE_THUNDER_CLIENT_ID?: string;
   VITE_THUNDER_SCOPES?: string;
+  VITE_THUNDER_RESOURCE?: string;
   /** WSO2 Cloud billing-user-api base; empty/absent disables first-login activation. */
   BILLING_API_BASE_URL?: string;
 }
@@ -61,6 +62,15 @@ export const env = {
   thunderUrl: getEnv("VITE_THUNDER_URL") || "http://localhost:8097",
   thunderClientId: getEnv("VITE_THUNDER_CLIENT_ID") || "aep-console-client",
   thunderScopes: getEnv("VITE_THUNDER_SCOPES") || "openid profile email",
+  // OAuth `resource` indicator (RFC 8707) for the `ae` resource server. An
+  // ae:* scope requested without it resolves against the platform's default
+  // resource server instead (whichever one that is — Agent Manager's on a
+  // converged cluster) and silently drops the ae:* scope while overwriting
+  // the token's aud, which then fails aep-api's own audience check. Empty by
+  // default: unset in a topology (e.g. dev-thunder-setup) that has no `ae`
+  // resource server bootstrapped, oidc-client-ts's `resource` is simply
+  // omitted from the request.
+  thunderResource: getEnv("VITE_THUNDER_RESOURCE") || "",
   // Empty outside WSO2 Cloud — presence of this URL is the gate for the
   // first-login billing activation call (GET …/organization?product=…).
   billingApiBaseUrl: getEnv("BILLING_API_BASE_URL") || "",

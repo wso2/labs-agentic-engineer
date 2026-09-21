@@ -38,9 +38,10 @@ import {
   GitHub,
   ReceiptText,
 } from "@wso2/oxygen-ui-icons-react";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { START_COMMAND } from "@aep/contracts/commands";
 import { ApiRequestError } from "../../../api/errors";
+import { useHasPermission } from "../../../auth/permissions";
 import { useSession } from "../../../auth/SessionContext";
 import { chatKeyFor, setPendingSeed } from "../../agent-chat/chatStore";
 import {
@@ -137,6 +138,7 @@ export function ProjectCreate() {
   // upload's retry (#383 decision: a failed upload is never a failed create).
   const [createdName, setCreatedName] = useState<string | null>(null);
   const { orgHandle } = useSession();
+  const hasRequirementUpdate = useHasPermission("ae:requirement-update");
   const { data: githubOrg } = useGithubOrg();
   const createProject = useCreateProject();
   const uploadReferences = useUploadReferences();
@@ -255,6 +257,30 @@ export function ProjectCreate() {
   };
 
   const pending = createProject.isPending || uploadReferences.isPending;
+
+  // Blocks the whole page, not just the entry-point button in ProjectsList —
+  // a bookmarked or back-navigated URL must not reach a live create form.
+  if (!hasRequirementUpdate) {
+    return (
+      <PageContent>
+        <Box
+          sx={{
+            maxWidth: 720,
+            mx: "auto",
+            pt: { xs: 4, md: 8 },
+            textAlign: "center",
+          }}
+        >
+          <Alert severity="warning" sx={{ mb: 3 }}>
+            You don't have permission to create a new project.
+          </Alert>
+          <Button component={Link} to="/projects">
+            Back to projects
+          </Button>
+        </Box>
+      </PageContent>
+    );
+  }
 
   return (
     <PageContent>

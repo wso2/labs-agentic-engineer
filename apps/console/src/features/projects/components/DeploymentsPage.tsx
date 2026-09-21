@@ -19,8 +19,10 @@
 import { useMemo, useState } from "react";
 import { Alert, Button, Snackbar } from "@wso2/oxygen-ui";
 import { Link, useNavigate } from "@tanstack/react-router";
+import { useHasPermission } from "../../../auth/permissions";
 import { EmptyState } from "../../../components/EmptyState";
 import { PageHeader } from "../../../components/PageHeader";
+import { PermissionRestrictedPage } from "../../../components/PermissionRestrictedPage";
 import { useBuildRuns, useBuilds } from "../../builds/api/queries";
 import { runStamp } from "../../builds/lib/format";
 import { mergedCycle } from "../../builds/lib/runView";
@@ -79,6 +81,8 @@ import { PromoteDialog } from "./PromoteDialog";
  */
 export function DeploymentsPage({ projectName }: { projectName: string }) {
   const navigate = useNavigate();
+  const canViewDeployments = useHasPermission("ae:build-view");
+  const hasResourceAccess = useHasPermission("ae:resource-view");
   const components = useProjectComponents(projectName);
   const componentNames = (components.data?.items ?? []).map((c) => c.name);
   const deployments = useComponentsDeployments(projectName, componentNames);
@@ -116,8 +120,13 @@ export function DeploymentsPage({ projectName }: { projectName: string }) {
   // values on the org plane — Connections must not offer Configure / the
   // project values dialog for those names. While the catalog query is
   // pending or failed, registeredNames is empty, so hide Configure for
-  // every external until the query has settled successfully.
-  const externalCatalog = useExternalResources();
+  // every external until the query has settled successfully. This is
+  // supporting lookup data gated on ae:resource-view/ae:resource-config
+  // (the BFF read itself requires one of those, not ae:build/ae:build-view),
+  // so a caller without either simply never resolves the catalog —
+  // catalogUnknown stays true and Configure stays hidden, same as any other
+  // pending/failed read; it never blocks the rest of this build-gated page.
+  const externalCatalog = useExternalResources(hasResourceAccess);
   const catalogUnknown = externalCatalog.isPending || externalCatalog.isError;
   const registeredNames = useMemo(() => {
     const names = new Set<string>();
@@ -162,6 +171,21 @@ export function DeploymentsPage({ projectName }: { projectName: string }) {
   // values at build time, real ones now), and the saved confirmation.
   const [valuesTarget, setValuesTarget] = useState<ConnectionRow | null>(null);
   const [valuesSaved, setValuesSaved] = useState(false);
+
+  // Every hook above must run first — React's rule against conditional hooks
+  // — so the gate sits here, after all of them, rather than before any.
+  if (!canViewDeployments) {
+    return (
+      <PermissionRestrictedPage
+        title="You don't have access to this project's deployments"
+        description="Environment status, connections, and promotion are restricted for your role. Ask a project admin to grant access."
+        backLabel="Back to project overview"
+        onBack={() =>
+          void navigate({ to: "/projects/$projectName", params: { projectName } })
+        }
+      />
+    );
+  }
 
   const header = (
     <PageHeader
