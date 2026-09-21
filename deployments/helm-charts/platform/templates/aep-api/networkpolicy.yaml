@@ -1,0 +1,109 @@
+{{- if .Values.networkPolicies.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: aep-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: wso2-aep
+spec:
+  podSelector:
+    matchLabels:
+      app: aep-api
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # OpenChoreo gateway (console/httproute.yaml routes /aep-api-service here
+    # cross-namespace) plus every in-namespace caller: console (proxy),
+    # collab-server (room-auth/spec-seed), aep-agents (MCP-catalog callback),
+    # aep-mcp-server (issue-create/dispatch), and smee-client (webhook forward).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openchoreo-control-plane
+        - podSelector:
+            matchLabels:
+              app: aep-console
+        - podSelector:
+            matchLabels:
+              app: collab-server
+        - podSelector:
+            matchLabels:
+              app: aep-agents
+        - podSelector:
+            matchLabels:
+              app: aep-mcp-server
+        {{- if .Values.webhook.localSmee.enabled }}
+        - podSelector:
+            matchLabels:
+              app: smee-client
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.aepApi.port }}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    {{- if .Values.temporal.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app: temporal-frontend
+      ports:
+        - protocol: TCP
+          port: 7233
+    {{- end }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app: aep-agents
+      ports:
+        - protocol: TCP
+          port: {{ .Values.aepAgents.port }}
+    # Thunder (platform IdP): token exchange, JWKS, admin API.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ index (splitList "." (urlParse .Values.thunder.adminURL).hostname) 1 }}
+      ports:
+        - protocol: TCP
+          port: {{ include "aep.urlPort" .Values.thunder.adminURL }}
+    # OpenChoreo control-plane API (component/project provisioning, log/resource reads).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ index (splitList "." (urlParse .Values.platformAPI.baseURL).hostname) 1 }}
+      ports:
+        - protocol: TCP
+          port: {{ include "aep.urlPort" .Values.platformAPI.baseURL }}
+    {{- if .Values.observer.baseURL }}
+    # OpenChoreo Observer (build-log / coding-cycle log reads).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ index (splitList "." (urlParse .Values.observer.baseURL).hostname) 1 }}
+      ports:
+        - protocol: TCP
+          port: {{ include "aep.urlPort" .Values.observer.baseURL }}
+    {{- end }}
+    {{- if .Values.codingAgentDispatch.openBaoDirect.enabled }}
+    # LOCAL DEV ONLY — direct OpenBao secrets delivery, see values.yaml.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ index (splitList "." (urlParse .Values.openbao.addr).hostname) 1 }}
+      ports:
+        - protocol: TCP
+          port: {{ include "aep.urlPort" .Values.openbao.addr }}
+    {{- end }}
+    # GitHub (repo clone/API, webhook registration) — no fixed IP range, so
+    # this is scoped to "the internet" rather than a specific host.
+    {{- include "aep.networkPolicy.internetEgress" . | nindent 4 }}
+{{- end }}

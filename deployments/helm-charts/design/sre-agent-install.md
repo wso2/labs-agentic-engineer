@@ -86,8 +86,6 @@ Tracked follow-ups:
   an LLM (prompt-injection surface).
 - **Non-WSO2 images**: `tharindulak/openchoreo-sre-agent` and the case-insensitive
   logs-adapter. Mirror to WSO2/GHCR and pin by digest for prod.
-- **No NetworkPolicies** on the chart (platform-wide gap); `aep-mcp-server:3400` is
-  guarded only by aep-api JWT validation.
 - **OpenSearch** is dev-sized (256M heap, no HA); no global LLM cost cap.
 - Per-org Anthropic key rotation (aep-api ExternalSecret push) is not yet wired;
   the static org key from OpenBao is used.

@@ -1,0 +1,29 @@
+{{- if and .Values.networkPolicies.enabled .Values.webhook.localSmee.enabled }}
+# LOCAL DEV ONLY — see values.yaml webhook.localSmee. No ingress rule: nothing
+# calls smee-client, it only pulls from smee.io and pushes into aep-api.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: smee-client
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: wso2-aep
+spec:
+  podSelector:
+    matchLabels:
+      app: smee-client
+  policyTypes:
+    - Egress
+  egress:
+    # Forwards GitHub webhook deliveries into aep-api.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: aep-api
+      ports:
+        - protocol: TCP
+          port: {{ .Values.aepApi.port }}
+    # smee.io itself.
+    {{- include "aep.networkPolicy.internetEgress" . | nindent 4 }}
+{{- end }}

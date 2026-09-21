@@ -1,0 +1,38 @@
+{{- if .Values.networkPolicies.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: aep-mcp-server
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: wso2-aep
+spec:
+  podSelector:
+    matchLabels:
+      app: aep-mcp-server
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Called by the OpenChoreo SRE/RCA agent, a workload from a separate addon
+    # installed by `aep sre install` — its namespace isn't owned by (or fixed
+    # by) this chart, so it can't be pinned to a namespaceSelector. Left open
+    # cluster-wide; every call still forwards the caller's bearer to aep-api,
+    # which enforces org-scoped auth, so this is a routing hole, not an authz one.
+    - from:
+        - namespaceSelector: {}
+          podSelector: {}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.aepMcpServer.port }}
+  egress:
+    # AEP_API_BASE_URL — forwards issue-create + coding-agent dispatch calls.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: aep-api
+      ports:
+        - protocol: TCP
+          port: {{ .Values.aepApi.port }}
+{{- end }}

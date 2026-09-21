@@ -1,0 +1,23 @@
+{{- if .Values.networkPolicies.enabled }}
+# Deny-all baseline for every pod in the release namespace. NetworkPolicies are
+# additive per pod: this only takes effect combined with the per-service allow
+# policies (templates/*/networkpolicy.yaml) that punch the specific holes each
+# service actually needs. Caveat: kubelet-sourced liveness/readiness probes are
+# not explicitly allowed here — most CNIs (Calico, Cilium, cloud-managed NPMs)
+# exempt node-to-pod probe traffic from NetworkPolicy enforcement by default,
+# but this is CNI-specific and not something a portable chart can guarantee;
+# verify probes still pass after installing on a new CNI.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: aep-default-deny
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: wso2-aep
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+{{- end }}

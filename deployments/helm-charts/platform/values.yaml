@@ -1,3 +1,13 @@
+networkPolicies:
+  # Default-deny NetworkPolicies for every pod in the release namespace, with
+  # explicit allow rules per service for its actual traffic (see each
+  # component's templates/*/networkpolicy.yaml). Only takes effect on a CNI
+  # that enforces NetworkPolicy (Calico, Cilium, Azure NPM, ...) — k3d's
+  # default flannel CNI does not, so this is inert (but harmless) in local dev
+  # unless the cluster was built with a different CNI. Disable if your CNI
+  # can't enforce these or you need to debug connectivity without them.
+  enabled: false
+
 localSecrets:
   # LOCAL DEV ONLY. When true, ESO ExternalSecrets and SecretStore are not
   # deployed — the chart expects plain K8s Secrets with the right names to

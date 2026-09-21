@@ -1,0 +1,47 @@
+{{- if .Values.networkPolicies.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: aep-agents
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: wso2-aep
+spec:
+  podSelector:
+    matchLabels:
+      app: aep-agents
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # aep-api dispatches turns here (AGENTS_SVC_BASE_URL).
+    - from:
+        - podSelector:
+            matchLabels:
+              app: aep-api
+      ports:
+        - protocol: TCP
+          port: {{ .Values.aepAgents.port }}
+  egress:
+    # Joins the collab-server's Yjs room as a live peer during spec generation.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: collab-server
+      ports:
+        - protocol: TCP
+          port: {{ .Values.collab.port }}
+    # Callback to aep-api's /internal/v1/mcp for org resource-catalog discovery
+    # (address is handed to it per-request by aep-api, not baked into env).
+    - to:
+        - podSelector:
+            matchLabels:
+              app: aep-api
+      ports:
+        - protocol: TCP
+          port: {{ .Values.aepApi.port }}
+    # Model provider API — built per-turn from the caller org's own connected
+    # credential (X-Anthropic-Key or equivalent), so no fixed host to pin.
+    {{- include "aep.networkPolicy.internetEgress" . | nindent 4 }}
+{{- end }}
