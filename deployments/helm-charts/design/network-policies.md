@@ -8,7 +8,7 @@ anything off-cluster.
 ## Model
 
 Default-deny + explicit allow, toggled by `networkPolicies.enabled` (default
-`true`):
+`false`):
 
 - `templates/networkpolicy-default-deny.yaml` — `podSelector: {}` over both
   `Ingress` and `Egress`, denying everything for every pod in the namespace.
@@ -31,11 +31,15 @@ those URLs moves the policy with it instead of silently drifting.
 Internet egress (GitHub for aep-api, the org's model provider for aep-agents,
 smee.io for smee-client) has no fixed host to pin, so it's scoped to "the
 public internet" via `aep.networkPolicy.internetEgress` in `_helpers.tpl`: an
-`ipBlock: 0.0.0.0/0` with `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`
-excepted, on 80/443. The exception matters: k3d's pod (`10.42.0.0/16`) and
-service (`10.43.0.0/16`) CIDRs, and most cloud VPC ranges, live inside
-`10.0.0.0/8`, so this rule alone can never double as a path to another
-pod/service — those still need their own selector-based rule.
+`ipBlock: 0.0.0.0/0` with `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
+`169.254.0.0/16`, and `100.64.0.0/10` excepted, on 80/443. The RFC1918
+exclusions matter because k3d's pod (`10.42.0.0/16`) and service
+(`10.43.0.0/16`) CIDRs, and most cloud VPC ranges, live inside `10.0.0.0/8`, so
+this rule alone can never double as a path to another pod/service — those
+still need their own selector-based rule. The `169.254.0.0/16` exclusion
+matters separately: that's where the AWS/GCP/Azure instance metadata endpoint
+(`169.254.169.254`) lives, and without excluding it this rule would let any
+pod granted internet egress fetch the node's IAM/service-account credentials.
 
 ## Known gaps / deliberate holes
 
@@ -47,10 +51,12 @@ pod/service — those still need their own selector-based rule.
   every request still forwards the caller's bearer to `aep-api`, which
   enforces org-scoped JWT auth.
 - **Kubelet liveness/readiness probes** aren't explicitly allowed anywhere.
-  Most CNIs that enforce NetworkPolicy (Calico, Cilium, cloud-managed NPMs)
-  exempt node-to-pod probe traffic by default, but this varies by CNI and
-  isn't something a portable chart can guarantee — verify probes still pass
-  after installing on a CNI other than the ones tested.
+  Most CNIs that enforce NetworkPolicy (Calico, Cilium, cloud-managed NPMs) are
+  documented to exempt node-to-pod probe traffic by default, but that has not
+  been verified against a live enforcing CNI here — this chart was only
+  validated by rendering (`helm template`) and a schema-only
+  `kubectl --dry-run=client`, no real cluster. Verify probes still pass on
+  whichever CNI you actually deploy to before relying on this.
 - **k3d's default CNI (flannel) does not enforce NetworkPolicy at all.** These
   policies render and apply cleanly on a local k3d install but are inert there
   — no traffic is actually blocked. They only take effect on a
