@@ -31,9 +31,12 @@ import { RenderProvider } from "./Renderer";
 import { VariantA, name as nameA } from "./VariantA";
 import { VariantB, name as nameB } from "./VariantB";
 import { VariantC, name as nameC } from "./VariantC";
+import { VariantD, name as nameD } from "./VariantD";
+import { VariantE, name as nameE } from "./VariantE";
+import { VariantF, name as nameF } from "./VariantF";
 import { initialState, reduce } from "./viewState";
 
-export const VARIANTS = ["A", "B", "C"] as const;
+export const VARIANTS = ["A", "B", "C", "D", "E", "F"] as const;
 export type VariantKey = (typeof VARIANTS)[number];
 
 export function PrototypeProto({ variant, onVariantChange }: { variant: VariantKey; onVariantChange: (v: VariantKey) => void }) {
@@ -54,13 +57,16 @@ export function PrototypeProto({ variant, onVariantChange }: { variant: VariantK
   }, []);
 
   const props = { model, state, dispatch };
-  const names = { A: nameA, B: nameB, C: nameC };
+  const names = { A: nameA, B: nameB, C: nameC, D: nameD, E: nameE, F: nameF };
   return (
     <RenderProvider value={props}>
       <PageContent fullWidth noPadding sx={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
         {variant === "A" && <VariantA {...props} />}
         {variant === "B" && <VariantB {...props} />}
         {variant === "C" && <VariantC {...props} />}
+        {variant === "D" && <VariantD {...props} />}
+        {variant === "E" && <VariantE {...props} />}
+        {variant === "F" && <VariantF {...props} />}
       </PageContent>
       <PrototypeSwitcher variants={VARIANTS} current={variant} names={names} onChange={(v) => onVariantChange(v as VariantKey)} />
       {/* State surface (press `s`) */}

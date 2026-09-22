@@ -77,6 +77,7 @@ function Annotatable({ id, children, inline }: { id: string; children: ReactNode
   const annotate = state.mode === "annotate";
   const selected = state.selectedComponentIds.includes(id);
   const label = labelFor(model, state.screenId, id);
+  const pin = state.queue.findIndex((a) => a.screenId === state.screenId && a.componentIds.includes(id));
   return (
     <Box
       data-prototype-component-id={id}
@@ -112,6 +113,9 @@ function Annotatable({ id, children, inline }: { id: string; children: ReactNode
           label={label}
           sx={{ position: "absolute", top: -12, left: 4, zIndex: 2, pointerEvents: "none" }}
         />
+      )}
+      {pin >= 0 && annotate && !selected && (
+        <Chip size="small" color="warning" label={pin + 1} sx={{ position: "absolute", top: -10, right: -6, zIndex: 2, pointerEvents: "none", minWidth: 24 }} />
       )}
       <Box sx={annotate ? { pointerEvents: "none" } : undefined}>{children}</Box>
     </Box>
