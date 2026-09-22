@@ -51,6 +51,9 @@ importers:
       '@aep/progress-view':
         specifier: workspace:*
         version: link:../../packages/progress-view
+      '@aep/prototype-model':
+        specifier: workspace:*
+        version: link:../../packages/prototype-model
       '@aep/ui-cell-diagram-view':
         specifier: workspace:*
         version: link:../../packages/ui/cell-diagram-view
