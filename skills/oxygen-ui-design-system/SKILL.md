@@ -4,7 +4,7 @@ description: Oxygen UI (`@wso2/oxygen-ui`) — this organization's web-app desig
 metadata:
   aep:
     kind: org
-    audience: [coding]
+    audience: [design, coding]
 ---
 
 # Oxygen UI Design System

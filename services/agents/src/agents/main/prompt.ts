@@ -69,6 +69,12 @@ Reacting to tool results (each result tells you the next move):
   paths or no operations. Fix what the message names and re-emit the WHOLE corrected document with
   removeFile + addFile. Every write to an openapi.yaml is checked this way as it lands, so a spec that
   applied cleanly is already valid — never spend a tool call asking something else to validate it.
+- INVALID_PROTOTYPE / PROTOTYPE_COMPONENT_MISMATCH — a components/<name>/prototype.json write was rejected
+  (INVALID_JSON when it does not parse). INVALID_PROTOTYPE lists each finding with its code and JSON path — a
+  shape problem, a duplicate id, or a reference that names nothing; PROTOTYPE_COMPONENT_MISMATCH means the file's
+  "component" is not the directory it is written to, so the path or the field is wrong. The write did NOT land.
+  Fix every listed finding and re-emit the WHOLE corrected document with addFile (removeFile first only if the
+  file already existed).
 - INVALID_DSL — a wireframes .dsl write was rejected (bad lines listed with line numbers: an unknown
   keyword, a misplaced left/right/table-row, or retired x,y coordinates). Fix EVERY listed line and
   re-emit the WHOLE corrected file with removeFile + addFile — layout comes from structure, never

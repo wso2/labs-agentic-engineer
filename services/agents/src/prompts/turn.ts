@@ -204,7 +204,31 @@ const FLOW_SUPPORTING_SKILLS: Record<string, string[]> = {
   // cached read costs a tenth of a re-prefill. Org-authored design skills stay
   // lazy: this map is flow wording and cannot know a given org's catalog.
   design: ["grilling", "cell-design", "architecture", "security-design", "openapi-conventions", "wireframes", "validation-criteria"],
+  // `/prototype` composes screens from the house design system's components,
+  // so the design-system skill rides with it: the registry says which nodes
+  // exist, the design system says how an enterprise screen is built from them.
+  prototype: ["oxygen-ui-design-system"],
 };
+
+/**
+ * What a flow READS, said where the turn starts (#815). Most flows discover
+ * their inputs by walking their own playbook; a flow that is purely DERIVED
+ * from artifacts already on disk names them, so the agent opens the right
+ * files first instead of rediscovering the design tree. Keyed by the skill the
+ * flow loads; a flow absent here gets no brief.
+ */
+const FLOW_BRIEFS: Record<string, string> = {
+  prototype:
+    "The design is the input. Read specs/design/design.cell for the web-application components, the roles in " +
+    "specs/design/security.json, and each web-application's openapi.yaml — the API it reads, which is the " +
+    "openapi.yaml of every component it depends on. Write one specs/design/components/<component>/prototype.json " +
+    "per web-application, and change no other file.",
+};
+
+/** The brief a flow's skill carries, or undefined. */
+function flowBrief(skill: string): string | undefined {
+  return Object.hasOwn(FLOW_BRIEFS, skill) ? FLOW_BRIEFS[skill] : undefined;
+}
 
 /** The branch a command names, or undefined for a token that IS its skill. */
 function commandFlow(token: string): { skill: string; scope: (subject: string) => string } | undefined {
@@ -277,7 +301,9 @@ function specBody(turn: Exclude<TurnSpec, { kind: "plan" }>): string {
       // and the agent says so, which is a better failure than a client-side
       // allowlist that goes stale against the org's catalog.
       const command = commandFlow(turn.skill);
-      const base = `Load the ${command?.skill ?? turn.skill} skill and follow it.`;
+      const skill = command?.skill ?? turn.skill;
+      const brief = flowBrief(skill);
+      const base = `Load the ${skill} skill and follow it.` + (brief ? `\n\n${brief}` : "");
       // A command that names a BRANCH says which one, and carries whatever the
       // user clicked as the branch's subject; everything else passes the user's
       // trailing text through untouched.

@@ -38,7 +38,7 @@ An absent kind means `org`, which is a real decision, not a default to lean on:
 - **`platform`** — AE-owned, read-only in the console. The design-flow skills
   (`start`, `amend`, `settle`, `grilling`, `prd-contract`, `design`,
   `cell-design`, `architecture`, `security-design`, `openapi-conventions`,
-  `wireframes`, `validation-criteria`, `task-planning`), the `console`
+  `wireframes`, `prototype`, `validation-criteria`, `task-planning`), the `console`
   narration policy, the coding run's own workflow skills (`aep`,
   `aep-validation`, `mock-verification`) and the browser CLIs they drive
   (`playwright-cli`, `agent-browser`), and one reference skill both sides
@@ -115,7 +115,9 @@ A design-system skill must declare four things to work in that slot:
 
 - **`metadata.aep.kind: org` and `metadata.aep.audience: [coding]`.** A design
   system is built against, not designed with; `[coding]` is what puts it in the
-  project mirror, and `org` is what lets an org edit or delete it.
+  project mirror, and `org` is what lets an org edit or delete it. The one
+  exception is `oxygen-ui-design-system`, which is `[design, coding]`: see the
+  prototype exception below.
 - **A `## Verify` section** naming the one command `react-webapp`'s verify
   sequence should run for it, or nothing if it has none. A command that is a
   script the skill ships (`oxygen-ui-design-system/scripts/verify.mjs`) rides
@@ -154,6 +156,14 @@ app's UI toolkit, and it does not follow the org's design system — swapping
 the design system does not restyle a wireframe. Keep it that way: do not
 couple the two, and do not let the name spread from there into anything a
 build reads.
+
+The prototype exception has the same shape. A `prototype.json` is rendered by
+the **console's** prototype renderer, which draws with Oxygen UI whatever the
+org builds with, so the `/prototype` flow inlines `oxygen-ui-design-system`
+(the flow map in `services/agents/src/prompts/turn.ts`, not this library) and
+that skill's audience includes `design` so the design agent may read it. The
+`prototype` skill itself names no vendor — it says "the design-system skill
+loaded beside this one" — and a test in the agents service keeps it that way.
 
 ## Who owns what
 

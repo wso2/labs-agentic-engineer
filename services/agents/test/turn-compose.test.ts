@@ -297,6 +297,38 @@ test("the design flow inlines its whole lineup, in lineup order", () => {
 });
 
 /**
+ * `/prototype` generates against a controlled registry in the house design
+ * system, so both bodies ride the prompt: without the design-system skill the
+ * agent composes screens from a component vocabulary it has never read.
+ */
+test("the prototype flow inlines its skill and the design system's", () => {
+  assert.deepEqual(eagerSkillsFor({ kind: "flow", skill: "prototype" }), ["prototype", "oxygen-ui-design-system"]);
+});
+
+/**
+ * The prototype is DERIVED from the design, so its turn names where each input
+ * lives — the web-applications, the roles, and the API shapes the mock records
+ * follow — rather than leaving the agent to rediscover the design tree.
+ */
+test("the prototype flow names its design inputs after the skill pointer", () => {
+  const out = composeInstruction({ kind: "flow", skill: "prototype" });
+  assert.ok(out.startsWith("Load the prototype skill and follow it.\n\n"));
+  for (const input of ["specs/design/design.cell", "specs/design/security.json", "openapi.yaml"]) {
+    assert.ok(out.includes(input), `the preamble names ${input}`);
+  }
+  assert.match(out, /specs\/design\/components\/<component>\/prototype\.json/);
+  // A flow with no brief is unchanged: the brief belongs to /prototype only.
+  assert.doesNotMatch(composeInstruction({ kind: "flow", skill: "design" }), /prototype\.json/);
+});
+
+test("the prototype brief leads, and the user's trailing text still follows it", () => {
+  const out = composeInstruction({ kind: "flow", skill: "prototype", text: "only the admin portal" });
+  const brief = out.indexOf("specs/design/security.json");
+  const text = out.indexOf("only the admin portal");
+  assert.ok(brief > 0 && text > brief, "brief first, then the user's words");
+});
+
+/**
  * A name that resolves to nothing is skipped SILENTLY by `buildEagerSkillsBlock`
  * (org catalogs vary, so an absent skill must not fail a turn). That makes a typo
  * here invisible at runtime — it just quietly stops inlining. This is the drift
@@ -312,6 +344,7 @@ test("every eager skill name exists in the platform skill library", () => {
     { kind: "flow", skill: "amend" } as const,
     { kind: "flow", skill: "settle" } as const,
     { kind: "flow", skill: "design" } as const,
+    { kind: "flow", skill: "prototype" } as const,
     // The branch commands resolve to a platform skill, so they are checked too.
     { kind: "flow", skill: "feature" } as const,
     { kind: "flow", skill: "actor" } as const,
