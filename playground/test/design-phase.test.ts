@@ -44,11 +44,6 @@ const VALID_DESIGN = {
   skillsPinned: ["go"],
 };
 
-const FLOW_DSL = `screen Login
-  input "Email"
-  button "Sign In" primary
-`;
-
 function seedProject(): string {
   const dir = mkdtempSync(join(tmpdir(), "aep-play-design-"));
   mkdirSync(join(dir, "specs/requirements"), { recursive: true });
@@ -66,7 +61,7 @@ function tempSkills(): string {
   return dir;
 }
 
-test("design phase: folds the bundle, gates skillsPinned shape, derives .excalidraw, check passes", async () => {
+test("design phase: folds the bundle, gates skillsPinned shape, projects the cell diagram, check passes", async () => {
   const projectDir = seedProject();
   const skillsDir = tempSkills();
   try {
@@ -78,12 +73,6 @@ test("design phase: folds the bundle, gates skillsPinned shape, derives .excalid
         toolName: "addFile",
         input: { path: "specs/design/components/user-service/design.json", content: JSON.stringify(VALID_DESIGN, null, 2) },
       },
-      {
-        kind: "toolCall",
-        toolCallId: "d3",
-        toolName: "addFile",
-        input: { path: "specs/design/components/user-service/wireframes.dsl", content: FLOW_DSL },
-      },
       { kind: "text", text: "Design generated." },
     ]);
     const outcome = await designCommand(projectDir, { model, skillsDir, silent: true });
@@ -93,10 +82,6 @@ test("design phase: folds the bundle, gates skillsPinned shape, derives .excalid
       skillsPinned?: string[];
     };
     assert.deepEqual(design.skillsPinned, ["go"], "model-authored skillsPinned landed");
-    assert.ok(
-      existsSync(join(projectDir, "specs/design/components/user-service/wireframes.excalidraw")),
-      "derived .excalidraw materialized",
-    );
     assert.ok(
       existsSync(join(projectDir, "specs/design/cell-diagram.gen.json")),
       "aggregate cell-diagram projected as design files streamed in",

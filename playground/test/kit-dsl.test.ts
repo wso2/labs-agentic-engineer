@@ -23,26 +23,28 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { compileDslArtifacts } from "../src/kit/dsl.js";
 
-const DSL = `screen Login
-  input "Email"
-  button "Sign In" primary
+const DSL = `entity Order
+  id: uuid
+entity LineItem
+  sku: string
+relation Order -[1..*]-> LineItem "contains"
 `;
 
 function tempThread(): string {
   return mkdtempSync(join(tmpdir(), "aep-dsl-"));
 }
 
-test("compiles a changed wireframes.dsl into a sibling .excalidraw", () => {
+test("compiles a changed domain-model.dsl into a sibling .excalidraw", () => {
   const dir = tempThread();
   try {
-    const rel = "specs/design/components/webapp/wireframes.dsl";
+    const rel = "specs/design/domain-model.dsl";
     mkdirSync(dirname(join(dir, rel)), { recursive: true });
     writeFileSync(join(dir, rel), DSL);
 
     const results = compileDslArtifacts(dir, [rel]);
     assert.equal(results.length, 1);
     assert.equal(results[0]!.ok, true);
-    assert.equal(results[0]!.outPath, "specs/design/components/webapp/wireframes.excalidraw");
+    assert.equal(results[0]!.outPath, "specs/design/domain-model.excalidraw");
     const scene = JSON.parse(readFileSync(join(dir, results[0]!.outPath), "utf8"));
     assert.equal(scene.type, "excalidraw");
   } finally {
@@ -53,20 +55,21 @@ test("compiles a changed wireframes.dsl into a sibling .excalidraw", () => {
 test("reports a parse failure without writing the sibling", () => {
   const dir = tempThread();
   try {
-    writeFileSync(join(dir, "wireframes.dsl"), "not a valid dsl at all\n");
-    const results = compileDslArtifacts(dir, ["wireframes.dsl"]);
+    writeFileSync(join(dir, "domain-model.dsl"), "not a valid dsl at all\n");
+    const results = compileDslArtifacts(dir, ["domain-model.dsl"]);
     assert.equal(results[0]!.ok, false);
     assert.ok(results[0]!.error);
-    assert.equal(existsSync(join(dir, "wireframes.excalidraw")), false);
+    assert.equal(existsSync(join(dir, "domain-model.excalidraw")), false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("ignores non-dsl paths and deleted dsl files", () => {
+test("ignores other paths, other .dsl files and deleted dsl files", () => {
   const dir = tempThread();
   try {
-    assert.deepEqual(compileDslArtifacts(dir, ["domain-model.md", "gone/wireframes.dsl"]), []);
+    writeFileSync(join(dir, "system.dsl"), "workspace {}\n");
+    assert.deepEqual(compileDslArtifacts(dir, ["domain-model.md", "system.dsl", "gone/domain-model.dsl"]), []);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
