@@ -72,6 +72,9 @@ var keepParity = map[string]bool{
 	"specs/design/components/api/dependencies/stripe.openapi.yaml": true,
 	// The project security design: one design-level file, by exact path.
 	"specs/design/security.json": true,
+	// A web-application's prototype: the component slot only, so a revision can
+	// read (and edit) the file it is revising.
+	"specs/design/components/web/prototype.json": true,
 	// Text references: the folder decides, not the extension.
 	"specs/requirements/references/brief.txt": true,
 	"specs/requirements/references/rows.csv":  true,
@@ -81,6 +84,9 @@ var keepParity = map[string]bool{
 	"specs/design/components/api/security.json": false,
 	"security.json":       false,
 	"specs/security.json": false,
+	// Outside the component slot a prototype.json is nothing the gate judges.
+	"specs/design/prototype.json":                       false,
+	"specs/design/components/web/drafts/prototype.json": false,
 	// Derived projections, code, arbitrary yaml, near-miss spec shapes.
 	"specs/design/components/api/workload.yaml":                           false,
 	"specs/design/components/api/api.gen.json":                            false,

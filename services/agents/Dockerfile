@@ -47,12 +47,14 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
 # @aep/agents runs from TypeScript source via tsx (no build of its own), but it
 # imports @aep/agent-stream and @aep/collab-doc as packages whose `exports`
 # resolve to ./dist — both MUST be compiled before the service can start.
-# @aep/excalidraw-dsl builds FIRST: @aep/agent-stream imports it (the layout
-# write-gate), so its dist must exist for agent-stream's tsc to resolve it.
+# @aep/excalidraw-dsl and @aep/prototype-model build FIRST: @aep/agent-stream
+# imports both (the layout and prototype write-gates), so their dist must exist
+# for agent-stream's tsc to resolve them; @aep/agents imports
+# @aep/prototype-model directly too (the turn-snapshot filter).
 # Without this step the container crashes at boot with "Cannot find module
 # .../@aep/agent-stream/dist" (or the collab-doc analog). These depend only on
 # packages/, so an agents-source edit doesn't rerun them.
-RUN pnpm --filter @aep/excalidraw-dsl build && pnpm --filter @aep/agent-stream build && pnpm --filter @aep/collab-doc build
+RUN pnpm --filter @aep/excalidraw-dsl build && pnpm --filter @aep/prototype-model build && pnpm --filter @aep/agent-stream build && pnpm --filter @aep/collab-doc build
 
 # Service source LAST: an agents-only change invalidates only this COPY (install
 # + the workspace-dep builds above stay cached). @aep/agents runs via tsx, so

@@ -28,6 +28,7 @@
     "@ai-sdk/devtools": "^1.0.4",
     "@aep/agent-stream": "workspace:*",
     "@aep/collab-doc": "workspace:*",
+    "@aep/prototype-model": "workspace:*",
     "@hocuspocus/provider": "^4.3.0",
     "ai": "^7.0.2",
     "express": "^5.0.0",
