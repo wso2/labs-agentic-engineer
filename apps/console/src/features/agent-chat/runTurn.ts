@@ -108,14 +108,14 @@ function settleFromTurnStatus(
   if (status?.status === "completed") {
     setTurnStatus(chatKey, turnId, "completed");
     planTurnEnded(chatKey, turnId, "completed", askedQuestion);
-    notifyTurnEnd(chatKey, "completed");
+    notifyTurnEnd(chatKey, "completed", turnId);
     onCommitted?.();
     return true;
   }
   if (status?.status === "failed") {
     setTurnStatus(chatKey, turnId, "failed");
     planTurnEnded(chatKey, turnId, "failed");
-    notifyTurnEnd(chatKey, "failed");
+    notifyTurnEnd(chatKey, "failed", turnId);
     addMessage(chatKey, {
       role: "error",
       content: status.message ?? "The agent turn failed.",
@@ -377,14 +377,14 @@ export async function attachAndFoldTurn(
         // Turn-end flush (#252 Task 5): the terminal frame is the signal the
         // chat panel's fallback + the spec view's deterministic room flush
         // both react to (see chatStore's turn-end bus + useTurnEndFlush).
-        notifyTurnEnd(chatKey, "completed");
+        notifyTurnEnd(chatKey, "completed", turnId);
         onCommitted?.();
         break;
       case "turn-failed":
         sawTerminal = true;
         setTurnStatus(chatKey, turnId, "failed");
         planTurnEnded(chatKey, turnId, "failed");
-        notifyTurnEnd(chatKey, "failed");
+        notifyTurnEnd(chatKey, "failed", turnId);
         addMessage(chatKey, {
           role: "error",
           content:

@@ -63,7 +63,7 @@ vi.mock("@aep/agent-stream", () => ({
   buildAnswersInstruction: () => "",
 }));
 
-const notified: { key: string; status: string }[] = [];
+const notified: { key: string; status: string; turnId: string }[] = [];
 vi.mock("./chatStore.js", () => ({
   appendAssistantText: vi.fn(),
   addMessage: vi.fn(),
@@ -72,7 +72,7 @@ vi.mock("./chatStore.js", () => ({
   dropQuestionMessage: vi.fn(),
   upsertPlanMessage: vi.fn(),
   setTurnStatus: vi.fn(),
-  notifyTurnEnd: (key: string, status: string) => notified.push({ key, status }),
+  notifyTurnEnd: (key: string, status: string, turnId: string) => notified.push({ key, status, turnId }),
 }));
 
 import { attachAndFoldTurn } from "./runTurn";
@@ -99,27 +99,27 @@ describe("attachAndFoldTurn — turn-end notification (#252 Task 5)", () => {
   it("notifies turn-end with 'completed' on a turn-committed terminal frame", async () => {
     queuedParts = [{ type: "turn-committed" } as StreamPart];
     await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
-    expect(notified).toEqual([{ key: KEY, status: "completed" }]);
+    expect(notified).toEqual([{ key: KEY, status: "completed", turnId: "t1" }]);
   });
 
   it("notifies turn-end with 'failed' on a turn-failed terminal frame", async () => {
     queuedParts = [{ type: "turn-failed", message: "boom" } as StreamPart];
     await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
-    expect(notified).toEqual([{ key: KEY, status: "failed" }]);
+    expect(notified).toEqual([{ key: KEY, status: "failed", turnId: "t1" }]);
   });
 
   it("notifies turn-end via the poll fallback when the stream is severed with no terminal frame", async () => {
     queuedParts = []; // stream ends with nothing — severed before a terminal
     mockGetTurn.mockResolvedValue({ status: "completed" });
     await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
-    expect(notified).toEqual([{ key: KEY, status: "completed" }]);
+    expect(notified).toEqual([{ key: KEY, status: "completed", turnId: "t1" }]);
   });
 
   it("notifies turn-end 'failed' via the poll fallback when the authoritative poll says failed", async () => {
     queuedParts = [];
     mockGetTurn.mockResolvedValue({ status: "failed", message: "oops" });
     await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
-    expect(notified).toEqual([{ key: KEY, status: "failed" }]);
+    expect(notified).toEqual([{ key: KEY, status: "failed", turnId: "t1" }]);
   });
 
   it("does NOT notify turn-end when the signal is aborted (detach, not a terminal)", async () => {
@@ -158,7 +158,7 @@ describe("attachAndFoldTurn — pre-stream 404 re-attach (#3)", () => {
     await done;
 
     expect(mockOpenTurnStream).toHaveBeenCalledTimes(2);
-    expect(notified).toEqual([{ key: KEY, status: "completed" }]);
+    expect(notified).toEqual([{ key: KEY, status: "completed", turnId: "t1" }]);
     expect(addMessage).not.toHaveBeenCalledWith(
       KEY,
       expect.objectContaining({ role: "error" }),
@@ -175,7 +175,7 @@ describe("attachAndFoldTurn — pre-stream 404 re-attach (#3)", () => {
     await vi.runAllTimersAsync();
     await done;
 
-    expect(notified).toEqual([{ key: KEY, status: "completed" }]);
+    expect(notified).toEqual([{ key: KEY, status: "completed", turnId: "t1" }]);
   });
 
   it("re-throws non-404 attach failures (still surfaces Turn failed upstream)", async () => {

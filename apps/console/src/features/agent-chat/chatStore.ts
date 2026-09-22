@@ -581,16 +581,17 @@ export function subscribeSeed(key: string, fn: () => void): () => void {
 
 export type TurnEndStatus = "completed" | "failed";
 
-const turnEndListeners = new Map<string, Set<(status: TurnEndStatus) => void>>();
+/** A turn-end listener: how the turn ended, and WHICH turn it was — a log can
+ *  hear a late end of an earlier turn after the next one has started. */
+export type TurnEndListener = (status: TurnEndStatus, turnId: string) => void;
 
-export function notifyTurnEnd(key: string, status: TurnEndStatus): void {
-  for (const fn of turnEndListeners.get(key) ?? []) fn(status);
+const turnEndListeners = new Map<string, Set<TurnEndListener>>();
+
+export function notifyTurnEnd(key: string, status: TurnEndStatus, turnId: string): void {
+  for (const fn of turnEndListeners.get(key) ?? []) fn(status, turnId);
 }
 
-export function subscribeTurnEnd(
-  key: string,
-  fn: (status: TurnEndStatus) => void,
-): () => void {
+export function subscribeTurnEnd(key: string, fn: TurnEndListener): () => void {
   const set = turnEndListeners.get(key) ?? new Set();
   set.add(fn);
   turnEndListeners.set(key, set);

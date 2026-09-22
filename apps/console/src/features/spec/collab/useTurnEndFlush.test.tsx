@@ -51,7 +51,7 @@ describe("useTurnEndFlush — deterministic room-flush closure (#252 Task 5)", (
       { wrapper: wrapper(queryClient) },
     );
 
-    notifyTurnEnd(KEY, "completed");
+    notifyTurnEnd(KEY, "completed", "turn-1");
     expect(flush).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(0); // let the flush() microtask resolve
     expect(spy).toHaveBeenCalledWith({ queryKey: specKeys.dependencies("proj1") });
@@ -94,7 +94,7 @@ describe("useTurnEndFlush — deterministic room-flush closure (#252 Task 5)", (
       { wrapper: wrapper(queryClient) },
     );
 
-    notifyTurnEnd(KEY, "completed");
+    notifyTurnEnd(KEY, "completed", "turn-1");
     await vi.advanceTimersByTimeAsync(0); // let the flush() rejection settle
     expect(spy).toHaveBeenCalled();
     const callsAfterFallbackStarts = spy.mock.calls.length;
@@ -112,7 +112,7 @@ describe("useTurnEndFlush — deterministic room-flush closure (#252 Task 5)", (
       { wrapper: wrapper(queryClient) },
     );
 
-    notifyTurnEnd(KEY, "failed");
+    notifyTurnEnd(KEY, "failed", "turn-1");
     expect(flush).not.toHaveBeenCalled();
     expect(spy).toHaveBeenCalledWith({ queryKey: specKeys.dependencies("proj1") });
   });
@@ -130,7 +130,7 @@ describe("useTurnEndFlush — deterministic room-flush closure (#252 Task 5)", (
     );
     rerender({ collab: { status: "connected" as const, flush: flushV2 } });
 
-    notifyTurnEnd(KEY, "completed");
+    notifyTurnEnd(KEY, "completed", "turn-1");
     expect(flushV1).not.toHaveBeenCalled();
     expect(flushV2).toHaveBeenCalledTimes(1);
   });

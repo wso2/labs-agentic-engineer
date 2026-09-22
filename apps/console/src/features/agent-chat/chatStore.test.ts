@@ -289,13 +289,13 @@ describe("pendingSeed", () => {
 // spec view's deterministic flush (different subtrees, only one of which
 // owns the collab connection) can react to the same event.
 describe("turn-end bus", () => {
-  it("notifies subscribers with the terminal status", () => {
+  it("notifies subscribers with the terminal status and the turn it ended", () => {
     const key = freshKey();
     const seen: string[] = [];
-    subscribeTurnEnd(key, (status) => seen.push(status));
-    notifyTurnEnd(key, "completed");
-    notifyTurnEnd(key, "failed");
-    expect(seen).toEqual(["completed", "failed"]);
+    subscribeTurnEnd(key, (status, turnId) => seen.push(`${turnId}:${status}`));
+    notifyTurnEnd(key, "completed", "turn-1");
+    notifyTurnEnd(key, "failed", "turn-2");
+    expect(seen).toEqual(["turn-1:completed", "turn-2:failed"]);
   });
 
   it("keeps distinct project keys apart", () => {
@@ -303,7 +303,7 @@ describe("turn-end bus", () => {
     const key2 = freshKey();
     let key1Fired = false;
     subscribeTurnEnd(key1, () => (key1Fired = true));
-    notifyTurnEnd(key2, "completed");
+    notifyTurnEnd(key2, "completed", "turn-1");
     expect(key1Fired).toBe(false);
   });
 
@@ -312,7 +312,7 @@ describe("turn-end bus", () => {
     let count = 0;
     const unsubscribe = subscribeTurnEnd(key, () => (count += 1));
     unsubscribe();
-    notifyTurnEnd(key, "completed");
+    notifyTurnEnd(key, "completed", "turn-1");
     expect(count).toBe(0);
   });
 });

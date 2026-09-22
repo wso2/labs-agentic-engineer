@@ -50,10 +50,10 @@ vi.mock("../../agent-chat/api/turns", async (importOriginal) => {
 // as the real fold announces a terminal frame.
 let endTurn: (status: "completed" | "failed" | null) => void = () => {};
 vi.mock("../../agent-chat/runTurn", () => ({
-  attachAndFoldTurn: (chatKey: string) =>
+  attachAndFoldTurn: (chatKey: string, _project: string, turnId: string) =>
     new Promise<void>((resolve) => {
       endTurn = (status) => {
-        if (status) notifyTurnEnd(chatKey, status);
+        if (status) notifyTurnEnd(chatKey, status, turnId);
         resolve();
       };
     }),

@@ -1357,7 +1357,7 @@ describe("SpecView resolve dependencies dialog (#252 Task 10)", () => {
     // Build already flushed once on its way here, so the listener's own flush
     // has to be counted, not merely observed.
     const flushesBeforeTurnEnd = mockFlush.mock.calls.length;
-    notifyTurnEnd(chatKeyFor("acme", "proj1"), "completed");
+    notifyTurnEnd(chatKeyFor("acme", "proj1"), "completed", "turn-1");
     // notifyTurnEnd dispatches SYNCHRONOUSLY and the listener's first act is
     // that flush, so this pins "a listener actually ran" right here — rather
     // than leaving it to be inferred from an unchanged dialog five seconds on.
@@ -1375,7 +1375,7 @@ describe("SpecView resolve dependencies dialog (#252 Task 10)", () => {
   it("does not touch preflight on a chat turn ending while no dialog is open", () => {
     render(<SpecView projectName="proj1" />);
 
-    notifyTurnEnd(chatKeyFor("acme", "proj1"), "completed");
+    notifyTurnEnd(chatKeyFor("acme", "proj1"), "completed", "turn-1");
 
     expect(mockPreflightRefetch).not.toHaveBeenCalled();
     expect(mockFlush).not.toHaveBeenCalled();

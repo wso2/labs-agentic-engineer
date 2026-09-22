@@ -50,7 +50,7 @@ describe("useTurnEndDependencyRefresh — universal fallback (#252 Task 5)", () 
       wrapper: wrapper(queryClient),
     });
 
-    notifyTurnEnd(KEY, "completed");
+    notifyTurnEnd(KEY, "completed", "turn-1");
     expect(spy).toHaveBeenCalledWith({ queryKey: specKeys.dependencies("proj1") });
     expect(spy).toHaveBeenCalledWith({ queryKey: projectKeys.buildPreflight("proj1") });
     const callsAfterFirst = spy.mock.calls.length;
@@ -66,7 +66,7 @@ describe("useTurnEndDependencyRefresh — universal fallback (#252 Task 5)", () 
       wrapper: wrapper(queryClient),
     });
 
-    notifyTurnEnd("aep.chat.v1.acme.some-other-proj", "completed");
+    notifyTurnEnd("aep.chat.v1.acme.some-other-proj", "completed", "turn-1");
     expect(spy).not.toHaveBeenCalled();
   });
 
@@ -78,7 +78,7 @@ describe("useTurnEndDependencyRefresh — universal fallback (#252 Task 5)", () 
       { wrapper: wrapper(queryClient) },
     );
     unmount();
-    notifyTurnEnd(KEY, "completed");
+    notifyTurnEnd(KEY, "completed", "turn-1");
     expect(spy).not.toHaveBeenCalled();
   });
 });
@@ -111,7 +111,7 @@ describe("coordination with useTurnEndFlush (Important #1 fix, #252 Task 5)", ()
       </QueryClientProvider>,
     );
 
-    notifyTurnEnd(KEY, "completed");
+    notifyTurnEnd(KEY, "completed", "turn-1");
     // Pre-flush: neither hook should have invalidated yet.
     expect(spy).not.toHaveBeenCalled();
     expect(flush).toHaveBeenCalledTimes(1);
@@ -129,7 +129,7 @@ describe("coordination with useTurnEndFlush (Important #1 fix, #252 Task 5)", ()
       wrapper: wrapper(queryClient),
     });
 
-    notifyTurnEnd(KEY, "completed");
+    notifyTurnEnd(KEY, "completed", "turn-1");
     expect(spy).toHaveBeenCalledWith({ queryKey: specKeys.dependencies("proj1") });
     expect(spy).toHaveBeenCalledWith({ queryKey: projectKeys.buildPreflight("proj1") });
   });
