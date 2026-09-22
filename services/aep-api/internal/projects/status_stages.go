@@ -134,21 +134,8 @@ const designFlow = "design"
 // re-derivation, while a swallowed one lets the coding agents implement a
 // design the user has already changed their mind about.
 func (s *Service) designOutdated(ctx context.Context, orgName, projectName, nowFingerprint string) (bool, error) {
-	if s.specTurns == nil {
-		return false, nil
-	}
-	lastDesign, err := s.specTurns.NewestCompletedDerivation(ctx, orgName, projectName, designFlow)
-	if err != nil {
-		return false, fmt.Errorf("newest design turn: %w", err)
-	}
-	if lastDesign == nil || lastDesign.BaseRef == "" {
-		return false, nil
-	}
-	was, err := s.artifactSvc.RequirementsFingerprintAt(ctx, orgName, projectName, lastDesign.BaseRef)
-	if err != nil {
-		return false, fmt.Errorf("requirements at the last design run's base: %w", err)
-	}
-	return was != nowFingerprint, nil
+	return s.outdatedSinceLastRun(ctx, orgName, projectName, designFlow,
+		spec.ArtifactService.RequirementsFingerprintAt, nowFingerprint)
 }
 
 // prototypeFlow is the `/prototype` token (#818). Every prototype write runs
@@ -169,19 +156,35 @@ const prototypeFlow = "prototype"
 // never reads as the design moving. No prototype run on record means nothing
 // to be behind; an unreadable baseline is an error, as for designOutdated.
 func (s *Service) prototypeOutdated(ctx context.Context, orgName, projectName, nowFingerprint string) (bool, error) {
+	return s.outdatedSinceLastRun(ctx, orgName, projectName, prototypeFlow,
+		spec.ArtifactService.DesignFingerprintAt, nowFingerprint)
+}
+
+// inputsFingerprintAt reads a derived stage's inputs, reduced to a
+// fingerprint, as they stood at a commit.
+type inputsFingerprintAt func(svc spec.ArtifactService, ctx context.Context, orgName, projectName, ref string) (string, error)
+
+// outdatedSinceLastRun is the one staleness rule both derived stages share:
+// the stage is outdated when its inputs as they stand (nowFingerprint) differ
+// from its inputs at the commit the newest successful derivation of flow read.
+// No such run on record is "not outdated"; an unreadable baseline is an error.
+func (s *Service) outdatedSinceLastRun(
+	ctx context.Context, orgName, projectName, flow string,
+	inputsAt inputsFingerprintAt, nowFingerprint string,
+) (bool, error) {
 	if s.specTurns == nil {
 		return false, nil
 	}
-	last, err := s.specTurns.NewestCompletedDerivation(ctx, orgName, projectName, prototypeFlow)
+	last, err := s.specTurns.NewestCompletedDerivation(ctx, orgName, projectName, flow)
 	if err != nil {
-		return false, fmt.Errorf("newest prototype turn: %w", err)
+		return false, fmt.Errorf("newest %s turn: %w", flow, err)
 	}
 	if last == nil || last.BaseRef == "" {
 		return false, nil
 	}
-	was, err := s.artifactSvc.DesignFingerprintAt(ctx, orgName, projectName, last.BaseRef)
+	was, err := inputsAt(s.artifactSvc, ctx, orgName, projectName, last.BaseRef)
 	if err != nil {
-		return false, fmt.Errorf("design at the last prototype run's base: %w", err)
+		return false, fmt.Errorf("inputs at the last %s run's base: %w", flow, err)
 	}
 	return was != nowFingerprint, nil
 }
