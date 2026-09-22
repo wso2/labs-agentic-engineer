@@ -90,6 +90,16 @@ function activeItemFor(pathname: string, inProject: boolean): string {
   }
 }
 
+// Project sections that take over the whole viewport: no header, sidebar,
+// footer or chat. The prototype review page (#813) is the application under
+// review, not a console page, and brings its own way back to the Spec.
+const TAKEOVER_SECTIONS = new Set(["json-prototype"]);
+
+function isTakeoverRoute(pathname: string): boolean {
+  const [, root, , section] = pathname.split("/");
+  return root === "projects" && section !== undefined && TAKEOVER_SECTIONS.has(section);
+}
+
 // Full-screen surfaces keep the sidebar but collapse it on entry (ADR-0010);
 // leaving re-expands it. Rendered inside <AppShell>, which provides the
 // shell context this consumes.
@@ -218,6 +228,14 @@ export function AppLayout() {
       if (projectName) setChatOpen(true);
     }
   }, [chatOpenRequest, projectName]);
+
+  if (isTakeoverRoute(pathname)) {
+    return (
+      <ErrorBoundary label="This page" resetKey={pathname}>
+        <Outlet />
+      </ErrorBoundary>
+    );
+  }
 
   return (
     <AppShell initialCollapsed={false} collapseOnSelectOnMobile>

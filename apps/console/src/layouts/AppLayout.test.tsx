@@ -244,6 +244,25 @@ describe("AppLayout — a stale chat-open request does not replay", () => {
   });
 });
 
+describe("AppLayout — takeover routes", () => {
+  it("renders the prototype review page alone: no header, sidebar or chat", () => {
+    localStorage.setItem("aep.chat.panelOpen", "true");
+    mockPathname = `/projects/${PROJECT}/json-prototype/storefront`;
+    render();
+    expect(screen.getByTestId("outlet")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Spec" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Toggle agent chat" })).toBeNull();
+    expect(screen.queryByTestId("agent-chat-panel")).toBeNull();
+  });
+
+  it("keeps the chrome on the project's other routes", () => {
+    mockPathname = `/projects/${PROJECT}/spec`;
+    render();
+    expect(sidebarItem("Spec")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Toggle agent chat" })).toBeInTheDocument();
+  });
+});
+
 describe("AppLayout — org nav", () => {
   it("shows Endpoints in the org sidebar on /endpoints", () => {
     mockPathname = "/endpoints";

@@ -1,4 +1,6 @@
 import type { components } from "../../generated/aep-api";
+import { stablePrototypeJson, type PrototypeModelV1 } from "@aep/prototype-model";
+import expenseApprovalPrototype from "@aep/prototype-model/fixtures/expense-approval.json";
 import { taskUsage } from "./usage";
 import {
   DEFAULT_VALIDATION_CRITERIA,
@@ -1685,6 +1687,15 @@ const collaborationFiles: MockSpecFile[] = [
   ...settledSpecFiles.slice(1),
 ];
 
+// The storefront's prototype (#813): the shared package's expense-approval
+// fixture, filed under this project's one web-application. Its `component`
+// is rewritten to match the directory, as every gate requires; the content is
+// otherwise the fixture byte-for-byte in its canonical serialization.
+const storefrontPrototypeJson = stablePrototypeJson({
+  ...(expenseApprovalPrototype as PrototypeModelV1),
+  component: "storefront",
+});
+
 const fullFiles: MockSpecFile[] = [
   ...settledSpecFiles,
   { path: "specs/design/flows/browse-and-check-out.md", content: flowBrowseAndCheckout },
@@ -1697,6 +1708,10 @@ const fullFiles: MockSpecFile[] = [
   {
     path: "specs/design/components/storefront/wireframes.dsl",
     content: storefrontWireframesDsl,
+  },
+  {
+    path: "specs/design/components/storefront/prototype.json",
+    content: storefrontPrototypeJson,
   },
   {
     path: "specs/design/components/catalog-api/design.json",
