@@ -198,12 +198,16 @@ const FLOW_SUPPORTING_SKILLS: Record<string, string[]> = {
   // than read. Inlined, the same bytes sit INSIDE the marked prompt, cached from
   // the first step and again on the next turn.
   //
-  // Three of them are conditional (a project with no `web-application` never
-  // writes a wireframes.dsl), but which components exist is decided DURING the
-  // turn — there is nothing to condition on when the prompt is composed, and a
-  // cached read costs a tenth of a re-prefill. Org-authored design skills stay
-  // lazy: this map is flow wording and cannot know a given org's catalog.
-  design: ["grilling", "cell-design", "architecture", "security-design", "openapi-conventions", "wireframes", "validation-criteria"],
+  // Two of them are conditional (a project with no sign-in writes no
+  // security.json, one with no `service` no openapi.yaml), but which components
+  // exist is decided DURING the turn — there is nothing to condition on when
+  // the prompt is composed, and a cached read costs a tenth of a re-prefill.
+  // Org-authored design skills stay lazy: this map is flow wording and cannot
+  // know a given org's catalog.
+  //
+  // A web-application's screens are not drawn here: `/prototype` writes its
+  // prototype.json after the design, so no wireframes skill rides this flow.
+  design: ["grilling", "cell-design", "architecture", "security-design", "openapi-conventions", "validation-criteria"],
   // `/prototype` composes screens from the house design system's components,
   // so the design-system skill rides with it: the registry says which nodes
   // exist, the design system says how an enterprise screen is built from them.
@@ -344,7 +348,7 @@ function specBody(turn: Exclude<TurnSpec, { kind: "plan" }>): string {
       const withText = scoped ? `${base}\n\n${scoped}` : base;
       // Reference documents ride flows the same way they ride start turns:
       // a flow generates artifacts, and an attached sketch IS the brief for
-      // wireframes. No documents → byte-identical to a plain flow turn.
+      // the prototype. No documents → byte-identical to a plain flow turn.
       return withText + references(turn.references);
     }
     case "start":

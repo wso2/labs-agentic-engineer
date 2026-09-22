@@ -291,7 +291,8 @@ test("the design flow inlines its whole lineup, in lineup order", () => {
     "architecture",
     "security-design",
     "openapi-conventions",
-    "wireframes",
+    // No `wireframes` (#820): a web-application's screens are its prototype,
+    // which `/prototype` writes after the design.
     "validation-criteria",
   ]);
 });

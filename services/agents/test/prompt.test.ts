@@ -101,9 +101,8 @@ test("eager skills inline resolved bodies into a per-turn block (#335)", () => {
 
 /**
  * `load()` has three states, and a refusal is neither a body nor a missing name.
- * The design flow inlines `wireframes` and `openapi-conventions`, which an org may
- * legitimately mark coding-only — a refusal there must cost that one body, not the
- * turn.
+ * The design flow inlines `openapi-conventions`, which an org may legitimately
+ * mark coding-only — a refusal there must cost that one body, not the turn.
  */
 test("eager skills: an audience refusal skips like a missing name, never throws", () => {
   const refusing: SkillSource = {

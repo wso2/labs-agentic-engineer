@@ -125,9 +125,9 @@ A screen is reachable for whoever holds the scope of the operation it **loads**
 — the list or detail call whose answer the screen renders on open. Nothing
 about that is written here: the SPA reads it off `openapi.yaml`. What this file
 decides is whether each role holds that scope. So before writing a role's
-`grants`, walk the flow `wireframes.dsl` gives that role, open the
-`openapi.yaml` of the component behind each screen in it, and grant the handle
-of the operation each screen loads — at the reach the screen shows. An
+`grants`, walk the key flows (`specs/design/flows/`) that role's actor takes,
+open the `openapi.yaml` of the component behind each call in them, and grant
+the handle of the operation each screen loads — at the reach the screen shows. An
 Approvals queue that lists every claim loads `GET /claims`, so the Approver
 holds `claims:read-all`; a My Claims page loads `GET /me/claims`, so the
 Employee holds `claims:read`. Then grant the actions the screen's controls call.
@@ -323,7 +323,7 @@ apply before you invent policy — a filled org entry is the decision. Nothing
 here creates anything: the platform creates the resource server, the roles, the
 groups and the test users when the user clicks Build. `openapi-conventions` owns
 how an operation names a handle and which rows it reaches (its path),
-`wireframes` owns which screens exist and which role's flow walks them,
+`prototype` owns which screens exist and which role reaches them,
 `thunder-authentication` owns how the SPA gates each screen on the operation it
 loads; this skill owns the decisions all three consume, and
 `authorization-model` states the invariants they share.
