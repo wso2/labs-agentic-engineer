@@ -816,7 +816,7 @@ export function SpecView({ projectName }: { projectName: string }) {
       return;
     }
     if (action === "regenerate-prototype") {
-      runPrototype();
+      prototypeTurn.run();
       return;
     }
     selectManually({ kind: "file", path: PRD_PATH });
@@ -824,7 +824,7 @@ export function SpecView({ projectName }: { projectName: string }) {
   };
 
   // Generate / Regenerate prototype (#813, #818): both send `/prototype`.
-  const runPrototype = usePrototypeTurn(projectName);
+  const prototypeTurn = usePrototypeTurn(projectName);
   // Review prototype opens that web-application's full-viewport review page.
   const reviewPrototype = (component: string) =>
     void navigate({
@@ -1409,7 +1409,8 @@ export function SpecView({ projectName }: { projectName: string }) {
                 plan={planEntries}
                 onReason={onRailReason}
                 dependencyStates={dependencyStates}
-                onPrototypeAction={runPrototype}
+                onPrototypeAction={prototypeTurn.run}
+                prototypeActionBlockedReason={lensBusyReason || prototypeTurn.blockedReason}
                 onReviewPrototype={reviewPrototype}
               />
             </Box>

@@ -85,6 +85,7 @@ export function SpecFileList({
   onReason,
   dependencyStates,
   onPrototypeAction,
+  prototypeActionBlockedReason = "",
   onReviewPrototype,
 }: {
   files: SpecFileEntry[];
@@ -112,9 +113,11 @@ export function SpecFileList({
    *  or regenerate the prototype. */
   onReason: (action: SectionReason["action"]) => void;
   /** The Prototype section's Generate / Regenerate prototype (#813) — both
-   *  send `/prototype`. Disabled with `regenerateDisabled`, for the same
-   *  reason: a turn is already running. */
+   *  send `/prototype`. */
   onPrototypeAction: (action: NonNullable<PrototypeStage["action"]>) => void;
+  /** Why that action cannot run right now (a turn is running, or the agent
+   *  waits on the user), shown on the disabled button; "" when it can. */
+  prototypeActionBlockedReason?: string;
   /** A Review prototype entry: open that web-application's prototype. */
   onReviewPrototype: (component: string) => void;
 }) {
@@ -578,7 +581,7 @@ export function SpecFileList({
           {sectionHeader(prototypeSection)}
           <PrototypeRows
             stage={prototypeSection.prototype ?? { action: null, reviews: [] }}
-            actionDisabled={regenerateDisabled ?? false}
+            actionBlockedReason={prototypeActionBlockedReason}
             emptyNote={emptyNote}
             onAction={onPrototypeAction}
             onReview={onReviewPrototype}
@@ -626,13 +629,13 @@ const PROTOTYPE_ACTION_LABEL: Record<NonNullable<PrototypeStage["action"]>, stri
  */
 function PrototypeRows({
   stage,
-  actionDisabled,
+  actionBlockedReason,
   emptyNote,
   onAction,
   onReview,
 }: {
   stage: PrototypeStage;
-  actionDisabled: boolean;
+  actionBlockedReason: string;
   emptyNote: string;
   onAction: (action: NonNullable<PrototypeStage["action"]>) => void;
   onReview: (component: string) => void;
@@ -670,16 +673,14 @@ function PrototypeRows({
       )}
       {action && (
         <Box sx={{ px: 2, pt: 0.5 }}>
-          <Tooltip
-            title={actionDisabled ? "An agent is still working — available once it finishes" : ""}
-          >
+          <Tooltip title={actionBlockedReason}>
             {/* span so the tooltip works while the button is disabled */}
             <span>
               <Button
                 size="small"
                 variant="outlined"
                 startIcon={action === "regenerate" ? <RefreshCw size={14} /> : <LayoutDashboard size={14} />}
-                disabled={actionDisabled}
+                disabled={actionBlockedReason !== ""}
                 onClick={() => onAction(action)}
               >
                 {PROTOTYPE_ACTION_LABEL[action]}

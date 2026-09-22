@@ -425,7 +425,7 @@ describe("SpecFileList — a dependency's group", () => {
 // The Prototype stage (#813): between Design and Validation, one Review entry
 // per web-application with a prototype, and the one turn it can start.
 describe("SpecFileList — the prototype section", () => {
-  function renderStage(over: Partial<RailInput>, disabled = false) {
+  function renderStage(over: Partial<RailInput>, blockedReason = "") {
     const onPrototypeAction = vi.fn();
     const onReviewPrototype = vi.fn();
     render(
@@ -435,10 +435,10 @@ describe("SpecFileList — the prototype section", () => {
           selection={null}
           onSelect={() => {}}
           onRegenerateDesign={() => {}}
-          regenerateDisabled={disabled}
           sections={railSections({ ...RAIL_INPUT, webApplications: ["storefront"], ...over })}
           onReason={() => {}}
           onPrototypeAction={onPrototypeAction}
+          prototypeActionBlockedReason={blockedReason}
           onReviewPrototype={onReviewPrototype}
         />
       </OxygenUIThemeProvider>,
@@ -465,9 +465,12 @@ describe("SpecFileList — the prototype section", () => {
     expect(onPrototypeAction).toHaveBeenCalledWith("generate");
   });
 
-  it("disables the action while an agent works", () => {
-    renderStage({}, true);
-    expect(screen.getByRole("button", { name: "Generate prototype" })).toBeDisabled();
+  it("disables the action with the reason it cannot run", async () => {
+    renderStage({}, "The agent is waiting on your answer in the chat — reply there first");
+    const button = screen.getByRole("button", { name: "Generate prototype" });
+    expect(button).toBeDisabled();
+    fireEvent.mouseOver(button.parentElement!);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(/waiting on your answer/);
   });
 
   it("lists a Review prototype entry that opens the component", () => {

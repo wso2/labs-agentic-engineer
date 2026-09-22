@@ -38,6 +38,7 @@ import {
   PageTitle,
   Paper,
   Stack,
+  Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
 import { usePrototype, type PrototypeReadIssue } from "../api/queries";
@@ -73,10 +74,10 @@ export function ComponentPrototypePage({ projectName, component, search, onSearc
   const { orgHandle } = useSession();
   const localTurn = useLocalTurnActivity(orgHandle ?? "default", projectName);
   const agentWorking = status?.spec.agent === "working" || localTurn;
-  const sendPrototypeTurn = usePrototypeTurn(projectName);
+  const prototypeTurn = usePrototypeTurn(projectName);
   const navigate = useNavigate();
   const regenerate = () => {
-    sendPrototypeTurn();
+    prototypeTurn.run();
     void navigate({ to: "/projects/$projectName/spec", params: { projectName } });
   };
 
@@ -128,7 +129,7 @@ export function ComponentPrototypePage({ projectName, component, search, onSearc
       request={search}
       onRequestChange={onSearchChange}
       backLink={backLink}
-      notice={outdated ? <OutdatedBanner onRegenerate={regenerate} /> : undefined}
+      notice={outdated ? <OutdatedBanner onRegenerate={regenerate} blockedReason={prototypeTurn.blockedReason} /> : undefined}
       feedback={{
         annotations: feedback.annotations,
         onAdd: feedback.add,
@@ -143,15 +144,20 @@ export function ComponentPrototypePage({ projectName, component, search, onSearc
 }
 
 /** The design has moved since this prototype was generated (#818). */
-function OutdatedBanner({ onRegenerate }: { onRegenerate: () => void }) {
+function OutdatedBanner({ onRegenerate, blockedReason }: { onRegenerate: () => void; blockedReason: string }) {
   return (
     <Alert
       severity="warning"
       sx={{ borderRadius: 0 }}
       action={
-        <Button color="inherit" size="small" onClick={onRegenerate}>
-          Regenerate prototype
-        </Button>
+        <Tooltip title={blockedReason}>
+          {/* span so the tooltip works while the button is disabled */}
+          <span>
+            <Button color="inherit" size="small" disabled={blockedReason !== ""} onClick={onRegenerate}>
+              Regenerate prototype
+            </Button>
+          </span>
+        </Tooltip>
       }
     >
       <AlertTitle>Outdated</AlertTitle>
