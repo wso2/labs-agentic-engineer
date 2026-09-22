@@ -78,6 +78,7 @@ export interface PrototypeViewRequest {
   flow?: string;
   state?: string;
   mode?: PrototypeMode;
+  role?: string;
 }
 
 export function reducePrototypeView(
@@ -199,19 +200,29 @@ function applyAction(model: PrototypeModelV1, s: PrototypeViewState, a: Prototyp
  * The view a request (a shared link) opens on, repaired against the model: an
  * unknown flow is dropped, an unknown screen falls back to the flow's first
  * screen or the model's default, an unknown display state to the first one.
- * The role is the flow's, else the first role (in model order) that can reach
- * the screen.
+ * The role is the flow's; else the requested role, when the model has it and
+ * it reaches some screen (the requested screen if it is the role's, else the
+ * default screen or the role's first); else the first role (in model order)
+ * that can reach the screen.
  */
 export function initialPrototypeView(model: PrototypeModelV1, request: PrototypeViewRequest): PrototypeViewState {
   const flow = model.flows.find((f) => f.id === request.flow);
   const requested = model.screens.find((x) => x.id === request.screen);
+  const role = flow ? undefined : model.roles.find((r) => r.id === request.role);
+  const roleScreens = role ? screensForRole(model, role.id) : [];
+  const roleScreen =
+    roleScreens.find((x) => x.id === requested?.id) ??
+    roleScreens.find((x) => x.id === model.defaultScreenId) ??
+    roleScreens[0];
   const screenId =
-    requested && (!flow || requested.roleIds.includes(flow.roleId))
+    roleScreen?.id ??
+    (requested && (!flow || requested.roleIds.includes(flow.roleId))
       ? requested.id
-      : (flow?.screenIds[0] ?? model.defaultScreenId);
+      : (flow?.screenIds[0] ?? model.defaultScreenId));
   const screen = model.screens.find((x) => x.id === screenId);
   const roleId =
     flow?.roleId ??
+    (roleScreen ? role?.id : undefined) ??
     model.roles.find((r) => screen?.roleIds.includes(r.id))?.id ??
     model.roles[0]?.id ??
     "";
@@ -236,6 +247,7 @@ export function initialPrototypeView(model: PrototypeModelV1, request: Prototype
 export function viewRequestOf(s: PrototypeViewState): PrototypeViewRequest {
   return {
     screen: s.screenId,
+    ...(s.roleId !== "" ? { role: s.roleId } : {}),
     state: s.stateId,
     ...(s.flowId !== null ? { flow: s.flowId } : {}),
     ...(s.mode === "annotate" ? { mode: s.mode } : {}),

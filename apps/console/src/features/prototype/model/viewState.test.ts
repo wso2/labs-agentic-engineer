@@ -73,6 +73,36 @@ describe("initialPrototypeView", () => {
   it("takes the role from the screen when no flow is named", () => {
     expect(initialPrototypeView(model, { screen: "screen.reports" }).roleId).toBe("finance");
   });
+
+  it("restores a shared link's role on a screen that role reaches", () => {
+    expect(initialPrototypeView(model, { screen: "screen.detail", role: "finance" })).toMatchObject({
+      screenId: "screen.detail",
+      roleId: "finance",
+    });
+  });
+
+  it("opens the role's first screen when the requested screen is not the role's", () => {
+    expect(initialPrototypeView(model, { role: "employee" })).toMatchObject({ screenId: "screen.new", roleId: "employee" });
+    expect(initialPrototypeView(model, { screen: "screen.queue", role: "employee" })).toMatchObject({
+      screenId: "screen.new",
+      roleId: "employee",
+    });
+  });
+
+  it("ignores an unknown role", () => {
+    expect(initialPrototypeView(model, { screen: "screen.detail", role: "auditor" })).toMatchObject({
+      screenId: "screen.detail",
+      roleId: "approver",
+    });
+  });
+
+  it("lets a flow's role win over the requested one", () => {
+    expect(initialPrototypeView(model, { flow: "flow.submit", role: "finance" })).toMatchObject({
+      flowId: "flow.submit",
+      roleId: "employee",
+      screenId: "screen.new",
+    });
+  });
 });
 
 describe("Preview acts", () => {
@@ -214,9 +244,20 @@ describe("MODEL_REPLACED", () => {
 });
 
 describe("viewRequestOf", () => {
-  it("carries screen and state always, flow when set, mode only when annotating", () => {
-    expect(viewRequestOf(start())).toEqual({ screen: "screen.queue", state: "state.default" });
+  it("carries screen, role and state always, flow when set, mode only when annotating", () => {
+    expect(viewRequestOf(start())).toEqual({ screen: "screen.queue", role: "approver", state: "state.default" });
     const s = run(start(), { type: "SET_FLOW", flowId: "flow.approve" }, { type: "ENTER_ANNOTATE" });
-    expect(viewRequestOf(s)).toEqual({ screen: "screen.queue", state: "state.default", flow: "flow.approve", mode: "annotate" });
+    expect(viewRequestOf(s)).toEqual({
+      screen: "screen.queue",
+      role: "approver",
+      state: "state.default",
+      flow: "flow.approve",
+      mode: "annotate",
+    });
+  });
+
+  it("round-trips a chosen role through the URL", () => {
+    const s = run(start(), { type: "SET_ROLE", roleId: "finance" }, { type: "NAVIGATE", screenId: "screen.detail" });
+    expect(initialPrototypeView(model, viewRequestOf(s))).toMatchObject({ screenId: "screen.detail", roleId: "finance" });
   });
 });

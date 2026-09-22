@@ -25,7 +25,7 @@ referred to.
    the prototype once. **Preview** and **Annotate** are a toggle in the review
    bar, not two pages or two renderings, so switching never loses the screen,
    flow, display state or open overlay the reviewer is looking at. Screen, flow,
-   state and mode ride the URL, written with `replace`, so a link opens exactly
+   state, mode and role ride the URL, written with `replace`, so a link opens exactly
    that view and Back leaves the prototype instead of stepping through its
    screens.
 

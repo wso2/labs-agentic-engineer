@@ -101,7 +101,7 @@ describe("ComponentPrototypePage", () => {
     expect(within(application()!).getByLabelText("Address")).toHaveTextContent("storefront.example.com/queue");
     expect(screen.getByRole("button", { name: "Preview" })).toHaveAttribute("aria-pressed", "true");
     // The resolved view is written back to the URL once, whole.
-    expect(onSearchChange).toHaveBeenLastCalledWith({ screen: "screen.queue", state: "state.default" });
+    expect(onSearchChange).toHaveBeenLastCalledWith({ screen: "screen.queue", role: "Compliance Admin", state: "state.default" });
   });
 
   it("opens where the URL points", async () => {
@@ -116,10 +116,10 @@ describe("ComponentPrototypePage", () => {
 
     fireEvent.click(document.querySelector('[data-prototype-component-id="expense.1042"]')!);
     expect(await screen.findByRole("heading", { name: "Expense #1042 · Maya Fernando" })).toBeInTheDocument();
-    expect(onSearchChange).toHaveBeenLastCalledWith({ screen: "screen.detail", state: "state.failed" });
+    expect(onSearchChange).toHaveBeenLastCalledWith({ screen: "screen.detail", role: "Compliance Admin", state: "state.failed" });
 
     fireEvent.click(screen.getByRole("button", { name: "Annotate" }));
-    expect(onSearchChange).toHaveBeenLastCalledWith({ screen: "screen.detail", state: "state.failed", mode: "annotate" });
+    expect(onSearchChange).toHaveBeenLastCalledWith({ screen: "screen.detail", role: "Compliance Admin", state: "state.failed", mode: "annotate" });
   });
 
   it("lists the coded issues of an invalid file and renders nothing of it", async () => {

@@ -58,7 +58,13 @@ const Route = RouteUnderTest as unknown as {
 };
 const PrototypeRoute = Route.component;
 
-const FULL = { screen: "screen.detail", flow: "flow.approve", state: "state.failed", mode: "annotate" } as const;
+const FULL = {
+  screen: "screen.detail",
+  flow: "flow.approve",
+  state: "state.failed",
+  mode: "annotate",
+  role: "approver",
+} as const;
 
 beforeEach(() => {
   mockUseParams.mockReset().mockReturnValue({ projectName: "p", component: "storefront" });
@@ -74,7 +80,7 @@ function lastNavigation() {
 
 describe("prototype route", () => {
   describe("validateSearch", () => {
-    it("keeps screen, flow, state and mode", () => {
+    it("keeps screen, flow, state, mode and role", () => {
       expect(Route.validateSearch({ ...FULL })).toEqual(FULL);
     });
 
@@ -83,12 +89,18 @@ describe("prototype route", () => {
         screen: "screen.detail",
         flow: "flow.approve",
         state: "state.failed",
+        role: "approver",
       });
       expect(Route.validateSearch({ mode: "preview" })).toEqual({ mode: "preview" });
     });
 
     it("drops empty, non-string and unknown params", () => {
       expect(Route.validateSearch({ screen: "", flow: 42, state: null, variant: "D" })).toEqual({});
+    });
+
+    it("drops an invalid role and keeps the rest", () => {
+      expect(Route.validateSearch({ screen: "screen.detail", role: "" })).toEqual({ screen: "screen.detail" });
+      expect(Route.validateSearch({ screen: "screen.detail", role: ["approver"] })).toEqual({ screen: "screen.detail" });
     });
   });
 
@@ -103,8 +115,9 @@ describe("prototype route", () => {
       ["a screen change", { ...FULL, screen: "screen.queue" }, { ...FULL, screen: "screen.queue" }],
       ["a flow change", { ...FULL, flow: "flow.month-end" }, { ...FULL, flow: "flow.month-end" }],
       ["a display-state change", { ...FULL, state: "state.empty" }, { ...FULL, state: "state.empty" }],
-      ["a mode change", { screen: FULL.screen, flow: FULL.flow, state: FULL.state }, { screen: FULL.screen, flow: FULL.flow, state: FULL.state }],
-      ["leaving a flow", { screen: FULL.screen, state: FULL.state, mode: "annotate" }, { screen: FULL.screen, state: FULL.state, mode: "annotate" }],
+      ["a role change", { screen: FULL.screen, state: FULL.state, mode: FULL.mode, role: "finance" }, { screen: FULL.screen, state: FULL.state, mode: FULL.mode, role: "finance" }],
+      ["a mode change", { screen: FULL.screen, flow: FULL.flow, state: FULL.state, role: FULL.role }, { screen: FULL.screen, flow: FULL.flow, state: FULL.state, role: FULL.role }],
+      ["leaving a flow", { screen: FULL.screen, state: FULL.state, mode: "annotate", role: FULL.role }, { screen: FULL.screen, state: FULL.state, mode: "annotate", role: FULL.role }],
     ])("writes %s with replace navigation, keeping every other param", (_, next, expected) => {
       mockUseSearch.mockReturnValue(FULL);
       render(<PrototypeRoute />);

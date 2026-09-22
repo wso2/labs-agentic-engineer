@@ -29,12 +29,13 @@ import {
 // layout, and AppLayout drops the console chrome for it: the page takes over
 // the whole viewport.
 //
-// Screen, flow, display state and mode ride the URL so a link opens exactly
+// Screen, flow, display state, mode and role ride the URL so a link opens exactly
 // what the reviewer saw. The page reports the WHOLE view on every change and
 // the route writes it with a REPLACE navigation: clicking through screens
 // piles up no history, so Back leaves the prototype, and no callback can drop
-// a param another one set. An unknown mode is dropped; unknown IDs are the
-// page's to repair against the model.
+// a param another one set. An unknown mode, and an empty or non-string param,
+// is dropped; unknown IDs (a role included) are the page's to repair against
+// the model.
 function nonEmpty(value: unknown): string | undefined {
   return typeof value === "string" && value !== "" ? value : undefined;
 }
@@ -44,11 +45,13 @@ export function validatePrototypeSearch(search: Record<string, unknown>): Protot
   const flow = nonEmpty(search.flow);
   const state = nonEmpty(search.state);
   const mode = PROTOTYPE_MODES.find((m) => m === search.mode);
+  const role = nonEmpty(search.role);
   return {
     ...(screen ? { screen } : {}),
     ...(flow ? { flow } : {}),
     ...(state ? { state } : {}),
     ...(mode ? { mode: mode satisfies PrototypeMode } : {}),
+    ...(role ? { role } : {}),
   };
 }
 
@@ -68,7 +71,16 @@ function PrototypeRoute() {
       search={search}
       onSearchChange={(next) =>
         void navigate({
-          search: (prev) => validatePrototypeSearch({ ...prev, screen: undefined, flow: undefined, state: undefined, mode: undefined, ...next }),
+          search: (prev) =>
+            validatePrototypeSearch({
+              ...prev,
+              screen: undefined,
+              flow: undefined,
+              state: undefined,
+              mode: undefined,
+              role: undefined,
+              ...next,
+            }),
           replace: true,
         })
       }
