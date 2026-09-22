@@ -17,6 +17,7 @@
 package genaiturns
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/clients/agentsvc"
@@ -67,7 +68,7 @@ func prototypeFeedbackFromJSON(fb *gen.PrototypeFeedbackInput, instruction strin
 		return nil, apierr.BadRequest("prototypeFeedback.prototypePath must be specs/design/components/<component>/prototype.json")
 	}
 	if len(fb.Annotations) == 0 || len(fb.Annotations) > maxPrototypeAnnotations {
-		return nil, apierr.BadRequest("prototypeFeedback.annotations must hold 1 to 50 annotations")
+		return nil, apierr.BadRequest(fmt.Sprintf("prototypeFeedback.annotations must hold 1 to %d annotations", maxPrototypeAnnotations))
 	}
 	seen := make(map[string]bool, len(fb.Annotations))
 	annotations := make([]agentsvc.PrototypeAnnotationBlock, 0, len(fb.Annotations))
@@ -90,13 +91,13 @@ func prototypeAnnotation(a gen.PrototypeAnnotationInput) (agentsvc.PrototypeAnno
 		return agentsvc.PrototypeAnnotationBlock{}, apierr.BadRequest("every prototype annotation needs an id, screenId, stateId and request")
 	}
 	if int(a.PrototypeSchemaVersion) != prototypespec.SchemaVersion {
-		return agentsvc.PrototypeAnnotationBlock{}, apierr.BadRequest("prototype annotation prototypeSchemaVersion must be 1")
+		return agentsvc.PrototypeAnnotationBlock{}, apierr.BadRequest(fmt.Sprintf("prototype annotation prototypeSchemaVersion must be %d", prototypespec.SchemaVersion))
 	}
 	if a.FlowID != nil && blank(*a.FlowID) {
 		return agentsvc.PrototypeAnnotationBlock{}, apierr.BadRequest("prototype annotation flowId must be a flow id or null")
 	}
 	if len(a.ComponentIds) > maxPrototypeComponentIDs {
-		return agentsvc.PrototypeAnnotationBlock{}, apierr.BadRequest("a prototype annotation holds at most 50 componentIds")
+		return agentsvc.PrototypeAnnotationBlock{}, apierr.BadRequest(fmt.Sprintf("a prototype annotation holds at most %d componentIds", maxPrototypeComponentIDs))
 	}
 	for _, c := range a.ComponentIds {
 		if blank(c) || len(c) > maxPrototypeModelIDLen {
