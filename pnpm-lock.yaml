@@ -224,6 +224,9 @@ importers:
       '@aep/playground':
         specifier: workspace:*
         version: link:../../playground
+      '@aep/prototype-model':
+        specifier: workspace:*
+        version: link:../../packages/prototype-model
       '@aep/ui-cell-diagram-react':
         specifier: workspace:*
         version: link:../../packages/ui/cell-diagram-react
