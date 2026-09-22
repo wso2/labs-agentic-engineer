@@ -155,6 +155,14 @@ describe("Annotate only selects", () => {
     expect(run(selected(), event).selectedComponentIds).toEqual([]);
   });
 
+  it("never selects in Preview, even when asked to directly", () => {
+    expect(run(start(), { type: "TOGGLE_SELECTION", componentId: "btn.export" }).selectedComponentIds).toEqual([]);
+  });
+
+  it("stays in Annotate when the model is replaced (a landed feedback turn)", () => {
+    expect(run(selected(), { type: "MODEL_REPLACED", model }).mode).toBe("annotate");
+  });
+
   it("returns to Preview on exit, where clicks act again", () => {
     const s = run(selected(), { type: "EXIT_ANNOTATE" }, activate("btn.export", { kind: "show-drawer", drawerId: "drawer.export" }));
     expect(s.mode).toBe("preview");

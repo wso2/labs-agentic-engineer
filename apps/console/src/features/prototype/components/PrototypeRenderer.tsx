@@ -34,7 +34,7 @@ import { Stack } from "@wso2/oxygen-ui";
 import type { PrototypeModelV1, PrototypeNode } from "@aep/prototype-model";
 import { isShownIn } from "../model/visibility";
 import type { PrototypeViewEvent, PrototypeViewState } from "../model/viewState";
-import { PrototypeRenderContext, Selectable, type PrototypeRenderContextValue } from "./renderContext";
+import { NO_PINS, PrototypeRenderContext, Selectable, type PrototypeRenderContextValue } from "./renderContext";
 import { NodeBody } from "./registry";
 import { AppShellView } from "./registry/layouts";
 import { OverlayView } from "./registry/overlays";
@@ -43,6 +43,8 @@ export interface PrototypeRendererProps {
   model: PrototypeModelV1;
   view: PrototypeViewState;
   dispatch: Dispatch<PrototypeViewEvent>;
+  /** Queued requests' numbers per component on this screen, pinned while annotating (#817). */
+  pins?: ReadonlyMap<string, readonly number[]>;
 }
 
 function NodeView({ node, stateId }: { node: PrototypeNode; stateId: string }) {
@@ -54,7 +56,7 @@ function NodeView({ node, stateId }: { node: PrototypeNode; stateId: string }) {
   );
 }
 
-export function PrototypeRenderer({ model, view, dispatch }: PrototypeRendererProps) {
+export function PrototypeRenderer({ model, view, dispatch, pins = NO_PINS }: PrototypeRendererProps) {
   const ctx = useMemo<PrototypeRenderContextValue>(
     () => ({
       model,
@@ -62,8 +64,9 @@ export function PrototypeRenderer({ model, view, dispatch }: PrototypeRendererPr
       activate: (componentId, action) => dispatch({ type: "ACTIVATE", componentId, action }),
       select: (componentId) => dispatch({ type: "TOGGLE_SELECTION", componentId }),
       renderNodes: (nodes) => nodes.map((n) => <NodeView key={n.id} node={n} stateId={view.stateId} />),
+      pins,
     }),
-    [model, view, dispatch],
+    [model, view, dispatch, pins],
   );
   const screen = model.screens.find((s) => s.id === view.screenId);
   if (!screen) return null;

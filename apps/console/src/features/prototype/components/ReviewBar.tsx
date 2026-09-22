@@ -49,6 +49,8 @@ export interface ReviewBarProps {
   dispatch: Dispatch<PrototypeViewEvent>;
   /** A router link element back to the Spec view, e.g. `<Link to="/projects/$projectName/spec" />`. */
   backLink: ReactElement<{ children?: ReactNode }>;
+  /** Hold the mode where it is — an agent turn is running on the project (#817). */
+  modeLocked?: boolean;
 }
 
 const NO_FLOW = "";
@@ -80,7 +82,7 @@ function Selector({
   );
 }
 
-export function ReviewBar({ model, view, dispatch, backLink }: ReviewBarProps) {
+export function ReviewBar({ model, view, dispatch, backLink, modeLocked = false }: ReviewBarProps) {
   const flows = flowsForRole(model, view.roleId);
   const flow = model.flows.find((f) => f.id === view.flowId);
   const flowStep = flow ? flow.screenIds.indexOf(view.screenId) : -1;
@@ -182,6 +184,7 @@ export function ReviewBar({ model, view, dispatch, backLink }: ReviewBarProps) {
           exclusive
           size="small"
           aria-label="Mode"
+          disabled={modeLocked}
           value={view.mode}
           onChange={(_, mode: PrototypeMode | null) => {
             if (mode === "annotate") dispatch({ type: "ENTER_ANNOTATE" });

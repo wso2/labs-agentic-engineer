@@ -42,6 +42,9 @@ import {
 } from "@wso2/oxygen-ui";
 import { usePrototype, type PrototypeReadIssue } from "../api/queries";
 import { useProjectStatus } from "../../projects/api/queries";
+import { useSession } from "../../../auth/SessionContext";
+import { useLocalTurnActivity } from "../../agent-chat/useLocalTurnActivity";
+import { usePrototypeFeedback } from "../hooks/usePrototypeFeedback";
 import { usePrototypeTurn } from "../hooks/usePrototypeTurn";
 import type { PrototypeViewRequest } from "../model/viewState";
 import { PrototypeShell } from "./PrototypeShell";
@@ -61,7 +64,15 @@ export function ComponentPrototypePage({ projectName, component, search, onSearc
   // #818: the design moved after the prototypes were generated. Regenerating
   // sends `/prototype` and goes back to the Spec, where the agent panel sends
   // it and the rail shows the stage working — this page has no chat to run in.
-  const outdated = useProjectStatus(projectName).data?.spec.prototypeOutdated ?? false;
+  const status = useProjectStatus(projectName).data;
+  const outdated = status?.spec.prototypeOutdated ?? false;
+  // #817: the Annotate batch, and whether an agent turn is running on the
+  // project — the server's word, or this browser's own evidence of a send
+  // that has no turn row yet. Either holds the mode and the sends.
+  const feedback = usePrototypeFeedback(projectName, component);
+  const { orgHandle } = useSession();
+  const localTurn = useLocalTurnActivity(orgHandle ?? "default", projectName);
+  const agentWorking = status?.spec.agent === "working" || localTurn;
   const sendPrototypeTurn = usePrototypeTurn(projectName);
   const navigate = useNavigate();
   const regenerate = () => {
@@ -118,6 +129,15 @@ export function ComponentPrototypePage({ projectName, component, search, onSearc
       onRequestChange={onSearchChange}
       backLink={backLink}
       notice={outdated ? <OutdatedBanner onRegenerate={regenerate} /> : undefined}
+      feedback={{
+        annotations: feedback.annotations,
+        onAdd: feedback.add,
+        onRemove: feedback.remove,
+        onSendAll: () => void feedback.sendAll(),
+        sending: feedback.sending,
+        busy: agentWorking,
+        error: feedback.error,
+      }}
     />
   );
 }
