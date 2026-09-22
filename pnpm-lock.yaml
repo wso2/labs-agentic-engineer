@@ -261,6 +261,9 @@ importers:
       '@aep/excalidraw-dsl':
         specifier: workspace:*
         version: link:../excalidraw-dsl
+      '@aep/prototype-model':
+        specifier: workspace:*
+        version: link:../prototype-model
       yaml:
         specifier: ^2.8.4
         version: 2.9.0

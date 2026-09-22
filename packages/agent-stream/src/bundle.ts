@@ -46,6 +46,7 @@ import { checkWireframeLayout } from "./wireframe-layout.js";
 import { checkDesignDiagram } from "./design-diagrams.js";
 import { checkComponentDependencies } from "./component-dependencies.js";
 import { checkDependencyDesign, preservePlatformFields } from "./dependency-design-schema.js";
+import { checkPrototype } from "./prototype-gate.js";
 import type {
   Op,
   ErrCode,
@@ -210,8 +211,9 @@ export class FileBundle {
   /**
    * Apply `content` to `path` through the write-gate ladder: YAML reparse, then
    * each artifact-specific gate that claims the path (component `design.json`
-   * schema, `security.json` schema, `wireframes.dsl` syntax, `openapi.yaml`
-   * structure, the design diagrams' shape and participants). The first
+   * schema, `security.json` schema, `wireframes.dsl` syntax, a component's
+   * `prototype.json` model, `openapi.yaml` structure, the design diagrams'
+   * shape and participants). The first
    * problem aborts with its own code and NO write, leaving the bundle
    * byte-for-byte unchanged — the safe in-memory contract. Every gate is a pure
    * (path, content) => problem | null function, so a new artifact kind is one
@@ -264,6 +266,14 @@ export class FileBundle {
     const layoutProblem = checkWireframeLayout(path, content);
     if (layoutProblem) {
       return err(path, op, layoutProblem.code, layoutProblem.message);
+    }
+    // A web-application's prototype.json is model-gated: the shape, the
+    // version, unique ids, resolvable references, and the component its
+    // directory names. A prototype the platform would refuse on save, or the
+    // console could not render, never reaches the ledger.
+    const prototypeProblem = checkPrototype(path, content);
+    if (prototypeProblem) {
+      return err(path, op, prototypeProblem.code, prototypeProblem.message);
     }
     // A component's openapi.yaml is structure-gated on the same terms, which is
     // what makes asking a separate tool to validate it unnecessary — that ask

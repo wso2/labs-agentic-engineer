@@ -184,6 +184,11 @@ export type {
   SdkManifest,
 } from "./contracts/dependency-design.js";
 
+// --- The prototype.json write-gate -----------------------------------------
+// The model itself (types, parser, serializer) is @aep/prototype-model's.
+export { checkPrototype } from "./prototype-gate.js";
+export type { PrototypeProblem } from "./prototype-gate.js";
+
 // --- The security.json write-gate ------------------------------------------
 export {
   checkSecurityDesign,
