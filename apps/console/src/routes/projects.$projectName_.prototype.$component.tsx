@@ -18,6 +18,8 @@
 
 import { createFileRoute } from "@tanstack/react-router";
 import { PrototypePage } from "../features/spec/components/PrototypePage";
+// PROTOTYPE (throwaway, issue #813): `?variant=` swaps in the JSON-model shell variants.
+import { PrototypeProto, VARIANTS, type VariantKey } from "../features/spec/prototype-proto/PrototypeProto";
 
 // `$projectName_` (trailing underscore) un-nests this route from the
 // /projects/$projectName layout, same trick as `projects.$projectName_.spec`
@@ -36,7 +38,10 @@ import { PrototypePage } from "../features/spec/components/PrototypePage";
 export const Route = createFileRoute(
   "/projects/$projectName_/prototype/$component",
 )({
-  validateSearch: (search: Record<string, unknown>): { screen?: string; flow?: string } => ({
+  validateSearch: (search: Record<string, unknown>): { screen?: string; flow?: string; variant?: VariantKey } => ({
+    ...(import.meta.env.DEV && typeof search.variant === "string" && (VARIANTS as readonly string[]).includes(search.variant)
+      ? { variant: search.variant as VariantKey }
+      : {}),
     ...(typeof search.screen === "string" && search.screen
       ? { screen: search.screen }
       : {}),
@@ -47,8 +52,16 @@ export const Route = createFileRoute(
 
 function PrototypeRoute() {
   const { projectName, component } = Route.useParams();
-  const { screen, flow } = Route.useSearch();
+  const { screen, flow, variant } = Route.useSearch();
   const navigate = Route.useNavigate();
+  if (import.meta.env.DEV && variant) {
+    return (
+      <PrototypeProto
+        variant={variant}
+        onVariantChange={(v) => void navigate({ search: (prev) => ({ ...prev, variant: v }), replace: true })}
+      />
+    );
+  }
   return (
     <PrototypePage
       projectName={projectName}
