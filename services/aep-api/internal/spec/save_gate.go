@@ -19,10 +19,12 @@ package spec
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/platform/agentfold"
 	"github.com/wso2/aep/aep-api/internal/platform/designspec"
+	"github.com/wso2/aep/aep-api/internal/platform/prototypespec"
 	"github.com/wso2/aep/aep-api/internal/platform/securityspec"
 )
 
@@ -80,6 +82,10 @@ const (
 //   - security.json, when present: the security design validates against the
 //     same published schema and referential rules the agent's write gate
 //     applies;
+//   - prototype.json: every present `components/<c>/prototype.json` validates
+//     against the published prototype schema and its reference rules, and
+//     names `<c>` as its component (prototypespec — the same schema and codes
+//     the agent's write gate uses);
 //   - OpenAPI: every present component openapi.yaml/yml must parse.
 //
 // A missing root is ErrArtifactPathInvalid (400). Any other failure aggregates
@@ -170,6 +176,8 @@ func validateDesignBundle(files map[string]string) error {
 		}
 	}
 
+	verrs = append(verrs, prototypeFindings(files)...)
+
 	// OpenAPI parseability (component openapi.yaml/.yml).
 	for rel, content := range files {
 		if !strings.HasSuffix(rel, "/openapi.yaml") && !strings.HasSuffix(rel, "/openapi.yml") {
@@ -195,4 +203,32 @@ func validateDesignBundle(files map[string]string) error {
 		return &DesignValidationError{Files: verrs}
 	}
 	return nil
+}
+
+// prototypeFindings validates every component prototype in the bundle, one row
+// per finding so each fix is listed. The row's code is the validator's own
+// (UNSUPPORTED_VERSION, DUPLICATE_ID, …) — the same code the agent's write gate
+// names for the same file — and its message leads with the JSON path. Keys are
+// visited in sorted order so the rows are stable.
+func prototypeFindings(files map[string]string) []FileValidationError {
+	keys := make([]string, 0, len(files))
+	for rel := range files {
+		if _, ok := prototypespec.BundleComponent(rel); ok {
+			keys = append(keys, rel)
+		}
+	}
+	sort.Strings(keys)
+	var out []FileValidationError
+	for _, rel := range keys {
+		component, _ := prototypespec.BundleComponent(rel)
+		_, issues := prototypespec.Parse(component, []byte(files[rel]))
+		for _, issue := range issues {
+			msg := issue.Message
+			if issue.Path != "" {
+				msg = issue.Path + ": " + msg
+			}
+			out = append(out, FileValidationError{Path: rel, Code: issue.Code, Message: msg})
+		}
+	}
+	return out
 }

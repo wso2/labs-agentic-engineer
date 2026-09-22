@@ -248,6 +248,14 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   - **A missing sibling narrows the check, it never refuses.** No `design.json` → no security verdict
     (the premise is unknowable); no `security.json` → the structural rules still run and only catalog
     membership and ownership wait. The build gate is the backstop that sees every file at the tag.
+- **A web-application's `prototype.json` is save-gated on the agent's terms** (`save_gate.go`,
+  `platform/prototypespec`). Every `components/<c>/prototype.json` in a save validates against the
+  vendored `prototype-model.schema.json` (generated from `@aep/prototype-model`), then one global id
+  namespace, every reference resolving to an entry of the right kind on the right screen, and
+  `component` equal to `<c>`. Each finding is its own 422 row carrying the validator's code
+  (`INVALID_JSON`, `SCHEMA_VIOLATION`, `UNSUPPORTED_VERSION`, `DUPLICATE_ID`, `UNKNOWN_REFERENCE`,
+  `PROTOTYPE_COMPONENT_MISMATCH`) and JSON path — the codes and paths the TypeScript validator reports
+  for the same file, pinned by one shared case table (`packages/prototype-model/test/validation-cases.json`).
 - The `/collab/validate` oracle recovers the acting org from VERIFIED claims and refuses any room whose
   `spec-<org>-` prefix mismatches — never a hint of whether the room exists. Platform-wide rules (tenant
   gate, secrets fence) → [../../README.md](../../README.md).
