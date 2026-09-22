@@ -57,7 +57,11 @@ export interface ProjectDesignComponent {
   services?: Record<string, ProjectDesignService>;
   /** Typed dependency edges (cell-diagram shape). */
   connections: ProjectDesignConnection[];
-  /** Bundle-relative paths of this component's spec artifacts. */
+  /**
+   * Bundle-relative paths of this component's spec artifacts, keyed `design`
+   * (always), `openapi` (a service's API) and `prototype` (a web-application's
+   * prototype.json).
+   */
   artifacts: Record<string, string>;
 }
 
