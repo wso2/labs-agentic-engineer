@@ -51,10 +51,10 @@ Never pull raw MUI or another component library alongside Oxygen UI.
 - **Empty, loading, error states are part of the design**, not afterthoughts.
   Every view ships all three (see `api-guidelines.md` for the doctrine).
 - **A render throw is contained to its section.** `components/ErrorBoundary`
-  wraps the shell's page outlet, the chat panel, and the wireframe canvas,
-  and the root route wraps the whole app in one more as the last resort.
-  Routes carry no error component of their own, so a page's throw lands in
-  the outlet boundary and the shell stays up; without these, the router's
+  wraps the shell's page outlet and the chat panel, and the root route wraps
+  the whole app in one more as the last resort. Routes carry no error
+  component of their own, so a page's throw lands in the outlet boundary and
+  the shell stays up; without these, the router's
   top-level catch replaced the whole app with its "Show Error" page. The
   boundary logs the error and component stack, retries on its own twice
   (2s, then 5s — observed failures are races that a same-content re-render
