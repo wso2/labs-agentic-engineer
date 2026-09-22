@@ -28,7 +28,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { SURFACES } from "@aep/agent-stream";
+import { SURFACES, type PrototypeFeedback } from "@aep/agent-stream";
 import { composeInstruction, eagerSkillsFor, toolsetFor, wantsRegisterDraftTool } from "../src/prompts/turn.js";
 
 /** The platform skill library this monorepo publishes to every org. */
@@ -337,6 +337,69 @@ test("the prototype brief leads, and the user's trailing text still follows it",
  * Only PLATFORM flows are checked. `/<org-skill>` inlines a name this repo has
  * never heard of, which is the feature, not drift.
  */
+/**
+ * A `/prototype` turn carrying a review batch (#817) REVISES one file rather
+ * than generating every prototype. The batch arrives as facts; this is the one
+ * place it becomes words, so every fact the agent acts on must be in the text —
+ * and the reviewer's request verbatim, since nobody upstream rephrased it.
+ */
+const feedbackTurn: { kind: "flow"; skill: string; prototypeFeedback: PrototypeFeedback } = {
+  kind: "flow",
+  skill: "prototype",
+  prototypeFeedback: {
+    prototypePath: "specs/design/components/portal/prototype.json",
+    annotations: [
+      {
+        id: "ann-1",
+        prototypeSchemaVersion: 1,
+        screenId: "screen.queue",
+        flowId: "flow.approve",
+        stateId: "state.default",
+        componentIds: ["queue.table", "queue.approve"],
+        request: "Show the submitter's department — and sort by amount, \"largest\" first.",
+      },
+      {
+        id: "ann-2",
+        prototypeSchemaVersion: 1,
+        screenId: "screen.detail",
+        flowId: null,
+        stateId: "state.failed",
+        componentIds: [],
+        request: "This whole screen feels cramped.",
+      },
+    ],
+  },
+};
+
+test("a feedback turn names the file, and every annotation's IDs and request verbatim", () => {
+  const out = composeInstruction(feedbackTurn);
+  assert.ok(out.startsWith("Load the prototype skill and follow it.\n\n"), "the skill pointer still leads");
+  assert.match(out, /specs\/design\/components\/portal\/prototype\.json/);
+  for (const a of feedbackTurn.prototypeFeedback.annotations) {
+    assert.ok(out.includes(a.id), `annotation ${a.id} named`);
+    assert.ok(out.includes(a.screenId), `screen ${a.screenId} named`);
+    assert.ok(out.includes(a.stateId), `state ${a.stateId} named`);
+    assert.ok(out.includes(a.request), `request ${a.id} verbatim`);
+  }
+  assert.ok(out.includes("flow.approve"));
+  assert.ok(out.includes("queue.table") && out.includes("queue.approve"));
+  // No flow and no components are said as such, not left blank.
+  assert.match(out, /whole screen/i);
+  assert.match(out, /no flow|free navigation/i);
+  // Annotations keep their order.
+  assert.ok(out.indexOf("ann-1") < out.indexOf("ann-2"));
+});
+
+test("a feedback turn rewrites only the named file, once, keeping IDs", () => {
+  const out = composeInstruction(feedbackTurn);
+  assert.match(out, /only/i);
+  assert.match(out, /once/i);
+  assert.match(out, /stable|keep every id|preserv/i);
+  // The generation brief ("one prototype.json per web-application") would
+  // contradict the revision, so it is not said on a feedback turn.
+  assert.doesNotMatch(out, /per web-application/);
+});
+
 test("every eager skill name exists in the platform skill library", () => {
   const turns = [
     { kind: "start" } as const,

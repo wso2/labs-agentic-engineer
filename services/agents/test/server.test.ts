@@ -484,7 +484,30 @@ test("a malformed turn spec is a clean pre-stream 400, never a composed nonsense
     const post = (turn: unknown) =>
       fetch(`${baseUrl}/conversations/${WS_CONV}/turns`, turnPost(wsBody({ turn }), { token, org: WS_ORG }));
 
-    for (const bad of [{ kind: "flow" }, { kind: "chat" }, { kind: "generate" }, {}, "start", null]) {
+    // A prototype review batch (#817) is refused whole when malformed, and on
+    // any flow but /prototype.
+    const annotation = {
+      id: "a1",
+      prototypeSchemaVersion: 1,
+      screenId: "screen.queue",
+      flowId: null,
+      stateId: "state.default",
+      componentIds: [],
+      request: "Tighten this screen",
+    };
+    const feedback = { prototypePath: "specs/design/components/portal/prototype.json", annotations: [annotation] };
+    for (const bad of [
+      { kind: "flow" },
+      { kind: "chat" },
+      { kind: "generate" },
+      {},
+      "start",
+      null,
+      { kind: "flow", skill: "design", prototypeFeedback: feedback },
+      { kind: "flow", skill: "prototype", prototypeFeedback: { ...feedback, annotations: [] } },
+      { kind: "flow", skill: "prototype", prototypeFeedback: { ...feedback, annotations: [annotation, annotation] } },
+      { kind: "flow", skill: "prototype", prototypeFeedback: { ...feedback, prototypePath: "specs/design/design.cell" } },
+    ]) {
       const res = await post(bad);
       assert.equal(res.status, 400, `${JSON.stringify(bad)} must not reach the model`);
       assert.match(((await res.json()) as { error: string }).error, /turn must be a valid turn spec/);

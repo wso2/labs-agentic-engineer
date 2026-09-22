@@ -34,7 +34,7 @@
  * all send a `TurnSpec` and none of them composes.
  */
 
-import type { PlanContextFile, PlanScope, Toolset, TurnAim, TurnSpec } from "@aep/agent-stream";
+import type { PlanContextFile, PlanScope, PrototypeFeedback, Toolset, TurnAim, TurnSpec } from "@aep/agent-stream";
 
 // --- Wording -----------------------------------------------------------------
 
@@ -225,6 +225,37 @@ const FLOW_BRIEFS: Record<string, string> = {
     "per web-application, and change no other file.",
 };
 
+/**
+ * The revision brief (#817): a `/prototype` turn carrying a reviewer's batch
+ * revises ONE file instead of generating every prototype, so it replaces the
+ * generation brief rather than following it — "write one per web-application"
+ * and "rewrite only this one" cannot both be the instruction.
+ *
+ * The batch arrives as IDs plus the reviewer's words; the words are quoted
+ * verbatim, never paraphrased, because nobody upstream rephrased them either.
+ */
+const FEEDBACK_LEAD = (path: string, count: number) =>
+  `This turn revises one prototype from review feedback: ${count} request${count === 1 ? "" : "s"} on ${path}. ` +
+  `Rewrite only that file, once — apply every request below in a single complete write, keep every ID a request ` +
+  `does not require you to change stable, and touch no other file. Resolve each ID against the file as it stands; ` +
+  `if one no longer exists, say so in your reply instead of guessing what was meant.`;
+
+function feedbackBrief(feedback: PrototypeFeedback): string {
+  const requests = feedback.annotations.map((a) => {
+    const flow = a.flowId === null ? "none (free navigation)" : a.flowId;
+    const components = a.componentIds.length === 0 ? "none — the request is about the whole screen" : a.componentIds.join(", ");
+    return (
+      `Request ${a.id}\n` +
+      `- Screen: ${a.screenId}\n` +
+      `- Flow: ${flow}\n` +
+      `- Display state: ${a.stateId}\n` +
+      `- Components: ${components}\n` +
+      `- The reviewer's words, verbatim:\n"""\n${a.request}\n"""`
+    );
+  });
+  return [FEEDBACK_LEAD(feedback.prototypePath, feedback.annotations.length), ...requests].join("\n\n");
+}
+
 /** The brief a flow's skill carries, or undefined. */
 function flowBrief(skill: string): string | undefined {
   return Object.hasOwn(FLOW_BRIEFS, skill) ? FLOW_BRIEFS[skill] : undefined;
@@ -302,7 +333,9 @@ function specBody(turn: Exclude<TurnSpec, { kind: "plan" }>): string {
       // allowlist that goes stale against the org's catalog.
       const command = commandFlow(turn.skill);
       const skill = command?.skill ?? turn.skill;
-      const brief = flowBrief(skill);
+      // A review batch replaces the generation brief: it narrows the flow to
+      // one file (see FEEDBACK_LEAD).
+      const brief = turn.prototypeFeedback ? feedbackBrief(turn.prototypeFeedback) : flowBrief(skill);
       const base = `Load the ${skill} skill and follow it.` + (brief ? `\n\n${brief}` : "");
       // A command that names a BRANCH says which one, and carries whatever the
       // user clicked as the branch's subject; everything else passes the user's

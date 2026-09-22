@@ -59,6 +59,8 @@ export type {
   TurnAnchorNode,
   TurnAim,
   TurnAimIntent,
+  PrototypeAnnotation,
+  PrototypeFeedback,
   WorkspaceRef,
   McpConfig,
   CollabConfig,
@@ -90,6 +92,9 @@ export {
   isTurnAttachmentsOrAbsent,
   isTurnAim,
   TURN_AIM_LIMITS,
+  isPrototypeFeedback,
+  PROTOTYPE_FEEDBACK_LIMITS,
+  PROTOTYPE_FLOW_SKILL,
   isCollabConfig,
 } from "./contracts/sse-events.js";
 export type {
