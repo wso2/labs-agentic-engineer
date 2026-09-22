@@ -57,7 +57,6 @@ export type ErrCode =
   | "INVALID_YAML"
   | "INVALID_JSON"
   | "SCHEMA_VIOLATION"
-  | "INVALID_DSL"
   | "INVALID_PROTOTYPE"
   | "PROTOTYPE_COMPONENT_MISMATCH"
   | "INVALID_OPENAPI"
@@ -482,7 +481,7 @@ export interface WorkspaceRef {
  *              the few that name a branch of one instead resolve in the agents
  *              service, which is where wording lives. `references` names the
  *              attached reference documents exactly as on `start` — a flow
- *              generates artifacts (wireframes above all) that must be
+ *              generates artifacts (prototypes above all) that must be
  *              grounded in an attached sketch or spec.
  *              `prototypeFeedback` (#817) rides only the `prototype` flow: a
  *              reviewer's batch of requests on one prototype file, which turns

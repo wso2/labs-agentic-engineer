@@ -131,31 +131,6 @@ test("streams a .cell addFile incrementally, line-by-line, converging to full co
   assert.deepEqual(writer.rollbackDangling(), []);
 });
 
-const DSL_PATH = "specs/design/components/shop-webapp/wireframes.dsl";
-const DSL =
-  'screen Catalog "Shoppers browse products"\n  navbar "Shop"\n  heading "Browse"\n  button "View cart" primary -> Cart\n\nscreen Cart "Review and check out"\n  heading "Your cart"\n';
-
-test("streams a wireframes .dsl addFile incrementally, line-by-line, converging to full content", async () => {
-  const peer = new FakePeer();
-  const writer = new StreamingDocWriter(peer, new FileBundle({}));
-
-  await feed(writer, addFileParts("c1", DSL_PATH, DSL));
-  writer.observe(toolResult("c1", true, DSL_PATH));
-  await writer.drain();
-
-  assert.ok(peer.sets.length >= 2, `expected incremental writes, got ${peer.sets.length}`);
-  assert.ok(peer.sets.every((s) => s.path === DSL_PATH), "all writes target wireframes.dsl");
-  for (let i = 1; i < peer.sets.length; i++) {
-    assert.ok(
-      peer.sets[i]!.content.startsWith(peer.sets[i - 1]!.content),
-      `write ${i} must extend write ${i - 1}`,
-    );
-  }
-  assert.equal(peer.sets.at(-1)!.content, DSL, "final write is the whole DSL body");
-  assert.deepEqual(peer.deletes, []);
-  assert.deepEqual(writer.rollbackDangling(), []);
-});
-
 const OA_PATH = "specs/design/components/shop-api/openapi.yaml";
 const OA =
   'openapi: 3.0.3\ninfo:\n  title: Shop API\n  version: 1.0.0\npaths:\n  /products:\n    get:\n      summary: List products\n      responses:\n        "200":\n          description: OK\n';

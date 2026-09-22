@@ -129,12 +129,12 @@ func validateDesignBundle(files map[string]string) error {
 	// single definition the agent's write gate uses, so a document that passes
 	// one gate passes the other.
 	//
-	// The rules that read a SIBLING file (a component the cell declares, a
-	// screen the wireframe declares, the operation behind a screen) are
-	// deliberately not run here: the design lineup writes security.json before
-	// those files exist, and a save refused on a file that is not written yet
-	// would be unfixable. The build gate runs the whole list against the tag,
-	// where every file is present by construction.
+	// The rules that read a SIBLING file (a component the cell declares, an
+	// operation in a component's openapi.yaml) are deliberately not run here:
+	// the design lineup writes security.json before those files exist, and a
+	// save refused on a file that is not written yet would be unfixable. The
+	// build gate runs the whole list against the tag, where every file is
+	// present by construction.
 	for _, name := range DependencyNamesIn(files) {
 		key := dependencyDesignKey(name)
 		content, ok := files[key]

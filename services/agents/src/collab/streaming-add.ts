@@ -36,12 +36,11 @@
  *    ProseMirror fragment (~30× the Yjs traffic + rewrites earlier text); line
  *    boundaries are clean.
  *
- * Scope: room-mode addFile for MARKDOWN, `.cell`, `.dsl`, and `openapi.yaml`.
- * `.cell` is the project-level architecture DSL, `.dsl` a component's
- * wireframes, `openapi.yaml` a component's API contract; streaming any of
- * them line-by-line renders its view live as the model writes. Markdown and
- * `.cell` have no content-gate; `.dsl` (INVALID_DSL) and `openapi.yaml`
- * (INVALID_YAML) are gated at execute() — when a write is rejected, the
+ * Scope: room-mode addFile for MARKDOWN, `.cell`, and `openapi.yaml`.
+ * `.cell` is the project-level architecture DSL, `openapi.yaml` a component's
+ * API contract; streaming any of them line-by-line renders its view live as
+ * the model writes. Markdown and `.cell` have no content-gate; `openapi.yaml`
+ * (INVALID_YAML) is gated at execute() — when a write is rejected, the
  * tool-result handler below rolls the optimistic preview back, same as any
  * rejected op. Other / already-existing paths are skipped (execute owns
  * them). Non-finalized streams (truncation / reject) are rolled back.
@@ -55,15 +54,14 @@ import { ADD_FILE } from "../agents/main/tools/files.js";
 
 /**
  * Paths safe to optimistically stream: markdown (Y.XmlFragment) or Y.Text
- * artifacts — `.cell` architecture DSL, `.dsl` wireframes, `openapi.yaml`.
- * YAML is line-oriented like the DSLs, so line-boundary prefixes parse and
+ * artifacts — `.cell` architecture DSL, `openapi.yaml`.
+ * YAML is line-oriented like the cell DSL, so line-boundary prefixes parse and
  * the OpenAPI view accumulates endpoints as the model writes them.
  */
 function isStreamablePath(path: string): boolean {
   return (
     isMarkdownPath(path) ||
     path.endsWith('.cell') ||
-    path.endsWith('.dsl') ||
     path.endsWith('openapi.yaml')
   );
 }

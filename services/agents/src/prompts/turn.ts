@@ -206,7 +206,7 @@ const FLOW_SUPPORTING_SKILLS: Record<string, string[]> = {
   // know a given org's catalog.
   //
   // A web-application's screens are not drawn here: `/prototype` writes its
-  // prototype.json after the design, so no wireframes skill rides this flow.
+  // prototype.json after the design.
   design: ["grilling", "cell-design", "architecture", "security-design", "openapi-conventions", "validation-criteria"],
   // `/prototype` composes screens from the house design system's components,
   // so the design-system skill rides with it: the registry says which nodes

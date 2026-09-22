@@ -42,7 +42,6 @@ import { parse as parseYaml } from "yaml";
 import { checkComponentDesign } from "./component-design-schema.js";
 import { checkSecurityDesign } from "./security-design-schema.js";
 import { checkOpenapiSpec } from "./openapi-spec.js";
-import { checkWireframeLayout } from "./wireframe-layout.js";
 import { checkDesignDiagram } from "./design-diagrams.js";
 import { checkComponentDependencies } from "./component-dependencies.js";
 import { checkDependencyDesign, preservePlatformFields } from "./dependency-design-schema.js";
@@ -211,9 +210,9 @@ export class FileBundle {
   /**
    * Apply `content` to `path` through the write-gate ladder: YAML reparse, then
    * each artifact-specific gate that claims the path (component `design.json`
-   * schema, `security.json` schema, `wireframes.dsl` syntax, a component's
-   * `prototype.json` model, `openapi.yaml` structure, the design diagrams'
-   * shape and participants). The first
+   * schema, `security.json` schema, a component's `prototype.json` model,
+   * `openapi.yaml` structure, the design diagrams' shape and participants).
+   * The first
    * problem aborts with its own code and NO write, leaving the bundle
    * byte-for-byte unchanged — the safe in-memory contract. Every gate is a pure
    * (path, content) => problem | null function, so a new artifact kind is one
@@ -259,13 +258,6 @@ export class FileBundle {
     const securityProblem = checkSecurityDesign(path, content, this);
     if (securityProblem) {
       return err(path, op, securityProblem.code, securityProblem.message);
-    }
-    // Wireframes .dsl is layout-gated the same way: out-of-frame or
-    // partially-overlapping elements abort the write with the coordinates the
-    // model needs to fix them (the compiler would render them verbatim).
-    const layoutProblem = checkWireframeLayout(path, content);
-    if (layoutProblem) {
-      return err(path, op, layoutProblem.code, layoutProblem.message);
     }
     // A web-application's prototype.json is model-gated: the shape, the
     // version, unique ids, resolvable references, and the component its

@@ -10,9 +10,8 @@ files** — accept/edit/save is a separate concern.
 The client-side consumption surface — wire types (SSE events, `OpResult`,
 `*Input`, `Change`, `TurnRequest`), the `FileBundle` fold (`applyToolCall`,
 `toChange`) with its per-artifact write gates (`design.json` schema,
-`wireframes.dsl` syntax, `openapi.yaml` structure, `prototype.json` model — so validating a spec costs no
-round trip), the SSE reader
-(`streamTurn`), and the published JSON Schema — lives in the workspace package
+`openapi.yaml` structure, `prototype.json` model — so validating a spec costs
+no round trip), the SSE reader (`streamTurn`), and the published JSON Schema — lives in the workspace package
 **`@aep/agent-stream`** (moved there so the console/playground fold one
 definition). This service imports it; `tool.ts`'s Zod schemas are drift-guarded
 against the wire `*Input` types there. See `design/`
