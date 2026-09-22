@@ -1,0 +1,707 @@
+{
+  "schemaVersion": 1,
+  "component": "integration-console",
+  "name": "Integration monitor",
+  "defaultScreenId": "screen.overview",
+  "roles": [
+    {
+      "id": "operator",
+      "name": "Integration operator"
+    },
+    {
+      "id": "integration-admin",
+      "name": "Integration administrator"
+    }
+  ],
+  "states": [
+    {
+      "id": "state.healthy",
+      "name": "Healthy"
+    },
+    {
+      "id": "state.delayed",
+      "name": "Delayed"
+    },
+    {
+      "id": "state.failed",
+      "name": "Failed"
+    },
+    {
+      "id": "state.empty",
+      "name": "No runs yet"
+    }
+  ],
+  "flows": [
+    {
+      "id": "flow.investigate",
+      "name": "Investigate a failed sync",
+      "roleId": "operator",
+      "screenIds": [
+        "screen.overview",
+        "screen.run"
+      ]
+    },
+    {
+      "id": "flow.replay",
+      "name": "Replay a delayed message",
+      "roleId": "operator",
+      "screenIds": [
+        "screen.overview",
+        "screen.run"
+      ]
+    },
+    {
+      "id": "flow.connections",
+      "name": "Review a connection",
+      "roleId": "integration-admin",
+      "screenIds": [
+        "screen.connections",
+        "screen.connection"
+      ]
+    }
+  ],
+  "screens": [
+    {
+      "id": "screen.overview",
+      "name": "Overview",
+      "roleIds": [
+        "operator",
+        "integration-admin"
+      ],
+      "navigationId": "nav.top",
+      "content": [
+        {
+          "kind": "heading",
+          "id": "heading.overview",
+          "text": "Integration health"
+        },
+        {
+          "kind": "alert",
+          "id": "alert.healthy",
+          "tone": "success",
+          "text": "All 6 connections synced within their schedule.",
+          "showIn": [
+            "state.healthy"
+          ]
+        },
+        {
+          "kind": "alert",
+          "id": "alert.delayed",
+          "tone": "warning",
+          "title": "Salesforce → ERP is behind",
+          "text": "The last run started 42 minutes late; 318 messages are queued.",
+          "showIn": [
+            "state.delayed"
+          ]
+        },
+        {
+          "kind": "alert",
+          "id": "alert.failed",
+          "tone": "error",
+          "title": "Order sync failed",
+          "text": "ERP returned 503 for 3 consecutive runs. No orders have synced since 06:00.",
+          "showIn": [
+            "state.failed"
+          ]
+        },
+        {
+          "kind": "grid",
+          "id": "grid.health",
+          "columns": 4,
+          "content": [
+            {
+              "kind": "stat",
+              "id": "stat.connections",
+              "label": "Connections",
+              "value": "6"
+            },
+            {
+              "kind": "stat",
+              "id": "stat.runs",
+              "label": "Runs today",
+              "value": "142"
+            },
+            {
+              "kind": "stat",
+              "id": "stat.failures",
+              "label": "Failures today",
+              "value": "3"
+            },
+            {
+              "kind": "stat",
+              "id": "stat.backlog",
+              "label": "Queued messages",
+              "value": "318"
+            }
+          ]
+        },
+        {
+          "kind": "filters",
+          "id": "filters.runs",
+          "fields": [
+            {
+              "id": "filter.connection",
+              "label": "Connection",
+              "type": "select",
+              "value": "All connections",
+              "options": [
+                "All connections",
+                "Salesforce → ERP",
+                "ERP → Warehouse"
+              ]
+            },
+            {
+              "id": "filter.outcome",
+              "label": "Outcome",
+              "type": "select",
+              "value": "Any",
+              "options": [
+                "Any",
+                "Succeeded",
+                "Failed",
+                "Delayed"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "table",
+          "id": "table.runs",
+          "title": "Recent runs",
+          "columns": [
+            "Run",
+            "Connection",
+            "Started",
+            "Duration",
+            "Outcome"
+          ],
+          "rows": [
+            {
+              "id": "run.8812",
+              "values": {
+                "Run": "#8812",
+                "Connection": "Salesforce → ERP",
+                "Started": "09:40",
+                "Duration": "—",
+                "Outcome": "Failed"
+              },
+              "tone": "error"
+            },
+            {
+              "id": "run.8811",
+              "values": {
+                "Run": "#8811",
+                "Connection": "ERP → Warehouse",
+                "Started": "09:30",
+                "Duration": "48s",
+                "Outcome": "Succeeded"
+              },
+              "tone": "success"
+            },
+            {
+              "id": "run.8810",
+              "values": {
+                "Run": "#8810",
+                "Connection": "Salesforce → ERP",
+                "Started": "09:20",
+                "Duration": "6m 12s",
+                "Outcome": "Delayed"
+              },
+              "tone": "warning"
+            }
+          ],
+          "onRow": {
+            "kind": "navigate",
+            "screenId": "screen.run"
+          },
+          "showIn": [
+            "state.healthy",
+            "state.delayed",
+            "state.failed"
+          ]
+        },
+        {
+          "kind": "button",
+          "id": "btn.latest-failure",
+          "label": "Show the latest failure",
+          "action": {
+            "kind": "select-row",
+            "tableId": "table.runs",
+            "rowId": "run.8812"
+          },
+          "showIn": [
+            "state.failed"
+          ]
+        },
+        {
+          "kind": "empty-state",
+          "id": "empty.runs",
+          "title": "No runs yet",
+          "text": "Runs appear here once a connection's first schedule fires.",
+          "action": {
+            "id": "btn.empty.connections",
+            "label": "Review connections",
+            "action": {
+              "kind": "navigate",
+              "screenId": "screen.connections"
+            }
+          },
+          "showIn": [
+            "state.empty"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "screen.run",
+      "name": "Run detail",
+      "roleIds": [
+        "operator",
+        "integration-admin"
+      ],
+      "navigationId": "nav.top",
+      "content": [
+        {
+          "kind": "breadcrumbs",
+          "id": "crumbs.run",
+          "items": [
+            {
+              "id": "crumb.overview",
+              "label": "Overview",
+              "action": {
+                "kind": "navigate",
+                "screenId": "screen.overview"
+              }
+            },
+            {
+              "id": "crumb.run",
+              "label": "Run #8812"
+            }
+          ]
+        },
+        {
+          "kind": "stack",
+          "id": "stack.run-title",
+          "direction": "row",
+          "content": [
+            {
+              "kind": "heading",
+              "id": "heading.run",
+              "text": "Run #8812 · Salesforce → ERP",
+              "actions": [
+                {
+                  "id": "btn.replay",
+                  "label": "Replay run",
+                  "emphasis": "primary",
+                  "action": {
+                    "kind": "show-dialog",
+                    "dialogId": "dialog.replay"
+                  }
+                },
+                {
+                  "id": "btn.payload",
+                  "label": "View payload",
+                  "action": {
+                    "kind": "show-drawer",
+                    "drawerId": "drawer.payload"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "badge",
+              "id": "badge.run.failed",
+              "label": "Failed",
+              "tone": "error",
+              "showIn": [
+                "state.failed"
+              ]
+            },
+            {
+              "kind": "badge",
+              "id": "badge.run.delayed",
+              "label": "Delayed",
+              "tone": "warning",
+              "showIn": [
+                "state.delayed"
+              ]
+            },
+            {
+              "kind": "badge",
+              "id": "badge.run.healthy",
+              "label": "Succeeded",
+              "tone": "success",
+              "showIn": [
+                "state.healthy"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "tabs",
+          "id": "tabs.run",
+          "tabs": [
+            {
+              "id": "tab.run.summary",
+              "label": "Summary",
+              "content": [
+                {
+                  "kind": "split",
+                  "id": "split.run",
+                  "ratio": 8,
+                  "left": [
+                    {
+                      "kind": "detail",
+                      "id": "detail.run",
+                      "title": "Run",
+                      "fields": [
+                        {
+                          "label": "Connection",
+                          "value": "Salesforce → ERP"
+                        },
+                        {
+                          "label": "Trigger",
+                          "value": "Schedule, every 10 minutes"
+                        },
+                        {
+                          "label": "Started",
+                          "value": "Sep 23, 09:40"
+                        },
+                        {
+                          "label": "Messages",
+                          "value": "112 read, 0 written"
+                        }
+                      ]
+                    }
+                  ],
+                  "right": [
+                    {
+                      "kind": "text",
+                      "id": "text.run.error",
+                      "text": "ERP responded 503 Service Unavailable on POST /orders.",
+                      "showIn": [
+                        "state.failed"
+                      ]
+                    },
+                    {
+                      "kind": "link",
+                      "id": "link.run.log",
+                      "label": "Open the run log",
+                      "action": {
+                        "kind": "set-tab",
+                        "tabsId": "tabs.run",
+                        "tabId": "tab.run.log"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "tab.run.log",
+              "label": "Log",
+              "content": [
+                {
+                  "kind": "timeline",
+                  "id": "timeline.run",
+                  "entries": [
+                    {
+                      "id": "log.start",
+                      "when": "09:40:00",
+                      "who": "Scheduler",
+                      "text": "Run started"
+                    },
+                    {
+                      "id": "log.read",
+                      "when": "09:40:03",
+                      "who": "Salesforce",
+                      "text": "Read 112 changed orders"
+                    },
+                    {
+                      "id": "log.retry",
+                      "when": "09:40:09",
+                      "who": "ERP",
+                      "text": "503 Service Unavailable, retrying in 30s"
+                    },
+                    {
+                      "id": "log.fail",
+                      "when": "09:41:40",
+                      "who": "ERP",
+                      "text": "503 Service Unavailable after 3 retries; run failed"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "overlays": [
+        {
+          "kind": "dialog",
+          "id": "dialog.replay",
+          "title": "Replay run #8812?",
+          "content": [
+            {
+              "kind": "text",
+              "id": "text.replay",
+              "text": "The 112 orders would be sent to ERP again. This preview sends nothing."
+            }
+          ],
+          "actions": [
+            {
+              "id": "btn.replay.cancel",
+              "label": "Cancel",
+              "action": {
+                "kind": "close-overlay"
+              }
+            },
+            {
+              "id": "btn.replay.confirm",
+              "label": "Replay",
+              "emphasis": "primary",
+              "action": {
+                "kind": "close-overlay"
+              }
+            }
+          ]
+        },
+        {
+          "kind": "drawer",
+          "id": "drawer.payload",
+          "title": "First failed message",
+          "content": [
+            {
+              "kind": "detail",
+              "id": "detail.payload",
+              "fields": [
+                {
+                  "label": "Order",
+                  "value": "SO-20931"
+                },
+                {
+                  "label": "Account",
+                  "value": "Northwind Traders"
+                },
+                {
+                  "label": "Total",
+                  "value": "$4,210.00"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "screen.connections",
+      "name": "Connections",
+      "roleIds": [
+        "integration-admin"
+      ],
+      "navigationId": "nav.top",
+      "content": [
+        {
+          "kind": "heading",
+          "id": "heading.connections",
+          "text": "Connections"
+        },
+        {
+          "kind": "task-queue",
+          "id": "queue.attention",
+          "title": "Needs attention",
+          "columns": [
+            "Connection",
+            "Issue",
+            "Since"
+          ],
+          "rows": [
+            {
+              "id": "attention.sf-erp",
+              "values": {
+                "Connection": "Salesforce → ERP",
+                "Issue": "Target unavailable",
+                "Since": "06:00"
+              },
+              "tone": "error"
+            },
+            {
+              "id": "attention.erp-wh",
+              "values": {
+                "Connection": "ERP → Warehouse",
+                "Issue": "Credential expires in 5 days",
+                "Since": "Sep 20"
+              },
+              "tone": "warning"
+            }
+          ],
+          "onRow": {
+            "kind": "navigate",
+            "screenId": "screen.connection"
+          },
+          "showIn": [
+            "state.delayed",
+            "state.failed"
+          ]
+        },
+        {
+          "kind": "table",
+          "id": "table.connections",
+          "title": "All connections",
+          "columns": [
+            "Connection",
+            "Schedule",
+            "Last run",
+            "Status"
+          ],
+          "rows": [
+            {
+              "id": "conn.sf-erp",
+              "values": {
+                "Connection": "Salesforce → ERP",
+                "Schedule": "Every 10 minutes",
+                "Last run": "09:40",
+                "Status": "Failing"
+              },
+              "tone": "error"
+            },
+            {
+              "id": "conn.erp-wh",
+              "values": {
+                "Connection": "ERP → Warehouse",
+                "Schedule": "Every 10 minutes",
+                "Last run": "09:30",
+                "Status": "Healthy"
+              }
+            },
+            {
+              "id": "conn.hr-dir",
+              "values": {
+                "Connection": "HR → Directory",
+                "Schedule": "Hourly",
+                "Last run": "09:00",
+                "Status": "Healthy"
+              }
+            }
+          ],
+          "onRow": {
+            "kind": "navigate",
+            "screenId": "screen.connection"
+          }
+        }
+      ]
+    },
+    {
+      "id": "screen.connection",
+      "name": "Connection detail",
+      "roleIds": [
+        "integration-admin"
+      ],
+      "navigationId": "nav.top",
+      "content": [
+        {
+          "kind": "breadcrumbs",
+          "id": "crumbs.connection",
+          "items": [
+            {
+              "id": "crumb.connections",
+              "label": "Connections",
+              "action": {
+                "kind": "navigate",
+                "screenId": "screen.connections"
+              }
+            },
+            {
+              "id": "crumb.connection",
+              "label": "Salesforce → ERP"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "id": "heading.connection",
+          "text": "Salesforce → ERP"
+        },
+        {
+          "kind": "detail",
+          "id": "detail.connection",
+          "title": "Configuration",
+          "fields": [
+            {
+              "label": "Source",
+              "value": "Salesforce · Orders"
+            },
+            {
+              "label": "Target",
+              "value": "ERP · POST /orders"
+            },
+            {
+              "label": "Schedule",
+              "value": "Every 10 minutes"
+            },
+            {
+              "label": "Retry policy",
+              "value": "3 attempts, 30s apart"
+            }
+          ]
+        },
+        {
+          "kind": "form",
+          "id": "form.connection",
+          "title": "Alerting",
+          "fields": [
+            {
+              "id": "field.alert-email",
+              "label": "Alert email",
+              "value": "integrations@example.com"
+            },
+            {
+              "id": "field.alert-after",
+              "label": "Alert after consecutive failures",
+              "type": "number",
+              "value": "3"
+            }
+          ],
+          "actions": [
+            {
+              "id": "btn.alert.save",
+              "label": "Save and return",
+              "emphasis": "primary",
+              "action": {
+                "kind": "navigate",
+                "screenId": "screen.connections"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "navigation": [
+    {
+      "kind": "top-nav",
+      "id": "nav.top",
+      "items": [
+        {
+          "id": "nav.overview",
+          "label": "Overview",
+          "action": {
+            "kind": "navigate",
+            "screenId": "screen.overview"
+          }
+        },
+        {
+          "id": "nav.connections",
+          "label": "Connections",
+          "action": {
+            "kind": "navigate",
+            "screenId": "screen.connections"
+          },
+          "roleIds": [
+            "integration-admin"
+          ]
+        }
+      ]
+    }
+  ]
+}

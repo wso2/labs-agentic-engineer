@@ -1,0 +1,321 @@
+{
+  "description": "Parity cases for the prototype validator. The TypeScript tests (test/schema.test.ts) and the Go tests (services/aep-api/internal/platform/prototypespec) both apply each case's patch to `base` and assert the same codes and JSON paths. An expected issue without a `path` asserts the code only: structural (SCHEMA_VIOLATION) findings come from two different schema engines and are compared by code.",
+  "base": {
+    "schemaVersion": 1,
+    "component": "approvals-portal",
+    "name": "Expense approvals",
+    "defaultScreenId": "screen.queue",
+    "roles": [{ "id": "approver", "name": "Approver" }],
+    "states": [
+      { "id": "state.default", "name": "Default" },
+      { "id": "state.invalid", "name": "Validation errors" }
+    ],
+    "flows": [
+      { "id": "flow.approve", "name": "Approve an expense", "roleId": "approver", "screenIds": ["screen.queue", "screen.detail"] }
+    ],
+    "screens": [
+      {
+        "id": "screen.queue",
+        "name": "Approval queue",
+        "roleIds": ["approver"],
+        "navigationId": "nav.main",
+        "content": [
+          {
+            "kind": "tabs",
+            "id": "tabs.queue",
+            "tabs": [
+              {
+                "id": "tab.open",
+                "label": "Open",
+                "content": [
+                  {
+                    "kind": "task-queue",
+                    "id": "queue.expenses",
+                    "title": "Expenses",
+                    "columns": ["Employee", "Amount"],
+                    "rows": [{ "id": "expense.1042", "values": { "Employee": "Maya Fernando", "Amount": "$148.20" } }],
+                    "onRow": { "kind": "navigate", "screenId": "screen.detail" }
+                  }
+                ]
+              },
+              { "id": "tab.decided", "label": "Decided", "content": [] }
+            ]
+          },
+          {
+            "kind": "button",
+            "id": "btn.decided",
+            "label": "Show decided",
+            "action": { "kind": "set-tab", "tabsId": "tabs.queue", "tabId": "tab.decided" }
+          },
+          {
+            "kind": "link",
+            "id": "link.oldest",
+            "label": "Oldest claim",
+            "action": { "kind": "select-row", "tableId": "queue.expenses", "rowId": "expense.1042" }
+          }
+        ]
+      },
+      {
+        "id": "screen.detail",
+        "name": "Expense detail",
+        "roleIds": ["approver"],
+        "content": [
+          {
+            "kind": "form",
+            "id": "form.note",
+            "fields": [{ "id": "field.note", "label": "Note", "error": "A note is required", "errorIn": ["state.invalid"] }],
+            "actions": []
+          },
+          {
+            "kind": "approval-panel",
+            "id": "approval.expense",
+            "title": "Decision",
+            "summary": "Within policy.",
+            "actions": [
+              { "id": "btn.approve", "label": "Approve", "emphasis": "primary", "action": { "kind": "show-dialog", "dialogId": "dialog.approve" } }
+            ],
+            "showIn": ["state.default"]
+          }
+        ],
+        "overlays": [
+          {
+            "kind": "dialog",
+            "id": "dialog.approve",
+            "title": "Approve expense?",
+            "content": [{ "kind": "text", "id": "text.notice", "text": "This preview changes nothing." }],
+            "actions": [{ "id": "btn.close", "label": "Close", "action": { "kind": "close-overlay" } }]
+          }
+        ]
+      }
+    ],
+    "navigation": [
+      {
+        "kind": "side-nav",
+        "id": "nav.main",
+        "items": [{ "id": "nav.queue", "label": "Queue", "action": { "kind": "navigate", "screenId": "screen.queue" } }]
+      }
+    ]
+  },
+  "cases": [
+    { "name": "the base document is valid", "patch": [], "issues": [] },
+    { "name": "the base document is valid for its own component", "component": "approvals-portal", "patch": [], "issues": [] },
+
+    {
+      "name": "a newer schema version is unsupported",
+      "patch": [{ "op": "set", "path": ["schemaVersion"], "value": 2 }],
+      "issues": [{ "code": "UNSUPPORTED_VERSION", "path": "schemaVersion" }]
+    },
+    {
+      "name": "a version spelled as a string is unsupported",
+      "patch": [{ "op": "set", "path": ["schemaVersion"], "value": "1" }],
+      "issues": [{ "code": "UNSUPPORTED_VERSION", "path": "schemaVersion" }]
+    },
+    {
+      "name": "an unsupported version is reported alone, before the shape",
+      "patch": [
+        { "op": "set", "path": ["schemaVersion"], "value": 3 },
+        { "op": "remove", "path": ["screens"] }
+      ],
+      "issues": [{ "code": "UNSUPPORTED_VERSION", "path": "schemaVersion" }]
+    },
+
+    {
+      "name": "a missing version is a schema violation",
+      "patch": [{ "op": "remove", "path": ["schemaVersion"] }],
+      "issues": [{ "code": "SCHEMA_VIOLATION" }]
+    },
+    {
+      "name": "a node kind outside the registry is a schema violation",
+      "patch": [{ "op": "set", "path": ["screens", 0, "content", 1, "kind"], "value": "carousel" }],
+      "issues": [{ "code": "SCHEMA_VIOLATION" }]
+    },
+    {
+      "name": "an action outside the registry is a schema violation",
+      "patch": [{ "op": "set", "path": ["screens", 0, "content", 1, "action"], "value": { "kind": "submit", "url": "/api/expenses" } }],
+      "issues": [{ "code": "SCHEMA_VIOLATION" }]
+    },
+    {
+      "name": "an unknown property is a schema violation",
+      "patch": [{ "op": "set", "path": ["screens", 1, "overlays", 0, "content", 0, "html"], "value": "<b>hi</b>" }],
+      "issues": [{ "code": "SCHEMA_VIOLATION" }]
+    },
+    {
+      "name": "a missing required property is a schema violation",
+      "patch": [{ "op": "remove", "path": ["screens", 1, "name"] }],
+      "issues": [{ "code": "SCHEMA_VIOLATION" }]
+    },
+    {
+      "name": "a row value must be text",
+      "patch": [{ "op": "set", "path": ["screens", 0, "content", 0, "tabs", 0, "content", 0, "rows", 0, "values", "Amount"], "value": 148.2 }],
+      "issues": [{ "code": "SCHEMA_VIOLATION" }]
+    },
+    {
+      "name": "a grid has at least one column",
+      "patch": [{ "op": "set", "path": ["screens", 1, "overlays", 0, "content", 0], "value": { "kind": "grid", "id": "grid.empty", "columns": 0, "content": [] } }],
+      "issues": [{ "code": "SCHEMA_VIOLATION" }]
+    },
+    {
+      "name": "a structural failure skips the reference pass",
+      "patch": [
+        { "op": "remove", "path": ["screens", 1, "name"] },
+        { "op": "set", "path": ["defaultScreenId"], "value": "screen.ghost" }
+      ],
+      "issues": [{ "code": "SCHEMA_VIOLATION" }]
+    },
+
+    {
+      "name": "two nodes share an id",
+      "patch": [{ "op": "set", "path": ["screens", 1, "content", 0, "id"], "value": "btn.decided" }],
+      "issues": [{ "code": "DUPLICATE_ID", "path": "screens[1].content[0].id" }]
+    },
+    {
+      "name": "ids share one namespace across kinds",
+      "patch": [{ "op": "set", "path": ["roles", 0, "id"], "value": "screen.queue" }],
+      "issues": [{ "code": "DUPLICATE_ID", "path": "screens[0].id" }]
+    },
+    {
+      "name": "rows, fields, tabs, and overlay buttons are identities too",
+      "patch": [
+        { "op": "set", "path": ["screens", 0, "content", 0, "tabs", 1, "id"], "value": "expense.1042" },
+        { "op": "set", "path": ["screens", 1, "overlays", 0, "actions", 0, "id"], "value": "field.note" }
+      ],
+      "issues": [
+        { "code": "DUPLICATE_ID", "path": "screens[0].content[0].tabs[1].id" },
+        { "code": "DUPLICATE_ID", "path": "screens[1].overlays[0].actions[0].id" }
+      ]
+    },
+    {
+      "name": "duplicate ids are rejected before any target resolves",
+      "patch": [
+        { "op": "set", "path": ["states", 1, "id"], "value": "state.default" },
+        { "op": "set", "path": ["flows", 0, "roleId"], "value": "ghost" }
+      ],
+      "issues": [{ "code": "DUPLICATE_ID", "path": "states[1].id" }]
+    },
+
+    {
+      "name": "the default screen must exist",
+      "patch": [{ "op": "set", "path": ["defaultScreenId"], "value": "screen.ghost" }],
+      "issues": [{ "code": "UNKNOWN_REFERENCE", "path": "defaultScreenId" }]
+    },
+    {
+      "name": "a flow's role must be declared",
+      "patch": [{ "op": "set", "path": ["flows", 0, "roleId"], "value": "auditor" }],
+      "issues": [{ "code": "UNKNOWN_REFERENCE", "path": "flows[0].roleId" }]
+    },
+    {
+      "name": "a flow's screens must exist",
+      "patch": [{ "op": "set", "path": ["flows", 0, "screenIds", 1], "value": "screen.ghost" }],
+      "issues": [{ "code": "UNKNOWN_REFERENCE", "path": "flows[0].screenIds[1]" }]
+    },
+    {
+      "name": "a flow screen must be a screen, not another kind of id",
+      "patch": [{ "op": "set", "path": ["flows", 0, "screenIds", 1], "value": "tabs.queue" }],
+      "issues": [{ "code": "UNKNOWN_REFERENCE", "path": "flows[0].screenIds[1]" }]
+    },
+    {
+      "name": "a screen's roles must be declared",
+      "patch": [{ "op": "set", "path": ["screens", 0, "roleIds", 0], "value": "auditor" }],
+      "issues": [{ "code": "UNKNOWN_REFERENCE", "path": "screens[0].roleIds[0]" }]
+    },
+    {
+      "name": "a screen's navigation must exist",
+      "patch": [{ "op": "set", "path": ["screens", 1, "navigationId"], "value": "nav.ghost" }],
+      "issues": [{ "code": "UNKNOWN_REFERENCE", "path": "screens[1].navigationId" }]
+    },
+    {
+      "name": "a navigation target must exist",
+      "patch": [{ "op": "set", "path": ["navigation", 0, "items", 0, "action", "screenId"], "value": "screen.ghost" }],
+      "issues": [{ "code": "UNKNOWN_REFERENCE", "path": "navigation[0].items[0].action.screenId" }]
+    },
+    {
+      "name": "a navigation item's roles must be declared",
+      "patch": [{ "op": "set", "path": ["navigation", 0, "items", 0, "roleIds"], "value": ["auditor"] }],
+      "issues": [{ "code": "UNKNOWN_REFERENCE", "path": "navigation[0].items[0].roleIds[0]" }]
+    },
+    {
+      "name": "a navigation item cannot open a dialog its screens do not own",
+      "patch": [{ "op": "set", "path": ["navigation", 0, "items", 0, "action"], "value": { "kind": "show-dialog", "dialogId": "dialog.approve" } }],
+      "issues": [{ "code": "UNKNOWN_REFERENCE", "path": "navigation[0].items[0].action.dialogId" }]
+    },
+    {
+      "name": "a row action's target screen must exist",
+      "patch": [{ "op": "set", "path": ["screens", 0, "content", 0, "tabs", 0, "content", 0, "onRow", "screenId"], "value": "screen.ghost" }],
+      "issues": [{ "code": "UNKNOWN_REFERENCE", "path": "screens[0].content[0].tabs[0].content[0].onRow.screenId" }]
+    },
+    {
+      "name": "a dialog must belong to the screen that opens it",
+      "patch": [{ "op": "set", "path": ["screens", 0, "content", 1, "action"], "value": { "kind": "show-dialog", "dialogId": "dialog.approve" } }],
+      "issues": [{ "code": "UNKNOWN_REFERENCE", "path": "screens[0].content[1].action.dialogId" }]
+    },
+    {
+      "name": "a drawer target must be a drawer",
+      "patch": [{ "op": "set", "path": ["screens", 1, "content", 1, "actions", 0, "action"], "value": { "kind": "show-drawer", "drawerId": "dialog.approve" } }],
+      "issues": [{ "code": "UNKNOWN_REFERENCE", "path": "screens[1].content[1].actions[0].action.drawerId" }]
+    },
+    {
+      "name": "a tab target must be a tab of the named tabs",
+      "patch": [{ "op": "set", "path": ["screens", 0, "content", 1, "action", "tabId"], "value": "tab.archived" }],
+      "issues": [{ "code": "UNKNOWN_REFERENCE", "path": "screens[0].content[1].action.tabId" }]
+    },
+    {
+      "name": "a set-tab action must name a tabs node",
+      "patch": [{ "op": "set", "path": ["screens", 0, "content", 1, "action", "tabsId"], "value": "queue.expenses" }],
+      "issues": [{ "code": "UNKNOWN_REFERENCE", "path": "screens[0].content[1].action.tabsId" }]
+    },
+    {
+      "name": "a set-tab action must stay on its own screen",
+      "patch": [{ "op": "set", "path": ["screens", 1, "overlays", 0, "actions", 0, "action"], "value": { "kind": "set-tab", "tabsId": "tabs.queue", "tabId": "tab.open" } }],
+      "issues": [{ "code": "UNKNOWN_REFERENCE", "path": "screens[1].overlays[0].actions[0].action.tabsId" }]
+    },
+    {
+      "name": "a set-step action must name a stepper",
+      "patch": [{ "op": "set", "path": ["screens", 0, "content", 1, "action"], "value": { "kind": "set-step", "stepperId": "tabs.queue", "stepId": "tab.open" } }],
+      "issues": [{ "code": "UNKNOWN_REFERENCE", "path": "screens[0].content[1].action.stepperId" }]
+    },
+    {
+      "name": "a selected row must be a row of the named table",
+      "patch": [{ "op": "set", "path": ["screens", 0, "content", 2, "action", "rowId"], "value": "expense.9999" }],
+      "issues": [{ "code": "UNKNOWN_REFERENCE", "path": "screens[0].content[2].action.rowId" }]
+    },
+    {
+      "name": "a display state named by showIn must be declared",
+      "patch": [{ "op": "set", "path": ["screens", 1, "content", 1, "showIn", 0], "value": "state.failed" }],
+      "issues": [{ "code": "UNKNOWN_REFERENCE", "path": "screens[1].content[1].showIn[0]" }]
+    },
+    {
+      "name": "a display state named by errorIn must be declared",
+      "patch": [{ "op": "set", "path": ["screens", 1, "content", 0, "fields", 0, "errorIn", 0], "value": "state.failed" }],
+      "issues": [{ "code": "UNKNOWN_REFERENCE", "path": "screens[1].content[0].fields[0].errorIn[0]" }]
+    },
+    {
+      "name": "every dangling reference is reported, in document order",
+      "patch": [
+        { "op": "set", "path": ["navigation", 0, "items", 0, "action", "screenId"], "value": "screen.ghost" },
+        { "op": "set", "path": ["flows", 0, "roleId"], "value": "auditor" },
+        { "op": "set", "path": ["defaultScreenId"], "value": "screen.ghost" }
+      ],
+      "issues": [
+        { "code": "UNKNOWN_REFERENCE", "path": "defaultScreenId" },
+        { "code": "UNKNOWN_REFERENCE", "path": "flows[0].roleId" },
+        { "code": "UNKNOWN_REFERENCE", "path": "navigation[0].items[0].action.screenId" }
+      ]
+    },
+
+    {
+      "name": "the component must match the directory it is written to",
+      "component": "customer-portal",
+      "patch": [],
+      "issues": [{ "code": "PROTOTYPE_COMPONENT_MISMATCH", "path": "component" }]
+    },
+    {
+      "name": "a mismatched component is reported with the references it breaks",
+      "component": "customer-portal",
+      "patch": [{ "op": "set", "path": ["defaultScreenId"], "value": "screen.ghost" }],
+      "issues": [
+        { "code": "PROTOTYPE_COMPONENT_MISMATCH", "path": "component" },
+        { "code": "UNKNOWN_REFERENCE", "path": "defaultScreenId" }
+      ]
+    }
+  ]
+}
