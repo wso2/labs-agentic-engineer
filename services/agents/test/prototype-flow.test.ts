@@ -25,7 +25,10 @@
  * agent (an audience refusal would drop one silently).
  *
  * What the BFF does with the landed file — commit it, serve it through
- * read-file with its blob SHA — is the Go rig's (files_component_test.go).
+ * read-file with its blob SHA — is the Go rig's half of the same scenario:
+ * services/aep-api/internal/spec/files_prototype_component_test.go
+ * (TestReadFile_PrototypeAtComponentPath_ReturnsBodyAndSHA), over the same
+ * shared fixture.
  */
 
 import { test } from "node:test";

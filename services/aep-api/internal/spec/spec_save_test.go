@@ -159,6 +159,42 @@ func TestSaveSpec_GateDesignInvalid(t *testing.T) {
 	}
 }
 
+// An invalid prototype.json at a component slot (#815) is refused by the
+// whole-spec gate over real git, one row per finding at its repo path, and
+// nothing is tagged (#819's "invalid save is refused" proof).
+func TestSaveSpec_GateRefusesAnInvalidPrototype(t *testing.T) {
+	if specGateDisabled {
+		t.Skip("whole-spec gate disabled (specGateDisabled)")
+	}
+	t.Parallel()
+	seed := validSpecSeed()
+	seed["specs/design/components/svc/prototype.json"] = lunchWebPrototype(t, func(d map[string]any) {
+		d["component"] = "svc"
+		d["defaultScreenId"] = "screen.ghost"
+		nav := d["navigation"].([]any)[0].(map[string]any)
+		nav["items"].([]any)[0].(map[string]any)["action"].(map[string]any)["screenId"] = "screen.gone"
+	})
+	r := newRig(t, seed)
+
+	_, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{})
+	var se *SpecValidationError
+	if !errors.As(err, &se) {
+		t.Fatalf("err = %v, want *SpecValidationError", err)
+	}
+	var codes []string
+	for _, f := range se.Files {
+		if f.Path == "specs/design/components/svc/prototype.json" {
+			codes = append(codes, f.Code)
+		}
+	}
+	if len(codes) != 2 || codes[0] != "UNKNOWN_REFERENCE" || codes[1] != "UNKNOWN_REFERENCE" {
+		t.Fatalf("prototype rows = %v (all: %+v), want one UNKNOWN_REFERENCE row per dangling reference", codes, se.Files)
+	}
+	if got := r.tags(); len(got) != 0 {
+		t.Errorf("tags = %v, want none (an invalid prototype is never tagged)", got)
+	}
+}
+
 func TestSaveSpec_GateAggregatesRequirementsAndDesign(t *testing.T) {
 	// The gate these assert is switched OFF (specGateDisabled), so it refuses
 	// nothing and every assertion below would fail. Skipped by the SAME constant
