@@ -60,6 +60,12 @@ test("prototype.json is a gated artifact with a reaction for every code its gate
   for (const code of Object.keys(codes)) assert.match(instructions, new RegExp(`\\b${code}\\b`));
 });
 
+test("prototype.json is named among the JSON artifacts an INVALID_JSON refusal can come from", () => {
+  const bullet = instructions.split("\n- ").find((b) => b.startsWith("INVALID_JSON / SCHEMA_VIOLATION"));
+  assert.ok(bullet, "the structured-artifact bullet exists");
+  assert.match(bullet, /components\/<name>\/prototype\.json/);
+});
+
 test("catalog lists name+description, appended at the END (base prefix preserved)", () => {
   const out = buildInstructions(SKILLS);
   assert.ok(out.startsWith(instructions), "base instructions stay the cacheable prefix");
