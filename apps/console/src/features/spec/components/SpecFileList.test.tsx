@@ -40,6 +40,9 @@ const RAIL_INPUT: RailInput = {
   openQuestions: 0,
   planEntries: [],
   planWreckage: false,
+  webApplications: [],
+  prototypes: [],
+  prototypeOutdated: false,
 };
 
 /** The list as `SpecView` hands it over: deduped and sorted by path. */
@@ -63,6 +66,8 @@ function renderList(files: SpecFileEntry[], sections?: RailSection[], onReason =
         files={files}
         selection={null}
         onSelect={() => {}}
+        onPrototypeAction={() => {}}
+        onReviewPrototype={() => {}}
         onRegenerateDesign={() => {}}
         sections={sections ?? railSections(RAIL_INPUT)}
         onReason={onReason}
@@ -88,6 +93,8 @@ describe("SpecFileList — the rail carries state", () => {
           files={files}
           selection={null}
           onSelect={() => {}}
+          onPrototypeAction={() => {}}
+          onReviewPrototype={() => {}}
             onRegenerateDesign={() => {}}
           sections={railSections({ ...RAIL_INPUT, ...over })}
           onReason={onReason}
@@ -195,6 +202,8 @@ describe("SpecFileList — the declared plan", () => {
           files={entries("specs/requirements/prd.md")}
           selection={null}
           onSelect={() => {}}
+          onPrototypeAction={() => {}}
+          onReviewPrototype={() => {}}
           onRegenerateDesign={() => {}}
           sections={railSections({ ...RAIL_INPUT, agentWorking: true, planEntries: plan })}
           plan={plan}
@@ -240,6 +249,8 @@ describe("SpecFileList — the declared plan", () => {
           files={entries("specs/requirements/prd.md")}
           selection={null}
           onSelect={() => {}}
+          onPrototypeAction={() => {}}
+          onReviewPrototype={() => {}}
           onRegenerateDesign={() => {}}
           sections={railSections({ ...RAIL_INPUT, planWreckage: true, planEntries: wreck })}
           plan={wreck}
@@ -336,6 +347,8 @@ describe("SpecFileList — the design reads as its parts (#686)", () => {
           files={designEntries("specs/design/domain-model.md")}
           selection={null}
           onSelect={() => {}}
+          onPrototypeAction={() => {}}
+          onReviewPrototype={() => {}}
           onRegenerateDesign={() => {}}
           sections={railSections({ ...RAIL_INPUT, agentWorking: true, planEntries: plan })}
           plan={plan}
@@ -365,6 +378,8 @@ describe("SpecFileList — a dependency's group", () => {
           )}
           selection={null}
           onSelect={onSelect}
+          onPrototypeAction={() => {}}
+          onReviewPrototype={() => {}}
           onRegenerateDesign={() => {}}
           sections={railSections(RAIL_INPUT)}
           onReason={() => {}}
@@ -404,5 +419,68 @@ describe("SpecFileList — a dependency's group", () => {
       kind: "file",
       path: "specs/design/dependencies/stripe/openapi.yaml",
     });
+  });
+});
+
+// The Prototype stage (#813): between Design and Validation, one Review entry
+// per web-application with a prototype, and the one turn it can start.
+describe("SpecFileList — the prototype section", () => {
+  function renderStage(over: Partial<RailInput>, disabled = false) {
+    const onPrototypeAction = vi.fn();
+    const onReviewPrototype = vi.fn();
+    render(
+      <OxygenUIThemeProvider theme={OxygenTheme}>
+        <SpecFileList
+          files={designEntries("specs/design/design.cell")}
+          selection={null}
+          onSelect={() => {}}
+          onRegenerateDesign={() => {}}
+          regenerateDisabled={disabled}
+          sections={railSections({ ...RAIL_INPUT, webApplications: ["storefront"], ...over })}
+          onReason={() => {}}
+          onPrototypeAction={onPrototypeAction}
+          onReviewPrototype={onReviewPrototype}
+        />
+      </OxygenUIThemeProvider>,
+    );
+    return { onPrototypeAction, onReviewPrototype };
+  }
+
+  it("reads Requirements, Design, Prototype, Validation", () => {
+    renderStage({});
+    const titles = ["Requirements", "Design", "Prototype", "Validation"].map((t) => screen.getByText(t));
+    for (let i = 1; i < titles.length; i++) {
+      expect(titles[i - 1]!.compareDocumentPosition(titles[i]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+  });
+
+  it("is not there without a web-application", () => {
+    renderStage({ webApplications: [] });
+    expect(screen.queryByText("Prototype")).not.toBeInTheDocument();
+  });
+
+  it("Generate prototype fires the generate action", () => {
+    const { onPrototypeAction } = renderStage({});
+    fireEvent.click(screen.getByRole("button", { name: "Generate prototype" }));
+    expect(onPrototypeAction).toHaveBeenCalledWith("generate");
+  });
+
+  it("disables the action while an agent works", () => {
+    renderStage({}, true);
+    expect(screen.getByRole("button", { name: "Generate prototype" })).toBeDisabled();
+  });
+
+  it("lists a Review prototype entry that opens the component", () => {
+    const { onReviewPrototype } = renderStage({ prototypes: ["storefront"] });
+    expect(screen.queryByRole("button", { name: /Generate prototype/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review prototype: storefront" }));
+    expect(onReviewPrototype).toHaveBeenCalledWith("storefront");
+  });
+
+  it("offers Regenerate prototype when outdated", () => {
+    const { onPrototypeAction } = renderStage({ prototypes: ["storefront"], prototypeOutdated: true });
+    expect(screen.getByRole("button", { name: "Prototype: 1 to resolve" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate prototype" }));
+    expect(onPrototypeAction).toHaveBeenCalledWith("regenerate");
   });
 });

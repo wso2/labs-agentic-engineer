@@ -20,6 +20,7 @@ import type React from "react";
 import { useState } from "react";
 import {
   Box,
+  Button,
   Chip,
   Collapse,
   IconButton,
@@ -37,6 +38,7 @@ import {
   ChevronDown,
   ChevronRight,
   Database,
+  Eye,
   FileText,
   RefreshCw,
   Network,
@@ -53,6 +55,7 @@ import {
   mostSignificant,
   reasonCount,
   type RailPlanEntry,
+  type PrototypeStage,
   type RailSection,
   type SectionReason,
 } from "../lib/railSections";
@@ -81,6 +84,8 @@ export function SpecFileList({
   plan,
   onReason,
   dependencyStates,
+  onPrototypeAction,
+  onReviewPrototype,
 }: {
   files: SpecFileEntry[];
   selection: SpecSelection | null;
@@ -103,9 +108,18 @@ export function SpecFileList({
    *  what is being written, an error mark on what died. Empty when no plan is
    *  live and no wreckage stands. */
   plan?: RailPlanEntry[];
-  /** A reason row was clicked: open the requirements document, or re-derive. */
+  /** A reason row was clicked: open the requirements document, re-derive,
+   *  or regenerate the prototype. */
   onReason: (action: SectionReason["action"]) => void;
+  /** The Prototype section's Generate / Regenerate prototype (#813) — both
+   *  send `/prototype`. Disabled with `regenerateDisabled`, for the same
+   *  reason: a turn is already running. */
+  onPrototypeAction: (action: NonNullable<PrototypeStage["action"]>) => void;
+  /** A Review prototype entry: open that web-application's prototype. */
+  onReviewPrototype: (component: string) => void;
 }) {
+  // Present only when the design cell declares a web-application (#813).
+  const prototypeSection = sections.find((sec) => sec.id === "prototype");
   const sectionOf = (id: RailSection["id"]) =>
     sections.find((sec) => sec.id === id) ?? {
       id,
@@ -129,7 +143,11 @@ export function SpecFileList({
     .map((e) => ({
       path: e.path,
       sha: "",
-      group: e.section === "design" ? ("designs" as const) : (e.section as "requirements" | "validation"),
+      // A prototype.json is a design file on disk; its SECTION is Prototype.
+      group:
+        e.section === "design" || e.section === "prototype"
+          ? ("designs" as const)
+          : (e.section as "requirements" | "validation"),
     }));
   // Merged in PATH order, not appended: a ghost has to sit where its file will
   // sit, or the row hops up the list the moment the write lands — the visible
@@ -564,6 +582,22 @@ export function SpecFileList({
         )}
       </Box>
 
+      {/* Prototype (#813) — between Design and Validation, only for a design
+          with a web-application: one Review entry per prototype, and the one
+          turn the stage can start now. */}
+      {prototypeSection && (
+        <Box sx={{ mb: 1 }}>
+          {sectionHeader(prototypeSection)}
+          <PrototypeRows
+            stage={prototypeSection.prototype ?? { action: null, reviews: [] }}
+            actionDisabled={regenerateDisabled ?? false}
+            emptyNote={emptyNote}
+            onAction={onPrototypeAction}
+            onReview={onReviewPrototype}
+          />
+        </Box>
+      )}
+
       {flatGroup(sectionOf("validation"), validation)}
 
       <ProblemsDialog
@@ -573,12 +607,99 @@ export function SpecFileList({
           key: reason.key,
           label: reason.label,
           fix: {
-            label: reason.action === "update-design" ? "Update the design" : "Open the document",
+            label: FIX_LABEL[reason.action],
             run: () => onReason(reason.action),
           },
         }))}
         onClose={() => setProblemsFor(null)}
       />
     </Box>
+  );
+}
+
+/** What a reason's repair button says, per repair. */
+const FIX_LABEL: Record<SectionReason["action"], string> = {
+  document: "Open the document",
+  "update-design": "Update the design",
+  "regenerate-prototype": "Regenerate prototype",
+};
+
+const PROTOTYPE_ACTION_LABEL: Record<NonNullable<PrototypeStage["action"]>, string> = {
+  generate: "Generate prototype",
+  regenerate: "Regenerate prototype",
+};
+
+/**
+ * The Prototype section's body: one Review prototype entry per
+ * web-application that has one (named, since a design may declare several),
+ * then the section's action. "Not created yet" only when there is neither —
+ * before the design is ready, or while the first generation runs (the header
+ * pulses for that).
+ */
+function PrototypeRows({
+  stage,
+  actionDisabled,
+  emptyNote,
+  onAction,
+  onReview,
+}: {
+  stage: PrototypeStage;
+  actionDisabled: boolean;
+  emptyNote: string;
+  onAction: (action: NonNullable<PrototypeStage["action"]>) => void;
+  onReview: (component: string) => void;
+}) {
+  const { action, reviews } = stage;
+  if (reviews.length === 0 && action === null) {
+    return (
+      <Typography variant="body2" color="text.secondary" sx={{ px: 2, py: 0.5, fontStyle: "italic" }}>
+        {emptyNote}
+      </Typography>
+    );
+  }
+  return (
+    <>
+      {reviews.length > 0 && (
+        <List dense disablePadding>
+          {reviews.map((component) => (
+            <ListItemButton
+              key={component}
+              onClick={() => onReview(component)}
+              aria-label={`Review prototype: ${component}`}
+              sx={{ px: 2 }}
+            >
+              <ListItemIcon sx={{ minWidth: 32 }}>
+                <Eye size={16} />
+              </ListItemIcon>
+              <ListItemText
+                primary="Review prototype"
+                secondary={component}
+                slotProps={{ primary: { noWrap: true }, secondary: { noWrap: true } }}
+              />
+            </ListItemButton>
+          ))}
+        </List>
+      )}
+      {action && (
+        <Box sx={{ px: 2, pt: 0.5 }}>
+          <Tooltip
+            title={actionDisabled ? "An agent is still working — available once it finishes" : ""}
+          >
+            {/* span so the tooltip works while the button is disabled */}
+            <span>
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={action === "regenerate" ? <RefreshCw size={14} /> : <LayoutDashboard size={14} />}
+                disabled={actionDisabled}
+                onClick={() => onAction(action)}
+              >
+                {PROTOTYPE_ACTION_LABEL[action]}
+              </Button>
+            </span>
+          </Tooltip>
+        </Box>
+      )}
+    </>
   );
 }

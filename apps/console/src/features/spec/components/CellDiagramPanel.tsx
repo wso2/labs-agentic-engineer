@@ -18,11 +18,9 @@
 
 import { Alert, Box, Chip, CircularProgress, Typography } from "@wso2/oxygen-ui";
 import { CellDiagramView } from "@aep/ui-cell-diagram-view";
-import { useSpecFileContent } from "../api/queries";
-import { DESIGN_CELL_PATH } from "../api/designTree";
 import type { SpecFileEntry } from "../api/mapping";
 import type { CollabSpec } from "../collab/useCollabSpec";
-import { useYTextString } from "../collab/useYTextString";
+import { useDesignCellSource } from "../hooks/useDesignCellSource";
 
 export function CellDiagramPanel({
   projectName,
@@ -34,18 +32,9 @@ export function CellDiagramPanel({
   collab: CollabSpec;
 }) {
   // design.cell IS the architecture: the diagram always renders the file
-  // itself, never a projection of the design.json bundle. Connected, the
-  // collab doc supplies it live (committed content is seeded into the room;
-  // an agent editFile lands in place, a restructure's removeFile + addFile
-  // re-streams line by line). Solo/offline, the committed git blob is
-  // fetched over REST instead.
-  const liveSource = useYTextString(collab.getFileText(DESIGN_CELL_PATH));
-  const committed =
-    files.find((f) => f.path === DESIGN_CELL_PATH && f.sha !== "") ?? null;
-  const restFallback = liveSource === null ? committed : null;
-  const rest = useSpecFileContent(projectName, restFallback);
-  const source =
-    liveSource ?? (restFallback ? (rest.data?.content ?? null) : null);
+  // itself, never a projection of the design.json bundle — live from the room
+  // when connected, the committed blob otherwise (useDesignCellSource).
+  const { source, isPending, isError } = useDesignCellSource(projectName, files, collab);
   // An agent peer in the room means a design turn is running; badge the pane
   // and show a "waiting" cell rather than the generic "generate a design"
   // empty state. The badge MUST key on the peer, not the live text: the doc
@@ -53,14 +42,14 @@ export function CellDiagramPanel({
   // "Designing…" up long after the turn ended (#239).
   const agentBusy = collab.peers.some((p) => p.kind === "agent");
 
-  if (restFallback && rest.isPending) {
+  if (isPending) {
     return (
       <Box sx={{ flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <CircularProgress aria-label="Loading architecture diagram" />
       </Box>
     );
   }
-  if (restFallback && rest.isError) {
+  if (isError) {
     return <Alert severity="error">Failed to load the architecture diagram source.</Alert>;
   }
 

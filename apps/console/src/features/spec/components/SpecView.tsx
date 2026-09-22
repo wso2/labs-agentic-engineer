@@ -63,8 +63,12 @@ import { useYTextString } from "../collab/useYTextString";
 import { useTurnEndFlush } from "../collab/useTurnEndFlush";
 import { refreshRoomCopy } from "../collab/refreshRoomCopy";
 import { START_COMMAND } from "@aep/contracts/commands";
+import { isPrototypeArtifactPath, prototypeArtifactComponent } from "@aep/prototype-model";
 import { fragmentToMarkdown } from "@aep/collab-doc";
 import { prdUnsettled } from "../lib/prdUnsettled";
+import { webApplicationsOf } from "../lib/webApplications";
+import { useDesignCellSource } from "../hooks/useDesignCellSource";
+import { usePrototypeTurn } from "../../prototype/hooks/usePrototypeTurn";
 import { useYFragmentVersion } from "../collab/useYFragmentVersion";
 import {
   railSections as buildRailSections,
@@ -702,6 +706,8 @@ export function SpecView({ projectName }: { projectName: string }) {
   // The plan's entries sorted into rail sections (#576). `specGroupOf` is the
   // same folder rule the committed files go through, so a planned path and the
   // file it becomes can never disagree about where they belong.
+  // A prototype.json is a design file on disk but belongs to the Prototype
+  // section (#813), so it is placed by path before the folder rule.
   const planEntries = useMemo<RailPlanEntry[]>(
     () =>
       (plan?.entries ?? []).map((e) => {
@@ -709,10 +715,30 @@ export function SpecView({ projectName }: { projectName: string }) {
         return {
           path: e.path,
           status: e.status,
-          section: group === "designs" ? "design" : group,
+          section: isPrototypeArtifactPath(e.path)
+            ? "prototype"
+            : group === "designs"
+              ? "design"
+              : group,
         };
       }),
     [plan],
+  );
+  // The Prototype stage's inputs (#813): which components the cell declares as
+  // web-applications — read from the cell itself every time, never stored —
+  // and which of them already have a prototype.json.
+  const designCell = useDesignCellSource(projectName, files, collab);
+  const webApplications = useMemo(
+    () => webApplicationsOf(designCell.source),
+    [designCell.source],
+  );
+  const prototypes = useMemo(
+    () =>
+      files.flatMap((f) => {
+        const component = prototypeArtifactComponent(f.path);
+        return component === undefined ? [] : [component];
+      }),
+    [files],
   );
   // The selected path when the plan says a document is coming but the room has
   // not delivered it yet. Any status EXCEPT a failed one counts while the turn
@@ -743,6 +769,9 @@ export function SpecView({ projectName }: { projectName: string }) {
         openQuestions: unsettled.openQuestions,
         planEntries,
         planWreckage: plan?.wreckage ?? false,
+        webApplications,
+        prototypes,
+        prototypeOutdated: status.data?.spec.prototypeOutdated ?? false,
       }),
     [
       files,
@@ -754,6 +783,9 @@ export function SpecView({ projectName }: { projectName: string }) {
       unsettled,
       planEntries,
       plan?.wreckage,
+      webApplications,
+      prototypes,
+      status.data?.spec.prototypeOutdated,
     ],
   );
   // The rail's own answer to "is an agent writing the requirements", reused so
@@ -785,9 +817,22 @@ export function SpecView({ projectName }: { projectName: string }) {
       generateDesign();
       return;
     }
+    if (action === "regenerate-prototype") {
+      runPrototype();
+      return;
+    }
     selectManually({ kind: "file", path: PRD_PATH });
     setRevealUnsettled((n) => n + 1);
   };
+
+  // Generate / Regenerate prototype (#813, #818): both send `/prototype`.
+  const runPrototype = usePrototypeTurn(projectName);
+  // Review prototype opens that web-application's full-viewport review page.
+  const reviewPrototype = (component: string) =>
+    void navigate({
+      to: "/projects/$projectName/json-prototype/$component",
+      params: { projectName, component },
+    });
 
   const seedChat = (message: string) =>
     setPendingSeed(chatKeyFor(orgHandle ?? "default", projectName), message);
@@ -1366,6 +1411,8 @@ export function SpecView({ projectName }: { projectName: string }) {
                 plan={planEntries}
                 onReason={onRailReason}
                 dependencyStates={dependencyStates}
+                onPrototypeAction={runPrototype}
+                onReviewPrototype={reviewPrototype}
               />
             </Box>
             <Box

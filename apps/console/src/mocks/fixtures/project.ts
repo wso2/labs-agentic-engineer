@@ -493,7 +493,7 @@ const sharedAuthDependency = {
 const designCell = `title Demo Shop
 version v1
 
-component storefront web-app
+component storefront web-application
 component catalog-api service
 component orders-api service
 

@@ -24,6 +24,7 @@
     "@aep/excalidraw-dsl": "workspace:*",
     "@aep/progress-view": "workspace:*",
     "@aep/prototype-model": "workspace:*",
+    "@aep/ui-cell-diagram-react": "workspace:*",
     "@aep/ui-cell-diagram-view": "workspace:*",
     "@aep/ui-design-view": "workspace:*",
     "@aep/ui-excalidraw-view": "workspace:*",

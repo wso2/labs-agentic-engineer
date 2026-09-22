@@ -37,6 +37,9 @@ function input(over: Partial<RailInput> = {}): RailInput {
     openQuestions: 0,
     planEntries: [],
     planWreckage: false,
+    webApplications: [],
+    prototypes: [],
+    prototypeOutdated: false,
     ...over,
   };
 }
@@ -437,5 +440,124 @@ describe("the declared plan", () => {
     );
     expect(of(sections, "design").progress).toEqual({ done: 1, total: 1 });
     expect(of(sections, "design").reasons).toHaveLength(0);
+  });
+});
+
+// The Prototype stage (#813 / #815, #818): present only when the design cell
+// declares a web-application, between Design and Validation.
+describe("the prototype section", () => {
+  const web = (over: Partial<RailInput> = {}) =>
+    input({ webApplications: ["storefront"], ...over });
+  const proto = (over: Partial<RailInput> = {}) =>
+    of(railSections(web(over)), "prototype");
+
+  it("is absent when the cell declares no web-application", () => {
+    const sections = railSections(input({ webApplications: [], prototypes: ["storefront"], prototypeOutdated: true }));
+    expect(sections.map((s) => s.id)).toEqual(["requirements", "design", "validation"]);
+  });
+
+  it("sits between design and validation when the cell declares one", () => {
+    expect(railSections(web()).map((s) => s.id)).toEqual([
+      "requirements",
+      "design",
+      "prototype",
+      "validation",
+    ]);
+    expect(proto().title).toBe("Prototype");
+  });
+
+  it("offers Generate prototype once the design is ready and no prototype exists", () => {
+    const s = proto();
+    expect(s.state).toBe("not-started");
+    expect(s.prototype).toEqual({ action: "generate", reviews: [] });
+  });
+
+  // Nothing to generate from: the design is not there, or is still being written.
+  it("offers nothing before the design is ready", () => {
+    expect(proto({ hasDesign: false }).prototype).toEqual({ action: null, reviews: [] });
+    expect(proto({ agentWorking: true, agentFlow: "design" }).prototype).toEqual({
+      action: null,
+      reviews: [],
+    });
+  });
+
+  it("pulses while a /prototype turn generates, with nothing to click", () => {
+    const s = proto({ agentWorking: true, agentFlow: "prototype" });
+    expect(s.state).toBe("active");
+    expect(s.prototype).toEqual({ action: null, reviews: [] });
+  });
+
+  it("lists one Review prototype entry per web-application that has one", () => {
+    const s = proto({
+      webApplications: ["storefront", "admin-portal", "partner-portal"],
+      prototypes: ["partner-portal", "storefront"],
+    });
+    expect(s.state).toBe("ready");
+    // Cell order, not file order; the one still missing is what Generate is for.
+    expect(s.prototype).toEqual({ action: "generate", reviews: ["storefront", "partner-portal"] });
+  });
+
+  it("is ready with nothing else to offer once every web-application has one", () => {
+    const s = proto({ prototypes: ["storefront"] });
+    expect(s.state).toBe("ready");
+    expect(s.reasons).toEqual([]);
+    expect(s.prototype).toEqual({ action: null, reviews: ["storefront"] });
+  });
+
+  // A feedback batch is a /prototype turn on a prototype that exists: the
+  // section pulses and the review stays reachable.
+  it("keeps the review reachable while a feedback turn runs", () => {
+    const s = proto({ prototypes: ["storefront"], agentWorking: true, agentFlow: "prototype" });
+    expect(s.state).toBe("active");
+    expect(s.prototype).toEqual({ action: null, reviews: ["storefront"] });
+  });
+
+  it("reads outdated after a design change and offers Regenerate prototype", () => {
+    const s = proto({ prototypes: ["storefront"], prototypeOutdated: true });
+    expect(s.state).toBe("attention");
+    expect(s.reasons).toEqual([
+      {
+        key: "design-moved",
+        label: "The design has changed since the prototype was generated",
+        count: 1,
+        action: "regenerate-prototype",
+      },
+    ]);
+    expect(s.prototype).toEqual({ action: "regenerate", reviews: ["storefront"] });
+  });
+
+  it("yields the outdated warning to a regeneration in flight", () => {
+    const s = proto({
+      prototypes: ["storefront"],
+      prototypeOutdated: true,
+      agentWorking: true,
+      agentFlow: "prototype",
+    });
+    expect(s.state).toBe("active");
+    expect(s.prototype?.action).toBeNull();
+  });
+
+  it("says nothing is outdated when there is no prototype", () => {
+    const s = proto({ prototypeOutdated: true });
+    expect(s.reasons).toEqual([]);
+    expect(s.prototype?.action).toBe("generate");
+  });
+
+  // The requirements moving is the design's problem, not the prototype's —
+  // and the prototype stage's own state never reaches validation.
+  it("leaves validation as it was", () => {
+    const without = of(railSections(input({ designOutdated: true })), "validation");
+    const withProto = of(
+      railSections(web({ designOutdated: true, prototypes: ["storefront"], prototypeOutdated: true })),
+      "validation",
+    );
+    expect(withProto).toEqual(without);
+    expect(proto({ designOutdated: true, prototypes: ["storefront"] }).reasons).toEqual([]);
+  });
+
+  it("carries no prototype block on the other sections", () => {
+    for (const s of railSections(web())) {
+      if (s.id !== "prototype") expect(s.prototype).toBeUndefined();
+    }
   });
 });
