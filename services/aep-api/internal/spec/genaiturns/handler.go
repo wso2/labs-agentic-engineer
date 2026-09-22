@@ -102,6 +102,13 @@ func (h *Handler) CreateTurn(ctx context.Context, request gen.CreateTurnRequestO
 			return nil, err
 		}
 		in.Aim = aim
+		// A prototype review batch (#817) — JSON-only: it carries no
+		// attachments, so the multipart form has no such part.
+		feedback, err := prototypeFeedbackFromJSON(request.JSONBody.PrototypeFeedback, in.Instruction, aim != nil)
+		if err != nil {
+			return nil, err
+		}
+		in.PrototypeFeedback = feedback
 	default:
 		return nil, apierr.BadRequest("request body is required")
 	}

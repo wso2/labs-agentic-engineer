@@ -117,15 +117,19 @@ type TurnRepository interface {
 	// conversation — the D20 filesChangedExternally / divergence-note input.
 	LastTerminal(ctx context.Context, orgID, projectID, conversationID string) (*AgentTurn, error)
 
-	// NewestCompletedFlow returns the project's most recent COMPLETED turn of
-	// one flow ("design", "start", …), or (nil, nil) when it has run none.
+	// NewestCompletedDerivation returns the project's most recent COMPLETED turn of
+	// one flow ("design", "start", …) that DERIVED the flow's artifacts from
+	// their inputs, or (nil, nil) when it has run none. A revision turn
+	// (AgentTurn.Revision — a `/prototype` feedback batch, #817) is skipped: it
+	// edited what an earlier run produced and reconciled nothing with the
+	// inputs, so it is never a staleness baseline.
 	//
 	// The status read's staleness check (#575) asks for the newest successful
 	// design run so it can read the requirements as that run saw them. Scoped
 	// to completed because a failed or running turn never reconciled anything:
 	// treating one as the baseline would clear a staleness warning on the
 	// strength of work that did not land.
-	NewestCompletedFlow(ctx context.Context, orgID, projectID, flow string) (*AgentTurn, error)
+	NewestCompletedDerivation(ctx context.Context, orgID, projectID, flow string) (*AgentTurn, error)
 
 	// Newest returns the project's most recent turn row, running or terminal,
 	// across every conversation — or (nil, nil) when nothing has ever run.
@@ -304,13 +308,13 @@ func (r *turnRepository) Newest(ctx context.Context, orgID, projectID string) (*
 	return &t, nil
 }
 
-// NewestCompletedFlow reads one row off the (org_id, project_id) index,
-// narrowed by the indexed `flow` column.
-func (r *turnRepository) NewestCompletedFlow(ctx context.Context, orgID, projectID, flow string) (*AgentTurn, error) {
+// NewestCompletedDerivation reads one row off the (org_id, project_id) index,
+// narrowed by the indexed `flow` column, skipping revision turns.
+func (r *turnRepository) NewestCompletedDerivation(ctx context.Context, orgID, projectID, flow string) (*AgentTurn, error) {
 	var t AgentTurn
 	err := r.db.WithContext(ctx).
-		Where("org_id = ? AND project_id = ? AND flow = ? AND status = ?",
-			orgID, projectID, flow, turnStatusCompleted).
+		Where("org_id = ? AND project_id = ? AND flow = ? AND status = ? AND revision = ?",
+			orgID, projectID, flow, turnStatusCompleted, false).
 		Order("created_at DESC").
 		First(&t).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {

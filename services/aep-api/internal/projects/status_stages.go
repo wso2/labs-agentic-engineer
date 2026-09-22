@@ -108,10 +108,11 @@ type bindingsReader interface {
 // no record of.
 type specTurnRows interface {
 	Newest(ctx context.Context, orgID, projectID string) (*spec.AgentTurn, error)
-	// NewestCompletedFlow finds the newest successful run of one flow — the
-	// staleness check (#575) needs the last DESIGN run, so it can read the
-	// requirements as that run saw them.
-	NewestCompletedFlow(ctx context.Context, orgID, projectID, flow string) (*spec.AgentTurn, error)
+	// NewestCompletedDerivation finds the newest successful run of one flow
+	// that derived its artifacts from their inputs — the staleness check (#575)
+	// needs the last DESIGN run, so it can read the requirements as that run
+	// saw them. Revision turns (a prototype feedback batch, #817) are skipped.
+	NewestCompletedDerivation(ctx context.Context, orgID, projectID, flow string) (*spec.AgentTurn, error)
 }
 
 // designFlow is the `/<skill>` token a design re-derivation runs under. Only a
@@ -136,7 +137,7 @@ func (s *Service) designOutdated(ctx context.Context, orgName, projectName, nowF
 	if s.specTurns == nil {
 		return false, nil
 	}
-	lastDesign, err := s.specTurns.NewestCompletedFlow(ctx, orgName, projectName, designFlow)
+	lastDesign, err := s.specTurns.NewestCompletedDerivation(ctx, orgName, projectName, designFlow)
 	if err != nil {
 		return false, fmt.Errorf("newest design turn: %w", err)
 	}
@@ -151,9 +152,12 @@ func (s *Service) designOutdated(ctx context.Context, orgName, projectName, nowF
 }
 
 // prototypeFlow is the `/prototype` token (#818). Every prototype write runs
-// under it — a full generation and a feedback batch alike — and each reads the
-// design at its base commit, so the newest successful one is the design the
-// prototypes stand on.
+// under it — a full generation and a feedback batch alike — but only a
+// generation derives the prototypes from the design: a feedback batch (#817)
+// is a revision turn that edits one file against the design it happens to
+// read, reconciling nothing. So the newest successful GENERATION is the design
+// the prototypes stand on, and a feedback turn after a design change leaves
+// them Outdated until Regenerate prototype runs.
 const prototypeFlow = "prototype"
 
 // prototypeOutdated answers whether the design has moved since the prototypes
@@ -161,14 +165,14 @@ const prototypeFlow = "prototype"
 //
 // nowFingerprint is the design (minus every prototype.json) as it stands; the
 // baseline is the same reduction at the commit the newest successful prototype
-// run read. Because prototypes are excluded from both sides, a feedback rewrite
+// generation read. Because prototypes are excluded from both sides, a feedback rewrite
 // never reads as the design moving. No prototype run on record means nothing
 // to be behind; an unreadable baseline is an error, as for designOutdated.
 func (s *Service) prototypeOutdated(ctx context.Context, orgName, projectName, nowFingerprint string) (bool, error) {
 	if s.specTurns == nil {
 		return false, nil
 	}
-	last, err := s.specTurns.NewestCompletedFlow(ctx, orgName, projectName, prototypeFlow)
+	last, err := s.specTurns.NewestCompletedDerivation(ctx, orgName, projectName, prototypeFlow)
 	if err != nil {
 		return false, fmt.Errorf("newest prototype turn: %w", err)
 	}

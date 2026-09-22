@@ -7790,16 +7790,19 @@ components:
             The design has changed since the prototypes were last generated from it (#818), so a
             web-application's `prototype.json` may no longer picture what the design says. Derived
             the way `designOutdated` is: the design as it stands now against the design as it
-            stood in the snapshot the newest successful `/prototype` turn read. "The design" is
-            the whole `specs/design/` tree EXCEPT every `components/<component>/prototype.json`,
-            so a feedback rewrite of a prototype alone never marks anything outdated.
+            stood in the snapshot the newest successful `/prototype` GENERATION read. "The design"
+            is the whole `specs/design/` tree EXCEPT every `components/<component>/prototype.json`,
+            so a feedback rewrite of a prototype alone never marks anything outdated — and a
+            feedback turn (one carrying `prototypeFeedback`, #817) is not a generation, so it
+            never clears the flag either: it revises one file without regenerating from the
+            design.
 
             One value for the project, not one per web-application: `/prototype` regenerates
             every web-application's prototype in one turn, so the remedy — Regenerate prototype —
             is the same whichever one fell behind, and the design fingerprint is project-wide.
 
-            False while no prototype exists or no `/prototype` turn has succeeded: there is
-            nothing to be behind.
+            False while no prototype exists or no `/prototype` generation has succeeded: there
+            is nothing to be behind.
           type: boolean
         version:
           description: The newest spec version's name; "" if never published.
@@ -8321,6 +8324,91 @@ components:
       - name
       - kind
       type: object
+    PrototypeAnnotationInput:
+      additionalProperties: false
+      description: >
+        One queued review request on a web-application prototype (#817): where the reviewer
+        was — screen, flow, display state — what they selected, and what they asked for.
+
+
+        Every field but `request` is a stable ID from the prototype model, never a label, so
+        the agent resolves it against the file as it stands. `request` is the reviewer's own
+        words, forwarded VERBATIM: the platform composes no prose around it.
+      properties:
+        componentIds:
+          description: The selected components' stable IDs, in the order they were selected.
+            Empty means the request is about the whole screen.
+          items:
+            maxLength: 200
+            minLength: 1
+            type: string
+          maxItems: 50
+          type: array
+        flowId:
+          description: The flow the reviewer was walking, or null for free navigation.
+          maxLength: 200
+          minLength: 1
+          nullable: true
+          type: string
+          # A pointer under the global prefer-skip-optional-pointer: null (free
+          # navigation) and a flow ID must stay distinguishable when forwarded.
+          x-go-type-skip-optional-pointer: false
+        id:
+          description: The annotation's own ID, chosen by the client and unique within the
+            batch — how the agent's reply can name which request it could not apply.
+          maxLength: 128
+          minLength: 1
+          type: string
+        prototypeSchemaVersion:
+          description: The prototype model version the IDs resolve against.
+          enum:
+          - 1
+          type: integer
+        request:
+          description: What the reviewer wants changed, in their own words.
+          maxLength: 4000
+          minLength: 1
+          type: string
+        screenId:
+          description: The screen the reviewer was on.
+          maxLength: 200
+          minLength: 1
+          type: string
+        stateId:
+          description: The display state the screen was shown in.
+          maxLength: 200
+          minLength: 1
+          type: string
+      required:
+      - id
+      - prototypeSchemaVersion
+      - screenId
+      - flowId
+      - stateId
+      - componentIds
+      - request
+      type: object
+    PrototypeFeedbackInput:
+      additionalProperties: false
+      description: >
+        A batch of review requests on ONE web-application prototype (#817), sent as a single
+        `/prototype` turn so the agent rewrites the file once rather than once per note. The
+        BFF validates the batch and forwards it unchanged; it never renders it into prose.
+      properties:
+        annotations:
+          items:
+            $ref: '#/components/schemas/PrototypeAnnotationInput'
+          maxItems: 50
+          minItems: 1
+          type: array
+        prototypePath:
+          description: The prototype the batch is about — the only file the turn may rewrite.
+          pattern: ^specs/design/components/[^/]+/prototype\.json$
+          type: string
+      required:
+      - prototypePath
+      - annotations
+      type: object
     TurnInputBody:
       additionalProperties: false
       properties:
@@ -8352,6 +8440,16 @@ components:
           - change
           - discuss
           type: string
+        prototypeFeedback:
+          allOf:
+          - $ref: '#/components/schemas/PrototypeFeedbackInput'
+          description: >
+            A prototype review batch (#817). Valid only when `instruction` is exactly
+            `/prototype`, and never together with `anchor`/`intent`: a batch aims at stable
+            prototype IDs, not at a selection in a document. Absent for every other turn.
+            JSON-only — a review batch carries no attachments, so the multipart form has no
+            such part.
+          x-go-type-skip-optional-pointer: false
         target:
           description: Optional target (e.g. a doc type)
           type: string

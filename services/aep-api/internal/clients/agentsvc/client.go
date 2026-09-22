@@ -103,6 +103,31 @@ type TurnSpec struct {
 	// TaskContext carries the existing-Task renders: platform state, not
 	// repository files, so it cannot ride the workspace snapshot.
 	TaskContext []PlanContextFile `json:"taskContext,omitempty"`
+	// PrototypeFeedback is a reviewer's batch of requests on one prototype
+	// (#817), carried by the `prototype` flow only. Forwarded exactly as the
+	// console sent it: the agents service words it, the BFF never does.
+	PrototypeFeedback *PrototypeFeedbackBlock `json:"prototypeFeedback,omitempty"`
+}
+
+// PrototypeFeedbackBlock is a prototype review batch (#817). JSON field names
+// match @aep/agent-stream's PrototypeFeedback exactly.
+type PrototypeFeedbackBlock struct {
+	PrototypePath string                     `json:"prototypePath"`
+	Annotations   []PrototypeAnnotationBlock `json:"annotations"`
+}
+
+// PrototypeAnnotationBlock is one review request: stable prototype IDs plus
+// the reviewer's words. FlowID is nil for free navigation and is sent as an
+// explicit null, never omitted — the wire shape declares the field required.
+// ComponentIDs is empty (never nil on the wire) for a whole-screen request.
+type PrototypeAnnotationBlock struct {
+	ID                     string   `json:"id"`
+	PrototypeSchemaVersion int      `json:"prototypeSchemaVersion"`
+	ScreenID               string   `json:"screenId"`
+	FlowID                 *string  `json:"flowId"`
+	StateID                string   `json:"stateId"`
+	ComponentIDs           []string `json:"componentIds"`
+	Request                string   `json:"request"`
 }
 
 // Turn kinds (the `TurnSpec.Kind` discriminant).

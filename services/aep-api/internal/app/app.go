@@ -491,7 +491,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// past its design is refused with the rest of the gate's conditions — the
 	// one refusal that is about the design being WRONG rather than incomplete.
 	artifactSvcGit.SetDesignBaselineResolver(func(ctx context.Context, orgID, projectID string) (string, error) {
-		last, err := turnRepo.NewestCompletedFlow(ctx, orgID, projectID, "design")
+		last, err := turnRepo.NewestCompletedDerivation(ctx, orgID, projectID, "design")
 		if err != nil || last == nil {
 			return "", err
 		}

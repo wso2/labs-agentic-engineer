@@ -37,7 +37,7 @@ func (s *stubFlowTurns) Newest(context.Context, string, string) (*spec.AgentTurn
 	return nil, nil
 }
 
-func (s *stubFlowTurns) NewestCompletedFlow(_ context.Context, _, _, flow string) (*spec.AgentTurn, error) {
+func (s *stubFlowTurns) NewestCompletedDerivation(_ context.Context, _, _, flow string) (*spec.AgentTurn, error) {
 	s.asked = append(s.asked, flow)
 	return s.byFlow[flow], s.err
 }
