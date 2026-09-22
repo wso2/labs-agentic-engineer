@@ -32,13 +32,19 @@ import type { paths } from "../../../generated/aep-api";
 import { projectHandlers } from "../../../mocks/handlers/project";
 import { expenseApproval } from "../testing/fixtures";
 import type { PrototypeViewRequest } from "../model/viewState";
+import { chatKeyFor, consumePendingSeed } from "../../agent-chat/chatStore";
 
 vi.mock("../../../api/client", () => ({
   // Resolve fetch per call: MSW patches it when the server starts listening.
   client: createClient<paths>({ baseUrl: "http://localhost/api/v1", fetch: (req) => globalThis.fetch(req) }),
 }));
+const mockNavigate = vi.fn();
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children, to }: { children?: React.ReactNode; to: string }) => <a href={to}>{children}</a>,
+  useNavigate: () => mockNavigate,
+}));
+vi.mock("../../../auth/SessionContext", () => ({
+  useSession: () => ({ orgHandle: "acme" }),
 }));
 
 const { ComponentPrototypePage } = await import("./ComponentPrototypePage");
@@ -50,7 +56,11 @@ afterEach(() => {
   cleanup();
 });
 afterAll(() => server.close());
-beforeEach(() => localStorage.clear());
+beforeEach(() => {
+  localStorage.clear();
+  mockNavigate.mockReset();
+  consumePendingSeed(chatKeyFor("acme", "demo-shop"));
+});
 
 const FILE = "*/api/v1/projects/:projectName/files/specs/design/components/storefront/prototype.json";
 
@@ -154,5 +164,30 @@ describe("ComponentPrototypePage", () => {
     renderPage("catalog-api");
     expect(await screen.findByText("catalog-api has no prototype yet.")).toBeInTheDocument();
     expect(application()).toBeNull();
+  });
+});
+
+// #818: the design moved after the prototype was generated.
+describe("ComponentPrototypePage — outdated", () => {
+  it("shows no banner while the prototype is current", async () => {
+    renderPage();
+    await screen.findByRole("heading", { name: "Approval queue", level: 2 });
+    expect(screen.queryByText("Outdated")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Regenerate prototype" })).not.toBeInTheDocument();
+  });
+
+  it("shows an Outdated banner whose Regenerate prototype sends /prototype and returns to the Spec", async () => {
+    localStorage.setItem("aep:mock:prototype", "outdated");
+    renderPage();
+    await screen.findByRole("heading", { name: "Approval queue", level: 2 });
+
+    expect(await screen.findByText("Outdated")).toBeInTheDocument();
+    expect(screen.getByText(/The design has changed since this prototype was generated/)).toBeInTheDocument();
+    // The prototype stays reviewable underneath.
+    expect(application()).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate prototype" }));
+    expect(consumePendingSeed(chatKeyFor("acme", "demo-shop"))).toEqual({ message: "/prototype", guarded: true });
+    expect(mockNavigate).toHaveBeenCalledWith({ to: "/projects/$projectName/spec", params: { projectName: "demo-shop" } });
   });
 });

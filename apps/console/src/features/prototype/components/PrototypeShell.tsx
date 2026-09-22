@@ -48,6 +48,8 @@ export interface PrototypeShellProps {
   request: PrototypeViewRequest;
   onRequestChange: (next: PrototypeViewRequest) => void;
   backLink: ReactElement<{ children?: ReactNode }>;
+  /** A page-level notice under the review bar — the Outdated banner (#818). */
+  notice?: ReactNode;
 }
 
 function sameRequest(a: PrototypeViewRequest, b: PrototypeViewRequest): boolean {
@@ -60,7 +62,7 @@ function addressOf(model: PrototypeModelV1, screenId: string): string {
   return `${model.component}.example.com/${path}`;
 }
 
-export function PrototypeShell({ model, request, onRequestChange, backLink }: PrototypeShellProps) {
+export function PrototypeShell({ model, request, onRequestChange, backLink, notice }: PrototypeShellProps) {
   const [view, dispatch] = useReducer(
     (s: PrototypeViewState, e: PrototypeViewEvent) => reducePrototypeView(model, s, e),
     request,
@@ -87,6 +89,7 @@ export function PrototypeShell({ model, request, onRequestChange, backLink }: Pr
   return (
     <Box sx={{ height: "100vh", display: "flex", flexDirection: "column", bgcolor: "background.default" }}>
       <ReviewBar model={model} view={view} dispatch={dispatch} backLink={backLink} />
+      {notice}
       <Box sx={{ flex: 1, minHeight: 0, display: "flex", p: 2 }}>
         <BrowserFrame title={model.name} address={addressOf(model, view.screenId)}>
           <PrototypeRenderer model={model} view={view} dispatch={dispatch} />

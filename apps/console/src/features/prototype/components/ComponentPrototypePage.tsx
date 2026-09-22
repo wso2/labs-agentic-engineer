@@ -28,7 +28,7 @@
  */
 
 import type { ReactElement, ReactNode } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import {
   Alert,
   AlertTitle,
@@ -41,6 +41,8 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { usePrototype, type PrototypeReadIssue } from "../api/queries";
+import { useProjectStatus } from "../../projects/api/queries";
+import { usePrototypeTurn } from "../hooks/usePrototypeTurn";
 import type { PrototypeViewRequest } from "../model/viewState";
 import { PrototypeShell } from "./PrototypeShell";
 
@@ -56,6 +58,16 @@ export interface ComponentPrototypePageProps {
 export function ComponentPrototypePage({ projectName, component, search, onSearchChange }: ComponentPrototypePageProps) {
   const prototype = usePrototype(projectName, component);
   const backLink = <Link to="/projects/$projectName/spec" params={{ projectName }} />;
+  // #818: the design moved after the prototypes were generated. Regenerating
+  // sends `/prototype` and goes back to the Spec, where the agent panel sends
+  // it and the rail shows the stage working — this page has no chat to run in.
+  const outdated = useProjectStatus(projectName).data?.spec.prototypeOutdated ?? false;
+  const sendPrototypeTurn = usePrototypeTurn(projectName);
+  const navigate = useNavigate();
+  const regenerate = () => {
+    sendPrototypeTurn();
+    void navigate({ to: "/projects/$projectName/spec", params: { projectName } });
+  };
 
   if (prototype.isPending) {
     return (
@@ -105,7 +117,26 @@ export function ComponentPrototypePage({ projectName, component, search, onSearc
       request={search}
       onRequestChange={onSearchChange}
       backLink={backLink}
+      notice={outdated ? <OutdatedBanner onRegenerate={regenerate} /> : undefined}
     />
+  );
+}
+
+/** The design has moved since this prototype was generated (#818). */
+function OutdatedBanner({ onRegenerate }: { onRegenerate: () => void }) {
+  return (
+    <Alert
+      severity="warning"
+      sx={{ borderRadius: 0 }}
+      action={
+        <Button color="inherit" size="small" onClick={onRegenerate}>
+          Regenerate prototype
+        </Button>
+      }
+    >
+      <AlertTitle>Outdated</AlertTitle>
+      The design has changed since this prototype was generated, so it may no longer show what will be built.
+    </Alert>
   );
 }
 
