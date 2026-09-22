@@ -68,11 +68,12 @@ and it was the wrong one to review:
 
 5. **Build is the approval, and it requires the prototype.** There is no approve
    operation, approval record, history or rollback: publishing a version stays
-   the one moment of commitment (console ADR-0007). The build gate refuses a
-   web application without a valid prototype (`MISSING_COMPONENT_ARTIFACT`,
-   `INVALID_PROTOTYPE`) and one whose roles `security.json` does not declare
-   (`UNKNOWN_PROTOTYPE_ROLE`) — the roles the user reviewed are the roles the
-   build creates. The structural save gate checks shape only; the role
+   the one moment of commitment (console ADR-0007). Build refuses a web
+   application without a prototype (`MISSING_COMPONENT_ARTIFACT`), one whose
+   prototype is invalid (the design-bundle validation Build runs first, with the
+   save gate's per-finding codes) and one whose roles `security.json` does not
+   declare (`UNKNOWN_PROTOTYPE_ROLE`) — the roles the user reviewed are the roles
+   the build creates. The structural save gate checks shape only; the role
    cross-check needs the whole bundle, so it lives with the other cross-file
    rules at Build. `prototypeOutdated` is derived, like `designOutdated`, from
    the design fingerprint (the design tree minus prototype files) at the

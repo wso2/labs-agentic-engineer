@@ -249,17 +249,20 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
     (the premise is unknowable); no `security.json` → the structural rules still run and only catalog
     membership and ownership wait. The build gate is the backstop that sees every file at the tag.
 - **A web-application's `prototype.json` is save-gated on the agent's terms** (`save_gate.go`,
-  `platform/prototypespec`). Every `components/<c>/prototype.json` in a save validates against the
+  `platform/prototypespec`). Every non-blank `components/<c>/prototype.json` in a save validates against the
   vendored `prototype-model.schema.json` (generated from `@aep/prototype-model`), then one global id
   namespace, every reference resolving to an entry of the right kind on the right screen, and
   `component` equal to `<c>`. Each finding is its own 422 row carrying the validator's code
   (`INVALID_JSON`, `SCHEMA_VIOLATION`, `UNSUPPORTED_VERSION`, `DUPLICATE_ID`, `UNKNOWN_REFERENCE`,
   `PROTOTYPE_COMPONENT_MISMATCH`) and JSON path — the codes and paths the TypeScript validator reports
   for the same file, pinned by one shared case table (`packages/prototype-model/test/validation-cases.json`).
+  The agent's write gate runs the same rules but collapses a refused file to `INVALID_PROTOTYPE`
+  (`INVALID_JSON` / `PROTOTYPE_COMPONENT_MISMATCH` where those apply) with the findings in its message.
 - **Build requires a valid prototype per web application** (`build_gate.go`). Every `web-application`
-  the cell declares needs `components/<c>/prototype.json` at the tag (`MISSING_COMPONENT_ARTIFACT`)
-  that passes the same validator (`INVALID_PROTOTYPE`), and when `security.json` exists every prototype
-  role must be one of its roles (`UNKNOWN_PROTOTYPE_ROLE`). The role rule reads two files, so it lives
+  the cell declares needs a non-blank `components/<c>/prototype.json` at the tag
+  (`MISSING_COMPONENT_ARTIFACT`), and when `security.json` exists every prototype role must be one of
+  its roles (`UNKNOWN_PROTOTYPE_ROLE`). An invalid one is refused by the design-bundle validation Build
+  runs first, with the save gate's per-finding codes above. The role rule reads two files, so it lives
   here rather than in the save gate. No approval is recorded: publishing the version is the approval
   (repo ADR-0034).
 - The `/collab/validate` oracle recovers the acting org from VERIFIED claims and refuses any room whose

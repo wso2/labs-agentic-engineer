@@ -71,9 +71,6 @@ const (
 	codeInvalidRolesDocument = "INVALID_ROLES_DOCUMENT"
 	// codeUnknownRoleStory — a role cites a PRD story that does not exist.
 	codeUnknownRoleStory = "UNKNOWN_ROLE_STORY"
-	// codeInvalidPrototype — a web-application's prototype.json is present but
-	// prototypespec refuses it.
-	codeInvalidPrototype = "INVALID_PROTOTYPE"
 	// codeUnknownPrototypeRole — a prototype role is not a role security.json
 	// declares.
 	codeUnknownPrototypeRole = "UNKNOWN_PROTOTYPE_ROLE"
@@ -220,14 +217,18 @@ func validateBuildGate(reqFiles, designFiles map[string]string) []FileValidation
 }
 
 // prototypeGate is a web-application's build artifact: its prototype.json must
-// exist and pass prototypespec, and when security.json declares roles
+// exist (a blank file counts as absent), and when security.json declares roles
 // (securityRoles non-nil) every prototype role must be one of them. The
 // prototype skill writes a role's id as the security.json role `name`
 // verbatim, so that is what is compared.
+//
+// A present-but-invalid prototype adds nothing here: validateDesignBundle
+// refuses it first, with prototypespec's own codes, and the build gate only
+// runs once that passes.
 func prototypeGate(component string, designFiles map[string]string, securityRoles map[string]bool) []FileValidationError {
-	path := "components/" + component + "/prototype.json"
-	raw, present := designFiles[path]
-	if !present {
+	path := prototypespec.BundleKey(component)
+	raw := designFiles[path]
+	if strings.TrimSpace(raw) == "" {
 		return []FileValidationError{{
 			Path: path, Code: codeMissingComponentArtifact,
 			Message: fmt.Sprintf("component %q (web-application) needs prototype.json — generate the prototype before building", component),
@@ -235,15 +236,7 @@ func prototypeGate(component string, designFiles map[string]string, securityRole
 	}
 	model, issues := prototypespec.Parse(component, []byte(raw))
 	if len(issues) > 0 {
-		errs := make([]FileValidationError, 0, len(issues))
-		for _, issue := range issues {
-			msg := issue.Message
-			if issue.Path != "" {
-				msg = issue.Path + ": " + msg
-			}
-			errs = append(errs, FileValidationError{Path: path, Code: codeInvalidPrototype, Message: msg})
-		}
-		return errs
+		return nil
 	}
 	if securityRoles == nil {
 		return nil

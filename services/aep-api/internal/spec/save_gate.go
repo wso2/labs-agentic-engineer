@@ -82,10 +82,10 @@ const (
 //   - security.json, when present: the security design validates against the
 //     same published schema and referential rules the agent's write gate
 //     applies;
-//   - prototype.json: every present `components/<c>/prototype.json` validates
+//   - prototype.json: every non-blank `components/<c>/prototype.json` validates
 //     against the published prototype schema and its reference rules, and
-//     names `<c>` as its component (prototypespec — the same schema and codes
-//     the agent's write gate uses);
+//     names `<c>` as its component (prototypespec — the same rules the agent's
+//     write gate applies; see prototypeFindings for how their codes differ);
 //   - OpenAPI: every present component openapi.yaml/yml must parse.
 //
 // A missing root is ErrArtifactPathInvalid (400). Any other failure aggregates
@@ -206,14 +206,19 @@ func validateDesignBundle(files map[string]string) error {
 }
 
 // prototypeFindings validates every component prototype in the bundle, one row
-// per finding so each fix is listed. The row's code is the validator's own
-// (UNSUPPORTED_VERSION, DUPLICATE_ID, …) — the same code the agent's write gate
-// names for the same file — and its message leads with the JSON path. Keys are
-// visited in sorted order so the rows are stable.
+// per finding so each fix is listed. The row's code is prototypespec's own
+// (UNSUPPORTED_VERSION, DUPLICATE_ID, …) and its message leads with the JSON
+// path. The agent's write gate runs the same rules but reports differently: it
+// collapses a refused file to one INVALID_PROTOTYPE row (INVALID_JSON when it
+// does not parse, PROTOTYPE_COMPONENT_MISMATCH for another component's file)
+// and lists these findings, code and path, in its message. Build runs this validation too, so these codes are what a Build
+// refusal of an invalid prototype carries. A blank file is skipped, as a blank
+// openapi.yaml is: the build gate names it a missing artifact. Keys are visited
+// in sorted order so the rows are stable.
 func prototypeFindings(files map[string]string) []FileValidationError {
 	keys := make([]string, 0, len(files))
-	for rel := range files {
-		if _, ok := prototypespec.BundleComponent(rel); ok {
+	for rel, content := range files {
+		if _, ok := prototypespec.BundleComponent(rel); ok && strings.TrimSpace(content) != "" {
 			keys = append(keys, rel)
 		}
 	}
@@ -223,11 +228,7 @@ func prototypeFindings(files map[string]string) []FileValidationError {
 		component, _ := prototypespec.BundleComponent(rel)
 		_, issues := prototypespec.Parse(component, []byte(files[rel]))
 		for _, issue := range issues {
-			msg := issue.Message
-			if issue.Path != "" {
-				msg = issue.Path + ": " + msg
-			}
-			out = append(out, FileValidationError{Path: rel, Code: issue.Code, Message: msg})
+			out = append(out, FileValidationError{Path: rel, Code: issue.Code, Message: issue.Located()})
 		}
 	}
 	return out

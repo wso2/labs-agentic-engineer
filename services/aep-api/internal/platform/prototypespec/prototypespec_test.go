@@ -227,3 +227,22 @@ func TestBundleComponent(t *testing.T) {
 		}
 	}
 }
+
+func TestBundleKeyIsWhatBundleComponentReadsBack(t *testing.T) {
+	key := BundleKey("approvals-portal")
+	if key != "components/approvals-portal/prototype.json" {
+		t.Fatalf("BundleKey = %q", key)
+	}
+	if got, ok := BundleComponent(key); !ok || got != "approvals-portal" {
+		t.Errorf("BundleComponent(BundleKey(c)) = %q, %v", got, ok)
+	}
+}
+
+func TestIssueLocated(t *testing.T) {
+	if got := (Issue{Path: "screens[0].id", Message: "duplicate"}).Located(); got != "screens[0].id: duplicate" {
+		t.Errorf("with a path: %q", got)
+	}
+	if got := (Issue{Message: "not JSON"}).Located(); got != "not JSON" {
+		t.Errorf("at the root: %q", got)
+	}
+}

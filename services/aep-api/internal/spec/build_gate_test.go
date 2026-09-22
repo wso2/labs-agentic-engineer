@@ -17,6 +17,7 @@
 package spec
 
 import (
+	"errors"
 	"maps"
 	"reflect"
 	"slices"
@@ -525,33 +526,65 @@ func TestBuildGate_WireframesDSLAloneIsNotEnough(t *testing.T) {
 	}
 }
 
-func TestBuildGate_InvalidPrototype(t *testing.T) {
-	cases := map[string]string{
-		"blank":             "  \n",
-		"not JSON":          "{",
-		"schema violation":  `{"schemaVersion":1}`,
-		"another component": strings.Replace(gatePrototype("Member"), `"component":"lunch-web"`, `"component":"lunch-api"`, 1),
-		"dangling reference": strings.Replace(gatePrototype("Member"),
-			`"defaultScreenId":"screen.home"`, `"defaultScreenId":"screen.ghost"`, 1),
-	}
-	for name, body := range cases {
+// A blank prototype.json is a missing one, the same as a blank openapi.yaml —
+// at Build, not refused earlier as malformed JSON by the save gate.
+func TestBuild_BlankPrototypeIsMissing(t *testing.T) {
+	for name, body := range map[string]string{"empty": "", "whitespace": "  \n\t"} {
 		t.Run(name, func(t *testing.T) {
 			files := completeDesignFiles()
 			files[gatePrototypeKey] = body
 
-			errs := gateErrors(t, files)
-			row, ok := gateRow(errs, gatePrototypeKey, codeInvalidPrototype)
-			if !ok {
-				t.Fatalf("want %s, got %+v", codeInvalidPrototype, errs)
-			}
-			if strings.TrimSpace(row.Message) == "" {
-				t.Error("an invalid prototype row must say what is wrong")
-			}
-			if _, missing := gateRow(errs, gatePrototypeKey, codeMissingComponentArtifact); missing {
-				t.Errorf("a present-but-invalid prototype is not a missing one: %+v", errs)
+			rows := specRows(t, validateSpecBundles(map[string]string{requirementsMainFile: gatePRD}, files))
+			if len(rows) != 1 || rows[0].Path != DesignDir+"/"+gatePrototypeKey || rows[0].Code != codeMissingComponentArtifact {
+				t.Fatalf("want one %s row at %s, got %+v", codeMissingComponentArtifact, gatePrototypeKey, rows)
 			}
 		})
 	}
+}
+
+// Build refuses a present-but-invalid prototype through the design bundle's
+// validation, which runs first, with prototypespec's own stable codes — the
+// codes the save gate names for the same file. The build gate adds no second
+// row for it.
+func TestBuild_InvalidPrototypeRefusedWithItsOwnCode(t *testing.T) {
+	cases := map[string]struct{ body, code string }{
+		"not JSON":          {"{", "INVALID_JSON"},
+		"schema violation":  {`{"schemaVersion":1}`, "SCHEMA_VIOLATION"},
+		"another component": {strings.Replace(gatePrototype("Member"), `"component":"lunch-web"`, `"component":"lunch-api"`, 1), "PROTOTYPE_COMPONENT_MISMATCH"},
+		"dangling reference": {strings.Replace(gatePrototype("Member"),
+			`"defaultScreenId":"screen.home"`, `"defaultScreenId":"screen.ghost"`, 1), "UNKNOWN_REFERENCE"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			files := completeDesignFiles()
+			files[gatePrototypeKey] = c.body
+
+			rows := specRows(t, validateSpecBundles(map[string]string{requirementsMainFile: gatePRD}, files))
+			for _, row := range rows {
+				if row.Path != DesignDir+"/"+gatePrototypeKey || row.Code != c.code {
+					t.Fatalf("want only %s rows at %s, got %+v", c.code, gatePrototypeKey, rows)
+				}
+				if strings.TrimSpace(row.Message) == "" {
+					t.Error("an invalid prototype row must say what is wrong")
+				}
+			}
+			if len(rows) == 0 {
+				t.Fatalf("an invalid prototype must refuse Build")
+			}
+			if errs := gateErrors(t, files); len(errs) != 0 {
+				t.Errorf("the build gate leaves an invalid prototype to the design validation, got %+v", errs)
+			}
+		})
+	}
+}
+
+func specRows(t *testing.T, err error) []FileValidationError {
+	t.Helper()
+	var verr *SpecValidationError
+	if !errors.As(err, &verr) {
+		t.Fatalf("want *SpecValidationError, got %T: %v", err, err)
+	}
+	return verr.Files
 }
 
 func TestBuildGate_PrototypeRoleMustBeADeclaredSecurityRole(t *testing.T) {

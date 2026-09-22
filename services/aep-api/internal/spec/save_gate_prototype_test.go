@@ -152,3 +152,13 @@ func TestSaveGate_JudgesOnlyTheComponentPrototypeSlot(t *testing.T) {
 		t.Fatalf("a prototype.json outside components/<c>/ must not be judged: %v", err)
 	}
 }
+
+// A blank prototype is not malformed JSON here: like a blank openapi.yaml it is
+// a MISSING artifact, which the build gate names.
+func TestSaveGate_LeavesABlankPrototypeToTheBuildGate(t *testing.T) {
+	files := completeDesignFiles()
+	files[prototypeKey] = " \n"
+	if err := validateDesignBundle(files); err != nil {
+		t.Fatalf("a blank prototype is the build gate's MISSING_COMPONENT_ARTIFACT, not a save refusal: %v", err)
+	}
+}

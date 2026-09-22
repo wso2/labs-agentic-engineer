@@ -71,6 +71,15 @@ type Issue struct {
 	Message string
 }
 
+// Located is the finding's message led by its JSON path, the way a per-file
+// validation row reports it; just the message for a root finding.
+func (i Issue) Located() string {
+	if i.Path == "" {
+		return i.Message
+	}
+	return i.Path + ": " + i.Message
+}
+
 // Model is a parsed prototype.json, version 1.
 type Model struct {
 	SchemaVersion   int            `json:"schemaVersion"`
@@ -254,6 +263,12 @@ func (n *Node) UnmarshalJSON(raw []byte) error {
 	}
 	n.Action = &Action{}
 	return json.Unmarshal(wire.Action, n.Action)
+}
+
+// BundleKey is a component's prototype slot in the design bundle (relative to
+// specs/design/): the key BundleComponent reads back.
+func BundleKey(component string) string {
+	return "components/" + component + "/prototype.json"
 }
 
 // BundleComponent reports the component a design-bundle key (relative to
