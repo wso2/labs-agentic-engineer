@@ -256,6 +256,12 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   (`INVALID_JSON`, `SCHEMA_VIOLATION`, `UNSUPPORTED_VERSION`, `DUPLICATE_ID`, `UNKNOWN_REFERENCE`,
   `PROTOTYPE_COMPONENT_MISMATCH`) and JSON path — the codes and paths the TypeScript validator reports
   for the same file, pinned by one shared case table (`packages/prototype-model/test/validation-cases.json`).
+- **Build requires a valid prototype per web application** (`build_gate.go`). Every `web-application`
+  the cell declares needs `components/<c>/prototype.json` at the tag (`MISSING_COMPONENT_ARTIFACT`)
+  that passes the same validator (`INVALID_PROTOTYPE`), and when `security.json` exists every prototype
+  role must be one of its roles (`UNKNOWN_PROTOTYPE_ROLE`). The role rule reads two files, so it lives
+  here rather than in the save gate. No approval is recorded: publishing the version is the approval
+  (repo ADR-0034).
 - The `/collab/validate` oracle recovers the acting org from VERIFIED claims and refuses any room whose
   `spec-<org>-` prefix mismatches — never a hint of whether the room exists. Platform-wide rules (tenant
   gate, secrets fence) → [../../README.md](../../README.md).

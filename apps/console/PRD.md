@@ -32,9 +32,13 @@ BFF, which is its only backend.
 
 1. User gives a requirement (creating or extending a project).
 2. Agents derive the design file (component architecture) + validation files.
-3. **Design gate (blocking, in the Console):** a developer reviews and
-   approves the derived design before any coding agent starts.
-4. Coding agents implement; their changes merge and deploy to dev
+3. For each **web application** the design declares, the user generates a
+   read-only **prototype** and reviews it in the Console, sending change
+   requests back to the agent until it is right.
+4. **Design gate (blocking, in the Console):** a developer reviews the derived
+   design (and its prototypes), then triggers Build — Build is the approval,
+   and it refuses a web application without a valid prototype.
+5. Coding agents implement; their changes merge and deploy to dev
    **autonomously** — there is no human code-review gate. Humans intervene
    on failure, not by default.
 
@@ -96,6 +100,34 @@ which is also what closes its issue. Newest first; links go to the feature's
 GitHub issue plus any ADRs it produced. Features still being built aren't
 here: they're the open `console` + `feature` issues.
 
+- Spec view — the **Prototype** stage: between Design and Validation, present
+  only when the design cell declares a `web-application`. **Generate prototype**
+  (once the design is ready) sends `/prototype`, which writes one read-only
+  `prototype.json` per web application from the design, its roles and its API;
+  the section then lists one **Review prototype** entry per web application.
+  Review opens a full-viewport page at
+  `/projects/:project/prototype/:component` — a slim review bar (**Back to
+  Spec**, the app name, **Prototype · read-only**, Role, Flow, Screen and
+  Display state selectors, **Preview** / **Annotate**) over the application in a
+  browser-window frame, rendered with Oxygen from the controlled registry.
+  **Preview** navigates, opens dialogs and drawers, and switches tabs and steps;
+  **Annotate** selects components instead (outlined and named, multi-select,
+  click again or Escape to clear, **Whole screen** when nothing is selected) and
+  slides in a Feedback inspector: request text, **Add request**, queued requests
+  as cards with numbered pins, and one **Send all** that posts the batch as a
+  single structured `/prototype` turn; the page re-reads the prototype once when
+  it lands, and a failed turn keeps the queue. Screen, flow, state and mode ride
+  the URL (replace, so Back leaves). A design change after generation marks the
+  stage and the page **Outdated** with **Regenerate prototype**; a feedback
+  rewrite does not. No approve action, history or rollback — Build is the
+  approval, and it refuses a missing, invalid or unknown-role prototype. The
+  Excalidraw wireframe canvas, its Canvas | Prototype toggle and the
+  component's *Wireframe* row are removed
+  ([ADR-0033](design/decisions/ADR-0033-preview-and-annotate-are-one-prototype-view.md);
+  repo [ADR-0034](../../docs/decisions/ADR-0034-a-web-application-is-reviewed-as-a-prototype-before-build.md)) —
+  [#813](https://github.com/wso2/labs-agentic-engineer/issues/813)
+  (contract: `SpecStage.prototypeOutdated`, the turn request's
+  `prototypeFeedback`)
 - Deployments — the Development card reads as the flow: **Deployed →
   Validation → Promote to Production** as three numbered steps on one rail,
   each with its one action. Step 1 holds the rollout sentence, the components
@@ -379,6 +411,8 @@ here: they're the open `console` + `feature` issues.
   route. `@aep/excalidraw-dsl`'s `tryDslToPrototype` compiles per-screen
   scenes client-side (no BE handshake, no contract change; ADR-0008) —
   [#348](https://github.com/wso2/labs-agentic-engineer/issues/348)
+  *Retired by the Prototype stage
+  ([#813](https://github.com/wso2/labs-agentic-engineer/issues/813)).*
 - Spec view — readable wireframe canvas: screens compile into a single column
   instead of a two-across grid, and the canvas opens focused on the first
   screen at a legible size with the top of the second peeking below; while an
@@ -387,6 +421,8 @@ here: they're the open `console` + `feature` issues.
   `@aep/excalidraw-dsl` stamps each element with its screen so the viewer can
   group per screen; no contract change —
   [#552](https://github.com/wso2/labs-agentic-engineer/issues/552)
+  *Retired by the Prototype stage
+  ([#813](https://github.com/wso2/labs-agentic-engineer/issues/813)).*
 - Project create — reference document upload on the "What do you want to
   build?" view. Two groups, both readable by the models: `.pdf`/`.png`/`.jpg`/
   `.jpeg`/`.gif`/`.webp` read natively as file parts, and `.md`/`.txt`/`.csv`/
@@ -425,6 +461,8 @@ here: they're the open `console` + `feature` issues.
   `Common · Screen 1`), and `?flow=<Name>` joins `?screen=` on the full-screen
   route. Same client-side derivation, no contract change —
   [#491](https://github.com/wso2/labs-agentic-engineer/issues/491)
+  *Retired by the Prototype stage
+  ([#813](https://github.com/wso2/labs-agentic-engineer/issues/813)).*
 - Agent chat — structured question cards: `ask_question` (single) +
   `ask_questions` (batch form) tool-calls rendered as native Oxygen UI cards
   in the activity stream (answer returns as the next turn's plain text);
