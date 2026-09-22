@@ -46,6 +46,27 @@ describe("startTurnBody", () => {
     });
   });
 
+  it("carries a prototype feedback batch as its own field, the instruction exactly /prototype (#817)", () => {
+    const prototypeFeedback = {
+      prototypePath: "specs/design/components/portal/prototype.json",
+      annotations: [
+        {
+          id: "a1",
+          prototypeSchemaVersion: 1 as const,
+          screenId: "screen.queue",
+          flowId: null,
+          stateId: "state.default",
+          componentIds: ["btn.export"],
+          request: "Rename this to Download",
+        },
+      ],
+    };
+    expect(startTurnBody("/prototype", false, undefined, prototypeFeedback)).toEqual({
+      instruction: "/prototype",
+      prototypeFeedback,
+    });
+  });
+
   it("sends neither field for an ordinary chat turn", () => {
     const body = startTurnBody("hello", true);
     expect(body).not.toHaveProperty("anchor");

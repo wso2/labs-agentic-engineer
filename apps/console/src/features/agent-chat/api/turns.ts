@@ -72,16 +72,21 @@ function turnFormData(
   return form;
 }
 
+/** A prototype review batch (#817): its own field, never words in `instruction`. */
+export type PrototypeFeedbackInput = components["schemas"]["PrototypeFeedbackInput"];
+
 /** JSON body for StartTurn. Register chat omits collab — there is no spec room. */
 export function startTurnBody(
   instruction: string,
   collab: boolean,
   aiming?: TurnAiming | undefined,
+  prototypeFeedback?: PrototypeFeedbackInput | undefined,
 ): components["schemas"]["TurnInputBody"] {
   return {
     instruction,
     ...(collab ? { collab: true } : {}),
     ...(aiming ? { anchor: aiming.anchor, intent: aiming.intent } : {}),
+    ...(prototypeFeedback ? { prototypeFeedback } : {}),
   };
 }
 
@@ -95,6 +100,8 @@ export function startTurnBody(
  * With none attached the request is the same JSON body as before — the
  * multipart form is built only when there is something to put in it, so the
  * overwhelmingly common send is byte-identical to the pre-feature one.
+ *
+ * `prototypeFeedback` (#817) is JSON-only — a review batch carries no files.
  */
 export async function startCollabTurn(
   projectName: string,
@@ -103,6 +110,7 @@ export async function startCollabTurn(
   files: File[] = [],
   collab = true,
   aiming?: TurnAiming | undefined,
+  prototypeFeedback?: PrototypeFeedbackInput | undefined,
 ): Promise<string> {
   const { data, error, response } = await client.POST(
     "/projects/{projectName}/agents/{conversationId}/messages",
@@ -123,7 +131,7 @@ export async function startCollabTurn(
             },
           }
         : {
-            body: startTurnBody(instruction, collab, aiming),
+            body: startTurnBody(instruction, collab, aiming, prototypeFeedback),
           }),
     },
   );
