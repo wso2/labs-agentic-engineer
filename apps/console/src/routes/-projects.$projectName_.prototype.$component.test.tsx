@@ -15,18 +15,14 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 // @vitest-environment jsdom
 
 import { render } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { PrototypeViewRequest } from "../features/prototype/model/viewState";
 
-// `PrototypeRoute` calls `Route.useParams()` / `Route.useSearch()` /
-// `Route.useNavigate()`, all of which TanStack Router attaches to the
-// object `createFileRoute(path)(options)` returns. Mocking `createFileRoute`
-// to return the options verbatim (plus stubbed hooks) lets us exercise the
-// real `validateSearch` and the real `PrototypeRoute` component without a
-// full router.
+// `createFileRoute` hands back its options plus stubbed hooks, so the real `validateSearch` and
+// the real route component run without a router.
 const mockUseParams = vi.fn();
 const mockUseSearch = vi.fn();
 const mockNavigate = vi.fn();
@@ -40,18 +36,15 @@ vi.mock("@tanstack/react-router", () => ({
   }),
 }));
 
-// The heavy page is irrelevant here — record the callbacks PrototypeRoute
-// wires up so the tests can invoke them directly.
 let captured: {
-  onScreenChange?: (screen: string) => void;
-  onFlowChange?: (flow: string) => void;
+  projectName?: string;
+  component?: string;
+  search?: PrototypeViewRequest;
+  onSearchChange?: (next: PrototypeViewRequest) => void;
 } = {};
 
-vi.mock("../features/spec/components/PrototypePage", () => ({
-  PrototypePage: (props: {
-    onScreenChange: (screen: string) => void;
-    onFlowChange: (flow: string) => void;
-  }) => {
+vi.mock("../features/prototype/components/ComponentPrototypePage", () => ({
+  ComponentPrototypePage: (props: typeof captured) => {
     captured = props;
     return <div data-testid="prototype-page" />;
   },
@@ -59,73 +52,68 @@ vi.mock("../features/spec/components/PrototypePage", () => ({
 
 import { Route as RouteUnderTest } from "./projects.$projectName_.prototype.$component";
 
-// `createFileRoute` is mocked above to hand back its options object as-is
-// (plus stubbed hooks), so at runtime `Route` also carries `component` and
-// `validateSearch` — properties the real generated `Route` type doesn't
-// expose. Cast through this narrower shape to access them from the tests.
 const Route = RouteUnderTest as unknown as {
-  validateSearch: (search: Record<string, unknown>) => { screen?: string; flow?: string };
+  validateSearch: (search: Record<string, unknown>) => PrototypeViewRequest;
   component: React.ComponentType;
 };
 const PrototypeRoute = Route.component;
 
+const FULL = { screen: "screen.detail", flow: "flow.approve", state: "state.failed", mode: "annotate" } as const;
+
 beforeEach(() => {
-  mockUseParams.mockReset();
+  mockUseParams.mockReset().mockReturnValue({ projectName: "p", component: "storefront" });
   mockUseSearch.mockReset();
   mockNavigate.mockReset();
   captured = {};
 });
 
+function lastNavigation() {
+  expect(mockNavigate).toHaveBeenCalledTimes(1);
+  return mockNavigate.mock.calls[0]![0] as { replace: boolean; search: (prev: unknown) => unknown };
+}
+
 describe("prototype route", () => {
   describe("validateSearch", () => {
-    it("keeps both screen and flow when present", () => {
-      expect(Route.validateSearch({ screen: "Login", flow: "Admin path" })).toEqual({
-        screen: "Login",
-        flow: "Admin path",
-      });
+    it("keeps screen, flow, state and mode", () => {
+      expect(Route.validateSearch({ ...FULL })).toEqual(FULL);
     });
 
-    it("drops non-string and empty values", () => {
-      expect(Route.validateSearch({ screen: "", flow: 42 })).toEqual({});
-      expect(Route.validateSearch({})).toEqual({});
+    it("drops an invalid mode and keeps the rest", () => {
+      expect(Route.validateSearch({ ...FULL, mode: "edit" })).toEqual({
+        screen: "screen.detail",
+        flow: "flow.approve",
+        state: "state.failed",
+      });
+      expect(Route.validateSearch({ mode: "preview" })).toEqual({ mode: "preview" });
+    });
+
+    it("drops empty, non-string and unknown params", () => {
+      expect(Route.validateSearch({ screen: "", flow: 42, state: null, variant: "D" })).toEqual({});
     });
   });
 
-  describe("PrototypeRoute", () => {
-    beforeEach(() => {
-      mockUseParams.mockReturnValue({ projectName: "p", component: "shop" });
+  describe("route component", () => {
+    it("hands the page its project, component and search", () => {
+      mockUseSearch.mockReturnValue(FULL);
+      render(<PrototypeRoute />);
+      expect(captured).toMatchObject({ projectName: "p", component: "storefront", search: FULL });
     });
 
-    it("preserves flow when onScreenChange navigates (fails if the object form of search regresses)", () => {
-      mockUseSearch.mockReturnValue({ screen: "Login", flow: "Admin path" });
+    it.each<[string, PrototypeViewRequest, PrototypeViewRequest]>([
+      ["a screen change", { ...FULL, screen: "screen.queue" }, { ...FULL, screen: "screen.queue" }],
+      ["a flow change", { ...FULL, flow: "flow.month-end" }, { ...FULL, flow: "flow.month-end" }],
+      ["a display-state change", { ...FULL, state: "state.empty" }, { ...FULL, state: "state.empty" }],
+      ["a mode change", { screen: FULL.screen, flow: FULL.flow, state: FULL.state }, { screen: FULL.screen, flow: FULL.flow, state: FULL.state }],
+      ["leaving a flow", { screen: FULL.screen, state: FULL.state, mode: "annotate" }, { screen: FULL.screen, state: FULL.state, mode: "annotate" }],
+    ])("writes %s with replace navigation, keeping every other param", (_, next, expected) => {
+      mockUseSearch.mockReturnValue(FULL);
       render(<PrototypeRoute />);
 
-      captured.onScreenChange!("Orders");
+      captured.onSearchChange!(next);
 
-      expect(mockNavigate).toHaveBeenCalledTimes(1);
-      const call = mockNavigate.mock.calls[0]![0] as { replace: boolean; search: (prev: unknown) => unknown };
+      const call = lastNavigation();
       expect(call.replace).toBe(true);
-      expect(typeof call.search).toBe("function");
-      expect(call.search({ flow: "Admin path", screen: "Login" })).toEqual({
-        flow: "Admin path",
-        screen: "Orders",
-      });
-    });
-
-    it("preserves screen when onFlowChange navigates", () => {
-      mockUseSearch.mockReturnValue({ screen: "Login", flow: "Admin path" });
-      render(<PrototypeRoute />);
-
-      captured.onFlowChange!("Customer path");
-
-      expect(mockNavigate).toHaveBeenCalledTimes(1);
-      const call = mockNavigate.mock.calls[0]![0] as { replace: boolean; search: (prev: unknown) => unknown };
-      expect(call.replace).toBe(true);
-      expect(typeof call.search).toBe("function");
-      expect(call.search({ flow: "Admin path", screen: "Login" })).toEqual({
-        flow: "Customer path",
-        screen: "Login",
-      });
+      expect(call.search({ ...FULL })).toEqual(expected);
     });
   });
 });

@@ -52,7 +52,7 @@ export function fileLabel(path: string): string {
   if (Object.hasOwn(TITLES, path)) return TITLES[path] as string;
   if (OPENAPI_RE.test(path)) return "API";
   // Under the component's own header, so the label adds the artifact and
-  // never repeats the subject — `orders › Design · API · Wireframe`.
+  // never repeats the subject — `orders › Design · API`.
   if (COMPONENT_DESIGN_RE.test(path)) return "Design";
   // A dependency's directory reads the same way under its own header —
   // `stripe › Definition · API · SDK` — the interface file taking the name

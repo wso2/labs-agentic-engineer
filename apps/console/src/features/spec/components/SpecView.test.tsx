@@ -2246,7 +2246,7 @@ describe("SpecView — the Prototype stage", () => {
     expect(screen.queryByRole("button", { name: "Generate prototype" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Review prototype: storefront" }));
     expect(mockNavigate).toHaveBeenCalledWith({
-      to: "/projects/$projectName/json-prototype/$component",
+      to: "/projects/$projectName/prototype/$component",
       params: { projectName: "proj1", component: "storefront" },
     });
   });

@@ -1110,7 +1110,7 @@ describe("SecurityPanel — the rest of the page", () => {
 
   // A screen's gate is the scope of the operation it loads (ADR-0033), so this
   // page never lists screens: it shows permissions, roles, groups and the test
-  // users, and reads no wireframe at all.
+  // users, and reads no prototype at all.
   it("lists no screens", () => {
     expenseTracker();
 

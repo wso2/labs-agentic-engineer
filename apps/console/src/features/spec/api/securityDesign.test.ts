@@ -631,12 +631,12 @@ describe("referencePaths", () => {
   });
 
   // A screen's gate is the scope of the operation it loads (ADR-0033) — the
-  // document declares nothing about screens, so no rule reads a DSL and no
-  // wireframe is asked for, whatever the project draws.
-  it("asks for no wireframe at all", () => {
+  // document declares nothing about screens, so no rule reads a prototype,
+  // whatever the project draws.
+  it("asks for no prototype at all", () => {
     for (const name of ["expense-tracker", "clinic", "vendor"] as const) {
       expect(
-        referencePaths(canonical(name)).filter((p) => p.endsWith("/wireframes.dsl")),
+        referencePaths(canonical(name)).filter((p) => p.endsWith("/prototype.json")),
       ).toEqual([]);
     }
   });

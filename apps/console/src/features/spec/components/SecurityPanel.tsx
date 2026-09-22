@@ -42,7 +42,7 @@
  * write that the room refuses simply never arrives.
  *
  * Everything else on the page stays read-only. Adding a resource, an action or
- * a role touches `openapi.yaml` and `wireframes.dsl` too, so it is a design
+ * a role touches `openapi.yaml` and `prototype.json` too, so it is a design
  * conversation; the matrix says so in its intro, ABOVE the grid — a reader has
  * to know it before they go hunting for a control that is not there, not after.
  */
@@ -100,7 +100,7 @@ export interface SecurityPanelProps {
   /** Live `security.json` text — from the room, or the committed fallback. */
   securityJson: string | null;
   live?: ProjectRolesLiveState | undefined;
-  /** Committed-blob read in flight — same spinner as Architecture / Wireframes. */
+  /** Committed-blob read in flight — same spinner as Architecture. */
   isPending?: boolean;
   /** Committed-blob read failed. */
   isError?: boolean;

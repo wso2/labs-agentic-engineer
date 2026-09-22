@@ -62,8 +62,7 @@ export interface SecurityEntry {
   /**
    * True only while the committed `security.json` fallback is in flight.
    * A disabled query still reports `isPending` in react-query, so this is
-   * gated on the fallback actually being used — same rule as Architecture
-   * and Wireframes. Live directory chips (`GET …/roles`) fill in after paint
+   * gated on the fallback actually being used — same rule as Architecture. Live directory chips (`GET …/roles`) fill in after paint
    * and do not block the page.
    */
   isPending: boolean;

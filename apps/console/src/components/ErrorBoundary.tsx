@@ -27,7 +27,7 @@ import { EmptyState } from "./EmptyState";
 // stack, and only a page reload brought the app back.
 //
 // This boundary contains such a throw to the section it wraps — a page, the
-// chat panel, the wireframe canvas — so the rest of the workspace keeps
+// chat panel, the architecture diagram — so the rest of the workspace keeps
 // working, and it records what happened so the next occurrence can be fixed
 // at its source. It is containment, not a fix: the root cause of a throw
 // stays a bug to chase with the stack this component now surfaces.
@@ -53,7 +53,7 @@ const SETTLE_MS = 10_000;
 
 interface ErrorBoundaryProps {
   children: ReactNode;
-  /** What the reader was looking at, in a sentence fragment: "The wireframe canvas". */
+  /** What the reader was looking at, in a sentence fragment: "The architecture diagram". */
   label: string;
   /** A change here clears the error and resets the automatic attempts. */
   resetKey?: unknown;

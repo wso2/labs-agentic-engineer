@@ -44,7 +44,7 @@ const e = (path: string): SpecFileEntry => ({
 describe("componentOf", () => {
   it("extracts the component name from a component path", () => {
     expect(componentOf("specs/design/components/orders/design.json")).toBe("orders");
-    expect(componentOf("specs/design/components/orders/wireframes.dsl")).toBe("orders");
+    expect(componentOf("specs/design/components/web/prototype.json")).toBe("web");
   });
   it("returns null for non-component design paths", () => {
     expect(componentOf("specs/design/domain-model.md")).toBeNull();
@@ -53,33 +53,32 @@ describe("componentOf", () => {
 });
 
 describe("buildDesignSection", () => {
-  it("splits overview files from per-component groups and finds the wireframe dsl", () => {
+  it("splits overview files from per-component groups", () => {
     const section = buildDesignSection([
       e("specs/design/domain-model.md"),
       e("specs/design/components/orders/design.json"),
       e("specs/design/components/orders/openapi.yaml"),
-      e("specs/design/components/orders/wireframes.dsl"),
       e("specs/design/components/web/design.json"),
-      e("specs/design/components/web/wireframes.dsl"),
       e("specs/requirements/prd.md"), // ignored: not a design file
     ]);
 
     expect(section.overview.map((f) => f.path)).toEqual(["specs/design/domain-model.md"]);
     expect(section.hasComponents).toBe(true);
     expect(section.components.map((c) => c.name)).toEqual(["orders", "web"]);
-
-    const orders = section.components[0]!;
-    // The raw .dsl is NOT listed as a browsable file; it drives the wireframe entry.
-    expect(orders.files.map((f) => f.path)).toEqual([
+    expect(section.components[0]!.files.map((f) => f.path)).toEqual([
       "specs/design/components/orders/design.json",
       "specs/design/components/orders/openapi.yaml",
     ]);
-    expect(orders.wireframeDslPath).toBe("specs/design/components/orders/wireframes.dsl");
   });
 
-  it("omits the wireframe entry when a component has no .dsl", () => {
-    const section = buildDesignSection([e("specs/design/components/api/design.json")]);
-    expect(section.components[0]!.wireframeDslPath).toBeNull();
+  it("lists no prototype.json row: the prototype is reviewed through the Prototype section", () => {
+    const section = buildDesignSection([
+      e("specs/design/components/web/design.json"),
+      e("specs/design/components/web/prototype.json"),
+    ]);
+    expect(section.components[0]!.files.map((f) => f.path)).toEqual([
+      "specs/design/components/web/design.json",
+    ]);
   });
 
   it("returns empty section when there are no design files", () => {
@@ -182,6 +181,10 @@ describe("dependencies — one directory, one definition", () => {
       "specs/design/dependencies/stripe/dependency.json",
       "specs/design/dependencies/stripe/openapi.yaml",
     ]);
+  });
+
+  it("follows no prototype.json write: it has no pane row to land on", () => {
+    expect(followSelection("specs/design/components/web/prototype.json")).toBeNull();
   });
 
   it("follows a dependency's files as files — the pane picks the renderer by path", () => {
