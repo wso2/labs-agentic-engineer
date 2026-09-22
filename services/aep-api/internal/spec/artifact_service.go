@@ -228,8 +228,8 @@ var allowedRequirementExts = []string{".md", ".excalidraw", ".dsl"}
 // against the published schema) plus the FE-derived `*.gen.json` projections;
 // `.cell` is the project-level cell-diagram DSL (design.cell) that drives the
 // live architecture diagram; `.dsl` is the per-component wireframes DSL
-// (wireframes.dsl) — the build gate demands it for deployable
-// web-applications, so it must ride the bundle the gate reads.
+// (wireframes.dsl), still accepted on save though the build gate no longer
+// asks for it (a web-application's build artifact is its prototype.json).
 var allowedDesignExts = []string{".md", ".yaml", ".yml", ".json", ".cell", ".dsl"}
 
 func hasAllowedDesignExt(name string) bool {

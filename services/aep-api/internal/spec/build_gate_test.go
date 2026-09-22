@@ -52,10 +52,26 @@ func completeDesignFiles() map[string]string {
 		"components/lunch-api/design.json":       enriched("lunch-api", "service", "1, 2, 4"),
 		"components/lunch-api/openapi.yaml":      "openapi: 3.0.3\n",
 		"components/lunch-web/design.json":       enriched("lunch-web", "web-application", "1, 2"),
-		"components/lunch-web/wireframes.dsl":    "screen home\n",
+		"components/lunch-web/prototype.json":    gatePrototype("Member"),
 		"components/slack-notifier/design.json":  enriched("slack-notifier", "service", "7"),
 		"components/slack-notifier/openapi.yaml": "openapi: 3.0.3\n",
 	}
+}
+
+// gatePrototype is the smallest valid prototype.json for lunch-web: one screen
+// every given role reaches. Role IDs are security.json role names, verbatim —
+// the prototype skill's rule — so "Member" matches rolesDoc's only role.
+func gatePrototype(roleIDs ...string) string {
+	roles := make([]string, 0, len(roleIDs))
+	quoted := make([]string, 0, len(roleIDs))
+	for _, id := range roleIDs {
+		roles = append(roles, `{"id":"`+id+`","name":"`+id+`"}`)
+		quoted = append(quoted, `"`+id+`"`)
+	}
+	return `{"schemaVersion":1,"component":"lunch-web","name":"Lunch","defaultScreenId":"screen.home",` +
+		`"roles":[` + strings.Join(roles, ",") + `],"states":[{"id":"state.default","name":"Default"}],` +
+		`"flows":[],"navigation":[],` +
+		`"screens":[{"id":"screen.home","name":"Home","roleIds":[` + strings.Join(quoted, ",") + `],"content":[]}]}`
 }
 
 func gateErrors(t *testing.T, designFiles map[string]string) []FileValidationError {
@@ -455,5 +471,125 @@ func TestBuildGate_RolesDocumentValidatedEvenWithoutSignIn(t *testing.T) {
 	errs := gateErrors(t, files)
 	if !slices.Contains(codesOf(errs), codeUnknownRoleStory) {
 		t.Fatalf("want %s, got %+v", codeUnknownRoleStory, errs)
+	}
+}
+
+// ---- the web-application prototype ------------------------------------------
+//
+// A web-application's build artifact is its prototype.json (#820): the review
+// the user did on the Prototype stage is what Build approves. wireframes.dsl is
+// neither required nor sufficient.
+
+const gatePrototypeKey = "components/lunch-web/prototype.json"
+
+func gateRow(errs []FileValidationError, path, code string) (FileValidationError, bool) {
+	for _, e := range errs {
+		if e.Path == path && e.Code == code {
+			return e, true
+		}
+	}
+	return FileValidationError{}, false
+}
+
+func TestBuildGate_AValidPrototypeWithoutDSLPasses(t *testing.T) {
+	files := completeDesignFiles()
+	if _, ok := files["components/lunch-web/wireframes.dsl"]; ok {
+		t.Fatal("fixture drift: the complete design must not carry wireframes.dsl")
+	}
+	if errs := gateErrors(t, files); len(errs) != 0 {
+		t.Fatalf("a valid prototype and no DSL should pass, got %+v", errs)
+	}
+}
+
+func TestBuildGate_MissingPrototypeNamesPrototypeJSON(t *testing.T) {
+	files := completeDesignFiles()
+	delete(files, gatePrototypeKey)
+
+	row, ok := gateRow(gateErrors(t, files), gatePrototypeKey, codeMissingComponentArtifact)
+	if !ok {
+		t.Fatalf("want %s at %s, got %+v", codeMissingComponentArtifact, gatePrototypeKey, gateErrors(t, files))
+	}
+	if !strings.Contains(row.Message, "prototype.json") || !strings.Contains(row.Message, "lunch-web") {
+		t.Errorf("message should name the component and prototype.json: %q", row.Message)
+	}
+}
+
+// wireframes.dsl alone no longer satisfies a new Build.
+func TestBuildGate_WireframesDSLAloneIsNotEnough(t *testing.T) {
+	files := completeDesignFiles()
+	delete(files, gatePrototypeKey)
+	files["components/lunch-web/wireframes.dsl"] = "screen home\n"
+
+	if _, ok := gateRow(gateErrors(t, files), gatePrototypeKey, codeMissingComponentArtifact); !ok {
+		t.Fatalf("wireframes.dsl must not stand in for prototype.json, got %+v", gateErrors(t, files))
+	}
+}
+
+func TestBuildGate_InvalidPrototype(t *testing.T) {
+	cases := map[string]string{
+		"blank":             "  \n",
+		"not JSON":          "{",
+		"schema violation":  `{"schemaVersion":1}`,
+		"another component": strings.Replace(gatePrototype("Member"), `"component":"lunch-web"`, `"component":"lunch-api"`, 1),
+		"dangling reference": strings.Replace(gatePrototype("Member"),
+			`"defaultScreenId":"screen.home"`, `"defaultScreenId":"screen.ghost"`, 1),
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			files := completeDesignFiles()
+			files[gatePrototypeKey] = body
+
+			errs := gateErrors(t, files)
+			row, ok := gateRow(errs, gatePrototypeKey, codeInvalidPrototype)
+			if !ok {
+				t.Fatalf("want %s, got %+v", codeInvalidPrototype, errs)
+			}
+			if strings.TrimSpace(row.Message) == "" {
+				t.Error("an invalid prototype row must say what is wrong")
+			}
+			if _, missing := gateRow(errs, gatePrototypeKey, codeMissingComponentArtifact); missing {
+				t.Errorf("a present-but-invalid prototype is not a missing one: %+v", errs)
+			}
+		})
+	}
+}
+
+func TestBuildGate_PrototypeRoleMustBeADeclaredSecurityRole(t *testing.T) {
+	files := signInDesignFiles()
+	files["security.json"] = rolesDoc("1, 2")
+	files[gatePrototypeKey] = gatePrototype("Member", "Coordinator")
+
+	errs := gateErrors(t, files)
+	row, ok := gateRow(errs, gatePrototypeKey, codeUnknownPrototypeRole)
+	if !ok {
+		t.Fatalf("want %s, got %+v", codeUnknownPrototypeRole, errs)
+	}
+	if !strings.Contains(row.Message, `"Coordinator"`) {
+		t.Errorf("message should name the undeclared role: %q", row.Message)
+	}
+	if len(errs) != 1 {
+		t.Errorf("only the undeclared role refuses, got %+v", errs)
+	}
+}
+
+// Without security.json the prototype's roles are free-form.
+func TestBuildGate_PrototypeRolesAreFreeWithoutASecurityDesign(t *testing.T) {
+	files := completeDesignFiles()
+	files[gatePrototypeKey] = gatePrototype("anyone")
+
+	if errs := gateErrors(t, files); len(errs) != 0 {
+		t.Fatalf("roles are free-form without security.json, got %+v", errs)
+	}
+}
+
+// An unparseable security.json is INVALID_ROLES_DOCUMENT's business; the role
+// cross-check has nothing to compare against and adds no noise.
+func TestBuildGate_UnparseableSecurityDesignSkipsTheRoleCheck(t *testing.T) {
+	files := signInDesignFiles()
+	files["security.json"] = `{"version":1,`
+
+	errs := gateErrors(t, files)
+	if slices.Contains(codesOf(errs), codeUnknownPrototypeRole) {
+		t.Fatalf("no role check against an unparseable security.json, got %+v", errs)
 	}
 }
