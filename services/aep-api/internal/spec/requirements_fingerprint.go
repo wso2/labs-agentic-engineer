@@ -82,10 +82,17 @@ func RequirementsFingerprint(entries []sourcecontrol.Entry) string {
 		}
 		lines = append(lines, rel+"\x00"+e.SHA)
 	}
-	// No requirements at all is its own value, distinct from "one empty file":
-	// an empty hash input would make a project with no requirements compare
-	// equal to one whose requirements were all deleted, which is a real
-	// difference and exactly the kind a staleness check must not miss.
+	return fingerprintLines(lines)
+}
+
+// fingerprintLines hashes a set of `rel\x00blobSHA` lines into one comparable
+// value — the reduction every staleness fingerprint shares.
+//
+// No files at all is its own value, distinct from "one empty file": an empty
+// hash input would make a tree with nothing in it compare equal to one whose
+// files were all deleted, which is a real difference and exactly the kind a
+// staleness check must not miss.
+func fingerprintLines(lines []string) string {
 	if len(lines) == 0 {
 		return ""
 	}

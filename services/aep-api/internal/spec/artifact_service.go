@@ -169,6 +169,12 @@ type ArtifactService interface {
 	// because equal-by-accident is the failure that ships a stale design.
 	RequirementsFingerprintAt(ctx context.Context, orgID, projectID, at string) (string, error)
 
+	// DesignFingerprintAt reduces the design (minus every component's
+	// prototype.json) at one commit to a comparable value (#818) — the
+	// prototype staleness check reads it as the last prototype run saw it.
+	// An unresolvable commit is an error, as for RequirementsFingerprintAt.
+	DesignFingerprintAt(ctx context.Context, orgID, projectID, at string) (string, error)
+
 	// SetDesignBaselineResolver wires the build gate's staleness input (#575):
 	// the commit the newest successful design run read the project at. On the
 	// interface because the composition root has to reach it, and it cannot be

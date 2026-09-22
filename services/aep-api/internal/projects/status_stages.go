@@ -150,6 +150,38 @@ func (s *Service) designOutdated(ctx context.Context, orgName, projectName, nowF
 	return was != nowFingerprint, nil
 }
 
+// prototypeFlow is the `/prototype` token (#818). Every prototype write runs
+// under it — a full generation and a feedback batch alike — and each reads the
+// design at its base commit, so the newest successful one is the design the
+// prototypes stand on.
+const prototypeFlow = "prototype"
+
+// prototypeOutdated answers whether the design has moved since the prototypes
+// were last generated from it — designOutdated one stage down.
+//
+// nowFingerprint is the design (minus every prototype.json) as it stands; the
+// baseline is the same reduction at the commit the newest successful prototype
+// run read. Because prototypes are excluded from both sides, a feedback rewrite
+// never reads as the design moving. No prototype run on record means nothing
+// to be behind; an unreadable baseline is an error, as for designOutdated.
+func (s *Service) prototypeOutdated(ctx context.Context, orgName, projectName, nowFingerprint string) (bool, error) {
+	if s.specTurns == nil {
+		return false, nil
+	}
+	last, err := s.specTurns.NewestCompletedFlow(ctx, orgName, projectName, prototypeFlow)
+	if err != nil {
+		return false, fmt.Errorf("newest prototype turn: %w", err)
+	}
+	if last == nil || last.BaseRef == "" {
+		return false, nil
+	}
+	was, err := s.artifactSvc.DesignFingerprintAt(ctx, orgName, projectName, last.BaseRef)
+	if err != nil {
+		return false, fmt.Errorf("design at the last prototype run's base: %w", err)
+	}
+	return was != nowFingerprint, nil
+}
+
 // SetStageSources wires the build/deploy stage inputs at the composition
 // root. On a ready repo GetProjectStatus fails when either is missing — the
 // stages are contract-required and never silently fabricated (D7).
@@ -323,14 +355,25 @@ func (s *Service) populateStages(ctx context.Context, orgName, projectName strin
 		}
 		outdated = stale
 	}
+	// Same shape one stage down (#818): checked only when a prototype exists
+	// at head, which keeps the extra tree read off every pre-prototype poll.
+	prototypeOutdated := false
+	if snap.HasPrototype {
+		stale, err := s.prototypeOutdated(ctx, orgName, projectName, snap.DesignFingerprint)
+		if err != nil {
+			return err
+		}
+		prototypeOutdated = stale
+	}
 	status.Spec = gen.SpecStage{
-		Exists:         snap.HasSpec,
-		Version:        snap.SpecVersion,
-		Dirty:          snap.SpecDirty,
-		Design:         snap.HasDesign,
-		Agent:          specAgentOf(s.specTurns, newestTurn),
-		AgentFlow:      runningFlowOf(newestTurn),
-		DesignOutdated: outdated,
+		Exists:            snap.HasSpec,
+		Version:           snap.SpecVersion,
+		Dirty:             snap.SpecDirty,
+		Design:            snap.HasDesign,
+		Agent:             specAgentOf(s.specTurns, newestTurn),
+		AgentFlow:         runningFlowOf(newestTurn),
+		DesignOutdated:    outdated,
+		PrototypeOutdated: prototypeOutdated,
 	}
 	applyFlatArtifactFields(status, snap)
 

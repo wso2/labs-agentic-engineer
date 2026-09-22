@@ -3096,6 +3096,11 @@ type SpecStage struct {
 	// Exists Any spec file created; false renders the Generate-spec CTA.
 	Exists bool `json:"exists"`
 
+	// PrototypeOutdated The design has changed since the prototypes were last generated from it (#818), so a web-application's `prototype.json` may no longer picture what the design says. Derived the way `designOutdated` is: the design as it stands now against the design as it stood in the snapshot the newest successful `/prototype` turn read. "The design" is the whole `specs/design/` tree EXCEPT every `components/<component>/prototype.json`, so a feedback rewrite of a prototype alone never marks anything outdated.
+	// One value for the project, not one per web-application: `/prototype` regenerates every web-application's prototype in one turn, so the remedy — Regenerate prototype — is the same whichever one fell behind, and the design fingerprint is project-wide.
+	// False while no prototype exists or no `/prototype` turn has succeeded: there is nothing to be behind.
+	PrototypeOutdated bool `json:"prototypeOutdated,omitempty"`
+
 	// Version The newest spec version's name; "" if never published.
 	Version string `json:"version"`
 }
