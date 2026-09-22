@@ -357,39 +357,38 @@ export function railSections(input: RailInput): RailSection[] {
     };
   };
 
-  const sections = [
+  // Rail order: Requirements, Design, Prototype, Validation.
+  const prototype = prototypeStage(input, reviews, activeID);
+  return [
     section("requirements", "Requirements", requirements),
     // "Design", not "Designs" — one design, written across several documents.
     section("design", "Design", outdatedReason),
+    // No web-application, no stage: a service-only project has nothing to
+    // prototype, and a stage it could never finish would read as a gap.
+    ...(input.webApplications.length > 0
+      ? [{ ...section("prototype", "Prototype", prototype.reasons), prototype: prototype.stage }]
+      : []),
     // The validation criteria are written against the same stories the design
     // is, and the same re-derivation rewrites both — so they go stale together
     // and clear together. Flagging only the design would quietly assert that
     // criteria written against a story you have since rewritten are still fine.
     section("validation", "Validation", outdatedReason),
   ];
-  // No web-application, no stage: a service-only project has nothing to
-  // prototype, and a stage it could never finish would read as a gap.
-  if (input.webApplications.length === 0) return sections;
-  return [
-    ...sections.slice(0, 2),
-    prototypeSection(input, section, reviews, activeID),
-    ...sections.slice(2),
-  ];
 }
 
 /**
- * The Prototype section (#813): the shared state rules, plus what it offers.
+ * What the Prototype section (#813) adds to the shared state rules: its
+ * reasons, and what it offers.
  *
  * Its one reason is the design moving past the prototypes (#818) — never the
  * requirements moving, which is the design's to answer first. Generate needs a
  * design to generate FROM: one that exists and is not being written right now.
  */
-function prototypeSection(
+function prototypeStage(
   input: RailInput,
-  section: (id: RailSection["id"], title: string, reasons: SectionReason[]) => RailSection,
   reviews: string[],
   activeID: RailSection["id"] | undefined,
-): RailSection {
+): { reasons: SectionReason[]; stage: PrototypeStage } {
   const outdated = input.prototypeOutdated && reviews.length > 0;
   const reasons: SectionReason[] = outdated
     ? [{ key: "design-moved", label: DESIGN_MOVED, count: 1, action: "regenerate-prototype" }]
@@ -398,5 +397,5 @@ function prototypeSection(
   const missing = reviews.length < input.webApplications.length;
   const action: PrototypeStage["action"] =
     activeID === "prototype" || !designReady ? null : outdated ? "regenerate" : missing ? "generate" : null;
-  return { ...section("prototype", "Prototype", reasons), prototype: { action, reviews } };
+  return { reasons, stage: { action, reviews } };
 }
