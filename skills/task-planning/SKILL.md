@@ -78,40 +78,38 @@ cannot land the work (e.g. a migration must merge before feature code).
 
 After planning, write every planned Task's full body via `updateTask` before
 the turn ends — `## Scope` (the concrete work, citing the component's
-design.json and its openapi.yaml/wireframes.dsl), `## Acceptance` (what done
+design.json and its openapi.yaml/prototype.json), `## Acceptance` (what done
 means, at work altitude — the validation oracle owns product acceptance), and
 `## References` (the spec paths the coding agent reads). A Task without a body
 is unfinished planning.
 
-For a `web-application` component the wireframe is the screen contract, so
+For a `web-application` component the prototype is the screen contract, so
 its Task always carries two more things: the path
-`specs/design/components/<name>/wireframes.dsl` under `## References`, and a
-`Screens:` line under `## Scope` naming every `screen` in that file the Task
-covers (`Screens: RiskQueue, MyRisks, NewRisk, …`). Names only — the elements
-live in the DSL, and listing them in the issue would go stale the moment the
-wireframe is edited. The coding agent's `wireframes` skill turns the names
-into pages.
+`specs/design/components/<name>/prototype.json` under `## References`, and a
+`Screens:` line under `## Scope` naming the id of every screen in that file the
+Task covers (`Screens: screen.risk-queue, screen.my-risks, screen.new-risk, …`).
+IDs only — the content lives in the prototype, and listing it in the issue
+would go stale the moment the prototype is revised. The coding agent's
+`prototype` skill turns the ids into pages.
 
 **Map the stories to the flows, and check the mapping yourself.** You hold
-both the story list and the wireframe, so you are the one place the two can be
+both the story list and the prototype, so you are the one place the two can be
 compared — the designer's coverage pass is not one you inherit on trust. Read
-the `flow` blocks and write a **`Flows:` checklist** under `## Scope` — one
-item per flow, numbered `F1`, `F2`, …, carrying the flow's name, its `role`,
-the stories it walks, and its `description` line from the DSL:
+the prototype's `flows` and write a **`Flows:` checklist** under `## Scope` —
+one item per flow, numbered `F1`, `F2`, …, carrying the flow's name, its role,
+and the stories it walks:
 
 ```markdown
 Flows:
 
 - [ ] **F1 · Submit an expense**
-  An employee files a claim and tracks its approval.
   Persona: Employee
   Stories: 3, 4, 7
-  Walk: MyClaims → NewClaim → ClaimDetail
+  Walk: screen.my-claims → screen.new-claim → screen.claim-detail
 - [ ] **F2 · Approve a claim**
-  A manager works the pending queue and decides a claim.
   Persona: Manager
   Stories: 5, 6
-  Walk: ApprovalQueue → ClaimReview
+  Walk: screen.approval-queue → screen.claim-review
 
 No flow: story 1 (sign-in — platform SSO owns the page), story 9 (nightly
 export job, no view).
@@ -119,17 +117,13 @@ export job, no view).
 
 One labelled line each:
 
-- **`F1 ·` + the flow's name**, numbered in the order the DSL declares them —
-  the number is how a reviewer names one exact journey.
-- **The flow's `description`** from the DSL, straight under the title,
-  unlabelled: it is prose, and it says what the journey is before the facts
-  about it.
-- **`Persona:`** — the flow's `role`. Write `Persona: any` for a role-less
-  journey rather than dropping the line.
+- **`F1 ·` + the flow's name**, numbered in the order the prototype declares
+  them — the number is how a reviewer names one exact journey.
+- **`Persona:`** — the name of the flow's role.
 - **`Stories:`** — the story numbers this journey walks.
-- **`Walk:`** — the flow's screens in walkthrough order, entry screen first.
-  Names and arrows only, no commentary. A screen in two flows appears in
-  both; that is the DSL's shape, not a mistake.
+- **`Walk:`** — the flow's `screenIds` in order, first screen first. IDs and
+  arrows only, no commentary. A screen in two flows appears in both; that is
+  the prototype's shape, not a mistake.
 
 **Leave every box unchecked.** The issue states what must be walked; the
 coding agent ticks the same list in its PR body. Re-planning rewrites this

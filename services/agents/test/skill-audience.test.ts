@@ -66,7 +66,7 @@ test("audience is read from frontmatter; absent means every audience", () => {
   const source = loadSkillsFromSnapshot(
     snapshotWith({
       go: md("go", "[coding]"),
-      wireframes: md("wireframes", "[design, coding]"),
+      prototype: md("prototype", "[design, coding]"),
       planning: md("planning", "[design]"),
       unmarked: md("unmarked"),
       bogus: md("bogus", "[nonsense]"),
@@ -74,7 +74,7 @@ test("audience is read from frontmatter; absent means every audience", () => {
   );
   const by = new Map(source.catalog().map((e) => [e.name, e.audience]));
   assert.deepEqual(by.get("go"), ["coding"]);
-  assert.deepEqual(by.get("wireframes"), ["design", "coding"]);
+  assert.deepEqual(by.get("prototype"), ["design", "coding"]);
   assert.deepEqual(by.get("planning"), ["design"]);
   // Nothing declared → permissive, so an org-authored skill keeps working.
   assert.deepEqual(by.get("unmarked"), ["design", "coding"]);

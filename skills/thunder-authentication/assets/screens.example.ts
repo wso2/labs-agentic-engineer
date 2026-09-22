@@ -33,8 +33,8 @@
 // or drops the operation fails `npm run gen && tsc` on the next build.
 //
 // THE ORDER OF THIS TABLE IS THE RAIL'S ORDER, and its first reachable row is
-// the screen the app lands on. Write the screens in the order the wireframes
-// draw them.
+// the screen the app lands on. Write the screens in the order the prototype's
+// navigation lists them.
 
 import { canCall } from "./core";
 import { OPERATIONS, isOperationKey, type OperationKey } from "./operations.gen";
@@ -42,7 +42,7 @@ import { OPERATIONS, isOperationKey, type OperationKey } from "./operations.gen"
 export interface ScreenRoute {
   /** A stable id the App maps to a page component. */
   readonly key: string;
-  /** The wireframe's screen name, for the rail and the Forbidden copy. */
+  /** The prototype screen's name, for the rail and the Forbidden copy. */
   readonly label: string;
   readonly path: string;
   /**
@@ -53,15 +53,15 @@ export interface ScreenRoute {
    */
   readonly loads: OperationKey | null;
   /**
-   * In a flow with no `role` line: reachable before sign-in, routed ABOVE the
-   * sign-in guard. Its load operation, if it has one, is `security: []` in the
+   * A screen the PRD gives to a signed-out visitor: reachable before sign-in,
+   * routed ABOVE the sign-in guard. Its load operation, if it has one, is `security: []` in the
    * contract.
    */
   readonly public?: boolean;
 }
 
 /**
- * YOUR screens, in RAIL ORDER. One row per wireframe screen.
+ * YOUR screens, in RAIL ORDER. One row per prototype screen.
  *
  * `loads` is the operation the screen exists to perform, AT THE REACH THE
  * SCREEN SHOWS: an every-row queue loads `GET /claims`, a "mine" page loads
@@ -76,7 +76,7 @@ export interface ScreenRoute {
  * now called that a defect and patched it, in two different places.
  *
  * `null` is only for a screen that needs no operation at all, which is rare. A
- * screen in a flow with no `role` line is `public: true`.
+ * screen the PRD gives to a signed-out visitor is `public: true`.
  */
 export const SCREEN_ROUTES: readonly ScreenRoute[] = [
   { key: "myclaims", label: "My Claims", path: "/claims", loads: "GET /me/claims" },
