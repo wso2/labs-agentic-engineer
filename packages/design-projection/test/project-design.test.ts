@@ -78,10 +78,8 @@ test("projects the bundle into the cell-diagram-compatible design json", () => {
   assert.deepEqual(web.skillsPinned, []); // no skillsPinned authored for this component
   assert.equal(web.services, undefined); // webapps expose no services
   assert.deepEqual(web.connections, [{ id: "http://expense-api", type: "http", onPlatform: true }]);
+  assert.equal(web.artifacts.wireframes, "specs/design/components/expense-webapp/wireframes.dsl");
   assert.equal(web.artifacts.prototype, "specs/design/components/expense-webapp/prototype.json");
-  // A web-application's artifact is its prototype; a leftover wireframes.dsl
-  // is not projected.
-  assert.equal(web.artifacts.wireframes, undefined);
 });
 
 

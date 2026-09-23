@@ -59,8 +59,8 @@ export interface ProjectDesignComponent {
   connections: ProjectDesignConnection[];
   /**
    * Bundle-relative paths of this component's spec artifacts, keyed `design`
-   * (always), `openapi` (a service's API) and `prototype` (a web-application's
-   * prototype.json).
+   * (always), `openapi` (a service's API), `wireframes` (a web-application's
+   * wireframes.dsl) and `prototype` (a web-application's prototype.json).
    */
   artifacts: Record<string, string>;
 }

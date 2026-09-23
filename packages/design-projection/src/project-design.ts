@@ -92,8 +92,9 @@ export function projectComponent(id: string, files: Record<string, string>): Pro
 
   const artifacts: Record<string, string> = { design: `${dir}/design.json` };
   if (files[`${dir}/openapi.yaml`] !== undefined) artifacts.openapi = `${dir}/openapi.yaml`;
-  // A web-application's build artifact is its prototype (the Build gate's
-  // requirement); only a web-application carries one.
+  if (files[`${dir}/wireframes.dsl`] !== undefined) artifacts.wireframes = `${dir}/wireframes.dsl`;
+  // A web-application may also carry its reviewed prototype (the /prototype
+  // flow's output); only a web-application has one.
   if (files[`${dir}/prototype.json`] !== undefined) artifacts.prototype = `${dir}/prototype.json`;
 
   // exactOptionalPropertyTypes: omit absent keys instead of `key: undefined`.
