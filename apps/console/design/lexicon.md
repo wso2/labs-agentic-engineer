@@ -42,7 +42,7 @@ concept for *the agreed description of what we're building*.
 |---|---|---|
 | `REQUIREMENTS` | **Product requirements** | `specs/requirements/prd.md` |
 | `DESIGN` (not `DESIGNS` — one design, several files) | **Architecture** · **Domain model** · **Security** as rows, then the groups: **Flows**, then one per component | `specs/design/` |
-| `PROTOTYPE` — only when the design declares a web application | one **Review prototype** entry per web application, named by the component | `specs/design/components/<name>/prototype.json` |
+| `PROTOTYPE` — only when the design declares a web application | one entry per web application, labelled with the component's name (app-window icon, open arrow; accessible name *Review prototype: <name>*) | `specs/design/components/<name>/prototype.json` |
 | `VALIDATION` | **Validation criteria** | `specs/validation/validation-criteria.json` |
 
 **Security** is one rail entry, one page:
@@ -1207,9 +1207,9 @@ It is never a *wireframe*, *mockup* or *preview build*: the word is
 
 | where | the words |
 |---|---|
-| the rail's `PROTOTYPE` section, before one exists | **Generate prototype** — offered once the design is ready |
-| the section, one per web application | **Review prototype**, the component's name beneath |
-| the section and the page, after the design moved | **Outdated** — *The design has changed since this prototype was generated, so it may no longer show what will be built.* — and **Regenerate prototype** |
+| the rail's `PROTOTYPE` section header, before one exists | **Generate** (accessible name *Generate prototype*) — offered once the design is ready, where the `DESIGN` header's re-generate sits; the section body reads *Not created yet* |
+| the section, one per web application | the component's name alone, with an open arrow — it opens the full-screen review |
+| the section and the page, after the design moved | **Outdated** — *The design has changed since this prototype was generated, so it may no longer show what will be built.* — with **Regenerate** in the section header (accessible name *Regenerate prototype*) and **Regenerate prototype** on the page |
 | the review page's bar | **Back to Spec**, the application's name, **Read-only**, **Role**, **Flow** (**Free navigation** when none), **Screen**, **Display state** |
 | the mode toggle | **Preview** · **Annotate** |
 | the Annotate inspector | **Feedback**; the selection as chips, or **Whole screen** when nothing is selected; **Request**; **Clear selection**; **Add request**; **Send all** (**Send all (N)** with N queued, **Sending…** while it goes); **Remove request** on a queued card |
@@ -1465,7 +1465,7 @@ renaming; it needed to stop being visible.
 | answer an open question | `/settle <the point>` | code lens on the question |
 | take up the open questions | `/settle` over the section | code lens on **Open Questions** |
 | talk a line through | *Discuss* — no command; opens the aim box on the line, Enter sends Discuss | code lens on any bullet |
-| see the web applications as applications | `/prototype` | fired by **Generate prototype** and **Regenerate prototype**; **Send all** sends it with the queued requests attached as structured feedback, never as prose |
+| see the web applications as applications | `/prototype` | fired by the rail's **Generate** and **Regenerate**, the page's and the problems dialog's **Regenerate prototype**; **Send all** sends it with the queued requests attached as structured feedback, never as prose |
 
 **An `*assumed*` run offers verdicts, not a command**
 ([#652](https://github.com/wso2/labs-agentic-engineer/issues/652)). An assumption is a decision

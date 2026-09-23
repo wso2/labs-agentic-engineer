@@ -101,11 +101,12 @@ GitHub issue plus any ADRs it produced. Features still being built aren't
 here: they're the open `console` + `feature` issues.
 
 - Spec view — the **Prototype** stage: between Design and Validation, present
-  only when the design cell declares a `web-application`. **Generate prototype**
-  (once the design is ready) sends `/prototype`, which writes one read-only
-  `prototype.json` per web application from the design, its roles and its API;
-  the section then lists one **Review prototype** entry per web application.
-  Review opens a full-viewport page at
+  only when the design cell declares a `web-application`. **Generate** in the
+  section header (once the design is ready) sends `/prototype`, which writes one
+  read-only `prototype.json` per web application from the design, its roles and
+  its API; the section then lists one entry per web application, named by the
+  component, with an app-window icon and an open arrow. The entry opens a
+  full-viewport page at
   `/projects/:project/prototype/:component` — a slim review bar (**Back to
   Spec**, the app name, **Read-only**, Role, Flow, Screen and
   Display state selectors, **Preview** / **Annotate**) over the application in a
@@ -118,7 +119,8 @@ here: they're the open `console` + `feature` issues.
   single structured `/prototype` turn; the page re-reads the prototype once when
   it lands, and a failed turn keeps the queue. Screen, flow, state and mode ride
   the URL (replace, so Back leaves). A design change after generation marks the
-  stage and the page **Outdated** with **Regenerate prototype**; a feedback
+  stage **Outdated** with **Regenerate** in its header, and the page
+  **Outdated** with **Regenerate prototype**; a feedback
   rewrite does not. No approve action, history or rollback — Build is the
   approval, and it refuses a missing, invalid or unknown-role prototype. The
   Excalidraw wireframe canvas, its Canvas | Prototype toggle and the
