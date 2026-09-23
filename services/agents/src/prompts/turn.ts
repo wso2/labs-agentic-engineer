@@ -242,7 +242,9 @@ const FEEDBACK_LEAD = (path: string, count: number) =>
   `This turn revises one prototype from review feedback: ${count} request${count === 1 ? "" : "s"} on ${path}. ` +
   `Rewrite only that file, once — apply every request below in a single complete write, keep every ID a request ` +
   `does not require you to change stable, and touch no other file. Resolve each ID against the file as it stands; ` +
-  `if one no longer exists, say so in your reply instead of guessing what was meant.`;
+  `if one no longer exists, say so in your reply instead of guessing what was meant. Answer every request in your ` +
+  `reply: every request is either applied or declined, and a decline names its reason — what the v1 prototype ` +
+  `registry cannot express, or the design change it needs.`;
 
 function feedbackBrief(feedback: PrototypeFeedback): string {
   const requests = feedback.annotations.map((a) => {

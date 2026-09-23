@@ -401,6 +401,14 @@ test("a feedback turn rewrites only the named file, once, keeping IDs", () => {
   assert.doesNotMatch(out, /per web-application/);
 });
 
+test("a feedback turn answers every request: applied, or declined with the reason", () => {
+  // A reviewer who asked for something and sees nothing change must be told
+  // why — a request silently dropped reads as a broken review.
+  const out = composeInstruction(feedbackTurn);
+  assert.match(out, /every request is either applied or declined/i);
+  assert.match(out, /registry/i);
+});
+
 test("every eager skill name exists in the platform skill library", () => {
   const turns = [
     { kind: "start" } as const,
