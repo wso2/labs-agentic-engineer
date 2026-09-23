@@ -249,7 +249,7 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
     (the premise is unknowable); no `security.json` → the structural rules still run and only catalog
     membership and ownership wait. The build gate is the backstop that sees every file at the tag.
 - **A web-application's `prototype.json` is save-gated on the agent's terms** (`save_gate.go`,
-  `platform/prototypespec`). Every non-blank `components/<c>/prototype.json` in a save validates against the
+  `platform/prototypespec`). Every present `components/<c>/prototype.json` in a save (a blank one included) validates against the
   vendored `prototype-model.schema.json` (generated from `@aep/prototype-model`), then one global id
   namespace, every reference resolving to an entry of the right kind on the right screen, and
   `component` equal to `<c>`. Each finding is its own 422 row carrying the validator's code
@@ -258,13 +258,10 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   for the same file, pinned by one shared case table (`packages/prototype-model/test/validation-cases.json`).
   The agent's write gate runs the same rules but collapses a refused file to `INVALID_PROTOTYPE`
   (`INVALID_JSON` / `PROTOTYPE_COMPONENT_MISMATCH` where those apply) with the findings in its message.
-- **Build requires a valid prototype per web application** (`build_gate.go`). Every `web-application`
-  the cell declares needs a non-blank `components/<c>/prototype.json` at the tag
-  (`MISSING_COMPONENT_ARTIFACT`), and when `security.json` exists every prototype role must be one of
-  its roles (`UNKNOWN_PROTOTYPE_ROLE`). An invalid one is refused by the design-bundle validation Build
-  runs first, with the save gate's per-finding codes above. The role rule reads two files, so it lives
-  here rather than in the save gate. No approval is recorded: publishing the version is the approval
-  (repo ADR-0034).
+- **Build does not ask for a prototype** (`build_gate.go`). A web-application's required artifact stays
+  its `wireframes.dsl`; the prototype is an optional review step after Design (repo ADR-0034). A
+  prototype present at the tag still passes through the design-bundle validation Build runs, so an
+  invalid one refuses Build with the save gate's codes above.
 - The `/collab/validate` oracle recovers the acting org from VERIFIED claims and refuses any room whose
   `spec-<org>-` prefix mismatches — never a hint of whether the room exists. Platform-wide rules (tenant
   gate, secrets fence) → [../../README.md](../../README.md).

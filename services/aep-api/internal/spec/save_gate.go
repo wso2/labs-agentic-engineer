@@ -82,7 +82,7 @@ const (
 //   - security.json, when present: the security design validates against the
 //     same published schema and referential rules the agent's write gate
 //     applies;
-//   - prototype.json: every non-blank `components/<c>/prototype.json` validates
+//   - prototype.json: every present `components/<c>/prototype.json` validates
 //     against the published prototype schema and its reference rules, and
 //     names `<c>` as its component (prototypespec — the same rules the agent's
 //     write gate applies; see prototypeFindings for how their codes differ);
@@ -211,14 +211,14 @@ func validateDesignBundle(files map[string]string) error {
 // path. The agent's write gate runs the same rules but reports differently: it
 // collapses a refused file to one INVALID_PROTOTYPE row (INVALID_JSON when it
 // does not parse, PROTOTYPE_COMPONENT_MISMATCH for another component's file)
-// and lists these findings, code and path, in its message. Build runs this validation too, so these codes are what a Build
-// refusal of an invalid prototype carries. A blank file is skipped, as a blank
-// openapi.yaml is: the build gate names it a missing artifact. Keys are visited
-// in sorted order so the rows are stable.
+// and lists these findings, code and path, in its message. A prototype is
+// optional, so no gate asks for one; a blank file is present, not missing, and
+// is refused as malformed JSON. Keys are visited in sorted order so the rows
+// are stable.
 func prototypeFindings(files map[string]string) []FileValidationError {
 	keys := make([]string, 0, len(files))
-	for rel, content := range files {
-		if _, ok := prototypespec.BundleComponent(rel); ok && strings.TrimSpace(content) != "" {
+	for rel := range files {
+		if _, ok := prototypespec.BundleComponent(rel); ok {
 			keys = append(keys, rel)
 		}
 	}

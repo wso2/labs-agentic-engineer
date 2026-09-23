@@ -265,12 +265,6 @@ func (n *Node) UnmarshalJSON(raw []byte) error {
 	return json.Unmarshal(wire.Action, n.Action)
 }
 
-// BundleKey is a component's prototype slot in the design bundle (relative to
-// specs/design/): the key BundleComponent reads back.
-func BundleKey(component string) string {
-	return "components/" + component + "/prototype.json"
-}
-
 // BundleComponent reports the component a design-bundle key (relative to
 // specs/design/) is the prototype of: `components/<component>/prototype.json`.
 func BundleComponent(key string) (string, bool) {

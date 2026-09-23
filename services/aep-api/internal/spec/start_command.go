@@ -95,8 +95,8 @@ func (s *Service) turnSpecFor(ctx context.Context, ref sourcecontrol.RepoRef, at
 	}
 
 	// Flow turns carry the reference paths too: a flow generates artifacts
-	// (the web-application prototype from /prototype most of all) that must be grounded in what
-	// the user attached — a drawn sketch is the prototype's brief. Chat prose
+	// (wireframes.dsl from /design most of all) that must be grounded in what
+	// the user attached — a drawn sketch is the wireframe brief. Chat prose
 	// stays reference-free; the documents already sit in the conversation
 	// history from the kickoff.
 	return agentsvc.TurnSpec{
