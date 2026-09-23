@@ -1,0 +1,80 @@
+{
+  "root": "card",
+  "elements": {
+    "card": {
+      "type": "Card",
+      "props": { "title": "Build #12: checkout flow", "subtitle": "Deployed to development, validation partly passing" },
+      "children": ["metrics", "tasks", "deployments", "validation", "log", "open"]
+    },
+    "metrics": {
+      "type": "Stack",
+      "props": { "direction": "row", "gap": 2 },
+      "children": ["merged", "scenarios", "cost"]
+    },
+    "merged": {
+      "type": "Metric",
+      "props": { "label": "Tasks merged", "value": "3 / 4" },
+      "children": []
+    },
+    "scenarios": {
+      "type": "Metric",
+      "props": { "label": "Scenarios passing", "value": "5 / 7" },
+      "children": []
+    },
+    "cost": {
+      "type": "Metric",
+      "props": { "label": "Agent cost", "value": "$4.20" },
+      "children": []
+    },
+    "tasks": {
+      "type": "TaskList",
+      "props": {
+        "tasks": [
+          { "number": 41, "title": "Checkout API", "state": "merged" },
+          { "number": 42, "title": "Payment form", "state": "merged" },
+          { "number": 43, "title": "Order history page", "state": "merged" },
+          { "number": 44, "title": "Refund webhook", "state": "blocked" }
+        ]
+      },
+      "children": []
+    },
+    "deployments": {
+      "type": "Deployments",
+      "props": {
+        "environments": [
+          { "environment": "Development", "state": "deployed", "version": "v0.3.1", "url": "https://checkout-dev.example.com" },
+          { "environment": "Production", "state": "not_deployed" }
+        ]
+      },
+      "children": []
+    },
+    "validation": {
+      "type": "ValidationResults",
+      "props": {
+        "scenarios": [
+          { "name": "Shopper pays with a saved card", "result": "passed" },
+          { "name": "Shopper sees past orders", "result": "passed" },
+          { "name": "Declined card shows a retry prompt", "result": "partial" },
+          { "name": "Refund reaches the shopper", "result": "failed" }
+        ]
+      },
+      "children": []
+    },
+    "log": {
+      "type": "CodeSnippet",
+      "props": {
+        "language": "bash",
+        "code": "POST /webhooks/refund -> 502 Bad Gateway\npayments-db: connection refused (dependency not provisioned)"
+      },
+      "children": []
+    },
+    "open": {
+      "type": "Button",
+      "props": { "label": "Open task #44", "variant": "secondary" },
+      "on": {
+        "press": { "action": "openTask", "params": { "taskNumber": 44 } }
+      },
+      "children": []
+    }
+  }
+}

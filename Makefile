@@ -46,7 +46,7 @@ LICENSE_HEADER := .github/license-header.txt
 # No `/vendor/` exclusion: the runner's vendored bal library distribution was the
 # only one in the repo, and ADR-0008 replaced it with a build stage.
 LICENSE_MATCH = grep -E '\.(go|ts|tsx|sh)$$|(^|/)Dockerfile$$' | \
-	grep -vE '\.gen\.(go|ts)$$|_mock\.go$$|/mocks/|/node_modules/|/dist/|/generated/|(^|/)\.(agents|claude)/'
+	grep -vE '\.gen\.(go|ts)$$|_mock\.go$$|/mocks/|/node_modules/|/dist/|/generated/|/vendor/|(^|/)\.(agents|claude)/'
 
 .PHONY: install gen build dev test lint eval-ui typecheck license license-check tools clean eval cover build-runner workflow-skill deadcode-ts deadcode-ts-check manifests-check setup-local dev-cluster deploy-local bal-library-tool
 

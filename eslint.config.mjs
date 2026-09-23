@@ -9,6 +9,9 @@ export default tseslint.config(
       "**/dist/**",
       "**/build/**",
       "**/generated/**",
+      // Third-party source copied in verbatim (e.g. shadcn/ui); kept as its
+      // authors wrote it.
+      "**/vendor/**",
       "**/*.gen.*",
       "**/node_modules/**",
       "**/.turbo/**",

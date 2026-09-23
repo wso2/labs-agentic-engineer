@@ -1,0 +1,27 @@
+{
+  "name": "@aep/ui-genui-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Dev page: renders a GenUI spec with every design system side by side.",
+  "scripts": {
+    "dev": "pnpm --dir ../genui-shadcn run build:css && vite",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@aep/ui-genui": "workspace:*",
+    "@aep/ui-genui-oxygen": "workspace:*",
+    "@aep/ui-genui-shadcn": "workspace:*",
+    "@wso2/oxygen-ui": "0.11.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  },
+  "devDependencies": {
+    "@types/react": "19.1.6",
+    "@types/react-dom": "19.0.2",
+    "@vitejs/plugin-react-swc": "4.2.0",
+    "typescript": "5.9.3",
+    "vite": "^7.3.6"
+  }
+}

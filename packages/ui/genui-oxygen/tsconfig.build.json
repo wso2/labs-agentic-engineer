@@ -1,0 +1,5 @@
+{
+  // Library output only: no tests.
+  "extends": "./tsconfig.json",
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test-setup.ts"]
+}
