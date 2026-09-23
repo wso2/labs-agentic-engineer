@@ -17,7 +17,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { exampleSpecs } from "../../../examples/index.js";
+import { componentExamples, exampleSpecs } from "../../../examples/index.js";
 import { genUiActions, genUiComponents } from "../../catalog/index.js";
 import { jsonRenderCatalog } from "./catalog.js";
 import { genUiSystemPrompt, validateGenUiSpec } from "./spec.js";
@@ -43,6 +43,14 @@ describe("validateGenUiSpec", () => {
     const result = validateGenUiSpec(spec);
     expect(result).toEqual({ ok: true, spec });
   });
+
+  it.each(Object.entries(componentExamples))(
+    "accepts the %s component sample",
+    (_, spec) => {
+      const result = validateGenUiSpec(spec);
+      expect(result).toEqual({ ok: true, spec });
+    },
+  );
 
   it("keeps action bindings on the returned spec", () => {
     const result = validateGenUiSpec(exampleSpecs["Dependency approval"]);

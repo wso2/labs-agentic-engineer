@@ -32,3 +32,5 @@ export const exampleSpecs: Record<string, unknown> = {
   "Build and deploy": buildAndDeploy,
   "Build view (console page)": buildView,
 };
+
+export { componentExamples } from "./components.js";

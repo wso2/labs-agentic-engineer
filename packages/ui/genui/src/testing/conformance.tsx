@@ -19,7 +19,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ComponentType, ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { exampleSpecs } from "../../examples/index.js";
+import { componentExamples, exampleSpecs } from "../../examples/index.js";
 import { createGenUiView, type GenUiSpec } from "../adapter/index.js";
 import type { GenUiDesignSystem } from "../design-system.js";
 
@@ -50,6 +50,14 @@ export function describeGenUiConformance(
   describe(`GenUI conformance: ${designSystem.name}`, () => {
     it.each(Object.entries(exampleSpecs))(
       "renders the %s example with no invalid elements",
+      (_, spec) => {
+        show(<GenUiView spec={spec as GenUiSpec} />);
+        expect(screen.queryByText(/Could not display/)).not.toBeInTheDocument();
+      },
+    );
+
+    it.each(Object.entries(componentExamples))(
+      "renders the %s component sample with no invalid elements",
       (_, spec) => {
         show(<GenUiView spec={spec as GenUiSpec} />);
         expect(screen.queryByText(/Could not display/)).not.toBeInTheDocument();

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Dev page: renders a GenUI spec with Oxygen UI (Classic theme) and logs its actions.",
+  "description": "Dev page: the GenUI catalog component by component, and whole views composed from it, rendered with Oxygen UI (Classic theme).",
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc --noEmit",
@@ -14,7 +14,8 @@
     "@aep/ui-genui-oxygen": "workspace:*",
     "@wso2/oxygen-ui": "0.11.0",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/react": "19.1.6",

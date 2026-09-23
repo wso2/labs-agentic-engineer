@@ -67,8 +67,10 @@ description you add makes it bigger.
    design system says the same thing.
 2. Implement it in every design-system package. `GenUiImplementations` fails
    to compile in each one until it has an implementation.
-3. Cover it in an example under `examples/`. Every design system renders every
-   example in its conformance suite.
+3. Add its sample to `examples/components.ts` (it fails to compile without
+   one), and use it in a composed example under `examples/` if it changes how
+   whole views look. The conformance suite renders every sample and example,
+   and the demo's Components page shows the sample with its props and JSON.
 
 ## Add a design system
 
@@ -102,5 +104,7 @@ saved are in the old wire format and need converting.
 pnpm --filter @aep/ui-genui-demo dev
 ```
 
-Opens a page that renders a spec with Oxygen UI in its Classic theme. Pick an
-example or paste model output; every action is logged.
+Opens two pages, in Oxygen UI's Classic theme: **Components** shows every
+catalog component with its props, its JSON and what renders; **Composed
+views** renders whole specs (such as the console's Build view) and logs every
+action.

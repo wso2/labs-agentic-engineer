@@ -16,135 +16,65 @@
  * under the License.
  */
 
-import { StrictMode, useMemo, useState } from "react";
+import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
-  Alert,
   Box,
   ClassicTheme,
   CssBaseline,
-  MenuItem,
   OxygenUIThemeProvider,
-  Paper,
   Stack,
-  TextField,
+  Tab,
+  Tabs,
   Typography,
 } from "@wso2/oxygen-ui";
-import {
-  genUiSystemPrompt,
-  validateGenUiSpec,
-  type GenUiActionHandlers,
-  type GenUiDispatchOutcome,
-} from "@aep/ui-genui";
-import { exampleSpecs } from "@aep/ui-genui/examples";
-import { GenUiView } from "@aep/ui-genui-oxygen";
+import { genUiSystemPrompt } from "@aep/ui-genui";
+import { ComponentsPage } from "./pages/ComponentsPage.js";
+import { ViewsPage } from "./pages/ViewsPage.js";
 
-const exampleNames = Object.keys(exampleSpecs);
 const promptChars = genUiSystemPrompt().length;
 
-// Every catalog action just logs here; the outcome log shows what reached it.
-const handlers: GenUiActionHandlers = {
-  openTask: (params) => console.info("openTask", params),
-  approveDependency: (params) => console.info("approveDependency", params),
-  rejectDependency: (params) => console.info("rejectDependency", params),
-  openDeployments: (params) => console.info("openDeployments", params),
-  editExternalResource: (params) => console.info("editExternalResource", params),
-};
+type Page = "components" | "views";
 
-function parse(text: string) {
-  try {
-    return validateGenUiSpec(JSON.parse(text));
-  } catch (error) {
-    return { ok: false as const, issues: [`Not JSON: ${(error as Error).message}`] };
-  }
+// The page lives in ?page= rather than the hash, which the components page
+// uses to jump between components.
+function initialPage(): Page {
+  return new URLSearchParams(window.location.search).get("page") === "views"
+    ? "views"
+    : "components";
 }
 
 function Demo() {
-  const [example, setExample] = useState(exampleNames[0] ?? "");
-  const [text, setText] = useState(() =>
-    JSON.stringify(exampleSpecs[example], null, 2),
-  );
-  const [log, setLog] = useState<GenUiDispatchOutcome[]>([]);
-  const result = useMemo(() => parse(text), [text]);
-
-  const pickExample = (name: string) => {
-    setExample(name);
-    setText(JSON.stringify(exampleSpecs[name], null, 2));
-    setLog([]);
+  const [page, setPage] = useState<Page>(initialPage);
+  const choose = (next: Page) => {
+    setPage(next);
+    const url = new URL(window.location.href);
+    url.searchParams.set("page", next);
+    url.hash = "";
+    window.history.replaceState(null, "", url);
   };
 
   return (
-    <Box
-      sx={{
-        p: 3,
-        display: "grid",
-        gap: 3,
-        gridTemplateColumns: { md: "minmax(320px, 1fr) 2fr" },
-      }}
-    >
-      <Stack spacing={2}>
+    <Stack spacing={3} sx={{ p: 3 }}>
+      <Stack spacing={1}>
         <Typography variant="h5" component="h1">
-          GenUI catalog demo
+          GenUI catalog
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          Paste model output or edit an example. System prompt for this catalog:{" "}
-          {promptChars.toLocaleString()} characters (≈
+          A model writes JSON that names only these components and actions; the
+          host renders it with Oxygen UI. The system prompt that teaches a model
+          this catalog is {promptChars.toLocaleString()} characters (≈
           {Math.round(promptChars / 4).toLocaleString()} tokens).
         </Typography>
-        <TextField
-          select
-          label="Example"
-          size="small"
-          value={example}
-          onChange={(event) => pickExample(event.target.value)}
-        >
-          {exampleNames.map((name) => (
-            <MenuItem key={name} value={name}>
-              {name}
-            </MenuItem>
-          ))}
-        </TextField>
-        <TextField
-          label="Spec (JSON)"
-          multiline
-          minRows={20}
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-          slotProps={{ htmlInput: { style: { fontFamily: "monospace", fontSize: 12 } } }}
-        />
       </Stack>
-      <Stack spacing={2}>
-        {result.ok ? (
-          <Paper variant="outlined">
-            <Box sx={{ p: 2 }}>
-              <GenUiView
-                spec={result.spec}
-                handlers={handlers}
-                onActionOutcome={(outcome) => setLog((prev) => [outcome, ...prev])}
-              />
-            </Box>
-          </Paper>
-        ) : (
-          <Alert severity="error">
-            {result.issues.map((issue) => (
-              <div key={issue}>{issue}</div>
-            ))}
-          </Alert>
-        )}
-        <Typography variant="subtitle2">Action log</Typography>
-        {log.length === 0 ? (
-          <Typography variant="body2" color="text.secondary">
-            Press a button in the rendered UI.
-          </Typography>
-        ) : (
-          log.map((outcome, index) => (
-            <Typography key={index} variant="body2" sx={{ fontFamily: "monospace" }}>
-              {outcome.status} · {outcome.action}
-            </Typography>
-          ))
-        )}
-      </Stack>
-    </Box>
+      <Box>
+        <Tabs value={page} onChange={(_, next: Page) => choose(next)}>
+          <Tab value="components" label="Components" />
+          <Tab value="views" label="Composed views" />
+        </Tabs>
+      </Box>
+      {page === "components" ? <ComponentsPage /> : <ViewsPage />}
+    </Stack>
   );
 }
 
