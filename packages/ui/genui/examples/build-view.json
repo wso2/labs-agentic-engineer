@@ -1,0 +1,158 @@
+{
+  "root": "page",
+  "elements": {
+    "page": {
+      "type": "Stack",
+      "props": { "gap": 3 },
+      "children": ["header", "summary", "tasks", "resources", "agentLog", "buildLogs"]
+    },
+
+    "header": {
+      "type": "Stack",
+      "props": { "direction": "row", "gap": 2 },
+      "children": ["title", "status"]
+    },
+    "title": { "type": "Heading", "props": { "text": "Build v2", "level": "page" }, "children": [] },
+    "status": {
+      "type": "StatusChip",
+      "props": { "label": "Failed · Coding agent stopped", "tone": "error" },
+      "children": []
+    },
+
+    "summary": { "type": "Card", "props": { "title": "Summary" }, "children": ["facts", "divider", "next"] },
+    "facts": {
+      "type": "KeyValueList",
+      "props": {
+        "layout": "columns",
+        "items": [
+          { "label": "Milestone", "value": "Milestone #2" },
+          { "label": "Started", "value": "Sep 10, 05:03 PM" },
+          { "label": "Duration", "value": "4h 00m" },
+          { "label": "Tasks", "value": "5 done" }
+        ]
+      },
+      "children": []
+    },
+    "divider": { "type": "Divider", "props": {}, "children": [] },
+    "next": {
+      "type": "Stack",
+      "props": { "direction": "row", "gap": 2 },
+      "children": ["toDeployments", "live"]
+    },
+    "toDeployments": {
+      "type": "Button",
+      "props": { "label": "Go to Deployments" },
+      "on": { "press": { "action": "openDeployments", "params": { "version": "v2" } } },
+      "children": []
+    },
+    "live": { "type": "Text", "props": { "text": "v2 is live.", "tone": "muted" }, "children": [] },
+
+    "tasks": {
+      "type": "Section",
+      "props": { "title": "Tasks", "summary": "5 in this build · 5 done" },
+      "children": ["taskList"]
+    },
+    "taskList": {
+      "type": "TaskList",
+      "props": {
+        "tasks": [
+          { "number": 4, "title": "Provision resource: allocation-db (postgres-cnpg)", "state": "merged", "updated": "Sep 10, 03:14 PM" },
+          { "number": 5, "title": "Provision resource: thunder (thunder-app)", "state": "merged", "updated": "Sep 10, 03:14 PM" },
+          { "number": 6, "title": "Provision roles and test users", "state": "merged" },
+          {
+            "number": 7,
+            "title": "Implement allocation-api",
+            "state": "merged",
+            "detail": "allocation-api builds clean; committed and pushed to aep/m2-c1 (#7)."
+          },
+          {
+            "number": 8,
+            "title": "Implement allocation-webapp",
+            "state": "merged",
+            "detail": "Mock verification done: allocation-webapp — 19 items · 18 done, 1 fixed, 0 open, 0 outside"
+          }
+        ]
+      },
+      "children": []
+    },
+
+    "resources": {
+      "type": "Section",
+      "props": {
+        "title": "External resources",
+        "badge": { "label": "1 of 1 configured", "tone": "success" }
+      },
+      "children": ["resourcesNote", "sendgrid"]
+    },
+    "resourcesNote": {
+      "type": "Text",
+      "props": { "text": "Every external dependency has its development configuration." },
+      "children": []
+    },
+    "sendgrid": {
+      "type": "Stack",
+      "props": { "direction": "row", "justify": "between", "gap": 2 },
+      "children": ["sendgridAbout", "sendgridActions"]
+    },
+    "sendgridAbout": { "type": "Stack", "props": { "gap": 0 }, "children": ["sendgridName", "sendgridDesc"] },
+    "sendgridName": { "type": "Heading", "props": { "text": "sendgrid", "level": "subsection" }, "children": [] },
+    "sendgridDesc": {
+      "type": "Text",
+      "props": {
+        "text": "Sends email notifications for allocation-request and allocation-decision events.",
+        "tone": "muted"
+      },
+      "children": []
+    },
+    "sendgridActions": {
+      "type": "Stack",
+      "props": { "direction": "row", "gap": 2 },
+      "children": ["sendgridState", "sendgridEdit"]
+    },
+    "sendgridState": { "type": "StatusChip", "props": { "label": "Configured", "tone": "success" }, "children": [] },
+    "sendgridEdit": {
+      "type": "Button",
+      "props": { "label": "Edit configuration", "variant": "secondary" },
+      "on": {
+        "press": { "action": "editExternalResource", "params": { "resourceName": "sendgrid" } }
+      },
+      "children": []
+    },
+
+    "agentLog": {
+      "type": "Section",
+      "props": { "title": "Coding agent log", "summary": "Run finished successfully" },
+      "children": ["cycle1"]
+    },
+    "cycle1": {
+      "type": "Card",
+      "props": { "title": "Cycle 1 · coding", "subtitle": "1248 events · PR #9 · 5 agents, all settled" },
+      "children": ["timeline"]
+    },
+    "timeline": {
+      "type": "AgentTimeline",
+      "props": {
+        "total": "34m26s across 5 agents",
+        "lanes": [
+          { "name": "lead agent", "start": 0, "end": 100, "duration": "34m26s" },
+          { "name": "Build allocation-api Ballerina service", "depth": 1, "start": 4, "end": 57, "duration": "18m18s" },
+          { "name": "Build allocation-webapp React app", "depth": 1, "start": 5, "end": 60, "duration": "18m54s" },
+          { "name": "Walk allocation-webapp mock verification", "depth": 1, "start": 62, "end": 97, "duration": "12m7s" },
+          { "name": "Investigate role query-param mismatch", "depth": 2, "start": 70, "end": 72, "duration": "48.0s" }
+        ]
+      },
+      "children": []
+    },
+
+    "buildLogs": {
+      "type": "Section",
+      "props": { "title": "Build logs" },
+      "children": ["noBuilds"]
+    },
+    "noBuilds": {
+      "type": "Text",
+      "props": { "text": "No component builds were produced for this version.", "tone": "muted" },
+      "children": []
+    }
+  }
+}

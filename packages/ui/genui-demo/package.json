@@ -1,0 +1,28 @@
+{
+  "name": "@aep/ui-genui-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Dev page: the GenUI catalog component by component, and whole views composed from it, rendered with Oxygen UI (Classic theme).",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@aep/ui-genui": "workspace:*",
+    "@aep/ui-genui-oxygen": "workspace:*",
+    "@wso2/oxygen-ui": "0.11.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/react": "19.1.6",
+    "@types/react-dom": "19.0.2",
+    "@vitejs/plugin-react-swc": "4.2.0",
+    "typescript": "5.9.3",
+    "vite": "^7.3.6"
+  }
+}

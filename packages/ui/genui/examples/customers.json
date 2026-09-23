@@ -1,0 +1,228 @@
+{
+  "root": "page",
+  "state": {
+    "customers": {
+      "items": [],
+      "total": 0
+    },
+    "customer": {
+      "name": "",
+      "contactName": "",
+      "contactEmail": "",
+      "contactPhone": ""
+    }
+  },
+  "elements": {
+    "page": {
+      "type": "Stack",
+      "props": {
+        "gap": 3
+      },
+      "children": [
+        "title",
+        "list",
+        "add"
+      ]
+    },
+    "title": {
+      "type": "Heading",
+      "props": {
+        "text": "Customers",
+        "level": "page"
+      },
+      "children": []
+    },
+    "list": {
+      "type": "Section",
+      "props": {
+        "title": "All customers",
+        "summary": {
+          "$template": "${/customers/total} in total"
+        }
+      },
+      "children": [
+        "table"
+      ]
+    },
+    "table": {
+      "type": "DataTable",
+      "props": {
+        "columns": [
+          {
+            "key": "name",
+            "label": "Name"
+          },
+          {
+            "key": "contactName",
+            "label": "Contact"
+          },
+          {
+            "key": "contactEmail",
+            "label": "Email"
+          },
+          {
+            "key": "contactPhone",
+            "label": "Phone"
+          }
+        ],
+        "rows": {
+          "$state": "/customers/items"
+        }
+      },
+      "children": []
+    },
+    "add": {
+      "type": "Section",
+      "props": {
+        "title": "Add a customer",
+        "summary": "Fields marked * are required."
+      },
+      "children": [
+        "created",
+        "failed",
+        "name",
+        "contactName",
+        "contactEmail",
+        "contactPhone",
+        "save"
+      ]
+    },
+    "created": {
+      "type": "Alert",
+      "props": {
+        "tone": "success",
+        "title": "Customer created",
+        "message": "The list above now includes them."
+      },
+      "visible": {
+        "$state": "/actions/createCustomer/status",
+        "eq": "success"
+      },
+      "children": []
+    },
+    "failed": {
+      "type": "Alert",
+      "props": {
+        "tone": "error",
+        "title": "Could not create the customer",
+        "message": {
+          "$state": "/actions/createCustomer/message"
+        }
+      },
+      "visible": {
+        "$state": "/actions/createCustomer/status",
+        "eq": "error"
+      },
+      "children": []
+    },
+    "name": {
+      "type": "TextField",
+      "props": {
+        "label": "Name",
+        "required": true,
+        "value": {
+          "$bindState": "/customer/name"
+        },
+        "error": {
+          "$state": "/actions/createCustomer/fieldErrors/name"
+        }
+      },
+      "children": []
+    },
+    "contactName": {
+      "type": "TextField",
+      "props": {
+        "label": "Contact name",
+        "required": true,
+        "value": {
+          "$bindState": "/customer/contactName"
+        },
+        "error": {
+          "$state": "/actions/createCustomer/fieldErrors/contactName"
+        }
+      },
+      "children": []
+    },
+    "contactEmail": {
+      "type": "TextField",
+      "props": {
+        "label": "Contact email",
+        "type": "email",
+        "required": true,
+        "value": {
+          "$bindState": "/customer/contactEmail"
+        },
+        "error": {
+          "$state": "/actions/createCustomer/fieldErrors/contactEmail"
+        }
+      },
+      "children": []
+    },
+    "contactPhone": {
+      "type": "TextField",
+      "props": {
+        "label": "Contact phone",
+        "type": "tel",
+        "helperText": "Optional.",
+        "value": {
+          "$bindState": "/customer/contactPhone"
+        },
+        "error": {
+          "$state": "/actions/createCustomer/fieldErrors/contactPhone"
+        }
+      },
+      "children": []
+    },
+    "save": {
+      "type": "Button",
+      "props": {
+        "label": {
+          "$cond": {
+            "$state": "/actions/createCustomer/status",
+            "eq": "pending"
+          },
+          "$then": "Creating…",
+          "$else": "Create customer"
+        },
+        "disabled": {
+          "$cond": {
+            "$state": "/actions/createCustomer/status",
+            "eq": "pending"
+          },
+          "$then": true,
+          "$else": false
+        }
+      },
+      "on": {
+        "press": {
+          "action": "createCustomer",
+          "params": {
+            "name": {
+              "$state": "/customer/name"
+            },
+            "contactName": {
+              "$state": "/customer/contactName"
+            },
+            "contactEmail": {
+              "$state": "/customer/contactEmail"
+            },
+            "contactPhone": {
+              "$state": "/customer/contactPhone"
+            }
+          },
+          "onSuccess": {
+            "set": {
+              "/customer": {
+                "name": "",
+                "contactName": "",
+                "contactEmail": "",
+                "contactPhone": ""
+              }
+            }
+          }
+        }
+      },
+      "children": []
+    }
+  }
+}

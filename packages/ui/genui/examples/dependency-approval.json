@@ -1,0 +1,59 @@
+{
+  "root": "card",
+  "elements": {
+    "card": {
+      "type": "Card",
+      "props": {
+        "title": "Approve dependency: payments-db",
+        "subtitle": "Requested by the design agent for the checkout component"
+      },
+      "children": ["facts", "note", "actions"]
+    },
+    "facts": {
+      "type": "KeyValueList",
+      "props": {
+        "items": [
+          { "label": "Type", "value": "PostgreSQL database" },
+          { "label": "Used by", "value": "checkout-service" },
+          { "label": "Environment", "value": "development" }
+        ]
+      },
+      "children": []
+    },
+    "note": {
+      "type": "Alert",
+      "props": {
+        "tone": "info",
+        "message": "Approving provisions the database in the development environment."
+      },
+      "children": []
+    },
+    "actions": {
+      "type": "Stack",
+      "props": { "direction": "row", "gap": 1 },
+      "children": ["approve", "reject"]
+    },
+    "approve": {
+      "type": "Button",
+      "props": { "label": "Approve", "variant": "primary" },
+      "on": {
+        "press": {
+          "action": "approveDependency",
+          "params": { "dependencyId": "payments-db" }
+        }
+      },
+      "children": []
+    },
+    "reject": {
+      "type": "Button",
+      "props": { "label": "Reject", "variant": "danger" },
+      "on": {
+        "press": {
+          "action": "rejectDependency",
+          "params": { "dependencyId": "payments-db", "reason": "Not needed yet" }
+        }
+      },
+      "children": []
+    }
+  }
+}

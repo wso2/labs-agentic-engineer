@@ -1,0 +1,12 @@
+{
+  // Library output only: no tests (mirrors design-view).
+  "extends": "./tsconfig.json",
+  "include": ["src", "examples"],
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/test-setup.ts",
+    "src/testing.ts",
+    "src/testing"
+  ]
+}

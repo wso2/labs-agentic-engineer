@@ -1,0 +1,53 @@
+{
+  "root": "card",
+  "state": { "delivery": { "percent": 60 } },
+  "elements": {
+    "card": {
+      "type": "Card",
+      "props": { "title": "Delivery v3", "subtitle": "Milestone run in progress" },
+      "children": ["progress", "tasks", "footer"]
+    },
+    "progress": {
+      "type": "Progress",
+      "props": {
+        "value": { "$state": "/delivery/percent" },
+        "label": { "$template": "${/delivery/percent}% of tasks merged" }
+      },
+      "children": []
+    },
+    "tasks": {
+      "type": "DataTable",
+      "props": {
+        "columns": [
+          { "key": "task", "label": "Task" },
+          { "key": "title", "label": "Title" },
+          { "key": "status", "label": "Status" }
+        ],
+        "rows": [
+          { "task": "#41", "title": "Checkout API", "status": "Merged" },
+          { "task": "#42", "title": "Payment form", "status": "In review" },
+          { "task": "#43", "title": "Order history page", "status": "In progress" }
+        ]
+      },
+      "children": []
+    },
+    "footer": {
+      "type": "Stack",
+      "props": { "direction": "row", "gap": 1 },
+      "children": ["chip", "open"]
+    },
+    "chip": {
+      "type": "StatusChip",
+      "props": { "label": "1 task blocked", "tone": "warning" },
+      "children": []
+    },
+    "open": {
+      "type": "Button",
+      "props": { "label": "Open task #43", "variant": "secondary" },
+      "on": {
+        "press": { "action": "openTask", "params": { "taskNumber": 43 } }
+      },
+      "children": []
+    }
+  }
+}
