@@ -33,15 +33,14 @@ import {
   Paper,
   Stack,
   TextField,
-  ToggleButton,
-  ToggleButtonGroup,
   Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
-import { ChevronLeft, ChevronRight, Eye, MessageSquarePlus } from "@wso2/oxygen-ui-icons-react";
+import { ChevronLeft, ChevronRight } from "@wso2/oxygen-ui-icons-react";
 import type { PrototypeModelV1 } from "@aep/prototype-model";
 import { flowsForRole, screensForRole } from "../model/visibility";
-import type { PrototypeMode, PrototypeViewEvent, PrototypeViewState } from "../model/viewState";
+import type { PrototypeViewEvent, PrototypeViewState } from "../model/viewState";
+import { ModeToggle } from "./ModeToggle";
 
 export interface ReviewBarProps {
   model: PrototypeModelV1;
@@ -180,30 +179,11 @@ export function ReviewBar({ model, view, dispatch, backLink, modeLocked = false 
           ))}
         </Selector>
         <Divider orientation="vertical" flexItem />
-        <ToggleButtonGroup
-          exclusive
-          size="small"
-          aria-label="Mode"
+        <ModeToggle
+          mode={view.mode}
           disabled={modeLocked}
-          value={view.mode}
-          onChange={(_, mode: PrototypeMode | null) => {
-            if (mode === "annotate") dispatch({ type: "ENTER_ANNOTATE" });
-            if (mode === "preview") dispatch({ type: "EXIT_ANNOTATE" });
-          }}
-        >
-          <ToggleButton value="preview" aria-label="Preview">
-            <Eye size={16} />
-            <Typography variant="body2" sx={{ ml: 0.75 }}>
-              Preview
-            </Typography>
-          </ToggleButton>
-          <ToggleButton value="annotate" aria-label="Annotate">
-            <MessageSquarePlus size={16} />
-            <Typography variant="body2" sx={{ ml: 0.75 }}>
-              Annotate
-            </Typography>
-          </ToggleButton>
-        </ToggleButtonGroup>
+          onChange={(mode) => dispatch({ type: mode === "annotate" ? "ENTER_ANNOTATE" : "EXIT_ANNOTATE" })}
+        />
       </Stack>
     </Paper>
   );
