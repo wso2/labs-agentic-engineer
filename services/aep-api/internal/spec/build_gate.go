@@ -28,7 +28,9 @@ package spec
 //     design);
 //   - every deployable component is ENRICHED (its design.json moved off the
 //     scaffold placeholder, a language decided) and carries its type-mandated
-//     artifact (service → openapi.yaml, web-application → wireframes.dsl);
+//     artifact (service → openapi.yaml, web-application → a valid
+//     prototype.json whose roles, when security.json exists, are all declared
+//     security roles — the prototype the user reviewed is what Build approves);
 //   - a design with END-USER SIGN-IN carries specs/design/security.json, it parses,
 //     and every story its roles cite is a real PRD story. The platform creates
 //     the roles and test users that file declares when the tag is built, so a
@@ -49,6 +51,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/wso2/aep/aep-api/internal/platform/prototypespec"
 	"github.com/wso2/aep/aep-api/internal/platform/securityspec"
 )
 
@@ -68,6 +71,9 @@ const (
 	codeInvalidRolesDocument = "INVALID_ROLES_DOCUMENT"
 	// codeUnknownRoleStory — a role cites a PRD story that does not exist.
 	codeUnknownRoleStory = "UNKNOWN_ROLE_STORY"
+	// codeUnknownPrototypeRole — a prototype role is not a role security.json
+	// declares.
+	codeUnknownPrototypeRole = "UNKNOWN_PROTOTYPE_ROLE"
 )
 
 // The security design's NON-BLOCKING codes. They ride Warning, which the
@@ -157,6 +163,8 @@ func validateBuildGate(reqFiles, designFiles map[string]string) []FileValidation
 	// catalog that defines it.
 	errs = append(errs, openapiSecurityFindings(designFiles)...)
 
+	securityRoles := declaredSecurityRoles(designFiles)
+
 	// Per-component completeness for deployable components.
 	for _, c := range facts.Components {
 		componentType, deployable := deployableCellTypes[strings.ToLower(strings.TrimSpace(c.Type))]
@@ -192,24 +200,77 @@ func validateBuildGate(reqFiles, designFiles map[string]string) []FileValidation
 				Message: fmt.Sprintf("component %q has no language decided — set it from the organization Tech stack default, the requirements, or the platform default", c.ID),
 			})
 		}
-		var artifact string
 		switch componentType {
 		case "service":
-			artifact = "openapi.yaml"
-		case "web-application":
-			artifact = "wireframes.dsl"
-		}
-		if artifact != "" {
-			artifactPath := "components/" + c.ID + "/" + artifact
+			artifactPath := "components/" + c.ID + "/openapi.yaml"
 			if strings.TrimSpace(designFiles[artifactPath]) == "" {
 				errs = append(errs, FileValidationError{
 					Path: artifactPath, Code: codeMissingComponentArtifact,
-					Message: fmt.Sprintf("component %q (%s) needs %s", c.ID, componentType, artifact),
+					Message: fmt.Sprintf("component %q (%s) needs openapi.yaml", c.ID, componentType),
 				})
 			}
+		case "web-application":
+			errs = append(errs, prototypeGate(c.ID, designFiles, securityRoles)...)
 		}
 	}
 	return errs
+}
+
+// prototypeGate is a web-application's build artifact: its prototype.json must
+// exist (a blank file counts as absent), and when security.json declares roles
+// (securityRoles non-nil) every prototype role must be one of them. The
+// prototype skill writes a role's id as the security.json role `name`
+// verbatim, so that is what is compared.
+//
+// A present-but-invalid prototype adds nothing here: validateDesignBundle
+// refuses it first, with prototypespec's own codes, and the build gate only
+// runs once that passes.
+func prototypeGate(component string, designFiles map[string]string, securityRoles map[string]bool) []FileValidationError {
+	path := prototypespec.BundleKey(component)
+	raw := designFiles[path]
+	if strings.TrimSpace(raw) == "" {
+		return []FileValidationError{{
+			Path: path, Code: codeMissingComponentArtifact,
+			Message: fmt.Sprintf("component %q (web-application) needs prototype.json — generate the prototype before building", component),
+		}}
+	}
+	model, issues := prototypespec.Parse(component, []byte(raw))
+	if len(issues) > 0 {
+		return nil
+	}
+	if securityRoles == nil {
+		return nil
+	}
+	var errs []FileValidationError
+	for _, role := range model.Roles {
+		if !securityRoles[role.ID] {
+			errs = append(errs, FileValidationError{
+				Path: path, Code: codeUnknownPrototypeRole,
+				Message: fmt.Sprintf("prototype role %q is not a role security.json declares — "+
+					"use a declared role name verbatim or add the role to the security design", role.ID),
+			})
+		}
+	}
+	return errs
+}
+
+// declaredSecurityRoles is the set of role names security.json declares, or nil
+// when there is no security design to check against — absent, blank, or
+// unparseable (validateRolesDocument owns refusing that last one).
+func declaredSecurityRoles(designFiles map[string]string) map[string]bool {
+	raw := designFiles[securityspec.BundleKey]
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	doc, err := securityspec.Parse([]byte(raw))
+	if err != nil {
+		return nil
+	}
+	names := make(map[string]bool, len(doc.Roles))
+	for _, role := range doc.Roles {
+		names[role.Name] = true
+	}
+	return names
 }
 
 // validateRolesDocument checks the security design: the permission catalog, the

@@ -18,7 +18,7 @@ compile error, not a runtime surprise.
 | `apps/` | React webapps (Vite + Oxygen UI) | yes |
 | `services/` | long-lived deployables (Go + TS) | yes |
 | `runners/` | one-shot / job images | as jobs |
-| `packages/` | shared libraries: `contracts`, `clients`, `ui`, `agent-stream`, `collab-doc`, `design-projection`, `excalidraw-dsl`, `progress-view`, `sse-cassette` | no |
+| `packages/` | shared libraries: `contracts`, `clients`, `ui`, `agent-stream`, `collab-doc`, `design-projection`, `excalidraw-dsl`, `progress-view`, `prototype-model`, `sse-cassette` | no |
 | `skills/` | the authored skill library, seeded and reconciled into each org's own repo | no — delivered as content |
 | `playground/` | local harness that runs the real agents against a plain directory (no cluster, no GitHub, no database) | no |
 | `evals/` | on-demand evaluation suites for the platform's agents (`spec-agents`: per-section + chained evals over the real agents service; see its README) | no — never in CI |
@@ -83,6 +83,16 @@ behind `gen`, and CI runs `gen` + `git diff --exit-code` to catch staleness. See
   both task kinds (ADR-0012).
 - `console` (app) — React frontend.
 
+## Before a version is built
+
+The spec is written in stages — requirements, design, then, for each
+`web-application` the design declares, a read-only **prototype**
+(`specs/design/components/<name>/prototype.json`, `@aep/prototype-model`) the
+user reviews in the console and revises through structured feedback turns. The
+prototype is the web application's screen contract: Build refuses a web
+application without a valid one, and the coding run builds its screens from it —
+[ADR-0034](decisions/ADR-0034-a-web-application-is-reviewed-as-a-prototype-before-build.md).
+
 ## How a version gets built
 
 A spec version is cut as a `v<N>` tag and executed as **one supervised run over
@@ -116,7 +126,7 @@ never presented as the whole of it —
 rather than after a deployment. Once a `web-application` builds clean the cycle
 dispatches one more agent for it: it stands the app up in mock mode — MSW
 answering `/api`, a substituted auth module, no cluster and no sibling service —
-walks every screen the component's wireframes name, and repairs each failure the
+walks every screen the component's prototype declares, and repairs each failure the
 moment it finds it, clearing the line by clicking it again rather than by the
 edit compiling. It reports one verdict per user story. Running the walk before
 the commit is what makes one pull request carry the build *and* its fixes. It is distinct

@@ -50,6 +50,15 @@ type AgentTurn struct {
 	// flow, and this column only ever narrows a lookup.
 	Flow string `gorm:"type:text;index" json:"-"`
 
+	// Revision marks a turn that REVISED an artifact from structured review
+	// feedback — a `/prototype` turn carrying a feedback batch (#817) — rather
+	// than deriving its flow's artifacts from their inputs. It shares the
+	// flow's token, but it read its inputs only to edit what they had already
+	// produced, so it reconciles nothing: a staleness baseline taken from it
+	// would clear an Outdated warning without anything being regenerated.
+	// NewestCompletedDerivation skips these rows for exactly that reason.
+	Revision bool `gorm:"not null;default:false" json:"-"`
+
 	// BaseRef is the main-tip commit SHA the turn ran against (its snapshot
 	// ref); SkillsRef is the _skills head the skill catalog was read at.
 	BaseRef   string `gorm:"not null" json:"baseRef"`

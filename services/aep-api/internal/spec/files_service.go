@@ -625,7 +625,7 @@ type treeReader interface {
 // This is the apply path's seam for them because it is the earliest place that
 // holds the WHOLE bundle: softValidate sees one file's
 // content, and a coverage fact is a statement about security.json read against
-// design.cell, the wireframes and the component specs together. Every one of
+// design.cell and the component specs together. Every one of
 // those files may be untouched by this batch, so the committed tree is read for
 // the ones the batch does not carry.
 //

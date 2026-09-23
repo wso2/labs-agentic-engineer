@@ -98,6 +98,10 @@ func (f *fakeArtifactSvc) RequirementsFingerprintAt(context.Context, string, str
 	return "", nil
 }
 
+func (f *fakeArtifactSvc) DesignFingerprintAt(context.Context, string, string, string) (string, error) {
+	return "", nil
+}
+
 func (f *fakeArtifactSvc) ComponentCountAtTag(ctx context.Context, orgID, projectID, tag string) (int, error) {
 	if f.ComponentCountAtTagFunc == nil {
 		panic("spec test: ComponentCountAtTag called but ComponentCountAtTagFunc is not set")

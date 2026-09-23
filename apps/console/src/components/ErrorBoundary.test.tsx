@@ -48,14 +48,14 @@ afterEach(() => {
 describe("ErrorBoundary", () => {
   it("contains the throw to a fallback that names the section and records the stack", () => {
     render(
-      <ErrorBoundary label="The wireframe canvas">
+      <ErrorBoundary label="The chat panel">
         <Flaky />
       </ErrorBoundary>,
     );
 
-    expect(screen.getByRole("alert")).toHaveTextContent(/The wireframe canvas hit an error/);
+    expect(screen.getByRole("alert")).toHaveTextContent(/The chat panel hit an error/);
     expect(console.error).toHaveBeenCalledWith(
-      "[console] The wireframe canvas failed to render",
+      "[console] The chat panel failed to render",
       expect.objectContaining({ message: "canvas exploded" }),
       expect.any(String),
     );
@@ -168,7 +168,7 @@ describe("ErrorBoundary", () => {
 
   it("new input inside the settle window also gives the attempts back", () => {
     const { rerender } = render(
-      <ErrorBoundary label="The wireframe canvas" resetKey="scene-1">
+      <ErrorBoundary label="The chat panel" resetKey="scene-1">
         <Flaky />
       </ErrorBoundary>,
     );
@@ -179,13 +179,13 @@ describe("ErrorBoundary", () => {
 
     // A new scene lands before the window closes, then fails: full attempts.
     rerender(
-      <ErrorBoundary label="The wireframe canvas" resetKey="scene-2">
+      <ErrorBoundary label="The chat panel" resetKey="scene-2">
         <Flaky text="scene two" />
       </ErrorBoundary>,
     );
     failing = true;
     rerender(
-      <ErrorBoundary label="The wireframe canvas" resetKey="scene-3">
+      <ErrorBoundary label="The chat panel" resetKey="scene-3">
         <Flaky />
       </ErrorBoundary>,
     );
@@ -195,7 +195,7 @@ describe("ErrorBoundary", () => {
 
   it("clears on new input via resetKey, with the automatic attempts restored", () => {
     const { rerender } = render(
-      <ErrorBoundary label="The wireframe canvas" resetKey="scene-1">
+      <ErrorBoundary label="The chat panel" resetKey="scene-1">
         <Flaky />
       </ErrorBoundary>,
     );
@@ -207,7 +207,7 @@ describe("ErrorBoundary", () => {
     // A new scene arrives and renders fine.
     failing = false;
     rerender(
-      <ErrorBoundary label="The wireframe canvas" resetKey="scene-2">
+      <ErrorBoundary label="The chat panel" resetKey="scene-2">
         <Flaky text="scene two" />
       </ErrorBoundary>,
     );
@@ -216,7 +216,7 @@ describe("ErrorBoundary", () => {
     // And a later throw on the new scene gets its own automatic attempts.
     failing = true;
     rerender(
-      <ErrorBoundary label="The wireframe canvas" resetKey="scene-3">
+      <ErrorBoundary label="The chat panel" resetKey="scene-3">
         <Flaky />
       </ErrorBoundary>,
     );

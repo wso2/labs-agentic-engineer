@@ -157,6 +157,11 @@ type TurnInput struct {
 	// Nil for an ordinary chat turn, which then reaches the agents service
 	// byte-identical to one sent before this channel existed.
 	Aim *agentsvc.AimBlock
+	// PrototypeFeedback is a reviewer's batch of requests on one prototype
+	// (#817), validated at the edge and only ever on a `/prototype` turn. It
+	// rides the flow's TurnSpec to the agents service unchanged, and marks the
+	// turn a revision (AgentTurn.Revision) rather than a derivation.
+	PrototypeFeedback *agentsvc.PrototypeFeedbackBlock
 }
 
 // TurnStatus is the read view of one turn (the status GET body).
@@ -412,6 +417,11 @@ func (s *Service) StartTurn(ctx context.Context, orgID, projectID string, in Tur
 	// every turn snapshot; an idea typed inline wins). Best-effort — no
 	// descriptor, no idea, and the start skill asks the user instead.
 	turnSpec, flow := s.turnSpecFor(ctx, ref, baseRef, in.Instruction)
+	if in.PrototypeFeedback != nil {
+		// The edge admits a batch only on a bare `/prototype`, so this is the
+		// prototype flow's TurnSpec; the batch is a fact on it, never text.
+		turnSpec.PrototypeFeedback = in.PrototypeFeedback
+	}
 	// What the transcript will SHOW for this turn. Ordinarily the instruction
 	// verbatim — but a bare `/start` says nothing about what it is starting,
 	// and the idea it carries is exactly the reassurance the user needs on the
@@ -431,6 +441,7 @@ func (s *Service) StartTurn(ctx context.Context, orgID, projectID string, in Tur
 		ConversationID:    in.ConversationID,
 		UseCase:           useCaseGeneral,
 		Flow:              flow,
+		Revision:          in.PrototypeFeedback != nil,
 		BaseRef:           baseRef,
 		SkillsRef:         skillsRef,
 		Status:            turnStatusRunning,

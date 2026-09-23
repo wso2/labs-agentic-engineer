@@ -108,10 +108,11 @@ type bindingsReader interface {
 // no record of.
 type specTurnRows interface {
 	Newest(ctx context.Context, orgID, projectID string) (*spec.AgentTurn, error)
-	// NewestCompletedFlow finds the newest successful run of one flow — the
-	// staleness check (#575) needs the last DESIGN run, so it can read the
-	// requirements as that run saw them.
-	NewestCompletedFlow(ctx context.Context, orgID, projectID, flow string) (*spec.AgentTurn, error)
+	// NewestCompletedDerivation finds the newest successful run of one flow
+	// that derived its artifacts from their inputs — the staleness check (#575)
+	// needs the last DESIGN run, so it can read the requirements as that run
+	// saw them. Revision turns (a prototype feedback batch, #817) are skipped.
+	NewestCompletedDerivation(ctx context.Context, orgID, projectID, flow string) (*spec.AgentTurn, error)
 }
 
 // designFlow is the `/<skill>` token a design re-derivation runs under. Only a
@@ -133,19 +134,57 @@ const designFlow = "design"
 // re-derivation, while a swallowed one lets the coding agents implement a
 // design the user has already changed their mind about.
 func (s *Service) designOutdated(ctx context.Context, orgName, projectName, nowFingerprint string) (bool, error) {
+	return s.outdatedSinceLastRun(ctx, orgName, projectName, designFlow,
+		spec.ArtifactService.RequirementsFingerprintAt, nowFingerprint)
+}
+
+// prototypeFlow is the `/prototype` token (#818). Every prototype write runs
+// under it — a full generation and a feedback batch alike — but only a
+// generation derives the prototypes from the design: a feedback batch (#817)
+// is a revision turn that edits one file against the design it happens to
+// read, reconciling nothing. So the newest successful GENERATION is the design
+// the prototypes stand on, and a feedback turn after a design change leaves
+// them Outdated until Regenerate prototype runs.
+const prototypeFlow = "prototype"
+
+// prototypeOutdated answers whether the design has moved since the prototypes
+// were last generated from it — designOutdated one stage down.
+//
+// nowFingerprint is the design (minus every prototype.json) as it stands; the
+// baseline is the same reduction at the commit the newest successful prototype
+// generation read. Because prototypes are excluded from both sides, a feedback rewrite
+// never reads as the design moving. No prototype run on record means nothing
+// to be behind; an unreadable baseline is an error, as for designOutdated.
+func (s *Service) prototypeOutdated(ctx context.Context, orgName, projectName, nowFingerprint string) (bool, error) {
+	return s.outdatedSinceLastRun(ctx, orgName, projectName, prototypeFlow,
+		spec.ArtifactService.DesignFingerprintAt, nowFingerprint)
+}
+
+// inputsFingerprintAt reads a derived stage's inputs, reduced to a
+// fingerprint, as they stood at a commit.
+type inputsFingerprintAt func(svc spec.ArtifactService, ctx context.Context, orgName, projectName, ref string) (string, error)
+
+// outdatedSinceLastRun is the one staleness rule both derived stages share:
+// the stage is outdated when its inputs as they stand (nowFingerprint) differ
+// from its inputs at the commit the newest successful derivation of flow read.
+// No such run on record is "not outdated"; an unreadable baseline is an error.
+func (s *Service) outdatedSinceLastRun(
+	ctx context.Context, orgName, projectName, flow string,
+	inputsAt inputsFingerprintAt, nowFingerprint string,
+) (bool, error) {
 	if s.specTurns == nil {
 		return false, nil
 	}
-	lastDesign, err := s.specTurns.NewestCompletedFlow(ctx, orgName, projectName, designFlow)
+	last, err := s.specTurns.NewestCompletedDerivation(ctx, orgName, projectName, flow)
 	if err != nil {
-		return false, fmt.Errorf("newest design turn: %w", err)
+		return false, fmt.Errorf("newest %s turn: %w", flow, err)
 	}
-	if lastDesign == nil || lastDesign.BaseRef == "" {
+	if last == nil || last.BaseRef == "" {
 		return false, nil
 	}
-	was, err := s.artifactSvc.RequirementsFingerprintAt(ctx, orgName, projectName, lastDesign.BaseRef)
+	was, err := inputsAt(s.artifactSvc, ctx, orgName, projectName, last.BaseRef)
 	if err != nil {
-		return false, fmt.Errorf("requirements at the last design run's base: %w", err)
+		return false, fmt.Errorf("inputs at the last %s run's base: %w", flow, err)
 	}
 	return was != nowFingerprint, nil
 }
@@ -323,14 +362,25 @@ func (s *Service) populateStages(ctx context.Context, orgName, projectName strin
 		}
 		outdated = stale
 	}
+	// Same shape one stage down (#818): checked only when a prototype exists
+	// at head, which keeps the extra tree read off every pre-prototype poll.
+	prototypeOutdated := false
+	if snap.HasPrototype {
+		stale, err := s.prototypeOutdated(ctx, orgName, projectName, snap.DesignFingerprint)
+		if err != nil {
+			return err
+		}
+		prototypeOutdated = stale
+	}
 	status.Spec = gen.SpecStage{
-		Exists:         snap.HasSpec,
-		Version:        snap.SpecVersion,
-		Dirty:          snap.SpecDirty,
-		Design:         snap.HasDesign,
-		Agent:          specAgentOf(s.specTurns, newestTurn),
-		AgentFlow:      runningFlowOf(newestTurn),
-		DesignOutdated: outdated,
+		Exists:            snap.HasSpec,
+		Version:           snap.SpecVersion,
+		Dirty:             snap.SpecDirty,
+		Design:            snap.HasDesign,
+		Agent:             specAgentOf(s.specTurns, newestTurn),
+		AgentFlow:         runningFlowOf(newestTurn),
+		DesignOutdated:    outdated,
+		PrototypeOutdated: prototypeOutdated,
 	}
 	applyFlatArtifactFields(status, snap)
 

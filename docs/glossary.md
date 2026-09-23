@@ -578,6 +578,17 @@ committed to git `main`. An agent turn's output is hash-parity checked by the fo
 (`platform/agentfold`) before commit; a mismatch rejects the turn and leaves `main`
 untouched. The git commit — not any draft buffer — is the source of truth.
 
+### Prototype
+A `web-application`'s reviewable picture before Build:
+`specs/design/components/<name>/prototype.json`, one per web application,
+written by the `/prototype` flow after the design and rendered read-only by the
+console. A versioned model over a controlled registry of components and
+view-state-only actions (`@aep/prototype-model`), with stable IDs and mock
+records shaped by the component's API. It is the web application's screen
+contract: the build gate requires a valid one whose roles `security.json`
+declares, the coding run builds its screens from it, and the mock walk follows
+its flows. There is no approval record — Build is the approval. ADR-0034.
+
 ## Skills
 
 ### Skill audience

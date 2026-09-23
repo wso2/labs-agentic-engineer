@@ -37,6 +37,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -361,12 +362,12 @@ func (m *memTurnRepo) GetActive(_ context.Context, orgID, projectID string) (*sp
 	return nil, nil
 }
 
-func (m *memTurnRepo) NewestCompletedFlow(_ context.Context, orgID, projectID, flow string) (*spec.AgentTurn, error) {
+func (m *memTurnRepo) NewestCompletedDerivation(_ context.Context, orgID, projectID, flow string) (*spec.AgentTurn, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var newest *spec.AgentTurn
 	for _, r := range m.rows { // insertion order == creation order
-		if r.OrgID == orgID && r.ProjectID == projectID && r.Flow == flow && r.Status == "completed" {
+		if r.OrgID == orgID && r.ProjectID == projectID && r.Flow == flow && r.Status == "completed" && !r.Revision {
 			newest = r
 		}
 	}
@@ -1570,5 +1571,144 @@ func TestStartTurnJSONCarriesNoAttachments(t *testing.T) {
 	}
 	if sent.req.Journal == nil || sent.req.Journal.Attachments != nil {
 		t.Errorf("journal attachments = %+v, want nil", sent.req.Journal)
+	}
+}
+
+// ---- prototype feedback (#817) --------------------------------------------------
+
+const feedbackPath = "specs/design/components/portal/prototype.json"
+
+// feedbackBody is a create-turn JSON body carrying a two-request batch — one on
+// two components inside a flow, one about a whole screen outside any flow.
+func feedbackBody(instruction string, mutate func(fb map[string]any)) string {
+	fb := map[string]any{
+		"prototypePath": feedbackPath,
+		"annotations": []any{
+			map[string]any{
+				"id": "ann-1", "prototypeSchemaVersion": 1, "screenId": "screen.queue", "flowId": "flow.approve",
+				"stateId": "state.default", "componentIds": []string{"queue.table", "queue.approve"},
+				"request": "Show the submitter's department",
+			},
+			map[string]any{
+				"id": "ann-2", "prototypeSchemaVersion": 1, "screenId": "screen.detail", "flowId": nil,
+				"stateId": "state.failed", "componentIds": []string{}, "request": "This screen feels cramped",
+			},
+		},
+	}
+	if mutate != nil {
+		mutate(fb)
+	}
+	body, _ := json.Marshal(map[string]any{"instruction": instruction, "prototypeFeedback": fb})
+	return string(body)
+}
+
+// The batch reaches the agents service on the prototype flow's TurnSpec with
+// every field as the console sent it — nothing reworded, nothing folded into
+// the instruction — and the turn is recorded as a revision, so it never
+// becomes the prototype staleness baseline.
+func TestPrototypeFeedback_ForwardedUnchanged(t *testing.T) {
+	r := newGenaiRig(t, map[string]string{"README.md": "hi\n"})
+	rec := r.h.AsOrg(testOrg).Post(turnsPath(convUUID), feedbackBody("/prototype", nil))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("POST feedback turn: code %d, want 202 (%s)", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		TurnID string `json:"turnId"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	r.waitTerminal(t, out.TurnID)
+
+	sent := r.fake.sentTurn(t, 0).req.Turn
+	if sent.Kind != agentsvc.TurnKindFlow || sent.Skill != "prototype" || sent.Text != "" {
+		t.Fatalf("turn spec = %+v, want a bare prototype flow", sent)
+	}
+	flow := "flow.approve"
+	want := &agentsvc.PrototypeFeedbackBlock{
+		PrototypePath: feedbackPath,
+		Annotations: []agentsvc.PrototypeAnnotationBlock{
+			{ID: "ann-1", PrototypeSchemaVersion: 1, ScreenID: "screen.queue", FlowID: &flow, StateID: "state.default",
+				ComponentIDs: []string{"queue.table", "queue.approve"}, Request: "Show the submitter's department"},
+			{ID: "ann-2", PrototypeSchemaVersion: 1, ScreenID: "screen.detail", FlowID: nil, StateID: "state.failed",
+				ComponentIDs: []string{}, Request: "This screen feels cramped"},
+		},
+	}
+	if !reflect.DeepEqual(sent.PrototypeFeedback, want) {
+		t.Fatalf("forwarded batch = %+v, want %+v", sent.PrototypeFeedback, want)
+	}
+	row := r.turns.row(t, out.TurnID)
+	if row.Flow != "prototype" || !row.Revision {
+		t.Fatalf("turn row flow=%q revision=%v, want a prototype revision", row.Flow, row.Revision)
+	}
+	if row.Summary != "/prototype" {
+		t.Fatalf("display record = %q, want the instruction verbatim", row.Summary)
+	}
+}
+
+// A plain /prototype is a generation, not a revision.
+func TestPrototypeGeneration_IsNotARevision(t *testing.T) {
+	r := newGenaiRig(t, map[string]string{"README.md": "hi\n"})
+	turnID := r.startTurn(t, convUUID, "", "/prototype")
+	r.waitTerminal(t, turnID)
+	if row := r.turns.row(t, turnID); row.Flow != "prototype" || row.Revision {
+		t.Fatalf("turn row flow=%q revision=%v, want a prototype generation", row.Flow, row.Revision)
+	}
+	if fb := r.fake.sentTurn(t, 0).req.Turn.PrototypeFeedback; fb != nil {
+		t.Fatalf("a generation forwarded a batch: %+v", fb)
+	}
+}
+
+// A malformed batch is a 400 before any turn exists: no row, no dispatch.
+func TestPrototypeFeedback_Malformed400BeforeATurnOpens(t *testing.T) {
+	r := newGenaiRig(t, map[string]string{"README.md": "hi\n"})
+	fifty := func(n int, f func(i int) any) []any {
+		out := make([]any, n)
+		for i := range out {
+			out[i] = f(i)
+		}
+		return out
+	}
+	annotation := func(id string) map[string]any {
+		return map[string]any{
+			"id": id, "prototypeSchemaVersion": 1, "screenId": "s", "flowId": nil,
+			"stateId": "st", "componentIds": []string{}, "request": "r",
+		}
+	}
+	cases := map[string]string{
+		"empty batch": feedbackBody("/prototype", func(fb map[string]any) { fb["annotations"] = []any{} }),
+		"over 50 annotations": feedbackBody("/prototype", func(fb map[string]any) {
+			fb["annotations"] = fifty(51, func(i int) any { return annotation(fmt.Sprintf("a%d", i)) })
+		}),
+		"duplicate annotation ids": feedbackBody("/prototype", func(fb map[string]any) {
+			fb["annotations"] = []any{annotation("same"), annotation("same")}
+		}),
+		"over 50 component ids": feedbackBody("/prototype", func(fb map[string]any) {
+			a := annotation("a1")
+			a["componentIds"] = fifty(51, func(i int) any { return fmt.Sprintf("c%d", i) })
+			fb["annotations"] = []any{a}
+		}),
+		"bad path":              feedbackBody("/prototype", func(fb map[string]any) { fb["prototypePath"] = "specs/design/design.cell" }),
+		"not /prototype":        feedbackBody("/design", nil),
+		"text after /prototype": feedbackBody("/prototype and make it blue", nil),
+	}
+	aimed := map[string]any{}
+	_ = json.Unmarshal([]byte(feedbackBody("/prototype", nil)), &aimed)
+	aimed["anchor"] = map[string]any{"file": "specs/requirements/prd.md", "nodes": []any{map[string]any{"name": "x", "kind": "paragraph"}}}
+	aimed["intent"] = "change"
+	withAim, _ := json.Marshal(aimed)
+	cases["with anchor and intent"] = string(withAim)
+
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			rec := r.h.AsOrg(testOrg).Post(turnsPath(convUUID), body)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("code %d, want 400 (%s)", rec.Code, rec.Body.String())
+			}
+		})
+	}
+	if r.fake.turns(t) != 0 {
+		t.Error("agents dispatched a malformed batch")
+	}
+	if rec := r.h.AsOrg(testOrg).Get(turnPath("active")); rec.Code != http.StatusNoContent {
+		t.Errorf("no row should exist: active = %d, want 204", rec.Code)
 	}
 }

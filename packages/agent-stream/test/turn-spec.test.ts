@@ -25,7 +25,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isTurnSpec } from "../src/contracts/sse-events.js";
+import { isPrototypeFeedback, isTurnSpec, PROTOTYPE_FEEDBACK_LIMITS } from "../src/contracts/sse-events.js";
 
 test("accepts each well-formed kind", () => {
   assert.ok(isTurnSpec({ kind: "chat", text: "add a returns policy" }));
@@ -87,4 +87,59 @@ test("a title is optional on a story row", () => {
 
 test("unknown extra keys are tolerated", () => {
   assert.ok(isTurnSpec({ kind: "start", idea: "x", futureField: true }));
+});
+
+// --- prototype feedback (#817) ------------------------------------------------
+
+const annotation = (over: Record<string, unknown> = {}) => ({
+  id: "a1",
+  prototypeSchemaVersion: 1,
+  screenId: "screen.queue",
+  flowId: null,
+  stateId: "state.default",
+  componentIds: ["queue.table"],
+  request: "Show the submitter's department",
+  ...over,
+});
+
+const feedbackFlow = (feedback: unknown, skill = "prototype") => ({ kind: "flow", skill, prototypeFeedback: feedback });
+
+const feedback = (over: Record<string, unknown> = {}) => ({
+  prototypePath: "specs/design/components/portal/prototype.json",
+  annotations: [annotation()],
+  ...over,
+});
+
+test("a /prototype flow may carry a well-formed feedback batch", () => {
+  assert.ok(isTurnSpec(feedbackFlow(feedback())));
+  // Whole-screen requests and a flow ID are both fine.
+  assert.ok(isTurnSpec(feedbackFlow(feedback({ annotations: [annotation({ componentIds: [], flowId: "flow.approve" })] }))));
+  assert.ok(isPrototypeFeedback(feedback()));
+});
+
+test("feedback rides only the prototype flow", () => {
+  assert.equal(isTurnSpec(feedbackFlow(feedback(), "design")), false);
+});
+
+test("a malformed feedback batch is refused whole", () => {
+  const bad = [
+    feedback({ annotations: [] }),
+    feedback({ annotations: Array.from({ length: PROTOTYPE_FEEDBACK_LIMITS.annotations + 1 }, (_, i) => annotation({ id: `a${i}` })) }),
+    feedback({ annotations: [annotation(), annotation()] }), // duplicate annotation IDs
+    feedback({ prototypePath: "specs/design/prototype.json" }),
+    feedback({ prototypePath: "specs/design/components/a/b/prototype.json" }),
+    feedback({ annotations: [annotation({ componentIds: Array.from({ length: 51 }, (_, i) => `c${i}`) })] }),
+    feedback({ annotations: [annotation({ prototypeSchemaVersion: 2 })] }),
+    feedback({ annotations: [annotation({ request: "   " })] }),
+    feedback({ annotations: [annotation({ screenId: "" })] }),
+    feedback({ annotations: [annotation({ flowId: "" })] }),
+    feedback({ annotations: [annotation({ flowId: undefined })] }),
+    feedback({ annotations: [annotation({ componentIds: ["ok", 3] })] }),
+    { annotations: [annotation()] },
+    null,
+  ];
+  for (const b of bad) {
+    assert.equal(isPrototypeFeedback(b), false, JSON.stringify(b)?.slice(0, 120));
+    assert.equal(isTurnSpec(feedbackFlow(b)), false);
+  }
 });

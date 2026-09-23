@@ -115,9 +115,8 @@ export function useDesignDependencies(projectName: string) {
 }
 
 /**
- * Fetch one spec file's content. Shared by the lazy selection hook below, the
- * derived wireframe hook (useDerivedWireframe), and the cell-diagram panel's
- * solo/offline design.cell read — reads outside a single "selected file"
+ * Fetch one spec file's content. Shared by the lazy selection hook below and
+ * the cell-diagram panel's solo/offline design.cell read — reads outside a single "selected file"
  * context.
  */
 export async function fetchSpecFileContent(
@@ -176,7 +175,7 @@ export function useSpecFileContent(
  *
  * The plural exists because some readers need a set of files whose SIZE depends
  * on what they are reading — the Security page's cross-checks read the OpenAPI
- * and wireframes of whichever components the security document names — and a
+ * of whichever components the security document names — and a
  * hook cannot be called a variable number of times. Same key, same fetch and
  * the same immutable-per-(path, sha) caching as `useSpecFileContent`, so a file
  * one of these pulls in is free for the single-file hook and vice versa.

@@ -172,3 +172,53 @@ func TestTurnRepo_SweepStale(t *testing.T) {
 		t.Fatalf("second sweep = (%+v, %v)", again, err)
 	}
 }
+
+// The prototype staleness baseline (#817) is the newest successful prototype
+// GENERATION. Walked as the Outdated flag sees it — the design as it stood at
+// the baseline's base commit against the design now: a design change marks the
+// prototypes outdated, a feedback batch after it (a revision turn) must NOT
+// clear that, and a regeneration does.
+func TestTurnRepo_PrototypeBaselineSkipsFeedbackRevisions(t *testing.T) {
+	t.Parallel()
+	repo := spec.NewTurnRepository(dbtest.New(t), nil)
+	ctx := context.Background()
+
+	designAt := map[string]string{} // base commit → the design fingerprint there
+	land := func(baseRef, design string, revision bool) {
+		t.Helper()
+		designAt[baseRef] = design
+		turn := newTurn("o1", "p1", "c1", "general")
+		turn.Flow, turn.Revision, turn.BaseRef = "prototype", revision, baseRef
+		row, err := repo.TryStart(ctx, turn)
+		if err != nil {
+			t.Fatalf("TryStart: %v", err)
+		}
+		if ok, err := repo.Finish(ctx, row.ID, spec.TurnTerminal{Status: "completed"}); err != nil || !ok {
+			t.Fatalf("Finish = (%v, %v)", ok, err)
+		}
+	}
+	outdated := func(designNow string) bool {
+		t.Helper()
+		base, err := repo.NewestCompletedDerivation(ctx, "o1", "p1", "prototype")
+		if err != nil || base == nil {
+			t.Fatalf("baseline = (%v, %v)", base, err)
+		}
+		return designAt[base.BaseRef] != designNow
+	}
+
+	land("gen-1", "design-v1", false)
+	if outdated("design-v1") {
+		t.Fatal("a fresh generation read as outdated")
+	}
+	if !outdated("design-v2") {
+		t.Fatal("a design change after the generation did not read as outdated")
+	}
+	land("feedback-1", "design-v2", true)
+	if !outdated("design-v2") {
+		t.Fatal("a feedback turn became the baseline and cleared Outdated without regenerating")
+	}
+	land("gen-2", "design-v2", false)
+	if outdated("design-v2") {
+		t.Fatal("regenerating did not clear Outdated")
+	}
+}

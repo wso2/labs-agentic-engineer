@@ -20,6 +20,7 @@ import type React from "react";
 import { useState } from "react";
 import {
   Box,
+  Button,
   Chip,
   Collapse,
   IconButton,
@@ -32,6 +33,8 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import {
+  AppWindow,
+  ArrowUpRight,
   Boxes,
   Check,
   ChevronDown,
@@ -40,9 +43,9 @@ import {
   FileText,
   RefreshCw,
   Network,
-  LayoutDashboard,
   Plug,
   ShieldCheck,
+  Sparkles,
   TriangleAlert,
   Workflow,
 } from "@wso2/oxygen-ui-icons-react";
@@ -53,6 +56,7 @@ import {
   mostSignificant,
   reasonCount,
   type RailPlanEntry,
+  type PrototypeStage,
   type RailSection,
   type SectionReason,
 } from "../lib/railSections";
@@ -81,6 +85,9 @@ export function SpecFileList({
   plan,
   onReason,
   dependencyStates,
+  onPrototypeAction,
+  prototypeActionBlockedReason = "",
+  onReviewPrototype,
 }: {
   files: SpecFileEntry[];
   selection: SpecSelection | null;
@@ -103,9 +110,20 @@ export function SpecFileList({
    *  what is being written, an error mark on what died. Empty when no plan is
    *  live and no wreckage stands. */
   plan?: RailPlanEntry[];
-  /** A reason row was clicked: open the requirements document, or re-derive. */
+  /** A reason row was clicked: open the requirements document, re-derive,
+   *  or regenerate the prototype. */
   onReason: (action: SectionReason["action"]) => void;
+  /** The Prototype section header's Generate / Regenerate (#813) — both
+   *  send `/prototype`. */
+  onPrototypeAction: (action: NonNullable<PrototypeStage["action"]>) => void;
+  /** Why that action cannot run right now (a turn is running, or the agent
+   *  waits on the user), shown on the disabled button; "" when it can. */
+  prototypeActionBlockedReason?: string;
+  /** A prototype entry: open that web-application's prototype review. */
+  onReviewPrototype: (component: string) => void;
 }) {
+  // Present only when the design cell declares a web-application (#813).
+  const prototypeSection = sections.find((sec) => sec.id === "prototype");
   const sectionOf = (id: RailSection["id"]) =>
     sections.find((sec) => sec.id === id) ?? {
       id,
@@ -129,7 +147,11 @@ export function SpecFileList({
     .map((e) => ({
       path: e.path,
       sha: "",
-      group: e.section === "design" ? ("designs" as const) : (e.section as "requirements" | "validation"),
+      // A prototype.json is a design file on disk; its SECTION is Prototype.
+      group:
+        e.section === "design" || e.section === "prototype"
+          ? ("designs" as const)
+          : (e.section as "requirements" | "validation"),
     }));
   // Merged in PATH order, not appended: a ghost has to sit where its file will
   // sit, or the row hops up the list the moment the write lands — the visible
@@ -292,7 +314,7 @@ export function SpecFileList({
   // `indent` bumps a row one level deeper than the top-level tree (matching
   // the old console's depth-based pl: files inside an expanded component sit
   // right of both the top-level entries and the component's own header row).
-  // `statusPath` is for the synthetic rows (Architecture, Security, Wireframe)
+  // `statusPath` is for the synthetic rows (Architecture, Security)
   // whose selection is not a file path; a plain file row derives it itself.
   const row = (
     sel: SpecSelection,
@@ -536,18 +558,6 @@ export function SpecFileList({
                     {c.files.map((f) =>
                       row(fileSel(f.path), fileLabel(f.path), <FileText size={16} />, true),
                     )}
-                    {c.wireframeDslPath &&
-                      row(
-                        {
-                          kind: "wireframe",
-                          component: c.name,
-                          dslPath: c.wireframeDslPath,
-                        },
-                        "Wireframe",
-                        <LayoutDashboard size={16} />,
-                        true,
-                        c.wireframeDslPath,
-                      )}
                   </Collapse>
                 </Box>
               );
@@ -564,6 +574,29 @@ export function SpecFileList({
         )}
       </Box>
 
+      {/* Prototype (#813) — between Design and Validation, only for a design
+          with a web-application: one entry per prototype, and the one turn
+          the stage can start now in its header. */}
+      {prototypeSection && (
+        <Box sx={{ mb: 1 }}>
+          {sectionHeader(
+            prototypeSection,
+            prototypeSection.prototype?.action && (
+              <PrototypeAction
+                action={prototypeSection.prototype.action}
+                blockedReason={prototypeActionBlockedReason}
+                onAction={onPrototypeAction}
+              />
+            ),
+          )}
+          <PrototypeRows
+            reviews={prototypeSection.prototype?.reviews ?? []}
+            emptyNote={emptyNote}
+            onReview={onReviewPrototype}
+          />
+        </Box>
+      )}
+
       {flatGroup(sectionOf("validation"), validation)}
 
       <ProblemsDialog
@@ -573,12 +606,106 @@ export function SpecFileList({
           key: reason.key,
           label: reason.label,
           fix: {
-            label: reason.action === "update-design" ? "Update the design" : "Open the document",
+            label: FIX_LABEL[reason.action],
             run: () => onReason(reason.action),
           },
         }))}
         onClose={() => setProblemsFor(null)}
       />
     </Box>
+  );
+}
+
+/** What a reason's repair button says, per repair. */
+const FIX_LABEL: Record<SectionReason["action"], string> = {
+  document: "Open the document",
+  "update-design": "Update the design",
+  "regenerate-prototype": "Regenerate prototype",
+};
+
+const PROTOTYPE_ACTION_LABEL: Record<NonNullable<PrototypeStage["action"]>, string> = {
+  generate: "Generate",
+  regenerate: "Regenerate",
+};
+
+/**
+ * The Prototype section header's action (#813): Generate before a prototype
+ * exists, Regenerate once the design has moved past it. It sits where the
+ * Design header's re-generate sits, as a small text button — the section
+ * title already names what it acts on, so the visible word stays short while
+ * the accessible name says it in full.
+ */
+function PrototypeAction({
+  action,
+  blockedReason,
+  onAction,
+}: {
+  action: NonNullable<PrototypeStage["action"]>;
+  blockedReason: string;
+  onAction: (action: NonNullable<PrototypeStage["action"]>) => void;
+}) {
+  return (
+    <Tooltip title={blockedReason}>
+      {/* span so the tooltip works while the button is disabled */}
+      <span>
+        <Button
+          size="small"
+          variant="text"
+          aria-label={`${PROTOTYPE_ACTION_LABEL[action]} prototype`}
+          startIcon={action === "regenerate" ? <RefreshCw size={14} /> : <Sparkles size={14} />}
+          disabled={blockedReason !== ""}
+          onClick={() => onAction(action)}
+          sx={{ py: 0.25, minWidth: 0, flexShrink: 0 }}
+        >
+          {PROTOTYPE_ACTION_LABEL[action]}
+        </Button>
+      </span>
+    </Tooltip>
+  );
+}
+
+/**
+ * The Prototype section's body: one entry per web-application that has a
+ * prototype, named by the component (a design may declare several), opening
+ * its full-viewport review. "Not created yet" when there is none — the
+ * header carries Generate once the design is ready, and pulses while the
+ * first generation runs.
+ */
+function PrototypeRows({
+  reviews,
+  emptyNote,
+  onReview,
+}: {
+  reviews: string[];
+  emptyNote: string;
+  onReview: (component: string) => void;
+}) {
+  if (reviews.length === 0) {
+    return (
+      <Typography variant="body2" color="text.secondary" sx={{ px: 2, py: 0.5, fontStyle: "italic" }}>
+        {emptyNote}
+      </Typography>
+    );
+  }
+  return (
+    <List dense disablePadding>
+      {reviews.map((component) => (
+        <ListItemButton
+          key={component}
+          onClick={() => onReview(component)}
+          aria-label={`Review prototype: ${component}`}
+          sx={{ px: 2 }}
+        >
+          <ListItemIcon sx={{ minWidth: 32 }}>
+            <AppWindow size={16} />
+          </ListItemIcon>
+          <ListItemText primary={component} slotProps={{ primary: { noWrap: true } }} />
+          {/* Opens the full-screen review, not a document in the pane. */}
+          <Box sx={{ display: "flex", flexShrink: 0, color: "text.secondary" }} aria-hidden>
+            <ArrowUpRight size={14} />
+          </Box>
+        </ListItemButton>
+      ))}
+    </List>
   );
 }

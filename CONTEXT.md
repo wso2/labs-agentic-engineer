@@ -45,6 +45,16 @@ _Avoid_: workspace, repo, project.
 One request→response cycle of the main agent: a user instruction plus the current
 spec bundle in, a stream of file mutations out. One turn = one POST.
 
+**Prototype**:
+A web application's read-only, versioned picture —
+`specs/design/components/<name>/prototype.json` — derived from the design by the
+`/prototype` flow and reviewed in the console before Build. Its screens, flows,
+roles and display states are the application's screen contract; its roles are
+`security.json`'s.
+_Avoid_: wireframe (the retired DSL it replaced), mockup, preview (the console's
+name for one of its two review modes), prototype approval (Build is the
+approval).
+
 ## Org skills (`services/aep-api`)
 
 **Org skills repo**:

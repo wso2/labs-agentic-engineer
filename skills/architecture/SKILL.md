@@ -41,7 +41,7 @@ component's build actually needs as a `skillsPinned` array **inside that
 component's `specs/design/components/<name>/design.json`** — use the exact
 catalog names, e.g. a Ballerina API service →
 `["openapi-conventions", "ballerina"]` (a Go one → `["openapi-conventions",
-"go"]`); a web-application → `["wireframes", "react-webapp", <design system>]`,
+"go"]`); a web-application → `["prototype", "react-webapp", <design system>]`,
 where `<design system>` is the skill name in the **UI design system** section of
 the Organization defaults block in your instructions. A web app's UI toolkit is
 a settled organization decision, so pin it on **every** web-application rather
@@ -503,8 +503,9 @@ resolvable, never a guess; a `platform-resource`'s says what it stores. The
 console shows it in the dependency drawer and the coding agent relies on it to
 integrate correctly.
 
-One component per directory. Every `web-application` gets a `wireframes.dsl`
-(`wireframes` governs it); every `service` gets an `openapi.yaml`
+One component per directory. Every `service` gets an `openapi.yaml`
 (`openapi-conventions` governs it), emitted after domain-model.md's ER model.
+A `web-application`'s screens are its `prototype.json`, which `/prototype`
+writes after the design (`prototype` governs it) — the design writes none.
 Other kinds (scheduled tasks, workers, …) carry no extra artifact yet — capture
 their behaviour fully in `description` and `dependencies`.

@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"strings"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
@@ -156,6 +157,104 @@ func TestSaveSpec_GateDesignInvalid(t *testing.T) {
 	}
 	if got := r.tags(); len(got) != 0 {
 		t.Errorf("tags = %v, want none (malformed design never tagged)", got)
+	}
+}
+
+// An invalid prototype.json at a component slot (#815) is refused by the
+// whole-spec gate over real git, one row per finding at its repo path, and
+// nothing is tagged (#819's "invalid save is refused" proof).
+func TestSaveSpec_GateRefusesAnInvalidPrototype(t *testing.T) {
+	if specGateDisabled {
+		t.Skip("whole-spec gate disabled (specGateDisabled)")
+	}
+	t.Parallel()
+	seed := validSpecSeed()
+	seed["specs/design/components/svc/prototype.json"] = lunchWebPrototype(t, func(d map[string]any) {
+		d["component"] = "svc"
+		d["defaultScreenId"] = "screen.ghost"
+		nav := d["navigation"].([]any)[0].(map[string]any)
+		nav["items"].([]any)[0].(map[string]any)["action"].(map[string]any)["screenId"] = "screen.gone"
+	})
+	r := newRig(t, seed)
+
+	_, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{})
+	var se *SpecValidationError
+	if !errors.As(err, &se) {
+		t.Fatalf("err = %v, want *SpecValidationError", err)
+	}
+	var codes []string
+	for _, f := range se.Files {
+		if f.Path == "specs/design/components/svc/prototype.json" {
+			codes = append(codes, f.Code)
+		}
+	}
+	if len(codes) != 2 || codes[0] != "UNKNOWN_REFERENCE" || codes[1] != "UNKNOWN_REFERENCE" {
+		t.Fatalf("prototype rows = %v (all: %+v), want one UNKNOWN_REFERENCE row per dangling reference", codes, se.Files)
+	}
+	if got := r.tags(); len(got) != 0 {
+		t.Errorf("tags = %v, want none (an invalid prototype is never tagged)", got)
+	}
+}
+
+// webAppSpecSeed is validSpecSeed after /design and /prototype: the cell also
+// declares a web-application, whose build artifact is its prototype.json — and
+// there is no wireframes.dsl anywhere.
+func webAppSpecSeed(t *testing.T) map[string]string {
+	t.Helper()
+	seed := validSpecSeed()
+	seed["specs/design/design.cell"] = "component svc service\ncomponent web web-application\n"
+	seed["specs/design/components/web/design.md"] = "---\ntype: web-application\n---\n# web\n"
+	seed["specs/design/components/web/design.json"] = strings.Replace(
+		strings.Replace(validComponentDesignJSON("web"), `"type":"service"`, `"type":"web-application"`, 1),
+		`"entrypoint":"main.go"`, `"entrypoint":"index.html"`, 1)
+	seed["specs/design/components/web/prototype.json"] = lunchWebPrototype(t, func(d map[string]any) {
+		d["component"] = "web"
+	})
+	return seed
+}
+
+// #820's proof over real git: after design and prototype, Build (the version
+// tag publish-version cuts) accepts a web-application with a valid prototype
+// and no wireframes.dsl, and refuses one with no prototype.
+func TestSaveSpec_BuildAcceptsAPrototypeWithoutWireframes(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, webAppSpecSeed(t))
+
+	res, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{Message: "Build"})
+	if err != nil {
+		t.Fatalf("SaveSpec: %v", err)
+	}
+	if res.Tag != "v1" {
+		t.Fatalf("result = %+v, want tag v1", res)
+	}
+}
+
+func TestSaveSpec_BuildRefusesAWebApplicationWithoutAPrototype(t *testing.T) {
+	if specGateDisabled {
+		t.Skip("whole-spec gate disabled (specGateDisabled)")
+	}
+	t.Parallel()
+	seed := webAppSpecSeed(t)
+	delete(seed, "specs/design/components/web/prototype.json")
+	seed["specs/design/components/web/wireframes.dsl"] = "screen home\n"
+	r := newRig(t, seed)
+
+	_, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{Message: "Build"})
+	var se *SpecValidationError
+	if !errors.As(err, &se) {
+		t.Fatalf("err = %v, want *SpecValidationError", err)
+	}
+	found := false
+	for _, f := range se.Files {
+		if f.Path == "specs/design/components/web/prototype.json" && f.Code == codeMissingComponentArtifact {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("want %s at the prototype path, got %+v", codeMissingComponentArtifact, se.Files)
+	}
+	if got := r.tags(); len(got) != 0 {
+		t.Errorf("tags = %v, want none", got)
 	}
 }
 

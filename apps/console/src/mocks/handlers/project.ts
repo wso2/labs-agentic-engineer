@@ -123,6 +123,13 @@ function scenarioRuns(s: Exclude<ProjectScenario, "error">): MilestoneRunView[] 
   return projectBuildRuns[s].runs ?? [];
 }
 
+// Whether the design has moved past the prototypes (aep:mock:prototype=outdated,
+// #818) — the Spec rail Prototype header's Regenerate and the review page's Outdated
+// banner. Off by default: every scenario's status carries the field as false.
+function prototypeOutdated(): boolean {
+  return localStorage.getItem("aep:mock:prototype") === "outdated";
+}
+
 function validationScenario(): ValidationScenario | null {
   const raw = localStorage.getItem("aep:mock:validation");
   return raw && VALIDATION_SCENARIOS.includes(raw as ValidationScenario)
@@ -227,7 +234,11 @@ export const projectHandlers = [
       const scenarioBase = projectStatuses[s];
       // The track override replaces all three aggregates together — they only
       // mean anything as a set.
-      const base = track ? { ...scenarioBase, ...trackOverrides[track] } : scenarioBase;
+      const tracked = track ? { ...scenarioBase, ...trackOverrides[track] } : scenarioBase;
+      const base = {
+        ...tracked,
+        spec: { ...tracked.spec, prototypeOutdated: prototypeOutdated() },
+      };
       // Only deploy.validation moves: the rest of the status is the project
       // scenario's, so the override can be read against any of them.
       return v ? { ...base, deploy: { ...base.deploy, validation: v } } : base;

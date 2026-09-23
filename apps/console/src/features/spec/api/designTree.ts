@@ -16,14 +16,14 @@
  * under the License.
  */
 
+import { isPrototypeArtifactPath } from "@aep/prototype-model";
 import type { SpecFileEntry } from "./mapping";
 
 /** What the content pane should render for the current sidebar selection. */
 export type SpecSelection =
   | { kind: "file"; path: string }
   | { kind: "cell-diagram" }
-  | { kind: "security" }
-  | { kind: "wireframe"; component: string; dslPath: string };
+  | { kind: "security" };
 
 /**
  * One external dependency's directory, `specs/design/dependencies/<name>/`,
@@ -40,10 +40,8 @@ export interface DesignDependencyNode {
 
 export interface DesignComponentNode {
   name: string;
-  /** Browsable files (design.json, openapi.yaml, …) — excludes the raw .dsl. */
+  /** Browsable files (design.json, openapi.yaml, …) — excludes prototype.json. */
   files: SpecFileEntry[];
-  /** The component's wireframes .dsl path, or null if it has none. */
-  wireframeDslPath: string | null;
 }
 
 export interface DesignSection {
@@ -114,15 +112,11 @@ export function dependencyFilePath(name: string, file: string): string {
   return `specs/design/dependencies/${name}/${file}`;
 }
 
-function isDsl(path: string): boolean {
-  return path.endsWith(".dsl");
-}
-
 /**
- * Group the Designs files into an overview list + per-component nodes. The raw
- * `.dsl` sources are not listed as files; each becomes its component's wireframe
- * entry (rendered as a diagram, not shown as text). Components and their files
- * are sorted by path for a stable tree.
+ * Group the Designs files into an overview list + per-component nodes. A
+ * web-application's `prototype.json` is not listed as a file: it is reviewed
+ * through the Prototype section's entry for it, never read as text.
+ * Components and their files are sorted by path for a stable tree.
  */
 export function buildDesignSection(files: SpecFileEntry[]): DesignSection {
   const design = files.filter((f) => f.group === "designs");
@@ -150,11 +144,10 @@ export function buildDesignSection(files: SpecFileEntry[]): DesignSection {
     if (name === null) continue;
     let node = byComponent.get(name);
     if (!node) {
-      node = { name, files: [], wireframeDslPath: null };
+      node = { name, files: [] };
       byComponent.set(name, node);
     }
-    if (isDsl(f.path)) node.wireframeDslPath = f.path;
-    else node.files.push(f);
+    if (!isPrototypeArtifactPath(f.path)) node.files.push(f);
   }
 
   const components = [...byComponent.values()].sort((a, b) =>
@@ -201,20 +194,19 @@ export function buildDesignSection(files: SpecFileEntry[]): DesignSection {
 /**
  * The selection that WATCHES a path being written (#576, ADR-0026) — the same
  * routing the rail's own rows use: the cell opens as the Architecture diagram,
- * security.json opens the Security entry, a wireframe `.dsl` opens as its
- * component's diagram, and everything else is the file itself (a structured
- * file — a component's design.json, a dependency's dependency.json — is a
- * file selection too; the pane picks its renderer by path). One definition,
- * so follow-the-write can never land somewhere a click on the rail would not
- * have gone.
+ * security.json opens the Security entry, and everything else is the file
+ * itself (a structured file — a component's design.json, a dependency's
+ * dependency.json — is a file selection too; the pane picks its renderer by
+ * path). A prototype.json has no row in the pane to follow to: it is reviewed
+ * on its own page, so its write is followed by nothing (null) and the
+ * Prototype section's pulse says it is being written. One definition, so
+ * follow-the-write can never land somewhere a click on the rail would not have
+ * gone.
  */
-export function followSelection(path: string): SpecSelection {
+export function followSelection(path: string): SpecSelection | null {
   if (path === DESIGN_CELL_PATH) return { kind: "cell-diagram" };
   if (path === SECURITY_JSON_PATH) return { kind: "security" };
-  const component = componentOf(path);
-  if (component && isDsl(path)) {
-    return { kind: "wireframe", component, dslPath: path };
-  }
+  if (isPrototypeArtifactPath(path)) return null;
   return { kind: "file", path };
 }
 
@@ -227,7 +219,5 @@ export function selectionKey(sel: SpecSelection): string {
       return "cell-diagram";
     case "security":
       return "security";
-    case "wireframe":
-      return `wireframe:${sel.component}`;
   }
 }

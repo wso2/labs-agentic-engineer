@@ -22,15 +22,12 @@ import {
   addMessage,
   chatKeyFor,
   claimSendInFlight,
-  claimStreamFold,
   clearFailedSends,
   flushRoomBeforeDispatch,
-  hasStreamFold,
   requestChatOpen,
-  setTurnStatus,
   settleUserMessage,
 } from "./chatStore.js";
-import { attachAndFoldTurn } from "./runTurn.js";
+import { followTurnToEnd } from "./followTurn.js";
 import { conversationKeys, fetchCurrentConversationId } from "./api/conversations.js";
 import {
   ConversationRotatedError,
@@ -127,18 +124,7 @@ export function useAnchoredTurn(
         // live for this log (the panel attached first), because two folds of
         // one turn would interleave the stream on top of itself. The panel's
         // own attach paths make the same check in the other direction.
-        if (!hasStreamFold(chatKey)) {
-          const releaseFold = claimStreamFold(chatKey);
-          void attachAndFoldTurn(chatKey, projectName, turnId, new AbortController().signal)
-            .catch(() => {
-              setTurnStatus(chatKey, turnId, "failed");
-              addMessage(chatKey, {
-                role: "error",
-                content: "Lost the agent's stream — open the panel to re-attach.",
-              });
-            })
-            .finally(releaseFold);
-        }
+        void followTurnToEnd(chatKey, projectName, turnId);
         return true;
       } catch (err) {
         // The row the user can already see becomes the failed one — a second

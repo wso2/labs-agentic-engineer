@@ -57,6 +57,13 @@ type StatusSnapshot struct {
 	// already walks, so it costs nothing extra; the staleness check compares it
 	// against the same value at the last design run's base commit.
 	RequirementsFingerprint string
+	// DesignFingerprint is the design AS IT STANDS minus every component's
+	// prototype.json (#818) — the prototype staleness check compares it
+	// against the same value at the last prototype run's base commit.
+	DesignFingerprint string
+	// HasPrototype: any component's prototype.json exists at head. Without
+	// one there is nothing to be behind the design.
+	HasPrototype bool
 }
 
 // StatusSnapshot implements ArtifactService: the status poll's git source
@@ -106,6 +113,8 @@ func (s *artifactService) StatusSnapshot(ctx context.Context, orgID, projectID s
 	}
 
 	snap.RequirementsFingerprint = RequirementsFingerprint(headEntries)
+	snap.DesignFingerprint = DesignFingerprint(headEntries)
+	snap.HasPrototype = hasPrototype(headEntries)
 	if latest, ok := latestVersionTag(tags); ok {
 		snap.SpecVersion = latest.Name
 		// Sha-addressed (the peeled tag commit) — a local read, no fetch.
@@ -122,15 +131,36 @@ func (s *artifactService) StatusSnapshot(ctx context.Context, orgID, projectID s
 // the snapshot's, taken at an arbitrary commit. One SHA-addressed tree listing
 // against the local mirror — no fetch, matching the status poll's budget.
 func (s *artifactService) RequirementsFingerprintAt(ctx context.Context, orgID, projectID, at string) (string, error) {
-	_, ref, err := s.readyRef(ctx, orgID, projectID)
+	entries, err := s.listLocalAt(ctx, orgID, projectID, at)
 	if err != nil {
 		return "", err
 	}
+	return RequirementsFingerprint(entries), nil
+}
+
+// DesignFingerprintAt implements ArtifactService: the snapshot's design
+// reduction taken at an arbitrary commit, for the prototype staleness check.
+// One SHA-addressed tree listing against the local mirror — no fetch.
+func (s *artifactService) DesignFingerprintAt(ctx context.Context, orgID, projectID, at string) (string, error) {
+	entries, err := s.listLocalAt(ctx, orgID, projectID, at)
+	if err != nil {
+		return "", err
+	}
+	return DesignFingerprint(entries), nil
+}
+
+// listLocalAt is the fingerprints' shared read: the full tree listing at one
+// commit on the local mirror.
+func (s *artifactService) listLocalAt(ctx context.Context, orgID, projectID, at string) ([]sourcecontrol.Entry, error) {
+	_, ref, err := s.readyRef(ctx, orgID, projectID)
+	if err != nil {
+		return nil, err
+	}
 	entries, _, err := s.git.Workspace().List(ctx, ref, at)
 	if err != nil {
-		return "", fmt.Errorf("list tree at %s: %w", at, err)
+		return nil, fmt.Errorf("list tree at %s: %w", at, err)
 	}
-	return RequirementsFingerprint(entries), nil
+	return entries, nil
 }
 
 // ComponentCountAtTag implements ArtifactService: the deploy stage's

@@ -62,6 +62,7 @@ import { parse as parseYaml } from "yaml";
 // fence parsing cannot drift from the spec-file fence parsing (same approach as
 // the caller-side skill resolver the playground uses to materialize the mount).
 import { FRONTMATTER_RE, lf } from "@aep/agent-stream";
+import { isPrototypeArtifactPath } from "@aep/prototype-model";
 import type { SkillAudience, SkillLoadResult } from "../agents/main/skill-source.js";
 import { ALL_AUDIENCES, SERVICE_AUDIENCE } from "../agents/main/skill-source.js";
 import {
@@ -148,12 +149,21 @@ function isAdmittedSpecPath(path: string): boolean {
  */
 const SECURITY_DESIGN_PATH = "specs/design/security.json";
 
+/*
+ * A web-application's prototype, `specs/design/components/<c>/prototype.json`,
+ * is admitted by the model's own slot rule (`isPrototypeArtifactPath` — the rule
+ * the write gate judges by), so the file a revision edits is exactly the file a
+ * gate validates. A prototype turn revises an existing file — a feedback batch
+ * rewrites it preserving every ID it need not change — so the agent must be
+ * able to read it back, and the Go fold must see it as existing too.
+ */
+
 /**
  * The turn-snapshot filter — mirrors aep-api `agentfold.KeepInTurnSnapshot`:
  * keep agent-authored sources (`*.md`, `*.dsl`, `*.cell`, component
  * `design.json`, the acceptance oracle `validation-criteria.json`, the project
  * security design `specs/design/security.json`, the two OpenAPI contract shapes
- * above) and drop everything else (derived `.excalidraw`/`*.gen.json`
+ * above, a component's `prototype.json`) and drop everything else (derived `.excalidraw`/`*.gen.json`
  * projections, code, arbitrary `*.yaml` such as `workload.yaml`, …). `*.cell`
  * is the project-level cell-diagram DSL (design.cell) that drives the live
  * architecture diagram. validation-criteria.json is kept so a design
@@ -169,7 +179,7 @@ const SECURITY_DESIGN_PATH = "specs/design/security.json";
 export function keepInTurnSnapshot(path: string): boolean {
   if (path.endsWith(".md") || path.endsWith(".dsl") || path.endsWith(".cell")) return true;
   if (isAdmittedSpecPath(path)) return true;
-  if (path === SECURITY_DESIGN_PATH) return true;
+  if (path === SECURITY_DESIGN_PATH || isPrototypeArtifactPath(path)) return true;
   if (isTextReferencePath(path)) return true;
   const base = basename(path);
   return base === "design.json" || base === "validation-criteria.json";

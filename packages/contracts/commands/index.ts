@@ -62,6 +62,10 @@ export const START_COMMAND = "/start";
 /** The design CTA's command. */
 export const DESIGN_COMMAND = "/design";
 
+/** The Prototype stage's command (#813): generate, regenerate, or revise a
+ *  web-application's prototype.json. */
+export const PROTOTYPE_COMMAND = "/prototype";
+
 /** Marketplace register flow. Same family as `/start` / `/design`. */
 export const REGISTER_EXTERNAL_RESOURCE_COMMAND = "/register-external-resource";
 

@@ -96,7 +96,6 @@ const (
 	ErrInvalidYAML     ErrCode = "INVALID_YAML"
 	ErrInvalidJSON     ErrCode = "INVALID_JSON"
 	ErrSchemaViolation ErrCode = "SCHEMA_VIOLATION"
-	ErrInvalidDSL      ErrCode = "INVALID_DSL"
 	ErrProtectedPath   ErrCode = "PROTECTED_PATH"
 	// Gates that live ONLY on the TS side (openapi.yaml, security.json, the
 	// design diagrams). The fold never re-judges them: it applies a write
@@ -313,9 +312,6 @@ func (f *Fold) RemoveFile(ctx context.Context, path string) (OpResult, error) {
 	return opOk(path, op, StatusApplied), nil
 }
 
-// commit applies content to path gated by the YAML reparse guard, the
-// component design.json schema gate, and the wireframes .dsl syntax gate;
-// a rejection leaves the fold byte-for-byte unchanged.
 // commit runs every write-gate over the candidate content and, when all pass,
 // lands it in the overlay. `prior` is the file as it stood before this write
 // (nil for a create) — the dependency gate's assumed-is-echoed rule reads it.
@@ -330,9 +326,6 @@ func (f *Fold) commit(path string, op Op, content string, prior *string, rejectM
 	// through every agent write of the file (preservePlatformFields).
 	content = preservePlatformFields(path, content, prior)
 	if code, msg := checkDependencyDesignGuard(path, content, prior); code != "" {
-		return opErr(path, op, code, msg)
-	}
-	if code, msg := checkWireframeDslGuard(path, content); code != "" {
 		return opErr(path, op, code, msg)
 	}
 	c := content

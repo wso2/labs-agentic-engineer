@@ -56,6 +56,8 @@ let turnCounter = 0;
 // shared Yjs map (and a closed one would suppress a fresh ask).
 const instanceId = Math.random().toString(36).slice(2, 8);
 const turnInstruction = new Map<string, string>();
+// The review requests a prototype feedback turn carried (#817), by turn id.
+const turnFeedback = new Map<string, string[]>();
 
 /**
  * Messages sent in this browser, per conversation — the mock stand-in for the
@@ -224,6 +226,7 @@ export const agentChatHandlers = [
     // journal so a reload paints the tag again — which is the whole reason the
     // anchor is journaled rather than being a live-session nicety.
     let anchor: unknown;
+    let feedbackRequests: string[] | undefined;
     if (isMultipart) {
       const form = await request.formData();
       instruction = String(form.get("instruction") ?? "");
@@ -249,9 +252,24 @@ export const agentChatHandlers = [
       }
       attachments = files.map((f) => f.name);
     } else {
-      const body = (await request.json()) as { instruction?: string; anchor?: unknown };
+      const body = (await request.json()) as {
+        instruction?: string;
+        anchor?: unknown;
+        prototypeFeedback?: { annotations?: { request?: string }[] };
+      };
       instruction = body.instruction ?? "";
       anchor = body.anchor;
+      // A prototype review batch (#817) rides only a bare /prototype, as on the
+      // real server; its requests decide the mock turn's outcome below.
+      if (body.prototypeFeedback) {
+        if (instruction.trim() !== "/prototype") {
+          return HttpResponse.json(
+            { code: "bad_request", message: "prototypeFeedback is only valid on a /prototype instruction" },
+            { status: 400 },
+          );
+        }
+        feedbackRequests = (body.prototypeFeedback.annotations ?? []).map((a) => a.request ?? "");
+      }
     }
     // The real server refuses a blank instruction BEFORE the turn row exists
     // (the shared TurnSpec validator rejects an empty chat turn), so mock mode
@@ -266,6 +284,7 @@ export const agentChatHandlers = [
     turnCounter += 1;
     const turnId = `mock-turn-${instanceId}-${turnCounter}`;
     turnInstruction.set(turnId, instruction);
+    if (feedbackRequests) turnFeedback.set(turnId, feedbackRequests);
     // Record it the way the journal would, so a reload shows the chips again.
     appendToJournal(params.conversationId as string, {
       role: "user",
@@ -303,6 +322,25 @@ export const agentChatHandlers = [
   http.get("*/api/v1/projects/:projectName/turns/:turnId/stream", ({ params }) => {
     const turnId = String(params.turnId);
     const instruction = turnInstruction.get(turnId) ?? "";
+    // A prototype review batch (#817): the agent rewrites the one file and the
+    // turn lands; a request mentioning "fail" makes it fail instead, so the
+    // kept-queue path is reachable in mock mode.
+    const feedback = turnFeedback.get(turnId);
+    if (feedback) {
+      if (feedback.some((r) => r.includes("fail"))) {
+        return sse([
+          { type: "text-delta", delta: "Revising the prototype…" },
+          { type: "turn-failed", message: "Mock turn failure (a request contained 'fail')." },
+        ]);
+      }
+      return sse([
+        {
+          type: "text-delta",
+          delta: `Applied ${feedback.length} review request${feedback.length === 1 ? "" : "s"} to the prototype in one rewrite, keeping every ID.`,
+        },
+        { type: "turn-committed", noChanges: true },
+      ]);
+    }
     const failing = instruction.includes("fail");
     // The /design run declares its plan (#576) — and owns its own failure
     // variant ("/design fail" dies mid-write, leaving the wreckage), so it is

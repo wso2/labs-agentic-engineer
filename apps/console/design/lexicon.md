@@ -42,6 +42,7 @@ concept for *the agreed description of what we're building*.
 |---|---|---|
 | `REQUIREMENTS` | **Product requirements** | `specs/requirements/prd.md` |
 | `DESIGN` (not `DESIGNS` — one design, several files) | **Architecture** · **Domain model** · **Security** as rows, then the groups: **Flows**, then one per component | `specs/design/` |
+| `PROTOTYPE` — only when the design declares a web application | one entry per web application, labelled with the component's name (app-window icon, open arrow; accessible name *Review prototype: <name>*) | `specs/design/components/<name>/prototype.json` |
 | `VALIDATION` | **Validation criteria** | `specs/validation/validation-criteria.json` |
 
 **Security** is one rail entry, one page:
@@ -58,7 +59,10 @@ slug — and each **component** is another, headed by the component's own name:
 | a flow row | one key flow: a PRD actor's journey across the architecture, as a sequence diagram | `specs/design/flows/<slug>.md` |
 | **Design** | the component's authored design record — type, language, the stories it serves, dependencies, pinned skills | `specs/design/components/<name>/design.json` |
 | **API** | the component's OpenAPI contract | `specs/design/components/<name>/openapi.yaml` |
-| **Wireframe** | the component's screens | `specs/design/components/<name>/wireframes.dsl` |
+
+A web application's screens are not a row under its component: they are its
+**prototype**, reviewed from the `PROTOTYPE` section (see **The prototype**
+below).
 
 A label under a header adds the artifact, never the subject the header already
 names — *Design*, not *Design overview* (the retired root document's name).
@@ -698,7 +702,8 @@ of the `/settle` conversation — see **Two kinds of unsettled**.
 
 ## The spec view's artifact rail
 
-**The rail is the flow.** It is already ordered — Requirements, Design, Validation — already where
+**The rail is the flow.** It is already ordered — Requirements, Design, Prototype (only for a design
+with a web application), Validation — already where
 the user reads, and now carries state at both levels plus **Build as its terminal step**. One
 surface answers *what exists*, *what is happening* and *what comes next*, so the journey needs no
 step bar and no second progress indicator competing with the overview's cards. Decided in
@@ -825,6 +830,7 @@ three assumptions and one otherwise look identical and *how much* is what a glan
 | Requirements | *N questions only you can answer* | **Open the document**, where the settle controls already are |
 | Requirements | *N decisions marked assumed* | **Open the document** |
 | Design · Validation | *The requirements have changed since* | **Update the design** |
+| Prototype | *The design has changed since the prototype was generated* | **Regenerate prototype** |
 
 **Ordered by how badly it hurts to ignore**, which is what makes the hover's pick meaningful rather
 than arbitrary: a design behind its requirements blocks the build and ships the wrong software if
@@ -1190,6 +1196,29 @@ platform's rungs live in `validation_status_line.ts`, and two of them —
 issues…* — carry the same debt. `harness` is deliberately byte-identical to its
 fallback, so one phase reads the same sentence whichever source produced it.
 
+## The prototype
+
+A web application's **prototype** is the application the design describes,
+rendered read-only so it can be used and pointed at before anything is built
+([#813](https://github.com/wso2/labs-agentic-engineer/issues/813); console
+[ADR-0033](decisions/ADR-0033-preview-and-annotate-are-one-prototype-view.md)).
+It is never a *wireframe*, *mockup* or *preview build*: the word is
+**prototype** everywhere a user reads it.
+
+| where | the words |
+|---|---|
+| the rail's `PROTOTYPE` section header, before one exists | **Generate** (accessible name *Generate prototype*) — offered once the design is ready, where the `DESIGN` header's re-generate sits; the section body reads *Not created yet* |
+| the section, one per web application | the component's name alone, with an open arrow — it opens the full-screen review |
+| the section and the page, after the design moved | **Outdated** — *The design has changed since this prototype was generated, so it may no longer show what will be built.* — with **Regenerate** in the section header (accessible name *Regenerate prototype*) and **Regenerate prototype** on the page |
+| the review page's bar | **Back to Spec**, the application's name, **Read-only**, **Role**, **Flow** (**Free navigation** when none), **Screen**, **Display state** |
+| the mode toggle | **Preview** · **Annotate** |
+| the Annotate inspector | **Feedback**; the selection as chips, or **Whole screen** when nothing is selected; **Request**; **Clear selection**; **Add request**; **Send all** (**Send all (N)** with N queued, **Sending…** while it goes); **Remove request** on a queued card |
+| a file that fails the model | **This prototype can't be shown** |
+
+**Preview uses the application; Annotate points at it.** The same click presses a button in Preview
+and selects it in Annotate — the toggle is what says which, so it is always visible and always
+named. There is no approve, version or history word on the page: **Build** is the approval.
+
 ## What a change invalidates
 
 **Numbered decisions, precise where the link was recorded, coarse where it was not.**
@@ -1436,6 +1465,7 @@ renaming; it needed to stop being visible.
 | answer an open question | `/settle <the point>` | code lens on the question |
 | take up the open questions | `/settle` over the section | code lens on **Open Questions** |
 | talk a line through | *Discuss* — no command; opens the aim box on the line, Enter sends Discuss | code lens on any bullet |
+| see the web applications as applications | `/prototype` | fired by the rail's **Generate** and **Regenerate**, the page's and the problems dialog's **Regenerate prototype**; **Send all** sends it with the queued requests attached as structured feedback, never as prose |
 
 **An `*assumed*` run offers verdicts, not a command**
 ([#652](https://github.com/wso2/labs-agentic-engineer/issues/652)). An assumption is a decision

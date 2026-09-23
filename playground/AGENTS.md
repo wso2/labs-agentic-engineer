@@ -54,7 +54,7 @@ a fixture like that is yours alone — author it by copying the `specs/` +
 
 **A `web-application` costs an extra round.** Its build is followed by mock
 verification: a subagent stands the app up in mock mode, walks every flow its
-wireframes draw with `agent-browser`, fixes what fails on the spot, and posts
+prototype declares with `agent-browser`, fixes what fails on the spot, and posts
 its plan and one line per item into the issue file's `## Mock verification`
 section (`skills/mock-verification`, whose `scripts/walk.sh` runs the server,
 and `react-webapp`'s `references/mock-mode.md` for the mock itself). In docker

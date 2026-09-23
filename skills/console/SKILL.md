@@ -58,7 +58,7 @@ written, how many, or in what order.
 
 **A design turn.**
 
-- ✗ *Full design is under `specs/design/` (design.cell, domain-model.md, flows/, per-component design.json/openapi.yaml/wireframes.dsl) with validation criteria at `specs/validation/validation-criteria.json`.*
+- ✗ *Full design is under `specs/design/` (design.cell, domain-model.md, flows/, per-component design.json/openapi.yaml) with validation criteria at `specs/validation/validation-criteria.json`.*
 - ✓ *The design is in: four components — a web app, two services and a database — with security and the validation criteria alongside. `orders-api` still needs a payment provider named before it can be built.*
 
 **A failure.** The case where a path is most tempting and least useful: the user

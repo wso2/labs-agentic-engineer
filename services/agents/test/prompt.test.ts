@@ -18,6 +18,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import type { PrototypeProblem } from "@aep/agent-stream";
 import { testSkillSource, type TestSkill } from "./skill-source.js";
 import type { SkillSource } from "../src/agents/main/skill-source.js";
 import {
@@ -42,6 +43,27 @@ test("no skills → catalog is empty and instructions are byte-identical to base
   assert.equal(buildSkillCatalog(testSkillSource([])), "");
   assert.equal(buildInstructions(), instructions);
   assert.equal(buildInstructions(testSkillSource([])), instructions);
+});
+
+/**
+ * The write gates fire whether or not a skill is loaded, so every code a gate
+ * can return must have its reaction in the standing prompt. `satisfies` makes
+ * a new prototype-gate code a compile error here until it has a row.
+ */
+test("prototype.json is a gated artifact with a reaction for every code its gate returns", () => {
+  const codes = {
+    INVALID_JSON: true,
+    INVALID_PROTOTYPE: true,
+    PROTOTYPE_COMPONENT_MISMATCH: true,
+  } satisfies Record<PrototypeProblem["code"], true>;
+  assert.match(instructions, /prototype\.json/);
+  for (const code of Object.keys(codes)) assert.match(instructions, new RegExp(`\\b${code}\\b`));
+});
+
+test("prototype.json is named among the JSON artifacts an INVALID_JSON refusal can come from", () => {
+  const bullet = instructions.split("\n- ").find((b) => b.startsWith("INVALID_JSON / SCHEMA_VIOLATION"));
+  assert.ok(bullet, "the structured-artifact bullet exists");
+  assert.match(bullet, /components\/<name>\/prototype\.json/);
 });
 
 test("catalog lists name+description, appended at the END (base prefix preserved)", () => {
@@ -85,9 +107,8 @@ test("eager skills inline resolved bodies into a per-turn block (#335)", () => {
 
 /**
  * `load()` has three states, and a refusal is neither a body nor a missing name.
- * The design flow inlines `wireframes` and `openapi-conventions`, which an org may
- * legitimately mark coding-only — a refusal there must cost that one body, not the
- * turn.
+ * The design flow inlines `openapi-conventions`, which an org may legitimately
+ * mark coding-only — a refusal there must cost that one body, not the turn.
  */
 test("eager skills: an audience refusal skips like a missing name, never throws", () => {
   const refusing: SkillSource = {

@@ -523,6 +523,21 @@ func (e ProgressEventEmitter) Valid() bool {
 	}
 }
 
+// Defines values for PrototypeAnnotationInputPrototypeSchemaVersion.
+const (
+	N1 PrototypeAnnotationInputPrototypeSchemaVersion = 1
+)
+
+// Valid indicates whether the value is a known member of the PrototypeAnnotationInputPrototypeSchemaVersion enum.
+func (e PrototypeAnnotationInputPrototypeSchemaVersion) Valid() bool {
+	switch e {
+	case N1:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ResourceContractType.
 const (
 	ResourceContractTypeAsyncapi      ResourceContractType = "asyncapi"
@@ -2464,6 +2479,43 @@ type PromoteFromIssueRequest struct {
 	ComponentName string `json:"componentName"`
 }
 
+// PrototypeAnnotationInput One queued review request on a web-application prototype (#817): where the reviewer was — screen, flow, display state — what they selected, and what they asked for.
+//
+// Every field but `request` is a stable ID from the prototype model, never a label, so the agent resolves it against the file as it stands. `request` is the reviewer's own words, forwarded VERBATIM: the platform composes no prose around it.
+type PrototypeAnnotationInput struct {
+	// ComponentIds The selected components' stable IDs, in the order they were selected. Empty means the request is about the whole screen.
+	ComponentIds []string `json:"componentIds"`
+
+	// FlowID The flow the reviewer was walking, or null for free navigation.
+	FlowID *string `json:"flowId"`
+
+	// ID The annotation's own ID, chosen by the client and unique within the batch — how the agent's reply can name which request it could not apply.
+	ID string `json:"id"`
+
+	// PrototypeSchemaVersion The prototype model version the IDs resolve against.
+	PrototypeSchemaVersion PrototypeAnnotationInputPrototypeSchemaVersion `json:"prototypeSchemaVersion"`
+
+	// Request What the reviewer wants changed, in their own words.
+	Request string `json:"request"`
+
+	// ScreenID The screen the reviewer was on.
+	ScreenID string `json:"screenId"`
+
+	// StateID The display state the screen was shown in.
+	StateID string `json:"stateId"`
+}
+
+// PrototypeAnnotationInputPrototypeSchemaVersion The prototype model version the IDs resolve against.
+type PrototypeAnnotationInputPrototypeSchemaVersion int
+
+// PrototypeFeedbackInput A batch of review requests on ONE web-application prototype (#817), sent as a single `/prototype` turn so the agent rewrites the file once rather than once per note. The BFF validates the batch and forwards it unchanged; it never renders it into prose.
+type PrototypeFeedbackInput struct {
+	Annotations []PrototypeAnnotationInput `json:"annotations"`
+
+	// PrototypePath The prototype the batch is about — the only file the turn may rewrite.
+	PrototypePath string `json:"prototypePath"`
+}
+
 // ProvisionBody defines model for ProvisionBody.
 type ProvisionBody struct {
 	// Environments Environments to provision (defaults to ["default"])
@@ -3096,6 +3148,11 @@ type SpecStage struct {
 	// Exists Any spec file created; false renders the Generate-spec CTA.
 	Exists bool `json:"exists"`
 
+	// PrototypeOutdated The design has changed since the prototypes were last generated from it (#818), so a web-application's `prototype.json` may no longer picture what the design says. Derived the way `designOutdated` is: the design as it stands now against the design as it stood in the snapshot the newest successful `/prototype` GENERATION read. "The design" is the whole `specs/design/` tree EXCEPT every `components/<component>/prototype.json`, so a feedback rewrite of a prototype alone never marks anything outdated — and a feedback turn (one carrying `prototypeFeedback`, #817) is not a generation, so it never clears the flag either: it revises one file without regenerating from the design.
+	// One value for the project, not one per web-application: `/prototype` regenerates every web-application's prototype in one turn, so the remedy — Regenerate prototype — is the same whichever one fell behind, and the design fingerprint is project-wide.
+	// False while no prototype exists or no `/prototype` generation has succeeded: there is nothing to be behind.
+	PrototypeOutdated bool `json:"prototypeOutdated,omitempty"`
+
 	// Version The newest spec version's name; "" if never published.
 	Version string `json:"version"`
 }
@@ -3345,6 +3402,9 @@ type TurnInputBody struct {
 	//
 	// Deliberately a field and NOT a `/command` prefix on `instruction`: a command IS the user's message (the console adds nothing to a line they typed), and an anchored turn carries prose they wrote in their own words, so a prefix would put machinery in their voice. Mirrors the console's own resolve/reconsider intent, whose only job is the same. Absent for a turn with no anchor.
 	Intent TurnInputBodyIntent `json:"intent,omitempty"`
+
+	// PrototypeFeedback A prototype review batch (#817). Valid only when `instruction` is exactly `/prototype`, and never together with `anchor`/`intent`: a batch aims at stable prototype IDs, not at a selection in a document. Absent for every other turn. JSON-only — a review batch carries no attachments, so the multipart form has no such part.
+	PrototypeFeedback *PrototypeFeedbackInput `json:"prototypeFeedback,omitempty"`
 
 	// Target Optional target (e.g. a doc type)
 	Target string `json:"target,omitempty"`

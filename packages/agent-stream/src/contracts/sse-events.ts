@@ -38,7 +38,10 @@
  * OpenAPI-representable); the package stays free of any AI-SDK dependency.
  */
 
+import { isPrototypeArtifactPath, PROTOTYPE_SCHEMA_VERSION } from "@aep/prototype-model";
+
 // --- Result payloads (the `tool-result.output` value) -----------------------
+
 
 /** The file-mutation operations the main agent performs. */
 export type Op = "add" | "edit" | "remove";
@@ -54,7 +57,8 @@ export type ErrCode =
   | "INVALID_YAML"
   | "INVALID_JSON"
   | "SCHEMA_VIOLATION"
-  | "INVALID_DSL"
+  | "INVALID_PROTOTYPE"
+  | "PROTOTYPE_COMPONENT_MISMATCH"
   | "INVALID_OPENAPI"
   | "INVALID_DIAGRAM"
   | "UNKNOWN_PARTICIPANT"
@@ -477,8 +481,11 @@ export interface WorkspaceRef {
  *              the few that name a branch of one instead resolve in the agents
  *              service, which is where wording lives. `references` names the
  *              attached reference documents exactly as on `start` — a flow
- *              generates artifacts (wireframes above all) that must be
+ *              generates artifacts (prototypes above all) that must be
  *              grounded in an attached sketch or spec.
+ *              `prototypeFeedback` (#817) rides only the `prototype` flow: a
+ *              reviewer's batch of requests on one prototype file, which turns
+ *              the flow from "generate every prototype" into "revise this one".
  *  - `start` — the project kickoff. `idea` is what the user asked for, read by
  *              the BFF from `specs/.agentic-engineer.toml` — a dot-led path
  *              stripped from every turn snapshot, so the agent cannot read it
@@ -493,9 +500,12 @@ export interface WorkspaceRef {
  */
 export type TurnSpec =
   | { kind: "chat"; text: string }
-  | { kind: "flow"; skill: string; text?: string; references?: string[] }
+  | { kind: "flow"; skill: string; text?: string; references?: string[]; prototypeFeedback?: PrototypeFeedback }
   | { kind: "start"; idea?: string; references?: string[] }
   | { kind: "plan"; scope?: PlanScope; taskContext?: PlanContextFile[] };
+
+/** The flow a `prototypeFeedback` batch may ride — the `/prototype` command's token. */
+export const PROTOTYPE_FLOW_SKILL = "prototype";
 
 /** The turn kinds a `TurnSpec` may declare (the server's pre-stream 400 check). */
 export const TURN_KINDS = ["chat", "flow", "start", "plan"] as const;
@@ -678,6 +688,86 @@ export function isTurnAim(v: unknown): v is TurnAim {
   });
 }
 
+/**
+ * One reviewer request on a prototype (#817): where they were — screen, flow,
+ * display state — what they selected, and what they asked for. Every field but
+ * `request` is a stable ID from the prototype model, never a label; `request`
+ * is the reviewer's words, verbatim. An empty `componentIds` is about the whole
+ * screen.
+ */
+export interface PrototypeAnnotation {
+  id: string;
+  prototypeSchemaVersion: typeof PROTOTYPE_SCHEMA_VERSION;
+  screenId: string;
+  /** The flow being walked, or null for free navigation. */
+  flowId: string | null;
+  stateId: string;
+  componentIds: string[];
+  request: string;
+}
+
+/**
+ * A batch of review requests on ONE prototype (#817), revised in a single
+ * `/prototype` turn so the file is rewritten once, not once per note. The
+ * caller forwards it as facts; the agents service alone words it.
+ */
+export interface PrototypeFeedback {
+  /** `specs/design/components/<component>/prototype.json` — the only file the turn may rewrite. */
+  prototypePath: string;
+  annotations: PrototypeAnnotation[];
+}
+
+/**
+ * The batch's ceilings, mirrored by the public contract (`PrototypeFeedbackInput`)
+ * and the BFF's pre-dispatch check. IDs are bounded like the anchor's names: a
+ * locator that grows without bound is a payload, not a locator.
+ */
+export const PROTOTYPE_FEEDBACK_LIMITS = {
+  annotations: 50,
+  componentIds: 50,
+  annotationId: 128,
+  modelId: 200,
+  request: 4000,
+} as const;
+
+/**
+ * Runtime guard for an untrusted prototype feedback batch. Refused WHOLE, never
+ * trimmed: a batch the agent applied only part of would read as sent and done.
+ * Annotation IDs must be unique — the agent's reply names requests by them.
+ */
+export function isPrototypeFeedback(v: unknown): v is PrototypeFeedback {
+  if (v === null || typeof v !== "object") return false;
+  const f = v as Record<string, unknown>;
+  if (typeof f.prototypePath !== "string" || !isPrototypeArtifactPath(f.prototypePath)) return false;
+  const { annotations } = f;
+  if (!Array.isArray(annotations)) return false;
+  if (annotations.length === 0 || annotations.length > PROTOTYPE_FEEDBACK_LIMITS.annotations) return false;
+  const ids = new Set<string>();
+  for (const a of annotations) {
+    if (!isPrototypeAnnotation(a) || ids.has(a.id)) return false;
+    ids.add(a.id);
+  }
+  return true;
+}
+
+function isPrototypeAnnotation(v: unknown): v is PrototypeAnnotation {
+  if (v === null || typeof v !== "object") return false;
+  const a = v as Record<string, unknown>;
+  const L = PROTOTYPE_FEEDBACK_LIMITS;
+  const bounded = (x: unknown, max: number): boolean => typeof x === "string" && x.trim() !== "" && x.length <= max;
+  return (
+    bounded(a.id, L.annotationId) &&
+    a.prototypeSchemaVersion === PROTOTYPE_SCHEMA_VERSION &&
+    bounded(a.screenId, L.modelId) &&
+    (a.flowId === null || bounded(a.flowId, L.modelId)) &&
+    bounded(a.stateId, L.modelId) &&
+    Array.isArray(a.componentIds) &&
+    a.componentIds.length <= L.componentIds &&
+    a.componentIds.every((c) => bounded(c, L.modelId)) &&
+    bounded(a.request, L.request)
+  );
+}
+
 /** The milestone a plan turn is scoped to, and which of its stories already have Tasks. */
 export interface PlanScope {
   /** The spec tag the milestone is pinned to. */
@@ -830,7 +920,15 @@ export function isTurnSpec(v: unknown): v is TurnSpec {
     case "chat":
       return str(t.text) && (t.text as string).trim() !== "";
     case "flow":
-      return str(t.skill) && (t.skill as string).trim() !== "" && optStr(t.text) && optStrArr(t.references);
+      return (
+        str(t.skill) &&
+        (t.skill as string).trim() !== "" &&
+        optStr(t.text) &&
+        optStrArr(t.references) &&
+        // A feedback batch is the prototype flow's alone: on any other skill it
+        // would be instructions the flow's playbook never reads.
+        (t.prototypeFeedback === undefined || (t.skill === PROTOTYPE_FLOW_SKILL && isPrototypeFeedback(t.prototypeFeedback)))
+      );
     case "start":
       return optStr(t.idea) && optStrArr(t.references);
     case "plan":

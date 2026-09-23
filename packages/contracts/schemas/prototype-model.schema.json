@@ -1,0 +1,1491 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "component": {
+      "type": "string",
+      "minLength": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "defaultScreenId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "roles": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "states": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "flows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "roleId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "screenIds": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "roleId",
+          "screenIds"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "screens": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "roleIds": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "navigationId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content": {
+            "$ref": "#/$defs/PrototypeNodeList"
+          },
+          "overlays": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "dialog"
+                    },
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "title": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "content": {
+                      "$ref": "#/$defs/PrototypeNodeList"
+                    },
+                    "actions": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/PrototypeButton"
+                      }
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "id",
+                    "title",
+                    "content",
+                    "actions"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "drawer"
+                    },
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "title": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "content": {
+                      "$ref": "#/$defs/PrototypeNodeList"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "id",
+                    "title",
+                    "content"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "roleIds",
+          "content"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "navigation": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "side-nav",
+              "top-nav"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "items": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "action": {
+                  "$ref": "#/$defs/PrototypeAction"
+                },
+                "roleIds": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "label",
+                "action"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "items"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "component",
+    "name",
+    "defaultScreenId",
+    "roles",
+    "states",
+    "flows",
+    "screens",
+    "navigation"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "PrototypeNodeList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PrototypeNode"
+      }
+    },
+    "PrototypeNode": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "stack"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "direction": {
+              "type": "string",
+              "enum": [
+                "row",
+                "column"
+              ]
+            },
+            "content": {
+              "$ref": "#/$defs/PrototypeNodeList"
+            },
+            "showIn": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "content"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "grid"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "columns": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 6
+            },
+            "content": {
+              "$ref": "#/$defs/PrototypeNodeList"
+            },
+            "showIn": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "columns",
+            "content"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "split"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "ratio": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 11
+            },
+            "left": {
+              "$ref": "#/$defs/PrototypeNodeList"
+            },
+            "right": {
+              "$ref": "#/$defs/PrototypeNodeList"
+            },
+            "showIn": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "left",
+            "right"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "detail"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1
+            },
+            "fields": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "value": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "label",
+                  "value"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "showIn": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "fields"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "breadcrumbs"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "items": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "action": {
+                    "$ref": "#/$defs/PrototypeAction"
+                  }
+                },
+                "required": [
+                  "id",
+                  "label"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "showIn": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "items"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "tabs"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tabs": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "content": {
+                    "$ref": "#/$defs/PrototypeNodeList"
+                  }
+                },
+                "required": [
+                  "id",
+                  "label",
+                  "content"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "showIn": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "tabs"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "stepper"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "steps": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "content": {
+                    "$ref": "#/$defs/PrototypeNodeList"
+                  }
+                },
+                "required": [
+                  "id",
+                  "label",
+                  "content"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "showIn": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "steps"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "text"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1
+            },
+            "showIn": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "heading"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1
+            },
+            "actions": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PrototypeButton"
+              }
+            },
+            "showIn": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "badge"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tone": {
+              "type": "string",
+              "enum": [
+                "default",
+                "info",
+                "success",
+                "warning",
+                "error"
+              ]
+            },
+            "showIn": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "label"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "stat"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1
+            },
+            "value": {
+              "type": "string",
+              "minLength": 1
+            },
+            "showIn": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "label",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "alert"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tone": {
+              "type": "string",
+              "enum": [
+                "default",
+                "info",
+                "success",
+                "warning",
+                "error"
+              ]
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1
+            },
+            "showIn": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "tone",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "empty-state"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1
+            },
+            "action": {
+              "$ref": "#/$defs/PrototypeButton"
+            },
+            "showIn": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "title",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "button"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1
+            },
+            "emphasis": {
+              "type": "string",
+              "enum": [
+                "primary",
+                "danger"
+              ]
+            },
+            "action": {
+              "$ref": "#/$defs/PrototypeAction"
+            },
+            "showIn": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "label",
+            "action"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "link"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1
+            },
+            "action": {
+              "$ref": "#/$defs/PrototypeAction"
+            },
+            "showIn": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "label",
+            "action"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "form"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1
+            },
+            "fields": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PrototypeField"
+              }
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PrototypeButton"
+              }
+            },
+            "showIn": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "fields",
+            "actions"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "validation-summary"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "issues": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "showIn": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "issues"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "table"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1
+            },
+            "columns": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "rows": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PrototypeRow"
+              }
+            },
+            "onRow": {
+              "$ref": "#/$defs/PrototypeAction"
+            },
+            "showIn": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "columns",
+            "rows"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "filters"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "fields": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PrototypeField"
+              }
+            },
+            "showIn": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "fields"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "timeline"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "entries": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "when": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "who": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "text": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "id",
+                  "when",
+                  "who",
+                  "text"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "showIn": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "entries"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "approval-panel"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1
+            },
+            "summary": {
+              "type": "string",
+              "minLength": 1
+            },
+            "actions": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PrototypeButton"
+              }
+            },
+            "showIn": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "title",
+            "summary",
+            "actions"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "task-queue"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1
+            },
+            "columns": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "rows": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PrototypeRow"
+              }
+            },
+            "onRow": {
+              "$ref": "#/$defs/PrototypeAction"
+            },
+            "showIn": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "title",
+            "columns",
+            "rows"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "PrototypeAction": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "navigate"
+            },
+            "screenId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "screenId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "set-tab"
+            },
+            "tabsId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tabId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "tabsId",
+            "tabId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "set-step"
+            },
+            "stepperId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "stepId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "stepperId",
+            "stepId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "select-row"
+            },
+            "tableId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "rowId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "tableId",
+            "rowId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "show-dialog"
+            },
+            "dialogId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "dialogId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "show-drawer"
+            },
+            "drawerId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "drawerId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "close-overlay"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "PrototypeButton": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "emphasis": {
+          "type": "string",
+          "enum": [
+            "primary",
+            "danger"
+          ]
+        },
+        "action": {
+          "$ref": "#/$defs/PrototypeAction"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "action"
+      ],
+      "additionalProperties": false
+    },
+    "PrototypeField": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "text",
+            "number",
+            "select",
+            "date",
+            "textarea",
+            "switch"
+          ]
+        },
+        "value": {
+          "type": "string"
+        },
+        "options": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "error": {
+          "type": "string",
+          "minLength": 1
+        },
+        "errorIn": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "additionalProperties": false
+    },
+    "PrototypeRow": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "values": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "tone": {
+          "type": "string",
+          "enum": [
+            "default",
+            "info",
+            "success",
+            "warning",
+            "error"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "values"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

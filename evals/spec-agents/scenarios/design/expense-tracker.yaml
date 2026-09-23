@@ -41,7 +41,7 @@ rubric:
       weight: 2
     - item: "The service's openapi.yaml puts the employee's own claims under /me/claims (guarded by claims:read) and every claim at /claims (guarded by claims:read-all): two operations, two handles, no handle guarding both sides of /me/"
       weight: 3
-    - item: "security.json names no screen (no screens table, no requires), and each role's grants cover the operation every screen in its wireframe flow loads, at the reach the screen shows (the approvals queue lists every claim via GET /claims, so the Approver holds claims:read-all; My Claims loads GET /me/claims, so the Employee holds claims:read)"
+    - item: "security.json names no screen (no screens table, no requires), and each role's grants cover the operation every screen that role reaches loads, at the reach the screen shows (the approvals queue lists every claim via GET /claims, so the Approver holds claims:read-all; My Claims loads GET /me/claims, so the Employee holds claims:read)"
       weight: 2
     - item: "The service's openapi.yaml declares an oauth2 security scheme whose scope keys are catalog handles, a document-level default of any signed-in user, and at most one scope on any operation"
       weight: 2

@@ -473,8 +473,8 @@ func TestSyncProjectSkills_Lifecycle(t *testing.T) {
 	host.writeAtHead(orgID, skillRepoPath("go"), mkSkillMDAudience("go", []string{SkillAudienceCoding}, "go guidance"))
 	host.writeAtHead(orgID, skillRepoPath("react"), mkSkillMDAudience("react", []string{SkillAudienceCoding}, "react guidance"))
 	host.writeAtHead(orgID, skillRepoPath("planning"), mkSkillMDAudience("planning", []string{SkillAudienceDesign}, "planning guidance"))
-	host.writeAtHead(orgID, skillRepoPath("wireframes"),
-		mkSkillMDAudience("wireframes", []string{SkillAudienceDesign, SkillAudienceCoding}, "wireframe guidance"))
+	host.writeAtHead(orgID, skillRepoPath("prototype"),
+		mkSkillMDAudience("prototype", []string{SkillAudienceDesign, SkillAudienceCoding}, "prototype guidance"))
 	provisionProjectRepo(t, host, orgID)
 
 	mirrored := func(t *testing.T, name string) bool {
@@ -483,7 +483,7 @@ func TestSyncProjectSkills_Lifecycle(t *testing.T) {
 	}
 	assertTree := func(t *testing.T, step string, want map[string]bool) {
 		t.Helper()
-		for _, name := range []string{"go", "react", "planning", "wireframes"} {
+		for _, name := range []string{"go", "react", "planning", "prototype"} {
 			if got := mirrored(t, name); got != want[name] {
 				t.Fatalf("%s: %q mirrored = %v, want %v", step, name, got, want[name])
 			}
@@ -496,7 +496,7 @@ func TestSyncProjectSkills_Lifecycle(t *testing.T) {
 		t.Fatalf("seed sync: %v", err)
 	}
 	assertTree(t, "after creation", map[string]bool{
-		"go": true, "react": true, "wireframes": true, "planning": false,
+		"go": true, "react": true, "prototype": true, "planning": false,
 	})
 
 	// 2. The design agent pins skills onto a component — including `planning`,
@@ -513,7 +513,7 @@ func TestSyncProjectSkills_Lifecycle(t *testing.T) {
 		t.Fatalf("post-design sync: %v", err)
 	}
 	assertTree(t, "after design pins planning", map[string]bool{
-		"go": true, "react": true, "wireframes": true, "planning": true,
+		"go": true, "react": true, "prototype": true, "planning": true,
 	})
 
 	// 3. An admin disables both a pinned skill and an unpinned one. The pinned
@@ -530,7 +530,7 @@ func TestSyncProjectSkills_Lifecycle(t *testing.T) {
 		t.Fatalf("post-disable sync: %v", err)
 	}
 	assertTree(t, "after disabling a pinned and an unpinned skill", map[string]bool{
-		"go": true, "react": false, "wireframes": true, "planning": true,
+		"go": true, "react": false, "prototype": true, "planning": true,
 	})
 
 	// 4. The design drops the pins. `go` is disabled AND no longer pinned, so
@@ -546,7 +546,7 @@ func TestSyncProjectSkills_Lifecycle(t *testing.T) {
 		t.Fatalf("post-unpin sync: %v", err)
 	}
 	assertTree(t, "after the design drops its pins", map[string]bool{
-		"go": false, "react": false, "wireframes": true, "planning": false,
+		"go": false, "react": false, "prototype": true, "planning": false,
 	})
 
 	// 5. Re-enabling restores availability without any design change.
@@ -557,7 +557,7 @@ func TestSyncProjectSkills_Lifecycle(t *testing.T) {
 		t.Fatalf("post-reenable sync: %v", err)
 	}
 	assertTree(t, "after re-enabling react", map[string]bool{
-		"go": false, "react": true, "wireframes": true, "planning": false,
+		"go": false, "react": true, "prototype": true, "planning": false,
 	})
 }
 

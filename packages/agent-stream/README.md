@@ -30,7 +30,7 @@ self-correctable error instead, so the model fixes it in the same turn:
 |---|---|---|
 | `*.yaml` / frontmatter | parse-only YAML reparse | `INVALID_YAML` |
 | `components/*/design.json` | `checkComponentDesign` (JSON + schema + `name` = directory) | `INVALID_JSON`, `SCHEMA_VIOLATION` |
-| `wireframes.dsl` | flow-dialect syntax (invalid lines would be silently dropped) | `INVALID_DSL` |
+| `components/*/prototype.json` | `checkPrototype` (`@aep/prototype-model`: JSON, schema version, unique ids, resolvable references, `component` = directory) | `INVALID_JSON`, `INVALID_PROTOTYPE`, `PROTOTYPE_COMPONENT_MISMATCH` |
 | `components/*/openapi.yaml` | OpenAPI 3.x, has paths, has operations | `INVALID_OPENAPI` |
 | `components/*/design.json` | every dependency names a node `design.cell` declares | `UNKNOWN_DEPENDENCY` |
 | `security.json` | `checkSecurityDesign` (v3 schema + the referential rules: a grant names a catalog handle, a role is not also a group, a test user names a declared role) | `INVALID_JSON`, `SCHEMA_VIOLATION` |

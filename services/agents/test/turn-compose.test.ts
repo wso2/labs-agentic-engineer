@@ -28,7 +28,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { SURFACES } from "@aep/agent-stream";
+import { SURFACES, type PrototypeFeedback } from "@aep/agent-stream";
 import { composeInstruction, eagerSkillsFor, toolsetFor, wantsRegisterDraftTool } from "../src/prompts/turn.js";
 
 /** The platform skill library this monorepo publishes to every org. */
@@ -257,7 +257,7 @@ test("eager skills are derived from the flow, not supplied by the caller", () =>
  */
 test("the instructed skill is always inlined, whatever the flow", () => {
   assert.deepEqual(eagerSkillsFor({ kind: "plan" }), ["task-planning"]);
-  assert.deepEqual(eagerSkillsFor({ kind: "flow", skill: "wireframes" }), ["wireframes"]);
+  assert.deepEqual(eagerSkillsFor({ kind: "flow", skill: "cell-design" }), ["cell-design"]);
   // Resolution runs through the SkillSource, so an org-authored flow inlines too;
   // a name that resolves to nothing is skipped downstream, not here.
   assert.deepEqual(eagerSkillsFor({ kind: "flow", skill: "their-own-skill" }), ["their-own-skill"]);
@@ -291,9 +291,42 @@ test("the design flow inlines its whole lineup, in lineup order", () => {
     "architecture",
     "security-design",
     "openapi-conventions",
-    "wireframes",
+    // A web-application's screens are its prototype, which `/prototype`
+    // writes after the design, so no screen skill rides this lineup.
     "validation-criteria",
   ]);
+});
+
+/**
+ * `/prototype` generates against a controlled registry in the house design
+ * system, so both bodies ride the prompt: without the design-system skill the
+ * agent composes screens from a component vocabulary it has never read.
+ */
+test("the prototype flow inlines its skill and the design system's", () => {
+  assert.deepEqual(eagerSkillsFor({ kind: "flow", skill: "prototype" }), ["prototype", "oxygen-ui-design-system"]);
+});
+
+/**
+ * The prototype is DERIVED from the design, so its turn names where each input
+ * lives — the web-applications, the roles, and the API shapes the mock records
+ * follow — rather than leaving the agent to rediscover the design tree.
+ */
+test("the prototype flow names its design inputs after the skill pointer", () => {
+  const out = composeInstruction({ kind: "flow", skill: "prototype" });
+  assert.ok(out.startsWith("Load the prototype skill and follow it.\n\n"));
+  for (const input of ["specs/design/design.cell", "specs/design/security.json", "openapi.yaml"]) {
+    assert.ok(out.includes(input), `the preamble names ${input}`);
+  }
+  assert.match(out, /specs\/design\/components\/<component>\/prototype\.json/);
+  // A flow with no brief is unchanged: the brief belongs to /prototype only.
+  assert.doesNotMatch(composeInstruction({ kind: "flow", skill: "design" }), /prototype\.json/);
+});
+
+test("the prototype brief leads, and the user's trailing text still follows it", () => {
+  const out = composeInstruction({ kind: "flow", skill: "prototype", text: "only the admin portal" });
+  const brief = out.indexOf("specs/design/security.json");
+  const text = out.indexOf("only the admin portal");
+  assert.ok(brief > 0 && text > brief, "brief first, then the user's words");
 });
 
 /**
@@ -305,6 +338,69 @@ test("the design flow inlines its whole lineup, in lineup order", () => {
  * Only PLATFORM flows are checked. `/<org-skill>` inlines a name this repo has
  * never heard of, which is the feature, not drift.
  */
+/**
+ * A `/prototype` turn carrying a review batch (#817) REVISES one file rather
+ * than generating every prototype. The batch arrives as facts; this is the one
+ * place it becomes words, so every fact the agent acts on must be in the text —
+ * and the reviewer's request verbatim, since nobody upstream rephrased it.
+ */
+const feedbackTurn: { kind: "flow"; skill: string; prototypeFeedback: PrototypeFeedback } = {
+  kind: "flow",
+  skill: "prototype",
+  prototypeFeedback: {
+    prototypePath: "specs/design/components/portal/prototype.json",
+    annotations: [
+      {
+        id: "ann-1",
+        prototypeSchemaVersion: 1,
+        screenId: "screen.queue",
+        flowId: "flow.approve",
+        stateId: "state.default",
+        componentIds: ["queue.table", "queue.approve"],
+        request: "Show the submitter's department — and sort by amount, \"largest\" first.",
+      },
+      {
+        id: "ann-2",
+        prototypeSchemaVersion: 1,
+        screenId: "screen.detail",
+        flowId: null,
+        stateId: "state.failed",
+        componentIds: [],
+        request: "This whole screen feels cramped.",
+      },
+    ],
+  },
+};
+
+test("a feedback turn names the file, and every annotation's IDs and request verbatim", () => {
+  const out = composeInstruction(feedbackTurn);
+  assert.ok(out.startsWith("Load the prototype skill and follow it.\n\n"), "the skill pointer still leads");
+  assert.match(out, /specs\/design\/components\/portal\/prototype\.json/);
+  for (const a of feedbackTurn.prototypeFeedback.annotations) {
+    assert.ok(out.includes(a.id), `annotation ${a.id} named`);
+    assert.ok(out.includes(a.screenId), `screen ${a.screenId} named`);
+    assert.ok(out.includes(a.stateId), `state ${a.stateId} named`);
+    assert.ok(out.includes(a.request), `request ${a.id} verbatim`);
+  }
+  assert.ok(out.includes("flow.approve"));
+  assert.ok(out.includes("queue.table") && out.includes("queue.approve"));
+  // No flow and no components are said as such, not left blank.
+  assert.match(out, /whole screen/i);
+  assert.match(out, /no flow|free navigation/i);
+  // Annotations keep their order.
+  assert.ok(out.indexOf("ann-1") < out.indexOf("ann-2"));
+});
+
+test("a feedback turn rewrites only the named file, once, keeping IDs", () => {
+  const out = composeInstruction(feedbackTurn);
+  assert.match(out, /only/i);
+  assert.match(out, /once/i);
+  assert.match(out, /stable|keep every id|preserv/i);
+  // The generation brief ("one prototype.json per web-application") would
+  // contradict the revision, so it is not said on a feedback turn.
+  assert.doesNotMatch(out, /per web-application/);
+});
+
 test("every eager skill name exists in the platform skill library", () => {
   const turns = [
     { kind: "start" } as const,
@@ -312,6 +408,7 @@ test("every eager skill name exists in the platform skill library", () => {
     { kind: "flow", skill: "amend" } as const,
     { kind: "flow", skill: "settle" } as const,
     { kind: "flow", skill: "design" } as const,
+    { kind: "flow", skill: "prototype" } as const,
     // The branch commands resolve to a platform skill, so they are checked too.
     { kind: "flow", skill: "feature" } as const,
     { kind: "flow", skill: "actor" } as const,

@@ -27,6 +27,8 @@ import (
 	"bytes"
 	"path"
 	"strings"
+
+	"github.com/wso2/aep/aep-api/internal/platform/prototypespec"
 )
 
 // The two OpenAPI contract shapes admitted into a turn snapshot alongside the
@@ -67,10 +69,29 @@ func isAdmittedSpecPath(p string) bool {
 // catalog — nothing reads it and nothing validates it.
 const securityDesignPath = "specs/design/security.json"
 
+// isPrototypePath admits a web-application's prototype,
+// specs/design/components/<c>/prototype.json, by the model's own slot rule
+// (prototypespec.BundleComponent — the rule the save gate judges by), so the
+// file a revision edits is the file a gate validates and nothing else.
+//
+// A prototype turn revises an existing file — a feedback batch rewrites it
+// preserving every ID it need not change — so the agent must be able to read
+// it back, and the fold must see it as existing or an edit against it
+// succeeds on one side only.
+func isPrototypePath(p string) bool {
+	key, ok := strings.CutPrefix(p, "specs/design/")
+	if !ok {
+		return false
+	}
+	_, ok = prototypespec.BundleComponent(key)
+	return ok
+}
+
 // KeepInTurnSnapshot mirrors keepInTurnSnapshot: keep agent-authored sources
 // (*.md, *.dsl, *.cell, a design.json or validation-criteria.json basename,
 // the project security design specs/design/security.json, the two OpenAPI
-// contract shapes above) and drop everything else. *.cell is the
+// contract shapes above, a component's prototype.json) and drop everything
+// else. *.cell is the
 // project-level cell-diagram DSL (design.cell). validation-criteria.json
 // is kept so a design regeneration can see the existing acceptance oracle and
 // reuse its criterion ids (keeping committed e2e specs, which are keyed by
@@ -87,7 +108,7 @@ func KeepInTurnSnapshot(path string) bool {
 	if isAdmittedSpecPath(path) {
 		return true
 	}
-	if path == securityDesignPath {
+	if path == securityDesignPath || isPrototypePath(path) {
 		return true
 	}
 	if isTextReferencePath(path) {

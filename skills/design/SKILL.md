@@ -41,10 +41,11 @@ that matter most are the user's own sketches: a drawn wireframe, a form
 screenshot, a mockup image. They are attached to this conversation natively
 (images and PDFs) or in your workspace files (text). When any exist:
 
-- **A user-drawn wireframe sketch is the layout brief.** `wireframes.dsl`
-  follows what the user drew — screen structure, navigation, the controls
-  they placed — refined, not reinvented. Look at the image before writing a
-  single screen.
+- **A user-drawn wireframe sketch is the brief for the screens.** The screens
+  themselves are the web-application's prototype, which `/prototype` writes
+  after this turn from the same references; here the sketch shapes the key
+  flows and what each web-application's API must serve. Look at the image
+  before writing a flow.
 - A form document (paper form, PDF) is the field inventory: the screens that
   digitize it carry its fields and sections.
 - Where a sketch and the PRD disagree, the PRD's scope wins, but the sketch's
@@ -133,14 +134,15 @@ turn — apply them directly, and load one only if you find you do not have it.
 5. **Security design** (`security-design`) — `specs/design/security.json` when
    the design has sign-in or roles.
 6. **Per-component artifacts** — every `service` gets `openapi.yaml`
-   (`openapi-conventions`); every `web-application` gets `wireframes.dsl`
-   (`wireframes`).
+   (`openapi-conventions`). A `web-application` gets no artifact here: its
+   screens are its `prototype.json`, which the user generates after the design
+   (the Build requires it), so write no screens and no wireframes.
 7. **Grants pass** (`security-design`) — re-read `specs/design/security.json`
-   now that the screens and the operations exist. Step 5 wrote each role's
-   `grants` against a design it could only intend; the operations the screens
-   in each role's flow load are decidable only here. Walk each flow, open the
-   contract behind each screen, and make sure the role holds the handle of the
-   operation each screen loads. Re-emit the file only if a grant changes. Skip
+   now that the flows and the operations exist. Step 5 wrote each role's
+   `grants` against a design it could only intend; the operations each role's
+   flows call are decidable only here. Walk each key flow, open the contract
+   behind each call its actor's web-application makes, and make sure the role
+   holds the handle of that operation. Re-emit the file only if a grant changes. Skip
    the step only when step 5 wrote no security.json at all. No gate refuses a
    role that is one handle short — the build's mock walk is what catches it, as
    a hidden screen — so this pass is where it is cheap.
@@ -173,12 +175,15 @@ architecture.
 ## Where this stops
 
 `/design` ends at the design and its validation criteria — no task planning,
-no application code. Close with three parts and nothing more: one line per
-component (name, type, one-clause role); a **"Needs your input"** block
-listing only the dependencies still unresolved, each as a link to its
-definition (`[<name>](aep://spec/specs/design/dependencies/<name>/dependency.json)`,
-the `architecture` skill's closing form) followed by the one thing you need,
-so the user opens it with a click; and
-a one-line pointer to `specs/design/`. The dependency narration during the
-turn (the `architecture` skill owns its format) already carried the
-play-by-play.
+no application code, and no prototype: that is the next step, and the user
+starts it. Close with these parts and nothing more: one line per component
+(name, type, one-clause role); a **"Needs your input"** block listing only the
+dependencies still unresolved, each as a link to its definition
+(`[<name>](aep://spec/specs/design/dependencies/<name>/dependency.json)`, the
+`architecture` skill's closing form) followed by the one thing you need, so
+the user opens it with a click; a one-line pointer to `specs/design/`; and,
+when the cell declares a `web-application`, one line saying the next step is
+**Generate prototype** on the Prototype stage — the Build needs a prototype
+for every web-application, and reviewing it is where the screens get settled.
+The dependency narration during the turn (the `architecture` skill owns its
+format) already carried the play-by-play.

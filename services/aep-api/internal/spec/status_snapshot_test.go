@@ -163,3 +163,55 @@ func TestComponentCountAtTag(t *testing.T) {
 		t.Fatal("unknown tag returned a count, want error (strict deploy stage)")
 	}
 }
+
+// TestStatusSnapshot_DesignFingerprint pins the prototype staleness inputs
+// (#818) against real commits: the design fingerprint at the commit a
+// prototype turn read, against the one at head. A design change after the
+// prototype moves it; a prototype-only rewrite does not; no prototype at head
+// is reported as such.
+func TestStatusSnapshot_DesignFingerprint(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := newRig(t, map[string]string{
+		"specs/design/design.cell":                "component web web-application\n",
+		"specs/design/components/web/design.json": `{"type":"web-application"}`,
+	})
+	r.freshen()
+	if snap := r.snapshot(); snap.HasPrototype {
+		t.Fatal("a design with no prototype reported one")
+	}
+
+	// The prototype turn reads the design at this commit, then writes.
+	base := r.headSHA()
+	r.seed(map[string]string{"specs/design/components/web/prototype.json": `{"v":1}`}, "prototype")
+	r.freshen()
+	was, err := r.svc.DesignFingerprintAt(ctx, r.org, r.proj, base)
+	if err != nil {
+		t.Fatalf("DesignFingerprintAt: %v", err)
+	}
+	snap := r.snapshot()
+	if !snap.HasPrototype {
+		t.Fatal("the committed prototype was not seen")
+	}
+	if snap.DesignFingerprint != was {
+		t.Fatal("writing the prototype moved the design fingerprint")
+	}
+
+	// Feedback rewrites the prototype alone.
+	r.seed(map[string]string{"specs/design/components/web/prototype.json": `{"v":2}`}, "feedback")
+	r.freshen()
+	if snap = r.snapshot(); snap.DesignFingerprint != was {
+		t.Fatal("a prototype-only rewrite moved the design fingerprint")
+	}
+
+	// The design moves after the prototype.
+	r.seed(map[string]string{"specs/design/components/web/design.json": `{"type":"web-application","v":2}`}, "design edit")
+	r.freshen()
+	if snap = r.snapshot(); snap.DesignFingerprint == was {
+		t.Fatal("a design change after the prototype left the design fingerprint unchanged")
+	}
+
+	if _, err := r.svc.DesignFingerprintAt(ctx, r.org, r.proj, "0000000000000000000000000000000000000000"); err == nil {
+		t.Fatal("an unresolvable commit read as a fingerprint")
+	}
+}

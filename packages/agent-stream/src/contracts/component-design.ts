@@ -33,7 +33,7 @@ export interface ComponentDesign {
   name: string;
   /**
    * Component kind. "service" and "web-application" carry full platform
-   * conventions (openapi.yaml / wireframes.dsl and deployment support) and
+   * conventions (openapi.yaml / prototype.json and deployment support) and
    * mirror OpenChoreo's own terms (deployment/service,
    * deployment/web-application — the same words minus the prefix); any other kind
    * the requirements imply (e.g. "scheduled-task", "worker") is CAPTURED at

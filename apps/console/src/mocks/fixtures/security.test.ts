@@ -17,6 +17,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { parsePrototypeModel } from "@aep/prototype-model";
 
 import {
   grantsOf,
@@ -173,5 +174,25 @@ describe("the offline directory read", () => {
     expect(
       (projectRolesViewOffline.testUsers ?? []).every((u) => u.exists === false),
     ).toBe(true);
+  });
+});
+
+// The build gate refuses a prototype whose roles security.json does not
+// declare, so a mock project that serves both must keep them in step.
+describe("the mock storefront prototype", () => {
+  const file = projectSpecFiles.deployed.find(
+    (f) => f.path === "specs/design/components/storefront/prototype.json",
+  );
+
+  it("is a prototype the shared model accepts", () => {
+    expect(file).toBeDefined();
+    const parsed = parsePrototypeModel(JSON.parse(file!.content), { component: "storefront" });
+    expect(parsed.ok).toBe(true);
+  });
+
+  it("names only roles the mock security design declares", () => {
+    const declared = new Set(design.roles.map((r) => r.name));
+    const roles = (JSON.parse(file!.content) as { roles: { id: string }[] }).roles.map((r) => r.id);
+    expect(roles.filter((id) => !declared.has(id))).toEqual([]);
   });
 });

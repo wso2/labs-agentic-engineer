@@ -17,52 +17,73 @@
  */
 
 import { createFileRoute } from "@tanstack/react-router";
-import { PrototypePage } from "../features/spec/components/PrototypePage";
+import { ComponentPrototypePage } from "../features/prototype/components/ComponentPrototypePage";
+import {
+  PROTOTYPE_MODES,
+  type PrototypeMode,
+  type PrototypeViewRequest,
+} from "../features/prototype/model/viewState";
 
-// `$projectName_` (trailing underscore) un-nests this route from the
-// /projects/$projectName layout, same trick as `projects.$projectName_.spec`
-// — the prototype is a full-screen workspace without the shared project
-// header (#348).
+// The prototype review page for one web-application component (#813), read
+// from its prototype.json. `$projectName_` un-nests it from the project
+// layout, and AppLayout drops the console chrome for it: the page takes over
+// the whole viewport.
 //
-// `?screen=<Name>` deep-links to a specific screen of the component's
-// prototype (e.g. a link shared mid-review), and `?flow=<Name>` deep-links
-// the persona/flow alongside it. `PrototypeView` drives screen and flow
-// navigation internally and calls back on every change via `onScreenChange`
-// / `onFlowChange`; this route syncs both back into the URL with a REPLACE
-// navigation (not push), so clicking through screens doesn't pile up history
-// entries — the browser back button leaves the prototype rather than
-// stepping screen by screen. Both params are merged onto the previous search
-// on every sync so changing one never drops the other.
-export const Route = createFileRoute(
-  "/projects/$projectName_/prototype/$component",
-)({
-  validateSearch: (search: Record<string, unknown>): { screen?: string; flow?: string } => ({
-    ...(typeof search.screen === "string" && search.screen
-      ? { screen: search.screen }
-      : {}),
-    ...(typeof search.flow === "string" && search.flow ? { flow: search.flow } : {}),
-  }),
+// Screen, flow, display state, mode and role ride the URL so a link opens exactly
+// what the reviewer saw. The page reports the WHOLE view on every change and
+// the route writes it with a REPLACE navigation: clicking through screens
+// piles up no history, so Back leaves the prototype, and no callback can drop
+// a param another one set. An unknown mode, and an empty or non-string param,
+// is dropped; unknown IDs (a role included) are the page's to repair against
+// the model.
+function nonEmpty(value: unknown): string | undefined {
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+export function validatePrototypeSearch(search: Record<string, unknown>): PrototypeViewRequest {
+  const screen = nonEmpty(search.screen);
+  const flow = nonEmpty(search.flow);
+  const state = nonEmpty(search.state);
+  const mode = PROTOTYPE_MODES.find((m) => m === search.mode);
+  const role = nonEmpty(search.role);
+  return {
+    ...(screen ? { screen } : {}),
+    ...(flow ? { flow } : {}),
+    ...(state ? { state } : {}),
+    ...(mode ? { mode: mode satisfies PrototypeMode } : {}),
+    ...(role ? { role } : {}),
+  };
+}
+
+export const Route = createFileRoute("/projects/$projectName_/prototype/$component")({
+  validateSearch: validatePrototypeSearch,
   component: PrototypeRoute,
 });
 
 function PrototypeRoute() {
   const { projectName, component } = Route.useParams();
-  const { screen, flow } = Route.useSearch();
+  const search = Route.useSearch();
   const navigate = Route.useNavigate();
   return (
-    <PrototypePage
+    <ComponentPrototypePage
       projectName={projectName}
       component={component}
-      // Both params are preserved on every sync: a shared link restores the
-      // persona AND the screen, and changing one must not drop the other.
-      onScreenChange={(s) =>
-        void navigate({ search: (prev) => ({ ...prev, screen: s }), replace: true })
+      search={search}
+      onSearchChange={(next) =>
+        void navigate({
+          search: (prev) =>
+            validatePrototypeSearch({
+              ...prev,
+              screen: undefined,
+              flow: undefined,
+              state: undefined,
+              mode: undefined,
+              role: undefined,
+              ...next,
+            }),
+          replace: true,
+        })
       }
-      onFlowChange={(f) =>
-        void navigate({ search: (prev) => ({ ...prev, flow: f }), replace: true })
-      }
-      {...(screen ? { screen } : {})}
-      {...(flow ? { flow } : {})}
     />
   );
 }

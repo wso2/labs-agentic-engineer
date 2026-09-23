@@ -34,7 +34,7 @@
  * all send a `TurnSpec` and none of them composes.
  */
 
-import type { PlanContextFile, PlanScope, Toolset, TurnAim, TurnSpec } from "@aep/agent-stream";
+import type { PlanContextFile, PlanScope, PrototypeFeedback, Toolset, TurnAim, TurnSpec } from "@aep/agent-stream";
 
 // --- Wording -----------------------------------------------------------------
 
@@ -198,13 +198,72 @@ const FLOW_SUPPORTING_SKILLS: Record<string, string[]> = {
   // than read. Inlined, the same bytes sit INSIDE the marked prompt, cached from
   // the first step and again on the next turn.
   //
-  // Three of them are conditional (a project with no `web-application` never
-  // writes a wireframes.dsl), but which components exist is decided DURING the
-  // turn — there is nothing to condition on when the prompt is composed, and a
-  // cached read costs a tenth of a re-prefill. Org-authored design skills stay
-  // lazy: this map is flow wording and cannot know a given org's catalog.
-  design: ["grilling", "cell-design", "architecture", "security-design", "openapi-conventions", "wireframes", "validation-criteria"],
+  // Two of them are conditional (a project with no sign-in writes no
+  // security.json, one with no `service` no openapi.yaml), but which components
+  // exist is decided DURING the turn — there is nothing to condition on when
+  // the prompt is composed, and a cached read costs a tenth of a re-prefill.
+  // Org-authored design skills stay lazy: this map is flow wording and cannot
+  // know a given org's catalog.
+  //
+  // A web-application's screens are not drawn here: `/prototype` writes its
+  // prototype.json after the design.
+  design: ["grilling", "cell-design", "architecture", "security-design", "openapi-conventions", "validation-criteria"],
+  // `/prototype` composes screens from the house design system's components,
+  // so the design-system skill rides with it: the registry says which nodes
+  // exist, the design system says how an enterprise screen is built from them.
+  prototype: ["oxygen-ui-design-system"],
 };
+
+/**
+ * What a flow READS, said where the turn starts (#815). Most flows discover
+ * their inputs by walking their own playbook; a flow that is purely DERIVED
+ * from artifacts already on disk names them, so the agent opens the right
+ * files first instead of rediscovering the design tree. Keyed by the skill the
+ * flow loads; a flow absent here gets no brief.
+ */
+const FLOW_BRIEFS: Record<string, string> = {
+  prototype:
+    "The design is the input. Read specs/design/design.cell for the web-application components, the roles in " +
+    "specs/design/security.json, and each web-application's openapi.yaml — the API it reads, which is the " +
+    "openapi.yaml of every component it depends on. Write one specs/design/components/<component>/prototype.json " +
+    "per web-application, and change no other file.",
+};
+
+/**
+ * The revision brief (#817): a `/prototype` turn carrying a reviewer's batch
+ * revises ONE file instead of generating every prototype, so it replaces the
+ * generation brief rather than following it — "write one per web-application"
+ * and "rewrite only this one" cannot both be the instruction.
+ *
+ * The batch arrives as IDs plus the reviewer's words; the words are quoted
+ * verbatim, never paraphrased, because nobody upstream rephrased them either.
+ */
+const FEEDBACK_LEAD = (path: string, count: number) =>
+  `This turn revises one prototype from review feedback: ${count} request${count === 1 ? "" : "s"} on ${path}. ` +
+  `Rewrite only that file, once — apply every request below in a single complete write, keep every ID a request ` +
+  `does not require you to change stable, and touch no other file. Resolve each ID against the file as it stands; ` +
+  `if one no longer exists, say so in your reply instead of guessing what was meant.`;
+
+function feedbackBrief(feedback: PrototypeFeedback): string {
+  const requests = feedback.annotations.map((a) => {
+    const flow = a.flowId === null ? "none (free navigation)" : a.flowId;
+    const components = a.componentIds.length === 0 ? "none — the request is about the whole screen" : a.componentIds.join(", ");
+    return (
+      `Request ${a.id}\n` +
+      `- Screen: ${a.screenId}\n` +
+      `- Flow: ${flow}\n` +
+      `- Display state: ${a.stateId}\n` +
+      `- Components: ${components}\n` +
+      `- The reviewer's words, verbatim:\n"""\n${a.request}\n"""`
+    );
+  });
+  return [FEEDBACK_LEAD(feedback.prototypePath, feedback.annotations.length), ...requests].join("\n\n");
+}
+
+/** The brief a flow's skill carries, or undefined. */
+function flowBrief(skill: string): string | undefined {
+  return Object.hasOwn(FLOW_BRIEFS, skill) ? FLOW_BRIEFS[skill] : undefined;
+}
 
 /** The branch a command names, or undefined for a token that IS its skill. */
 function commandFlow(token: string): { skill: string; scope: (subject: string) => string } | undefined {
@@ -277,7 +336,11 @@ function specBody(turn: Exclude<TurnSpec, { kind: "plan" }>): string {
       // and the agent says so, which is a better failure than a client-side
       // allowlist that goes stale against the org's catalog.
       const command = commandFlow(turn.skill);
-      const base = `Load the ${command?.skill ?? turn.skill} skill and follow it.`;
+      const skill = command?.skill ?? turn.skill;
+      // A review batch replaces the generation brief: it narrows the flow to
+      // one file (see FEEDBACK_LEAD).
+      const brief = turn.prototypeFeedback ? feedbackBrief(turn.prototypeFeedback) : flowBrief(skill);
+      const base = `Load the ${skill} skill and follow it.` + (brief ? `\n\n${brief}` : "");
       // A command that names a BRANCH says which one, and carries whatever the
       // user clicked as the branch's subject; everything else passes the user's
       // trailing text through untouched.
@@ -285,7 +348,7 @@ function specBody(turn: Exclude<TurnSpec, { kind: "plan" }>): string {
       const withText = scoped ? `${base}\n\n${scoped}` : base;
       // Reference documents ride flows the same way they ride start turns:
       // a flow generates artifacts, and an attached sketch IS the brief for
-      // wireframes. No documents → byte-identical to a plain flow turn.
+      // the prototype. No documents → byte-identical to a plain flow turn.
       return withText + references(turn.references);
     }
     case "start":

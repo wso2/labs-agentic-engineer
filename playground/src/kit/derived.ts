@@ -23,7 +23,7 @@
  * BFF owns in production, kept as thin functions so the turn loop stays chat
  * mechanics only.
  *
- *   *.dsl                        → sibling .excalidraw           (per-file compile)
+ *   domain-model .dsl            → sibling .excalidraw           (per-file compile)
  *   design.json (all components) → specs/design/cell-diagram.gen.json (aggregate)
  *
  * Everything written here ends in .excalidraw / .gen.json — the extensions
@@ -45,7 +45,7 @@ export interface DerivedNote {
 }
 
 /**
- * Compile ONE changed path's derived view, if it has one: a `*.dsl` source
+ * Compile ONE changed path's derived view, if it has one: a domain-model `.dsl`
  * compiles to its sibling `.excalidraw`. Returns a display note, or `null` when
  * `path` is not a compilable source (so the caller can drive it per change).
  * The source must already be on disk — `compileDslArtifacts` reads it back.

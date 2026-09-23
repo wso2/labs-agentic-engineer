@@ -19,10 +19,12 @@ package spec
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/platform/agentfold"
 	"github.com/wso2/aep/aep-api/internal/platform/designspec"
+	"github.com/wso2/aep/aep-api/internal/platform/prototypespec"
 	"github.com/wso2/aep/aep-api/internal/platform/securityspec"
 )
 
@@ -80,6 +82,10 @@ const (
 //   - security.json, when present: the security design validates against the
 //     same published schema and referential rules the agent's write gate
 //     applies;
+//   - prototype.json: every non-blank `components/<c>/prototype.json` validates
+//     against the published prototype schema and its reference rules, and
+//     names `<c>` as its component (prototypespec — the same rules the agent's
+//     write gate applies; see prototypeFindings for how their codes differ);
 //   - OpenAPI: every present component openapi.yaml/yml must parse.
 //
 // A missing root is ErrArtifactPathInvalid (400). Any other failure aggregates
@@ -123,12 +129,12 @@ func validateDesignBundle(files map[string]string) error {
 	// single definition the agent's write gate uses, so a document that passes
 	// one gate passes the other.
 	//
-	// The rules that read a SIBLING file (a component the cell declares, a
-	// screen the wireframe declares, the operation behind a screen) are
-	// deliberately not run here: the design lineup writes security.json before
-	// those files exist, and a save refused on a file that is not written yet
-	// would be unfixable. The build gate runs the whole list against the tag,
-	// where every file is present by construction.
+	// The rules that read a SIBLING file (a component the cell declares, an
+	// operation in a component's openapi.yaml) are deliberately not run here:
+	// the design lineup writes security.json before those files exist, and a
+	// save refused on a file that is not written yet would be unfixable. The
+	// build gate runs the whole list against the tag, where every file is
+	// present by construction.
 	for _, name := range DependencyNamesIn(files) {
 		key := dependencyDesignKey(name)
 		content, ok := files[key]
@@ -170,6 +176,8 @@ func validateDesignBundle(files map[string]string) error {
 		}
 	}
 
+	verrs = append(verrs, prototypeFindings(files)...)
+
 	// OpenAPI parseability (component openapi.yaml/.yml).
 	for rel, content := range files {
 		if !strings.HasSuffix(rel, "/openapi.yaml") && !strings.HasSuffix(rel, "/openapi.yml") {
@@ -195,4 +203,33 @@ func validateDesignBundle(files map[string]string) error {
 		return &DesignValidationError{Files: verrs}
 	}
 	return nil
+}
+
+// prototypeFindings validates every component prototype in the bundle, one row
+// per finding so each fix is listed. The row's code is prototypespec's own
+// (UNSUPPORTED_VERSION, DUPLICATE_ID, …) and its message leads with the JSON
+// path. The agent's write gate runs the same rules but reports differently: it
+// collapses a refused file to one INVALID_PROTOTYPE row (INVALID_JSON when it
+// does not parse, PROTOTYPE_COMPONENT_MISMATCH for another component's file)
+// and lists these findings, code and path, in its message. Build runs this validation too, so these codes are what a Build
+// refusal of an invalid prototype carries. A blank file is skipped, as a blank
+// openapi.yaml is: the build gate names it a missing artifact. Keys are visited
+// in sorted order so the rows are stable.
+func prototypeFindings(files map[string]string) []FileValidationError {
+	keys := make([]string, 0, len(files))
+	for rel, content := range files {
+		if _, ok := prototypespec.BundleComponent(rel); ok && strings.TrimSpace(content) != "" {
+			keys = append(keys, rel)
+		}
+	}
+	sort.Strings(keys)
+	var out []FileValidationError
+	for _, rel := range keys {
+		component, _ := prototypespec.BundleComponent(rel)
+		_, issues := prototypespec.Parse(component, []byte(files[rel]))
+		for _, issue := range issues {
+			out = append(out, FileValidationError{Path: rel, Code: issue.Code, Message: issue.Located()})
+		}
+	}
+	return out
 }

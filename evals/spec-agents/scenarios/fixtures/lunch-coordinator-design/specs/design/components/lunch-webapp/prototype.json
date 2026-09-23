@@ -1,0 +1,606 @@
+{
+  "schemaVersion": 1,
+  "component": "lunch-webapp",
+  "name": "Team Lunch",
+  "defaultScreenId": "screen.open-round",
+  "roles": [
+    {
+      "id": "teammate",
+      "name": "Teammate"
+    }
+  ],
+  "states": [
+    {
+      "id": "state.default",
+      "name": "Default"
+    },
+    {
+      "id": "state.invalid",
+      "name": "Validation errors"
+    },
+    {
+      "id": "state.empty",
+      "name": "Nothing to show"
+    }
+  ],
+  "flows": [
+    {
+      "id": "flow.open-and-add",
+      "name": "Open a round and add items",
+      "roleId": "teammate",
+      "screenIds": [
+        "screen.open-round",
+        "screen.round",
+        "screen.consolidated"
+      ]
+    },
+    {
+      "id": "flow.view-consolidated",
+      "name": "View a consolidated order",
+      "roleId": "teammate",
+      "screenIds": [
+        "screen.history",
+        "screen.consolidated"
+      ]
+    }
+  ],
+  "screens": [
+    {
+      "id": "screen.open-round",
+      "name": "Start today's lunch round",
+      "roleIds": [
+        "teammate"
+      ],
+      "navigationId": "nav.main",
+      "content": [
+        {
+          "kind": "heading",
+          "id": "heading.open-round",
+          "text": "Start Today's Lunch Round"
+        },
+        {
+          "kind": "text",
+          "id": "text.signed-in",
+          "text": "Signed in as J. Alvarez"
+        },
+        {
+          "kind": "alert",
+          "id": "alert.no-round",
+          "tone": "info",
+          "text": "No round is open right now — be the one to start it."
+        },
+        {
+          "kind": "form",
+          "id": "form.open-round",
+          "fields": [
+            {
+              "id": "field.restaurant",
+              "label": "Restaurant",
+              "value": "Taco Fiesta",
+              "error": "Name the restaurant",
+              "errorIn": [
+                "state.invalid"
+              ]
+            },
+            {
+              "id": "field.cutoff",
+              "label": "Cutoff time",
+              "type": "text",
+              "value": "12:30 PM today",
+              "error": "The cutoff must be later today",
+              "errorIn": [
+                "state.invalid"
+              ]
+            },
+            {
+              "id": "field.notes",
+              "label": "Notes (optional)",
+              "type": "textarea",
+              "value": "Pickup at 12:45, pay opener via Venmo"
+            }
+          ],
+          "actions": [
+            {
+              "id": "btn.cancel-round",
+              "label": "Cancel",
+              "action": {
+                "kind": "navigate",
+                "screenId": "screen.history"
+              }
+            },
+            {
+              "id": "btn.open-round",
+              "label": "Open round",
+              "emphasis": "primary",
+              "action": {
+                "kind": "navigate",
+                "screenId": "screen.round"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "screen.round",
+      "name": "Open round",
+      "roleIds": [
+        "teammate"
+      ],
+      "navigationId": "nav.main",
+      "content": [
+        {
+          "kind": "heading",
+          "id": "heading.round",
+          "text": "Taco Fiesta",
+          "actions": [
+            {
+              "id": "btn.close-round",
+              "label": "Close round now",
+              "action": {
+                "kind": "navigate",
+                "screenId": "screen.consolidated"
+              }
+            }
+          ]
+        },
+        {
+          "kind": "badge",
+          "id": "badge.round-open",
+          "label": "Open",
+          "tone": "success"
+        },
+        {
+          "kind": "text",
+          "id": "text.cutoff",
+          "text": "Cutoff: 12:30 PM (in 42 minutes) — opened by J. Alvarez"
+        },
+        {
+          "kind": "split",
+          "id": "split.round",
+          "ratio": 7,
+          "left": [
+            {
+              "kind": "table",
+              "id": "table.items",
+              "title": "Items so far",
+              "columns": [
+                "Teammate",
+                "Item",
+                "Qty",
+                "Price"
+              ],
+              "rows": [
+                {
+                  "id": "item.1",
+                  "values": {
+                    "Teammate": "J. Alvarez",
+                    "Item": "Carnitas taco",
+                    "Qty": "2",
+                    "Price": "$3.50"
+                  }
+                },
+                {
+                  "id": "item.2",
+                  "values": {
+                    "Teammate": "M. Chen",
+                    "Item": "Burrito bowl",
+                    "Qty": "1",
+                    "Price": "$9.00"
+                  }
+                },
+                {
+                  "id": "item.3",
+                  "values": {
+                    "Teammate": "S. Patel",
+                    "Item": "Quesadilla",
+                    "Qty": "1",
+                    "Price": "$7.50"
+                  }
+                }
+              ],
+              "showIn": [
+                "state.default",
+                "state.invalid"
+              ]
+            },
+            {
+              "kind": "empty-state",
+              "id": "empty.items",
+              "title": "No items yet",
+              "text": "Add the first item before the cutoff.",
+              "showIn": [
+                "state.empty"
+              ]
+            },
+            {
+              "kind": "stack",
+              "id": "stack.my-item-actions",
+              "direction": "row",
+              "content": [
+                {
+                  "kind": "button",
+                  "id": "btn.edit-item",
+                  "label": "Edit my item",
+                  "action": {
+                    "kind": "show-dialog",
+                    "dialogId": "dialog.edit-item"
+                  }
+                },
+                {
+                  "kind": "button",
+                  "id": "btn.remove-item",
+                  "label": "Remove my item",
+                  "emphasis": "danger",
+                  "action": {
+                    "kind": "show-dialog",
+                    "dialogId": "dialog.remove-item"
+                  }
+                }
+              ]
+            }
+          ],
+          "right": [
+            {
+              "kind": "form",
+              "id": "form.add-item",
+              "title": "Add your item",
+              "fields": [
+                {
+                  "id": "field.item-description",
+                  "label": "Description",
+                  "value": "Carnitas taco",
+                  "error": "Describe the item",
+                  "errorIn": [
+                    "state.invalid"
+                  ]
+                },
+                {
+                  "id": "field.item-quantity",
+                  "label": "Quantity",
+                  "type": "number",
+                  "value": "2"
+                },
+                {
+                  "id": "field.item-price",
+                  "label": "Price",
+                  "type": "number",
+                  "value": "3.50",
+                  "error": "Enter a price",
+                  "errorIn": [
+                    "state.invalid"
+                  ]
+                }
+              ],
+              "actions": [
+                {
+                  "id": "btn.add-item",
+                  "label": "Add item",
+                  "emphasis": "primary",
+                  "action": {
+                    "kind": "navigate",
+                    "screenId": "screen.round"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "text",
+              "id": "text.own-items",
+              "text": "You can only edit or remove items you added, before cutoff."
+            }
+          ]
+        }
+      ],
+      "overlays": [
+        {
+          "kind": "dialog",
+          "id": "dialog.edit-item",
+          "title": "Edit my item",
+          "content": [
+            {
+              "kind": "form",
+              "id": "form.edit-item",
+              "fields": [
+                {
+                  "id": "field.edit-description",
+                  "label": "Description",
+                  "value": "Carnitas taco"
+                },
+                {
+                  "id": "field.edit-quantity",
+                  "label": "Quantity",
+                  "type": "number",
+                  "value": "2"
+                },
+                {
+                  "id": "field.edit-price",
+                  "label": "Price",
+                  "type": "number",
+                  "value": "3.50"
+                }
+              ],
+              "actions": []
+            }
+          ],
+          "actions": [
+            {
+              "id": "btn.edit-cancel",
+              "label": "Cancel",
+              "action": {
+                "kind": "close-overlay"
+              }
+            },
+            {
+              "id": "btn.edit-save",
+              "label": "Save",
+              "emphasis": "primary",
+              "action": {
+                "kind": "close-overlay"
+              }
+            }
+          ]
+        },
+        {
+          "kind": "dialog",
+          "id": "dialog.remove-item",
+          "title": "Remove my item?",
+          "content": [
+            {
+              "kind": "text",
+              "id": "text.remove-item",
+              "text": "2x Carnitas taco will be removed from this round."
+            }
+          ],
+          "actions": [
+            {
+              "id": "btn.remove-cancel",
+              "label": "Keep it",
+              "action": {
+                "kind": "close-overlay"
+              }
+            },
+            {
+              "id": "btn.remove-confirm",
+              "label": "Remove",
+              "emphasis": "danger",
+              "action": {
+                "kind": "close-overlay"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "screen.consolidated",
+      "name": "Consolidated order",
+      "roleIds": [
+        "teammate"
+      ],
+      "navigationId": "nav.main",
+      "content": [
+        {
+          "kind": "breadcrumbs",
+          "id": "crumbs.consolidated",
+          "items": [
+            {
+              "id": "crumb.history",
+              "label": "History",
+              "action": {
+                "kind": "navigate",
+                "screenId": "screen.history"
+              }
+            },
+            {
+              "id": "crumb.round",
+              "label": "Sep 14 — Taco Fiesta"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "id": "heading.consolidated",
+          "text": "Taco Fiesta — Sep 14"
+        },
+        {
+          "kind": "badge",
+          "id": "badge.round-closed",
+          "label": "Closed",
+          "tone": "info"
+        },
+        {
+          "kind": "text",
+          "id": "text.closed-at",
+          "text": "Closed at 12:30 PM (cutoff) — opened by J. Alvarez"
+        },
+        {
+          "kind": "split",
+          "id": "split.consolidated",
+          "ratio": 7,
+          "left": [
+            {
+              "kind": "table",
+              "id": "table.grouped",
+              "title": "Items, grouped",
+              "columns": [
+                "Item",
+                "Total qty"
+              ],
+              "rows": [
+                {
+                  "id": "group.carnitas",
+                  "values": {
+                    "Item": "Carnitas taco",
+                    "Total qty": "4"
+                  }
+                },
+                {
+                  "id": "group.bowl",
+                  "values": {
+                    "Item": "Burrito bowl",
+                    "Total qty": "2"
+                  }
+                },
+                {
+                  "id": "group.quesadilla",
+                  "values": {
+                    "Item": "Quesadilla",
+                    "Total qty": "1"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "stat",
+              "id": "stat.grand-total",
+              "label": "Grand total across 3 teammates",
+              "value": "$58.50"
+            }
+          ],
+          "right": [
+            {
+              "kind": "table",
+              "id": "table.per-person",
+              "title": "Per-person breakdown",
+              "columns": [
+                "Teammate",
+                "Items",
+                "Owes"
+              ],
+              "rows": [
+                {
+                  "id": "owes.alvarez",
+                  "values": {
+                    "Teammate": "J. Alvarez",
+                    "Items": "2x Carnitas taco",
+                    "Owes": "$7.00"
+                  }
+                },
+                {
+                  "id": "owes.chen",
+                  "values": {
+                    "Teammate": "M. Chen",
+                    "Items": "Burrito bowl",
+                    "Owes": "$9.00"
+                  }
+                },
+                {
+                  "id": "owes.patel",
+                  "values": {
+                    "Teammate": "S. Patel",
+                    "Items": "Quesadilla",
+                    "Owes": "$7.50"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "screen.history",
+      "name": "Past rounds",
+      "roleIds": [
+        "teammate"
+      ],
+      "navigationId": "nav.main",
+      "content": [
+        {
+          "kind": "heading",
+          "id": "heading.history",
+          "text": "Past Rounds"
+        },
+        {
+          "kind": "table",
+          "id": "table.history",
+          "columns": [
+            "Date",
+            "Restaurant",
+            "Opened by",
+            "Grand total"
+          ],
+          "rows": [
+            {
+              "id": "round.sep14",
+              "values": {
+                "Date": "Sep 14",
+                "Restaurant": "Taco Fiesta",
+                "Opened by": "J. Alvarez",
+                "Grand total": "$58.50"
+              }
+            },
+            {
+              "id": "round.sep13",
+              "values": {
+                "Date": "Sep 13",
+                "Restaurant": "Pizza Palace",
+                "Opened by": "M. Chen",
+                "Grand total": "$71.20"
+              }
+            },
+            {
+              "id": "round.sep12",
+              "values": {
+                "Date": "Sep 12",
+                "Restaurant": "Sushi Go",
+                "Opened by": "S. Patel",
+                "Grand total": "$64.00"
+              }
+            }
+          ],
+          "onRow": {
+            "kind": "navigate",
+            "screenId": "screen.consolidated"
+          },
+          "showIn": [
+            "state.default",
+            "state.invalid"
+          ]
+        },
+        {
+          "kind": "empty-state",
+          "id": "empty.history",
+          "title": "No past rounds",
+          "text": "Closed rounds show up here.",
+          "action": {
+            "id": "btn.start-first-round",
+            "label": "Start a round",
+            "action": {
+              "kind": "navigate",
+              "screenId": "screen.open-round"
+            }
+          },
+          "showIn": [
+            "state.empty"
+          ]
+        }
+      ]
+    }
+  ],
+  "navigation": [
+    {
+      "kind": "top-nav",
+      "id": "nav.main",
+      "items": [
+        {
+          "id": "nav.today",
+          "label": "Today",
+          "action": {
+            "kind": "navigate",
+            "screenId": "screen.round"
+          }
+        },
+        {
+          "id": "nav.history",
+          "label": "History",
+          "action": {
+            "kind": "navigate",
+            "screenId": "screen.history"
+          }
+        }
+      ]
+    }
+  ]
+}

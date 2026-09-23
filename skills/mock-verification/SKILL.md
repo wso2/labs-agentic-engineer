@@ -1,6 +1,6 @@
 ---
 name: mock-verification
-description: "Smoke-walk a `web-application` in a real browser once it builds clean — stand it up in mock mode, walk every flow its wireframes draw, fix each failure where you find it, post progress item by item. Required for every change to a webapp component. Judging a DEPLOYED system is `aep-validation`'s job instead."
+description: "Smoke-walk a `web-application` in a real browser once it builds clean — stand it up in mock mode, walk every flow its prototype declares, fix each failure where you find it, post progress item by item. Required for every change to a webapp component. Judging a DEPLOYED system is `aep-validation`'s job instead."
 metadata:
   aep:
     kind: platform
@@ -10,13 +10,13 @@ metadata:
 # Mock verification
 
 A clean build says the code is well formed and nothing about what the screens
-do: a route the wireframe draws and the router never registered, a button wired
+do: a route the prototype declares and the router never registered, a button wired
 to nothing, a form that flips a row and sends no request. So you open the app
 and use it. Mock mode stands it up on this machine with no cluster, no sibling
 service and no IDP. You verify and repair in one pass.
 
 **This is a smoke walk: breadth over depth.** You are looking for a screen that
-is missing, an arrow that goes nowhere, a control that does nothing, a request
+is missing, a navigation that goes nowhere, a control that does nothing, a request
 that never leaves the page. Data, layout and wording are not your questions.
 Your scope is the whole component: a cycle's regressions land in shared chrome
 and on pages nobody meant to touch, so every flow is walked, whichever issue
@@ -26,14 +26,14 @@ built it.
 
 ### The map
 
-`specs/design/components/<component>/wireframes.dsl`, under the project root —
-your working directory, one level above the App Path you edit in. A `flow`
-block is the unit: one role and the screens that role walks, entry screen
-first. Walk every flow under its role (`?role=<name>`) by clicking from its
-entry screen; a screen in no flow is reached at its route. **The DSL is your
-only map**: you open a source file to repair, never to learn a route. A
-component with no `wireframes.dsl` gives you its registered routes instead, one
-flow per role.
+`specs/design/components/<component>/prototype.json`, under the project root —
+your working directory, one level above the App Path you edit in. An entry of
+its `flows` is the unit: one role (`roleId`) and the screens that role walks
+(`screenIds`), entry screen first. Walk every flow under its role
+(`?role=<name>`) by clicking from its entry screen; a screen in no flow is
+reached at its route. **The prototype is your only map**: you open a source
+file to repair, never to learn a route. A component with no `prototype.json`
+gives you its registered routes instead, one flow per role.
 
 ### Per screen
 
@@ -43,14 +43,14 @@ smoke.
 
 | | Question | Evidence |
 |---|---|---|
-| **Reach** | Did the arrow that names this screen bring you here, and does every `->` it draws land where it says? | the target's snapshot |
+| **Reach** | Did the control that navigates to this screen bring you here, and does every `navigate` action on it land where it says? | the target's snapshot |
 | **Act** | Does every drawn control change something visible when used? A create is in the next list, a filter narrows, a toggle flips a row. | the snapshot after the action |
 | **Request** | Did a change leave the page as the request the contract declares, with the status it declares? A row that flips and sends nothing is the one defect a build cannot see. | `agent-browser network requests` |
 
 ### Once per app
 
 - **Roles** (`mock/authz/roles.gen.ts` exists): each flow's entry screen under its own
-  role (`?role=<name>`), and once under a role the DSL gives no flow there.
+  role (`?role=<name>`), and once under a role the prototype gives no flow there.
   Both directions are defects. Then three more, which the scope model makes
   walkable and which no build can see:
   - **Every role, and the no-role visitor.** Walk `?role=<name>` for each role
@@ -83,8 +83,8 @@ smoke.
   next load in again, so the session being gone is outside; the click leaving
   the page is not.
 - **Probes**: submit one form empty; open one detail route with an id that does
-  not exist. The wireframe draws the happy path; these are the two states it
-  implies.
+  not exist. These are the two failure states every app owes, whether or not
+  the prototype draws them.
 - **Short window**: reload ONE screen that has a primary action low on the page
   at `agent-browser set viewport 1280 600`, and click that action. A layout that
   only works on a tall window is a layout most laptops do not have, and the way
@@ -123,7 +123,7 @@ other: the plan once, one line per item as it settles, the close once.
 
 ```text
 Mock verification: <component> — <N> items
-1. <Screen> (<role>): <its controls>; -> <the screens its arrows name>
+1. <Screen> (<role>): <its controls>; -> <the screens its actions navigate to>
 2. <Screen>: ...
 <N-4>. Roles
 <N-3>. Session

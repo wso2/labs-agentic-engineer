@@ -112,6 +112,7 @@ beforeEach(() => {
   mockCollab = soloCollab();
   mockSpecAgent = "";
   mockSpecFlow = "";
+  mockPrototypeOutdated = false;
   mockSearch.current = {};
 });
 
@@ -229,6 +230,7 @@ const mockMutateAsync = vi.fn();
 const mockPreflightRefetch = vi.fn();
 let mockSpecAgent = "";
 let mockSpecFlow = "";
+let mockPrototypeOutdated = false;
 vi.mock("../../projects/api/queries", () => ({
   useProject: () => ({ data: { displayName: "Test Project" } }),
   // `spec.agent` (#562) is what tells the workspace whether an agent is working
@@ -241,6 +243,7 @@ vi.mock("../../projects/api/queries", () => ({
         agent: mockSpecAgent,
         agentFlow: mockSpecFlow,
         designOutdated: false,
+        prototypeOutdated: mockPrototypeOutdated,
       },
     },
   }),
@@ -1354,7 +1357,7 @@ describe("SpecView resolve dependencies dialog (#252 Task 10)", () => {
     // Build already flushed once on its way here, so the listener's own flush
     // has to be counted, not merely observed.
     const flushesBeforeTurnEnd = mockFlush.mock.calls.length;
-    notifyTurnEnd(chatKeyFor("acme", "proj1"), "completed");
+    notifyTurnEnd(chatKeyFor("acme", "proj1"), "completed", "turn-1");
     // notifyTurnEnd dispatches SYNCHRONOUSLY and the listener's first act is
     // that flush, so this pins "a listener actually ran" right here — rather
     // than leaving it to be inferred from an unchanged dialog five seconds on.
@@ -1372,7 +1375,7 @@ describe("SpecView resolve dependencies dialog (#252 Task 10)", () => {
   it("does not touch preflight on a chat turn ending while no dialog is open", () => {
     render(<SpecView projectName="proj1" />);
 
-    notifyTurnEnd(chatKeyFor("acme", "proj1"), "completed");
+    notifyTurnEnd(chatKeyFor("acme", "proj1"), "completed", "turn-1");
 
     expect(mockPreflightRefetch).not.toHaveBeenCalled();
     expect(mockFlush).not.toHaveBeenCalled();
@@ -2184,5 +2187,78 @@ describe("SpecView — the API view's granting roles and audience", () => {
     expect(screen.getByText("Orders API")).toBeInTheDocument();
     expect(screen.queryByText(/^aud /)).not.toBeInTheDocument();
     expect(screen.queryByText(/Shopper/)).not.toBeInTheDocument();
+  });
+});
+
+// The Prototype stage (#813, #818): derived from the design cell as it
+// stands, it sends `/prototype` through the chat's seed slot and opens the
+// review page for one web-application.
+describe("SpecView — the Prototype stage", () => {
+  const CELL_PATH = "specs/design/design.cell";
+  const PROTOTYPE_PATH = "specs/design/components/storefront/prototype.json";
+
+  function withDesign(cell: string, extra: string[] = []) {
+    mockUseSpecFiles.mockReturnValue({
+      data: [CELL_PATH, "specs/design/components/storefront/design.json", ...extra].map((path) => ({
+        path,
+        sha: "sha",
+        group: "designs",
+      })),
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    mockUseSpecFileContent.mockImplementation((_project: string, entry: { path: string } | null) =>
+      entry?.path === CELL_PATH
+        ? { data: { sha: "sha", content: cell }, isPending: false, isError: false, error: null, refetch: vi.fn() }
+        : { data: undefined, isPending: true, isError: false, error: null, refetch: vi.fn() },
+    );
+  }
+  const WEB_CELL = "component storefront web-application\ncomponent orders-api service\n";
+
+  afterEach(() => {
+    consumePendingSeed(chatKeyFor("acme", "proj1"));
+  });
+
+  it("has no Prototype section when the cell declares no web-application", () => {
+    withDesign("component orders-api service\n");
+    render(<SpecView projectName="proj1" />);
+    const nav = screen.getByRole("navigation", { name: "Spec files" });
+    expect(within(nav).getByText("Validation")).toBeInTheDocument();
+    expect(within(nav).queryByText("Prototype")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Generate prototype" })).not.toBeInTheDocument();
+  });
+
+  it("Generate prototype sends /prototype as a guarded flow turn", () => {
+    withDesign(WEB_CELL);
+    render(<SpecView projectName="proj1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Generate prototype" }));
+    expect(consumePendingSeed(chatKeyFor("acme", "proj1"))).toEqual({
+      message: "/prototype",
+      guarded: true,
+    });
+  });
+
+  it("Review prototype opens the web-application's review page", () => {
+    withDesign(WEB_CELL, [PROTOTYPE_PATH]);
+    render(<SpecView projectName="proj1" />);
+    expect(screen.queryByRole("button", { name: "Generate prototype" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review prototype: storefront" }));
+    expect(mockNavigate).toHaveBeenCalledWith({
+      to: "/projects/$projectName/prototype/$component",
+      params: { projectName: "proj1", component: "storefront" },
+    });
+  });
+
+  it("an outdated prototype offers Regenerate prototype, which sends /prototype", () => {
+    mockPrototypeOutdated = true;
+    withDesign(WEB_CELL, [PROTOTYPE_PATH]);
+    render(<SpecView projectName="proj1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate prototype" }));
+    expect(consumePendingSeed(chatKeyFor("acme", "proj1"))).toEqual({
+      message: "/prototype",
+      guarded: true,
+    });
   });
 });

@@ -43,6 +43,7 @@ type FakeArtifactService struct {
 	GetDesignAtCommitFunc         func(ctx context.Context, orgID, projectID, commitSHA string) (map[string]string, error)
 	StatusSnapshotFunc            func(ctx context.Context, orgID, projectID string) (*spec.StatusSnapshot, error)
 	RequirementsFingerprintAtFunc func(ctx context.Context, orgID, projectID, at string) (string, error)
+	DesignFingerprintAtFunc       func(ctx context.Context, orgID, projectID, at string) (string, error)
 	ComponentCountAtTagFunc       func(ctx context.Context, orgID, projectID, tag string) (int, error)
 }
 
@@ -110,6 +111,16 @@ func (f *FakeArtifactService) RequirementsFingerprintAt(ctx context.Context, org
 		return "", nil
 	}
 	return f.RequirementsFingerprintAtFunc(ctx, orgID, projectID, at)
+}
+
+// DesignFingerprintAt defaults to the EMPTY fingerprint, for the same reason
+// RequirementsFingerprintAt does: most callers never reach the prototype
+// staleness check.
+func (f *FakeArtifactService) DesignFingerprintAt(ctx context.Context, orgID, projectID, at string) (string, error) {
+	if f.DesignFingerprintAtFunc == nil {
+		return "", nil
+	}
+	return f.DesignFingerprintAtFunc(ctx, orgID, projectID, at)
 }
 
 func (f *FakeArtifactService) ComponentCountAtTag(ctx context.Context, orgID, projectID, tag string) (int, error) {

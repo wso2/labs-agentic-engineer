@@ -169,6 +169,12 @@ type ArtifactService interface {
 	// because equal-by-accident is the failure that ships a stale design.
 	RequirementsFingerprintAt(ctx context.Context, orgID, projectID, at string) (string, error)
 
+	// DesignFingerprintAt reduces the design (minus every component's
+	// prototype.json) at one commit to a comparable value (#818) — the
+	// prototype staleness check reads it as the last prototype run saw it.
+	// An unresolvable commit is an error, as for RequirementsFingerprintAt.
+	DesignFingerprintAt(ctx context.Context, orgID, projectID, at string) (string, error)
+
 	// SetDesignBaselineResolver wires the build gate's staleness input (#575):
 	// the commit the newest successful design run read the project at. On the
 	// interface because the composition root has to reach it, and it cannot be
@@ -221,10 +227,9 @@ var allowedRequirementExts = []string{".md", ".excalidraw", ".dsl"}
 // JSON is the post-#70 component `design.json` (structured facts, save-gated
 // against the published schema) plus the FE-derived `*.gen.json` projections;
 // `.cell` is the project-level cell-diagram DSL (design.cell) that drives the
-// live architecture diagram; `.dsl` is the per-component wireframes DSL
-// (wireframes.dsl) — the build gate demands it for deployable
-// web-applications, so it must ride the bundle the gate reads.
-var allowedDesignExts = []string{".md", ".yaml", ".yml", ".json", ".cell", ".dsl"}
+// live architecture diagram. A web-application's prototype.json is JSON like
+// any other structured design file.
+var allowedDesignExts = []string{".md", ".yaml", ".yml", ".json", ".cell"}
 
 func hasAllowedDesignExt(name string) bool {
 	lower := strings.ToLower(name)

@@ -58,12 +58,27 @@ export interface SectionReason {
    */
   count: number;
   /** `document` opens the requirements document, where the settle controls
-   *  already live on the flagged lines; `update-design` re-derives. */
-  action: "document" | "update-design";
+   *  already live on the flagged lines; `update-design` re-derives;
+   *  `regenerate-prototype` sends `/prototype` again. */
+  action: "document" | "update-design" | "regenerate-prototype";
+}
+
+/**
+ * What the Prototype section offers (#813) — carried only by that section.
+ *
+ * `reviews` is one prototype entry per web-application whose prototype
+ * exists, in the order the cell declares them. `action` is the one turn the
+ * section can start right now: `generate` while a web-application has no
+ * prototype yet, `regenerate` once the design has moved past the prototypes,
+ * and nothing while the design is not ready or a turn is already writing here.
+ */
+export interface PrototypeStage {
+  action: "generate" | "regenerate" | null;
+  reviews: string[];
 }
 
 export interface RailSection {
-  id: "requirements" | "design" | "validation";
+  id: "requirements" | "design" | "prototype" | "validation";
   title: string;
   state: SectionState;
   reasons: SectionReason[];
@@ -73,6 +88,8 @@ export interface RailSection {
    * a clean turn's plan dissolves and the count goes with it.
    */
   progress?: { done: number; total: number };
+  /** The Prototype section's entries and action; absent on every other one. */
+  prototype?: PrototypeStage;
 }
 
 /** One declared-plan entry as the rail consumes it (#576) — a projection of
@@ -105,9 +122,17 @@ export interface RailInput {
   /** The declaring turn died leaving undone entries — the residue is the case
    *  for re-running the flow, so it surfaces as an attention reason. */
   planWreckage: boolean;
+  /** The components the design cell declares as web-applications, in cell
+   *  order (#813). Empty means the project has no Prototype stage at all. */
+  webApplications: string[];
+  /** The components whose prototype.json exists. */
+  prototypes: string[];
+  /** The design moved since the prototypes were generated (#818). */
+  prototypeOutdated: boolean;
 }
 
 const REQUIREMENTS_MOVED = "The requirements have changed since";
+const DESIGN_MOVED = "The design has changed since the prototype was generated";
 
 /**
  * Which section a running turn is changing.
@@ -128,6 +153,8 @@ const SECTION_FOR_FLOW: Record<string, RailSection["id"]> = {
   feature: "requirements",
   actor: "requirements",
   design: "design",
+  // Generation and a feedback batch alike: both write the prototypes.
+  prototype: "prototype",
 };
 
 function plural(n: number, one: string, many: string): string {
@@ -199,7 +226,8 @@ export function reasonCount(reasons: SectionReason[]): number {
 }
 
 /**
- * The three sections, in journey order, each carrying its state and reasons.
+ * The sections, in journey order, each carrying its state and reasons — the
+ * Prototype section only when the cell declares a web-application.
  *
  * ACTIVE is claimed for at most ONE section, only while an agent is working,
  * and WHICH one comes from the running turn's flow token — with one fallback:
@@ -220,9 +248,15 @@ export function railSections(input: RailInput): RailSection[] {
     : [];
 
   const requirements = requirementsReasons(input);
+  // Cell order, and only for components the cell still declares: a prototype
+  // left behind by a component that stopped being a web-application is not a
+  // review the stage offers.
+  const withPrototype = new Set(input.prototypes);
+  const reviews = input.webApplications.filter((c) => withPrototype.has(c));
   const has: Record<RailSection["id"], boolean> = {
     requirements: input.hasRequirements,
     design: input.hasDesign,
+    prototype: reviews.length > 0,
     validation: input.hasValidation,
   };
 
@@ -323,14 +357,45 @@ export function railSections(input: RailInput): RailSection[] {
     };
   };
 
+  // Rail order: Requirements, Design, Prototype, Validation.
+  const prototype = prototypeStage(input, reviews, activeID);
   return [
     section("requirements", "Requirements", requirements),
     // "Design", not "Designs" — one design, written across several documents.
     section("design", "Design", outdatedReason),
+    // No web-application, no stage: a service-only project has nothing to
+    // prototype, and a stage it could never finish would read as a gap.
+    ...(input.webApplications.length > 0
+      ? [{ ...section("prototype", "Prototype", prototype.reasons), prototype: prototype.stage }]
+      : []),
     // The validation criteria are written against the same stories the design
     // is, and the same re-derivation rewrites both — so they go stale together
     // and clear together. Flagging only the design would quietly assert that
     // criteria written against a story you have since rewritten are still fine.
     section("validation", "Validation", outdatedReason),
   ];
+}
+
+/**
+ * What the Prototype section (#813) adds to the shared state rules: its
+ * reasons, and what it offers.
+ *
+ * Its one reason is the design moving past the prototypes (#818) — never the
+ * requirements moving, which is the design's to answer first. Generate needs a
+ * design to generate FROM: one that exists and is not being written right now.
+ */
+function prototypeStage(
+  input: RailInput,
+  reviews: string[],
+  activeID: RailSection["id"] | undefined,
+): { reasons: SectionReason[]; stage: PrototypeStage } {
+  const outdated = input.prototypeOutdated && reviews.length > 0;
+  const reasons: SectionReason[] = outdated
+    ? [{ key: "design-moved", label: DESIGN_MOVED, count: 1, action: "regenerate-prototype" }]
+    : [];
+  const designReady = input.hasDesign && activeID !== "design";
+  const missing = reviews.length < input.webApplications.length;
+  const action: PrototypeStage["action"] =
+    activeID === "prototype" || !designReady ? null : outdated ? "regenerate" : missing ? "generate" : null;
+  return { reasons, stage: { action, reviews } };
 }
