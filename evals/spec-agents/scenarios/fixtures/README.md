@@ -17,7 +17,7 @@ drift.
   split, so the design section's security step has something to catalog.
 - `lunch-coordinator-design/` — design output of the `design-lunch-coordinator`
   run (2026-08-02, pass band 93), frozen as produced: `lunch-api` +
-  `lunch-webapp` components with design.json / openapi.yaml, design.cell, and
-  validation-criteria.json. `lunch-webapp/prototype.json` is curated: the run's
-  wireframes translated screen for screen when the prototype replaced them, and
-  kept valid by `test/fixtures.test.ts`.
+  `lunch-webapp` components with design.json / openapi.yaml / wireframes,
+  design.cell, and validation-criteria.json. `lunch-webapp/prototype.json` is
+  curated, not produced by the run: its wireframes translated screen for screen
+  into the optional prototype review, kept valid by `test/fixtures.test.ts`.

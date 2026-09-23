@@ -16,12 +16,12 @@
  * under the License.
  */
 
-// Every web-application in a design fixture carries what the platform now
-// builds it from: a prototype.json the shared model accepts for its directory,
-// whose roles are security.json role names when that file exists (the build
-// gate's rule), and the skills the architecture skill pins on a web app. A
+// Every web-application in a design fixture carries what the platform builds
+// it from: a wireframes.dsl, and the skills the architecture skill pins on a
+// web app. A prototype.json is optional (the /prototype review step); when a
+// fixture carries one, the shared model accepts it for its directory. A
 // fixture that drifted from this would feed the evals a design the platform
-// itself would refuse to build.
+// itself would refuse to build or review.
 
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
@@ -52,21 +52,17 @@ test("the design fixtures hold at least one web-application", () => {
 for (const { fixture, design, component } of webApplications()) {
   const dir = join(design, "components", component);
 
-  test(`${fixture}/${component}: prototype.json is a valid prototype of its component`, () => {
-    const parsed = parsePrototypeModel(JSON.parse(readFileSync(join(dir, "prototype.json"), "utf8")), { component });
-    assert.ok(parsed.ok, JSON.stringify(parsed.ok ? [] : parsed.issues));
-    const security = join(design, "security.json");
-    if (!existsSync(security)) return;
-    const declared = new Set(
-      (JSON.parse(readFileSync(security, "utf8")) as { roles: { name: string }[] }).roles.map((r) => r.name),
-    );
-    for (const role of parsed.model.roles) assert.ok(declared.has(role.id), `role ${role.id} is not a security.json role`);
+  test(`${fixture}/${component}: carries wireframes.dsl and pins the wireframes and web-app stack skills`, () => {
+    assert.ok(existsSync(join(dir, "wireframes.dsl")), "missing wireframes.dsl");
+    const { skillsPinned } = JSON.parse(readFileSync(join(dir, "design.json"), "utf8")) as { skillsPinned: string[] };
+    for (const skill of ["wireframes", "react-webapp"]) assert.ok(skillsPinned.includes(skill), `missing ${skill}`);
   });
 
-  test(`${fixture}/${component}: pins the prototype and web-app stack skills, and no wireframes`, () => {
-    const { skillsPinned } = JSON.parse(readFileSync(join(dir, "design.json"), "utf8")) as { skillsPinned: string[] };
-    for (const skill of ["prototype", "react-webapp"]) assert.ok(skillsPinned.includes(skill), `missing ${skill}`);
-    assert.ok(!skillsPinned.includes("excalidraw-wireframes"));
-    assert.ok(!existsSync(join(dir, "wireframes.dsl")));
-  });
+  const prototype = join(dir, "prototype.json");
+  if (existsSync(prototype)) {
+    test(`${fixture}/${component}: prototype.json is a valid prototype of its component`, () => {
+      const parsed = parsePrototypeModel(JSON.parse(readFileSync(prototype, "utf8")), { component });
+      assert.ok(parsed.ok, JSON.stringify(parsed.ok ? [] : parsed.issues));
+    });
+  }
 }
