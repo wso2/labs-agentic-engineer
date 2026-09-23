@@ -124,7 +124,7 @@ function scenarioRuns(s: Exclude<ProjectScenario, "error">): MilestoneRunView[] 
 }
 
 // Whether the design has moved past the prototypes (aep:mock:prototype=outdated,
-// #818) — the Spec rail's Regenerate prototype and the review page's Outdated
+// #818) — the Spec rail Prototype header's Regenerate and the review page's Outdated
 // banner. Off by default: every scenario's status carries the field as false.
 function prototypeOutdated(): boolean {
   return localStorage.getItem("aep:mock:prototype") === "outdated";

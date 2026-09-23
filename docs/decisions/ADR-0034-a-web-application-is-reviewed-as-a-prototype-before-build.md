@@ -47,7 +47,8 @@ and it was the wrong one to review:
    pinned skill that carries it into the coding run, and the map the mock walk
    follows. It is written by the `/prototype` flow (the `prototype` skill with
    the organization's design-system skill), never by `/design`, and generation
-   is a user click (**Generate prototype**), never platform-fired.
+   is a user click (**Generate** in the Spec rail's Prototype header), never
+   platform-fired.
 
 3. **The model is a versioned, controlled registry** (`@aep/prototype-model`,
    schema version 1): layouts, navigation, content, forms, data, workflow nodes
