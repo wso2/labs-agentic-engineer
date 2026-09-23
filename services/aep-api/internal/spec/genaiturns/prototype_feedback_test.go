@@ -42,6 +42,12 @@ func feedbackAnnotation(id string) gen.PrototypeAnnotationInput {
 	}
 }
 
+// feedbackTurn is a create-turn body carrying the batch as it must arrive: a
+// room turn on a bare /prototype.
+func feedbackTurn(fb *gen.PrototypeFeedbackInput, instruction string) *gen.TurnInputBody {
+	return &gen.TurnInputBody{Instruction: instruction, Collab: true, PrototypeFeedback: fb}
+}
+
 func feedbackFixture() *gen.PrototypeFeedbackInput {
 	whole := feedbackAnnotation("ann-2")
 	whole.FlowID = nil
@@ -55,7 +61,7 @@ func feedbackFixture() *gen.PrototypeFeedbackInput {
 // Every field reaches the agents service exactly as the console sent it: the
 // BFF validates and forwards, it never words anything.
 func TestPrototypeFeedbackForwardsEveryFieldUnchanged(t *testing.T) {
-	block, err := prototypeFeedbackFromJSON(feedbackFixture(), "/prototype", false)
+	block, err := prototypeFeedbackFromJSON(feedbackTurn(feedbackFixture(), "/prototype"), false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -76,9 +82,25 @@ func TestPrototypeFeedbackForwardsEveryFieldUnchanged(t *testing.T) {
 // No batch, no block — an ordinary turn reaches the agents service
 // byte-identical to one sent before this channel existed.
 func TestPrototypeFeedbackAbsent(t *testing.T) {
-	block, err := prototypeFeedbackFromJSON(nil, "hello", true)
+	block, err := prototypeFeedbackFromJSON(&gen.TurnInputBody{Instruction: "hello"}, true)
 	if err != nil || block != nil {
 		t.Fatalf("absent batch = (%v, %v), want (nil, nil)", block, err)
+	}
+}
+
+// A batch must ride a room turn. A non-room turn commits nothing (the turn
+// runner is preview-only; only the collab committer persists an agent's
+// edits), so the revision would complete, report success and be lost.
+func TestPrototypeFeedbackRequiresARoomTurn(t *testing.T) {
+	body := feedbackTurn(feedbackFixture(), "/prototype")
+	body.Collab = false
+	_, err := prototypeFeedbackFromJSON(body, false)
+	var ae *apierr.Error
+	if !errors.As(err, &ae) || ae.Status != 400 {
+		t.Fatalf("want a 400 apierr, got %v", err)
+	}
+	if !strings.Contains(ae.Message, "collab") {
+		t.Fatalf("message %q does not say the turn must be a collab turn", ae.Message)
 	}
 }
 
@@ -126,7 +148,7 @@ func TestPrototypeFeedbackRejectsMalformedBatches(t *testing.T) {
 			if tc.mutate != nil {
 				tc.mutate(f)
 			}
-			_, err := prototypeFeedbackFromJSON(f, tc.instruction, tc.aimed)
+			_, err := prototypeFeedbackFromJSON(feedbackTurn(f, tc.instruction), tc.aimed)
 			if err == nil {
 				t.Fatal("expected a rejection")
 			}

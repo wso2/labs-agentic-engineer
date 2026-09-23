@@ -3403,7 +3403,7 @@ type TurnInputBody struct {
 	// Deliberately a field and NOT a `/command` prefix on `instruction`: a command IS the user's message (the console adds nothing to a line they typed), and an anchored turn carries prose they wrote in their own words, so a prefix would put machinery in their voice. Mirrors the console's own resolve/reconsider intent, whose only job is the same. Absent for a turn with no anchor.
 	Intent TurnInputBodyIntent `json:"intent,omitempty"`
 
-	// PrototypeFeedback A prototype review batch (#817). Valid only when `instruction` is exactly `/prototype`, and never together with `anchor`/`intent`: a batch aims at stable prototype IDs, not at a selection in a document. Absent for every other turn. JSON-only — a review batch carries no attachments, so the multipart form has no such part.
+	// PrototypeFeedback A prototype review batch (#817). Valid only when `instruction` is exactly `/prototype` and `collab` is true, and never together with `anchor`/`intent`: a batch aims at stable prototype IDs, not at a selection in a document. Room turns only because the room's committer is the one path an agent's revision reaches git by — a non-room turn commits nothing. Absent for every other turn. JSON-only — a review batch carries no attachments, so the multipart form has no such part.
 	PrototypeFeedback *PrototypeFeedbackInput `json:"prototypeFeedback,omitempty"`
 
 	// Target Optional target (e.g. a doc type)

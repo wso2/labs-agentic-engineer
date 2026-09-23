@@ -54,12 +54,21 @@ const (
 // prototypeFeedbackFromJSON converts the request's batch into the agents-service
 // wire block, or nil when the turn carries none. aimed says the request also
 // carries document aiming (anchor/intent), which a batch excludes.
-func prototypeFeedbackFromJSON(fb *gen.PrototypeFeedbackInput, instruction string, aimed bool) (*agentsvc.PrototypeFeedbackBlock, error) {
+//
+// A batch rides a ROOM turn (`collab: true`) and nothing else. The agent's
+// revision reaches git only through the collab committer: a non-room turn is
+// preview-only (see the turn runner) and commits nothing, so a batch sent on
+// one would complete, report success, and leave the prototype unchanged.
+func prototypeFeedbackFromJSON(body *gen.TurnInputBody, aimed bool) (*agentsvc.PrototypeFeedbackBlock, error) {
+	fb := body.PrototypeFeedback
 	if fb == nil {
 		return nil, nil
 	}
-	if strings.TrimSpace(instruction) != prototypeCommand {
+	if strings.TrimSpace(body.Instruction) != prototypeCommand {
 		return nil, apierr.BadRequest("prototypeFeedback is only valid on a /prototype instruction")
+	}
+	if !body.Collab {
+		return nil, apierr.BadRequest("prototypeFeedback must be a collab (room) turn: only the room's committer saves the revision, so send it with collab: true")
 	}
 	if aimed {
 		return nil, apierr.BadRequest("prototypeFeedback cannot be combined with anchor or intent")

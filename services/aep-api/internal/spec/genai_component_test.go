@@ -1598,7 +1598,9 @@ func feedbackBody(instruction string, mutate func(fb map[string]any)) string {
 	if mutate != nil {
 		mutate(fb)
 	}
-	body, _ := json.Marshal(map[string]any{"instruction": instruction, "prototypeFeedback": fb})
+	// A room turn, as the console sends it: only the collab committer persists
+	// an agent's edits, so a batch on any other turn is refused.
+	body, _ := json.Marshal(map[string]any{"instruction": instruction, "collab": true, "prototypeFeedback": fb})
 	return string(body)
 }
 
@@ -1635,12 +1637,37 @@ func TestPrototypeFeedback_ForwardedUnchanged(t *testing.T) {
 	if !reflect.DeepEqual(sent.PrototypeFeedback, want) {
 		t.Fatalf("forwarded batch = %+v, want %+v", sent.PrototypeFeedback, want)
 	}
+	// A ROOM turn: the agent edits the project's room doc and the collab
+	// committer persists it — the only path an agent's edits reach git by.
+	if c := r.fake.sentTurn(t, 0).req.Collab; c == nil || c.RoomID != "spec-"+testOrg+"-"+testProj {
+		t.Fatalf("feedback turn collab block = %+v, want the project's room", c)
+	}
 	row := r.turns.row(t, out.TurnID)
 	if row.Flow != "prototype" || !row.Revision {
 		t.Fatalf("turn row flow=%q revision=%v, want a prototype revision", row.Flow, row.Revision)
 	}
 	if row.Summary != "/prototype" {
 		t.Fatalf("display record = %q, want the instruction verbatim", row.Summary)
+	}
+}
+
+// A batch on a non-room turn is refused before a turn opens: such a turn
+// commits nothing, so the revision would complete and be lost (#817 live bug).
+func TestPrototypeFeedback_RequiresARoomTurn(t *testing.T) {
+	r := newGenaiRig(t, map[string]string{"README.md": "hi\n"})
+	solo := map[string]any{}
+	_ = json.Unmarshal([]byte(feedbackBody("/prototype", nil)), &solo)
+	delete(solo, "collab")
+	body, _ := json.Marshal(solo)
+	rec := r.h.AsOrg(testOrg).Post(turnsPath(convUUID), string(body))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code %d, want 400 (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "collab") {
+		t.Errorf("400 body %s does not name the collab requirement", rec.Body.String())
+	}
+	if r.fake.turns(t) != 0 {
+		t.Error("agents dispatched a non-room feedback turn")
 	}
 }
 

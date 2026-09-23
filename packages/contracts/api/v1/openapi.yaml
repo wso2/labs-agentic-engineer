@@ -8445,8 +8445,10 @@ components:
           - $ref: '#/components/schemas/PrototypeFeedbackInput'
           description: >
             A prototype review batch (#817). Valid only when `instruction` is exactly
-            `/prototype`, and never together with `anchor`/`intent`: a batch aims at stable
-            prototype IDs, not at a selection in a document. Absent for every other turn.
+            `/prototype` and `collab` is true, and never together with `anchor`/`intent`: a
+            batch aims at stable prototype IDs, not at a selection in a document. Room turns
+            only because the room's committer is the one path an agent's revision reaches
+            git by — a non-room turn commits nothing. Absent for every other turn.
             JSON-only — a review batch carries no attachments, so the multipart form has no
             such part.
           x-go-type-skip-optional-pointer: false
