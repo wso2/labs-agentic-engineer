@@ -41,7 +41,9 @@ An absent kind means `org`, which is a real decision, not a default to lean on:
   `wireframes`, `validation-criteria`, `task-planning`), the `console`
   narration policy, the coding run's own workflow skills (`aep`,
   `acceptance-run`, `mock-verification`) and the browser CLI they drive
-  (`agent-browser`), and one reference skill both sides read:
+  (`agent-browser`); `modernize-extract` (authored here so it reconciles into
+  every org library, but meant to run on a developer's machine in a
+  **legacy** repo — see below); and one reference skill both sides read:
   `authorization-model`, the platform's authorization invariants stated once
   (ADR-0030 to ADR-0033) so no design or stack skill restates them.
 - **`org`** — the org-visible stack skills (`go`, `ballerina`, `react-webapp`,
@@ -254,6 +256,12 @@ To use these skills in your own Claude Code, copy the directories into
 `~/.claude/skills/` (or point a project's `.claude/skills/` at them). Nothing
 assembles a plugin any more — a coding session reads a plain skills directory,
 which is exactly what your own Claude Code reads.
+
+**`modernize-extract` is the one library skill meant to run outside the
+platform** — in a legacy application repo, before anything is imported into
+AEP (ADR-0020). It is `audience: [design]` so it is not mirrored into project
+coding sessions; developers copy it the same way as above. Its body refuses to
+run if `specs/requirements/` or `specs/design/` already exists.
 
 ## Conventions
 

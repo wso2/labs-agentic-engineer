@@ -1,0 +1,37 @@
+# Design from an imported legacy-expense requirements bundle.
+# Starts from the curated modernize-extract-shaped fixture — no interview
+# for the PRD itself; design may still ask dependency questions.
+
+brief:
+  name: legacy-expense
+  idea: >-
+    Rebuild employee expense submission, manager approval, and finance payout
+    tracking from an imported requirements bundle (not from legacy folder structure).
+  persona: >-
+    Platform engineer onboarding an existing expense app into AEP; wants a
+    clean greenfield design, not a re-host of the old layout.
+  facts:
+    - Sign-in is company SSO via an identity provider.
+    - Expenses have statuses draft/submitted/approved/rejected/paid.
+    - Manager approval is required above a configurable amount threshold.
+    - Receipts are required above a receipt threshold and stored as blobs.
+    - Finance marks approved expenses paid; no bank transfer in v1.
+    - Email notifications for approval/rejection are a capability, not a binding.
+  fallback: >-
+    Prefer the smallest reasonable v1; do not invent legacy folder names as components.
+
+fixture: legacy-expense-requirements
+
+rubric:
+  mustCover:
+    - item: The design.md ER model reflects Expense and Approval entities from domain-model.md
+      weight: 2
+    - Manager approval threshold / receipt-required rules appear in validation criteria or design
+    - A web frontend and a backend/API component are both designed
+    - Identity-provider / SSO sign-in appears in the design
+  mustNot:
+    - Components named after legacy folders (expense-management-api, expense-management-webapp, hr-entity-service)
+    - importAsIs or sourceMode language in the design
+    - A component that is a byte-for-byte re-hosting of the old application
+    - Native mobile app component
+    - Bank transfer / payroll execution

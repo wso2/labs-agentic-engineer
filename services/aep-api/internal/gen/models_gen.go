@@ -1740,6 +1740,9 @@ type CreateProjectRequest struct {
 
 	// RepoName Repository name for the project's GitHub repo; defaults to the project name, the organization is fixed server-side (issue #71).
 	RepoName string `json:"repoName,omitempty"`
+
+	// RequirementsImportPending The caller will POST a requirements bundle next (`import-requirements`, ADR-0020). Suppress the create-time `/start` kickoff permanently — the imported corpus is the brief, and an interview started before import lands would be overwritten when the turn finishes. After import the project proceeds from `/design` like any other. Omitted/false keeps today's greenfield create.
+	RequirementsImportPending bool `json:"requirementsImportPending,omitempty"`
 }
 
 // CreateRcaAgentReportRequest Write-side request for a new RCA-agent alert report (issue
@@ -2525,6 +2528,16 @@ type RegisterExternalResourceRequest struct {
 	// Provider The concrete system this resource is ("Open Exchange Rates").
 	Provider     string                `json:"provider"`
 	ResourceDocs []ResourceDocWriteDTO `json:"resourceDocs,omitempty"`
+}
+
+// RequirementsImportResult Result of importing a requirements bundle into a project.
+type RequirementsImportResult struct {
+	// Files Repo-relative paths written under specs/requirements/
+	Files []string `json:"files"`
+
+	// Tag The version name the save gate cut (ADR-0030), e.g. v1
+	Tag      string   `json:"tag"`
+	Warnings []string `json:"warnings"`
 }
 
 // ResourceContract The contract as held at one level — `{ type, path }`, the path relative to that level's store (the org docs repo for a registry record, the dependency directory for a project copy). No URL form exists. On a project copy, origin says where the file came from and accepted is the user's permission for an assumed one (platform-written).
@@ -3638,6 +3651,12 @@ type PutProjectReferencesMultipartBody struct {
 	Files []openapi_types.File `json:"files"`
 }
 
+// ImportRequirementsMultipartBody defines parameters for ImportRequirements.
+type ImportRequirementsMultipartBody struct {
+	// File Gzip-compressed tarball of a single top-level directory of flat requirements files (prd.md required)
+	File openapi_types.File `json:"file"`
+}
+
 // GetSpecCollabSessionParams defines parameters for GetSpecCollabSession.
 type GetSpecCollabSessionParams struct {
 	// Authorization Bearer token; the display identity is decoded from it
@@ -3741,6 +3760,9 @@ type CreateIssueJSONRequestBody = CreateIssueRequest
 
 // PutProjectReferencesMultipartRequestBody defines body for PutProjectReferences for multipart/form-data ContentType.
 type PutProjectReferencesMultipartRequestBody PutProjectReferencesMultipartBody
+
+// ImportRequirementsMultipartRequestBody defines body for ImportRequirements for multipart/form-data ContentType.
+type ImportRequirementsMultipartRequestBody ImportRequirementsMultipartBody
 
 // PromoteTaskFromIssueJSONRequestBody defines body for PromoteTaskFromIssue for application/json ContentType.
 type PromoteTaskFromIssueJSONRequestBody = PromoteFromIssueRequest

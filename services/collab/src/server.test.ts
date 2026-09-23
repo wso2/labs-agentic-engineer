@@ -33,6 +33,7 @@ import {
   type CollabContext,
 } from "./server.js";
 import { filesMap } from "./seed.js";
+import { markdownToFragment } from "@aep/collab-doc";
 import { devSeedFiles } from "./fixtures.js";
 import type { Document } from "@hocuspocus/server";
 import {
@@ -539,4 +540,147 @@ test("requestFreshToken returns null when no connections", async () => {
     broadcastStateless: () => {},
   };
   assert.equal(await requestFreshToken(doc as never, {}, ROOM), null);
+});
+
+// Resync-on-demand (onboarding #702): a room that connected before an import
+// committed to git never learns about it on its own — `onLoadDocument` only
+// runs for the first joiner. A `{type:"resync",id}` message has to seed what
+// git now holds and ack with a matching id.
+test("resync seeds a file the room is missing and baselines it", async () => {
+  ensureRoomState(ROOM, "shop");
+  const sent: string[] = [];
+  const hook = buildStatelessHook(prodConfig, {
+    bff: fakeBff({
+      fetchSpecFiles: async () => [
+        { path: "specs/requirements/prd.md", content: "# imported PRD\n", sha: "s9" },
+      ],
+    }),
+  });
+  const doc = new Y.Doc() as Document;
+  await hook({
+    connection: {
+      context: {
+        user: { name: "Jo", email: "j", kind: "user" },
+        token: "jwt-abc",
+        projectName: "shop",
+      } satisfies CollabContext,
+      sendStateless: (payload: string) => sent.push(payload),
+    } as never,
+    documentName: ROOM,
+    document: doc,
+    payload: JSON.stringify({ type: "resync", id: "r1" }),
+  });
+
+  assert.match(
+    doc.getXmlFragment("specs/requirements/prd.md").toString(),
+    /imported PRD/,
+  );
+  assert.deepEqual(JSON.parse(sent[0]!), { type: "resynced", id: "r1" });
+  assert.deepEqual(roomState(ROOM)!.baseline.get("specs/requirements/prd.md"), {
+    content: "# imported PRD\n",
+    sha: "s9",
+  });
+});
+
+test("resync never overwrites a path the room already holds, live or baselined", async () => {
+  const state = ensureRoomState(ROOM, "shop");
+  const doc = new Y.Doc() as Document;
+  // Simulate a live, in-progress edit already in the room — never baselined,
+  // exactly like a file an agent or the seed-on-load path has not yet touched
+  // being edited straight from a fresh, empty fragment.
+  const fragment = doc.getXmlFragment("specs/requirements/domain-model.md");
+  markdownToFragment("# live edit, not yet saved\n", fragment);
+
+  const hook = buildStatelessHook(prodConfig, {
+    bff: fakeBff({
+      fetchSpecFiles: async () => [
+        {
+          path: "specs/requirements/domain-model.md",
+          content: "# stale git copy\n",
+          sha: "s-old",
+        },
+      ],
+    }),
+  });
+  const sent: string[] = [];
+  await hook({
+    connection: {
+      context: {
+        user: { name: "Jo", email: "j", kind: "user" },
+        token: "jwt-abc",
+        projectName: "shop",
+      } satisfies CollabContext,
+      sendStateless: (payload: string) => sent.push(payload),
+    } as never,
+    documentName: ROOM,
+    document: doc,
+    payload: JSON.stringify({ type: "resync", id: "r2" }),
+  });
+
+  assert.match(
+    doc.getXmlFragment("specs/requirements/domain-model.md").toString(),
+    /live edit, not yet saved/,
+  );
+  assert.ok(
+    !state.baseline.has("specs/requirements/domain-model.md"),
+    "a path the room already held must not gain a baseline entry from a resync",
+  );
+  assert.deepEqual(JSON.parse(sent[0]!), { type: "resynced", id: "r2" });
+});
+
+test("resync acks immediately in dev mode without reading the BFF", async () => {
+  let called = false;
+  const hook = buildStatelessHook(devConfig, {
+    bff: fakeBff({
+      fetchSpecFiles: async () => {
+        called = true;
+        return [];
+      },
+    }),
+  });
+  const sent: string[] = [];
+  await hook({
+    connection: {
+      context: {
+        user: { name: "Jo", email: "j", kind: "user" },
+        token: "jwt-abc",
+        projectName: "shop",
+      } satisfies CollabContext,
+      sendStateless: (payload: string) => sent.push(payload),
+    } as never,
+    documentName: ROOM,
+    document: new Y.Doc() as Document,
+    payload: JSON.stringify({ type: "resync", id: "r3" }),
+  });
+  assert.equal(called, false);
+  assert.deepEqual(JSON.parse(sent[0]!), { type: "resynced", id: "r3" });
+});
+
+test("resync reports resync-error when the BFF read fails", async () => {
+  ensureRoomState(ROOM, "shop");
+  const hook = buildStatelessHook(prodConfig, {
+    bff: fakeBff({
+      fetchSpecFiles: async () => {
+        throw new BffReadError("shop", 500);
+      },
+    }),
+  });
+  const sent: string[] = [];
+  await hook({
+    connection: {
+      context: {
+        user: { name: "Jo", email: "j", kind: "user" },
+        token: "jwt-abc",
+        projectName: "shop",
+      } satisfies CollabContext,
+      sendStateless: (payload: string) => sent.push(payload),
+    } as never,
+    documentName: ROOM,
+    document: new Y.Doc() as Document,
+    payload: JSON.stringify({ type: "resync", id: "r4" }),
+  });
+  const msg = JSON.parse(sent[0]!) as { type: string; id: string; message: string };
+  assert.equal(msg.type, "resync-error");
+  assert.equal(msg.id, "r4");
+  assert.match(msg.message, /Failed to read spec files for shop \(500\)/);
 });

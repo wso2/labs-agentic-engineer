@@ -114,6 +114,25 @@ func TestCreateProject_HoldsTheKickoffWhileReferencesAreComing(t *testing.T) {
 	}
 }
 
+// A requirements bundle is the primary brief for onboarding (ADR-0020), so a
+// create that says one is coming SUPPRESSES the kickoff — `/start` would
+// interview and then overwrite the import when the turn lands.
+func TestCreateProject_SuppressesKickoffForRequirementsImport(t *testing.T) {
+	t.Parallel()
+	k := &fakeKickoff{}
+	svc := createSvcWithKickoff(t, k, &fakeDescriptorWriter{}, nil)
+
+	if _, err := svc.CreateProject(context.Background(), "acme", &gen.CreateProjectRequest{
+		Name:                        "legacy-expense",
+		RequirementsImportPending: true,
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if calls, _, _ := k.seen(); calls != 0 {
+		t.Fatalf("kickoffs = %d, want 0 while requirements import is pending", calls)
+	}
+}
+
 // The kickoff hangs off the repo branch, after the descriptor commit that
 // carries the idea — so a project whose repo never provisioned has nothing to
 // read the idea from and nothing to interview against.

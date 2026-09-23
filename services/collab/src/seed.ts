@@ -141,12 +141,18 @@ function isPresent(doc: Y.Doc, file: SpecFile): boolean {
  * ten-file bundle, but silent data loss is not something to leave unobserved, so
  * a dropped file is re-seeded WITHOUT a stable identity (content present, at the
  * cost of that one file doubling on a future rejoin) and reported.
+ *
+ * Returns the files this call actually seeded (a subset of `files` — the ones
+ * that were missing before the call), so a caller re-seeding a LIVE room
+ * (rather than a fresh load) knows exactly which paths are new and need a
+ * fresh committer baseline; an already-present path's baseline is untouched,
+ * since resetting it would break the flush's diff against a live edit.
  */
 export function seedDocument(
   doc: Y.Doc,
   files: SpecFile[],
   onAnomaly?: (message: string) => void,
-): void {
+): SpecFile[] {
   const seeded: SpecFile[] = [];
   doc.transact(() => {
     for (const file of files) {
@@ -157,19 +163,21 @@ export function seedDocument(
   });
 
   const dropped = seeded.filter((file) => !isPresent(doc, file));
-  if (dropped.length === 0) return;
-  doc.transact(() => {
-    for (const file of dropped) {
-      onAnomaly?.(
-        `seed identity collision on ${file.path} — re-seeded without a stable id`,
-      );
-      if (isMarkdownPath(file.path)) {
-        markdownToFragment(file.content, doc.getXmlFragment(file.path));
-      } else {
-        const text = new Y.Text();
-        filesMap(doc).set(file.path, text);
-        text.insert(0, file.content);
+  if (dropped.length > 0) {
+    doc.transact(() => {
+      for (const file of dropped) {
+        onAnomaly?.(
+          `seed identity collision on ${file.path} — re-seeded without a stable id`,
+        );
+        if (isMarkdownPath(file.path)) {
+          markdownToFragment(file.content, doc.getXmlFragment(file.path));
+        } else {
+          const text = new Y.Text();
+          filesMap(doc).set(file.path, text);
+          text.insert(0, file.content);
+        }
       }
-    }
-  });
+    });
+  }
+  return seeded;
 }

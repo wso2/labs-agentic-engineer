@@ -414,6 +414,15 @@ export function buildAfterUnloadHook(deps: CollabDeps) {
   };
 }
 
+/** The connection's live token, falling back to the room's last-seen one — same
+ *  fallback the forced unload flush relies on when no connection is left. */
+function tokenFor(
+  data: Pick<onStatelessPayload, "connection" | "documentName">,
+): string | null {
+  const ctx = data.connection.context as CollabContext | undefined;
+  return ctx?.token ?? roomState(data.documentName)?.lastToken ?? null;
+}
+
 // Flush-on-demand (#162): the console requests a commit BEFORE triggering a
 // build. `POST /build` tags git HEAD, so the room's live doc edits (which
 // otherwise reach git only on the debounce / last-peer-leave) must land first.
@@ -451,6 +460,65 @@ export function buildStatelessHook(config: CollabConfig, deps: CollabDeps) {
         pendingTokenPlease.get(msg.id)?.resolve(value);
       }
       deps.log?.(`token refreshed for ${data.documentName}`);
+      return;
+    }
+
+    // Resync-on-demand (onboarding #702): a committed requirements import
+    // lands straight in git, bypassing the room entirely, so a room that was
+    // already live before the import — another tab, another viewer — never
+    // learns about it; `onLoadDocument` only runs for the FIRST joiner, and
+    // this room already has one. A stateless `{type:"resync",id}` message
+    // re-reads the project's files and seeds whatever the room is still
+    // missing via `seedDocument`, which never overwrites an existing entry —
+    // a live edit in progress is untouched. Only the paths this call
+    // actually seeds get a fresh committer baseline; an already-tracked
+    // path's baseline stays whatever the room's own history already made it.
+    // A clean/dev/no-BFF room acks immediately (nothing more to seed than
+    // what devMode/no BFF ever had).
+    if (msg.type === "resync") {
+      const ackResync = (extra: Record<string, unknown> = {}) =>
+        data.connection.sendStateless(
+          JSON.stringify({ type: "resynced", id: msg.id, ...extra }),
+        );
+
+      const state = roomState(data.documentName);
+      if (config.devMode || !deps.bff || !state) {
+        ackResync(); // nothing more to seed than what devMode/no BFF ever had
+        return;
+      }
+      const token = tokenFor(data);
+      if (!token) {
+        data.connection.sendStateless(
+          JSON.stringify({
+            type: "resync-error",
+            id: msg.id,
+            message: "no token to resync with",
+          }),
+        );
+        return;
+      }
+      try {
+        const fetched = await deps.bff.fetchSpecFiles(token, state.projectName);
+        const files = fetched.filter((f) => !isReferenceDocPath(f.path));
+        const onAnomaly = (message: string) =>
+          deps.log?.(`seed anomaly in ${data.documentName}: ${message}`);
+        const seeded = seedDocument(data.document, files, onAnomaly);
+        for (const f of seeded) {
+          state.baseline.set(f.path, { content: f.content, sha: f.sha });
+        }
+        deps.log?.(
+          `resynced ${data.documentName} (${seeded.length} new file(s)) from BFF`,
+        );
+        ackResync();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "resync failed";
+        deps.log?.(
+          `committer: on-demand resync failed for ${data.documentName} (${message})`,
+        );
+        data.connection.sendStateless(
+          JSON.stringify({ type: "resync-error", id: msg.id, message }),
+        );
+      }
       return;
     }
 

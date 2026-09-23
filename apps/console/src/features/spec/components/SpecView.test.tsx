@@ -102,6 +102,7 @@ const soloCollab = () => ({
   flush: mockFlush,
   flushError: null as string | null,
   clearFlushError: vi.fn(),
+  resyncRoom: vi.fn().mockResolvedValue(undefined),
 });
 let mockCollab = soloCollab();
 vi.mock("../collab/useCollabSpec", () => ({
@@ -269,6 +270,18 @@ vi.mock("../api/queries", () => ({
   useSpecFileContent: (...args: unknown[]) => mockUseSpecFileContent(...args),
   useDesignDependencies: (...args: unknown[]) =>
     mockUseDesignDependencies(...args),
+  useImportRequirements: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+    isError: false,
+    error: null,
+    reset: vi.fn(),
+  }),
+}));
+
+vi.mock("./ImportRequirementsDialog", () => ({
+  ImportRequirementsDialog: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="import-requirements-dialog" /> : null,
 }));
 
 // The Security entry's own wiring. Stubbed like every other query here: these
@@ -1295,6 +1308,72 @@ describe("SpecView — a document linked from the chat", () => {
       expect.objectContaining({ to: "/projects/$projectName/spec", params: { projectName: "proj1" }, replace: true }),
     );
     mockSearch.current = {};
+  });
+});
+
+// `?import=requirements` (ADR-0020) is the same one-shot shape: open the
+// dialog once, then strip the param so a reload after the user closes it (or
+// completes the import) does not reopen it.
+describe("SpecView — import requirements on arrival", () => {
+  it("opens the dialog once and strips only the import param", async () => {
+    render(<SpecView projectName="proj1" openImportOnMount />);
+
+    expect(
+      await screen.findByTestId("import-requirements-dialog"),
+    ).toBeInTheDocument();
+    expect(mockNavigate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "/projects/$projectName/spec",
+        params: { projectName: "proj1" },
+        search: expect.any(Function),
+        replace: true,
+      }),
+    );
+
+    // The updater strips `import` alone — a `generate`/`view`/`file` param
+    // arriving alongside it (or set afterward) must survive the strip.
+    const call = mockNavigate.mock.calls.find(
+      ([arg]) => arg?.to === "/projects/$projectName/spec",
+    );
+    const search = call?.[0].search as (prev: Record<string, unknown>) => Record<string, unknown>;
+    expect(search({ import: "requirements", generate: "design" })).toEqual({
+      generate: "design",
+    });
+  });
+});
+
+// canImportRequirements gates the header's Import requirements launcher —
+// BASE_FILES carries no requirements group entry, so these start from the
+// same "nothing imported yet" state the dialog-on-arrival tests above do.
+//
+// A project name of its own, not "proj1": `useLocalTurnActivity`'s claims
+// (chatStore.ts) are real module-level state keyed by (org, project), live
+// for the whole test-file run rather than reset per test — sharing "proj1"
+// with the file's many send/dispatch tests risks reading a stale claim this
+// describe block never took.
+describe("SpecView — Import requirements launcher visibility", () => {
+  it("shows the launcher once idle with no requirements yet", () => {
+    render(<SpecView projectName="proj-import-gate" />);
+    expect(
+      screen.getByRole("button", { name: "Import requirements" }),
+    ).toBeInTheDocument();
+  });
+
+  // An agent joining the room (a chat turn, a dependency lens, anything) must
+  // hide the launcher exactly like it disables Re-generate design beside it —
+  // opening the dialog mid-turn would only hit the server's own
+  // requireNoActiveTurn refusal, but the room-peer signal here can lead the
+  // turn-status query by a beat, so the button should not dangle in front of
+  // the user for that window.
+  it("hides the launcher while an agent is in the room", () => {
+    mockCollab = {
+      ...mockCollab,
+      peers: [{ clientId: 1, name: "Agent", color: "#000", kind: "agent" }],
+    };
+    render(<SpecView projectName="proj-import-gate" />);
+    expect(
+      screen.queryByRole("button", { name: "Import requirements" }),
+    ).not.toBeInTheDocument();
   });
 });
 

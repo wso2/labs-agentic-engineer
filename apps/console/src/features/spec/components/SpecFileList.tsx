@@ -45,6 +45,7 @@ import {
   Plug,
   ShieldCheck,
   TriangleAlert,
+  Upload,
   Workflow,
 } from "@wso2/oxygen-ui-icons-react";
 import { WorkingPulse } from "../../agent-chat/components/WorkingIndicator";
@@ -77,6 +78,7 @@ export function SpecFileList({
   files,
   selection,
   onSelect,
+  onImportRequirements,
   onRegenerateDesign,
   regenerateDisabled,
   sections,
@@ -87,6 +89,8 @@ export function SpecFileList({
   files: SpecFileEntry[];
   selection: SpecSelection | null;
   onSelect: (sel: SpecSelection) => void;
+  /** Create-only import — only wired when the project has no requirements yet. */
+  onImportRequirements?: () => void;
   /**
    * One state per external dependency (name → folded read model), so a row
    * can say what the user must do without opening the page. Absent while the
@@ -413,10 +417,11 @@ export function SpecFileList({
   const flatGroup = (
     section: RailSection,
     groupFiles: SpecFileEntry[],
+    headerAction?: React.ReactNode,
     lead?: React.ReactNode,
   ) => (
     <Box sx={{ mb: 1 }}>
-      {sectionHeader(section)}
+      {sectionHeader(section, headerAction)}
       {groupFiles.length > 0 || lead !== undefined ? (
         <List dense disablePadding>
           {lead}
@@ -438,7 +443,21 @@ export function SpecFileList({
 
   return (
     <Box component="nav" aria-label="Spec files" sx={{ py: 1 }}>
-      {flatGroup(sectionOf("requirements"), requirements)}
+      {flatGroup(
+        sectionOf("requirements"),
+        requirements,
+        requirements.length === 0 && onImportRequirements ? (
+          <Tooltip title="Import requirements bundle">
+            <IconButton
+              size="small"
+              aria-label="Import requirements"
+              onClick={onImportRequirements}
+            >
+              <Upload size={16} />
+            </IconButton>
+          </Tooltip>
+        ) : undefined,
+      )}
 
       {/* Design — the documents as rows (Architecture, Domain model, Security),
           then the groups: Flows first, then one per component. */}
@@ -579,6 +598,7 @@ export function SpecFileList({
       {flatGroup(
         sectionOf("validation"),
         validation.files,
+        undefined,
         validation.hasAcceptance
           ? row(
               { kind: "acceptance" },

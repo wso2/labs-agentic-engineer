@@ -19,3 +19,10 @@ drift.
   run (2026-08-02, pass band 93), frozen as produced: `lunch-api` +
   `lunch-webapp` components with design.json / openapi.yaml / wireframes,
   design.cell, and validation-criteria.json.
+- `legacy-expense-requirements/` — hand-authored to the `modernize-extract`
+  bundle shape (not a captured run — there is no legacy repo to run the
+  skill against): a requirements-only import for the `design/legacy-expense`
+  scenario, so the design step has an imported bundle to design from instead
+  of an interview. `business-rules.md` carries an "Approval escalation" rule
+  with a `Logic` block (pseudocode) demonstrating the shape a non-trivial
+  rule takes beyond a plain When/Then.
