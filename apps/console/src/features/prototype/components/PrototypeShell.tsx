@@ -135,8 +135,20 @@ export function PrototypeShell({ model, request, onRequestChange, backLink, noti
     <Box sx={{ height: "100vh", display: "flex", flexDirection: "column", bgcolor: "background.default" }}>
       <ReviewBar model={model} view={view} dispatch={dispatch} backLink={backLink} modeLocked={locked} />
       {notice}
-      <Stack direction="row" sx={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-        <Box sx={{ flex: 1, minWidth: 0, display: "flex", p: 2 }}>
+      {/* The desk the window sits on: a recessed neutral, a step away from
+          the page background the application itself renders on, so the
+          window reads as its own surface in either colour scheme. */}
+      <Stack
+        direction="row"
+        sx={(theme) => ({
+          flex: 1,
+          minHeight: 0,
+          overflow: "hidden",
+          bgcolor: "grey.300",
+          ...theme.applyStyles("dark", { bgcolor: "grey.800" }),
+        })}
+      >
+        <Box sx={{ flex: 1, minWidth: 0, display: "flex", p: 3 }}>
           <BrowserFrame title={model.name} address={addressOf(model, view.screenId)}>
             <PrototypeRenderer model={model} view={view} dispatch={dispatch} pins={pins} />
           </BrowserFrame>

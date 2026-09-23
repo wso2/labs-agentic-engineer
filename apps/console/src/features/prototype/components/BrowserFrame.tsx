@@ -41,7 +41,9 @@ export function BrowserFrame({ title, address, children }: { title: string; addr
         borderColor: "divider",
         borderRadius: 2,
         overflow: "hidden",
-        bgcolor: "background.paper",
+        // Opaque, and the colour a console page itself sits on: the theme's
+        // paper is translucent and would take on the desk behind the window.
+        bgcolor: "background.default",
         boxShadow: 4,
       }}
     >
