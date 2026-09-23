@@ -177,8 +177,8 @@ describe("the offline directory read", () => {
   });
 });
 
-// The build gate refuses a prototype whose roles security.json does not
-// declare, so a mock project that serves both must keep them in step.
+// A prototype's roles are security.json's (the prototype skill copies them),
+// so a mock project that serves both must keep them in step.
 describe("the mock storefront prototype", () => {
   const file = projectSpecFiles.deployed.find(
     (f) => f.path === "specs/design/components/storefront/prototype.json",

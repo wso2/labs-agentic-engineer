@@ -80,7 +80,7 @@ export function kindBlurb(kind: SkillKind): string {
     case "org":
       return "Your organization's skills — platform-provided defaults plus ones you've added. Editable; the platform can still offer updates.";
     case "platform":
-      return "Guidance the platform's own agents follow — the generation flows (design, prototype, tasks) and the coding run's workflow. Read-only.";
+      return "Guidance the platform's own agents follow — the generation flows (design, wireframes, prototype, tasks) and the coding run's workflow. Read-only.";
     case "imported":
       return "AgentSkills brought in from the ecosystem.";
   }

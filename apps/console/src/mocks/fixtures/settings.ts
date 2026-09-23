@@ -207,7 +207,7 @@ export const skillsSyncError: ApiError = {
 // python-service, postgres-schema), user-authored (acme-deploy-checklist,
 // acme-api-style), or imported (find-skills, commit-conventions) — are
 // editable:true, deletable:true; platform-kind skills (high-level-
-// architecture, security-design, prototype, validation-files) are always
+// architecture, security-design, wireframes, validation-files) are always
 // managed by reconcile and are editable:false, deletable:false. Both Delete
 // states render in mock mode. More than one page of skills (10/page, issue
 // #172) so the flat list's pagination is exercisable in mock mode.
@@ -424,22 +424,22 @@ One migration per change; never edit an applied migration.`,
   },
   {
     orgId: "org-1",
-    name: "prototype",
+    name: "wireframes",
     kind: "platform",
     editable: false,
     deletable: false,
     enabled: true,
     required: false,
-    description: "Writes the read-only prototype of each web-application in the design.",
+    description: "Derives per-component wireframes from the design file.",
     skillMd: `---
-name: prototype
-description: Writes the read-only prototype of each web-application in the design.
+name: wireframes
+description: Derives per-component wireframes from the design file.
 ---
 
-Write one prototype.json per web-application the design declares.`,
+Derive one wireframe per user-facing component in the approved design.`,
     references: {},
     binaryReferences: [],
-    contentSha: "sha-proto-1",
+    contentSha: "sha-wf-1",
     updatedAt: "2026-05-01T00:00:00Z",
   },
   {

@@ -99,6 +99,7 @@ import { computeDependencyStates } from "../lib/dependencyStates";
 import { RESOLVE_ALL_DEPENDENCIES_COMMAND } from "../../projects/lib/dependencyResolutionMessage";
 import { SpecFileList } from "./SpecFileList";
 import { CellDiagramPanel } from "./CellDiagramPanel";
+import { WireframePanel } from "./WireframePanel";
 import { OpenApiView } from "@aep/ui-openapi-view";
 import { DesignView } from "@aep/ui-design-view";
 import type { DependencyStatusInfo } from "@aep/ui-design-view";
@@ -414,7 +415,7 @@ export function SpecView({ projectName }: { projectName: string }) {
           : { kind: "file", path: "" });
 
   // The concrete file entry when the selection is a file (else null: the
-  // synthetic cell-diagram / security views render their own panels).
+  // synthetic cell-diagram / wireframe views render their own panels).
   const selectedFile =
     effectiveSelection.kind === "file"
       ? (files.find((f) => f.path === effectiveSelection.path) ?? null)
@@ -521,8 +522,8 @@ export function SpecView({ projectName }: { projectName: string }) {
   // Collab supplies live content when connected; the REST read (lazy, per
   // selected file) is only the solo fallback, so it stays disabled while a
   // collab doc backs the selection. `openapi.yaml` is a fully rendered,
-  // read-only API Spec view — it never goes through the collab text editor, so
-  // it's excluded from both branches below.
+  // read-only API Spec view — like the wireframe .dsl, it never goes through
+  // the collab text editor, so it's excluded from both branches below.
   const isOpenApiFile = selectedFile?.path.endsWith("/openapi.yaml") ?? false;
   // A component's design.json renders as a read-only structured Overview —
   // like openapi.yaml, it never goes through the collab text editor.
@@ -543,12 +544,14 @@ export function SpecView({ projectName }: { projectName: string }) {
   // sourced from the live doc or the committed fetch).
   const isStructuredFile =
     isOpenApiFile || isComponentDesignFile || isValidationCriteriaFile || isDependencyDefinitionFile;
-  // Canvas-based views (the cell diagram) need a flex-column,
+  // Canvas-based views (cell diagram, Excalidraw) need a flex-column,
   // overflow-hidden ancestor so their own `flex: 1` roots get a real
   // measured height to stretch into — a plain overflow:auto block (used for
   // text content below) leaves them at their library-default intrinsic size
   // instead of filling the pane.
-  const isDiagramView = effectiveSelection.kind === "cell-diagram";
+  const isDiagramView =
+    effectiveSelection.kind === "cell-diagram" ||
+    effectiveSelection.kind === "wireframe";
   const selectedIsMd = selectedFile?.path.endsWith(".md") ?? false;
   const fragment =
     selectedFile && selectedIsMd && !isOpenApiFile
@@ -828,7 +831,7 @@ export function SpecView({ projectName }: { projectName: string }) {
   // Review prototype opens that web-application's full-viewport review page.
   const reviewPrototype = (component: string) =>
     void navigate({
-      to: "/projects/$projectName/prototype/$component",
+      to: "/projects/$projectName/review/$component",
       params: { projectName, component },
     });
 
@@ -1446,6 +1449,13 @@ export function SpecView({ projectName }: { projectName: string }) {
                   roomLive={security.roomLive}
                   writeSecurityJson={security.writeSecurityJson}
                   dependencies={dependencies.data}
+                />
+              ) : effectiveSelection.kind === "wireframe" ? (
+                <WireframePanel
+                  projectName={projectName}
+                  dslPath={effectiveSelection.dslPath}
+                  files={files}
+                  collab={collab}
                 />
               ) : selectedFile ? (
                 // Per-type renderers (WYSIWYG for markdown, dedicated components

@@ -41,6 +41,7 @@ import {
   ChevronRight,
   Database,
   FileText,
+  LayoutDashboard,
   RefreshCw,
   Network,
   Plug,
@@ -314,7 +315,7 @@ export function SpecFileList({
   // `indent` bumps a row one level deeper than the top-level tree (matching
   // the old console's depth-based pl: files inside an expanded component sit
   // right of both the top-level entries and the component's own header row).
-  // `statusPath` is for the synthetic rows (Architecture, Security)
+  // `statusPath` is for the synthetic rows (Architecture, Security, Wireframe)
   // whose selection is not a file path; a plain file row derives it itself.
   const row = (
     sel: SpecSelection,
@@ -558,6 +559,18 @@ export function SpecFileList({
                     {c.files.map((f) =>
                       row(fileSel(f.path), fileLabel(f.path), <FileText size={16} />, true),
                     )}
+                    {c.wireframeDslPath &&
+                      row(
+                        {
+                          kind: "wireframe",
+                          component: c.name,
+                          dslPath: c.wireframeDslPath,
+                        },
+                        "Wireframe",
+                        <LayoutDashboard size={16} />,
+                        true,
+                        c.wireframeDslPath,
+                      )}
                   </Collapse>
                 </Box>
               );

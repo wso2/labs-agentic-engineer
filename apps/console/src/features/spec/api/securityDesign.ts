@@ -464,9 +464,9 @@ export function rolesGranting(doc: SecurityDesign, handle: string): string[] {
  * design, and which files that is depends on the document: `design.cell`
  * always, and the OpenAPI contract of every component that OWNS a resource —
  * that is the spec a catalog handle can be judged against, because a handle is
- * used by being named on an operation. No screen is read: a screen's gate is
+ * used by being named on an operation. No wireframe is read: a screen's gate is
  * the scope of the operation the screen loads (ADR-0033), so nothing about
- * screens is authored in this document or checked against another file. Deriving the
+ * screens is authored in this document or checked against the DSL. Deriving the
  * list here rather than inside the hook keeps "which files does this document
  * depend on?" a question answerable without React, and testable.
  *

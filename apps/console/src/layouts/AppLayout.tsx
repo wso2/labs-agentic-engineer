@@ -93,7 +93,7 @@ function activeItemFor(pathname: string, inProject: boolean): string {
 // Project sections that take over the whole viewport: no header, sidebar,
 // footer or chat. The prototype review page (#813) is the application under
 // review, not a console page, and brings its own way back to the Spec.
-const TAKEOVER_SECTIONS = new Set(["prototype"]);
+const TAKEOVER_SECTIONS = new Set(["review"]);
 
 function isTakeoverRoute(pathname: string): boolean {
   const [, root, , section] = pathname.split("/");

@@ -247,7 +247,7 @@ describe("AppLayout — a stale chat-open request does not replay", () => {
 describe("AppLayout — takeover routes", () => {
   it("renders the prototype review page alone: no header, sidebar or chat", () => {
     localStorage.setItem("aep.chat.panelOpen", "true");
-    mockPathname = `/projects/${PROJECT}/prototype/storefront`;
+    mockPathname = `/projects/${PROJECT}/review/storefront`;
     render();
     expect(screen.getByTestId("outlet")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Spec" })).toBeNull();

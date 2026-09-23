@@ -1541,10 +1541,9 @@ const securityJson = `{
 `;
 
 // Per-component design files (#80 rich design view): design.json for each of
-// the three components the domain model and flows name, plus the
-// customer-facing component's prototype.json — enough to exercise the Designs
-// sidebar's component grouping, the derived Architecture view and the
-// Prototype stage.
+// the three components the domain model and flows name, plus one wireframes.dsl for
+// the customer-facing component — enough to exercise the Designs sidebar's
+// component grouping and the derived Architecture / Wireframe views.
 const storefrontDesignJson = `{
   "name": "storefront",
   "type": "web-application",
@@ -1560,6 +1559,70 @@ const storefrontDesignJson = `{
     { "kind": "component", "name": "orders-api" }
   ]
 }`;
+
+const storefrontWireframesDsl = `screen Catalog "Shoppers browse and search the product catalogue"
+  navbar "Demo Shop | Catalog | Cart | Orders | Account"
+  row
+    heading "Browse products"
+    right
+    search "Search products, brands, SKUs"
+    select "Category: All"
+  tabs "All | New in | On sale | Bestsellers"
+  row
+    card "Wireless Headphones\n$89"
+      badge "In stock" success
+    card "Mechanical Keyboard\n$129"
+      badge "Low stock" warning
+    card "4K Monitor\n$349"
+      badge "In stock" success
+    card "USB-C Hub\n$39"
+      badge "In stock" success
+  row
+    right
+    button "View cart" primary -> Cart
+
+screen Cart "Shopper reviews items and checks out"
+  navbar "Demo Shop | Catalog | Cart | Orders | Account"
+  heading "Your cart"
+  split 60/40
+    left
+      table "Product | Qty | Price | Subtotal"
+        row "Wireless Headphones | 1 | $89.00 | $89.00"
+        row "USB-C Hub | 2 | $39.00 | $78.00"
+        row "Mechanical Keyboard | 1 | $129.00 | $129.00"
+      button "Continue shopping" -> Catalog
+    right
+      card "Order summary"
+        text "Subtotal: $296.00"
+        text "Shipping: $6.00"
+        text "Total: $302.00"
+        checkbox "Ship to billing address" active
+        button "Checkout" primary -> Orders
+
+screen Orders "Shopper tracks past orders and their status"
+  navbar "Demo Shop | Catalog | Cart | Orders | Account"
+  heading "Your orders"
+  table "Order | Placed | Items | Total | Status"
+    row "#10432 | Jul 8, 2026 | 3 | $302.00 | Shipped"
+    row "#10391 | Jun 27, 2026 | 1 | $89.00 | Delivered"
+    row "#10355 | Jun 15, 2026 | 2 | $168.00 | Delivered"
+
+// Two journeys over the same three screens, so mock mode exercises every
+// flow case the prototype has to render: a screen in one flow (Cart, Orders),
+// a screen both flows reach (Catalog → "Common" on the canvas), and a flow
+// picker with more than one entry.
+flow "Browse & buy"
+  role "Shopper"
+  description "A shopper finds products and checks out"
+  Catalog
+  Cart
+
+flow "Order tracking"
+  role "Shopper"
+  description "A signed-in shopper checks where a placed order is"
+  Catalog
+  Orders
+`;
 
 const catalogApiDesignJson = `{
   "name": "catalog-api",
@@ -1626,11 +1689,11 @@ const collaborationFiles: MockSpecFile[] = [
 
 // The storefront's prototype (#813): the shared package's expense-approval
 // fixture, filed under this project's one web-application. Two things are
-// rewritten so the mock project passes the real gates: `component` matches the
-// directory, and every role is one `securityJson` declares — the build gate
-// refuses a prototype role that security.json does not name. The fixture's
-// three roles fold onto the two declared ones; everything else is the fixture
-// in its canonical serialization.
+// rewritten so the mock project is what `/prototype` would write: `component`
+// matches the directory, and every role is one `securityJson` declares (the
+// prototype skill copies its role ids from security.json). The fixture's three
+// roles fold onto the two declared ones; everything else is the fixture in its
+// canonical serialization.
 const STOREFRONT_ROLE: Record<string, string> = {
   employee: "Shopper",
   approver: "Compliance Admin",
@@ -1667,6 +1730,10 @@ const fullFiles: MockSpecFile[] = [
   {
     path: "specs/design/components/storefront/design.json",
     content: storefrontDesignJson,
+  },
+  {
+    path: "specs/design/components/storefront/wireframes.dsl",
+    content: storefrontWireframesDsl,
   },
   {
     path: "specs/design/components/storefront/prototype.json",

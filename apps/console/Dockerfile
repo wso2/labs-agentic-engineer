@@ -49,8 +49,10 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm install --frozen-lockfile --store-dir=/pnpm/store --filter @aep/console...
 
 # Workspace deps whose exports resolve to ./dist must be compiled first
-# (@aep/prototype-model — the prototype.json model, read by the prototype
-# review page and imported by @aep/agent-stream, so built before it; @aep/agent-stream — the agent-chat panel's SSE
+# (@aep/excalidraw-dsl — the wireframe DSL + layout gate, built FIRST because
+# @aep/agent-stream imports it; @aep/prototype-model — the prototype.json
+# model, read by the prototype review page and imported by @aep/agent-stream,
+# so also built before it; @aep/agent-stream — the agent-chat panel's SSE
 # contracts, #130; @aep/collab-doc — the AgentInsertion mark shared with the
 # editor, #86 ph6; @aep/design-projection — the rich design view's projection,
 # #149; @aep/progress-view — the ONE rendering of the run progress feed, shared
@@ -66,6 +68,7 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
 # fails ONLY here, as TS2307 plus a cascade of implicit-any and
 # undefined-narrowing errors in files that never mention it. Adding a dep to
 # apps/console/package.json means adding a line below.
+RUN pnpm --filter @aep/excalidraw-dsl build
 RUN pnpm --filter @aep/prototype-model build
 RUN pnpm --filter @aep/agent-stream build
 RUN pnpm --filter @aep/collab-doc build

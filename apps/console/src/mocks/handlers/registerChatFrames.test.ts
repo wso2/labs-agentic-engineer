@@ -21,7 +21,7 @@ import { describe, expect, it, vi } from "vitest";
 import { MARKETPLACE_CHAT_PROJECT } from "../../features/marketplace/constants";
 
 // Same literals as @aep/agent-stream. Vitest cannot load that barrel here
-// (it resolves to a dist that a fresh worktree has not built).
+// (dist pulls @aep/excalidraw-dsl, which has no dist in this worktree).
 const ANSWER_PREFIX = 'Answer to "';
 vi.mock("@aep/agent-stream", () => ({
   ANSWER_PREFIX: 'Answer to "',

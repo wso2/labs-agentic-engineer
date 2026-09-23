@@ -16,7 +16,7 @@
  * under the License.
  */
 
-// The reviewer's whole journey through the prototype (#819), in a real
+// The reviewer's whole journey through the JSON prototype (#819), in a real
 // browser with real input, against the console's own mock layer served by a
 // real MSW service worker: the Spec rail's Review prototype entry opens the
 // review page on its real route, Preview navigates (side nav, row → detail, a
@@ -73,7 +73,7 @@ vi.mock("../../spec/collab/useCollabSpec", () => ({
 }));
 
 const { SpecFileList } = await import("../../spec/components/SpecFileList");
-const { Route: prototypeRoute } = await import("../../../routes/projects.$projectName_.prototype.$component");
+const { Route: prototypeRoute } = await import("../../../routes/projects.$projectName_.review.$component");
 
 const PROJECT = "demo-shop";
 const COMPONENT = "storefront";
@@ -113,7 +113,7 @@ function SpecRail() {
       onPrototypeAction={() => {}}
       onReviewPrototype={(component) =>
         void navigate({
-          to: "/projects/$projectName/prototype/$component",
+          to: "/projects/$projectName/review/$component",
           params: { projectName: PROJECT, component },
         })
       }
@@ -132,8 +132,8 @@ function renderApp() {
   // Re-parent the real file route under this root, as the generated route
   // tree does under the app's.
   prototypeRoute.update({
-    id: "/projects/$projectName_/prototype/$component",
-    path: "/projects/$projectName/prototype/$component",
+    id: "/projects/$projectName_/review/$component",
+    path: "/projects/$projectName/review/$component",
     getParentRoute: () => rootRoute,
   } as unknown as Parameters<typeof prototypeRoute.update>[0]);
   const router = createRouter({
@@ -183,7 +183,7 @@ describe("the prototype review journey", () => {
     // Spec rail → Review prototype.
     await userEvent.click(await screen.findByRole("button", { name: `Review prototype: ${COMPONENT}` }));
     expect(await screen.findByRole("heading", { name: "Approval queue", level: 2 })).toBeInTheDocument();
-    expect(router.state.location.pathname).toBe(`/projects/${PROJECT}/prototype/${COMPONENT}`);
+    expect(router.state.location.pathname).toBe(`/projects/${PROJECT}/review/${COMPONENT}`);
     expect(reads).toHaveLength(1);
 
     // Preview: a row opens the detail screen, and the URL follows.
