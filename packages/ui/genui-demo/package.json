@@ -3,16 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Dev page: renders a GenUI spec with every design system side by side.",
+  "description": "Dev page: renders a GenUI spec with Oxygen UI (Classic theme) and logs its actions.",
   "scripts": {
-    "dev": "pnpm --dir ../genui-shadcn run build:css && vite",
+    "dev": "vite",
     "typecheck": "tsc --noEmit",
     "lint": "eslint ."
   },
   "dependencies": {
     "@aep/ui-genui": "workspace:*",
     "@aep/ui-genui-oxygen": "workspace:*",
-    "@aep/ui-genui-shadcn": "workspace:*",
     "@wso2/oxygen-ui": "0.11.0",
     "react": "19.2.3",
     "react-dom": "19.2.3"

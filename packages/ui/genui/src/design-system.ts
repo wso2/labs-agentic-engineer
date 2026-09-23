@@ -40,9 +40,9 @@ export type GenUiImplementations = {
 
 /**
  * Everything a design system supplies to render generated UIs. Each design
- * system lives in its own package (@aep/ui-genui-oxygen, @aep/ui-genui-shadcn)
- * so a host installs only the one it uses, and all of them are held to the
- * same catalog and the same conformance suite (@aep/ui-genui/testing).
+ * system lives in its own package (today @aep/ui-genui-oxygen) so a host
+ * installs only the one it uses, and every one is held to the same catalog
+ * and the same conformance suite (@aep/ui-genui/testing).
  */
 export interface GenUiDesignSystem {
   /** Shown in demos and test names, e.g. "Oxygen UI". */

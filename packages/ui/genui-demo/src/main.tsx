@@ -16,10 +16,9 @@
  * under the License.
  */
 
-import { StrictMode, useMemo, useState, type ReactNode } from "react";
+import { StrictMode, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
-  AcrylicOrangeTheme,
   Alert,
   Box,
   ClassicTheme,
@@ -29,21 +28,16 @@ import {
   Paper,
   Stack,
   TextField,
-  ThemeSwitcher,
   Typography,
-  useColorScheme,
 } from "@wso2/oxygen-ui";
 import {
   genUiSystemPrompt,
   validateGenUiSpec,
   type GenUiActionHandlers,
   type GenUiDispatchOutcome,
-  type GenUiSpec,
 } from "@aep/ui-genui";
 import { exampleSpecs } from "@aep/ui-genui/examples";
-import { GenUiView as OxygenGenUiView } from "@aep/ui-genui-oxygen";
-import { GenUiView as ShadcnGenUiView } from "@aep/ui-genui-shadcn";
-import "@aep/ui-genui-shadcn/styles.css";
+import { GenUiView } from "@aep/ui-genui-oxygen";
 
 const exampleNames = Object.keys(exampleSpecs);
 const promptChars = genUiSystemPrompt().length;
@@ -57,11 +51,6 @@ const handlers: GenUiActionHandlers = {
   editExternalResource: (params) => console.info("editExternalResource", params),
 };
 
-interface LoggedOutcome {
-  designSystem: string;
-  outcome: GenUiDispatchOutcome;
-}
-
 function parse(text: string) {
   try {
     return validateGenUiSpec(JSON.parse(text));
@@ -70,31 +59,12 @@ function parse(text: string) {
   }
 }
 
-function Panel({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <Stack spacing={1}>
-      <Typography variant="subtitle2">{title}</Typography>
-      <Paper variant="outlined">
-        <Box sx={{ p: 2 }}>{children}</Box>
-      </Paper>
-    </Stack>
-  );
-}
-
-// shadcn switches to dark with a `dark` class; follow Oxygen's colour scheme
-// so both panels are in the same mode.
-function ShadcnColorScheme({ children }: { children: ReactNode }) {
-  const { mode, systemMode } = useColorScheme();
-  const dark = (mode === "system" ? systemMode : mode) === "dark";
-  return <div className={dark ? "dark" : undefined}>{children}</div>;
-}
-
 function Demo() {
   const [example, setExample] = useState(exampleNames[0] ?? "");
   const [text, setText] = useState(() =>
     JSON.stringify(exampleSpecs[example], null, 2),
   );
-  const [log, setLog] = useState<LoggedOutcome[]>([]);
+  const [log, setLog] = useState<GenUiDispatchOutcome[]>([]);
   const result = useMemo(() => parse(text), [text]);
 
   const pickExample = (name: string) => {
@@ -102,36 +72,6 @@ function Demo() {
     setText(JSON.stringify(exampleSpecs[name], null, 2));
     setLog([]);
   };
-  const logFrom = (designSystem: string) => (outcome: GenUiDispatchOutcome) =>
-    setLog((prev) => [{ designSystem, outcome }, ...prev]);
-
-  const render = (spec: GenUiSpec) => (
-    <Box
-      sx={{
-        display: "grid",
-        gap: 3,
-        gridTemplateColumns: { lg: "1fr 1fr" },
-        alignItems: "start",
-      }}
-    >
-      <Panel title="Oxygen UI">
-        <OxygenGenUiView
-          spec={spec}
-          handlers={handlers}
-          onActionOutcome={logFrom("Oxygen UI")}
-        />
-      </Panel>
-      <Panel title="shadcn/ui">
-        <ShadcnColorScheme>
-          <ShadcnGenUiView
-            spec={spec}
-            handlers={handlers}
-            onActionOutcome={logFrom("shadcn/ui")}
-          />
-        </ShadcnColorScheme>
-      </Panel>
-    </Box>
-  );
 
   return (
     <Box
@@ -139,18 +79,15 @@ function Demo() {
         p: 3,
         display: "grid",
         gap: 3,
-        gridTemplateColumns: { md: "minmax(320px, 1fr) 3fr" },
+        gridTemplateColumns: { md: "minmax(320px, 1fr) 2fr" },
       }}
     >
       <Stack spacing={2}>
-        <Stack direction="row" spacing={2}>
-          <Typography variant="h5" component="h1">
-            GenUI design systems
-          </Typography>
-          <ThemeSwitcher />
-        </Stack>
+        <Typography variant="h5" component="h1">
+          GenUI catalog demo
+        </Typography>
         <Typography variant="body2" color="text.secondary">
-          One spec, every design system. System prompt for this catalog:{" "}
+          Paste model output or edit an example. System prompt for this catalog:{" "}
           {promptChars.toLocaleString()} characters (≈
           {Math.round(promptChars / 4).toLocaleString()} tokens).
         </Typography>
@@ -178,7 +115,15 @@ function Demo() {
       </Stack>
       <Stack spacing={2}>
         {result.ok ? (
-          render(result.spec)
+          <Paper variant="outlined">
+            <Box sx={{ p: 2 }}>
+              <GenUiView
+                spec={result.spec}
+                handlers={handlers}
+                onActionOutcome={(outcome) => setLog((prev) => [outcome, ...prev])}
+              />
+            </Box>
+          </Paper>
         ) : (
           <Alert severity="error">
             {result.issues.map((issue) => (
@@ -189,12 +134,12 @@ function Demo() {
         <Typography variant="subtitle2">Action log</Typography>
         {log.length === 0 ? (
           <Typography variant="body2" color="text.secondary">
-            Press a button in either rendered UI.
+            Press a button in the rendered UI.
           </Typography>
         ) : (
-          log.map(({ designSystem, outcome }, index) => (
+          log.map((outcome, index) => (
             <Typography key={index} variant="body2" sx={{ fontFamily: "monospace" }}>
-              {designSystem} · {outcome.status} · {outcome.action}
+              {outcome.status} · {outcome.action}
             </Typography>
           ))
         )}
@@ -203,18 +148,12 @@ function Demo() {
   );
 }
 
-// Classic is what the Oxygen UI Storybook shows; Acrylic Orange is what the
-// console uses.
-const themes = [
-  { key: "classic", label: "Classic (Oxygen Storybook)", theme: ClassicTheme },
-  { key: "acrylic-orange", label: "Acrylic Orange (console)", theme: AcrylicOrangeTheme },
-];
-
 const container = document.getElementById("root");
 if (container) {
   createRoot(container).render(
     <StrictMode>
-      <OxygenUIThemeProvider themes={themes} initialTheme="classic">
+      {/* Classic: the theme the Oxygen UI Storybook shows. */}
+      <OxygenUIThemeProvider theme={ClassicTheme}>
         <CssBaseline />
         <Demo />
       </OxygenUIThemeProvider>

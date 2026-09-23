@@ -4,13 +4,10 @@ Generative UI for AEP: a model describes a screen as JSON, and a host renders
 it with its design system, using only components and actions this package
 allows.
 
-This package is the design-system-neutral core. Each design system implements
-the catalog in its own package:
-
-| Package | Design system | Host provides |
-|---|---|---|
-| `@aep/ui-genui-oxygen` | WSO2 Oxygen UI | `OxygenUIThemeProvider` (the host's theme applies) |
-| `@aep/ui-genui-shadcn` | shadcn/ui (radix-nova, neutral) | `import "@aep/ui-genui-shadcn/styles.css"` |
+This package is the design-system-neutral core. A design system implements
+the catalog in its own package; today that is `@aep/ui-genui-oxygen` (WSO2
+Oxygen UI), which renders in whatever theme the host's
+`OxygenUIThemeProvider` sets.
 
 ```
             catalog (Zod)  ──►  adapter (json-render today)  ──►  design system
@@ -24,7 +21,7 @@ Render a spec with the host's design system:
 
 ```tsx
 import { validateGenUiSpec } from "@aep/ui-genui";
-import { GenUiView } from "@aep/ui-genui-oxygen"; // or "@aep/ui-genui-shadcn"
+import { GenUiView } from "@aep/ui-genui-oxygen";
 
 const result = validateGenUiSpec(modelOutput);
 if (result.ok) {
@@ -44,8 +41,8 @@ import { genUiSystemPrompt, validateGenUiSpec } from "@aep/ui-genui/headless";
 const system = genUiSystemPrompt({ customRules: ["Keep it to one card."] });
 ```
 
-A spec does not name a design system, so the same model output renders with
-any of them. The prompt is the same for every call (about 4.5k tokens for the
+A spec does not name a design system, so the same model output would render
+with any design system added later. The prompt is the same for every call (about 4.5k tokens for the
 current catalog), so it is a good fit for prompt caching. Every component and
 description you add makes it bigger.
 
@@ -105,6 +102,5 @@ saved are in the old wire format and need converting.
 pnpm --filter @aep/ui-genui-demo dev
 ```
 
-Opens a page that renders one spec with every design system side by side.
-Pick an example or paste model output; every action is logged with the design
-system it came from.
+Opens a page that renders a spec with Oxygen UI in its Classic theme. Pick an
+example or paste model output; every action is logged.
