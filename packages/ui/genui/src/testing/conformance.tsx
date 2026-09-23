@@ -21,6 +21,7 @@ import type { ComponentType, ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { componentExamples, exampleSpecs } from "../../examples/index.js";
 import { createGenUiView, type GenUiSpec } from "../adapter/index.js";
+import { GenUiActionError } from "../catalog/index.js";
 import type { GenUiDesignSystem } from "../design-system.js";
 
 export interface GenUiConformanceOptions {
@@ -32,6 +33,7 @@ const dependencyApproval = exampleSpecs["Dependency approval"] as GenUiSpec;
 const deliveryStatus = exampleSpecs["Delivery status"] as GenUiSpec;
 const buildAndDeploy = exampleSpecs["Build and deploy"] as GenUiSpec;
 const buildView = exampleSpecs["Build view (console page)"] as GenUiSpec;
+const createCustomer = exampleSpecs["Create customer (form)"] as GenUiSpec;
 
 /**
  * The behaviour every design system must show, whatever it looks like. A
@@ -149,6 +151,80 @@ export function describeGenUiConformance(
       await waitFor(() =>
         expect(editExternalResource).toHaveBeenCalledWith({ resourceName: "sendgrid" }),
       );
+    });
+
+    describe("a form (Create customer)", () => {
+      const field = (name: RegExp) => screen.getByRole("textbox", { name });
+      const type = (name: RegExp, value: string) =>
+        fireEvent.change(field(name), { target: { value } });
+      const submit = () =>
+        fireEvent.click(screen.getByRole("button", { name: "Create customer" }));
+      const fillValid = () => {
+        type(/^Name/, "Acme");
+        type(/^Contact name/, "Jane Doe");
+        type(/^Contact email/, "jane@acme.test");
+      };
+
+      it("sends what was typed as the action's params", async () => {
+        const createCustomer_ = vi.fn();
+        show(<GenUiView spec={createCustomer} handlers={{ createCustomer: createCustomer_ }} />);
+        fillValid();
+        type(/^Contact phone/, "+1 555 0100");
+        submit();
+        await waitFor(() =>
+          expect(createCustomer_).toHaveBeenCalledWith({
+            name: "Acme",
+            contactName: "Jane Doe",
+            contactEmail: "jane@acme.test",
+            contactPhone: "+1 555 0100",
+          }),
+        );
+        expect(await screen.findByText("Customer created")).toBeInTheDocument();
+      });
+
+      it("stops invalid input before the request and says why beside each field", async () => {
+        const createCustomer_ = vi.fn();
+        show(<GenUiView spec={createCustomer} handlers={{ createCustomer: createCustomer_ }} />);
+        type(/^Contact email/, "not-an-email");
+        submit();
+        expect(await screen.findByText("Check the highlighted fields.")).toBeInTheDocument();
+        expect(screen.getByText("Enter the customer's name.")).toBeInTheDocument();
+        expect(screen.getByText("Enter a contact name.")).toBeInTheDocument();
+        expect(screen.getByText(/Enter a valid email address/)).toBeInTheDocument();
+        expect(createCustomer_).not.toHaveBeenCalled();
+        expect(screen.queryByText("Customer created")).not.toBeInTheDocument();
+      });
+
+      it("shows the server's refusal, with its field errors beside their fields", async () => {
+        const createCustomer_ = vi.fn().mockRejectedValue(
+          new GenUiActionError("A customer with this name already exists.", {
+            name: "Pick a different name.",
+          }),
+        );
+        show(<GenUiView spec={createCustomer} handlers={{ createCustomer: createCustomer_ }} />);
+        fillValid();
+        submit();
+        expect(
+          await screen.findByText("A customer with this name already exists."),
+        ).toBeInTheDocument();
+        expect(screen.getByText("Pick a different name.")).toBeInTheDocument();
+      });
+
+      it("still shows results after the view switches to it from another spec", async () => {
+        const { rerender } = show(<GenUiView spec={dependencyApproval} />);
+        rerender(<GenUiView spec={createCustomer} />);
+        submit();
+        expect(await screen.findByText("Check the highlighted fields.")).toBeInTheDocument();
+      });
+
+      it("keeps an unexpected error's details off the screen", async () => {
+        const createCustomer_ = vi.fn().mockRejectedValue(new Error("ECONNREFUSED 127.0.0.1:2001"));
+        show(<GenUiView spec={createCustomer} handlers={{ createCustomer: createCustomer_ }} />);
+        fillValid();
+        submit();
+        expect(await screen.findByText("Something went wrong. Try again.")).toBeInTheDocument();
+        expect(screen.queryByText(/ECONNREFUSED/)).not.toBeInTheDocument();
+      });
     });
 
     it("shows a warning instead of crashing on props that fail the schema", () => {

@@ -24,8 +24,13 @@ export {
   type GenUiTone,
 } from "./components.js";
 export {
+  actionStateFor,
   dispatchGenUiAction,
+  GenUiActionError,
   genUiActions,
+  genUiActionStatePath,
+  type GenUiActionState,
+  type GenUiFieldErrors,
   type GenUiActionHandlers,
   type GenUiActionName,
   type GenUiActionParams,

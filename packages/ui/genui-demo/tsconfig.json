@@ -5,7 +5,7 @@
     "jsx": "react-jsx",
     "noEmit": true,
     "resolveJsonModule": true,
-    "types": ["vite/client"]
+    "types": ["vite/client", "node"]
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "dev", "vite.config.ts"]
 }

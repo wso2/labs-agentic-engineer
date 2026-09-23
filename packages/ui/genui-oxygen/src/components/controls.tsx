@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { Box, Button } from "@wso2/oxygen-ui";
+import { Box, Button, TextField } from "@wso2/oxygen-ui";
 import type { GenUiPropsOf, GenUiRenderProps } from "@aep/ui-genui";
 
 type Variant = NonNullable<GenUiPropsOf<"Button">["variant"]>;
@@ -46,5 +46,22 @@ export function GenUiButton({
         {props.label}
       </Button>
     </Box>
+  );
+}
+
+export function GenUiTextField({
+  props,
+  setProp,
+}: GenUiRenderProps<GenUiPropsOf<"TextField">>) {
+  return (
+    <TextField
+      label={props.label}
+      type={props.type ?? "text"}
+      required={props.required ?? false}
+      value={props.value ?? ""}
+      onChange={(event) => setProp("value", event.target.value)}
+      error={Boolean(props.error)}
+      helperText={props.error ?? props.helperText}
+    />
   );
 }

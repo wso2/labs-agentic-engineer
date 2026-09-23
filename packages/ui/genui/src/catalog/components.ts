@@ -237,6 +237,20 @@ export const genUiComponents = {
     hasChildren: false,
     events: [],
   },
+  TextField: {
+    props: z.object({
+      label: z.string(),
+      value: z.string().optional(),
+      type: z.enum(["text", "email", "tel"]).optional(),
+      required: z.boolean().optional(),
+      helperText: z.string().optional(),
+      error: z.string().optional(),
+    }),
+    description:
+      "A text input. Bind value with { \"$bindState\": \"/form/field\" } so typing writes to state, and pass that state to an action's params. Bind error to /actions/<action>/fieldErrors/<param> to show that field's validation message.",
+    hasChildren: false,
+    events: [],
+  },
   Button: {
     props: z.object({
       label: z.string(),

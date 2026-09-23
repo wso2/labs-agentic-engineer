@@ -15,3 +15,15 @@ theme (the one the Oxygen UI Storybook shows).
 ```
 pnpm --filter @aep/ui-genui-demo dev
 ```
+
+**Create customer (form)** posts to `/api/customers`. With nothing else
+running, the dev server answers with a stand-in (`dev/customers-api.ts`: 201,
+400 with field errors, 409 for a taken name; "Acme" already exists). To use the
+real API instead:
+
+```
+CUSTOMERS_API_URL=http://localhost:2001 pnpm --filter @aep/ui-genui-demo dev
+```
+
+The handler (`src/handlers.ts`) expects error bodies shaped
+`{ message, fieldErrors }`; map the real API's shape there if it differs.

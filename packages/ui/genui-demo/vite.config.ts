@@ -18,7 +18,15 @@
 
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
+import { mockCustomersApi } from "./dev/customers-api";
+
+// /api/customers goes to the real API when CUSTOMERS_API_URL is set (e.g.
+// http://localhost:2001), and to an in-process stand-in otherwise.
+const customersApi = process.env.CUSTOMERS_API_URL;
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), ...(customersApi ? [] : [mockCustomersApi()])],
+  ...(customersApi
+    ? { server: { proxy: { "/api": { target: customersApi, changeOrigin: true } } } }
+    : {}),
 });

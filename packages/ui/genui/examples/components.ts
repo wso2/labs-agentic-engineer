@@ -294,6 +294,33 @@ export const componentExamples = {
       },
     },
   },
+  TextField: {
+    root: "fields",
+    elements: {
+      fields: { type: "Stack", props: {}, children: ["email", "invalid"] },
+      email: {
+        type: "TextField",
+        props: {
+          label: "Contact email",
+          type: "email",
+          required: true,
+          value: { $bindState: "/sample/email" },
+          helperText: "What you type is written to /sample/email.",
+        },
+        children: [],
+      },
+      invalid: {
+        type: "TextField",
+        props: {
+          label: "Name",
+          value: "",
+          required: true,
+          error: "Enter the customer's name.",
+        },
+        children: [],
+      },
+    },
+  },
   Button: {
     root: "buttons",
     elements: {

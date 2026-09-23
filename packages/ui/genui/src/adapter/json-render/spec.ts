@@ -105,6 +105,14 @@ export function validateGenUiSpec(input: unknown): GenUiValidation {
   return issues.length > 0 ? { ok: false, issues } : { ok: true, spec };
 }
 
+// How a spec learns what happened to an action: the view writes it to state
+// (see GenUiActionState), so these rules hold for every generated UI.
+const ACTION_STATE_RULES = [
+  'Each action\'s progress is in state at /actions/<actionName>: status is "pending", "success" or "error"; message says what went wrong; fieldErrors maps each param name to its problem.',
+  "For a form, bind every TextField value with $bindState to /<form>/<param>, read those paths with $state in the submit Button's action params, and bind each TextField error to /actions/<actionName>/fieldErrors/<param>.",
+  'Show the result with element-level visible conditions, e.g. { "$state": "/actions/<actionName>/status", "eq": "success" } for a confirmation Alert and "eq": "error" for an Alert whose message is { "$state": "/actions/<actionName>/message" }. Disable the submit Button while status is "pending".',
+];
+
 export interface GenUiPromptOptions {
   /** Extra rules for this surface, e.g. "Keep it to one card." */
   customRules?: string[];
@@ -115,7 +123,7 @@ export interface GenUiPromptOptions {
  * format. It is identical across calls for a given catalog, so it caches well.
  */
 export function genUiSystemPrompt(options: GenUiPromptOptions = {}): string {
-  return jsonRenderCatalog.prompt(
-    options.customRules ? { customRules: options.customRules } : {},
-  );
+  return jsonRenderCatalog.prompt({
+    customRules: [...ACTION_STATE_RULES, ...(options.customRules ?? [])],
+  });
 }

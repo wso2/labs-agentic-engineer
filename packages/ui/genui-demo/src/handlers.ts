@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import type { GenUiActionHandlers } from "@aep/ui-genui";
+import { GenUiActionError, type GenUiActionHandlers } from "@aep/ui-genui";
 
 // Every catalog action just logs here; each page shows the outcome of what
 // reached it.
@@ -26,4 +26,29 @@ export const handlers: GenUiActionHandlers = {
   rejectDependency: (params) => console.info("rejectDependency", params),
   openDeployments: (params) => console.info("openDeployments", params),
   editExternalResource: (params) => console.info("editExternalResource", params),
+  createCustomer: async (params) => {
+    // The URL lives here, in the host, never in a spec. The dev server sends
+    // /api/customers to the real API or to its stand-in (vite.config.ts).
+    const response = await fetch("/api/customers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...params,
+        // An optional field left empty is not sent at all.
+        contactPhone: params.contactPhone?.trim() || undefined,
+      }),
+    });
+    if (!response.ok) {
+      // Assumes the API's error body is { message, fieldErrors }; map it here
+      // if the real one differs.
+      const body = (await response.json().catch(() => ({}))) as {
+        message?: string;
+        fieldErrors?: Record<string, string>;
+      };
+      throw new GenUiActionError(
+        body.message ?? `The server refused the request (${response.status}).`,
+        body.fieldErrors ?? {},
+      );
+    }
+  },
 };

@@ -46,6 +46,36 @@ with any design system added later. The prompt is the same for every call (about
 current catalog), so it is a good fit for prompt caching. Every component and
 description you add makes it bigger.
 
+## Forms and feedback
+
+A form in a spec never names a URL. It binds inputs to state, and a button
+sends that state as an action's params; the host's handler makes the request.
+
+```
+TextField value {"$bindState": "/customer/name"}   typing writes state
+Button press → createCustomer, params {"name": {"$state": "/customer/name"}, …}
+  → dispatchGenUiAction   params checked against the action's Zod schema
+  → host handler          e.g. POST /api/customers through the app's client
+```
+
+The view writes every action's progress to state at `/actions/<action>`
+(`GenUiActionState`): `status` (`pending` → `success` | `error`), `message`
+and `fieldErrors`. A spec shows it with `$state` bindings and `visible`
+conditions (see `examples/create-customer.json`):
+
+| Outcome | `status` | `message` | `fieldErrors` |
+|---|---|---|---|
+| Handler returned | `success` | — | — |
+| Params failed the schema (no request sent) | `error` | "Check the highlighted fields." | the schema's message per param |
+| Handler threw `GenUiActionError` (e.g. the server's 400/409) | `error` | its message | its field errors |
+| Handler threw anything else | `error` | a generic message; details stay off screen | — |
+
+The messages users see for bad input live in the action's schema, so the same
+words appear whichever design system renders the form. `genUiSystemPrompt()`
+teaches a model this contract. A failed action also rejects inside
+json-render, so a spec's own `onSuccess` runs only on success and `onError` on
+failure.
+
 ## What protects the host
 
 - `validateGenUiSpec` rejects unknown component types, props that fail the

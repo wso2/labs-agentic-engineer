@@ -16,16 +16,22 @@
  * under the License.
  */
 
-import { useMemo, type ComponentType } from "react";
+import { useEffect, useMemo, useRef, type ComponentType } from "react";
+import { createStateStore } from "@json-render/core";
 import {
   createRenderer,
+  useStateStore,
   type ComponentRenderProps,
   type ComponentRenderer,
 } from "@json-render/react";
 import {
+  actionStateFor,
   dispatchGenUiAction,
+  genUiActions,
+  genUiActionStatePath,
   genUiComponents,
   type GenUiActionHandlers,
+  type GenUiActionName,
   type GenUiComponentName,
   type GenUiDispatchOutcome,
   type GenUiPropsOf,
@@ -56,15 +62,27 @@ function adapt<K extends GenUiComponentName>(
   >;
   const { InvalidElement } = designSystem;
   const schema = genUiComponents[name].props;
-  function Adapted({ element, children, emit, loading }: ComponentRenderProps) {
+  function Adapted({ element, children, emit, bindings, loading }: ComponentRenderProps) {
+    const { set } = useStateStore();
     const parsed = schema.safeParse(element.props);
     if (!parsed.success) {
       return loading ? null : <InvalidElement message={invalidMessage(name)} />;
     }
+    // A failed action rejects (so a spec's onSuccess is skipped and its
+    // onError runs) but its outcome is already in state and reported to the
+    // host, so an event nobody awaits must not surface as an unhandled
+    // rejection.
+    const fire = (event: string) => {
+      void Promise.resolve(emit(event) as unknown).catch(() => undefined);
+    };
+    const setProp = (prop: string, value: unknown) => {
+      const path = bindings?.[prop];
+      if (path) set(path, value);
+    };
     // Sound: parsed.data is the output of genUiComponents[K].props, the schema
     // GenUiPropsOf<K> is derived from.
     return (
-      <Impl props={parsed.data as GenUiPropsOf<K>} emit={emit}>
+      <Impl props={parsed.data as GenUiPropsOf<K>} emit={fire} setProp={setProp}>
         {children}
       </Impl>
     );
@@ -74,6 +92,18 @@ function adapt<K extends GenUiComponentName>(
 }
 
 const componentNames = Object.keys(genUiComponents) as GenUiComponentName[];
+
+function isCatalogAction(name: string): name is GenUiActionName {
+  return Object.hasOwn(genUiActions, name);
+}
+
+// Identifies each store a view creates; see the renderer's key below.
+let storeGeneration = 0;
+
+// JSON Pointer escaping for a single path segment (RFC 6901).
+function escapePointer(segment: string): string {
+  return segment.replaceAll("~", "~0").replaceAll("/", "~1");
+}
 
 export interface GenUiViewProps {
   /** The spec to render; null renders nothing. */
@@ -115,24 +145,48 @@ export function createGenUiView(
     onActionOutcome,
     loading = false,
   }: GenUiViewProps) {
+    // One store per spec, so what the user typed survives re-renders; host
+    // state is layered in on creation and again whenever the host changes it.
+    const hostState = useRef(state);
+    hostState.current = state;
+    const { store, generation } = useMemo(
+      () => ({
+        store: createStateStore({ ...(spec?.state ?? {}), ...(hostState.current ?? {}) }),
+        generation: ++storeGeneration,
+      }),
+      [spec],
+    );
+    useEffect(() => {
+      for (const [key, value] of Object.entries(state ?? {})) {
+        store.set(`/${escapePointer(key)}`, value);
+      }
+    }, [store, state]);
+
     // A fresh closure each render is fine: json-render rebuilds its action
     // proxy on every render too, so the latest handlers are always the ones used.
-    const onAction = (action: string, params?: Record<string, unknown>) => {
-      void dispatchGenUiAction(handlers, action, params).then((outcome) =>
-        onActionOutcome?.(outcome),
-      );
+    const onAction = async (action: string, params?: Record<string, unknown>) => {
+      const statePath = isCatalogAction(action) ? genUiActionStatePath(action) : undefined;
+      if (statePath) store.set(statePath, { status: "pending", fieldErrors: {} });
+      const outcome = await dispatchGenUiAction(handlers, action, params);
+      const settled = actionStateFor(outcome);
+      if (statePath) store.set(statePath, settled);
+      onActionOutcome?.(outcome);
+      // Rejecting is what makes json-render skip the spec's onSuccess and run
+      // its onError (where "$error.message" is this message).
+      if (settled.status === "error") throw new Error(settled.message);
     };
-
-    const initialState = useMemo(
-      () => ({ ...(spec?.state ?? {}), ...(state ?? {}) }),
-      [spec?.state, state],
-    );
 
     const view = (
       <CatalogRenderer
+        // json-render's StateProvider adopts the store it mounts with and
+        // ignores a new one, so a new spec (and so a new store) remounts it.
+        // Otherwise action results would go to a store nothing reads.
+        key={generation}
         spec={spec}
-        state={initialState}
-        onAction={onAction}
+        store={store}
+        // json-render types onAction as returning void but awaits whatever it
+        // returns; the promise is what drives onSuccess / onError.
+        onAction={onAction as (action: string, params?: Record<string, unknown>) => void}
         loading={loading}
         fallback={UnknownElement}
       />

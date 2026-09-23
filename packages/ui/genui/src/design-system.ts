@@ -31,6 +31,11 @@ export interface GenUiRenderProps<P> {
   children?: ReactNode;
   /** Fire one of the component's declared events. */
   emit: (event: string) => void;
+  /**
+   * Write a new value for a prop the spec bound with `$bindState` (e.g. what
+   * the user typed into a TextField). A no-op for a prop that is not bound.
+   */
+  setProp: <K extends keyof P & string>(prop: K, value: P[K]) => void;
 }
 
 /** One implementation per catalog component, checked at compile time. */

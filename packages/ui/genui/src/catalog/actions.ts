@@ -43,6 +43,23 @@ export const genUiActions = {
     params: z.object({ version: z.string().min(1).optional() }),
     description: "Open the project's Deployments view, optionally at a version.",
   },
+  createCustomer: {
+    // The request body of POST /api/customers. The messages are what a user
+    // sees beside the field when a value is missing or malformed.
+    params: z.object({
+      name: z.string({ error: "Enter the customer's name." }).trim().min(1, {
+        error: "Enter the customer's name.",
+      }),
+      contactName: z.string({ error: "Enter a contact name." }).trim().min(1, {
+        error: "Enter a contact name.",
+      }),
+      contactEmail: z
+        .email({ error: "Enter a valid email address, like name@example.com." }),
+      contactPhone: z.string().optional(),
+    }),
+    description:
+      "Create a customer. Params come from the form's fields; the host sends the request.",
+  },
   editExternalResource: {
     params: z.object({ resourceName: z.string().min(1) }),
     description:
@@ -63,13 +80,79 @@ export type GenUiActionHandlers = {
   ) => void | Promise<void>;
 };
 
+/** Field name → the message to show beside that field. */
+export type GenUiFieldErrors = Record<string, string>;
+
+/**
+ * Thrown by a host handler when the request was refused for a reason the user
+ * can fix, e.g. the server's own validation. The message is shown to the user
+ * and each field error beside its field. Any other thrown error shows only a
+ * generic message, so internal details never reach the screen.
+ */
+export class GenUiActionError extends Error {
+  readonly fieldErrors: GenUiFieldErrors;
+
+  constructor(message: string, fieldErrors: GenUiFieldErrors = {}) {
+    super(message);
+    this.name = "GenUiActionError";
+    this.fieldErrors = fieldErrors;
+  }
+}
+
 /** What happened when a spec fired an action. */
 export type GenUiDispatchOutcome =
   | { status: "handled"; action: GenUiActionName }
   | { status: "unhandled"; action: GenUiActionName }
   | { status: "unknown-action"; action: string }
-  | { status: "invalid-params"; action: GenUiActionName; issues: string[] }
+  | {
+      status: "invalid-params";
+      action: GenUiActionName;
+      issues: string[];
+      fieldErrors: GenUiFieldErrors;
+    }
   | { status: "failed"; action: GenUiActionName; error: unknown };
+
+/**
+ * Where a generated UI can read an action's progress: its state at
+ * `/actions/<actionName>`. The view writes it; a spec shows it with `$state`
+ * bindings and `visible` conditions.
+ */
+export interface GenUiActionState {
+  status: "pending" | "success" | "error";
+  /** For the user: what went wrong, or nothing on success. */
+  message?: string;
+  fieldErrors: GenUiFieldErrors;
+}
+
+export const genUiActionStatePath = (action: GenUiActionName): string =>
+  `/actions/${action}`;
+
+const GENERIC_FAILURE = "Something went wrong. Try again.";
+
+/** The state a spec sees once an action has settled. */
+export function actionStateFor(outcome: GenUiDispatchOutcome): GenUiActionState {
+  switch (outcome.status) {
+    case "handled":
+      return { status: "success", fieldErrors: {} };
+    case "invalid-params":
+      return {
+        status: "error",
+        message: "Check the highlighted fields.",
+        fieldErrors: outcome.fieldErrors,
+      };
+    case "failed":
+      return outcome.error instanceof GenUiActionError
+        ? {
+            status: "error",
+            message: outcome.error.message,
+            fieldErrors: outcome.error.fieldErrors,
+          }
+        : { status: "error", message: GENERIC_FAILURE, fieldErrors: {} };
+    case "unhandled":
+    case "unknown-action":
+      return { status: "error", message: "This action is not available here.", fieldErrors: {} };
+  }
+}
 
 function isGenUiActionName(name: string): name is GenUiActionName {
   return Object.hasOwn(genUiActions, name);
@@ -91,12 +174,21 @@ export async function dispatchGenUiAction(
   }
   const parsed = genUiActions[action].params.safeParse(rawParams ?? {});
   if (!parsed.success) {
+    const fieldErrors: GenUiFieldErrors = {};
+    for (const issue of parsed.error.issues) {
+      const field = issue.path[0];
+      // The first issue per field is the one to fix first.
+      if (field !== undefined && !(String(field) in fieldErrors)) {
+        fieldErrors[String(field)] = issue.message;
+      }
+    }
     return {
       status: "invalid-params",
       action,
       issues: parsed.error.issues.map(
         (issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`,
       ),
+      fieldErrors,
     };
   }
   const handler = handlers[action] as

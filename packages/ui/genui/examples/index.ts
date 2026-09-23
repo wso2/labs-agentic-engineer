@@ -19,6 +19,7 @@
 import dependencyApproval from "./dependency-approval.json" with { type: "json" };
 import buildAndDeploy from "./build-and-deploy.json" with { type: "json" };
 import buildView from "./build-view.json" with { type: "json" };
+import createCustomer from "./create-customer.json" with { type: "json" };
 import deliveryStatus from "./delivery-status.json" with { type: "json" };
 
 /**
@@ -31,6 +32,7 @@ export const exampleSpecs: Record<string, unknown> = {
   "Delivery status": deliveryStatus,
   "Build and deploy": buildAndDeploy,
   "Build view (console page)": buildView,
+  "Create customer (form)": createCustomer,
 };
 
 export { componentExamples } from "./components.js";
