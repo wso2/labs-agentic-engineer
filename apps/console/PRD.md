@@ -107,7 +107,7 @@ here: they're the open `console` + `feature` issues.
   the section then lists one **Review prototype** entry per web application.
   Review opens a full-viewport page at
   `/projects/:project/prototype/:component` — a slim review bar (**Back to
-  Spec**, the app name, **Prototype · read-only**, Role, Flow, Screen and
+  Spec**, the app name, **Read-only**, Role, Flow, Screen and
   Display state selectors, **Preview** / **Annotate**) over the application in a
   browser-window frame, rendered with Oxygen from the controlled registry.
   **Preview** navigates, opens dialogs and drawers, and switches tabs and steps;

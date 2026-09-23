@@ -96,7 +96,7 @@ describe("ComponentPrototypePage", () => {
 
     expect(await screen.findByRole("heading", { name: "Approval queue", level: 2 })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Expense approvals", level: 1 })).toBeInTheDocument();
-    expect(screen.getByText("Prototype · read-only")).toBeInTheDocument();
+    expect(screen.getByText("Read-only")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Back to Spec/ })).toBeInTheDocument();
     expect(within(application()!).getByLabelText("Address")).toHaveTextContent("storefront.example.com/queue");
     expect(screen.getByRole("button", { name: "Preview" })).toHaveAttribute("aria-pressed", "true");
@@ -137,7 +137,7 @@ describe("ComponentPrototypePage", () => {
     expect(await screen.findByText("This prototype can't be shown")).toBeInTheDocument();
     expect(screen.getByText("UNSUPPORTED_VERSION")).toBeInTheDocument();
     expect(application()).toBeNull();
-    expect(screen.queryByText("Prototype · read-only")).toBeNull();
+    expect(screen.queryByText("Read-only")).toBeNull();
   });
 
   it("names a component mismatch as such", async () => {

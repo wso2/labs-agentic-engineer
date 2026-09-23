@@ -1210,7 +1210,7 @@ It is never a *wireframe*, *mockup* or *preview build*: the word is
 | the rail's `PROTOTYPE` section, before one exists | **Generate prototype** — offered once the design is ready |
 | the section, one per web application | **Review prototype**, the component's name beneath |
 | the section and the page, after the design moved | **Outdated** — *The design has changed since this prototype was generated, so it may no longer show what will be built.* — and **Regenerate prototype** |
-| the review page's bar | **Back to Spec**, the application's name, **Prototype · read-only**, **Role**, **Flow** (**Free navigation** when none), **Screen**, **Display state** |
+| the review page's bar | **Back to Spec**, the application's name, **Read-only**, **Role**, **Flow** (**Free navigation** when none), **Screen**, **Display state** |
 | the mode toggle | **Preview** · **Annotate** |
 | the Annotate inspector | **Feedback**; the selection as chips, or **Whole screen** when nothing is selected; **Request**; **Clear selection**; **Add request**; **Send all** (**Send all (N)** with N queued, **Sending…** while it goes); **Remove request** on a queued card |
 | a file that fails the model | **This prototype can't be shown** |

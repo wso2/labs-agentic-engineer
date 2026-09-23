@@ -110,7 +110,7 @@ export function ReviewBar({ model, view, dispatch, backLink, modeLocked = false 
         <Typography variant="subtitle1" component="h1">
           {model.name}
         </Typography>
-        <Chip size="small" variant="outlined" label="Prototype · read-only" />
+        <Chip size="small" variant="outlined" label="Read-only" />
         <Box sx={{ flex: 1 }} />
         <Selector label="Role" value={view.roleId} width={130} onChange={(roleId) => dispatch({ type: "SET_ROLE", roleId })}>
           {model.roles.map((r) => (
