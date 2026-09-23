@@ -33,18 +33,19 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import {
+  AppWindow,
+  ArrowUpRight,
   Boxes,
   Check,
   ChevronDown,
   ChevronRight,
   Database,
-  Eye,
   FileText,
   RefreshCw,
   Network,
-  LayoutDashboard,
   Plug,
   ShieldCheck,
+  Sparkles,
   TriangleAlert,
   Workflow,
 } from "@wso2/oxygen-ui-icons-react";
@@ -112,13 +113,13 @@ export function SpecFileList({
   /** A reason row was clicked: open the requirements document, re-derive,
    *  or regenerate the prototype. */
   onReason: (action: SectionReason["action"]) => void;
-  /** The Prototype section's Generate / Regenerate prototype (#813) — both
+  /** The Prototype section header's Generate / Regenerate (#813) — both
    *  send `/prototype`. */
   onPrototypeAction: (action: NonNullable<PrototypeStage["action"]>) => void;
   /** Why that action cannot run right now (a turn is running, or the agent
    *  waits on the user), shown on the disabled button; "" when it can. */
   prototypeActionBlockedReason?: string;
-  /** A Review prototype entry: open that web-application's prototype. */
+  /** A prototype entry: open that web-application's prototype review. */
   onReviewPrototype: (component: string) => void;
 }) {
   // Present only when the design cell declares a web-application (#813).
@@ -574,16 +575,23 @@ export function SpecFileList({
       </Box>
 
       {/* Prototype (#813) — between Design and Validation, only for a design
-          with a web-application: one Review entry per prototype, and the one
-          turn the stage can start now. */}
+          with a web-application: one entry per prototype, and the one turn
+          the stage can start now in its header. */}
       {prototypeSection && (
         <Box sx={{ mb: 1 }}>
-          {sectionHeader(prototypeSection)}
+          {sectionHeader(
+            prototypeSection,
+            prototypeSection.prototype?.action && (
+              <PrototypeAction
+                action={prototypeSection.prototype.action}
+                blockedReason={prototypeActionBlockedReason}
+                onAction={onPrototypeAction}
+              />
+            ),
+          )}
           <PrototypeRows
-            stage={prototypeSection.prototype ?? { action: null, reviews: [] }}
-            actionBlockedReason={prototypeActionBlockedReason}
+            reviews={prototypeSection.prototype?.reviews ?? []}
             emptyNote={emptyNote}
-            onAction={onPrototypeAction}
             onReview={onReviewPrototype}
           />
         </Box>
@@ -616,32 +624,63 @@ const FIX_LABEL: Record<SectionReason["action"], string> = {
 };
 
 const PROTOTYPE_ACTION_LABEL: Record<NonNullable<PrototypeStage["action"]>, string> = {
-  generate: "Generate prototype",
-  regenerate: "Regenerate prototype",
+  generate: "Generate",
+  regenerate: "Regenerate",
 };
 
 /**
- * The Prototype section's body: one Review prototype entry per
- * web-application that has one (named, since a design may declare several),
- * then the section's action. "Not created yet" only when there is neither —
- * before the design is ready, or while the first generation runs (the header
- * pulses for that).
+ * The Prototype section header's action (#813): Generate before a prototype
+ * exists, Regenerate once the design has moved past it. It sits where the
+ * Design header's re-generate sits, as a small text button — the section
+ * title already names what it acts on, so the visible word stays short while
+ * the accessible name says it in full.
+ */
+function PrototypeAction({
+  action,
+  blockedReason,
+  onAction,
+}: {
+  action: NonNullable<PrototypeStage["action"]>;
+  blockedReason: string;
+  onAction: (action: NonNullable<PrototypeStage["action"]>) => void;
+}) {
+  return (
+    <Tooltip title={blockedReason}>
+      {/* span so the tooltip works while the button is disabled */}
+      <span>
+        <Button
+          size="small"
+          variant="text"
+          aria-label={`${PROTOTYPE_ACTION_LABEL[action]} prototype`}
+          startIcon={action === "regenerate" ? <RefreshCw size={14} /> : <Sparkles size={14} />}
+          disabled={blockedReason !== ""}
+          onClick={() => onAction(action)}
+          sx={{ py: 0.25, minWidth: 0, flexShrink: 0 }}
+        >
+          {PROTOTYPE_ACTION_LABEL[action]}
+        </Button>
+      </span>
+    </Tooltip>
+  );
+}
+
+/**
+ * The Prototype section's body: one entry per web-application that has a
+ * prototype, named by the component (a design may declare several), opening
+ * its full-viewport review. "Not created yet" when there is none — the
+ * header carries Generate once the design is ready, and pulses while the
+ * first generation runs.
  */
 function PrototypeRows({
-  stage,
-  actionBlockedReason,
+  reviews,
   emptyNote,
-  onAction,
   onReview,
 }: {
-  stage: PrototypeStage;
-  actionBlockedReason: string;
+  reviews: string[];
   emptyNote: string;
-  onAction: (action: NonNullable<PrototypeStage["action"]>) => void;
   onReview: (component: string) => void;
 }) {
-  const { action, reviews } = stage;
-  if (reviews.length === 0 && action === null) {
+  if (reviews.length === 0) {
     return (
       <Typography variant="body2" color="text.secondary" sx={{ px: 2, py: 0.5, fontStyle: "italic" }}>
         {emptyNote}
@@ -649,46 +688,24 @@ function PrototypeRows({
     );
   }
   return (
-    <>
-      {reviews.length > 0 && (
-        <List dense disablePadding>
-          {reviews.map((component) => (
-            <ListItemButton
-              key={component}
-              onClick={() => onReview(component)}
-              aria-label={`Review prototype: ${component}`}
-              sx={{ px: 2 }}
-            >
-              <ListItemIcon sx={{ minWidth: 32 }}>
-                <Eye size={16} />
-              </ListItemIcon>
-              <ListItemText
-                primary="Review prototype"
-                secondary={component}
-                slotProps={{ primary: { noWrap: true }, secondary: { noWrap: true } }}
-              />
-            </ListItemButton>
-          ))}
-        </List>
-      )}
-      {action && (
-        <Box sx={{ px: 2, pt: 0.5 }}>
-          <Tooltip title={actionBlockedReason}>
-            {/* span so the tooltip works while the button is disabled */}
-            <span>
-              <Button
-                size="small"
-                variant="outlined"
-                startIcon={action === "regenerate" ? <RefreshCw size={14} /> : <LayoutDashboard size={14} />}
-                disabled={actionBlockedReason !== ""}
-                onClick={() => onAction(action)}
-              >
-                {PROTOTYPE_ACTION_LABEL[action]}
-              </Button>
-            </span>
-          </Tooltip>
-        </Box>
-      )}
-    </>
+    <List dense disablePadding>
+      {reviews.map((component) => (
+        <ListItemButton
+          key={component}
+          onClick={() => onReview(component)}
+          aria-label={`Review prototype: ${component}`}
+          sx={{ px: 2 }}
+        >
+          <ListItemIcon sx={{ minWidth: 32 }}>
+            <AppWindow size={16} />
+          </ListItemIcon>
+          <ListItemText primary={component} slotProps={{ primary: { noWrap: true } }} />
+          {/* Opens the full-screen review, not a document in the pane. */}
+          <Box sx={{ display: "flex", flexShrink: 0, color: "text.secondary" }} aria-hidden>
+            <ArrowUpRight size={14} />
+          </Box>
+        </ListItemButton>
+      ))}
+    </List>
   );
 }

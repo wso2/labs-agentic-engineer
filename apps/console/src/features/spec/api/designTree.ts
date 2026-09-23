@@ -115,7 +115,7 @@ export function dependencyFilePath(name: string, file: string): string {
 /**
  * Group the Designs files into an overview list + per-component nodes. A
  * web-application's `prototype.json` is not listed as a file: it is reviewed
- * through the Prototype section's Review prototype entry, never read as text.
+ * through the Prototype section's entry for it, never read as text.
  * Components and their files are sorted by path for a stable tree.
  */
 export function buildDesignSection(files: SpecFileEntry[]): DesignSection {

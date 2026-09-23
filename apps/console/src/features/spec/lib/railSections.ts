@@ -66,7 +66,7 @@ export interface SectionReason {
 /**
  * What the Prototype section offers (#813) — carried only by that section.
  *
- * `reviews` is one Review prototype entry per web-application whose prototype
+ * `reviews` is one prototype entry per web-application whose prototype
  * exists, in the order the cell declares them. `action` is the one turn the
  * section can start right now: `generate` while a web-application has no
  * prototype yet, `regenerate` once the design has moved past the prototypes,

@@ -18,7 +18,7 @@
 
 // Which components the design cell declares as web-applications (#813) — the
 // one fact that decides whether the Spec rail has a Prototype stage at all, and
-// which Review prototype entries it lists.
+// which prototype entries it lists.
 //
 // Derived from the cell every time, never stored: the cell IS the architecture,
 // read by the same compiler the Architecture diagram renders it with, so the

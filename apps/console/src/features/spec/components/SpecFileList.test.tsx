@@ -459,8 +459,9 @@ describe("SpecFileList — the prototype section", () => {
     expect(screen.queryByText("Prototype")).not.toBeInTheDocument();
   });
 
-  it("Generate prototype fires the generate action", () => {
+  it("the header's Generate fires the generate action", () => {
     const { onPrototypeAction } = renderStage({});
+    expect(screen.getByRole("button", { name: "Generate prototype" })).toHaveTextContent(/^Generate$/);
     fireEvent.click(screen.getByRole("button", { name: "Generate prototype" }));
     expect(onPrototypeAction).toHaveBeenCalledWith("generate");
   });
@@ -473,16 +474,19 @@ describe("SpecFileList — the prototype section", () => {
     expect(await screen.findByRole("tooltip")).toHaveTextContent(/waiting on your answer/);
   });
 
-  it("lists a Review prototype entry that opens the component", () => {
+  it("lists an entry named by the component that opens its review", () => {
     const { onReviewPrototype } = renderStage({ prototypes: ["storefront"] });
     expect(screen.queryByRole("button", { name: /Generate prototype/ })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Review prototype: storefront" }));
+    const entry = screen.getByRole("button", { name: "Review prototype: storefront" });
+    expect(entry).toHaveTextContent(/^storefront$/);
+    fireEvent.click(entry);
     expect(onReviewPrototype).toHaveBeenCalledWith("storefront");
   });
 
-  it("offers Regenerate prototype when outdated", () => {
+  it("offers Regenerate in the header when outdated", () => {
     const { onPrototypeAction } = renderStage({ prototypes: ["storefront"], prototypeOutdated: true });
     expect(screen.getByRole("button", { name: "Prototype: 1 to resolve" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Regenerate prototype" })).toHaveTextContent(/^Regenerate$/);
     fireEvent.click(screen.getByRole("button", { name: "Regenerate prototype" }));
     expect(onPrototypeAction).toHaveBeenCalledWith("regenerate");
   });
