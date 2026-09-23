@@ -152,8 +152,8 @@ export async function runSpecTurn(session: TurnSession, turn: TurnSpec, opts: Sp
     changes.push(change);
     if (bundle.has(path)) after[path] = bundle.read(path)!;
     else delete after[path];
-    // Refresh this change's derived views immediately: the domain-model *.dsl →
-    // .excalidraw compile is per-file; any specs/design/ change re-rolls the aggregate
+    // Refresh this change's derived views immediately: the *.dsl → .excalidraw
+    // compile is per-file; any specs/design/ change re-rolls the aggregate
     // cell-diagram from the current snapshot (last rebuild wins the final view).
     if (change.kind !== "remove") {
       const note = compileDslDerived(projectDir, change.path);

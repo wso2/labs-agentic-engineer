@@ -17,9 +17,10 @@
  */
 
 /**
- * Post-turn DSL compilation. A domain-model `*.dsl` source (an `erd*` or
- * `domain*` basename) compiles into the sibling `.excalidraw` scene via
- * `@aep/excalidraw-dsl`, a deterministic compiler, so validity is by
+ * Post-turn DSL compilation. The agent authors `*.dsl` sources (tiny,
+ * skill-guided, cheaply editable); this client compiles each one it just
+ * wrote into the sibling `.excalidraw` scene via `@aep/excalidraw-dsl` — the
+ * same deterministic compiler the legacy console used, so validity is by
  * construction, not model discipline. The service stays file-agnostic; like
  * all disk concerns, compilation is the CALLER's job (in production, the
  * BFF's).
@@ -27,7 +28,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { tryDslToExcalidraw } from "@aep/excalidraw-dsl";
+import { tryDslToExcalidraw, type DslKind } from "@aep/excalidraw-dsl";
 
 export interface DslCompileResult {
   /** The `.dsl` source path (thread-relative). */
@@ -39,25 +40,25 @@ export interface DslCompileResult {
   error?: string;
 }
 
-/** A domain-model DSL source: a `.dsl` whose basename starts `erd` or `domain`. */
-function isDomainModelDsl(path: string): boolean {
+/** Infer the DSL dialect from the filename (`erd`/`domain` → domain-model). */
+function kindFor(path: string): DslKind {
   const base = basename(path).toLowerCase();
-  return base.endsWith(".dsl") && (base.startsWith("erd") || base.startsWith("domain"));
+  return base.startsWith("erd") || base.startsWith("domain") ? "domain-model" : "wireframes";
 }
 
 /**
- * Compile every domain-model `.dsl` among `changedPaths` (thread-relative)
- * into its sibling `.excalidraw` under `threadDir`. Other paths and
- * since-deleted files are skipped; a failed parse reports instead of writing.
+ * Compile every `.dsl` among `changedPaths` (thread-relative) into its
+ * sibling `.excalidraw` under `threadDir`. Non-DSL paths and since-deleted
+ * files are skipped; a failed parse reports instead of writing.
  */
 export function compileDslArtifacts(threadDir: string, changedPaths: readonly string[]): DslCompileResult[] {
   const results: DslCompileResult[] = [];
   for (const rel of changedPaths) {
-    if (!isDomainModelDsl(rel)) continue;
+    if (!rel.endsWith(".dsl")) continue;
     const abs = join(threadDir, rel);
     if (!existsSync(abs)) continue; // removed this turn — nothing to compile
     const outPath = rel.replace(/\.dsl$/, ".excalidraw");
-    const res = tryDslToExcalidraw(readFileSync(abs, "utf8"));
+    const res = tryDslToExcalidraw(kindFor(rel), readFileSync(abs, "utf8"));
     if (res.ok) {
       writeFileSync(join(threadDir, outPath), res.json);
       results.push({ path: rel, outPath, ok: true });

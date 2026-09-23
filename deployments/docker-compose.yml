@@ -316,7 +316,7 @@ services:
   # arrives per-turn in X-Anthropic-Key (no boot-time key).
   # See docs/design/agents-generation-migration.md.
   # Built from the repo root so pnpm resolves the workspace:* deps
-  # (@aep/agent-stream, @aep/prototype-model, @aep/design-projection).
+  # (@aep/agent-stream, @aep/excalidraw-dsl, @aep/design-projection).
   # ---------------------------------------------------------------------------
   agents:
     build:
