@@ -38,7 +38,7 @@ An absent kind means `org`, which is a real decision, not a default to lean on:
 - **`platform`** — AE-owned, read-only in the console. The design-flow skills
   (`start`, `amend`, `settle`, `grilling`, `prd-contract`, `design`,
   `cell-design`, `architecture`, `security-design`, `openapi-conventions`,
-  `prototype`, `validation-criteria`, `task-planning`), the `console`
+  `wireframes`, `prototype`, `validation-criteria`, `task-planning`), the `console`
   narration policy, the coding run's own workflow skills (`aep`,
   `aep-validation`, `mock-verification`) and the browser CLIs they drive
   (`playwright-cli`, `agent-browser`), and one reference skill both sides
@@ -143,19 +143,27 @@ changing a web-app skill:
 grep -rniE 'astryx|@astryxdesign|\boxygen\b|@wso2/oxygen' skills/ --include='*.md'
 ```
 
-Four paths may match: `skills/organization/SKILL.md`,
+Four paths may match, plus the one exception below: `skills/organization/SKILL.md`,
 `skills/oxygen-ui-design-system/**`, `skills/astryx-design-system/**` and this
 file. A hit anywhere else — especially in `architecture`, which is
 `kind: platform` and read-only in the console — means an org can no longer swap
 its design system without a platform change.
 
-The prototype exception: a `prototype.json` is rendered by the **console's**
-prototype renderer, which draws with Oxygen UI whatever the org builds with, so the `/prototype` flow inlines `oxygen-ui-design-system`
+The exception: `skills/wireframes/SKILL.md` says the wireframe
+compiler renders with an "Oxygen UI palette" and applies "the Oxygen theme".
+That is the **compiler's** drawing style for a `.excalidraw` picture, not the
+app's UI toolkit, and it does not follow the org's design system — swapping
+the design system does not restyle a wireframe. Keep it that way: do not
+couple the two, and do not let the name spread from there into anything a
+build reads.
+
+The prototype exception has the same shape. A `prototype.json` is rendered by
+the **console's** prototype renderer, which draws with Oxygen UI whatever the
+org builds with, so the `/prototype` flow inlines `oxygen-ui-design-system`
 (the flow map in `services/agents/src/prompts/turn.ts`, not this library) and
 that skill's audience includes `design` so the design agent may read it. The
 `prototype` skill itself names no vendor — it says "the design-system skill
-loaded beside this one", and its coding reference says "the pinned design
-system" — and a test in the agents service keeps its body that way.
+loaded beside this one" — and a test in the agents service keeps it that way.
 
 ## Who owns what
 

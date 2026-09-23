@@ -11,7 +11,7 @@ metadata:
 One page, so the design skills and the coding skills stop restating it. Each
 rule names the measurement or the incident behind it and the ADR that holds the
 argument. Nothing here is a procedure: `security-design`, `openapi-conventions`,
-`prototype`, `thunder-authentication`, `react-webapp` and `api-management` say
+`wireframes`, `thunder-authentication`, `react-webapp` and `api-management` say
 what to write; this page says what must stay true whatever they write.
 
 ## The invariants
@@ -71,8 +71,8 @@ what to write; this page says what must stay true whatever they write.
    screens is authored in `security.json`. The SPA gates each route with
    `RequireOperation op=` and each rail item with `Can op=`, both reading the
    generated operations table; the coding agent names each screen's load
-   operation once, in `src/authz/screens.ts`. A screen the PRD gives to a
-   signed-out visitor is public and is routed above the sign-in guard. *Why:* the
+   operation once, in `src/authz/screens.ts`. A screen in a flow with no
+   `role` line is public and is routed above the sign-in guard. *Why:* the
    screen table was a third statement of the contract, consumed by nothing at
    runtime, and a gate that can disagree with the operation it fronts turns a
    user away from a page the API would serve. ADR-0033.
@@ -136,5 +136,5 @@ what to write; this page says what must stay true whatever they write.
 | which handles exist, which roles hold them, who holds a role | `security.json` (`security-design`) | Thunder at Build; `gen-authz.mjs` |
 | which handle an operation needs | `openapi.yaml` `security` (`openapi-conventions`) | the gateway trait; the build gate; `gen-authz.mjs`; the mock gateway |
 | which rows an operation reaches | the operation's path (`openapi-conventions`) | the generated handler |
-| which screens exist and which role's flow walks them | `prototype.json` (`prototype`) | the walk (`mock-verification`) |
+| which screens exist and which role's flow walks them | `wireframes.dsl` (`wireframes`) | the walk (`mock-verification`) |
 | which operation a screen loads | `src/authz/screens.ts` (`thunder-authentication`) | `RequireOperation`, `Can`, the rail, the landing redirect |

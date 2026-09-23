@@ -247,7 +247,7 @@ type ForbiddenState = { op?: OperationKey; screen?: string };
  * the navigation the caller CAN use is still there. Route it at /forbidden.
  *
  * /forbidden and NoAccess are platform-prescribed views. They appear in no
- * prototype.json and they are the carve-out from "no invented screens".
+ * wireframe .dsl and they are the carve-out from "no invented screens".
  */
 export function Forbidden(): ReactElement {
   const { op, screen } = (useLocation().state ?? {}) as ForbiddenState;

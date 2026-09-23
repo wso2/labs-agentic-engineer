@@ -113,7 +113,7 @@ test("the skill says the review renderer draws only the model's nodes and its na
 
 test("the skill scopes the built app's shell to the build, not the review renderer", () => {
   assert.match(PROSE, /describes? the built application, not the review renderer/i);
-  assert.match(PROSE, /references\/implementing\.md/);
+  assert.match(PROSE, /wireframes\.dsl/);
 });
 
 test("a feedback revision answers every annotation — applied, or declined with the registry reason", () => {
@@ -130,15 +130,15 @@ test("the skill asks for validation-error and failure states where the API has e
 });
 
 // The design-system skill rides with `/prototype` too, and its "implementing a
-// prototype" mapping (header, user menu, footer) is where the false claim came
+// wireframe" mapping (header, user menu, footer) is where the false claim came
 // from. It must say it is the coding run's, and that the renderer draws none of it.
 const DESIGN_SYSTEM = fs.readFileSync(
   path.resolve(fileURLToPath(import.meta.url), "../../../../skills/oxygen-ui-design-system/SKILL.md"),
   "utf8",
 );
 
-test("the design-system skill's prototype mapping is scoped to the coding run", () => {
-  const section = (/## Implementing a prototype with Oxygen\n([\s\S]*?)\n\|/.exec(DESIGN_SYSTEM)?.[1] ?? "").replace(/\s+/g, " ");
+test("the design-system skill's wireframe mapping is scoped to the coding run", () => {
+  const section = (/## Implementing a wireframe with Oxygen\n([\s\S]*?)\n\|/.exec(DESIGN_SYSTEM)?.[1] ?? "").replace(/\s+/g, " ");
   assert.match(section, /coding run/i);
   assert.match(section, /review renderer draws none of/i);
 });

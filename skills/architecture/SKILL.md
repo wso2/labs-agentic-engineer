@@ -41,7 +41,7 @@ component's build actually needs as a `skillsPinned` array **inside that
 component's `specs/design/components/<name>/design.json`** — use the exact
 catalog names, e.g. a Ballerina API service →
 `["openapi-conventions", "ballerina"]` (a Go one → `["openapi-conventions",
-"go"]`); a web-application → `["prototype", "react-webapp", <design system>]`,
+"go"]`); a web-application → `["wireframes", "react-webapp", <design system>]`,
 where `<design system>` is the skill name in the **UI design system** section of
 the Organization defaults block in your instructions. A web app's UI toolkit is
 a settled organization decision, so pin it on **every** web-application rather

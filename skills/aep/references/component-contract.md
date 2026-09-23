@@ -115,8 +115,8 @@ a `Dockerfile` is verified there and never here, so write it carefully (your
 stack skill pins the base image).
 
 **A `web-application` is green when it builds AND walks.** A screen that
-compiles can still render the wrong content, drop a navigation its
-prototype declares, or leave a button wired to nothing. The walk is
+compiles can still render the wrong content, drop a navigation arrow its
+wireframe draws, or leave a button wired to nothing. The walk is
 `mock-verification`, dispatched by the lead once your build is clean: leave
 `mock/` and the `dev:mock` script working and hand off a clean build. A clean
 build alone is not green, so never report it as such.

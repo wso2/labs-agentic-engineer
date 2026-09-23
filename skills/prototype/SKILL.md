@@ -1,10 +1,10 @@
 ---
 name: prototype
-description: "Load for the /prototype flow (generate or revise the read-only prototype.json of every web-application a finished design declares, including a turn that carries a prototype feedback batch), or when implementing a web-application component that has a prototype.json (coding) — the prototype is the screen contract the pages must honour, screen for screen and node for node."
+description: "Load for the /prototype flow: generate or revise the read-only prototype.json of every web-application a finished design declares, including a turn that carries a prototype feedback batch."
 metadata:
   aep:
     kind: platform
-    audience: [design, coding]
+    audience: [design]
 ---
 
 # Prototype
@@ -15,13 +15,11 @@ mock records, rendered read-only by the platform. It is **derived from the
 design**, so this flow runs after `/design` and asks nothing the design already
 answers. It writes one file per web-application and nothing else.
 
-This file is written for the `/prototype` flow. A coding run implementing a
-`web-application` from its `prototype.json` reads
-`references/implementing.md` instead; of this file, only **The document**
-applies to it. The reverse holds too: `references/implementing.md`, and the
-design-system skill's guidance on implementing a prototype (its app shell,
-header, user menu, footer), describe the built application, not the review
-renderer. This flow never reads them as a statement of what a reviewer sees —
+This file is written for the `/prototype` flow only; a coding run implements
+a `web-application` from its `wireframes.dsl`, not from its prototype. The
+design-system skill's guidance on implementing a wireframe (its app shell,
+header, user menu, footer) describes the built application, not the review
+renderer. This flow never reads it as a statement of what a reviewer sees —
 **What the reviewer sees** below is that statement.
 
 ## Inputs
@@ -55,7 +53,7 @@ is the same name. Write it with ONE `addFile` of the whole document
 with edits, and never write a partial file to finish later.
 
 Change **no other file**: not the cell, not `security.json`, not any
-`design.json`, `openapi.yaml` or requirement. If the design
+`design.json`, `openapi.yaml`, `wireframes.dsl` or requirement. If the design
 is wrong for the prototype you would write, say what is wrong in your reply and
 leave the design alone.
 

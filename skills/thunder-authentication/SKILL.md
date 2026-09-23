@@ -117,7 +117,7 @@ already exists this is the only edit the copy cannot make for you.
 The two example files are written against the Expense Tracker — its
 `SCREEN_ROUTES`, `PAGE_BY_KEY` and `APP_NAME` all name ITS screens and ITS
 operations. They are a shape to follow, not a fixture to ship. If your app
-already holds its name somewhere (the prototype's `name`, usually
+already holds its name somewhere (the wireframes' `navbar` title, usually
 `src/appName.ts`), import it rather than declaring a second copy.
 
 If `$AEP_SKILLS_DIR` is unset, copy from `assets/` next to this skill's
@@ -468,7 +468,7 @@ about authorization.
 ### 5 · `src/authz/screens.ts` — each screen names the operation it loads
 
 **A screen is gated on the operation it loads, and that operation is named
-once, here.** The screen table is yours to write from `prototype.json`, in
+once, here.** The screen table is yours to write from `wireframes.dsl`, in
 **rail order** — the first reachable row is the landing screen:
 
 ```ts
@@ -486,8 +486,8 @@ makes** — it has no load call, but naming its one operation is what keeps the
 rail, the route guard and the button enabled from the same fact; leaving it
 `null` lets a caller reach a form whose only control they can never use.
 `loads: null` is reserved for a screen that needs no operation at all, which is
-rare. A screen the PRD gives to a **signed-out visitor** is `public: true` and
-is routed above the sign-in guard (§6). `reachableScreens(scopes, signedIn)` filters the table
+rare. A screen in a flow with **no `role` line** is `public: true` and is routed above the
+sign-in guard (§6). `reachableScreens(scopes, signedIn)` filters the table
 through `canCall`, and the rail, the landing redirect and `NoAccess` all read
 it.
 
@@ -530,7 +530,7 @@ redirects to the first **reachable** screen in `SCREEN_ROUTES` order.
 - `loads: "<operation>"` → `<RequireOperation op={…}>` around the route and
   `<Can op={…}>` around its nav item.
 - `loads: null` → any signed-in caller; no guard. Rare — a form names its submit operation instead.
-- `public: true` (a screen the PRD gives to a signed-out visitor) → reachable before
+- `public: true` (a screen in a flow with no `role` line) → reachable before
   sign-in; keep it outside the sign-in gate entirely. `App.example.tsx` routes
   those screens **above** `SignedIn`, still inside `AuthzProvider` (so `<Can>`
   and `useScopes()` work on them) and outside `AppShell` — a visitor with no
@@ -538,10 +538,10 @@ redirects to the first **reachable** screen in `SCREEN_ROUTES` order.
   guard is unreachable by the visitor it exists for, because the guard
   redirects them to the IdP first.
 
-**The rail is ONE rail whose items are each wrapped in `Can`.** The prototype
-shows a different rail per role because it is viewed one role at a time; a
-single gated rail reproduces every one of those views and also covers the case
-the prototype cannot show — somebody holding two roles, who sees the union.
+**The rail is ONE rail whose items are each wrapped in `Can`.** The DSL draws a
+different sidebar per role because it draws one role at a time; a single gated
+rail reproduces every one of those pictures and also covers the case the DSL
+cannot draw — somebody holding two roles, who sees the union.
 
 **A reachable screen with nothing in it shows its empty state**, not Forbidden,
 and a region whose operation the viewing role cannot call renders its own
@@ -549,9 +549,9 @@ forbidden state rather than vanishing. The UI never turns away a user the API
 would serve.
 
 **`/forbidden` and `NoAccess` are platform-prescribed views.** They appear in no
-`prototype.json` and they are the carve-out from "no invented screens"
-(`prototype`'s `references/implementing.md` says the same); their absence is a
-defect even though no prototype names them.
+`wireframes.dsl` and they are the carve-out from "no invented screens"
+(`wireframes`' `references/implementing.md` says the same); their absence is a
+defect even though no wireframe names them.
 
 ---
 

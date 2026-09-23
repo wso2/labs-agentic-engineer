@@ -65,11 +65,11 @@ test("the rule admits coding skills and withholds design-only ones", () => {
   const lib = [
     { name: "go", skillMd: md("go", "[coding]") },
     { name: "planning", skillMd: md("planning", "[design]") },
-    { name: "prototype", skillMd: md("prototype", "[design, coding]") },
+    { name: "wireframes", skillMd: md("wireframes", "[design, coding]") },
     { name: "unmarked", skillMd: md("unmarked") },
   ];
   const { copied, skipped } = selectMirroredSkills(lib, new Set(), new Set());
-  assert.deepEqual(copied, ["go", "prototype", "unmarked"]);
+  assert.deepEqual(copied, ["go", "wireframes", "unmarked"]);
   assert.deepEqual(skipped, [{ name: "planning", reason: "design-only" }]);
 });
 
@@ -91,7 +91,7 @@ test("only the admitted skills reach .claude/skills/", async () => {
   const skillsDir = libraryDir({
     go: md("go", "[coding]"),
     planning: md("planning", "[design]"),
-    prototype: md("prototype", "[design, coding]"),
+    wireframes: md("wireframes", "[design, coding]"),
   });
   const workspace = mkdtempSync(join(tmpdir(), "aep-local-ws-"));
 
@@ -99,7 +99,7 @@ test("only the admitted skills reach .claude/skills/", async () => {
 
   const at = (n: string) => join(workspace, ".claude", "skills", n, "SKILL.md");
   assert.ok(existsSync(at("go")), "coding skill must be mirrored");
-  assert.ok(existsSync(at("prototype")), "dual-audience skill must be mirrored");
+  assert.ok(existsSync(at("wireframes")), "dual-audience skill must be mirrored");
   // The regression this file exists for: a whole-tree copy put this in a
   // build's clone, where production would never have written it.
   assert.ok(!existsSync(at("planning")), "design-only skill must NOT reach a build's clone");

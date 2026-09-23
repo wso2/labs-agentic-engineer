@@ -257,7 +257,7 @@ test("eager skills are derived from the flow, not supplied by the caller", () =>
  */
 test("the instructed skill is always inlined, whatever the flow", () => {
   assert.deepEqual(eagerSkillsFor({ kind: "plan" }), ["task-planning"]);
-  assert.deepEqual(eagerSkillsFor({ kind: "flow", skill: "cell-design" }), ["cell-design"]);
+  assert.deepEqual(eagerSkillsFor({ kind: "flow", skill: "wireframes" }), ["wireframes"]);
   // Resolution runs through the SkillSource, so an org-authored flow inlines too;
   // a name that resolves to nothing is skipped downstream, not here.
   assert.deepEqual(eagerSkillsFor({ kind: "flow", skill: "their-own-skill" }), ["their-own-skill"]);
@@ -291,8 +291,8 @@ test("the design flow inlines its whole lineup, in lineup order", () => {
     "architecture",
     "security-design",
     "openapi-conventions",
-    // A web-application's screens are its prototype, which `/prototype`
-    // writes after the design, so no screen skill rides this lineup.
+    // No `wireframes` (#820): a web-application's screens are its prototype,
+    // which `/prototype` writes after the design.
     "validation-criteria",
   ]);
 });

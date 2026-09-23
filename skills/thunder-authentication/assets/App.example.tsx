@@ -19,7 +19,7 @@
 // PATTERN, not a verbatim copy. Copy this to <app-path>/src/App.tsx and replace
 // PAGE_BY_KEY and APP_NAME with YOUR pages and YOUR app's name — both below are
 // the Expense Tracker fixture's. If the app already holds its name (the
-// prototype's `name`, usually src/appName.ts), import it from there
+// wireframes' `navbar` title, usually src/appName.ts), import it from there
 // rather than declaring a second copy that can drift.
 // The ROUTING STRUCTURE below is the part that is
 // prescribed, and it is a structure rule, not styling:
@@ -46,7 +46,7 @@
 //     taken from SCREEN_ROUTES — never a handle or an operation typed here.
 //
 //   A `public` screen is routed ABOVE the sign-in guard.
-//     `public: true` is a screen the PRD gives to a signed-out visitor, reachable
+//     `public: true` is a screen in a flow with no `role` line, reachable
 //     BEFORE sign-in. SignedIn() below redirects anyone without a session to
 //     the IdP, so a public screen routed inside it can never be seen by the
 //     visitor it exists for. It keeps the session provider (so <Can> and

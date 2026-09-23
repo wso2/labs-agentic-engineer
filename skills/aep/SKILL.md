@@ -454,7 +454,7 @@ worked again next cycle. **The platform merges the PR; no human reviews it.**
 **A web application in the cycle** → its Task's `Screens:` and `Flows:` lists
 go in the body, ticked from the walk's report: a screen when its line is green,
 a flow when every screen in its block is. An open `[ ]` line stays unticked with
-the report's line beside it (`prototype`'s `references/implementing.md` shows
+the report's line beside it (`wireframes`' `references/implementing.md` shows
 the shape). The PR stays ready for review — a defect on a committed component
 is not a red one (the component contract's **Walks**).
 
