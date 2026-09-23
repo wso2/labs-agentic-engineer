@@ -23,7 +23,7 @@
  * had just written had to retype the whole thing as tool input — measured at
  * 4.1k output tokens and 28.9s for a 13KB spec. Coverage matches that tool's
  * (structural: 3.x, has paths, has operations), so nothing is lost by moving
- * the check here. Same seam as the design.json and prototype.json gates.
+ * the check here. Same seam as the design.json and wireframes gates.
  */
 
 import { test } from "node:test";

@@ -97,7 +97,7 @@ export interface SecurityReferenceFinding {
 
 /**
  * The sibling files the rules read — `design.cell` and the owner components'
- * `openapi.yaml`, and nothing else.
+ * `openapi.yaml`, and nothing else: no wireframe is read here any more.
  * `FileBundle` satisfies it, and so does any map of the tag's spec tree —
  * which is how the build gate calls the same rules.
  */

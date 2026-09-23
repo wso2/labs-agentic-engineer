@@ -51,7 +51,7 @@ import { InMemoryConversationStore } from "../src/store/memory-store.js";
 const FILES: ReadonlyArray<readonly [string, string]> = [
   ["specs/design/glossary.md", "# Glossary\n"],
   ["specs/design/notes.md", "# Notes\n"],
-  ["specs/design/decisions.md", "# Decisions\n"],
+  ["specs/design/components/web/wireframes.dsl", "screen Home\n"],
 ];
 
 const USAGE = {

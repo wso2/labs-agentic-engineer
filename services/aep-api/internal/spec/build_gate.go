@@ -30,7 +30,8 @@ package spec
 //     scaffold placeholder, a language decided) and carries its type-mandated
 //     artifact (service → openapi.yaml, web-application → a valid
 //     prototype.json whose roles, when security.json exists, are all declared
-//     security roles — the prototype the user reviewed is what Build approves);
+//     security roles — the prototype the user reviewed is what Build approves;
+//     wireframes.dsl is neither required nor sufficient);
 //   - a design with END-USER SIGN-IN carries specs/design/security.json, it parses,
 //     and every story its roles cite is a real PRD story. The platform creates
 //     the roles and test users that file declares when the tag is built, so a

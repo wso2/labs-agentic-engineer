@@ -267,6 +267,9 @@ importers:
 
   packages/agent-stream:
     dependencies:
+      '@aep/excalidraw-dsl':
+        specifier: workspace:*
+        version: link:../excalidraw-dsl
       '@aep/prototype-model':
         specifier: workspace:*
         version: link:../prototype-model

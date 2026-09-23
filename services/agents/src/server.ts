@@ -302,7 +302,7 @@ export function createApp(deps: CreateAppDeps): Express {
       skillSource = loadSkillsFromSnapshot(ws.skillsSnapshotDir);
       if (turn.kind === "start" || turn.kind === "flow") {
         // Flows generate artifacts that must be grounded in the attachments
-        // (a sketch is the screens' brief); run-conversation-turn dedupes
+        // (a sketch is the wireframe brief); run-conversation-turn dedupes
         // against history, so re-naming a document never re-stores it.
         referenceAttachments = readReferenceAttachments(ws.snapshotDir, turn.references);
       }

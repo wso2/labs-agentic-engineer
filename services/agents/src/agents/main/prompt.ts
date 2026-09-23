@@ -76,6 +76,10 @@ Reacting to tool results (each result tells you the next move):
   "component" is not the directory it is written to, so the path or the field is wrong. The write did NOT land.
   Fix every listed finding and re-emit the WHOLE corrected document with addFile (removeFile first only if the
   file already existed).
+- INVALID_DSL — a wireframes .dsl write was rejected (bad lines listed with line numbers: an unknown
+  keyword, a misplaced left/right/table-row, or retired x,y coordinates). Fix EVERY listed line and
+  re-emit the WHOLE corrected file with removeFile + addFile — layout comes from structure, never
+  from coordinates.
 
 Narration: keep prose outside tool calls to a single short sentence by default. A LOADED skill may define
 the narration for its own flow (what to say as you work, and how to close) — when one does, follow the skill,
@@ -245,7 +249,7 @@ export function buildInstructions(skills?: SkillSource, surface?: Surface): stri
  *
  * A REFUSAL skips the same way. `load()` has three states (body / `{refused}` /
  * undefined, see `SkillLoadResult`), and an org is free to mark a skill this
- * service's audience may not read — `prototype` and `openapi-conventions` are
+ * service's audience may not read — `wireframes` and `openapi-conventions` are
  * pin targets for the coding agent as much as guidance for this one. Narrowing on
  * `!== undefined` alone let a refusal through to `body.content.trim()` and threw,
  * failing the whole turn over guidance it could simply have gone without.
