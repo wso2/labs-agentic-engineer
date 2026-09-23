@@ -59,10 +59,10 @@ slug — and each **component** is another, headed by the component's own name:
 | a flow row | one key flow: a PRD actor's journey across the architecture, as a sequence diagram | `specs/design/flows/<slug>.md` |
 | **Design** | the component's authored design record — type, language, the stories it serves, dependencies, pinned skills | `specs/design/components/<name>/design.json` |
 | **API** | the component's OpenAPI contract | `specs/design/components/<name>/openapi.yaml` |
+| **Wireframe** | the component's screens | `specs/design/components/<name>/wireframes.dsl` |
 
-A web application's screens are not a row under its component: they are its
-**prototype**, reviewed from the `PROTOTYPE` section (see **The prototype**
-below).
+A web application's `prototype.json` is not a row under its component: it is
+reviewed from the `PROTOTYPE` section (see **The prototype** below).
 
 A label under a header adds the artifact, never the subject the header already
 names — *Design*, not *Design overview* (the retired root document's name).
@@ -1202,8 +1202,10 @@ A web application's **prototype** is the application the design describes,
 rendered read-only so it can be used and pointed at before anything is built
 ([#813](https://github.com/wso2/labs-agentic-engineer/issues/813); console
 [ADR-0033](decisions/ADR-0033-preview-and-annotate-are-one-prototype-view.md)).
-It is never a *wireframe*, *mockup* or *preview build*: the word is
-**prototype** everywhere a user reads it.
+It is an additional review step after Design, beside the component's
+**Wireframe**, not a replacement for it. It is never a *wireframe* (that is the
+design's own artifact), *mockup* or *preview build*: the word is **prototype**
+everywhere a user reads it.
 
 | where | the words |
 |---|---|
@@ -1217,7 +1219,8 @@ It is never a *wireframe*, *mockup* or *preview build*: the word is
 
 **Preview uses the application; Annotate points at it.** The same click presses a button in Preview
 and selects it in Annotate — the toggle is what says which, so it is always visible and always
-named. There is no approve, version or history word on the page: **Build** is the approval.
+named. There is no approve, version or history word on the page: **Build** is the approval, and
+it does not ask for a prototype.
 
 ## What a change invalidates
 

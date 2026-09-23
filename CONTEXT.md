@@ -48,12 +48,13 @@ spec bundle in, a stream of file mutations out. One turn = one POST.
 **Prototype**:
 A web application's read-only, versioned picture —
 `specs/design/components/<name>/prototype.json` — derived from the design by the
-`/prototype` flow and reviewed in the console before Build. Its screens, flows,
-roles and display states are the application's screen contract; its roles are
-`security.json`'s.
-_Avoid_: wireframe (the retired DSL it replaced), mockup, preview (the console's
-name for one of its two review modes), prototype approval (Build is the
-approval).
+`/prototype` flow and reviewed in the console, an optional step after Design.
+Its screens, flows, roles and display states are what a reviewer walks and
+annotates; its roles are `security.json`'s. It sits beside the component's
+wireframes, which stay the build's screen contract.
+_Avoid_: wireframe (the `wireframes.dsl` the design writes, a different
+artifact), mockup, preview (the console's name for one of its two review modes),
+prototype approval (Build neither requires nor approves it).
 
 ## Org skills (`services/aep-api`)
 

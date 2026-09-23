@@ -584,10 +584,10 @@ A `web-application`'s reviewable picture before Build:
 written by the `/prototype` flow after the design and rendered read-only by the
 console. A versioned model over a controlled registry of components and
 view-state-only actions (`@aep/prototype-model`), with stable IDs and mock
-records shaped by the component's API. It is the web application's screen
-contract: the build gate requires a valid one whose roles `security.json`
-declares, the coding run builds its screens from it, and the mock walk follows
-its flows. There is no approval record — Build is the approval. ADR-0034.
+records shaped by the component's API. It is a review artifact, optional and
+additional to the component's `wireframes.dsl`: the build gate does not ask for
+it, the coding run and the mock walk read the wireframes, and there is no
+approval record. A present one is validated on save. ADR-0034.
 
 ## Skills
 

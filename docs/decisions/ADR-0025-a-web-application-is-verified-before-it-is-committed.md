@@ -1,7 +1,6 @@
 # ADR-0025 — A web application is verified before it is committed
 
-**Status:** Accepted · **the walk's map is `prototype.json`, not `wireframes.dsl`**, since
-[ADR-0034](ADR-0034-a-web-application-is-reviewed-as-a-prototype-before-build.md) · **Related:**
+**Status:** Accepted · **Related:**
 [ADR-0012](ADR-0012-one-debian-runner-image-for-both-task-kinds.md) (one image
 serves both task kinds — this adds a browser driver to it),
 [ADR-0014](ADR-0014-skill-audience-is-metadata-visible-not-loadable.md)

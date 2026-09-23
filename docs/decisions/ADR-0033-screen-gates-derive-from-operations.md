@@ -1,8 +1,6 @@
 # ADR-0033 — A screen's gate is the scope of the operation it loads
 
-**Status:** Accepted · 2026-09-16 · **point 4 superseded** by
-[ADR-0034](ADR-0034-a-web-application-is-reviewed-as-a-prototype-before-build.md)
-(a public screen is one the PRD gives to a signed-out visitor)
+**Status:** Accepted · 2026-09-16
 **Amends:** [ADR-0030](ADR-0030-scopes-are-the-authorization-authority-for-a-generated-app.md)
 point 1 ("which operation every screen reaches" is no longer authored) and
 [ADR-0031](ADR-0031-reach-is-the-path.md) point 6 (the screen reachability

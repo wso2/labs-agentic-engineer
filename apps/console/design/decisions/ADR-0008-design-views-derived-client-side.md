@@ -1,9 +1,6 @@
 # ADR-0008: Design-phase views are derived client-side on demand, read-only, never committed
 
-- **Status:** Accepted — cell-diagram source amended 2026-07-22 (see note below);
-  **the wireframe view is superseded** by repo
-  [ADR-0034](../../../../docs/decisions/ADR-0034-a-web-application-is-reviewed-as-a-prototype-before-build.md)
-  (a web application is reviewed as its `prototype.json`, rendered by the console)
+- **Status:** Accepted — cell-diagram source amended 2026-07-22 (see note below)
 - **Date:** 2026-07-09 (rich design view feature,
   [#149](https://github.com/wso2/labs-agentic-engineer/issues/149))
 - **Context:** the spec view rendered every design file as raw text (#80

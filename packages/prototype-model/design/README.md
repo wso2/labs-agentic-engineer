@@ -2,7 +2,8 @@
 
 The one definition of a web application's `prototype.json`: what a valid
 prototype is, how it is read, and how it is written back. Why the prototype
-exists, where it sits in the stage order and what Build asks of it is repo
+exists, where it sits in the stage order (an optional review step after Design,
+beside the wireframes) and why Build does not ask for it is repo
 [ADR-0034](../../../docs/decisions/ADR-0034-a-web-application-is-reviewed-as-a-prototype-before-build.md);
 how the console presents it is console
 [ADR-0033](../../../apps/console/design/decisions/ADR-0033-preview-and-annotate-are-one-prototype-view.md).
@@ -13,7 +14,7 @@ how the console presents it is console
 |---|---|
 | the agent write gate (`@aep/agent-stream`'s `checkPrototype`) | `parsePrototypeModel` with the directory's component, so a write the model refuses never reaches the turn ledger |
 | the console (`features/prototype`) | `parsePrototypeModel` on the file read through `read-file`, the types for the renderer and reducer, the artifact-path helpers for the rail |
-| the Go save and build gates (`services/aep-api/internal/platform/prototypespec`) | the generated JSON Schema, vendored, plus a Go twin of the reference pass |
+| the Go save gate (`services/aep-api/internal/platform/prototypespec`) | the generated JSON Schema, vendored, plus a Go twin of the reference pass |
 | the `prototype` skill's test (`services/agents`) | the node and action kinds, and the gate, against the skill's registry table and worked example |
 
 ## What it owns

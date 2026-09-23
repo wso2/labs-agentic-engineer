@@ -98,10 +98,10 @@ func TestStartCommand_OnlyStoredReferencesRide(t *testing.T) {
 	}
 }
 
-// Flow turns carry the references too (#383 follow-up): a user-drawn sketch
-// attached at create is the brief for the screens the design and its
-// prototypes describe. Same channel, same sorting, same best-effort posture as
-// the start turn.
+// Flow turns carry the references too (#383 follow-up): the design flow
+// generates wireframes.dsl, and a user-drawn sketch attached at create is
+// exactly what those wireframes must follow. Same channel, same sorting,
+// same best-effort posture as the start turn.
 func TestFlowCommand_CarriesReferenceDocuments(t *testing.T) {
 	got := startTurnSpecWithReferences(t,
 		map[string]string{spec.DescriptorPath: descriptorTOML(t, testIdea)},

@@ -32,12 +32,12 @@ BFF, which is its only backend.
 
 1. User gives a requirement (creating or extending a project).
 2. Agents derive the design file (component architecture) + validation files.
-3. For each **web application** the design declares, the user generates a
-   read-only **prototype** and reviews it in the Console, sending change
-   requests back to the agent until it is right.
+3. Optionally, for each **web application** the design declares, the user
+   generates a read-only **prototype** and reviews it in the Console, sending
+   change requests back to the agent until it is right.
 4. **Design gate (blocking, in the Console):** a developer reviews the derived
-   design (and its prototypes), then triggers Build — Build is the approval,
-   and it refuses a web application without a valid prototype.
+   design (its wireframes, and any prototypes), then triggers Build — Build is
+   the approval; it does not ask for a prototype.
 5. Coding agents implement; their changes merge and deploy to dev
    **autonomously** — there is no human code-review gate. Humans intervene
    on failure, not by default.
@@ -107,7 +107,7 @@ here: they're the open `console` + `feature` issues.
   its API; the section then lists one entry per web application, named by the
   component, with an app-window icon and an open arrow. The entry opens a
   full-viewport page at
-  `/projects/:project/prototype/:component` — a slim review bar (**Back to
+  `/projects/:project/review/:component` — a slim review bar (**Back to
   Spec**, the app name, **Read-only**, Role, Flow, Screen and
   Display state selectors, **Preview** / **Annotate**) over the application in a
   browser-window frame, rendered with Oxygen from the controlled registry.
@@ -122,9 +122,9 @@ here: they're the open `console` + `feature` issues.
   stage **Outdated** with **Regenerate** in its header, and the page
   **Outdated** with **Regenerate prototype**; a feedback
   rewrite does not. No approve action, history or rollback — Build is the
-  approval, and it refuses a missing, invalid or unknown-role prototype. The
-  Excalidraw wireframe canvas, its Canvas | Prototype toggle and the
-  component's *Wireframe* row are removed
+  approval and does not ask for a prototype. The stage is an additional review
+  step: the component's *Wireframe* row and the Excalidraw canvas (still on
+  `/projects/:project/prototype/:component`) stay as they were
   ([ADR-0033](design/decisions/ADR-0033-preview-and-annotate-are-one-prototype-view.md);
   repo [ADR-0034](../../docs/decisions/ADR-0034-a-web-application-is-reviewed-as-a-prototype-before-build.md)) —
   [#813](https://github.com/wso2/labs-agentic-engineer/issues/813)
@@ -413,8 +413,6 @@ here: they're the open `console` + `feature` issues.
   route. `@aep/excalidraw-dsl`'s `tryDslToPrototype` compiles per-screen
   scenes client-side (no BE handshake, no contract change; ADR-0008) —
   [#348](https://github.com/wso2/labs-agentic-engineer/issues/348)
-  *Retired by the Prototype stage
-  ([#813](https://github.com/wso2/labs-agentic-engineer/issues/813)).*
 - Spec view — readable wireframe canvas: screens compile into a single column
   instead of a two-across grid, and the canvas opens focused on the first
   screen at a legible size with the top of the second peeking below; while an
@@ -423,8 +421,6 @@ here: they're the open `console` + `feature` issues.
   `@aep/excalidraw-dsl` stamps each element with its screen so the viewer can
   group per screen; no contract change —
   [#552](https://github.com/wso2/labs-agentic-engineer/issues/552)
-  *Retired by the Prototype stage
-  ([#813](https://github.com/wso2/labs-agentic-engineer/issues/813)).*
 - Project create — reference document upload on the "What do you want to
   build?" view. Two groups, both readable by the models: `.pdf`/`.png`/`.jpg`/
   `.jpeg`/`.gif`/`.webp` read natively as file parts, and `.md`/`.txt`/`.csv`/
@@ -463,8 +459,6 @@ here: they're the open `console` + `feature` issues.
   `Common · Screen 1`), and `?flow=<Name>` joins `?screen=` on the full-screen
   route. Same client-side derivation, no contract change —
   [#491](https://github.com/wso2/labs-agentic-engineer/issues/491)
-  *Retired by the Prototype stage
-  ([#813](https://github.com/wso2/labs-agentic-engineer/issues/813)).*
 - Agent chat — structured question cards: `ask_question` (single) +
   `ask_questions` (batch form) tool-calls rendered as native Oxygen UI cards
   in the activity stream (answer returns as the next turn's plain text);

@@ -6,7 +6,8 @@
   settled by prototype, variant D "Inspector")
 - **Related:** repo
   [ADR-0034](../../../../docs/decisions/ADR-0034-a-web-application-is-reviewed-as-a-prototype-before-build.md)
-  (the prototype model, stage order and build gate);
+  (the prototype model and stage order: an additional review step after
+  Design, beside the wireframes);
   [ADR-0007](./ADR-0007-design-gate-is-build-trigger.md) (Build is the approval).
 
 ## Context
@@ -15,14 +16,16 @@ A reviewer does two things with a prototype: uses it as the application it
 stands for, and points at what is wrong with it. Both happen on the same
 screens, in the same session, usually alternating — walk to the detail page,
 notice the missing column, say so, walk on. Every click on a rendered button is
-ambiguous between the two: *press it* or *this one*. The Excalidraw prototype
-had no answer, so feedback went to chat as prose and the agent guessed what it
-referred to.
+ambiguous between the two: *press it* or *this one*. The Excalidraw wireframe
+canvas's click-through has no answer, so feedback on it goes to chat as prose
+and the agent guesses what it refers to. The canvas stays (ADR-0008) for the
+wireframes; the prototype gets its own page.
 
 ## Decisions
 
-1. **One page, two modes.** `/projects/:project/prototype/:component` renders
-   the prototype once. **Preview** and **Annotate** are a toggle in the review
+1. **One page, two modes.** `/projects/:project/review/:component` renders
+   the prototype once (`/projects/:project/prototype/:component` stays the
+   wireframe canvas's full-screen click-through). **Preview** and **Annotate** are a toggle in the review
    bar, not two pages or two renderings, so switching never loses the screen,
    flow, display state or open overlay the reviewer is looking at. Screen, flow,
    state, mode and role ride the URL, written with `replace`, so a link opens exactly
