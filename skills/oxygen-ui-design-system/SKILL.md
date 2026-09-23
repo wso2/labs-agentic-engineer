@@ -349,6 +349,13 @@ specifies. "Install no other library" above is about UI and styling.
 
 ## Implementing a prototype with Oxygen
 
+For the coding run only: this is what the BUILT application's pages are made
+of. The `/prototype` flow's review renderer draws none of this shell — no
+`Header`, `UserMenu`, `ColorSchemeToggle` or `Footer`; it draws only the
+prototype's nodes and the navigation a screen names (the prototype skill's
+**What the reviewer sees**) — so a design turn never cites this table as what
+a reviewer is shown.
+
 `prototype/references/implementing.md` says what each prototype node must
 become; this is what it becomes here. Every row names the exact component and
 its props, and what to do when the prototype carries more than the component

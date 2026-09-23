@@ -18,7 +18,11 @@ answers. It writes one file per web-application and nothing else.
 This file is written for the `/prototype` flow. A coding run implementing a
 `web-application` from its `prototype.json` reads
 `references/implementing.md` instead; of this file, only **The document**
-applies to it.
+applies to it. The reverse holds too: `references/implementing.md`, and the
+design-system skill's guidance on implementing a prototype (its app shell,
+header, user menu, footer), describe the built application, not the review
+renderer. This flow never reads them as a statement of what a reviewer sees —
+**What the reviewer sees** below is that statement.
 
 ## Inputs
 
@@ -118,14 +122,46 @@ refused.
 ```
 
 - `roles`, `states` and `screens` have at least one entry. `states` always
-  starts with a default state; add one per presentation a reviewer must see —
-  empty, validation errors, a failed integration, a delayed one.
+  starts with a default state (`state.default`); add one per presentation a
+  reviewer must see:
+  - `state.empty` wherever a list can be empty.
+  - Wherever a screen's operations declare error responses in the API, the
+    states those responses produce. A form whose operation answers `400` or
+    `422` for invalid input shows its validation errors in
+    `state.validation-error`: its fields carry `error` with
+    `errorIn: ["state.validation-error"]`, and a `validation-summary` with
+    `showIn: ["state.validation-error"]` lists them. An operation that can
+    fail (`5xx`, or a dependency it calls) gets `state.failed`: an `alert`
+    with `tone: "error"` saying what failed and what the user can do. A call that can be slow — an external dependency, a
+    long-running operation — gets `state.delayed`: an `alert` with
+    `tone: "info"` or `"warning"` saying the result is on its way.
+  A prototype with only default and empty states hides the presentations a
+  reviewer most needs to judge.
 - A screen's `roleIds` are the roles that reach it; a navigation item's
   `roleIds` (every role when absent) are the roles that see it. Keep them
   consistent: an item never leads a role to a screen it cannot reach.
 - A flow is one role's walk through its screens, in order, for one story.
 - A screen with `navigationId` renders inside the application shell with that
   navigation; omit it for a screen that stands alone (a sign-in page).
+
+### What the reviewer sees
+
+The review renderer draws only what the document holds: the current screen's
+`content` and `overlays`, inside the navigation its `navigationId` names — a
+`side-nav` or `top-nav` of that navigation's items, labelled with the
+prototype's `name`. A screen without `navigationId` is drawn with no
+navigation at all.
+
+Nothing else is drawn automatically. There is no header, user menu, account
+menu, sign-out, notification bell, theme toggle or footer, whatever the built
+application's shell will carry. If a reviewer asks for such chrome, model it in
+the registry: a navigation item, or a `button` or `link` in the screen's
+content (a `heading`'s `actions` for the top right), whose action is a
+`navigate` to the screen it leads to (an account screen, a signed-out screen) or
+a `show-dialog` / `show-drawer` (an account menu as a drawer, a sign-out
+confirmation). Only if what they ask for is outside the v1 registry, say so in
+your reply and name the limitation. Never tell a reviewer the platform draws
+something for them.
 
 ### Registry (v1) — the only nodes there are
 
@@ -247,6 +283,12 @@ reviewer's request.
   inconsistent — nothing else.
 - Touch no other file, including other prototypes. If a request needs a design
   change, say so in your reply instead of making it.
+- Answer every annotation: every annotation is either applied or explicitly
+  declined. Your reply names each request by its id and says what you changed,
+  or why you did not — the registry reason (the node, action or presentation v1
+  does not have) or the design change it needs. Never drop a request silently,
+  and never decline one on a claim about what the platform draws: check it
+  against **What the reviewer sees**.
 
 ## Closing
 

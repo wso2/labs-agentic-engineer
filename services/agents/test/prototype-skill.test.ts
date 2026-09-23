@@ -94,3 +94,51 @@ test("the skill's worked example is a prototype the write gate accepts", () => {
 test("the skill names no design-system vendor — the org's design-system skill does", () => {
   assert.doesNotMatch(SKILL, /astryx|@astryxdesign|\boxygen\b|@wso2\/oxygen/i);
 });
+
+/** The skill's prose with line wrapping undone, so a phrase matches across a break. */
+const PROSE = SKILL.replace(/\s+/g, " ");
+
+// Live bug (#817): asked for an account button and sign-out on a screen, the
+// design agent declined, claiming the platform draws a user menu on every
+// screen with a navigation — true of the BUILT app's shell, false of the
+// review renderer. The skill has to say exactly what the renderer draws.
+test("the skill says the review renderer draws only the model's nodes and its named navigation", () => {
+  assert.match(PROSE, /renderer draws only/i);
+  assert.match(PROSE, /navigationId/);
+  assert.match(PROSE, /no header, user menu, account menu, sign-out/i);
+  // The reviewer's ask for such chrome is modelled, or declined out loud.
+  assert.match(PROSE, /model it in the registry/i);
+  assert.match(PROSE, /outside the v1 registry/i);
+});
+
+test("the skill scopes the built app's shell to the build, not the review renderer", () => {
+  assert.match(PROSE, /describes? the built application, not the review renderer/i);
+  assert.match(PROSE, /references\/implementing\.md/);
+});
+
+test("a feedback revision answers every annotation — applied, or declined with the registry reason", () => {
+  assert.match(PROSE, /every annotation is either applied or explicitly declined/i);
+  assert.match(PROSE, /registry/i);
+});
+
+test("the skill asks for validation-error and failure states where the API has error responses", () => {
+  assert.match(PROSE, /validation errors?/i);
+  assert.match(PROSE, /error responses?/i);
+  assert.match(PROSE, /state\.validation-error/);
+  assert.match(PROSE, /state\.failed/);
+  assert.match(PROSE, /state\.delayed/);
+});
+
+// The design-system skill rides with `/prototype` too, and its "implementing a
+// prototype" mapping (header, user menu, footer) is where the false claim came
+// from. It must say it is the coding run's, and that the renderer draws none of it.
+const DESIGN_SYSTEM = fs.readFileSync(
+  path.resolve(fileURLToPath(import.meta.url), "../../../../skills/oxygen-ui-design-system/SKILL.md"),
+  "utf8",
+);
+
+test("the design-system skill's prototype mapping is scoped to the coding run", () => {
+  const section = (/## Implementing a prototype with Oxygen\n([\s\S]*?)\n\|/.exec(DESIGN_SYSTEM)?.[1] ?? "").replace(/\s+/g, " ");
+  assert.match(section, /coding run/i);
+  assert.match(section, /review renderer draws none of/i);
+});
