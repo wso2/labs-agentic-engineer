@@ -17,7 +17,7 @@
  */
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { ComponentType, ReactNode } from "react";
+import type { ComponentType, ReactElement, ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { componentExamples, exampleSpecs } from "../../examples/index.js";
 import { createGenUiView, type GenUiSpec } from "../adapter/index.js";
@@ -34,6 +34,7 @@ const deliveryStatus = exampleSpecs["Delivery status"] as GenUiSpec;
 const buildAndDeploy = exampleSpecs["Build and deploy"] as GenUiSpec;
 const buildView = exampleSpecs["Build view (console page)"] as GenUiSpec;
 const createCustomer = exampleSpecs["Create customer (form)"] as GenUiSpec;
+const customers = exampleSpecs["Customers (list + form)"] as GenUiSpec;
 
 /**
  * The behaviour every design system must show, whatever it looks like. A
@@ -47,7 +48,9 @@ export function describeGenUiConformance(
   { wrapper }: GenUiConformanceOptions = {},
 ): void {
   const GenUiView = createGenUiView(designSystem);
-  const show = (ui: ReactNode) => render(<>{ui}</>, wrapper ? { wrapper } : {});
+  // Render the view as the root (no fragment around it) so rerender() updates
+  // the same tree instead of remounting it, which would hide state bugs.
+  const show = (ui: ReactElement) => render(ui, wrapper ? { wrapper } : {});
 
   describe(`GenUI conformance: ${designSystem.name}`, () => {
     it.each(Object.entries(exampleSpecs))(
@@ -224,6 +227,64 @@ export function describeGenUiConformance(
         submit();
         expect(await screen.findByText("Something went wrong. Try again.")).toBeInTheDocument();
         expect(screen.queryByText(/ECONNREFUSED/)).not.toBeInTheDocument();
+      });
+    });
+
+    describe("host data (Customers)", () => {
+      const acme = {
+        id: "c-1",
+        name: "Acme",
+        contactName: "Jane Doe",
+        contactEmail: "jane@acme.test",
+      };
+      const globex = {
+        id: "c-2",
+        name: "Globex",
+        contactName: "Hank Scorpio",
+        contactEmail: "hank@globex.test",
+      };
+
+      it("renders the host's data where the spec binds it", () => {
+        show(<GenUiView spec={customers} state={{ customers: { items: [acme], total: 1 } }} />);
+        expect(screen.getByText("Acme")).toBeInTheDocument();
+        expect(screen.getByText("1 in total")).toBeInTheDocument();
+      });
+
+      it("shows new host data without losing what the user typed", () => {
+        const { rerender } = show(
+          <GenUiView spec={customers} state={{ customers: { items: [acme], total: 1 } }} />,
+        );
+        fireEvent.change(screen.getByRole("textbox", { name: /^Name/ }), {
+          target: { value: "Initech" },
+        });
+        rerender(
+          <GenUiView spec={customers} state={{ customers: { items: [acme, globex], total: 2 } }} />,
+        );
+        expect(screen.getByText("Globex")).toBeInTheDocument();
+        expect(screen.getByText("2 in total")).toBeInTheDocument();
+        expect(screen.getByRole("textbox", { name: /^Name/ })).toHaveValue("Initech");
+      });
+
+      it("runs the spec's onSuccess (clearing the form) only when the action succeeds", async () => {
+        const createCustomer_ = vi
+          .fn()
+          .mockRejectedValueOnce(new GenUiActionError("Name taken.", { name: "Pick another." }))
+          .mockResolvedValueOnce(undefined);
+        show(<GenUiView spec={customers} handlers={{ createCustomer: createCustomer_ }} />);
+        const name = () => screen.getByRole("textbox", { name: /^Name/ });
+        fireEvent.change(name(), { target: { value: "Acme" } });
+        fireEvent.change(screen.getByRole("textbox", { name: /^Contact name/ }), {
+          target: { value: "Jane Doe" },
+        });
+        fireEvent.change(screen.getByRole("textbox", { name: /^Contact email/ }), {
+          target: { value: "jane@acme.test" },
+        });
+        fireEvent.click(screen.getByRole("button", { name: "Create customer" }));
+        expect(await screen.findByText("Pick another.")).toBeInTheDocument();
+        expect(name()).toHaveValue("Acme");
+        fireEvent.click(screen.getByRole("button", { name: "Create customer" }));
+        expect(await screen.findByText("Customer created")).toBeInTheDocument();
+        await waitFor(() => expect(name()).toHaveValue(""));
       });
     });
 

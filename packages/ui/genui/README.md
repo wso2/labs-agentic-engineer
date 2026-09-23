@@ -76,6 +76,24 @@ teaches a model this contract. A failed action also rejects inside
 json-render, so a spec's own `onSuccess` runs only on success and `onError` on
 failure.
 
+## Data in, actions out
+
+A spec cannot fetch. Data reaches it through the view's `state` prop, and
+the spec binds to it; changes go back out as actions:
+
+```tsx
+const { customers, reload } = useCustomers();          // host: GET /api/customers
+<GenUiView
+  spec={spec}                                          // DataTable rows: {"$state": "/customers/items"}
+  state={{ customers }}                                // re-applied whenever it changes
+  handlers={{ createCustomer: async (p) => { await post(p); await reload(); } }}
+/>;
+```
+
+Host state is layered over the spec's own `state` (its defaults) and written
+again whenever the host passes new data, without touching anything the user
+has typed. See `examples/customers.json`, which lists customers and adds one.
+
 ## What protects the host
 
 - `validateGenUiSpec` rejects unknown component types, props that fail the

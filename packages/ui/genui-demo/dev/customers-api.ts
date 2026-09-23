@@ -26,11 +26,11 @@ interface Customer {
   contactPhone?: string;
 }
 
-// A stand-in for POST /api/customers (the real one listens on
-// localhost:2001), so the demo can show every outcome with nothing else
-// running: 201 on success, 400 with field errors, 409 for a taken name. Its
-// checks mirror what a server would do; the catalog's own schema catches most
-// of them earlier, in the browser.
+// A stand-in for /api/customers (the real one listens on localhost:2001), so
+// the demo can show every outcome with nothing else running. GET lists the
+// customers; POST answers 201 on success, 400 with field errors, or 409 for a
+// taken name. Its checks mirror what a server would do; the catalog's own
+// schema catches most of them earlier, in the browser.
 export function mockCustomersApi(): Plugin {
   const customers: Customer[] = [
     { id: "c-1", name: "Acme", contactName: "Jane Doe", contactEmail: "jane@acme.test" },
@@ -39,6 +39,11 @@ export function mockCustomersApi(): Plugin {
     name: "mock-customers-api",
     configureServer(server) {
       server.middlewares.use("/api/customers", (req, res, next) => {
+        if (req.method === "GET") {
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify(customers));
+          return;
+        }
         if (req.method !== "POST") return next();
         let raw = "";
         req.on("data", (chunk: Buffer) => (raw += chunk.toString()));

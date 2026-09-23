@@ -18,9 +18,14 @@
 
 import { GenUiActionError, type GenUiActionHandlers } from "@aep/ui-genui";
 
-// Every catalog action just logs here; each page shows the outcome of what
-// reached it.
-export const handlers: GenUiActionHandlers = {
+export interface HandlerHooks {
+  /** Called after a customer is created, so the host can reload its list. */
+  onCustomerCreated?: () => Promise<void> | void;
+}
+
+// Most catalog actions just log here; each page shows the outcome of what
+// reached them. createCustomer makes a real request.
+export const createHandlers = ({ onCustomerCreated }: HandlerHooks = {}): GenUiActionHandlers => ({
   openTask: (params) => console.info("openTask", params),
   approveDependency: (params) => console.info("approveDependency", params),
   rejectDependency: (params) => console.info("rejectDependency", params),
@@ -50,5 +55,6 @@ export const handlers: GenUiActionHandlers = {
         body.fieldErrors ?? {},
       );
     }
+    await onCustomerCreated?.();
   },
-};
+});

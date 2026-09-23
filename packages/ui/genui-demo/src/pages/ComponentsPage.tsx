@@ -39,10 +39,11 @@ import {
 } from "@aep/ui-genui";
 import { componentExamples } from "@aep/ui-genui/examples";
 import { GenUiView } from "@aep/ui-genui-oxygen";
-import { handlers } from "../handlers.js";
+import { createHandlers } from "../handlers.js";
 import { propRows, type PropRow } from "../schema.js";
 
 const componentNames = Object.keys(genUiComponents) as GenUiComponentName[];
+const handlers = createHandlers();
 
 function PropsTable({ rows }: { rows: PropRow[] }) {
   if (rows.length === 0) {

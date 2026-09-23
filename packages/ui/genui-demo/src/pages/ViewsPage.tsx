@@ -29,7 +29,8 @@ import {
 import { validateGenUiSpec, type GenUiDispatchOutcome } from "@aep/ui-genui";
 import { exampleSpecs } from "@aep/ui-genui/examples";
 import { GenUiView } from "@aep/ui-genui-oxygen";
-import { handlers } from "../handlers.js";
+import { useCustomers } from "../customers.js";
+import { createHandlers } from "../handlers.js";
 
 const exampleNames = Object.keys(exampleSpecs);
 
@@ -49,6 +50,10 @@ export function ViewsPage() {
   );
   const [log, setLog] = useState<GenUiDispatchOutcome[]>([]);
   const result = useMemo(() => parse(text), [text]);
+  // Host data every view can bind to; the Customers example reads /customers.
+  const { customers, reload } = useCustomers();
+  const hostState = useMemo(() => ({ customers }), [customers]);
+  const handlers = useMemo(() => createHandlers({ onCustomerCreated: reload }), [reload]);
 
   const pickExample = (name: string) => {
     setExample(name);
@@ -97,6 +102,7 @@ export function ViewsPage() {
             <Box sx={{ p: 2 }}>
               <GenUiView
                 spec={result.spec}
+                state={hostState}
                 handlers={handlers}
                 onActionOutcome={(outcome) => setLog((prev) => [outcome, ...prev])}
               />

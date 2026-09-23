@@ -16,9 +16,13 @@ theme (the one the Oxygen UI Storybook shows).
 pnpm --filter @aep/ui-genui-demo dev
 ```
 
-**Create customer (form)** posts to `/api/customers`. With nothing else
-running, the dev server answers with a stand-in (`dev/customers-api.ts`: 201,
-400 with field errors, 409 for a taken name; "Acme" already exists). To use the
+**Customers (list + form)** loads `GET /api/customers` in the host
+(`src/customers.ts`) and passes it to the view as state; after a create, the
+handler reloads it. **Create customer (form)** and the Customers form post to
+`/api/customers`. With nothing else
+running, the dev server answers with a stand-in (`dev/customers-api.ts`: GET
+lists, POST answers 201, 400 with field errors, or 409 for a taken name;
+"Acme" already exists). To use the
 real API instead:
 
 ```
