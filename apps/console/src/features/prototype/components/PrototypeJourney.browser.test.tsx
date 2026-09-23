@@ -22,8 +22,13 @@
 // review page on its real route, Preview navigates (side nav, row → detail, a
 // dialog), Annotate selects two components, one component request and one
 // whole-screen request are queued, and ONE Send all posts both as one
-// /prototype turn — after which the prototype is read exactly once more and
-// the queue is empty.
+// /prototype ROOM turn — after which the prototype is read exactly once more,
+// showing the revision, and the queue is empty.
+//
+// The mock turn writes its revision into the mock room, as a real room turn
+// does, and git has it only once the room is saved. The page's room is the
+// one thing faked here: no collab server runs in this browser, so its forced
+// save is the mock room's.
 //
 // The rail is SpecFileList, wired to the route the way SpecView wires it; the
 // rest of SpecView (collab, file panes) is not what this journey is about.
@@ -48,6 +53,7 @@ import createClient from "openapi-fetch";
 import type { paths } from "../../../generated/aep-api";
 import { agentChatHandlers } from "../../../mocks/handlers/agent-chat";
 import { projectHandlers } from "../../../mocks/handlers/project";
+import { flushMockRoom } from "../../../mocks/collabRoom";
 import { railSections } from "../../spec/lib/railSections";
 import { chatKeyFor, hasLocalTurnActivity, replaceMessages } from "../../agent-chat/chatStore";
 
@@ -60,6 +66,10 @@ vi.mock("../../../auth/SessionContext", () => ({
 }));
 vi.mock("../../agent-chat/currentUser", () => ({
   useCurrentAuthor: () => ({ id: "ann@example.com", displayName: "Ann" }),
+}));
+const roomFlush = vi.fn(async () => flushMockRoom(PROJECT));
+vi.mock("../../spec/collab/useCollabSpec", () => ({
+  useCollabSpec: () => ({ status: "connected", flush: roomFlush }),
 }));
 
 const { SpecFileList } = await import("../../spec/components/SpecFileList");
@@ -146,6 +156,7 @@ const byId = (id: string) => document.querySelector<HTMLElement>(`[data-prototyp
 beforeEach(async () => {
   await page.viewport(1440, 900);
   localStorage.clear();
+  roomFlush.mockClear();
   replaceMessages(chatKeyFor("acme", PROJECT), []);
 });
 afterEach(() => {
@@ -210,9 +221,13 @@ describe("the prototype review journey", () => {
 
     await waitFor(() => expect(within(inspector).queryAllByRole("listitem")).toHaveLength(0), { timeout: 10_000 });
     await waitFor(() => expect(reads).toHaveLength(2));
+    // The one re-read comes after the room's save, so it shows the revision.
+    expect(roomFlush).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("region", { name: "Expense approvals (revised) prototype" })).toBeInTheDocument();
     expect(posts).toHaveLength(1);
     expect(posts[0]).toMatchObject({
       instruction: "/prototype",
+      collab: true,
       prototypeFeedback: {
         prototypePath: PROTOTYPE_PATH,
         annotations: [

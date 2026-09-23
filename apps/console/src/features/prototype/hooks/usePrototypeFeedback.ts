@@ -32,6 +32,7 @@ import { conversationKeys, fetchCurrentConversationId } from "../../agent-chat/a
 import { ConversationRotatedError, startCollabTurn } from "../../agent-chat/api/turns";
 import { useCurrentAuthor } from "../../agent-chat/currentUser";
 import { followTurnToEnd } from "../../agent-chat/followTurn";
+import type { CollabSpec } from "../../spec/collab/useCollabSpec";
 import { prototypeKeys } from "../api/keys";
 import type { PrototypeAnnotation } from "../model/annotations";
 
@@ -50,7 +51,15 @@ export interface PrototypeFeedback {
   ready: boolean;
 }
 
+/**
+ * The project's collab room as the review page holds it — see
+ * `useCollabSpec`. Only its connection and its forced save are used here.
+ */
+export type PrototypeFeedbackRoom = Pick<CollabSpec, "status" | "flush">;
+
 const FAILED = "The feedback turn did not finish, so the prototype was not revised. Your requests are still queued — send them again when you're ready.";
+const NO_ROOM = "This page isn't connected to the project's live workspace, so the agent's revision couldn't be saved. Your requests are still queued — send them again once it reconnects.";
+const NOT_SAVED = "The agent revised the prototype, but the revision is not saved yet, so this page still shows the previous version. It is saved automatically — reload in a minute to see it.";
 
 /**
  * The Annotate batch for one web-application's prototype (#817): the queue the
@@ -58,19 +67,33 @@ const FAILED = "The feedback turn did not finish, so the prototype was not revis
  *
  * The batch rides a single `/prototype` turn as its typed `prototypeFeedback`
  * field — the instruction is exactly the command, nothing is written into it.
- * The turn is COMMITTED-TRUTH, not room-scoped: the review page reads the
- * prototype from git, so the rewrite must be in git when the turn reports
- * completed, or the one refresh below would read the old file.
+ * The turn is a ROOM turn, like every spec turn: the agent edits the project's
+ * collab room, and the room's committer is the only thing that puts an agent's
+ * edits in git — a non-room turn commits nothing, so the BFF refuses a batch
+ * on one. The review page, though, reads the prototype from git, and the
+ * committer lands the revision some time AFTER the turn ends. So the page
+ * holds the room too, and once the turn completes it forces the room's save
+ * (the same flush Build awaits) and refreshes only when that save has landed.
  *
  * It is recorded in the project's chat like any send (a row now, the stream
- * folded into the log), and its end decides the queue's fate: completed →
- * invalidate the prototype read ONCE and clear the queue; failed, or an end
- * this browser never saw → keep the queue and invalidate nothing.
+ * folded into the log), and its end decides the queue's fate:
+ * - completed → the batch leaves the queue (the agent applied it; sending it
+ *   again would apply it twice); then the room's save → invalidate the
+ *   prototype read ONCE. A save that fails, or a room that dropped, refreshes
+ *   nothing and says the revision is not saved yet.
+ * - failed, or an end this browser never saw → keep the queue, save nothing,
+ *   invalidate nothing.
+ * Nothing is sent while the room is not connected: its revision could not be
+ * saved from here, and the reviewer would see nothing change.
  *
  * The queue lives in this hook's state: it survives re-renders and a refreshed
  * model, not leaving the page.
  */
-export function usePrototypeFeedback(projectName: string, component: string): PrototypeFeedback {
+export function usePrototypeFeedback(
+  projectName: string,
+  component: string,
+  room: PrototypeFeedbackRoom,
+): PrototypeFeedback {
   const { orgHandle } = useSession();
   const author = useCurrentAuthor();
   const queryClient = useQueryClient();
@@ -78,6 +101,10 @@ export function usePrototypeFeedback(projectName: string, component: string): Pr
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
+  // Read when the turn ends, not when it was sent: the room may have dropped
+  // (or reconnected) while the agent worked.
+  const roomRef = useRef(room);
+  roomRef.current = room;
   // The same query the chat panel resolves its thread with, by the same key.
   const conversation = useQuery({
     queryKey: conversationKeys.current(projectName),
@@ -93,6 +120,10 @@ export function usePrototypeFeedback(projectName: string, component: string): Pr
 
   const sendAll = useCallback(async (): Promise<boolean> => {
     if (inFlight.current || !conversationId || annotations.length === 0) return false;
+    if (roomRef.current.status !== "connected") {
+      setError(NO_ROOM);
+      return false;
+    }
     inFlight.current = true;
     setSending(true);
     setError(null);
@@ -109,7 +140,7 @@ export function usePrototypeFeedback(projectName: string, component: string): Pr
     try {
       let turnId: string;
       try {
-        turnId = await startCollabTurn(projectName, conversationId, PROTOTYPE_COMMAND, [], false, undefined, {
+        turnId = await startCollabTurn(projectName, conversationId, PROTOTYPE_COMMAND, [], true, undefined, {
           prototypePath: prototypeArtifactPath(component),
           annotations: batch,
         });
@@ -136,6 +167,10 @@ export function usePrototypeFeedback(projectName: string, component: string): Pr
       // the turn ran was not part of it.
       const sent = new Set(batch.map((a) => a.id));
       setAnnotations((queue) => queue.filter((a) => !sent.has(a.id)));
+      if (!(await saveRoom(roomRef.current))) {
+        setError(NOT_SAVED);
+        return true;
+      }
       await queryClient.invalidateQueries({ queryKey: prototypeKeys.file(projectName, component) });
       return true;
     } finally {
@@ -145,4 +180,19 @@ export function usePrototypeFeedback(projectName: string, component: string): Pr
   }, [annotations, author, component, conversationId, orgHandle, projectName, queryClient]);
 
   return { annotations, add, remove, sendAll, sending, error, ready: Boolean(conversationId) };
+}
+
+/**
+ * Force the room's pending edits into git and say whether they landed. An
+ * unconnected room's flush resolves at once without saving anything
+ * (`useCollabSpec`), so it is not asked: its answer would be a false "saved".
+ */
+async function saveRoom(room: PrototypeFeedbackRoom): Promise<boolean> {
+  if (room.status !== "connected") return false;
+  try {
+    await room.flush();
+    return true;
+  } catch {
+    return false;
+  }
 }

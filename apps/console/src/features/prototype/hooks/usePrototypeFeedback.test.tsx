@@ -17,8 +17,9 @@
  */
 // @vitest-environment jsdom
 
-// The Annotate batch (#817): one Send all is ONE `/prototype` turn carrying the
-// whole queue as a typed field; how that turn ends decides the queue's fate.
+// The Annotate batch (#817): one Send all is ONE `/prototype` ROOM turn
+// carrying the whole queue as a typed field; how that turn ends decides the
+// queue's fate, and the room's forced save decides when the page refreshes.
 
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -27,6 +28,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { chatKeyFor, getMessages, notifyTurnEnd, replaceMessages } from "../../agent-chat/chatStore";
 import { prototypeKeys } from "../api/keys";
 import type { PrototypeAnnotation } from "../model/annotations";
+import type { CollabStatus } from "../../spec/collab/useCollabSpec";
 import { usePrototypeFeedback } from "./usePrototypeFeedback";
 
 const ORG = "acme";
@@ -68,18 +70,38 @@ const request = (text: string, componentIds: string[] = []): Omit<PrototypeAnnot
   request: text,
 });
 
-function mount() {
+// The project's room as the page holds it. Its forced save is held open by
+// the test, so "persisted" is a moment the test chooses — exactly the gap the
+// live bug fell into: the turn ends, and git only has the revision later.
+type Room = { status: CollabStatus; flush: () => Promise<void> };
+let saveRoom: (outcome?: Error) => void = () => {};
+function connectedRoom(): Room & { flush: ReturnType<typeof vi.fn> } {
+  return {
+    status: "connected",
+    flush: vi.fn(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          saveRoom = (outcome) => (outcome ? reject(outcome) : resolve());
+        }),
+    ),
+  };
+}
+
+function mount(room: Room = connectedRoom()) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const invalidate = vi.spyOn(queryClient, "invalidateQueries");
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   );
-  const view = renderHook(() => usePrototypeFeedback(PROJECT, "portal"), { wrapper });
-  return { ...view, invalidate };
+  const view = renderHook(({ room: r }) => usePrototypeFeedback(PROJECT, "portal", r), {
+    wrapper,
+    initialProps: { room },
+  });
+  return { ...view, invalidate, room };
 }
 
-async function queuedTwo() {
-  const view = mount();
+async function queuedTwo(room?: Room) {
+  const view = mount(room);
   await waitFor(() => expect(view.result.current.ready).toBe(true));
   act(() => {
     view.result.current.add(request("Rename to Download", ["btn.export"]));
@@ -109,7 +131,7 @@ describe("usePrototypeFeedback", () => {
     expect(result.current.annotations.map((a) => a.request)).toEqual(["Too busy"]);
   });
 
-  it("sends the whole batch in ONE request, the instruction exactly /prototype", async () => {
+  it("sends the whole batch in ONE room turn, the instruction exactly /prototype", async () => {
     const { result } = await queuedTwo();
     let sent: Promise<boolean> = Promise.resolve(false);
     act(() => {
@@ -117,7 +139,9 @@ describe("usePrototypeFeedback", () => {
     });
     await waitFor(() => expect(mockStartTurn).toHaveBeenCalledTimes(1));
     const [project, conversation, instruction, files, collab, aiming, feedback] = mockStartTurn.mock.calls[0]!;
-    expect([project, conversation, instruction, files, collab, aiming]).toEqual([PROJECT, "conv-1", "/prototype", [], false, undefined]);
+    // A ROOM turn: only the room's committer saves an agent's edits — a
+    // non-room turn commits nothing, and the BFF refuses a batch on one.
+    expect([project, conversation, instruction, files, collab, aiming]).toEqual([PROJECT, "conv-1", "/prototype", [], true, undefined]);
     expect(feedback).toEqual({
       prototypePath: "specs/design/components/portal/prototype.json",
       annotations: result.current.annotations,
@@ -125,11 +149,13 @@ describe("usePrototypeFeedback", () => {
     // Recorded in the project's chat like any other send.
     expect(getMessages(KEY).find((m) => m.role === "user")).toMatchObject({ content: "/prototype", turnId: "turn-1" });
     act(() => endTurn("completed"));
+    await waitFor(() => expect(result.current.annotations).toEqual([]));
+    act(() => saveRoom());
     await act(async () => expect(await sent).toBe(true));
   });
 
-  it("refreshes the prototype exactly once after the turn completes, and clears the queue", async () => {
-    const { result, invalidate } = await queuedTwo();
+  it("refreshes the prototype exactly once, only after the room has saved the revision to git", async () => {
+    const { result, invalidate, room } = await queuedTwo();
     let sent: Promise<boolean> = Promise.resolve(false);
     act(() => {
       sent = result.current.sendAll();
@@ -139,18 +165,69 @@ describe("usePrototypeFeedback", () => {
     // Nothing is refreshed while the turn runs.
     expect(prototypeInvalidations(invalidate)).toHaveLength(0);
     act(() => endTurn("completed"));
-    await act(async () => void (await sent));
+    // The turn is over, but its revision is only in the room: the page forces
+    // the room's save, and reads nothing until that save has landed.
+    await waitFor(() => expect(room.flush).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.annotations).toEqual([]));
+    expect(prototypeInvalidations(invalidate)).toHaveLength(0);
+    expect(result.current.sending).toBe(true);
+    act(() => saveRoom());
+    await act(async () => expect(await sent).toBe(true));
     expect(prototypeInvalidations(invalidate)).toHaveLength(1);
-    expect(result.current.annotations).toEqual([]);
+    expect(room.flush).toHaveBeenCalledTimes(1);
     expect(result.current.sending).toBe(false);
     expect(result.current.error).toBeNull();
+  });
+
+  it("clears the applied batch but refreshes nothing when the room's save fails", async () => {
+    const { result, invalidate } = await queuedTwo();
+    let sent: Promise<boolean> = Promise.resolve(false);
+    act(() => {
+      sent = result.current.sendAll();
+    });
+    await waitFor(() => expect(mockStartTurn).toHaveBeenCalled());
+    act(() => endTurn("completed"));
+    await waitFor(() => expect(result.current.annotations).toEqual([]));
+    act(() => saveRoom(new Error("Timed out waiting for the workspace to commit.")));
+    // The turn DID revise the prototype — re-sending the batch would apply it
+    // twice — but the page cannot show what git does not have yet.
+    await act(async () => expect(await sent).toBe(true));
+    expect(prototypeInvalidations(invalidate)).toHaveLength(0);
+    expect(result.current.error).toMatch(/not saved yet/);
+  });
+
+  it("refreshes nothing when the room dropped before the revision could be saved", async () => {
+    const room = connectedRoom();
+    const { result, invalidate, rerender } = await queuedTwo(room);
+    let sent: Promise<boolean> = Promise.resolve(false);
+    act(() => {
+      sent = result.current.sendAll();
+    });
+    await waitFor(() => expect(mockStartTurn).toHaveBeenCalled());
+    rerender({ room: { ...room, status: "offline" } });
+    act(() => endTurn("completed"));
+    await act(async () => expect(await sent).toBe(true));
+    // An offline room's flush answers at once without saving anything: asking
+    // it would "confirm" a save that never happened.
+    expect(room.flush).not.toHaveBeenCalled();
+    expect(prototypeInvalidations(invalidate)).toHaveLength(0);
+    expect(result.current.error).toMatch(/not saved yet/);
+  });
+
+  it("sends nothing while the project's room is not connected — the revision could not be saved", async () => {
+    const { result, invalidate } = await queuedTwo({ status: "offline", flush: vi.fn(() => Promise.resolve()) });
+    await act(async () => expect(await result.current.sendAll()).toBe(false));
+    expect(mockStartTurn).not.toHaveBeenCalled();
+    expect(result.current.annotations).toHaveLength(2);
+    expect(result.current.error).toMatch(/still queued/);
+    expect(prototypeInvalidations(invalidate)).toHaveLength(0);
   });
 
   it.each([
     ["fails", "failed" as const],
     ["ends unseen", null],
   ])("keeps the queue and refreshes nothing when the turn %s", async (_, status) => {
-    const { result, invalidate } = await queuedTwo();
+    const { result, invalidate, room } = await queuedTwo();
     let sent: Promise<boolean> = Promise.resolve(true);
     act(() => {
       sent = result.current.sendAll();
@@ -158,6 +235,7 @@ describe("usePrototypeFeedback", () => {
     await waitFor(() => expect(mockStartTurn).toHaveBeenCalled());
     act(() => endTurn(status));
     await act(async () => expect(await sent).toBe(false));
+    expect(room.flush).not.toHaveBeenCalled();
     expect(prototypeInvalidations(invalidate)).toHaveLength(0);
     expect(result.current.annotations).toHaveLength(2);
     expect(result.current.error).toMatch(/still queued/);

@@ -45,6 +45,7 @@ import { usePrototype, type PrototypeReadIssue } from "../api/queries";
 import { useProjectStatus } from "../../projects/api/queries";
 import { useSession } from "../../../auth/SessionContext";
 import { useLocalTurnActivity } from "../../agent-chat/useLocalTurnActivity";
+import { useCollabSpec } from "../../spec/collab/useCollabSpec";
 import { usePrototypeFeedback } from "../hooks/usePrototypeFeedback";
 import { usePrototypeTurn } from "../hooks/usePrototypeTurn";
 import type { PrototypeViewRequest } from "../model/viewState";
@@ -70,8 +71,14 @@ export function ComponentPrototypePage({ projectName, component, search, onSearc
   // #817: the Annotate batch, and whether an agent turn is running on the
   // project — the server's word, or this browser's own evidence of a send
   // that has no turn row yet. Either holds the mode and the sends.
-  const feedback = usePrototypeFeedback(projectName, component);
-  const { orgHandle } = useSession();
+  //
+  // The page holds the project's collab room for the batch's sake: the
+  // feedback turn edits the room, and the page forces the room's save before
+  // it re-reads the prototype from git (see usePrototypeFeedback). Rooms are
+  // org-scoped with the same mock fallback SpecView uses.
+  const { user, orgHandle } = useSession();
+  const room = useCollabSpec(projectName, user, orgHandle ?? "acme");
+  const feedback = usePrototypeFeedback(projectName, component, room);
   const localTurn = useLocalTurnActivity(orgHandle ?? "default", projectName);
   const agentWorking = status?.spec.agent === "working" || localTurn;
   const prototypeTurn = usePrototypeTurn(projectName);

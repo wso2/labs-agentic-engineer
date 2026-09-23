@@ -42,6 +42,9 @@ import {
   MAX_CHAT_ATTACHMENT_TOTAL_BYTES,
 } from "../../features/agent-chat/lib/chatAttachments";
 import { isAcceptedAttachment } from "../../lib/attachments";
+import { stablePrototypeJson, type PrototypeModelV1 } from "@aep/prototype-model";
+import { writeToMockRoom } from "../collabRoom";
+import { readMockSpecFile } from "./project";
 import {
   activeTeammateTurn,
   multiuserHistory,
@@ -56,8 +59,21 @@ let turnCounter = 0;
 // shared Yjs map (and a closed one would suppress a fresh ask).
 const instanceId = Math.random().toString(36).slice(2, 8);
 const turnInstruction = new Map<string, string>();
-// The review requests a prototype feedback turn carried (#817), by turn id.
-const turnFeedback = new Map<string, string[]>();
+// The batch a prototype feedback turn carried (#817), by turn id.
+interface MockFeedback {
+  prototypePath: string;
+  requests: string[];
+}
+const turnFeedback = new Map<string, MockFeedback>();
+
+/**
+ * The mock agent's revision of a prototype: the file as it stands, renamed so
+ * the revision is visible — a real agent rewrites what the requests ask for.
+ */
+function mockPrototypeRevision(content: string): string {
+  const model = JSON.parse(content) as PrototypeModelV1;
+  return stablePrototypeJson({ ...model, name: `${model.name} (revised)` });
+}
 
 /**
  * Messages sent in this browser, per conversation — the mock stand-in for the
@@ -226,7 +242,7 @@ export const agentChatHandlers = [
     // journal so a reload paints the tag again — which is the whole reason the
     // anchor is journaled rather than being a live-session nicety.
     let anchor: unknown;
-    let feedbackRequests: string[] | undefined;
+    let feedback: MockFeedback | undefined;
     if (isMultipart) {
       const form = await request.formData();
       instruction = String(form.get("instruction") ?? "");
@@ -255,12 +271,14 @@ export const agentChatHandlers = [
       const body = (await request.json()) as {
         instruction?: string;
         anchor?: unknown;
-        prototypeFeedback?: { annotations?: { request?: string }[] };
+        collab?: boolean;
+        prototypeFeedback?: { prototypePath?: string; annotations?: { request?: string }[] };
       };
       instruction = body.instruction ?? "";
       anchor = body.anchor;
-      // A prototype review batch (#817) rides only a bare /prototype, as on the
-      // real server; its requests decide the mock turn's outcome below.
+      // A prototype review batch (#817) rides only a bare /prototype ROOM
+      // turn, as on the real server; its requests decide the mock turn's
+      // outcome below.
       if (body.prototypeFeedback) {
         if (instruction.trim() !== "/prototype") {
           return HttpResponse.json(
@@ -268,7 +286,20 @@ export const agentChatHandlers = [
             { status: 400 },
           );
         }
-        feedbackRequests = (body.prototypeFeedback.annotations ?? []).map((a) => a.request ?? "");
+        if (body.collab !== true) {
+          return HttpResponse.json(
+            {
+              code: "bad_request",
+              message:
+                "prototypeFeedback must be a collab (room) turn: only the room's committer saves the revision, so send it with collab: true",
+            },
+            { status: 400 },
+          );
+        }
+        feedback = {
+          prototypePath: body.prototypeFeedback.prototypePath ?? "",
+          requests: (body.prototypeFeedback.annotations ?? []).map((a) => a.request ?? ""),
+        };
       }
     }
     // The real server refuses a blank instruction BEFORE the turn row exists
@@ -284,7 +315,7 @@ export const agentChatHandlers = [
     turnCounter += 1;
     const turnId = `mock-turn-${instanceId}-${turnCounter}`;
     turnInstruction.set(turnId, instruction);
-    if (feedbackRequests) turnFeedback.set(turnId, feedbackRequests);
+    if (feedback) turnFeedback.set(turnId, feedback);
     // Record it the way the journal would, so a reload shows the chips again.
     appendToJournal(params.conversationId as string, {
       role: "user",
@@ -322,21 +353,26 @@ export const agentChatHandlers = [
   http.get("*/api/v1/projects/:projectName/turns/:turnId/stream", ({ params }) => {
     const turnId = String(params.turnId);
     const instruction = turnInstruction.get(turnId) ?? "";
-    // A prototype review batch (#817): the agent rewrites the one file and the
-    // turn lands; a request mentioning "fail" makes it fail instead, so the
-    // kept-queue path is reachable in mock mode.
+    // A prototype review batch (#817): the agent rewrites the one file IN THE
+    // ROOM and the turn lands — git gets the revision only when the mock
+    // room's committer saves it, as in production. A request mentioning "fail"
+    // makes the turn fail instead, so the kept-queue path is reachable.
     const feedback = turnFeedback.get(turnId);
     if (feedback) {
-      if (feedback.some((r) => r.includes("fail"))) {
+      if (feedback.requests.some((r) => r.includes("fail"))) {
         return sse([
           { type: "text-delta", delta: "Revising the prototype…" },
           { type: "turn-failed", message: "Mock turn failure (a request contained 'fail')." },
         ]);
       }
+      const project = String(params.projectName);
+      const current = readMockSpecFile(project, feedback.prototypePath);
+      if (current !== null) writeToMockRoom(project, feedback.prototypePath, mockPrototypeRevision(current));
+      const n = feedback.requests.length;
       return sse([
         {
           type: "text-delta",
-          delta: `Applied ${feedback.length} review request${feedback.length === 1 ? "" : "s"} to the prototype in one rewrite, keeping every ID.`,
+          delta: `Applied ${n} review request${n === 1 ? "" : "s"} to the prototype in one rewrite, keeping every ID.`,
         },
         { type: "turn-committed", noChanges: true },
       ]);

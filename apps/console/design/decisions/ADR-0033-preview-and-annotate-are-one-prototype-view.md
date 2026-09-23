@@ -52,10 +52,17 @@ referred to.
 4. **Requests are queued locally and sent as one structured turn.** **Send all**
    posts the whole batch as a single `/prototype` turn carrying the typed
    `prototypeFeedback` (path, and per request its screen, flow, state, component
-   IDs and text) — never prose composed by the console. The queue clears only
-   when that turn succeeds, and the prototype is re-read exactly once then; a
-   failed turn keeps the queue for a retry. Mode switching and sending are
-   disabled while any agent turn runs on the project.
+   IDs and text) — never prose composed by the console. It is a room turn like
+   every spec turn: the agent edits the project's collab room, and only the
+   room's committer puts that revision in git, some time after the turn ends
+   (the BFF refuses a batch on a non-room turn, which would commit nothing). The
+   page reads the prototype from git, so it holds the room too: when the turn
+   succeeds the queue clears, the page forces the room's save (the flush Build
+   awaits), and the prototype is re-read exactly once, after that save lands. A
+   failed turn keeps the queue for a retry; a save that fails refreshes nothing
+   and says the revision is not saved yet; nothing is sent while the room is not
+   connected. Mode switching and sending are disabled while any agent turn runs
+   on the project.
 
 5. **Read-only means view state only.** No control submits, mutates, or calls
    anything; a form shows its values, an approval moves to the screen that

@@ -180,6 +180,22 @@ function specFiles(s: Exclude<ProjectScenario, "error">) {
   ];
 }
 
+/**
+ * A project file as the mock's git has it at the tip: the scenario's files,
+ * with anything committed through files/apply (or the mock room's committer)
+ * over them.
+ */
+function mockSpecFile(projectName: string, path: string, s: Exclude<ProjectScenario, "error">) {
+  return appliedFileContent(projectName, path) ?? specFileContent(specFiles(s), path);
+}
+
+/** The tip's content of one project file, or null — what an agent turn reads. */
+export function readMockSpecFile(projectName: string, path: string): string | null {
+  const s = scenario();
+  if (s === "error") return null;
+  return mockSpecFile(projectName, path, s)?.content ?? null;
+}
+
 function respond<T extends JsonBodyType>(
   pick: (s: Exclude<ProjectScenario, "error">) => T,
 ) {
@@ -630,12 +646,15 @@ export const projectHandlers = [
   ),
   // Files API (#113): list-files metadata + per-file content reads, exactly
   // as aep-api serves them (repo-relative specs/ paths). Files applied through
-  // the mock files/apply (#383's reference uploads) are merged in per project.
+  // the mock files/apply — or saved by the mock room's committer — are merged
+  // in per project, and replace the scenario's copy of the same path: they are
+  // a later commit.
   http.get("*/api/v1/projects/:projectName/files", ({ params }) =>
-    respond((s) => [
-      ...specFileMetas(specFiles(s)),
-      ...appliedFileMetas(String(params.projectName)),
-    ]),
+    respond((s) => {
+      const applied = appliedFileMetas(String(params.projectName));
+      const replaced = new Set(applied.map((f) => f.path));
+      return [...specFileMetas(specFiles(s)).filter((f) => !replaced.has(f.path)), ...applied];
+    }),
   ),
   http.get(
     "*/api/v1/projects/:projectName/files/*",
@@ -648,9 +667,7 @@ export const projectHandlers = [
       }
       const pathname = new URL(request.url).pathname;
       const path = decodeURIComponent(pathname.replace(/^.*\/files\//, ""));
-      const file =
-        specFileContent(specFiles(s), path) ??
-        appliedFileContent(String(params.projectName), path);
+      const file = mockSpecFile(String(params.projectName), path, s);
       if (!file) {
         return HttpResponse.json(specFileNotFound(path), {
           status: 404,

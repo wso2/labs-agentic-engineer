@@ -31,6 +31,7 @@ import { stablePrototypeJson } from "@aep/prototype-model";
 import type { paths } from "../../../generated/aep-api";
 import { agentChatHandlers } from "../../../mocks/handlers/agent-chat";
 import { projectHandlers } from "../../../mocks/handlers/project";
+import { flushMockRoom } from "../../../mocks/collabRoom";
 import { expenseApproval } from "../testing/fixtures";
 import type { PrototypeViewRequest } from "../model/viewState";
 import { chatKeyFor, consumePendingSeed, getMessages, hasLocalTurnActivity, replaceMessages } from "../../agent-chat/chatStore";
@@ -50,6 +51,12 @@ vi.mock("../../../auth/SessionContext", () => ({
 vi.mock("../../agent-chat/currentUser", () => ({
   useCurrentAuthor: () => ({ id: "ann@example.com", displayName: "Ann" }),
 }));
+// The project's room, connected: its forced save is the mock room's, so a
+// feedback turn's revision reaches the mock's git exactly when it is flushed.
+const mockRoomFlush = vi.fn(async () => flushMockRoom("demo-shop"));
+vi.mock("../../spec/collab/useCollabSpec", () => ({
+  useCollabSpec: () => ({ status: "connected", flush: mockRoomFlush }),
+}));
 
 const { ComponentPrototypePage } = await import("./ComponentPrototypePage");
 
@@ -63,6 +70,7 @@ afterAll(() => server.close());
 beforeEach(() => {
   localStorage.clear();
   mockNavigate.mockReset();
+  mockRoomFlush.mockClear();
   consumePendingSeed(chatKeyFor("acme", "demo-shop"));
   replaceMessages(chatKeyFor("acme", "demo-shop"), []);
 });
@@ -226,7 +234,7 @@ describe("ComponentPrototypePage — feedback", () => {
 
   afterEach(() => server.events.removeAllListeners());
 
-  it("sends the queue as one /prototype turn, refreshes once on completion, and clears the queue", async () => {
+  it("sends the queue as one /prototype room turn, refreshes once after the room saved the revision, and clears the queue", async () => {
     const { reads, posts, inspector } = await annotate();
     fireEvent.click(document.querySelector('[data-prototype-component-id="btn.export"]')!);
     queue(inspector, "Rename to Download");
@@ -238,9 +246,14 @@ describe("ComponentPrototypePage — feedback", () => {
 
     await waitFor(() => expect(within(inspector).queryAllByRole("listitem")).toHaveLength(0));
     await waitFor(() => expect(reads.length).toBe(readsBefore + 1));
+    // The one refresh reads the revision: the page forced the room's save
+    // first, so git had it by then.
+    expect(mockRoomFlush).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("region", { name: "Expense approvals (revised) prototype" })).toBeInTheDocument();
     expect(posts).toHaveLength(1);
     expect(posts[0]).toMatchObject({
       instruction: "/prototype",
+      collab: true,
       prototypeFeedback: {
         prototypePath: "specs/design/components/storefront/prototype.json",
         annotations: [
@@ -265,5 +278,6 @@ describe("ComponentPrototypePage — feedback", () => {
     expect(await within(inspector).findByText(/still queued/)).toBeInTheDocument();
     expect(within(inspector).getAllByRole("listitem")).toHaveLength(1);
     expect(reads.length).toBe(readsBefore);
+    expect(mockRoomFlush).not.toHaveBeenCalled();
   });
 });

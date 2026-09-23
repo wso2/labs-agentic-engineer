@@ -92,7 +92,7 @@ export function FeedbackInspector(props: FeedbackInspectorProps) {
       </Stack>
       {sending ? (
         <Alert severity="info" sx={{ borderRadius: 0 }}>
-          The agent is revising this prototype. It refreshes here when the agent finishes.
+          The agent is revising this prototype. It refreshes here once the revision is saved.
         </Alert>
       ) : locked ? (
         <Alert severity="info" sx={{ borderRadius: 0 }}>
