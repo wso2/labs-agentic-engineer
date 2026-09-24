@@ -49,8 +49,15 @@ chat_playground/
 e2e_test_run.txt
 new_spec.yml
 
-# Personal learning notes (not part of the project)
-learning/
+# Personal learning notes (not part of the project).
+# Exception: the dataplane-secrets spec and its Cloud threat model are
+# team-reviewed deliverables. Only those two trees are tracked; the rest of
+# learning/threat-modeling-2/ (map, issues, research, prototype) stays ignored.
+learning/*
+!learning/threat-modeling-2/
+learning/threat-modeling-2/*
+!learning/threat-modeling-2/spec/
+!learning/threat-modeling-2/threat-model/
 
 # Git worktrees for isolated agent/dev work
 .worktrees/
