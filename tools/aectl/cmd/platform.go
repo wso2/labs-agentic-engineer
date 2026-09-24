@@ -79,7 +79,6 @@ var (
 	initOpenBaoDirect       bool
 	initReuseSecrets        bool
 	initAddons              string
-	initProducts            string
 )
 
 var initCmd = &cobra.Command{
@@ -126,7 +125,6 @@ func init() {
 	_ = viper.BindPFlag("openbao.addr", initCmd.Flags().Lookup("openbao-addr"))
 	initCmd.Flags().BoolVar(&initReuseSecrets, "reuse-secrets", false, "Skip secret prompts and reuse secrets already seeded in OpenBao (for reinstall or upgrade)")
 	initCmd.Flags().StringVar(&initAddons, "addons", "", `Comma-separated addon IDs to install without prompting (e.g. "thunder-app,postgres-cnpg"). Use "none" to skip addons, "all" to install everything. Omit for interactive selection.`)
-	initCmd.Flags().StringVar(&initProducts, "products", "", `Comma-separated additional-product IDs to install without prompting (e.g. "agent-manager"). Use "none" to skip, "all" to install everything. Omit for interactive selection.`)
 	registerThunderFlags(initCmd)
 }
 
@@ -373,11 +371,6 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if err := installAddons(ctx, k8sClient, platformVersion); err != nil {
-		return err
-	}
-	// Additional products run last: a product is a second platform sharing
-	// this cluster, and it may depend on the addons above being present.
-	if err := installProducts(ctx); err != nil {
 		return err
 	}
 	ui.Ready(initConsoleURL)
