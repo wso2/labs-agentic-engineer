@@ -21,15 +21,16 @@
 #
 # This is the official k3d single-cluster guide:
 #   https://openchoreo.dev/docs/getting-started/try-it-out/on-k3d-locally/
-# with three deviations, each called out at its own step below:
+# with two deviations, each called out at its own step below:
 #   1. the "Install ThunderID Identity Provider" sub-step of Step 3 is
 #      replaced (see "The Thunder step" below)
 #   2. a WSO2 API Platform operator install is added at the end of Step 2 —
 #      the official page has no equivalent step; it satisfies `aectl platform
 #      install`'s checkAPIPlatform prerequisite (see that step's own comment)
-#   3. an Environment named "default" is added at the end of Step 4 —
-#      `aectl platform install`'s checkOrConfigureGatewayIngress requires one
-#      that the official sample doesn't create (see that step's own comment)
+# Step 4's sample resources are applied as published: the environment `aectl
+# platform install` configures gateway ingress on is whichever one
+# oc.pipeline_source_environment names (`development` on this sample), imported
+# with `aectl platform config import` before the install runs.
 # Every other step (cluster, prerequisites, control/data/workflow/
 # observability planes, samples) is copied verbatim from the official page,
 # version for version. It has NO dependency on this repo's own
@@ -116,7 +117,10 @@ CLUSTER_CONTEXT="k3d-${CLUSTER_NAME}"
 
 THUNDER_CHART="oci://ghcr.io/thunder-id/helm-charts/thunderid"
 THUNDER_VERSION="1.0.0"
-THUNDER_ADMIN_USER="admin@openchoreo.dev"
+# The ThunderID chart's own default username, kept rather than an email-shaped
+# one: this is typed at every sign-in on a dev cluster. `sub` follows it — the
+# chart's bootstrap sets the admin's subject claim to the username.
+THUNDER_ADMIN_USER="admin"
 THUNDER_ADMIN_PASSWORD="Admin@123"
 
 WITH_BUILD="${WITH_BUILD:-1}"
@@ -935,34 +939,6 @@ echo ""
 echo "4️⃣  Default resources"
 kubectl label namespace default openchoreo.dev/control-plane=true --overwrite
 kubectl apply -f "${RAW}/samples/getting-started/all.yaml"
-
-# ── Environment "default" ────────────────────────────────────────────────
-# Not part of the official k3d guide. `all.yaml` above creates three
-# environments — development, staging, production. `aectl platform
-# install`'s checkOrConfigureGatewayIngress additionally expects an
-# Environment named exactly "default" in namespace "default"
-# (tools/aectl/cmd/platform_gateway.go's ocPipelineSourceEnvironment — configurable via
-# oc.pipeline_source_environment in aectl's config if your pipeline's real source
-# environment is named something else). Referencing the same ClusterDataPlane
-# "default" that Step 5 below registers is safe before that step runs — the
-# sibling environments above do the same forward reference, and OpenChoreo's
-# Environment controller tolerates it.
-kubectl apply -f - <<'EOF'
-apiVersion: openchoreo.dev/v1alpha1
-kind: Environment
-metadata:
-  name: default
-  namespace: default
-  labels:
-    openchoreo.dev/name: default
-  annotations:
-    openchoreo.dev/display-name: Default
-    openchoreo.dev/description: Default environment aectl platform install expects for gateway ingress configuration
-spec:
-  dataPlaneRef:
-    kind: ClusterDataPlane
-    name: default
-EOF
 
 # ============================================================================
 # Step 5: Data Plane (official page, Step 5 — unchanged)

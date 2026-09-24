@@ -129,7 +129,7 @@ deployment.
 
 The console is at **http://console.openchoreo.localhost:8080**. Sign in with
 the ThunderID admin account `setup-env-for-aectl.sh` creates
-(`admin@openchoreo.dev` / `Admin@123` by default — see that script's output).
+(`admin` / `Admin@123` by default — see that script's output).
 If your OS doesn't resolve `*.localhost`, point `console.openchoreo.localhost`
 and `thunder.openchoreo.localhost` at `127.0.0.1` in `/etc/hosts`.
 

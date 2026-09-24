@@ -44,6 +44,23 @@ dataplane (image from `AGENT_RUNNER_IMAGE`); builds use the `dockerfile-builder`
 ClusterWorkflow, whose `generate-workload-cr` step exchanges OAuth tokens at
 Thunder via the `openchoreo-workload-publisher-client` `aectl` registers.
 
+That ClusterWorkflow and the four Argo ClusterWorkflowTemplates it chains
+(`checkout-source`, `containerfile-build`, `publish-image`, `generate-workload`)
+are **OpenChoreo's**, applied by its own samples — `all.yaml` in Step 4 and the
+workflow-plane templates in Step 6 of `scripts/setup-env-for-aectl.sh`. AEP
+neither ships nor forks them, deliberately: a product on a shared cluster either
+uses OpenChoreo's build templates as they are or ships its own under a prefixed
+name. A repo-local `aep-*` copy existed until it was removed; it had drifted to
+an older, less hardened vintage of the same upstream files, and its only
+substantive deviation — pushing to the registry Service in-cluster rather than
+`host.k3d.internal` — dated from the Docker Compose era.
+
+WSO2 Agent Manager's platform-resources chart renders four of those template
+names unprefixed, so installing it takes OpenChoreo's build path over for
+everything on the cluster. That is a naming defect in that chart (it already
+prefixes a fifth as `amp-generate-workload`), to be fixed there rather than
+worked around here.
+
 ## What was removed from the previous v1
 
 - The Docker Compose local-dev path in its entirety: `scripts/setup.sh` and
@@ -72,16 +89,12 @@ elsewhere and were deliberately NOT deleted along with the Compose chain:
 - `manifests/api-platform/api-configuration-trait.yaml` — the source of truth
   `scripts/check-trait-copies.sh` diffs against its Helm-chart copy; gated by
   `make test` (CI).
-- `manifests/docker-build-workflow.yaml` and
-  `manifests/api-platform/observability-alert-rule-trait.yaml` — the only
-  copies in this repo of the `dockerfile-builder` ClusterWorkflow and the
-  `observability-alert-rule` ClusterTrait, both of which the shared Helm
-  chart's ComponentTypes (`allowedWorkflows`/`allowedTraits`) already
-  reference by name. Neither is currently applied by `aectl platform install`
-  — that's a real gap in the aectl-only path, not something this cleanup
-  introduced or resolved. Until that's closed, a fresh aectl-only cluster may
-  need these applied by hand (`kubectl apply -f manifests/docker-build-workflow.yaml`,
-  same for the trait) for builds / auto-RCA to work.
+- `manifests/api-platform/observability-alert-rule-trait.yaml` — the only copy
+  in this repo of the `observability-alert-rule` ClusterTrait, which the chart's
+  ComponentTypes name in `allowedTraits`. Not applied by `aectl platform
+  install` — a fresh aectl-only cluster needs
+  `kubectl apply -f manifests/api-platform/observability-alert-rule-trait.yaml`
+  by hand for auto-RCA to work.
 - `single-cluster/thunder-resources/`, `thunder-env-resources/`,
   `values-cp.yaml`, `values-dp.yaml`, `values-openbao.yaml` — the old
   Compose-chain's Thunder bootstrap bundle and OC values, genuinely unused now.

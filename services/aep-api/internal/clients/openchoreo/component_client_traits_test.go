@@ -24,6 +24,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	ocgen "github.com/wso2/aep/aep-api/internal/clients/openchoreo/gen"
 )
 
 // UNIT tier for the two trait write paths, driven end-to-end through the REAL
@@ -278,4 +280,29 @@ func mapKeys(m map[string]interface{}) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// A trait reference is (kind, name): OpenChoreo accepts ClusterTrait and the
+// namespaced Trait, so a name alone does not identify one. On a converged
+// cluster a namespaced Trait can carry the same name in the org's own
+// namespace, and a kind-less reference would hand OpenChoreo the choice. Every
+// entry this platform writes names ClusterTrait, including one built without an
+// explicit kind.
+func TestComponentTraitsToGen_AlwaysCarriesAnExplicitKind(t *testing.T) {
+	got := componentTraitsToGen([]ComponentTrait{
+		{InstanceName: "api", Name: "api-configuration"},
+		{InstanceName: "alerts", Name: "observability-alert-rule", Kind: "ClusterTrait"},
+	})
+	if got == nil {
+		t.Fatal("componentTraitsToGen returned nil for a non-empty input")
+	}
+	for _, entry := range *got {
+		if entry.Kind == nil {
+			t.Errorf("trait %q: kind omitted; OpenChoreo would choose between ClusterTrait and Trait", entry.Name)
+			continue
+		}
+		if *entry.Kind != ocgen.ComponentTraitKindClusterTrait {
+			t.Errorf("trait %q: kind = %q, want %q", entry.Name, *entry.Kind, ocgen.ComponentTraitKindClusterTrait)
+		}
+	}
 }
