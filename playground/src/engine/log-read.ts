@@ -27,7 +27,7 @@
  * summarised into the feed or copied into a third file.
  *
  * Two artifacts per run, and this module joins them:
- *   .logs/claude.log — the raw SDK transcript. Every message: thinking blocks,
+ *   .logs/runtime.log — the raw SDK transcript. Every message: thinking blocks,
  *     whole tool inputs, whole outputs, the subagents' closing reports. Nothing
  *     is missing from it, which is why there is no derived index — a cache of an
  *     analysis can drift from the truth, and this one would.
@@ -162,7 +162,7 @@ interface RunLog {
  * what a developer view needs — so this reader follows the forwarded channel.
  */
 export function readRunLog(runDir: string): RunLog {
-  const messages = readJsonl(join(runDir, ".logs", "claude.log"));
+  const messages = readJsonl(join(runDir, ".logs", "runtime.log"));
   const progress = readJsonl(join(runDir, "progress.ndjson"));
 
   // Only a `tool_result` carries both halves: an `agent_settled` measures a whole

@@ -29,15 +29,23 @@ type dbStore struct {
 	cipher *ColumnCipher
 }
 
-// NewDBStore returns a CredentialStore backed by Postgres. key must be exactly
+// NewDBStore returns a TxCredentialStore backed by Postgres. key must be exactly
 // 32 bytes (AES-256). Values are encrypted with AES-256-GCM before writing and
 // decrypted on read. Generate a key with: openssl rand -base64 32
-func NewDBStore(db *gorm.DB, key []byte) (CredentialStore, error) {
+func NewDBStore(db *gorm.DB, key []byte) (TxCredentialStore, error) {
 	c, err := NewColumnCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("credential store: %w", err)
 	}
 	return &dbStore{db: db, cipher: c}, nil
+}
+
+// WithDB returns the same store bound to db, which is how a caller's
+// transaction joins the secret write: a store bound to a *gorm.DB transaction
+// reads and writes through it, so the bytes commit or roll back with the rows
+// that describe them.
+func (s *dbStore) WithDB(db *gorm.DB) CredentialStore {
+	return &dbStore{db: db, cipher: s.cipher}
 }
 
 func (s *dbStore) Get(ctx context.Context, ocOrgID, key string) ([]byte, error) {

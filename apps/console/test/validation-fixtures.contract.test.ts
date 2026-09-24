@@ -52,7 +52,7 @@ afterEach(() => {
 
 function layOut(files: { path: string; content: string }[]): string {
   const root = mkdtempSync(join(tmpdir(), "aep-mock-"));
-  mkdirSync(join(root, "specs/acceptance"), { recursive: true });
+  mkdirSync(join(root, "specs/validation/acceptance"), { recursive: true });
   mkdirSync(join(root, "tests/acceptance"), { recursive: true });
   for (const f of files) writeFileSync(join(root, f.path), f.content);
   return root;

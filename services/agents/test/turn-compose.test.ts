@@ -293,7 +293,6 @@ test("the design flow inlines its whole lineup, in lineup order", () => {
     "openapi-conventions",
     "wireframes",
     "agent-building",
-    "validation-criteria",
     "acceptance-criteria",
   ]);
 });

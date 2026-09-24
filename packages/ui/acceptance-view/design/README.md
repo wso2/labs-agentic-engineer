@@ -1,6 +1,6 @@
 # Design notes — `@aep/ui-acceptance-view`
 
-This package renders `specs/acceptance/*.feature` — the Gherkin acceptance
+This package renders `specs/validation/acceptance/*.feature` — the Gherkin acceptance
 criteria — optionally joined against a run's `tests/acceptance/report.json`. Two
 consumers, one component:
 

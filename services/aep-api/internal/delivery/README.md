@@ -101,7 +101,7 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
 | `SpecTagger` (`*spec.SpecSaveResult`) · `SpecCollector` · `AuthDeriver` | needs | `spec` — the whole-spec gate + tag cut + design reads |
 | `RepoLookup` (`owner/name`) | needs | `sourcecontrol` — repo full-name resolution |
 | org-credential reads | needs | `platform/secrets` / P3a org repositories — the GitHub + publisher halves of a coding-agent run's secrets |
-| `CodingKeyResolver` (`organization.SecretRefTriplet`) | needs | `organization` — WHICH Anthropic credential this org's coding runs bill (its coding-agent override, else its default key) and the env var it must be mounted as. A domain decision, so the port exposes no way to ask "is there an override?"; dispatch only mounts what it is handed. See ADR-0016 |
+| `CodingKeyResolver` (`organization.SecretRefTriplet`) | needs | `organization` — WHICH Anthropic credential a run on a given runtime bills (the org's Claude subscription on Claude Code, else its API key) and the env var it must be mounted as. A domain decision, so the port exposes no way to ask "is there a subscription?"; dispatch only mounts what it is handed. See ADR-0036 |
 | `ExecutionReader` (`ops.ExecutionFact`) | offers | `ops` — latest-execution-per-kind correlation (`execution.OpsExecutionReader`, P6-retired the app bridge) |
 | `BuildTerminalObserver` (root) | offers | the OpenChoreo watcher → the event plane: a settled build reported outwards, so watcher and event plane stay peer sub-packages |
 | `MilestoneDispatcher` (root, over `MilestoneDispatch`) | offers | the coding agent → the supervisor: launch one agent run at a milestone and answer with its Job ref. The dispatch prompt is a milestone reference; the runner discovers its own working set. Satisfied by `*codingagent.CodingExecutor`, which writes no execution row — the cycle record is the supervisor's bookkeeping |
@@ -735,8 +735,9 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   settle — and minting last is also what makes the coverage honest, because mid-run adoption postpones
   deployed-green by construction. It then settles SUCCEEDED with an EMPTY verdict, which is the honest
   reading of "delivered, not yet judged". The one exception is a project with no acceptance oracle: no
-  task is filed, nothing will ever judge the version, and `skipped` says so. The acceptance oracle
-  `specs/validation/validation-criteria.json` is read-only input authored in the design phase (spec domain).
+  task is filed, nothing will ever judge the version, and `skipped` says so. The acceptance oracle — every
+  `specs/validation/acceptance/<slug>.feature` — is read-only input authored in the design phase
+  (spec domain).
   **ONE validation issue per version, filed into the version's milestone by the create itself** — like a
   Task, it carries no version label, because the milestone is the pin. Per version and not per project:
   the body embeds the criteria as they stood at mint time, so adopting an older version's issue would

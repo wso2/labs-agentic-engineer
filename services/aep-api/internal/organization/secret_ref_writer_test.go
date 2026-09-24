@@ -564,94 +564,44 @@ func seedAnthropicRow(t testing.TB, db *gorm.DB, ocOrgID string, refName, kvPath
 
 func strPtr(s string) *string { return &s }
 
-func TestSecretRefWriter_DeleteAnthropic_DB(t *testing.T) {
+// DeleteAnthropic runs after the card's transaction has deleted the row, so it
+// takes the secret-ref name the caller captured beforehand and reads nothing.
+func TestSecretRefWriter_DeleteAnthropic(t *testing.T) {
 	t.Run("disabled (nil client) is a no-op", func(t *testing.T) {
 		t.Parallel()
 		w := organization.NewSecretRefWriter(nil, nil, nil, nil)
-		if err := w.DeleteAnthropic(context.Background(), "acme", organization.AnthropicRoleDefault); err != nil {
+		if err := w.DeleteAnthropic(context.Background(), "acme", organization.AnthropicRoleDefault, "acme-anthropic-secrets"); err != nil {
 			t.Fatalf("disabled DeleteAnthropic = %v; want nil", err)
 		}
 	})
 
-	t.Run("no row for org is a no-op (idempotent), SM-API never called", func(t *testing.T) {
+	t.Run("deletes the role's secret by the captured name", func(t *testing.T) {
 		t.Parallel()
-		db := dbtest.New(t)
 		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil))
-		if err := w.DeleteAnthropic(context.Background(), "ghost-org", organization.AnthropicRoleDefault); err != nil {
-			t.Fatalf("DeleteAnthropic on a missing row = %v; want nil", err)
-		}
-		if len(fake.deleteCalls) != 0 {
-			t.Fatalf("DeleteSecret must not be called when no row exists")
-		}
-	})
-
-	t.Run("clears the triplet after a successful SM-API delete", func(t *testing.T) {
-		t.Parallel()
-		db := dbtest.New(t)
-		seedAnthropicRow(t, db, "acme", strPtr("acme-anthropic-secrets"), strPtr("user-app-secrets/wc-xxx/acme-anthropic-secrets"), strPtr("api-key"))
-
-		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil))
-		if err := w.DeleteAnthropic(claimsCtx("ou-acme-uuid"), "acme", organization.AnthropicRoleDefault); err != nil {
+		w := organization.NewSecretRefWriter(fake, nil, nil, nil)
+		if err := w.DeleteAnthropic(claimsCtx("ou-acme-uuid"), "acme", organization.AnthropicRoleCoding, "acme-anthropic-coding"); err != nil {
 			t.Fatalf("DeleteAnthropic: %v", err)
 		}
 		if len(fake.deleteCalls) != 1 {
 			t.Fatalf("want 1 DeleteSecret call, got %d", len(fake.deleteCalls))
 		}
 		call := fake.deleteCalls[0]
-		wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", ControlPlaneNamespace: "acme", EntityName: "anthropic", SecretKey: secretmanagersvc.SecretKeyAPIKey}
-		if call.loc != wantLoc || call.secretRefName != "acme-anthropic-secrets" {
-			t.Fatalf("DeleteSecret called with loc=%+v ref=%q; want loc=%+v ref=%q", call.loc, call.secretRefName, wantLoc, "acme-anthropic-secrets")
-		}
-		var got organization.OrgAnthropicCredential
-		if err := db.Where("oc_org_id = ?", "acme").First(&got).Error; err != nil {
-			t.Fatalf("reload: %v", err)
-		}
-		if got.SecretRefName != nil || got.SecretRefKVPath != nil || got.SecretRefProperty != nil {
-			t.Fatalf("triplet not cleared: %+v", got)
+		wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", ControlPlaneNamespace: "acme", EntityName: "anthropic-coding", SecretKey: secretmanagersvc.SecretKeyAPIKey}
+		if call.loc != wantLoc || call.secretRefName != "acme-anthropic-coding" {
+			t.Fatalf("DeleteSecret called with loc=%+v ref=%q; want loc=%+v ref=%q", call.loc, call.secretRefName, wantLoc, "acme-anthropic-coding")
 		}
 	})
 
-	t.Run("nil SecretRefName on the row passes an empty refName to DeleteSecret", func(t *testing.T) {
+	t.Run("SM-API delete error propagates", func(t *testing.T) {
 		t.Parallel()
-		db := dbtest.New(t)
-		seedAnthropicRow(t, db, "acme", nil, nil, nil)
-
-		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil))
-		if err := w.DeleteAnthropic(claimsCtx("ou-acme-uuid"), "acme", organization.AnthropicRoleDefault); err != nil {
-			t.Fatalf("DeleteAnthropic: %v", err)
-		}
-		if len(fake.deleteCalls) != 1 || fake.deleteCalls[0].secretRefName != "" {
-			t.Fatalf("want DeleteSecret called with empty secretRefName, got %+v", fake.deleteCalls)
-		}
-	})
-
-	t.Run("SM-API delete error propagates and the row is left untouched", func(t *testing.T) {
-		t.Parallel()
-		db := dbtest.New(t)
-		seedAnthropicRow(t, db, "acme", strPtr("acme-anthropic-secrets"), strPtr("kv/path"), strPtr("api-key"))
-
 		fake := &fakeSMClient{deleteErr: errors.New("sm-api: 500")}
-		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil))
-		if err := w.DeleteAnthropic(claimsCtx("ou-acme-uuid"), "acme", organization.AnthropicRoleDefault); err == nil {
+		w := organization.NewSecretRefWriter(fake, nil, nil, nil)
+		if err := w.DeleteAnthropic(claimsCtx("ou-acme-uuid"), "acme", organization.AnthropicRoleDefault, "acme-anthropic-secrets"); err == nil {
 			t.Fatalf("want the SM-API error to propagate")
-		}
-		var got organization.OrgAnthropicCredential
-		if err := db.Where("oc_org_id = ?", "acme").First(&got).Error; err != nil {
-			t.Fatalf("reload: %v", err)
-		}
-		if got.SecretRefName == nil || *got.SecretRefName != "acme-anthropic-secrets" {
-			t.Fatalf("row must be untouched on delete error: %+v", got)
 		}
 	})
 }
 
-// --- DeletePublisher (DB) -----------------------------------------------------
-
-// seedIDPProfileRow inserts a minimal valid organization_idp_profiles row,
-// optionally with the secret-ref triplet populated.
 func seedIDPProfileRow(t testing.TB, db *gorm.DB, orgID string, refName, kvPath *string) {
 	t.Helper()
 	row := organization.OrganizationIDPProfile{

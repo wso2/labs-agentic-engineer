@@ -725,6 +725,13 @@ export interface TurnRequest {
    * calling the question tools.
    */
   headless?: boolean;
+  /**
+   * The model this turn runs on: the organization's chosen model id, resolved
+   * by the caller per turn (aep-api reads the org's `agents.model`). Absent →
+   * the service's default (`AGENT_MODEL`), which is what a local caller such as
+   * the playground relies on.
+   */
+  model?: string;
   /** Where to read files + skills from the shared mount (IDs + shas only). */
   workspace: WorkspaceRef;
   filesChangedExternally?: boolean;

@@ -21,10 +21,8 @@ import type { components } from "../../generated/aep-api";
 
 type ApiError = components["schemas"]["Error"];
 import {
-  codingAgentDefaultsFixture,
-  codingAgentRuntimeUnavailable,
-  codingLlmValidationError,
-  codingLlmWithoutDefault,
+  agentsDefaultsFixture,
+  agentsOpenCodeFixture,
   configLoadError,
   gitProviderDisconnectRejected,
   githubConnectedFixture,
@@ -34,6 +32,7 @@ import {
   importFileInvalidError,
   importWarningsFixture,
   INVALID_CREDENTIAL_VALUE,
+  llmDisconnectedAtFixture,
   llmConnectedFixture,
   llmValidationError,
   seedSkillUpdates,
@@ -41,10 +40,15 @@ import {
   skillsLoadError,
   skillsSyncError,
   skillsRepoUrl,
+  subscriptionFixture,
+  subscriptionRequiresApiKey,
+  subscriptionRequiresClaudeCode,
+  subscriptionTokenRequired,
+  subscriptionValidationError,
   type SettingsScenario,
 } from "../fixtures/settings";
 
-type CodingAgentProjection = components["schemas"]["CodingAgentProjection"];
+type AgentsProjection = components["schemas"]["AgentsProjection"];
 type ConfigPatch = components["schemas"]["ConfigPatch"];
 type ConfigProjection = components["schemas"]["ConfigProjection"];
 type GitProviderProjection = components["schemas"]["GitProviderProjection"];
@@ -66,18 +70,25 @@ function errorJson(body: ApiError, status: number) {
   return HttpResponse.json(body, { status });
 }
 
+// A `claude setup-token` value is a subscription token; anything else shaped
+// `sk-ant-` is an API key. The server classifies by the same prefix.
+function isSubscriptionToken(key: string): boolean {
+  return key.startsWith("sk-ant-oat");
+}
+
 // Session-local state layered on top of the scenario baseline, mirroring
 // handlers/projects.ts's createdProjects pattern.
 let gitProvider: GitProviderProjection | null = null;
 let llm: LLMProjection | null = null;
-// null = the coding agent reuses `llm`'s key. Not a mode flag — the absence of
-// a key IS "reuse", exactly as on the server (ADR-0016).
-let codingLlm: LLMProjection | null = null;
-// Always present, unlike the credentials: an org has an effective runtime and
-// model from the moment it exists. Reset (codingAgent:null) restores this very
-// value INCLUDING the null stamps — "reset to defaults" and "never touched"
-// are the same observable state, which is what the contract says.
-let codingAgent: CodingAgentProjection = { ...codingAgentDefaultsFixture };
+// When the org's key was last disconnected; null once a key is connected.
+let llmDisconnectedAt: string | null = null;
+// Always present, unlike the credentials: an org has an effective model and
+// runtime from the moment it exists. Reset (agents:null) restores this very
+// value INCLUDING the null stamps and no subscription — "reset to defaults" and
+// "never touched" are the same observable state, which is what the contract
+// says. `subscription` is the Claude subscription coding runs bill (null =
+// they bill `llm`'s key).
+let agents: AgentsProjection = { ...agentsDefaultsFixture };
 let skills: SkillDetailBody[] = [];
 let skillUpdates: SkillUpdate[] = [];
 let initialized = false;
@@ -90,7 +101,10 @@ const CONNECTION_KEY = "aep:mock:connection";
 
 function persistConnection(): void {
   try {
-    localStorage.setItem(CONNECTION_KEY, JSON.stringify({ gitProvider, llm }));
+    localStorage.setItem(
+      CONNECTION_KEY,
+      JSON.stringify({ gitProvider, llm, llmDisconnectedAt }),
+    );
   } catch {
     /* quota — non-fatal in mock mode */
   }
@@ -99,13 +113,21 @@ function persistConnection(): void {
 function ensureInitialized() {
   if (initialized) return;
   initialized = true;
-  if (scenario() === "connected") {
+  const connectedScenarios: SettingsScenario[] = [
+    "connected",
+    "subscription",
+    "opencode",
+  ];
+  if (connectedScenarios.includes(scenario())) {
     gitProvider = { ...githubConnectedFixture };
     llm = { ...llmConnectedFixture };
   } else if (scenario() === "partial") {
     // Onboarding resume-after-abandon (#102): GitHub landed, Anthropic
     // didn't — the wizard must open at its first incomplete step.
     gitProvider = { ...githubConnectedFixture };
+  } else if (scenario() === "disconnected") {
+    gitProvider = { ...githubConnectedFixture };
+    llmDisconnectedAt = llmDisconnectedAtFixture;
   }
   // A persisted connection (the user onboarded in an earlier page load) wins
   // over the scenario baseline so the wizard doesn't reappear on refresh.
@@ -115,14 +137,21 @@ function ensureInitialized() {
       const saved = JSON.parse(raw) as {
         gitProvider: GitProviderProjection | null;
         llm: LLMProjection | null;
+        llmDisconnectedAt?: string | null;
       };
       gitProvider = saved.gitProvider;
       llm = saved.llm;
+      llmDisconnectedAt = saved.llmDisconnectedAt ?? null;
     }
   } catch {
     /* ignore malformed persisted state */
   }
-  codingAgent = { ...codingAgentDefaultsFixture };
+  agents =
+    scenario() === "opencode"
+      ? { ...agentsOpenCodeFixture }
+      : scenario() === "subscription"
+        ? { ...agentsDefaultsFixture, subscription: { ...subscriptionFixture } }
+        : { ...agentsDefaultsFixture };
   skills = seedSkills.map((s) => ({ ...s }));
   skillUpdates = seedSkillUpdates.map((u) => ({ ...u }));
 }
@@ -198,8 +227,8 @@ function configProjection(): ConfigProjection {
   return {
     gitProvider,
     llm,
-    codingLlm,
-    codingAgent,
+    ...(llm === null && llmDisconnectedAt ? { llmDisconnectedAt } : {}),
+    agents,
     idp: {
       kind: "platform",
       issuer: "https://idp.aep.local",
@@ -227,25 +256,24 @@ export const settingsHandlers = [
     if (body.llm != null && body.llm.apiKey === INVALID_CREDENTIAL_VALUE) {
       return errorJson(llmValidationError, 400);
     }
-    if (body.codingLlm != null) {
-      if (body.codingLlm.apiKey === INVALID_CREDENTIAL_VALUE) {
-        return errorJson(codingLlmValidationError, 400);
+    // The AI agents card, judged as one on the state the patch leaves, as on
+    // the server: a subscription needs Claude Code and a connected API key.
+    const newToken = body.agents?.subscription?.token;
+    if (newToken !== undefined) {
+      if (newToken === INVALID_CREDENTIAL_VALUE) {
+        return errorJson(subscriptionValidationError, 400);
       }
-      // An override with nothing to override — including the case where this
-      // very patch clears the key it would override.
-      const defaultAfterPatch = body.llm === undefined ? llm : body.llm;
-      if (defaultAfterPatch === null) {
-        return errorJson(codingLlmWithoutDefault, 400);
+      if (!isSubscriptionToken(newToken)) {
+        return errorJson(subscriptionTokenRequired, 400);
       }
-    }
-    // The runtime enum carries more than the platform can run: an unavailable
-    // one is rejected with a reason naming what is missing, never quietly
-    // swapped for the one that works.
-    if (
-      body.codingAgent != null &&
-      body.codingAgent.runtime === "opencode"
-    ) {
-      return errorJson(codingAgentRuntimeUnavailable, 422);
+      const runtimeAfter = body.agents?.runtime ?? agents.runtime;
+      if (runtimeAfter !== "claude-code") {
+        return errorJson(subscriptionRequiresClaudeCode, 400);
+      }
+      const keyAfter = body.llm === undefined ? llm !== null : body.llm !== null;
+      if (!keyAfter) {
+        return errorJson(subscriptionRequiresApiKey, 400);
+      }
     }
     if (body.gitProvider !== undefined) {
       if (body.gitProvider === null) {
@@ -260,9 +288,9 @@ export const settingsHandlers = [
     if (body.llm !== undefined) {
       if (body.llm === null) {
         llm = null;
-        // The coding key overrides `llm` and cannot outlive it.
-        codingLlm = null;
+        llmDisconnectedAt = new Date().toISOString();
       } else {
+        llmDisconnectedAt = null;
         llm = {
           kind: "anthropic",
           credentialKind: "api_key",
@@ -275,39 +303,44 @@ export const settingsHandlers = [
       }
     }
 
-    if (body.codingLlm !== undefined) {
-      if (body.codingLlm === null) {
-        codingLlm = null;
+    if (body.agents !== undefined) {
+      if (body.agents === null) {
+        agents = { ...agentsDefaultsFixture };
       } else {
-        codingLlm = {
-          kind: "anthropic",
-          // The coding agent may bill a Claude subscription instead: a
-          // `claude setup-token` value is an oauth_token, not an api_key.
-          credentialKind: body.codingLlm.apiKey.startsWith("sk-ant-oat")
-            ? "oauth_token"
-            : "api_key",
-          status: "connected",
-          keyPrefix: body.codingLlm.apiKey.slice(0, 7),
-          keyLast4: body.codingLlm.apiKey.slice(-4),
-          connectedAt: new Date().toISOString(),
-          lastValidatedAt: new Date().toISOString(),
-        };
+        // Every field is optional so a client can move one without restating
+        // the others — merge, never replace.
+        const { model, runtime, subscription } = body.agents;
+        if (model !== undefined || runtime !== undefined) {
+          agents = {
+            ...agents,
+            runtime: runtime ?? agents.runtime,
+            model: model ?? agents.model,
+            updatedAt: new Date().toISOString(),
+            updatedBy: "dev@acme.example",
+          };
+        }
+        if (subscription === null) {
+          agents = { ...agents, subscription: null };
+        } else if (subscription !== undefined) {
+          const now = new Date().toISOString();
+          agents = {
+            ...agents,
+            subscription: {
+              kind: "claude",
+              status: "connected",
+              keyPrefix: subscription.token.slice(0, 13),
+              keyLast4: subscription.token.slice(-4),
+              connectedAt: now,
+              lastValidatedAt: now,
+            },
+          };
+        }
       }
     }
-
-    if (body.codingAgent !== undefined) {
-      if (body.codingAgent === null) {
-        codingAgent = { ...codingAgentDefaultsFixture };
-      } else {
-        // Both fields are optional so a client can move one without restating
-        // the other — merge, never replace.
-        codingAgent = {
-          runtime: body.codingAgent.runtime ?? codingAgent.runtime,
-          model: body.codingAgent.model ?? codingAgent.model,
-          updatedAt: new Date().toISOString(),
-          updatedBy: "dev@acme.example",
-        };
-      }
+    // A subscription the end state cannot use goes in the same save: OpenCode
+    // cannot present one, and it cannot outlive the key it sits beside.
+    if (agents.runtime !== "claude-code" || llm === null) {
+      agents = { ...agents, subscription: null };
     }
 
     if (body.gitProvider != null) {

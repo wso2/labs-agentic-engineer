@@ -39,7 +39,7 @@ import (
 // --- Read side: ConfigProjection (no secret material) -----------------------
 
 // ConfigProjection is the GET /config body: the org's connection state across
-// all three sections. Secrets are never echoed (write-only), so this shape is
+// all sections. Secrets are never echoed (write-only), so this shape is
 // intentionally distinct from ConfigPatch — which is what forces PATCH-not-PUT
 // (a client can't round-trip a full document it can't read back).
 //
@@ -47,33 +47,29 @@ import (
 // {status:"not_connected"} sentinel objects); idp is always present because an
 // org always has at least the platform default.
 //
-// codingLlm is the one section whose null does NOT mean "not connected": the
-// coding agent key is an OVERRIDE on llm, so null means the coding agent reuses
-// llm's key (ADR-0016). It is still a required field so a client can tell
-// "reuse" from "the server is too old to know about the section".
-//
-// codingAgent is never null at all: every org has an effective runtime and model
-// whether or not anyone has chosen one, so the section carries the platform's
-// defaults until someone does. Its UpdatedBy is what tells the two apart.
+// agents is never null: every org has an effective model and runtime whether
+// or not anyone has chosen them, so the section carries the platform's defaults
+// until someone does. Its UpdatedBy is what tells the two apart.
 type ConfigProjection struct {
-	LLM         *LLMProjection         `json:"llm"`         // null = not connected
-	CodingLLM   *LLMProjection         `json:"codingLlm"`   // null = reuse LLM's key
-	CodingAgent CodingAgentProjection  `json:"codingAgent"` // always present
-	GitProvider *GitProviderProjection `json:"gitProvider"` // null = not connected
-	IDP         IDPProjection          `json:"idp"`         // always present
+	LLM *LLMProjection `json:"llm"` // null = not connected
+	// LLMDisconnectedAt is when the org's API key was last disconnected; set
+	// only while llm is null, so a client can tell "your key was disconnected"
+	// from "no key was ever set".
+	LLMDisconnectedAt *time.Time             `json:"llmDisconnectedAt,omitempty"`
+	Agents            AgentsProjection       `json:"agents"`      // always present
+	GitProvider       *GitProviderProjection `json:"gitProvider"` // null = not connected
+	IDP               IDPProjection          `json:"idp"`         // always present
 }
 
-// LLMProjection carries the org's LLM connection status. Fields are carried 1:1
-// from orgcreds.AnthropicProjection minus ocOrgId (dropped from all
+// LLMProjection carries the org's Anthropic API key status. Fields are carried
+// 1:1 from organization.AnthropicProjection minus ocOrgId (dropped from all
 // projections — the org is implicit from the JWT).
 type LLMProjection struct {
 	Kind string `json:"kind" enum:"anthropic"`
-	// CredentialKind distinguishes a Console API key from a Claude Code OAuth
-	// token (`claude setup-token`), which bills a Claude subscription instead
-	// of API credits. Only codingLlm can be an oauth_token; llm is always an
-	// api_key, because the design agent is an AI SDK call that cannot present
-	// a bearer token.
-	CredentialKind  string     `json:"credentialKind" enum:"api_key,oauth_token"`
+	// CredentialKind is always api_key: the spec agents are AI SDK calls that
+	// cannot present a Claude subscription token, so the org's key is a
+	// Console API key and a subscription lives on the agents section.
+	CredentialKind  string     `json:"credentialKind" enum:"api_key"`
 	KeyPrefix       string     `json:"keyPrefix"`
 	KeyLast4        string     `json:"keyLast4"`
 	Status          string     `json:"status"`
@@ -82,63 +78,81 @@ type LLMProjection struct {
 	ValidationError *string    `json:"validationError,omitempty"`
 }
 
-// --- codingAgent: the one section that is a plain setting -------------------
+// --- agents: how the organization's agents run ------------------------------
 //
-// Every other section here is credential-shaped: a write-only secret, an
-// external probe before it is persisted, and a projection that cannot echo what
-// was written. This one carries no secret and has nothing to probe, so its
-// validation is entirely local — the values have to be members of the contract's
-// enums, and the runtime has to be one this build can actually run.
+// One model for every agent (the spec agents and the coding agent), the coding
+// agent's runtime, and an optional Claude subscription the coding agent bills
+// instead of the API key. The model and runtime are plain values validated
+// against the contract's enums; the subscription is a write-only secret probed
+// against Anthropic. The rule that ties them together (a subscription needs
+// Claude Code and a connected API key) lives in the organization domain, which
+// owns the credentials.
 
-// The platform's defaults, and the values an org gets until someone chooses
-// otherwise. `DefaultCodingAgentModel` is deliberately a model the platform
-// seeds a `model_rates` row for: cost stamping is all-or-nothing across a
-// cycle's capture, so an unpriced default would blank the cost of every run made
-// by every org that never opened the setting.
+// AgentRuntime is a member of the contract's AgentRuntime enum: which
+// coding-agent runtime an organization's cycles run on.
+type AgentRuntime string
+
 const (
-	DefaultAgentRuntime     = "claude-code"
-	DefaultCodingAgentModel = "claude-sonnet-5"
+	AgentRuntimeClaudeCode AgentRuntime = "claude-code"
+	AgentRuntimeOpenCode   AgentRuntime = "opencode"
 )
 
-// AgentRuntimes are the runtime values the contract's AgentRuntime enum carries.
-//
-// MEMBERSHIP IS NOT AVAILABILITY. `opencode` is here because the design carries
-// it and a client should be able to render the choice; whether this build can
-// run one is `SupportedAgentRuntimes` below, and the two are deliberately
-// different lists. Pinned against the committed contract by a test in this
+// AgentRuntimes are the runtime values the contract's AgentRuntime enum carries,
+// the default first. Pinned against the committed contract by a test in this
 // package, because a value that drifts out of the enum is rejected by the
 // request validator long before any handler sees it.
-var AgentRuntimes = []string{"claude-code", "opencode"}
+var AgentRuntimes = []AgentRuntime{AgentRuntimeClaudeCode, AgentRuntimeOpenCode}
 
-// SupportedAgentRuntimes are the runtimes this build ships an adapter for.
-//
-// One, today. The runner's `runtime/registry.ts` refuses the other by name with
-// a reason; this is the same refusal one layer earlier, so an organization is
-// told at the moment it chooses rather than by a pod that fails to start three
-// hours later.
-var SupportedAgentRuntimes = []string{"claude-code"}
+// The platform's defaults, and the values an org gets until someone chooses
+// otherwise. The model is deliberately one the platform seeds a `model_rates`
+// row for: cost stamping is all-or-nothing across a cycle's capture, so an
+// unpriced default would blank the cost of every run made by every org that
+// never opened the setting.
+const (
+	DefaultAgentRuntime = AgentRuntimeClaudeCode
+	DefaultAgentModel   = "claude-sonnet-5"
+)
 
-// CodingAgentModels are the models the contract's CodingAgentModel enum carries
-// — narrower than the list any runtime can serve, and narrow for one reason: the
-// platform only offers a model it can price. See the contract's own note.
-var CodingAgentModels = []string{"claude-sonnet-5", "claude-haiku-4-5"}
+// AgentModels are the models the contract's AgentModel enum carries — the set
+// the platform can price. See the contract's own note.
+var AgentModels = []string{"claude-sonnet-5", "claude-haiku-4-5"}
 
-// CodingAgentProjection is the runtime and model an organization's coding runs
-// use, and the moment somebody chose them.
+// AgentsProjection is how an organization's agents run, and the moment somebody
+// chose it. The one model serves every agent and every call a coding run makes,
+// on either runtime.
 //
 // UpdatedAt/UpdatedBy are nil exactly when nobody ever has — which is what tells
 // "the platform's defaults" apart from "somebody chose the same values", a
 // distinction the console needs and no other field carries.
-type CodingAgentProjection struct {
-	Runtime   string     `json:"runtime" enum:"claude-code,opencode"`
-	Model     string     `json:"model" enum:"claude-sonnet-5,claude-haiku-4-5"`
-	UpdatedAt *time.Time `json:"updatedAt"`
-	UpdatedBy *string    `json:"updatedBy"`
+type AgentsProjection struct {
+	Model        string                  `json:"model" enum:"claude-sonnet-5,claude-haiku-4-5"`
+	Runtime      AgentRuntime            `json:"runtime" enum:"claude-code,opencode"`
+	Subscription *SubscriptionProjection `json:"subscription"` // null = coding bills the API key
+	UpdatedAt    *time.Time              `json:"updatedAt"`
+	UpdatedBy    *string                 `json:"updatedBy"`
 }
 
-// DefaultCodingAgent is the projection for an org that has never set one.
-func DefaultCodingAgent() CodingAgentProjection {
-	return CodingAgentProjection{Runtime: DefaultAgentRuntime, Model: DefaultCodingAgentModel}
+// SubscriptionProjection is a stored Claude subscription token, masked.
+type SubscriptionProjection struct {
+	Kind            string     `json:"kind" enum:"claude"`
+	KeyPrefix       string     `json:"keyPrefix"`
+	KeyLast4        string     `json:"keyLast4"`
+	Status          string     `json:"status"`
+	ConnectedAt     time.Time  `json:"connectedAt"`
+	LastValidatedAt *time.Time `json:"lastValidatedAt,omitempty"`
+	ValidationError *string    `json:"validationError,omitempty"`
+}
+
+// SubscriptionKindClaude is the only subscription kind: a Claude plan, billed
+// through a `claude setup-token` token.
+const SubscriptionKindClaude = "claude"
+
+// DefaultAgents is the projection for an org that has never set one.
+func DefaultAgents() AgentsProjection {
+	return AgentsProjection{
+		Model:   DefaultAgentModel,
+		Runtime: DefaultAgentRuntime,
+	}
 }
 
 // GitProviderProjection carries the org's git-provider connection status. The
@@ -176,39 +190,38 @@ type IDPProjection struct {
 // ConfigPatch is the PATCH /config body. Each section is a three-state
 // patch.Field: absent = keep, null = clear (where allowed), present = replace
 // the section wholesale (deliberately not RFC 7386 deep-merge — a section with
-// write-only fields can't be deep-merged into).
+// write-only fields can't be deep-merged into). agents is the one exception:
+// its fields are individually optional, see AgentsWrite.
 type ConfigPatch struct {
 	LLM         patch.Field[LLMWrite]         `json:"llm,omitempty"`
-	CodingLLM   patch.Field[LLMWrite]         `json:"codingLlm,omitempty"`
-	CodingAgent patch.Field[CodingAgentWrite] `json:"codingAgent,omitempty"`
+	Agents      patch.Field[AgentsWrite]      `json:"agents,omitempty"`
 	GitProvider patch.Field[GitProviderWrite] `json:"gitProvider,omitempty"`
 	IDP         patch.Field[IDPWrite]         `json:"idp,omitempty"`
 }
 
-// CodingAgentWrite is the codingAgent section's write shape, and the ONE section
-// whose fields are individually optional.
+// AgentsWrite is the agents section's write shape, and the ONE section whose
+// fields are individually optional: an omitted field keeps what is stored, so a
+// client changes the model without restating the runtime and never has to send
+// the stored token back.
 //
-// Every other section is replaced wholesale because it holds a write-only secret
-// that cannot be deep-merged into. This one holds two plain values a client CAN
-// read back, and the two change for different reasons — an org tunes its model
-// far more often than it moves runtime — so an omitted field keeps what is
-// there rather than resetting it. `null` on the section still resets both, which
-// is the state "put me back on the platform's defaults" and is not the same as
-// never having chosen (the projection's updatedBy is what tells them apart).
-type CodingAgentWrite struct {
-	Runtime string `json:"runtime,omitempty" enum:"claude-code,opencode"`
-	Model   string `json:"model,omitempty" enum:"claude-sonnet-5,claude-haiku-4-5"`
+// Subscription is itself three-state: absent keeps it, a value sets or
+// replaces it, null deletes it. `null` on the whole section resets the model
+// and runtime to the platform's defaults and deletes the subscription.
+type AgentsWrite struct {
+	Model        string                         `json:"model,omitempty" enum:"claude-sonnet-5,claude-haiku-4-5"`
+	Runtime      AgentRuntime                   `json:"runtime,omitempty" enum:"claude-code,opencode"`
+	Subscription patch.Field[SubscriptionWrite] `json:"subscription,omitempty"`
 }
 
-// LLMWrite is the write shape of both LLM sections — llm (the org's default
-// key) and codingLlm (the coding agent's override). The apiKey is write-only:
-// probed against Anthropic, never echoed in any projection.
-//
-// codingLlm's three states read differently from every other section's, because
-// the section models an override rather than a connection: absent = keep,
-// null = REMOVE the override (the coding agent goes back to reusing the default
-// key), value = set/rotate it. There is no "disconnected coding agent" state to
-// clear into. See ADR-0016.
+// SubscriptionWrite sets or replaces the Claude subscription token. The token
+// is write-only: probed against Anthropic, never echoed.
+type SubscriptionWrite struct {
+	Kind  string `json:"kind" enum:"claude" required:"true"`
+	Token string `json:"token" required:"true"`
+}
+
+// LLMWrite is the llm section's write shape: the org's Anthropic API key. The
+// apiKey is write-only: probed against Anthropic, never echoed.
 type LLMWrite struct {
 	Kind   string `json:"kind" enum:"anthropic" required:"true"`
 	APIKey string `json:"apiKey" required:"true"`

@@ -131,7 +131,7 @@ func repairIssueBody(f FailedScenario) string {
 	return strings.TrimRight(b.String(), "\n") +
 		"\n\nFix the implementation so this scenario holds, then include this issue in " +
 		"your pull request's Resolves list.\n\n" +
-		"Do not change anything under `specs/acceptance/` or `tests/` — the scenarios are " +
+		"Do not change anything under `specs/validation/acceptance/` or `tests/` — the scenarios are " +
 		"the question, not the answer. Validation drives every scenario again as it stands " +
 		"once your fix is built and deployed.\n"
 }

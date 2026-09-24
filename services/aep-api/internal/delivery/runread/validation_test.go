@@ -112,7 +112,7 @@ func (f vCycles) ListValidationCyclesByProject(_ context.Context, _, _ string) (
 // test can prove the pinning rather than the content.
 type vFiles struct {
 	reportAt   map[string]string
-	criteriaAt map[string][]gen.ValidationCriteriaFile
+	criteriaAt map[string][]gen.AcceptanceCriteriaFile
 	askedAt    []string
 }
 
@@ -122,7 +122,7 @@ func (f *vFiles) ReportAt(_ context.Context, _, _, at string) (string, bool, err
 	return c, ok, nil
 }
 
-func (f *vFiles) CriteriaAt(_ context.Context, _, _, at string) ([]gen.ValidationCriteriaFile, error) {
+func (f *vFiles) CriteriaAt(_ context.Context, _, _, at string) ([]gen.AcceptanceCriteriaFile, error) {
 	f.askedAt = append(f.askedAt, "criteria@"+at)
 	return f.criteriaAt[at], nil
 }
@@ -403,7 +403,7 @@ func TestSnapshotReadsBothHalvesAtTheAttemptsOwnCommit(t *testing.T) {
 	}
 	files := &vFiles{
 		reportAt:   map[string]string{"sha-attempt": `{"scenarios":[]}`},
-		criteriaAt: map[string][]gen.ValidationCriteriaFile{"sha-attempt": {{Path: "specs/acceptance/a.feature", Content: "Feature: a"}}},
+		criteriaAt: map[string][]gen.AcceptanceCriteriaFile{"sha-attempt": {{Path: "specs/validation/acceptance/a.feature", Content: "Feature: a"}}},
 	}
 	out, err := reads(rows, cycles, files).ValidationSnapshot(context.Background(), vOrg, vProject, "v1", "val")
 	if err != nil {
@@ -433,7 +433,7 @@ func TestSnapshotOfARunningAttemptReadsCriteriaAtHeadAndHasNoReport(t *testing.T
 	rows := []delivery.MilestoneRun{devRun("r1", 1, "v1", delivery.RunStateRunning, "")}
 	cycles := map[string][]delivery.RunCycle{"r1": {vCycle("val", "r1", 5, nil, "", "")}}
 	files := &vFiles{
-		criteriaAt: map[string][]gen.ValidationCriteriaFile{"": {{Path: "specs/acceptance/a.feature", Content: "Feature: a"}}},
+		criteriaAt: map[string][]gen.AcceptanceCriteriaFile{"": {{Path: "specs/validation/acceptance/a.feature", Content: "Feature: a"}}},
 	}
 	out, err := reads(rows, cycles, files).ValidationSnapshot(context.Background(), vOrg, vProject, "v1", "val")
 	if err != nil {

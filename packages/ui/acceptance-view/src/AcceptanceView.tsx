@@ -735,7 +735,7 @@ function FeatureGroup({
 }
 
 export interface AcceptanceFeatureSource {
-  /** Repo-relative, e.g. `specs/acceptance/bought-items.feature`. */
+  /** Repo-relative, e.g. `specs/validation/acceptance/bought-items.feature`. */
   readonly path: string;
   readonly content: string;
 }

@@ -101,7 +101,7 @@ expired for any run after 2026-07-02. To re-mint:
 1. Log in to the console `http://localhost:8090` as `admin` / `admin`.
 2. Read localStorage key
    `session_data-instance_0-aep-console-client` → its `.access_token` field.
-   (`playwright-cli localstorage-get session_data-instance_0-aep-console-client`,
+   (`agent-browser storage local get session_data-instance_0-aep-console-client`,
    or the coordinator can re-extract the same way it produced `token.txt`.)
 
 ## Running replay.sh (the 0b before/after oracle)

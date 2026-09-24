@@ -28,7 +28,7 @@ that names a directory, a next step that names a command — these rules win.
 | `specs/design/flows/<slug>.md` | the flow, by its title |
 | `specs/design/security.json` | **Security** |
 | `specs/design/components/<name>/…` | the component, by its own name |
-| `specs/acceptance/<slug>.feature` | the **Acceptance criteria**, as one set |
+| `specs/validation/acceptance/<slug>.feature` | the **Acceptance criteria**, as one set |
 
 `apps/console/design/lexicon.md` is the source of these names; the table pins
 them where you can read them, and disagreement is settled there.
@@ -58,7 +58,7 @@ written, how many, or in what order.
 
 **A design turn.**
 
-- ✗ *Full design is under `specs/design/` (design.cell, domain-model.md, flows/, per-component design.json/openapi.yaml/wireframes.dsl) with validation criteria at `specs/validation/validation-criteria.json`.*
+- ✗ *Full design is under `specs/design/` (design.cell, domain-model.md, flows/, per-component design.json/openapi.yaml/wireframes.dsl) with acceptance criteria at `specs/validation/acceptance/`.*
 - ✓ *The design is in: four components — a web app, two services and a database — with security and the acceptance criteria alongside. `orders-api` still needs a payment provider named before it can be built.*
 
 **A failure.** The case where a path is most tempting and least useful: the user

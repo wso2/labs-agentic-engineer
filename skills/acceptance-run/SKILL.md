@@ -1,6 +1,6 @@
 ---
 name: acceptance-run
-description: Use when running the acceptance criteria against a live app — drive each Gherkin scenario in specs/acceptance/ with agent-browser and write tests/acceptance/report.json.
+description: Use when running the acceptance criteria against a live app — drive each Gherkin scenario in specs/validation/acceptance/ with agent-browser and write tests/acceptance/report.json.
 metadata:
   aep:
     kind: platform
@@ -9,7 +9,7 @@ metadata:
 
 # Run the acceptance criteria
 
-You execute `specs/acceptance/<slug>.feature` against a **running** app. There
+You execute `specs/validation/acceptance/<slug>.feature` against a **running** app. There
 are no step definitions and no generated test code: the scenario text is the
 test, and you are the runner.
 
@@ -207,7 +207,7 @@ files — every one, including those you could not run. Stamp `commit` with
   "scenarios": [
     {
       "feature": "Adding items to the list",
-      "featureFile": "specs/acceptance/shopping-list.feature",
+      "featureFile": "specs/validation/acceptance/shopping-list.feature",
       "line": 24,
       "rule": "An item that duplicates one already on the list is rejected",
       "scenario": "Trying to add an exact duplicate",

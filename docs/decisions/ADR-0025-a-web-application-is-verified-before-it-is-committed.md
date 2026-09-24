@@ -110,8 +110,8 @@ skill, so a new skill needs no runner code change.
 What the platform did have to change is the envelope the session runs in:
 
 - **The runner image gains `agent-browser`** (`runners/remote-worker/Dockerfile`),
-  pointed at the Chromium ADR-0012 already bakes for Playwright via
-  `AGENT_BROWSER_EXECUTABLE_PATH`. No third browser is downloaded.
+  pointed via `AGENT_BROWSER_EXECUTABLE_PATH` at the chromium the image already
+  bakes (Debian's, since ADR-0016). No second browser is downloaded.
 - **The coding job's deadline names three hours** (`codingDeadlineSeconds`),
   with the OpenChoreo ComponentType schema ceiling raised to match. The coding
   path previously sent no deadline at all and inherited the schema default, so

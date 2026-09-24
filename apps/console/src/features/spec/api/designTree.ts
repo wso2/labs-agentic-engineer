@@ -17,14 +17,14 @@
  */
 
 import type { RailPlanEntry } from "../lib/railSections";
-import { isAcceptanceFeaturePath, type SpecFileEntry } from "./mapping";
+import { isAcceptanceCriteriaFile, type SpecFileEntry } from "./mapping";
 
 /** What the content pane should render for the current sidebar selection. */
 export type SpecSelection =
   | { kind: "file"; path: string }
   | { kind: "cell-diagram" }
   | { kind: "security" }
-  // Every specs/acceptance/*.feature at once, not one of them: the pane reads
+  // Every specs/validation/acceptance/*.feature at once, not one of them: the pane reads
   // them as one document set, which is what lets a reader search across
   // capabilities instead of guessing which one holds the scenario.
   | { kind: "acceptance" }
@@ -164,7 +164,7 @@ function compareComponentFiles(a: SpecFileEntry, b: SpecFileEntry): number {
  * component put that reasoning in the middle of the rendering.
  *
  * The acceptance criteria are the whole reason it is not just a file list. One
- * rail entry stands for EVERY `specs/acceptance/*.feature` (ADR-0031), so the
+ * rail entry stands for EVERY `specs/validation/acceptance/*.feature` (ADR-0031), so the
  * section has to say both which files get an ordinary row AND whether that one
  * standing-in entry belongs there. Deriving the two separately is how they come
  * to disagree — a predicate changed on one side and not the other drops files
@@ -204,19 +204,19 @@ export function buildValidationSection(
   plan: readonly RailPlanEntry[],
 ): ValidationSection {
   const validation = allFiles.filter((f) => f.group === "validation");
-  const acceptanceFiles = validation.filter((f) => isAcceptanceFeaturePath(f.path));
+  const acceptanceFiles = validation.filter((f) => isAcceptanceCriteriaFile(f.path));
   const plannedPaths = plan
-    .filter((e) => isAcceptanceFeaturePath(e.path))
+    .filter((e) => isAcceptanceCriteriaFile(e.path))
     .map((e) => e.path);
 
   const writing = plan.find(
-    (e) => e.status === "writing" && isAcceptanceFeaturePath(e.path),
+    (e) => e.status === "writing" && isAcceptanceCriteriaFile(e.path),
   )?.path;
   const anyCommitted = acceptanceFiles.some((f) => committed.has(f.path));
 
   return {
     // The one filter, so nothing can hide a file the entry does not cover.
-    files: validation.filter((f) => !isAcceptanceFeaturePath(f.path)),
+    files: validation.filter((f) => !isAcceptanceCriteriaFile(f.path)),
     hasAcceptance: acceptanceFiles.length > 0 || plannedPaths.length > 0,
     acceptanceStatusPath: writing ?? (anyCommitted ? undefined : plannedPaths[0]),
   };
@@ -311,7 +311,7 @@ export function buildDesignSection(files: SpecFileEntry[]): DesignSection {
 export function followSelection(path: string): SpecSelection {
   if (path === DESIGN_CELL_PATH) return { kind: "cell-diagram" };
   if (path === SECURITY_JSON_PATH) return { kind: "security" };
-  if (isAcceptanceFeaturePath(path)) return { kind: "acceptance" };
+  if (isAcceptanceCriteriaFile(path)) return { kind: "acceptance" };
   const component = componentOf(path);
   if (component && isDsl(path)) {
     return { kind: "wireframe", component, dslPath: path };

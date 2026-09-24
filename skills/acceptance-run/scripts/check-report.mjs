@@ -145,7 +145,7 @@ if (!projectDir) {
   process.exit(1);
 }
 
-const featureDir = join(projectDir, "specs/acceptance");
+const featureDir = join(projectDir, "specs/validation/acceptance");
 const reportPath = join(projectDir, "tests/acceptance/report.json");
 for (const [label, p] of [["acceptance dir", featureDir], ["report", reportPath]]) {
   if (!existsSync(p)) {

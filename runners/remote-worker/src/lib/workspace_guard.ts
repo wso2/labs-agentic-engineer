@@ -118,10 +118,28 @@ export function workspaceWriteDenial(
   const input = toolInput as Record<string, unknown>;
   const raw = PATH_KEYS.map((k) => input[k]).find((v) => typeof v === "string" && v !== "");
   if (typeof raw !== "string") return undefined;
+  return authoredPathDenial(toolName, raw, workspaceRoot, isAllowed);
+}
 
+/**
+ * The rule and its sentence for ONE authored path, whatever tool named it.
+ *
+ * Split out of `workspaceWriteDenial` so a runtime whose authoring tools are
+ * spelled differently enforces the SAME rule with the SAME words: OpenCode's
+ * guard plugin (`runtime/opencode/plugin/`) is bundled from this module and
+ * calls it with its own tool name and its own argument key. Two copies of the
+ * sentence would drift, and the agent reading it is the audience it is written
+ * for.
+ */
+export function authoredPathDenial(
+  toolName: string,
+  rawPath: string,
+  workspaceRoot: string,
+  isAllowed: (target: string) => boolean = allowsWriteOutsideProject,
+): string | undefined {
   // Relative paths resolve against the workspace, which is the session's cwd —
   // so a relative path is in-project by construction and never the mistake.
-  const target = path.resolve(workspaceRoot, raw);
+  const target = path.resolve(workspaceRoot, rawPath);
   const root = path.resolve(workspaceRoot);
   if (isInside(root, target)) return undefined;
   if (isAllowed(target)) return undefined;

@@ -28,12 +28,12 @@ import {
 import type { components } from "../../../generated/aep-api";
 import { useSession } from "../../../auth/SessionContext";
 import { GitHubStep } from "./GitHubStep";
-import { AnthropicStep } from "./AnthropicStep";
+import { AiAgentsStep } from "./AiAgentsStep";
 import { SkillsBootstrapStep } from "./SkillsBootstrapStep";
 
 type ConfigProjection = components["schemas"]["ConfigProjection"];
 
-const STEPS = ["Connect GitHub", "Connect Anthropic", "Set up skills"];
+const STEPS = ["Connect GitHub", "Set up AI agents", "Set up skills"];
 
 // The active step derives from server state, not local navigation: each
 // successful PATCH /config updates the query cache and the wizard advances.
@@ -87,7 +87,7 @@ export function OnboardingWizard({
         </Stepper>
 
         {step === 0 && <GitHubStep />}
-        {step === 1 && <AnthropicStep />}
+        {step === 1 && <AiAgentsStep config={config} />}
         {step === 2 && <SkillsBootstrapStep onComplete={onComplete} />}
       </Paper>
 

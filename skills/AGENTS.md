@@ -38,7 +38,7 @@ An absent kind means `org`, which is a real decision, not a default to lean on:
 - **`platform`** — AE-owned, read-only in the console. The design-flow skills
   (`start`, `amend`, `settle`, `grilling`, `prd-contract`, `design`,
   `cell-design`, `architecture`, `security-design`, `openapi-conventions`,
-  `wireframes`, `validation-criteria`, `task-planning`), the `console`
+  `wireframes`, `acceptance-criteria`, `task-planning`), the `console`
   narration policy, the coding run's own workflow skills (`aep`,
   `acceptance-run`, `mock-verification`) and the browser CLI they drive
   (`agent-browser`), and one reference skill both sides read:

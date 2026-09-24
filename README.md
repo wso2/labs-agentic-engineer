@@ -63,7 +63,7 @@ flowchart LR
     TASK["tasks — GitHub issues in the milestone"]
     CYCLE["cycle — one coding-agent pod → one pull request"]
     MERGE["auto-merge → per-component build"]
-    VAL["validation cycle — Playwright vs the criteria"]
+    VAL["validation cycle — scenarios driven against the deployed system"]
     TASK --> CYCLE --> MERGE --> VAL
     VAL -.->|not settled| CYCLE
   end

@@ -28,8 +28,8 @@ describe("toSpecEntry", () => {
       toSpecEntry({ path: "specs/design/architecture.md", sha: "b2" }),
     ).toEqual({ path: "specs/design/architecture.md", sha: "b2", group: "designs" });
     expect(
-      toSpecEntry({ path: "specs/validation/plan.md", sha: "c3" }),
-    ).toEqual({ path: "specs/validation/plan.md", sha: "c3", group: "validation" });
+      toSpecEntry({ path: "specs/validation/acceptance/bought-items.feature", sha: "c3" }),
+    ).toEqual({ path: "specs/validation/acceptance/bought-items.feature", sha: "c3", group: "validation" });
   });
 
   // References are transient turn inputs, never committed (ADR-0017), so no
@@ -69,7 +69,7 @@ describe("toSpecEntry", () => {
     expect(toSpecEntry({ path: "specs/validation/agent-scenarios.json", sha: "s1" })).toBeNull();
     expect(specGroupOf("specs/validation/agent-scenarios.json")).toBeNull();
     // The Gherkin acceptance criteria beside it stay: they are the oracle a person reads.
-    expect(toSpecEntry({ path: "specs/acceptance/bought-items.feature", sha: "s2" })?.group).toBe(
+    expect(toSpecEntry({ path: "specs/validation/acceptance/bought-items.feature", sha: "s2" })?.group).toBe(
       "validation",
     );
   });
@@ -99,9 +99,9 @@ describe("toSpecEntries", () => {
       toSpecEntries([
         { path: "specs/requirements/prd.md", sha: "a1" },
         { path: "specs/notes.md", sha: "x" },
-        { path: "specs/validation/plan.md", sha: "c3" },
+        { path: "specs/validation/acceptance/bought-items.feature", sha: "c3" },
       ]).map((e) => e.path),
-    ).toEqual(["specs/requirements/prd.md", "specs/validation/plan.md"]);
+    ).toEqual(["specs/requirements/prd.md", "specs/validation/acceptance/bought-items.feature"]);
   });
 
   // The acceptance criteria file under its own folder, deliberately in the SAME
@@ -111,25 +111,27 @@ describe("toSpecEntries", () => {
   it("files the acceptance criteria under validation, not a fourth section", () => {
     expect(
       toSpecEntries([
-        { path: "specs/acceptance/bought-items.feature", sha: "a" },
-        { path: "specs/validation/plan.md", sha: "b" },
+        { path: "specs/validation/acceptance/bought-items.feature", sha: "a" },
+        { path: "specs/validation/acceptance/adding-items.feature", sha: "b" },
       ]).map((e) => e.group),
     ).toEqual(["validation", "validation"]);
   });
 
-  // The retired criteria+e2e oracle. The design turn still mints it, so it
-  // reaches this mapping on every project; the spec view drops it rather than
-  // offer a second oracle beside the Gherkin one with nothing to tell them
-  // apart. Dropped HERE because this one rule feeds both of the view's lists —
-  // the committed files and the declared plan's entries — so the row, the ghost,
-  // the section counter and the section's state all go with it.
-  it("hides the retired validation criteria, keeping the rest of the folder", () => {
+  // The phase's folder is shut and one subfolder of it is open, so this pins
+  // BOTH halves at once: the retired criteria JSON (legacy projects still have
+  // it committed, and there is no viewer left for it) and a hypothetical later
+  // addition stay hidden, while the oracle beside them is admitted. Pinned HERE
+  // because this one rule feeds both of the view's lists — the committed files
+  // and the declared plan's entries — so the row, the ghost, the section
+  // counter and the section's state all follow it.
+  it("shuts the specs/validation/ folder itself, admitting only the oracle", () => {
     expect(
       toSpecEntries([
         { path: "specs/validation/validation-criteria.json", sha: "a" },
         { path: "specs/validation/plan.md", sha: "b" },
+        { path: "specs/validation/acceptance/bought-items.feature", sha: "c" },
       ]).map((e) => e.path),
-    ).toEqual(["specs/validation/plan.md"]);
+    ).toEqual(["specs/validation/acceptance/bought-items.feature"]);
     expect(specGroupOf("specs/validation/validation-criteria.json")).toBeNull();
   });
 });

@@ -386,7 +386,7 @@ func TestSnapshotFilter(t *testing.T) {
 		!KeepInTurnSnapshot("a.dsl") ||
 		!KeepInTurnSnapshot("specs/design/design.cell") ||
 		!KeepInTurnSnapshot("specs/design/components/x/design.json") ||
-		!KeepInTurnSnapshot("specs/validation/validation-criteria.json") ||
+		!KeepInTurnSnapshot("specs/validation/acceptance/checkout.feature") ||
 		!KeepInTurnSnapshot("specs/design/components/x/openapi.yaml") ||
 		!KeepInTurnSnapshot("specs/design/components/x/dependencies/stripe.openapi.yaml") {
 		t.Fatal("keep-filter rejects agent-authored sources")

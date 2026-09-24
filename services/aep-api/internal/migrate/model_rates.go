@@ -30,19 +30,20 @@ import (
 // thereafter — a price change is an UPDATE, and because USD is stamped at
 // capture (never re-derived), that change only affects work captured after it.
 //
-// Two rows:
+// Two rows, exactly the contract's AgentModel enum — the models an org can
+// choose for every one of its agents (spec and coding alike, ADR-0036):
 //
-//   - claude-sonnet-5 (the agents' model, deployments/AGENT_MODEL) at its
+//   - claude-sonnet-5 (the default agent model) at its
 //     INTRODUCTORY rates, in force through 2026-08-31: input $2.00/MTok,
 //     output $10.00/MTok, cache-read ~0.1x input ($0.20), cache-write ~1.25x
 //     input ($2.50). The 2026-08-31 step-up to standard $3/$15 is the first
 //     intended ops override — a live demonstration of why history must not
 //     reprice.
 //   - claude-haiku-4-5 at standard rates ($1.00/$5.00, cache-read $0.10,
-//     cache-write $1.25). Nothing dispatches on haiku, but the Agent SDK's
-//     small-model helpers spend tokens on it inside coding runs, and pricing
-//     is all-or-nothing per capture (Stamper.SumCost) — without this row every
-//     run haiku touched would stamp null and show tokens instead of dollars.
+//     cache-write $1.25), the second model an org can choose. Pricing is
+//     all-or-nothing per capture (Stamper.SumCost), so an offered model with
+//     no row would stamp every run on it null and show tokens instead of
+//     dollars.
 //
 // Idempotent per model: seeds only where the model has no row, so an
 // ops-adjusted rate is never clobbered by a redeploy. AutoMigrate (BaseModels)

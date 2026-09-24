@@ -454,7 +454,7 @@ describe("RunCrew", () => {
     seq = 0;
     const events = [
       ev(0, { kind: "run_started", agentId: "lead", taskKind: "validation" }),
-      ev(1, { kind: "tool_use", agentId: "lead", tool: "Bash", summary: "pnpm playwright test", toolUseId: "v1" }),
+      ev(1, { kind: "tool_use", agentId: "lead", tool: "Bash", summary: "agent-browser snapshot -i", toolUseId: "v1" }),
       ev(2, { kind: "tool_result", agentId: "lead", tool: "Bash", ok: true, durationMs: 61_400, toolUseId: "v1" }),
       ev(3, { kind: "agent_settled", agentId: "lead", status: "completed", durationMs: 184_000, toolCount: 22, report: "Checked 5 automated criteria." }),
       ev(4, { kind: "run_settled", agentId: "lead", outcome: "success" }),
@@ -464,7 +464,7 @@ describe("RunCrew", () => {
     // rather than one it would replace.
     expect(row("lead agent")).toBeInTheDocument();
     // And the inspector beside it: the steps, the totals and the report.
-    expect(screen.getByText("$ pnpm playwright test")).toBeInTheDocument();
+    expect(screen.getByText("$ agent-browser snapshot -i")).toBeInTheDocument();
     expect(screen.getByText("completed · 3m4s · 22 tools")).toBeInTheDocument();
     expect(screen.getAllByText("Checked 5 automated criteria.").length).toBeGreaterThan(0);
     expect(screen.getByText("1 agent · all settled")).toBeInTheDocument();
@@ -522,10 +522,10 @@ describe("RunCrew", () => {
     seq = 0;
     const events = [
       ev(0, { kind: "run_started", agentId: "lead", taskKind: "validation" }),
-      ev(1, { kind: "tool_use", agentId: "lead", tool: "Bash", summary: "pnpm playwright test", toolUseId: "v1" }),
+      ev(1, { kind: "tool_use", agentId: "lead", tool: "Bash", summary: "agent-browser snapshot -i", toolUseId: "v1" }),
     ];
     render(<RunCrew events={events} />);
-    expect(screen.getByText("$ pnpm playwright test")).toBeInTheDocument();
+    expect(screen.getByText("$ agent-browser snapshot -i")).toBeInTheDocument();
     expect(screen.queryByText(/solid · working/)).toBeNull();
   });
 

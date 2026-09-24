@@ -18,7 +18,8 @@
 
 import type { components } from "../../generated/aep-api";
 
-type CodingAgentProjection = components["schemas"]["CodingAgentProjection"];
+type AgentsProjection = components["schemas"]["AgentsProjection"];
+type SubscriptionProjection = components["schemas"]["SubscriptionProjection"];
 type GitProviderProjection = components["schemas"]["GitProviderProjection"];
 type LLMProjection = components["schemas"]["LLMProjection"];
 type SkillDetailBody = components["schemas"]["SkillDetailBody"];
@@ -28,12 +29,20 @@ type ApiError = components["schemas"]["Error"];
 // Scenario switch for the Settings (#96) and Onboarding (#102) features.
 // Toggle in devtools:
 //   localStorage.setItem('aep:mock:settings',
-//     'empty' | 'partial' | 'connected' | 'error' | 'sync-error')
+//     'empty' | 'partial' | 'connected' | 'subscription' | 'opencode'
+//     | 'legacy-coding-key' | 'disconnected' | 'error' | 'sync-error')
 // "empty": nothing connected yet (the default — triggers the onboarding
 // gate; also exercises Settings' not-connected states).
 // "partial": GitHub connected, Anthropic not — the onboarding wizard opens
 // at its first incomplete step (resume-after-abandon, #102).
-// "connected": GitHub + Anthropic already connected (no onboarding).
+// "connected": GitHub + Anthropic already connected (no onboarding); the AI
+// agents card shows the API key only.
+// "subscription": as "connected", plus a Claude subscription token billing
+// Claude Code.
+// "opencode": as "connected", with OpenCode chosen as the coding agent.
+// "disconnected": GitHub connected and the Anthropic key disconnected — the
+// wizard opens at its AI step and says the key was disconnected
+// (`llmDisconnectedAt`).
 // "error": GET /config and GET /skills fail (load-error state).
 // "sync-error": config empty and POST /skills/sync fails — exercises the
 // wizard's bootstrap-failure step (Retry / Continue anyway, #102).
@@ -41,6 +50,9 @@ export type SettingsScenario =
   | "empty"
   | "partial"
   | "connected"
+  | "subscription"
+  | "opencode"
+  | "disconnected"
   | "error"
   | "sync-error";
 
@@ -94,31 +106,67 @@ export const llmConnectedFixture: LLMProjection = {
   lastValidatedAt: "2026-07-01T09:00:00Z",
 };
 
-// Every org has an effective runtime and model, so this section is never
+// When the "disconnected" scenario's key was removed.
+export const llmDisconnectedAtFixture = "2026-09-20T08:00:00Z";
+
+// A `claude setup-token` value stored as the org's Claude subscription.
+export const subscriptionFixture: SubscriptionProjection = {
+  kind: "claude",
+  status: "connected",
+  keyPrefix: "sk-ant-oat01-",
+  keyLast4: "9f2c",
+  connectedAt: "2026-09-01T10:00:00Z",
+  lastValidatedAt: "2026-09-01T10:00:00Z",
+};
+
+export const agentsOpenCodeFixture: AgentsProjection = {
+  runtime: "opencode",
+  model: "claude-sonnet-5",
+  subscription: null,
+  updatedAt: "2026-09-20T08:30:00Z",
+  updatedBy: "dev@acme.example",
+};
+
+// Every org has an effective model and runtime, so this section is never
 // absent — unlike the credential sections. Null updatedAt/updatedBy is the
 // platform-defaults state: nobody has ever chosen, which the console must not
 // render as somebody having picked these very values.
-export const codingAgentDefaultsFixture: CodingAgentProjection = {
+export const agentsDefaultsFixture: AgentsProjection = {
   runtime: "claude-code",
   model: "claude-sonnet-5",
+  subscription: null,
   updatedAt: null,
   updatedBy: null,
 };
 
-// `opencode` is in the contract's enum but the platform ships no adapter for
-// it, so the API rejects it by name rather than silently substituting the
-// runtime it can run. 422 + body.codingAgent, matching the real rejection.
-export const codingAgentRuntimeUnavailable: ApiError = {
-  code: "validation_failed",
-  message:
-    "coding agent: runtime \"opencode\" is not available on this platform — no adapter is installed for it",
-  details: [
-    {
-      field: "body.codingAgent",
-      message:
-        "coding agent: runtime \"opencode\" is not available on this platform — no adapter is installed for it",
-    },
-  ],
+// The one rule: a subscription needs Claude Code and a connected API key.
+// 400 + body.agents + the refusal's code, matching the real rejections
+// (judgeCard → patchconfig); the message names the fix.
+const subscriptionRequiresClaudeCodeMessage =
+  "a Claude subscription bills the coding agent only on Claude Code, and this save leaves the runtime on OpenCode. Choose Claude Code to use the subscription, or save OpenCode without one";
+
+export const subscriptionRequiresClaudeCode: ApiError = {
+  code: "agents_subscription_requires_claude_code",
+  message: subscriptionRequiresClaudeCodeMessage,
+  details: [{ field: "body.agents", message: subscriptionRequiresClaudeCodeMessage }],
+};
+
+const subscriptionRequiresApiKeyMessage =
+  "a Claude subscription sits beside the organization's Anthropic API key and cannot exist without it. Connect the API key in the same save, or first";
+
+export const subscriptionRequiresApiKey: ApiError = {
+  code: "agents_subscription_requires_api_key",
+  message: subscriptionRequiresApiKeyMessage,
+  details: [{ field: "body.agents", message: subscriptionRequiresApiKeyMessage }],
+};
+
+const subscriptionTokenRequiredMessage =
+  "a Claude subscription takes a token from `claude setup-token` (sk-ant-oat…); an Anthropic API key belongs in the organization's API key field";
+
+export const subscriptionTokenRequired: ApiError = {
+  code: "agents_subscription_token_required",
+  message: subscriptionTokenRequiredMessage,
+  details: [{ field: "body.agents", message: subscriptionTokenRequiredMessage }],
 };
 
 export const gitProviderValidationError: ApiError = {
@@ -133,7 +181,7 @@ export const gitProviderValidationError: ApiError = {
 };
 
 export const llmValidationError: ApiError = {
-  code: "validation_failed",
+  code: "anthropic_key_invalid",
   message: "the provided API key was rejected by Anthropic",
   details: [
     {
@@ -143,28 +191,13 @@ export const llmValidationError: ApiError = {
   ],
 };
 
-export const codingLlmValidationError: ApiError = {
-  code: "validation_failed",
-  message: "the provided API key was rejected by Anthropic",
+export const subscriptionValidationError: ApiError = {
+  code: "anthropic_key_invalid",
+  message: "Anthropic rejected the key (401 Unauthorized)",
   details: [
     {
-      field: "body.codingLlm",
-      message: "the provided API key was rejected by Anthropic",
-    },
-  ],
-};
-
-// The coding agent key overrides the org's key, so it cannot be set before
-// there is one. Same shape the BFF returns (sectionErrorFrom → patchconfig).
-export const codingLlmWithoutDefault: ApiError = {
-  code: "validation_failed",
-  message:
-    "anthropic: connect the organization's Anthropic key before setting a coding-agent key",
-  details: [
-    {
-      field: "body.codingLlm",
-      message:
-        "anthropic: connect the organization's Anthropic key before setting a coding-agent key",
+      field: "body.agents",
+      message: "Anthropic rejected the key (401 Unauthorized)",
     },
   ],
 };

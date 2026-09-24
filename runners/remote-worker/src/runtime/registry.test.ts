@@ -18,8 +18,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_RUNTIME, UnsupportedRuntimeError } from "./port.js";
-import { createRuntime, modelFromEnv, runtimeNameFromEnv } from "./registry.js";
+import { DEFAULT_RUNTIME, runtimeNameFromEnv, UnsupportedRuntimeError } from "./port.js";
+import { createRuntime, envOr } from "./registry.js";
 
 test("createRuntime: the default is Claude Code, and it is what an unset env resolves to", () => {
   assert.equal(DEFAULT_RUNTIME, "claude-code");
@@ -29,30 +29,18 @@ test("createRuntime: the default is Claude Code, and it is what an unset env res
   assert.equal(runtimeNameFromEnv({ AEP_AGENT_RUNTIME: "  " }), "claude-code");
 });
 
-// The org setting's contract carries `opencode` because the design does, and
-// this build ships no adapter for it. The failure has to be LOUD: a silent
-// fallback would bill an org for a runtime it did not choose, and the org would
-// never learn it had not got the one it picked.
-test("createRuntime: OpenCode is refused by name, with the reason", () => {
-  assert.throws(
-    () => createRuntime("opencode"),
-    (err: unknown) => {
-      assert.ok(err instanceof UnsupportedRuntimeError);
-      assert.equal(err.runtime, "opencode");
-      assert.match(err.message, /no OpenCode adapter/);
-      // The three spikes the design owes before an adapter is worth merging.
-      assert.match(err.message, /tool\/permission parity/);
-      assert.match(err.message, /declares an agent's id, depth and parent/);
-      assert.match(err.message, /usage is reported for cost stamping/);
-      return true;
-    },
-  );
+// The second adapter. Building it is cheap and starts nothing — `start` is where
+// a server is spawned — so the registry can be asserted without a binary.
+test("createRuntime: OpenCode builds its own adapter, with the platform's default model", () => {
+  const runtime = createRuntime("opencode");
+  assert.equal(runtime.name, "opencode");
+  assert.equal(runtime.defaultModel, "claude-sonnet-5");
+  assert.match(runtime.toolGlossary(), /## Tool glossary \(OpenCode\)/);
 });
+
 
 test("runtimeNameFromEnv: a name the platform has never heard of is an error, not a default", () => {
   assert.equal(runtimeNameFromEnv({ AEP_AGENT_RUNTIME: "claude-code" }), "claude-code");
-  // Recognised, but still unbuildable — the registry is where that is decided,
-  // so the two failures stay distinguishable.
   assert.equal(runtimeNameFromEnv({ AEP_AGENT_RUNTIME: "opencode" }), "opencode");
   assert.throws(() => runtimeNameFromEnv({ AEP_AGENT_RUNTIME: "cursor" }), UnsupportedRuntimeError);
   // The underscore spelling the glossary table used before the port. One
@@ -60,12 +48,13 @@ test("runtimeNameFromEnv: a name the platform has never heard of is an error, no
   assert.throws(() => runtimeNameFromEnv({ AEP_AGENT_RUNTIME: "claude_code" }), UnsupportedRuntimeError);
 });
 
-test("modelFromEnv: the org's setting wins, and an absent one changes nothing", () => {
-  assert.equal(modelFromEnv("claude-sonnet-5", {}), "claude-sonnet-5");
-  assert.equal(modelFromEnv("claude-sonnet-5", { AEP_AGENT_MODEL: "" }), "claude-sonnet-5");
-  assert.equal(modelFromEnv("claude-sonnet-5", { AEP_AGENT_MODEL: "  " }), "claude-sonnet-5");
-  assert.equal(modelFromEnv("claude-sonnet-5", { AEP_AGENT_MODEL: "claude-haiku-4-5" }), "claude-haiku-4-5");
+test("envOr(AEP_AGENT_MODEL): the org's setting wins, and an absent one changes nothing", () => {
+  assert.equal(envOr("AEP_AGENT_MODEL", "claude-sonnet-5", {}), "claude-sonnet-5");
+  assert.equal(envOr("AEP_AGENT_MODEL", "claude-sonnet-5", { AEP_AGENT_MODEL: "" }), "claude-sonnet-5");
+  assert.equal(envOr("AEP_AGENT_MODEL", "claude-sonnet-5", { AEP_AGENT_MODEL: "  " }), "claude-sonnet-5");
+  assert.equal(envOr("AEP_AGENT_MODEL", "claude-sonnet-5", { AEP_AGENT_MODEL: "claude-haiku-4-5" }), "claude-haiku-4-5");
   // Trimmed, because a stamped env var picks up whitespace from a YAML block
   // scalar and a model id with a trailing space resolves to nothing.
-  assert.equal(modelFromEnv("claude-sonnet-5", { AEP_AGENT_MODEL: " claude-haiku-4-5 " }), "claude-haiku-4-5");
+  assert.equal(envOr("AEP_AGENT_MODEL", "claude-sonnet-5", { AEP_AGENT_MODEL: " claude-haiku-4-5 " }), "claude-haiku-4-5");
 });
+

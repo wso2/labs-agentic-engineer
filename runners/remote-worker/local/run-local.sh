@@ -159,5 +159,5 @@ esac
 echo ""
 echo ">> runner finished: ${STATUS} (exit code ${EXIT_CODE})"
 echo ">> workspace kept at: $WS"
-echo ">> full SDK transcript: $WS/.logs/claude.log"
+echo ">> full SDK transcript: $WS/.logs/runtime.log"
 exit "$EXIT_CODE"

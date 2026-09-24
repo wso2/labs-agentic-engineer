@@ -207,16 +207,10 @@ test("systemPromptAppend: the glossary names the fan-out, wait and task-list too
   assert.match(glossary, /`run_in_background: true`/);
   assert.match(glossary, /wait tool.*`TaskOutput`/);
   assert.match(glossary, /task list.*`TaskCreate`/);
-  // The skill says "the fast model" and "the default one" and leaves the aliases
-  // to this table; a lead that guesses one spends a turn on a schema error.
-  assert.match(glossary, /`haiku` \(the fast model\)/);
-  assert.match(glossary, /`sonnet` \(the default\)/);
-  // And ONLY models the platform can price. modelcost.SumCost is all-or-nothing:
-  // one slice whose model has no rate row makes the whole cycle's cost null. So
-  // offering an alias with no seeded rate turns the skill's own "pick the model
-  // for the job" into a silent way to lose a cycle's spend. This offered `opus`
-  // when only sonnet and haiku were seeded.
-  assert.doesNotMatch(glossary, /opus/i);
+  // A run has one model and the fan-out call names none: an alias offered here
+  // is a second model the org's key may not serve or the platform cannot price
+  // (modelcost.SumCost is all-or-nothing, so one unpriced slice nulls the cycle).
+  assert.doesNotMatch(glossary, /`model:`|haiku|opus/i);
 });
 
 
@@ -264,7 +258,7 @@ function layoutFor(workspace: string): WorkspaceLayout {
   };
 }
 
-const silentLog: TaskLog = { write: () => {}, close: () => {}, dir: os.tmpdir() };
+const silentLog: TaskLog = { write: () => {}, close: () => {}, dir: fs.mkdtempSync(path.join(os.tmpdir(), "aep-logs-")) };
 
 /**
  * A runtime that records what it was asked to run and then ends at once.
@@ -284,6 +278,8 @@ function recordingRuntime(): { runtime: Runtime; calls: { prompt: string; policy
       return {
         stream: { messages: (async function* () {})(), stopTask: async () => {} },
         translate: () => [],
+        classify: () => ({ kind: "activity" }),
+        usage: () => undefined,
         artifacts: async () => [],
         close: async () => {},
       };
@@ -384,6 +380,43 @@ test("startCodingRun: the preloaded appendix ends with the runtime's own glossar
   assert.ok(policy.skills.preloadBodies.endsWith("GLOSSARY"));
 });
 
+test("startCodingRun: names what the lead was given on the feed, and keeps the exact appendix beside runtime.log", async () => {
+  const workspace = mirrorWorkspace();
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "aep-logs-"));
+  const { runtime, calls } = recordingRuntime();
+  const lines: string[] = [];
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string) => (lines.push(String(chunk)), true)) as typeof process.stdout.write;
+  try {
+    const started = await startCodingRun(
+      dispatch(),
+      layoutFor(workspace),
+      { ...silentLog, dir: logDir },
+      { availableSkillNames: ["aep", "ballerina", "go"], pinnedBodies: "PINNED", pinnedSkillNames: ["ballerina"] },
+      undefined,
+      runtime,
+    );
+    await started.completion;
+  } finally {
+    process.stdout.write = original;
+  }
+  try {
+    const notices = lines
+      .flatMap((l) => l.split("\n"))
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as { kind: string; detail?: string })
+      .filter((e) => e.kind === "notice" && e.detail?.startsWith("[skills]"));
+    assert.deepEqual(
+      notices.map((n) => n.detail),
+      ["[skills] workflow: aep · pinned: ballerina · 3 available: aep, ballerina, go"],
+    );
+    assert.equal(fs.readFileSync(path.join(logDir, "prompt-appendix.md"), "utf8"), calls[0].policy.skills.preloadBodies);
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+    fs.rmSync(logDir, { recursive: true, force: true });
+  }
+});
+
 // A run cannot derive its own project root, and a run that guessed built a whole
 // component in the wrong tree, green.
 test("startCodingRun: the prompt names the absolute project root and the contract path", async () => {
@@ -411,19 +444,6 @@ test("startCodingRun: the model is the org's setting, or the runtime's default",
   // A blank stamp is the same as no stamp — a dispatcher that sends "" for an
   // unset setting must not pin the model to nothing.
   assert.equal((await policyFor(dispatch(), { AEP_AGENT_MODEL: "" })).model, "model-from-runtime");
-});
-
-// Watching the authoring tools costs a hook on every call, so it is registered
-// only where something reads it.
-// The `observe` seam is deliberately unregistered on BOTH kinds while real-time
-// validation progress is deferred. The watchers it used to carry matched
-// Playwright file writes and spec names, so against an agent driving a browser
-// they matched nothing at all and every criterion rendered `not_validated` —
-// which reads as a verdict, not as an empty state. Pinned so re-registering one
-// is a deliberate act rather than a merge's side effect.
-test("startCodingRun: no run registers tool watchers while progress is deferred", async () => {
-  assert.equal((await policyFor(dispatch())).observe, undefined);
-  assert.equal((await policyFor(dispatch({ taskKind: "validation" }))).observe, undefined);
 });
 
 // A URL with no token must omit the server rather than register it

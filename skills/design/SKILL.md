@@ -144,15 +144,12 @@ turn — apply them directly, and load one only if you find you do not have it.
    the step only when step 5 wrote no security.json at all. No gate refuses a
    role that is one handle short — the build's mock walk is what catches it, as
    a hidden screen — so this pass is where it is cheap.
-8. **The acceptance oracle** — mint it LAST, and mint BOTH halves. A design
-   without one is unfinished — never skip this.
-   - `validation-criteria` → `specs/validation/validation-criteria.json`
-   - `acceptance-criteria` → `specs/acceptance/<slug>.feature`
+8. **The acceptance oracle** — mint it LAST. A design without one is
+   unfinished — never skip this.
+   - `acceptance-criteria` → `specs/validation/acceptance/<slug>.feature`, one per
+     capability.
 
-   Two documents, deliberately: the same requirement decomposed two ways. Both
-   are authored from the PRD alone, so they are independent of each other and of
-   everything above — emit them in one step. A design that produced only one of
-   them is incomplete.
+   Authored from the PRD alone, so it is independent of everything above.
 
 Order binds only where a step reads an earlier one's result: the cell before
 enrichment (the platform scaffolds each design.json from it),
@@ -178,7 +175,7 @@ architecture.
 
 ## Where this stops
 
-`/design` ends at the design and its validation criteria — no task planning,
+`/design` ends at the design and its acceptance criteria — no task planning,
 no application code. Close with three parts and nothing more: one line per
 component (name, type, one-clause role); a **"Needs your input"** block
 listing only the dependencies still unresolved, each as a link to its

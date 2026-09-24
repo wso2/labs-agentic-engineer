@@ -24,7 +24,6 @@ describe("fileLabel — a document's name, never its filename", () => {
     expect(fileLabel("specs/requirements/prd.md")).toBe("Product requirements");
     expect(fileLabel("specs/design/domain-model.md")).toBe("Domain model");
     expect(fileLabel("specs/design/security.json")).toBe("Security");
-    expect(fileLabel("specs/validation/validation-criteria.json")).toBe("Validation criteria");
   });
 
   it("names a component's artifacts without repeating the component", () => {
@@ -48,9 +47,9 @@ describe("fileLabel — a document's name, never its filename", () => {
   // a document tree — so it is cased like one. First word only: a capability is a
   // phrase, and Title Casing Every Word reads as a product name.
   it("title-cases an acceptance capability", () => {
-    expect(fileLabel("specs/acceptance/bought-items.feature")).toBe("Bought items");
-    expect(fileLabel("specs/acceptance/checkout.feature")).toBe("Checkout");
-    expect(fileLabel("specs/acceptance/shared_list_access.feature")).toBe(
+    expect(fileLabel("specs/validation/acceptance/bought-items.feature")).toBe("Bought items");
+    expect(fileLabel("specs/validation/acceptance/checkout.feature")).toBe("Checkout");
+    expect(fileLabel("specs/validation/acceptance/shared_list_access.feature")).toBe(
       "Shared list access",
     );
   });

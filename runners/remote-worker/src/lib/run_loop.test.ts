@@ -33,7 +33,8 @@ import {
   type RunDeadline,
   type RunTermination,
 } from "./run_loop.js";
-import { createClaudeAdapter } from "./progress/claude_adapter.js";
+import { createClaudeClassifier } from "../runtime/claude/classify.js";
+import { createClaudeAdapter } from "../runtime/claude/translate.js";
 import { createRunWatchdog } from "./progress/watchdog.js";
 import type { RunEventInput } from "./progress/emitter.js";
 
@@ -80,6 +81,7 @@ async function replay(messages: unknown[]): Promise<{ exitCode: number; error?: 
     { messages: source(), stopTask: async () => {} },
     {
       translate: createClaudeAdapter({ taskKind: "implementation" }).translate,
+      classify: createClaudeClassifier(),
       // A real watchdog, with its emit redirected: it is never started here, so
       // it reports nothing — but it still has to survive every event the feed
       // sees, which is a pin worth keeping for free.
@@ -113,10 +115,12 @@ function rateLimit(utilization: number): unknown {
   };
 }
 
-// The filter itself is pinned in diagnostics.test.ts. What is pinned HERE is the
-// wiring, and specifically that the reader is built per RUN: a module-level
-// factory would remember the last sentence across runs, so a second pod on a
-// throttled account would stay silent about a limit it had never reported.
+// The filter itself is pinned in runtime/claude/classify.test.ts. What is
+// pinned HERE is the wiring, and specifically that the reader is per RUN — it
+// lives in the session's classifier, and `replay` builds one per run as the
+// runtime does per session: a module-level one would remember the last
+// sentence across runs, so a second pod on a throttled account would stay
+// silent about a limit it had never reported.
 test("consumeRun: an unchanged rate-limit sentence is said once per run", async () => {
   // 0.823 → 0.826 both round to 83%, so they are ONE sentence, not two.
   const stream = [rateLimit(0.82), rateLimit(0.823), rateLimit(0.826), rateLimit(0.834)];
@@ -133,7 +137,7 @@ test("consumeRun: an unchanged rate-limit sentence is said once per run", async 
   );
 
   // A fresh run says it again. This is the assertion that fails if the reader is
-  // ever hoisted out of `consumeRun`.
+  // ever hoisted out of the per-session classifier.
   const second = await replay([rateLimit(0.82)]);
   assert.equal(
     kindsOf(second.emitted, "notice").filter((e) => e.code === "rate_limit").length,
@@ -401,7 +405,7 @@ test("consumeRun: heartbeats reach the feed and never reset the watchdog's idle 
 
   await consumeRun(
     { messages: source(), stopTask: async () => {} },
-    { translate: adapter.translate, watchdog, emit: (e) => emitted.push(e) },
+    { translate: adapter.translate, classify: createClaudeClassifier(), watchdog, emit: (e) => emitted.push(e) },
   );
 
   // Bounded: at most one per agent per ten seconds, and both waits share the
@@ -460,6 +464,7 @@ test("consumeRun: a run that never ends is terminated at its deadline", async ()
     },
     {
       translate: createClaudeAdapter().translate,
+      classify: createClaudeClassifier(),
       watchdog: createRunWatchdog({ emit: () => {} }),
       emit: (event) => emitted.push(event),
       deadline,
@@ -507,6 +512,7 @@ test("consumeRun: the deadline stops only the tasks still running", async () => 
     { messages: source(), stopTask: async (taskId) => void stopped.push(taskId) },
     {
       translate: createClaudeAdapter().translate,
+      classify: createClaudeClassifier(),
       watchdog: createRunWatchdog({ emit: () => {} }),
       emit: () => {},
       deadline,
@@ -550,6 +556,7 @@ test("consumeRun: a fatal ends the run with exactly one settle, naming what ende
     { messages: source(), stopTask: async (taskId) => void stopped.push(taskId) },
     {
       translate: createClaudeAdapter().translate,
+      classify: createClaudeClassifier(),
       watchdog: createRunWatchdog({ emit: () => {} }),
       emit: (event) => emitted.push(event),
       deadline,
@@ -598,6 +605,7 @@ test("consumeRun: a fatal ends the run with no deadline configured", async () =>
     { messages: source(), stopTask: async () => {} },
     {
       translate: createClaudeAdapter().translate,
+      classify: createClaudeClassifier(),
       watchdog: createRunWatchdog({ emit: () => {} }),
       emit: (event) => emitted.push(event),
       terminator,
@@ -633,6 +641,7 @@ test("consumeRun: a fatal after the stream closed cannot re-settle the run", asy
     { messages: source(), stopTask: async () => {} },
     {
       translate: createClaudeAdapter().translate,
+      classify: createClaudeClassifier(),
       watchdog: createRunWatchdog({ emit: () => {} }),
       emit: (event) => emitted.push(event),
       terminator,
@@ -660,6 +669,7 @@ test("consumeRun: a stream that closes without any result is still a failure", a
     { messages: source(), stopTask: async () => {} },
     {
       translate: createClaudeAdapter().translate,
+      classify: createClaudeClassifier(),
       watchdog: createRunWatchdog({ emit: () => {} }),
       emit: (event) => emitted.push(event),
     },
@@ -688,6 +698,7 @@ test("consumeRun: a stream that throws fails the run and says why", async () => 
     { messages: source(), stopTask: async () => {} },
     {
       translate: createClaudeAdapter().translate,
+      classify: createClaudeClassifier(),
       watchdog: createRunWatchdog({ emit: () => {} }),
       emit: (event) => emitted.push(event),
       record: (message) => recorded.push(message),
@@ -715,6 +726,7 @@ test("consumeRun: a requested skill the session did not resolve warns", async ()
     { messages: source(), stopTask: async () => {} },
     {
       translate: createClaudeAdapter().translate,
+      classify: createClaudeClassifier(),
       watchdog: createRunWatchdog({ emit: () => {} }),
       emit: (event) => emitted.push(event),
       requestedSkills: ["aep", "ballerina"],
@@ -838,6 +850,7 @@ async function replayWithInput(
     },
     {
       translate: createClaudeAdapter({ taskKind: "implementation" }).translate,
+      classify: createClaudeClassifier(),
       watchdog: createRunWatchdog({ emit: () => {} }),
       emit: (event) => emitted.push({ at: cursor, event }),
       ...(opts.inputGraceMs !== undefined ? { inputGraceMs: opts.inputGraceMs } : {}),
@@ -888,6 +901,7 @@ test("consumeRun: a woken lead disarms the grace", async () => {
     { messages: source(), stopTask: async () => {}, endInput: () => endedAt.push(cursor) },
     {
       translate: createClaudeAdapter({ taskKind: "implementation" }).translate,
+      classify: createClaudeClassifier(),
       watchdog: createRunWatchdog({ emit: () => {} }),
       emit: () => {},
       inputGraceMs: 40,
@@ -931,6 +945,7 @@ async function replayThroughGrace(liveness: unknown): Promise<number[]> {
     { messages: source(), stopTask: async () => {}, endInput: () => endedAt.push(cursor) },
     {
       translate: createClaudeAdapter({ taskKind: "implementation" }).translate,
+      classify: createClaudeClassifier(),
       watchdog: createRunWatchdog({ emit: () => {} }),
       emit: () => {},
       inputGraceMs: 30,

@@ -190,6 +190,7 @@ async function main(): Promise<number> {
   // place, not two.
   let availableSkillNames: string[] = [];
   let pinnedBodies = "";
+  let pinnedSkillNames: string[] = [];
   try {
     const pinned = await resolveTaskSkills({
       workspace: run.projectDir,
@@ -207,9 +208,7 @@ async function main(): Promise<number> {
     // pinned subset additionally rides in on the system prompt.
     availableSkillNames = await listMirroredSkills(run.projectDir);
     pinnedBodies = await readSkillBodies(run.projectDir, present);
-    console.log(
-      `[local] ${availableSkillNames.length} skill(s) available, ${present.length} pinned into context`,
-    );
+    pinnedSkillNames = present;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[local] ⚠️  SKILLS UNAVAILABLE — proceeding without per-task skills: ${msg}`);
@@ -245,7 +244,7 @@ async function main(): Promise<number> {
   const log = openTaskLog(run.runDir);
   let completion: Promise<{ exitCode: number }>;
   try {
-    ({ completion } = await startCodingRun(req, layout, log, { availableSkillNames, pinnedBodies }));
+    ({ completion } = await startCodingRun(req, layout, log, { availableSkillNames, pinnedBodies, pinnedSkillNames }));
   } catch (err) {
     // The mirror carries no workflow skill, so there is no procedure to run —
     // see requireWorkflowBodies. In the playground that means the library or the

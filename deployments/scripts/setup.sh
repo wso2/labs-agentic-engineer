@@ -52,7 +52,7 @@ echo "     requests saved). Turn them on any time, no reinstall:"
 echo "     bash scripts/park-observability.sh up   (down parks again)"
 echo ""
 
-# The runner image (Debian + Go + Playwright + baked chromium, multi-GB) has no
+# The runner image (Debian + Go + a baked chromium, multi-GB) has no
 # cluster dependency — only its `k3d image import` does. Building it in the
 # background from step 1 overlaps it with the prerequisites / OpenChoreo /
 # Temporal installs, which take longer than the build, so it costs nothing on

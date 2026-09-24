@@ -33,8 +33,9 @@
 #   LOCAL_DEV_ADMIN_GITHUB_PAT   PAT to register (classic or fine-grained)
 #   LOCAL_DEV_ADMIN_GITHUB_OWNER GitHub login the PAT is scoped to
 #   ANTHROPIC_API_KEY            Anthropic key to register
-#   AEP_CODING_ANTHROPIC_KEY optional; bills the CODING agent to its own
-#                                key instead of the one above (ADR-0016)
+#   AEP_CODING_ANTHROPIC_KEY optional; a Claude subscription token
+#                                (`claude setup-token`, sk-ant-oat…) the CODING
+#                                agent bills instead of the key above (ADR-0036)
 #
 # Knobs (env, with defaults):
 #   ENV_FILE                     defaults to deployments/.env
@@ -177,23 +178,30 @@ else
     echo "⏭️  ANTHROPIC_API_KEY not set in $ENV_FILE — skipping Anthropic seed"
 fi
 
-# The coding-agent key is an OVERRIDE on the key above (ADR-0016), so it can
-# only be seeded when the org has a default key — either already connected, or
-# being connected by this very PATCH. The BFF applies llm before codingLlm
-# within one request, so "both at once" works; "coding alone, no default" is a
-# 400 we pre-empt here with a readable message instead.
+# The coding agent may bill a Claude subscription instead of the key above
+# (ADR-0036). It sits beside that key and cannot exist without it — connected
+# already, or by this very PATCH (the BFF judges the state the patch leaves).
+# Only a subscription token is accepted: a separate coding API key is not a
+# thing the platform offers.
 if [ -n "$CODING_ANTHROPIC_KEY" ]; then
-    if _section_connected codingLlm; then
-        echo "✅ Coding-agent Anthropic key already connected — skipping (SEED_FORCE=1 to re-connect)"
+    case "$CODING_ANTHROPIC_KEY" in
+        sk-ant-oat*) _is_token=1 ;;
+        *) _is_token=0 ;;
+    esac
+    if [ "$_is_token" != "1" ]; then
+        echo "⏭️  AEP_CODING_ANTHROPIC_KEY is not a Claude subscription token (sk-ant-oat…) — skipping"
+        echo "   coding runs bill the org's Anthropic API key"
+    elif _section_connected subscription; then
+        echo "✅ Claude subscription already connected — skipping (SEED_FORCE=1 to re-connect)"
     elif [ -z "$ANTHROPIC_KEY" ] && ! _section_connected llm; then
         echo "⏭️  AEP_CODING_ANTHROPIC_KEY is set but ANTHROPIC_API_KEY is not — skipping"
-        echo "   the coding-agent key overrides the org's Anthropic key; connect that one first"
+        echo "   a Claude subscription needs the org's Anthropic API key; connect that one first"
     else
-        _sections="${_sections:+$_sections,}$(printf '"codingLlm":{"kind":"anthropic","apiKey":"%s"}' "$CODING_ANTHROPIC_KEY")"
-        _labels="${_labels:+$_labels + }Anthropic (coding agent)"
+        _sections="${_sections:+$_sections,}$(printf '"agents":{"subscription":{"kind":"claude","token":"%s"}}' "$CODING_ANTHROPIC_KEY")"
+        _labels="${_labels:+$_labels + }Claude subscription (coding agent)"
     fi
 else
-    echo "⏭️  AEP_CODING_ANTHROPIC_KEY not set in $ENV_FILE — the coding agent will reuse the org's Anthropic key"
+    echo "⏭️  AEP_CODING_ANTHROPIC_KEY not set in $ENV_FILE — coding runs bill the org's Anthropic API key"
 fi
 
 if [ -n "$GITHUB_PAT" ] && [ -n "$GITHUB_OWNER" ]; then

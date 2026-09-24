@@ -16,6 +16,24 @@ const (
 	UserJWTScopes userJWTContextKey = "userJWT.Scopes"
 )
 
+// Defines values for AgentModel.
+const (
+	AgentModelClaudeHaiku45 AgentModel = "claude-haiku-4-5"
+	AgentModelClaudeSonnet5 AgentModel = "claude-sonnet-5"
+)
+
+// Valid indicates whether the value is a known member of the AgentModel enum.
+func (e AgentModel) Valid() bool {
+	switch e {
+	case AgentModelClaudeHaiku45:
+		return true
+	case AgentModelClaudeSonnet5:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AgentRuntime.
 const (
 	AgentRuntimeClaudeCode AgentRuntime = "claude-code"
@@ -217,24 +235,6 @@ const (
 func (e BuildSummaryWaitingReason) Valid() bool {
 	switch e {
 	case BuildSummaryWaitingReasonExternalValues:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for CodingAgentModel.
-const (
-	CodingAgentModelClaudeHaiku45 CodingAgentModel = "claude-haiku-4-5"
-	CodingAgentModelClaudeSonnet5 CodingAgentModel = "claude-sonnet-5"
-)
-
-// Valid indicates whether the value is a known member of the CodingAgentModel enum.
-func (e CodingAgentModel) Valid() bool {
-	switch e {
-	case CodingAgentModelClaudeHaiku45:
-		return true
-	case CodingAgentModelClaudeSonnet5:
 		return true
 	default:
 		return false
@@ -1309,6 +1309,15 @@ type AcceptAssumptionBody struct {
 	Note string `json:"note,omitempty"`
 }
 
+// AcceptanceCriteriaFile One acceptance criteria file as it stood at the snapshot's commit.
+type AcceptanceCriteriaFile struct {
+	// Content The file's Gherkin source, verbatim.
+	Content string `json:"content"`
+
+	// Path Repository path, e.g. specs/validation/acceptance/checkout.feature.
+	Path string `json:"path"`
+}
+
 // AccessRequest defines model for AccessRequest.
 type AccessRequest struct {
 	ConsumerComponentName string    `json:"consumerComponentName"`
@@ -1354,16 +1363,28 @@ type ActivityFeed struct {
 	NextBeforeID string `json:"nextBeforeId,omitempty"`
 }
 
+// AgentModel The model every agent of an organization bills to: the requirements, design and task-planning agents and the coding agent alike.
+//
+// Offered only once the platform can price it. The platform stamps a run's cost from a per-model rate table, and that stamp is ALL-OR-NOTHING across a cycle's capture — one model with no rate blanks the cost of the whole cycle, not just its own share. Adding one is a rate row and a contract change together, never one without the other.
+type AgentModel string
+
 // AgentRuntime Which coding-agent runtime an organization's builds run on.
 //
 // The values are the same two RunEvent.runtime records, and deliberately so: what an org SELECTS and what a finished run REPORTS have to be the same vocabulary or a reader cannot line them up. The lifetimes differ — this is a setting that can change, that one is a fact about an attempt that cannot.
 //
-// `opencode` is in the enum because the design carries it and because a client should be able to render the choice; it is NOT selectable while the platform ships no adapter for it, and the API rejects it with a reason naming what is missing. Do not treat membership of this enum as availability.
+// Both runtimes run on the organization's Anthropic API key. Only `claude-code` can bill a Claude subscription instead, so choosing `opencode` deletes a stored subscription (ADR-0028, ADR-0036).
 type AgentRuntime string
 
 // AgentStatus How an agent, or a backgrounded task an agent owns, ended — as the runtime itself reported it. `running` is the only non-terminal value and exists so a consumer can repaint a row without waiting for the end; `completed` is a clean finish; `failed` is one the runtime called an error; `stopped` is a cancellation or a kill from outside, which is NOT a failure — the work did not go wrong, it was taken away, and a run a user stopped must not be shown as broken.
 // Carried by RunEvent's `agent_settled` and `task_settled`, which are the only places a status is authoritative. A settle event that never arrives means the platform never learned how the agent ended; it does not mean the agent is still running.
 type AgentStatus string
+
+// AgentsProjection How an organization's agents run: the one model every agent uses, the coding agent's runtime, and the Claude subscription coding bills to instead of the API key.
+//
+// ALWAYS present: every org has an effective model and runtime whether or not anyone has chosen them, so the section carries the platform's defaults until someone does. `updatedAt`/`updatedBy` are null exactly when nobody has — which is what tells "the platform's defaults" apart from "somebody chose the same values".
+//
+// The spec agents read the model at the start of every turn. A coding run copies the model and runtime when it is dispatched, so a run in flight keeps what it was launched with.
+type AgentsProjection = orgconfig.AgentsProjection
 
 // ApplyConflict One file whose baseSha no longer matches HEAD.
 type ApplyConflict struct {
@@ -1575,18 +1596,6 @@ type BuildSummaryWaitingReason string
 type ClientSecretOutputBody struct {
 	ClientSecret string `json:"clientSecret"`
 }
-
-// CodingAgentModel The model an organization's coding runs bill to.
-//
-// Narrower than the list any runtime can serve, and narrow for one reason: the platform stamps a run's cost from a per-model rate table, and that stamp is ALL-OR-NOTHING across a cycle's capture — one model with no rate blanks the cost of the whole cycle, not just its own share. So a model is offered here only once the platform can price it. Adding one is a rate row and a contract change together, never one without the other.
-type CodingAgentModel string
-
-// CodingAgentProjection The runtime and model an organization's coding runs use.
-//
-// ALWAYS present, unlike the credential sections: every org has an effective runtime and model whether or not anyone has ever opened the setting. `updatedAt`/`updatedBy` are null exactly when nobody has — which is what tells "the platform's defaults" apart from "somebody chose the same values".
-//
-// A change applies from the NEXT cycle. Dispatch copies these onto the run it starts, so a run already in flight keeps the runtime and model it was launched with; re-reading the setting mid-run would leave a feed whose model names disagree with the tokens they were billed for.
-type CodingAgentProjection = orgconfig.CodingAgentProjection
 
 // CollabSessionOutputBody defines model for CollabSessionOutputBody.
 type CollabSessionOutputBody struct {
@@ -3117,6 +3126,9 @@ type StatusMsg struct {
 	Status string `json:"status"`
 }
 
+// SubscriptionProjection A stored Claude subscription token, masked. It bills the coding agent's runs to a Claude plan instead of the organization's API key, and only Claude Code can present it.
+type SubscriptionProjection = orgconfig.SubscriptionProjection
+
 // TagList defines model for TagList.
 type TagList struct {
 	// Latest Newest spec version tag (e.g. v3); absent when nothing is tagged.
@@ -3469,15 +3481,6 @@ type Usage struct {
 	OutputTokens int64  `json:"outputTokens"`
 }
 
-// ValidationCriteriaFile One acceptance criteria file as it stood at the snapshot's commit.
-type ValidationCriteriaFile struct {
-	// Content The file's Gherkin source, verbatim.
-	Content string `json:"content"`
-
-	// Path Repository path, e.g. specs/acceptance/checkout.feature.
-	Path string `json:"path"`
-}
-
 // ValidationDetail One version's validation history, already filtered to what asks the question.
 // `runs` holds only runs that ATTEMPTED validation — ones holding at least one VALIDATION cycle, which is the fact rather than the kind: a task run never holds one, and a run that did ask the criteria is listed whatever its kind says it was for. Each run's `cycles` holds only its VALIDATION cycles. Both filters are applied here rather than by the client: they are the platform's own rules, and the surface that re-derived them read a newer non-validating run as the version's answer and hid a real verdict. The views are the same MilestoneRunView and RunCycleView the run story serves, so one projection describes a cycle everywhere.
 type ValidationDetail struct {
@@ -3511,8 +3514,8 @@ type ValidationSnapshot struct {
 	// Commit The commit both halves were read at — the cycle's merge SHA, or empty when the attempt is still running and the criteria came from HEAD.
 	Commit string `json:"commit"`
 
-	// Criteria Every specs/acceptance/*.feature file at that commit. The report annotates these; they are the spine the view renders and the report is the overlay.
-	Criteria []ValidationCriteriaFile `json:"criteria"`
+	// Criteria Every specs/validation/acceptance/*.feature file at that commit. The report annotates these; they are the spine the view renders and the report is the overlay.
+	Criteria []AcceptanceCriteriaFile `json:"criteria"`
 
 	// Report The raw tests/acceptance/report.json at that commit, verbatim, for the client's own parser to read. Null while the attempt is still running: it has not committed one yet, and an absent report is not the same fact as an empty one.
 	Report *string `json:"report,omitempty"`

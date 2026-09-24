@@ -56,13 +56,16 @@ func (f fakeOrgRepo) SetThunderOrgUUID(context.Context, string, uuid.UUID) error
 }
 
 // fakeCodingKey stands in for the organization domain's answer to "which
-// Anthropic credential does this org's coding run bill". WHICH key that is —
-// the coding override or the default — is decided and tested in the
-// organization package (TestResolveCodingSecretRef_*); dispatch's job is only
-// to mount whatever it is handed, and to abort when nothing can be handed to it.
+// Anthropic credential does a run on this runtime bill". WHICH credential that
+// is — the subscription or the API key — is decided and tested in the
+// organization package (TestResolveCodingSecretRef_*); dispatch's job is to ask
+// with the runtime the run will use, mount whatever it is handed, and abort
+// when nothing can be handed to it. asked records the runtime it was asked
+// with.
 type fakeCodingKey struct {
-	ref organization.SecretRefTriplet
-	err error
+	ref   organization.SecretRefTriplet
+	err   error
+	asked *orgconfig.AgentRuntime
 
 	// The DEFAULT-role key is a separate answer to a separate question: which
 	// credential the build's EVALUATION step bills. It is not always the same
@@ -72,7 +75,10 @@ type fakeCodingKey struct {
 	defaultErr error
 }
 
-func (f fakeCodingKey) ResolveCodingSecretRef(context.Context, string) (organization.SecretRefTriplet, error) {
+func (f fakeCodingKey) ResolveCodingSecretRef(_ context.Context, _ string, runtime orgconfig.AgentRuntime) (organization.SecretRefTriplet, error) {
+	if f.asked != nil {
+		*f.asked = runtime
+	}
 	return f.ref, f.err
 }
 
@@ -103,7 +109,7 @@ func (f fakeGitHubCreds) Tx(context.Context, func(organization.OrgCredentialTx) 
 }
 
 func fullSecretRefs() (fakeCodingKey, *organization.OrgCredential) {
-	// Reuse — the org configured no coding override — is the common case, so both
+	// No subscription — the org bills its API key — is the common case, so both
 	// answers name the same row here. Tests that care about the difference set
 	// defaultRef themselves.
 	defaultRef := organization.SecretRefTriplet{
@@ -747,13 +753,13 @@ func TestDeadlinesFitTheComponentTypeSchema(t *testing.T) {
 
 // --- the org's coding-agent setting, and the run's own deadline -------------
 
-// fakeCodingAgentSettings stands in for organization.CodingAgentService.
+// fakeCodingAgentSettings stands in for organization.AgentSettingsService.
 type fakeCodingAgentSettings struct {
-	proj orgconfig.CodingAgentProjection
+	proj orgconfig.AgentsProjection
 	err  error
 }
 
-func (f fakeCodingAgentSettings) Effective(context.Context, string) (orgconfig.CodingAgentProjection, error) {
+func (f fakeCodingAgentSettings) Effective(context.Context, string) (orgconfig.AgentsProjection, error) {
 	return f.proj, f.err
 }
 
@@ -766,11 +772,21 @@ func TestDispatch_NoCodingAgentSettingStampsThePlatformDefaults(t *testing.T) {
 	if _, err := e.Dispatch(context.Background(), codingMilestoneDispatch()); err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
-	if got := secretEnvByKey(t, rec.load, "AEP_AGENT_RUNTIME").Value; got != orgconfig.DefaultAgentRuntime {
+	if got := secretEnvByKey(t, rec.load, "AEP_AGENT_RUNTIME").Value; got != string(orgconfig.DefaultAgentRuntime) {
 		t.Errorf("AEP_AGENT_RUNTIME = %q, want %q", got, orgconfig.DefaultAgentRuntime)
 	}
-	if got := secretEnvByKey(t, rec.load, "AEP_AGENT_MODEL").Value; got != orgconfig.DefaultCodingAgentModel {
-		t.Errorf("AEP_AGENT_MODEL = %q, want %q", got, orgconfig.DefaultCodingAgentModel)
+	if got := secretEnvByKey(t, rec.load, "AEP_AGENT_MODEL").Value; got != orgconfig.DefaultAgentModel {
+		t.Errorf("AEP_AGENT_MODEL = %q, want %q", got, orgconfig.DefaultAgentModel)
+	}
+	// A Claude Code run on the Claude Code image, and the cluster can see so.
+	if rec.load.Image != "ghcr.io/wso2/aep/remote-worker:latest" {
+		t.Errorf("image = %q, want the Claude Code runner image", rec.load.Image)
+	}
+	if got := rec.create.Labels["aep.wso2.com/runtime"]; got != "claude-code" {
+		t.Errorf("component runtime label = %q, want claude-code", got)
+	}
+	if got := rec.create.Parameters["runtime"]; got != "claude-code" {
+		t.Errorf("runtime parameter = %v, want claude-code", got)
 	}
 	// Two plain values, never a secret — a secretKeyRef here would need a
 	// SecretReference nobody creates and the dispatch would fail to render.
@@ -786,7 +802,7 @@ func TestDispatch_TheOrgsCodingAgentSettingIsCopiedOntoTheRun(t *testing.T) {
 	rec := &chainRecorder{}
 	e := newOCDispatchExecutor(rec)
 	e.WithCodingAgentSettings(fakeCodingAgentSettings{
-		proj: orgconfig.CodingAgentProjection{Runtime: "claude-code", Model: "claude-haiku-4-5"},
+		proj: orgconfig.AgentsProjection{Runtime: "claude-code", Model: "claude-haiku-4-5"},
 	})
 
 	if _, err := e.Dispatch(context.Background(), codingMilestoneDispatch()); err != nil {
@@ -797,6 +813,93 @@ func TestDispatch_TheOrgsCodingAgentSettingIsCopiedOntoTheRun(t *testing.T) {
 	}
 	if got := secretEnvByKey(t, rec.load, "AEP_AGENT_RUNTIME").Value; got != "claude-code" {
 		t.Errorf("AEP_AGENT_RUNTIME = %q", got)
+	}
+}
+
+// --- OpenCode: its own image, its own label, and an API key or nothing -------
+
+const openCodeRunnerImage = "aep-runner-opencode:dev"
+
+func newOpenCodeDispatchExecutor(rec *chainRecorder, anthropic fakeCodingKey, github *organization.OrgCredential, opencodeImage string) *CodingExecutor {
+	e := newCodingDispatchExecutor(anthropic, github)
+	e.WithPublisherCredentials(fakePublisher{name: "acme-publisher-secrets"}, "http://thunder.example/oauth2/token")
+	e.WithOCDispatch(NewOCDispatcher(rec.client()).
+		WithImage("ghcr.io/wso2/aep/remote-worker:latest").
+		WithOpenCodeImage(opencodeImage))
+	e.WithCodingAgentSettings(fakeCodingAgentSettings{proj: orgconfig.AgentsProjection{
+		Runtime: "opencode", Model: "claude-sonnet-5",
+	}})
+	return e
+}
+
+// An OpenCode org's cycle runs on the OpenCode image and says so everywhere the
+// cluster looks: the Component and Workload label, and the ComponentType
+// parameter that renders the label onto the Job and its pod.
+func TestDispatch_AnOpenCodeRunGetsItsImageAndLabel(t *testing.T) {
+	rec := &chainRecorder{}
+	anthropic, github := fullSecretRefs()
+	e := newOpenCodeDispatchExecutor(rec, anthropic, github, openCodeRunnerImage)
+
+	if _, err := e.Dispatch(context.Background(), codingMilestoneDispatch()); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if rec.load.Image != openCodeRunnerImage {
+		t.Errorf("image = %q, want the OpenCode runner image", rec.load.Image)
+	}
+	if got := rec.create.Labels["aep.wso2.com/runtime"]; got != "opencode" {
+		t.Errorf("component runtime label = %q, want opencode", got)
+	}
+	if got := rec.load.Labels["aep.wso2.com/runtime"]; got != "opencode" {
+		t.Errorf("workload runtime label = %q, want opencode", got)
+	}
+	if got := rec.create.Parameters["runtime"]; got != "opencode" {
+		t.Errorf("runtime parameter = %v, want opencode", got)
+	}
+	if got := secretEnvByKey(t, rec.load, "AEP_AGENT_RUNTIME").Value; got != "opencode" {
+		t.Errorf("AEP_AGENT_RUNTIME = %q, want opencode", got)
+	}
+	if ev := anthropicSecretEnv(t, rec.load, anthropic.ref.Name); ev.Key != "ANTHROPIC_API_KEY" {
+		t.Errorf("anthropic env key = %q, want ANTHROPIC_API_KEY", ev.Key)
+	}
+}
+
+// The credential is chosen FOR the runtime: dispatch asks the resolver with the
+// runtime this run will use, which is what keeps a subscription (Claude Code
+// only) off an OpenCode run.
+func TestDispatch_AsksForTheCredentialOfTheRunsRuntime(t *testing.T) {
+	for _, runtime := range []orgconfig.AgentRuntime{orgconfig.AgentRuntimeClaudeCode, orgconfig.AgentRuntimeOpenCode} {
+		rec := &chainRecorder{}
+		anthropic, github := fullSecretRefs()
+		var asked orgconfig.AgentRuntime
+		anthropic.asked = &asked
+		e := newOpenCodeDispatchExecutor(rec, anthropic, github, openCodeRunnerImage)
+		e.WithCodingAgentSettings(fakeCodingAgentSettings{proj: orgconfig.AgentsProjection{
+			Runtime: runtime, Model: "claude-sonnet-5",
+		}})
+
+		if _, err := e.Dispatch(context.Background(), codingMilestoneDispatch()); err != nil {
+			t.Fatalf("%s dispatch: %v", runtime, err)
+		}
+		if asked != runtime {
+			t.Errorf("resolver asked for runtime %q, want %q", asked, runtime)
+		}
+	}
+}
+
+// A platform with no OpenCode image cannot run an OpenCode cycle, and must not
+// run it on the Claude Code image (no OpenCode binary in it). The failure names
+// the setting that is missing.
+func TestDispatch_AnOpenCodeRunWithNoOpenCodeImageFailsNamingTheSetting(t *testing.T) {
+	rec := &chainRecorder{}
+	anthropic, github := fullSecretRefs()
+	e := newOpenCodeDispatchExecutor(rec, anthropic, github, "")
+
+	_, err := e.Dispatch(context.Background(), codingMilestoneDispatch())
+	if err == nil || !strings.Contains(err.Error(), "AGENT_RUNNER_IMAGE_OPENCODE") {
+		t.Fatalf("dispatch err = %v, want it to name AGENT_RUNNER_IMAGE_OPENCODE", err)
+	}
+	if len(rec.calls) != 0 {
+		t.Errorf("the OC chain was walked anyway: %v", rec.calls)
 	}
 }
 

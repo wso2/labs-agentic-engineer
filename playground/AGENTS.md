@@ -184,7 +184,7 @@ is captured to `playground/.devtools/generations.json` (gitignored). Inspect
 with `npx @ai-sdk/devtools` (port 4983). Opt out per run with
 `AGENT_DEVTOOLS=false pnpm play …`. The coding agent is an Agent SDK session,
 not an AI SDK model — its full transcript is the run's
-`.aep-playground/runs/<ts>/…/claude.log` instead.
+`.aep-playground/runs/<ts>/…/runtime.log` instead.
 
 Beside it, `agent-sessions/` is the runtime's own scratch — the lead's
 transcript, a fanned-out subagent's, and the output files its backgrounded tasks
@@ -212,7 +212,7 @@ tagged `[#1]`/`[#2]` — and **on a terminal** the crew sits pinned under them:
     ☑ Build onboarding-webapp
     ▸ Walk onboarding-webapp in mock mode
     ✓ #1 Build onboarding-webapp React SPA  build clean  completed · 41m11s · 162 tools
-    ● #3 Walk onboarding-webapp in mock mode (background)  npx playwright test…  42.0s · ♥ 4.0s
+    ● #3 Walk onboarding-webapp in mock mode (background)  agent-browser open…   42.0s · ♥ 4.0s
       ⟳ npm run dev:mock                                                     running 41.5s
 ```
 
@@ -251,6 +251,31 @@ wrapped row makes the block one physical line taller than the cursor arithmetic
 believes, and the next erase would eat the transcript instead. The failure mode is
 "the block is short", never "the transcript is mangled". Closing takes the block
 down and leaves the merged end-of-run pass with no residue above it.
+
+## Choosing the coding-agent runtime
+
+The runtime is the platform's own organization setting, read from your shell and
+forwarded into the container by name exactly as a dispatch stamps it onto a pod:
+
+```
+# Claude Code (the default) — nothing to set
+pnpm play /abs/path/to/project code --yes
+
+# OpenCode, on haiku
+AEP_AGENT_RUNTIME=opencode AEP_AGENT_MODEL=claude-haiku-4-5 \
+  pnpm play /abs/path/to/project code --yes
+```
+
+Images, defaults and OpenCode's mode and credential limits are in `play --help`;
+each runtime's entry is one `RUNTIME_PROFILES` record (`src/engine/coding-run.ts`),
+and an unknown `AEP_AGENT_RUNTIME` is refused by the runner's own parser.
+
+Only `local.ts` and the skill library are mounted over the image: **the runner's
+own `src/` is the image's**, so a change to the runner (either runtime's adapter)
+is not in a playground run until `FORCE=1 make build-runner`.
+
+`play <dir> log` parses Claude Code's message shapes; for an OpenCode run read
+`progress.ndjson` and `.logs/runtime.log` directly.
 
 ## Fidelity contract
 

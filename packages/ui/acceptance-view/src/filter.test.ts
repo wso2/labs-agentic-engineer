@@ -31,7 +31,7 @@ import {
 } from "./filter.js";
 
 const FEATURE = parseFeatureFile(
-  "specs/acceptance/bought-items.feature",
+  "specs/validation/acceptance/bought-items.feature",
   [
     "@capability",
     "Feature: Bought items",

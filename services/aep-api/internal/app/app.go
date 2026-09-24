@@ -158,7 +158,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	orgRepo := organization.NewOrganizationRepository(db)
 	orgCredRepo := organization.NewOrgCredentialRepository(db, in.ColumnCipher)
 	orgAnthropicRepo := organization.NewOrgAnthropicRepository(db)
-	orgCodingAgentRepo := organization.NewOrgCodingAgentRepository(db)
+	orgAgentSettingsRepo := organization.NewOrgAgentSettingsRepository(db)
+	// The AI agents card's unit of work: one transaction over the Anthropic
+	// credential rows, the agent-settings row and the secret bytes.
+	agentsCardRepo := organization.NewAgentsCardRepository(db, credStore)
 	idpRepo := organization.NewIDPRepository(db, in.ColumnCipher)
 	codingAgentLogRepo := delivery.NewCodingAgentLogRepository(db)
 	activityRepo := projects.NewActivityEventRepository(db)
@@ -303,10 +306,11 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	buildCredService := organization.NewBuildCredentialsService(repoRepo, credResolver, gitSecretClient)
 	credService.WithBuildSecretCleaner(buildCredService)
 	anthropicCredService := organization.NewAnthropicCredentialService(orgAnthropicRepo, credStore)
-	// The org's coding-agent runtime and model. ONE instance, read by two
-	// callers for two different reasons: /config projects and edits it, and
-	// coding dispatch copies it onto the run it launches.
-	codingAgentSettings := organization.NewCodingAgentService(orgCodingAgentRepo)
+	// How the org's agents run: the one model, the coding runtime and the Claude
+	// subscription. ONE instance, read by three callers for three reasons:
+	// /config projects and saves it, the spec agents resolve the model per turn,
+	// and coding dispatch copies model + runtime onto the run it launches.
+	agentSettings := organization.NewAgentSettingsService(orgAgentSettingsRepo, orgRepo, anthropicCredService, agentsCardRepo)
 
 	// Task JWT manager — RS256. The public key is published on
 	// /auth/external/jwks.json. Used to mint BFF MCP tokens
@@ -366,8 +370,8 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 
 	// File-mutation agents service (services/agents) — the requirements/design/
 	// chat generation and task-planning flows. Plain HS256 M2M bearer; the
-	// per-org Anthropic key is resolved by genai pre-stream and forwarded as
-	// X-Anthropic-Key.
+	// per-org Anthropic key and model are resolved per turn: the key is
+	// forwarded as X-Anthropic-Key, the model in the turn body.
 	agentsvcClient := agentsvc.New(agentsvc.Config{
 		BaseURL:  cfg.AgentsSvc.BaseURL,
 		Secret:   cfg.AgentsSvc.JWTSecret,
@@ -386,15 +390,19 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// NOT pushed inline anymore — agents reads the full catalog (embedded
 	// flow skills seeded into _skills + org skills) from the SkillsRef
 	// snapshot.
-	anthropicKeyForGenAI := func(ctx context.Context, orgID string) (string, error) {
+	agentLLMForTurns := func(ctx context.Context, orgID string) (spec.AgentLLM, error) {
 		res, err := anthropicCredService.EffectiveKey(ctx, orgID)
 		if err != nil {
-			return "", err
+			return spec.AgentLLM{}, err
 		}
 		if res == nil || res.Source == "none" {
-			return "", nil // no key → genai raises a pre-202 4xx
+			return spec.AgentLLM{}, nil // no key → a pre-202 4xx
 		}
-		return res.Key, nil
+		model, err := agentSettings.Model(ctx, orgID)
+		if err != nil {
+			return spec.AgentLLM{}, err
+		}
+		return spec.AgentLLM{Key: res.Key, Model: model}, nil
 	}
 	// SkillsRef source for genai + task-plan turns. Reconcile so platform
 	// skills shipped after first provision land before Head/Ensure.
@@ -404,7 +412,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	genaiDeps := spec.ServiceDeps{
 		Repos:      repoService,
 		Git:        gitOpsService,
-		Keys:       anthropicKeyForGenAI,
+		LLM:        agentLLMForTurns,
 		Client:     agentsvcClient,
 		Turns:      turnRepo,
 		Broker:     turnBroker,
@@ -490,7 +498,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// satisfy the task consumer ports directly.
 	taskReads := task.NewReads(issueService, repoService, executionRepo, milestoneRunRepo)
 	taskPlan := task.NewPlanService(repoService, artifactSvcGit, gitOpsService,
-		anthropicKeyForGenAI, agentsvcClient, issueService, deliveryIssues, workspaceEngine,
+		agentLLMForTurns, agentsvcClient, issueService, deliveryIssues, workspaceEngine,
 		task.SkillsRepoResolver(skillsRepoForTurns))
 
 	// Eagerly provision each org's skills repo on project creation.
@@ -740,7 +748,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// console JWT is still on ctx.
 	// Which runtime and model this org's cycles run on. The values are copied
 	// onto each Job's env, so a change applies from the next cycle.
-	codingExecutor.WithCodingAgentSettings(codingAgentSettings)
+	codingExecutor.WithCodingAgentSettings(agentSettings)
 	codingExecutor.WithPublisherCredentials(
 		codingagent.NewIDPPublisherResolver(idpRepo),
 		codingagent.PublisherTokenURLFromJWKS(cfg.PlatformIDP.JWKSURL),
@@ -762,11 +770,13 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		}
 		ocDispatcher := codingagent.NewOCDispatcher(componentClient).
 			WithImage(cfg.AgentRunnerImage).
+			WithOpenCodeImage(cfg.AgentRunnerImageOpenCode).
 			WithRetention(codingagent.NewComponentRetention(
 				componentClient, runCycleRepo, retentionLimit))
 		codingExecutor.WithOCDispatch(ocDispatcher)
 		slog.Info("coding executor: OpenChoreo component dispatch path enabled",
 			"runnerImage", cfg.AgentRunnerImage,
+			"runnerImageOpenCode", cfg.AgentRunnerImageOpenCode,
 			"componentRetention", retentionLimit)
 	}
 	// Build-secret staging so the post-merge build clones a PRIVATE project repo
@@ -927,7 +937,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		organization.PlatformIDPConfig{Issuer: cfg.PlatformIDP.Issuer, JWKSURL: cfg.PlatformIDP.JWKSURL},
 		cfg.BFFPublicURL,
 		cfg.GitHubAppClientID,
-	).WithCodingAgent(codingAgentSettings)
+	).WithAgentSettings(agentSettings)
 
 	// Strict-handler feature dependencies — everything the contract-first
 	// /api/v1 edge serves (internal/api/handlers_*.go).

@@ -3657,11 +3657,9 @@ components:
         that cannot.
 
 
-        `opencode` is in the enum because the design carries it and because a
-        client should be able to render the choice; it is NOT selectable while
-        the platform ships no adapter for it, and the API rejects it with a
-        reason naming what is missing. Do not treat membership of this enum as
-        availability.
+        Both runtimes run on the organization's Anthropic API key. Only
+        `claude-code` can bill a Claude subscription instead, so choosing
+        `opencode` deletes a stored subscription (ADR-0028, ADR-0036).
       enum:
       - claude-code
       - opencode
@@ -3669,6 +3667,106 @@ components:
       x-enum-varnames:
       - AgentRuntimeClaudeCode
       - AgentRuntimeOpencode
+    AgentModel:
+      description: >-
+        The model every agent of an organization bills to: the requirements,
+        design and task-planning agents and the coding agent alike.
+
+
+        Offered only once the platform can price it. The platform stamps a run's
+        cost from a per-model rate table, and that stamp is ALL-OR-NOTHING across
+        a cycle's capture — one model with no rate blanks the cost of the whole
+        cycle, not just its own share. Adding one is a rate row and a contract
+        change together, never one without the other.
+      enum:
+      - claude-sonnet-5
+      - claude-haiku-4-5
+      type: string
+      x-enum-varnames:
+      - AgentModelClaudeSonnet5
+      - AgentModelClaudeHaiku45
+    AgentsProjection:
+      x-go-type: orgconfig.AgentsProjection
+      x-go-type-import:
+        path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
+      description: >-
+        How an organization's agents run: the one model every agent uses, the
+        coding agent's runtime, and the Claude subscription coding bills to
+        instead of the API key.
+
+
+        ALWAYS present: every org has an effective model and runtime whether or
+        not anyone has chosen them, so the section carries the platform's
+        defaults until someone does. `updatedAt`/`updatedBy` are null exactly
+        when nobody has — which is what tells "the platform's defaults" apart
+        from "somebody chose the same values".
+
+
+        The spec agents read the model at the start of every turn. A coding run
+        copies the model and runtime when it is dispatched, so a run in flight
+        keeps what it was launched with.
+      additionalProperties: false
+      properties:
+        model:
+          $ref: '#/components/schemas/AgentModel'
+        runtime:
+          $ref: '#/components/schemas/AgentRuntime'
+        subscription:
+          allOf:
+          - $ref: '#/components/schemas/SubscriptionProjection'
+          description: >-
+            The stored Claude subscription token, masked, or null when coding
+            bills the organization's API key.
+          nullable: true
+        updatedAt:
+          format: date-time
+          nullable: true
+          type: string
+        updatedBy:
+          nullable: true
+          type: string
+      required:
+      - model
+      - runtime
+      - subscription
+      - updatedAt
+      - updatedBy
+      type: object
+    SubscriptionProjection:
+      x-go-type: orgconfig.SubscriptionProjection
+      x-go-type-import:
+        path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
+      additionalProperties: false
+      description: >-
+        A stored Claude subscription token, masked. It bills the coding agent's
+        runs to a Claude plan instead of the organization's API key, and only
+        Claude Code can present it.
+      properties:
+        kind:
+          enum:
+          - claude
+          type: string
+        keyPrefix:
+          type: string
+        keyLast4:
+          type: string
+        status:
+          type: string
+        connectedAt:
+          format: date-time
+          type: string
+        lastValidatedAt:
+          format: date-time
+          type: string
+        validationError:
+          type: string
+      required:
+      - kind
+      - keyPrefix
+      - keyLast4
+      - status
+      - connectedAt
+      type: object
     ApplyRequest:
       additionalProperties: false
       properties:
@@ -4105,60 +4203,6 @@ components:
       - status
       - startedAt
       type: object
-    CodingAgentModel:
-      description: >-
-        The model an organization's coding runs bill to.
-
-
-        Narrower than the list any runtime can serve, and narrow for one reason:
-        the platform stamps a run's cost from a per-model rate table, and that
-        stamp is ALL-OR-NOTHING across a cycle's capture — one model with no rate
-        blanks the cost of the whole cycle, not just its own share. So a model is
-        offered here only once the platform can price it. Adding one is a rate
-        row and a contract change together, never one without the other.
-      enum:
-      - claude-sonnet-5
-      - claude-haiku-4-5
-      type: string
-      x-enum-varnames:
-      - CodingAgentModelClaudeSonnet5
-      - CodingAgentModelClaudeHaiku45
-    CodingAgentProjection:
-      x-go-type: orgconfig.CodingAgentProjection
-      x-go-type-import:
-        path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
-      description: >-
-        The runtime and model an organization's coding runs use.
-
-
-        ALWAYS present, unlike the credential sections: every org has an
-        effective runtime and model whether or not anyone has ever opened the
-        setting. `updatedAt`/`updatedBy` are null exactly when nobody has — which
-        is what tells "the platform's defaults" apart from "somebody chose the
-        same values".
-
-
-        A change applies from the NEXT cycle. Dispatch copies these onto the run
-        it starts, so a run already in flight keeps the runtime and model it was
-        launched with; re-reading the setting mid-run would leave a feed whose
-        model names disagree with the tokens they were billed for.
-      additionalProperties: false
-      properties:
-        runtime:
-          $ref: '#/components/schemas/AgentRuntime'
-        model:
-          $ref: '#/components/schemas/CodingAgentModel'
-        updatedAt:
-          format: date-time
-          nullable: true
-          type: string
-        updatedBy:
-          nullable: true
-          type: string
-      required:
-      - runtime
-      - model
-      type: object
     ClientSecretOutputBody:
       additionalProperties: false
       properties:
@@ -4381,42 +4425,53 @@ components:
         path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
       additionalProperties: false
       properties:
-        codingAgent:
+        agents:
           description: >-
-            Which runtime and model this organization's coding runs use.
+            How the organization's agents run. Every field is optional: an
+            absent field keeps what is stored, so a client changes the model
+            without restating the runtime and never has to send the stored
+            token back.
 
 
-            Unlike every other section here this one carries no secret and has no
-            external probe: the values are validated against the contract's enums
-            and against what this build can actually run. A runtime the platform
-            ships no adapter for is rejected with a reason, never silently
-            replaced by the one it can run.
+            `subscription` is three-state: absent keeps it, an object sets or
+            replaces it, `null` deletes it. A subscription needs the
+            `claude-code` runtime and a connected API key, judged on the state
+            the patch leaves: choosing `opencode` deletes the stored token in the
+            same write, and `opencode` with a new subscription in one patch is
+            refused (`agents_subscription_requires_claude_code`), as is a
+            subscription with no API key (`agents_subscription_requires_api_key`).
 
 
-            Both fields are optional, so a client can change the model without
-            restating the runtime. `null` resets the section to the platform's
-            defaults, which is a real state and not the same as never having set
-            it — the projection's `updatedBy` tells them apart.
+            `null` on the section resets it to the platform's defaults and
+            deletes the subscription — a real state, not the same as never
+            having set it; the projection's `updatedBy` tells them apart.
           additionalProperties: false
           properties:
             model:
-              $ref: '#/components/schemas/CodingAgentModel'
+              $ref: '#/components/schemas/AgentModel'
             runtime:
               $ref: '#/components/schemas/AgentRuntime'
-          type: object
-          nullable: true
-        codingLlm:
-          additionalProperties: false
-          properties:
-            apiKey:
-              type: string
-            kind:
-              enum:
-              - anthropic
-              type: string
-          required:
-          - kind
-          - apiKey
+            subscription:
+              additionalProperties: false
+              description: >-
+                A long-lived token from `claude setup-token`
+                (`sk-ant-oat…`). Write-only: probed against Anthropic, never
+                echoed.
+              properties:
+                kind:
+                  enum:
+                  - claude
+                  type: string
+                token:
+                  type: string
+                  writeOnly: true
+                  minLength: 1
+                  maxLength: 512
+              required:
+              - kind
+              - token
+              type: object
+              nullable: true
           type: object
           nullable: true
         gitProvider:
@@ -4458,10 +4513,18 @@ components:
           type: object
           nullable: true
         llm:
+          description: >-
+            The organization's Anthropic API key (`sk-ant-api…`), used by every
+            agent. Write-only: probed against Anthropic before anything in the
+            patch is written. `null` disconnects it and deletes the stored Claude
+            subscription with it.
           additionalProperties: false
           properties:
             apiKey:
               type: string
+              writeOnly: true
+              minLength: 1
+              maxLength: 512
             kind:
               enum:
               - anthropic
@@ -4478,12 +4541,8 @@ components:
         path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
       additionalProperties: false
       properties:
-        codingAgent:
-          $ref: '#/components/schemas/CodingAgentProjection'
-        codingLlm:
-          allOf:
-          - $ref: '#/components/schemas/LLMProjection'
-          nullable: true
+        agents:
+          $ref: '#/components/schemas/AgentsProjection'
         gitProvider:
           allOf:
           - $ref: '#/components/schemas/GitProviderProjection'
@@ -4494,10 +4553,17 @@ components:
           allOf:
           - $ref: '#/components/schemas/LLMProjection'
           nullable: true
+        llmDisconnectedAt:
+          description: >-
+            When the organization's Anthropic API key was last disconnected.
+            Present only while `llm` is null, so a client can tell an org whose
+            key was disconnected from one that never set a key. Cleared when a
+            key is connected again.
+          format: date-time
+          type: string
       required:
       - llm
-      - codingLlm
-      - codingAgent
+      - agents
       - gitProvider
       - idp
       type: object
@@ -5734,9 +5800,12 @@ components:
           format: date-time
           type: string
         credentialKind:
+          description: >-
+            Always `api_key`: the organization's key is a Console API key,
+            because the spec agents are AI SDK calls that cannot present a
+            Claude subscription token. A subscription lives on `agents`.
           enum:
           - api_key
-          - oauth_token
           type: string
         keyLast4:
           type: string
@@ -8782,7 +8851,7 @@ components:
         - model
         - costUsd
       type: object
-    ValidationCriteriaFile:
+    AcceptanceCriteriaFile:
       additionalProperties: false
       description: One acceptance criteria file as it stood at the snapshot's commit.
       properties:
@@ -8790,7 +8859,7 @@ components:
           description: The file's Gherkin source, verbatim.
           type: string
         path:
-          description: Repository path, e.g. specs/acceptance/checkout.feature.
+          description: Repository path, e.g. specs/validation/acceptance/checkout.feature.
           type: string
       required:
       - path
@@ -8917,10 +8986,10 @@ components:
             is still running and the criteria came from HEAD.
           type: string
         criteria:
-          description: Every specs/acceptance/*.feature file at that commit. The report annotates
+          description: Every specs/validation/acceptance/*.feature file at that commit. The report annotates
             these; they are the spine the view renders and the report is the overlay.
           items:
-            $ref: '#/components/schemas/ValidationCriteriaFile'
+            $ref: '#/components/schemas/AcceptanceCriteriaFile'
           type: array
         report:
           description: >-

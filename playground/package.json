@@ -23,6 +23,7 @@
     "@clack/prompts": "^1.6.0",
     "ai": "^7.0.2",
     "jose": "^5.9.0",
+    "remote-worker": "workspace:*",
     "smol-toml": "^1.7.1",
     "yaml": "^2.8.4"
   },

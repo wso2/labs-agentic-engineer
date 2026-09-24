@@ -1,6 +1,11 @@
 # ADR-0007 — The runner image names playwright-cli's browser
 
-**Status:** Accepted
+**Status:** Superseded by
+[ADR-0016](ADR-0016-the-browser-comes-from-debian.md). Its subject is gone —
+`playwright-cli` was retired with the compiled-spec path (ADR-0029) and
+`PLAYWRIGHT_MCP_BROWSER` appears nowhere in the tree. What survives is the
+principle this ADR established and ADR-0016 keeps: **the image, not a skill,
+decides which binary launches.** Its Rejected section still stands.
 
 `playwright-cli` defaults to the *pair* (engine `chromium`, channel `chrome`), so
 its default engine cannot be had without Google's branded build at

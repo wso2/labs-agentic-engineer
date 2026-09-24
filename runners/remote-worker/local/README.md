@@ -30,12 +30,12 @@ cp env.local.example .env.local     # fill in the four required values
 ```
 
 The runner streams progress NDJSON to stdout. After exit, the cloned
-workspace (including `.logs/claude.log`, the full SDK transcript) is kept
+workspace (including `.logs/runtime.log`, the full SDK transcript) is kept
 under `workspace/<org>/<project>/<taskId>/` for inspection.
 
 ## Validation tasks
 
-The same image serves validation runs (it bakes Playwright + chromium),
+The same image serves validation runs (it bakes a chromium),
 so only the dispatch env differs. Point the harness at an alternate env
 file:
 
@@ -99,19 +99,18 @@ npm install -g agent-browser@0.35.2      # match runners/remote-worker/Dockerfil
 and ignored on purpose: the tarball ships prebuilt Rust binaries and no node
 ever runs the CLI. The Dockerfile documents the same choice.
 
-### Point it at a browser
-
-Do **not** run `agent-browser install` if a Playwright chromium is already
-present — the runner image deliberately reuses `@playwright/test`'s chromium
-(revision 1228) rather than downloading a third browser.
+### Get a browser
 
 ```bash
-## macOS arm64, revision 1228
-export AGENT_BROWSER_EXECUTABLE_PATH="$HOME/Library/Caches/ms-playwright/chromium-1228/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
+agent-browser install
 ```
 
-Never set `AGENT_BROWSER_ARGS=--no-sandbox` on a host; it is a build-time-only
-concession in the image.
+On a Mac that is all of it — the CLI downloads Chrome for Testing and finds it
+without being told. The image gets its browser a different way (ADR-0016); for
+driving a page they are the same CDP.
+
+Never set `AGENT_BROWSER_ARGS=--no-sandbox` on a host. The image sets it because
+a pod has no usable chromium sandbox; your machine does.
 
 ### Verify — the round trip, not `doctor`
 

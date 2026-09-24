@@ -113,7 +113,7 @@ type ValidationSnapshotReader interface {
 	// CriteriaAt returns every acceptance criteria file at `at`, path and source.
 	// An absent directory is an empty slice, not an error: a version whose oracle
 	// was never authored is an ordinary state, not a read failure.
-	CriteriaAt(ctx context.Context, orgID, projectID, at string) ([]gen.ValidationCriteriaFile, error)
+	CriteriaAt(ctx context.Context, orgID, projectID, at string) ([]gen.AcceptanceCriteriaFile, error)
 }
 
 // ProjectBuildLister reads every build WorkflowRun in a project, in ONE call —

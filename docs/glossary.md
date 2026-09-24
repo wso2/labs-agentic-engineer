@@ -479,15 +479,15 @@ replaced within a tick by one with fresh budgets. Cleared by a rebuild, or by a
 person removing the label.
 
 ### Acceptance oracle
-`specs/validation/validation-criteria.json` in its JUDGING role — the source of
-truth a validation run grades the deployed system against. *Oracle* names what
-the document DOES, not what it is: the console calls the document itself the
-**Validation criteria** (`apps/console/design/lexicon.md` holds that mapping),
-and one row inside it is an **acceptance criterion**, which is what its
-`AC-001-a`-style id says. Different axes, so both words are correct and neither
-is a leftover. Authored from the requirement prose alone by the
-`validation-criteria` skill, deliberately blind to the design and the code it
-will grade. A version with no acceptance oracle has nothing to validate: no
+Every `specs/validation/acceptance/<slug>.feature` in its JUDGING role — the
+source of truth a validation run grades the deployed system against. *Oracle* names what the set
+DOES, not what it is: the console calls the documents themselves the **Acceptance
+criteria** (`apps/console/design/lexicon.md` holds that mapping), and one
+`Scenario:` inside them is an **acceptance criterion**. Different axes, so both
+words are correct and neither is a leftover. Authored from the requirement prose
+alone by the `acceptance-criteria` skill, deliberately blind to the design and the
+code it will grade — one file per capability, and the scenario text IS the test
+(ADR-0029). A version with no acceptance oracle has nothing to validate: no
 validation task is filed, nothing will ever judge it, and the verdict settles
 `skipped` rather than staying silent.
 

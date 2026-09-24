@@ -1,7 +1,8 @@
 # ADR-0028 — The coding agent's runtime and model are an organization setting
 
 **Status:** accepted · 2026-09-07
-**Related:** ADR-0016 (the coding-agent key is an override, not a peer) ·
+**Related:** ADR-0016 (the coding-agent key is an override, not a peer;
+superseded by ADR-0036) · ADR-0036 (the coding credential is a subscription) ·
 `runners/remote-worker/design/decisions/ADR-0012` (the runtime is a port) ·
 ADR-0027 (run recordings are observability, not ledger)
 
@@ -85,3 +86,32 @@ deliberately does not widen.
 - Authorization is unchanged: any authenticated member of the org may change it,
   compensated by the section-level `orgconfig.patched` audit line — which now
   names `codingAgent` — and by `updated_by` on the row itself.
+
+## Amendment 2026-09-24 — OpenCode is selectable; one `agents` section and one model
+
+[ADR-0036](ADR-0036-the-coding-credential-is-a-subscription.md) supersedes
+ADR-0016, and OpenCode is the second runtime adapter
+([`runners/remote-worker` ADR-0015](../../runners/remote-worker/design/decisions/ADR-0015-opencode-is-the-second-adapter.md)).
+Together they reshape this setting:
+
+- **Every `AgentRuntime` value is selectable.** A runtime enters the contract
+  with its adapter, so there is no separate "supported" list. Claude Code is the
+  default; OpenCode is opt-in per org.
+- **`agents` is the section.** It carries `model`, `runtime` and the optional
+  Claude subscription (`subscription`, masked on read, three-state on write),
+  stored in `org_agent_settings`; the row's absence is the platform defaults.
+- **One model for every agent.** The requirements, design and task-planning
+  agents resolve the org's model with its key at the start of every turn; a
+  coding run copies it at dispatch and uses it for the lead, every subagent and
+  the runtime's own helper calls. The runner never falls back to a model the org
+  did not choose, which also keeps every slice inside the all-or-nothing cost
+  stamp.
+- **The credential rule is the subscription rule.** OpenCode authenticates with
+  an API key only, so a subscription needs `claude-code` and a connected API
+  key, judged on the state the patch leaves. Choosing `opencode`, disconnecting
+  the key and resetting the section delete the stored token in the same
+  transaction. Dispatch asks for the credential of the run's runtime.
+- **The runtime picks the runner image**, and the `job/coding-agent`
+  ComponentType's `runtime` parameter labels the run's Job, pod, Component and
+  Workload `aep.wso2.com/runtime`. An OpenCode cycle on a platform with no
+  OpenCode image fails its dispatch naming the missing setting.

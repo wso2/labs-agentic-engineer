@@ -22,10 +22,12 @@ import { debugQueryOptions } from "../../lib/logger.js";
 import {
   AGENT_SETTING_SOURCES,
   CLAUDE_CODE_DEFAULT_MODEL,
+  modelPinEnv,
   createClaudeCodeRuntime,
   openPromptStream,
-  watchHook,
+  sessionContextHook,
 } from "./runtime.js";
+import type { SessionContextRecord } from "../../lib/run_context.js";
 import { BASE_ALLOWED_TOOLS, buildMcpOptions, deniedTools, namespacedMcpTool } from "./tools.js";
 import { DENIED_CAPABILITIES, type DeniedCapability } from "../port.js";
 
@@ -227,6 +229,19 @@ test("createClaudeCodeRuntime: the default model is the one the platform seeds a
   assert.equal(CLAUDE_CODE_DEFAULT_MODEL, "claude-sonnet-5");
 });
 
+// Left unpinned, each alias resolves to the CLI release's own default and the
+// CLI's helper calls run through `haiku`, so a run would bill models the org
+// never chose. Every alias and the subagent model name the org's one model.
+test("modelPinEnv: every alias, the helper calls and the subagents run on the org's model", () => {
+  assert.deepEqual(modelPinEnv("claude-haiku-4-5"), {
+    ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-haiku-4-5",
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4-5",
+    ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-haiku-4-5",
+    ANTHROPIC_DEFAULT_FABLE_MODEL: "claude-haiku-4-5",
+    CLAUDE_CODE_SUBAGENT_MODEL: "claude-haiku-4-5",
+  });
+});
+
 // The `aep` skill points at the glossary BY POSITION, and this runtime is what
 // supplies its text. Every role the workflow's prose defers to has to be bound,
 // or the agent resolves it by guessing a tool name.
@@ -237,16 +252,10 @@ test("createClaudeCodeRuntime: the glossary binds the fan-out, wait and task-lis
   assert.match(glossary, /`run_in_background: true`/);
   assert.match(glossary, /wait tool.*`TaskOutput`/);
   assert.match(glossary, /task list.*`TaskCreate`/);
-  // The skill says "the fast model" and "the default one" and leaves the aliases
-  // to this table; a lead that guesses one spends a turn on a schema error.
-  assert.match(glossary, /`haiku` \(the fast model\)/);
-  assert.match(glossary, /`sonnet` \(the default\)/);
-  // And ONLY models the platform can price. modelcost.SumCost is all-or-nothing:
-  // one slice whose model has no rate row makes the whole cycle's cost null. So
-  // offering an alias with no seeded rate turns the skill's own "pick the model
-  // for the job" into a silent way to lose a cycle's spend. This offered `opus`
-  // when only sonnet and haiku were seeded.
-  assert.doesNotMatch(glossary, /opus/i);
+  // A run has one model and the fan-out call names none: an alias offered here
+  // is a second model the org's key may not serve or the platform cannot price
+  // (modelcost.SumCost is all-or-nothing, so one unpriced slice nulls the cycle).
+  assert.doesNotMatch(glossary, /`model:`|haiku|opus/i);
 });
 
 test("debugQueryOptions: a normal run carries NONE of the developer options", () => {
@@ -311,48 +320,21 @@ test("openPromptStream: yields the prompt once and stays open until released", a
   assert.equal((await second).done, true);
 });
 
-// --- watchHook --------------------------------------------------------------
+// --- sessionContextHook -----------------------------------------------------
 
-const preToolUse = (toolName = "Bash") =>
-  ({ hook_event_name: "PreToolUse", tool_name: toolName, tool_input: {}, tool_use_id: "tu_1" }) as never;
+test("sessionContextHook: a subagent is recorded without the appendix, a skill load against its agent", async () => {
+  const records: SessionContextRecord[] = [];
+  const hook = sessionContextHook((r) => void records.push(r));
+  const fire = (input: unknown) => hook(input as never, undefined, { signal: undefined } as never);
 
-const fireHook = (hook: ReturnType<typeof watchHook>, input: unknown = preToolUse()) =>
-  hook(input as never, undefined, { signal: undefined } as never);
+  assert.deepEqual(await fire({ hook_event_name: "SubagentStart", agent_id: "a1", agent_type: "general-purpose" }), {});
+  await fire({ hook_event_name: "PreToolUse", tool_name: "Skill", tool_input: { skill: "ballerina" }, agent_id: "a1" });
+  await fire({ hook_event_name: "PreToolUse", tool_name: "Skill", tool_input: { skill: "go" } });
+  await fire({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "ls" } });
 
-// The regression pin for `RuntimeObservers.toolUse` returning a promise. The
-// validation status line posts from that seam, and its whole value is that the
-// line explaining a twenty-minute silence lands BEFORE the silence — which only
-// holds while this adapter awaits the watcher, because the SDK dispatches the
-// tool call the moment this callback resolves.
-test("watchHook: a watcher that reaches the outside world is awaited before the call", async () => {
-  let posted = false;
-  const hook = watchHook(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    posted = true;
-  });
-
-  await fireHook(hook);
-
-  assert.equal(posted, true, "the call would have been dispatched while the line was still unposted");
-});
-
-// A watcher is not a decision — see RuntimeObservers — so whatever it answers,
-// the hook answers the SDK with an empty decision.
-test("watchHook: watching never decides", async () => {
-  const seen: string[] = [];
-  const hook = watchHook((toolName) => void seen.push(toolName));
-
-  assert.deepEqual(await fireHook(hook, preToolUse("Write")), {});
-  assert.deepEqual(seen, ["Write"]);
-});
-
-// Every other hook event reaches the same callback, and a watcher derived from
-// one would report a tool call that is not happening.
-test("watchHook: a non-PreToolUse event is not a tool call", async () => {
-  let calls = 0;
-  const hook = watchHook(() => void (calls += 1));
-
-  await fireHook(hook, { hook_event_name: "PostToolUse", tool_name: "Bash", tool_use_id: "tu_1" });
-
-  assert.equal(calls, 0);
+  assert.deepEqual(records, [
+    { session: "a1", agent: "general-purpose", appendix: false },
+    { session: "a1", skill: "ballerina" },
+    { session: "lead", skill: "go" },
+  ]);
 });

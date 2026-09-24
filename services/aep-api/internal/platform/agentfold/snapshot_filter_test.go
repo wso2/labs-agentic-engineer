@@ -67,7 +67,7 @@ var keepParity = map[string]bool{
 	"specs/design/design.cell":                                     true,
 	"specs/design/system.dsl":                                      true,
 	"specs/design/components/api/design.json":                      true,
-	"specs/validation/validation-criteria.json":                    true,
+	"specs/validation/acceptance/checkout.feature":                 true,
 	"specs/design/components/api/openapi.yaml":                     true,
 	"specs/design/components/api/dependencies/stripe.openapi.yaml": true,
 	// The project security design: one design-level file, by exact path.

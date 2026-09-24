@@ -50,25 +50,23 @@ export interface SpecFileEntry {
 const GROUP_BY_FOLDER: Record<string, SpecGroup> = {
   requirements: "requirements",
   design: "designs",
-  validation: "validation",
-  // The acceptance criteria are a second folder in the SAME section, not a
-  // fourth section: validation is the phase, and an acceptance criterion is the
-  // unit it grades (docs/glossary.md — different axes, both words correct). A
-  // group of its own would put two headers on one phase and force a rail
-  // ordering decision that means nothing to a reader.
-  acceptance: "validation",
+  // `validation` is absent on purpose — see ACCEPTANCE_PREFIX.
 };
 
 /**
- * One acceptance-criteria document, `specs/acceptance/<capability>.feature`.
+ * One acceptance-criteria document,
+ * `specs/validation/acceptance/<capability>.feature`.
  *
  * The single definition, because three places were carrying the same regex —
  * the pane's read-only routing, the Validations page's oracle read, and the
  * rail. A fourth copy is how one of them comes to disagree with the others
  * about what an acceptance file is.
+ *
+ * Narrower than ACCEPTANCE_PREFIX: that admits the folder to the section, this
+ * picks the files the one rail entry stands for.
  */
-export function isAcceptanceFeaturePath(path: string): boolean {
-  return /^specs\/acceptance\/[^/]+\.feature$/.test(path);
+export function isAcceptanceCriteriaFile(path: string): boolean {
+  return /^specs\/validation\/acceptance\/[^/]+\.feature$/.test(path);
 }
 
 // Reference documents (#383) are transient turn inputs, never committed
@@ -79,24 +77,11 @@ export function isAcceptanceFeaturePath(path: string): boolean {
 // #427 was opened to fix.
 const REFERENCES_PREFIX = "specs/requirements/references/";
 
-// Exact paths the view hides although their folder is shown.
-//
-// The RETIRING acceptance oracle. The design turn still mints it — its step 8
-// says to mint BOTH halves (skills/design/SKILL.md) — so every project holds one
-// beside its Gherkin acceptance criteria, and the rail offered two rows with
-// nothing to say which one the platform still grades against. Hidden here rather
-// than removed: the file stays committed and is read on GitHub when anyone needs
-// it, which is why nothing in the console has to keep it reachable.
-//
-// DELETE that entry with the criteria+e2e path itself. That change also takes
-// SpecView's `isValidationCriteriaFile` branches, `fileLabel`'s "Validation
-// criteria" entry and the console's `@aep/ui-validation-view` dependency, which
-// this one leaves standing but unreachable.
-const HIDDEN_PATHS = new Set<string>([
-  "specs/validation/validation-criteria.json",
-  // The build's evaluation input; the criteria it cites are the readable oracle.
-  "specs/validation/agent-scenarios.json",
-]);
+// Admitted by prefix because its PARENT stays shut: `specs/validation/` also
+// holds the build's evaluation inputs, generated JSON with no viewer, which the
+// rail would offer as an editable textarea. Opening one subfolder keeps
+// whatever the phase adds there hidden until someone decides it is a document.
+const ACCEPTANCE_PREFIX = "specs/validation/acceptance/";
 
 /**
  * The spec-view group a path would belong to, or null for a path the view
@@ -109,14 +94,14 @@ const HIDDEN_PATHS = new Set<string>([
  * beyond it (segments.length >= 3). A trailing slash means the path names a
  * DIRECTORY, not a file: it clears the length check (the empty last segment
  * counts) and would otherwise become a selectable entry with no file name.
- * Checked before the hidden-path branches below, so it holds for every group.
+ * Checked before the path branches below, so it holds for every group.
  */
 export function specGroupOf(path: string): SpecGroup | null {
   const segments = path.split("/");
   if (segments[0] !== "specs" || segments.length < 3) return null;
   if (segments[segments.length - 1] === "") return null;
   if (path.startsWith(REFERENCES_PREFIX)) return null;
-  if (HIDDEN_PATHS.has(path)) return null;
+  if (path.startsWith(ACCEPTANCE_PREFIX)) return "validation";
   return GROUP_BY_FOLDER[segments[1] ?? ""] ?? null;
 }
 

@@ -432,7 +432,7 @@ describe("SpecFileList — a dependency's group", () => {
   });
 });
 
-// One entry stands for every specs/acceptance/*.feature, because the pane reads
+// One entry stands for every specs/validation/acceptance/*.feature, because the pane reads
 // them as one set — so the rail cannot carry a row per capability, and the two
 // things `row` derives from a single path have to be folded for a set.
 describe("SpecFileList — Acceptance criteria is one entry", () => {
@@ -464,9 +464,9 @@ describe("SpecFileList — Acceptance criteria is one entry", () => {
   }
 
   const THREE = validationEntries(
-    "specs/acceptance/adding-items.feature",
-    "specs/acceptance/bought-items.feature",
-    "specs/acceptance/shared-list-access.feature",
+    "specs/validation/acceptance/adding-items.feature",
+    "specs/validation/acceptance/bought-items.feature",
+    "specs/validation/acceptance/shared-list-access.feature",
   );
 
   // Every path here is an acceptance capability: the retired criteria document
@@ -502,10 +502,10 @@ describe("SpecFileList — Acceptance criteria is one entry", () => {
   // pulse is folded: it marks the entry while ANY capability is being written.
   it("pulses while the agent writes any capability", () => {
     renderValidation(
-      validationEntries("specs/acceptance/adding-items.feature"),
+      validationEntries("specs/validation/acceptance/adding-items.feature"),
       [
-        { path: "specs/acceptance/adding-items.feature", status: "done", section: "validation" },
-        { path: "specs/acceptance/bought-items.feature", status: "writing", section: "validation" },
+        { path: "specs/validation/acceptance/adding-items.feature", status: "done", section: "validation" },
+        { path: "specs/validation/acceptance/bought-items.feature", status: "writing", section: "validation" },
       ],
     );
     // The pulse is the console's one "an agent is working" dot, rendered
@@ -519,10 +519,10 @@ describe("SpecFileList — Acceptance criteria is one entry", () => {
   // documents exists — with two written and a third planned the entry is real.
   it("stays live while one capability is still planned", () => {
     const nav = renderValidation(
-      validationEntries("specs/acceptance/adding-items.feature"),
+      validationEntries("specs/validation/acceptance/adding-items.feature"),
       [
-        { path: "specs/acceptance/adding-items.feature", status: "done", section: "validation" },
-        { path: "specs/acceptance/bought-items.feature", status: "planned", section: "validation" },
+        { path: "specs/validation/acceptance/adding-items.feature", status: "done", section: "validation" },
+        { path: "specs/validation/acceptance/bought-items.feature", status: "planned", section: "validation" },
       ],
     );
     const entry = within(nav)
@@ -536,7 +536,7 @@ describe("SpecFileList — Acceptance criteria is one entry", () => {
   it("is a disabled ghost before any capability has been written", () => {
     const nav = renderValidation(
       [],
-      [{ path: "specs/acceptance/bought-items.feature", status: "planned", section: "validation" }],
+      [{ path: "specs/validation/acceptance/bought-items.feature", status: "planned", section: "validation" }],
     );
     // The attribute, not a click: MUI disables a ListItemButton with
     // `pointer-events: none`, which jsdom does not enforce — so asserting on a

@@ -35,6 +35,7 @@ import {
   formatBytes,
   formatDuration,
   formatOutcome,
+  isShellTool,
   type FormattedLine,
   type LineTone,
 } from "./line.js";
@@ -292,8 +293,8 @@ export function formatEvent(e: RunEventView): FormattedLine {
       const summary = e.summary ?? e.command ?? "";
       const tool = e.tool ?? "";
       if (!summary) return { text: `$ ${tool || "tool"}`, tone: "muted" };
-      // For Bash the `$` prompt already says "shell", so its name is noise.
-      if (!tool || tool === "Bash") return { text: `$ ${summary}`, tone: "muted" };
+      // For the shell the `$` prompt already says "shell", so its name is noise.
+      if (!tool || isShellTool(tool)) return { text: `$ ${summary}`, tone: "muted" };
       return { text: `$ ${tool} ${summary}`, tone: "muted" };
     }
     case "tool_result": {

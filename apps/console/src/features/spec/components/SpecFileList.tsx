@@ -571,7 +571,7 @@ export function SpecFileList({
         )}
       </Box>
 
-      {/* ONE entry for every specs/acceptance/*.feature, because the pane reads
+      {/* ONE entry for every specs/validation/acceptance/*.feature, because the pane reads
           them as one document set — which is what lets a reader search across
           capabilities instead of picking the right file first (ADR-0031). Which
           files keep an ordinary row and whether this entry appears are decided

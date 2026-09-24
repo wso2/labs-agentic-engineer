@@ -35,7 +35,7 @@
  *
  * Two run modes, same `local.ts` entrypoint:
  *   docker (default) — runs inside the exact `remote-worker/Dockerfile` image
- *     production ships (Debian, pinned Go, baked Playwright/chromium, the
+ *     production ships (Debian, pinned Go, a baked chromium, the
  *     non-root `aep` user), so a skill authored here behaves under the same
  *     toolchain a real cluster run gives it. `local.ts` is never baked into
  *     that image (`.dockerignore` — see `remote-worker/AGENTS.md`), so it is
@@ -45,6 +45,13 @@
  *   host — the prior bare `npx tsx` child process, no Docker dependency.
  *     Opt in with `--host` (faster iteration, weaker parity) when Docker
  *     isn't available or a fast loop matters more than environment fidelity.
+ *
+ * The RUNTIME is the platform's own setting, read from the developer's shell:
+ * `AEP_AGENT_RUNTIME=opencode` (with `AEP_AGENT_MODEL` beside it) is forwarded
+ * into the container exactly as a dispatch stamps it, and picks the image that carries that runtime (`runnerImage`). Only `local.ts` and
+ * the skill library are mounted over the image — the runner's own `src/` is the
+ * image's, so a runner change needs `FORCE=1 make build-runner` before it shows
+ * up here.
  */
 
 import { spawn } from "node:child_process";
@@ -65,6 +72,7 @@ import {
 import { createAgentTags, type AgentTags } from "./agent-tags.js";
 import { openCrewPane } from "./crew-pane.js";
 import { REPO_ROOT } from "../paths.js";
+import { DEFAULT_RUNTIME, runtimeNameFromEnv, UnsupportedRuntimeError, type RuntimeName } from "remote-worker/src/runtime/port.js";
 
 const LOCAL_ENTRY = join(REPO_ROOT, "runners", "remote-worker", "src", "local.ts");
 const BUILD_RUNNER_SCRIPT = join(REPO_ROOT, "deployments", "scripts", "build-runner.sh");
@@ -73,7 +81,16 @@ const BUILD_RUNNER_SCRIPT = join(REPO_ROOT, "deployments", "scripts", "build-run
 // run with no rebuild. It is the ONE library the run reads, and local mode mirrors
 // it into the project dir's .claude/skills/, standing in for the BFF's write.
 const IMAGE_LIBRARY_DIR = "/app/skills";
-const RUNNER_IMAGE = process.env.AGENT_RUNNER_IMAGE || "aep-runner:dev";
+
+/**
+ * The org-level coding-agent settings a dispatch stamps onto the pod, forwarded
+ * BY NAME into the container so a playground run is shaped exactly like a
+ * dispatched one: which runtime and which model. Unset in the
+ * developer's shell means unset in the container, which means the platform
+ * defaults — the same rule the runner applies (`runtime/registry.ts`).
+ */
+export const FORWARDED_AGENT_SETTINGS = ["AEP_AGENT_RUNTIME", "AEP_AGENT_MODEL"] as const;
+
 // The `bal library` tool, which the `ballerina` skill drives by name. The image
 // INSTALLS it (see the Dockerfile) rather than putting a command on PATH: it is a
 // Ballerina CLI tool, so it lives in the `aep` user's local bala repository and
@@ -243,6 +260,84 @@ export function hostToolAdvice(): string | undefined {
 // filesystem, and giving it a durable home there is a decision for the pod's
 // log/artifact story, not something to smuggle in through a dev harness.
 const IMAGE_AGENT_SESSION_DIR = "/home/aep/.claude/projects";
+
+/**
+ * OpenCode's equivalent: its whole session store — every session's messages and
+ * parts in `opencode.db` (sqlite), plus its own log files — under the `aep`
+ * user's data dir. The run's FEED and the raw bus are already on the host
+ * (`progress.ndjson`, `.logs/`); this is the transcript the feed does not carry.
+ */
+const IMAGE_OPENCODE_SESSION_DIR = "/home/aep/.local/share/opencode";
+
+/** What this harness has to know about one runtime to run it. */
+interface RuntimeProfile {
+  /** The env var that overrides the image, and the image when it is unset. */
+  imageEnv: string;
+  defaultImage: string;
+  /** Where the runtime keeps its session store inside the image. */
+  sessionDir: string;
+  /** Why it cannot start in this mode with this credential, or undefined. */
+  refusal(mode: "docker" | "host", credential: CodingCredential | undefined): string | undefined;
+}
+
+/**
+ * One entry per runtime the contract names. The OpenCode image is the Claude
+ * Code one plus the `opencode` binary, the guard plugin and a pre-warmed home,
+ * but a Claude Code run stays on its own image — the one a Claude Code org's
+ * pods run.
+ */
+const RUNTIME_PROFILES: Record<RuntimeName, RuntimeProfile> = {
+  "claude-code": {
+    imageEnv: "AGENT_RUNNER_IMAGE",
+    defaultImage: "aep-runner:dev",
+    sessionDir: IMAGE_AGENT_SESSION_DIR,
+    refusal: () => undefined,
+  },
+  opencode: {
+    imageEnv: "AGENT_RUNNER_IMAGE_OPENCODE",
+    defaultImage: "aep-runner-opencode:dev",
+    sessionDir: IMAGE_OPENCODE_SESSION_DIR,
+    // The binary and the guard plugin live in the IMAGE, so there is no host
+    // mode; and OpenCode authenticates with an API key only (Claude
+    // subscription OAuth was removed in 1.3.0).
+    refusal: (mode, credential) => {
+      if (mode === "host") {
+        return "OpenCode runs in docker mode only — the binary and the guard plugin live in the aep-runner-opencode image; drop --host";
+      }
+      if (credential?.envVar === "CLAUDE_CODE_OAUTH_TOKEN") {
+        return "OpenCode authenticates with an API key only — AEP_CODING_ANTHROPIC_KEY holds a `claude setup-token` token; unset it or set an API key";
+      }
+      return undefined;
+    },
+  },
+};
+
+export function runnerImage(runtime: RuntimeName, env: NodeJS.ProcessEnv = process.env): string {
+  const profile = RUNTIME_PROFILES[runtime];
+  return env[profile.imageEnv] || profile.defaultImage;
+}
+
+/**
+ * The runtime this run gets, or why it cannot start in this mode with these
+ * credentials. Checked before any build or spawn, for refusals the runner would
+ * otherwise make a minute later. `AEP_AGENT_RUNTIME` is read by the RUNNER's
+ * own parser, so an unknown name is refused exactly as a pod would refuse it.
+ */
+export function resolveRuntime(
+  mode: "docker" | "host",
+  credential: CodingCredential | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): { runtime: RuntimeName } | { refusal: string } {
+  let runtime: RuntimeName;
+  try {
+    runtime = runtimeNameFromEnv(env);
+  } catch (err) {
+    if (err instanceof UnsupportedRuntimeError) return { refusal: err.message };
+    throw err;
+  }
+  const refusal = RUNTIME_PROFILES[runtime].refusal(mode, credential);
+  return refusal ? { refusal } : { runtime };
+}
 
 /** One NDJSON event off the runner's v2 feed, as this harness reads it. */
 export type ProgressEvent = RunEventView;
@@ -455,7 +550,7 @@ interface Invocation {
 export function hostInvocation(opts: CodingRunOptions, runDir: string): Invocation {
   // Host mode has no image, so every tool a skill names comes off the developer's
   // own machine — which is exactly what --host already means for `bal`, `go` and
-  // `playwright-cli`, and now for `bal library` too: it is a `bal` tool, resolved
+  // `agent-browser`, and now for `bal library` too: it is a `bal` tool, resolved
   // out of `~/.ballerina`, so there is no PATH entry to point anywhere. What that
   // resolves to is reported by `hostToolAdvice`, not patched here.
   const env: NodeJS.ProcessEnv = {
@@ -586,7 +681,9 @@ export function dockerInvocation(opts: CodingRunOptions, runDir: string, contain
     "AEP_LOCAL_RUN_DIR=/workspace/run",
     "-e",
     `AEP_LOCAL_SKILLS_DIR=${IMAGE_LIBRARY_DIR}`,
-    RUNNER_IMAGE,
+    // By name, like the credential: docker forwards each only when it is set.
+    ...FORWARDED_AGENT_SETTINGS.flatMap((name) => ["-e", name]),
+    runnerImage(runtimeNameFromEnv()),
     "npx",
     "tsx",
     "src/local.ts",
@@ -642,11 +739,16 @@ export function isFailedAgent(e: ProgressEvent): boolean {
  * copy legitimately finds nothing when a failure lands before the SDK has
  * written anything.
  */
-async function snapshotAgentSessions(containerName: string, runDir: string, label: string): Promise<void> {
+async function snapshotAgentSessions(
+  containerName: string,
+  runDir: string,
+  label: string,
+  runtime: RuntimeName,
+): Promise<void> {
   const dest = join(runDir, "agent-sessions", label);
   try {
     mkdirSync(dest, { recursive: true });
-    await runProcess("docker", ["cp", `${containerName}:${IMAGE_AGENT_SESSION_DIR}/.`, dest], "ignore");
+    await runProcess("docker", ["cp", `${containerName}:${RUNTIME_PROFILES[runtime].sessionDir}/.`, dest], "ignore");
   } catch {
     // nothing to rescue, or docker refused — the run's own outcome is unaffected
   }
@@ -724,6 +826,13 @@ export async function runCodingAgent(opts: CodingRunOptions): Promise<CodingRunR
   const progressLog = createWriteStream(join(runDir, "progress.ndjson"), { flags: "w" });
 
   const mode = opts.mode ?? "docker";
+  const resolved = resolveRuntime(mode, codingCredential());
+  if ("refusal" in resolved) {
+    progressLog.end();
+    if (!opts.silent) output.write(`  ✗ ${resolved.refusal}\n`);
+    return { exitCode: 2, runDir };
+  }
+  const { runtime } = resolved;
 
   if (mode === "docker") {
     // A container reaches no credential store, so the key is the only auth it
@@ -769,6 +878,8 @@ export async function runCodingAgent(opts: CodingRunOptions): Promise<CodingRunR
     if (note) output.write(`  ℹ ${note}\n`);
   }
 
+  if (!opts.silent && runtime !== DEFAULT_RUNTIME) output.write(`  ℹ runtime: ${runtime} (${runnerImage(runtime)})\n`);
+
   // Names this run's container so its scratch can be copied out after it exits.
   // The run dir's timestamp is already unique per run; `docker` accepts it as-is.
   const containerName = mode === "docker" ? `aep-play-${stamp}` : "";
@@ -813,7 +924,7 @@ export async function runCodingAgent(opts: CodingRunOptions): Promise<CodingRunR
         // agent's files, so it starts now rather than after this batch of
         // events is rendered.
         if (containerName && isFailedAgent(event)) {
-          void snapshotAgentSessions(containerName, runDir, event.agentId || `seq-${String(events.length)}`);
+          void snapshotAgentSessions(containerName, runDir, event.agentId || `seq-${String(events.length)}`, runtime);
         }
         if (opts.silent) continue;
         for (const rendered of render(event)) pane.line(rendered);
@@ -851,7 +962,7 @@ export async function runCodingAgent(opts: CodingRunOptions): Promise<CodingRunR
       // `--rm` is not passed: this is the only moment the lead's transcript and
       // the backgrounded tasks' output files can be taken out of it.
       if (containerName) {
-        await snapshotAgentSessions(containerName, runDir, "final");
+        await snapshotAgentSessions(containerName, runDir, "final", runtime);
         await removeContainer(containerName);
       }
       if (!opts.silent && events.length > 0) {

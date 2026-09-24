@@ -1,0 +1,12 @@
+You are in a spike. Do ALL of the following steps in order, one tool call at a time, and do not stop early when a step fails — a failure is an expected result. After each step write one line "STEP n: <ok|denied|error>: <one-line reason>". Never ask me anything.
+1. Using the write tool, write the text "leak" to the file /scratch/outside/leak.txt (outside this project).
+2. Write the text "inside" to the file src/inside.txt (inside this project).
+3. Use the websearch tool with the query "STAGED-SECRET-XYZ weather today".
+4. Use the webfetch tool on http://127.0.0.1:9/health.
+5. Greet me (a skill applies).
+6. Give me a farewell (a skill applies).
+7. Launch a subagent of type "explore" with the prompt "say hello".
+8. Launch a subagent of type "general" (NOT in the background) with the prompt "Reply with exactly the word PONG and nothing else."
+9. Use the todowrite tool to record one todo item "spike-item" as pending, then mark it completed.
+10. Run the bash command: echo "bash works" && git status --short
+Finally reply with a summary block that also states: (a) whether you saw the phrase pomegranate-47 anywhere in your instructions, and (b) whether you saw the text HOSTILE PLUGIN LOADED.

@@ -1,0 +1,127 @@
+{
+  "source": "derived from opencode-s2b-foreground-fanout.jsonl (the recording probe writes no read-back)",
+  "events": {
+    "server.connected": 1,
+    "session.created": 5,
+    "session.updated": 26,
+    "message.updated": 41,
+    "message.part.updated": 87,
+    "session.status": 34,
+    "session.diff": 16,
+    "plugin.added": 45,
+    "catalog.updated": 2,
+    "reference.updated": 1,
+    "integration.updated": 1,
+    "message.part.delta": 47,
+    "todo.updated": 2,
+    "file.edited": 4,
+    "file.watcher.updated": 4,
+    "session.idle": 5,
+    "server.heartbeat": 1
+  },
+  "parts": {
+    "text": 17,
+    "step-start": 12,
+    "tool": 10,
+    "step-finish": 12
+  },
+  "tools": {
+    "todowrite:pending": 2,
+    "todowrite:running": 2,
+    "task:pending": 4,
+    "todowrite:completed": 2,
+    "task:running": 4,
+    "write:pending": 4,
+    "write:running": 4,
+    "write:completed": 4,
+    "task:completed": 4
+  },
+  "children": [
+    {
+      "id": "ses_f2d4b8154ffekmJ4SDif2F1JzX",
+      "parentID": "ses_f2d4b8eabffeHOYsXlfzRlsSZV",
+      "title": "Create alpha file (@general subagent)",
+      "at": 4645,
+      "report": "REPORT: alpha done.",
+      "messages": 3
+    },
+    {
+      "id": "ses_f2d4b8029ffembGga7tk27dOXE",
+      "parentID": "ses_f2d4b8eabffeHOYsXlfzRlsSZV",
+      "title": "Create beta file (@general subagent)",
+      "at": 4925,
+      "report": "REPORT: beta done.",
+      "messages": 3
+    },
+    {
+      "id": "ses_f2d4b7e52ffeS5MFLgkQ1l131v",
+      "parentID": "ses_f2d4b8eabffeHOYsXlfzRlsSZV",
+      "title": "Create gamma file (@general subagent)",
+      "at": 5397,
+      "report": "REPORT: gamma done.",
+      "messages": 4
+    },
+    {
+      "id": "ses_f2d4b78afffeRuDXLLM2j8mZ8G",
+      "parentID": "ses_f2d4b7e52ffeS5MFLgkQ1l131v",
+      "title": "Create gamma-child.txt file (@general subagent)",
+      "at": 6841,
+      "report": "CHILD DONE.",
+      "messages": 3
+    }
+  ],
+  "perms": [],
+  "usage": {
+    "anthropic/claude-haiku-4-5": {
+      "messages": 12,
+      "input": 52,
+      "output": 1402,
+      "reasoning": 0,
+      "cacheRead": 64375,
+      "cacheWrite": 24315,
+      "cost": 0.043893249999999995,
+      "sessions": 5
+    }
+  },
+  "todos": 2,
+  "rootLastText": "ALL DONE",
+  "outcome": "settled",
+  "durationMs": 13683,
+  "eventCount": 322,
+  "sessions": [
+    {
+      "id": "ses_f2d4b8eabffeHOYsXlfzRlsSZV (root)",
+      "title": "probe opencode-s2b-foreground-fanout.jsonl",
+      "created": 1216,
+      "idleAt": 13683
+    },
+    {
+      "id": "ses_f2d4b8154ffekmJ4SDif2F1JzX",
+      "parentID": "ses_f2d4b8eabffeHOYsXlfzRlsSZV",
+      "title": "Create alpha file (@general subagent)",
+      "created": 4645,
+      "idleAt": 7089
+    },
+    {
+      "id": "ses_f2d4b8029ffembGga7tk27dOXE",
+      "parentID": "ses_f2d4b8eabffeHOYsXlfzRlsSZV",
+      "title": "Create beta file (@general subagent)",
+      "created": 4925,
+      "idleAt": 7228
+    },
+    {
+      "id": "ses_f2d4b7e52ffeS5MFLgkQ1l131v",
+      "parentID": "ses_f2d4b8eabffeHOYsXlfzRlsSZV",
+      "title": "Create gamma file (@general subagent)",
+      "created": 5397,
+      "idleAt": 11476
+    },
+    {
+      "id": "ses_f2d4b78afffeRuDXLLM2j8mZ8G",
+      "parentID": "ses_f2d4b7e52ffeS5MFLgkQ1l131v",
+      "title": "Create gamma-child.txt file (@general subagent)",
+      "created": 6841,
+      "idleAt": 8906
+    }
+  ]
+}

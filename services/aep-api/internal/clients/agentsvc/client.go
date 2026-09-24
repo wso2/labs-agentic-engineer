@@ -140,7 +140,12 @@ type PlanContextFile struct {
 // ref differs from the current base). The tool set and the flow's eager skills
 // are NOT sent: the agents service derives both from Turn.
 type TurnRequest struct {
-	Turn                   TurnSpec     `json:"turn"`
+	Turn TurnSpec `json:"turn"`
+	// Model is the organization's chosen model for this turn (its one agent
+	// model, resolved per turn). Omitted → the agents service's default
+	// (AGENT_MODEL), which is what a local playground run relies on. Pinned by
+	// @aep/agent-stream's TurnRequest.
+	Model                  string       `json:"model,omitempty"`
 	Workspace              WorkspaceRef `json:"workspace"`
 	FilesChangedExternally bool         `json:"filesChangedExternally,omitempty"`
 	// Target is the spec-bundle path this turn should write to, when the caller

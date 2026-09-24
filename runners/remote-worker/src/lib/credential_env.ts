@@ -39,7 +39,7 @@ import { MIN_LITERAL_LEN } from "./progress/scrubber.js";
 // user's own dependency, hence unnameable here) stays covered by the DLP sweep.
 //
 // BOTH members of each pair are listed, because exactly one is typically set: a
-// run bills either ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (ADR-0016), and
+// run bills either ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (ADR-0036), and
 // git resolves either GITHUB_TOKEN or GH_TOKEN. Priming only whichever happens
 // to be set would leave the other unredacted. PUBLISHER_CLIENT_ID is absent on
 // purpose — it is an identifier, not a secret, and websearch_dlp.ts treats it as

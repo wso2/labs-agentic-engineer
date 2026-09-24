@@ -37,7 +37,7 @@ const FLOW_APPROVE = "specs/design/flows/approve-an-expense.md";
 const SECURITY = "specs/design/security.json";
 const PORTAL = "specs/design/components/expense-portal/design.json";
 const API = "specs/design/components/expense-api/design.json";
-const CRITERIA = "specs/validation/validation-criteria.json";
+const ACCEPTANCE = "specs/validation/acceptance/submitting-an-expense.feature";
 
 // The document each write delivers, as plain text — `addFile` below is what
 // escapes it for the JSON input stream, so a document may hold quotes and
@@ -83,7 +83,8 @@ const CONTENT: Record<string, string> = {
   ),
   [PORTAL]: '{"componentName":"expense-portal","kind":"web-app"}',
   [API]: '{"componentName":"expense-api","kind":"service"}',
-  [CRITERIA]: '{"criteria":[{"story":1,"then":"submission is refused without a receipt"}]}',
+  [ACCEPTANCE]:
+    "Feature: Submitting an expense\n\n  @story-1\n  Rule: An expense needs its receipt before it can be submitted\n\n    Scenario: Submitting an expense that carries its receipt\n      Given Dan has attached a receipt to a 42.00 expense\n      When Dan submits it\n      Then the expense is submitted\n\n    @negative\n    Scenario: An expense with no receipt is refused\n      Given Dan has entered a 42.00 expense with no receipt\n      When Dan tries to submit it\n      Then he has no submitted expenses\n",
 };
 
 type MockFrame = Record<string, unknown>;
@@ -115,7 +116,7 @@ function addFile(id: string, path: string): MockFrame[] {
 export function designPlanFrames(turnId: string, failing: boolean): MockFrame[] {
   const wave1 = { paths: [CELL, DOMAIN_MODEL, SECURITY] };
   // DOMAIN_MODEL is restated on purpose — the union must dedupe it.
-  const wave2 = { paths: [DOMAIN_MODEL, FLOW_SUBMIT, FLOW_APPROVE, PORTAL, API, CRITERIA] };
+  const wave2 = { paths: [DOMAIN_MODEL, FLOW_SUBMIT, FLOW_APPROVE, PORTAL, API, ACCEPTANCE] };
   const frames: MockFrame[] = [
     { type: "text-delta", delta: "Working on the design — reading the requirements first. " },
     // Wave one via the streamed-input path plus the complete call.
@@ -162,7 +163,7 @@ export function designPlanFrames(turnId: string, failing: boolean): MockFrame[] 
   if (failing) {
     // Dies mid-write: the API design's input opens and its path resolves
     // (planned → writing), then the turn fails — error on the API design,
-    // the validation criteria still a ghost.
+    // the acceptance criteria still a ghost.
     frames.push(
       { type: "tool-input-start", id: `f-api-${turnId}`, toolName: "addFile" },
       { type: "tool-input-delta", id: `f-api-${turnId}`, delta: `{"path":"${API}","content":"{` },
@@ -172,8 +173,8 @@ export function designPlanFrames(turnId: string, failing: boolean): MockFrame[] 
   }
   frames.push(
     ...addFile(`f-api-${turnId}`, API),
-    { type: "text-delta", delta: "Writing the validation criteria… " },
-    ...addFile(`f-criteria-${turnId}`, CRITERIA),
+    { type: "text-delta", delta: "Writing the acceptance criteria… " },
+    ...addFile(`f-acceptance-${turnId}`, ACCEPTANCE),
     { type: "text-delta", delta: "\n\nThe design is ready — read it at your pace." },
     { type: "turn-committed", noChanges: true },
   );

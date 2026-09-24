@@ -23,7 +23,6 @@ const OPENAPI_RE = /\/openapi\.ya?ml$/;
 const GRAPHQL_SCHEMA_RE = /^specs\/design\/dependencies\/[^/]+\/schema\.graphql$/;
 const COMPONENT_DESIGN_RE = /^specs\/design\/components\/[^/]+\/design\.json$/;
 const SDK_MANIFEST_RE = /^specs\/design\/dependencies\/[^/]+\/sdk\.json$/;
-const VALIDATION_CRITERIA_RE = /^specs\/validation\/validation-criteria\.json$/;
 const AGENT_AFM_RE = /^specs\/design\/components\/[^/]+\/agent\.afm\.md$/;
 
 function basename(path: string): string {
@@ -64,7 +63,6 @@ export function fileLabel(path: string): string {
   if (isDependencyDefinition(path)) return "Definition";
   if (GRAPHQL_SCHEMA_RE.test(path)) return "API";
   if (SDK_MANIFEST_RE.test(path)) return "SDK";
-  if (VALIDATION_CRITERIA_RE.test(path)) return "Validation criteria";
   // A document nothing above names — a feature file most of the time, where
   // the filename IS the feature's name once the extension is off it. Keeping
   // the extension would leave the one surface the user reads throughout still

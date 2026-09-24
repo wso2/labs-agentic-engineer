@@ -1509,11 +1509,10 @@ describe("SpecView follows the write (#576, ADR-0026)", () => {
   });
 
   // The follow is the ONE way a hidden document could still name itself. The
-  // design turn mints the retired validation criteria on every project and the
-  // spec view drops the path everywhere else (mapping.ts) — but the follow takes
-  // its path from the plan, not from the file list, so without a guard the pane
-  // announced "Waiting for the agent to write Validation criteria…" mid-turn:
-  // the one document just hidden, named, with no row to go back to.
+  // spec view drops `specs/validation/` everywhere else (mapping.ts) — but the
+  // follow takes its path from the plan, not from the file list, so without a
+  // guard the pane announced "Waiting for the agent to write…" mid-turn: a
+  // document just hidden, named, with no row to go back to.
   it("does not follow a write into a document the view hides", () => {
     render(<SpecView projectName="proj1" />);
     act(() => {
@@ -1521,7 +1520,7 @@ describe("SpecView follows the write (#576, ADR-0026)", () => {
       planFileWriting(chatKey, "t1", "specs/validation/validation-criteria.json");
     });
     expect(screen.queryByText(/Waiting for the agent to write/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Validation criteria/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/validation-criteria/)).not.toBeInTheDocument();
   });
 
   it("a new turn resets to following", () => {
@@ -1893,112 +1892,6 @@ describe("designWarningIntro", () => {
   });
 });
 
-// The criteria pane is where a reader meets the acceptance oracle cold: the rail
-// carries no explanation, the design turn mints the file with no announcement, and
-// the only sentence in the product that said what criteria were for lived on the
-// Validations page's empty state. This is the surface that gap was reported
-// against, so the description's presence here is the change's real coverage.
-// The criteria document is HIDDEN from the spec view (mapping.ts): nothing the
-// app produces can select it any more, so these reach `ValidationView` only
-// because they mock `useSpecFiles` directly. They stand with the renderer, until
-// the criteria+e2e path is removed and both go together.
-describe("SpecView validation criteria explanation", () => {
-  const CRITERIA_JSON = JSON.stringify({
-    requirements: [
-      {
-        id: "REQ-001",
-        statement: "Shoppers can search the catalog.",
-        criteria: [
-          { id: "AC-001-a", must: "Search returns matches", method: "e2e" },
-          { id: "AC-001-b", must: "Payment is encrypted", method: "manual" },
-        ],
-      },
-    ],
-  });
-
-  beforeEach(() => {
-    mockUseSpecFiles.mockReturnValue({
-      data: [
-        {
-          path: "specs/validation/validation-criteria.json",
-          sha: "abc",
-          group: "validation",
-        },
-      ],
-      isPending: false,
-      isError: false,
-      error: null,
-      refetch: vi.fn(),
-    });
-    mockUseSpecFileContent.mockReturnValue({
-      data: { sha: "abc", content: CRITERIA_JSON },
-      isPending: false,
-      isError: false,
-      error: null,
-      refetch: vi.fn(),
-    });
-  });
-
-  it("explains what the criteria are, where they come from, and how to change one", () => {
-    render(<SpecView projectName="proj1" />);
-
-    expect(
-      screen.getByText(/Each criterion represents one thing your system must do/),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/based on your requirements/)).toBeInTheDocument();
-    // Both halves, because only the automatable ones are checked for the reader.
-    // Claiming all of them were is what this sentence used to do, above a list
-    // whose glyphs said otherwise.
-    expect(
-      screen.getByText(/the ones that can be automated are checked/),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/The rest you have to check yourself/),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/To change one, ask the agent/)).toBeInTheDocument();
-  });
-
-  it("marks who checks each criterion, and never with a run signal", () => {
-    // This pane has no run attached — it is a file preview of the oracle — so a
-    // chip here would name a run that does not exist. `manual` is the one that
-    // regressed: a rule giving manual criteria their final word was ranked above
-    // the has-a-run check, and stamped "Manual" onto every preview.
-    render(<SpecView projectName="proj1" />);
-
-    // Each row's mark is a glyph, so its phrase is what identifies it. The glyph
-    // carries no visible text of its own, which is why the phrase is also the
-    // accessible name.
-    expect(
-      screen.getByText("Validated automatically by the agent."),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Requires manual validation.")).toBeInTheDocument();
-    for (const chip of ["Manual", "Pending", "Passed", "Failed", "Planned"]) {
-      expect(screen.queryByText(chip)).not.toBeInTheDocument();
-    }
-  });
-
-  it("names no method at all — the glyph does it", () => {
-    // `e2e` is an acronym the console lexicon forbids, and "auto" is the word it
-    // is spelled as elsewhere. Neither belongs on a row, where the glyph carries
-    // the distinction, so neither may leak here.
-    render(<SpecView projectName="proj1" />);
-
-    for (const word of ["e2e", "auto", "manual"]) {
-      expect(screen.queryByText(word)).not.toBeInTheDocument();
-    }
-  });
-
-  it("shortens the ids, keeping the full one on hover", () => {
-    render(<SpecView projectName="proj1" />);
-
-    expect(screen.getByText("1")).toBeInTheDocument();
-    expect(screen.getByText("a")).toBeInTheDocument();
-    expect(screen.getByText("b")).toBeInTheDocument();
-    expect(screen.queryByText("AC-001-a")).not.toBeInTheDocument();
-    expect(screen.queryByText("REQ-001")).not.toBeInTheDocument();
-  });
-});
-
 // ---------------------------------------------------------------------------
 // What this view hands the Security page and the API view
 // ---------------------------------------------------------------------------
@@ -2252,8 +2145,8 @@ describe("SpecView acceptance criteria", () => {
   beforeEach(() => {
     mockUseSpecFiles.mockReturnValue({
       data: [
-        { path: "specs/acceptance/adding-items.feature", sha: "a", group: "validation" },
-        { path: "specs/acceptance/bought-items.feature", sha: "b", group: "validation" },
+        { path: "specs/validation/acceptance/adding-items.feature", sha: "a", group: "validation" },
+        { path: "specs/validation/acceptance/bought-items.feature", sha: "b", group: "validation" },
       ],
       isPending: false,
       isError: false,
@@ -2262,8 +2155,8 @@ describe("SpecView acceptance criteria", () => {
     });
     mockAcceptance = {
       features: [
-        { path: "specs/acceptance/adding-items.feature", content: ADDING },
-        { path: "specs/acceptance/bought-items.feature", content: FEATURE },
+        { path: "specs/validation/acceptance/adding-items.feature", content: ADDING },
+        { path: "specs/validation/acceptance/bought-items.feature", content: FEATURE },
       ],
       isPending: false,
       isError: false,

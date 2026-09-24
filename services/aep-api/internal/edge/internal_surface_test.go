@@ -70,8 +70,7 @@ type fakeValidationContext struct {
 func (f *fakeValidationContext) ValidationContext(_ context.Context, cycleID, orgHandle string) (*validation.ValidationContextResponse, error) {
 	f.gotCycle, f.gotOrg = cycleID, orgHandle
 	return &validation.ValidationContextResponse{
-		Endpoints:    []validation.ComponentEndpoint{{Component: "hello-webapp", URL: "https://hello.example"}},
-		CriteriaPath: "specs/validation/validation-criteria.json",
+		Endpoints: []validation.ComponentEndpoint{{Component: "hello-webapp", URL: "https://hello.example"}},
 	}, nil
 }
 

@@ -42,7 +42,7 @@ function step(text: string) {
 }
 
 const BOUGHT: AcceptanceFeatureSource = {
-  path: "specs/acceptance/bought-items.feature",
+  path: "specs/validation/acceptance/bought-items.feature",
   content: [
     "Feature: Bought items",
     "",
@@ -62,7 +62,7 @@ const BOUGHT: AcceptanceFeatureSource = {
 };
 
 const ADDING: AcceptanceFeatureSource = {
-  path: "specs/acceptance/adding-items.feature",
+  path: "specs/validation/acceptance/adding-items.feature",
   content: [
     "Feature: Adding items",
     "",
@@ -87,7 +87,7 @@ function report(scenarios: unknown[]): string {
 
 const BLOCKED = {
   feature: "Bought items",
-  featureFile: "specs/acceptance/bought-items.feature",
+  featureFile: "specs/validation/acceptance/bought-items.feature",
   rule: "A bought item is locked from further edits",
   scenario: "Editing a bought item is refused",
   outcome: "blocked",
@@ -105,7 +105,7 @@ const BLOCKED = {
 
 const PASSED = {
   feature: "Bought items",
-  featureFile: "specs/acceptance/bought-items.feature",
+  featureFile: "specs/validation/acceptance/bought-items.feature",
   rule: "A bought item is locked from further edits",
   scenario: "Marking an item bought",
   outcome: "passed",
@@ -154,7 +154,7 @@ describe("the specification alone", () => {
   // whose job is "are the refusals covered".
   it("marks a refusal that inherits the tag from its rule", () => {
     const inherited: AcceptanceFeatureSource = {
-      path: "specs/acceptance/locked.feature",
+      path: "specs/validation/acceptance/locked.feature",
       content: [
         "Feature: Locked items",
         "",
@@ -186,7 +186,7 @@ describe("the specification alone", () => {
   // especially would put a refusal SCENARIO in the same bucket as a BLOCKED one.
   it("tells a refusal apart from a story reference", () => {
     const tagged: AcceptanceFeatureSource = {
-      path: "specs/acceptance/tagged.feature",
+      path: "specs/validation/acceptance/tagged.feature",
       content: [
         "Feature: Tagged",
         "",

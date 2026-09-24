@@ -34,6 +34,8 @@ test("tool_use: a bare argument keeps its verb, a whole sentence does not gain o
   assert.equal(formatLine({ kind: "tool_use", tool: "", summary: "Reading src/App.tsx" }).text, "$ Reading src/App.tsx");
   // Bash never gets its name printed: the `$` prompt already says "shell".
   assert.equal(formatLine({ kind: "tool_use", tool: "Bash", summary: "bal build" }).text, "$ bal build");
+  // …under either runtime's spelling (OpenCode's shell is `bash`).
+  assert.equal(formatLine({ kind: "tool_use", tool: "bash", summary: "bal build" }).text, "$ bal build");
   // No summary at all still names something.
   assert.equal(formatLine({ kind: "tool_use", tool: "Glob", summary: "" }).text, "$ Glob");
 });

@@ -19,7 +19,7 @@
 // Interim VALIDATION-phase task creator for the LOCAL harness (in production the
 // platform mints the issue — see services/aep-api/internal/delivery/README.md).
 //
-// Reads the `.feature` files under `specs/acceptance/` from a project repo
+// Reads the `.feature` files under `specs/validation/acceptance/` from a project repo
 // (authored there by the spec agent's `acceptance-criteria` skill) and
 // creates the GitHub validation issue the coding agent will be dispatched
 // against. Stands in for the platform trigger + issue builder until that
@@ -36,7 +36,7 @@ import { execFileSync } from "node:child_process";
 
 // ---------------------------------------------------------------------------
 // Target repo — the deployed project's repo (expected structure:
-// specs/acceptance/*.feature committed, specs/design/** for
+// specs/validation/acceptance/*.feature committed, specs/design/** for
 // component design docs). Required via --repo (or the REPO env var) so the
 // issue is never created against a stale hardcoded default.
 // ---------------------------------------------------------------------------
@@ -50,13 +50,13 @@ function resolveRepo() {
   if (!repo || !/^[^/\s]+\/[^/\s]+$/.test(repo)) {
     console.error(
       "create-validation-issue: pass --repo <owner/repo> (or set REPO) — " +
-        "the project repo holding specs/acceptance/*.feature",
+        "the project repo holding specs/validation/acceptance/*.feature",
     );
     process.exit(1);
   }
   return repo;
 }
-const CRITERIA_DIR = "specs/acceptance";
+const CRITERIA_DIR = "specs/validation/acceptance";
 const LABELS = ["aep", "validation"];
 
 // Deployed endpoint URLs + test credentials are NOT written into the issue: the
@@ -96,7 +96,7 @@ function fetchCriteria() {
 // to drive.
 function validateCriteria(doc) {
   const fail = (msg) => {
-    throw new Error(`specs/acceptance/ invalid: ${msg}`);
+    throw new Error(`specs/validation/acceptance/ invalid: ${msg}`);
   };
   if (doc.files.length === 0) fail("no .feature files");
   for (const f of doc.files) {

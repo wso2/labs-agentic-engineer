@@ -171,6 +171,9 @@ func Load() (Config, error) {
 		// callbacks deploy as a matched pair. Empty disables dispatch, which
 		// fails loudly, rather than silently running an unpinned image.
 		AgentRunnerImage: r.readOptionalString("AGENT_RUNNER_IMAGE", ""),
+		// The OpenCode variant of the same image, pinned the same way (Helm
+		// codingAgentRunner.opencodeImage / compose AGENT_RUNNER_IMAGE_OPENCODE).
+		AgentRunnerImageOpenCode: r.readOptionalString("AGENT_RUNNER_IMAGE_OPENCODE", ""),
 		// Finished cycle Components stay queryable via the observer until
 		// pruned. Default 10 matches codingagent.DefaultCodingAgentComponentRetention;
 		// local compose lowers this (often to 2) to make LRU prune observable.

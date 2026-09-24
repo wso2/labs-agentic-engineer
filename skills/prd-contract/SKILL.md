@@ -79,9 +79,8 @@ buildable with them outstanding.>
   defines.
 - **The story list is total.** Every story the PRD defines ships. Work that
   should come later is an Out of Scope line, or it is not a story yet.
-- **No acceptance criteria.** Validation criteria live in
-  `specs/validation/validation-criteria.json` — the single acceptance oracle.
-  The PRD never duplicates them.
+- **No acceptance criteria.** They live in `specs/validation/acceptance/<slug>.feature`
+  — the acceptance oracle. The PRD never duplicates them.
 - **The PRD body stays lean.** A story is one line; what the product does
   is the story list, not an elaboration of it. There is no separate
   per-feature document — the PRD is the whole requirements document.

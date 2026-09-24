@@ -115,7 +115,9 @@ func newPlanRig(t *testing.T, seed map[string]string, specTag string) *planRig {
 		fakeRepos{repo: repoRow},
 		planVersions{specTag: specTag, scope: rigScope},
 		sourcecontrol.NewGitOpsService(nilResolver{}, fx.Engine),
-		func(context.Context, string) (string, error) { return "sk-test", nil },
+		func(context.Context, string) (spec.AgentLLM, error) {
+			return spec.AgentLLM{Key: "sk-test", Model: "claude-haiku-4-5"}, nil
+		},
 		turn,
 		issues,
 		issues.writer(),
@@ -152,6 +154,10 @@ func TestPlanIntoMilestone_DispatchesWorkspaceShape(t *testing.T) {
 	// states what the turn is for and stops there.
 	if req.Turn.Kind != agentsvc.TurnKindPlan {
 		t.Errorf("turn kind = %q, want %q", req.Turn.Kind, agentsvc.TurnKindPlan)
+	}
+	// The planner runs on the org's model, like every spec agent.
+	if req.Model != "claude-haiku-4-5" {
+		t.Errorf("turn model = %q, want the org's model", req.Model)
 	}
 	ws := req.Workspace
 	if ws.Ref != r.fx.Origin.HeadSHA(t) {
@@ -213,7 +219,7 @@ func TestPlanIntoMilestone_SkillsRepoGone_TypedError(t *testing.T) {
 		fakeRepos{repo: repoRow},
 		planVersions{specTag: "v1"},
 		sourcecontrol.NewGitOpsService(nilResolver{}, fx.Engine),
-		func(context.Context, string) (string, error) { return "sk-test", nil },
+		func(context.Context, string) (spec.AgentLLM, error) { return spec.AgentLLM{Key: "sk-test"}, nil },
 		turn,
 		planIssues,
 		planIssues.writer(),

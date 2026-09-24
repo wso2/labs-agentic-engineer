@@ -29,7 +29,7 @@
 import pg from "pg";
 import { registerTelemetry } from "ai";
 import { createApp } from "./server.js";
-import { createModel, resolveModelId } from "./shared/model.js";
+import { createModel } from "./shared/model.js";
 import { captureTelemetry } from "./shared/telemetry.js";
 import { pruneDevtoolsFile } from "./shared/devtools-retention.js";
 import { intEnv } from "./shared/env.js";
@@ -100,8 +100,8 @@ async function main(): Promise<void> {
   const store = await buildStore();
   const app = createApp({
     store,
-    buildModel: (apiKey) => createModel({ apiKey }), // built PER TURN from X-Anthropic-Key
-    modelId: resolveModelId(), // the id createModel resolves above (usage attribution, #249)
+    // Built PER TURN from X-Anthropic-Key and the turn's resolved model id.
+    buildModel: (apiKey, model) => createModel({ apiKey, model }),
     auth: buildAuthConfig(), // throws here if neither JWKS nor secret is set (gate is always on)
   });
 

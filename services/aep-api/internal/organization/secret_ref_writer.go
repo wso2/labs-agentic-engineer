@@ -470,18 +470,13 @@ func (w *SecretRefWriter) resolveVaultKey(ctx context.Context, secretRefName str
 	return vaultKey, nil
 }
 
-// DeleteAnthropic best-effort removes one role's SM-API secret + clears the
-// triplet on that role's `org_anthropic_credentials` row. Tolerates "already
+// DeleteAnthropic best-effort removes one role's SM-API secret. The caller
+// passes the secret-ref name it captured from the row before deleting it — the
+// credential row is already gone by the time this runs (the delete commits
+// first), so there is no triplet left to read or clear. Tolerates "already
 // gone" responses (the underlying client returns nil on 404).
-func (w *SecretRefWriter) DeleteAnthropic(ctx context.Context, ocOrgID string, role AnthropicRole) error {
+func (w *SecretRefWriter) DeleteAnthropic(ctx context.Context, ocOrgID string, role AnthropicRole, secretRefName string) error {
 	if !w.Enabled() {
-		return nil
-	}
-	row, err := w.anthropicRepo.GetByOrg(ctx, ocOrgID, role)
-	if err != nil {
-		return fmt.Errorf("secret-ref writer: load anthropic row: %w", err)
-	}
-	if row == nil {
 		return nil
 	}
 	orgUUID, err := orgUUIDForSecretLocation(ctx)
@@ -494,11 +489,10 @@ func (w *SecretRefWriter) DeleteAnthropic(ctx context.Context, ocOrgID string, r
 		EntityName:            role.SecretRefEntity(),
 		SecretKey:             secretmanagersvc.SecretKeyAPIKey,
 	}
-	refName := derefOrEmpty(row.SecretRefName)
-	if err := w.client.DeleteSecret(ctx, loc, refName); err != nil {
+	if err := w.client.DeleteSecret(ctx, loc, secretRefName); err != nil {
 		return fmt.Errorf("secret-ref writer: delete anthropic secret: %w", err)
 	}
-	return w.anthropicRepo.UpdateColumns(ctx, ocOrgID, role, clearSecretRefTriplet())
+	return nil
 }
 
 // PublisherSecretFieldClientID and PublisherSecretFieldClientSecret are the

@@ -89,17 +89,13 @@ describe("agent-building SKILL.md — prescribed store invariants", () => {
   });
 });
 
-// The scenarios half of the same skill, and the design skill that emits the
-// scenario file. Both are prose an agent follows at build time, so the same
-// argument applies: nothing else in this repo would notice if a line went.
+// The scenarios half of the same skill: prose an agent follows at build time,
+// so the same argument applies — nothing else in this repo would notice if a
+// line went.
 const DESIGNING = readFileSync(
   fileURLToPath(
     new URL("../../../skills/agent-building/references/designing.md", import.meta.url),
   ),
-  "utf8",
-);
-const VALIDATION_CRITERIA = readFileSync(
-  fileURLToPath(new URL("../../../skills/validation-criteria/SKILL.md", import.meta.url)),
   "utf8",
 );
 
@@ -308,8 +304,16 @@ describe("agent-building — the scenario file", () => {
     );
   });
 
-  it("is emitted by the design phase, under the same input rule", () => {
-    assert.match(VALIDATION_CRITERIA, /specs\/validation\/agent-scenarios\.json/);
-    assert.match(VALIDATION_CRITERIA, /never the\s+agent document|never[\s\S]{0,40}agent\.afm\.md/i);
+  // The design turn learns the scenario file exists from the skill BODY, which
+  // is what `FLOW_SUPPORTING_SKILLS.design` pins into its context — the
+  // reference above is read on demand, so a body that stopped naming the file
+  // would leave a design turn with no reason to open it.
+  //
+  // `validation-criteria/SKILL.md` carried this line too and was the subject
+  // here; it went with the criteria+e2e path (ADR-0029), so the body is now the
+  // only place the design turn is told.
+  it("is named by the skill body the design turn pins, under the same input rule", () => {
+    assert.match(BODY, /specs\/validation\/agent-scenarios\.json/);
+    assert.match(BODY, /from the requirements alone/i);
   });
 });

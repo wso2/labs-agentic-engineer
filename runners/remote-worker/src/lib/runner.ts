@@ -36,6 +36,7 @@ import type { DispatchRequest } from "./types.js";
 import type { WorkspaceLayout } from "./workspace.js";
 import { writeBearerFile } from "./workspace.js";
 import { emit, primeScrubber } from "./progress/emitter.js";
+import { cap, MAX_REPORT } from "./progress/adapter_common.js";
 import {
   consumeRun,
   createRunTerminator,
@@ -53,8 +54,15 @@ import { allowsWriteOutsideProject } from "./workspace_guard.js";
 import { staticTokenSource, type AccessTokenSource } from "./auth_retry.js";
 import { webFetchDenial } from "./webfetch_guard.js";
 import { SKILLS_MIRROR_DIR, requireWorkflowBodies } from "./skills_presence.js";
-import { DENIED_CAPABILITIES, type Runtime, type RuntimePolicy, type RuntimeSession } from "../runtime/port.js";
-import { createRuntime, modelFromEnv, runtimeNameFromEnv } from "../runtime/registry.js";
+import { skillsNotice, writePromptAppendix } from "./run_context.js";
+import {
+  DENIED_CAPABILITIES,
+  runtimeNameFromEnv,
+  type Runtime,
+  type RuntimePolicy,
+  type RuntimeSession,
+} from "../runtime/port.js";
+import { createRuntime, envOr } from "../runtime/registry.js";
 import { curlConfigHome } from "./endpoint_access.js";
 
 /**
@@ -192,9 +200,12 @@ export interface StartedRun {
 //     invokes the skill. A pin says the guidance IS needed for this work, so its
 //     body is appended to the system prompt instead of left to the model's
 //     discretion. Empty string when nothing is pinned.
+//
+//   pinnedSkillNames → the names behind pinnedBodies, for the run-start notice.
 export interface PerTaskSkills {
   availableSkillNames: string[];
   pinnedBodies: string;
+  pinnedSkillNames: string[];
 }
 
 // Live access-token source for MCP (and bearer-file persistence on remint).
@@ -287,12 +298,13 @@ export async function startCodingRun(
     AEP_GIT_SERVICE_URL: req.gitServiceUrl,
     AEP_CORRELATION_ID: req.correlationId ?? "",
     // A runtime's own default is typically 120s, which is under what this
-    // platform's longest legitimate command takes: a Playwright spec is allowed
-    // 30s, so a suite severs on a handful of them. A severed call proves nothing
-    // — the command keeps running, its results are unread, and a validation run
-    // that authored a full suite can end with none of it recorded. 600s is the
-    // documented ceiling for a single shell call, so this raises the default to
-    // the maximum already allowed rather than picking a number.
+    // platform's longest legitimate command takes: driving a scenario is a
+    // sequence of `agent-browser` calls against a live page, each waiting on a
+    // real navigation. A severed call proves nothing — the command keeps
+    // running and its result is unread, so a step that did settle is recorded
+    // as one that never answered. 600s is the documented ceiling for a single
+    // shell call, so this raises the default to the maximum already allowed
+    // rather than picking a number.
     BASH_DEFAULT_TIMEOUT_MS: "600000",
     // Where curl looks for `.curlrc`. Named explicitly rather than left to the
     // inherited HOME: a validation run writes `resolve` overrides there for its
@@ -333,7 +345,7 @@ export async function startCodingRun(
     // The organization's setting, stamped onto the Workload by the dispatcher.
     // Absent for a dispatch made before the setting existed, and for the
     // playground — both then get exactly the run they had.
-    model: modelFromEnv(runtime.defaultModel),
+    model: envOr("AEP_AGENT_MODEL", runtime.defaultModel),
     taskKind: req.taskKind,
     // Absent on a normal run, which is what keeps a prompt-bearing debug log out
     // of the cluster — see DispatchRequest.debug.
@@ -367,10 +379,32 @@ export async function startCodingRun(
     ...buildMcpPolicy(req, layout, terminator, mcpAuth),
   };
 
-  const session = await runtime.start(
-    promptWithProjectRoot(req.prompt, layout.workspace, contractReferencePath(layout.workspace)),
-    policy,
-  );
+  // What the lead's context was built from, said once on the feed, and the
+  // exact appendix kept beside runtime.log (lib/run_context.ts).
+  emit({
+    kind: "notice",
+    level: "info",
+    detail: skillsNotice(alwaysOnSkills(req.taskKind), perTaskSkills?.pinnedSkillNames ?? [], skills),
+  });
+  writePromptAppendix(log.dir, policy.skills.preloadBodies);
+
+  let session: RuntimeSession;
+  try {
+    session = await runtime.start(
+      promptWithProjectRoot(req.prompt, layout.workspace, contractReferencePath(layout.workspace)),
+      policy,
+    );
+  } catch (err) {
+    // A runtime that refuses to start says why ON THE FEED, at `error`: the
+    // reason is often a check that exists because the failure would otherwise
+    // be silent (OpenCode's start-time assertions — a guard plugin that did not
+    // load, a tool a rule hides), and the entrypoint's settle only carries a
+    // one-line error. No settle here — the caller settles its own pre-flight
+    // failures, and there is no loop yet to collide with (see run_loop.ts).
+    const msg = err instanceof Error ? err.message : String(err);
+    emit({ kind: "notice", level: "error", detail: cap(`[runtime] ${runtime.name} did not start: ${msg}`, MAX_REPORT) });
+    throw err;
+  }
 
   // …and one watchdog, so a silent stretch says what it is waiting on rather
   // than looking identical to a dead run.
@@ -409,6 +443,8 @@ export async function startCodingRun(
       // working, and returning there killed the pod with their work unread.
       return await consumeRun(session.stream, {
         translate: session.translate,
+        classify: session.classify,
+        usage: session.usage,
         watchdog,
         emit,
         record: (m) => log.write(m),

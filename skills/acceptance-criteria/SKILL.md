@@ -1,6 +1,6 @@
 ---
 name: acceptance-criteria
-description: Use when generating the acceptance criteria — write specs/acceptance/<slug>.feature, the Gherkin acceptance criteria, from the requirement prose alone.
+description: Use when generating the acceptance criteria — write specs/validation/acceptance/<slug>.feature, the Gherkin acceptance criteria, from the requirement prose alone.
 metadata:
   aep:
     kind: platform
@@ -27,9 +27,9 @@ the Actors section names the people your scenarios are about.
 `openapi.yaml`, wireframes, or any source code. The specification must be
 independent of the work it will grade.
 
-## Output — Gherkin under `specs/acceptance/`
+## Output — Gherkin under `specs/validation/acceptance/`
 
-Write `specs/acceptance/<slug>.feature`, one file per capability (use `addFile`;
+Write `specs/validation/acceptance/<slug>.feature`, one file per capability (use `addFile`;
 replace the contents if the file already exists). A capability usually spans
 several user stories — group by what a reader would call one area of the
 product, not one file per story and not one file per screen.
@@ -75,7 +75,7 @@ Feature: Lunch rounds
 ### Regenerating over an existing set
 
 Story numbers are permanent by contract, so a tag stays correct across
-regeneration. Read what is already in `specs/acceptance/` before writing.
+regeneration. Read what is already in `specs/validation/acceptance/` before writing.
 
 - **Keep the existing file names.** Renaming a capability because you would
   phrase it differently this time leaves the old file on disk, so its rules are

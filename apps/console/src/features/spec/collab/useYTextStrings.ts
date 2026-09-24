@@ -24,7 +24,7 @@ import type * as Y from "yjs";
  * the order given (`null` for a path the room has not delivered).
  *
  * It exists because one rail entry can stand for many documents — the
- * Acceptance criteria entry is every `specs/acceptance/*.feature` — and the
+ * Acceptance criteria entry is every `specs/validation/acceptance/*.feature` — and the
  * single-text hook cannot be called in a loop. One subscription per text,
  * one `useSyncExternalStore`.
  *

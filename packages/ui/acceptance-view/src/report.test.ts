@@ -34,7 +34,7 @@ function ok(raw: string): AcceptanceReport {
 
 const BLOCKED = {
   feature: "Bought items",
-  featureFile: "specs/acceptance/bought-items.feature",
+  featureFile: "specs/validation/acceptance/bought-items.feature",
   line: 12,
   rule: "A bought item is locked from further edits",
   scenario: "Editing a bought item is refused",

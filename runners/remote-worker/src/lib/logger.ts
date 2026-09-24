@@ -24,17 +24,20 @@ export interface TaskLog {
   close(): void;
   /**
    * Where this run's artifacts live. Exposed because the debug sinks land
-   * beside `claude.log` and the two entrypoints do not agree on the base: a pod
+   * beside `runtime.log` and the two entrypoints do not agree on the base: a pod
    * logs into the workspace, the playground into its own run directory. One
    * decision about where a run writes, made here.
    */
   dir: string;
 }
 
+/** The run's own log directory under the base `openTaskLog` is given. */
+export const TASK_LOG_DIR = ".logs";
+
 export function openTaskLog(workspacePath: string): TaskLog {
-  const logDir = path.join(workspacePath, ".logs");
+  const logDir = path.join(workspacePath, TASK_LOG_DIR);
   fs.mkdirSync(logDir, { recursive: true, mode: 0o755 });
-  const stream = fs.createWriteStream(path.join(logDir, "claude.log"), {
+  const stream = fs.createWriteStream(path.join(logDir, "runtime.log"), {
     flags: "w",
   });
   return {
@@ -52,7 +55,7 @@ export function openTaskLog(workspacePath: string): TaskLog {
  * The developer-only sinks: the SDK's own debug log, and the CLI's stderr.
  *
  * Files, never the feed — and that is what makes them developer-only in
- * practice as well as by policy. Nothing collects a pod's files (`claude.log`
+ * practice as well as by policy. Nothing collects a pod's files (`runtime.log`
  * has been written unconditionally for as long as it has existed and only the
  * playground has ever read one), so a sink here is by construction for someone
  * sitting in front of the run directory. Both can be large and the debug log

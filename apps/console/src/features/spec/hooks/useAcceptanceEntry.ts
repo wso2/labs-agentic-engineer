@@ -23,7 +23,7 @@
  *
  * ONE ENTRY, MANY DOCUMENTS. It is the only rail entry that stands for a set,
  * so it is the only read that has to be plural: every
- * `specs/acceptance/<capability>.feature`, live from the room with the
+ * `specs/validation/acceptance/<capability>.feature`, live from the room with the
  * committed copy as the fallback, handed to the view as one set so a reader can
  * search across capabilities rather than guessing which holds the scenario.
  *
@@ -38,7 +38,7 @@
 
 import { useQueries } from "@tanstack/react-query";
 import type { AcceptanceFeatureSource } from "@aep/ui-acceptance-view";
-import { isAcceptanceFeaturePath, type SpecFileEntry } from "../api/mapping";
+import { isAcceptanceCriteriaFile, type SpecFileEntry } from "../api/mapping";
 import { specKeys } from "../api/keys";
 import { fetchSpecFileContent } from "../api/queries";
 import type { CollabSpec } from "../collab/useCollabSpec";
@@ -72,7 +72,7 @@ export function useAcceptanceEntry({
   // so a capability the agent has created but not yet committed is in here.
   // Deriving the list from the git listing alone would miss exactly the files
   // this pane exists to watch being written.
-  const entries = active ? files.filter((f) => isAcceptanceFeaturePath(f.path)) : [];
+  const entries = active ? files.filter((f) => isAcceptanceCriteriaFile(f.path)) : [];
 
   const live = useYTextStrings(
     entries.map((f) => (active ? collab.getFileText(f.path) : null)),

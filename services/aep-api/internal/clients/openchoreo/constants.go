@@ -61,6 +61,11 @@ const (
 	LabelKeyAepMilestone LabelKeys = "aep.wso2.com/milestone"
 	LabelKeyAepCycle     LabelKeys = "aep.wso2.com/cycle"
 	LabelKeyAepRunName   LabelKeys = "aep.wso2.com/run-name"
+	// LabelKeyAepRuntime names the coding-agent runtime a cycle ran on
+	// (claude-code | opencode). Stamped on the Component and Workload by the
+	// dispatcher and rendered onto the Job and its pod by the coding-agent
+	// ComponentType, so the cluster can select runs by runtime.
+	LabelKeyAepRuntime LabelKeys = "aep.wso2.com/runtime"
 
 	LabelKeyK8sManagedBy LabelKeys = "app.kubernetes.io/managed-by"
 	LabelKeyK8sPartOf    LabelKeys = "app.kubernetes.io/part-of"

@@ -42,14 +42,7 @@ concept for *the agreed description of what we're building*.
 |---|---|---|
 | `REQUIREMENTS` | **Product requirements** | `specs/requirements/prd.md` |
 | `DESIGN` (not `DESIGNS` — one design, several files) | **Architecture** · **Domain model** · **Security** as rows, then the groups: **Flows**, then one per component | `specs/design/` |
-| `VALIDATION` | **Acceptance criteria** | every `specs/acceptance/<slug>.feature`, as ONE entry |
-
-The design turn also mints `specs/validation/validation-criteria.json`, the oracle of the
-retiring criteria+e2e path. **It is not in this table because the spec view hides it** — two
-oracles side by side, with nothing on screen to say which one the platform still grades against,
-is a reader's problem and not a naming one. The file stays committed and is read on GitHub. It
-comes back into the vocabulary only if that decision is reversed; otherwise it leaves with the
-criteria+e2e path.
+| `VALIDATION` | **Acceptance criteria** | every `specs/validation/acceptance/<slug>.feature`, as ONE entry |
 
 **Security** is one rail entry, one page:
 
@@ -1026,65 +1019,10 @@ The chat panel is the spine and **never collapses itself**; only the user closes
 pointing at a form that already owns the screen, and its composer stays live during a form — the
 agent is waiting on the user, not working, and the user may want to talk instead of fill.
 
-## The criteria pane
-
-The read-only pane behind the Validation section's document. A reader meets it
-cold: the rail carries no explanation, a design turn mints the file as its last
-step with no announcement, and the only sentence in the product that said what
-criteria were for lived in the **Validations** empty state, on another page most
-readers never reach.
-
-| | |
-|---|---|
-| Description, under the heading | *Each criterion represents one thing your system must do, based on your requirements. After every deployment the ones that can be automated are checked against the deployed system, and the results appear under Validations. The rest you have to check yourself. To change one, ask the agent.* |
-| Checked by a test | the **agent glyph** — `Sparkles`, `primary.main` — tooltip *Validated automatically by the agent.* |
-| Checked by a person | the **person glyph** — `User`, `text.secondary` — tooltip *Requires manual validation.* |
-
-**A glyph, never the word.** The stored value stays `e2e` — the validation
-runner, the report generator and the per-criterion spec path all key on it — and
-no row spells it out, because a row marks the method rather than naming it. That
-shuts naming rule 4's oldest hole here: `E2E` was never a copy decision, it was
-agent-authored JSON rendered verbatim, and an acronym can no longer reach a row
-even by accident. No prose spells it out either since Validations became a version
-ledger: the pending tile that needed a word for it is gone, so the stored value
-reaches no reader at all.
-
-**The agent glyph is the console's own.** `Sparkles` at `primary.main` is what
-the agent chat, the "ask the agent" action and the nav already mean *the agent*
-by, so a row inherits a meaning the reader arrives with instead of teaching a
-new one.
-
-**Everything that is not `e2e` takes the person glyph.** A third method exists in
-older documents, and a criterion can arrive with no method at all. Neither is ever
-automated, so both fall to the person rather than rendering bare — the glyph is
-already claiming a human does the work, and one sentence is honest for all three.
-
-**The mark is the accessible name, not the tooltip.** A tooltip exists only while
-hovered, and `Tooltip` puts its title on a bare span where an aria-label is
-ignored, so the same sentence is repeated as visually-hidden text.
-
-**"Ask the agent", not an edit control.** There is no way to edit a criterion
-here, by design: they are written from the requirements alone and never from the
-design, so they judge the work rather than describe it. The chat panel is on
-screen throughout, so this points at something the reader can use rather than
-narrating a procedure (rule 3).
-
-**The description belongs to the spec view, not to Validations.** Both surfaces
-render the same pane, and Validations suppresses it — a reader there came for run
-results, so a sentence promising that results appear under Validations is
-redundant on the page holding them.
-
-**`deployment`, not `build`, and `the deployed system`, not `your software`.**
-Validation runs against a running instance and needs its resolved endpoints, so
-the event before it is a deployment; the **Validations** empty state says so too.
-The subject takes the platform's own noun, the one the agent's status line, the
-validation task's title and the `acceptance-run` skill all already use — so the
-description and the run name the same thing the same way.
-
 ## The acceptance pane, and its one entry
 
 **One rail entry, not one per capability.** **Acceptance criteria** stands for
-every `specs/acceptance/<capability>.feature` at once, and the pane lists them
+every `specs/validation/acceptance/<capability>.feature` at once, and the pane lists them
 all — the same set the Validations page shows. The capabilities are named inside
 it, as feature headings, never in the rail.
 
@@ -1379,9 +1317,9 @@ criteria** were a rail entry: that document is plural, one row inside it is an *
 criterion** — what its `AC-` id says and what the term means everywhere else — and naming a
 document after one of its rows cost the link between the criteria and the runs against them, at a
 sentence of empty-state copy to restore. The rule stands; its example has moved. With the criteria
-document hidden, **Acceptance criteria** now names the Gherkin set under `specs/acceptance/` and
-nothing else, and the same discipline applies there: the entry is the set, a `Scenario:` inside it
-is one criterion.
+document retired, **Acceptance criteria** now names the Gherkin set under
+`specs/validation/acceptance/` and nothing else, and the same discipline applies
+there: the entry is the set, a `Scenario:` inside it is one criterion.
 
 **Validations has four empty states, and only the first offers an action.** The ledger and the
 version page are different surfaces: a project with no built version cannot validate anything, and
@@ -1463,7 +1401,7 @@ too, in the same message as the text it overrides.
 ### The rules it carries
 
 1. **Name things the way the UI names them.** *Architecture*, not `design.cell`. *Acceptance
-   criteria*, not `specs/acceptance/<slug>.feature`. The mapping is the table under
+   criteria*, not `specs/validation/acceptance/<slug>.feature`. The mapping is the table under
    [The spec workspace](#the-spec-workspace) — this file is its source, and the console skill is
    how it reaches the agent.
 2. **Never quote a repo path** to the user.

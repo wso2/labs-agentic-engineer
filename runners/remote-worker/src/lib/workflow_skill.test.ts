@@ -413,18 +413,19 @@ test("the workflow names tool roles, never a runtime's tool names", () => {
 
 // The other half of that: a role the body names and the glossary does not is a
 // dangling pointer the agent resolves by guessing.
-test("the glossary binds every role the workflow names", () => {
-  const glossary = toolGlossary();
-  for (const role of ["fan-out tool", "wait tool", "task list"]) {
-    assert.ok(glossary.includes(role), `the glossary binds no ${role}`);
-    for (const mode of ["github", "local"] as const) {
-      assert.ok(composed[mode].includes(role), `${mode} mode never names the ${role}`);
+// Every runtime's glossary, because each one is the only binding its session
+// gets: a role bound on Claude Code and dangling on OpenCode is a lead that
+// guesses on one runtime and not the other.
+test("the glossary binds every role the workflow names, on every runtime", () => {
+  for (const runtime of ["claude-code", "opencode"] as const) {
+    const glossary = toolGlossary(runtime);
+    for (const role of ["fan-out tool", "wait tool", "task list"]) {
+      assert.ok(glossary.includes(role), `the ${runtime} glossary binds no ${role}`);
+      for (const mode of ["github", "local"] as const) {
+        assert.ok(composed[mode].includes(role), `${mode} mode never names the ${role}`);
+      }
     }
   }
-  // "the fast model" / "the default one" is how the body defers the choice, so
-  // the glossary has to carry the aliases those words resolve to.
-  assert.ok(glossary.includes("the fast model") && glossary.includes("the default"));
-  assert.ok(composed.github.includes("runs well on the fast model"));
 });
 
 // A subagent posts its own progress, so the fan-out prompt list is the only

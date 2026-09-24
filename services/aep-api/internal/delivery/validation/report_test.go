@@ -187,7 +187,7 @@ func TestFailedScenarios(t *testing.T) {
 	t.Run("a failure carries its identity, its text and what settled it", func(t *testing.T) {
 		raw := `{"scenarios":[
 		  {"scenario":"A","outcome":"passed"},
-		  {"feature":"Lists","featureFile":"specs/acceptance/lists.feature","line":24,
+		  {"feature":"Lists","featureFile":"specs/validation/acceptance/lists.feature","line":24,
 		   "rule":"A duplicate is rejected","scenario":"Adding a duplicate","outcome":"failed",
 		   "steps":[
 		     {"keyword":"When","text":"Dan adds \"Milk\" again","command":"agent-browser click"},
@@ -202,7 +202,7 @@ func TestFailedScenarios(t *testing.T) {
 		if f.ID != "Lists / A duplicate is rejected / Adding a duplicate" {
 			t.Errorf("ID = %q", f.ID)
 		}
-		if f.FeatureFile != "specs/acceptance/lists.feature" || f.Line != 24 {
+		if f.FeatureFile != "specs/validation/acceptance/lists.feature" || f.Line != 24 {
 			t.Errorf("location = %s:%d", f.FeatureFile, f.Line)
 		}
 		// EVERY step, not just the one that settled it: only the whole trace

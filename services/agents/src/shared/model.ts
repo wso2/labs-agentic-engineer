@@ -23,9 +23,9 @@
  * Multi-provider stays additive: `LlmConfig` grows a `provider` discriminator
  * and `createModel` switches on it — no call-site changes.
  *
- * (The per-org key resolver from the legacy agents-service is intentionally NOT
- * ported here — this package is the standalone main-agent demo, which reads its
- * key from the environment. See run.ts.)
+ * The key and the model id both arrive per turn (the `X-Anthropic-Key` header
+ * and the turn body's `model`); `config.model` (`AGENT_MODEL`) is only the
+ * default for a caller that sends no model.
  */
 
 import type { LanguageModel } from "ai";
@@ -41,6 +41,19 @@ export interface LlmConfig {
   model?: string;
   /** Optional provider base URL override (gateways / proxies / self-host). */
   baseURL?: string;
+}
+
+/**
+ * The model ids a turn may name: the contract's `AgentModel` enum, the set the
+ * platform can price (pinned against the contract by test/model.test.ts). A
+ * turn naming none runs on `AGENT_MODEL`, the operator's default, which this
+ * list does not bind.
+ */
+export const OFFERED_MODELS: readonly string[] = ["claude-sonnet-5", "claude-haiku-4-5"];
+
+/** Whether a turn may name `modelId`. */
+export function isOfferedModel(modelId: string): boolean {
+  return OFFERED_MODELS.includes(modelId);
 }
 
 /**
@@ -70,11 +83,28 @@ export function createModel(cfg: LlmConfig): LanguageModel {
 }
 
 /**
- * Provider-specific per-call options, built here so the reasoning-effort knob
- * (like the provider SDK itself) stays inside this seam. The generic turn loop
- * passes the returned object through untouched.
+ * Models that reject Anthropic's `effort` parameter. `@ai-sdk/anthropic`
+ * forwards `effort` as `output_config.effort` without checking the model, and
+ * the API answers a 400 on these rather than ignoring it, so the option is
+ * omitted for them. Every other offered model (Sonnet 5, Opus 4.5 and later)
+ * takes it.
  */
-export function modelProviderOptions(): ProviderOptions {
+const MODELS_WITHOUT_EFFORT = ["claude-haiku-4-5", "claude-sonnet-4-5"] as const;
+
+/** Whether `modelId` accepts the `effort` option. Prefix match covers dated ids. */
+export function supportsEffort(modelId: string): boolean {
+  return !MODELS_WITHOUT_EFFORT.some((prefix) => modelId.startsWith(prefix));
+}
+
+/**
+ * Provider-specific per-call options for the turn's model, built here so the
+ * reasoning-effort knob (like the provider SDK itself) stays inside this seam.
+ * The generic turn loop passes the returned object through untouched. A model
+ * that rejects `effort` gets no options at all, so its request carries no
+ * `output_config`.
+ */
+export function modelProviderOptions(modelId: string): ProviderOptions | undefined {
+  if (!supportsEffort(modelId)) return undefined;
   return {
     anthropic: { effort: config.reasoningEffort } satisfies AnthropicLanguageModelOptions,
   };

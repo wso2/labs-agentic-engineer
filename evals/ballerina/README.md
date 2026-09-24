@@ -139,7 +139,7 @@ idiomatic form.
 Two axes, because neither means anything alone — a run can reach a green build
 by luck, and take a clean path to the wrong answer.
 
-**Path** (`src/metrics/transcript.ts`), from `claude.log`: lookup **tokens** —
+**Path** (`src/metrics/transcript.ts`), from `runtime.log`: lookup **tokens** —
 the primary axis — then turns, invocations, how many were piped through a filter,
 failures, how often `## Next` survived, verb census, and **worst detour**, the
 longest run of consecutive zero-yield calls circling one package. That last one
@@ -259,7 +259,7 @@ fixtures caught two errors in the hand analysis they were taken from.
 ## Artifacts
 
 `.runs/<timestamp>/` (gitignored): `report.md`, `summary.json`, `attempts.json`,
-and per attempt the scratch package itself plus `run/.logs/claude.log`. The
+and per attempt the scratch package itself plus `run/.logs/runtime.log`. The
 package is left buildable — `cd` into it and run `bal build` by hand. Each sweep
 diffs against the previous one automatically.
 

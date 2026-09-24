@@ -37,6 +37,7 @@ import { formatAgentReport, type AgentReport } from "./agent.js";
 import {
   LIFECYCLE_LABELS,
   formatOutcome,
+  isShellTool,
   type FormattedLine,
   type LineTone,
 } from "./line.js";
@@ -77,11 +78,11 @@ export interface ProgressLineView {
 // nothing hides.
 const PHASE_LABELS: Record<string, string> = LIFECYCLE_LABELS;
 
-// The SDK's fan-out tool, under both names it has shipped under (`Agent` now,
-// `Task` before). A tool_result naming one of these is not a step's outcome — it
-// is a whole subagent's closing report.
+// The Claude Agent SDK's fan-out tool, under both names it has shipped under
+// (`Agent` now, `Task` before). A tool_result naming one of these is not a
+// step's outcome — it is a whole subagent's closing report.
 //
-// v2 needs no such inference: an `agent_settled` event says so outright.
+// v1 only; v2 declares agents.
 const FANOUT_TOOLS = new Set(["Agent", "Task"]);
 
 function isFanOutResult(e: ProgressLineView): boolean {
@@ -133,8 +134,8 @@ export function formatLine(e: ProgressLineView): FormattedLine {
       const summary = e.summary ?? "";
       const tool = e.tool ?? "";
       if (!summary) return { text: `$ ${tool || "tool"}`, tone: "muted" };
-      // For Bash the `$` prompt already says "shell", so its name is noise.
-      if (!tool || tool === "Bash") return { text: `$ ${summary}`, tone: "muted" };
+      // For the shell the `$` prompt already says "shell", so its name is noise.
+      if (!tool || isShellTool(tool)) return { text: `$ ${summary}`, tone: "muted" };
       return { text: `$ ${tool} ${summary}`, tone: "muted" };
     }
     case "activity":

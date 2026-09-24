@@ -45,12 +45,12 @@ type IssueClient interface {
 }
 
 // CriteriaReader reads the acceptance oracle — the `.feature` files under
-// specs/acceptance/ — at HEAD. found=false when the directory holds none yet
-// (the design agent has not authored them) — the minter then skips, and a later
-// planning pass re-mints once they exist. The composition root adapts the files
-// feature's Bundle, which reads a whole directory at one commit.
+// specs/validation/acceptance/ — at HEAD. found=false when the directory holds
+// none yet (the design agent has not authored them) — the minter then skips,
+// and a later planning pass re-mints once they exist. The composition root
+// adapts the files feature's Bundle, which reads a whole directory at one commit.
 type CriteriaReader interface {
-	ReadAcceptanceCriteria(ctx context.Context, orgID, projectID string) (files []AcceptanceFile, found bool, err error)
+	ReadAcceptanceCriteria(ctx context.Context, orgID, projectID string) (files []AcceptanceCriteriaFile, found bool, err error)
 }
 
 // ContextProvider is the internal validation-context endpoint's view of the

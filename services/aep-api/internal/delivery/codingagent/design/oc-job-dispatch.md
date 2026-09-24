@@ -117,6 +117,15 @@ only and break the next dispatch of every existing one. Deliberately not a `Clus
 wso2cloud's org-default-resources bootstrap: the BFF owns the template, so it
 owns its upgrades.
 
+One type serves both coding-agent runtimes. It carries a `runtime` parameter
+(enum `claude-code | opencode`, default `claude-code`) that renders as the
+`aep.wso2.com/runtime` label on the Job and on its pod, merged over
+`metadata.labels` / `metadata.podSelectors` with `oc_merge` so the observer's
+pod selectors stay intact. The pods otherwise differ only in their image, which
+the Workload carries, so a second type would duplicate every pin below for one
+string. The convergence above is what rolls a changed body out: the next
+dispatch into an org whose stored type lacks the parameter updates it in place.
+
 The type pins the cost envelope rather than trusting callers: `backoffLimit: 0`
 (the runner pushes commits and opens pull requests — a silent retry would repeat
 side effects), `activeDeadlineSeconds` (a coding cycle passes 3h — it ends with a browser
@@ -136,16 +145,30 @@ not stated here; duplicating it would let the two drift apart silently.
 
 ## The org's runtime and model ride on the same env
 
-`AEP_AGENT_RUNTIME` and `AEP_AGENT_MODEL` carry the organization's `codingAgent`
-setting (ADR-0028) onto every cycle, beside the credential ref ADR-0016 already
-resolves. They are **copied, not referenced**: a change applies from the next
-cycle, because a run that re-read the setting halfway through would leave a feed
+`AEP_AGENT_RUNTIME` and `AEP_AGENT_MODEL` carry the
+organization's `agents` setting (ADR-0028) onto every cycle, beside the
+credential ref. The setting is read FIRST, because the runtime decides the
+credential: `ResolveCodingSecretRef(org, runtime)` returns the org's Claude
+subscription (mounted as `CLAUDE_CODE_OAUTH_TOKEN`) only when the runtime is
+Claude Code, and its API key (`ANTHROPIC_API_KEY`) otherwise; exactly one of the
+two reaches the run (ADR-0036). They are **copied, not referenced**: a
+change applies from the next cycle, because a run that re-read the setting halfway through would leave a feed
 whose model names disagree with the tokens they were billed for. An org that
 never opened the setting gets the platform defaults, which is exactly what every
 dispatch carried before it existed — but a resolver that ERRORS fails the
 dispatch rather than falling back, since the org did choose something and
 launching on the defaults would bill it for a model it moved off without ever
 saying so.
+
+The runtime also picks the image: `AGENT_RUNNER_IMAGE` for Claude Code,
+`AGENT_RUNNER_IMAGE_OPENCODE` for OpenCode (two tags from one Dockerfile). Neither
+has a built-in default; an OpenCode cycle with no OpenCode image fails its
+dispatch naming the variable rather than starting on an image with no OpenCode
+binary. The dispatcher stamps the same runtime as the Component's `runtime`
+parameter and as the `aep.wso2.com/runtime` label on the Component and Workload.
+Which credential it mounts is the organization domain's answer for the run's
+runtime (`ResolveCodingSecretRef`): an OpenCode run is always handed the API key
+([ADR-0036](../../../../../../docs/decisions/ADR-0036-the-coding-credential-is-a-subscription.md)).
 
 The type name is also what wso2cloud's entitlement gate keys on
 (`job/coding-agent`, `coding-agent`). A create over the org's cap answers
@@ -232,21 +255,21 @@ read a dynamic display name: `Coding cycle — milestone #<n> <title>`, or
 ## Two model credentials on one pod
 
 A cycle mounts the Anthropic credential the organization's coding runs bill
-(ADR-0016) — as `ANTHROPIC_API_KEY` or as `CLAUDE_CODE_OAUTH_TOKEN`, whichever
-the org's row says, never both. That is the credential the agent's own session
+(ADR-0036) — as `ANTHROPIC_API_KEY` or, for a Claude subscription on Claude
+Code, as `CLAUDE_CODE_OAUTH_TOKEN`, never both. That is the credential the agent's own session
 authenticates with.
 
 It also mounts the org's **default-role** key as `AEP_EVAL_ANTHROPIC_API_KEY`,
 for the agent-evaluation step a build runs before opening an ai-agent's PR. That
 step needs a model twice over — for the generated agent it boots and for the LLM
 judge that grades it — and both are API calls, so the credential has to be an API
-key. The default key always is; the coding one may be an OAuth token that
+key. The default key always is; the coding one may be a subscription token that
 authenticates neither.
 
 The separate variable is not decoration. `ANTHROPIC_API_KEY` belongs to Claude
 Code, which ranks it above `CLAUDE_CODE_OAUTH_TOKEN`, so mounting the evaluation
-key there would move an OAuth-billing org's whole coding session onto it — the
-silent mis-bill ADR-0016 exists to prevent.
+key there would move a subscription org's whole coding session onto it — the
+silent mis-bill ADR-0036 keeps out.
 
 An org with no connected default key dispatches **without** the variable and the
 run proceeds: evaluation reports, it never fails a build, and a missing key must
@@ -265,11 +288,11 @@ credential, so if `AEP_EVAL_ANTHROPIC_API_KEY` is not here, this run has none.
 Without it the harness cannot read a pod correctly. Outside one —
 a developer in the monorepo — `ANTHROPIC_API_KEY` simply is "the key", and the
 harness falls back to it. On a pod that same name holds the **coding**
-credential, which may be an override the org configured precisely so that
-coding, and nothing else, bills it. An org whose coding override is live while
-its default row is not is the case that makes this concrete: the dispatch
-succeeds on the override, `DefaultKeyRef` finds nothing, and an unconditional
-fallback would then grade agents on the ring-fenced budget — quietly, and
+credential, which may be the org's Claude subscription. An org whose
+subscription is live while its API key row is not active is the case that makes
+this concrete: the dispatch succeeds on the subscription, `DefaultKeyRef` finds
+nothing, and an unconditional fallback would then grade agents on the
+subscription token — which cannot authenticate an API call — quietly, and
 contradicting what this note says happens. The declaration is what makes the
 documented behaviour the actual one.
 

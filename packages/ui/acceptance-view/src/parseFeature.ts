@@ -17,7 +17,7 @@
  */
 
 /**
- * Reads `specs/acceptance/<slug>.feature` into the tree the view renders.
+ * Reads `specs/validation/acceptance/<slug>.feature` into the tree the view renders.
  *
  * A LINE SCANNER, not a Gherkin parser, and deliberately the same one the run
  * is checked with — `skills/acceptance-run/scripts/check-report.mjs`. That file

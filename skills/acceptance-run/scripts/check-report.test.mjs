@@ -44,9 +44,9 @@ const FEATURE = `Feature: Lists
 function check(steps, outcome = "passed") {
   const dir = mkdtempSync(join(tmpdir(), "acc-check-"));
   try {
-    mkdirSync(join(dir, "specs/acceptance"), { recursive: true });
+    mkdirSync(join(dir, "specs/validation/acceptance"), { recursive: true });
     mkdirSync(join(dir, "tests/acceptance"), { recursive: true });
-    writeFileSync(join(dir, "specs/acceptance/lists.feature"), FEATURE);
+    writeFileSync(join(dir, "specs/validation/acceptance/lists.feature"), FEATURE);
     writeFileSync(
       join(dir, "tests/acceptance/report.json"),
       JSON.stringify({
@@ -56,7 +56,7 @@ function check(steps, outcome = "passed") {
         scenarios: [
           {
             feature: "Lists",
-            featureFile: "specs/acceptance/lists.feature",
+            featureFile: "specs/validation/acceptance/lists.feature",
             line: 5,
             rule: "A duplicate is rejected",
             scenario: "Adding a duplicate",

@@ -83,6 +83,10 @@ services:
       # registry pull). Override to a published ghcr.io/wso2/aep/remote-worker
       # tag in cloud release bindings.
       AGENT_RUNNER_IMAGE: "${AGENT_RUNNER_IMAGE:-aep-runner:dev}"
+      # The OpenCode variant of the same image (the Dockerfile's
+      # runner-opencode stage), used for orgs whose coding-agent runtime is
+      # OpenCode. Same local-tag rules as above; built beside aep-runner:dev.
+      AGENT_RUNNER_IMAGE_OPENCODE: "${AGENT_RUNNER_IMAGE_OPENCODE:-aep-runner-opencode:dev}"
       # Finished cycle Components are retained so their observer archive stays
       # queryable, then pruned oldest-first past this cap (code default 10).
       # Lowered locally only to make the prune observable in three cycles.

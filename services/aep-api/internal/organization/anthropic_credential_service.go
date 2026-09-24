@@ -16,39 +16,37 @@
 
 // anthropic_credential_service.go — Anthropic credential service.
 //
-// AnthropicCredentialService owns the per-org Anthropic API key surface. An org
+// AnthropicCredentialService owns the per-org Anthropic credentials. An org
 // holds one row per AnthropicRole:
 //
-//   - `default` — the org's key. EVERY reader uses it unless overridden.
-//   - `coding`  — an optional OVERRIDE read only by coding-agent dispatch. Its
-//     absence is what "reuse the default key" means; nothing stores a mode.
+//   - `default` — the org's API key. EVERY reader uses it.
+//   - `coding`  — an optional Claude subscription token (`claude setup-token`)
+//     the coding agent bills instead of the API key, only while it runs on
+//     Claude Code. It cannot exist without the default row.
 //
-// The two are not peers: a coding row may only exist while an active default
-// row does, and disconnecting the default cascades the coding one away with it
-// (ADR-0016). That invariant is what keeps every reader below from needing a
-// "which key, and is it there" branch of its own.
+// Surface — all in-process; this service has no HTTP routes of its own:
 //
-// Surface — all in-process; this service has no HTTP routes of its own, and is
-// reached through the /config orchestrator (Service.Get / Service.Patch) or
-// directly from the composition root:
+//   - ValidateKey — the shape checks plus the live probe, per role. The AI
+//     agents card (AgentSettingsService) calls it before its unit of work.
+//   - writeKeyTx / deleteKeyTx — the credential half of that unit of work,
+//     inside its transaction; mirrorKey / forgetKey — the SM-API copy, after
+//     it commits; publishModelKey — the Agent Manager provider's copy of the
+//     default key, after it commits.
+//   - Status — one role's masked projection; Holds — whether a role's row exists.
+//   - EffectiveKey — the DEFAULT key (or "none") for the spec agents, which
+//     the BFF forwards to agents-service per turn. There is no platform
+//     fallback: orgs bring their own key.
+//   - ResolveCodingSecretRef — which credential a coding run mounts, stated
+//     once here so no other reader inherits the rule by accident. Its
+//     SecretRefTriplet.EnvVar is what the coding-agent OC Job Component mounts
+//     the credential under (ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN).
 //
-//   - Connect / Status / Disconnect — one role at a time. The llm and codingLlm
-//     sections of PATCH /config are exactly these, bound to a role.
-//   - EffectiveKey — returns the DEFAULT key (or "none") for the genai turn
-//     surface, which forwards it to agents-service per call. There is no
-//     platform fallback: orgs bring their own key.
-//   - ResolveCodingSecretRef — the coding→default fallback, stated once here so
-//     no other reader inherits it by accident. Its SecretRefTriplet.EnvVar is
-//     what the coding-agent OC Job Component mounts the credential under
-//     (ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN) — there is no
-//     workflow-plane Secret on this path.
+// Secret bytes live in the same `org_secrets` (Postgres + AES-256-GCM) table
+// as the GitHub PAT, keyed by the role's SecretStoreKey(). The metadata
+// (prefix / last4 / status / connected_at / last_validated_at) lives in the
+// `org_anthropic_credentials` table.
 //
-// Secret bytes live in the same `org_secrets` (Postgres + AES-256-GCM)
-// table as the GitHub PAT, keyed by the role's SecretStoreKey(). The metadata
-// (prefix / last4 / status / connected_at / last_validated_at) lives in
-// the `org_anthropic_credentials` table.
-//
-// See docs/decisions/ADR-0016-coding-agent-key-is-an-override-not-a-peer.md.
+// See docs/decisions/ADR-0036-the-coding-credential-is-a-subscription.md.
 package organization
 
 import (
@@ -62,6 +60,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
@@ -72,7 +71,7 @@ type AnthropicCredentialService struct {
 	anthropicAPI string // "https://api.anthropic.com" by default; overridden in tests
 	httpClient   *http.Client
 
-	// secretRefWriter mirrors the key into SM-API on Connect. nil-safe.
+	// secretRefWriter mirrors a saved credential into SM-API. nil-safe.
 	secretRefWriter *SecretRefWriter
 
 	// modelProvider is told when the org's key changes, so an Agent Manager
@@ -112,7 +111,9 @@ func (s *AnthropicCredentialService) WithAnthropicAPIBase(base string) *Anthropi
 	return s
 }
 
-// NewAnthropicCredentialService wires the service. repo and store must be non-nil.
+// NewAnthropicCredentialService wires the service. repo and store must be
+// non-nil; store serves the reads (EffectiveKey, resync), while the card's
+// writes go through the store bound to its transaction.
 func NewAnthropicCredentialService(
 	repo OrgAnthropicRepository,
 	store secrets.CredentialStore,
@@ -124,24 +125,6 @@ func NewAnthropicCredentialService(
 		httpClient:   &http.Client{Timeout: 15 * time.Second},
 	}
 }
-
-// ----------------------------------------------------------------------------
-// Errors
-// ----------------------------------------------------------------------------
-
-// ErrAnthropicKeyRequired signals that no per-org key is configured and
-// the caller specifically required one (dispatch path). Distinct from
-// returning the platform fallback. Wrap with status 422 at the API edge.
-var ErrAnthropicKeyRequired = errors.New("anthropic: org key required")
-
-// ErrAnthropicDefaultKeyRequired signals an attempt to set the coding-agent
-// key on an org with no active default key. The coding key is an override, not
-// a peer — there is nothing for it to override yet. sectionErrorFrom turns it
-// into a section-scoped client fault, which patchconfig then renders like every
-// other probe rejection (400 validation_failed + body.codingLlm). It is what
-// stops a client reaching the llm=null + codingLlm=set state the projection
-// cannot describe.
-var ErrAnthropicDefaultKeyRequired = errors.New("anthropic: connect the organization's Anthropic key before setting a coding-agent key")
 
 // ----------------------------------------------------------------------------
 // Projection — what the API + console see
@@ -172,38 +155,55 @@ func projectionFromAnthropicRow(r *OrgAnthropicCredential) *AnthropicProjection 
 }
 
 // ----------------------------------------------------------------------------
-// Connect / Replace
+// Validation + the card's credential writes
 // ----------------------------------------------------------------------------
 
-// AnthropicConnectRequest is the body for POST /internal/credentials/orgs/{org}/anthropic.
-type AnthropicConnectRequest struct {
-	APIKey string `json:"apiKey"`
+// ValidateKey runs the save-time validation for a credential WITHOUT
+// persisting anything: the shape checks plus the live /v1/messages probe,
+// authenticated the way that KIND of credential authenticates.
+//
+// role fixes the one kind it accepts: the default role holds a Console API key
+// (the spec agents are AI SDK calls that cannot present a bearer token), the
+// coding role a Claude subscription token (a separate coding API key is not a
+// thing the platform offers). The wrong kind is refused here, before a probe is
+// spent on it, rather than discovered later by an agent that cannot use it.
+func (s *AnthropicCredentialService) ValidateKey(ctx context.Context, role AnthropicRole, apiKey string) error {
+	key := strings.TrimSpace(apiKey)
+	if key == "" {
+		return &ValidationError{Code: "anthropic_key_missing", Message: "a credential is required"}
+	}
+	if !looksLikeAnthropicKey(key) {
+		return &ValidationError{Code: "anthropic_key_invalid", Message: "value does not look like an Anthropic credential (expected prefix 'sk-ant-')"}
+	}
+	kind := AnthropicCredentialKindOf(key)
+	switch {
+	case role == AnthropicRoleCoding && kind != AnthropicCredentialOAuth:
+		return &ValidationError{
+			Code: "agents_subscription_token_required",
+			Message: "a Claude subscription takes a token from `claude setup-token` (sk-ant-oat…); " +
+				"an Anthropic API key belongs in the organization's API key field",
+		}
+	case role != AnthropicRoleCoding && kind == AnthropicCredentialOAuth:
+		return &ValidationError{
+			Code: "anthropic_oauth_token_coding_only",
+			Message: "a Claude subscription token can only bill the coding agent; " +
+				"the organization's Anthropic key must be a Console API key (sk-ant-api…)",
+		}
+	}
+	return s.validateAnthropicKey(ctx, kind, key)
 }
 
-// Connect validates the supplied key against Anthropic, persists it in
-// `org_secrets` (AES-256-GCM), and upserts the metadata row for role.
-// Idempotent under the org-scoped advisory lock — concurrent Connects produce
-// one consistent row. The BFF resolves the effective key per request and
-// forwards it to agents-service, so there is no remote cache to invalidate.
-//
-// Connecting the CODING role requires an active default row: the coding key
-// overrides the default rather than standing in for it, so without one there
-// is nothing to override (ErrAnthropicDefaultKeyRequired → 422). The check runs
-// inside the advisory lock so it cannot race a concurrent default disconnect
-// and leave an orphan behind.
-//
-// Does NOT touch any cluster: the coding runner reads the key through
-// ResolveCodingSecretRef's SecretRefTriplet, mounted onto the OC Job
-// Component's SecretEnv at dispatch time.
-func (s *AnthropicCredentialService) Connect(ctx context.Context, ocOrgID string, role AnthropicRole, req AnthropicConnectRequest) (*AnthropicProjection, error) {
-	key := strings.TrimSpace(req.APIKey)
-	if err := s.ValidateKey(ctx, role, key); err != nil {
-		return nil, err
-	}
-
+// writeKeyTx stores key as role's credential inside the card's transaction:
+// the encrypted bytes and the metadata row commit or roll back together. key
+// must already have passed ValidateKey — the probe runs before the
+// transaction opens, so no lock is held across a network call.
+func (s *AnthropicCredentialService) writeKeyTx(ctx context.Context, tx AgentsCardTx, ocOrgID string, role AnthropicRole, key string) error {
+	key = strings.TrimSpace(key)
 	now := time.Now().UTC()
 	prefix, last4 := anthropicKeyPreview(key)
-
+	if err := tx.Secrets().Put(ctx, ocOrgID, role.SecretStoreKey(), []byte(key)); err != nil {
+		return fmt.Errorf("anthropic %s: store put: %w", role, err)
+	}
 	row := OrgAnthropicCredential{
 		OcOrgID:         ocOrgID,
 		Role:            role,
@@ -213,118 +213,86 @@ func (s *AnthropicCredentialService) Connect(ctx context.Context, ocOrgID string
 		Status:          "active",
 		ConnectedAt:     now,
 		LastValidatedAt: &now,
-		ValidationError: nil,
 	}
-	err := s.repo.Tx(ctx, func(tx OrgAnthropicTx) error {
-		if err := tx.AdvisoryLock("org_anthropic:" + ocOrgID); err != nil {
-			return fmt.Errorf("anthropic connect: lock: %w", err)
-		}
-
-		if role == AnthropicRoleCoding {
-			// Read through the TX, not the pool: this precondition and the
-			// write that depends on it must see one snapshot, so "a default
-			// exists" holds by construction rather than by an argument about
-			// the advisory lock.
-			base, err := tx.GetByOrg(ocOrgID, AnthropicRoleDefault)
-			if err != nil {
-				return fmt.Errorf("anthropic connect: load default row: %w", err)
-			}
-			if base == nil || base.Status != "active" {
-				return ErrAnthropicDefaultKeyRequired
-			}
-		}
-
-		// Encrypted bytes — same KV store the GitHub PAT uses, keyed per role
-		// so the coding key can never overwrite the default one's bytes.
-		if err := s.store.Put(ctx, ocOrgID, role.SecretStoreKey(), []byte(key)); err != nil {
-			return fmt.Errorf("anthropic connect: store put: %w", err)
-		}
-
-		// Upsert via ON CONFLICT DO UPDATE so Replace is idempotent. The UPDATE
-		// deliberately omits connected_at so a replace preserves the ORIGINAL
-		// connection time; RETURNING that column reads the persisted value back so
-		// the projection we return matches the stored row (on a replace it's the
-		// original, not the in-memory `now`) — Upsert scans it back into
-		// row.ConnectedAt.
-		if err := tx.Upsert(&row); err != nil {
-			return fmt.Errorf("anthropic connect: upsert: %w", err)
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
+	if err := tx.UpsertCredential(&row); err != nil {
+		return fmt.Errorf("anthropic %s: upsert: %w", role, err)
 	}
-
-	// Best-effort SM-API mirror. Same posture as
-	// CredentialService.mirrorPATToSMAPI: org_secrets stays authoritative
-	// when SM-API is unavailable; the row's SM-API triplet stays NULL
-	// until the next successful Connect.
-	if s.secretRefWriter != nil && s.secretRefWriter.Enabled() {
-		if _, err := s.secretRefWriter.WriteAnthropic(ctx, ocOrgID, role, key); err != nil {
-			slog.WarnContext(ctx, "anthropic: SM-API mirror failed (legacy store still authoritative)",
-				"ocOrgId", ocOrgID, "role", role, "error", err)
-		}
-	}
-
-	// Push the new key to the org's Agent Manager provider, which holds a COPY
-	// of it on behalf of every governed agent.
-	//
-	// WHY THIS MATTERS MORE THAN IT LOOKS: without it, a rotated key leaves the
-	// provider calling Anthropic with a revoked one, and EVERY governed agent in
-	// the org fails at once — at the upstream, far from Settings, with nothing
-	// in AEP saying why.
-	//
-	// Best-effort, and deliberately so: the key IS stored, and failing the
-	// user's Settings action because a downstream copy lagged would be the worse
-	// outcome. The next governed deploy re-asserts it anyway (EnsureProvider
-	// writes the current key every time), so this is how fast it converges, not
-	// whether it does.
-	//
-	// Only the DEFAULT role is published: that is the key agents run on. The
-	// coding role belongs to the coding agent, which does not go through the
-	// gateway.
-	if s.modelProvider != nil && role == AnthropicRoleDefault {
-		if err := s.modelProvider.PublishOrgModelKey(ctx, ocOrgID, key); err != nil {
-			slog.WarnContext(ctx, "anthropic: could not publish the rotated key to the Agent Manager provider; governed agents keep the previous key until the next deploy",
-				"ocOrgId", ocOrgID, "error", err)
-		}
-	}
-
-	slog.InfoContext(ctx, "anthropic.connected", "ocOrgId", ocOrgID, "role", role, "keyPrefix", prefix)
-	return projectionFromAnthropicRow(&row), nil
+	return nil
 }
 
-// ValidateKey runs the connect-time validation for a credential WITHOUT
-// persisting anything: the shape checks plus the live /v1/messages probe,
-// authenticated the way that KIND of credential authenticates.
+// deleteKeyTx removes role's credential — row and bytes — inside the card's
+// transaction, returning the SM-API secret-ref name the row carried so the
+// caller can delete that copy once the transaction commits (the row, and the
+// name with it, is gone by then). Idempotent: a missing row returns "", false.
+func (s *AnthropicCredentialService) deleteKeyTx(ctx context.Context, tx AgentsCardTx, ocOrgID string, role AnthropicRole) (string, bool, error) {
+	row, err := tx.GetCredential(ocOrgID, role)
+	if err != nil {
+		return "", false, fmt.Errorf("anthropic %s: load row: %w", role, err)
+	}
+	if row == nil {
+		return "", false, nil
+	}
+	if err := tx.DeleteCredential(ocOrgID, role); err != nil {
+		return "", false, fmt.Errorf("anthropic %s: delete row: %w", role, err)
+	}
+	if err := tx.Secrets().Delete(ctx, ocOrgID, role.SecretStoreKey()); err != nil {
+		return "", false, fmt.Errorf("anthropic %s: store delete: %w", role, err)
+	}
+	return derefOrEmpty(row.SecretRefName), true, nil
+}
+
+// mirrorKey copies a committed credential into SM-API, best-effort: org_secrets
+// stays authoritative. The save cleared the row's triplet (UpsertCredential), so
+// a failed mirror leaves it NULL until the next save, and dispatch fails closed
+// with a reason naming it rather than mounting the previous credential.
+func (s *AnthropicCredentialService) mirrorKey(ctx context.Context, ocOrgID string, role AnthropicRole, key string) {
+	if s.secretRefWriter == nil || !s.secretRefWriter.Enabled() {
+		return
+	}
+	if _, err := s.secretRefWriter.WriteAnthropic(ctx, ocOrgID, role, strings.TrimSpace(key)); err != nil {
+		slog.WarnContext(ctx, "anthropic: SM-API mirror failed (org_secrets still authoritative)",
+			"ocOrgId", ocOrgID, "role", role, "error", err)
+	}
+}
+
+// forgetKey deletes a removed credential's SM-API copy, best-effort, by the
+// secret-ref name deleteKeyTx captured before the row went. A failure leaves an
+// orphaned vault entry nothing reads; the next save of that role overwrites it.
+func (s *AnthropicCredentialService) forgetKey(ctx context.Context, ocOrgID string, role AnthropicRole, secretRefName string) {
+	if s.secretRefWriter == nil || !s.secretRefWriter.Enabled() {
+		return
+	}
+	if err := s.secretRefWriter.DeleteAnthropic(ctx, ocOrgID, role, secretRefName); err != nil {
+		slog.WarnContext(ctx, "anthropic: SM-API delete failed (orphaned copy until the next save)",
+			"ocOrgId", ocOrgID, "role", role, "error", err)
+	}
+}
+
+// publishModelKey pushes a committed DEFAULT key to the org's Agent Manager
+// provider, which holds a COPY of it on behalf of every governed agent.
 //
-// role bounds which kinds are acceptable: a Claude Code OAuth token is only
-// meaningful for the coding agent, so offering one as the org's default key is
-// rejected here rather than discovered later by a design agent that cannot
-// authenticate with it.
+// WHY THIS MATTERS MORE THAN IT LOOKS: without it, a rotated key leaves the
+// provider calling Anthropic with a revoked one, and EVERY governed agent in
+// the org fails at once — at the upstream, far from Settings, with nothing in
+// AEP saying why.
 //
-// It is the probe-only seam the /config PATCH orchestrator calls in its
-// pre-persist phase, so a bad key in one section fails the whole atomic patch
-// before any section is written (docs/design/org-config-consolidation.md §4).
-// Connect calls it too, so the validation logic lives in exactly one place and
-// the two paths can't drift.
-func (s *AnthropicCredentialService) ValidateKey(ctx context.Context, role AnthropicRole, apiKey string) error {
-	key := strings.TrimSpace(apiKey)
-	if key == "" {
-		return &ValidationError{Code: "anthropic_key_missing", Message: "apiKey is required"}
+// Best-effort, and deliberately so: the key IS stored, and failing the user's
+// Settings action because a downstream copy lagged would be the worse outcome.
+// The next governed deploy re-asserts it anyway (EnsureProvider writes the
+// current key every time), so this is how fast it converges, not whether it
+// does.
+//
+// Only the DEFAULT role is ever published: that is the key agents run on. The
+// coding role's subscription token belongs to the coding agent, which does not
+// go through the gateway.
+func (s *AnthropicCredentialService) publishModelKey(ctx context.Context, ocOrgID, key string) {
+	if s.modelProvider == nil {
+		return
 	}
-	if !looksLikeAnthropicKey(key) {
-		return &ValidationError{Code: "anthropic_key_invalid", Message: "value does not look like an Anthropic credential (expected prefix 'sk-ant-')"}
+	if err := s.modelProvider.PublishOrgModelKey(ctx, ocOrgID, strings.TrimSpace(key)); err != nil {
+		slog.WarnContext(ctx, "anthropic: could not publish the rotated key to the Agent Manager provider; governed agents keep the previous key until the next deploy",
+			"ocOrgId", ocOrgID, "error", err)
 	}
-	kind := AnthropicCredentialKindOf(key)
-	if kind == AnthropicCredentialOAuth && role != AnthropicRoleCoding {
-		return &ValidationError{
-			Code: "anthropic_oauth_token_coding_only",
-			Message: "a Claude Code OAuth token can only be used as the coding agent's credential; " +
-				"the organization's Anthropic key must be a Console API key (sk-ant-api…)",
-		}
-	}
-	return s.validateAnthropicKey(ctx, kind, key)
 }
 
 // ----------------------------------------------------------------------------
@@ -332,8 +300,8 @@ func (s *AnthropicCredentialService) ValidateKey(ctx context.Context, role Anthr
 // ----------------------------------------------------------------------------
 
 // Status returns the projection for (ocOrgID, role). Returns NotFoundError
-// when no row exists so the API edge can map to 404 — and, for the coding
-// role, so the config projection can map it to null ("reuse").
+// when no row exists, which the config projection maps to null (no key, or no
+// subscription).
 func (s *AnthropicCredentialService) Status(ctx context.Context, ocOrgID string, role AnthropicRole) (*AnthropicProjection, error) {
 	row, err := s.fetchRow(ctx, ocOrgID, role)
 	if err != nil {
@@ -342,64 +310,12 @@ func (s *AnthropicCredentialService) Status(ctx context.Context, ocOrgID string,
 	return projectionFromAnthropicRow(row), nil
 }
 
-// ----------------------------------------------------------------------------
-// Disconnect
-// ----------------------------------------------------------------------------
-
-// Disconnect removes an org's Anthropic key for role: deletes the encrypted
-// bytes from `org_secrets` and drops the metadata row (status flip first, then
-// delete via best-effort sweep is overkill for a single per-org credential).
-//
-// Disconnecting the DEFAULT role CASCADES: the coding key is an override on it
-// and cannot outlive it, so every role's row and bytes go in the same
-// transaction. Without the cascade an org could reach llm=null + codingLlm=set
-// — a state the projection has no way to describe and dispatch has no way to
-// act on (ADR-0016). Disconnecting the coding role touches only itself, and is
-// how the console's "reuse the key above" flip is spelled.
-//
-// Idempotent: missing row is a no-op (200 → 204 at the API edge).
-func (s *AnthropicCredentialService) Disconnect(ctx context.Context, ocOrgID string, role AnthropicRole) error {
-	cascade := role == AnthropicRoleDefault
-
-	err := s.repo.Tx(ctx, func(tx OrgAnthropicTx) error {
-		if err := tx.AdvisoryLock("org_anthropic:" + ocOrgID); err != nil {
-			return fmt.Errorf("anthropic disconnect: lock: %w", err)
-		}
-
-		// Delete the metadata row directly — the existing GitHub PAT flow flips
-		// to `disconnected` for audit, but here we have nothing else referencing
-		// the row (no installation_id, no webhook routing). Delete is cleaner.
-		if cascade {
-			if err := tx.DeleteAllRoles(ocOrgID); err != nil {
-				return fmt.Errorf("anthropic disconnect: delete rows: %w", err)
-			}
-			return nil
-		}
-		if err := tx.DeleteByOrg(ocOrgID, role); err != nil {
-			return fmt.Errorf("anthropic disconnect: delete row: %w", err)
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-
-	// Best-effort GC. Failures are logged, not surfaced. The cascade sweeps the
-	// coding role's bytes too — the rows are already gone, so anything left
-	// here would be unreachable material nothing can ever clean up.
-	gcRoles := []AnthropicRole{role}
-	if cascade {
-		gcRoles = []AnthropicRole{AnthropicRoleDefault, AnthropicRoleCoding}
-	}
-	for _, r := range gcRoles {
-		if err := s.store.Delete(ctx, ocOrgID, r.SecretStoreKey()); err != nil {
-			slog.WarnContext(ctx, "anthropic disconnect: store delete failed",
-				"ocOrgId", ocOrgID, "role", r, "error", err)
-		}
-	}
-
-	slog.InfoContext(ctx, "anthropic.disconnected", "ocOrgId", ocOrgID, "role", role, "cascade", cascade)
-	return nil
+// Holds reports whether the org has a row for role, whatever its status: the
+// AI agents card judges a save by which credentials exist, not whether they
+// currently validate.
+func (s *AnthropicCredentialService) Holds(ctx context.Context, ocOrgID string, role AnthropicRole) (bool, error) {
+	row, err := s.repo.GetByOrg(ctx, ocOrgID, role)
+	return row != nil, err
 }
 
 // ----------------------------------------------------------------------------
@@ -416,9 +332,8 @@ type EffectiveKeyResponse struct {
 // Returns { source: "none" } when the org has no usable key — agents-service
 // maps to 503. There is no platform fallback: orgs bring their own key.
 //
-// Deliberately default-only. Its caller is agents-service (the design agent),
-// which the coding override does not reach: an org that scoped a key to the
-// coding agent has said which reader it is for, and this is not that reader.
+// Deliberately default-only: the spec agents are AI SDK calls, which cannot
+// present the coding role's subscription token.
 func (s *AnthropicCredentialService) EffectiveKey(ctx context.Context, ocOrgID string) (*EffectiveKeyResponse, error) {
 	row, err := s.fetchRow(ctx, ocOrgID, AnthropicRoleDefault)
 	if err == nil && row.Status == "active" {
@@ -435,7 +350,7 @@ func (s *AnthropicCredentialService) EffectiveKey(ctx context.Context, ocOrgID s
 }
 
 // ----------------------------------------------------------------------------
-// ResolveCodingSecretRef — the reuse fallback, stated once
+// ResolveCodingSecretRef — which credential a coding run mounts, stated once
 // ----------------------------------------------------------------------------
 
 // SecretRefTriplet is a resolved SM-API secret reference: the name plus the
@@ -448,42 +363,47 @@ type SecretRefTriplet struct {
 
 	// EnvVar is the name a coding run must receive this credential as —
 	// ANTHROPIC_API_KEY for a Console API key, CLAUDE_CODE_OAUTH_TOKEN for a
-	// Claude Code OAuth token. Carried here rather than re-derived at the
+	// Claude subscription token. Carried here rather than re-derived at the
 	// mount site because the secret bytes are never read on that path, so
 	// nothing downstream can tell the two apart on its own.
 	EnvVar string
 }
 
-// ResolveCodingSecretRef returns the secret reference a coding run must mount:
-// the coding row's when the org configured one, the default row's otherwise.
-// This is the ONLY place the reuse fallback is written; every other reader is
-// default-only by construction, so the rule cannot leak into one by omission.
+// ResolveCodingSecretRef returns the secret reference a coding run on runtime
+// must mount: the org's Claude subscription when it has one and the runtime is
+// Claude Code, its API key otherwise. This is the ONLY place that choice is
+// written; every other reader is default-only by construction.
 //
-// Fails closed. A coding row that exists but has no usable triplet is an
-// error, never a silent fall-through to the default key: the org asked for its
-// coding agent to bill a specific key, and quietly billing a different one
-// defeats the whole point while leaving no trace anywhere the org can see.
-func (s *AnthropicCredentialService) ResolveCodingSecretRef(ctx context.Context, ocOrgID string) (SecretRefTriplet, error) {
-	coding, err := s.repo.GetByOrg(ctx, ocOrgID, AnthropicRoleCoding)
-	if err != nil {
-		return SecretRefTriplet{}, fmt.Errorf("anthropic resolve coding ref: load coding row: %w", err)
-	}
-	if coding != nil {
-		if coding.Status != "active" {
-			return SecretRefTriplet{}, fmt.Errorf(
-				"coding-agent Anthropic key for org %q is %s — reconnect it in Settings, "+
-					"or switch the organization back to reusing its default key", ocOrgID, coding.Status)
+// Only Claude Code can present a subscription token, so on any other runtime
+// the subscription is not consulted at all (the save rule keeps one from being
+// stored alongside OpenCode; this keeps a stray row from ever reaching a run).
+//
+// Fails closed. A subscription that exists but has no usable triplet is an
+// error, never a silent fall-through to the API key: the org chose to bill its
+// plan, and quietly billing API credits instead defeats that choice while
+// leaving no trace the org can see.
+func (s *AnthropicCredentialService) ResolveCodingSecretRef(ctx context.Context, ocOrgID string, runtime orgconfig.AgentRuntime) (SecretRefTriplet, error) {
+	if runtime == orgconfig.AgentRuntimeClaudeCode {
+		sub, err := s.repo.GetByOrg(ctx, ocOrgID, AnthropicRoleCoding)
+		if err != nil {
+			return SecretRefTriplet{}, fmt.Errorf("anthropic resolve coding ref: load subscription row: %w", err)
 		}
-		ref, refErr := tripletFrom(coding)
-		if refErr != nil {
-			return SecretRefTriplet{}, fmt.Errorf(
-				"coding-agent Anthropic key for org %q is configured but %w — reconnect it in Settings, "+
-					"or switch the organization back to reusing its default key", ocOrgID, refErr)
+		if sub != nil {
+			if sub.Status != "active" {
+				return SecretRefTriplet{}, fmt.Errorf(
+					"the Claude subscription for org %q is %s — replace its token in Settings, "+
+						"or remove the subscription so coding bills the organization's API key", ocOrgID, sub.Status)
+			}
+			ref, refErr := tripletFrom(sub)
+			if refErr != nil {
+				return SecretRefTriplet{}, fmt.Errorf(
+					"the Claude subscription for org %q is configured but %w — save its token again in Settings, "+
+						"or remove the subscription so coding bills the organization's API key", ocOrgID, refErr)
+			}
+			return ref, nil
 		}
-		return ref, nil
 	}
 
-	// Reuse: no coding row, so the run bills the org's default key.
 	def, err := s.repo.GetByOrg(ctx, ocOrgID, AnthropicRoleDefault)
 	if err != nil {
 		return SecretRefTriplet{}, fmt.Errorf("anthropic resolve coding ref: load default row: %w", err)
@@ -559,11 +479,11 @@ func derefOrEmpty(p *string) string {
 // helpers
 // ----------------------------------------------------------------------------
 
-// ResyncSecretRef re-pushes the org's Anthropic keys through the in-process
-// SecretRefWriter (local OpenBao repair). EVERY role is resynced: a repair that
-// only restored the default key would leave a separate-key org dispatching
-// against a vault path that no longer resolves, which fails closed — a repair
-// that visibly does not repair. Returns (true, nil) when at least one role was
+// ResyncSecretRef re-pushes the org's Anthropic credentials through the
+// in-process SecretRefWriter (local OpenBao repair). EVERY role is resynced: a
+// repair that only restored the API key would leave a subscription org
+// dispatching against a vault path that no longer resolves, which fails
+// closed — a repair that visibly does not repair. Returns (true, nil) when at least one role was
 // pushed, (false, nil) when there was nothing to push. ctx must carry an ouId
 // claim (repair injects thunder_org_uuid).
 func (s *AnthropicCredentialService) ResyncSecretRef(ctx context.Context, ocOrgID string) (bool, error) {
@@ -583,7 +503,7 @@ func (s *AnthropicCredentialService) ResyncSecretRef(ctx context.Context, ocOrgI
 
 // resyncRole re-pushes one role's key. A role with no row, an inactive row, no
 // triplet, or missing bytes is simply nothing to repair — (false, nil), not an
-// error, because the common case is an org that never set a coding key.
+// error, because the common case is an org with no subscription.
 func (s *AnthropicCredentialService) resyncRole(ctx context.Context, ocOrgID string, role AnthropicRole) (bool, error) {
 	row, err := s.fetchRow(ctx, ocOrgID, role)
 	if err != nil {

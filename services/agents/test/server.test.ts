@@ -38,6 +38,7 @@ import { InMemoryConversationStore } from "../src/store/memory-store.js";
 import { SEED_FILES } from "./seed-files.js";
 import { sha256Hex } from "../src/shared/hash.js";
 import { mockModel } from "../src/shared/mock-model.js";
+import { config } from "../src/shared/config.js";
 
 const OPENAPI = "specs/design/components/hello-api/openapi.yaml";
 const WORKLOAD_YAML = "specs/design/components/hello-api/workload.yaml";
@@ -730,6 +731,124 @@ test("a console turn carries the narration policy; the same turn without a surfa
   } finally {
     await consoleRun.close();
     await localRun.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// --- The turn's model (body `model`, else AGENT_MODEL) --------------------------
+
+/** Boot with a buildModel that records the model id each turn asked for. */
+async function bootRecordingModels(workspaceMountRoot: string) {
+  const requested: string[] = [];
+  const app = createApp({
+    store: new InMemoryConversationStore(),
+    buildModel: (_apiKey, modelId) => {
+      requested.push(modelId);
+      return mockModel([{ kind: "text", text: "ok" }]);
+    },
+    auth: { audience: AUD, secret: SECRET },
+    workspaceMountRoot,
+  });
+  const { baseUrl, close } = await listen0(app.listen(0));
+  return { requested, baseUrl, close };
+}
+
+/** The `model` the terminal manifest attributed the turn's usage to. */
+function manifestModel(sse: string): string | undefined {
+  const frame = sse
+    .split("\n")
+    .filter((l) => l.startsWith("data: {") && l.includes('"type":"manifest"'))
+    .pop();
+  return frame ? (JSON.parse(frame.slice("data: ".length)) as { usage?: { model?: string } }).usage?.model : undefined;
+}
+
+test("each turn builds the model it names; a turn naming none runs on AGENT_MODEL", async () => {
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" });
+  const run = await bootRecordingModels(root);
+  try {
+    const token = await mintToken();
+    const post = (body: unknown, turnId: string) =>
+      fetch(`${run.baseUrl}/conversations/${WS_CONV}/turns`, turnPost(wsBody({ ...(body as object), workspace: { turnId } }), { token, org: WS_ORG }));
+
+    const haiku = await post({ model: "claude-haiku-4-5" }, "t-1");
+    assert.equal(haiku.status, 200);
+    assert.equal(manifestModel(await haiku.text()), "claude-haiku-4-5");
+
+    const sonnet = await post({ model: "claude-sonnet-5" }, "t-2");
+    assert.equal(sonnet.status, 200);
+    assert.equal(manifestModel(await sonnet.text()), "claude-sonnet-5");
+
+    const unnamed = await post({}, "t-3");
+    assert.equal(unnamed.status, 200);
+    assert.equal(manifestModel(await unnamed.text()), config.model);
+
+    assert.deepEqual(run.requested, ["claude-haiku-4-5", "claude-sonnet-5", config.model]);
+  } finally {
+    await run.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("400 on a model that is not a non-empty string; no model is built", async () => {
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" });
+  const run = await bootRecordingModels(root);
+  try {
+    const token = await mintToken();
+    for (const model of ["", "   ", 42, null, { id: "claude-sonnet-5" }]) {
+      const res = await fetch(`${run.baseUrl}/conversations/${WS_CONV}/turns`, turnPost(wsBody({ model }), { token, org: WS_ORG }));
+      assert.equal(res.status, 400, `model=${JSON.stringify(model)}`);
+      assert.match(((await res.json()) as { error: string }).error, /model must be a non-empty string/);
+    }
+    assert.deepEqual(run.requested, []);
+  } finally {
+    await run.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("400 on a model the platform does not offer; no model is built", async () => {
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" });
+  const run = await bootRecordingModels(root);
+  try {
+    const token = await mintToken();
+    for (const model of ["claude-opus-5", "gpt-5", "claude-sonnet-5-typo"]) {
+      const res = await fetch(`${run.baseUrl}/conversations/${WS_CONV}/turns`, turnPost(wsBody({ model }), { token, org: WS_ORG }));
+      assert.equal(res.status, 400, `model=${model}`);
+      assert.match(((await res.json()) as { error: string }).error, /is not offered \(claude-sonnet-5, claude-haiku-4-5\)/);
+    }
+    assert.deepEqual(run.requested, []);
+  } finally {
+    await run.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("reasoning effort rides a Sonnet 5 turn and is left off a Haiku 4.5 turn", async () => {
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" });
+  const models: ReturnType<typeof mockModel>[] = [];
+  const app = createApp({
+    store: new InMemoryConversationStore(),
+    buildModel: () => {
+      const m = mockModel([{ kind: "text", text: "ok" }]);
+      models.push(m);
+      return m;
+    },
+    auth: { audience: AUD, secret: SECRET },
+    workspaceMountRoot: root,
+  });
+  const { baseUrl, close } = await listen0(app.listen(0));
+  try {
+    const token = await mintToken();
+    const post = (model: string, turnId: string) =>
+      fetch(`${baseUrl}/conversations/${WS_CONV}/turns`, turnPost(wsBody({ model, workspace: { turnId } }), { token, org: WS_ORG }));
+    await (await post("claude-sonnet-5", "t-1")).text();
+    await (await post("claude-haiku-4-5", "t-2")).text();
+    const effortOf = (m: ReturnType<typeof mockModel>) =>
+      (m.doStreamCalls[0]!.providerOptions as { anthropic?: { effort?: string } } | undefined)?.anthropic?.effort;
+    assert.equal(effortOf(models[0]!), config.reasoningEffort);
+    assert.equal(effortOf(models[1]!), undefined);
+  } finally {
+    await close();
     rmSync(root, { recursive: true, force: true });
   }
 });

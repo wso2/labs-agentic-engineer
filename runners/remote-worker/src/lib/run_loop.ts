@@ -96,18 +96,19 @@
 // **A run that never ends is not a settle**, which is what the deadline guard
 // below is for: a pod is killed from outside when its Job's deadline passes, and
 // a killed pod explains nothing. See `createRunDeadline`.
+//
+// **This loop reads no message shape.** Every rule above turns on WHAT KIND of
+// message arrived — a turn ending, a task starting, a retry, a liveness frame —
+// and the kind is the runtime's to say: `RunLoopOptions.classify` answers with a
+// `MessageClass` (`runtime/port.ts`), and the loop branches on that. The words
+// above say "a `result`" because the rules were measured on Claude Code; the
+// code says `turn_end` and `task_bookkeeping`.
 
+import type { ApiRetryInfo, MessageClassifier } from "../runtime/port.js";
 import { checkPreload, preloadWarning } from "./skills_preload_check.js";
-import {
-  apiRetryLine,
-  isModelWaitFrame,
-  isStreamFrame,
-  isToolProgressFrame,
-  createStallSignalReader,
-  readApiRetry,
-} from "./progress/diagnostics.js";
-import { emit as defaultEmit, LEAD_AGENT_ID, type RunEventInput } from "./progress/emitter.js";
+import { emit as defaultEmit, LEAD_AGENT_ID, type RunEventInput, type RunEventUsage } from "./progress/emitter.js";
 import type { RunWatchdog } from "./progress/watchdog.js";
+import { withTimeout } from "./with_timeout.js";
 
 // The race's "this run is over" arm. A unique symbol key rather than a sentinel
 // object so an early end can never be confused with an IteratorResult — which is
@@ -326,13 +327,25 @@ export function createRunTerminator(): RunTerminator {
 }
 
 export interface RunLoopOptions {
-  /** This run's adapter — see createClaudeAdapter; never shared between runs. */
+  /** This run's translator — see `RuntimeSession.translate`; never shared between runs. */
   translate: RunEventTranslator;
+  /**
+   * This run's classifier — see `RuntimeSession.classify`. Per run for the same
+   * reason as the translator: it may remember what it has already said.
+   */
+  classify: MessageClassifier;
   /** This run's watchdog, fed the same events the feed gets. */
   watchdog: RunWatchdog;
   emit?: (event: RunEventInput) => void;
-  /** Where every raw SDK message is kept (claude.log). */
+  /** Where every raw SDK message is kept (runtime.log). */
   record?: (message: unknown) => void;
+  /**
+   * The adapter's cumulative usage — see `RuntimeSession.usage`. Carried by a
+   * settle no turn reported (an early end, a stream that closed or threw
+   * without one); a normal settle carries the last turn's, which is the same
+   * total.
+   */
+  usage?: () => RunEventUsage | undefined;
   /**
    * The skills the session was asked for, checked against the ones its `init`
    * says it resolved. Data rather than a callback: the mismatch is reported as
@@ -359,15 +372,15 @@ export interface RunLoopOptions {
 export async function consumeRun(stream: RunStream, opts: RunLoopOptions): Promise<RunResult> {
   const emit = opts.emit ?? defaultEmit;
   const record = opts.record ?? (() => {});
-  const { translate, watchdog, deadline } = opts;
-  const live = createLiveTasks();
-
-  // Per RUN, not per module: the reader remembers the last rate-limit sentence
-  // it let through so an unchanged one is not said again. A live run said the
-  // same "near the limit on the seven_day window at 83%" seventeen times, twice
-  // within eight seconds of each other, which is how a warning becomes
-  // something a reader scrolls past.
-  const readStallSignal = createStallSignalReader();
+  const { translate, classify, watchdog, deadline } = opts;
+  const usageSoFar = (): { usage?: RunEventUsage } => {
+    const usage = opts.usage?.();
+    return usage ? { usage } : {};
+  };
+  // The task ids this run knows are still running — what a termination has to
+  // stop. Moved only by `task_bookkeeping`; which runtime words open and close
+  // a task (and which deliberately do not) is the classifier's to know.
+  const live = new Set<string>();
 
   // The newest turn's ending, kept so the settle can carry its verdict and its
   // usage. Undefined right up to the first `result` message, which is what
@@ -411,41 +424,50 @@ export async function consumeRun(stream: RunStream, opts: RunLoopOptions): Promi
     for (;;) {
       const step = ending ? await Promise.race([messages.next(), ending]) : await messages.next();
       if (isEarlyEnd(step)) {
-        // The held turn is deliberately dropped. Whatever the last turn
-        // reported, this run did not finish — it was ended with work
-        // outstanding, and a success line here is the one thing nobody re-reads.
-        return await terminateRun(step[TERMINATED], stream, live, watchdog, emit);
+        // The held turn's VERDICT is deliberately dropped. Whatever the last
+        // turn reported, this run did not finish — it was ended with work
+        // outstanding, and a success line here is the one thing nobody
+        // re-reads. Its usage is not: the adapter's running total is carried.
+        return await terminateRun(step[TERMINATED], stream, live, watchdog, emit, usageSoFar);
       }
       if (step.done) break;
       const message = step.value;
+      const cls = classify(message);
 
-      // Streaming frames arrive per token and never reach claude.log: writing
+      // Streaming frames arrive per token and never reach runtime.log: writing
       // one JSON line per token would turn a diagnostic into the hang it exists
       // to report. Only present under `debug` at all. They still produce a
       // rate-limited heartbeat below, which is bounded by construction.
-      const streaming = isStreamFrame(message);
-      if (!streaming) record(message);
-      // A retryable API failure is the answer to "waiting on the model" —
-      // see progress/diagnostics.ts. It is recorded and reported but NOT
+      if (!(cls.kind === "model_wait" && cls.streaming)) record(message);
+      // A message about the server rather than the run (OpenCode's keep-alives,
+      // its plugin and catalog announcements). Recorded above and nothing else:
+      // translating it would produce nothing, and observing that nothing would
+      // reset the watchdog's idle clock — see `MessageClass`.
+      if (cls.kind === "noise") continue;
+      // A retryable API failure is the answer to "waiting on the model" — see
+      // `MessageClass` (runtime/port.ts). It is recorded and reported but NOT
       // passed to observe(): a retry means the run failed to progress, and
       // counting it as activity would suppress the very report it explains.
-      // The translator drops this message, so emitting here adds a line
-      // rather than duplicating one.
-      const retry = readApiRetry(message);
-      if (retry) {
-        watchdog.observeRetry(retry);
-        emit({ kind: "notice", agentId: LEAD_AGENT_ID, level: "warn", code: "api_retry", detail: apiRetryLine(retry) });
+      // Retries are not translated, so emitting here adds a line rather than
+      // duplicating one.
+      if (cls.kind === "retry") {
+        watchdog.observeRetry(cls.info);
+        emit({ kind: "notice", agentId: LEAD_AGENT_ID, level: "warn", code: "api_retry", detail: apiRetryLine(cls.info) });
         continue;
       }
-      // The other system messages that explain a silence or an ending — a
-      // compaction, a refusal, a denied tool, a worker going away. Dropped
-      // with every other unrecognised subtype until now, which is how a run
-      // that was compacting and a run that was wedged looked identical.
-      // Deliberately NOT fed to the watchdog: none of them is the agent making
-      // progress, and firing the idle report slightly early is the safe
-      // direction for a diagnostic.
-      const signal = readStallSignal(message);
-      if (signal) {
+      // The other messages that explain a silence or an ending — a
+      // compaction, a refusal, a denied tool, a worker going away, a rate-limit
+      // window. Without a notice, a run that was compacting and a run that was
+      // wedged look identical. Deliberately NOT fed to the watchdog: none of
+      // them is the agent making progress, and firing the idle report slightly
+      // early is the safe direction for a diagnostic.
+      //
+      // A rate-limit sentence the run has already said is NOT this class — the
+      // classifier drops the repeat per session (a live run said the same "near
+      // the limit on the seven_day window at 83%" seventeen times) and the
+      // message falls through to `activity`.
+      if (cls.kind === "stall_signal") {
+        const { signal } = cls;
         emit({ kind: "notice", agentId: LEAD_AGENT_ID, level: signal.level, code: signal.code, detail: signal.detail });
         continue;
       }
@@ -456,7 +478,7 @@ export async function consumeRun(stream: RunStream, opts: RunLoopOptions): Promi
       // counting one as activity would keep the watchdog quiet through exactly
       // the stall the heartbeat is reporting. Note that this must hold for the
       // ones the rate limiter DROPS too, which is why the routing is by message
-      // rather than by whether an event came back.
+      // class rather than by whether an event came back.
       //
       // The INPUT grace is the opposite call on the same frames, and the two
       // were conflated here until a live run paid for it (see the header). They
@@ -468,20 +490,24 @@ export async function consumeRun(stream: RunStream, opts: RunLoopOptions): Promi
       // much as the model's — a tool the runtime is still ticking is work this
       // run is doing, and closing stdin under it cancels the hook the write at
       // the end of that work would have answered on. Disarming on proof of life
-      // cannot hang a run: a lead with nothing left to say emits a `result`, and
-      // the `isResult` path below ends input there when nothing is live. The
+      // cannot hang a run: a lead with nothing left to say ends its turn, and
+      // the `turn_end` path below ends input there when nothing is live. The
       // grace exists only for a lead that is never woken at all, and
       // `createRunDeadline` remains the backstop for a run that never ends.
-      const modelWait = streaming || isModelWaitFrame(message);
-      if (modelWait || isToolProgressFrame(message)) {
+      if (cls.kind === "model_wait" || cls.kind === "tool_progress") {
         disarmInputGrace();
-        // Only a token frame says the model is producing; a slow tool says
+        // Only a model wait says the model is producing; a slow tool says
         // nothing about the model at all.
-        if (modelWait) watchdog.observeStream();
+        if (cls.kind === "model_wait") watchdog.observeStream();
         for (const event of translate(message)) emit(event);
         continue;
       }
-      live.observe(message);
+      // Everything from here on is activity; `turn_end`, `task_bookkeeping` and
+      // `init` each add one step of their own after it (see MessageClass).
+      if (cls.kind === "task_bookkeeping") {
+        if (cls.started) live.add(cls.started);
+        if (cls.ended) live.delete(cls.ended);
+      }
       const events = translate(message);
       watchdog.observe(events);
       for (const event of events) {
@@ -491,26 +517,26 @@ export async function consumeRun(stream: RunStream, opts: RunLoopOptions): Promi
         if (event.kind === "turn_ended") lastTurn = event as TurnEnded;
         emit(event);
       }
-      // The input rule (header). A `result` with nothing live: the run is over.
-      // A task settling after a `result`, leaving nothing live: the lead is
-      // normally woken for another turn — give it the grace, and let any
+      // The input rule (header). A turn ending with nothing live: the run is
+      // over. A task settling after a turn ended, leaving nothing live: the lead
+      // is normally woken for another turn — give it the grace, and let any
       // message that is not task bookkeeping (the woken lead's own output)
-      // disarm it. A `result` while tasks are live keeps input open.
-      if (isResult(message)) {
+      // disarm it. A turn ending while tasks are live keeps input open.
+      if (cls.kind === "turn_end") {
         disarmInputGrace();
-        if (live.ids().length === 0) endInput();
-      } else if (isTaskBookkeeping(message)) {
-        if (lastTurn && live.ids().length === 0) armInputGrace();
+        if (live.size === 0) endInput();
+      } else if (cls.kind === "task_bookkeeping") {
+        if (lastTurn && live.size === 0) armInputGrace();
       } else {
         disarmInputGrace();
       }
-      // The SDK reports what it actually resolved; a preload that matched
+      // The runtime reports what it actually resolved; a preload that matched
       // nothing is dropped in silence (see skills_preload_check.ts for the
       // run this cost us). Warn rather than fail: the guidance is missing,
       // not the build, and a run that can still produce something useful
       // should — but it must not look clean while doing it.
-      if (isInit(message) && opts.requestedSkills) {
-        const { missing } = checkPreload(opts.requestedSkills, resolvedSkills(message));
+      if (cls.kind === "init" && opts.requestedSkills) {
+        const { missing } = checkPreload(opts.requestedSkills, cls.resolvedSkills);
         if (missing.length > 0) {
           emit({ kind: "notice", agentId: LEAD_AGENT_ID, level: "warn", detail: preloadWarning(missing) });
         }
@@ -524,7 +550,7 @@ export async function consumeRun(stream: RunStream, opts: RunLoopOptions): Promi
     // does not know is a different, readable statement.
     if (!lastTurn) {
       const error = "agent stream ended without result";
-      emit({ kind: "run_settled", agentId: LEAD_AGENT_ID, outcome: "failure", error });
+      emit({ kind: "run_settled", agentId: LEAD_AGENT_ID, outcome: "failure", error, ...usageSoFar() });
       return { exitCode: 1, error };
     }
     // The exit code follows the SETTLE, so the feed and the process cannot give
@@ -541,7 +567,7 @@ export async function consumeRun(stream: RunStream, opts: RunLoopOptions): Promi
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     record({ type: "worker_error", error: msg });
-    emit({ kind: "run_settled", agentId: LEAD_AGENT_ID, outcome: "failure", error: msg });
+    emit({ kind: "run_settled", agentId: LEAD_AGENT_ID, outcome: "failure", error: msg, ...usageSoFar() });
     return { exitCode: 1, error: msg };
   } finally {
     disarmInputGrace();
@@ -586,11 +612,12 @@ function deadlineTermination(deadline: RunDeadline): RunTermination {
 async function terminateRun(
   reason: RunTermination,
   stream: RunStream,
-  live: LiveTasks,
+  live: ReadonlySet<string>,
   watchdog: RunWatchdog,
   emit: (event: RunEventInput) => void,
+  usageSoFar: () => { usage?: RunEventUsage },
 ): Promise<RunResult> {
-  const ids = live.ids();
+  const ids = [...live];
   const stopping = ids.length > 0 ? `, stopping ${ids.length} running task(s)` : "";
   // Announced BEFORE the stop, so the reason reaches the pipe even if stopping
   // is what hangs. Same shape as the watchdog's own lines, and at `error`
@@ -610,18 +637,11 @@ async function terminateRun(
   await withTimeout(
     Promise.all(ids.map((id) => stream.stopTask(id).catch(() => {}))),
     STOP_TASKS_TIMEOUT_MS,
-  );
-  emit({ kind: "run_settled", agentId: LEAD_AGENT_ID, outcome: "failure", error: reason.error });
+    "stopping the live tasks",
+  ).catch(() => {});
+  // Read after the stop, so a task's last usage report is counted.
+  emit({ kind: "run_settled", agentId: LEAD_AGENT_ID, outcome: "failure", error: reason.error, ...usageSoFar() });
   return { exitCode: 1, error: reason.error };
-}
-
-function withTimeout(work: Promise<unknown>, ms: number): Promise<unknown> {
-  let timer: NodeJS.Timeout | undefined;
-  const capped = new Promise<void>((resolve) => {
-    timer = setTimeout(resolve, ms);
-    timer.unref?.();
-  });
-  return Promise.race([work, capped]).finally(() => clearTimeout(timer));
 }
 
 /** A budget as a person set it: whole minutes above a minute, seconds below. */
@@ -629,81 +649,26 @@ function budgetText(ms: number): string {
   return ms >= 60_000 ? `${Math.round(ms / 60_000)}m` : `${Math.round(ms / 1000)}s`;
 }
 
-function isResult(message: unknown): boolean {
-  return !!message && typeof message === "object" && (message as Record<string, unknown>).type === "result";
-}
-
 /**
- * A task lifecycle message — the ones `createLiveTasks` reads, plus the
- * background roster. None of them is the lead speaking, which is what the
- * input rule needs to know.
- */
-function isTaskBookkeeping(message: unknown): boolean {
-  if (!message || typeof message !== "object") return false;
-  const m = message as Record<string, unknown>;
-  if (m.type !== "system") return false;
-  const subtype = typeof m.subtype === "string" ? m.subtype : "";
-  return subtype.startsWith("task_") || subtype === "background_tasks_changed";
-}
-
-function isInit(message: unknown): boolean {
-  if (!message || typeof message !== "object") return false;
-  const m = message as Record<string, unknown>;
-  return m.type === "system" && m.subtype === "init";
-}
-
-function resolvedSkills(message: unknown): string[] {
-  const skills = (message as Record<string, unknown>).skills;
-  return Array.isArray(skills) ? (skills as string[]) : [];
-}
-
-interface LiveTasks {
-  observe(message: unknown): void;
-  ids(): string[];
-}
-
-// A task that has settled, whatever word the SDK used for it. Anything NOT in
-// this set leaves the task live, which is the safe direction: stopping a task
-// that already finished is a no-op, while dropping one that is still running
-// leaves it working past the deadline — which is the failure the guard exists
-// to prevent.
-const TASK_TERMINAL = new Set(["completed", "failed", "killed", "stopped", "cancelled", "error"]);
-
-/**
- * The task ids a run knows are still running.
+ * The feed line for one retry.
  *
- * Fed from `task_started` (a task begins) and closed by `task_updated` with a
- * terminal status or by the task's `task_notification` (it settled) — the two
- * messages every settled task in both recordings produces.
- *
- * `background_tasks_changed` is deliberately NOT used, though it looks like the
- * authoritative list: it enumerates only BACKGROUNDED tasks, so a foreground
- * subagent (probe1's depth-2 child, `is_backgrounded: false`) would be evicted
- * by the next one that omits it and then never stopped.
+ * The loop's, not the runtime's: a classifier says a retry happened and with
+ * what numbers (`ApiRetryInfo`), and how that reads is the same sentence
+ * whichever runtime retried. Every retry gets a line, not just the late ones:
+ * the count is bounded by `maxRetries`, and a single retry only ever happens
+ * when something IS wrong, so there is no healthy run for this to add noise to.
+ * A threshold would have to be tuned against an error class we do not control.
  */
-function createLiveTasks(): LiveTasks {
-  const live = new Set<string>();
-  return {
-    observe(message: unknown): void {
-      if (!message || typeof message !== "object") return;
-      const m = message as Record<string, unknown>;
-      if (m.type !== "system") return;
-      const taskId = typeof m.task_id === "string" ? m.task_id : "";
-      if (!taskId) return;
-      if (m.subtype === "task_started") {
-        live.add(taskId);
-        return;
-      }
-      if (m.subtype === "task_notification") {
-        live.delete(taskId);
-        return;
-      }
-      if (m.subtype === "task_updated") {
-        const patch = m.patch && typeof m.patch === "object" ? (m.patch as Record<string, unknown>) : {};
-        const status = typeof patch.status === "string" ? patch.status : "";
-        if (TASK_TERMINAL.has(status)) live.delete(taskId);
-      }
-    },
-    ids: () => [...live],
-  };
+export function apiRetryLine(info: ApiRetryInfo): string {
+  // "no response" is the honest rendering of a null status: a refused
+  // connection or a timeout never got one, and printing "HTTP 0" would invent
+  // a status the API never returned.
+  const where = info.errorStatus === null ? "no response" : `HTTP ${info.errorStatus}`;
+  // Backoff delays are sub-minute by construction, so plain seconds reads
+  // better here than the run-length format the watchdog uses.
+  const next = `${Math.round(info.retryDelayMs / 1000)}s`;
+  // A runtime that states no ceiling gets none printed: "retry 3" is the fact,
+  // "retry 3/0" would be a bound nobody enforces.
+  const attempt = info.maxRetries === null ? `${info.attempt}` : `${info.attempt}/${info.maxRetries}`;
+  return `[api] retry ${attempt} after ${info.error} (${where}) — next attempt in ${next}`;
 }

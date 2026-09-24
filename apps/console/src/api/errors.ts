@@ -44,6 +44,22 @@ export function apiErrorCode(error: unknown): string | undefined {
 }
 
 /**
+ * The request fields the failure names (`details[].field`, e.g. `body.llm`),
+ * so a form that sent several sections can show the message on the one that
+ * was refused.
+ */
+function apiErrorFields(error: unknown): string[] {
+  if (!error || typeof error !== "object") return [];
+  const details = (error as Record<string, unknown>).details;
+  if (!Array.isArray(details)) return [];
+  return details.flatMap((d: unknown) => {
+    const field =
+      d && typeof d === "object" ? (d as Record<string, unknown>).field : undefined;
+    return typeof field === "string" && field.length > 0 ? [field] : [];
+  });
+}
+
+/**
  * An `Error` that keeps the envelope's `code` alongside its message (#561).
  * Mutations that rewrap a failed call as `new Error(message)` throw the status
  * and the code away, which leaves a caller wanting to react to one specific
@@ -53,10 +69,12 @@ export function apiErrorCode(error: unknown): string | undefined {
  */
 export class ApiRequestError extends Error {
   readonly code: string | undefined;
+  readonly fields: string[];
 
   constructor(error: unknown, fallback: string) {
     super(apiErrorMessage(error, fallback));
     this.name = "ApiRequestError";
     this.code = apiErrorCode(error);
+    this.fields = apiErrorFields(error);
   }
 }

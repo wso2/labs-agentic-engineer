@@ -81,11 +81,12 @@ type turnJob struct {
 	// author is the acting user for the journal (#463), nil when the bearer
 	// carries no human identity — an M2M token journals no author rather than
 	// a bare subject claim.
-	author       *agentsvc.JournalAuthor
-	repoRef      sourcecontrol.RepoRef
-	baseRef      string
-	skillsRef    string
-	anthropicKey string
+	author    *agentsvc.JournalAuthor
+	repoRef   sourcecontrol.RepoRef
+	baseRef   string
+	skillsRef string
+	// llm is the org's key and model, resolved when the turn was admitted.
+	llm AgentLLM
 	// Room-scoped turn (#86 phase 4): non-empty collabRoomID makes the agents
 	// service a live peer of this room (joining with collabToken, the
 	// prompting user's bearer). The doc is the write surface — the runner
@@ -315,8 +316,9 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 	if job.collabRoomID != "" {
 		collab = &agentsvc.CollabBlock{RoomID: job.collabRoomID, Token: job.collabToken}
 	}
-	body, err := s.client.Turn(ctx, job.nsConversationID, job.orgID, job.anthropicKey, agentsvc.TurnRequest{
-		Turn: job.turn,
+	body, err := s.client.Turn(ctx, job.nsConversationID, job.orgID, job.llm.Key, agentsvc.TurnRequest{
+		Turn:  job.turn,
+		Model: job.llm.Model,
 		Workspace: agentsvc.WorkspaceRef{
 			ConversationID: job.nsConversationID,
 			TurnID:         job.turnID,

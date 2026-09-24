@@ -56,7 +56,7 @@
 // clock would be a worse bug than the silence it replaces.
 
 import { emit as defaultEmit, LEAD_AGENT_ID, type RunEventInput } from "./emitter.js";
-import type { ApiRetryInfo } from "./diagnostics.js";
+import type { ApiRetryInfo } from "../../runtime/port.js";
 
 // Long enough that an ordinary compile or install does not trip it, short
 // enough that a multi-minute dead zone turns into several informative lines
@@ -188,7 +188,8 @@ export function createRunWatchdog(opts?: RunWatchdogOptions): RunWatchdog {
   function cause(t: number): string {
     if (lastRetry) {
       const { attempt, maxRetries, error } = lastRetry.info;
-      return ` (API retry ${attempt}/${maxRetries}, ${error}, last ${seconds(t - lastRetry.at)} ago)`;
+      const count = maxRetries === null ? `${attempt}` : `${attempt}/${maxRetries}`;
+      return ` (API retry ${count}, ${error}, last ${seconds(t - lastRetry.at)} ago)`;
     }
     // Only ever known when the streaming option is on. Absence is not
     // "no tokens" — it is "not measured" — so nothing is claimed here.
@@ -207,8 +208,8 @@ export function createRunWatchdog(opts?: RunWatchdogOptions): RunWatchdog {
       return `waiting on ${named(oldest)}${where} for ${seconds(t - oldest.startedAt)}${cause(t)}`;
     }
     const agents = runningAgents();
-    if (agents.length === 1) {
-      const a = agents[0];
+    const [a] = agents;
+    if (agents.length === 1 && a) {
       return (
         `no tool in flight inside ${named(a)}, running ${seconds(t - a.startedAt)}` +
         ` — waiting on its model for ${seconds(t - lastActivityAt)}${cause(t)}`

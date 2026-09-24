@@ -26,7 +26,7 @@
 // without editing the module every run goes through.
 
 import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
-import type { DeniedCapability } from "../port.js";
+import { deniedToolNames, type DeniedCapability } from "../port.js";
 
 // Phase 0 allowed-tools: git, gh, build/test/lint via Bash; standard file
 // tools. Endpoint Spec Discovery (B2) re-introduces MCP — but only as an
@@ -134,21 +134,9 @@ const DENIED_TOOLS_BY_CAPABILITY: Record<DeniedCapability, readonly string[]> = 
   artifact_publishing: ["Artifact"],
 };
 
-/**
- * The Claude Code tool names denied by a set of capability classes.
- *
- * Order is the classes' order and then each class's own, so the list a query
- * receives is stable — a diff on it should mean a policy change and nothing
- * else.
- */
+/** The Claude Code tool names denied by a set of capability classes. */
 export function deniedTools(capabilities: readonly DeniedCapability[]): string[] {
-  const names: string[] = [];
-  for (const capability of capabilities) {
-    for (const tool of DENIED_TOOLS_BY_CAPABILITY[capability] ?? []) {
-      if (!names.includes(tool)) names.push(tool);
-    }
-  }
-  return names;
+  return deniedToolNames(DENIED_TOOLS_BY_CAPABILITY, capabilities);
 }
 
 // The server key the platform's MCP endpoint is registered under. The SDK

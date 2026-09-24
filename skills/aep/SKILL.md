@@ -355,9 +355,8 @@ not have.
 **A subagent may fan out itself** when its own work meets the two tests above; it
 inherits every rule in this section.
 
-**Pick the model for the job.** A walk or a small fix runs well on the fast model,
-a build on the default one. Name the model on the fan-out call — the glossary
-lists the aliases this session accepts.
+**Every subagent runs the session's one configured model**, so the fan-out call
+names no model.
 
 **Keep your plan in the task list.** One entry per issue you work, moved to
 in_progress when you or a subagent starts it, and to completed when its work is

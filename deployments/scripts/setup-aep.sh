@@ -75,8 +75,8 @@ apply_with_retry "${SCRIPT_DIR}/../manifests/docker-build-workflow.yaml" "docker
 echo "✅ ClusterWorkflow 'dockerfile-builder' installed"
 
 # Coding-agent runs as an OpenChoreo Job Component (not a ClusterWorkflow).
-# Build + import the runner image (ONE image, both task kinds: Debian + Go +
-# Playwright + baked chromium). It has no published counterpart on this branch,
+# Build + import the runner image (ONE image, both task kinds: Debian + Go + a
+# baked chromium). It has no published counterpart on this branch,
 # so it's built locally once per machine and imported into the node —
 # self-contained, no shared registry. Pre-importing also keeps the FIRST
 # dispatch from cold-pulling a multi-GB image, which has taken long enough to
@@ -1255,11 +1255,11 @@ LOCAL_DEV_ADMIN_GITHUB_PAT=${LOCAL_DEV_ADMIN_GITHUB_PAT_VAL}
 LOCAL_DEV_ADMIN_GITHUB_OWNER=${LOCAL_DEV_ADMIN_GITHUB_OWNER_VAL}
 ANTHROPIC_API_KEY=${ANTHROPIC_KEY}
 
-# Optional. Bills the CODING agent to its own Anthropic key, leaving everything
-# else on ANTHROPIC_API_KEY above (ADR-0016). Read by BOTH seed-dev.sh (which
-# connects it as the org's coding-agent key) and the playground (which hands it
-# to local coding runs) — leave it empty and the coding agent reuses the key
-# above, which is the default everywhere.
+# Optional. A Claude subscription token (`claude setup-token`, sk-ant-oat…) the
+# CODING agent bills instead of ANTHROPIC_API_KEY above (ADR-0036). Read by BOTH
+# seed-dev.sh (which connects it as the org's Claude subscription; any other
+# value is skipped) and the playground (which hands it to local coding runs) —
+# leave it empty and coding runs bill the key above, the default everywhere.
 AEP_CODING_ANTHROPIC_KEY=${CODING_ANTHROPIC_KEY_VAL}
 EOF
 

@@ -75,7 +75,7 @@ export interface DispatchRequest {
   /**
    * Developer diagnostics for this run: the SDK's own debug log, its stderr,
    * and per-token streaming frames for the watchdog. All three land in files
-   * beside `claude.log`; none of them reach the progress feed.
+   * beside `runtime.log`; none of them reach the progress feed.
    *
    * Stated by the entrypoint, never inferred — the same discipline as skills
    * scope. `local.ts` turns it on, because a playground run is read off disk by
@@ -86,7 +86,7 @@ export interface DispatchRequest {
    * diagnostic you do not have.
    *
    * Note what does NOT depend on this flag: API retries. Those are reported on
-   * every run — see progress/diagnostics.ts for why they are safe to be.
+   * every run — see runtime/claude/classify.ts for why they are safe to be.
    */
   debug?: boolean;
 }

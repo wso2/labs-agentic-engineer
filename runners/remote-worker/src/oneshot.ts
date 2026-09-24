@@ -233,6 +233,7 @@ async function main(): Promise<number> {
   // by hand instead. onDemandSkills() names what the phase may load.
   let availableSkillNames: string[] = [];
   let pinnedBodies = "";
+  let pinnedSkillNames: string[] = [];
   if (req.taskKind === "validation") {
     console.log(
       "[oneshot] validation run — no design skills apply; acceptance-run is injected as this run's workflow",
@@ -331,9 +332,6 @@ async function main(): Promise<number> {
       (l) => console.log(l),
     );
     availableSkillNames = present;
-    console.log(
-      `[oneshot] ${availableSkillNames.length} skill(s) loadable on demand: ${availableSkillNames.join(", ") || "none"}`,
-    );
   } else {
     const pinned = await resolveTaskSkills({
       workspace: layout.workspace,
@@ -352,9 +350,7 @@ async function main(): Promise<number> {
     // preloads guidance.
     availableSkillNames = await listMirroredSkills(layout.workspace);
     pinnedBodies = await readSkillBodies(layout.workspace, present);
-    console.log(
-      `[oneshot] ${availableSkillNames.length} skill(s) available, ${present.length} pinned into context`,
-    );
+    pinnedSkillNames = present;
   }
 
   const log = openTaskLog(layout.workspace);
@@ -367,7 +363,13 @@ async function main(): Promise<number> {
       : undefined;
   let completion: Promise<{ exitCode: number }>;
   try {
-    ({ completion } = await startCodingRun(req, layout, log, { availableSkillNames, pinnedBodies }, mcpAuth));
+    ({ completion } = await startCodingRun(
+      req,
+      layout,
+      log,
+      { availableSkillNames, pinnedBodies, pinnedSkillNames },
+      mcpAuth,
+    ));
   } catch (err) {
     // The mirror carries no workflow skill (see requireWorkflowBodies), so this
     // run has no procedure to follow. Fail the build rather than let the agent

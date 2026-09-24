@@ -499,8 +499,10 @@ here: they're the open `console` + `feature` issues.
   [#562](https://github.com/wso2/labs-agentic-engineer/issues/562), which fires
   the kickoff at creation and leaves the CTA as a resumption affordance.*
 - Onboarding — first-time credentials wizard for the default org (hard gate on
-  incomplete `GET /config`): GitHub PAT + Anthropic key, then auto skills-repo
-  bootstrap via extended `/skills/sync` —
+  incomplete `GET /config`): GitHub PAT, then the settings' AI agents card
+  (only the Anthropic key required; model and coding agent prefilled with the
+  platform defaults; a disconnected key re-gates with "Your Anthropic key was
+  disconnected"), then auto skills-repo bootstrap via extended `/skills/sync` —
   [#102](https://github.com/wso2/labs-agentic-engineer/issues/102)
   (BE handshake [#171](https://github.com/wso2/labs-agentic-engineer/issues/171);
   ADR-0009)
@@ -512,11 +514,7 @@ here: they're the open `console` + `feature` issues.
   (browse/search/import/sync; no in-console authoring) —
   [#96](https://github.com/wso2/labs-agentic-engineer/issues/96) (BE
   handshake: [#100](https://github.com/wso2/labs-agentic-engineer/issues/100))
-- Settings → Anthropic, coding-agent key — bill the coding agent to a separate
-  credential (another API key, or a `claude setup-token` token that bills a
-  Claude subscription) while everything else keeps the org's key. "Reuse the key
-  above" is the default and is the ABSENCE of a second key, not a stored mode
-  (ADR-0016)
+- Settings → AI agents — one card, one Save: model, Anthropic API key, coding agent (Claude Code | OpenCode) and an optional Claude subscription on Claude Code (root ADR-0036)
 - Settings → Skills legacy parity — per-tab routes, categorised catalogue
   (org/platform/custom/imported), MD viewer + monospace editor with preview,
   upload-only import with pull-request guidance —

@@ -72,10 +72,10 @@ it, this run has no evaluation key, and the harness says so rather than reaching
 for the one next to it. Nothing outside a dispatch sets it, so a local or
 playground run keeps the fallback it needs.
 
-The narrow case this closes: an org whose coding override is live while its
-default row is not. Dispatch succeeds on the override, `DefaultKeyRef` finds
-nothing, no evaluation key is mounted — and an unconditional fallback would have
-quietly evaluated on the coding key.
+The narrow case this closes: an org whose Claude subscription is live while its
+API key row is not active. Dispatch succeeds on the subscription,
+`DefaultKeyRef` finds nothing, no evaluation key is mounted — and an
+unconditional fallback would have quietly evaluated on the coding credential.
 
 `||` rather than `??` at each step, because ESO can materialize an **empty**
 secret and an empty key is no key, not a key that fails to authenticate. The

@@ -204,11 +204,11 @@ type fakeCriteria struct {
 
 // The fixture is carried as raw bytes so a test can hand in a deliberately
 // unusable oracle (empty, or a file with no scenarios) as easily as a good one.
-func (f fakeCriteria) ReadAcceptanceCriteria(_ context.Context, _, _ string) ([]AcceptanceFile, bool, error) {
+func (f fakeCriteria) ReadAcceptanceCriteria(_ context.Context, _, _ string) ([]AcceptanceCriteriaFile, bool, error) {
 	if !f.found {
 		return nil, false, nil
 	}
-	return []AcceptanceFile{{Path: "specs/acceptance/greeting.feature", Content: string(f.raw)}}, true, nil
+	return []AcceptanceCriteriaFile{{Path: "specs/validation/acceptance/greeting.feature", Content: string(f.raw)}}, true, nil
 }
 
 const sampleCriteria = `Feature: Greeting
@@ -289,9 +289,9 @@ func TestEnsureValidationIssue_CreatesFormattedIssue(t *testing.T) {
 	for _, want := range []string{
 		"## Acceptance criteria",
 		"## Report",
-		"specs/acceptance/greeting.feature", // the file is NAMED
-		"tests/acceptance/report.json",      // where the answer goes
-		"There is no test code to author",   // the load-bearing difference
+		"specs/validation/acceptance/greeting.feature", // the file is NAMED
+		"tests/acceptance/report.json",                 // where the answer goes
+		"There is no test code to author",              // the load-bearing difference
 		// The false-pass guard has to be REACHABLE from the issue: it ships
 		// inside the skill, so the body names the one path that resolves in a
 		// pod. Without this line the guard exists and nothing ever runs it.

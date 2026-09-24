@@ -28,18 +28,18 @@ import (
 // passing — the shape a repair pass is built from. The blocked one is here on
 // purpose: it must never be filed.
 const failedReport = `{"schemaVersion":2,"commit":"abc123","scenarios":[
-  {"feature":"Greeting","featureFile":"specs/acceptance/greeting.feature","line":8,
+  {"feature":"Greeting","featureFile":"specs/validation/acceptance/greeting.feature","line":8,
    "rule":"The page greets the visitor by name","scenario":"Greeting a known visitor","outcome":"failed",
    "steps":[
      {"keyword":"When","text":"Ada opens the page","command":"agent-browser open /"},
      {"keyword":"Then","text":"she is greeted by name","command":"agent-browser wait --text \"Hello, Ada\"",
       "exit":1,"observed":"the heading read \"Hello, undefined\""}]},
-  {"feature":"Greeting","featureFile":"specs/acceptance/greeting.feature","line":16,
+  {"feature":"Greeting","featureFile":"specs/validation/acceptance/greeting.feature","line":16,
    "rule":"The page greets the visitor by name","scenario":"Greeting an unknown visitor","outcome":"passed"},
-  {"feature":"Greeting","featureFile":"specs/acceptance/greeting.feature","line":24,
+  {"feature":"Greeting","featureFile":"specs/validation/acceptance/greeting.feature","line":24,
    "rule":"A blank name is refused","scenario":"Submitting a blank name","outcome":"blocked",
    "steps":[{"keyword":"When","text":"Ada submits a blank name","observed":"the Submit button was [disabled]"}]},
-  {"feature":"Copy","featureFile":"specs/acceptance/copy.feature","line":5,
+  {"feature":"Copy","featureFile":"specs/validation/acceptance/copy.feature","line":5,
    "rule":"Warnings read as warnings","scenario":"The cutoff notice","outcome":"failed",
    "steps":[{"keyword":"Then","text":"the notice reads as a warning",
              "command":"agent-browser get text .notice","exit":0,"observed":"copy reads as a confirmation"}]}
@@ -91,10 +91,10 @@ func TestMintRepairIssues_OnePerFailedScenario(t *testing.T) {
 	// was demanded, the observation says what happened, and the location says
 	// where to read it. Nothing here needs a second read of the specification.
 	for _, want := range []string{
-		"The page greets the visitor by name", // the rule
-		"**Then** she is greeted by name",     // the step, as executed
-		`the heading read "Hello, undefined"`, // what the agent observed
-		"specs/acceptance/greeting.feature:8", // where to read it
+		"The page greets the visitor by name",            // the rule
+		"**Then** she is greeted by name",                // the step, as executed
+		`the heading read "Hello, undefined"`,            // what the agent observed
+		"specs/validation/acceptance/greeting.feature:8", // where to read it
 	} {
 		if !strings.Contains(first.Body, want) {
 			t.Errorf("body is missing %q:\n%s", want, first.Body)
@@ -102,7 +102,7 @@ func TestMintRepairIssues_OnePerFailedScenario(t *testing.T) {
 	}
 	// Enforcement of this is deferred to separate skill work, so the issue itself has
 	// to say it: the cheapest path to a green report is to weaken the assertion.
-	if !strings.Contains(first.Body, "specs/acceptance/") {
+	if !strings.Contains(first.Body, "specs/validation/acceptance/") {
 		t.Errorf("body does not tell the agent the scenarios are off limits:\n%s", first.Body)
 	}
 }
@@ -258,7 +258,7 @@ const productionReport = `{
   "isolation": "each scenario creates its own list and asserts only on that list",
   "scenarios": [
     {"feature": "Adding items to the list",
-     "featureFile": "specs/acceptance/shopping-list.feature", "line": 12,
+     "featureFile": "specs/validation/acceptance/shopping-list.feature", "line": 12,
      "rule": "A household member can add an item with a name and a quantity",
      "scenario": "Adding a new item", "tags": ["@story-2"], "outcome": "passed",
      "steps": [
@@ -269,7 +269,7 @@ const productionReport = `{
        {"text": "the list shows \"Milk\" with quantity \"2\"", "keyword": "Then",
         "command": "agent-browser wait --text \"Milk\" --timeout 3000", "exit": 0}]},
     {"feature": "Adding items to the list",
-     "featureFile": "specs/acceptance/shopping-list.feature", "line": 27,
+     "featureFile": "specs/validation/acceptance/shopping-list.feature", "line": 27,
      "rule": "An item that duplicates one already on the list is rejected",
      "scenario": "Adding a duplicate item", "tags": ["@negative"], "outcome": "failed",
      "steps": [
@@ -301,7 +301,7 @@ func TestMintRepairIssues_AgainstAProductionReport(t *testing.T) {
 		"An item that duplicates one already on the list is rejected", // the rule
 		"**Then** the list still has exactly one item",                // the step, as executed
 		`2 — the list holds "Milk" and " milk "`,                      // the observation, which is the only evidence
-		"specs/acceptance/shopping-list.feature:27",                   // where to read it
+		"specs/validation/acceptance/shopping-list.feature:27",        // where to read it
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body is missing %q:\n%s", want, body)
@@ -336,7 +336,7 @@ func equalStrings(a, b []string) bool {
 // left the page and came back 201, and the list still did not change. That is a
 // rendering defect, and the ONLY thing that says so is the network line.
 const evidenceReport = `{"schemaVersion":2,"commit":"abc123","scenarios":[
-  {"feature":"Lists","featureFile":"specs/acceptance/lists.feature","line":27,
+  {"feature":"Lists","featureFile":"specs/validation/acceptance/lists.feature","line":27,
    "rule":"A duplicate is rejected","scenario":"Adding a duplicate","outcome":"failed",
    "steps":[
      {"keyword":"Given","text":"the list holds one item","command":"POST /lists"},
