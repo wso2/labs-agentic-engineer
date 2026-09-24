@@ -4,25 +4,20 @@ Inputs for putting Agent Manager onto a cluster that already runs AEP — built 
 `deployments/scripts/setup-env-for-aectl.sh` and installed by
 `aectl platform install`.
 
-Nothing here is executed by any script in this repo. The values and documents
-are the decided answers; applying them is manual until an Agent Manager
-installer exists.
+`deployments/scripts/setup-agent-manager.sh` is what applies all of this. The
+files here are its inputs, kept separate from it because they are the decided
+answers rather than the procedure — reviewable on their own, and re-derivable
+against a newer chart without reading the script.
 
 | | |
 |---|---|
 | `amp-values.yaml` | Values for the `wso2-amp-platform-resources-extension` chart — the promotion graph, the shared environment, and the project name |
 | `thunder-bootstrap/` | The composed ThunderID bootstrap documents, for the settings that exist once per server and cannot be held by two publishers |
 
-## Cluster prerequisite: raise the Prometheus operator's CPU limit
+## Why the Prometheus operator's CPU limit is raised
 
-Do this before installing Agent Manager.
-
-```bash
-helm upgrade observability-metrics-prometheus \
-  oci://ghcr.io/openchoreo/helm-charts/observability-metrics-prometheus \
-  --namespace openchoreo-observability-plane --version 0.6.1 --reuse-values \
-  --set kube-prometheus-stack.prometheusOperator.resources.limits.cpu=300m
-```
+`setup-agent-manager.sh` does this in step 2, before any Agent Manager chart
+lands. It is here because the reason is not obvious from the line that does it.
 
 The chart caps the operator at `limits.cpu: 40m` and gives it a liveness probe
 with `timeoutSeconds: 1`. One platform's worth of CRDs fits inside that; two
@@ -34,17 +29,10 @@ nothing in `kubectl get pods` says what is wrong.
 Only the limit moves. The 20m request is what the scheduler places on, and it is
 adequate; the ceiling is what throttles.
 
-`--reuse-values` because `setup-env-for-aectl.sh` installs this release as part
-of the observability plane, and an upgrade without it drops anything that
-install (or a later one) supplied.
-
-Helm accepts an unknown `--set` path silently, so confirm the value landed
-rather than assuming it:
-
-```bash
-kubectl get deploy prometheus-operator -n openchoreo-observability-plane \
-  -o jsonpath='{.spec.template.spec.containers[0].resources.limits.cpu}{"\n"}'
-```
+Helm accepts an unknown `--set` path silently, so the script reads the value
+back off the live Deployment and fails if it is not `300m` — a moved value path
+in a newer chart would otherwise leave the ceiling where it was, with the
+restart loop only appearing later and reading as `Completed`.
 
 ## Chart versions
 
