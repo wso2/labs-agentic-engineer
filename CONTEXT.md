@@ -529,3 +529,18 @@ An OpenChoreo CR that names a vault path for a secret. It lives in the same
 control-plane namespace as the Workload that consumes it. The vault path's
 `wc-…` segment (`OrgBaseNamespace`) is a storage key, not that namespace.
 _Avoid_: treating OrgBaseNamespace as the SecretReference CR namespace.
+
+**SM API**:
+The platform's secret manager API: the one door through which the platform
+stores an organization's secret values in vault. It is write-only to the
+platform. It gives back names and keys, never a value, so a secret written
+through it cannot be read back by the platform that wrote it.
+_Avoid_: vault (the store behind it), secret store, secrets service.
+
+**Environment Thunder**:
+The Thunder identity provider for one organization and one environment. It is a
+different issuer from the Platform IdP, with its own keys: there is one per
+organization and environment, where the Platform IdP is one for the whole
+platform.
+_Avoid_: dataplane IdP (it does not run in the dataplane), tenant IdP, Platform
+IdP (a different issuer).
