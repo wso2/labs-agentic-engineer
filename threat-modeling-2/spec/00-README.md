@@ -17,7 +17,7 @@ Each change below came from a new decision and is applied across the chapters it
 
 | Date | Change | Chapters |
 |---|---|---|
-| 2026-09-24 | O-2 closed: `ae-design-agent` calls platform MCP tools through `ae-studio-tools` on its own Unix socket; `ae-studio-tools` serves remote-git and passes the rest to `aep-api` as the publisher client (new flow 12). `/internal/v1/mcp` accepts only the publisher client token. `ae-studio` pods do not share a process namespace. The Excalidraw pictures do not show flow 12 or the MCP socket yet; until they are redrawn, the Mermaid versions in `03` and `10` are the reference for them. | `03`, `04`, `07`, `08`, `09`, `10`, `12`, `13`, `14` |
+| 2026-09-24 | O-2 closed: `ae-design-agent` calls platform MCP tools through `ae-studio-tools` on its own Unix socket; `ae-studio-tools` serves remote-git and passes the rest to `aep-api` as the publisher client (new flow 12). `/internal/v1/mcp` accepts only the publisher client token. `ae-studio` pods do not share a process namespace. Pictures 01 and 02 are redrawn: they draw flow 12 on the flow-6 line, labelled `6·12` (same hop, same credential), and add the MCP socket arrow. The repository `CONTEXT.md` entries for Publisher client and Coding agent are updated to match. | `03`, `04`, `07`, `08`, `09`, `10`, `12`, `13`, `14`, `diagrams/01`, `diagrams/02`, `CONTEXT.md` |
 
 This spec does not cover the console UI. It is not an implementation plan.
 
@@ -56,6 +56,6 @@ Everyone: `01`, then `14` as needed.
 
 - It states the end state only. It does not tell the story of how each choice was made.
 - Decision chapters (`03`, `06`, `07`, `08`, `09`) end with a short "Not chosen, and why" list.
-- Flow numbers 1–12 and boundary numbers TB-1 to TB-9 are the same in every file and every picture that shows them.
-- Where a picture and its Mermaid version differ, the picture (Excalidraw) wins, except for what "Changes after the lock" says is not redrawn yet.
+- Flow numbers 1–12 and boundary numbers TB-1 to TB-9 are the same in every file and every picture that shows them. Pictures 01 and 02 draw flows 6 and 12 as one line labelled `6·12`.
+- Where a picture and its Mermaid version differ, the picture (Excalidraw) wins.
 - Where a glossary word in `14-glossary.md` differs from the repository's `CONTEXT.md`, `CONTEXT.md` wins.
