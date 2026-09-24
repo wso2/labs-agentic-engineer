@@ -57,7 +57,7 @@ Source: [C3-today-vs-intended.excalidraw](diagrams/C3-today-vs-intended.excalidr
 | 2 | `aep-api` uses the gitpat for all git work. | Only `ae-studio-tools` and `ae-coding-tools`, in the dataplane, use it. |
 | 3 | The Anthropic key is taken out of the database and sent with every chat turn. | The key is given to the agent from vault. `aep-api` never reads it. |
 | 4 | The coding agent (an AI with a shell) can read all its secrets. | The gitpat and the publisher client move to a separate tools container. The AI keeps only the Anthropic key. |
-| 5 | The AI agent gets a copy of the user's full login token. | The agent never gets the user's login token. It gets only a 5-minute token that works on nothing but this org's agent. |
+| 5 | The AI agent gets a copy of the user's full login token. | The agent never gets the user's login token. For a Room turn it gets a token for this one Room that ends with the turn (30 minutes at most). |
 | 6 | One webhook secret for all orgs. | One secret per org, checked in that org's dataplane. |
 | 7 | All orgs share the same services. | Each org's work runs in its own dataplane. |
 

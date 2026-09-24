@@ -21,7 +21,7 @@ There is no private HTTP path from the control plane into the org dataplane. Eve
 | 10 | `aep-api` → SM API | Control plane | Write gitpat, org HMAC, Default key, Coding agent key | Not stated in this spec (open item) | SM API writes vault through the OpenChoreo Secret API. It returns keys and `secretReferenceName` only. |
 | 11 | ESO → vault | ClusterSecretStore | Read secret values into the dataplane | Not stated in this spec (open item) | ExternalSecret refresh 15s → Kubernetes Secret → container env. |
 
-Also on the control plane, not numbered: `aep-api` → Postgres (rows only), `aep-api` → OpenChoreo control plane (Ensure the Project, ProjectReleaseBinding and Resource; create the coding Job), `ae-studio-tools` and `ae-coding-tools` → Platform IdP (`client_credentials` for the publisher client token).
+Also on the control plane, not numbered: `aep-api` → Postgres (rows only), `aep-api` → OpenChoreo control plane (Ensure the Project, ProjectReleaseBinding and Resource; create the coding Job), `ae-studio-tools` and `ae-coding-tools` → Platform IdP (`client_credentials` for the publisher client token). How dataplane containers fetch the aep-api JWKS is not stated (open item O-10).
 
 ## What the browser calls
 

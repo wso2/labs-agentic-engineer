@@ -80,4 +80,5 @@ flowchart TB
 - The model covers WSO2 Cloud only. smee and the local install are not in it.
 - It models the intended production shape and treats GAP-1, GAP-2 and GAP-3 as controls not yet in place.
 - The Room join inside `ae-studio` (`ae-design-agent` → `ae-collab`) uses the agent Room token, checked like the browser's. A leaked token opens this Room until the turn ends.
-- The authentication of flows 10 and 11 is not stated in this spec (open item).
+- The authentication of flows 10 and 11 is not stated in this spec (open item O-3).
+- How dataplane containers fetch and refresh the aep-api JWKS is not stated (open item O-10). It crosses TB-3.

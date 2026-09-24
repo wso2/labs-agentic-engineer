@@ -32,6 +32,7 @@ Three kinds of entry:
 | O-7 | **What stays in `org_credentials`** after the secret values leave: the GitHub identity and the secret-reference names. | Only the values are required to leave. | [13-change-inventory.md](13-change-inventory.md) |
 | O-8 | **Cloud Project name** once the WSO2 Cloud orchestrator can create Resource `ae-studio`. | May move off `ae-system` and off the org's quota. | [11-local-vs-cloud.md](11-local-vs-cloud.md) |
 | O-9 | **Switch to the Environment Thunder exchange** for the CP → DP service token and the Room token, once WSO2 Cloud enables the grant. Needs a new decision to switch verifiers and `aud`. | Closes GAP-2. | [07-identity-and-tokens.md](07-identity-and-tokens.md) |
+| O-10 | **How dataplane containers fetch and refresh the aep-api JWKS.** `ae-studio-tools`, `ae-design-agent` and `ae-collab` check `aep-api`-minted tokens against its JWKS. The only public door into `aep-api` is the gateway with `jwt-auth` (`iss=platform-idp`). The route, its authentication and key rotation are not stated. | A DP → CP call that crosses TB-3 and has no flow number. | [04-flows.md](04-flows.md), [07-identity-and-tokens.md](07-identity-and-tokens.md) |
 
 O-1 (how `ae-design-agent` joins a Room) is decided: the agent Room token in [07-identity-and-tokens.md](07-identity-and-tokens.md), with the in-pod channel rules in [09-sandboxing-and-guardrails.md](09-sandboxing-and-guardrails.md). The other numbers are kept.
 

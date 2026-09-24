@@ -9,7 +9,7 @@ There is one architecture for a local install and for WSO2 Cloud. Where the two 
 
 ## Status
 
-**Draft. Not locked.** The last decision the lock waited on is made: how `ae-design-agent` joins a Room on `ae-collab` ([07-identity-and-tokens.md](07-identity-and-tokens.md)). The lock is a separate review. The open items left in [12-gaps-and-open-items.md](12-gaps-and-open-items.md) are named, not decided.
+**Locked on 2026-09-24.** This is the spec the WSO2 Cloud threat model is written from. A change after the lock needs a new decision; do not edit this spec in place. The open items O-2 to O-10 in [12-gaps-and-open-items.md](12-gaps-and-open-items.md) are named, not decided. The threat model tags them.
 
 This spec does not cover the console UI. It is not an implementation plan.
 
