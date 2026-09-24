@@ -9,7 +9,15 @@ There is one architecture for a local install and for WSO2 Cloud. Where the two 
 
 ## Status
 
-**Locked on 2026-09-24.** This is the spec the WSO2 Cloud threat model is written from. A change after the lock needs a new decision; do not edit this spec in place. The open items O-2 to O-10 in [12-gaps-and-open-items.md](12-gaps-and-open-items.md) are named, not decided. The threat model tags them.
+**Locked on 2026-09-24.** This is the spec the WSO2 Cloud threat model is written from. A change after the lock needs a new decision; do not edit this spec in place. The open items O-3 to O-10 in [12-gaps-and-open-items.md](12-gaps-and-open-items.md) are named, not decided. The threat model tags them.
+
+### Changes after the lock
+
+Each change below came from a new decision and is applied across the chapters it touches.
+
+| Date | Change | Chapters |
+|---|---|---|
+| 2026-09-24 | O-2 closed: `ae-design-agent` calls platform MCP tools through `ae-studio-tools` on its own Unix socket; `ae-studio-tools` serves remote-git and passes the rest to `aep-api` as the publisher client (new flow 12). `/internal/v1/mcp` accepts only the publisher client token. `ae-studio` pods do not share a process namespace. The Excalidraw pictures do not show flow 12 or the MCP socket yet; until they are redrawn, the Mermaid versions in `03` and `10` are the reference for them. | `03`, `04`, `07`, `08`, `09`, `10`, `12`, `13`, `14` |
 
 This spec does not cover the console UI. It is not an implementation plan.
 
@@ -20,7 +28,7 @@ This spec does not cover the console UI. It is not an implementation plan.
 | [01-overview.md](01-overview.md) | Goal, scope, the words you need first, problem → fix |
 | [02-today-and-problems.md](02-today-and-problems.md) | How AE works today and its seven problems |
 | [03-components.md](03-components.md) | Every runtime: its job, what it mounts, what it exposes |
-| [04-flows.md](04-flows.md) | Flows 1–11 and the calls inside each pod |
+| [04-flows.md](04-flows.md) | Flows 1–12 and the calls inside each pod |
 | [05-lifecycle.md](05-lifecycle.md) | gitpat submit, key writes, Ensure, upgrade, coding Job start |
 | [06-secrets.md](06-secrets.md) | Write-only SM API, the ESO read path, which secret lands where |
 | [07-identity-and-tokens.md](07-identity-and-tokens.md) | Every token: issuer, audience, lifetime, who checks it |
@@ -48,6 +56,6 @@ Everyone: `01`, then `14` as needed.
 
 - It states the end state only. It does not tell the story of how each choice was made.
 - Decision chapters (`03`, `06`, `07`, `08`, `09`) end with a short "Not chosen, and why" list.
-- Flow numbers 1–11 and boundary numbers TB-1 to TB-9 are the same in every file and every picture.
-- Where a picture and its Mermaid version differ, the picture (Excalidraw) wins.
+- Flow numbers 1–12 and boundary numbers TB-1 to TB-9 are the same in every file and every picture that shows them.
+- Where a picture and its Mermaid version differ, the picture (Excalidraw) wins, except for what "Changes after the lock" says is not redrawn yet.
 - Where a glossary word in `14-glossary.md` differs from the repository's `CONTEXT.md`, `CONTEXT.md` wins.

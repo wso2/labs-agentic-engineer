@@ -135,7 +135,7 @@ Words used only in this spec. The `ae-*` names are implementation names, so they
 | **`ae-studio`** | The OpenChoreo ResourceType and Resource for the dataplane authoring runtime: one pod, three containers. Not a Room. |
 | **`ae-design-agent`** | Container (and image) in `ae-studio` that runs the design agent model. Mounts the Default key only. |
 | **`ae-collab`** | Container (and image) in `ae-studio` that serves Room WebSockets. Mounts no secrets. |
-| **`ae-studio-tools`** | Container (and image) in `ae-studio` that runs no model: git, GitHub, webhook receive and HMAC check, publisher client calls. |
+| **`ae-studio-tools`** | Container (and image) in `ae-studio` that runs no model: git, GitHub, webhook receive and HMAC check, the MCP server for `ae-design-agent`, publisher client calls. |
 | **`ae-coding-agent`** | Container (and image) in the coding agent Job that runs the coding agent model. Mounts an Anthropic key only. |
 | **`ae-coding-tools`** | Container (and image) in the coding agent Job that runs no model: git and GitHub for this run's repository, platform calls for this run. |
 | **`*-agent` / `*-tools`** | Naming rule: a `*-agent` container runs a model and holds only an Anthropic key; a `*-tools` container holds the gitpat, the org HMAC (studio only) and the publisher client. |
@@ -147,7 +147,7 @@ Words used only in this spec. The `ae-*` names are implementation names, so they
 | **org kgateway** | The public gateway of the org dataplane. TLS only; it does not check identity. |
 | **ESO** | External Secrets Operator. Reads vault through a ClusterSecretStore and writes Kubernetes Secrets in the dataplane. |
 | **vault** | The secret store behind the SM API (OpenBao on a local install). |
-| **emptyDir** | A pod-local scratch volume. The only writable mounts in the agent pods. One emptyDir holds the Files API Unix socket and is mounted only into `ae-collab` and `ae-studio-tools`. |
+| **emptyDir** | A pod-local scratch volume. The only writable mounts in the agent pods. One emptyDir holds the Files API Unix socket and is mounted only into `ae-collab` and `ae-studio-tools`. Another holds the MCP Unix socket and is mounted only into `ae-design-agent` and `ae-studio-tools`. |
 | **smee** | A public relay that forwards GitHub webhooks to a local cluster. Local install only. |
 | **brain vs hands** | The split between a model container (brain) and its tools container (hands). |
 | **TB-n** | Trust boundary n in WSO2 Cloud, TB-1 to TB-9 ([10-cloud-trust-boundaries.md](10-cloud-trust-boundaries.md)). |

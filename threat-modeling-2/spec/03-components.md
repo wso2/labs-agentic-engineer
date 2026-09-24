@@ -54,6 +54,8 @@ flowchart LR
   MAIN -- "8" --> AN
   GHD -- "9 gitpat" --> GH
   CS -- "Files API (Unix socket)" --> GHD
+  AS -- "MCP tools (Unix socket)" --> GHD
+  GHD -- "12 MCP tool calls<br/>publisher client" --> GW1
   GHD -. "emptyDir snapshot" .-> AS
   MAIN -- "127.0.0.1" --> CAT
   API --> PG
@@ -100,13 +102,14 @@ An OpenChoreo **Resource** of a custom ResourceType, also named `ae-studio`. It 
 
 | Container | Job | Mounts | Exposes |
 |---|---|---|---|
-| `ae-design-agent` | Runs the design agent model. Streams design turns. Reads snapshots from the shared emptyDir. No URL-fetch tool; its file tools stay inside the snapshot. | **Default key only.** For a Room-mode turn, the agent Room token that `aep-api` puts on the turn sits in memory. | Turn / SSE route behind the org kgateway (flow 2). |
+| `ae-design-agent` | Runs the design agent model. Streams design turns. Reads snapshots from the shared emptyDir. Calls platform MCP tools on `ae-studio-tools` over a Unix socket. No URL-fetch tool; its file tools stay inside the snapshot. | **Default key only.** For a Room-mode turn, the agent Room token that `aep-api` puts on the turn sits in memory. | Turn / SSE route behind the org kgateway (flow 2). |
 | `ae-collab` | The Yjs Room WebSocket server. Talks the Files API to `ae-studio-tools` over a Unix socket (`files/bundle`, `files/apply`, seed, flush). It does not speak git. | **No secrets.** | Room WebSocket behind the org kgateway (flow 4), for the browser and for `ae-design-agent`. Both present a Room token. |
-| `ae-studio-tools` | Runs no model. Clone, fetch, commit, push. GitHub REST (issues, PRs, milestones, merge, repo create). MCP remote-git. Webhook receive and HMAC check. Writes snapshots to the shared emptyDir. Calls `aep-api` as the publisher client. | gitpat, org HMAC, publisher client (`client_id`, `client_secret`). | Service route (flow 3) and webhook route (flow 5) behind the org kgateway. Files API on a Unix socket that only `ae-collab` can reach. It never returns a secret value. |
+| `ae-studio-tools` | Runs no model. Clone, fetch, commit, push. GitHub REST (issues, PRs, milestones, merge, repo create). The MCP server for `ae-design-agent`: remote-git tools with the gitpat, other tools passed to `aep-api` (flow 12). Webhook receive and HMAC check. Writes snapshots to the shared emptyDir. Calls `aep-api` as the publisher client. | gitpat, org HMAC, publisher client (`client_id`, `client_secret`). | Service route (flow 3) and webhook route (flow 5) behind the org kgateway. Files API on a Unix socket that only `ae-collab` can reach. MCP tools on a second Unix socket that only `ae-design-agent` can reach. It never returns a secret value. |
 
 All containers in a pod share one network: any container can reach any `localhost` port. So a `localhost` port cannot keep `ae-design-agent` out. Inside the pod:
 
 - `ae-collab` → `ae-studio-tools`: the Files API on a Unix socket, in an emptyDir mounted only into those two containers. No token.
+- `ae-design-agent` → `ae-studio-tools`: platform MCP tools on a second Unix socket, in its own emptyDir mounted only into those two containers. No token.
 - `ae-design-agent` → `ae-collab`: the Room WebSocket with a Room token ([07-identity-and-tokens.md](07-identity-and-tokens.md)).
 - `ae-studio-tools` → `ae-design-agent`: snapshots in a shared named emptyDir. No call.
 
@@ -119,7 +122,7 @@ A separate, one-shot pod per run cycle. OpenChoreo renders it from a `coding-age
 | Container | Job | Mounts | Exposes |
 |---|---|---|---|
 | `ae-coding-agent` | Runs the coding agent model with Bash, the build tools and the workspace. | The Coding agent key when the org has one, otherwise the Default key. No gitpat, no publisher client, no HMAC. | Nothing inbound. |
-| `ae-coding-tools` | Runs no model. Does git and GitHub for **this run's repository only**, and platform calls for **this run only**. | gitpat, publisher client. | An API on `127.0.0.1` for `ae-coding-agent`, not an endpoint. It never returns a secret value and never writes one into the shared workspace. |
+| `ae-coding-tools` | Runs no model. Does git and GitHub for **this run's repository only**, and platform calls for **this run only**. Serves the platform MCP tools to `ae-coding-agent`: remote-git with the gitpat, the rest over flow 7a. | gitpat, publisher client. | An API on `127.0.0.1` for `ae-coding-agent`, not an endpoint. It never returns a secret value and never writes one into the shared workspace. |
 
 ### Shared dataplane parts
 

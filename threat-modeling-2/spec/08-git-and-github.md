@@ -8,7 +8,7 @@ After gitpat submit, the control plane can never read the gitpat. Every operatio
 |---|---|---|
 | clone, fetch, commit, push (spec files, Files API apply) | `ae-studio-tools` | flow 3 from `aep-api` / Temporal; Unix socket from `ae-collab` |
 | GitHub REST: issues, pull requests, milestones, merge | `ae-studio-tools` | flow 3 |
-| MCP remote-git | `ae-studio-tools` | flow 3 |
+| MCP remote-git (file contents, code search) | `ae-studio-tools` for `ae-design-agent`; `ae-coding-tools` for a coding run | MCP Unix socket from `ae-design-agent`, then flow 9; `127.0.0.1` from `ae-coding-agent`, then flow 7b |
 | repo create | GitHub call on `ae-studio-tools`; the Postgres row on `aep-api` | flow 3 |
 | webhook **register** | `aep-api`, during gitpat submit, with the in-memory gitpat. The hook URL is the public address of `ae-studio-tools`. | [05-lifecycle.md](05-lifecycle.md) |
 | webhook **verify** | `ae-studio-tools`, with the org HMAC from vault | flow 5 |

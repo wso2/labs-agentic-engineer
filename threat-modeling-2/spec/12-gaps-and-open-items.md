@@ -18,13 +18,13 @@ Three kinds of entry:
 
 - **No prompt-injection filter** on either agent. A model container holds only an Anthropic key, and the tools containers act only within their scope.
 - **Model containers hold an Anthropic key.** The agent needs it to run. An AI gateway that holds the key is out of scope.
+- **Platform MCP calls from `ae-design-agent` are not bound to a user or a turn.** The MCP socket carries no token, so the agent can call a tool between turns, and `aep-api` sees the org's publisher client, not the user. The tools are read-only and scoped to this pod's org, which is less than the Default key the container already holds.
 - **Project `ae-system` in WSO2 Cloud** is created by `aep-api`, counts toward the org's `projects` quota, and is visible to the org. Accepted for now.
 
 ## Open items
 
 | # | Open item | Why it matters | Where it is marked |
 |---|---|---|---|
-| O-2 | **How `ae-design-agent` calls the platform's MCP endpoint from the dataplane.** Today it sends an `aep-api`-minted MCP token (`aud=aep-api-mcp`) to `/internal/v1/mcp`. The public `aep-api` gateway expects `iss=platform-idp`, and the publisher client may not be mounted on a model container. | The design agent needs platform tools during a turn. No flow covers this call yet. | [04-flows.md](04-flows.md) (no flow number) |
 | O-3 | **Authentication of flow 10** (`aep-api` → SM API) **and flow 11** (ESO → vault). | Both cross TB-9. | [04-flows.md](04-flows.md), [10-cloud-trust-boundaries.md](10-cloud-trust-boundaries.md) |
 | O-4 | **How a changed secret reaches a running container.** ESO refreshes the Kubernetes Secret every 15 seconds, but a container reads it as an environment variable. | A key or gitpat change may not take effect in `ae-studio` until its pod restarts. | [05-lifecycle.md](05-lifecycle.md) |
 | O-5 | **Order of the first Ensure and the Default key.** gitpat submit creates Resource `ae-studio`, which references the Default key. The org may not have set a Default key yet. | The pod may not start without a referenced secret. | [05-lifecycle.md](05-lifecycle.md) |
@@ -34,6 +34,8 @@ Three kinds of entry:
 | O-9 | **Switch to the Environment Thunder exchange** for the CP → DP service token and the Room token, once WSO2 Cloud enables the grant. Needs a new decision to switch verifiers and `aud`. | Closes GAP-2. | [07-identity-and-tokens.md](07-identity-and-tokens.md) |
 | O-10 | **How dataplane containers fetch and refresh the aep-api JWKS.** `ae-studio-tools`, `ae-design-agent` and `ae-collab` check `aep-api`-minted tokens against its JWKS. The only public door into `aep-api` is the gateway with `jwt-auth` (`iss=platform-idp`). The route, its authentication and key rotation are not stated. | A DP → CP call that crosses TB-3 and has no flow number. | [04-flows.md](04-flows.md), [07-identity-and-tokens.md](07-identity-and-tokens.md) |
 
-O-1 (how `ae-design-agent` joins a Room) is decided: the agent Room token in [07-identity-and-tokens.md](07-identity-and-tokens.md), with the in-pod channel rules in [09-sandboxing-and-guardrails.md](09-sandboxing-and-guardrails.md). The other numbers are kept.
+O-1 (how `ae-design-agent` joins a Room) is decided: the agent Room token in [07-identity-and-tokens.md](07-identity-and-tokens.md), with the in-pod channel rules in [09-sandboxing-and-guardrails.md](09-sandboxing-and-guardrails.md).
+
+O-2 (how `ae-design-agent` calls the platform MCP endpoint) is decided after the lock: `ae-design-agent` calls `ae-studio-tools` on its own Unix socket, `ae-studio-tools` serves the remote-git tools with the gitpat and passes the other tools to `aep-api` as the publisher client (flow 12). See [07-identity-and-tokens.md](07-identity-and-tokens.md) and [04-flows.md](04-flows.md). The other numbers are kept.
 
 A later wish to merge `ae-collab` and `ae-studio-tools` into one container also needs a new decision. It changes the secret split, the Room token `aud`, and TB-4 and TB-5, and it puts the public Room WebSocket on the container that holds the gitpat.
