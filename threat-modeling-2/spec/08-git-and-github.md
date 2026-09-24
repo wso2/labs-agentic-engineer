@@ -6,14 +6,14 @@ After gitpat submit, the control plane can never read the gitpat. Every operatio
 
 | Operation | Where | Reached by |
 |---|---|---|
-| clone, fetch, commit, push (spec files, Files API apply) | `ae-studio-tools` | flow 3 from `aep-api` / Temporal; `localhost` from `ae-collab` |
+| clone, fetch, commit, push (spec files, Files API apply) | `ae-studio-tools` | flow 3 from `aep-api` / Temporal; Unix socket from `ae-collab` |
 | GitHub REST: issues, pull requests, milestones, merge | `ae-studio-tools` | flow 3 |
 | MCP remote-git | `ae-studio-tools` | flow 3 |
 | repo create | GitHub call on `ae-studio-tools`; the Postgres row on `aep-api` | flow 3 |
 | webhook **register** | `aep-api`, during gitpat submit, with the in-memory gitpat. The hook URL is the public address of `ae-studio-tools`. | [05-lifecycle.md](05-lifecycle.md) |
 | webhook **verify** | `ae-studio-tools`, with the org HMAC from vault | flow 5 |
 | gitpat check at submit | `aep-api`, with the gitpat from the request body, in memory | flow 1 |
-| coding run: git and GitHub for this run's repository | `ae-coding-tools` | `localhost` from `ae-coding-agent`; flow 7b to GitHub |
+| coding run: git and GitHub for this run's repository | `ae-coding-tools` | `127.0.0.1` from `ae-coding-agent`; flow 7b to GitHub |
 
 `aep-api` may use the gitpat only from the gitpat submit request body. After that it never reads it again. Build clone secrets are passed as **references** only.
 

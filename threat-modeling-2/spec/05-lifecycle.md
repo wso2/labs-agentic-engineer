@@ -118,7 +118,7 @@ sequenceDiagram
   OC-->>CA: Job pod; ESO mounts Anthropic key
   OC-->>CT: Job pod; ESO mounts gitpat + publisher client
   CT->>IDP: client_credentials
-  CA->>CT: localhost: git, GitHub, platform actions
+  CA->>CT: 127.0.0.1: git, GitHub, platform actions
   CT->>GH: this run's repo only (flow 7b)
   CT->>API: this run's platform calls (flow 7a)
   GH-->>API: PR webhook via ae-studio-tools (flows 5, 6)

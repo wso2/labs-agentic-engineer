@@ -9,7 +9,7 @@ There is one architecture for a local install and for WSO2 Cloud. Where the two 
 
 ## Status
 
-**Draft. Not locked.** One decision is still open: how `ae-design-agent` joins a Room on `ae-collab` after the move. It is marked "not yet decided" in [04-flows.md](04-flows.md) and [07-identity-and-tokens.md](07-identity-and-tokens.md), and listed in [12-gaps-and-open-items.md](12-gaps-and-open-items.md). The spec is locked only after that decision.
+**Draft. Not locked.** The last decision the lock waited on is made: how `ae-design-agent` joins a Room on `ae-collab` ([07-identity-and-tokens.md](07-identity-and-tokens.md)). The lock is a separate review. The open items left in [12-gaps-and-open-items.md](12-gaps-and-open-items.md) are named, not decided.
 
 This spec does not cover the console UI. It is not an implementation plan.
 

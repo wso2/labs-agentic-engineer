@@ -52,8 +52,8 @@ flowchart TB
   CAT -- "7a publisher client CC" --> GW1
   API -- "10 write value" --> SM
   SM -. "11 ESO read" .-> ESO
-  AS -. "TB-5 brain vs hands (localhost)" .- GHD
-  MAIN -. "TB-7 brain vs hands (localhost)" .- CAT
+  AS -. "TB-5 brain vs hands (Unix socket)" .- GHD
+  MAIN -. "TB-7 brain vs hands (127.0.0.1)" .- CAT
   classDef llm fill:#ddd6fe,stroke:#6d28d9
   classDef hands fill:#fef3c7,stroke:#b45309
 ```
@@ -67,10 +67,10 @@ flowchart TB
 | **TB-1** Internet → `aep-api` gateway | 1 user REST and SSE; 6 webhook events; 7a run platform calls | `jwt-auth` `iss=platform-idp`; `aep-api` authorizes user, org and Room; for 6: redact, dedup on delivery id | none |
 | **TB-2** Internet → org kgateway | 2, 3 service calls; 4 Room WebSocket; 5 GitHub webhook | TLS only at the gateway; containers check aep-api JWKS, `aud`, `exp`, org; `X-Hub-Signature-256` check | GAP-1 webhook still on the control-plane RestApi; GAP-2 `aep-api`-minted tokens |
 | **TB-3** cloud-cp ↔ org dataplane | 2, 3 CP → DP; 6, 7a DP → CP; 11 ESO read of vault | No private CP → DP HTTP; every hop goes through a public gateway and carries a token | GAP-2 until the Environment Thunder token exchange |
-| **TB-4** `ae-studio` pod edge | in: 2, 3, 4, 5 and env secrets; out: 6, 8, 9 | Non-root, read-only root filesystem, drop all capabilities, no privilege escalation, seccomp `RuntimeDefault`, no ServiceAccount token | GAP-3 gVisor RuntimeClass missing |
-| **TB-5** brain vs hands, in `ae-studio` | Files API on `localhost`; emptyDir snapshots to `ae-design-agent` | The model container has the Default key only (no gitpat, HMAC or publisher client), no URL fetch, jailed file tools | none (accepted: no prompt-injection filter) |
+| **TB-4** `ae-studio` pod edge | in: 2, 3, 4, 5 and env secrets; out: 6, 8, 9 | Non-root, read-only root filesystem, drop all capabilities, no privilege escalation, seccomp `RuntimeDefault`, no ServiceAccount token; only flows 2–5 are endpoints; ingress only through the org kgateway; the agent's Room join carries the agent Room token | GAP-3 gVisor RuntimeClass missing; GAP-2 `aep-api`-minted Room tokens |
+| **TB-5** brain vs hands, in `ae-studio` | Files API on a Unix socket (`ae-collab` → `ae-studio-tools`); emptyDir snapshots to `ae-design-agent`; agent Room join to `ae-collab` | The model container has the Default key only (no gitpat, HMAC or publisher client), no URL fetch, jailed file tools; it cannot see the Files API socket; its Room token opens only this turn's Room | none (accepted: no prompt-injection filter) |
 | **TB-6** coding agent Job pod edge | in: env secrets; out: 7a, 7b, 8 | Same pod controls as TB-4 | GAP-3 gVisor RuntimeClass missing |
-| **TB-7** `ae-coding-agent` vs `ae-coding-tools` | `ae-coding-agent` calls `ae-coding-tools` on `localhost` | `ae-coding-agent` has no gitpat and no publisher client; tools act only for this run's repository and platform calls | none (accepted: no prompt-injection filter) |
+| **TB-7** `ae-coding-agent` vs `ae-coding-tools` | `ae-coding-agent` calls `ae-coding-tools` on `127.0.0.1` (not an endpoint) | `ae-coding-agent` has no gitpat and no publisher client; tools act only for this run's repository and platform calls | none (accepted: no prompt-injection filter) |
 | **TB-8** dataplane egress | 6, 7a, 7b, 8, 9 out to the internet | DNS and public 80/443 only; deny private ranges, link-local, metadata and the Kubernetes API | none |
 | **TB-9** SM API and vault, write-only | 10 secret value in from `aep-api`; 11 ESO read to the dataplane | SM API GET returns keys and `secretReferenceName` only; `GetSecretWithValue` is not supported | none (Postgres holds no secret values) |
 
@@ -78,5 +78,5 @@ flowchart TB
 
 - The model covers WSO2 Cloud only. smee and the local install are not in it.
 - It models the intended production shape and treats GAP-1, GAP-2 and GAP-3 as controls not yet in place.
-- The Room join inside `ae-studio` (`ae-design-agent` → `ae-collab`) is not yet decided. It sits inside TB-4 and must be decided before the spec is locked.
+- The Room join inside `ae-studio` (`ae-design-agent` → `ae-collab`) uses the agent Room token, checked like the browser's. A leaked token opens this Room until the turn ends.
 - The authentication of flows 10 and 11 is not stated in this spec (open item).

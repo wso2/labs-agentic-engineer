@@ -12,7 +12,8 @@ Per component: what is added, changed and removed to reach the end state in this
 | Remove | Every read of the gitpat after gitpat submit: `Token()` for gitfs, GitHub REST and GraphQL, MCP remote-git, and build secrets. |
 | Remove | `credentials/refresh` returning a gitpat. |
 | Remove | `EffectiveKey` decrypting the Default key, and the `X-Anthropic-Key` header on design turns. |
-| Remove | Copying the user's Platform IdP JWT into a design turn for the Room join. The replacement waits on O-1. |
+| Remove | Copying the user's Platform IdP JWT into a design turn for the Room join. |
+| Add | `aep-api` mints the agent Room token for each Room-mode turn and puts it in the turn body ([07-identity-and-tokens.md](07-identity-and-tokens.md)). |
 | Remove | `collab/validate` as Room authorization. |
 | Remove | The HS256 service token to the agents service. |
 | Remove | Git work in `aep-api` (gitfs clone, fetch, commit, push) and the Files API used by collab. They move to `ae-studio-tools`. |
@@ -32,7 +33,7 @@ Per component: what is added, changed and removed to reach the end state in this
 
 | Change | What |
 |---|---|
-| Add | ResourceType `ae-studio`: one pod, three containers, named emptyDirs, pod controls and egress from [09-sandboxing-and-guardrails.md](09-sandboxing-and-guardrails.md), gVisor when the RuntimeClass exists. |
+| Add | ResourceType `ae-studio`: one pod, three containers, named emptyDirs (one only for the Files API socket), pod controls, egress and the ingress rule from [09-sandboxing-and-guardrails.md](09-sandboxing-and-guardrails.md), gVisor when the RuntimeClass exists. |
 | Add | Routes on the org kgateway for `ae-design-agent` (flow 2), `ae-studio-tools` service (flow 3) and webhook (flow 5), and `ae-collab` Room WebSocket (flow 4). TLS only. |
 | Change | The `coding-agent` ComponentType: rename container `main` to `ae-coding-agent`; add container `ae-coding-tools`; apply the same pod controls and egress. |
 
@@ -41,7 +42,7 @@ Per component: what is added, changed and removed to reach the end state in this
 | Image = container | What it is |
 |---|---|
 | `ae-design-agent` | Today's agents service, run in the dataplane. Mounts the Default key. Reads snapshots from the emptyDir. No URL-fetch tool. |
-| `ae-collab` | Today's collab server, run in the dataplane. Checks the Room token. Talks the Files API on `localhost` to `ae-studio-tools`. |
+| `ae-collab` | Today's collab server, run in the dataplane. Checks the Room token. Talks the Files API to `ae-studio-tools` over a Unix socket. Accepts the agent Room token from `ae-design-agent`. |
 | `ae-studio-tools` | New. Git, GitHub REST, MCP remote-git, the Files API, the webhook receiver with HMAC check, the CP → DP token check, the publisher client call to `aep-api`, snapshots to the emptyDir. |
 | `ae-coding-agent` | Today's coding agent container `main`, renamed. Holds only the Anthropic key. |
 | `ae-coding-tools` | New. Git and GitHub for this run's repository, platform calls for this run, as the publisher client. |
