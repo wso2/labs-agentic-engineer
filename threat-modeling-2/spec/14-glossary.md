@@ -141,12 +141,13 @@ Words used only in this spec. The `ae-*` names are implementation names, so they
 | **`*-agent` / `*-tools`** | Naming rule: a `*-agent` container runs a model and holds only an Anthropic key; a `*-tools` container holds the gitpat, the org HMAC (studio only) and the publisher client. |
 | **CP → DP service token** | Short RS256 JWT minted by `aep-api` per call, `aud` org + the receiving container, TTL 5 minutes. |
 | **Room token** | Short RS256 JWT minted by `aep-api` for the browser, `aud` org + `ae-collab` + Room, TTL 5 minutes. |
+| **Agent Room token** | RS256 JWT minted by `aep-api` for one Room-mode turn and sent in the turn body. `aud` org + `ae-collab` + Room, `sub` the user, `act` `ae-design-agent`, valid until the turn deadline. `ae-collab` checks it like the Room token. |
 | **JWKS** | The public keys an issuer publishes so receivers can check its tokens. |
 | **Token exchange** | RFC 8693: trade one token for another at an identity provider. Intended at Environment Thunder. |
 | **org kgateway** | The public gateway of the org dataplane. TLS only; it does not check identity. |
 | **ESO** | External Secrets Operator. Reads vault through a ClusterSecretStore and writes Kubernetes Secrets in the dataplane. |
 | **vault** | The secret store behind the SM API (OpenBao on a local install). |
-| **emptyDir** | A pod-local scratch volume. The only writable mounts in the agent pods. |
+| **emptyDir** | A pod-local scratch volume. The only writable mounts in the agent pods. One emptyDir holds the Files API Unix socket and is mounted only into `ae-collab` and `ae-studio-tools`. |
 | **smee** | A public relay that forwards GitHub webhooks to a local cluster. Local install only. |
 | **brain vs hands** | The split between a model container (brain) and its tools container (hands). |
 | **TB-n** | Trust boundary n in WSO2 Cloud, TB-1 to TB-9 ([10-cloud-trust-boundaries.md](10-cloud-trust-boundaries.md)). |

@@ -50,6 +50,7 @@ flowchart LR
   CAT -- "7a publisher client" --> GW1
   CAT -- "7b gitpat, this run's repo only" --> GH
   AS -- "8" --> AN
+  AS -- "agent Room token" --> CS
   MAIN -- "8" --> AN
   GHD -- "9 gitpat" --> GH
   CS -- "Files API (Unix socket)" --> GHD

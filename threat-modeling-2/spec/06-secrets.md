@@ -84,7 +84,7 @@ The **org HMAC** is one secret per organization. It replaces today's single plat
 
 ## What is not a secret here
 
-Tokens that `aep-api` mints (the CP → DP service token and the Room token) are short-lived and are not stored anywhere: not in Postgres, not in vault. The key that signs them is a platform secret of `aep-api`, not an organization secret. See [07-identity-and-tokens.md](07-identity-and-tokens.md).
+Tokens that `aep-api` mints (the CP → DP service token, the Room token and the agent Room token) are short-lived and are not stored anywhere: not in Postgres, not in vault. The key that signs them is a platform secret of `aep-api`, not an organization secret. See [07-identity-and-tokens.md](07-identity-and-tokens.md).
 
 ## Not chosen, and why
 

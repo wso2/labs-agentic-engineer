@@ -52,7 +52,8 @@ flowchart TB
   CAT -- "7a publisher client CC" --> GW1
   API -- "10 write value" --> SM
   SM -. "11 ESO read" .-> ESO
-  AS -. "TB-5 brain vs hands (Unix socket)" .- GHD
+  AS -- "agent Room token" --> CS
+  AS -. "TB-5 brain vs hands" .- GHD
   MAIN -. "TB-7 brain vs hands (127.0.0.1)" .- CAT
   classDef llm fill:#ddd6fe,stroke:#6d28d9
   classDef hands fill:#fef3c7,stroke:#b45309

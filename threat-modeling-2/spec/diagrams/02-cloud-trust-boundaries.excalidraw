@@ -3249,6 +3249,10 @@
         {
           "id": "f8a",
           "type": "arrow"
+        },
+        {
+          "id": "a_roomjoin",
+          "type": "arrow"
         }
       ],
       "link": null,
@@ -3321,6 +3325,10 @@
         },
         {
           "id": "fk_collab",
+          "type": "arrow"
+        },
+        {
+          "id": "a_roomjoin",
           "type": "arrow"
         }
       ],
@@ -3826,7 +3834,7 @@
       "id": "a_files_t",
       "x": 1890,
       "y": 1380,
-      "width": 158.4,
+      "width": 187.2,
       "height": 60.0,
       "angle": 0,
       "strokeColor": "#64748b",
@@ -3844,8 +3852,8 @@
       "boundElements": null,
       "link": null,
       "locked": false,
-      "text": "Files API\n(localhost)",
-      "originalText": "Files API\n(localhost)",
+      "text": "Files API\n(Unix socket)",
+      "originalText": "Files API\n(Unix socket)",
       "fontSize": 24,
       "fontFamily": 3,
       "textAlign": "left",
@@ -4772,8 +4780,8 @@
       "boundElements": null,
       "link": null,
       "locked": false,
-      "text": "localhost to tools",
-      "originalText": "localhost to tools",
+      "text": "127.0.0.1 to tools",
+      "originalText": "127.0.0.1 to tools",
       "fontSize": 24,
       "fontFamily": 3,
       "textAlign": "left",
@@ -7435,6 +7443,87 @@
       "text": "aep-api never reads\ngitpat after Connect",
       "originalText": "aep-api never reads\ngitpat after Connect",
       "fontSize": 26,
+      "fontFamily": 3,
+      "textAlign": "left",
+      "verticalAlign": "top",
+      "containerId": null,
+      "lineHeight": 1.25,
+      "autoResize": true
+    },
+    {
+      "type": "arrow",
+      "id": "a_roomjoin",
+      "x": 1854,
+      "y": 1160,
+      "width": 32,
+      "height": 0,
+      "angle": 0,
+      "strokeColor": "#1e3a5f",
+      "backgroundColor": "transparent",
+      "fillStyle": "solid",
+      "strokeWidth": 3,
+      "strokeStyle": "solid",
+      "roughness": 0,
+      "opacity": 100,
+      "seed": 909001,
+      "version": 1,
+      "versionNonce": 909002,
+      "isDeleted": false,
+      "groupIds": [],
+      "boundElements": null,
+      "link": null,
+      "locked": false,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          32,
+          0
+        ]
+      ],
+      "roundness": null,
+      "startArrowhead": null,
+      "endArrowhead": "arrow",
+      "elbowed": false,
+      "startBinding": {
+        "elementId": "agent",
+        "focus": 0,
+        "gap": 4
+      },
+      "endBinding": {
+        "elementId": "collab",
+        "focus": 0,
+        "gap": 4
+      }
+    },
+    {
+      "type": "text",
+      "id": "a_roomjoin_l",
+      "x": 1550,
+      "y": 1385,
+      "width": 276.0,
+      "height": 50.0,
+      "angle": 0,
+      "strokeColor": "#1e3a5f",
+      "backgroundColor": "transparent",
+      "fillStyle": "solid",
+      "strokeWidth": 1,
+      "strokeStyle": "solid",
+      "roughness": 0,
+      "opacity": 100,
+      "seed": 909003,
+      "version": 1,
+      "versionNonce": 909004,
+      "isDeleted": false,
+      "groupIds": [],
+      "boundElements": null,
+      "link": null,
+      "locked": false,
+      "text": "agent → ae-collab:\nagent Room token (turn)",
+      "originalText": "agent → ae-collab:\nagent Room token (turn)",
+      "fontSize": 20,
       "fontFamily": 3,
       "textAlign": "left",
       "verticalAlign": "top",
