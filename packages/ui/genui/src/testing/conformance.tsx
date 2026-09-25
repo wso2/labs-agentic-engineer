@@ -230,6 +230,55 @@ export function describeGenUiConformance(
       });
     });
 
+    it("sends a form's answers whatever kind each field is", async () => {
+      const replyToAgent = vi.fn();
+      const spec: GenUiSpec = {
+        root: "form",
+        state: { answers: { name: "", plan: "team", receipts: false } },
+        elements: {
+          form: { type: "Stack", props: {}, children: ["name", "plan", "receipts", "send"] },
+          name: {
+            type: "Field",
+            props: { type: "text", label: "Name", value: { $bindState: "/answers/name" } },
+            children: [],
+          },
+          plan: {
+            type: "Field",
+            props: {
+              type: "select",
+              label: "Plan",
+              value: { $bindState: "/answers/plan" },
+              options: [
+                { value: "free", label: "Free" },
+                { value: "team", label: "Team" },
+              ],
+            },
+            children: [],
+          },
+          receipts: {
+            type: "Field",
+            props: { type: "checkbox", label: "Receipts", value: { $bindState: "/answers/receipts" } },
+            children: [],
+          },
+          send: {
+            type: "Button",
+            props: { label: "Send" },
+            on: { press: { action: "replyToAgent", params: { answers: { $state: "/answers" } } } },
+            children: [],
+          },
+        },
+      };
+      show(<GenUiView spec={spec} handlers={{ replyToAgent }} />);
+      fireEvent.change(screen.getByRole("textbox", { name: /^Name/ }), { target: { value: "Acme" } });
+      fireEvent.click(screen.getByRole("checkbox", { name: /Receipts/ }));
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      await waitFor(() =>
+        expect(replyToAgent).toHaveBeenCalledWith({
+          answers: { name: "Acme", plan: "team", receipts: true },
+        }),
+      );
+    });
+
     describe("host data (Customers)", () => {
       const acme = {
         id: "c-1",

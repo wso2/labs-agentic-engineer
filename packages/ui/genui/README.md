@@ -52,7 +52,7 @@ A form in a spec never names a URL. It binds inputs to state, and a button
 sends that state as an action's params; the host's handler makes the request.
 
 ```
-TextField value {"$bindState": "/customer/name"}   typing writes state
+Field value {"$bindState": "/customer/name"}       input writes state
 Button press → createCustomer, params {"name": {"$state": "/customer/name"}, …}
   → dispatchGenUiAction   params checked against the action's Zod schema
   → host handler          e.g. POST /api/customers through the app's client
@@ -75,6 +75,23 @@ words appear whichever design system renders the form. `genUiSystemPrompt()`
 teaches a model this contract. A failed action also rejects inside
 json-render, so a spec's own `onSuccess` runs only on success and `onError` on
 failure.
+
+### Kinds of input
+
+`Field` is one catalog component whose `type` picks the input: `text`,
+`email`, `tel`, `textarea`, `select` (with `options`) or `checkbox` (a
+true/false value). Its props are a discriminated union, so each kind is held
+to its own props, and the kind must be written out, not bound. A design system
+renders each kind with its stock input.
+
+### Forms in chat
+
+When an agent asks with a form, it chooses the fields, so there is no fixed
+schema per form. The submit button sends `replyToAgent` with
+`{"answers": {"$state": "/answers"}}`, and the receiving side checks the
+answers against the form it sent: its `required` fields and `email` kinds.
+Failures come back as field errors in the usual shape. The demo's Chat page
+shows the loop with a scripted agent.
 
 ## Data in, actions out
 

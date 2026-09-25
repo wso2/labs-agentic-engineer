@@ -33,7 +33,7 @@ export interface GenUiRenderProps<P> {
   emit: (event: string) => void;
   /**
    * Write a new value for a prop the spec bound with `$bindState` (e.g. what
-   * the user typed into a TextField). A no-op for a prop that is not bound.
+   * the user typed into a Field). A no-op for a prop that is not bound.
    */
   setProp: <K extends keyof P & string>(prop: K, value: P[K]) => void;
 }

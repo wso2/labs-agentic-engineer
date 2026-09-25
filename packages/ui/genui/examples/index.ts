@@ -19,6 +19,7 @@
 import dependencyApproval from "./dependency-approval.json" with { type: "json" };
 import buildAndDeploy from "./build-and-deploy.json" with { type: "json" };
 import buildView from "./build-view.json" with { type: "json" };
+import chatAgentAsks from "./chat-agent-asks.json" with { type: "json" };
 import createCustomer from "./create-customer.json" with { type: "json" };
 import customers from "./customers.json" with { type: "json" };
 import deliveryStatus from "./delivery-status.json" with { type: "json" };
@@ -35,6 +36,7 @@ export const exampleSpecs: Record<string, unknown> = {
   "Build view (console page)": buildView,
   "Create customer (form)": createCustomer,
   "Customers (list + form)": customers,
+  "Chat: agent asks for details": chatAgentAsks,
 };
 
 export { componentExamples } from "./components.js";

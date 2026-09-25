@@ -294,24 +294,53 @@ export const componentExamples = {
       },
     },
   },
-  TextField: {
+  Field: {
     root: "fields",
     elements: {
-      fields: { type: "Stack", props: {}, children: ["email", "invalid"] },
+      fields: { type: "Stack", props: {}, children: ["email", "plan", "notes", "terms", "invalid"] },
       email: {
-        type: "TextField",
+        type: "Field",
         props: {
-          label: "Contact email",
           type: "email",
+          label: "Contact email",
           required: true,
           value: { $bindState: "/sample/email" },
           helperText: "What you type is written to /sample/email.",
         },
         children: [],
       },
-      invalid: {
-        type: "TextField",
+      plan: {
+        type: "Field",
         props: {
+          type: "select",
+          label: "Plan",
+          value: { $bindState: "/sample/plan" },
+          options: [
+            { value: "free", label: "Free" },
+            { value: "team", label: "Team" },
+            { value: "enterprise", label: "Enterprise" },
+          ],
+        },
+        children: [],
+      },
+      notes: {
+        type: "Field",
+        props: { type: "textarea", label: "Notes", value: { $bindState: "/sample/notes" } },
+        children: [],
+      },
+      terms: {
+        type: "Field",
+        props: {
+          type: "checkbox",
+          label: "Send receipts by email",
+          value: { $bindState: "/sample/receipts" },
+        },
+        children: [],
+      },
+      invalid: {
+        type: "Field",
+        props: {
+          type: "text",
           label: "Name",
           value: "",
           required: true,

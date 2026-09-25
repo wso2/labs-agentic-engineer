@@ -29,19 +29,19 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { genUiSystemPrompt } from "@aep/ui-genui";
+import { ChatPage } from "./pages/ChatPage.js";
 import { ComponentsPage } from "./pages/ComponentsPage.js";
 import { ViewsPage } from "./pages/ViewsPage.js";
 
 const promptChars = genUiSystemPrompt().length;
 
-type Page = "components" | "views";
+type Page = "components" | "views" | "chat";
 
 // The page lives in ?page= rather than the hash, which the components page
 // uses to jump between components.
 function initialPage(): Page {
-  return new URLSearchParams(window.location.search).get("page") === "views"
-    ? "views"
-    : "components";
+  const page = new URLSearchParams(window.location.search).get("page");
+  return page === "views" || page === "chat" ? page : "components";
 }
 
 function Demo() {
@@ -71,9 +71,10 @@ function Demo() {
         <Tabs value={page} onChange={(_, next: Page) => choose(next)}>
           <Tab value="components" label="Components" />
           <Tab value="views" label="Composed views" />
+          <Tab value="chat" label="Chat" />
         </Tabs>
       </Box>
-      {page === "components" ? <ComponentsPage /> : <ViewsPage />}
+      {page === "components" ? <ComponentsPage /> : page === "views" ? <ViewsPage /> : <ChatPage />}
     </Stack>
   );
 }

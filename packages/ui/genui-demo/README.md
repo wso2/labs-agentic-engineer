@@ -11,6 +11,11 @@ theme (the one the Oxygen UI Storybook shows).
 - **Composed views** (`?page=views`): whole specs such as the console's Build
   view, rendered as one UI. Pick an example or paste model output; every
   action is logged.
+- **Chat** (`?page=chat`): a scripted agent asks with a form card (select,
+  text, checkbox, textarea). Answers go back as `replyToAgent`; the agent
+  checks them against the form it sent (`src/chat/formRules.ts`) and replies
+  with a confirmation card, checked with `validateGenUiSpec` before it is
+  posted. Every card can show the JSON the agent sent.
 
 ```
 pnpm --filter @aep/ui-genui-demo dev

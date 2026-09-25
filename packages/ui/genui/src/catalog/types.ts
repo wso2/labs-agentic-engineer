@@ -28,9 +28,11 @@ import type { z } from "zod";
 export interface GenUiComponentDef {
   /**
    * The props contract. Both the model's output and the implementation are
-   * held to it. Always an object schema, so adapters can reason per prop.
+   * held to it. An object schema, or a discriminated union of object schemas
+   * when one component has kinds with different props (Field: text, select,
+   * checkbox); either way adapters can reason per prop once the kind is known.
    */
-  readonly props: z.ZodObject;
+  readonly props: z.ZodObject | z.ZodDiscriminatedUnion<readonly z.ZodObject[]>;
   /** What the component is for. Goes verbatim into the model's instructions. */
   readonly description: string;
   /** Whether the component renders child elements. */

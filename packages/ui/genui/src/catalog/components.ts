@@ -21,6 +21,14 @@ import type { GenUiComponentDef } from "./types.js";
 
 const tone = z.enum(["neutral", "info", "success", "warning", "error"]);
 
+// What every kind of Field shares.
+const fieldCommon = {
+  label: z.string(),
+  required: z.boolean().optional(),
+  helperText: z.string().optional(),
+  error: z.string().optional(),
+};
+
 /** The catalog's tones. Each design system maps them to its own colours. */
 export type GenUiTone = z.output<typeof tone>;
 
@@ -237,17 +245,29 @@ export const genUiComponents = {
     hasChildren: false,
     events: [],
   },
-  TextField: {
-    props: z.object({
-      label: z.string(),
-      value: z.string().optional(),
-      type: z.enum(["text", "email", "tel"]).optional(),
-      required: z.boolean().optional(),
-      helperText: z.string().optional(),
-      error: z.string().optional(),
-    }),
+  Field: {
+    props: z.discriminatedUnion("type", [
+      z.object({
+        type: z.enum(["text", "email", "tel", "textarea"]),
+        value: z.string().optional(),
+        ...fieldCommon,
+      }),
+      z.object({
+        type: z.literal("select"),
+        value: z.string().optional(),
+        options: z
+          .array(z.object({ value: z.string(), label: z.string() }))
+          .min(1),
+        ...fieldCommon,
+      }),
+      z.object({
+        type: z.literal("checkbox"),
+        value: z.boolean().optional(),
+        ...fieldCommon,
+      }),
+    ]),
     description:
-      "A text input. Bind value with { \"$bindState\": \"/form/field\" } so typing writes to state, and pass that state to an action's params. Bind error to /actions/<action>/fieldErrors/<param> to show that field's validation message.",
+      'An input; type picks the kind (text, email, tel, textarea, select with options, checkbox with a true/false value). Write type out literally. Bind value with { "$bindState": "/form/field" } so input writes to state, and pass that state to an action\'s params. Bind error to /actions/<action>/fieldErrors/<param> to show that field\'s validation message.',
     hasChildren: false,
     events: [],
   },

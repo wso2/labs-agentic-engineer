@@ -18,7 +18,11 @@
 
 import { validateSpec, type Spec } from "@json-render/core";
 import { z } from "zod";
-import { genUiComponents, type GenUiComponentName } from "../../catalog/index.js";
+import {
+  genUiComponents,
+  type GenUiComponentDef,
+  type GenUiComponentName,
+} from "../../catalog/index.js";
 import { jsonRenderCatalog } from "./catalog.js";
 
 /**
@@ -45,6 +49,40 @@ function isExpression(value: unknown): boolean {
 }
 
 /**
+ * The object schema an element's props are held to. For a component with
+ * kinds (a discriminated union), the kind must be written out literally, not
+ * bound, so the right variant is known before render time. Takes the schema
+ * as a parameter so its declared type is not narrowed to today's catalog.
+ */
+function propsShapeFor(
+  type: GenUiComponentName,
+  schema: GenUiComponentDef["props"],
+  props: Record<string, unknown>,
+): { shape: z.ZodRawShape } | { issues: z.core.$ZodIssue[] } {
+  if (!(schema instanceof z.ZodDiscriminatedUnion)) return { shape: schema.shape };
+  const key = schema.def.discriminator;
+  if (isExpression(props[key])) {
+    return {
+      issues: [
+        {
+          code: "custom",
+          path: [key],
+          message: `must be written out, not bound, so the kind of ${type} is known`,
+          input: props[key],
+        },
+      ],
+    };
+  }
+  const variant = schema.options.find(
+    (option) => (option.shape[key] as z.ZodType).safeParse(props[key]).success,
+  );
+  if (variant) return { shape: variant.shape };
+  // No variant matches the kind: the union's own error names the valid kinds.
+  const parsed = schema.safeParse({ [key]: props[key] });
+  return { issues: parsed.success ? [] : parsed.error.issues };
+}
+
+/**
  * Holds one element's props to its component schema. json-render's own
  * catalog check does not, so this is what rejects, say, a Progress with value
  * 250. Each literal prop is checked against its own field schema (keeping the
@@ -54,8 +92,10 @@ function propIssues(
   type: GenUiComponentName,
   props: Record<string, unknown>,
 ): z.core.$ZodIssue[] {
+  const resolved = propsShapeFor(type, genUiComponents[type].props, props);
+  if ("issues" in resolved) return resolved.issues;
   const issues: z.core.$ZodIssue[] = [];
-  for (const [key, field] of Object.entries(genUiComponents[type].props.shape)) {
+  for (const [key, field] of Object.entries(resolved.shape)) {
     const value = props[key];
     if (isExpression(value)) continue;
     const result = (field as z.ZodType).safeParse(value);
@@ -109,7 +149,7 @@ export function validateGenUiSpec(input: unknown): GenUiValidation {
 // (see GenUiActionState), so these rules hold for every generated UI.
 const ACTION_STATE_RULES = [
   'Each action\'s progress is in state at /actions/<actionName>: status is "pending", "success" or "error"; message says what went wrong; fieldErrors maps each param name to its problem.',
-  "For a form, bind every TextField value with $bindState to /<form>/<param>, read those paths with $state in the submit Button's action params, and bind each TextField error to /actions/<actionName>/fieldErrors/<param>.",
+  "For a form, bind every Field value with $bindState to /<form>/<param>, read those paths with $state in the submit Button's action params, and bind each Field error to /actions/<actionName>/fieldErrors/<param>.",
   'Show the result with element-level visible conditions, e.g. { "$state": "/actions/<actionName>/status", "eq": "success" } for a confirmation Alert and "eq": "error" for an Alert whose message is { "$state": "/actions/<actionName>/message" }. Disable the submit Button while status is "pending".',
 ];
 

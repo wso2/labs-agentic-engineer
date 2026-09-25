@@ -28,7 +28,9 @@ export interface PropRow {
 type JsonSchema = {
   type?: string;
   enum?: unknown[];
+  const?: unknown;
   anyOf?: JsonSchema[];
+  oneOf?: JsonSchema[];
   items?: JsonSchema;
   properties?: Record<string, JsonSchema>;
   required?: string[];
@@ -38,8 +40,10 @@ type JsonSchema = {
 };
 
 function describeType(schema: JsonSchema): string {
+  if (schema.const !== undefined) return JSON.stringify(schema.const);
   if (schema.enum) return schema.enum.map((value) => JSON.stringify(value)).join(" | ");
-  if (schema.anyOf) return schema.anyOf.map(describeType).join(" | ");
+  const variants = schema.anyOf ?? schema.oneOf;
+  if (variants) return variants.map(describeType).join(" | ");
   switch (schema.type) {
     case "array":
       return schema.items ? `${describeType(schema.items)}[]` : "array";
@@ -65,16 +69,36 @@ function describeType(schema: JsonSchema): string {
   }
 }
 
-/**
- * The props table for a catalog schema, derived from the schema itself so it
- * cannot drift from what validation enforces.
- */
-export function propRows(schema: z.ZodType): PropRow[] {
-  const json = z.toJSONSchema(schema, { io: "input", unrepresentable: "any" }) as JsonSchema;
+/** One props table; a component with kinds gets one per kind. */
+export interface PropGroup {
+  /** The kind this table is for, e.g. `type: "select"`; absent for plain components. */
+  title?: string;
+  rows: PropRow[];
+}
+
+function rowsOf(json: JsonSchema): PropRow[] {
   const required = new Set(json.required ?? []);
   return Object.entries(json.properties ?? {}).map(([name, field]) => ({
     name,
     type: describeType(field),
     required: required.has(name),
   }));
+}
+
+/**
+ * The props tables for a catalog schema, derived from the schema itself so
+ * they cannot drift from what validation enforces. A discriminated union
+ * (Field) yields one table per kind, titled by its discriminator.
+ */
+export function propGroups(schema: z.ZodType): PropGroup[] {
+  const json = z.toJSONSchema(schema, { io: "input", unrepresentable: "any" }) as JsonSchema;
+  const variants = json.oneOf ?? json.anyOf;
+  if (!variants) return [{ rows: rowsOf(json) }];
+  return variants.map((variant) => {
+    const kind = variant.properties?.type;
+    return {
+      ...(kind ? { title: `type: ${describeType(kind)}` } : {}),
+      rows: rowsOf(variant),
+    };
+  });
 }

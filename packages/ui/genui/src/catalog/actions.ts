@@ -39,6 +39,17 @@ export const genUiActions = {
     }),
     description: "Reject a declared dependency, optionally saying why.",
   },
+  replyToAgent: {
+    // Generic on purpose: in chat the agent decides which fields to ask for,
+    // so the answers' shape is the form's, not a fixed schema. The agent side
+    // checks them against the form it sent (required fields, emails) and
+    // answers with field errors in the usual shape.
+    params: z.object({
+      answers: z.record(z.string(), z.union([z.string(), z.boolean()])),
+    }),
+    description:
+      "Send the user's answers to the agent that asked. params: { answers: { \"$state\": \"/answers\" } }, the form's fields bound under /answers.",
+  },
   openDeployments: {
     params: z.object({ version: z.string().min(1).optional() }),
     description: "Open the project's Deployments view, optionally at a version.",

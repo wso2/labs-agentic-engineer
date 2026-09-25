@@ -16,7 +16,16 @@
  * under the License.
  */
 
-import { Box, Button, TextField } from "@wso2/oxygen-ui";
+import {
+  Box,
+  Button,
+  Checkbox,
+  FormControl,
+  FormControlLabel,
+  FormHelperText,
+  MenuItem,
+  TextField,
+} from "@wso2/oxygen-ui";
 import type { GenUiPropsOf, GenUiRenderProps } from "@aep/ui-genui";
 
 type Variant = NonNullable<GenUiPropsOf<"Button">["variant"]>;
@@ -49,19 +58,60 @@ export function GenUiButton({
   );
 }
 
-export function GenUiTextField({
-  props,
-  setProp,
-}: GenUiRenderProps<GenUiPropsOf<"TextField">>) {
-  return (
-    <TextField
-      label={props.label}
-      type={props.type ?? "text"}
-      required={props.required ?? false}
-      value={props.value ?? ""}
-      onChange={(event) => setProp("value", event.target.value)}
-      error={Boolean(props.error)}
-      helperText={props.error ?? props.helperText}
-    />
-  );
+/**
+ * Each kind of Field is the stock Oxygen input for it. TypeScript narrows
+ * props by kind, so options exist only for select and a checkbox's value is
+ * a boolean. Every kind writes back through setProp("value", …).
+ */
+export function GenUiField({ props, setProp }: GenUiRenderProps<GenUiPropsOf<"Field">>) {
+  const required = props.required ?? false;
+  const help = props.error ?? props.helperText;
+  switch (props.type) {
+    case "checkbox":
+      return (
+        <FormControl required={required} error={Boolean(props.error)}>
+          <FormControlLabel
+            label={props.label}
+            control={
+              <Checkbox
+                checked={props.value ?? false}
+                onChange={(event) => setProp("value", event.target.checked)}
+              />
+            }
+          />
+          {help ? <FormHelperText>{help}</FormHelperText> : null}
+        </FormControl>
+      );
+    case "select":
+      return (
+        <TextField
+          select
+          label={props.label}
+          required={required}
+          value={props.value ?? ""}
+          onChange={(event) => setProp("value", event.target.value)}
+          error={Boolean(props.error)}
+          helperText={help}
+        >
+          {props.options.map((option) => (
+            <MenuItem key={option.value} value={option.value}>
+              {option.label}
+            </MenuItem>
+          ))}
+        </TextField>
+      );
+    default:
+      return (
+        <TextField
+          label={props.label}
+          type={props.type === "textarea" ? "text" : props.type}
+          {...(props.type === "textarea" ? { multiline: true, minRows: 3 } : {})}
+          required={required}
+          value={props.value ?? ""}
+          onChange={(event) => setProp("value", event.target.value)}
+          error={Boolean(props.error)}
+          helperText={help}
+        />
+      );
+  }
 }

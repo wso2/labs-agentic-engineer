@@ -81,6 +81,42 @@ describe("validateGenUiSpec", () => {
     expect(result.ok).toBe(false);
   });
 
+  describe("a component with kinds (Field)", () => {
+    it("accepts each kind with its own props", () => {
+      expect(validateGenUiSpec(leaf("Field", { type: "email", label: "Email" })).ok).toBe(true);
+      expect(
+        validateGenUiSpec(
+          leaf("Field", { type: "select", label: "Plan", options: [{ value: "a", label: "A" }] }),
+        ).ok,
+      ).toBe(true);
+      expect(validateGenUiSpec(leaf("Field", { type: "checkbox", label: "Ok", value: true })).ok).toBe(true);
+    });
+
+    it("rejects a kind missing a prop only that kind needs", () => {
+      const result = validateGenUiSpec(leaf("Field", { type: "select", label: "Plan" }));
+      expect(!result.ok && result.issues.some((i) => i.startsWith("a.props.options"))).toBe(true);
+    });
+
+    it("holds a prop to its kind's type", () => {
+      const result = validateGenUiSpec(leaf("Field", { type: "checkbox", label: "Ok", value: "yes" }));
+      expect(!result.ok && result.issues.some((i) => i.startsWith("a.props.value"))).toBe(true);
+    });
+
+    it("rejects a kind the catalog does not have", () => {
+      const result = validateGenUiSpec(leaf("Field", { type: "slider", label: "Volume" }));
+      expect(!result.ok && result.issues.some((i) => i.startsWith("a.props.type"))).toBe(true);
+    });
+
+    it("requires the kind to be written out, not bound", () => {
+      const result = validateGenUiSpec(
+        leaf("Field", { type: { $state: "/kind" }, label: "Anything" }),
+      );
+      expect(!result.ok && result.issues).toEqual([
+        "a.props.type: must be written out, not bound, so the kind of Field is known",
+      ]);
+    });
+  });
+
   it("names the element and prop that failed", () => {
     const result = validateGenUiSpec(leaf("Progress", { value: 250 }));
     expect(!result.ok && result.issues).toEqual([

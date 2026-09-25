@@ -1,0 +1,111 @@
+{
+  "root": "card",
+  "state": {
+    "answers": { "provider": "", "merchantId": "", "environment": "sandbox", "receipts": true, "notes": "" }
+  },
+  "elements": {
+    "card": {
+      "type": "Card",
+      "props": {
+        "title": "Payments setup",
+        "subtitle": "I need these to configure the payments dependency."
+      },
+      "children": ["sent", "failed", "provider", "merchantId", "environment", "receipts", "notes", "send"]
+    },
+    "sent": {
+      "type": "Alert",
+      "props": { "tone": "success", "message": "Sent to the agent." },
+      "visible": { "$state": "/actions/replyToAgent/status", "eq": "success" },
+      "children": []
+    },
+    "failed": {
+      "type": "Alert",
+      "props": { "tone": "error", "message": { "$state": "/actions/replyToAgent/message" } },
+      "visible": { "$state": "/actions/replyToAgent/status", "eq": "error" },
+      "children": []
+    },
+    "provider": {
+      "type": "Field",
+      "props": {
+        "type": "select",
+        "label": "Payment provider",
+        "required": true,
+        "value": { "$bindState": "/answers/provider" },
+        "error": { "$state": "/actions/replyToAgent/fieldErrors/provider" },
+        "options": [
+          { "value": "stripe", "label": "Stripe" },
+          { "value": "adyen", "label": "Adyen" },
+          { "value": "paypal", "label": "PayPal" }
+        ]
+      },
+      "children": []
+    },
+    "merchantId": {
+      "type": "Field",
+      "props": {
+        "type": "text",
+        "label": "Merchant account ID",
+        "required": true,
+        "helperText": "From the provider's dashboard, e.g. acct_1Nv0…",
+        "value": { "$bindState": "/answers/merchantId" },
+        "error": { "$state": "/actions/replyToAgent/fieldErrors/merchantId" }
+      },
+      "children": []
+    },
+    "environment": {
+      "type": "Field",
+      "props": {
+        "type": "select",
+        "label": "Environment",
+        "value": { "$bindState": "/answers/environment" },
+        "options": [
+          { "value": "sandbox", "label": "Sandbox (test payments)" },
+          { "value": "live", "label": "Live" }
+        ]
+      },
+      "children": []
+    },
+    "receipts": {
+      "type": "Field",
+      "props": {
+        "type": "checkbox",
+        "label": "Email receipts to customers",
+        "value": { "$bindState": "/answers/receipts" }
+      },
+      "children": []
+    },
+    "notes": {
+      "type": "Field",
+      "props": {
+        "type": "textarea",
+        "label": "Anything else I should know?",
+        "value": { "$bindState": "/answers/notes" }
+      },
+      "children": []
+    },
+    "send": {
+      "type": "Button",
+      "props": {
+        "label": {
+          "$cond": { "$state": "/actions/replyToAgent/status", "eq": "pending" },
+          "$then": "Sending…",
+          "$else": "Send to agent"
+        },
+        "disabled": {
+          "$cond": {
+            "$or": [
+              { "$state": "/actions/replyToAgent/status", "eq": "pending" },
+              { "$state": "/actions/replyToAgent/status", "eq": "success" }
+            ]
+          },
+          "$then": true,
+          "$else": false
+        }
+      },
+      "on": {
+        "press": { "action": "replyToAgent", "params": { "answers": { "$state": "/answers" } } }
+      },
+      "children": []
+    }
+  }
+}

@@ -18,7 +18,7 @@
 
 import { Alert } from "@wso2/oxygen-ui";
 import { createGenUiView, type GenUiDesignSystem } from "@aep/ui-genui";
-import { GenUiButton, GenUiTextField } from "./components/controls.js";
+import { GenUiButton, GenUiField } from "./components/controls.js";
 import {
   GenUiCodeSnippet,
   GenUiDataTable,
@@ -65,7 +65,7 @@ export const oxygenDesignSystem: GenUiDesignSystem = {
     ValidationResults: GenUiValidationResults,
     Section: GenUiSection,
     AgentTimeline: GenUiAgentTimeline,
-    TextField: GenUiTextField,
+    Field: GenUiField,
     Button: GenUiButton,
   },
   InvalidElement,

@@ -40,7 +40,7 @@ import {
 import { componentExamples } from "@aep/ui-genui/examples";
 import { GenUiView } from "@aep/ui-genui-oxygen";
 import { createHandlers } from "../handlers.js";
-import { propRows, type PropRow } from "../schema.js";
+import { propGroups, type PropGroup, type PropRow } from "../schema.js";
 
 const componentNames = Object.keys(genUiComponents) as GenUiComponentName[];
 const handlers = createHandlers();
@@ -81,6 +81,23 @@ function PropsTable({ rows }: { rows: PropRow[] }) {
   );
 }
 
+function PropsTables({ groups }: { groups: PropGroup[] }) {
+  return (
+    <Stack spacing={2}>
+      {groups.map((group, index) => (
+        <Stack key={group.title ?? index} spacing={1}>
+          {group.title ? (
+            <Typography variant="subtitle2" component="h4">
+              <code>{group.title}</code>
+            </Typography>
+          ) : null}
+          <PropsTable rows={group.rows} />
+        </Stack>
+      ))}
+    </Stack>
+  );
+}
+
 function ComponentEntry({ name }: { name: GenUiComponentName }) {
   const def = genUiComponents[name];
   const spec = componentExamples[name];
@@ -102,7 +119,7 @@ function ComponentEntry({ name }: { name: GenUiComponentName }) {
       />
       <CardContent>
         <Stack spacing={2}>
-          <PropsTable rows={propRows(def.props)} />
+          <PropsTables groups={propGroups(def.props)} />
           <Box
             sx={{
               display: "grid",
@@ -160,7 +177,7 @@ function ActionsEntry() {
               <Typography variant="body2" color="text.secondary">
                 {def.description}
               </Typography>
-              <PropsTable rows={propRows(def.params)} />
+              <PropsTables groups={propGroups(def.params)} />
             </Stack>
           ))}
         </Stack>

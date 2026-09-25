@@ -116,8 +116,9 @@
       "children": []
     },
     "name": {
-      "type": "TextField",
+      "type": "Field",
       "props": {
+        "type": "text",
         "label": "Name",
         "required": true,
         "value": {
@@ -130,8 +131,9 @@
       "children": []
     },
     "contactName": {
-      "type": "TextField",
+      "type": "Field",
       "props": {
+        "type": "text",
         "label": "Contact name",
         "required": true,
         "value": {
@@ -144,10 +146,10 @@
       "children": []
     },
     "contactEmail": {
-      "type": "TextField",
+      "type": "Field",
       "props": {
-        "label": "Contact email",
         "type": "email",
+        "label": "Contact email",
         "required": true,
         "value": {
           "$bindState": "/customer/contactEmail"
@@ -159,10 +161,10 @@
       "children": []
     },
     "contactPhone": {
-      "type": "TextField",
+      "type": "Field",
       "props": {
-        "label": "Contact phone",
         "type": "tel",
+        "label": "Contact phone",
         "helperText": "Optional.",
         "value": {
           "$bindState": "/customer/contactPhone"
