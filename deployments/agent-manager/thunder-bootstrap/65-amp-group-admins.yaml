@@ -1,0 +1,6 @@
+resource_type: group
+id: amp-admins
+name: Agent Manager Admins
+description: Administrative group with full access to all AMP resources
+ouHandle: default
+members:

@@ -47,6 +47,10 @@
 #   * register the environment with amp-api. That step is Agent Manager's own
 #     (its add-environment-thunder.sh), and the two values it needs from this
 #     side are printed at the end
+#   * take over OpenChoreo's build templates. Agent Manager's chart forks five
+#     of them under OpenChoreo's own names; step 5 renames its copies to
+#     `amp-*` on the way in, so AEP keeps building with the templates it
+#     already has
 #
 # ── Re-running ──────────────────────────────────────────────────────────────
 #
@@ -83,23 +87,39 @@ THUNDER_NS="${THUNDER_NS:-thunder}"
 THUNDER_RELEASE="${THUNDER_RELEASE:-thunder}"
 BOOTSTRAP_CM="${BOOTSTRAP_CM:-openchoreo-thunderid-bootstrap}"
 
+# Renames Agent Manager's forked build templates during the step 5 install.
+# See the file itself for which five move and why the others may not.
+FORKED_TEMPLATE_RENAMER="prefix-forked-workflow-templates.py"
+
 AMP_NS="wso2-amp"
 OBS_NS="openchoreo-observability-plane"
 DP_NS="openchoreo-data-plane"
 WP_NS="openchoreo-workflow-plane"
 
-# In-cluster Thunder addresses. A hostname is a name, not an address: the
-# public URL is what tokens are issued against and what clients send as the
-# OAuth resource indicator, but a pod reaches Thunder through its Service.
-THUNDER_SVC_HOST="${THUNDER_RELEASE}.${THUNDER_NS}.svc.cluster.local"
-THUNDER_INTERNAL_TOKEN_URL="http://${THUNDER_SVC_HOST}:8090/oauth2/token"
-THUNDER_INTERNAL_JWKS_URL="http://${THUNDER_SVC_HOST}:8090/oauth2/jwks"
+# The in-cluster Thunder addresses are resolved from the cluster after the
+# preflight, below — ThunderID's objects are not named after its release.
 
 # What Agent Manager's own environment-registration step needs from this side.
 # HTTPS on 8443 is not a preference: ThunderID rejects a plain-http JWKS URL
 # for a trusted issuer, the certificate is issued for the public hostname, and
 # that hostname reaches the HTTPS gateway from inside the cluster only through
 # the CoreDNS rewrite OpenChoreo's own coredns-custom.yaml installs.
+# Agent Manager addresses an environment's IdP as "<handle>.<base domain>:8080"
+# (ThunderOriginFromHandle, with TLS off) — it stores an origin it COMPOSES, it
+# is not told one. aectl has already provisioned this environment's IdP at
+# "<env>-idp.openchoreo.localhost", so pointing Agent Manager at that instance
+# rather than standing up a second one is a matter of making the value it
+# computes come out right: the base domain below, plus the handle registered in
+# the final step.
+#
+# The direct-URL half of that API is not an option here — it runs the origin
+# through an SSRF check that rejects any *.localhost host outright, while the
+# handle path skips it because the hostname is Agent Manager's own to compose.
+ENV_IDP_BASE_DOMAIN="${ENV_IDP_BASE_DOMAIN:-openchoreo.localhost}"
+ENV_IDP_HANDLE="${ENV_IDP_HANDLE:-${OC_ENV}-idp}"
+ENV_IDP_RELEASE="thunder-${ORG_NS}-${OC_ENV}"
+AMP_API_URL="${AMP_API_URL:-http://api.amp.localhost:8080/api/v1}"
+
 PUBLIC_THUNDER_HOST="${PUBLIC_THUNDER_URL#*://}"
 PUBLIC_THUNDER_HOST="${PUBLIC_THUNDER_HOST%%:*}"
 PLATFORM_THUNDER_JWKS_URL="https://${PUBLIC_THUNDER_HOST}:8443/oauth2/jwks"
@@ -123,14 +143,60 @@ kubectl get ns "$WP_NS" &>/dev/null \
     || fail "The workflow plane is missing." "The evaluation extension installs into it (setup-env-for-aectl.sh step 6, WITH_BUILD=1)."
 kubectl get environment "$OC_ENV" -n "$ORG_NS" &>/dev/null \
     || fail "Environment/$OC_ENV not found in namespace $ORG_NS." "Set OC_ENV to the environment aectl provisioned (oc.pipeline_source_environment)."
+# Step 1 edits this ConfigMap in place and pipes it through python3; an absent
+# one feeds empty stdin to json.load and, under `set -o pipefail`, ends the run
+# on a JSONDecodeError rather than on anything naming the missing object.
+# OpenChoreo installs it (install/k3d/common/coredns-custom.yaml).
+kubectl get cm coredns-custom -n kube-system &>/dev/null \
+    || fail "ConfigMap coredns-custom not found in namespace kube-system." "OpenChoreo installs it; step 1 adds Agent Manager's rewrites beside its keys."
 kubectl get cm "$BOOTSTRAP_CM" -n "$THUNDER_NS" &>/dev/null \
-    || fail "ConfigMap $BOOTSTRAP_CM not found in namespace $THUNDER_NS." "This script merges Agent Manager's bootstrap documents into it."
+    || fail "ConfigMap $BOOTSTRAP_CM not found in namespace $THUNDER_NS." "setup-env-for-aectl.sh publishes it before installing ThunderID."
+# Agent Manager's identity configuration is published with AEP's, before the
+# IdP installs, and cannot be added afterwards — the bootstrap folder is read
+# once, by the chart's pre-install Job. An IdP installed without it needs
+# reinstalling, not patching, so this fails here rather than four charts in
+# with amp-console unable to authenticate anyone.
+kubectl get cm "$BOOTSTRAP_CM" -n "$THUNDER_NS" -o jsonpath='{.data.50-amp-api-client\.yaml}' 2>/dev/null | grep -q . \
+    || fail "ThunderID was installed without Agent Manager's documents." \
+            "Re-run setup-env-for-aectl.sh (it publishes both products' documents in step 3d) — they cannot be added to a running IdP."
 [ -f "$INPUTS_DIR/amp-values.yaml" ] \
     || fail "Missing $INPUTS_DIR/amp-values.yaml." "The decided chart values live there; this script does not inline them."
 command -v helm >/dev/null || fail "helm not found on PATH."
 command -v python3 >/dev/null || fail "python3 not found on PATH." "Used to compose the bootstrap ConfigMap."
+python3 -c 'import yaml' 2>/dev/null \
+    || fail "python3 cannot import yaml (PyYAML)." "The bootstrap merge (step 3) and the workflow-template post-renderer (step 5) both parse YAML."
+[ -x "$INPUTS_DIR/$FORKED_TEMPLATE_RENAMER" ] \
+    || fail "Missing or non-executable $INPUTS_DIR/$FORKED_TEMPLATE_RENAMER." "Step 5 runs it as a Helm post-renderer; chmod +x it."
+
+# ── ThunderID's own object names ────────────────────────────────────────────
+# A hostname is a name, not an address: the public URL is what tokens are
+# issued against and what clients send as the OAuth resource indicator, but a
+# pod reaches Thunder through its Service.
+#
+# Both the Service and the workload are found by ThunderID's release label
+# rather than named. The chart derives them from the release name with its own
+# suffixes — `thunder-service`, `thunder-deployment` — so a name built from
+# THUNDER_RELEASE alone matches nothing, and a suffix list would break again on
+# the next chart that spells them differently.
+#
+# Getting the Service wrong is the silent half: every address below is passed
+# as a --set that Helm cannot validate, so the wrong host installs cleanly and
+# surfaces later as a 401 from amp-api with nothing naming the cause.
+THUNDER_SELECTOR="app.kubernetes.io/instance=${THUNDER_RELEASE}"
+
+THUNDER_SVC="$(kubectl -n "$THUNDER_NS" get svc -l "$THUNDER_SELECTOR" \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+[ -n "$THUNDER_SVC" ] \
+    || fail "No Service in namespace ${THUNDER_NS} carries ${THUNDER_SELECTOR}." \
+            "Agent Manager reaches the identity provider through it. Set THUNDER_RELEASE to the ThunderID release name."
+
+# 8090 is ThunderID's own service port, the same on every deployment of it.
+THUNDER_SVC_HOST="${THUNDER_SVC}.${THUNDER_NS}.svc.cluster.local"
+THUNDER_INTERNAL_TOKEN_URL="http://${THUNDER_SVC_HOST}:8090/oauth2/token"
+THUNDER_INTERNAL_JWKS_URL="http://${THUNDER_SVC_HOST}:8090/oauth2/jwks"
 
 echo "✅ Preflight: cluster, planes, Environment/${OC_ENV}, ${BOOTSTRAP_CM}"
+echo "   Thunder: reachable at ${THUNDER_SVC_HOST}:8090"
 
 # ============================================================================
 # Step 1: CoreDNS rewrites for Agent Manager's hostnames
@@ -226,106 +292,42 @@ applied_cpu="$(kubectl get deploy prometheus-operator -n "$OBS_NS" \
 echo "   ✅ metrics module, operator ceiling at 300m"
 
 # ============================================================================
-# Step 3: Compose the identity provider's bootstrap documents
+# The identity provider's documents are NOT published here
 # ============================================================================
-# ThunderID imports its bootstrap folder in filename order and upserts each
-# document. Four of the settings involved exist ONCE for the whole server, and
-# declaring one replaces its entire value rather than adding to it — so two
-# publishers cannot both hold them, and without this step a number in a
-# filename decides which wins.
+# Both products' bootstrap documents are published together by
+# setup-env-for-aectl.sh, before ThunderID is installed — see its step 3d and
+# deployments/agent-manager/thunder-bootstrap/README.md.
 #
-# Agent Manager's documents are rendered from the chart HERE rather than copied
-# into this repo: they move with the chart, and a frozen copy would drift from
-# the version actually being installed. `thunder.enabled=false` is the
-# supported way to make it a publisher into an identity provider it did not
-# install — the chart's ThunderID dependency is declared `condition:
-# thunder.enabled`, so with it false the chart emits documents and no Thunder.
-echo ""
-echo "3️⃣  Composing ${BOOTSTRAP_CM}"
-
-AMP_RENDER="$(mktemp)"
-trap 'rm -f "$AMP_RENDER"' EXIT
-helm template amp-thunder "${AMP_REGISTRY}/wso2-amp-thunder-extension" \
-    --version "$AMP_VERSION" \
-    -f "$INPUTS_DIR/thunder-extension-values.yaml" > "$AMP_RENDER"
-
-# Which of Agent Manager's documents are dropped, and why, is the assembly
-# table in deployments/agent-manager/thunder-bootstrap/README.md. Keeping the
-# list here rather than in the python below keeps the two readable side by side.
-AMP_DROP=(
-    71-amp-cors-config.yaml                    # cors — composed
-    73-amp-csp-config.yaml                     # csp — composed
-    70-fix-thunder-system-rs-identifier.yaml   # System resource server — composed
-)
-# 69-amp-default-resource-server-config.yaml is NOT dropped: AEP publishes no
-# competing document, and both its clients send an explicit OAuth resource
-# indicator rather than relying on the server-wide default.
-# 67-amp-default-users.yaml renders empty — see thunder-extension-values.yaml.
-
-kubectl get cm "$BOOTSTRAP_CM" -n "$THUNDER_NS" -o json \
-    | AMP_RENDER="$AMP_RENDER" COMPOSED_DIR="$INPUTS_DIR/thunder-bootstrap" \
-      DROP="${AMP_DROP[*]}" python3 -c '
-import json, os, sys, yaml
-
-cm = json.load(sys.stdin)
-data = cm.setdefault("data", {})
-drop = {d.split("#")[0].strip() for d in os.environ["DROP"].split()}
-
-# Agent Manager s documents, out of the rendered ConfigMap.
-added = []
-for doc in yaml.safe_load_all(open(os.environ["AMP_RENDER"])):
-    if not doc or doc.get("kind") != "ConfigMap":
-        continue
-    for name, body in (doc.get("data") or {}).items():
-        if name in drop or not (body or "").strip():
-            continue
-        if name in data and data[name] != body:
-            print(f"   ⚠️  {name} already present with different content — Agent Manager s copy wins", file=sys.stderr)
-        data[name] = body
-        added.append(name)
-
-# The composed documents last, so they are the value that lands whatever either
-# side numbers its own.
-composed = []
-for fn in sorted(os.listdir(os.environ["COMPOSED_DIR"])):
-    if not fn.endswith(".yaml"):
-        continue
-    data[fn] = open(os.path.join(os.environ["COMPOSED_DIR"], fn)).read()
-    composed.append(fn)
-
-cm["metadata"] = {"name": cm["metadata"]["name"], "namespace": cm["metadata"]["namespace"]}
-json.dump(cm, sys.stdout)
-print(f"   added {len(added)} Agent Manager document(s), {len(composed)} composed", file=sys.stderr)
-' | kubectl apply -f - >/dev/null
-
-# ThunderID imports the folder at startup, so the ConfigMap alone changes
-# nothing until the pod re-reads it. A rollout is the whole re-import: every
-# document is an upsert, so replaying the folder is idempotent.
-kubectl -n "$THUNDER_NS" rollout restart "statefulset/${THUNDER_RELEASE}" 2>/dev/null \
-    || kubectl -n "$THUNDER_NS" rollout restart "deployment/${THUNDER_RELEASE}"
-kubectl -n "$THUNDER_NS" rollout status "statefulset/${THUNDER_RELEASE}" --timeout=300s 2>/dev/null \
-    || kubectl -n "$THUNDER_NS" rollout status "deployment/${THUNDER_RELEASE}" --timeout=300s
-echo "   ✅ documents merged and re-imported"
-
+# They cannot be added from this script. ThunderID reads its bootstrap folder
+# exactly once, from the chart's pre-install setup Job; the running server
+# mounts no bootstrap volume, so a document written afterwards is never read,
+# and restarting the pod re-imports nothing. Publishing both sides up front is
+# what makes one install enough.
 # ============================================================================
 # Step 4: Hand the shared objects over to Helm
 # ============================================================================
 # OpenChoreo's samples create DeploymentPipeline/default and Environment/<env>
 # with a client-side `kubectl apply`. Agent Manager's platform-resources chart
-# renders both, and Helm will not adopt an object it did not create. Three
-# moves are needed and the first two alone are not enough:
+# renders both, and Helm will not adopt an object it did not create. Two moves
+# hand them over:
 #
-#   1. the meta.helm.sh ownership annotations and the managed-by label —
-#      without them the install fails with "invalid ownership metadata"
-#   2. dropping last-applied-configuration — Helm's server-side apply migrates
-#      that annotation into a kubectl-client-side-apply field manager which
-#      owns .spec, and the install dies on the conflict
-#   3. --force-conflicts on the install itself (step 5)
+#   1. the meta.helm.sh ownership annotations and the managed-by label — these
+#      are what Helm checks, and without them the install fails with
+#      "invalid ownership metadata"
+#   2. dropping last-applied-configuration — Helm 3 reconciles with a
+#      client-side three-way merge, and that annotation is one of its three
+#      inputs; leaving OpenChoreo's copy behind lets it re-assert fields the
+#      chart is now the author of
 #
-# Forcing is not a workaround: taking those fields over is the point. What
-# makes it safe here is that the chart, given amp-values.yaml, renders the same
-# promotion graph and the same environment already on the cluster — so the
-# force is a no-op force rather than a rewrite.
+# Adoption is safe here rather than a rewrite: the chart, given
+# amp-values.yaml, renders the same promotion graph and the same environment
+# already on the cluster, so what changes is who owns them and not what they
+# say.
+#
+# The release is deliberately NOT installed with --take-ownership. That flag
+# would skip the ownership check for every object in the release, which is the
+# one thing standing between a post-renderer that stops renaming and Helm
+# quietly adopting OpenChoreo's build templates.
 echo ""
 echo "4️⃣  Handing DeploymentPipeline/default and Environment/${OC_ENV} to Helm"
 
@@ -360,14 +362,38 @@ DP_INGRESS_HOST="$(kubectl get clusterdataplane default \
     -o jsonpath='{.spec.gateway.ingress.external.http.host}' 2>/dev/null || true)"
 DP_INGRESS_HOST="${DP_INGRESS_HOST:-openchoreoapis.localhost}"
 
+# The chart also forks five of OpenChoreo's build templates under OpenChoreo's
+# own names. OpenChoreo applies those five client-side, so they carry no Helm
+# ownership and this install would stop on the first one. The post-renderer
+# prefixes Agent Manager's copies instead of adopting OpenChoreo's, because the
+# forks differ: Agent Manager's checkout-source has no ssh-privatekey branch,
+# so adopting it would drop SSH git authentication from every AEP build.
 helm upgrade --install amp-platform-resources \
     "${AMP_REGISTRY}/wso2-amp-platform-resources-extension" \
     --version "$AMP_VERSION" \
     --namespace "$ORG_NS" --kube-context "$CLUSTER_CONTEXT" \
-    --force-conflicts --reset-values \
+    --reset-values \
+    --post-renderer "$INPUTS_DIR/$FORKED_TEMPLATE_RENAMER" \
     -f "$INPUTS_DIR/amp-values.yaml" \
     --set-string "environment.gateway.http.host=${DP_INGRESS_HOST}" \
     --timeout 10m >/dev/null
+
+# Read both halves of the rename back. The post-renderer fails loudly on a
+# shape it does not recognise, but it cannot see what reached the cluster, and
+# an adopted template is the silent half: AEP would go on building with Agent
+# Manager's fork and the first sign would be a private repo that stops cloning.
+for forked in checkout-source publish-image containerfile-build \
+              ballerina-buildpack-build gcp-buildpacks-build; do
+    kubectl get clusterworkflowtemplate "amp-${forked}" >/dev/null 2>&1 \
+        || fail "ClusterWorkflowTemplate/amp-${forked} is missing after the install." \
+                "The post-renderer did not reach this release."
+    owner="$(kubectl get clusterworkflowtemplate "$forked" \
+        -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}' 2>/dev/null || true)"
+    [ "$owner" = "amp-platform-resources" ] \
+        && fail "OpenChoreo's ClusterWorkflowTemplate/${forked} was adopted by amp-platform-resources." \
+                "AEP builds would run Agent Manager's fork, which has no SSH git authentication."
+done
+echo "   ✅ forked build templates installed as amp-*, OpenChoreo's untouched"
 
 # The values are only worth passing if they landed. A flattened pipeline is a
 # valid pipeline, so nothing downstream would complain about it.
@@ -429,6 +455,8 @@ helm upgrade --install amp "${AMP_REGISTRY}/wso2-agent-manager" \
     --set "agentManagerService.config.keyManager.jwksUrl=${THUNDER_INTERNAL_JWKS_URL}" \
     --set "agentManagerService.config.oidc.tokenUrl=${THUNDER_INTERNAL_TOKEN_URL}" \
     --set "agentManagerService.config.thunder.resolveToHost=${THUNDER_SVC_HOST}:8090" \
+    --set-string "agentManagerService.config.thunderHostBaseDomain=${ENV_IDP_BASE_DOMAIN}" \
+    --set-string "console.config.thunderHostBaseDomain=${ENV_IDP_BASE_DOMAIN}" \
     --timeout 30m >/dev/null
 
 echo "   ⏳ waiting for Agent Manager..."
@@ -504,6 +532,122 @@ helm upgrade --install amp-evaluation-extension \
 echo "   ✅ evaluation extension"
 
 # ============================================================================
+# Step 10: Point Agent Manager at the environment IdP aectl already installed
+# ============================================================================
+# Agent Manager keeps its own record of where each environment's IdP lives and
+# what credentials administer it. Its own add-environment-thunder.sh fills that
+# record by PROVISIONING a second IdP for the environment; this registers the
+# one aectl already built instead, so the environment keeps a single IdP tier
+# shared by both products (ADR-0029).
+#
+# Two calls, no provisioning:
+#
+#   thunder-system-client  the credentials amp-api administers that IdP with.
+#                          aectl's aep-system-client is reused rather than a
+#                          second admin client being minted — one environment,
+#                          one IdP, one system credential.
+#   thunder-url            the handle Agent Manager composes the origin from.
+#                          It must spell aectl's hostname exactly, which is why
+#                          it is derived from OC_ENV rather than written down.
+#
+# The record is immutable once written: a different value later is rejected
+# with 409 and needs DeleteThunderURL first, so a mismatch here is not
+# self-correcting. Both calls are idempotent when the value matches.
+echo ""
+echo "🔟 Registering ${OC_ENV}'s identity provider with Agent Manager"
+
+env_idp_secret="${ENV_IDP_RELEASE}-aep-system-client"
+system_client_id="$(kubectl -n "$ENV_IDP_RELEASE" get secret "$env_idp_secret" \
+    -o jsonpath='{.data.client-id}' 2>/dev/null | base64 -d || true)"
+system_client_secret="$(kubectl -n "$ENV_IDP_RELEASE" get secret "$env_idp_secret" \
+    -o jsonpath='{.data.client-secret}' 2>/dev/null | base64 -d || true)"
+[ -n "$system_client_id" ] && [ -n "$system_client_secret" ] \
+    || fail "Secret ${ENV_IDP_RELEASE}/${env_idp_secret} has no client-id/client-secret." \
+            "aectl writes it when it provisions the environment IdP — re-run \`aectl platform install\`."
+
+amp_token="$(curl -sf --max-time 30 --retry 5 --retry-delay 5 \
+    -X POST "${PUBLIC_THUNDER_URL}/oauth2/token" \
+    -u "amp-api-client:amp-api-client-secret" \
+    -d "grant_type=client_credentials" \
+    --data-urlencode "scope=amp:org:manage-service-account" 2>/dev/null \
+    | sed -E 's/.*"access_token":"([^"]+)".*/\1/')"
+[ -n "$amp_token" ] \
+    || fail "Could not get an amp-api token from ${PUBLIC_THUNDER_URL}." \
+            "amp-api-client is published by setup-env-for-aectl.sh's bootstrap; check it imported."
+
+register() {
+    local path="$1" body="$2" label="$3"
+    local code
+    code="$(curl -s -o /tmp/amp-register-$$.json -w '%{http_code}' --max-time 30 \
+        -X PUT "${AMP_API_URL}/orgs/${ORG_NS}/environments/${OC_ENV}/${path}" \
+        -H "Authorization: Bearer ${amp_token}" \
+        -H "Content-Type: application/json" -d "$body")"
+    case "$code" in
+        200|201|204) echo "   ✅ ${label}" ;;
+        409) fail "${label}: already registered with a different value (HTTP 409)." \
+                  "Agent Manager treats this record as immutable — DELETE it before re-registering." ;;
+        *)   echo "   response: $(head -c 300 /tmp/amp-register-$$.json)" >&2
+             fail "${label} failed (HTTP ${code})." ;;
+    esac
+    rm -f "/tmp/amp-register-$$.json"
+}
+
+register "thunder-system-client" \
+    "{\"clientId\":\"${system_client_id}\",\"clientSecret\":\"${system_client_secret}\"}" \
+    "system client (${system_client_id})"
+# amp-api runs a reconciler that generates a RANDOM handle for any environment
+# without one, seconds after it boots. That handle composes to a hostname
+# nothing answers on, so it is replaced rather than accepted — and since the
+# reconciler can win the race between the delete and the write, this retries
+# instead of failing on the first 409.
+#
+# The record is otherwise immutable: a PUT of a different handle is rejected,
+# which is why the existing one is deleted rather than overwritten.
+env_idp_url="${AMP_API_URL}/orgs/${ORG_NS}/environments/${OC_ENV}/thunder-url"
+read_handle() {
+    curl -s --max-time 30 "$env_idp_url" -H "Authorization: Bearer ${amp_token}" 2>/dev/null \
+        | sed -nE 's/.*"handle":"([^"]+)".*/\1/p'
+}
+
+registered=""
+for attempt in 1 2 3; do
+    registered="$(read_handle)"
+    [ "$registered" = "$ENV_IDP_HANDLE" ] && break
+    if [ -n "$registered" ]; then
+        curl -s -o /dev/null --max-time 30 -X DELETE "$env_idp_url" \
+            -H "Authorization: Bearer ${amp_token}"
+    fi
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 -X PUT "$env_idp_url" \
+        -H "Authorization: Bearer ${amp_token}" -H "Content-Type: application/json" \
+        -d "{\"handle\":\"${ENV_IDP_HANDLE}\"}")"
+    [ "$code" = "200" ] || [ "$code" = "201" ] && { registered="$(read_handle)"; break; }
+    sleep 2
+done
+
+[ "$registered" = "$ENV_IDP_HANDLE" ] \
+    || fail "${OC_ENV}'s IdP handle is '${registered:-<none>}', not ${ENV_IDP_HANDLE}." \
+            "amp-api's reconciler keeps reclaiming it; re-run, or delete the record and register by hand."
+echo "   ✅ IdP handle (${ENV_IDP_HANDLE})"
+
+# The handle only addresses the right instance if amp-api composes it against
+# the same base domain aectl published the IdP on. Helm accepts an unknown
+# --set path in silence, so that value is read back off the live ConfigMap
+# rather than assumed — a mismatch leaves Agent Manager addressing an IdP that
+# does not exist, and nothing says so until an agent's API returns 401.
+amp_base_domain="$(kubectl -n "$AMP_NS" get cm amp-api \
+    -o jsonpath='{.data.THUNDER_HOST_BASE_DOMAIN}' 2>/dev/null || true)"
+[ "$amp_base_domain" = "$ENV_IDP_BASE_DOMAIN" ] \
+    || fail "amp-api composes environment IdP hostnames under '${amp_base_domain:-unset}', not ${ENV_IDP_BASE_DOMAIN}." \
+            "The thunderHostBaseDomain value did not reach the chart — its path may have moved in ${AMP_VERSION}."
+
+env_idp_host="$(kubectl -n "$ENV_IDP_RELEASE" get httproute \
+    -o jsonpath='{.items[0].spec.hostnames[0]}' 2>/dev/null || true)"
+[ "$env_idp_host" = "${ENV_IDP_HANDLE}.${ENV_IDP_BASE_DOMAIN}" ] \
+    || fail "Agent Manager will address ${ENV_IDP_HANDLE}.${ENV_IDP_BASE_DOMAIN}, but the environment IdP answers on '${env_idp_host:-none}'." \
+            "ENV_IDP_HANDLE must match the hostname aectl published (envidp's publicURL)."
+echo "   ✅ resolves to http://${env_idp_host}:8080 — the instance aectl installed"
+
+# ============================================================================
 # Done — and the one step that is Agent Manager's own
 # ============================================================================
 echo ""
@@ -514,17 +658,15 @@ echo ""
 echo "  Console: http://console.amp.localhost:8080"
 echo "  API:     http://api.amp.localhost:8080"
 echo ""
-echo "  Environment registration is NOT done here. Agent Manager keeps its own"
-echo "  list of environments it can deploy agents into, and putting one on that"
-echo "  list is its own step — deployments/scripts/add-environment-thunder.sh in"
-echo "  github.com/wso2/agent-manager, at tag amp/v${AMP_VERSION}."
+echo "  ${OC_ENV} is registered against the identity provider aectl installed"
+echo "  (${ENV_IDP_RELEASE}), not a second one. Agent Manager's own"
+echo "  add-environment-thunder.sh is NOT used and must not be run for this"
+echo "  environment — it would provision a parallel IdP for the same"
+echo "  environment and both products would stop agreeing on agent identity."
 echo ""
-echo "  It cannot derive two values, and its defaults name a hostname this"
-echo "  cluster does not publish. Pass these:"
+echo "  Adding a FURTHER environment is still Agent Manager's own step, and"
+echo "  needs these two values, which its defaults name a hostname this"
+echo "  cluster does not publish:"
 echo ""
 echo "    PLATFORM_THUNDER_ISSUER=${PUBLIC_THUNDER_URL}"
 echo "    PLATFORM_THUNDER_JWKS_URL=${PLATFORM_THUNDER_JWKS_URL}"
-echo ""
-echo "  Get them wrong and nothing fails at install time: the environment"
-echo "  Thunder is configured to trust an issuer that never signs anything, and"
-echo "  it surfaces later as a 401 on an agent's API."

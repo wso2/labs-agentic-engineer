@@ -104,6 +104,7 @@
 #                           other way and must not silently pick this one up.
 
 set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ============================================================================
 # Versions — everything except THUNDER_* is copied straight from the official
@@ -846,6 +847,20 @@ assignments:
     type: app
 YAML
 
+fi
+
+# ── 3d. Agent Manager's documents ───────────────────────────────────────────
+# Both products share one IdP (ADR-0027) and ThunderID reads its bootstrap
+# folder only once, at install — so Agent Manager's documents have to be in
+# this folder now, not added to a running IdP later.
+#
+# Kept in its own script so it can be deleted whole: that file, the directory
+# it copies from, and this call are the entire Agent Manager coupling here.
+AMP_DOCS_SCRIPT="${SCRIPT_DIR}/publish-amp-thunder-documents.sh"
+if [ -x "$AMP_DOCS_SCRIPT" ]; then
+    bash "$AMP_DOCS_SCRIPT" "$BOOTSTRAP_DIR"
+else
+    echo "⏭️  ${AMP_DOCS_SCRIPT} not present — installing the IdP with AEP's documents only"
 fi
 
 BOOTSTRAP_CM="openchoreo-thunderid-bootstrap"
