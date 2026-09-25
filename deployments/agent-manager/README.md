@@ -75,7 +75,10 @@ them names the object being renamed:
 ```
 
 The step name is what the workflow's own `steps.publish-image.outputs...`
-references resolve against, and what surfaces as a task name on a `WorkflowRun`.
+references resolve against, and the likelier source of the task names a
+`WorkflowRun` reports — which `aep-api` matches on. The step and the template
+share that name there, so nothing in the code settles which it reads; leaving
+both alone means it does not have to be settled.
 A textual substitution would rewrite all three, so the renamer walks the
 structure instead.
 

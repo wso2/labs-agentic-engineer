@@ -222,10 +222,16 @@ func verifyThunderReachable(ctx context.Context, c clients, cfg Config, inst *Th
 const platformTrustAudience = "urn:wso2:amp"
 
 // platformTrustJWKSPort is the HTTPS port the platform IdP's JWKS endpoint is
-// reached on. ThunderID refuses a plain-http trusted-issuer JWKS URL, and the
-// certificate is issued for the public hostname, so the JWKS URL is HTTPS on
-// this port while the issuer stays the plain-http public URL that T1 actually
-// stamps into `iss` — the two are deliberately different schemes.
+// reached on. ThunderID refuses to start at all on a plain-http trusted-issuer
+// JWKS URL —
+//
+//	Failed to load configurations: trusted_issuer.jwks_url must use https
+//	(got http://...); http is only allowed for localhost
+//
+// — and the certificate is issued for the public hostname, so the JWKS URL is
+// HTTPS on this port while the issuer stays the plain-http public URL that T1
+// actually stamps into `iss`. The two being different schemes is deliberate,
+// not an oversight to tidy up.
 const platformTrustJWKSPort = 8443
 
 // platformTrust is what T2 needs in order to accept a token the platform IdP

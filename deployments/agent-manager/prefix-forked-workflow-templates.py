@@ -54,11 +54,18 @@ Each of these names appears in three roles inside one ClusterWorkflow:
         name: publish-image          # the ClusterWorkflowTemplate  <- only this
         template: publish-image      # a template inside that object
 
-Only templateRef.name names the object being renamed. The step name is what
-the workflow's own `steps.publish-image.outputs...` references resolve
-against and what surfaces as a task name on a WorkflowRun; the inner template
-belongs to the renamed object's spec. A textual substitution would rewrite all
-three, which is why this walks the structure instead.
+Only templateRef.name names the object being renamed, and the rename is safe
+precisely because the other two do not move. The step name is what the
+workflow's own `steps.publish-image.outputs...` references resolve against, and
+is the likelier source of the task names a WorkflowRun reports — aep-api
+matches on those (internal/delivery/codingagent/build_auth.go looks for
+"checkout-source"), and because the step and the template share that name there,
+nothing in the code settles which of them it reads. Leaving both alone means it
+does not have to be settled. The inner template belongs to the renamed object's
+own spec.
+
+A textual substitution would rewrite all three, which is why this walks the
+structure instead.
 
 Nothing outside the release reaches these five. ComponentTypes list
 allowedWorkflows by `kind: ClusterWorkflow`, and Agent Manager's own service

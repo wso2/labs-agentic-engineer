@@ -112,9 +112,11 @@ WP_NS="openchoreo-workflow-plane"
 # computes come out right: the base domain below, plus the handle registered in
 # the final step.
 #
-# The direct-URL half of that API is not an option here — it runs the origin
-# through an SSRF check that rejects any *.localhost host outright, while the
-# handle path skips it because the hostname is Agent Manager's own to compose.
+# There is no way to hand it the address directly. Later Agent Manager builds
+# grew a `url` field on this endpoint; ${AMP_VERSION} has neither the field nor
+# a column to store it, and a body carrying one is accepted with 200 and a
+# generated handle rather than refused — so composing the right value is the
+# only lever, and a `url` that looks like it worked is the trap.
 ENV_IDP_BASE_DOMAIN="${ENV_IDP_BASE_DOMAIN:-openchoreo.localhost}"
 ENV_IDP_HANDLE="${ENV_IDP_HANDLE:-${OC_ENV}-idp}"
 ENV_IDP_RELEASE="thunder-${ORG_NS}-${OC_ENV}"
