@@ -333,7 +333,7 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 	}
 	ui.Success("Thunder configured")
 
-	if err := waitForAllPodsReady(ctx, k8sClient, initPlatformNamespace, 10*time.Minute); err != nil {
+	if err := waitForAllPodsReady(ctx, k8sClient, initPlatformNamespace, platformPodsReadyTimeout); err != nil {
 		return err
 	}
 
@@ -1064,6 +1064,25 @@ func waitForAllPodsReady(ctx context.Context, client *kubernetes.Clientset, name
 // in-cluster StatefulSet with a single replica, not a configurable release.
 const postgresPod = "postgres-0"
 
+// coldImagePullBudget sizes the waits in this install that are really
+// waiting on image pulls into a fresh cluster's empty containerd, not on the
+// workloads themselves. Measured against a cold pull on a slow link (83MB in
+// 9m01s, roughly 150KB/s); a budget merely close to that observed time fails
+// the next install that is slightly slower. Both waits below return as soon
+// as their condition holds, so the budget costs nothing on a fast link and
+// only decides whether a healthy-but-slow install completes or is aborted.
+const coldImagePullBudget = 20 * time.Minute
+
+// postgresPodStartTimeout bounds how long syncPostgresPassword waits for
+// postgres-0 to reach Running — in practice, for the node to pull
+// postgres:<version> alongside every other first-install image at once.
+const postgresPodStartTimeout = coldImagePullBudget
+
+// platformPodsReadyTimeout bounds the wait for every platform pod to become
+// Ready. It covers the same cold pulls as postgresPodStartTimeout plus the
+// rest of the chart's images, so it is never the smaller of the two.
+const platformPodsReadyTimeout = coldImagePullBudget
+
 // waitForPodRunning polls until the named pod reaches phase Running, or
 // timeout expires. Running, not Ready: syncPostgresPassword only needs the
 // container process up, not its readiness probe passing.
@@ -1141,13 +1160,13 @@ var runAlterPostgresRolePassword = func(ctx context.Context, namespace, podName,
 // every install, not just a reinstall.
 //
 // postgresSyncTimeout bounds the whole operation (pod wait + Secret wait +
-// ALTER retries — roughly 2m+60s+60s of internal budgets) under one
-// deadline. ctx itself arrives from runAEPInit as an undeadlined
+// ALTER retries — postgresPodStartTimeout+60s+60s of internal budgets) under
+// one deadline. ctx itself arrives from runAEPInit as an undeadlined
 // context.Background(), so without this a single hung call anywhere in the
 // chain — including the kubectl exec inside runAlterPostgresRolePassword,
 // which inherits this same ctx — would block indefinitely instead of being
 // canceled.
-const postgresSyncTimeout = 5 * time.Minute
+const postgresSyncTimeout = postgresPodStartTimeout + 2*time.Minute
 
 func syncPostgresPassword(ctx context.Context, k8sClient *kubernetes.Clientset, namespace string) error {
 	ctx, cancel := context.WithTimeout(ctx, postgresSyncTimeout)
@@ -1156,7 +1175,7 @@ func syncPostgresPassword(ctx context.Context, k8sClient *kubernetes.Clientset, 
 	sp := ui.NewSpinner("Syncing Postgres password")
 	sp.Start()
 
-	if err := waitForPodRunning(ctx, k8sClient, namespace, postgresPod, 2*time.Minute); err != nil {
+	if err := waitForPodRunning(ctx, k8sClient, namespace, postgresPod, postgresPodStartTimeout); err != nil {
 		sp.Fail("Postgres pod never started")
 		return fmt.Errorf("wait for %s: %w", postgresPod, err)
 	}

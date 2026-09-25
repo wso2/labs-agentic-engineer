@@ -159,6 +159,16 @@ kubectl config use-context "${CLUSTER_CONTEXT}"
 echo ""
 echo "2️⃣  Prerequisites"
 
+# COLD_PULL_TIMEOUT budgets the --wait installs below, which on a freshly
+# created cluster are waiting on image pulls into an empty containerd rather
+# than on the charts themselves. Sized against a measured cold pull on a slow
+# link (external-secrets v2.0.1, 83MB, 9m01s — roughly 150KB/s), not against
+# the warm-cache case where each of these becomes ready in seconds. A --wait
+# that is already satisfied returns immediately, so a generous budget costs
+# nothing on a fast link and is the difference between a completed install
+# and a spuriously aborted one on a slow one.
+COLD_PULL_TIMEOUT="${COLD_PULL_TIMEOUT:-20m}"
+
 echo "   Gateway API CRDs"
 kubectl apply --server-side \
   -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml
@@ -166,12 +176,12 @@ kubectl apply --server-side \
 echo "   cert-manager"
 helm upgrade --install cert-manager oci://quay.io/jetstack/charts/cert-manager \
   --namespace cert-manager --create-namespace --version v1.19.4 \
-  --set crds.enabled=true --wait --timeout 180s
+  --set crds.enabled=true --wait --timeout "${COLD_PULL_TIMEOUT}"
 
 echo "   External Secrets Operator"
 helm upgrade --install external-secrets oci://ghcr.io/external-secrets/charts/external-secrets \
   --namespace external-secrets --create-namespace --version 2.0.1 \
-  --set installCRDs=true --wait --timeout 180s
+  --set installCRDs=true --wait --timeout "${COLD_PULL_TIMEOUT}"
 
 echo "   kgateway"
 helm upgrade --install kgateway-crds oci://cr.kgateway.dev/kgateway-dev/charts/kgateway-crds \
@@ -183,7 +193,7 @@ echo "   OpenBao"
 helm upgrade --install openbao oci://ghcr.io/openbao/charts/openbao \
   --namespace openbao --create-namespace --version 0.25.6 \
   --values "${RAW}/install/k3d/common/values-openbao.yaml" \
-  --wait --timeout 300s
+  --wait --timeout "${COLD_PULL_TIMEOUT}"
 
 echo "   ClusterSecretStore"
 kubectl apply -f - <<EOF
@@ -835,6 +845,7 @@ assignments:
   - id: ae-install-client
     type: app
 YAML
+
 fi
 
 BOOTSTRAP_CM="openchoreo-thunderid-bootstrap"
