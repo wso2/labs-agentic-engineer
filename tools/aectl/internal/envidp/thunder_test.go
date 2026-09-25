@@ -141,7 +141,8 @@ func TestThunderChartSpec(t *testing.T) {
 		Namespace: "thunder-default-default",
 		PublicURL: "http://default-idp.openchoreo.localhost:8080",
 	}
-	spec, err := thunderChartSpec(inst, "thunder-default-default-bootstrap", []string{"13-fix.yaml", "80-client.yaml", "84-role.yaml"})
+	trust := platformTrustFrom("http://thunder.openchoreo.localhost:8080")
+	spec, err := thunderChartSpec(inst, "thunder-default-default-bootstrap", []string{"13-fix.yaml", "80-client.yaml", "84-role.yaml"}, trust)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -174,6 +175,12 @@ func TestThunderChartSpec(t *testing.T) {
 		"httproute.hostnames[0]=default-idp.openchoreo.localhost",
 		"configuration.server.publicUrl=http://default-idp.openchoreo.localhost:8080",
 		"configuration.jwt.issuer=http://default-idp.openchoreo.localhost:8080",
+		// The issuer keeps T1's plain-http public URL because that is what T1
+		// stamps into `iss`; only the JWKS URL moves to HTTPS, which ThunderID
+		// requires of a trusted issuer.
+		"configuration.server.security.trustedIssuer.issuer=http://thunder.openchoreo.localhost:8080",
+		"configuration.server.security.trustedIssuer.jwksUrl=https://thunder.openchoreo.localhost:8443/oauth2/jwks",
+		"configuration.server.security.trustedIssuer.audience=urn:wso2:amp",
 	}
 	for _, want := range wantSetStrings {
 		if !containsString(spec.SetStrings, want) {
@@ -204,4 +211,21 @@ func containsString(haystack []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+func TestThunderChartSpec_OmitsTrustedIssuerWhenPlatformURLUnset(t *testing.T) {
+	inst := &ThunderInstance{
+		Release:   "thunder-default-default",
+		Namespace: "thunder-default-default",
+		PublicURL: "http://default-idp.openchoreo.localhost:8080",
+	}
+	spec, err := thunderChartSpec(inst, "cm", []string{"13-fix.yaml"}, platformTrustFrom(""))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, got := range spec.SetStrings {
+		if strings.Contains(got, "trustedIssuer") {
+			t.Errorf("SetStrings carries %q; an unset platform URL must leave trustedIssuer off entirely", got)
+		}
+	}
 }

@@ -161,7 +161,7 @@ func createThunder(ctx context.Context, c clients, cfg Config, inst *ThunderInst
 		return fmt.Errorf("apply bootstrap ConfigMap %s/%s: %w", inst.Namespace, bootstrapCM, err)
 	}
 
-	values, err := thunderChartSpec(inst, bootstrapCM, names)
+	values, err := thunderChartSpec(inst, bootstrapCM, names, platformTrustFrom(cfg.PlatformThunderPublicURL))
 	if err != nil {
 		return fmt.Errorf("build Thunder chart spec: %w", err)
 	}
@@ -214,6 +214,50 @@ func verifyThunderReachable(ctx context.Context, c clients, cfg Config, inst *Th
 	return nil
 }
 
+// platformTrustAudience is the audience T2 requires on a token minted by the
+// platform IdP. Agent Manager's amp-api is the only caller that presents one
+// today and mints it with this value (its own provisioning script's
+// PLATFORM_THUNDER_TOKEN_AUDIENCE default), so the two must agree or every
+// call it makes into this environment's IdP is rejected as wrong-audience.
+const platformTrustAudience = "urn:wso2:amp"
+
+// platformTrustJWKSPort is the HTTPS port the platform IdP's JWKS endpoint is
+// reached on. ThunderID refuses a plain-http trusted-issuer JWKS URL, and the
+// certificate is issued for the public hostname, so the JWKS URL is HTTPS on
+// this port while the issuer stays the plain-http public URL that T1 actually
+// stamps into `iss` — the two are deliberately different schemes.
+const platformTrustJWKSPort = 8443
+
+// platformTrust is what T2 needs in order to accept a token the platform IdP
+// (T1) issued: the issuer string to match, where to fetch T1's signing keys,
+// and the audience to require. Without it T2 trusts only itself, and a caller
+// holding a perfectly valid T1 token is rejected.
+type platformTrust struct {
+	Issuer   string
+	JWKSURL  string
+	Audience string
+}
+
+// platformTrustFrom derives T2's trust of T1 from the platform IdP's public
+// URL. Returns the zero value when that URL is unset, which leaves the
+// trustedIssuer block off the install entirely rather than writing a half
+// one: a trustedIssuer naming an issuer that signs nothing is worse than no
+// trustedIssuer, because it reads as configured.
+func platformTrustFrom(platformPublicURL string) platformTrust {
+	host := hostnameOf(platformPublicURL)
+	if platformPublicURL == "" || host == "" {
+		return platformTrust{}
+	}
+	return platformTrust{
+		Issuer:   platformPublicURL,
+		JWKSURL:  fmt.Sprintf("https://%s:%d/oauth2/jwks", host, platformTrustJWKSPort),
+		Audience: platformTrustAudience,
+	}
+}
+
+// configured reports whether there is a trust to write.
+func (t platformTrust) configured() bool { return t.Issuer != "" && t.JWKSURL != "" }
+
 // thunderChartSpec builds the Thunder chart's install values — same shape as
 // setup-environment-thunder.sh's own CREATE path: sqlite for every one of
 // ThunderID 1.0.0's 4 logical DBs (single-writer, matching the official k3d
@@ -222,10 +266,23 @@ func verifyThunderReachable(ctx context.Context, c clients, cfg Config, inst *Th
 // for the platform IdP, applied here for this environment's own hostname
 // (see publicURL). Extracted as a pure function (fileNames already sorted by
 // the caller) so the exact args are unit-testable without invoking helm.
-func thunderChartSpec(inst *ThunderInstance, bootstrapCM string, fileNames []string) (helm.ChartSpec, error) {
+func thunderChartSpec(inst *ThunderInstance, bootstrapCM string, fileNames []string, trust platformTrust) (helm.ChartSpec, error) {
 	filesJSON, err := json.Marshal(fileNames)
 	if err != nil {
 		return helm.ChartSpec{}, fmt.Errorf("marshal bootstrap file list: %w", err)
+	}
+	setStrings := []string{
+		fmt.Sprintf("fullnameOverride=%s", inst.Release),
+		fmt.Sprintf("httproute.hostnames[0]=%s", hostnameOf(inst.PublicURL)),
+		fmt.Sprintf("configuration.server.publicUrl=%s", inst.PublicURL),
+		fmt.Sprintf("configuration.jwt.issuer=%s", inst.PublicURL),
+	}
+	if trust.configured() {
+		setStrings = append(setStrings,
+			fmt.Sprintf("configuration.server.security.trustedIssuer.issuer=%s", trust.Issuer),
+			fmt.Sprintf("configuration.server.security.trustedIssuer.jwksUrl=%s", trust.JWKSURL),
+			fmt.Sprintf("configuration.server.security.trustedIssuer.audience=%s", trust.Audience),
+		)
 	}
 	return helm.ChartSpec{
 		ReleaseName: inst.Release,
@@ -249,12 +306,7 @@ func thunderChartSpec(inst *ThunderInstance, bootstrapCM string, fileNames []str
 			"setup.enabled=true",
 			fmt.Sprintf("bootstrap.configMap.name=%s", bootstrapCM),
 		},
-		SetStrings: []string{
-			fmt.Sprintf("fullnameOverride=%s", inst.Release),
-			fmt.Sprintf("httproute.hostnames[0]=%s", hostnameOf(inst.PublicURL)),
-			fmt.Sprintf("configuration.server.publicUrl=%s", inst.PublicURL),
-			fmt.Sprintf("configuration.jwt.issuer=%s", inst.PublicURL),
-		},
+		SetStrings: setStrings,
 		SetJSON: []string{
 			fmt.Sprintf("bootstrap.configMap.files=%s", filesJSON),
 		},
