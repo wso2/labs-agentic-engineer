@@ -110,3 +110,7 @@ deployments/scripts/setup-local
 # Ballerina eval sweeps: scratch packages, transcripts and reports (on-demand, never CI)
 evals/ballerina/.runs/
 tools/aectl/aectlv2
+
+# Python bytecode from the deployment helper scripts
+__pycache__/
+*.pyc
