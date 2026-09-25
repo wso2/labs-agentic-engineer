@@ -28,7 +28,9 @@ type OperatorSpec struct {
 	ReleaseName string
 	// Chart is the OCI or local chart reference.
 	Chart string
-	// Version is the chart version string; empty omits --version (uses registry default).
+	// Version is the chart version passed to --version; empty omits the flag.
+	// Helm resolves this as a semver constraint, not only a literal version, so
+	// a range is valid here — see the thunder-app addon for why one is needed.
 	Version string
 	// Namespace is the target namespace for the operator deployment.
 	Namespace string
@@ -84,6 +86,13 @@ var Available = []Addon{
 		Operator: OperatorSpec{
 			ReleaseName: "thunder-app-operator",
 			Chart:       "oci://ghcr.io/wso2/thunder-app-operator",
+			// The chart publishes only prereleases (0.6.0-rc.N; no stable tag
+			// exists yet). Helm's default resolution considers stable versions
+			// only, so omitting --version matches nothing and the install fails
+			// at chart resolution with "Could not locate a version matching
+			// provided version string". This constraint admits prereleases,
+			// selecting the highest rc — equivalent to Helm's --devel.
+			Version:     ">0.0.0-0",
 			Namespace:   "thunder-app-operator-system",
 			DisplayName: "thunder-app-operator",
 			// The operator carries no fixed credentials of its own (the

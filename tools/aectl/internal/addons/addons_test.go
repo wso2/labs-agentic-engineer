@@ -84,8 +84,10 @@ func TestAvailable_ThunderApp(t *testing.T) {
 	if got, want := op.Namespace, "thunder-app-operator-system"; got != want {
 		t.Errorf("Namespace = %q, want %q", got, want)
 	}
-	if op.Version != "" {
-		t.Errorf("Version = %q, want empty (use registry default)", op.Version)
+	// The chart has no stable tag, so default resolution finds nothing; the
+	// constraint must admit prereleases. See the addon's comment in addons.go.
+	if got, want := op.Version, ">0.0.0-0"; got != want {
+		t.Errorf("Version = %q, want %q (chart publishes only prereleases)", got, want)
 	}
 }
 
