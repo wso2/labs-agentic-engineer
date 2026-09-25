@@ -30,6 +30,9 @@ const (
 	// SigRunWorkable — the dispatch predicate turned true for a waiting run
 	// (its last gate closed, or an issue joined the milestone).
 	SigRunWorkable = "run-workable"
+	// SigRunNoWork wakes a coding attempt whose working set may have emptied
+	// without a PR. The workflow re-reads both the cycle and milestone.
+	SigRunNoWork = "run-no-work"
 	// SigRunPRMerged — the cycle's pull request squash-merged. Carries the
 	// merge SHA the build fan-out was pinned to.
 	SigRunPRMerged = "run-pr-merged"

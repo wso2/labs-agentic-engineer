@@ -61,6 +61,18 @@ AI_GATEWAY_CHART_VERSION="${AI_GATEWAY_CHART_VERSION:-0.14.0-rc1}"
 # (scripts/park-observability.sh). See design/agent-manager-convergence.md.
 AMP_VERSION="${AMP_VERSION:-1.0.0-rc2}"
 AMP_REGISTRY="${AMP_REGISTRY:-oci://ghcr.io/wso2}"
+# Full setup installs Agent Manager by default for convergence testing. Set
+# ENABLE_AGENT_MANAGER=0 before running setup.sh for an AEP-only local stack.
+if [ -z "${ENABLE_AGENT_MANAGER:-}" ] && [ -f "$SCRIPT_DIR/../.env" ]; then
+    _aep_enable_agent_manager="$(grep -E '^ENABLE_AGENT_MANAGER=' "$SCRIPT_DIR/../.env" 2>/dev/null | tail -1 | cut -d= -f2-)"
+    _aep_enable_agent_manager="${_aep_enable_agent_manager#\"}"
+    _aep_enable_agent_manager="${_aep_enable_agent_manager%\"}"
+    _aep_enable_agent_manager="${_aep_enable_agent_manager#\'}"
+    _aep_enable_agent_manager="${_aep_enable_agent_manager%\'}"
+    [ -n "$_aep_enable_agent_manager" ] && ENABLE_AGENT_MANAGER="$_aep_enable_agent_manager"
+    unset _aep_enable_agent_manager
+fi
+ENABLE_AGENT_MANAGER="${ENABLE_AGENT_MANAGER:-1}"
 # Agent Manager's API. Spelled once here because five scripts ask whether it
 # answers (utils.sh amp_api_present) and two of them also EXPORT it for Agent
 # Manager's own sourced helpers, which read it under this name.

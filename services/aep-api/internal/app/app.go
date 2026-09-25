@@ -837,6 +837,13 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		PlatformSender: platformSender,
 	})
 	eventPlane.RegisterHandlers(registerWebhook)
+	// The SRE/RCA handoff's OTHER adoption trigger: a code-level issue adopts
+	// itself the instant CreateIssue files it (issueService.adoptIncident),
+	// rather than waiting for the `aep` arming label taskCommands below
+	// watches for. Can only be wired here, after eventPlane exists — eventPlane
+	// itself is built from issueService-derived services above, so the two
+	// cannot be constructed in either order alone (see IssueService.WithAdopter).
+	issueService.WithAdopter(eventcoreAdopter{events: eventPlane})
 	// The SRE/RCA handoff's dispatch leg (promote-task-from-issue): adopt a
 	// freshly filed issue into the deployed version's milestone and start an
 	// incident run over it.
@@ -920,6 +927,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		ConfigRepo:          configRepo,
 		ThunderJWKS:         thunderJWKS,
 		OrganizationService: organizationService,
+		SREHandoffAuth:      authn.NewSREHandoffVerifier(cfg.SREHandoffToken, cfg.SREHandoffOrg),
 
 		DB:                   db,
 		CredService:          credService,

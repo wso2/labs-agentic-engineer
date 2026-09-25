@@ -60,6 +60,22 @@ spec:
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
+  name: rca-agent-anthropic-secret
+  namespace: {{.ObsNamespace}}
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: openbao
+    kind: SecretStore
+  target:
+    name: rca-agent-anthropic-secret
+  data:
+    - secretKey: RCA_LLM_API_KEY
+      remoteRef: { key: aep/anthropic-api-key, property: value }
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
   name: opensearch-admin-credentials
   namespace: {{.ObsNamespace}}
 spec:

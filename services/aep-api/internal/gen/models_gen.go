@@ -316,6 +316,27 @@ func (e ExternalResourceDTOScope) Valid() bool {
 	}
 }
 
+// Defines values for IssueInfoAttentionReason.
+const (
+	Escalated       IssueInfoAttentionReason = "escalated"
+	NoChangeVerdict IssueInfoAttentionReason = "no_change_verdict"
+	UnverifiedFix   IssueInfoAttentionReason = "unverified_fix"
+)
+
+// Valid indicates whether the value is a known member of the IssueInfoAttentionReason enum.
+func (e IssueInfoAttentionReason) Valid() bool {
+	switch e {
+	case Escalated:
+		return true
+	case NoChangeVerdict:
+		return true
+	case UnverifiedFix:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for MilestoneRunViewKind.
 const (
 	MilestoneRunViewKindDev        MilestoneRunViewKind = "dev"
@@ -1726,12 +1747,17 @@ type ConversationMessageAuthor struct {
 	ID          string `json:"id"`
 }
 
-// CreateIssueRequest Issue to file on the project's repo. dedupeKey makes creation idempotent per open issue (label-encoded), for concurrent alert handlers.
+// CreateIssueRequest Issue to file on the project's repo. dedupeKey makes creation idempotent per open issue (label-encoded), for concurrent alert handlers. componentName and actionStatuses carry the SRE incident handoff context; they do not declare issue-create outcomes.
 type CreateIssueRequest struct {
-	Body      string   `json:"body"`
-	DedupeKey string   `json:"dedupeKey,omitempty"`
-	Labels    []string `json:"labels,omitempty"`
-	Title     string   `json:"title"`
+	// ActionStatuses Ordered per-action statuses from the incident handoff. A null entry is meaningful and preserves the action's position when it has no status.
+	ActionStatuses []*string `json:"actionStatuses,omitempty"`
+	Body           string    `json:"body"`
+
+	// ComponentName Component affected by the incident.
+	ComponentName string   `json:"componentName,omitempty"`
+	DedupeKey     string   `json:"dedupeKey,omitempty"`
+	Labels        []string `json:"labels,omitempty"`
+	Title         string   `json:"title"`
 }
 
 // CreateProjectRequest defines model for CreateProjectRequest.
@@ -2065,16 +2091,42 @@ type IssueInfo struct {
 	Labels []string `json:"Labels"`
 	Number int64    `json:"Number"`
 	State  string   `json:"State"`
-	Title  string   `json:"Title"`
-	URL    string   `json:"URL"`
+
+	// StateReason Provider-supplied reason for the issue state, when available.
+	StateReason string `json:"StateReason,omitempty"`
+	Title       string `json:"Title"`
+	URL         string `json:"URL"`
+
+	// AttentionReason Console attention state. Omitted when the issue needs no attention.
+	AttentionReason IssueInfoAttentionReason `json:"attentionReason,omitempty"`
 }
 
-// IssueResult Issue metadata after create. deduped=true means an open issue with the same dedupeKey already existed — number/url refer to it.
+// IssueInfoAttentionReason Console attention state. Omitted when the issue needs no attention.
+type IssueInfoAttentionReason string
+
+// IssueResult Server-derived issue-create outcome. deduped=true means an open issue with the same dedupeKey already existed — number/url refer to it. Callers never supply classification, suppression, reopening, adoption, or recurrence outcomes.
 type IssueResult struct {
-	Deduped bool   `json:"deduped,omitempty"`
-	NodeID  string `json:"nodeId"`
-	Number  int64  `json:"number"`
-	URL     string `json:"url"`
+	// Adopted True when the server adopted the incident into an existing issue.
+	Adopted bool `json:"adopted,omitempty"`
+
+	// AdoptionError Server-derived reason adoption did not complete, when present.
+	AdoptionError string `json:"adoptionError,omitempty"`
+
+	// Classification Server-derived incident classification.
+	Classification string `json:"classification,omitempty"`
+	Deduped        bool   `json:"deduped,omitempty"`
+	NodeID         string `json:"nodeId"`
+	Number         int64  `json:"number"`
+
+	// RecurrenceCount Server-derived count of recorded recurrences for this incident.
+	RecurrenceCount int64 `json:"recurrenceCount,omitempty"`
+
+	// Reopened True when the server reopened a matching closed issue.
+	Reopened bool `json:"reopened,omitempty"`
+
+	// Suppressed True when the server suppressed creation for this incident.
+	Suppressed bool   `json:"suppressed,omitempty"`
+	URL        string `json:"url"`
 }
 
 // LLMProjection defines model for LLMProjection.

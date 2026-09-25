@@ -47,24 +47,19 @@ type CreateOrgRepoRequest struct {
 
 // CreateIssueRequest maps to the fields we send to POST /repos/{owner}/{repo}/issues.
 //
-// DedupeKey is aep-api-only and never reaches GitHub (issueService clears it
-// before the GitHub call; omitempty keeps it off the wire). When set, issue
-// creation is idempotent per open issue: the key is normalised into a
-// `dedupe:<normalised-key>` label (lowercased, whitespace runs collapsed to
-// "-", then truncated to GitHub's 50-char label limit — see dedupeLabelFor in
-// issue_service.go), and if an OPEN issue carrying that label already exists
-// the existing issue is returned instead of creating a duplicate. Because the
-// label is a lossy transform of the raw key, callers cannot reconstruct the
-// exact label name from the key alone. This is the correctness layer for
-// callers that may fire concurrently for one incident (e.g. the OpenChoreo
-// SRE/RCA handoff, one run per alert rule) — they pass a stable key like
-// `sre-rca/<component>` so only the first run files an issue.
-// This struct is marshalled straight onto the wire by the host adapter, so
-// every field but DedupeKey is a GitHub field.
+// DedupeKey is legacy non-SRE deduplication context, cleared before host writes.
+// SRE requests ignore it: trusted incident context, tenant/project, normalized
+// component, and classification namespace establish their identity server-side.
+// This struct is marshalled straight onto the wire by the host adapter. Every
+// field except DedupeKey, ComponentName, and ActionStatuses is a GitHub field.
 type CreateIssueRequest struct {
 	Title  string   `json:"title"`
 	Body   string   `json:"body"`
 	Labels []string `json:"labels,omitempty"`
+	// ComponentName and ActionStatuses are handoff context owned by aep-api.
+	// They are deliberately not forwarded to GitHub's issue-create endpoint.
+	ComponentName  string    `json:"-"`
+	ActionStatuses []*string `json:"-"`
 	// Milestone assigns the issue to a milestone at creation time — one call
 	// instead of create-then-patch, which is what keeps a plan's API cost at
 	// 1+N. It is the milestone NUMBER; GitHub answers 422 to a title here. Nil
@@ -316,25 +311,36 @@ func clampWork(n int) int {
 	return n
 }
 
-// IssueResult is the issue metadata returned after creation. Deduped reports
-// that no issue was created because an open issue with the same DedupeKey
-// already existed — Number/URL then refer to that existing issue (NodeID may
-// be empty in that case; the list API doesn't return it).
+// IssueResult reports creation or the existing issue chosen by server identity.
+// SRE outcomes include open deduplication, terminal suppression, and recurrence.
+// Adopted means this call successfully handed work to delivery; an open dedupe
+// never dispatches again. NodeID may be empty for existing issues.
 type IssueResult struct {
-	Number  int    `json:"number"`
-	URL     string `json:"url"`
-	NodeID  string `json:"nodeId"`
-	Deduped bool   `json:"deduped,omitempty"`
+	Number          int    `json:"number"`
+	URL             string `json:"url"`
+	NodeID          string `json:"nodeId"`
+	Deduped         bool   `json:"deduped,omitempty"`
+	Classification  string `json:"classification,omitempty"`
+	Suppressed      bool   `json:"suppressed,omitempty"`
+	Reopened        bool   `json:"reopened,omitempty"`
+	Adopted         bool   `json:"adopted,omitempty"`
+	AdoptionError   string `json:"adoptionError,omitempty"`
+	RecurrenceCount int64  `json:"recurrenceCount,omitempty"`
 }
 
 // IssueInfo represents an issue returned when listing.
 type IssueInfo struct {
-	Number int
-	Title  string
-	Body   string
-	URL    string
-	State  string
-	Labels []string
+	Number      int
+	Title       string
+	Body        string
+	URL         string
+	State       string
+	StateReason string
+	// ClosedAt is the host closure identity, used only to make recurrence writes
+	// idempotent across failed reopen requests. It is not an API response field.
+	ClosedAt        string `json:"-"`
+	Labels          []string
+	AttentionReason string
 }
 
 // CompareResult is the per-file change summary between two refs the lineage

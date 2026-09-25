@@ -65,20 +65,32 @@ To trigger component builds on PR merge here, copy
 The Compose flow needs no equivalent: setup provisions a channel into `.env` and
 the stack runs the relay.
 
-## What setup installs, and the one switch
+## What setup installs, and its switches
 
-`scripts/setup.sh` has one profile: AEP, the platform IdP, the OpenChoreo
-observability plane, and Agent Manager (~22 pods) on the same cluster. There
-are no enable flags. The only environment knob is `PREBUILD_RUNNER=0`, which
-builds the runner image serially inside `setup-aep.sh` instead of in the
-background.
+`scripts/setup.sh` installs AEP, the platform IdP, the OpenChoreo observability
+plane, and Agent Manager (~22 pods) on the same cluster. Three environment
+switches change that:
 
-What keeps that profile affordable on an 8 GB VM: the last step of setup
-**parks** the observability plane's heavy workloads at zero replicas —
-OpenSearch, Prometheus, Alertmanager, the RCA agent, Fluent Bit, the
-OpenTelemetry collector and the three query adapters, about 2 GB of requests.
-They stay installed; nothing is uninstalled. The switch is a script, usable on
-a live cluster at any time:
+| Variable | Default | Effect |
+|---|---|---|
+| `ENABLE_AGENT_MANAGER` | `1` | `0` skips the Agent Manager install for an AEP-only stack. An explicit value wins over the one saved in `.env`, and setup saves it there for later runs. |
+| `PARK_OBSERVABILITY_AFTER_SETUP` | `1`, or `0` when `ENABLE_AGENT_MANAGER=0` | `1` parks the observability plane at the end of setup; `0` leaves it running. |
+| `PREBUILD_RUNNER` | `1` | `0` builds the runner image serially inside `setup-aep.sh` instead of in the background. |
+
+For an AEP-only local stack, which keeps the observability plane running so
+the alert → RCA → coding-agent handoff works right after setup:
+
+```bash
+ENABLE_AGENT_MANAGER=0 bash scripts/setup.sh
+```
+
+What keeps the full profile affordable on an 8 GB VM: when
+`PARK_OBSERVABILITY_AFTER_SETUP=1`, the last step of setup **parks** the
+observability plane's heavy workloads at zero replicas — OpenSearch,
+Prometheus, Alertmanager, the RCA agent, Fluent Bit, the OpenTelemetry
+collector and the three query adapters, about 2 GB of requests. They stay
+installed; nothing is uninstalled. The switch is a script, usable on a live
+cluster at any time:
 
 ```bash
 bash scripts/park-observability.sh status   # what is parked
@@ -91,9 +103,17 @@ through the OpenChoreo API), but the archive of finished cycles reads "logs
 unavailable", Agent Manager's trace/metric/log views are empty, and no alert is
 evaluated. Observer, the plane's controller and gateway, and amp-observer stay
 up so both consoles get "no data" rather than a refused connection. A setup
-re-run resets the charts' replica counts and parks again at its end.
+re-run resets the charts' replica counts, then parks or restores the plane
+according to `PARK_OBSERVABILITY_AFTER_SETUP`.
 `teardown-agent-manager.sh` removes Agent Manager and leaves the park state as
 it finds it.
+
+`setup-aep.sh` also generates a random `AEP_MCP_TOKEN` into `.env` (preserved
+across re-runs). Compose hands it to `aep-api` (`SRE_HANDOFF_TOKEN`) and
+`aep-mcp-server` (`AEP_MCP_DEFAULT_BEARER`) for the SRE handoff; an empty value
+(`AEP_MCP_TOKEN=`, also preserved) disables the handoff shortcut, and deleting
+the line before a re-run rotates it. See
+`docs/developer-guide/sre-handoff-security.md`.
 
 ## Compose architecture (host-side compose ↔ in-cluster OC)
 

@@ -731,10 +731,10 @@ spec:
       kind: ClusterAuthzRole
       name: workload-publisher
 ---
-# The SRE/RCA agent's handoff stage auto-dispatches a coding-agent run for a
-# code-level incident (AE_AUTO_DISPATCH): ae_dispatch_coding_agent → aectl-api's
-# PromoteAndExecute, whose SYNCHRONOUS EnsureComponent pre-check forwards the
-# agent's own service-account token (sub=openchoreo-rca-agent) to the OC API's
+# The SRE/RCA handoff creates an AE issue; AE then adopts dispatchable
+# code-level incidents through the normal issue-to-coding-agent funnel. The
+# funnel's SYNCHRONOUS EnsureComponent pre-check forwards the agent's own
+# service-account token (sub=openchoreo-rca-agent) to the OC API's
 # CreateComponent. The control-plane chart's `rca-agent` role is read-only
 # (*:view + incidents:update), so that one call 403s and dispatch never fires.
 # Grant the agent's identity `component:create` via this ADDITIVE role/binding

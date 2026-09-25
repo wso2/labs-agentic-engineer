@@ -529,6 +529,20 @@ brake. Gates are minted and resolved by `dependencies/provisioning`, and carry n
 arming label, which is both why nothing works them and why they are counted on
 their own rather than subtracted from the work waiting behind them.
 
+### SRE handoff
+The OpenChoreo SRE remediation extension's hand-over to AE. It is intentionally
+issue-shaped: the SRE agent may call `ae_search_related_issues` for context and
+must call `ae_create_issue` once for any RCA report with an identified root
+cause. AE owns classification, dedupe, recurrence, adoption, and coding-agent
+dispatch after that create call.
+
+### SRE attention reason
+A server-derived reason an SRE issue needs human attention in the Console:
+`unverified_fix` for a low-confidence or disarmed fix, `no_change_verdict` for a
+terminal `not_planned` code-agent verdict, and `escalated` for repeated
+recurrence. The browser renders this field but does not infer it from labels or
+issue text.
+
 ### Ledger issue
 An issue in a milestone that is **not armed**. Part of the version's record;
 never worked, never stalling settle, and never written to — a cancel does not

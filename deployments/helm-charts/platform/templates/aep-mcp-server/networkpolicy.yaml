@@ -1,0 +1,36 @@
+{{- if .Values.sreHandoff.enabled }}
+# With sreHandoff enabled, aep-mcp-server applies the shared handoff bearer
+# (AEP_MCP_DEFAULT_BEARER) to any request that arrives without its own
+# Authorization header. Limit ingress to the SRE agent's pods (callerPodLabels)
+# in its namespace (callerNamespace) so only the trusted handoff caller can use
+# that fallback. See docs/developer-guide/sre-handoff-security.md.
+{{- if not .Values.sreHandoff.callerPodLabels }}
+{{- fail "sreHandoff.callerPodLabels is required when sreHandoff.enabled (the SRE agent pod's labels)" }}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: aep-mcp-server
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: aep-mcp-server
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: aep
+spec:
+  podSelector:
+    matchLabels:
+      app: aep-mcp-server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ required "sreHandoff.callerNamespace is required when sreHandoff.enabled" .Values.sreHandoff.callerNamespace | quote }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.sreHandoff.callerPodLabels | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: http
+{{- end }}

@@ -83,6 +83,17 @@ type Config struct {
 	// line, and pass through. Read from TENANT_GATE_MODE; unset ⇒ enforce.
 	TenantGateMode string
 
+	// SREHandoffToken and SREHandoffOrg configure the long-lived credential
+	// aep-mcp-server forwards on behalf of the OpenChoreo SRE agent for
+	// CreateIssue/ListIssues only (internal/edge/sre_handoff_gate.go). Both
+	// must be set together — either empty leaves the shortcut disabled
+	// (secure default) and those two operations require a normal Thunder
+	// JWT like every other /api/ operation. Read from SRE_HANDOFF_TOKEN /
+	// SRE_HANDOFF_ORG. Never a ConfigMap value — Secret only, same posture
+	// as every other credential in this file.
+	SREHandoffToken string
+	SREHandoffOrg   string
+
 	// OAuthStateSigningKey is the HS256 key used to sign the connect-state
 	// JWT that rides the GitHub App OAuth `state` query param (CSRF
 	// protection on the connect callback). Task JWTs use RS256 via

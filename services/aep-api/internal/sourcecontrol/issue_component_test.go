@@ -28,11 +28,13 @@ package sourcecontrol_test
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/edge"
 	"github.com/wso2/aep/aep-api/internal/platform/componenttest"
+	"github.com/wso2/aep/aep-api/internal/platform/gittest"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol/httpapi"
 )
@@ -50,7 +52,130 @@ type fakeIssueService struct {
 func (f *fakeIssueService) CreateIssue(_ context.Context, org, _ string, req sourcecontrol.CreateIssueRequest) (*sourcecontrol.IssueResult, error) {
 	f.gotOrg = org
 	f.created = append(f.created, req)
-	return &sourcecontrol.IssueResult{Number: 7, URL: "https://github.com/acme/repo/issues/7", NodeID: "n7"}, nil
+	return &sourcecontrol.IssueResult{
+		Number:         7,
+		URL:            "https://github.com/acme/repo/issues/7",
+		NodeID:         "n7",
+		Classification: "code-level",
+		Adopted:        true,
+	}, nil
+}
+
+func TestIssueComponent_CreatePreservesSREHandoff(t *testing.T) {
+	t.Parallel()
+	svc := &fakeIssueService{}
+	h := componenttest.New(t, componenttest.Options{Deps: edge.Deps{SourceControl: scWith(t, svc)}})
+
+	resp := h.AsOrg("acme").Post("/api/v1/projects/web/issues", `{
+  "title": "checkout-api times out calling inventory",
+  "body": "## RCA summary\n\nRequest failures spike.\n\n## Root cause\n\nRetry loop is unbounded.",
+  "componentName": "checkout-api",
+  "actionStatuses": ["revised", "suggested", null]
+}`)
+	if resp.Code != 200 {
+		t.Fatalf("create: want 200, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	if len(svc.created) != 1 {
+		t.Fatalf("create calls = %d, want 1", len(svc.created))
+	}
+	got := svc.created[0]
+	if got.ComponentName != "checkout-api" {
+		t.Fatalf("componentName = %q, want checkout-api", got.ComponentName)
+	}
+	if len(got.ActionStatuses) != 3 || got.ActionStatuses[0] == nil || *got.ActionStatuses[0] != "revised" || got.ActionStatuses[1] == nil || *got.ActionStatuses[1] != "suggested" || got.ActionStatuses[2] != nil {
+		t.Fatalf("actionStatuses = %#v, want [revised suggested <nil>] in order", got.ActionStatuses)
+	}
+
+	var created struct {
+		Classification string `json:"classification"`
+		Adopted        bool   `json:"adopted"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if created.Classification != "code-level" || !created.Adopted {
+		t.Fatalf("create outcome = %+v, want server-derived classification and adopted", created)
+	}
+}
+
+func TestIssueComponent_ListAllowsOnlyKnownAttentionReasons(t *testing.T) {
+	t.Parallel()
+	svc := &fakeIssueService{issues: []sourcecontrol.IssueInfo{
+		{
+			Number:          1,
+			Title:           "verified fix needs review",
+			Body:            "body",
+			URL:             "u1",
+			State:           "open",
+			StateReason:     "reopened",
+			Labels:          []string{"sre"},
+			AttentionReason: "unverified_fix",
+		},
+		{
+			Number:          2,
+			Title:           "unknown attention",
+			Body:            "body",
+			URL:             "u2",
+			State:           "open",
+			Labels:          []string{"sre"},
+			AttentionReason: "unexpected",
+		},
+	}}
+	h := componenttest.New(t, componenttest.Options{Deps: edge.Deps{SourceControl: scWith(t, svc)}})
+
+	resp := h.AsOrg("acme").Get("/api/v1/projects/web/issues")
+	if resp.Code != 200 {
+		t.Fatalf("list: want 200, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	var items []map[string]json.RawMessage
+	if err := json.Unmarshal(resp.Body.Bytes(), &items); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("items = %d, want 2: %s", len(items), resp.Body.String())
+	}
+	if string(items[0]["StateReason"]) != `"reopened"` || string(items[0]["attentionReason"]) != `"unverified_fix"` {
+		t.Fatalf("known attention fields = %s, want StateReason and unverified_fix", resp.Body.String())
+	}
+	if _, ok := items[1]["attentionReason"]; ok {
+		t.Fatalf("unknown attentionReason must be omitted: %s", resp.Body.String())
+	}
+}
+
+func TestIssueComponent_AttentionFromGitHubEvidence(t *testing.T) {
+	t.Parallel()
+	stub := gittest.NewStub(t)
+	stub.On(http.MethodGet, "/repos/acme/widgets/issues", http.StatusOK, `[
+	{"number":1,"title":"review fix","state":"open","state_reason":"reopened","labels":[{"name":"incident"}]},
+	{"number":2,"title":"no code change","state":"closed","state_reason":"not_planned","labels":[{"name":"incident"}]},
+	{"number":3,"title":"repeated incident","state":"open","state_reason":"reopened","body":"Original\n\n## Recurrence 1\nEvidence\n\n## Recurrence 2\nEvidence\n\n## Recurrence 3\nEvidence","labels":[{"name":"incident"},{"name":"aep"}]},
+  {"number":4,"title":"ordinary","state":"open","state_reason":"reopened","labels":[{"name":"bug"}]}
+]`)
+	h := componenttest.New(t, componenttest.Options{Deps: edge.Deps{SourceControl: scWith(t, newIssueSvcOnStub(t, stub))}})
+	resp := h.AsOrg("org1").Get("/api/v1/projects/proj1/issues")
+	if resp.Code != 200 {
+		t.Fatalf("list status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var items []struct {
+		Number          int
+		StateReason     string
+		AttentionReason string `json:"attentionReason"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &items); err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 4 {
+		t.Fatalf("items=%s", resp.Body.String())
+	}
+	want := map[int]string{1: "unverified_fix", 2: "no_change_verdict", 3: "escalated", 4: ""}
+	for _, item := range items {
+		if item.AttentionReason != want[item.Number] || item.StateReason == "" {
+			t.Fatalf("item=%+v want attention=%q", item, want[item.Number])
+		}
+	}
+	if strings.Contains(resp.Body.String(), "ClosedAt") {
+		t.Fatalf("internal closure identity leaked: %s", resp.Body.String())
+	}
 }
 
 func (f *fakeIssueService) ListIssues(_ context.Context, org, _ string, _ []string) ([]sourcecontrol.IssueInfo, error) {

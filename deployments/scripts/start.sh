@@ -246,12 +246,54 @@ else
     echo "⚠️  aep-mcp-server not responding on :3401 — the RCA→coding-agent handoff"
     echo "    will fail its ae_* tool calls. Check: docker logs aep-mcp-server"
 fi
+# The SRE extension sends no Authorization header; it relies on the
+# AEP_MCP_TOKEN-derived fallback bearer (docker-compose.yml). A .env written
+# before setup-aep.sh generated that token leaves the handoff unauthenticated;
+# an explicit empty `AEP_MCP_TOKEN=` is the operator disabling it on purpose.
+if ! grep -qE '^AEP_MCP_TOKEN=.+' "$DEPLOY_DIR/.env" 2>/dev/null && [ -z "${AEP_MCP_TOKEN:-}" ]; then
+    if grep -qE '^AEP_MCP_TOKEN=$' "$DEPLOY_DIR/.env" 2>/dev/null; then
+        echo "ℹ️  AEP_MCP_TOKEN is empty in deployments/.env — the SRE handoff shortcut is disabled"
+        echo "    (SRE handoff calls will get 401). To enable it, delete that line and re-run scripts/setup-aep.sh."
+    else
+        echo "⚠️  AEP_MCP_TOKEN is not set in deployments/.env — SRE handoff calls will get 401."
+        echo "    Re-run scripts/setup-aep.sh, or add a random value, e.g.:"
+        echo "    echo \"AEP_MCP_TOKEN=\$(openssl rand -hex 32)\" >> deployments/.env && docker compose up -d aep-api aep-mcp-server"
+    fi
+fi
+
+# 7c. Converge AE-managed credentials before checking/restarting SRE.
+#     The SRE agent reads Anthropic from a Kubernetes Secret projected from the
+#     org key the user saved in the AE Console. This must happen BEFORE the pod
+#     is considered ready for alerts; otherwise the first alert after start can
+#     reach RCA and fail at LLM authentication time. seed-dev, when enabled, is
+#     only a local convenience that writes through the same /config API the
+#     Console uses. reconcile-sre-anthropic-externalsecret.sh then points
+#     ExternalSecrets at the already-stored AE org key so ESO materializes
+#     openchoreo-observability-plane/rca-agent-anthropic-secret.
+echo ""
+if [ -x "$SCRIPT_DIR/repair-secrets.sh" ]; then
+    bash "$SCRIPT_DIR/repair-secrets.sh" || \
+        echo "⚠️  repair-secrets did not complete cleanly — see output above."
+fi
+echo ""
+if [ "${SKIP_DEV_SEED:-0}" = "1" ]; then
+    echo "⏭️  SKIP_DEV_SEED=1 — skipping dev seed (run scripts/seed-dev.sh manually when needed)"
+elif grep -qE '^(LOCAL_DEV_ADMIN_GITHUB_PAT|ANTHROPIC_API_KEY)=.+' "$DEPLOY_DIR/.env" 2>/dev/null; then
+    bash "$SCRIPT_DIR/seed-dev.sh" || \
+        echo "⚠️  seed-dev did not complete cleanly — see output above."
+else
+    echo "⏭️  no LOCAL_DEV_ADMIN_GITHUB_PAT / ANTHROPIC_API_KEY in .env — skipping dev seed (scripts/seed-dev.sh)"
+fi
+if [ -f "$SCRIPT_DIR/reconcile-sre-anthropic-externalsecret.sh" ]; then
+    bash "$SCRIPT_DIR/reconcile-sre-anthropic-externalsecret.sh" || \
+        echo "⚠️  SRE Anthropic ExternalSecret reconcile did not complete cleanly — set the org Anthropic key in the AE Console and rerun start.sh."
+fi
 
 # 7c. Verify the cluster half of the handoff — the RCA agent deployment.
 #     Best-effort: a rebuilt cluster loses the locally-imported RCA image and
 #     the pod sits in ImagePullBackOff; re-running setup-observability.sh
-#     fixes it (it re-imports, auto-pulling tharindulak/openchoreo-sre-agent
-#     :handoff from Docker Hub if no local build exists).
+#     fixes it (it re-imports, auto-pulling
+#     tharindulak/sre-agent:v1.0.1-hotfix.1-anthropic if no local build exists).
 #
 #     The deployment was renamed ai-rca-agent -> sre-agent in observability-plane
 #     1.2.0. RCA_DEPLOYMENT comes from env.sh, which is the one place either
@@ -299,36 +341,6 @@ if kubectl cluster-info --context "${CLUSTER_CONTEXT}" --request-timeout=5s &>/d
         echo "ℹ️  $RCA_DEPLOYMENT not installed — run scripts/setup-observability.sh to"
         echo "    enable the alert→RCA→coding-agent pipeline."
     fi
-fi
-
-# 8. Repair per-org secrets in OpenBao. When the local cluster (or just the
-#    OpenBao volume) has been torn down since the last credential connect,
-#    the SM-API metadata rows still point at OpenBao paths that no longer
-#    exist. Without this stage every coding-agent dispatch hangs in
-#    CreateContainerConfigError. Best-effort: failure here doesn't fail
-#    start.sh. Safe in remote envs because repair-secrets.sh refuses to
-#    run unless the kubectl context matches the local k3d cluster.
-echo ""
-if [ -x "$SCRIPT_DIR/repair-secrets.sh" ]; then
-    bash "$SCRIPT_DIR/repair-secrets.sh" || \
-        echo "⚠️  repair-secrets did not complete cleanly — see output above."
-fi
-
-# 9. Local-dev seed. Opt-in: runs only when the operator has set
-#    LOCAL_DEV_ADMIN_GITHUB_PAT and/or ANTHROPIC_API_KEY in .env (both
-#    are preserved across setup-aep.sh re-runs). Connects the default
-#    org's credentials exactly as a user would via Settings — idempotent
-#    on re-runs, and best-effort: failure here doesn't fail start.sh.
-#    SKIP_DEV_SEED=1 disables the auto-run (e.g. to exercise the manual
-#    Settings clickthrough, or to run scripts/seed-dev.sh yourself later).
-echo ""
-if [ "${SKIP_DEV_SEED:-0}" = "1" ]; then
-    echo "⏭️  SKIP_DEV_SEED=1 — skipping dev seed (run scripts/seed-dev.sh manually when needed)"
-elif grep -qE '^(LOCAL_DEV_ADMIN_GITHUB_PAT|ANTHROPIC_API_KEY)=.+' "$DEPLOY_DIR/.env" 2>/dev/null; then
-    bash "$SCRIPT_DIR/seed-dev.sh" || \
-        echo "⚠️  seed-dev did not complete cleanly — see output above."
-else
-    echo "⏭️  no LOCAL_DEV_ADMIN_GITHUB_PAT / ANTHROPIC_API_KEY in .env — skipping dev seed (scripts/seed-dev.sh)"
 fi
 
 echo ""

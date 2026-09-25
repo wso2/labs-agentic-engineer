@@ -19,10 +19,12 @@ package eventcore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // RegisterFunc is the webhook-router registration seam (the same closure shape
@@ -292,6 +294,16 @@ func (e *Events) OnPullRequestClosed(ctx context.Context, _, _ string, payload [
 		return err
 	}
 	mergeSHA := p.PullRequest.MergeCommitSHA
+	// The unverified-fix cleanup is an issue-side follow-up to the merge, not a
+	// precondition of it: its failure must not hold back the cycle close, the
+	// supervisor signal or the rebuild. It is still reported (joined below) so
+	// the delivery is retried; re-running this handler is safe (see Idempotency
+	// in doc.go), and the cleanup skips an issue it already left unverified.
+	var cleanupErr error
+	if unverifiedMerge(p.PullRequest.Body) {
+		cleanupErr = e.keepUnverifiedIssuesOpen(ctx, owner.orgID, owner.projectID, p.PullRequest.Number,
+			parseResolvesRefs(p.PullRequest.Body))
+	}
 	// Only the agent's own pull request closes the cycle. A human's merge moves
 	// main (so it still rebuilds), but it is not the cycle's outcome.
 	if owner.agentBranch {
@@ -302,7 +314,8 @@ func (e *Events) OnPullRequestClosed(ctx context.Context, _, _ string, payload [
 		Branch:   p.PullRequest.Head.Ref,
 		MergeSHA: mergeSHA,
 	})
-	return e.fanOutBuilds(ctx, owner.orgID, owner.projectID, owner.run, p.PullRequest.Number, mergeSHA)
+	return errors.Join(cleanupErr,
+		e.fanOutBuilds(ctx, owner.orgID, owner.projectID, owner.run, p.PullRequest.Number, mergeSHA))
 }
 
 // prOwner is a pull request's run, plus whether the pull request is the run's
@@ -399,7 +412,7 @@ func (e *Events) OnIssues(ctx context.Context, _, action string, payload []byte)
 	// exactly the event that has to wake it. Returning here would leave a run
 	// asleep on work a human had just handed it.
 	if action == "labeled" && strings.EqualFold(p.Label.Name, delivery.LabelAgentWork) {
-		target := AdoptTarget{Number: p.Issue.Number, Labels: p.issueLabels()}
+		target := AdoptTarget{Number: p.Issue.Number, Labels: p.issueLabels(), State: p.Issue.State}
 		if ms, ok := p.milestone(); ok {
 			target.MilestoneNumber, target.MilestoneTitle = ms.Number, ms.Title
 		}
@@ -420,6 +433,24 @@ func (e *Events) OnIssues(ctx context.Context, _, action string, payload []byte)
 	run, err := e.p.Runs.LiveRunForMilestone(ctx, orgID, projectID, ms.Number)
 	if err != nil || run == nil {
 		return err
+	}
+	if run.State == delivery.RunStateRunning && sourcecontrol.HasIncidentLabel(p.issueLabels()) {
+		cycle := e.openCycle(ctx, run)
+		if cycle == nil || cycle.PRNumber != 0 || cycle.Kind == delivery.CycleKindValidation {
+			return nil
+		}
+		counts, err := e.p.Issues.MilestoneIssueCounts(ctx, orgID, projectID, ms.Number)
+		if err != nil || counts == nil {
+			return err
+		}
+		work := counts.OpenDevWork()
+		if run.Kind == delivery.RunKindTask {
+			work = counts.OpenTaskWork()
+		}
+		if work == 0 {
+			e.signal(ctx, run, delivery.SigRunNoWork, delivery.RunSignal{})
+		}
+		return nil
 	}
 	if run.State != delivery.RunStateWaiting {
 		// A running run re-reads the milestone at its own cycle boundary; waking

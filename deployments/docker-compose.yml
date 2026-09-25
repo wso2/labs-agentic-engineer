@@ -184,6 +184,19 @@ services:
       # AE-HANDOFF-DESIGN.md §9 in openchoreo/agents/sre-agent.
       JWT_AUDIENCE: "${BFF_AUDIENCE:-aep-*,openchoreo-rca-agent}"
 
+      # ── SRE-handoff credential (docs/developer-guide/sre-handoff-security.md).
+      # aep-mcp-server forwards this bearer, on the SRE agent's behalf, for
+      # CreateIssue/ListIssues only. It is deliberately NOT a Thunder token
+      # like JWT_AUDIENCE above: the OC extensions loader resolves mcp.json's
+      # `headers` from `${VAR}` once at process start and never refreshes
+      # them, so a short-lived Thunder bearer would expire mid pod-lifetime.
+      # Must match aep-mcp-server's AEP_MCP_TOKEN below (same var).
+      # setup-aep.sh generates a random per-install value into .env; there is
+      # no built-in default. Unset or empty disables the shortcut (see
+      # internal/platform/auth/sre_handoff.go).
+      SRE_HANDOFF_TOKEN: "${AEP_MCP_TOKEN:-}"
+      SRE_HANDOFF_ORG: "${SRE_HANDOFF_ORG:-default}"
+
       # ── Phase 3 of api-platform-integration — Thunder admin client
       # for per-org publisher OAuth app lifecycle. The aep-system-client
       # OAuth app and its Administrator role assignment are provisioned by
@@ -433,6 +446,14 @@ services:
     environment:
       PORT: "3400"
       AEP_API_BASE_URL: "http://aep-api:9090"
+      # Local-dev fallback for clients that cannot send Authorization headers
+      # to a plaintext MCP URL. Explicit Authorization headers still win per
+      # request. Verified aep-api-side by SRE_HANDOFF_TOKEN above — same
+      # AEP_MCP_TOKEN var on both services. Unset or empty AEP_MCP_TOKEN leaves
+      # this empty, so every caller must send its own Authorization header.
+      # Anyone who can reach host port 3401 gets the handoff's narrow rights
+      # (list/create issues in SRE_HANDOFF_ORG) while this is set.
+      AEP_MCP_DEFAULT_BEARER: "${AEP_MCP_TOKEN:+Bearer ${AEP_MCP_TOKEN}}"
     depends_on:
       - aep-api
     networks:

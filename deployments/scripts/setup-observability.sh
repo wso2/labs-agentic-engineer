@@ -72,43 +72,24 @@
 #       patterns then match analysed lowercase tokens — "ERROR" never matches).
 #
 # Knobs (env):
-#   RCA_IMAGE_TAG   SRE-agent image tag to import/run (default: handoff-v16).
-#                   handoff-v14+ makes every SRE-created issue a well-formed,
-#                   dispatchable AE Task at creation (src/agent/handoff_logic.py):
-#                   it stamps the aep:task/aep:coding/aep:origin/incident labels
-#                   plus the taskmeta block, and normalises the component to AE's
-#                   design (unprefixed) name via design_component_name()
-#                   (testyello-service1 → service1) on BOTH the block and the
-#                   ae_dispatch_coding_agent call — so the funnel gate no longer
-#                   cancels with "component not in design at HEAD" and a
-#                   partially-labelled issue is never left inert (missing the
-#                   aep:task marker → the funnel ignores it). Requires the
-#                   rca-agent component:create grant in setup-aep.sh (without it
-#                   the synchronous EnsureComponent pre-check 403s).
-#                   handoff-v15 ADDS the external-skills loader: the handoff
-#                   'issue-fix' skill is no longer baked into the image — it is
-#                   owned by AEP (services/aep-mcp-server/skills/issue-fix) and
-#                   mounted at deploy time by step 3d below via EXTERNAL_SKILLS_DIR.
-#                   An older image (<= handoff-v14) IGNORES that mount and uses
-#                   its stale baked-in copy, so bump to v15+ to make AEP the real
-#                   source of truth. handoff-v16 makes the handoff MCP path
-#                   configurable (AE_MCP_PATH, default /mcp) so the agent reaches
-#                   the standalone aep-mcp-server on :3401 — v15 and earlier
-#                   hardcoded /sre-mcp and crash-loop at boot against a :3401
-#                   server that only serves /mcp. Falls back to anthropic-patched
-#                   if not built or pullable (RCA works, handoff stage ABSENT).
-#   AE_MCP_PATH     path of the handoff MCP endpoint under AE_API_URL
-#                   (default: /mcp = standalone aep-mcp-server; set /sre-mcp for
-#                   the in-process aep-api surface). handoff-v16+ only.
+#   RCA_IMAGE_TAG   SRE-agent image tag to import/run
+#                   (default: v1.0.1-hotfix.1-anthropic). This hotfix contains
+#                   the Anthropic RCA fix and the OC SRE extension loader used by
+#                   the AE remediation handoff.
 #   AE_HANDOFF      enable the RCA→AEP coding-agent handoff (default: true)
 #   AE_AUTO_DISPATCH auto-dispatch the coding agent after issue creation
 #                   (default: true; false = issue-only, human dispatches)
 #   AE_PUBLISH_REPORTS publish each completed RCA report to aep-api so it
 #                   shows in the console Alerts bell/list (default: true;
-#                   handoff-v14+). Needs AEP_API_URL.
+#                   supported by the hotfix SRE image. Needs AEP_API_URL.
 #   AEP_API_URL     aep-api REST base for report publishing
 #                   (default: http://host.k3d.internal:9090). NOT AE_API_URL
 #                   (that is the MCP server on :3401).
+#   AEP_MCP_TOKEN   local bearer configured on aep-mcp-server as
+#                   AEP_MCP_DEFAULT_BEARER (random per install, generated into
+#                   deployments/.env by setup-aep.sh). The SRE extension does
+#                   not send it as an HTTP header because the extension loader
+#                   rejects credentials over plaintext local URLs.
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -139,7 +120,12 @@ RCA_DEPLOYMENT="sre-agent"
 AE_HANDOFF="${AE_HANDOFF:-true}"
 AE_AUTO_DISPATCH="${AE_AUTO_DISPATCH:-true}"
 AE_API_URL="${AE_API_URL:-http://host.k3d.internal:3401}"
-# Report publishing (handoff-v14+): POST each completed RCA report to aep-api
+AEP_MCP_URL="${AEP_MCP_URL:-${AE_API_URL}/mcp}"
+case "$AEP_MCP_URL" in
+    http://*|https://*) ;;
+    *) AEP_MCP_URL="http://${AEP_MCP_URL}" ;;
+esac
+# Report publishing: POST each completed RCA report to aep-api
 # so it surfaces in the console Alerts bell/list. AEP_API_URL is aep-api's REST
 # base — DISTINCT from AE_API_URL (the MCP server on :3401); reports go to the
 # HTTP API on :9090.
@@ -206,36 +192,21 @@ EOF
 echo "✅ ExternalSecrets applied"
 
 # ── 1b. RCA (SRE) agent image + secret ───────────────────────────────────
-# The RCA agent runs the patched image (Anthropic ToolStrategy fix). It's a
-# locally-built image, so import it into the k3d cluster (a cluster rebuild
-# loses imported images — this makes the import part of setup). Build once with
-# (repo:tag must match RCA_IMAGE_REPO:RCA_IMAGE_TAG below so this local build is
-# picked up instead of a registry pull):
-#   docker build -t tharindulak/openchoreo-sre-agent:handoff-v16 <openchoreo-repo>/agents/sre-agent
-# handoff-v16 must be built from the SRE branch that (a) adds the
-# EXTERNAL_SKILLS_DIR loader (src/agent/skills.py + src/config.py), (b) removes
-# the baked-in src/skills/issue-fix — without both, step 3d's mount is inert —
-# and (c) makes the handoff MCP path configurable (AE_MCP_PATH, default /mcp) so
-# the boot MCP test reaches the standalone aep-mcp-server on :3401.
+# The RCA agent runs the published Anthropic hotfix image. It carries the OC SRE
+# remediation extension loader; AE owns the extension content and mounts it in
+# step 3d.
 # The agent reads its LLM key + OAuth client secret from the rca-agent-secret
 # Secret (envFrom). RCA_LLM_API_KEY comes from ANTHROPIC_API_KEY in deployments/.env;
 # OAUTH_CLIENT_SECRET must equal the openchoreo-rca-agent client secret registered
 # by the IdP bootstrap (single-cluster/thunder-resources/86-openchoreo-rca-agent.yaml).
 echo ""
 echo "1️⃣b RCA agent image + secret"
-# Preferred tag `handoff-v16` (= RCA_IMAGE_TAG default below) carries the
-# Anthropic structured-output fix, the AEP coding-agent handoff stage
-# (AE_HANDOFF), the EXTERNAL_SKILLS_DIR loader that reads the AEP-mounted
-# issue-fix skill from step 3d, AND the configurable AE_MCP_PATH (default /mcp).
 # Resolution order:
-#   1. local build            docker build -t tharindulak/openchoreo-sre-agent:handoff-v16 \
-#                               <openchoreo-repo>/agents/sre-agent
-#      (preferred — developers iterating on the agent aren't surprised by a
-#       stale registry copy)
+#   1. local image            ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}
 #   2. registry pull          ${RCA_IMAGE_PULL} (Docker Hub mirror)
-#   3. local anthropic-patched (older tag: RCA works, handoff stage ABSENT)
 #
-# RCA_IMAGE_REPO is the FULLY QUALIFIED name (tharindulak/openchoreo-sre-agent),
+# RCA_IMAGE_REPO is the fully qualified image name (default:
+# tharindulak/sre-agent),
 # not a short local alias — deliberately. An earlier version used a short repo
 # name here and retagged the pulled image to it before `k3d image import`; the
 # Deployment then referenced that short, unqualified name. That worked right
@@ -246,18 +217,14 @@ echo "1️⃣b RCA agent image + secret"
 # (ImagePullBackOff: "pull access denied, repository does not exist"). Using
 # the fully-qualified name everywhere means a cache-evicted image can always
 # be re-pulled from the real registry — no more silent long-term fragility.
-RCA_IMAGE_REPO="tharindulak/openchoreo-sre-agent"
-RCA_IMAGE_TAG="${RCA_IMAGE_TAG:-handoff-v16}"
-RCA_IMAGE_PULL="${RCA_IMAGE_PULL:-tharindulak/openchoreo-sre-agent:handoff-v16}"
+RCA_IMAGE_REPO="${RCA_IMAGE_REPO:-tharindulak/sre-agent}"
+RCA_IMAGE_TAG="${RCA_IMAGE_TAG:-v1.0.1-hotfix.1-anthropic}"
+RCA_IMAGE_PULL="${RCA_IMAGE_PULL:-tharindulak/sre-agent:v1.0.1-hotfix.1-anthropic}"
 if ! docker image inspect "${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}" >/dev/null 2>&1; then
     echo "   ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} not built locally — trying registry ${RCA_IMAGE_PULL}..."
     if docker pull "$RCA_IMAGE_PULL" >/dev/null 2>&1; then
         docker tag "$RCA_IMAGE_PULL" "${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}"
         echo "✅ pulled ${RCA_IMAGE_PULL} → retagged as ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}"
-    elif docker image inspect "${RCA_IMAGE_REPO}:anthropic-patched" >/dev/null 2>&1; then
-        echo "⚠️  registry pull failed — falling back to ${RCA_IMAGE_REPO}:anthropic-patched"
-        echo "    (RCA works, AEP handoff stage ABSENT)."
-        RCA_IMAGE_TAG="anthropic-patched"
     fi
 fi
 RCA_IMAGE="${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}"
@@ -308,8 +275,9 @@ else
 fi
 ANTHROPIC_API_KEY="$(grep -E '^ANTHROPIC_API_KEY=' "$SCRIPT_DIR/../.env" 2>/dev/null | head -1 | cut -d= -f2-)"
 if [ -z "$ANTHROPIC_API_KEY" ]; then
-    echo "⚠️  ANTHROPIC_API_KEY not set in deployments/.env — RCA agent will fail its"
-    echo "    LLM connection test. Set it (or switch rca.llm.modelName to an OpenAI model)."
+    echo "ℹ️  ANTHROPIC_API_KEY not set in deployments/.env — static RCA fallback is empty."
+    echo "   This is OK when the org key is configured in the AE Console; the required"
+    echo "   rca-agent-anthropic-secret projection below is the runtime source."
 fi
 kubectl --context "$CLUSTER_CONTEXT" -n "$NS" create secret generic rca-agent-secret \
     --from-literal=RCA_LLM_API_KEY="$ANTHROPIC_API_KEY" \
@@ -513,6 +481,10 @@ echo "✅ logs-opensearch ready (incl. logs-adapter)"
 #     AE_API_URL               aep-mcp-server base URL (host.k3d.internal:3401)
 #     AE_PUBLISH_REPORTS       publish RCA reports to aep-api (console Alerts)
 #     AEP_API_URL              aep-api REST base (host.k3d.internal:9090)
+#     AEP_MCP_URL              full MCP URL used by remediation/mcp.json.
+#                              Auth is supplied by aep-mcp-server's local
+#                              AEP_MCP_DEFAULT_BEARER fallback, not this
+#                              plaintext client config.
 echo ""
 echo "3️⃣b Alert→RCA auto-trigger + AEP handoff wiring"
 kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch cm observer-config --type=merge -p \
@@ -520,9 +492,9 @@ kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch cm observer-config --type=me
 kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout restart deploy/observer
 if [ "$AE_HANDOFF" = "true" ]; then
     kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch cm rca-agent-config --type=merge -p \
-        "{\"data\":{\"AE_HANDOFF\":\"true\",\"AE_AUTO_DISPATCH\":\"${AE_AUTO_DISPATCH}\",\"AE_API_URL\":\"${AE_API_URL}\",\"AE_PUBLISH_REPORTS\":\"${AE_PUBLISH_REPORTS}\",\"AEP_API_URL\":\"${AEP_API_URL}\"}}"
+        "{\"data\":{\"AE_HANDOFF\":\"true\",\"AE_AUTO_DISPATCH\":\"${AE_AUTO_DISPATCH}\",\"AE_API_URL\":\"${AE_API_URL}\",\"AEP_MCP_URL\":\"${AEP_MCP_URL}\",\"AE_PUBLISH_REPORTS\":\"${AE_PUBLISH_REPORTS}\",\"AEP_API_URL\":\"${AEP_API_URL}\"}}"
     kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout restart deploy/${RCA_DEPLOYMENT}
-    echo "   AE handoff: enabled (auto-dispatch=${AE_AUTO_DISPATCH}, mcp=${AE_API_URL})"
+    echo "   AE handoff: enabled (auto-dispatch=${AE_AUTO_DISPATCH}, mcp=${AEP_MCP_URL})"
     echo "   Report publishing: ${AE_PUBLISH_REPORTS} (aep-api=${AEP_API_URL})"
 else
     echo "   AE handoff: disabled (AE_HANDOFF=false)"
@@ -587,19 +559,24 @@ echo "✅ auto-trigger + handoff wiring applied"
 # ── 3c. Dynamic Anthropic key — reuse the org's key as set via the AE console ──
 # AnthropicCredentialService.Connect() (aep-api) stores the console-connected
 # key in Postgres (org_secrets, AES-256-GCM) and best-effort mirrors it into
-# OpenBao via the SM-API stub. aep-api pushes nothing into this namespace: the
-# observability workstream owns the RCA agent's own ExternalSecret, declared
-# against the org's Anthropic KV path with a refreshInterval that re-syncs it
-# after a connect or a rotation.
+# OpenBao via the SM-API stub. For local Docker Compose + k3d development,
+# scripts/repair-secrets.sh / scripts/reconcile-sre-anthropic-externalsecret.sh
+# point ExternalSecrets at the AE-stored org key so ESO materializes it into
+# this namespace as rca-agent-anthropic-secret.
 #
-# So THIS script neither creates nor discovers that ExternalSecret — it only
-# ensures the one-time STRUCTURAL piece exists: the volume + mount + env var
-# wiring below, which the ExternalSecret (whenever the RCA agent's own manifest
-# declares one) feeds into. If no key has been synced, `optional: true` on the
-# volume's secret source means the mount is just an empty dir rather than
-# blocking the pod in ContainerCreating — resolve_api_key() falls back to the
-# static RCA_LLM_API_KEY exactly as before, and main.py's boot-time LLM test
-# skips (warns, doesn't crash) when neither source has a key.
+# THIS script ensures the STRUCTURAL piece exists: the volume + mount + env var
+# wiring below. The secret is NOT optional when AE_HANDOFF is on. A Ready SRE
+# pod without an AE-managed org key is worse than a blocked pod: the first alert
+# reaches RCA and fails at analysis time. The reconcile below makes the key the
+# user saved through the AE Console (or local seed-dev's call into the same
+# config API) available as rca-agent-anthropic-secret before the final readiness
+# step. With AE_HANDOFF off the volume stays optional, so a missing secret
+# cannot keep the SRE pod from starting.
+if [ "$AE_HANDOFF" = "true" ]; then
+    ANTHROPIC_SECRET_OPTIONAL=false
+else
+    ANTHROPIC_SECRET_OPTIONAL=true
+fi
 echo ""
 echo "3️⃣c Dynamic Anthropic key (volume wiring; the ExternalSecret is owned by the RCA agent's own manifest)"
 # Patched onto the Deployment (not chart values) for the same "survives a
@@ -613,7 +590,7 @@ spec:
         - name: anthropic-key
           secret:
             secretName: rca-agent-anthropic-secret
-            optional: true
+            optional: '"${ANTHROPIC_SECRET_OPTIONAL}"'
             defaultMode: 0400
       containers:
         - name: '"${RCA_DEPLOYMENT}"'
@@ -626,68 +603,79 @@ spec:
               value: /etc/rca-agent/anthropic/RCA_LLM_API_KEY
 '
 echo "✅ ${RCA_DEPLOYMENT} volume/env wired for the dynamic Anthropic key"
-echo "   The RCA agent's own ExternalSecret (against the org's Anthropic KV path) fills this mount."
-echo "   Until one exists it falls back to the static RCA_LLM_API_KEY from step 1b."
+echo "   Local start/repair projects AE's org Anthropic key into rca-agent-anthropic-secret."
+echo "   Secret volume optional=${ANTHROPIC_SECRET_OPTIONAL} (required only when AE_HANDOFF=true)."
+if [ -f "$SCRIPT_DIR/reconcile-sre-anthropic-externalsecret.sh" ]; then
+    echo "🤖 Reconciling SRE Anthropic ExternalSecret if local AE metadata is available..."
+    bash "$SCRIPT_DIR/reconcile-sre-anthropic-externalsecret.sh" || \
+        echo "   ⚠️  could not reconcile SRE Anthropic ExternalSecret now; start.sh will retry."
+fi
 
-# ── 3d. AEP-owned handoff skill (issue-fix) — deploy-time mount ───────────
-# The handoff sub-agent loads the 'issue-fix' skill (classify config-vs-code,
-# dedupe/search related issues, file one issue, dispatch). Its content IS
-# AEP's contract (aep:* / sre-agent labels, taskmeta block, dedupe keys,
-# unprefixed component names, dispatch rules), so AEP owns it — canonical
-# source: services/aep-mcp-server/skills/issue-fix/SKILL.md, right here in
-# this repo. The SRE agent does NOT bake it into its image and does NOT fetch
-# it at runtime; we materialize it into a ConfigMap and mount it, and the
-# agent's EXTERNAL_SKILLS_DIR points its loader at the mount (searched before
-# the built-in src/skills library). Same "patch the Deployment so it survives
-# a helm re-run" pattern as step 3c's volume wiring.
-#
-# Only wired when AE_HANDOFF=true — without the handoff stage the agent never
-# loads a skill, so there's nothing to mount.
+# ── 3d. AEP-owned SRE remediation extension — deploy-time mount ───────────
+# The OC SRE agent loads remediation extensions from EXTENSIONS_DIR. AE owns
+# this extension because it defines the AE MCP endpoint and the exact
+# coding-agent-handoff skill contract. The deployment-owned context/mcp files
+# live in deployments/sre-agent-extensions/remediation; the skill is mounted
+# from services/aep-mcp-server/skills/coding-agent-handoff/SKILL.md so the MCP
+# server and agent instructions stay in sync.
 if [ "$AE_HANDOFF" = "true" ]; then
     echo ""
-    echo "3️⃣d Handoff skill (issue-fix) — ConfigMap + mount"
-    ISSUE_FIX_SKILL="$SCRIPT_DIR/../../services/aep-mcp-server/skills/issue-fix/SKILL.md"
-    if [ ! -f "$ISSUE_FIX_SKILL" ]; then
-        echo "⚠️  issue-fix skill not found at $ISSUE_FIX_SKILL — skipping mount."
-        echo "    AE_HANDOFF is on, so ${RCA_DEPLOYMENT} will error 'Skill issue-fix not found'"
-        echo "    on the handoff stage (best-effort — RCA analysis still completes)."
+    echo "3️⃣d SRE remediation extension — ConfigMap + mount"
+    SRE_EXTENSION_DIR="$SCRIPT_DIR/../sre-agent-extensions/remediation"
+    HANDOFF_CONTEXT="$SRE_EXTENSION_DIR/CONTEXT.md"
+    HANDOFF_MCP_JSON="$SRE_EXTENSION_DIR/mcp.json"
+    HANDOFF_SKILL="$SCRIPT_DIR/../../services/aep-mcp-server/skills/coding-agent-handoff/SKILL.md"
+    if [ ! -f "$HANDOFF_CONTEXT" ] || [ ! -f "$HANDOFF_MCP_JSON" ] || [ ! -f "$HANDOFF_SKILL" ]; then
+        echo "⚠️  SRE remediation extension files are incomplete — skipping mount."
+        echo "    Expected $HANDOFF_CONTEXT, $HANDOFF_MCP_JSON, and $HANDOFF_SKILL"
+        echo "    AE_HANDOFF is on, so ${RCA_DEPLOYMENT} will not dispatch AE issues until fixed."
     else
         # Render deterministically (create --dry-run) then apply, so re-runs are
-        # idempotent and the ConfigMap can be diffed. Key SKILL.md; ConfigMaps
-        # can't have '/' in keys, so the single file lands directly in the mount
-        # dir via items[].path.
-        kubectl --context "$CLUSTER_CONTEXT" -n "$NS" create configmap rca-agent-skill-issue-fix \
-            --from-file=SKILL.md="$ISSUE_FIX_SKILL" \
+        # idempotent and the ConfigMap can be diffed. ConfigMap keys are flat;
+        # the Deployment volume items below map them back to remediation paths.
+        #
+        # The SRE extension loader validates the MCP URL before env expansion in
+        # the remediation path, so render the concrete URL into mcp.json here.
+        _rendered_mcp_json="$(mktemp)"
+        awk -v url="$AEP_MCP_URL" '{ gsub(/\$\{AEP_MCP_URL\}/, url); print }' "$HANDOFF_MCP_JSON" > "$_rendered_mcp_json"
+        kubectl --context "$CLUSTER_CONTEXT" -n "$NS" create configmap sre-agent-extensions \
+            --from-file=CONTEXT.md="$HANDOFF_CONTEXT" \
+            --from-file=mcp.json="$_rendered_mcp_json" \
+            --from-file=SKILL.md="$HANDOFF_SKILL" \
             --dry-run=client -o yaml | kubectl --context "$CLUSTER_CONTEXT" apply -f - >/dev/null
-        echo "✅ rca-agent-skill-issue-fix ConfigMap applied (from $ISSUE_FIX_SKILL)"
+        rm -f "$_rendered_mcp_json"
+        echo "✅ sre-agent-extensions ConfigMap applied"
 
-        # Patch the Deployment: mount the skill at /etc/rca-agent/skills/issue-fix
-        # and point the loader at /etc/rca-agent/skills. A podSpec change here
-        # triggers a rolling update on its own.
+        # Patch the Deployment: mount the extension at
+        # /etc/openchoreo/sre-agent/remediation/{CONTEXT.md,mcp.json,skills/...}.
+        # A podSpec change here triggers a rolling update on its own.
         kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch deployment ${RCA_DEPLOYMENT} --type=strategic -p '
 spec:
   template:
     spec:
       volumes:
-        - name: issue-fix-skill
+        - name: sre-agent-extensions
           configMap:
-            name: rca-agent-skill-issue-fix
+            name: sre-agent-extensions
             items:
+              - key: CONTEXT.md
+                path: remediation/CONTEXT.md
+              - key: mcp.json
+                path: remediation/mcp.json
               - key: SKILL.md
-                path: SKILL.md
+                path: remediation/skills/coding-agent-handoff/SKILL.md
       containers:
         - name: '"${RCA_DEPLOYMENT}"'
           volumeMounts:
-            - name: issue-fix-skill
-              mountPath: /etc/rca-agent/skills/issue-fix
+            - name: sre-agent-extensions
+              mountPath: /etc/openchoreo/sre-agent
               readOnly: true
           env:
-            - name: EXTERNAL_SKILLS_DIR
-              value: /etc/rca-agent/skills
+            - name: EXTENSIONS_DIR
+              value: /etc/openchoreo/sre-agent
 '
-        echo "✅ ${RCA_DEPLOYMENT} volume/env wired for the handoff skill (EXTERNAL_SKILLS_DIR=/etc/rca-agent/skills)"
-        echo "   Edit the skill in services/aep-mcp-server/skills/issue-fix/, re-run this script"
-        echo "   (or re-apply the ConfigMap) and restart the agent — no SRE image rebuild."
+        echo "✅ ${RCA_DEPLOYMENT} volume/env wired for the remediation extension (EXTENSIONS_DIR=/etc/openchoreo/sre-agent)"
+        echo "   Edit deployments/sre-agent-extensions or services/aep-mcp-server/skills/coding-agent-handoff, then re-run this script."
     fi
 fi
 
@@ -878,6 +866,18 @@ EOF
 echo "⏳ Waiting for bootstrap Job to finish..."
 kubectl --context "$CLUSTER_CONTEXT" -n "$NS" wait --for=condition=complete job/opensearch-bootstrap-templates --timeout=300s
 echo "✅ OpenSearch index-template bootstrap complete"
+
+echo ""
+echo "7️⃣  Ensure observability workloads are running"
+# setup-observability.sh is the repair/reconcile entry point for the
+# alert→RCA→coding-agent pipeline. If a prior full setup or a manual
+# park-observability.sh down left OpenSearch, Fluent Bit, the logs adapter, or
+# the SRE agent parked at zero replicas, a direct re-run of this script must
+# bring them back; otherwise the install reports success while no alert can be
+# evaluated and no RCA can run. The full setup script may still choose to park
+# them after all setup steps finish, but this script's own postcondition is an
+# active observability/SRE pipeline.
+bash "$SCRIPT_DIR/park-observability.sh" up
 
 echo ""
 echo "✅ Observability Plane installation complete!"

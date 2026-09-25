@@ -19,13 +19,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import {
-  AepApiError,
-  type AepClientOptions,
-  createIssue,
-  dispatchFromIssue,
-  listIssues,
-} from "./aepClient.js";
+import { AepApiError, type AepClientOptions, createIssue, listIssues } from "./aepClient.js";
+import { resolveHandoff } from "./handoffContext.js";
+import { annotatePlatformIssues } from "./platformIssues.js";
 
 function textResult(payload: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(payload) }] };
@@ -36,23 +32,35 @@ function errorResult(err: unknown) {
   return { content: [{ type: "text" as const, text: message }], isError: true };
 }
 
-
 /**
  * Builds an McpServer bound to one caller's bearer token. Called once per
  * incoming HTTP request (see main.ts) — this server holds no credentials or
  * state of its own; every tool call forwards `client.bearer` straight
  * through to aep-api, which performs the actual org-scoped auth check.
+ *
+ * Two tools, not three. There is no dispatch tool: adoption moved into
+ * create-issue, so filing an issue and handing it to the coding agent are one
+ * call and cannot come apart. The other way to adopt an issue that already
+ * exists is the `aep` arming GitHub label, which AE's event plane watches —
+ * a human's route, not this server's. Adoption itself is entirely aep-api's
+ * call (classification-driven — see CreateIssueRequest in
+ * packages/contracts/api/v1/openapi.yaml, which has no adopt-like property):
+ * there is no operator or caller override to forward here.
  */
-export function createAepMcpServer(client: AepClientOptions): McpServer {
+export function createAepMcpServer(
+  client: AepClientOptions,
+  create: typeof createIssue = createIssue,
+): McpServer {
   const server = new McpServer({ name: "aep-mcp-server", version: "0.0.0" });
 
   server.registerTool(
-    "ae_search_related_issues",
+    "search_related_issues",
     {
       title: "Search related AE issues",
       description:
         "Search existing GitHub issues on a project's repo to find related/duplicate issues before filing a new one. " +
-        "Keyword-ranked: pass space-separated keywords (component name + symptom terms), not a sentence; results come back ranked by keyword overlap for you to judge.",
+        "Keyword-ranked: pass space-separated keywords (component name + symptom terms), not a sentence; results come back ranked by keyword overlap for you to judge. " +
+        "An issue marked `PlatformRecord: true` is AE's own plan for what to BUILD, not a defect report: read `ReadAs` on it before you treat it as evidence about whether something is broken.",
       inputSchema: {
         project: z.string().describe("OpenChoreo/AE project name"),
         query: z
@@ -66,16 +74,11 @@ export function createAepMcpServer(client: AepClientOptions): McpServer {
     },
     async ({ project, query, labels }) => {
       try {
-        // A conditional spread (rather than `{ query, labels }` directly) is
-        // required under exactOptionalPropertyTypes: zod's optional args
-        // destructure to `undefined` when absent, and explicitly assigning
-        // `undefined` to an optional field is rejected — omitting the key
-        // entirely is not.
         const issues = await listIssues(client, project, {
           ...(query !== undefined ? { query } : {}),
           ...(labels !== undefined ? { labels } : {}),
         });
-        return textResult(issues);
+        return textResult(annotatePlatformIssues(issues));
       } catch (err) {
         return errorResult(err);
       }
@@ -83,65 +86,50 @@ export function createAepMcpServer(client: AepClientOptions): McpServer {
   );
 
   server.registerTool(
-    "ae_create_issue",
+    "create_issue",
     {
       title: "Create a GitHub issue via AE",
       description:
-        "Create a GitHub issue on a project's repo. Use this for a code-level fix that needs the AE coding agent — not for config-level changes. " +
-        "Pass a stable dedupeKey so concurrent callers reporting the same incident share one issue: if an OPEN issue with the same key exists, it is returned with `deduped: true` and no new issue is created.",
+        "Create a GitHub issue on a project's repo and hand it to AE for downstream handling. Creating the issue IS the hand-off — there is no second call. " +
+        "File every report that reaches you. What the work IS, and whether a coding agent gets it, are not yours to decide: the platform derives both automatically and answers the classification it chose. " +
+        "A `config-level` answer means the remediation agent already expressed every action as configuration — the issue is still filed, as a ledger entry, and nothing is dispatched over it. " +
+        "Deduplication is automatic and server-owned: aep-api derives the stable incident key from the trusted request context and validated create fields, so if an OPEN issue for the same incident exists it is returned with `deduped: true`, nothing is created, and nothing is dispatched (the run that created that issue owns its dispatch). An issue already carrying a no-change verdict for this incident answers `suppressed: true`, and nothing is created. " +
+        "If instead a CLOSED issue with that key is found — the same component's failure recurring after a fix was merged — it is reopened with this call's body appended as a `## Recurrence <n>` section, moved into the currently deployed version's milestone and handed back to the coding agent; the result then carries `reopened: true` and `recurrence` (which attempt this is). " +
+        "The result's `adopted` says whether anything will actually work the issue, and `adoptionError` says why not when it will not — a project with no built version yet gets its issue recorded but not worked. Those outcomes are decided here and in aep-api code, not by the caller's skill.",
       inputSchema: {
         project: z.string().describe("OpenChoreo/AE project name"),
         title: z.string().describe("Issue title"),
         body: z.string().describe("Issue body (markdown)"),
         labels: z.array(z.string()).optional().describe("GitHub labels to apply"),
-        dedupeKey: z
+        componentName: z
           .string()
           .optional()
           .describe(
-            "Stable idempotency key (e.g. 'sre-rca/<component>'). While an issue created with this key is open, further creates with the same key return that issue (deduped: true) instead of filing a duplicate.",
+            "The component this issue is about. AE's design names it unprefixed ('service1'), and a name carrying its project prefix ('myproject-service1') is resolved to the design name for you, so pass whichever your world uses. Checked before the issue is filed — a name the design carries under neither form fails this call rather than surfacing later inside a coding cycle.",
+          ),
+        actionStatuses: z
+          .array(z.enum(["revised", "suggested"]).nullable())
+          .describe(
+            "Your own remediation verdict for each of the RCA report's recommended_actions, in that same order: 'revised' when you expressed it as an OpenChoreo config change, 'suggested' when you could not, null for one you did not address. Required on every call — this is what AE classifies code-level vs config-level vs none from.",
           ),
       },
     },
-    async ({ project, title, body, labels, dedupeKey }) => {
+    async ({ project, title, body, labels, componentName, actionStatuses }) => {
       try {
-        const issue = await createIssue(client, project, {
+        const resolved = resolveHandoff({
+          project,
+          ...(componentName !== undefined ? { componentName } : {}),
+          ...(labels !== undefined ? { labels } : {}),
+          actionStatuses,
+        });
+        const issue = await create(client, resolved.project, {
           title,
           body,
-          ...(labels !== undefined ? { labels } : {}),
-          ...(dedupeKey !== undefined ? { dedupeKey } : {}),
+          labels: resolved.labels,
+          ...(resolved.componentName !== undefined ? { componentName: resolved.componentName } : {}),
+          actionStatuses: resolved.actionStatuses,
         });
         return textResult(issue);
-      } catch (err) {
-        return errorResult(err);
-      }
-    },
-  );
-
-  server.registerTool(
-    "ae_dispatch_coding_agent",
-    {
-      title: "Dispatch the AE coding agent",
-      description:
-        "Create a task bound to an already-created GitHub issue and dispatch the AE coding agent against it. Call ae_create_issue first and pass its returned issue number/url here. Dispatch is async — this call only confirms the dispatch was accepted, not that the coding agent run has started or finished.",
-      inputSchema: {
-        project: z.string().describe("OpenChoreo/AE project name"),
-        componentName: z
-          .string()
-          .describe("Component this issue is about (the alerting component's name)"),
-        title: z.string().describe("Task title — reuse the issue title"),
-        issueNumber: z.number().int().describe("GitHub issue number returned by ae_create_issue"),
-        issueUrl: z.string().describe("GitHub issue URL returned by ae_create_issue"),
-      },
-    },
-    async ({ project, componentName, title, issueNumber, issueUrl }) => {
-      try {
-        await dispatchFromIssue(client, project, {
-          componentName,
-          title,
-          issueNumber,
-          issueUrl,
-        });
-        return textResult({ dispatched: true });
       } catch (err) {
         return errorResult(err);
       }

@@ -5701,10 +5701,23 @@ components:
       additionalProperties: false
       description: Issue to file on the project's repo. dedupeKey makes creation
         idempotent per open issue (label-encoded), for concurrent alert handlers.
+        componentName and actionStatuses carry the SRE incident handoff context;
+        they do not declare issue-create outcomes.
       properties:
+        actionStatuses:
+          description: Ordered per-action statuses from the incident handoff. A null
+            entry is meaningful and preserves the action's position when it has no status.
+          items:
+            type: string
+            nullable: true
+          type: array
+          nullable: true
         title:
           type: string
         body:
+          type: string
+        componentName:
+          description: Component affected by the incident.
           type: string
         labels:
           items:
@@ -5759,9 +5772,21 @@ components:
       type: object
     IssueResult:
       additionalProperties: false
-      description: Issue metadata after create. deduped=true means an open issue
-        with the same dedupeKey already existed — number/url refer to it.
+      description: Server-derived issue-create outcome. deduped=true means an open
+        issue with the same dedupeKey already existed — number/url refer to it.
+        Callers never supply classification, suppression, reopening, adoption, or
+        recurrence outcomes.
       properties:
+        adoptionError:
+          description: Server-derived reason adoption did not complete, when present.
+          type: string
+          nullable: true
+        adopted:
+          description: True when the server adopted the incident into an existing issue.
+          type: boolean
+        classification:
+          description: Server-derived incident classification.
+          type: string
         number:
           format: int64
           type: integer
@@ -5770,6 +5795,16 @@ components:
         nodeId:
           type: string
         deduped:
+          type: boolean
+        reopened:
+          description: True when the server reopened a matching closed issue.
+          type: boolean
+        recurrenceCount:
+          description: Server-derived count of recorded recurrences for this incident.
+          format: int64
+          type: integer
+        suppressed:
+          description: True when the server suppressed creation for this incident.
           type: boolean
       required:
       - number
@@ -5798,6 +5833,17 @@ components:
             type: string
           type: array
           nullable: true
+        StateReason:
+          description: Provider-supplied reason for the issue state, when available.
+          type: string
+          nullable: true
+        attentionReason:
+          description: Console attention state. Omitted when the issue needs no attention.
+          enum:
+          - unverified_fix
+          - no_change_verdict
+          - escalated
+          type: string
       required:
       - Number
       - Title

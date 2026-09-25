@@ -224,6 +224,7 @@ type loop struct {
 
 	cancel   workflow.ReceiveChannel
 	workable workflow.ReceiveChannel
+	noWork   workflow.ReceiveChannel
 	merged   workflow.ReceiveChannel
 	builds   workflow.ReceiveChannel
 	conflict workflow.ReceiveChannel
@@ -324,6 +325,7 @@ func newLoop(ctx workflow.Context, in RunInput) *loop {
 		maxValidationAttempts: attempts,
 		cancel:                workflow.GetSignalChannel(ctx, delivery.SigRunCancel),
 		workable:              workflow.GetSignalChannel(ctx, delivery.SigRunWorkable),
+		noWork:                workflow.GetSignalChannel(ctx, delivery.SigRunNoWork),
 		merged:                workflow.GetSignalChannel(ctx, delivery.SigRunPRMerged),
 		builds:                workflow.GetSignalChannel(ctx, delivery.SigRunBuildTerminal),
 		conflict:              workflow.GetSignalChannel(ctx, delivery.SigRunConflict),

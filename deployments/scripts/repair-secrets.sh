@@ -95,4 +95,10 @@ kubectl -n openbao exec openbao-0 -- sh -c \
     'VAULT_ADDR=http://127.0.0.1:8200 vault kv put -mount=secret registry-push-secret value="{\"auths\":{}}"' >/dev/null \
     && echo "  ✅ registry-push-secret" || echo "  ⚠️  could not seed registry-push-secret (openbao-0 unreachable?)"
 
+if [ -f "$SCRIPT_DIR/reconcile-sre-anthropic-externalsecret.sh" ]; then
+    echo "🤖 Ensuring SRE Anthropic ExternalSecret watches AE's org key..."
+    bash "$SCRIPT_DIR/reconcile-sre-anthropic-externalsecret.sh" || \
+        echo "  ⚠️  could not reconcile SRE Anthropic ExternalSecret"
+fi
+
 exit 0

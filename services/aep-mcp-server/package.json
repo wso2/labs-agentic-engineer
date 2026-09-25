@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Streamable-HTTP MCP server wrapping aep-api's issue/dispatch REST endpoints, so external agents (e.g. the OpenChoreo SRE/RCA agent) can file GitHub issues and dispatch the coding agent. See AE-HANDOFF-DESIGN.md in openchoreo/agents/sre-agent.",
+  "description": "Streamable-HTTP MCP server wrapping aep-api's SRE handoff issue endpoints, so external agents (e.g. the OpenChoreo SRE/RCA agent) can file GitHub issues for AE handling.",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",

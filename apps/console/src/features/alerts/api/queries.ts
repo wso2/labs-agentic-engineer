@@ -22,8 +22,9 @@ import { alertKeys } from "./keys";
 import { apiErrorMessage } from "../../../api/errors";
 
 // Bell badge poll interval (#154 decision: 60s, matches the ~3-4 min
-// RCA→handoff completion time from the SRE-handoff runbook).
-const BELL_POLL_MS = 60_000;
+// RCA→handoff completion time from the SRE-handoff runbook). Every query
+// behind the bell badge shares it (see useAttentionUnread).
+export const BELL_POLL_MS = 60_000;
 
 // Last N reports the bell dropdown shows/counts (#154 decision: 50, no pagination).
 export const BELL_LIMIT = 50;

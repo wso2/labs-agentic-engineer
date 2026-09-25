@@ -87,6 +87,13 @@ type AppParams struct {
 	// deny-by-default tenant gate chain are untouched.
 	InboundAuth func(http.Handler) http.Handler
 
+	// SREHandoffAuth verifies aep-mcp-server's forwarded SRE-handoff bearer
+	// for exactly CreateIssue/ListIssues (sre_handoff_gate.go), binding the
+	// one org it is configured for. nil (the default) leaves the shortcut
+	// absent — those two operations then require a normal Thunder JWT like
+	// every other /api/ operation. See auth.SREHandoffVerifier.
+	SREHandoffAuth *auth.SREHandoffVerifier
+
 	// Runner-facing and agents-facing surfaces. Callers use the gitrepo +
 	// artifacts packages in-process. CredService + AnthropicCredService + DB
 	// also back the local-dev in-process secret resync helper (devResyncHandler).

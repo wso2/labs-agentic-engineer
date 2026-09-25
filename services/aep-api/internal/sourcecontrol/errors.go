@@ -34,6 +34,15 @@ import (
 // survived the REST→mount migration unchanged, so `errors.Is` checks and log
 // lines stayed stable.
 var (
+	// ErrIncidentContextRequired rejects SRE handoffs without trusted identity
+	// and a component, before any issue write.
+	ErrIncidentContextRequired = errors.New("trusted incident identity and component are required")
+	// ErrIncidentRecurrenceIneligible refuses an SRE handoff whose incident
+	// identity matches only closed issues that cannot recur (a closure reason
+	// other than completed or not_planned, or a non-SRE issue). The refusal is
+	// stable until a human reopens or re-closes the match, so callers map it
+	// to a conflict rather than a server failure.
+	ErrIncidentRecurrenceIneligible = errors.New("the incident's closed issue is not eligible to recur; only completed SRE issues can recur")
 	// ErrRepoNotFound is a gitrepo-domain error (no repo row) returned by
 	// repoService/issueService lookups.
 	ErrRepoNotFound = errors.New("repository not found")

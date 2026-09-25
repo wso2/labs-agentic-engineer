@@ -35,6 +35,9 @@ import (
 //	───────────────────────────────────────────────────────────────────────────────────────────────────
 //	public         /api/v1              Thunder user JWT + org gate                handlers_*.go · tenant_gate.go
 //	               (jwt → orgensure)    (org from the verified token, never input)  ← packages/contracts/api/v1 (source of truth)
+//	               CreateIssue/         OR a long-lived SRE-handoff secret,         sre_handoff_gate.go ·
+//	               ListIssues only      scoped to one configured org — see         auth.SREHandoffVerifier
+//	                                    sre_handoff_gate.go's doc comment for why
 //	internal S2S   /internal/v1/validation/, publisher-cc (iss platform-idp)        internal.go · runnerAuthGate
 //	               /internal/v1/executions/  (INT-6 fence keyed to the run CYCLE     ← packages/contracts/api/internal/v1 (non-public)
 //	               (deny-by-default gate)     id)
@@ -200,6 +203,12 @@ func mountSurfaces(params AppParams) *http.ServeMux {
 			ResourceMetadataURL: params.Config.JWTResourceMetadataURL,
 		})
 	}
+	// sreHandoffOrJWT sits outside jwt: on exactly CreateIssue/ListIssues with
+	// a bearer that verifies against params.SREHandoffAuth, it binds that
+	// verifier's org and skips Thunder JWT verification for that one request
+	// (see sre_handoff_gate.go for why — the OC extensions loader cannot
+	// refresh a short-lived Thunder token). Every other request is unaffected.
+	jwt = sreHandoffOrJWT(params.SREHandoffAuth, jwt)
 	ensureOrg := auth.EnsureOrgMiddleware(params.OrganizationService)
 	// Stamp the configured tenant-gate mode onto every /api/ request context;
 	// humakit.OrgScopedInput.Resolve reads it per-request (ENFORCE default when

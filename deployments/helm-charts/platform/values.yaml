@@ -244,6 +244,37 @@ postgres:
 # workflow state is durable across Temporal pod restarts. enabled=false turns
 # the whole feature off (no server deployed, no TEMPORAL_* env on aep-api, and
 # /devflows answers 503).
+# SRE-agent issue-handoff shortcut (auth.SREHandoffVerifier,
+# internal/edge/sre_handoff_gate.go). Off by default — most installs don't run
+# the OpenChoreo SRE agent. Enabling requires a random value at the
+# aep/aep-mcp-token OpenBao path (seed it with
+# `aectl platform secret import --path aep/aep-mcp-token`). aep-api and
+# aep-mcp-server share that one credential, the same way
+# deployments/docker-compose.yml ties SRE_HANDOFF_TOKEN to AEP_MCP_TOKEN.
+# org is not secret — it's the one org this aep-api's SRE
+# integration is scoped to, matching today's one-install-per-org model. See
+# docs/developer-guide/sre-handoff-security.md.
+#
+# Enabling also gives aep-mcp-server that credential as its fallback bearer
+# (AEP_MCP_DEFAULT_BEARER), because the SRE extension cannot send an
+# Authorization header over the plaintext in-cluster URL, and adds a
+# NetworkPolicy that only admits pods matching callerPodLabels in
+# callerNamespace (the SRE agent's namespace, aectl sre install
+# --obs-namespace) to aep-mcp-server.
+#
+# callerPodLabels defaults to the SRE agent Deployment's selector labels in the
+# openchoreo-observability-plane chart aectl installs (1.0.1-hotfix.1, where the
+# component is ai-rca-agent). Selector labels are immutable on a Deployment, so
+# every SRE pod carries them. Chart 1.2.0+ renamed the component to sre-agent;
+# set app.kubernetes.io/component accordingly for that chart.
+sreHandoff:
+  enabled: false
+  org: "default"
+  callerNamespace: "openchoreo-observability-plane"
+  callerPodLabels:
+    app.kubernetes.io/name: openchoreo-observability-plane
+    app.kubernetes.io/component: ai-rca-agent
+
 temporal:
   enabled: true
   # Temporal namespace aep-api connects to; auto-setup registers it on startup.

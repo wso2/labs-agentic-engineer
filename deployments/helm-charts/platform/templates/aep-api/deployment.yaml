@@ -203,6 +203,19 @@ spec:
                   key: POSTGRES_PASSWORD
             - name: DATABASE_URL
               value: "postgresql://{{ .Values.postgres.user }}:$(POSTGRES_PASSWORD)@postgres.{{ .Release.Namespace }}.svc.cluster.local:5432/{{ .Values.postgres.database }}?sslmode=disable"
+            {{- if .Values.sreHandoff.enabled }}
+            # SRE-agent issue-handoff shortcut (auth.SREHandoffVerifier). Off
+            # by default (values.yaml) — omitting these env vars entirely
+            # keeps the shortcut disabled, same secure default as every other
+            # aep-api deployment target.
+            - name: SRE_HANDOFF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: aep-sre-handoff-secrets
+                  key: SRE_HANDOFF_TOKEN
+            - name: SRE_HANDOFF_ORG
+              value: {{ .Values.sreHandoff.org | quote }}
+            {{- end }}
             {{- if .Values.temporal.enabled }}
             # Temporal (devflow workflows). Points the in-process worker at the
             # in-cluster temporal-frontend Service. Plain host:port — CoreDNS

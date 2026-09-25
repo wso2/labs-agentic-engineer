@@ -37,6 +37,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	urlpkg "net/url"
 	"strings"
@@ -507,78 +508,88 @@ func (c *Client) CommentIssue(ctx context.Context, owner, repo string, cred secr
 	return fmt.Errorf("github issue comment failed (status %d): %s", resp.StatusCode, string(respBody))
 }
 
+// issueListMaxPages bounds ListIssues' page walk. The console bell polls the
+// unfiltered list for every project with an alert, so each page is a request
+// against the installation's rate budget on every poll; 10 pages keep a
+// 1000-issue repository complete and cap the cost of a larger one.
+const issueListMaxPages = 10
+
+// ListIssues returns the repository's issues in every state, filtered by label
+// (AND semantics), following pagination until a short page or
+// issueListMaxPages. GitHub answers newest first, so a repository past the cap
+// loses its OLDEST issues from the list (logged); GetIssue still reaches them.
+// Pull requests are dropped: the issues endpoint returns them alongside issues,
+// each carrying a pull_request member.
 func (c *Client) ListIssues(ctx context.Context, owner, repo string, cred secrets.Credential, labels []string) ([]sourcecontrol.IssueInfo, error) {
-	url := fmt.Sprintf(c.apiBase+"/repos/%s/%s/issues?state=all&per_page=100", owner, repo)
+	base := fmt.Sprintf(c.apiBase+"/repos/%s/%s/issues?state=all&per_page=%d", owner, repo, milestonePageSize)
 	if len(labels) > 0 {
-		url += "&labels=" + strings.Join(labels, ",")
+		base += "&labels=" + strings.Join(labels, ",")
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	if err := authHeaders(ctx, httpReq, cred); err != nil {
-		return nil, err
-	}
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("github API request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("github list issues failed (status %d): %s", resp.StatusCode, string(respBody))
-	}
-
-	var raw []struct {
-		Number  int    `json:"number"`
-		Title   string `json:"title"`
-		Body    string `json:"body"`
-		HTMLURL string `json:"html_url"`
-		State   string `json:"state"`
-		Labels  []struct {
-			Name string `json:"name"`
-		} `json:"labels"`
-	}
-	if err := json.Unmarshal(respBody, &raw); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
-	}
-
-	issues := make([]sourcecontrol.IssueInfo, 0, len(raw))
-	for _, r := range raw {
-		labelNames := make([]string, 0, len(r.Labels))
-		for _, l := range r.Labels {
-			labelNames = append(labelNames, l.Name)
+	var issues []sourcecontrol.IssueInfo
+	for page := 1; page <= issueListMaxPages; page++ {
+		var raw []struct {
+			Number      int    `json:"number"`
+			Title       string `json:"title"`
+			Body        string `json:"body"`
+			HTMLURL     string `json:"html_url"`
+			State       string `json:"state"`
+			StateReason string `json:"state_reason"`
+			ClosedAt    string `json:"closed_at"`
+			Labels      []struct {
+				Name string `json:"name"`
+			} `json:"labels"`
+			// PullRequest is present only on pull requests.
+			PullRequest *struct{} `json:"pull_request"`
 		}
-		issues = append(issues, sourcecontrol.IssueInfo{
-			Number: r.Number,
-			Title:  r.Title,
-			Body:   r.Body,
-			URL:    r.HTMLURL,
-			State:  r.State,
-			Labels: labelNames,
-		})
+		if err := c.getJSON(ctx, fmt.Sprintf("%s&page=%d", base, page), cred, &raw); err != nil {
+			return nil, err
+		}
+		for _, r := range raw {
+			if r.PullRequest != nil {
+				continue
+			}
+			labelNames := make([]string, 0, len(r.Labels))
+			for _, l := range r.Labels {
+				labelNames = append(labelNames, l.Name)
+			}
+			issues = append(issues, sourcecontrol.IssueInfo{
+				Number:      r.Number,
+				Title:       r.Title,
+				Body:        r.Body,
+				URL:         r.HTMLURL,
+				State:       r.State,
+				StateReason: r.StateReason,
+				ClosedAt:    r.ClosedAt,
+				Labels:      labelNames,
+			})
+		}
+		// Page length counts PRs too, so it — not len(issues) — decides the walk.
+		if len(raw) < milestonePageSize {
+			return issues, nil
+		}
 	}
+	slog.WarnContext(ctx, "githubhost: issue list reached its page cap — older issues are not listed",
+		"owner", owner, "repo", repo, "pages", issueListMaxPages)
 	return issues, nil
 }
 
 // GetIssue fetches a single issue by number via GET
 // /repos/{owner}/{repo}/issues/{number} — O(1) in repo size, unlike ListIssues
-// (which pages the repo and stops at 100). A 404 is mapped to
+// (which pages the repo up to issueListMaxPages). A 404 is mapped to
 // sourcecontrol.ErrIssueNotFound so callers can distinguish a missing issue from a
 // transport failure.
 func (c *Client) GetIssue(ctx context.Context, owner, repo string, cred secrets.Credential, number int) (*sourcecontrol.IssueInfo, error) {
 	url := fmt.Sprintf(c.apiBase+"/repos/%s/%s/issues/%d", owner, repo, number)
 	var raw struct {
-		Number  int    `json:"number"`
-		Title   string `json:"title"`
-		Body    string `json:"body"`
-		HTMLURL string `json:"html_url"`
-		State   string `json:"state"`
-		Labels  []struct {
+		Number      int    `json:"number"`
+		Title       string `json:"title"`
+		Body        string `json:"body"`
+		HTMLURL     string `json:"html_url"`
+		State       string `json:"state"`
+		StateReason string `json:"state_reason"`
+		ClosedAt    string `json:"closed_at"`
+		Labels      []struct {
 			Name string `json:"name"`
 		} `json:"labels"`
 	}
@@ -593,12 +604,14 @@ func (c *Client) GetIssue(ctx context.Context, owner, repo string, cred secrets.
 		labelNames = append(labelNames, l.Name)
 	}
 	return &sourcecontrol.IssueInfo{
-		Number: raw.Number,
-		Title:  raw.Title,
-		Body:   raw.Body,
-		URL:    raw.HTMLURL,
-		State:  raw.State,
-		Labels: labelNames,
+		Number:      raw.Number,
+		Title:       raw.Title,
+		Body:        raw.Body,
+		URL:         raw.HTMLURL,
+		State:       raw.State,
+		StateReason: raw.StateReason,
+		ClosedAt:    raw.ClosedAt,
+		Labels:      labelNames,
 	}, nil
 }
 

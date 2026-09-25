@@ -33,3 +33,18 @@ spec:
             # caller's bearer here; aep-api enforces org-scoped auth.
             - name: AEP_API_BASE_URL
               value: "http://aep-api:{{ .Values.aepApi.port }}"
+            {{- if .Values.sreHandoff.enabled }}
+            # SRE-handoff fallback bearer. The OC SRE extension loader will not
+            # send an Authorization header to this plaintext in-cluster URL, so
+            # the server supplies the shared handoff credential itself: the
+            # same secret aep-api verifies as SRE_HANDOFF_TOKEN. Callers that
+            # send their own header still win. networkpolicy.yaml limits who
+            # can reach this port while the fallback is on.
+            - name: AEP_MCP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: aep-sre-handoff-secrets
+                  key: SRE_HANDOFF_TOKEN
+            - name: AEP_MCP_DEFAULT_BEARER
+              value: "Bearer $(AEP_MCP_TOKEN)"
+            {{- end }}

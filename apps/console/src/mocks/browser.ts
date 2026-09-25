@@ -7,6 +7,7 @@ import { organizationsHandlers } from "./handlers/organizations";
 import { settingsHandlers } from "./handlers/settings";
 import { marketplaceHandlers } from "./handlers/marketplace";
 import { alertsHandlers } from "./handlers/alerts";
+import { issuesHandlers } from "./handlers/issues";
 import { usageHandlers } from "./handlers/usage";
 import { workloadDependenciesHandlers } from "./handlers/workload-dependencies";
 import { resourcesHandlers } from "./handlers/resources";
@@ -26,5 +27,6 @@ export const worker = setupWorker(
   ...resourcesHandlers,
   ...rolesHandlers,
   ...alertsHandlers,
+  ...issuesHandlers,
   ...usageHandlers,
 );
