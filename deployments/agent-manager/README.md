@@ -4,10 +4,14 @@ Inputs for putting Agent Manager onto a cluster that already runs AEP — built 
 `deployments/scripts/setup-env-for-aectl.sh` and installed by
 `aectl platform install`.
 
-`deployments/scripts/setup-agent-manager.sh` is what applies all of this. The
-files here are its inputs, kept separate from it because they are the decided
-answers rather than the procedure — reviewable on their own, and re-derivable
-against a newer chart without reading the script.
+`deployments/scripts/setup-agent-manager.sh` is what applies all of this, and
+`make dev-env` runs it as its last step — a local cluster comes up with both
+products on it, because a cluster with only AEP cannot exercise anything the two
+share. `WITH_AGENT_MANAGER=0 make dev-env` stops after AEP.
+
+The files here are that script's inputs, kept separate from it because they are
+the decided answers rather than the procedure — reviewable on their own, and
+re-derivable against a newer chart without reading the script.
 
 | | |
 |---|---|

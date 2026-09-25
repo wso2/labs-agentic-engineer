@@ -1172,16 +1172,14 @@ echo "  ✅ Setup complete"
 echo "============================================"
 # Grouped by what is actually serving. This script builds the cluster and the
 # shared identity provider; the AEP and Agent Manager consoles are installed by
-# the steps after it, so listing all four flat would send someone to a URL that
-# is not answering yet and read as a broken install.
+# the steps `make dev-env` runs after it, so listing all four flat would send
+# someone to a URL that is not answering yet and read as a broken install.
 echo "  Serving now"
 printf "    %-16s%-50s(%s / %s)\n" "OpenChoreo" "http://openchoreo.localhost:8080" "${THUNDER_ADMIN_USER}" "${THUNDER_ADMIN_PASSWORD}"
 printf "    %-16s%-50s(%s / %s)\n" "ThunderID" "http://thunder.openchoreo.localhost:8080/console" "${THUNDER_ADMIN_USER}" "${THUNDER_ADMIN_PASSWORD}"
 echo ""
-echo "  After \`aectl platform install\` (make dev-env runs it next)"
-printf "    %-16s%s\n" "AEP" "http://console.openchoreo.localhost:8080"
-echo ""
-echo "  After deployments/scripts/setup-agent-manager.sh"
-printf "    %-16s%s\n" "Agent Manager" "http://console.amp.localhost:8080"
+echo "  Still to install — \`make dev-env\` runs both of these next"
+printf "    %-16s%-50s%s\n" "AEP" "http://console.openchoreo.localhost:8080" "aectl platform install"
+printf "    %-16s%-50s%s\n" "Agent Manager" "http://console.amp.localhost:8080" "setup-agent-manager.sh"
 echo ""
 echo "  Cleanup:  k3d cluster delete ${CLUSTER_NAME}"

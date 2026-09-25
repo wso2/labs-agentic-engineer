@@ -186,7 +186,18 @@ workflow-skill:
 # One-time bootstrap: the bare cluster (deployments/scripts/setup-env-for-aectl.sh),
 # aectl's own Thunder admin client (WITH_SKAFFOLD_CLIENT=1 — see that script's
 # step 3c for why this can't be registered by aectl itself), then
-# `aectl platform config import` + `aectl platform install` against the local chart.
+# `aectl platform config import` + `aectl platform install` against the local chart,
+# then Agent Manager beside it.
+#
+# Agent Manager runs LAST and from here rather than being left to the operator,
+# because the two products share one identity provider and one environment tier:
+# a cluster with only AEP on it cannot exercise either sharing decision, so the
+# convergence is only actually tested when both are installed. Its step 4 also
+# hands two OpenChoreo objects to Helm, which has to happen after
+# `platform install` has finished patching them.
+#
+# WITH_AGENT_MANAGER=0 skips it, for when the AEP half is all that is being
+# worked on — it is the slowest step here by a wide margin.
 #
 # `platform install` otherwise prompts interactively for two secrets — set as
 # env vars here so it doesn't:
@@ -205,6 +216,11 @@ dev-env:
 	./tools/aectl/aectl-skaffold platform config import --config skaffold/defaults.yaml
 	ANTHROPIC_API_KEY=none AEP_THUNDER_ADMIN_CLIENT_SECRET=ae-install-client-secret \
 		./tools/aectl/aectl-skaffold platform install --addons=all --platform-version=latest --platform-chart=deployments/helm-charts/platform
+	@if [ "$${WITH_AGENT_MANAGER:-1}" = "1" ]; then \
+		bash deployments/scripts/setup-agent-manager.sh; \
+	else \
+		echo "⏭️  Skipping Agent Manager (WITH_AGENT_MANAGER=0)"; \
+	fi
 
 # Edit source, then run this: builds only the images whose dependencies
 # changed and loads them into k3d (skaffold.yaml — build-only, tagged
