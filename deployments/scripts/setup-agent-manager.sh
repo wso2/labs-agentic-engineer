@@ -308,16 +308,19 @@ echo "   ✅ metrics module, operator ceiling at 300m"
 # ============================================================================
 # OpenChoreo's samples create DeploymentPipeline/default and Environment/<env>
 # with a client-side `kubectl apply`. Agent Manager's platform-resources chart
-# renders both, and Helm will not adopt an object it did not create. Two moves
-# hand them over:
+# renders both, and Helm will not adopt an object it did not create.
 #
-#   1. the meta.helm.sh ownership annotations and the managed-by label — these
-#      are what Helm checks, and without them the install fails with
-#      "invalid ownership metadata"
-#   2. dropping last-applied-configuration — Helm 3 reconciles with a
-#      client-side three-way merge, and that annotation is one of its three
-#      inputs; leaving OpenChoreo's copy behind lets it re-assert fields the
-#      chart is now the author of
+# The meta.helm.sh annotations and the managed-by label are the whole of what
+# Helm checks, and are all the hand-over needs: without them the install fails
+# with "invalid ownership metadata", and with them it succeeds whether or not
+# the object still carries kubectl's own record.
+#
+# last-applied-configuration is dropped anyway, but not because Helm reads it —
+# Helm 3 reconciles with a three-way merge over its OWN stored manifest, the
+# new one, and the live object, and never looks at that annotation. It is
+# dropped because it is kubectl's record of a spec Helm now authors: it keeps a
+# second writer's view of the object alive, and it becomes a conflicting field
+# manager rather than a stale note the day this reconciles server-side.
 #
 # Adoption is safe here rather than a rewrite: the chart, given
 # amp-values.yaml, renders the same promotion graph and the same environment
