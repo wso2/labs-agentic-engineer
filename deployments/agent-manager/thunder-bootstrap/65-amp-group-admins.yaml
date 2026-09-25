@@ -1,6 +1,24 @@
+# MODIFIED FROM THE CHART — re-deriving this file will drop the edit below.
+#
+# The chart renders this group with an empty members list, and binds the
+# "Agent Manager Admin" role to it (61-amp-role-admin.yaml). Left empty, the
+# role reaches amp-api-client and no human: the console authenticates a user
+# and then shows them nothing, with no error saying why.
+#
+# Upstream fills it through thunder.bootstrap.defaultUsers, which is set to []
+# here — that document rewrites ThunderID's built-in admin account with four
+# attributes in place of seven, dropping the `sub` claim the account is
+# identified by (see ../thunder-extension-values.yaml). Naming the account as a
+# member instead gets the membership without the rewrite.
+#
+# 01900000-0000-7000-8000-000000000030 is ThunderID's own built-in `admin`
+# (sub: admin) — the account this cluster's consoles are logged into, and the
+# same id AEP's own admins group names in setup-env-for-aectl.sh.
 resource_type: group
 id: amp-admins
 name: Agent Manager Admins
 description: Administrative group with full access to all AMP resources
 ouHandle: default
 members:
+  - id: "01900000-0000-7000-8000-000000000030"
+    type: user
