@@ -31,6 +31,7 @@ import { http, HttpResponse, type RequestHandler } from "msw";
 import { setupWorker } from "msw/browser";
 import { gatewayHandlers } from "./authz/gateway";
 import { handlers } from "./handlers";
+import { mountRoleBadge } from "./badge";
 
 // Closes the API surface, and it has to be closed explicitly: MSW passes an
 // unhandled request THROUGH to the network, so a call nobody wrote a handler
@@ -50,6 +51,18 @@ const unhandledApi: RequestHandler = http.all("/api/*", ({ request }) => {
 export const worker = setupWorker(...gatewayHandlers, ...handlers, unhandledApi);
 
 export async function startMockWorker(): Promise<void> {
+  // Who am I / switch. Mounted in both modes and before the early return below,
+  // because wired mode is the one where a person walks every role in one
+  // sitting and it is the only thing this module does there.
+  mountRoleBadge();
+
+  // WIRED MODE (the playground's `wire` verb): `/api` is proxied to the real
+  // service and the dev server is the gateway in front of it — see
+  // mock/wired.ts. Starting the worker here would intercept those calls in the
+  // browser and answer them from seed data, which is precisely the thing wired
+  // mode exists not to do.
+  if ((globalThis as { __AEP_WIRED__?: boolean }).__AEP_WIRED__) return;
+
   // Everything else the page asks for — modules, assets, HMR — is the dev
   // server's and passes through untouched.
   await worker.start({ onUnhandledRequest: "bypass" });

@@ -42,22 +42,23 @@ const (
 	authServiceRequired = "service-required"
 )
 
-// deriveEndUserAuth stamps exposesAPI.auth=end-user-required on service
-// components that declare a platform-resource dependency whose resourceType
+// deriveEndUserAuth stamps exposesAPI.auth=end-user-required on gateway-
+// protectable components (service and ai-agent — see IsGatewayProtectableType)
+// that declare a platform-resource dependency whose resourceType
 // carries the end-user-auth role marker (markers[resourceType].EndUserAuth),
 // and rejects an explicit conflicting service-required as a validation error.
-// Mutates components in place. web-app components and services with no
-// qualifying dependency (including a platform-resource dependency of a type
-// that carries NO end-user-auth marker, e.g. postgres-cnpg) are left completely
-// untouched: SPAs aren't gateway-exposed managed APIs, and a bare
-// dependency-less/differently-marked service has nothing to derive from. A nil
+// Mutates components in place. web-app components and protectable components
+// with no qualifying dependency (including a platform-resource dependency of a
+// type that carries NO end-user-auth marker, e.g. postgres-cnpg) are left
+// completely untouched: SPAs aren't gateway-exposed managed APIs, and a bare
+// dependency-less/differently-marked component has nothing to derive from. A nil
 // markers map (no platform-resource deps → no catalog fetch) qualifies nothing.
 // On a conflict, nothing in components is mutated — the caller sees the
 // original, unmodified state.
 func deriveEndUserAuth(components []DesignComponent, markers map[string]CRTType) error {
 	for i := range components {
 		comp := &components[i]
-		if comp.ComponentType != ComponentTypeService {
+		if !IsGatewayProtectableType(comp.ComponentType) {
 			continue
 		}
 		dep, ok := endUserAuthDependency(comp.Dependencies, markers)

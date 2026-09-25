@@ -40,6 +40,21 @@ const OXYGEN = "@wso2/oxygen-ui";
 const ICONS = "@wso2/oxygen-ui-icons-react";
 const CHARTS = "@wso2/oxygen-ui-charts-react";
 const ROUTER = "react-router";
+// What the app actually IMPORTS. `react-router-dom` is the DOM entry point and
+// depends on `react-router` at its own version, so installing it covers both —
+// and installing only `react-router` does NOT cover it. Measured 2026-09-17:
+// `thunder-authentication`'s assets (`gates.tsx`, `App.example.tsx`) are copied
+// verbatim into every generated app and import from `react-router-dom`, so a
+// manifest holding only `react-router` left the app importing a package npm had
+// never installed. One run discovered it mid-build and paid a second full
+// resolve; another only survived because it had hand-written package.json
+// before this script ran. Two skills must not disagree about the router.
+const ROUTER_DOM = "react-router-dom";
+// The type packages. Not optional: `react-dom/client` has NO types of its own,
+// so a `tsc --noEmit` without these fails TS7016 — and left to npm they arrive
+// transitively at whatever major is newest (19.3.0 against a react pinned to
+// 19.2.3, measured), which is the same failure by a different route.
+const REACT_TYPES = ["@types/react", "@types/react-dom"];
 const BUNDLED = ["@mui/", "@emotion/", "lucide-react"];
 
 const isBundled = (dep) => BUNDLED.some((p) => (p.endsWith("/") ? dep.startsWith(p) : dep === p));
@@ -205,7 +220,7 @@ function main() {
     "react-dom": versions.reactDom,
     [OXYGEN]: `^${versions.oxygen}`,
     [ICONS]: `^${versions.icons}`,
-    [ROUTER]: `^${versions.router}`,
+    [ROUTER_DOM]: `^${versions.router}`,
     ...(flags.has("--charts") ? { [CHARTS]: `^${versions.oxygen}` } : {}),
   };
   const changed = [];
@@ -216,6 +231,19 @@ function main() {
     }
     delete pkg.devDependencies?.[dep];
   }
+
+  // The type packages are devDependencies — they are erased at build time — and
+  // they are pinned to the MAJOR of the react that was just pinned, not left to
+  // float. `@types/react@^19` against `react@19.2.3` is right; the transitive
+  // `19.3.0` npm chose on its own is what produced TS7016 on `react-dom/client`.
+  pkg.devDependencies ??= {};
+  const typesRange = `^${versions.react.split(".")[0]}`;
+  for (const dep of REACT_TYPES) {
+    if (pkg.devDependencies[dep] !== typesRange && pkg.dependencies[dep] === undefined) {
+      changed.push(`${dep}@${typesRange}`);
+      pkg.devDependencies[dep] = typesRange;
+    }
+  }
   writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
 
   console.log(
@@ -223,7 +251,7 @@ function main() {
       ? `ok    react and react-dom pinned to ${versions.react} (Oxygen ${versions.oxygen}'s peer dependency)`
       : `ok    react pinned to ${versions.react}, react-dom to ${versions.reactDom} (Oxygen ${versions.oxygen}'s peer dependencies)`,
   );
-  console.log(`ok    react-router ${versions.router} — the newest release whose React peer accepts ${versions.react}`);
+  console.log(`ok    ${ROUTER_DOM} ${versions.router} — the newest release whose React peer accepts ${versions.react} (it brings ${ROUTER} with it)`);
   console.log(changed.length ? `ok    package.json: ${changed.join(", ")}` : "ok    package.json already carried every dependency at these versions");
   if (removed.length) console.log(`ok    removed ${removed.join(", ")} — Oxygen bundles them; a second copy breaks theming at runtime`);
 

@@ -88,17 +88,6 @@ test("a command that names a branch resolves to the skill and says which branch"
   const actor = composeInstruction({ kind: "flow", skill: "actor", text: "Finance reviewer" });
   assert.ok(actor.startsWith("Load the amend skill and follow it.\n\nAdd an actor: Finance reviewer"));
 
-  const expand = composeInstruction({
-    kind: "flow",
-    skill: "expand",
-    text: "As an Employee, I want to submit an expense.",
-  });
-  assert.ok(
-    expand.startsWith(
-      "Load the amend skill and follow it.\n\nGo deeper on this feature: As an Employee, I want to submit an expense.",
-    ),
-  );
-
   // Fired bare (the header's "+ Feature", where there is no line to carry) the
   // branch still arrives; the skill interviews for the subject.
   const bare = composeInstruction({ kind: "flow", skill: "feature" });
@@ -106,7 +95,7 @@ test("a command that names a branch resolves to the skill and says which branch"
 });
 
 test("a branch command inlines the skill it resolves to, not its own token", () => {
-  for (const token of ["feature", "actor", "expand"]) {
+  for (const token of ["feature", "actor"]) {
     assert.deepEqual(eagerSkillsFor({ kind: "flow", skill: token }), [
       "amend",
       "grilling",
@@ -303,7 +292,8 @@ test("the design flow inlines its whole lineup, in lineup order", () => {
     "security-design",
     "openapi-conventions",
     "wireframes",
-    "validation-criteria",
+    "agent-building",
+    "acceptance-criteria",
   ]);
 });
 
@@ -326,7 +316,6 @@ test("every eager skill name exists in the platform skill library", () => {
     // The branch commands resolve to a platform skill, so they are checked too.
     { kind: "flow", skill: "feature" } as const,
     { kind: "flow", skill: "actor" } as const,
-    { kind: "flow", skill: "expand" } as const,
   ];
   for (const turn of turns) {
     for (const name of eagerSkillsFor(turn)) {

@@ -42,7 +42,7 @@ import {
 import { DocFileBundle } from "../collab/doc-bundle.js";
 import { StreamingDocWriter } from "../collab/streaming-add.js";
 import type { RoomPeer } from "../collab/room-peer.js";
-import { runTurn } from "../agents/main/run-turn.js";
+import { runTurn, type ProviderOptions } from "../agents/main/run-turn.js";
 import { buildFileToolSet, buildRegisterDraftTools } from "../agents/main/tools/files.js";
 import { tapWrites, type WriteLedger } from "../agents/main/tools/write-ledger.js";
 import { buildTaskPlanTools } from "../agents/main/tools/task-plan.js";
@@ -224,10 +224,11 @@ export interface RunConversationTurnInput {
   /** Injected at the composition root (createModel is called ONCE there, not per turn). */
   model: LanguageModel;
   /**
-   * The resolved model id `model` was built with (`resolveModelId`, threaded
-   * from the composition root alongside the model — #249). Attributes the
-   * turn's token usage on the terminal manifest; absent (mock-model tests,
-   * evals) → the manifest usage carries `model: ""`.
+   * The model id `model` was built with this turn (`resolveModelId` over the
+   * turn body's `model`, #249). Attributes the turn's token usage on the
+   * terminal manifest and decides the model-specific provider options
+   * (`modelProviderOptions`); absent (mock-model tests, evals) → the manifest
+   * usage carries `model: ""` and the options are the service default model's.
    */
   modelId?: string;
   /**
@@ -395,7 +396,7 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
       // on the `files` set only, so this never fires on a task-plan turn).
       stopWhen: [isStepCount(config.maxSteps), hasValidQuestionCall()],
       maxOutputTokens: config.maxOutputTokens,
-      providerOptions: modelProviderOptions(),
+      ...providerOptionsFor(input.modelId ?? config.model),
       // History is append-only (see the module doc above), so the prefix this
       // marks is byte-identical on the next step and the next turn — which is
       // exactly what makes it cacheable. Omitted entirely when caching is off,
@@ -449,4 +450,10 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     }
     input.guard.release(input.id);
   }
+}
+
+/** The turn's provider options as a spreadable field; none for a model that takes none. */
+function providerOptionsFor(modelId: string): { providerOptions?: ProviderOptions } {
+  const providerOptions = modelProviderOptions(modelId);
+  return providerOptions ? { providerOptions } : {};
 }

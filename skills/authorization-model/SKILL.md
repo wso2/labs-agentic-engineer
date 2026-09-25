@@ -95,7 +95,19 @@ what to write; this page says what must stay true whatever they write.
     and the SPA shows `NoAccess`. Inferring a role from the absence of one is
     fail-open. ADR-0030 point 8.
 
-11. **A screen shows only what its role can reach.** Every field a screen
+11. **Every user role has a test login; no role has a registration flow.**
+    Whatever its `enrolment`, a `kind: user` role gets a disposable test
+    account — an admin role's joins an `assignTo` group, a self-service role's
+    binds straight to the role as a user principal. Only `kind: service` gets
+    none. The platform provisions **no self-registration flow**, so a
+    self-service role's test login is its only principal, and sign-up, password
+    reset and MFA are identity-provider surface that no generated app renders.
+    A criterion depending on one is a platform finding, never an application
+    bug. *Why:* `enrolment` was read as "can this role be exercised?", which it
+    never answered; a role standing with zero principals made every criterion
+    it served ungradable. ADR-0030's 2026-09-20 amendment.
+
+12. **A screen shows only what its role can reach.** Every field a screen
     displays is carried by the operation it loads, under a handle that screen's
     role holds. A criterion naming a field no permitted operation returns is a
     design contradiction, not a coding task: put the field on the projection

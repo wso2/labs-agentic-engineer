@@ -9,7 +9,9 @@ on 2026-09-16 (the service verifies the gateway's signed assertion and holds no
 scope table) · **point 1 amended** by
 [ADR-0033](ADR-0033-screen-gates-derive-from-operations.md) on 2026-09-16
 (`security.json` no longer says which operation a screen reaches; a screen's
-gate is the scope of the operation it loads). Every other point stands.
+gate is the scope of the operation it loads) · **the "every test account is a
+role's account" consequence amended** on 2026-09-20 (a self-service role gets a
+test login too, bound to the account). Every other point stands.
 **Supersedes the role half of:** [ADR-0022](ADR-0022-roles-and-test-users-are-shared-directory-objects.md),
 whose group and test-account model stands unchanged.
 
@@ -169,3 +171,27 @@ project's `aud`.
 **Every test account is a role's account.** A project whose design declares only
 self-service or service roles publishes no logins at all, and the gate ticket
 says so rather than publishing a credential that holds nothing.
+
+## Amended 2026-09-20 — a self-service role gets a test login, bound to the account
+
+The consequence above read "a project whose design declares only self-service or
+service roles publishes no logins at all". That is wrong about the self-service
+half. `enrolment` answers "how do real accounts come to hold this role?", and it
+was also being read as "does a principal exist that can exercise this role?" —
+two different questions. A test user is a disposable agent account, never a
+model of how a person signs up, so a role nobody can sign in as is simply a role
+nothing can validate. **Every `kind: user` role owes a test login, whatever its
+enrolment; only `kind: service` gets none**, its principal being an application.
+
+How the login holds the role still follows enrolment. An admin role's account
+joins an `assignTo` group; a self-service role has no `assignTo` (point 7
+stands — the gate still refuses one), so its login binds **directly to the role
+as a user principal**. Inventing a group instead would put a project role on an
+org group nobody asked for and drop a published-password account into a real
+directory group, which is what ADR-0022 prevents. Point 7 also means the
+converge never removes that principal, so a role whose enrolment flips to
+`admin` picks up its group and keeps it — same account, same role, same grants.
+
+The platform still provisions no registration flow, so today that test login is
+a self-service role's only principal. A criterion that depends on
+self-registration is a platform finding, never an application bug.

@@ -74,6 +74,13 @@ export interface CellDiagramConnection {
 const PROJECT_ID = "project";
 const EXTERNAL_SEGMENT = "external-apis";
 
+// Authored ProjectDesignComponent.type → the cell-diagram lib's kind spelling.
+// Unmapped kinds fall back to "service" (a plain service box).
+const CELL_KIND_BY_TYPE: Record<string, string> = {
+  webapp: "web-app",
+  "ai-agent": "ai-agent",
+};
+
 /** "datastore://postgres" → "postgres" */
 const targetOf = (connId: string): string => connId.slice(connId.indexOf("://") + 3);
 
@@ -106,7 +113,7 @@ export function toCellDiagramProject(design: ProjectDesign): CellDiagramProject 
     }
 
     const isWebapp = comp.type === "webapp";
-    const serviceKey = `${comp.id}:${isWebapp ? "web" : "api"}`;
+    const serviceKey = `${comp.id}:${comp.type === "webapp" ? "web" : "api"}`;
     const exposure = comp.services?.[comp.id]?.deploymentMetadata.gateways;
 
     return {
@@ -115,8 +122,12 @@ export function toCellDiagramProject(design: ProjectDesign): CellDiagramProject 
       version: comp.version,
       // Known kinds use the lib's vocabulary; anything else renders as a plain
       // service box (the legacy TYPE_MAP fallback) — the true kind stays in
-      // the ProjectDesign, this is a view-layer concession only.
-      type: isWebapp ? "web-app" : "service",
+      // the ProjectDesign, this is a view-layer concession only. The vendored
+      // @aep/ui-cell-diagram-react renderer treats a component's `type` as a
+      // free-form display string (ParsedComponent.type?: string, no enum) and
+      // never validates it against a fixed vocabulary, so "ai-agent" passes
+      // straight through instead of falling back to "service".
+      type: CELL_KIND_BY_TYPE[comp.type] ?? "service",
       ...(comp.build.language ? { buildPack: comp.build.language } : {}),
       services: {
         [serviceKey]: {

@@ -28,7 +28,8 @@ settles is how much of the design stands on the reads that DO exist.
 ## Decisions
 
 1. **Deployments is an environment board: a card per environment, then a
-   ledger.** The Development card carries the running version, the rollout
+   ledger.** *Amended by ADR-0032: the Development card's contents are now a
+   vertical flow — deployed, validated, promoted — rather than the pile below.* The Development card carries the running version, the rollout
    count, the validation verdict (the same shared sentence the Validation
    page's tile reads) and the promotion; the Production card carries the gate
    ("only a version whose validation has passed can be promoted here") and how
@@ -91,11 +92,14 @@ settles is how much of the design stands on the reads that DO exist.
    any still converging → *Deploying*; all intentionally undeployed →
    *Undeployed*; otherwise *Deployed*.
 
-6. **Connections keep their surface.** The side panel's Connections section —
-   Configure on a Project External, *provisioned* and *platform-managed* on the
-   rest — was the one thing the panel said that nothing else on the page does,
-   so it becomes a card under the ledger. The Test users panel stays on the
-   Development card, shown only when every component is live, as before.
+6. **Connections and test users live on the environment surfaces** (amended
+   by ADR-0032). The side panel's Connections section — Configure on a
+   Project External, *provisioned* and *platform-managed* on the rest — was
+   the one thing the panel said that nothing else on the page does, so it
+   keeps a surface: each environment card lists its own connections beside
+   the components they serve, and the environment page tables them. The Test
+   users panel lives on the Development environment page, inside the web
+   application they sign in to, shown only when every component is live.
 
 ## Consequences
 

@@ -50,6 +50,8 @@ swapping `src/authz/session.ts` is a module substitution, not a request.
 │   ├── plugin.ts         copied verbatim — env-config, the session swap, the worker
 │   │                     script, and the operation table read off openapi.yaml
 │   ├── browser.ts        copied verbatim — starts MSW, gateway ahead of handlers
+│   ├── badge.ts          copied verbatim — the in-page role switch (mock only)
+│   ├── wired.ts          copied verbatim — the gateway stand-in for wired mode
 │   ├── handlers.ts       YOURS — the seed data and the request handlers
 │   ├── env.ts            YOURS — what window._env_ holds
 │   └── authz/            thunder-authentication's — arrives with its `assets/app/` tree
@@ -71,6 +73,8 @@ From the App Path:
 mkdir -p mock
 cp "$AEP_SKILLS_DIR/react-webapp/assets/mock-plugin.ts"   mock/plugin.ts
 cp "$AEP_SKILLS_DIR/react-webapp/assets/mock-browser.ts"  mock/browser.ts
+cp "$AEP_SKILLS_DIR/react-webapp/assets/mock-badge.ts"    mock/badge.ts
+cp "$AEP_SKILLS_DIR/react-webapp/assets/mock-wired.ts"    mock/wired.ts
 # the gateway layer, ALWAYS — auth dependency or not:
 mkdir -p mock/authz
 cp "$AEP_SKILLS_DIR/thunder-authentication/assets/app/mock/authz/contract.ts" mock/authz/contract.ts
@@ -94,6 +98,13 @@ platform has made to the harness since this component last saw them, and a
 component that keeps its first copy quietly loses them — leaving the walk
 reaching for a lever this app has never had. For `mock/authz/session.ts` that
 means taking the current asset and re-applying your app's own exports, below.
+
+`badge.ts` and `wired.ts` are copied **always** too: `browser.ts` imports the
+first and `plugin.ts` the second, so an app missing either does not start. Both
+turn themselves off — no roles in `security.json`, no badge; no `AEP_WIRED_API`,
+no wired mode. An app that keeps an older `mock/` is refused by `wire` rather
+than started, because the alternative is a page that answers its own API while
+the real service runs untouched beside it.
 
 If `$AEP_SKILLS_DIR` is unset, copy from `assets/` beside each skill's
 `SKILL.md`. `plugin.ts` and `browser.ts` are complete as they stand — a change
@@ -426,6 +437,36 @@ server through its own script, and a server you start here has nothing to reap
 it: the runner image has no `pkill`, and a stray `vite` stays in the pod's
 memory for the rest of the run.
 
+## Wired mode
+
+The same `dev:mock` server, with the API replaced by the REAL one. The
+playground's `wire` verb sets it up — see `playground/AGENTS.md` for what that
+does — and nothing about the app changes for it. What makes it work is already
+in the files copied above, driven by four variables:
+
+| Variable | Read by |
+|---|---|
+| `AEP_WIRED_API` | `mock/plugin.ts`: switches the mode on and proxies `/api` there |
+| `AEP_WIRED_KEY` | `mock/wired.ts`: the private key it signs the assertion with. Required once the first is set |
+| `AEP_WIRED_SECURITY` | `mock/wired.ts` and `mock/plugin.ts`; default `../specs/design/security.json` |
+| `AEP_WIRED_ISSUER`, `AEP_WIRED_HEADER` | `mock/wired.ts`; must match the service's `GATEWAY_ASSERTION_ISSUER` / `_HEADER` |
+
+The dev server then IS the gateway: it refuses an operation the role has no
+handle for with a bare 401 before the service sees it (the reason lands in an
+`x-aep-wired-reason` response header and on the terminal), 404s a path no
+contract declares, and mints the signed `x-jwt-assertion` for everything it lets
+through. The browser's own mock bearer is stripped on the way out — the service
+must never see a caller-supplied identity. MSW never starts.
+
+Roles switch from the badge in the corner, or from `?role=` as always. The badge
+says `wired` rather than `mock` so nobody mistakes real data for seed data.
+
+By hand, from the App Path:
+
+```bash
+AEP_WIRED_API=http://localhost:19090 AEP_WIRED_KEY=/path/to/key.pem npm run dev:mock
+```
+
 ## Pitfalls
 
 | Symptom | Cause | Fix |
@@ -447,3 +488,6 @@ memory for the rest of the run.
 | `tsc --noEmit` passes but `dev:mock` fails on a type | `mock` is missing from `tsconfig.json`'s `include` | Add it, and re-run the type-check. |
 | `TS2339: Property 'env' does not exist on type 'ImportMeta'` | `vite/client` is not in `tsconfig.json`'s `types` | Add `"types": ["vite/client", "node"]`. |
 | `mockServiceWorker.js` appears in `public/` | `npx msw init` was run | Delete it. The plugin serves the script from the installed package. |
+| Wired: `dev:mock` exits saying there is no operation table | `AEP_WIRED_API` is set and no contract declares an `oauth2` scheme | Refused on purpose: with no table every call would be forwarded unauthenticated. Fix the contract, or run plain mock mode. |
+| Wired: every screen 401s | The service's `GATEWAY_ASSERTION_ISSUER`/`_HEADER` do not match this app's | They come from one plan; re-run `wire` rather than editing either side. |
+| Wired: a column is silently empty | The service's response field is named differently from `openapi.yaml` | Not caught by anything in v1 — the proxy does not validate response shapes. It is a real API defect: report it. |

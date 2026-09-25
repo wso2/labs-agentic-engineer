@@ -14,13 +14,15 @@
 # every local bring-up on an Apple-silicon machine exercises it — while amd64 is
 # built by no developer, no script and no other job.
 #
-# remote-worker is built for BOTH platforms, which on this amd64 runner puts its
-# arm64 half under QEMU exactly as the release does. That emulated build is a
+# remote-worker and remote-worker-opencode (the same Dockerfile's
+# `runner-opencode` target) are built for BOTH platforms, which on this amd64
+# runner puts their arm64 halves under QEMU exactly as the release does. That emulated build is a
 # third mode no native build stands in for: a step that runs the target's own
 # binaries can pass natively and die under emulation — chromium does — and the
-# very next release after the `chrome-linux` fix failed that way. Only
-# remote-worker pays for it, being the one Dockerfile that launches programs
-# beyond a compiler at build time; the release has measured it at 28 min cold,
+# very next release after the `chrome-linux` fix failed that way, and the
+# OpenCode target runs its own binary to pre-warm. Only the runner Dockerfile
+# pays for it, being the one that launches programs beyond a compiler at build
+# time; the release has measured it at 28 min cold,
 # less against its buildcache. The other images stay amd64-only. A row's last
 # column opts an image in.
 #
@@ -54,11 +56,12 @@ jobs:
     name: build changed images
     runs-on: ubuntu-latest
     # A budget, not just a ceiling: the images build in sequence in one slot,
-    # and a shared-input change builds all seven. remote-worker is the outlier
+    # and a shared-input change builds all eight. remote-worker is the outlier
     # — it compiles the `bal library` tool, installs a JDK and a chromium,
     # smoke-tests the browser, and does half of that under emulation; the
     # release has measured its two-platform build at 28 min cold, and the other
-    # six follow it here rather than run beside it. Raise this rather than trim
+    # seven follow it here rather than run beside it. remote-worker-opencode
+    # comes right after it and reuses every shared layer from this builder. Raise this rather than trim
     # an image if a cold all-images run legitimately grows past it.
     timeout-minutes: 90
     permissions:
@@ -92,17 +95,20 @@ jobs:
           set -euo pipefail
 
           # name | context | dockerfile | named contexts | platforms (empty =
-          # linux/amd64). Mirrors release.yml's matrix; an image added there
-          # belongs here too. An image is selected when its own directory — the
+          # linux/amd64) | target (empty = the Dockerfile's last stage).
+          # Mirrors release.yml's matrix; an image added there belongs here
+          # too. An image is selected when its own directory — the
           # Dockerfile's — changed.
+          RUNNER_CONTEXTS="skills=skills bal-library-tool=packages/bal-library-tool agent-eval=packages/agent-eval"
           IMAGES=(
-            "remote-worker|runners/remote-worker|runners/remote-worker/Dockerfile|skills=skills bal-library-tool=packages/bal-library-tool|linux/amd64,linux/arm64"
-            "aep-api|services/aep-api|services/aep-api/Dockerfile|skills=skills|"
-            "agents|.|services/agents/Dockerfile||"
-            "collab|.|services/collab/Dockerfile||"
-            "aep-mcp-server|.|services/aep-mcp-server/Dockerfile||"
-            "console|.|apps/console/Dockerfile||"
-            "thunder-app-operator|deployments/single-cluster/resource-types/thunder-app/operator|deployments/single-cluster/resource-types/thunder-app/operator/Dockerfile||"
+            "remote-worker|runners/remote-worker|runners/remote-worker/Dockerfile|$RUNNER_CONTEXTS|linux/amd64,linux/arm64|"
+            "remote-worker-opencode|runners/remote-worker|runners/remote-worker/Dockerfile|$RUNNER_CONTEXTS|linux/amd64,linux/arm64|runner-opencode"
+            "aep-api|services/aep-api|services/aep-api/Dockerfile|skills=skills||"
+            "agents|.|services/agents/Dockerfile|||"
+            "collab|.|services/collab/Dockerfile|||"
+            "aep-mcp-server|.|services/aep-mcp-server/Dockerfile|||"
+            "console|.|apps/console/Dockerfile|||"
+            "thunder-app-operator|deployments/single-cluster/resource-types/thunder-app/operator|deployments/single-cluster/resource-types/thunder-app/operator/Dockerfile|||"
           )
 
           # Inputs no single image owns: the four root manifests and `packages/`
@@ -129,7 +135,7 @@ jobs:
 
           built=0
           for row in "${IMAGES[@]}"; do
-            IFS='|' read -r name context dockerfile contexts platforms <<<"$row"
+            IFS='|' read -r name context dockerfile contexts platforms target <<<"$row"
             platforms=${platforms:-linux/amd64}
 
             selected=$ALL
@@ -144,6 +150,7 @@ jobs:
             # the runner's.
             cmd=(docker buildx build --platform "$platforms" --file "$dockerfile")
             for c in $contexts; do cmd+=(--build-context "$c"); done
+            if [ -n "$target" ]; then cmd+=(--target "$target"); fi
             # --output type=cacheonly: build it, keep nothing. No tag to name and
             # no image to garbage-collect.
             cmd+=(--secret "id=packagePAT,env=PACKAGE_PAT"

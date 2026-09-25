@@ -18,11 +18,16 @@
 
 import { createFileRoute, useRouterState } from "@tanstack/react-router";
 import { RegisterFormPage } from "../features/marketplace/components/RegisterFormPage";
+import { decodePromoteTarget } from "../features/marketplace/lib/promoteTarget";
 
 export const Route = createFileRoute("/resources_/register_/form")({
-  validateSearch: (search: Record<string, unknown>): { name?: string } => {
-    const next: { name?: string } = {};
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { name?: string; promote?: string } => {
+    const next: { name?: string; promote?: string } = {};
     if (typeof search.name === "string") next.name = search.name;
+    // The project's own resource the organization takes over (see promoteTarget.ts).
+    if (decodePromoteTarget(search.promote)) next.promote = search.promote as string;
     return next;
   },
   component: RegisterFormRoute,
@@ -35,14 +40,16 @@ function registerPromptOf(state: unknown): string {
 }
 
 function RegisterFormRoute() {
-  const { name } = Route.useSearch();
+  const { name, promote } = Route.useSearch();
   const prompt = useRouterState({
     select: (s) => registerPromptOf(s.location.state),
   });
+  const promoteTarget = decodePromoteTarget(promote);
   return (
     <RegisterFormPage
       {...(prompt ? { prompt } : {})}
       {...(name !== undefined ? { name } : {})}
+      {...(promoteTarget ? { promote: promoteTarget } : {})}
     />
   );
 }

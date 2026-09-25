@@ -43,8 +43,15 @@ export function applyPrdEdit(view: EditorView, lens: PrdEditLens): void {
 
 /**
  * Delete the `*assumed*` run, and the one space that went with it, so
- * "slot *assumed* — nobody" reads "slot — nobody" and a trailing flag leaves no
- * dangling space behind.
+ * "slot *assumed* — nobody" reads "slot — nobody", "on a schedule *assumed*."
+ * reads "on a schedule." and a trailing flag leaves no dangling space behind.
+ *
+ * The space that went with the flag is the one BEFORE it, whatever follows —
+ * end of line, another word, or the sentence's own punctuation. Deciding by
+ * what follows instead left the space standing on every flag written inside
+ * the sentence it qualifies (`... *assumed*.`), which is where the PRD
+ * contract puts most of them, and the stray space then reached git as a
+ * requirements change nobody made.
  */
 function stripFlag(tr: Transaction, lens: PrdEditLens): void {
   const { from, to } = lens.run;
@@ -54,7 +61,6 @@ function stripFlag(tr: Transaction, lens: PrdEditLens): void {
   const after = to < contentEnd ? tr.doc.textBetween(to, to + 1) : "";
   tr.delete(from, to);
   // After the delete, the character that followed the run now sits at `from`.
-  if (before === " " && after === " ") tr.delete(from, from + 1);
-  else if (before === " " && after === "") tr.delete(from - 1, from);
-  else if (before === "" && after === " ") tr.delete(from, from + 1);
+  if (before === " ") tr.delete(from - 1, from);
+  else if (after === " ") tr.delete(from, from + 1);
 }

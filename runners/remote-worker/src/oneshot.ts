@@ -51,10 +51,9 @@ import type { ComponentEndpoint } from "./lib/validation_context.js";
 import {
   curlConfigHome,
   curlResolveEntries,
-  playwrightCliConfigHome,
   probeEndpoints,
   writeCurlResolveConfig,
-  writePlaywrightCliConfig,
+  writeAgentBrowserWrapper,
 } from "./lib/endpoint_access.js";
 
 function requireEnv(name: string): string {
@@ -224,19 +223,20 @@ async function main(): Promise<number> {
   // A validation run (AEP_TASK_KIND) applies no DESIGN skills at all — it is
   // black-box verification and builds nothing — so `pinnedBodies` stays empty
   // for it. Its workflow arrives another way: alwaysOnSkills() names
-  // `aep-validation` and requireWorkflowBodies() injects the whole SKILL.md into
+  // `acceptance-run` and requireWorkflowBodies() injects the whole SKILL.md into
   // the system prompt, in context from the first token rather than invocable.
   //
   // The ALLOWLIST is not empty though, and that distinction cost a release.
   // Pinning nothing is not the same as allowing nothing: `skills:` gates the
-  // Skill tool, so an empty array made the `playwright-cli` load that
-  // `aep-validation` instructs impossible, and the agent read the mirror's files
+  // Skill tool, so an empty array made the `agent-browser` load that
+  // `acceptance-run` instructs impossible, and the agent read the mirror's files
   // by hand instead. onDemandSkills() names what the phase may load.
   let availableSkillNames: string[] = [];
   let pinnedBodies = "";
+  let pinnedSkillNames: string[] = [];
   if (req.taskKind === "validation") {
     console.log(
-      "[oneshot] validation run — no design skills apply; aep-validation is injected as this run's workflow",
+      "[oneshot] validation run — no design skills apply; acceptance-run is injected as this run's workflow",
     );
     // PREFLIGHT: where the deployed system is, fetched by the platform before the
     // agent starts. Fatal on purpose — an agent that cannot learn its targets has
@@ -271,11 +271,11 @@ async function main(): Promise<number> {
     try {
       const entries = await curlResolveEntries(endpoints, undefined, (l) => console.log(l));
       const written = await writeCurlResolveConfig(curlConfigHome(), entries);
-      // The same override for the exploration browser. Separate file because
-      // `.curlrc` is a curl mechanism and reaches no browser, and separate from
-      // the project's playwright.config.ts because playwright-cli does not read
-      // that either — it was the one client still dialling loopback.
-      const browserConfig = await writePlaywrightCliConfig(playwrightCliConfigHome(), entries);
+      // The same override for the agent's browser, as a PATH wrapper in the
+      // workspace's own bin dir. NOT an env var: the agent-browser skill tells
+      // an agent to export AGENT_BROWSER_ARGS when the browser will not launch,
+      // and one that does would un-map every deployed host. See the writer.
+      const browserWrapper = await writeAgentBrowserWrapper(layout.aepDir, entries);
       if (written === undefined) {
         // No `.localhost` endpoints — a cloud plane resolves them normally and
         // there is nothing to pin. Logged so the absence is a decision on the
@@ -284,9 +284,20 @@ async function main(): Promise<number> {
       } else {
         console.log(`[oneshot] pinned ${entries.length} endpoint host(s) for curl → ${written}`);
       }
-      if (browserConfig !== undefined) {
+      if (browserWrapper !== undefined) {
+        // Not a per-host count like the curl line above it: the browser gets ONE
+        // rule covering the whole `.localhost` family, because it is the only
+        // shape that survives AGENT_BROWSER_ARGS. See hostResolverRules.
+        console.log(`[oneshot] mapped the deployed .localhost hosts for the browser → ${browserWrapper}`);
+      } else if (entries.length > 0) {
+        // Endpoints to map but no wrapper: the k3d bridge did not resolve, or
+        // there is no agent-browser to wrap. Said out loud because the run does
+        // NOT fail here — the browser falls back to DNS, which answers for the
+        // data plane and not for the IdP, and the agent then reports every
+        // signed-in scenario blocked on an unreachable issuer. That reads as a
+        // verdict about the app; this line is what distinguishes it.
         console.log(
-          `[oneshot] pinned ${entries.length} endpoint host(s) for playwright-cli → ${browserConfig}`,
+          "[oneshot] ⚠️  no browser host mapping written — the browser will resolve deployed hosts by DNS",
         );
       }
     } catch (err) {
@@ -321,9 +332,6 @@ async function main(): Promise<number> {
       (l) => console.log(l),
     );
     availableSkillNames = present;
-    console.log(
-      `[oneshot] ${availableSkillNames.length} skill(s) loadable on demand: ${availableSkillNames.join(", ") || "none"}`,
-    );
   } else {
     const pinned = await resolveTaskSkills({
       workspace: layout.workspace,
@@ -342,9 +350,7 @@ async function main(): Promise<number> {
     // preloads guidance.
     availableSkillNames = await listMirroredSkills(layout.workspace);
     pinnedBodies = await readSkillBodies(layout.workspace, present);
-    console.log(
-      `[oneshot] ${availableSkillNames.length} skill(s) available, ${present.length} pinned into context`,
-    );
+    pinnedSkillNames = present;
   }
 
   const log = openTaskLog(layout.workspace);
@@ -357,7 +363,13 @@ async function main(): Promise<number> {
       : undefined;
   let completion: Promise<{ exitCode: number }>;
   try {
-    ({ completion } = await startCodingRun(req, layout, log, { availableSkillNames, pinnedBodies }, mcpAuth));
+    ({ completion } = await startCodingRun(
+      req,
+      layout,
+      log,
+      { availableSkillNames, pinnedBodies, pinnedSkillNames },
+      mcpAuth,
+    ));
   } catch (err) {
     // The mirror carries no workflow skill (see requireWorkflowBodies), so this
     // run has no procedure to follow. Fail the build rather than let the agent

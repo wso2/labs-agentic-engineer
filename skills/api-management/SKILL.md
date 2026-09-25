@@ -171,9 +171,9 @@ below), never 403.
 Three rules, all mandatory in every protected handler:
 
 1. **Verify the assertion once, at the edge of the service.** Copy the verifier
-   from your stack skill and wire it as that skill says. A missing
-   `GATEWAY_ASSERTION_CERTIFICATE` must stop the service from starting: one that
-   runs without it cannot tell a real caller from a forged one.
+   from your stack skill and wire it as that skill says. A partially set
+   `GATEWAY_ASSERTION_CERTIFICATE` trio must stop the service from starting: one
+   that runs on half a config cannot tell a real caller from a forged one.
 2. **Resolve the caller from the verified assertion, in one helper**, rather
    than re-reading a header at each call site — and 401 when a handler that
    needs an identity has none.

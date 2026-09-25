@@ -22,20 +22,31 @@ type RunVerdict = NonNullable<
 //   localStorage.setItem('aep:mock:validation', 'failed')
 //   localStorage.removeItem('aep:mock:validation')   // back to the project scenario
 //
-// Two companion keys narrow the `running` scenario further — which ATTEMPT is in
-// flight (see ValidationAttempt below) and whether the repo has an oracle at all:
-//   localStorage.setItem('aep:mock:validation-criteria', 'missing')
-// which drops validation-criteria.json from the file list, so the read 404s the way
-// it does for a version whose spec authored none (handlers/project.ts). The same key
-// also takes:
-//   localStorage.setItem('aep:mock:validation-criteria', 'drifted')
-// which adds a criterion to the ORACLE that the report does not speak for — see
-// DRIFTED below.
+// Two companion keys narrow it — whether the newest attempt is a REPEAT over a
+// failed one (see ValidationAttempt below) and whether the repo has an oracle at all:
+//   localStorage.setItem('aep:mock:acceptance-criteria', 'missing')
+// which drops every specs/validation/acceptance/*.feature from the file list, so the page sees
+// a version whose spec authored none (handlers/project.ts). The same key also takes:
+//   localStorage.setItem('aep:mock:acceptance-criteria', 'drifted')
+// which adds a SCENARIO to the feature files that the pinned report does not speak
+// for — see DRIFTED below.
 //
 // Setting it alone is enough: with no `aep:mock:project` chosen, the base scenario
 // becomes `deployed` rather than the usual `building`, because a verdict only
 // exists on a version whose run got that far (see handlers/project.ts).
 export type ValidationScenario = DeployStage["validation"];
+
+/**
+ * The two keys read together: what state the version is in, and — where the
+ * scenario alone cannot say — whether a failed attempt came before it. One value
+ * rather than two arguments, because every read below must be told the same
+ * story or the page and the board disagree about one run again (#423).
+ */
+export interface ValidationStory {
+  scenario: ValidationScenario;
+  /** Whether the newest attempt is the first or a repeat — see ValidationAttempt. */
+  attempt?: ValidationAttempt;
+}
 
 /** The switch's accepted values — also the list the handler validates against. */
 export const VALIDATION_SCENARIOS: ValidationScenario[] = [
@@ -53,9 +64,7 @@ export const VALIDATION_SCENARIOS: ValidationScenario[] = [
 
 // The paths this module owns. The handler drops them from the project scenario's
 // file list before splicing in the ones a verdict override implies.
-export const CRITERIA_PATH = "specs/validation/validation-criteria.json";
-export const REPORT_PATH = "tests/validation/report.json";
-export const VALIDATION_FILE_PATHS = [CRITERIA_PATH, REPORT_PATH];
+export const REPORT_PATH = "tests/acceptance/report.json";
 
 // Same repo the project fixtures use. Duplicated rather than imported so this
 // module stays a LEAF — ./project.ts imports the default artifacts from here, and
@@ -66,385 +75,562 @@ const REPO_URL = "https://github.com/acme-dev/demo-shop";
 // The oracle and the report, built together from one catalogue
 // ---------------------------------------------------------------------------
 
-// Every scenario draws its criteria from this one list, so a reader comparing two
-// verdicts sees only the OUTCOMES move: a criterion's id, requirement, wording and
-// method are the same everywhere they appear.
-interface CatalogueEntry {
-  req: string;
-  statement: string;
-  id: string;
-  must: string;
-  method: "e2e" | "scenario" | "manual";
+// Every scenario draws from this one catalogue, so a reader comparing two verdicts
+// sees only the OUTCOMES move: a feature's name, its rules, its wording and its
+// steps are the same everywhere they appear.
+
+interface ScenarioSpec {
+  name: string;
+  /** `@negative` — the product refuses, rejects or limits. */
+  negative?: boolean;
+  steps: { keyword: string; text: string }[];
 }
 
-const REQ_001 =
-  "Shoppers can browse and search the catalog by name and category.";
-const REQ_002 = "Cart contents persist across browser sessions.";
-const REQ_003 =
-  "Checkout produces an order visible in the shopper's order history.";
+interface RuleSpec {
+  story: number;
+  text: string;
+  scenarios: ScenarioSpec[];
+}
 
-const CATALOGUE: CatalogueEntry[] = [
+interface FeatureSpec {
+  slug: string;
+  name: string;
+  rules: RuleSpec[];
+}
+
+const CATALOGUE: FeatureSpec[] = [
   {
-    req: "REQ-001",
-    statement: REQ_001,
-    id: "AC-001-a",
-    must: "A shopper can search products by name and see matching results",
-    method: "e2e",
+    slug: "browsing-the-catalog",
+    name: "Browsing the catalog",
+    rules: [
+      {
+        story: 1,
+        text: "A shopper can find a product by name",
+        scenarios: [
+          {
+            name: "Searching for a product by name",
+            steps: [
+              { keyword: "Given", text: 'the catalog has a product named "Cedar Desk Lamp"' },
+              { keyword: "When", text: 'Priya searches for "Cedar Desk"' },
+              { keyword: "Then", text: 'the results include "Cedar Desk Lamp"' },
+            ],
+          },
+        ],
+      },
+      {
+        story: 1,
+        text: "A shopper can narrow the catalog to one category",
+        scenarios: [
+          {
+            name: "Filtering the catalog by category",
+            steps: [
+              { keyword: "Given", text: "the catalog has products in Lighting and in Accessories" },
+              { keyword: "When", text: "Priya filters the catalog to Accessories" },
+              { keyword: "Then", text: "every product shown is in Accessories" },
+            ],
+          },
+          // Deliberately LAST in the last rule of its feature — see DRIFTED below.
+          {
+            name: "A search that matches nothing explains itself",
+            negative: true,
+            steps: [
+              { keyword: "Given", text: "the catalog has no product named \"Zeppelin\"" },
+              { keyword: "When", text: 'Priya searches for "Zeppelin"' },
+              { keyword: "Then", text: "she is shown that nothing matched, and no products" },
+            ],
+          },
+        ],
+      },
+    ],
   },
   {
-    req: "REQ-001",
-    statement: REQ_001,
-    id: "AC-001-b",
-    must: "A shopper can filter the catalog by category",
-    method: "e2e",
+    slug: "the-cart",
+    name: "The cart",
+    rules: [
+      {
+        story: 2,
+        text: "A cart's contents survive a browser restart",
+        scenarios: [
+          {
+            name: "Reopening the shop with items in the cart",
+            steps: [
+              { keyword: "Given", text: 'Priya has "Cedar Desk Lamp" in her cart' },
+              { keyword: "When", text: "she closes the browser and opens the shop again" },
+              { keyword: "Then", text: 'her cart still holds "Cedar Desk Lamp"' },
+            ],
+          },
+        ],
+      },
+      {
+        story: 2,
+        text: "The cart total tracks what is in it",
+        scenarios: [
+          {
+            name: "Adding an item updates the total",
+            steps: [
+              { keyword: "Given", text: "Priya has an empty cart" },
+              { keyword: "When", text: 'she adds "Cedar Desk Lamp" at "42.00"' },
+              { keyword: "Then", text: 'the cart total is "42.00"' },
+            ],
+          },
+          {
+            name: "A cart cannot hold more of an item than the shop has",
+            negative: true,
+            steps: [
+              { keyword: "Given", text: '"Cedar Desk Lamp" has 2 left in stock' },
+              { keyword: "When", text: "Priya tries to add 3 of them to her cart" },
+              { keyword: "Then", text: 'her cart holds 2 of "Cedar Desk Lamp"' },
+            ],
+          },
+        ],
+      },
+    ],
   },
   {
-    req: "REQ-002",
-    statement: REQ_002,
-    id: "AC-002-a",
-    must: "A cart's contents survive a browser restart for the same shopper",
-    method: "e2e",
-  },
-  {
-    req: "REQ-002",
-    statement: REQ_002,
-    id: "AC-002-b",
-    must: "The cart total updates promptly as items are added or removed",
-    method: "scenario",
-  },
-  {
-    req: "REQ-003",
-    statement: REQ_003,
-    id: "AC-003-a",
-    must: "Completing checkout creates an order visible in order history",
-    method: "e2e",
-  },
-  {
-    req: "REQ-003",
-    statement: REQ_003,
-    id: "AC-003-b",
-    must: "Payment details are transmitted over an encrypted connection",
-    method: "manual",
+    slug: "checkout",
+    name: "Checkout",
+    rules: [
+      {
+        story: 3,
+        text: "Completing checkout creates an order in the shopper's history",
+        scenarios: [
+          {
+            name: "Placing an order",
+            steps: [
+              { keyword: "Given", text: 'Priya has "Cedar Desk Lamp" in her cart' },
+              { keyword: "When", text: "she completes checkout" },
+              { keyword: "Then", text: 'her order history includes an order for "Cedar Desk Lamp"' },
+            ],
+          },
+        ],
+      },
+      {
+        story: 3,
+        text: "Payment details are transmitted over an encrypted connection",
+        scenarios: [
+          {
+            name: "The payment step is encrypted",
+            steps: [
+              { keyword: "Given", text: "Priya is at the payment step" },
+              { keyword: "When", text: "she submits her card details" },
+              { keyword: "Then", text: "the details leave the browser encrypted" },
+            ],
+          },
+        ],
+      },
+    ],
   },
 ];
 
 /**
- * A criterion the oracle carries and the pinned report does not.
+ * A scenario the feature files carry and the pinned report does not.
  *
- * Deliberately OUTSIDE the catalogue. build() derives both files from one outcome
- * map, so every entry it can see lands in both — and drift is precisely the case
- * where the two files disagree, which is why this is spliced into the oracle after
- * the pair is built.
+ * It is the one that sits LAST in the last rule of its feature, so including it
+ * moves no other scenario's line number — the report's `line` values stay true of
+ * the files shipped beside them, drifted or not.
  *
- * Not a contrived state: the console reads the criteria at the branch tip and the
- * report at the merge commit of the attempt that wrote it, so any criterion
+ * Not a contrived state: the console reads the feature files at the branch tip and
+ * the report at the merge commit of the attempt that wrote it, so any scenario
  * authored since that attempt looks exactly like this. Asking the agent for one
- * more criterion after reading a failure is the ordinary way to get here.
+ * more scenario after reading a failure is the ordinary way to get here.
  */
-const DRIFTED: CatalogueEntry = {
-  req: "REQ-001",
-  statement: REQ_001,
-  id: "AC-001-c",
-  must: "A search with no matches explains that nothing was found",
-  method: "e2e",
-};
+const DRIFTED = "A search that matches nothing explains itself";
 
-/** The oracle with DRIFTED appended to its requirement; the report is left alone. */
-function withDrift(criteria: string): string {
-  const doc = JSON.parse(criteria) as {
-    requirements: {
-      id: string;
-      statement: string;
-      criteria: Record<string, unknown>[];
-    }[];
-  };
-  const entry = { id: DRIFTED.id, must: DRIFTED.must, method: DRIFTED.method };
-  const req = doc.requirements.find((r) => r.id === DRIFTED.req);
-  if (req) req.criteria.push(entry);
-  else {
-    doc.requirements.push({
-      id: DRIFTED.req,
-      statement: DRIFTED.statement,
-      criteria: [entry],
-    });
-  }
-  return JSON.stringify(doc, null, 2);
+/** What a run made of one scenario, and the evidence it recorded step by step. */
+interface Step {
+  command?: string;
+  exit?: number;
+  observed?: string;
 }
 
-/** One criterion's outcome in a run report — the only thing a scenario varies. */
+/**
+ * The failure-time capture — what the SYSTEM was doing when a scenario failed,
+ * read while the page was still open. Only a `failed` outcome carries one, and
+ * the checker requires it there: after the run neither half can be recovered.
+ */
+interface Capture {
+  network: { method: string; url: string; status: number }[];
+  console: string[];
+  snapshot?: string;
+}
+
 interface Outcome {
-  status: "pass" | "fail" | "not_run" | "not_validated" | "manual";
-  spec?: string;
-  // The real shape the runner writes: an object, not a bare string. A
-  // string-shaped mock is what let the view's failure block look fine while dead.
-  failure?: { message: string; location: string };
-  flaky?: boolean;
-  healed?: boolean;
-  durationMs?: number;
+  outcome: "passed" | "failed" | "blocked" | "unjudgeable";
+  /**
+   * Aligned to the scenario's steps, and allowed to be SHORTER: a blocked run
+   * stops where it was stopped, and the steps past that point are specification
+   * the run never reached.
+   */
+  steps: Step[];
+  /** Required on `failed`, meaningless anywhere else. */
+  capture?: Capture;
 }
 
 interface Artifacts {
-  /** validation-criteria.json — absent when the project authored no oracle. */
-  criteria?: string;
-  /** report.json — absent when the run committed none (`unreported`). */
-  report?: string;
+  /** The outcome map, or undefined when the project authored no feature files. */
+  outcomes?: Record<string, Outcome>;
+  /** Whether the run committed a report — `unreported` is the absence of one. */
+  reported: boolean;
 }
 
-// build derives BOTH files from one outcome map, which is what keeps a scenario
-// honest: the oracle can only list criteria the report speaks for, and the
-// report's totals are counted rather than typed. Criteria absent from the map are
-// absent from the oracle — that is how `passed` gets an all-automatable oracle
-// while `inconclusive` gets one with nothing automatable in it.
-function build(outcomes: Record<string, Outcome>): {
-  criteria: string;
-  report: string;
-} {
-  const chosen: { entry: CatalogueEntry; outcome: Outcome }[] = [];
-  for (const entry of CATALOGUE) {
-    const outcome = outcomes[entry.id];
-    if (outcome) chosen.push({ entry, outcome });
-  }
-
-  const byReq = new Map<
-    string,
-    { statement: string; entries: CatalogueEntry[] }
-  >();
-  for (const { entry } of chosen) {
-    const group = byReq.get(entry.req);
-    if (group) group.entries.push(entry);
-    else byReq.set(entry.req, { statement: entry.statement, entries: [entry] });
-  }
-
-  const criteria = JSON.stringify(
-    {
-      requirements: [...byReq].map(([id, group]) => ({
-        id,
-        statement: group.statement,
-        criteria: group.entries.map((c) => ({
-          id: c.id,
-          must: c.must,
-          method: c.method,
-        })),
-      })),
-    },
-    null,
-    2,
-  );
-
-  const e2e = { total: 0, pass: 0, fail: 0, notRun: 0 };
-  let manual = 0;
-  let scenario = 0;
-  for (const { entry, outcome } of chosen) {
-    if (entry.method === "manual") manual += 1;
-    else if (entry.method === "scenario") scenario += 1;
-    else {
-      e2e.total += 1;
-      if (outcome.status === "pass") e2e.pass += 1;
-      else if (outcome.status === "fail") e2e.fail += 1;
-      else e2e.notRun += 1;
-    }
-  }
-
-  const report = JSON.stringify(
-    {
-      schemaVersion: 1,
-      issue: 30,
-      commit: "a1b2c3d",
-      generatedAt: "2026-07-20T10:00:00.000Z",
-      playwrightVersion: "1.55.0",
-      totals: { e2e, manual, scenario },
-      criteria: chosen.map(({ entry, outcome }) => ({
-        id: entry.id,
-        requirementId: entry.req,
-        // The generator echoes the `must` into the report, so a reader (and a
-        // repair issue) never needs the oracle to know what the criterion demanded.
-        must: entry.must,
-        method: entry.method,
-        status: outcome.status,
-        spec: outcome.spec ?? null,
-        healed: outcome.healed ?? false,
-        healAttempts: outcome.healed ? 1 : 0,
-        flaky: outcome.flaky ?? false,
-        durationMs: outcome.durationMs ?? 0,
-        failure: outcome.failure ?? null,
-      })),
-    },
-    null,
-    2,
-  );
-
-  return { criteria, report };
+/** `bought-items` -> `specs/validation/acceptance/bought-items.feature`. */
+function featurePath(slug: string): string {
+  return `specs/validation/acceptance/${slug}.feature`;
 }
 
-// A representative Playwright failure: multi-line, with the locator that timed
-// out, so the failure block is exercised at a realistic size.
-const TIMEOUT_FAILURE = {
-  message:
-    "TimeoutError: locator.click: Timeout 5000ms exceeded.\n  waiting for getByRole('option', { name: 'Accessories' })",
-  location: "tests/e2e/specs/AC-001-b.spec.ts:31",
-};
-
-// Everything automated, everything green. The oracle is the four e2e criteria
-// ONLY: a `passed` verdict over an oracle carrying a manual criterion is
-// unreachable, because the runner reports that criterion `manual` and an uncovered
-// criterion is precisely what makes a run `partial`.
-const PASSED = build({
-  "AC-001-a": {
-    status: "pass",
-    spec: "tests/e2e/specs/AC-001-a.spec.ts",
-    durationMs: 1840,
-  },
-  "AC-001-b": {
-    status: "pass",
-    spec: "tests/e2e/specs/AC-001-b.spec.ts",
-    healed: true,
-    durationMs: 2210,
-  },
-  "AC-002-a": {
-    status: "pass",
-    spec: "tests/e2e/specs/AC-002-a.spec.ts",
-    durationMs: 980,
-  },
-  "AC-003-a": {
-    status: "pass",
-    spec: "tests/e2e/specs/AC-003-a.spec.ts",
-    flaky: true,
-    durationMs: 3120,
-  },
-});
-
-// Something passed, nothing failed, and three criteria were never answered — one
-// e2e that never ran plus the two methods no runner executes. Exercises every
-// state chip except `fail`.
-const PARTIAL = build({
-  "AC-001-a": {
-    status: "pass",
-    spec: "tests/e2e/specs/AC-001-a.spec.ts",
-    durationMs: 1840,
-  },
-  "AC-001-b": {
-    status: "pass",
-    spec: "tests/e2e/specs/AC-001-b.spec.ts",
-    durationMs: 2600,
-  },
-  "AC-002-a": { status: "not_run" },
-  "AC-002-b": { status: "not_validated" },
-  "AC-003-a": {
-    status: "pass",
-    spec: "tests/e2e/specs/AC-003-a.spec.ts",
-    healed: true,
-    durationMs: 3120,
-  },
-  "AC-003-b": { status: "manual" },
-});
-
-// The same oracle with one criterion lost. `fail` wins the verdict outright, which
-// is why this scenario keeps the uncovered criteria: the tile has to count the
-// failure against the whole set, not against the criteria that ran.
-const FAILED = build({
-  "AC-001-a": {
-    status: "pass",
-    spec: "tests/e2e/specs/AC-001-a.spec.ts",
-    durationMs: 1840,
-  },
-  "AC-001-b": {
-    status: "fail",
-    spec: "tests/e2e/specs/AC-001-b.spec.ts",
-    failure: TIMEOUT_FAILURE,
-    flaky: true,
-    durationMs: 2600,
-  },
-  "AC-002-a": { status: "not_run" },
-  "AC-002-b": { status: "not_validated" },
-  "AC-003-a": {
-    status: "pass",
-    spec: "tests/e2e/specs/AC-003-a.spec.ts",
-    healed: true,
-    durationMs: 3120,
-  },
-  "AC-003-b": { status: "manual" },
-});
-
-// Nothing failed because nothing ran: an oracle whose criteria are all manual or
-// scenario, plus an e2e whose spec was never written. Zero passes is what makes it
-// inconclusive rather than partial.
-const INCONCLUSIVE = build({
-  "AC-002-a": { status: "not_run" },
-  "AC-002-b": { status: "not_validated" },
-  "AC-003-b": { status: "manual" },
-});
+interface Located {
+  file: string;
+  feature: string;
+  rule: string;
+  line: number;
+}
 
 /**
- * The default oracle: the full six, mixed across all three methods. It is what the
- * Spec view previews (criteria only, no report), so it stays the widest one.
+ * The feature files for a set of scenario names, and where each one landed.
+ *
+ * Emitting the text and recording the line in one pass is what keeps the report's
+ * `line` honest: typed line numbers go stale the moment a step is reworded, and a
+ * stale one is exactly the breach `check-report.mjs` fails a real run for.
  */
-export const DEFAULT_VALIDATION_CRITERIA = PARTIAL.criteria;
+function featureFiles(names: ReadonlySet<string>): {
+  files: { path: string; content: string }[];
+  located: Map<string, Located>;
+} {
+  const files: { path: string; content: string }[] = [];
+  const located = new Map<string, Located>();
+
+  for (const feature of CATALOGUE) {
+    const lines: string[] = [`Feature: ${feature.name}`];
+    let wrote = false;
+    for (const rule of feature.rules) {
+      const scenarios = rule.scenarios.filter((s) => names.has(s.name));
+      if (scenarios.length === 0) continue;
+      wrote = true;
+      lines.push("", `  @story-${rule.story}`, `  Rule: ${rule.text}`);
+      for (const scenario of scenarios) {
+        lines.push("");
+        if (scenario.negative) lines.push("    @negative");
+        lines.push(`    Scenario: ${scenario.name}`);
+        located.set(scenario.name, {
+          file: featurePath(feature.slug),
+          feature: feature.name,
+          rule: rule.text,
+          line: lines.length,
+        });
+        for (const step of scenario.steps) lines.push(`      ${step.keyword} ${step.text}`);
+      }
+    }
+    if (wrote) files.push({ path: featurePath(feature.slug), content: `${lines.join("\n")}\n` });
+  }
+  return { files, located };
+}
+
+/** Every step a scenario declares, by name. */
+const STEPS_OF = new Map<string, { keyword: string; text: string }[]>(
+  CATALOGUE.flatMap((f) => f.rules.flatMap((r) => r.scenarios.map((s) => [s.name, s.steps] as const))),
+);
+
+/** Whether a scenario carries `@negative`, by name. */
+const NEGATIVE_OF = new Set(
+  CATALOGUE.flatMap((f) =>
+    f.rules.flatMap((r) => r.scenarios.filter((s) => s.negative).map((s) => s.name)),
+  ),
+);
+
+/** The isolation note. A paragraph, as a real one is — the view gives it room. */
+const ISOLATION =
+  "Every scenario creates the cart or the order it asserts on through the shop's own " +
+  "interface, with a run-unique suffix on any product name it adds, and asserts only " +
+  "within it. The two catalog scenarios have no container to own, so they assert on " +
+  "the change in the result count rather than on an absolute total — sound because " +
+  "the platform runs one validation at a time per version.";
+
+/** schemaVersion 2, keyed by scenario, as `report.go` and the run's checker read it. */
+function reportFor(
+  outcomes: Record<string, Outcome>,
+  located: Map<string, Located>,
+): string {
+  return JSON.stringify(
+    {
+      schemaVersion: 2,
+      generatedAt: "2026-07-20T10:00:00.000Z",
+      commit: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+      baseUrl: "https://demo-shop--development.openchoreoapis.localhost:19080/",
+      isolation: ISOLATION,
+      scenarios: Object.entries(outcomes).map(([name, outcome]) => {
+        const where = located.get(name);
+        const steps = STEPS_OF.get(name) ?? [];
+        return {
+          feature: where?.feature ?? "",
+          featureFile: where?.file ?? "",
+          line: where?.line ?? 0,
+          rule: where?.rule ?? "",
+          scenario: name,
+          tags: NEGATIVE_OF.has(name) ? ["@negative"] : [],
+          outcome: outcome.outcome,
+          // Only as far as the run got. The steps past the end are specification,
+          // and the view renders them as never reached.
+          steps: outcome.steps.map((e, i) => ({
+            text: steps[i]?.text ?? "",
+            keyword: steps[i]?.keyword ?? "",
+            ...(e.command !== undefined ? { command: e.command } : {}),
+            ...(e.exit !== undefined ? { exit: e.exit } : {}),
+            ...(e.observed !== undefined ? { observed: e.observed } : {}),
+          })),
+          ...(outcome.capture !== undefined ? { evidence: outcome.capture } : {}),
+        };
+      }),
+    },
+    null,
+    2,
+  );
+}
+
+// Settled three ways, so the evidence on screen is the shape a real run writes:
+// a `wait` whose exit code IS the verdict, a `get count` that exits 0 because the
+// command RAN and therefore has to record the value the agent read, and a step
+// with no command at all, which has to say why.
+const found = (what: string): Step => ({
+  command: `agent-browser wait --text ${JSON.stringify(what)} --timeout 3000`,
+  exit: 0,
+});
+const counted = (selector: string, observed: string): Step => ({
+  command: `agent-browser get count ${JSON.stringify(selector)}`,
+  exit: 0,
+  observed,
+});
+const clicked = (name: string): Step => ({
+  command: `agent-browser find role button click --name ${JSON.stringify(name)}`,
+  exit: 0,
+});
+
+const PASS_SEARCH: Outcome = {
+  outcome: "passed",
+  steps: [
+    { command: 'POST /products {"name":"Cedar Desk Lamp-vr8821","category":"Lighting"}', exit: 0 },
+    { command: 'agent-browser find label "Search" fill "Cedar Desk"; agent-browser press Enter', exit: 0 },
+    found("Cedar Desk Lamp-vr8821"),
+  ],
+};
+const PASS_FILTER: Outcome = {
+  outcome: "passed",
+  steps: [
+    { command: "POST /products x2 (Lighting, Accessories)", exit: 0 },
+    clicked("Accessories"),
+    counted('[data-testid="product"]:not([data-category="Accessories"])', "0 — every row shown is in Accessories"),
+  ],
+};
+const PASS_PERSIST: Outcome = {
+  outcome: "passed",
+  steps: [
+    { command: "POST /cart/items {\"name\":\"Cedar Desk Lamp-vr8821\"}", exit: 0 },
+    { command: "agent-browser close; agent-browser open https://demo-shop…/", exit: 0 },
+    found("Cedar Desk Lamp-vr8821"),
+  ],
+};
+const PASS_TOTAL: Outcome = {
+  outcome: "passed",
+  steps: [
+    { command: "agent-browser get count \"[data-testid=cart-row]\"", exit: 0, observed: "0 — the cart starts empty" },
+    clicked("Add to cart"),
+    found("42.00"),
+  ],
+};
+const PASS_ORDER: Outcome = {
+  outcome: "passed",
+  steps: [
+    { command: 'POST /cart/items {"name":"Cedar Desk Lamp-vr8821"}', exit: 0 },
+    clicked("Place order"),
+    found("Cedar Desk Lamp-vr8821"),
+  ],
+};
+
+// A refusal the shop gets WRONG: it accepts three of a product it has two of.
+const FAIL_STOCK: Outcome = {
+  outcome: "failed",
+  steps: [
+    { command: 'POST /products {"name":"Cedar Desk Lamp-vr8821","stock":2}', exit: 0 },
+    {
+      command: 'agent-browser find label "Quantity" fill "3"; agent-browser find role button click --name "Add to cart"',
+      exit: 0,
+      observed: "the form accepted the quantity and returned to the cart",
+    },
+    {
+      command: 'agent-browser get value "[data-testid=cart-qty]"',
+      exit: 1,
+      observed: '3 — the cart holds three of a product the shop has two of',
+    },
+  ],
+  // The request LEFT and the server said yes. That is what makes this a stock
+  // rule the shop does not enforce, rather than a form that failed to submit —
+  // and the step trace above reads identically for both.
+  capture: {
+    network: [{ method: "POST", url: "/cart/items", status: 201 }],
+    console: [],
+    snapshot: '- row "Cedar Desk Lamp-vr8821"\n  - textbox "Quantity": "3"',
+  },
+};
+
+// Blocked, not failed: the control the When needs is ABSENT, so the behaviour was
+// never reached. A person has to say whether that is the shop correctly refusing
+// or the shop being broken, which is why no repair is filed for it.
+const BLOCKED_STOCK: Outcome = {
+  outcome: "blocked",
+  steps: [
+    { command: 'POST /products {"name":"Cedar Desk Lamp-vr8821","stock":2}', exit: 0 },
+    {
+      command: 'agent-browser snapshot -i',
+      observed:
+        'The quantity control on the product page is a select whose options stop at the stock count — it offers "1" and "2" and nothing else, and the free-text box the desktop layout used is absent here. There is no enabled control through which a quantity of 3 can be entered, so the action this step describes cannot be attempted through the UI. `agent-browser network requests` confirms no POST /cart/items left the page.',
+    },
+  ],
+};
+
+// Unjudgeable: the answer lives outside the running app. Honest, and not a defect.
+const UNJUDGEABLE_TLS: Outcome = {
+  outcome: "unjudgeable",
+  steps: [
+    { command: "agent-browser open https://demo-shop…/checkout/payment", exit: 0 },
+    clicked("Pay"),
+    {
+      observed:
+        "Whether the details left the browser encrypted is a property of the transport, not of anything the shop renders: the page shows a confirmation either way, and the development deployment terminates TLS at the gateway ahead of the app. Nothing in the running system can settle this, so it is reported rather than guessed at.",
+    },
+  ],
+};
+
+// Everything settled, everything green. The two scenarios a run cannot settle are
+// absent from the oracle entirely — a `passed` verdict over a spec containing one
+// is unreachable, because an unsettled scenario is precisely what makes a run
+// `partial`.
+const PASSED: Record<string, Outcome> = {
+  "Searching for a product by name": PASS_SEARCH,
+  "Filtering the catalog by category": PASS_FILTER,
+  "Reopening the shop with items in the cart": PASS_PERSIST,
+  "Adding an item updates the total": PASS_TOTAL,
+  "Placing an order": PASS_ORDER,
+};
+
+// Everything that ran passed, and two scenarios could not be settled — one blocked
+// by an absent control, one whose truth lives outside the app. Exercises every
+// outcome chip except `Failed`.
+const PARTIAL: Record<string, Outcome> = {
+  ...PASSED,
+  "A cart cannot hold more of an item than the shop has": BLOCKED_STOCK,
+  "The payment step is encrypted": UNJUDGEABLE_TLS,
+};
+
+// One real defect, beside one scenario nobody could settle — the pair the page has
+// to keep apart, because one says the behaviour is wrong and the other says it was
+// never reached.
+const FAILED: Record<string, Outcome> = {
+  ...PASSED,
+  "A cart cannot hold more of an item than the shop has": FAIL_STOCK,
+  "The payment step is encrypted": UNJUDGEABLE_TLS,
+};
+
+// Nothing passed: every scenario was blocked or unanswerable, which is what
+// `inconclusive` means — the run produced no verdict anyone can act on.
+const INCONCLUSIVE: Record<string, Outcome> = {
+  "A cart cannot hold more of an item than the shop has": BLOCKED_STOCK,
+  "The payment step is encrypted": UNJUDGEABLE_TLS,
+};
+
+/**
+ * The default oracle: the widest set, which the Spec view previews with no report.
+ */
+export const DEFAULT_ACCEPTANCE_FEATURES = featureFiles(
+  new Set([...Object.keys(PARTIAL), DRIFTED]),
+).files;
 
 /**
  * The default report, paired with the default verdict on ./project.ts's settled
  * run. It is the `partial` one because that is the only verdict this oracle can
- * honestly reach: two of its six criteria are methods no runner executes, so a
- * green report over it would be claiming a result for criteria nobody checked.
+ * honestly reach: two of its scenarios are ones a run cannot settle, so a green
+ * report over it would be claiming a result nobody produced.
  */
-export const DEFAULT_VALIDATION_REPORT = PARTIAL.report;
+export const DEFAULT_VALIDATION_REPORT = (() => {
+  const { located } = featureFiles(new Set(Object.keys(PARTIAL)));
+  return reportFor(PARTIAL, located);
+})();
 
-// Per verdict: the pair of files a project in that state actually has on disk.
-// Chosen together, because a verdict is a statement ABOUT the pair — `unreported`
-// is not an empty report, it is the absence of one, and `skipped` has no oracle at
-// all, which is why it was skipped.
+// Per verdict: what a project in that state actually has on disk. Chosen together,
+// because a verdict is a statement ABOUT the pair — `unreported` is not an empty
+// report, it is the absence of one, and `skipped` has no oracle at all, which is
+// why it was skipped.
 const ARTIFACTS: Record<ValidationScenario, Artifacts> = {
-  passed: PASSED,
-  partial: PARTIAL,
-  failed: FAILED,
-  inconclusive: INCONCLUSIVE,
+  passed: { outcomes: PASSED, reported: true },
+  partial: { outcomes: PARTIAL, reported: true },
+  failed: { outcomes: FAILED, reported: true },
+  inconclusive: { outcomes: INCONCLUSIVE, reported: true },
   // The run reached its validation cycle's merge commit and found nothing there.
-  unreported: { criteria: PARTIAL.criteria },
-  // No acceptance oracle was ever authored — that IS the reason it was skipped.
-  skipped: {},
+  unreported: { outcomes: PARTIAL, reported: false },
+  // No acceptance criteria were ever authored — that IS the reason it was skipped.
+  skipped: { reported: false },
   // The oracle exists; the report does not yet, because the attempt is still
-  // running or has not started. A REPEAT attempt does have one — see REPEAT_ARTIFACTS.
-  running: { criteria: PARTIAL.criteria },
-  none: { criteria: PARTIAL.criteria },
-  // Same pair as `none`: the oracle was authored, and the attempt that would have
-  // written a report against it was stopped before it committed one. The absence
-  // here is why the page must not read `cancelled` as "no criteria" — the criteria
+  // running or has not started. A REPEAT attempt does have one — see below.
+  running: { outcomes: PARTIAL, reported: false },
+  none: { outcomes: PARTIAL, reported: false },
+  // Same pair as `none`: the criteria were authored, and the attempt that would
+  // have written a report against them was stopped before it committed one. The
+  // absence here is why the page must not read `cancelled` as "no criteria" — they
   // are right there, unanswered.
-  cancelled: { criteria: PARTIAL.criteria },
+  cancelled: { outcomes: PARTIAL, reported: false },
   // Mid-repair: the failed attempt's report is committed and stays readable, which
   // is what lets the page show WHAT is being fixed while the fix is in flight.
-  "awaiting-fix": FAILED,
+  "awaiting-fix": { outcomes: FAILED, reported: true },
 };
 
 /** The validation artifacts a scenario puts in the repo, as Files-API entries. */
 export function validationFiles(
-  scenario: ValidationScenario,
-  attempt: ValidationAttempt = "first",
+  story: ValidationStory,
   drifted = false,
 ): { path: string; content: string }[] {
-  // A repeat attempt is running OVER a failed one whose report is still committed —
-  // which is what its copy counts. A first attempt has the oracle and nothing else.
-  const { criteria, report } = isRepeat(scenario, attempt)
-    ? FAILED
-    : ARTIFACTS[scenario];
-  // Only the oracle moves: a report is written once and pinned, so drift can only
-  // ever come from the criteria side.
-  const oracle = criteria && drifted ? withDrift(criteria) : criteria;
+  const { outcomes, reported } = previousReportStands(story)
+    ? { outcomes: FAILED, reported: true }
+    : ARTIFACTS[story.scenario];
+  if (!outcomes) return [];
+
+  // Only the SPECIFICATION moves: a report is written once and pinned, so drift can
+  // only ever come from the feature-file side.
+  const names = new Set(Object.keys(outcomes));
+  const { located } = featureFiles(names);
+  if (drifted) names.add(DRIFTED);
+  const { files } = featureFiles(names);
+
   return [
-    ...(oracle ? [{ path: CRITERIA_PATH, content: oracle }] : []),
-    ...(report ? [{ path: REPORT_PATH, content: report }] : []),
+    ...files,
+    ...(reported ? [{ path: REPORT_PATH, content: reportFor(outcomes, located) }] : []),
   ];
 }
+
+/**
+ * Every path this module can put in the repo — what the handler swaps out before
+ * splicing in the ones a verdict override implies.
+ */
+export const ACCEPTANCE_PATHS = CATALOGUE.map((f) => featurePath(f.slug));
+export const VALIDATION_FILE_PATHS = [...ACCEPTANCE_PATHS, REPORT_PATH];
 
 // ---------------------------------------------------------------------------
 // The run story behind each verdict
 // ---------------------------------------------------------------------------
 
-// The cycles are not decoration: the page reads the report at the LAST validation
-// cycle's mergeSha, the deployments chip is derived from whether the LATEST cycle
-// is an in-flight validation one, and `awaiting-fix` exists only because a coding
-// cycle follows a failed attempt. A verdict with the wrong cycles renders the
-// wrong page.
+// Validation is its own run. The DEV run delivers the version — coding cycles
+// only — and mints its validation task at deployed-green, settling with an EMPTY
+// verdict: delivered, not yet judged. A VALIDATION run (kind `validation`, origin
+// `revalidate` whether the sweep started it off that task or a person clicked)
+// judges it in one cycle, or two when the agent merged without a report and the
+// platform dispatched again. A failed verdict files one repair issue per failed
+// criterion, an ordinary TASK run works them, and the sweep judges again. So a
+// version's story is its dev run followed by one validation run per attempt, and
+// every read takes the version's answer off the newest of those.
+//
+// The cycles are not decoration: the page reads each attempt's report at its own
+// cycle's mergeSha, the deployments chip is derived from whether the newest
+// validation cycle is still open, and the attempt count is the number of
+// validation runs. A verdict with the wrong runs renders the wrong page.
 
+// The dev run's one coding cycle: the increment, merged.
 const CODING_1: RunCycleView = {
   id: "cycle-1",
   kind: "coding",
@@ -482,10 +668,19 @@ const CODING_IN_FLIGHT: RunCycleView = {
   createdAt: "2026-07-10T10:05:00Z",
 };
 
+// One merge SHA per cycle number, so two attempts never claim one commit.
+const MERGE_SHA: Record<number, string> = {
+  2: "5c0de1a77b3f2049",
+  3: "c2f7e19b04d6a583",
+  4: "7ab41c90ee31d5f0",
+  5: "e3d9a04f6b17c825",
+};
+
+// A judging that landed: merged its pull request and recorded a verdict.
 function validationCycle(
   n: number,
   verdict: RunVerdict,
-  over: Partial<RunCycleView> = {},
+  at: { createdAt: string; endedAt: string },
 ): RunCycleView {
   return {
     id: `cycle-${String(n)}`,
@@ -494,25 +689,17 @@ function validationCycle(
     branch: `aep/m1-c${String(n)}`,
     prNumber: n + 2,
     prUrl: `${REPO_URL}/pull/${String(n + 2)}`,
-    mergeSha: n === 2 ? "5c0de1a77b3f2049" : "7ab41c90ee31d5f0",
+    mergeSha: MERGE_SHA[n] ?? "0000000000000000",
     validationVerdict: verdict,
     // `validationTask` in project.ts — the one issue list-tasks hides and get-task
-    // still answers for. Every validation cycle carries the SAME number because the
-    // platform reopens the version's issue for a repeat attempt rather than minting
-    // a second one, so a per-cycle number here would misdescribe the real thing.
+    // still answers for. Every attempt carries the SAME number because a
+    // validation run ADOPTS the version's task — the sweep reopens it after a
+    // repair rather than minting a second one — so a per-attempt number here
+    // would misdescribe the real thing.
     validationIssue: 30,
-    createdAt: "2026-07-10T09:45:00Z",
-    endedAt: "2026-07-10T10:02:00Z",
-    ...over,
+    ...at,
   };
 }
-
-const VALIDATION_IN_FLIGHT: RunCycleView = {
-  id: "cycle-2",
-  kind: "validation",
-  attempts: 1,
-  createdAt: "2026-07-10T09:45:00Z",
-};
 
 // The two counters the server DERIVES from the cycle ledger — the supervisor bumps
 // them as it appends cycles, so a fixture that states them by hand states them
@@ -536,166 +723,283 @@ function run(over: Partial<MilestoneRunView>): MilestoneRunView {
       cycleCeiling: 8,
       fixCycles: 0,
       conflictCycles: 0,
-      buildRetriggers: 1,
+      // A validation run has nothing to build, so nothing to retrigger.
+      buildRetriggers: over.kind === "validation" ? 0 : 1,
       validationCycles: cycles.filter((c) => c.kind === "validation").length,
     },
     validation: {},
     cycles,
     createdAt: "2026-07-10T09:12:00Z",
     startedAt: "2026-07-10T09:13:00Z",
-    endedAt: "2026-07-10T10:41:00Z",
+    endedAt: "2026-07-10T09:43:00Z",
     ...over,
   };
 }
 
-// A run that answered on its first attempt.
-function firstAttemptRun(verdict: RunVerdict): MilestoneRunView {
-  return run({
-    validation: { verdict, issue: 30, reportPath: REPORT_PATH },
-    cycles: [CODING_1, validationCycle(2, verdict)],
-  });
+// The version's dev run: delivered on one coding cycle, deployed green, its
+// validation task minted, settled with no verdict of its own. Every judged
+// scenario stands on it.
+const DEV_RUN = run({});
+
+// Where an attempt sits in the version's morning. The first is judged as soon
+// as the dev run settles; the second comes after the repair, so a repeat story
+// reads dev → attempt 1 → repair → attempt 2 down the page.
+interface AttemptSlot {
+  runId: string;
+  /** The cycle number its judging takes — the next number is the re-dispatch. */
+  cycle: number;
+  createdAt: string;
+  startedAt: string;
+  cycleStart: string;
+  cycleEnd: string;
+  endedAt: string;
+  /** When a person stopped it, for `cancelled`. */
+  stoppedAt: string;
+  /** The re-dispatch after `unreported`, and when the run gave up. */
+  againStart: string;
+  againEnd: string;
+  againEndedAt: string;
 }
 
-// A run that spent BOTH attempts on the same answer: attempt 1 failed, the
-// platform filed the failure as ordinary work, a coding cycle worked it, and
-// attempt 2 came back the same. Spending the attempts is what settles the run —
-// the first failure alone does not.
-function exhaustedRun(
-  verdict: RunVerdict,
-  terminalReason: string,
-  reportPath: boolean,
-): MilestoneRunView {
-  return run({
-    state: "failed",
-    terminalReason,
-    validation: {
-      verdict,
-      issue: 30,
-      // The server omits the path for `unreported`: advertising one would send the
-      // client to a 404 to rediscover what the verdict already said.
-      ...(reportPath ? { reportPath: REPORT_PATH } : {}),
-    },
-    cycles: [
-      CODING_1,
-      validationCycle(2, verdict),
-      CODING_3,
-      validationCycle(4, verdict, {
-        createdAt: "2026-07-10T10:24:00Z",
-        endedAt: "2026-07-10T10:40:00Z",
-      }),
-    ],
-  });
-}
-
-const RUNS: Record<ValidationScenario, MilestoneRunView> = {
-  passed: firstAttemptRun("passed"),
-  partial: firstAttemptRun("partial"),
-  inconclusive: firstAttemptRun("inconclusive"),
-  failed: exhaustedRun("failed", "validation-failed", true),
-  unreported: exhaustedRun("unreported", "validation-unreported", false),
-  // Nothing to validate: the run never dispatched a validation cycle, so there is
-  // no cycle to read a report at and the verdict is the workflow's, not a report's.
-  skipped: run({ validation: { verdict: "skipped" } }),
-  // Live, with the validation cycle itself in flight. No verdict yet — the chip is
-  // `running` because the LATEST cycle is an unfinished validation one, which is
-  // the only place that fact is knowable.
-  running: run({
-    state: "running",
-    endedAt: null,
-    cycles: [CODING_1, VALIDATION_IN_FLIGHT],
-  }),
-  // Live, mid self-heal: a real `failed` verdict from attempt 1, an attempt still
-  // in budget, and an ordinary coding cycle in flight against the repair issues.
-  // The verdict is deliberately NOT hidden — the run row carries it, which is what
-  // the deployments board turns into `awaiting-fix` rather than a terminal `failed`.
-  "awaiting-fix": run({
-    state: "running",
-    endedAt: null,
-    validation: { verdict: "failed", issue: 30, reportPath: REPORT_PATH },
-    cycles: [CODING_1, validationCycle(2, "failed"), CODING_IN_FLIGHT],
-  }),
-  // A person STOPPED the judging. The validation cycle was opened and closed with
-  // no merge SHA — what the agent stage records for a dispatch that produced
-  // nothing — so the run settles carrying no verdict at all. Kind and origin are
-  // the validation run's own, and that is the whole distinction this scenario
-  // exists to show: only a run of THAT kind reads as `cancelled`, because a
-  // cancelled dev run is an abandoned increment and means something else.
-  cancelled: run({
-    kind: "validation",
-    origin: "revalidate",
-    state: "cancelled",
-    validation: {},
-    cycles: [
-      {
-        id: "cycle-2",
-        kind: "validation",
-        attempts: 1,
-        validationIssue: 30,
-        createdAt: "2026-07-10T09:45:00Z",
-        endedAt: "2026-07-10T09:52:00Z",
-      },
-    ],
-  }),
-  // The run is live and has not reached validation at all — the state every run
-  // spends most of its life in.
-  none: run({
-    state: "running",
-    endedAt: null,
-    cycles: [CODING_1, CODING_IN_FLIGHT],
-  }),
+const ATTEMPT_1: AttemptSlot = {
+  runId: "run-v1-2",
+  cycle: 2,
+  createdAt: "2026-07-10T09:44:00Z",
+  startedAt: "2026-07-10T09:45:00Z",
+  cycleStart: "2026-07-10T09:45:00Z",
+  cycleEnd: "2026-07-10T10:02:00Z",
+  endedAt: "2026-07-10T10:03:00Z",
+  stoppedAt: "2026-07-10T09:52:00Z",
+  againStart: "2026-07-10T10:05:00Z",
+  againEnd: "2026-07-10T10:20:00Z",
+  againEndedAt: "2026-07-10T10:21:00Z",
 };
 
-// `running` is the one scenario with TWO honest shapes, because the loop repeats:
-// a first attempt (no verdict yet, nothing to report) and a repeat attempt (the
-// previous attempt's verdict still on the row, its report still committed). They
-// render differently — only the repeat has a verdict tile, and only its copy marks
-// its numbers as the last attempt's — and `deploy.validation` is `running` for both,
-// so no value of the scenario switch can tell them apart.
-//
-// Hence a second devtools key rather than an eleventh scenario:
-//   localStorage.setItem('aep:mock:validation', 'running')
+const ATTEMPT_2: AttemptSlot = {
+  runId: "run-v1-4",
+  cycle: 4,
+  createdAt: "2026-07-10T10:23:00Z",
+  startedAt: "2026-07-10T10:24:00Z",
+  cycleStart: "2026-07-10T10:24:00Z",
+  cycleEnd: "2026-07-10T10:40:00Z",
+  endedAt: "2026-07-10T10:41:00Z",
+  stoppedAt: "2026-07-10T10:31:00Z",
+  againStart: "2026-07-10T10:43:00Z",
+  againEnd: "2026-07-10T10:58:00Z",
+  againEndedAt: "2026-07-10T10:59:00Z",
+};
+
+// The scenarios a validation run can settle in — every verdict, plus the two
+// lifecycle states that are the run's own. `none` and `skipped` are the dev
+// run's to say, and `awaiting-fix` is a repair, not a judging.
+type Judged = Exclude<ValidationScenario, "none" | "skipped" | "awaiting-fix">;
+const JUDGED: readonly ValidationScenario[] = [
+  "passed",
+  "partial",
+  "inconclusive",
+  "failed",
+  "unreported",
+  "running",
+  "cancelled",
+];
+
+function isJudged(scenario: ValidationScenario): scenario is Judged {
+  return JUDGED.includes(scenario);
+}
+
+/**
+ * One attempt: the validation run that reached `scenario`, in its slot. The
+ * shapes are ValidationRunWorkflow's, not the dev loop's.
+ */
+function attempt(scenario: Judged, slot: AttemptSlot): MilestoneRunView {
+  const base: Partial<MilestoneRunView> = {
+    id: slot.runId,
+    kind: "validation",
+    origin: "revalidate",
+    createdAt: slot.createdAt,
+    startedAt: slot.startedAt,
+    endedAt: slot.endedAt,
+  };
+  const judging = (verdict: RunVerdict) =>
+    validationCycle(slot.cycle, verdict, { createdAt: slot.cycleStart, endedAt: slot.cycleEnd });
+
+  switch (scenario) {
+    case "passed":
+    case "partial":
+    case "inconclusive":
+      // Honest reports, incomplete or not: the run settles green on them.
+      return run({
+        ...base,
+        validation: { verdict: scenario, issue: 30, reportPath: REPORT_PATH },
+        cycles: [judging(scenario)],
+      });
+    case "failed":
+      // A real assertion loss. ONE cycle: the run files the failure as repair
+      // work and stops, where the dev loop used to work it in place.
+      return run({
+        ...base,
+        state: "failed",
+        terminalReason: "validation-failed",
+        validation: { verdict: "failed", issue: 30, reportPath: REPORT_PATH },
+        cycles: [judging("failed")],
+      });
+    case "unreported":
+      // The one verdict the run remedies itself, once: the agent merged without
+      // a report, so it was dispatched again, and a second silence settled it.
+      // The server omits the path: advertising one would send the client to a
+      // 404 to rediscover what the verdict already said.
+      return run({
+        ...base,
+        state: "failed",
+        terminalReason: "validation-unreported",
+        validation: { verdict: "unreported", issue: 30 },
+        cycles: [
+          judging("unreported"),
+          validationCycle(slot.cycle + 1, "unreported", {
+            createdAt: slot.againStart,
+            endedAt: slot.againEnd,
+          }),
+        ],
+        endedAt: slot.againEndedAt,
+      });
+    case "running":
+      // Live, the judging itself in flight. No verdict yet — the chip is
+      // `running` because the newest validation cycle is unfinished, which is
+      // the only place that fact is knowable.
+      return run({
+        ...base,
+        state: "running",
+        endedAt: null,
+        cycles: [
+          { id: `cycle-${String(slot.cycle)}`, kind: "validation", attempts: 1, createdAt: slot.cycleStart },
+        ],
+      });
+    case "cancelled":
+      // A person STOPPED the judging. The cycle was opened and closed with no
+      // merge SHA — what the agent stage records for a dispatch that produced
+      // nothing — so the run settles carrying no verdict at all.
+      return run({
+        ...base,
+        state: "cancelled",
+        cycles: [
+          {
+            id: `cycle-${String(slot.cycle)}`,
+            kind: "validation",
+            attempts: 1,
+            validationIssue: 30,
+            createdAt: slot.cycleStart,
+            endedAt: slot.stoppedAt,
+          },
+        ],
+        endedAt: slot.stoppedAt,
+      });
+  }
+}
+
+// The repair between two attempts: the failed verdict filed one issue per failed
+// criterion, and an ordinary task run worked them. What routes a repair back to
+// a judging is the version's validation task, which the sweep reopens once the
+// repair lands.
+const REPAIR_RUN = run({
+  id: "run-v1-3",
+  kind: "task",
+  origin: "incident-adoption",
+  cycles: [CODING_3],
+  createdAt: "2026-07-10T10:04:00Z",
+  startedAt: "2026-07-10T10:04:00Z",
+  endedAt: "2026-07-10T10:22:00Z",
+});
+
+// The first attempt failed and its repair was worked. Every repeat story stands
+// on these, and every read that walks the older attempts finds the failed one.
+const FAILED_ATTEMPT_1 = attempt("failed", ATTEMPT_1);
+
+/** A version's runs, newest first as the server lists them, on a first attempt. */
+const STORIES: Record<ValidationScenario, MilestoneRunView[]> = {
+  passed: [attempt("passed", ATTEMPT_1), DEV_RUN],
+  partial: [attempt("partial", ATTEMPT_1), DEV_RUN],
+  inconclusive: [attempt("inconclusive", ATTEMPT_1), DEV_RUN],
+  failed: [FAILED_ATTEMPT_1, DEV_RUN],
+  unreported: [attempt("unreported", ATTEMPT_1), DEV_RUN],
+  running: [attempt("running", ATTEMPT_1), DEV_RUN],
+  cancelled: [attempt("cancelled", ATTEMPT_1), DEV_RUN],
+  // Nothing to validate: no acceptance oracle, so no validation task was minted
+  // and nothing will ever judge this version. The dev run says so itself — the
+  // one verdict it records — because an empty one would read as "any moment now"
+  // forever.
+  skipped: [run({ validation: { verdict: "skipped" } })],
+  // The dev run is live and has not delivered yet — the state every version
+  // spends most of its life in. No validation run exists to be judged by.
+  none: [
+    run({
+      state: "running",
+      endedAt: null,
+      cycles: [CODING_1, CODING_IN_FLIGHT],
+    }),
+  ],
+  // Mid-repair: the first attempt failed, and the task run working its repair
+  // issues is in flight. The failed report stays committed, which is what lets
+  // the page show WHAT is being fixed while the fix is.
+  //
+  // What the platform's own derivation says of this shape today is `failed`:
+  // the aggregate reads the newest VALIDATION run, which is terminal, and only
+  // a live run holding a fatal verdict reads `awaiting-fix` — a shape the dev
+  // loop had before validation became its own run. So this state reaches the
+  // console only through the scenario override. Whether the platform should
+  // say `awaiting-fix` here again is an open question on its side; the run
+  // story is honest either way.
+  "awaiting-fix": [
+    run({
+      id: "run-v1-3",
+      kind: "task",
+      origin: "incident-adoption",
+      state: "running",
+      endedAt: null,
+      cycles: [CODING_IN_FLIGHT],
+      createdAt: "2026-07-10T10:04:00Z",
+      startedAt: "2026-07-10T10:04:00Z",
+    }),
+    FAILED_ATTEMPT_1,
+    DEV_RUN,
+  ],
+};
+
+// A version is judged as many times as it takes, and the scenario switch only
+// says how the NEWEST attempt ended. The attempt key says whether that was the
+// version's first judging or a repeat over a failed one whose repair was worked
+// — the story that gives the page a history to stack, and the only one the
+// platform produces beyond a single attempt:
+//   localStorage.setItem('aep:mock:validation', 'passed')
 //   localStorage.setItem('aep:mock:validation-attempt', 'repeat')
 //
-// It is read only for `running`; every other scenario has one shape and ignores it.
+// A repeat is dev run → attempt 1 (failed) → repair → attempt 2 (the scenario).
+// Read for every scenario a validation run can settle in; `none`, `skipped` and
+// `awaiting-fix` have one shape each and ignore it.
 export type ValidationAttempt = "first" | "repeat";
 
 /** The key's accepted values — also the list the handler validates against. */
 export const VALIDATION_ATTEMPTS: ValidationAttempt[] = ["first", "repeat"];
 
-// Attempt 1 merged and failed, a coding cycle repaired it, attempt 2 is in flight
-// against the fixed system. The in-flight cycle is re-id'd because
-// VALIDATION_IN_FLIGHT is hardcoded `cycle-2`, which the merged attempt owns here.
-const RUNNING_REPEAT: MilestoneRunView = run({
-  state: "running",
-  endedAt: null,
-  validation: { verdict: "failed", issue: 30, reportPath: REPORT_PATH },
-  cycles: [
-    CODING_1,
-    validationCycle(2, "failed"),
-    CODING_3,
-    {
-      ...VALIDATION_IN_FLIGHT,
-      id: "cycle-4",
-      createdAt: "2026-07-10T10:24:00Z",
-    },
-  ],
-});
-
-/** True when the scenario/attempt pair is the repeat-attempt shape. */
-function isRepeat(
-  scenario: ValidationScenario,
-  attempt: ValidationAttempt,
-): boolean {
-  return scenario === "running" && attempt === "repeat";
+/** True when the story is a repeat attempt — which only a judged scenario can be. */
+function isRepeat(story: ValidationStory): boolean {
+  return story.attempt === "repeat" && isJudged(story.scenario);
 }
 
-/** The version's run story for a validation scenario. */
-export function validationRuns(
-  scenario: ValidationScenario,
-  attempt: ValidationAttempt = "first",
-): BuildRunList {
-  const row = isRepeat(scenario, attempt) ? RUNNING_REPEAT : RUNS[scenario];
-  return { tag: "v1", milestoneNumber: 1, runs: [row] };
+// A report is overwritten by the next attempt to commit one, so a repeat attempt
+// that has committed nothing yet — in flight, or stopped — leaves the FIRST
+// attempt's failed report at the branch tip. Not `unreported`: that verdict IS
+// the tip having been read and no report found there.
+function previousReportStands(story: ValidationStory): boolean {
+  return isRepeat(story) && (story.scenario === "running" || story.scenario === "cancelled");
+}
+
+/** The version's run story, newest run first as the server lists them. */
+export function validationRuns(story: ValidationStory): BuildRunList {
+  const runs =
+    isRepeat(story) && isJudged(story.scenario)
+      ? [attempt(story.scenario, ATTEMPT_2), REPAIR_RUN, FAILED_ATTEMPT_1, DEV_RUN]
+      : STORIES[story.scenario];
+  return { tag: "v1", milestoneNumber: 1, runs };
 }
 
 // ---------------------------------------------------------------------------
@@ -775,4 +1079,178 @@ export function validationStatusThread(
     // credential — so the brand is the only thing that can, here as on the wire.
     ...(post.observed ? { observed: true } : {}),
   }));
+}
+
+// ---------------------------------------------------------------------------
+// The validation READ MODEL — the ledger, a version's history, one attempt's
+// evidence.
+//
+// Derived from the same scenario switch the run story uses, so flipping
+// `aep:mock:validation` moves every validation surface together. The alternative
+// — a second set of rows describing the same state — is how the page and the
+// board came to disagree about the same run in the first place.
+
+type ValidationList = components["schemas"]["ValidationList"];
+type ValidationSummary = components["schemas"]["ValidationSummary"];
+type ValidationDetail = components["schemas"]["ValidationDetail"];
+type ValidationSnapshot = components["schemas"]["ValidationSnapshot"];
+
+// v0.2's one judging, months before the morning the scenario describes. Its own
+// literal rather than `attempt()`, whose slots, cycle numbers and branch names
+// all belong to v1 — two versions sharing a cycle id would open two attempts at
+// once, since the page keys its sections on it.
+const OLDER_PASSED_ATTEMPT: MilestoneRunView = {
+  id: "run-v0.2-2",
+  milestoneNumber: 2,
+  milestoneTitle: "v0.2",
+  kind: "validation",
+  origin: "revalidate",
+  state: "succeeded",
+  budgets: {
+    cyclesTotal: 1,
+    cycleCeiling: 8,
+    fixCycles: 0,
+    conflictCycles: 0,
+    buildRetriggers: 0,
+    validationCycles: 1,
+  },
+  validation: { verdict: "passed", issue: 22, reportPath: REPORT_PATH },
+  cycles: [
+    {
+      id: "cycle-v0.2-2",
+      kind: "validation",
+      attempts: 1,
+      branch: "aep/m2-c2",
+      prNumber: 2,
+      prUrl: `${REPO_URL}/pull/2`,
+      mergeSha: "b71c4e08d95a2f36",
+      validationVerdict: "passed",
+      validationIssue: 22,
+      createdAt: "2026-04-02T09:12:00Z",
+      endedAt: "2026-04-02T09:31:00Z",
+    },
+  ],
+  createdAt: "2026-04-02T09:11:00Z",
+  startedAt: "2026-04-02T09:12:00Z",
+  endedAt: "2026-04-02T09:32:00Z",
+};
+
+/**
+ * The versions behind the scenario's own, with the history each one has.
+ *
+ * They are the point of the page: a ledger exists so an older version is
+ * reachable, and the revalidate gate can only be seen to work against a version
+ * that is not deployed. Their runs are here rather than only their summary rows
+ * because the rows are CLICKABLE — a row whose page answered with the current
+ * version's attempts would make the fixture contradict itself on the one
+ * feature the page was built for.
+ *
+ * v0.1 has no runs at all — a version built and never judged. Its dev run holds
+ * no validation cycle, which is exactly what the detail read filters out.
+ */
+const OLDER_VERSIONS: {
+  tag: string;
+  milestoneNumber: number;
+  scenario: ValidationScenario;
+  runs: MilestoneRunView[];
+}[] = [
+  { tag: "v0.2", milestoneNumber: 2, scenario: "passed", runs: [OLDER_PASSED_ATTEMPT] },
+  { tag: "v0.1", milestoneNumber: 3, scenario: "none", runs: [] },
+];
+
+/** The attempts a run list holds, oldest first — the runs arrive newest first. */
+function attemptsIn(runs: readonly MilestoneRunView[]) {
+  return [...runs]
+    .reverse()
+    .flatMap((r) => (r.cycles ?? []).filter((c) => c.kind === "validation"));
+}
+
+/** One ledger row, dated by the version's NEWEST attempt as the server dates it. */
+function summaryOf(
+  tag: string,
+  milestoneNumber: number,
+  state: ValidationScenario,
+  runs: readonly MilestoneRunView[],
+): ValidationSummary {
+  const cycles = attemptsIn(runs);
+  const newest = cycles[cycles.length - 1];
+  return {
+    tag,
+    milestoneNumber,
+    state,
+    ...(newest?.createdAt ? { startedAt: newest.createdAt } : {}),
+    ...(newest?.endedAt ? { endedAt: newest.endedAt } : {}),
+  };
+}
+
+/** The ledger. The scenario's own version, then the ones before it. */
+export function validationLedger(story: ValidationStory): ValidationList {
+  return {
+    validations: [
+      summaryOf("v1", 1, story.scenario, validationRuns(story).runs ?? []),
+      ...OLDER_VERSIONS.map((v) => summaryOf(v.tag, v.milestoneNumber, v.scenario, v.runs)),
+    ],
+  };
+}
+
+/** One version's validation history, filtered as the server filters it. */
+export function validationDetail(story: ValidationStory, tag = "v1"): ValidationDetail {
+  const older = OLDER_VERSIONS.find((v) => v.tag === tag);
+  const list = validationRuns(story);
+  const runs = (older ? older.runs : (list.runs ?? []))
+    .map((r) => ({ ...r, cycles: (r.cycles ?? []).filter((c) => c.kind === "validation") }))
+    .filter((r) => r.cycles.length > 0);
+  return {
+    tag,
+    milestoneNumber: older?.milestoneNumber ?? list.milestoneNumber,
+    state: older?.scenario ?? story.scenario,
+    live: runs.some((r) => !TERMINAL_RUN_STATES.has(r.state)),
+    // The scenario's own version is the deployed one; the older rows are not.
+    // Without a NOT-deployed version in the fixtures the revalidate gate cannot
+    // be seen to work at all — every page would offer the trigger and the
+    // disabled state would exist only in tests.
+    deployed: tag === "v1",
+    runs,
+  };
+}
+
+const TERMINAL_RUN_STATES = new Set(["succeeded", "failed", "cancelled", "blocked"]);
+
+/**
+ * One attempt's evidence: the report, and the criteria at the same commit.
+ *
+ * A running attempt has no commit and therefore no report — which is the state
+ * the scenario list's `running` first attempt puts the page in.
+ *
+ * Read at the ATTEMPT's own commit, never at the branch tip: on a repeat the
+ * first attempt is answered with what it committed, the failed report, and the
+ * repeat itself only with what it has committed — nothing, while it is in
+ * flight. That is what `previousReportStands` is NOT for: it models the tip,
+ * which is the Spec view's question and not this one.
+ *
+ * An older version answers from its own verdict, and drift does not reach it:
+ * its commit is pinned, and only the tip can move.
+ */
+export function validationSnapshot(
+  story: ValidationStory,
+  drifted = false,
+  cycleId?: string,
+  tag = "v1",
+): ValidationSnapshot {
+  const older = OLDER_VERSIONS.find((v) => v.tag === tag);
+  const historical =
+    isRepeat(story) && FAILED_ATTEMPT_1.cycles.some((c) => c.id === cycleId);
+  // Whose artifacts this attempt committed. A pinned commit is also the one
+  // drift cannot reach — only the tip moves.
+  const pinned: { scenario: ValidationScenario } | undefined =
+    older ?? (historical ? { scenario: "failed" } : undefined);
+  const files = pinned
+    ? validationFiles({ scenario: pinned.scenario })
+    : validationFiles({ scenario: story.scenario }, drifted);
+  const report = files.find((f) => f.path === REPORT_PATH);
+  return {
+    commit: report ? "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c" : "",
+    criteria: files.filter((f) => f.path !== REPORT_PATH),
+    ...(report ? { report: report.content } : {}),
+  };
 }

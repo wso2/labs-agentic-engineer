@@ -30,7 +30,7 @@ The marker vocabulary:
 | Marker | Kind | Meaning |
 |---|---|---|
 | `aep.wso2.com/role: end-user-auth` | label | A `service` component that declares a dependency of this type gets `exposesAPI.auth: end-user-required` stamped automatically at design save. An explicit, conflicting `exposesAPI.auth: service-required` on such a component is rejected as a validation error, not silently overridden. |
-| `aep.wso2.com/consumer-url-env-config: <key>` | annotation | Once the consuming web-app's public URL resolves, aep-api patches `<spaOrigin><consumer-url-path>` into this key on the dependency's dev `ResourceReleaseBinding` environment configs. |
+| `aep.wso2.com/consumer-url-env-config: <key>` | annotation | aep-api writes the consuming web-apps' `<spaOrigin><consumer-url-path>` into this key on the dependency's dev `ResourceReleaseBinding` environment configs, as each origin resolves. The value is a SET — several web apps can declare one dependency — see the 2026-09-19 amendment. |
 | `aep.wso2.com/consumer-url-path: <path>` | annotation | Path appended to the consumer's origin for the patch above. Defaults to `/callback` when the env-config annotation is present without it. |
 | `aep.wso2.com/skill: <skill-name>` | annotation | Design save ensures the named skill is present in the design's `skillsPinned` whenever a dependency of this type exists. |
 
@@ -64,7 +64,8 @@ cross-package test so the two paths can never drift apart. There are no
 `redirect_uri = window.location.origin + '/callback'` itself, taught by the
 consuming skill, and the platform's only job is to get that origin registered
 as a valid redirect URI on the OAuth application (via the consumer-URL-patch
-annotation above).
+annotation above) — alongside every other web app that declares the same
+dependency.
 
 ## Consequences
 
@@ -141,3 +142,30 @@ annotation above).
   already relies on.
 
 See ADR-0006 for why end-user auth is a `platform-resource` dependency at all.
+
+## Amended 2026-09-19 — the consumer-URL key holds the project's whole set
+
+The marker's original wording — "patches `<spaOrigin><consumer-url-path>` into
+this key" — reads as one consumer per dependency, and the deploy read
+implemented it that way: it registered from inside its per-component loop, one
+whole-field write per web app, each replacing the last.
+
+A dependency is project-scoped, and nothing in the marker vocabulary ever said
+only one component could consume it. A project with two web apps on one
+`user-auth` dependency therefore kept only the last-written callback, and every
+other web app was held pending until the deploy budget expired.
+
+The key holds a SET. aep-api resolves every web app in the design that declares
+the dependency, joins their resolved consumer URLs SORTED, and writes the field
+once per dependency per read. Sorting is part of the contract rather than
+cosmetic: the binding write is skipped when the value is unchanged, so a set
+joined in map order would differ between two otherwise identical reads and turn
+every deploy poll into a real write — a write storm against the objects
+OpenChoreo's own controllers are reconciling.
+
+This changes nothing a PE authors. The marker and its `consumer-url-path`
+companion are unchanged; only the platform's reading of "the consumer" widened
+from one component to all of them.
+
+See [ADR-0006](ADR-0006-auth-as-platform-resource.md)'s amendment of the same
+date for the sign-in-specific consequence.

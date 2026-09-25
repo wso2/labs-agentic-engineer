@@ -26,7 +26,7 @@ package provisioning
 // **The ticket is also the credential channel.** Before closing, the gate posts a
 // comment carrying every test account's username and password: that comment is
 // where the validation agent reads the login it signs in with
-// (skills/aep-validation, ADR-0022). Two rules follow, and both are enforced
+// (skills/acceptance-run, ADR-0022). Two rules follow, and both are enforced
 // below. A ticket that cannot be filed, or a comment that cannot be posted,
 // FAILS THE BUILD — an account nothing can read is the silent degradation this
 // gate exists to prevent. And a password reaches the issue comment and nothing
@@ -60,8 +60,11 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/delivery"
+	"github.com/wso2/aep/aep-api/internal/platform/ocname"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
+	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
 // rolesGate names this gate. It rides the `aep:gate/` prefix, not `aep:dep/`,
@@ -144,6 +147,13 @@ func (s *Service) ensureRolesGate(ctx context.Context, orgID, projectID, tag str
 		s.commentGateFailure(ctx, orgID, projectID, number, err)
 		return &ProvisionFailure{Dependency: rolesGate, Reason: err.Error()}
 	}
+
+	// The logins are published WITH the client they sign in at. Read after the
+	// ensure because it costs a binding read and is pointless if the ensure
+	// failed, and best-effort because a missing client makes the ticket less
+	// useful, never wrong — the trailer just omits the line.
+	outcome.ClientID = s.SignInCoordinates(ctx, orgID, projectID).ClientID
+	outcome.CallbackURL = s.tryItCallbackURL
 
 	if perr := s.publishTestUserLogins(ctx, orgID, projectID, number, outcome); perr != nil {
 		return perr
@@ -371,12 +381,15 @@ func redactPasswords(msg string, creds []RolesCredential) string {
 // deriving them means reading security.json and re-doing the union the ensure
 // already did.
 //
-// The TRAILER carries the two values a login cannot mint a token without. The
+// The TRAILER carries the three values a login cannot mint a token without. The
 // ISSUER, because there is one identity provider per environment and the same
-// username on another one is a different account with a different password. And
-// the RESOURCE — the project's resource-server identifier — because the token
+// username on another one is a different account with a different password. The
+// RESOURCE — the project's resource-server identifier — because the token
 // endpoint narrows an access token to one audience: a client that asks for the
-// wrong `resource`, or for none, gets a token the gateway refuses. The third
+// wrong `resource`, or for none, gets a token the gateway refuses. And the
+// CLIENT_ID, because OAuth has no flow a username alone can start; it was the
+// one value published nowhere, and a validation agent holding the other two
+// still could not sign in. The fourth
 // line is the refresh rule, which is the one piece of behaviour that surprises
 // an agent mid-run: a token minted before a grant was added never gains it, so
 // "the role has the scope but the call 401s" is answered by signing in again.
@@ -439,8 +452,91 @@ func renderCredentialsTrailer(outcome RolesEnsureOutcome) string {
 			"`resource` parameter when you ask for a token; it is the audience the gateway "+
 			"checks, and a token minted for anything else is refused.\n", outcome.ResourceIdentifier)
 	}
+	if outcome.ClientID != "" {
+		fmt.Fprintf(&b, "- **client_id** `%s` — the OAuth client to sign in AT. A username and a "+
+			"password start no flow on their own: the authorize leg names a client, and this is "+
+			"the one this project's sign-in resource registered. It is a public PKCE client id, "+
+			"not a secret.\n", outcome.ClientID)
+	}
+	if outcome.CallbackURL != "" {
+		fmt.Fprintf(&b, "- **redirect_uri** `%s` — the platform's registered callback. Send it as "+
+			"`redirect_uri` on the authorize request and capture the code where it lands; for a "+
+			"project with no web app it is the only registered redirect there is.\n", outcome.CallbackURL)
+	}
 	b.WriteString("- **A new grant needs a fresh sign-in: a refresh narrows a token but never " +
 		"widens it.** A scope removed from a role disappears at the next renew; one added to a " +
 		"role reaches the token only after signing in again.\n")
 	return b.String()
+}
+
+// SignInClient is a project's sign-in as a client outside it performs it: the
+// OAuth client to sign in AS, the resource server the token is minted for, and
+// the issuer that mints it — the sign-in resource's binding outputs
+// (`client_id` / `resource` / `issuer`). Zero when the project declares no
+// sign-in resource or its binding has not resolved.
+type SignInClient struct {
+	ClientID string
+	Resource string
+	Issuer   string
+}
+
+// SignInCoordinates reads the project's SignInClient off the same resolved
+// binding the runtime reads `<DEP>_CLIENT_ID` from. The roles gate publishes
+// the client id; the roles panel publishes all three for the test app.
+//
+// BEST EFFORT, by design. Every step is a reason to have no client rather than
+// a failure: a project may declare no sign-in resource at all, the marker
+// catalog may be unreachable, and a binding resolves asynchronously. None of
+// those make the published logins wrong — they make the ticket one line
+// shorter — and failing the build over a missing convenience would take down
+// projects that never sign anybody in.
+//
+// The dependency is found by MARKER, not by the name `user-auth`: the name is a
+// convention a design is free to break, while the end-user-auth marker is what
+// the platform itself keys the sign-in overlay on (see deriveEndUserAuth). One
+// project has one such resource — every protected component shares it by
+// declaring the same dependency name — so the first match is the answer.
+func (s *Service) SignInCoordinates(ctx context.Context, orgID, projectID string) SignInClient {
+	if s == nil || s.design == nil || s.bindings == nil || s.markers == nil {
+		return SignInClient{}
+	}
+	components, err := s.design.ReadDesignComponents(ctx, orgID, projectID)
+	if err != nil {
+		slog.DebugContext(ctx, "roles gate: no design to find the sign-in client on",
+			"project", projectID, "error", err)
+		return SignInClient{}
+	}
+	byName, err := s.markers.MarkersByName(ctx)
+	if err != nil {
+		slog.DebugContext(ctx, "roles gate: no marker catalog to find the sign-in client with",
+			"project", projectID, "error", err)
+		return SignInClient{}
+	}
+	for _, comp := range components {
+		for _, dep := range comp.Dependencies {
+			if dep.Kind != spec.DependencyKindPlatformResource || !byName[dep.ResourceType].EndUserAuth {
+				continue
+			}
+			name := ocname.ExternalResourceBindingName(projectID, dep.Name, openchoreo.DevEnvironmentName)
+			binding, berr := s.bindings.GetBinding(ctx, orgID, name)
+			if berr != nil || binding == nil || binding.Status == nil {
+				slog.DebugContext(ctx, "roles gate: the sign-in resource's binding is not readable yet",
+					"project", projectID, "binding", name, "error", berr)
+				return SignInClient{}
+			}
+			var c SignInClient
+			for _, out := range binding.Status.Outputs {
+				switch out.Name {
+				case "client_id":
+					c.ClientID = out.Value
+				case "resource":
+					c.Resource = out.Value
+				case "issuer":
+					c.Issuer = out.Value
+				}
+			}
+			return c
+		}
+	}
+	return SignInClient{}
 }

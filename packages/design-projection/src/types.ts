@@ -37,7 +37,7 @@ export interface ProjectDesign {
 export interface ProjectDesignComponent {
   /** Component directory name, e.g. "expense-api". */
   id: string;
-  type: string; // authored kind, passed through ("service" | "webapp" | future kinds)
+  type: string; // authored kind, passed through ("service" | "webapp" | "ai-agent" | future kinds)
   version: string;
   /**
    * Skill names preloaded for this component's coding agent (from the

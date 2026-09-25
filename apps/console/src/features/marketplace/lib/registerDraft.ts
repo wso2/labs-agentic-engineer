@@ -17,9 +17,11 @@
  */
 
 import type { components } from "../../../generated/aep-api";
+import type { ContractRow } from "../components/ContractFields";
 import type { ResourceDocRow } from "../components/ResourceDocsFields";
 
 type ConfigKeyDTO = components["schemas"]["ConfigKeyDTO"];
+type ResourceContractType = components["schemas"]["ResourceContractType"];
 type ResourceDocPointerDTO = components["schemas"]["ResourceDocPointerDTO"];
 type DocType = ResourceDocPointerDTO["type"];
 
@@ -33,20 +35,40 @@ const DOC_TYPES = new Set<string>([
   "protobuf",
 ]);
 
+/** A contract may be any of these; an SDK manifest is one too. */
+const CONTRACT_TYPES = new Set<string>([
+  "openapi",
+  "graphql",
+  "sdk",
+  "asyncapi",
+  "protobuf",
+  "documentation",
+]);
+
 export type RegisterDraft = {
   name?: string;
+  /** The concrete system the resource is ("Open Exchange Rates"). */
+  provider?: string;
   description?: string;
   consumptionInstructions?: string;
   config?: Array<{ key: string; description: string; secret: boolean }>;
+  /**
+   * The one document consumers code against. The agent only ever proposes an
+   * ADDRESS for it — it never uploads bytes — so the draft's contract is a URL
+   * the form offers to the platform to fetch.
+   */
+  contract?: { type: ResourceContractType; url: string };
   resourceDocs?: Array<{ type: ResourceDocPointerDTO["type"]; url: string }>;
 };
 
 export type RegisterFormSnapshot = {
   name: string;
+  provider: string;
   description: string;
   consumptionInstructions: string;
   keys: ConfigKeyDTO[];
   values: Record<string, string>;
+  contract: ContractRow;
   docs: ResourceDocRow[];
 };
 
@@ -82,10 +104,24 @@ function parseDocEntry(
   return { type: value.type as DocType, url: value.url };
 }
 
+function parseContract(
+  value: unknown,
+): { type: ResourceContractType; url: string } | null {
+  if (!isPlainObject(value)) return null;
+  if (typeof value.type !== "string" || !CONTRACT_TYPES.has(value.type)) return null;
+  // A blank address is no address: the form trims before it submits, so a
+  // whitespace-only URL would replace a real one and then vanish on the wire.
+  if (typeof value.url !== "string" || value.url.trim() === "") return null;
+  // A draft never carries document bytes — an upload is the user's own act.
+  if (hasFileRowFields(value)) return null;
+  return { type: value.type as ResourceContractType, url: value.url.trim() };
+}
+
 export function parseRegisterDraft(input: unknown): RegisterDraft | null {
   if (!isPlainObject(input)) return null;
   const draft: RegisterDraft = {};
   if (typeof input.name === "string") draft.name = input.name;
+  if (typeof input.provider === "string") draft.provider = input.provider;
   if (typeof input.description === "string") draft.description = input.description;
   if (typeof input.consumptionInstructions === "string") {
     draft.consumptionInstructions = input.consumptionInstructions;
@@ -96,6 +132,8 @@ export function parseRegisterDraft(input: unknown): RegisterDraft | null {
       return parsed ? [parsed] : [];
     });
   }
+  const contract = parseContract(input.contract);
+  if (contract) draft.contract = contract;
   if (Array.isArray(input.resourceDocs)) {
     draft.resourceDocs = input.resourceDocs.flatMap((entry) => {
       const parsed = parseDocEntry(entry);
@@ -156,6 +194,20 @@ function applyKeys(
   });
 }
 
+/**
+ * The draft's contract as the form's block. An uploaded file is the user's own
+ * and outranks a proposal, so a draft never displaces one; the type still
+ * follows the draft, which is what the agent actually knows.
+ */
+function applyContract(current: ContractRow, contract: RegisterDraft["contract"]): ContractRow {
+  if (contract === undefined) return current;
+  // An uploaded file is the user's own act and outranks a draft. Its TYPE goes
+  // with it: the bytes on file are that format, and taking the draft's type
+  // would label the document as something it is not.
+  if (current.fileName) return current;
+  return { ...current, type: contract.type, url: contract.url };
+}
+
 export function applyRegisterDraft(
   current: RegisterFormSnapshot,
   draft: RegisterDraft,
@@ -163,6 +215,7 @@ export function applyRegisterDraft(
 ): RegisterFormSnapshot {
   return {
     name: mode.freezeName || draft.name === undefined ? current.name : draft.name,
+    provider: draft.provider === undefined ? current.provider : draft.provider,
     description:
       draft.description === undefined ? current.description : draft.description,
     consumptionInstructions:
@@ -171,6 +224,7 @@ export function applyRegisterDraft(
         : draft.consumptionInstructions,
     keys: applyKeys(current.keys, draft.config, mode.freezeKeys),
     values: current.values,
+    contract: applyContract(current.contract, draft.contract),
     docs:
       draft.resourceDocs === undefined
         ? current.docs

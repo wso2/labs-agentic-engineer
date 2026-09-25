@@ -41,7 +41,7 @@ type MilestoneDispatch struct {
 
 	// Kind is the RunCycle kind this dispatch serves (CycleKind*). It selects
 	// the runner's skill and prompt shape: every kind but validation is the
-	// ordinary milestone loop, and validation swaps in the `aep-validation`
+	// ordinary milestone loop, and validation swaps in the `acceptance-run`
 	// skill anchored to IssueNumber.
 	Kind string `json:"kind"`
 

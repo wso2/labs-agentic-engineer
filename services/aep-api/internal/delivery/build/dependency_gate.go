@@ -32,6 +32,17 @@ const (
 	kindExternalSpec       = "external-spec"
 )
 
+// kindAgentToolUnresolved is the InputFailure/PreflightItem kind for an
+// agent's `x-aep.tools.openapi[].allow` entry that resolved to
+// spec.DependencyStatusUnresolved (agent_tools.go's precedence table): the
+// named component either isn't a declared component dependency at all, or the
+// operation named isn't one its openapi.yaml declares. Unlike the
+// `external-*` kinds above, there is no drawer input that fixes this — the
+// designer must edit agent.afm.md — so this kind exists purely to block the
+// tag-cut with an actionable message; the console does not render a
+// resolution UI for it.
+const kindAgentToolUnresolved = "agent-tool-unresolved"
+
 // dependencyBlocker is the SINGLE place that maps an `external` dependency's
 // already-computed Status/Reason onto a user-facing blocker: the drawer item
 // kind + a plain-language description. Both preflight.externalItems (the
@@ -122,6 +133,34 @@ func (s *Service) dependencyGateFailures(ctx context.Context, orgID, projectID s
 				})
 			}
 		}
+		failures = append(failures, agentToolGateFailures(c)...)
 	}
 	return failures, nil
+}
+
+// agentToolGateFailures maps an ai-agent component's already-computed
+// AgentToolStatuses (spec.ComputeAgentToolStatus, run by
+// deriveAgentToolStatuses at design-save — see internal/spec/agent_tools.go)
+// onto the same InputFailure shape the dependency hard gate above already
+// uses, blocking the tag-cut exactly like an unresolved `external`/`org-service`
+// dependency does. Only DependencyStatusUnresolved blocks: an
+// AgentToolStatusUnchecked entry means the named component's contract isn't
+// in the tree yet (skills/design's per-component writes have no guaranteed
+// order — see agent_tools.go), which is legitimate and must never block a
+// build. c.AgentToolStatuses is nil for every non-agent component and for an
+// agent component with no agent.afm.md yet, so this is a no-op for both.
+func agentToolGateFailures(c spec.DesignComponent) []InputFailure {
+	var failures []InputFailure
+	for _, st := range c.AgentToolStatuses {
+		if st.Status != spec.DependencyStatusUnresolved {
+			continue
+		}
+		failures = append(failures, InputFailure{
+			Component:  c.Name,
+			Dependency: st.Component,
+			Kind:       kindAgentToolUnresolved,
+			Reason:     st.Reason,
+		})
+	}
+	return failures
 }

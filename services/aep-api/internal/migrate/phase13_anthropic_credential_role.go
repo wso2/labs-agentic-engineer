@@ -110,12 +110,18 @@ func RunPhase13AnthropicCredentialRole(ctx context.Context, db *gorm.DB) error {
 		// agent is an AI SDK model call that speaks API keys only. Enforced in
 		// the schema because a default-role OAuth row would leave every
 		// non-coding reader unable to authenticate, with no obvious cause.
+		//
+		// phase16 replaced this CHECK with a stricter one
+		// (org_anthropic_credentials_role_kind), so it is added only while that
+		// successor does not exist yet — re-adding it on every boot after would
+		// churn a constraint phase16 immediately drops again.
 		`DO $$
 		 BEGIN
 		   IF NOT EXISTS (
 		     SELECT 1 FROM pg_constraint
 		      WHERE conrelid = 'org_anthropic_credentials'::regclass
-		        AND conname  = 'org_anthropic_credentials_oauth_is_coding_only'
+		        AND conname IN ('org_anthropic_credentials_oauth_is_coding_only',
+		                        'org_anthropic_credentials_role_kind')
 		   ) THEN
 		     ALTER TABLE org_anthropic_credentials
 		       ADD CONSTRAINT org_anthropic_credentials_oauth_is_coding_only

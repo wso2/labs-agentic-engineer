@@ -152,8 +152,11 @@ bal build && bal test
 ```
 
 Write the tests against a **throwaway RSA keypair**: mint an assertion with the
-private half and export `GATEWAY_ASSERTION_CERTIFICATE` from its self-signed
-certificate, so nothing in the test talks to a gateway. Cover four cases — a
+private half and export **all three** of `GATEWAY_ASSERTION_CERTIFICATE` (from its
+self-signed certificate), `GATEWAY_ASSERTION_ISSUER` and `GATEWAY_ASSERTION_HEADER`,
+so nothing in the test talks to a gateway. Export them **before** `bal test`:
+without the full trio the interceptor takes its unverified fallback, so every
+assertion test fails for a reason the output does not name. Cover four cases — a
 valid assertion is accepted; one signed by a *different* key is a 401; one whose
 payload was edited after signing is a 401 (never an anonymous caller); and a
 `security: []` resource answers 200 with no assertion at all.

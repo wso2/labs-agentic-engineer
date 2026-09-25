@@ -56,6 +56,20 @@ type DeployObserver interface {
 	OnComponentDeployed(ctx context.Context, orgID, projectID, component string) error
 }
 
+// AgentDeathNotifier is told that a dispatched cycle's agent ended without a
+// pull request. The run supervisor satisfies it, so the watcher can wake a run
+// without holding a workflow engine — the same split, and for the same reason,
+// as eventcore.RunSignaler.
+//
+// It takes primitives rather than the run row because the watcher has a CYCLE in
+// hand: resolving (org, run) to the row that carries the milestone number and
+// the run's KIND — the workflow id's prefix, and a different vocabulary from a
+// cycle's kind — is the composition root's job. Best-effort; nil → the run
+// settles on its landing deadline as before.
+type AgentDeathNotifier interface {
+	AgentDied(ctx context.Context, orgID, runID, reason string) error
+}
+
 // SecretRef is one org credential's refs-only SM-API triplet.
 type SecretRef struct {
 	SecretRefName string
@@ -115,14 +129,24 @@ type SkillMirror interface {
 	SyncProjectSkills(ctx context.Context, orgID, projectID string) error
 }
 
-// CodingKeyResolver answers which Anthropic credential this run must bill: the
-// org's coding-agent key when it configured one, its default key otherwise. The
-// choice is the organization domain's to make — dispatch only mounts what it is
-// handed — so this port deliberately exposes no way to ask "is there an
-// override?", which is what keeps the reuse rule stated in exactly one place
-// (ADR-0016). Wired from organization.AnthropicCredentialService.
+// CodingKeyResolver answers which Anthropic credential a run on runtime must
+// bill: the org's Claude subscription when it has one and the runtime is Claude
+// Code, its API key otherwise. The choice is the organization domain's to make —
+// dispatch only mounts what it is handed — so this port deliberately exposes no
+// way to ask "is there a subscription?", which keeps the rule stated in exactly
+// one place (ADR-0036). Wired from organization.AnthropicCredentialService.
+//
+// DefaultKeyRef is a SECOND question, not a way around the first: which key the
+// build's agent-evaluation step bills. That step is an API call — it drives the
+// generated agent's model and an LLM judge — so it cannot run on a Claude
+// subscription token, and the default key is the org's key that is always an
+// API key. Asking for it says nothing about whether a subscription exists, so
+// the rule above stays in its one place. A NotFoundError means the org has
+// connected no key at all; see evaluationKeyRef for why that is not a dispatch
+// failure.
 type CodingKeyResolver interface {
-	ResolveCodingSecretRef(ctx context.Context, ocOrgID string) (organization.SecretRefTriplet, error)
+	ResolveCodingSecretRef(ctx context.Context, ocOrgID string, runtime orgconfig.AgentRuntime) (organization.SecretRefTriplet, error)
+	DefaultKeyRef(ctx context.Context, ocOrgID string) (organization.SecretRefTriplet, error)
 }
 
 // CodingAgentSettings answers which runtime and model this org's next cycle
@@ -134,10 +158,9 @@ type CodingKeyResolver interface {
 // The values are COPIED onto the run at launch, so a change applies from the
 // next cycle: re-reading mid-run would leave a feed whose model names disagree
 // with the tokens they were billed for. Wired from
-// organization.CodingAgentService; nil → the platform defaults, which is what
-// every dispatch made before this setting existed already carried.
+// organization.AgentSettingsService; nil → the platform defaults.
 type CodingAgentSettings interface {
-	Effective(ctx context.Context, ocOrgID string) (orgconfig.CodingAgentProjection, error)
+	Effective(ctx context.Context, ocOrgID string) (orgconfig.AgentsProjection, error)
 }
 
 // ProjectRepos resolves a project's git repo row (RepoURL/RepoSlug). Wired from

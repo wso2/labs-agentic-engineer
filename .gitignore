@@ -29,6 +29,11 @@ generated/
 # Env / secrets
 .env
 .env.*
+# Also anything ENDING in .env — `.env*` misses a generated file named for what
+# it holds (`.poc-api-platform-client.env`), which is exactly the shape a script
+# writes credentials into. Caught one sitting untracked in a worktree, one
+# `git add -A` away from being committed.
+*.env
 !.env.example
 
 # Dev playground threads (services/agents/playground)
@@ -87,6 +92,7 @@ deployments/scripts/setup-local
 # Local session artifacts — dev-tool config and working notes, not repo content
 /.agents/launch.json
 /docs/superpowers/
+/.superpowers/
 
 # aider's local repo-map cache — a tool's scratch, never source.
 .aider.tags.cache.v*/

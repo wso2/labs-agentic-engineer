@@ -150,15 +150,18 @@ const SECURITY_DESIGN_PATH = "specs/design/security.json";
 
 /**
  * The turn-snapshot filter — mirrors aep-api `agentfold.KeepInTurnSnapshot`:
- * keep agent-authored sources (`*.md`, `*.dsl`, `*.cell`, component
- * `design.json`, the acceptance oracle `validation-criteria.json`, the project
- * security design `specs/design/security.json`, the two OpenAPI contract shapes
- * above) and drop everything else (derived `.excalidraw`/`*.gen.json`
- * projections, code, arbitrary `*.yaml` such as `workload.yaml`, …). `*.cell`
- * is the project-level cell-diagram DSL (design.cell) that drives the live
- * architecture diagram. validation-criteria.json is kept so a design
- * regeneration can see the existing oracle and preserve its covered flags
- * instead of resetting them.
+ * keep agent-authored sources (`*.md`, `*.dsl`, `*.cell`, `*.feature`,
+ * component `design.json`, the project security design
+ * `specs/design/security.json`, the two OpenAPI contract shapes above) and drop
+ * everything else (derived `.excalidraw`/`*.gen.json` projections, code,
+ * arbitrary `*.yaml` such as `workload.yaml`, …). `*.cell` is the
+ * project-level cell-diagram DSL (design.cell) that drives the live
+ * architecture diagram.
+ *
+ * The acceptance oracle is kept so a design regeneration can SEE what it is
+ * regenerating: with `*.feature` in the snapshot a capability keeps its
+ * existing file name and the rules that still hold, rather than being renamed
+ * into a second file stating the same rules twice.
  *
  * The two filters are ONE rule implemented twice: a change here that is not
  * made in `snapshot_filter.go` silently changes what a turn can read on one
@@ -167,12 +170,12 @@ const SECURITY_DESIGN_PATH = "specs/design/security.json";
  * `snapshot_filter_test.go` pin the same fixed accept/reject table.
  */
 export function keepInTurnSnapshot(path: string): boolean {
-  if (path.endsWith(".md") || path.endsWith(".dsl") || path.endsWith(".cell")) return true;
+  if (path.endsWith(".md") || path.endsWith(".dsl") || path.endsWith(".cell") || path.endsWith(".feature"))
+    return true;
   if (isAdmittedSpecPath(path)) return true;
   if (path === SECURITY_DESIGN_PATH) return true;
   if (isTextReferencePath(path)) return true;
-  const base = basename(path);
-  return base === "design.json" || base === "validation-criteria.json";
+  return basename(path) === "design.json";
 }
 
 /**

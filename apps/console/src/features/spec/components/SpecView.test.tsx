@@ -281,6 +281,19 @@ vi.mock("../hooks/useSecurityEntry", () => ({
   useSecurityEntry: (...args: unknown[]) => mockUseSecurityEntry(...args),
 }));
 
+// The acceptance entry reads N documents through useQueries, and these tests
+// render with no QueryClientProvider — the same reason useSecurityEntry is
+// stubbed. `mockAcceptance` is settable so a test can hand the pane a document
+// set; the hook's own reading is covered in useAcceptanceEntry.test.tsx.
+let mockAcceptance: {
+  features: { path: string; content: string }[];
+  isPending: boolean;
+  isError: boolean;
+} = { features: [], isPending: false, isError: false };
+vi.mock("../hooks/useAcceptanceEntry", () => ({
+  useAcceptanceEntry: () => mockAcceptance,
+}));
+
 // What the API view is decorated with — the catalog's granting roles and the
 // project's resource server. Stubbed for the same reason (it reads the spec
 // tree and the platform's role record through react-query); the assertions
@@ -935,6 +948,47 @@ describe("SpecView onBuild routing (#164)", () => {
     ).toBeInTheDocument();
   });
 
+  // The preflight diffs names against the last tag, so it calls a copy of a
+  // Registered External resource `new` like anything else. The design read
+  // model is what knows better, and the dialog takes it from there.
+  it("says an external that reuses a registered resource is reused, not new", async () => {
+    mockUseDesignDependencies.mockReturnValue({
+      data: [
+        {
+          componentName: "checkout-api",
+          dependencies: [
+            {
+              kind: "external",
+              name: "currency-service",
+              status: "resolved",
+              source: "org",
+              resourceRef: "currency-service",
+            },
+          ],
+        },
+      ],
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    mockPreflightRefetch.mockResolvedValue({
+      data: ready({
+        changes: [
+          { name: "currency-service", kind: "external", state: "new" },
+          { name: "reports-web", kind: "component", state: "new" },
+        ],
+      }),
+    });
+
+    render(<SpecView projectName="proj1" />);
+    clickBuild();
+
+    const dialog = await screen.findByTestId("start-build-dialog");
+    expect(within(dialog).getByText("reused · organization")).toBeInTheDocument();
+    // The component beside it is still new.
+    expect(within(dialog).getByText("new")).toBeInTheDocument();
+  });
+
   // `tag` is optional on BuildResponse, so the version page it names may not
   // exist. The ledger is the honest fallback — never the overview, which is
   // where a reader would have to leave to reach either.
@@ -1454,6 +1508,21 @@ describe("SpecView follows the write (#576, ADR-0026)", () => {
     expect(screen.queryByText(/Waiting for the agent to write/)).not.toBeInTheDocument();
   });
 
+  // The follow is the ONE way a hidden document could still name itself. The
+  // spec view drops `specs/validation/` everywhere else (mapping.ts) — but the
+  // follow takes its path from the plan, not from the file list, so without a
+  // guard the pane announced "Waiting for the agent to write…" mid-turn: a
+  // document just hidden, named, with no row to go back to.
+  it("does not follow a write into a document the view hides", () => {
+    render(<SpecView projectName="proj1" />);
+    act(() => {
+      planDeclared(chatKey, "t1", ["specs/validation/validation-criteria.json"]);
+      planFileWriting(chatKey, "t1", "specs/validation/validation-criteria.json");
+    });
+    expect(screen.queryByText(/Waiting for the agent to write/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/validation-criteria/)).not.toBeInTheDocument();
+  });
+
   it("a new turn resets to following", () => {
     render(<SpecView projectName="proj1" />);
     act(() => planFileWriting(chatKey, "t1", CELL));
@@ -1823,108 +1892,6 @@ describe("designWarningIntro", () => {
   });
 });
 
-// The criteria pane is where a reader meets the acceptance oracle cold: the rail
-// carries no explanation, the design turn mints the file with no announcement, and
-// the only sentence in the product that said what criteria were for lived on the
-// Validations page's empty state. This is the surface that gap was reported
-// against, so the description's presence here is the change's real coverage.
-describe("SpecView validation criteria explanation", () => {
-  const CRITERIA_JSON = JSON.stringify({
-    requirements: [
-      {
-        id: "REQ-001",
-        statement: "Shoppers can search the catalog.",
-        criteria: [
-          { id: "AC-001-a", must: "Search returns matches", method: "e2e" },
-          { id: "AC-001-b", must: "Payment is encrypted", method: "manual" },
-        ],
-      },
-    ],
-  });
-
-  beforeEach(() => {
-    mockUseSpecFiles.mockReturnValue({
-      data: [
-        {
-          path: "specs/validation/validation-criteria.json",
-          sha: "abc",
-          group: "validation",
-        },
-      ],
-      isPending: false,
-      isError: false,
-      error: null,
-      refetch: vi.fn(),
-    });
-    mockUseSpecFileContent.mockReturnValue({
-      data: { sha: "abc", content: CRITERIA_JSON },
-      isPending: false,
-      isError: false,
-      error: null,
-      refetch: vi.fn(),
-    });
-  });
-
-  it("explains what the criteria are, where they come from, and how to change one", () => {
-    render(<SpecView projectName="proj1" />);
-
-    expect(
-      screen.getByText(/Each criterion represents one thing your system must do/),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/based on your requirements/)).toBeInTheDocument();
-    // Both halves, because only the automatable ones are checked for the reader.
-    // Claiming all of them were is what this sentence used to do, above a list
-    // whose glyphs said otherwise.
-    expect(
-      screen.getByText(/the ones that can be automated are checked/),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/The rest you have to check yourself/),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/To change one, ask the agent/)).toBeInTheDocument();
-  });
-
-  it("marks who checks each criterion, and never with a run signal", () => {
-    // This pane has no run attached — it is a file preview of the oracle — so a
-    // chip here would name a run that does not exist. `manual` is the one that
-    // regressed: a rule giving manual criteria their final word was ranked above
-    // the has-a-run check, and stamped "Manual" onto every preview.
-    render(<SpecView projectName="proj1" />);
-
-    // Each row's mark is a glyph, so its phrase is what identifies it. The glyph
-    // carries no visible text of its own, which is why the phrase is also the
-    // accessible name.
-    expect(
-      screen.getByText("Validated automatically by the agent."),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Requires manual validation.")).toBeInTheDocument();
-    for (const chip of ["Manual", "Pending", "Passed", "Failed", "Planned"]) {
-      expect(screen.queryByText(chip)).not.toBeInTheDocument();
-    }
-  });
-
-  it("names no method at all — the glyph does it", () => {
-    // `e2e` is an acronym the console lexicon forbids, and "auto" is the word it
-    // is spelled as elsewhere. Neither belongs on a row, where the glyph carries
-    // the distinction, so neither may leak here.
-    render(<SpecView projectName="proj1" />);
-
-    for (const word of ["e2e", "auto", "manual"]) {
-      expect(screen.queryByText(word)).not.toBeInTheDocument();
-    }
-  });
-
-  it("shortens the ids, keeping the full one on hover", () => {
-    render(<SpecView projectName="proj1" />);
-
-    expect(screen.getByText("1")).toBeInTheDocument();
-    expect(screen.getByText("a")).toBeInTheDocument();
-    expect(screen.getByText("b")).toBeInTheDocument();
-    expect(screen.queryByText("AC-001-a")).not.toBeInTheDocument();
-    expect(screen.queryByText("REQ-001")).not.toBeInTheDocument();
-  });
-});
-
 // ---------------------------------------------------------------------------
 // What this view hands the Security page and the API view
 // ---------------------------------------------------------------------------
@@ -2143,5 +2110,132 @@ describe("SpecView — the API view's granting roles and audience", () => {
     expect(screen.getByText("Orders API")).toBeInTheDocument();
     expect(screen.queryByText(/^aud /)).not.toBeInTheDocument();
     expect(screen.queryByText(/Shopper/)).not.toBeInTheDocument();
+  });
+});
+
+// A `.feature` file is neither `.md` nor one of the structured JSON/YAML types, so
+// before this it fell through the whole branch tree to CollabTextArea: an editable
+// monospace box over a document nobody edits by hand. That is exactly the
+// dishonesty CommittedFileView's doc comment says was fixed for every other type.
+describe("SpecView acceptance criteria", () => {
+  const FEATURE = [
+    "Feature: Bought items",
+    "",
+    "  @story-6",
+    "  Rule: A bought item is locked from further edits",
+    "",
+    "    @negative",
+    "    Scenario: Editing a bought item is refused",
+    '      Given the shared list has a bought item named "Eggs"',
+    '      When Dev tries to change the quantity of "Eggs" to "2"',
+    '      Then the quantity of "Eggs" is still "1"',
+  ].join("\n");
+
+  const ADDING = [
+    "Feature: Adding items",
+    "",
+    "  @story-2",
+    "  Rule: An item is added with a name and a quantity",
+    "",
+    "    Scenario: Adding a new item",
+    '      When Priya adds "Milk"',
+    '      Then the list shows "Milk"',
+  ].join("\n");
+
+  beforeEach(() => {
+    mockUseSpecFiles.mockReturnValue({
+      data: [
+        { path: "specs/validation/acceptance/adding-items.feature", sha: "a", group: "validation" },
+        { path: "specs/validation/acceptance/bought-items.feature", sha: "b", group: "validation" },
+      ],
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    mockAcceptance = {
+      features: [
+        { path: "specs/validation/acceptance/adding-items.feature", content: ADDING },
+        { path: "specs/validation/acceptance/bought-items.feature", content: FEATURE },
+      ],
+      isPending: false,
+      isError: false,
+    };
+  });
+
+  // One rail entry for the set, so the reader picks the pane and then searches
+  // it — rather than picking the right file and then searching that.
+  function openAcceptance() {
+    render(<SpecView projectName="proj1" />);
+    fireEvent.click(screen.getByText("Acceptance criteria"));
+  }
+
+  it("lists every capability under one entry", () => {
+    openAcceptance();
+
+    expect(screen.getByText("Bought items")).toBeInTheDocument();
+    expect(screen.getByText("Adding items")).toBeInTheDocument();
+    // The rail carries the entry, not the capabilities: each name appears once,
+    // in the pane.
+    expect(screen.getAllByText("Bought items")).toHaveLength(1);
+  });
+
+  it("renders the structure as a document, not the file as editable text", () => {
+    openAcceptance();
+
+    expect(screen.getByText("A bought item is locked from further edits")).toBeInTheDocument();
+    expect(screen.getByText("Editing a bought item is refused")).toBeInTheDocument();
+    // The document takes no typing: CollabTextArea rendered it as a multiline
+    // field, so a textarea anywhere on the pane is the regression.
+    expect(document.querySelector("textarea")).toBeNull();
+    // The one input is the view's own filter, which edits nothing.
+    expect(screen.getAllByRole("textbox")).toHaveLength(1);
+    expect(screen.getByRole("textbox")).toHaveAccessibleName("Filter scenarios");
+  });
+
+  // The point of collapsing the rail: one search now reaches every capability.
+  it("filters across capabilities, which per-file rows could not", () => {
+    openAcceptance();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Filter scenarios" }), {
+      target: { value: "milk" },
+    });
+    expect(screen.getByText("Adding a new item")).toBeInTheDocument();
+    expect(screen.queryByText("Editing a bought item is refused")).not.toBeInTheDocument();
+  });
+
+  it("opens a scenario's steps on a click, and not before", () => {
+    const step = (text: string) => (_: string, el: Element | null) =>
+      el?.tagName === "SPAN" && el.textContent === text;
+    const when = 'Dev tries to change the quantity of "Eggs" to "2"';
+
+    openAcceptance();
+
+    expect(screen.queryByText(step(when))).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Editing a bought item is refused"));
+    expect(screen.getByText(step(when))).toBeInTheDocument();
+  });
+
+  it("marks a refusal with its tag", () => {
+    openAcceptance();
+
+    expect(screen.getAllByText("@negative").length).toBeGreaterThan(0);
+  });
+
+  it("waits rather than claiming the criteria are empty", () => {
+    mockAcceptance = { features: [], isPending: true, isError: false };
+    openAcceptance();
+
+    expect(
+      screen.getByRole("progressbar", { name: "Loading the acceptance criteria" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("No acceptance criteria yet")).not.toBeInTheDocument();
+  });
+
+  it("says the criteria have not been written when nothing is in flight", () => {
+    mockAcceptance = { features: [], isPending: false, isError: false };
+    openAcceptance();
+
+    expect(screen.getByText("No acceptance criteria yet")).toBeInTheDocument();
   });
 });

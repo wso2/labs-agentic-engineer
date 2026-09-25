@@ -55,6 +55,10 @@ function toneColor(theme: Theme, tone: StatusTone): string {
  * a caption was tried first and lost the fight with the toolbar: at that weight
  * it read as a label rather than as a state.
  *
+ * It reports the repository and the delivery stages, and nothing before the
+ * first build. The spec is not part of it: a spec can be amended while the
+ * last version builds, so one line cannot carry both — `projectChip` says why.
+ *
  * The leading mark is the one thing this chip does that the shared `StatusChip`
  * cannot. `busy` states — the platform is working and the label will change on
  * its own — get a spinner; states that only change when somebody acts get a
@@ -73,6 +77,7 @@ export function ProjectStatusBadge() {
   if (!projectName || !status.data) return null;
 
   const chip = projectChip(status.data);
+  if (!chip) return null;
 
   return (
     <Chip

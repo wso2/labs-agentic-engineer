@@ -26,15 +26,16 @@ import (
 type AnthropicRole string
 
 const (
-	// AnthropicRoleDefault is the org's Anthropic key. EVERY reader uses it —
-	// the design agent, the coding agent, the RCA agent — unless a more
-	// specific key overrides it. An org without one cannot run any agent;
-	// there is no platform-provided fallback.
+	// AnthropicRoleDefault is the org's Anthropic API key. EVERY reader uses
+	// it — the spec agents, the coding agent, the RCA agent. An org without
+	// one cannot run any agent; there is no platform-provided fallback. Always
+	// an api_key (CHECK-enforced).
 	AnthropicRoleDefault AnthropicRole = "default"
 
-	// AnthropicRoleCoding is the optional coding-agent key: an OVERRIDE on the
-	// default, read by coding-agent dispatch and by nothing else. Its ABSENCE
-	// is what "reuse the default key" means — no row, no flag (ADR-0016).
+	// AnthropicRoleCoding is the optional Claude subscription the coding agent
+	// bills instead of the API key, read by coding-agent dispatch alone and
+	// only while the runtime is Claude Code. Always an oauth_token
+	// (CHECK-enforced), and it cannot outlive the default row (ADR-0036).
 	AnthropicRoleCoding AnthropicRole = "coding"
 )
 
@@ -49,8 +50,8 @@ type AnthropicCredentialKind string
 
 const (
 	// AnthropicCredentialAPIKey is a Console API key (`sk-ant-api…`),
-	// authenticated with the `x-api-key` header. The only kind the design
-	// agent can use: it is an AI SDK model call, which speaks API keys.
+	// authenticated with the `x-api-key` header. The only kind the spec agents
+	// can use: they are AI SDK model calls, which speak API keys.
 	AnthropicCredentialAPIKey AnthropicCredentialKind = "api_key"
 
 	// AnthropicCredentialOAuth is a long-lived Claude Code OAuth token from
@@ -87,7 +88,7 @@ func AnthropicCredentialKindOf(key string) AnthropicCredentialKind {
 // ranks `ANTHROPIC_API_KEY` ABOVE `CLAUDE_CODE_OAUTH_TOKEN`, so a container
 // holding both would authenticate with the API key and silently ignore the
 // token. Mounting exactly one is what makes the org's choice actually take
-// effect. See docs/decisions/ADR-0016 and
+// effect. See docs/decisions/ADR-0036 and
 // https://code.claude.com/docs/en/authentication#authentication-precedence.
 func (k AnthropicCredentialKind) RunnerEnvVar() string {
 	if k == AnthropicCredentialOAuth {
@@ -97,8 +98,8 @@ func (k AnthropicCredentialKind) RunnerEnvVar() string {
 }
 
 // SecretStoreKey is the `org_secrets` key holding this role's encrypted bytes.
-// The default role keeps the historical "anthropic/key" so no secret data has
-// to move; only a new role introduces a new key.
+// The default role keeps the historical "anthropic/key"; the coding role keeps
+// "anthropic/coding-key", the key it held when it could also be an API key.
 func (r AnthropicRole) SecretStoreKey() string {
 	if r == AnthropicRoleCoding {
 		return "anthropic/coding-key"
@@ -107,7 +108,7 @@ func (r AnthropicRole) SecretStoreKey() string {
 }
 
 // SecretRefEntity is the SM-API `EntityName` this role mirrors under. Distinct
-// per role so the two keys can never land on the same vault path.
+// per role so the key and the subscription token never share a vault path.
 func (r AnthropicRole) SecretRefEntity() string {
 	if r == AnthropicRoleCoding {
 		return "anthropic-coding"
@@ -121,7 +122,7 @@ func (r AnthropicRole) SecretRefEntity() string {
 // — same `dbStore` (Postgres + AES-256-GCM) plumbing, different `key` value.
 // This table stores only non-secret projection fields.
 //
-// See docs/decisions/ADR-0016-coding-agent-key-is-an-override-not-a-peer.md.
+// See docs/decisions/ADR-0036-the-coding-credential-is-a-subscription.md.
 type OrgAnthropicCredential struct {
 	OcOrgID         string                  `gorm:"primaryKey;type:text" json:"ocOrgId"`
 	Role            AnthropicRole           `gorm:"primaryKey;type:text;not null;default:default" json:"role"`

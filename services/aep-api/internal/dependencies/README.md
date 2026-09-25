@@ -43,8 +43,8 @@ three services are sub-package slices that import only that root.
 
 | Slice | Ops / role | Reaches |
 |---|---|---|
-| `provisioning` | 9 HTTP ops: list/delete/collect-values external resources, list-workload-dependencies, project readiness, provision-platform, dependency-status, request/list org-service access + the `provision` gate lifecycle, watcher, teardown | root cores; delivery (provision execution rows); sourcecontrol (gate issues); `WorkloadDepSource` (deployed Workload consumer refs) |
-| `mcpdiscovery` | the MCP discovery server (including `list_groups`, the design-time directory-group catalog, and `slice_openapi_spec`, which cuts the operations a design uses from a provider's whole document — fetched outside the model's context — with the provenance the dependency file records) + `ListPlatformResourceTypes` and `ListOrgEndpoints` HTTP reads; `list_external_resources` is RT-backed (Registered at register Ensure and Project Externals with an authored RT), not provisioned-only | root `ResourceTypeLister` / external RT catalog / endpoint catalog |
+| `provisioning` | 11 HTTP ops: list/register/update/promote/delete/collect-values external resources, list-workload-dependencies, project readiness, provision-platform, dependency-status, request/list org-service access + the `provision` gate lifecycle, watcher, teardown | root cores; delivery (provision execution rows); sourcecontrol (gate issues); `WorkloadDepSource` (deployed Workload consumer refs) |
+| `mcpdiscovery` | the MCP discovery server (including `list_groups`, the design-time directory-group catalog, and `slice_openapi_spec`, which cuts the operations a design uses from a provider's whole document — fetched outside the model's context — with the provenance the dependency file records) + `ListPlatformResourceTypes` and `ListOrgEndpoints` HTTP reads; `list_external_resources` is RT-backed and lists Registered resources only (`scope: org`); a project's own type is not a catalog entry | root `ResourceTypeLister` / external RT catalog / endpoint catalog |
 | `runtimeconfig` | the SPA `env-config.js` convergence service + its watcher (no HTTP op) | root naming/markers; spec (design at HEAD); repositories (execution enumerate) |
 
 Each slice owns its service AND its HTTP handler (as delivery's `build` slice does); `httpapi` aggregates
@@ -67,8 +67,9 @@ slices.
 | SecurityJSONReader | needs | `spec.ArtifactService` — `security.json` bytes at HEAD (empty tag) or a `v<N>` spec tag (`GetDesignAtSpecTag`). Absent file is no overlay; parse of a present file is provisioning's job. The overlay DERIVES both CRT parameters: `scopes` is the OIDC scopes plus every catalog handle, and nothing in the document names the client |
 | ProjectNamer | needs | `openchoreo` project client — the project's display name, which becomes the sign-in client's `displayName` (suffixed `· <web app>` when the project has several). Best-effort: an unreadable name falls back to the project id rather than failing a provision |
 | RolesEnsurer | needs | `identity` — the build-time roles ensure. The roles gate calls it inside `ProvisionForBuild`, driven by the DESIGN at the tag rather than the drawer inputs, so a role added in a later version is still created. Reports a `RolesEnsureOutcome`, never an identity entity. The outcome carries each test account's login, which the gate publishes as its own comment on the ticket before closing it — that comment is where a validation agent reads the credentials it signs in with, and a failure to publish fails the build |
+| AgentRegistrar | needs | `delivery/agentgovernance` (through an app-root adapter, wired by `SetAgentRegistrar` because the governor is built after this service). The build-time Agent Manager gate calls it inside `ProvisionForBuild`, driven by the DESIGN at the tag like the roles gate beside it: ONE gate per version, listing every `ai-agent`. It registers the org's LLM provider, each agent's record and each agent's model binding — and deliberately NOT the credential, which only a deploy can carry into a pod. A failure fails the run at planning, because an agent built before these records exist ends in a 503 from its own `/healthz` and a verdict that means nothing |
 | GroupCatalogLister | needs | `identity` — the groups already on the org environment's directory, behind the `list_groups` MCP tool. Read-only, with no write counterpart on this surface: groups are created at build time, never by a model |
-| the 11 public ops (provisioning 9 + mcpdiscovery `ListPlatformResourceTypes` and `ListOrgEndpoints`) | offers | the edge (`dependenciesHandlers`) |
+| the 13 public ops (provisioning 11 + mcpdiscovery `ListPlatformResourceTypes` and `ListOrgEndpoints`) | offers | the edge (`dependenciesHandlers`) |
 
 ## Owns
 - `ExternalResource` (an in-memory definition, NOT a DB row — see Persistence), `AccessRequest`, the
@@ -111,10 +112,29 @@ slices.
   OrgSecretWriter (empty when that writer is unwired). Secret cell values are never copied into
   Plain. Project readiness iterates the design schema; stale binding keys cannot make a
   dependency configured.
-- **Consumption instructions on the ResourceType mark Registered** (ADR-0021). The process-local
-  org value plane is a cache: after aep-api restart, `registeredEnvCells` synthesizes configured
-  cells from the RT and `OrgCatalogVaultKey` reconstructs the org-catalog vault path — it does
-  not re-write secrets. Empty consumption instructions keep the row a Project External.
+- **The scope marker on the ResourceType says whose it is** (ADR-0021 amended). Register writes
+  `aep.wso2.com/scope: org` plus the record (`provider`, `contract {type,path}` into the org docs
+  repo, `provenance`, consumption instructions); a project's build writes `scope: project` and
+  `aep.wso2.com/project: <name>`, and folds the project into the type's NAME so it can never collide
+  with a registered type of the same logical name. Org-level reads — `ExternalResourceCatalog.List`,
+  Register's uniqueness check, `Delete` — see `scope: org` only: a project's resource belongs to its
+  project and is never offered for reuse or counted as a taken name. A type from before the marker
+  existed is judged by its consumption instructions (the ADR-0021 rule), which stays the fallback.
+  The process-local value plane is a cache: `synthesizeRegisteredEnvCells` rebuilds cells from the RT
+  and its `OrgCatalogVaultKey` after a restart and does not re-write secrets.
+- **The HTTP list shows a project's own resources after the records; Promote turns one into a
+  record.** `ListExternalResources` appends a `scope: project` row per (project, dependency) whose
+  design holds an inline block (no `resource.ref`), read in the same design sweep that computes
+  consumers (`sweepProjectExternals`), with per-environment cell STATUS from the project's bindings
+  and never a value. The org-only readers above do not change. `PromoteExternalResource`
+  (`promote.go`) validates as Register — instructions, a value per key × environment, the name not
+  yet registered — with one difference: an environment the request leaves out is carried over from
+  the project's binding (plain keys from its values, secrets by `OrgSecretWriter.CopyOrgCatalogSecret`,
+  vault to vault). It commits the project's document under the record's name, writes the value plane,
+  ensures the `scope: org` type, then asks the design service (`ProjectResourcePromoter`) to rewrite the
+  project's file as a copy of the record through the same renderer the Apply-time copy uses. Order
+  matters: a failure after Ensure leaves a record the project does not reference yet, and the next
+  attempt reads "already registered — have the project reuse it instead".
 - **A gate's provisioning run keeps an execution row.** It is the one execution kind the milestone model
   still writes: admitted when the drawer submits, finished by the readiness watcher, and its terminal state
   is what closes the gate issue.

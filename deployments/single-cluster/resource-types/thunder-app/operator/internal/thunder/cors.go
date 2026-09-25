@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"slices"
@@ -156,6 +157,13 @@ func (c *client) putCORSWritable(ctx context.Context, token string, origins []st
 // that cannot be one — a relative URI, a custom scheme (a native app's
 // myapp://callback), or an unparseable string — so a CR carrying a redirect URI
 // no browser could ever send does not widen the allow-list.
+//
+// Default ports are stripped on purpose. OpenChoreo's public URL for an HTTPS
+// HTTPRoute is often `https://host:443/…`. Go's url.URL.Host keeps `:443`, but
+// the browser Origin header omits it (RFC 6454). Allow-listing `https://host:443`
+// then makes the SPA's first call — fetch of /.well-known/openid-configuration —
+// fail CORS while curl against the same URL returns 200, and the app hangs on
+// "Checking your session…".
 func OriginOf(redirectURI string) string {
 	u, err := url.Parse(strings.TrimSpace(redirectURI))
 	if err != nil || u.Host == "" {
@@ -166,7 +174,43 @@ func OriginOf(redirectURI string) string {
 	default:
 		return ""
 	}
-	return u.Scheme + "://" + u.Host
+	host := u.Hostname()
+	port := u.Port()
+	if omitDefaultPort(u.Scheme, port) {
+		// Trim the :port suffix off u.Host so IPv6 literals keep their
+		// brackets. Hostname() strips them, which would emit http://::1.
+		return u.Scheme + "://" + strings.TrimSuffix(u.Host, ":"+port)
+	}
+	if port != "" {
+		return u.Scheme + "://" + net.JoinHostPort(host, port)
+	}
+	return u.Scheme + "://" + host
+}
+
+func omitDefaultPort(scheme, port string) bool {
+	return (scheme == "https" && (port == "" || port == "443")) ||
+		(scheme == "http" && (port == "" || port == "80"))
+}
+
+// CanonicalWebURL strips default ports from an http(s) URI so it matches what
+// a browser puts in redirect_uri (window.location.origin omits :443 / :80).
+// Non-http(s) and unparseable strings are returned unchanged.
+func CanonicalWebURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return raw
+	}
+	switch u.Scheme {
+	case "http", "https":
+	default:
+		return raw
+	}
+	if !omitDefaultPort(u.Scheme, u.Port()) {
+		return raw
+	}
+	u.Host = strings.TrimSuffix(u.Host, ":"+u.Port())
+	return u.String()
 }
 
 // normalizeOrigins de-duplicates, drops empties and sorts, so that two calls

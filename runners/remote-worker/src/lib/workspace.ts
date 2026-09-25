@@ -62,6 +62,7 @@ import {
   resolveRealGhPath,
 } from "./gh_git_auth.js";
 import { cloneCredentialScope, cloneWithHelper } from "./git_clone.js";
+import { TASK_LOG_DIR } from "./logger.js";
 import { shellQuote } from "./shell.js";
 
 const execAsync = promisify(exec);
@@ -108,14 +109,17 @@ export async function writeBearerFile(file: string, token: string, previous?: st
   return token;
 }
 
+const AEP_DIR = ".aep";
+const GH_CONFIG_DIR = ".gh-config";
+
 // computeLayout names every path the dispatch flow touches. Pure function
 // so tests can verify the path layout without filesystem effects.
 export function computeLayout(orgId: string, projectId: string, taskId: string): WorkspaceLayout {
   const workspace = path.join(config.workspaceBasePath, orgId, projectId, taskId);
-  const aepDir = path.join(workspace, ".aep");
+  const aepDir = path.join(workspace, AEP_DIR);
   return {
     workspace,
-    ghConfigDir: path.join(workspace, ".gh-config"),
+    ghConfigDir: path.join(workspace, GH_CONFIG_DIR),
     bearerFile: path.join(aepDir, "bearer"),
     aepDir,
     helperBin: path.join(aepDir, CREDHELPER_FILE),
@@ -150,7 +154,32 @@ async function installCommitIdentity(
 // process, and the JVM's two post-mortem logs (`bal build` runs one). Not a
 // general-purpose ignore list — these are the files that are never wanted, in
 // any component, in any language, and that nobody puts there on purpose.
-const CRASH_ARTEFACT_PATTERNS = ["core", "core.*", "hs_err_pid*.log", "replay_pid*.log"];
+//
+// THE SHAPE OF EACH PATTERN IS THE WHOLE PROBLEM, because a name a crash picks
+// is a name a person picks too. The list read `core.*` for a while, which is
+// unanchored and extension-blind, so it ignored `core.ts`, `core.css` and
+// `core.go` — and `src/authz/core.ts` is written into EVERY generated web app by
+// the `thunder-authentication` skill, so it fired on every project. A bare
+// `core` matches a DIRECTORY of that name as well as a file, and `src/core/` is
+// about as common as a directory name gets. That combination cost a live run
+// (`ae-demo/simplest-crud-blog`, 2026-09-19) two fully-built components: their
+// sources were invisible to `git status` and unstageable by `git add -A`, and
+// nothing anywhere said why.
+//
+// So each pattern now says what it means:
+//   `core`         — a dump file at any depth. Unanchored deliberately: a JVM
+//                    dumps where it was running, which is any component.
+//   `!core/`       — …but a DIRECTORY named core is somebody's source. The
+//                    trailing slash is what distinguishes the two, and the
+//                    negation only has something to re-include because the line
+//                    above it is unanchored. Do not "simplify" it away.
+//   `core.[0-9]*`  — the kernel's `core.%p` / `core.%p.%t` shape, which is what
+//                    a suffixed dump actually looks like. No source file's
+//                    extension starts with a digit.
+// Proven the only way that counts, against a real `git init` in
+// `workspace.test.ts`: `core.ts`, `src/core/index.ts` and `session.ts` stay
+// stageable, `core` and `core.4711` stay unstageable.
+const CRASH_ARTEFACT_PATTERNS = ["core", "!core/", "core.[0-9]*", "hs_err_pid*.log", "replay_pid*.log"];
 
 // installCrashArtefactExclude writes those patterns into the clone's
 // `.git/info/exclude` — git's per-clone ignore file, which behaves exactly like
@@ -180,9 +209,33 @@ const CRASH_ARTEFACT_PATTERNS = ["core", "core.*", "hs_err_pid*.log", "replay_pi
 // will later clone themselves, learns it from the skill. Deleting either half
 // costs something the other does not provide.
 // Exported for `workspace.test.ts`, which drives it against a real `git init`
-// and asserts a `core` file stays unstageable through `git add -A` — the only
-// assertion that proves the guarantee rather than the file's contents.
+// and asserts through `git add -A` that a dump stays unstageable AND that
+// `core.ts` and a `src/core/` directory do not — the only assertions that prove
+// the guarantee rather than the file's contents.
 export async function installCrashArtefactExclude(workspace: string): Promise<void> {
+  await appendCloneExclude(workspace, "crash artefacts", CRASH_ARTEFACT_PATTERNS);
+}
+
+// installRunLogExclude keeps the run's own log directory (`openTaskLog`: the
+// transcript, the prompt appendix, the session-context record) out of anything
+// the agent stages. Root-anchored, so a project's own `logs/` or a nested
+// `.logs/` is untouched.
+export async function installRunLogExclude(workspace: string): Promise<void> {
+  await appendCloneExclude(workspace, "the runner's logs", [`/${TASK_LOG_DIR}/`]);
+}
+
+// installCredentialExclude keeps the credential directories provisionWorkspace
+// drops inside the clone (the publisher bearer, the credential helper, the gh
+// wrapper and gh's config) out of anything the agent stages: one `git add -A`
+// would otherwise push the bearer into the customer's repository.
+export async function installCredentialExclude(workspace: string): Promise<void> {
+  await appendCloneExclude(workspace, "the runner's credentials", [
+    `/${AEP_DIR}/`,
+    `/${GH_CONFIG_DIR}/`,
+  ]);
+}
+
+async function appendCloneExclude(workspace: string, what: string, patterns: readonly string[]): Promise<void> {
   // `.git/info/` is not created by every clone (a worktree or a `--separate-git-dir`
   // layout puts the real git dir elsewhere), so resolve it from git rather than
   // assuming `<workspace>/.git/info`.
@@ -194,7 +247,7 @@ export async function installCrashArtefactExclude(workspace: string): Promise<vo
   // replacing one would silently drop whatever it said.
   await fs.promises.appendFile(
     path.join(infoDir, "exclude"),
-    `\n# AEP: crash artefacts. Written per clone by the runner, never committed.\n${CRASH_ARTEFACT_PATTERNS.join("\n")}\n`,
+    `\n# AEP: ${what}. Written per clone by the runner, never committed.\n${patterns.join("\n")}\n`,
   );
 }
 
@@ -284,6 +337,8 @@ export async function provisionWorkspace(req: ProvisionRequest): Promise<Workspa
 
     await installCommitIdentity(layout.workspace, req.identity);
     await installCrashArtefactExclude(layout.workspace);
+    await installRunLogExclude(layout.workspace);
+    await installCredentialExclude(layout.workspace);
 
     const scope = cloneCredentialScope(req.repoUrl);
     if (scope) {

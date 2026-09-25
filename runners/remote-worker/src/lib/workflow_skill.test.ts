@@ -164,8 +164,11 @@ for (const rule of [
   // of one run's 55 minutes.
   "**Dispatch every builder of a wave in the background, in ONE turn.**",
   // What the deleted PreToolUse hook used to guarantee structurally: nothing is
-  // staged while a subagent is still writing.
-  "before you stage or commit\nanything",
+  // staged while a subagent is still writing. Only the COMMIT waits for the
+  // whole issue — a wait on the whole wave held one run's walk 13m36s past its
+  // builder's report while the lead sat blocked on the sibling service.
+  "**Wait for one at a time, and act on each report as it lands.**",
+  "Only the **commit** waits for the whole issue",
   // A subagent that backgrounds its own build reports "clean" while the command
   // runs on, and the run ends with it orphaned (probe 2's `sleep`, stopped at
   // session end).
@@ -177,6 +180,7 @@ for (const rule of [
   // will not let a web app be committed unwalked, and the literal dispatch
   // prompt. The procedure itself is `mock-verification`, asserted below.
   "**A `web-application` is finished by a walk, not a build.**",
+  "Once its builder\n   reports clean",
   "dispatch **one more subagent**",
   "Walk <component> at <App Path>",
 ]) {
@@ -262,7 +266,7 @@ test("mock-verification walks and repairs a line at a time", () => {
     "## 1 · Stand it up",
     "## 2 · Plan",
     // The dev server — process group, free port, browser close — is the skill's
-    // script, reached through the runner-stamped path like aep-validation's
+    // script, reached through the runner-stamped path like acceptance-run's
     // report generator. The walker never re-derives it.
     'bash "$AEP_SKILLS_DIR/mock-verification/scripts/walk.sh" up',
     'bash "$AEP_SKILLS_DIR/mock-verification/scripts/walk.sh" down',
@@ -289,6 +293,11 @@ test("mock-verification walks and repairs a line at a time", () => {
 // `specPath`. Coding reads those fields. Each rule lives in one skill —
 // architecture must not paste the coding procedure, and the research file
 // must not restate the design-time name choice.
+// A phrase a skill wraps across lines is still that phrase: compare on one line.
+function flowed(text: string): string {
+  return text.replace(/\s+/g, " ");
+}
+
 const ARCHITECTURE = path.join(LIBRARY, "architecture", "SKILL.md");
 const RESEARCH = path.join(LIBRARY, "aep", "references", "external-dependency-research.md");
 
@@ -318,16 +327,20 @@ test("architecture prefers a Registered External resource over a new-name Projec
   const skill = fs.readFileSync(ARCHITECTURE, "utf8");
   assert.ok(skill.includes("Registered External resource"), "lost Registered External resource");
   assert.ok(skill.includes("Project External resource"), "lost Project External resource");
-  assert.ok(skill.includes("consumption instructions"), "list_external_resources returns consumption instructions");
-  assert.ok(skill.includes("org resource docs pointers"), "list_external_resources returns org resource docs pointers");
-  assert.ok(
-    skill.includes("Write consumption instructions into the dependency `description`"),
-    "coding reads consumption instructions from description — name that handoff",
-  );
+  assert.ok(skill.includes("consumption instructions"), "the organization's instructions are named");
   assert.ok(skill.includes("**new** name"), "a Project External resource uses a new name");
-  assert.ok(skill.includes("org values stay on the Registered name"), "org values stay on the Registered name");
+  assert.ok(flowed(skill).includes("org values stay on the registered name"), "org values stay on the registered name");
   assert.ok(skill.includes("org-level one wins"), "org catalog rows outrank a new Project External name");
   assert.ok(skill.includes("user-asked reconsider"), "leaving a fitting org row requires a reconsider");
+  // ADR-0030: reuse writes a STUB and the platform copies the record in. The
+  // agent never retypes what the organization holds.
+  assert.ok(skill.includes('"ref"'), "reuse is a stub naming the record");
+  assert.ok(flowed(skill).includes("The platform fills the block at save"), "the platform, not the agent, fills the block");
+  assert.ok(skill.includes("Never retype the keys"), "a retyped key is how a copy drifts");
+  assert.ok(
+    !skill.includes("Write consumption instructions into the dependency `description`"),
+    "instructions are their own field, not description prose (ADR-0030)",
+  );
   assert.ok(!skill.includes("unresolved on purpose"), "catalog reuse is the github example, not an invented needs-spec");
   assert.ok(!skill.includes("{type, url}"), "MCP pointer shape belongs to the list tool, not the skill");
   assert.ok(!skill.includes("{type, path}"), "MCP pointer shape belongs to the list tool, not the skill");
@@ -339,14 +352,24 @@ test("architecture does not paste the coding research procedure", () => {
   assert.ok(!skill.includes("vendor's own quickstart"), "sdk quickstart is the coding research procedure");
 });
 
-test("external-dependency-research reads Registered consumption instructions from description and specPath", () => {
+test("external-dependency-research reads the organization's instructions from the resource block", () => {
   const research = fs.readFileSync(RESEARCH, "utf8");
-  assert.ok(research.includes("Registered External resource"));
-  assert.ok(research.includes("consumption instructions"));
-  assert.ok(research.includes("dependency `description`"), "consumption instructions arrive in description");
+  assert.ok(research.includes("resource.ref"), "a copy is recognised by its ref");
+  assert.ok(research.includes("resource.consumptionInstructions"), "instructions are their own field (ADR-0030)");
+  assert.ok(
+    research.includes("how the organization wants the resource used"),
+    "say what that field carries — an instruction, not background",
+  );
+  assert.ok(research.includes("resource.contract.path"), "the contract document sits beside the file");
+  assert.ok(research.includes("WHOLE document"), "the copy is the whole document, not a slice");
+  assert.ok(research.includes("Slice the document first"), "coding slices; design never does");
+  assert.ok(
+    !research.includes("dependency `description`"),
+    "instructions no longer ride in description (ADR-0030)",
+  );
   assert.ok(
     !research.includes("there is no catalog to read it out of"),
-    "Registered External resources carry consumption instructions into description and specPath",
+    "a copy carries the organization's instructions in its own block",
   );
   assert.ok(!research.includes("list_external_resources"), "MCP list is design-time; coding does not call it");
   assert.ok(!research.includes("when present"), "name the checkable fields; do not leave a dangling when-present");
@@ -390,18 +413,19 @@ test("the workflow names tool roles, never a runtime's tool names", () => {
 
 // The other half of that: a role the body names and the glossary does not is a
 // dangling pointer the agent resolves by guessing.
-test("the glossary binds every role the workflow names", () => {
-  const glossary = toolGlossary();
-  for (const role of ["fan-out tool", "wait tool", "task list"]) {
-    assert.ok(glossary.includes(role), `the glossary binds no ${role}`);
-    for (const mode of ["github", "local"] as const) {
-      assert.ok(composed[mode].includes(role), `${mode} mode never names the ${role}`);
+// Every runtime's glossary, because each one is the only binding its session
+// gets: a role bound on Claude Code and dangling on OpenCode is a lead that
+// guesses on one runtime and not the other.
+test("the glossary binds every role the workflow names, on every runtime", () => {
+  for (const runtime of ["claude-code", "opencode"] as const) {
+    const glossary = toolGlossary(runtime);
+    for (const role of ["fan-out tool", "wait tool", "task list"]) {
+      assert.ok(glossary.includes(role), `the ${runtime} glossary binds no ${role}`);
+      for (const mode of ["github", "local"] as const) {
+        assert.ok(composed[mode].includes(role), `${mode} mode never names the ${role}`);
+      }
     }
   }
-  // "the fast model" / "the default one" is how the body defers the choice, so
-  // the glossary has to carry the aliases those words resolve to.
-  assert.ok(glossary.includes("the fast model") && glossary.includes("the default"));
-  assert.ok(composed.github.includes("runs well on the fast model"));
 });
 
 // A subagent posts its own progress, so the fan-out prompt list is the only
@@ -515,7 +539,7 @@ test("the mirror carries the coding-audience skills, composed for the mode", asy
 
     // The runner's own skills arrive the SAME way every other coding skill does.
     // There is no plugin any more, so if they are not here they reach no session.
-    for (const name of ["aep", "aep-validation", "playwright-cli"]) {
+    for (const name of ["aep", "acceptance-run", "agent-browser"]) {
       assert.ok(fs.existsSync(path.join(skills, name, "SKILL.md")), `mirror is missing ${name}`);
     }
     // Design-only skills stay out: their descriptions would sit in a coding
@@ -610,10 +634,10 @@ test("a skill's references, assets and scripts come along", async () => {
       path.join("aep", "references", "external-dependency-research.md"),
       path.join("aep", "references", "component-contract.md"),
       path.join("aep", "references", "workload-and-wiring.md"),
-      path.join("aep-validation", "references", "authoring.md"),
-      path.join("aep-validation", "assets", "playwright.config.template.ts"),
-      path.join("aep-validation", "scripts", "generate-report.mjs"),
-      path.join("playwright-cli", "LICENSE"),
+      // The false-pass guard. It ships INSIDE the skill precisely so the mirror
+      // carries it into the project clone — a validation pod has no checkout of
+      // this repo, so a guard left at the repo root is a guard that never runs.
+      path.join("acceptance-run", "scripts", "check-report.mjs"),
       // Mock mode is the harness (two verbatim templates plus the reference
       // that wires them, under react-webapp) and the authorization half it
       // imports by path (the gateway layer, the session substitute and the
@@ -642,72 +666,13 @@ test("a skill's references, assets and scripts come along", async () => {
 // mirror). `/app/plugin` was such a path, and it stopped existing when the plugin
 // did; the report generator was still being invoked through it.
 test("no library skill hardcodes a runner path", () => {
-  for (const skill of ["aep", "aep-validation", "playwright-cli", "mock-verification"]) {
+  for (const skill of ["aep", "acceptance-run", "agent-browser", "mock-verification"]) {
     const body = fs.readFileSync(path.join(LIBRARY, skill, "SKILL.md"), "utf8");
     assert.ok(!body.includes("/app/plugin"), `${skill} names the retired /app/plugin`);
     assert.ok(
       !/\/app\/skills/.test(body),
       `${skill} hardcodes /app/skills — use $AEP_SKILLS_DIR, which is right in every mode`,
     );
-  }
-});
-
-// The Bash tool keeps ONE shell for a whole run, so a bare relative `cd` is
-// correct exactly once. #49: the RUN block was re-entered after a heal wave and
-// `cd tests/e2e` landed in `tests/e2e/tests/e2e`. Every other path the
-// validation workflow names is repo-root relative, so the one command that
-// moves the shell has to be self-locating. Scoped to aep-validation on purpose:
-// `cd <project-name>` in the ballerina skill is a placeholder after `bal new`,
-// not a fixed path.
-// From the repo root a bare `npx playwright test` is the QUIET failure: it
-// discovers the specs, passes, and exits 0 without loading the config — so no
-// reporter, no results.json, and none of the launch args the deployed endpoints
-// need. Verified against the pinned 1.61.1. Every invocation therefore goes
-// through the package's own `test` script, which `npm --prefix` runs with the
-// package as its working directory — that is what removed the last `cd` from
-// this workflow.
-test("the validation workflow never runs playwright test bare", () => {
-  const docs = ["SKILL.md", "references/authoring.md", "references/healing.md"].map(
-    (rel) => [rel, fs.readFileSync(path.join(LIBRARY, "aep-validation", rel), "utf8")] as const,
-  );
-  for (const [rel, body] of docs) {
-    for (const line of body.split("\n")) {
-      // Start-of-line only: prose may name the form it is warning against.
-      if (!/^\s*npx\s+playwright\s+test\b/.test(line)) continue;
-      assert.ok(
-        line.includes("--config"),
-        `aep-validation/${rel}: \`${line.trim()}\` — bare from the repo root this ` +
-          `passes and writes no results.json; use \`npm test --prefix tests/e2e\``,
-      );
-    }
-  }
-  const skill = docs[0][1];
-  assert.match(
-    skill,
-    /"scripts":\s*\{\s*"test":\s*"playwright test"\s*\}/,
-    "the scaffolded package.json lost its `test` script — every invocation depends on it",
-  );
-  assert.ok(
-    skill.includes("npm test --prefix tests/e2e"),
-    "SKILL.md no longer runs the suite through the package script",
-  );
-});
-
-test("the validation workflow never cds to a bare relative path", () => {
-  for (const rel of ["SKILL.md", "references/authoring.md", "references/healing.md"]) {
-    const body = fs.readFileSync(path.join(LIBRARY, "aep-validation", rel), "utf8");
-    for (const line of body.split("\n")) {
-      // The whole argument, not the first token: `cd "$(git rev-parse …)/x"`
-      // contains spaces, and splitting on them would read as a bare path.
-      const target = /^\s*cd\s+(.+)$/.exec(line)?.[1]?.trim();
-      if (!target) continue;
-      assert.ok(
-        target.replace(/^["']/, "").startsWith("/") ||
-          target.includes("$(git rev-parse --show-toplevel)"),
-        `aep-validation/${rel}: \`${line.trim()}\` — the shell persists across calls, so a ` +
-          `cd must be self-locating (absolute, or rooted at $(git rev-parse --show-toplevel))`,
-      );
-    }
   }
 });
 
@@ -729,45 +694,6 @@ test("no skill licenses a force-push without the lease", () => {
       );
     }
   }
-});
-
-// The half a reader misses: the deny-list can go on governing a force-push
-// after the step that needed one has lost it.
-test("aep-validation still names the force-push its push step needs", () => {
-  const body = fs.readFileSync(path.join(LIBRARY, "aep-validation", "SKILL.md"), "utf8");
-  assert.ok(
-    body.includes("git push --force-with-lease"),
-    "step 10 lost its lease form while the deny-list still governs one",
-  );
-});
-
-// The two comments a validation run has always posted are STEP-anchored, and
-// that is why they are the two that reliably happen — ADR-0010's own rule, that
-// an obligation stated beside a numbered sequence gets skipped while one inside
-// it lands. The platform now writes the middle, so nothing else is asked for;
-// lose either of these and the issue has no opening claim or no closing verdict.
-test("aep-validation keeps the two comments its steps ask for", () => {
-  const body = fs.readFileSync(path.join(LIBRARY, "aep-validation", "SKILL.md"), "utf8");
-  assert.ok(body.includes("Post a brief opening comment"), "step 1 lost its opening comment");
-  assert.ok(
-    body.includes("Post an issue comment with the summary counts"),
-    "step 10 lost its closing summary",
-  );
-});
-
-// …and asks for NOTHING else. The skill carried a `## The status line` section
-// telling the agent to keep the middle current; it never did, and the platform
-// now writes those lines itself (ADR-0011). Restoring the section would put two
-// writers on one line — the `aep` body is always-on for a validation run too, so
-// its own keep-it-current rule is already in the prompt and needs no second
-// voice here.
-test("aep-validation asks for no status line of its own", () => {
-  const body = fs.readFileSync(path.join(LIBRARY, "aep-validation", "SKILL.md"), "utf8");
-  const headings = body.split("\n").filter((l) => /^#{1,6}\s+\S/.test(l));
-  assert.ok(
-    !headings.some((h) => /status line/i.test(h)),
-    `aep-validation grew a status-line section back: ${headings.filter((h) => /status line/i.test(h)).join(", ")}`,
-  );
 });
 
 test("re-mirroring the same workspace replaces the previous mode's body", async () => {

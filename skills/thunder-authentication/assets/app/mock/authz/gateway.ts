@@ -85,18 +85,27 @@ const table: MockOperationTable | null =
   null;
 
 /**
- * The scopes carried by a mock bearer (`mock:claims:read,claims:submit`).
+ * The scopes carried by a mock bearer (`mock:HRCoordinator;claims:read,claims:submit`).
  *
  * This file owns the format because in production the GATEWAY is what reads a
  * token; `mock/authz/session.ts` mints one and re-exports this reader for the header
  * badge. A handler never decides on it: which rows an operation returns is its
  * path (`/api/me/…` the caller's, anything else every row — ADR-0031).
+ *
+ * THE ROLE SEGMENT. Everything before the first `;` names the role(s) the
+ * session is signed in as, and it is NOT a scope. It exists for the one reader
+ * that cannot work it out for itself: the wired gateway (`mock/wired.ts`), which
+ * has to put a username in the assertion it mints and cannot infer the role from
+ * the grants, because two roles in one design may hold exactly the same ones. A
+ * token with no `;` is the older shape and is read as all-scopes, so a page
+ * loaded before a restart keeps working.
  */
 export function scopesFromToken(header: string | null): string[] {
   const token = header?.replace(/^Bearer\s+/i, "") ?? "";
   if (!token.startsWith("mock:")) return [];
-  return token
-    .slice("mock:".length)
+  const body = token.slice("mock:".length);
+  const semicolon = body.indexOf(";");
+  return (semicolon >= 0 ? body.slice(semicolon + 1) : body)
     .split(",")
     .map((value) => decodeURIComponent(value).trim())
     .filter(Boolean);

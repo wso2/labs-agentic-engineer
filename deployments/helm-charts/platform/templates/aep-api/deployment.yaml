@@ -179,9 +179,12 @@ spec:
             # Same in-cluster address as AGENT_PLATFORM_URL above.
             - name: AEP_API_INTERNAL_BASE_URL
               value: "http://aep-api.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.aepApi.port }}"
-            # The one runner image, used by both task kinds.
+            # The Claude Code runner image, used by both task kinds.
             - name: AGENT_RUNNER_IMAGE
               value: {{ .Values.codingAgentRunner.image | quote }}
+            # The OpenCode runner image, used for orgs whose runtime is OpenCode.
+            - name: AGENT_RUNNER_IMAGE_OPENCODE
+              value: {{ .Values.codingAgentRunner.opencodeImage | quote }}
             # OpenBao-direct secrets delivery (local-only). Cloud injects a
             # different SecretsProvider via the overlay; OPENBAO_* must be
             # absent there. OPENBAO_TOKEN comes from the ESO-synced
@@ -247,10 +250,32 @@ spec:
             - name: TEMPORAL_TASKQUEUE
               value: {{ .Values.temporal.taskQueue | quote }}
             {{- end }}
+            {{- with .Values.aepApi.kubeAPI }}
+            {{- if .baseURL }}
+            - name: KUBE_API_BASE_URL
+              value: {{ .baseURL | quote }}
+            {{- end }}
+            {{- if .tokenSecret }}
+            - name: KUBE_API_TOKEN_FILE
+              value: /var/run/dp-kube/token
+            - name: KUBE_API_CA_FILE
+              value: /var/run/dp-kube/ca.crt
+            {{- end }}
+            {{- end }}
           volumeMounts:
             - name: workspaces
               mountPath: /workspaces
+            {{- if and .Values.aepApi.kubeAPI .Values.aepApi.kubeAPI.tokenSecret }}
+            - name: dp-kube
+              mountPath: /var/run/dp-kube
+              readOnly: true
+            {{- end }}
       volumes:
         - name: workspaces
           persistentVolumeClaim:
             claimName: aep-workspaces
+        {{- if and .Values.aepApi.kubeAPI .Values.aepApi.kubeAPI.tokenSecret }}
+        - name: dp-kube
+          secret:
+            secretName: {{ .Values.aepApi.kubeAPI.tokenSecret | quote }}
+        {{- end }}

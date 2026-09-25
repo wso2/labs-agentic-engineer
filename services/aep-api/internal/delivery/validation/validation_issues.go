@@ -20,20 +20,17 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
-// criteriaFilePath is the acceptance-oracle path in the project repo, authored
-// by the validation-criteria skill and read by the runner.
-const criteriaFilePath = "specs/validation/validation-criteria.json"
-
 // validationTitle is the fixed title of a version's validation issue. It names
 // no version: the MILESTONE is the version pin, and a title is renamable display
 // text that nothing matches on.
-const validationTitle = "Validate the deployed system against its validation criteria"
+const validationTitle = "Validate the deployed system against its acceptance criteria"
 
 // Service mints the project's validation Task issue. It holds only consumer
 // ports; concrete providers are wired at the composition root.
@@ -105,20 +102,20 @@ func (s *Service) EnsureValidationIssue(ctx context.Context, orgID, projectID st
 		// invisible to every milestone-scoped read, and belonging to no ledger.
 		return 0, fmt.Errorf("validation: a milestone is required to file the validation issue under")
 	}
-	raw, found, err := s.criteria.ReadValidationCriteria(ctx, orgID, projectID)
+	files, found, err := s.criteria.ReadAcceptanceCriteria(ctx, orgID, projectID)
 	if err != nil {
-		return 0, fmt.Errorf("validation: read criteria: %w", err)
+		return 0, fmt.Errorf("validation: read acceptance criteria: %w", err)
 	}
 	if !found {
 		// The design agent has not authored the oracle yet — a later planning
 		// pass re-mints once it exists.
 		return 0, nil
 	}
-	doc, err := parseCriteria(raw)
+	sum, err := validateAcceptance(files)
 	if err != nil {
-		// A malformed oracle is the design agent's bug, not a reason to fail the
+		// An unusable oracle is the design agent's bug, not a reason to fail the
 		// save; skip and let a corrected pass re-mint.
-		slog.WarnContext(ctx, "validation: skipping mint — criteria file unusable", "project", projectID, "error", err)
+		slog.WarnContext(ctx, "validation: skipping mint — acceptance criteria unusable", "project", projectID, "error", err)
 		return 0, nil
 	}
 
@@ -143,7 +140,7 @@ func (s *Service) EnsureValidationIssue(ctx context.Context, orgID, projectID st
 
 	number, _, cerr := s.writer.Mint(ctx, orgID, projectID, delivery.IssueSpec{
 		Title:  validationTitle,
-		Body:   rationale(doc.summarize()) + "\n\n" + renderScope(doc),
+		Body:   rationale(sum) + "\n\n" + renderScope(files, sum),
 		Labels: []string{delivery.LabelAgentWork, delivery.KindValidation},
 		// The version pin RIDES the create — one call, so the issue is never
 		// versionless, not even for the beat a follow-up patch would take.
@@ -185,11 +182,11 @@ func (s *Service) EnsureValidationIssue(ctx context.Context, orgID, projectID st
 // The comment is prose and nothing parses it. It exists so a human opening the
 // closed task can see which attempt closed it and why, without reading the run
 // timeline.
-func (s *Service) CloseValidationIssue(ctx context.Context, orgID, projectID string, issue int, verdict string) error {
+func (s *Service) CloseValidationIssue(ctx context.Context, orgID, projectID string, issue int, verdict string, repairs []int) error {
 	if issue <= 0 {
 		return nil
 	}
-	if err := s.writer.Close(ctx, orgID, projectID, issue, closeComment(verdict)); err != nil {
+	if err := s.writer.Close(ctx, orgID, projectID, issue, closeComment(verdict, repairs)); err != nil {
 		return fmt.Errorf("validation: close issue #%d: %w", issue, err)
 	}
 	slog.InfoContext(ctx, "validation: closed the version's validation task",
@@ -201,13 +198,39 @@ func (s *Service) CloseValidationIssue(ctx context.Context, orgID, projectID str
 // verdict is its own sentence rather than a blank: the attempt ended without one,
 // which is a different thing from a verdict of `inconclusive` and the reader has
 // to be able to tell them apart.
-func closeComment(verdict string) string {
+//
+// Naming the repair issues here is the ONLY edge between a repair issue and the
+// run that found it, and it is deliberately on this end rather than in the repair
+// bodies — ADR-0029, "One defect, one issue".
+func closeComment(verdict string, repairs []int) string {
 	if verdict == "" {
 		return "Closing this validation task: the attempt ended without reaching a verdict. " +
 			"The version is deployed and unjudged — trigger validation again to ask its criteria."
 	}
-	return fmt.Sprintf("Closing this validation task: the attempt concluded `%s`. "+
-		"Reopened automatically if the version is judged again.", verdict)
+	var b strings.Builder
+	fmt.Fprintf(&b, "Closing this validation task: the attempt concluded `%s`. ", verdict)
+	if len(repairs) > 0 {
+		fmt.Fprintf(&b, "Filed %s for the scenarios that did not hold. ", issueRefs(repairs))
+	}
+	b.WriteString("Reopened automatically if the version is judged again.")
+	return b.String()
+}
+
+// issueRefs renders issue numbers as an English list of `#N` references —
+// "#7", "#7 and #9", "#7, #9 and #11".
+func issueRefs(numbers []int) string {
+	refs := make([]string, 0, len(numbers))
+	for _, n := range numbers {
+		refs = append(refs, "#"+strconv.Itoa(n))
+	}
+	switch len(refs) {
+	case 1:
+		return refs[0]
+	case 2:
+		return refs[0] + " and " + refs[1]
+	default:
+		return strings.Join(refs[:len(refs)-1], ", ") + " and " + refs[len(refs)-1]
+	}
 }
 
 // findValidationIssue returns the number of the milestone's validation task
@@ -248,20 +271,33 @@ func (s *Service) findValidationIssue(ctx context.Context, orgID, projectID stri
 }
 
 // rationale is the one-line blockquote summary in the issue body.
-func rationale(s criteriaSummary) string {
-	return fmt.Sprintf("Validate the deployed system against %d e2e, %d scenario, and %d manual acceptance criteria.",
-		s.E2E, s.Scenario, s.Manual)
+func rationale(s acceptanceSummary) string {
+	return fmt.Sprintf("Drive %s across %s against the deployed system.",
+		plural(s.Scenarios, "acceptance scenario"), plural(s.Rules, "rule"))
+}
+
+// plural renders "1 rule" / "2 rules" — the issue body is read by a person, and
+// every count in it is one the oracle decides rather than a fixed shape.
+func plural(n int, noun string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, noun)
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 // renderScope builds the human markdown body of the validation issue — the
-// consumer contract the aep-validation skill reads (validation criteria + test
-// layout + report). Deployed endpoints and test credentials are deliberately
-// absent: the runner fetches endpoints from the secure validation-context
-// endpoint, and the agent reads a test user's login from the roles gate ticket
-// in this same milestone. Mirrors scripts/create-validation-issue.mjs
-// renderBody minus the Deployed-endpoints section.
-func renderScope(doc *criteriaDoc) string {
-	sum := doc.summarize()
+// consumer contract the acceptance-run skill reads. Deployed endpoints and test
+// credentials are deliberately absent: the runner fetches endpoints from the
+// secure validation-context endpoint, and the agent reads a test user's login
+// from the roles gate ticket in this same milestone. Mirrors
+// scripts/create-validation-issue.mjs renderBody minus the Deployed-endpoints
+// section.
+//
+// It NAMES the feature files rather than inlining them. Under the incumbent the
+// oracle was a JSON table nobody could read in the repo, so the issue rendered
+// it; a `.feature` file is already the readable artifact, and copying it here
+// would give the agent two versions of the specification that can disagree.
+func renderScope(files []AcceptanceCriteriaFile, sum acceptanceSummary) string {
 	var b strings.Builder
 	w := func(lines ...string) {
 		for _, l := range lines {
@@ -271,41 +307,33 @@ func renderScope(doc *criteriaDoc) string {
 	}
 
 	w(
-		"Validate the deployed system against its validation criteria: author end-to-end tests, run them against the deployed system, and open a PR containing the tests and a validation report.",
+		"Drive every scenario in this project's acceptance criteria against the deployed system, and open a PR containing the run's report.",
 		"",
 		"The deployed endpoint URLs are provided to the validation runner by the platform at dispatch time, and a test user's login is published on this milestone's roles gate ticket — neither is in this issue.",
 		"",
-		"## Validation criteria",
-		fmt.Sprintf("The source of truth is `%s` in this repo. It is read-only input for this task — do not modify it or anything else under `specs/`.", criteriaFilePath),
+		"## Acceptance criteria",
+		fmt.Sprintf("The source of truth is `%s/` in this repo — %s across %s. It is read-only input for this task — do not modify it or anything else under `specs/`.",
+			AcceptanceDirPath, plural(sum.Scenarios, "scenario"), plural(sum.Rules, "rule")),
 		"",
-		fmt.Sprintf("- `e2e` — %d criteria: a committed spec already at `tests/e2e/specs/<AC-ID>.spec.ts` runs as regression; author specs for the rest.", sum.E2E),
-		fmt.Sprintf("- `manual` — %d criteria: render as an unchecked human checklist in the report.", sum.Manual),
-		fmt.Sprintf("- `scenario` — %d criteria: out of scope for automation in this run; list as not-yet-validated in the report.", sum.Scenario),
+		"There is no test code to author. The scenario text IS the test: drive each one through the deployed app and record what settled it.",
 		"",
 	)
 
-	for _, r := range doc.Requirements {
-		w(fmt.Sprintf("### %s — %s", r.ID, r.Statement), "", "| Criterion | Method | Must |", "|---|---|---|")
-		for _, c := range r.Criteria {
-			w(fmt.Sprintf("| %s | %s | %s |", c.ID, c.Method, strings.ReplaceAll(c.Must, "|", "\\|")))
-		}
-		w("")
+	for _, f := range files {
+		w(fmt.Sprintf("- `%s`", f.Path))
 	}
+	w("")
 
 	w(
 		"Per-component design docs: `specs/design/components/<name>/design.json` (OpenAPI contract, when present, alongside as `openapi.yaml`); system design: `specs/design/design.cell` (architecture), `specs/design/domain-model.md` (entities), `specs/design/flows/` (key flows).",
 		"",
-		"## Test layout",
-		"- Playwright package at repo root `tests/e2e/` (own `package.json`; do not touch application source under any component app path).",
-		"- One spec file per criterion: `tests/e2e/specs/<AC-ID>.spec.ts`; test title MUST start with `<AC-ID>: ` — that prefix is the join key for the report.",
-		"- UI criteria: browser specs (`@playwright/test`). API criteria: the built-in `request` fixture. Explore with `playwright-cli` first; never commit exploration sessions.",
-		"",
 		"## Report",
-		"- Commit `tests/validation/report.md` (summary, per-criterion results, manual checklist, scenario not-yet-validated list) and `tests/validation/report.json`.",
+		fmt.Sprintf("- Commit `%s` — one entry per scenario in the feature files, including the ones you could not drive.", ReportFilePath),
+		"- Check it before opening the PR: `node \"$AEP_SKILLS_DIR/acceptance-run/scripts/check-report.mjs\" \"$(git rev-parse --show-toplevel)\"`. It exits 2 if a scenario has no entry, if a `passed` is not backed by a command that could have said no, or if a `failed` does not record what the page was doing when it failed.",
 		"- Post a summary comment on this issue when done.",
 		"",
 		"---",
-		"Open one PR whose body includes `Validates #<this issue's number>` so the platform links it back. `Validates` is deliberately NOT one of GitHub's closing keywords: the platform owns this task's close, so that merging the PR links it without ending the task. One PR; tests and report only.",
+		"Open one PR whose body includes `Validates #<this issue's number>` so the platform links it back. `Validates` is deliberately NOT one of GitHub's closing keywords: the platform owns this task's close, so that merging the PR links it without ending the task. One PR; the report only.",
 	)
 
 	return strings.TrimRight(b.String(), "\n")

@@ -1,0 +1,57 @@
+# The permissions behind 92-aep-amp-publisher-client.yaml.
+#
+# A NEW ROLE, not an assignment into Agent Manager's amp-role-admin. The
+# publisher contract (this directory's README) forbids redeclaring a document
+# another product owns, and adding an assignee to 61-amp-role-admin.yaml is
+# exactly that: the importer replaces the document wholesale, so AEP's edit
+# would silently become the definition of Agent Manager's admin role. A separate
+# role with its own assignment is additive and leaves theirs untouched.
+#
+# Declaring scopes on the client alone is not enough. ThunderID resolves an
+# amp: scope through a role on the resource server named below; without this
+# document the client mints a token successfully and then answers 403
+# "insufficient permissions" on every call — the same failure that makes the AI
+# gateway chart's bootstrap Job unusable here, arrived at from the other side.
+#
+# The permission list is deliberately narrower than amp-role-admin's: AEP
+# registers agents and maintains its own provider, and has no business deleting
+# either. `amp:llm-provider:api-key-manage` is what lets it issue an agent's own
+# model key; `amp:llm-provider-template:read` is what lets it read the auth
+# header and upstream URL rather than hardcoding them.
+resource_type: role
+id: aep-amp-publisher-role
+name: AEP Agent Manager Publisher
+description: Lets AEP register its agents, providers and model bindings in Agent Manager
+ouHandle: default
+permissions:
+  - resourceServerId: amp-resource-server
+    permissions:
+      - "amp:org:view"
+      # Read only: Agent Manager projects OpenChoreo's own Projects into its
+      # catalogue, so AEP never creates one. The agent paths are nested under a
+      # project, which is what the read is for.
+      - "amp:project:read"
+      - "amp:agent:create"
+      - "amp:agent:read"
+      - "amp:agent:update"
+      - "amp:llm-provider:create"
+      - "amp:llm-provider:read"
+      - "amp:llm-provider:update"
+      - "amp:llm-provider:api-key-manage"
+      # An AGENT's model-config keys are gated by the agent permission, not the
+      # provider one: issuing or rotating a key under
+      # .../agents/{a}/model-configs/{c}/environments/{e}/api-keys answers 403
+      # with only amp:llm-provider:api-key-manage.
+      - "amp:agent:api-key-manage"
+      # The agent's TRACING token, which is a third key family again: an
+      # externally-hosted agent authenticates its OTLP export with
+      # `x-amp-api-key: <token>` against …/otel/v1/traces, and the token is
+      # minted per agent at registration. Without this scope the mint answers
+      # 403 and the agent emits no traces — silently, because nothing tries.
+      - "amp:agent:token-manage"
+      - "amp:llm-provider-template:read"
+      - "amp:gateway:read"
+      - "amp:environment:read"
+assignments:
+  - id: amp-publisher-aep
+    type: app

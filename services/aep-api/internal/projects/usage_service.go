@@ -53,9 +53,9 @@ type DeliveryPhaseUsageFunc func(ctx context.Context, orgID string) (build, vali
 // and orders the cards so the biggest spenders lead. It reprices nothing —
 // every costUsd is a sum of stamps frozen at capture (amended ADR-0011).
 type UsageService struct {
-	specUsage      UsageByProjectFunc
+	specUsage          UsageByProjectFunc
 	deliveryPhaseUsage DeliveryPhaseUsageFunc
-	liveNames      ProjectNameLister
+	liveNames          ProjectNameLister
 }
 
 // NewUsageService wires the roll-up from the spec-turn source, the phase-split

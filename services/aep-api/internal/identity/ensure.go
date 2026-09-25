@@ -81,10 +81,14 @@ package identity
 //     alone, which is the whole point: the login holds the project role without
 //     the platform putting a disposable account into an org group it does not
 //     own.
-//   - a role assigned to no group at all (self-service, service) is granted by
-//     neither, and an account whose every role is of that shape is not created:
-//     a standing credential for a login that holds nothing is worse than no
-//     credential. It is reported and skipped.
+//   - a role assigned to no group AT ALL — the self-service shape — is granted
+//     the same way, by binding the role to the account. It is the only way such
+//     a login can hold it, since the design gate refuses an assignTo on that
+//     role; ADR-0030's 2026-09-20 amendment holds the argument.
+//
+// An account that none of these would give a single role is not created: a
+// standing credential for a login that holds nothing is worse than no
+// credential. It is reported and skipped.
 //
 // Accounts still come before groups, because the IdP sets group membership only
 // when a group is CREATED. Knowing the member ids up front lets a brand-new role
@@ -158,18 +162,33 @@ type Result struct {
 	UsersCreated      []string
 	UsersReused       []string
 	// UsersRefused are usernames the design named that already exist on the
-	// directory as accounts the platform does not own.
+	// directory as accounts the platform does not own, and for which every
+	// numbered alternate (see UsersRenamed) was ALSO taken by an account this
+	// platform does not own.
 	UsersRefused []string
-	// UsersSkipped are accounts the design asked for whose roles assign to no
-	// org group at all — the self-service and service shapes, which nothing
-	// here enrols. They are deliberately not created: an account that would
+	// UsersRenamed is every account this run created or reused under an
+	// alternate name because the design's own username collided with an
+	// account the platform does not own — the same collision UsersRefused
+	// reports, except one a numbered suffix resolved. Declared is the name
+	// security.json asked for; Actual is the one really in use, the one
+	// UsersCreated/UsersReused name and the one Credentials publishes. See
+	// ensureUser.
+	UsersRenamed []UsernameRename
+	// UsersSkipped are accounts the design asked for that nothing here would
+	// give a role. They are deliberately not created: an account that would
 	// hold no role is a standing credential for a login that holds nothing, and
 	// serving it to validation would be worse than serving nothing.
 	//
-	// A role assigned only to a group somebody else made does NOT land here: the
-	// account is created and the role is bound to it directly (see the file
-	// header, pass 1).
+	// An account whose role assigns to no org group, or only to a group
+	// somebody else made, does NOT land here: it is created and the role is
+	// bound to it directly (the file header, pass 1). What reaches this list is
+	// an account holding no role the plan declares.
 	UsersSkipped []string
+	// UsersBoundDirectly are the accounts holding a role as a USER principal on
+	// the directory rather than through an org group. Reported because a project
+	// role assigned straight to a person otherwise reads as somebody's hand
+	// edit. Which roles each one holds is the credentials table's Roles column.
+	UsersBoundDirectly []string
 	// Credentials are the logins for every account this project can sign in
 	// as after this run — the ones created here AND the ones reused from an
 	// earlier build. It is deliberately not "what changed": the validation
@@ -201,6 +220,14 @@ type Result struct {
 	// Environment is the environment whose identity provider was used, for the
 	// gate comment and the logs.
 	Environment string
+}
+
+// UsernameRename is one test user whose actual username differs from the one
+// the design declared, because the declared name was already taken by an
+// account this platform does not own and a numbered alternate resolved it.
+type UsernameRename struct {
+	Declared string
+	Actual   string
 }
 
 // Credential is one test account's login, as published to the provisioning
@@ -241,8 +268,20 @@ func (r Result) Summary() string {
 	add("Groups left alone (not created by the platform, so no members are enrolled)", r.GroupsPreExisting)
 	add("Test users created", r.UsersCreated)
 	add("Test users reused", r.UsersReused)
-	add("Test users refused (the username already belongs to an account the platform does not own)", r.UsersRefused)
-	add("Test users not created (their roles are assigned to no org group)", r.UsersSkipped)
+	if len(r.UsersRenamed) > 0 {
+		renamed := slices.Clone(r.UsersRenamed)
+		sort.Slice(renamed, func(i, j int) bool { return renamed[i].Declared < renamed[j].Declared })
+		parts := make([]string, len(renamed))
+		for i, rn := range renamed {
+			parts[i] = fmt.Sprintf("%s → %s", rn.Declared, rn.Actual)
+		}
+		lines = append(lines, fmt.Sprintf(
+			"- Test users created under an alternate name (the declared username already belongs to an account the platform does not own): %s",
+			strings.Join(parts, ", ")))
+	}
+	add("Test users refused (the declared username and every numbered alternate already belong to an account the platform does not own)", r.UsersRefused)
+	add("Test users not created (nothing in the design would give them a role)", r.UsersSkipped)
+	add("Test users bound straight to their role, as user principals (the role is assigned to no org group this platform enrols into)", r.UsersBoundDirectly)
 	add("Project roles", r.RolesConverged)
 	add("Project roles deleted (no longer declared at this version)", r.RolesDeleted)
 	if len(lines) == 0 {
@@ -404,23 +443,32 @@ func (s *EnsureService) ensure(ctx context.Context, target Target, projectID str
 	// grant it. See directRoles.
 	directPrincipals := map[string][]DirectoryID{}
 	var refs []TestUserRef
+	// declaredByActual is the reverse of a rename: the actual username
+	// ensureUser settled on → the name security.json declared. Only rows a
+	// numbered alternate resolved are in it; collectCredentials reads it to
+	// find the PlannedUser (keyed by the DECLARED name) behind an actual
+	// username that no longer matches it.
+	declaredByActual := map[string]string{}
 	for _, planned := range plan.Users {
 		joins := enrolableGroups(planned, enrolable)
 		direct := directRoles(planned, assignTo, enrolable)
 		if len(joins) == 0 && len(direct) == 0 {
-			// Nothing would give this account a role: its roles assign to no
-			// group at all (the self-service shape). A standing credential for a
-			// login that holds nothing is worse than no credential, so it is not
+			// Nothing would give this account a role — every role it holds is
+			// one the plan does not declare. A standing credential for a login
+			// that holds nothing is worse than no credential, so it is not
 			// minted.
 			result.UsersSkipped = append(result.UsersSkipped, planned.Username)
 			continue
 		}
-		account, usable, err := s.ensureUser(ctx, scope, dir, planned, &result)
+		account, actualUsername, usable, err := s.ensureUser(ctx, scope, dir, planned, &result)
 		if err != nil {
 			return result, err
 		}
 		if !usable {
 			continue
+		}
+		if actualUsername != planned.Username {
+			declaredByActual[actualUsername] = planned.Username
 		}
 		for _, group := range joins {
 			key := strings.ToLower(group)
@@ -429,11 +477,19 @@ func (s *EnsureService) ensure(ctx context.Context, target Target, projectID str
 		for _, role := range direct {
 			directPrincipals[role] = append(directPrincipals[role], DirectoryID(account.ID))
 		}
+		if len(direct) > 0 {
+			// The ACTUAL username, the one the credential is published under: a
+			// renamed account reported under its declared name would name a
+			// login nobody can sign in as.
+			result.UsersBoundDirectly = append(result.UsersBoundDirectly, actualUsername)
+		}
 		// A reference is the statement "this account is the login for this role
 		// in this project", and the credential provider reads it as exactly
-		// that. It is written only for an account that WILL be enrolled.
+		// that. It is written only for an account that WILL be enrolled, and it
+		// names the account ACTUALLY in use — planned.Username only when no
+		// rename happened.
 		refs = append(refs, TestUserRef{
-			Username: planned.Username,
+			Username: actualUsername,
 			RoleName: primaryRole(planned),
 			Supplied: planned.Supplied,
 		})
@@ -481,7 +537,7 @@ func (s *EnsureService) ensure(ctx context.Context, target Target, projectID str
 		return result, err
 	}
 
-	result.Credentials = s.collectCredentials(ctx, scope, projectID, refs, plan)
+	result.Credentials = s.collectCredentials(ctx, scope, projectID, refs, plan, declaredByActual)
 	return result, nil
 }
 
@@ -673,9 +729,11 @@ func (s *EnsureService) convergeRoles(
 		}
 		result.RolesConverged = append(result.RolesConverged, role.Name)
 		if len(role.AssignTo) == 0 {
-			// Recorded, assigned to nobody — the normal shape for a self-service
-			// role, whose accounts the registration flow assigns. The row still
-			// has to exist: it is what the delete path reads to find the role.
+			// No GROUP holds this role — the self-service shape. The row is
+			// still written with an empty group: it is what the delete path
+			// reads to find the role, and it is the honest record, since the
+			// role's principals are the test logins bound just above, not a
+			// group.
 			bindings = append(bindings, IdPRoleBinding{Role: role.Name, DirectoryRoleID: string(roleID)})
 			continue
 		}
@@ -848,14 +906,19 @@ func enrolableGroups(planned securityspec.PlannedUser, enrolable map[string]bool
 //
 // A role a group the platform owns already covers is NOT listed: enrolment
 // through that group grants it, and a second, direct principal would be a grant
-// the converge can never take back for no gain. A role assigning to no group at
-// all — the self-service and service shapes — is not listed either: nothing
-// here is meant to enrol it.
+// the converge can never take back for no gain.
+//
+// A role assigning to NO group is always listed. That is the self-service
+// shape, and the direct bind is the only way its login holds it.
+//
+// A role the plan does not declare is skipped. Pass 5 walks the DECLARED roles,
+// so a principal collected for one would never be bound, and the ticket would
+// report a binding that did not happen.
 func directRoles(planned securityspec.PlannedUser, assignTo map[string][]string, enrolable map[string]bool) []string {
 	var out []string
 	for _, role := range planned.Roles {
-		groups := assignTo[role]
-		if len(groups) == 0 {
+		groups, declared := assignTo[role]
+		if !declared {
 			continue
 		}
 		covered := false
@@ -896,7 +959,12 @@ func primaryRole(planned securityspec.PlannedUser) string {
 // A reveal failure never fails the build. The account exists and is enrolled;
 // only its publication is lost, and the row goes out with an empty password
 // that the renderer calls out explicitly.
-func (s *EnsureService) collectCredentials(ctx context.Context, scope Scope, projectID string, refs []TestUserRef, plan securityspec.EnsurePlan) []Credential {
+//
+// declaredByActual is pass 1's record of every rename: an actual username a
+// numbered alternate resolved to → the name security.json declared. A ref
+// whose username is not in it was never renamed, so the ref's own username
+// IS the declared one.
+func (s *EnsureService) collectCredentials(ctx context.Context, scope Scope, projectID string, refs []TestUserRef, plan securityspec.EnsurePlan, declaredByActual map[string]string) []Credential {
 	// The plan is the source of the roles and the scopes, not the stored row:
 	// the row keeps ONE role name (the account exists for it) while a v2 account
 	// may hold several, and the scopes are the union of their grants, which no
@@ -909,10 +977,14 @@ func (s *EnsureService) collectCredentials(ctx context.Context, scope Scope, pro
 	}
 	out := make([]Credential, 0, len(refs))
 	for _, ref := range refs {
+		declared, renamed := declaredByActual[ref.Username]
+		if !renamed {
+			declared = ref.Username
+		}
 		cred := Credential{
 			Username: ref.Username,
-			Roles:    slices.Clone(planned[ref.Username].Roles),
-			Scopes:   sortedScopes(planned[ref.Username].Scopes),
+			Roles:    slices.Clone(planned[declared].Roles),
+			Scopes:   sortedScopes(planned[declared].Scopes),
 		}
 		password, err := s.store.RevealTestUserPassword(ctx, scope, ref.Username)
 		if err != nil {
@@ -1036,65 +1108,118 @@ func (s *EnsureService) realiseGroup(ctx context.Context, target Target, project
 	return created, nil
 }
 
-// ensureUser makes one test account real, and reports whether it may be used.
+// maxUsernameAttempts bounds how many names ensureUser tries for one planned
+// account before refusing: the design's own name, then up to this many
+// numbered alternates. It exists so a busy environment cannot spin forever
+// probing candidates that will never be free, while still covering the case
+// that matters in practice — one or two other projects' roles happening to
+// slug to the same deterministic name.
+const maxUsernameAttempts = 5
+
+// usernameCandidate is the Nth name ensureUser tries for a planned account:
+// the design's own name on attempt 1, "<name>-2", "<name>-3", ... after that.
+// The suffix is a plain integer, never randomised, so the same design on the
+// same project always tries names in the same order — which is what makes a
+// rename IDEMPOTENT: a rebuild re-tries "<name>-2" first and finds the row
+// this platform already owns from the previous build, rather than picking a
+// different alternate.
+func usernameCandidate(declared string, attempt int) string {
+	if attempt <= 1 {
+		return declared
+	}
+	return fmt.Sprintf("%s-%d", declared, attempt)
+}
+
+// ensureUser makes one test account real, and reports whether it may be used
+// and under what username.
 //
 // The refusal case is the one that matters: a username that exists on the
 // directory but has no `test_users` row is an account the platform does not
 // own. It is left completely untouched — not adopted, not password-reset, not
 // enrolled — because the design naming `jsmith` must not hand out a real
-// person's login.
-func (s *EnsureService) ensureUser(ctx context.Context, scope Scope, dir Directory, planned securityspec.PlannedUser, result *Result) (DirectoryAccount, bool, error) {
-	recorded, err := s.store.GetTestUser(ctx, scope, planned.Username)
-	if err != nil {
-		return DirectoryAccount{}, false, err
-	}
-	live, onDirectory, err := dir.FindUserByUsername(ctx, planned.Username)
-	if err != nil {
-		return DirectoryAccount{}, false, err
-	}
+// person's login. But a collision with a stranger's account must not need a
+// human either when the platform can simply try another name: so a refusal
+// on the design's own name is not final here — it moves on to a numbered
+// alternate, and only refuses (under the DECLARED name, the one a human
+// recognises) once every alternate up to maxUsernameAttempts is ALSO
+// somebody else's.
+//
+// The returned username is the one actually in use — the caller's ref and the
+// published credential must name THAT one, not necessarily planned.Username.
+func (s *EnsureService) ensureUser(ctx context.Context, scope Scope, dir Directory, planned securityspec.PlannedUser, result *Result) (DirectoryAccount, string, bool, error) {
+	for attempt := 1; attempt <= maxUsernameAttempts; attempt++ {
+		candidate := usernameCandidate(planned.Username, attempt)
+		recorded, err := s.store.GetTestUser(ctx, scope, candidate)
+		if err != nil {
+			return DirectoryAccount{}, "", false, err
+		}
+		live, onDirectory, err := dir.FindUserByUsername(ctx, candidate)
+		if err != nil {
+			return DirectoryAccount{}, "", false, err
+		}
 
-	switch {
-	case recorded != nil && onDirectory:
-		// Ours, and present. Keep the password we already sealed — re-rolling it
-		// every build would invalidate a credential a human is holding. The
-		// facts update deliberately never reads it: revealing a password only to
-		// seal it again decrypts a credential for no reason, and would fail the
-		// whole build for an account whose sealed password is missing.
-		if recorded.ThunderUserID != live.ID || recorded.RoleName != primaryRole(planned) {
-			if err := s.store.UpdateTestUserFacts(ctx, scope, planned.Username, live.ID, primaryRole(planned)); err != nil {
-				return DirectoryAccount{}, false, err
+		switch {
+		case recorded != nil && onDirectory:
+			// Ours, and present. Keep the password we already sealed — re-rolling
+			// it every build would invalidate a credential a human is holding. The
+			// facts update deliberately never reads it: revealing a password only
+			// to seal it again decrypts a credential for no reason, and would fail
+			// the whole build for an account whose sealed password is missing.
+			if recorded.ThunderUserID != live.ID || recorded.RoleName != primaryRole(planned) {
+				if err := s.store.UpdateTestUserFacts(ctx, scope, candidate, live.ID, primaryRole(planned)); err != nil {
+					return DirectoryAccount{}, "", false, err
+				}
 			}
-		}
-		result.UsersReused = append(result.UsersReused, planned.Username)
-		return *live, true, nil
+			result.UsersReused = append(result.UsersReused, candidate)
+			reportRename(result, planned.Username, candidate)
+			return *live, candidate, true, nil
 
-	case recorded == nil && onDirectory:
-		result.UsersRefused = append(result.UsersRefused, planned.Username)
-		return DirectoryAccount{}, false, nil
+		case recorded == nil && onDirectory:
+			// Somebody else's account. Never adopted — try the next candidate
+			// instead, which touches nothing about the account in the way.
+			continue
 
-	default:
-		password, err := generatePassword()
-		if err != nil {
-			return DirectoryAccount{}, false, err
+		default:
+			password, err := generatePassword()
+			if err != nil {
+				return DirectoryAccount{}, "", false, err
+			}
+			created, err := dir.CreateUser(ctx, candidate, testUserEmail(candidate), password)
+			if err != nil {
+				return DirectoryAccount{}, "", false, fmt.Errorf("create test user %q: %w", candidate, err)
+			}
+			// Seal BEFORE anything can fail after it: the directory now holds a
+			// password only this process knows, and losing it here would leave an
+			// account nobody can sign in as and the platform cannot rotate.
+			row := TestUser{
+				OrgID: scope.OrgID, Environment: scope.Environment,
+				Username: candidate, ThunderUserID: created.ID,
+				RoleName: primaryRole(planned), Email: created.Email,
+			}
+			if err := s.store.UpsertTestUser(ctx, row, password); err != nil {
+				return DirectoryAccount{}, "", false, err
+			}
+			result.UsersCreated = append(result.UsersCreated, candidate)
+			reportRename(result, planned.Username, candidate)
+			return created, candidate, true, nil
 		}
-		created, err := dir.CreateUser(ctx, planned.Username, testUserEmail(planned.Username), password)
-		if err != nil {
-			return DirectoryAccount{}, false, fmt.Errorf("create test user %q: %w", planned.Username, err)
-		}
-		// Seal BEFORE anything can fail after it: the directory now holds a
-		// password only this process knows, and losing it here would leave an
-		// account nobody can sign in as and the platform cannot rotate.
-		row := TestUser{
-			OrgID: scope.OrgID, Environment: scope.Environment,
-			Username: planned.Username, ThunderUserID: created.ID,
-			RoleName: primaryRole(planned), Email: created.Email,
-		}
-		if err := s.store.UpsertTestUser(ctx, row, password); err != nil {
-			return DirectoryAccount{}, false, err
-		}
-		result.UsersCreated = append(result.UsersCreated, planned.Username)
-		return created, true, nil
 	}
+	// Every name up to the bound belongs to somebody else. Refused under the
+	// DECLARED name — the numbered alternates are this function's own detail,
+	// and the one a human can act on is the one security.json actually says.
+	result.UsersRefused = append(result.UsersRefused, planned.Username)
+	return DirectoryAccount{}, "", false, nil
+}
+
+// reportRename records a rename for the gate's ticket, only when one
+// happened: declared and actual are the same string on every attempt-1
+// success, which is still the overwhelming majority of accounts, and those
+// must not grow a line in Result.UsersRenamed.
+func reportRename(result *Result, declared, actual string) {
+	if declared == actual {
+		return
+	}
+	result.UsersRenamed = append(result.UsersRenamed, UsernameRename{Declared: declared, Actual: actual})
 }
 
 // testUserEmail gives an account a syntactically valid address in a domain that

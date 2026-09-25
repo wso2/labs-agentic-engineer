@@ -72,27 +72,33 @@ function row(label: string): HTMLElement {
 }
 
 /**
- * A plan row, by its title and by WHICH surface drew it.
+ * A plan row, in the INSPECTOR, which is the only surface that draws one.
  *
- * A plan appears twice on a fan-out — once under its owner in the tree, once in
- * the inspector for the agent the reader picked — so a query that did not say
- * which would pass on either. `where` picks by the tree's list element: the tree
- * is a `<ul>` of rows and the inspector is not.
- *
- * In the tree a plan row is a SIBLING of the owning agent's button rather than a
- * child of it, the same way a backgrounded command's row is, so where it lands
- * in the DOM is the proof it sits under the right agent.
+ * The filter on the tree's `<ul>` is what keeps this honest rather than being
+ * mere ceremony: the tree used to draw these rows too, and a query that did not
+ * say which surface it meant passed on either. Excluding the list is therefore
+ * also the assertion that the tree has stopped drawing them — `treePlanRows`
+ * makes that check directly.
  */
-function planRow(title: string, where: "tree" | "inspector" = "tree"): HTMLElement {
+function planRow(title: string): HTMLElement {
   const rows = screen
     .getAllByText(title)
     .map((el) => el.parentElement)
     .filter((el): el is HTMLElement => el !== null)
-    .filter((el) => (where === "tree" ? el.closest("ul") !== null : el.closest("ul") === null));
+    .filter((el) => el.closest("ul") === null);
   if (rows.length !== 1) {
-    throw new Error(`expected one ${where} plan row titled ${title}, found ${String(rows.length)}`);
+    throw new Error(`expected one inspector plan row titled ${title}, found ${String(rows.length)}`);
   }
   return rows[0]!;
+}
+
+/** Anything in the TREE bearing this title — which must be nothing. */
+function treePlanRows(title: string): HTMLElement[] {
+  return screen
+    .queryAllByText(title)
+    .map((el) => el.parentElement)
+    .filter((el): el is HTMLElement => el !== null)
+    .filter((el) => el.closest("ul") !== null);
 }
 
 beforeEach(() => {
@@ -448,7 +454,7 @@ describe("RunCrew", () => {
     seq = 0;
     const events = [
       ev(0, { kind: "run_started", agentId: "lead", taskKind: "validation" }),
-      ev(1, { kind: "tool_use", agentId: "lead", tool: "Bash", summary: "pnpm playwright test", toolUseId: "v1" }),
+      ev(1, { kind: "tool_use", agentId: "lead", tool: "Bash", summary: "agent-browser snapshot -i", toolUseId: "v1" }),
       ev(2, { kind: "tool_result", agentId: "lead", tool: "Bash", ok: true, durationMs: 61_400, toolUseId: "v1" }),
       ev(3, { kind: "agent_settled", agentId: "lead", status: "completed", durationMs: 184_000, toolCount: 22, report: "Checked 5 automated criteria." }),
       ev(4, { kind: "run_settled", agentId: "lead", outcome: "success" }),
@@ -458,7 +464,7 @@ describe("RunCrew", () => {
     // rather than one it would replace.
     expect(row("lead agent")).toBeInTheDocument();
     // And the inspector beside it: the steps, the totals and the report.
-    expect(screen.getByText("$ pnpm playwright test")).toBeInTheDocument();
+    expect(screen.getByText("$ agent-browser snapshot -i")).toBeInTheDocument();
     expect(screen.getByText("completed · 3m4s · 22 tools")).toBeInTheDocument();
     expect(screen.getAllByText("Checked 5 automated criteria.").length).toBeGreaterThan(0);
     expect(screen.getByText("1 agent · all settled")).toBeInTheDocument();
@@ -516,10 +522,10 @@ describe("RunCrew", () => {
     seq = 0;
     const events = [
       ev(0, { kind: "run_started", agentId: "lead", taskKind: "validation" }),
-      ev(1, { kind: "tool_use", agentId: "lead", tool: "Bash", summary: "pnpm playwright test", toolUseId: "v1" }),
+      ev(1, { kind: "tool_use", agentId: "lead", tool: "Bash", summary: "agent-browser snapshot -i", toolUseId: "v1" }),
     ];
     render(<RunCrew events={events} />);
-    expect(screen.getByText("$ pnpm playwright test")).toBeInTheDocument();
+    expect(screen.getByText("$ agent-browser snapshot -i")).toBeInTheDocument();
     expect(screen.queryByText(/solid · working/)).toBeNull();
   });
 
@@ -529,7 +535,7 @@ describe("RunCrew", () => {
   // person watching, "so it is the one place your plan has to be true". These
   // are the tests that make that sentence true of this surface.
 
-  it("draws the lead's plan under the lead, and a handed-off entry under its owner", () => {
+  it("keeps the plan out of the tree and shows it in the inspector, per owner", () => {
     seq = 0;
     const events = [
       ev(0, { kind: "agent_started", agentId: "lead", label: "lead agent", depth: 0 }),
@@ -539,16 +545,22 @@ describe("RunCrew", () => {
     ];
     render(<RunCrew events={events} />);
 
-    // Under the agent it NAMES, not under the lead that wrote it: "what was this
-    // one sent to do" is the question a reader has about the spawned row.
-    expect(planRow("Implement the API").previousElementSibling).toBe(row("todo-api"));
-    expect(planRow("Read the design").previousElementSibling).toBe(row("lead agent"));
-    // Indented under its owner, so a depth-1 agent's entry cannot read as the
-    // lead's own.
-    const indent = (el: HTMLElement) => parseFloat(getComputedStyle(el).paddingLeft);
-    expect(indent(planRow("Implement the API"))).toBeGreaterThan(indent(planRow("Read the design")));
-    // Colour is never the only signal: where an entry stands is a word too.
+    // NOT IN THE TREE. A lead writes one entry per component and holds them all
+    // `in progress` for most of a run, so under the busiest agent sat the rows
+    // that changed least — in the column whose whole job is "is anything stuck".
+    expect(treePlanRows("Read the design")).toHaveLength(0);
+    expect(treePlanRows("Implement the API")).toHaveLength(0);
+
+    // The lead is selected first, so its OWN entry is the one in the inspector.
+    expect(planRow("Read the design")).toBeInTheDocument();
+    expect(screen.queryByText("Implement the API")).toBeNull();
+
+    // And the handed-off entry appears under the agent it NAMES, not the lead
+    // that wrote it: "what was this one sent to do" is the question a reader has
+    // once they have picked the spawned row.
+    fireEvent.click(row("todo-api"));
     expect(within(planRow("Implement the API")).getByText("in progress")).toBeInTheDocument();
+    expect(screen.queryByText("Read the design")).toBeNull();
   });
 
   it("keeps a plan entry's title when a later update carries only its status", () => {
@@ -593,15 +605,13 @@ describe("RunCrew", () => {
     ];
     render(<RunCrew events={events} />);
     // The commonest shape a run takes, and the skill's promise has to hold on
-    // it: the entry is under the agent in the tree AND labelled in the
-    // inspector, exactly as it is on a cycle that fanned out.
-    expect(planRow("Fix the redirect handler").previousElementSibling).toBe(row("lead agent"));
+    // it: the entry is labelled in the inspector exactly as it is on a cycle
+    // that fanned out, and the tree is still only agents.
+    expect(treePlanRows("Fix the redirect handler")).toHaveLength(0);
     expect(screen.getByText("Plan")).toBeInTheDocument();
     // …and a settled agent KEEPS it: the list is what it set out to do and
     // whether it got there, which only becomes a record once the run is over.
-    expect(
-      within(planRow("Fix the redirect handler", "inspector")).getByText("completed"),
-    ).toBeInTheDocument();
+    expect(within(planRow("Fix the redirect handler")).getByText("completed")).toBeInTheDocument();
   });
 
   it("gives an agent that kept no list no plan section at all", () => {

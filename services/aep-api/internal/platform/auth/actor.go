@@ -18,12 +18,18 @@ package auth
 
 import "context"
 
+// UnknownActor is what ActorFromContext answers when no verified subject is
+// available. Named because callers that must not INVENT an identity — as
+// opposed to those merely attributing an audit line — have to be able to
+// recognise it.
+const UnknownActor = "unknown"
+
 // ActorFromContext returns the requesting user's identifier (the verified
-// JWT subject) for audit attribution. Falls back to "unknown" when the JWT
+// JWT subject) for audit attribution. Falls back to UnknownActor when the JWT
 // middleware didn't populate claims (e.g. an unauthenticated path).
 func ActorFromContext(ctx context.Context) string {
 	if c := ClaimsFromContext(ctx); c != nil && c.Subject != "" {
 		return c.Subject
 	}
-	return "unknown"
+	return UnknownActor
 }

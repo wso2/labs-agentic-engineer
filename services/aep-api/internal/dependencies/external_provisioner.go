@@ -96,7 +96,7 @@ func (p *ExternalResourceProvisioner) Provision(
 	// SAME name (a stable get-or-create target), while a schema OR template
 	// change authors a fresh RT instead of silently reusing a stale same-named
 	// one on 409-conflict.
-	rt, err := openchoreo.BuildExternalResourceType(er.Name, er.Description, toRTConfigKeys(er.ConfigKeys), "", nil)
+	rt, err := openchoreo.BuildExternalResourceType(projectExternalTypeSpec(projectName, er))
 	if err != nil {
 		// A schema the builder refuses — no config key, an empty key — is an
 		// answer about the design, not a blip: no retry can change it.
@@ -179,7 +179,7 @@ func (p *ExternalResourceProvisioner) AuthorPreparedValues(
 	}
 
 	// 1. ResourceType (get-or-create; immutable once created).
-	rt, err := openchoreo.BuildExternalResourceType(er.Name, er.Description, toRTConfigKeys(er.ConfigKeys), "", nil)
+	rt, err := openchoreo.BuildExternalResourceType(projectExternalTypeSpec(projectName, er))
 	if err != nil {
 		// A schema the builder refuses — no config key, an empty key — is an
 		// answer about the design, not a blip: no retry can change it.
@@ -444,6 +444,30 @@ func buildExternalResourceBinding(projectName, name, env, latestRelease, secretS
 			ResourceTypeEnvironmentConfigs: json.RawMessage(raw),
 		},
 	}, nil
+}
+
+// projectExternalTypeSpec is the type a PROJECT's build binds to. For a
+// resource the project defined itself: scope project, the project folded
+// into the name, no instructions, no document — the record of a project
+// resource is the project's own dependency.json; it never counts as
+// registered and is never listed org-wide. For a COPY of the organization's
+// registered resource (er.Registered): the organization's own type — scope
+// org, the bare name — so EnsureResourceType's get-or-create lands on the
+// record register authored (same keys ⇒ same name) instead of minting a
+// project type that would shadow it.
+func projectExternalTypeSpec(projectName string, er *ExternalResource) openchoreo.ExternalResourceTypeSpec {
+	ts := openchoreo.ExternalResourceTypeSpec{
+		Name:        er.Name,
+		Description: er.Description,
+		Provider:    er.Provider,
+		Keys:        toRTConfigKeys(er.ConfigKeys),
+		Scope:       openchoreo.ExternalResourceScopeProject,
+		Project:     projectName,
+	}
+	if er.Registered {
+		ts.Scope, ts.Project = openchoreo.ExternalResourceScopeOrg, ""
+	}
+	return ts
 }
 
 func toRTConfigKeys(in []spec.ConfigKey) []openchoreo.ExternalResourceConfigKey {

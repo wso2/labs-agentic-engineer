@@ -154,26 +154,35 @@ export type { DesignDiagramProblem, DiagramBundleReader, CellNodes } from "./des
 export { checkComponentDependencies } from "./component-dependencies.js";
 export type { ComponentDependencyProblem } from "./component-dependencies.js";
 
+// --- The agent.afm.md structural write-gate (the ai-agent component kind) ---
+export { checkAgentAfm, splitAfm, type AfmProblem, type AgentAfmFrontMatter } from "./agent-afm-schema.js";
+
 // --- The dependency.json write-gate (one dependency, one definition) --------
 export {
   checkDependencyDesign,
-  preserveAssumption,
+  preservePlatformFields,
   dependencyDesignSchema,
   dependencySuggestionSchema,
+  resourceDefinitionSchema,
+  resourceContractSchema,
+  resourceProvenanceSchema,
   sdkManifestSchema,
   dependencyDir,
   dependencyDesignPath,
   DEPENDENCY_DESIGN_JSON_RE,
   SDK_MANIFEST_JSON_RE,
-  CONTRACT_FILES_BY_STYLE,
+  CONTRACT_FILES_BY_TYPE,
   SDK_MANIFEST_FILE,
 } from "./dependency-design-schema.js";
 export type { DependencyDesignProblem } from "./dependency-design-schema.js";
 export type {
   DependencyDesign,
   DependencySuggestion,
-  DependencySource,
-  DependencyProvenance,
+  ResourceDefinition,
+  ResourceContract,
+  ResourceContractType,
+  ContractOrigin,
+  ResourceProvenance,
   DependencyAssumption,
   SdkManifest,
 } from "./contracts/dependency-design.js";
@@ -214,6 +223,7 @@ export {
   securityDesignJsonSchema,
   planTaskJsonSchema,
   updateTaskJsonSchema,
+  agentAfmJsonSchema,
 } from "./json-schema.js";
 
 // --- The reference SSE reader ------------------------------------------------

@@ -10,4 +10,4 @@ maps to a user-facing flow in [`apps/console/PRD.md`](../../apps/console/PRD.md)
 - Run against the cluster from `deployments/` (`make dev-env` once, `make
   dev-update` after each source edit) — no mocked infra.
 - One spec per scenario; keep selectors resilient (roles/labels over CSS).
-- Verify flows manually with the `playwright-cli` skill before writing the spec.
+- Verify flows manually with the `agent-browser` skill before writing the spec.

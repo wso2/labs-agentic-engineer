@@ -16,6 +16,24 @@ const (
 	UserJWTScopes userJWTContextKey = "userJWT.Scopes"
 )
 
+// Defines values for AgentModel.
+const (
+	AgentModelClaudeHaiku45 AgentModel = "claude-haiku-4-5"
+	AgentModelClaudeSonnet5 AgentModel = "claude-sonnet-5"
+)
+
+// Valid indicates whether the value is a known member of the AgentModel enum.
+func (e AgentModel) Valid() bool {
+	switch e {
+	case AgentModelClaudeHaiku45:
+		return true
+	case AgentModelClaudeSonnet5:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AgentRuntime.
 const (
 	AgentRuntimeClaudeCode AgentRuntime = "claude-code"
@@ -223,66 +241,6 @@ func (e BuildSummaryWaitingReason) Valid() bool {
 	}
 }
 
-// Defines values for CodingAgentModel.
-const (
-	CodingAgentModelClaudeHaiku45 CodingAgentModel = "claude-haiku-4-5"
-	CodingAgentModelClaudeSonnet5 CodingAgentModel = "claude-sonnet-5"
-)
-
-// Valid indicates whether the value is a known member of the CodingAgentModel enum.
-func (e CodingAgentModel) Valid() bool {
-	switch e {
-	case CodingAgentModelClaudeHaiku45:
-		return true
-	case CodingAgentModelClaudeSonnet5:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for DeployStageValidation.
-const (
-	DeployStageValidationAwaitingFix  DeployStageValidation = "awaiting-fix"
-	DeployStageValidationCancelled    DeployStageValidation = "cancelled"
-	DeployStageValidationFailed       DeployStageValidation = "failed"
-	DeployStageValidationInconclusive DeployStageValidation = "inconclusive"
-	DeployStageValidationNone         DeployStageValidation = "none"
-	DeployStageValidationPartial      DeployStageValidation = "partial"
-	DeployStageValidationPassed       DeployStageValidation = "passed"
-	DeployStageValidationRunning      DeployStageValidation = "running"
-	DeployStageValidationSkipped      DeployStageValidation = "skipped"
-	DeployStageValidationUnreported   DeployStageValidation = "unreported"
-)
-
-// Valid indicates whether the value is a known member of the DeployStageValidation enum.
-func (e DeployStageValidation) Valid() bool {
-	switch e {
-	case DeployStageValidationAwaitingFix:
-		return true
-	case DeployStageValidationCancelled:
-		return true
-	case DeployStageValidationFailed:
-		return true
-	case DeployStageValidationInconclusive:
-		return true
-	case DeployStageValidationNone:
-		return true
-	case DeployStageValidationPartial:
-		return true
-	case DeployStageValidationPassed:
-		return true
-	case DeployStageValidationRunning:
-		return true
-	case DeployStageValidationSkipped:
-		return true
-	case DeployStageValidationUnreported:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for EnvValueCellDTOStatus.
 const (
 	EnvValueCellDTOStatusConfigured EnvValueCellDTOStatus = "configured"
@@ -295,6 +253,24 @@ func (e EnvValueCellDTOStatus) Valid() bool {
 	case EnvValueCellDTOStatusConfigured:
 		return true
 	case EnvValueCellDTOStatusUnset:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EnvironmentDTOValidation.
+const (
+	Off EnvironmentDTOValidation = "off"
+	On  EnvironmentDTOValidation = "on"
+)
+
+// Valid indicates whether the value is a known member of the EnvironmentDTOValidation enum.
+func (e EnvironmentDTOValidation) Valid() bool {
+	switch e {
+	case Off:
+		return true
+	case On:
 		return true
 	default:
 		return false
@@ -316,6 +292,24 @@ func (e ExternalDependencyValueState) Valid() bool {
 	case ExternalDependencyValueStateNotProvisioned:
 		return true
 	case ExternalDependencyValueStateUnset:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ExternalResourceDTOScope.
+const (
+	ExternalResourceDTOScopeOrg     ExternalResourceDTOScope = "org"
+	ExternalResourceDTOScopeProject ExternalResourceDTOScope = "project"
+)
+
+// Valid indicates whether the value is a known member of the ExternalResourceDTOScope enum.
+func (e ExternalResourceDTOScope) Valid() bool {
+	switch e {
+	case ExternalResourceDTOScopeOrg:
+		return true
+	case ExternalResourceDTOScopeProject:
 		return true
 	default:
 		return false
@@ -481,6 +475,36 @@ func (e ProgressEventEmitter) Valid() bool {
 	case ProgressEventEmitterMain:
 		return true
 	case ProgressEventEmitterSubagent:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ResourceContractType.
+const (
+	ResourceContractTypeAsyncapi      ResourceContractType = "asyncapi"
+	ResourceContractTypeDocumentation ResourceContractType = "documentation"
+	ResourceContractTypeGraphql       ResourceContractType = "graphql"
+	ResourceContractTypeOpenapi       ResourceContractType = "openapi"
+	ResourceContractTypeProtobuf      ResourceContractType = "protobuf"
+	ResourceContractTypeSdk           ResourceContractType = "sdk"
+)
+
+// Valid indicates whether the value is a known member of the ResourceContractType enum.
+func (e ResourceContractType) Valid() bool {
+	switch e {
+	case ResourceContractTypeAsyncapi:
+		return true
+	case ResourceContractTypeDocumentation:
+		return true
+	case ResourceContractTypeGraphql:
+		return true
+	case ResourceContractTypeOpenapi:
+		return true
+	case ResourceContractTypeProtobuf:
+		return true
+	case ResourceContractTypeSdk:
 		return true
 	default:
 		return false
@@ -984,28 +1008,28 @@ func (e RunProgressLineEmitter) Valid() bool {
 
 // Defines values for RunValidationVerdict.
 const (
-	Failed       RunValidationVerdict = "failed"
-	Inconclusive RunValidationVerdict = "inconclusive"
-	Partial      RunValidationVerdict = "partial"
-	Passed       RunValidationVerdict = "passed"
-	Skipped      RunValidationVerdict = "skipped"
-	Unreported   RunValidationVerdict = "unreported"
+	RunValidationVerdictFailed       RunValidationVerdict = "failed"
+	RunValidationVerdictInconclusive RunValidationVerdict = "inconclusive"
+	RunValidationVerdictPartial      RunValidationVerdict = "partial"
+	RunValidationVerdictPassed       RunValidationVerdict = "passed"
+	RunValidationVerdictSkipped      RunValidationVerdict = "skipped"
+	RunValidationVerdictUnreported   RunValidationVerdict = "unreported"
 )
 
 // Valid indicates whether the value is a known member of the RunValidationVerdict enum.
 func (e RunValidationVerdict) Valid() bool {
 	switch e {
-	case Failed:
+	case RunValidationVerdictFailed:
 		return true
-	case Inconclusive:
+	case RunValidationVerdictInconclusive:
 		return true
-	case Partial:
+	case RunValidationVerdictPartial:
 		return true
-	case Passed:
+	case RunValidationVerdictPassed:
 		return true
-	case Skipped:
+	case RunValidationVerdictSkipped:
 		return true
-	case Unreported:
+	case RunValidationVerdictUnreported:
 		return true
 	default:
 		return false
@@ -1180,6 +1204,48 @@ func (e TurnInputMultipartIntent) Valid() bool {
 	}
 }
 
+// Defines values for ValidationState.
+const (
+	ValidationStateAwaitingFix  ValidationState = "awaiting-fix"
+	ValidationStateCancelled    ValidationState = "cancelled"
+	ValidationStateFailed       ValidationState = "failed"
+	ValidationStateInconclusive ValidationState = "inconclusive"
+	ValidationStateNone         ValidationState = "none"
+	ValidationStatePartial      ValidationState = "partial"
+	ValidationStatePassed       ValidationState = "passed"
+	ValidationStateRunning      ValidationState = "running"
+	ValidationStateSkipped      ValidationState = "skipped"
+	ValidationStateUnreported   ValidationState = "unreported"
+)
+
+// Valid indicates whether the value is a known member of the ValidationState enum.
+func (e ValidationState) Valid() bool {
+	switch e {
+	case ValidationStateAwaitingFix:
+		return true
+	case ValidationStateCancelled:
+		return true
+	case ValidationStateFailed:
+		return true
+	case ValidationStateInconclusive:
+		return true
+	case ValidationStateNone:
+		return true
+	case ValidationStatePartial:
+		return true
+	case ValidationStatePassed:
+		return true
+	case ValidationStateRunning:
+		return true
+	case ValidationStateSkipped:
+		return true
+	case ValidationStateUnreported:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for WorkloadDependencyDTOKind.
 const (
 	WorkloadDependencyDTOKindOrgService WorkloadDependencyDTOKind = "org-service"
@@ -1243,6 +1309,15 @@ type AcceptAssumptionBody struct {
 	Note string `json:"note,omitempty"`
 }
 
+// AcceptanceCriteriaFile One acceptance criteria file as it stood at the snapshot's commit.
+type AcceptanceCriteriaFile struct {
+	// Content The file's Gherkin source, verbatim.
+	Content string `json:"content"`
+
+	// Path Repository path, e.g. specs/validation/acceptance/checkout.feature.
+	Path string `json:"path"`
+}
+
 // AccessRequest defines model for AccessRequest.
 type AccessRequest struct {
 	ConsumerComponentName string    `json:"consumerComponentName"`
@@ -1288,16 +1363,28 @@ type ActivityFeed struct {
 	NextBeforeID string `json:"nextBeforeId,omitempty"`
 }
 
+// AgentModel The model every agent of an organization bills to: the requirements, design and task-planning agents and the coding agent alike.
+//
+// Offered only once the platform can price it. The platform stamps a run's cost from a per-model rate table, and that stamp is ALL-OR-NOTHING across a cycle's capture — one model with no rate blanks the cost of the whole cycle, not just its own share. Adding one is a rate row and a contract change together, never one without the other.
+type AgentModel string
+
 // AgentRuntime Which coding-agent runtime an organization's builds run on.
 //
 // The values are the same two RunEvent.runtime records, and deliberately so: what an org SELECTS and what a finished run REPORTS have to be the same vocabulary or a reader cannot line them up. The lifetimes differ — this is a setting that can change, that one is a fact about an attempt that cannot.
 //
-// `opencode` is in the enum because the design carries it and because a client should be able to render the choice; it is NOT selectable while the platform ships no adapter for it, and the API rejects it with a reason naming what is missing. Do not treat membership of this enum as availability.
+// Both runtimes run on the organization's Anthropic API key. Only `claude-code` can bill a Claude subscription instead, so choosing `opencode` deletes a stored subscription (ADR-0028, ADR-0036).
 type AgentRuntime string
 
 // AgentStatus How an agent, or a backgrounded task an agent owns, ended — as the runtime itself reported it. `running` is the only non-terminal value and exists so a consumer can repaint a row without waiting for the end; `completed` is a clean finish; `failed` is one the runtime called an error; `stopped` is a cancellation or a kill from outside, which is NOT a failure — the work did not go wrong, it was taken away, and a run a user stopped must not be shown as broken.
 // Carried by RunEvent's `agent_settled` and `task_settled`, which are the only places a status is authoritative. A settle event that never arrives means the platform never learned how the agent ended; it does not mean the agent is still running.
 type AgentStatus string
+
+// AgentsProjection How an organization's agents run: the one model every agent uses, the coding agent's runtime, and the Claude subscription coding bills to instead of the API key.
+//
+// ALWAYS present: every org has an effective model and runtime whether or not anyone has chosen them, so the section carries the platform's defaults until someone does. `updatedAt`/`updatedBy` are null exactly when nobody has — which is what tells "the platform's defaults" apart from "somebody chose the same values".
+//
+// The spec agents read the model at the start of every turn. A coding run copies the model and runtime when it is dispatched, so a run in flight keeps what it was launched with.
+type AgentsProjection = orgconfig.AgentsProjection
 
 // ApplyConflict One file whose baseSha no longer matches HEAD.
 type ApplyConflict struct {
@@ -1510,18 +1597,6 @@ type ClientSecretOutputBody struct {
 	ClientSecret string `json:"clientSecret"`
 }
 
-// CodingAgentModel The model an organization's coding runs bill to.
-//
-// Narrower than the list any runtime can serve, and narrow for one reason: the platform stamps a run's cost from a per-model rate table, and that stamp is ALL-OR-NOTHING across a cycle's capture — one model with no rate blanks the cost of the whole cycle, not just its own share. So a model is offered here only once the platform can price it. Adding one is a rate row and a contract change together, never one without the other.
-type CodingAgentModel string
-
-// CodingAgentProjection The runtime and model an organization's coding runs use.
-//
-// ALWAYS present, unlike the credential sections: every org has an effective runtime and model whether or not anyone has ever opened the setting. `updatedAt`/`updatedBy` are null exactly when nobody has — which is what tells "the platform's defaults" apart from "somebody chose the same values".
-//
-// A change applies from the NEXT cycle. Dispatch copies these onto the run it starts, so a run already in flight keeps the runtime and model it was launched with; re-reading the setting mid-run would leave a feed whose model names disagree with the tokens they were billed for.
-type CodingAgentProjection = orgconfig.CodingAgentProjection
-
 // CollabSessionOutputBody defines model for CollabSessionOutputBody.
 type CollabSessionOutputBody struct {
 	Email    string `json:"email"`
@@ -1729,7 +1804,7 @@ type DeleteOp struct {
 	Path    string `json:"path"`
 }
 
-// Dependency A component's unified, kind-discriminated dependency entry. status/reason/flags are read-time computed by spec.ComputeDependencyStatus — never authored, never persisted (Design.json write-gate rejects them). An external dependency's definition (source, provider, style, contract, sdk, package, provenance, suggestions, config, assumed) is HYDRATED from its own file, specs/design/dependencies/<name>/dependency.json — one dependency, one definition, referenced by name from every component that uses it.
+// Dependency A component's unified, kind-discriminated dependency entry. status/reason/flags are read-time computed by spec.ComputeDependencyStatus — never authored, never persisted (Design.json write-gate rejects them). An external dependency is HYDRATED from its own file, specs/design/dependencies/<name>/dependency.json — one dependency, one definition, holding a full `resource` block (a copy from the org registry when resourceRef is set, else one the project defined). style, contractAssumed and contractDerived are COMPUTED from the contract's type and origin; nothing here is stored as such.
 type Dependency = contracts.Dependency
 
 // DependencyAssumption The user's permission to build against a contract the agent wrote from research — who accepted, when, and the agent's note of what it was unsure about.
@@ -1747,8 +1822,8 @@ type DependencyContractResponse struct {
 	Contract string `json:"contract"`
 }
 
-// DependencyProvenance Where a committed contract came from — the source document, its full-document hash, when it was read, and whether the committed file is a slice of it.
-type DependencyProvenance = contracts.DependencyProvenance
+// DependencyOperationStatus One `x-aep.tools.openapi[].allow` entry's read-time computed resolution against the dependency it targets — status/reason are computed by spec.ComputeAgentToolStatus, never authored, never persisted.
+type DependencyOperationStatus = contracts.DependencyOperationStatus
 
 // DependencyStatus defines model for DependencyStatus.
 type DependencyStatus struct {
@@ -1770,23 +1845,12 @@ type DeployStage struct {
 	} `json:"components"`
 	Status string `json:"status"`
 
-	// Validation Validation state of the newest milestone run. This MIRRORS the run's verdict rather than folding it, so the chip says what the run concluded: a fold would have to discard `partial`, `inconclusive` and `unreported` at exactly the surface that needs them, and `completed` never said whether anything passed.
-	// Four LIFECYCLE values. none is PENDING, never settled: a verdict is expected and has not arrived, because a run is live or a dev run filed the version's validation task and nothing has started it yet. A client must not read it as "there is no verdict to wait for" — that is what skipped and inconclusive say. running is a validation CYCLE in flight, not merely a live run with no verdict yet. awaiting-fix is validation having failed with the run repairing it — the work in flight is a CODING cycle, which is why the state names the implementation rather than validation. cancelled is a person STOPPING the judging: a validation run settled cancelled before recording a verdict, so nothing will answer for this version unless somebody re-asks. The rest are the verdict verbatim. They are mutually exclusive in time, so nothing is hidden behind another.
-	// passed (every criterion was automated and passed), partial (some passed, none failed, some were never covered), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the validation cycle's merge commit), skipped (no validation criteria, and incident runs, which get no validation cycle).
-	// failed and unreported fail the run only once its validation attempts are spent: while attempts remain the run repairs and re-validates, and reads awaiting-fix in the meantime.
-	// The report path and per-cycle detail live on the version's run story (list-build-runs).
-	Validation DeployStageValidation `json:"validation"`
+	// Validation Where the deployed version's validation stands, in the shared ValidationState vocabulary. The report path and the per-attempt detail behind it live on the version's run story (list-build-runs) and its validation history (get-validation).
+	Validation ValidationState `json:"validation"`
 
 	// Version Spec tag live in dev; "" if nothing deployed.
 	Version string `json:"version"`
 }
-
-// DeployStageValidation Validation state of the newest milestone run. This MIRRORS the run's verdict rather than folding it, so the chip says what the run concluded: a fold would have to discard `partial`, `inconclusive` and `unreported` at exactly the surface that needs them, and `completed` never said whether anything passed.
-// Four LIFECYCLE values. none is PENDING, never settled: a verdict is expected and has not arrived, because a run is live or a dev run filed the version's validation task and nothing has started it yet. A client must not read it as "there is no verdict to wait for" — that is what skipped and inconclusive say. running is a validation CYCLE in flight, not merely a live run with no verdict yet. awaiting-fix is validation having failed with the run repairing it — the work in flight is a CODING cycle, which is why the state names the implementation rather than validation. cancelled is a person STOPPING the judging: a validation run settled cancelled before recording a verdict, so nothing will answer for this version unless somebody re-asks. The rest are the verdict verbatim. They are mutually exclusive in time, so nothing is hidden behind another.
-// passed (every criterion was automated and passed), partial (some passed, none failed, some were never covered), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the validation cycle's merge commit), skipped (no validation criteria, and incident runs, which get no validation cycle).
-// failed and unreported fail the run only once its validation attempts are spent: while attempts remain the run repairs and re-validates, and reads awaiting-fix in the meantime.
-// The report path and per-cycle detail live on the version's run story (list-build-runs).
-type DeployStageValidation string
 
 // Deployment defines model for Deployment.
 type Deployment struct {
@@ -1826,16 +1890,42 @@ type EnvValueCellDTO struct {
 // EnvValueCellDTOStatus defines model for EnvValueCellDTO.Status.
 type EnvValueCellDTOStatus string
 
+// EnvValueWriteDTO One value of one config key in one environment, as written by a form.
+type EnvValueWriteDTO struct {
+	Environment string `json:"environment"`
+	Key         string `json:"key"`
+	Value       string `json:"value"`
+}
+
 // EnvVar defines model for EnvVar.
 type EnvVar struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
 }
 
-// EnvironmentDTO defines model for EnvironmentDTO.
+// EnvironmentDTO One environment in the org's deployment pipeline, in promotion order. `name` is the OpenChoreo Environment's immutable identity; everything else is presentation or flow. `validation` says whether this environment runs a validation step; it is always present in the response, because an Environment whose annotation is missing or unrecognised is served as "off".
 type EnvironmentDTO struct {
+	// DisplayName From the openchoreo.dev/display-name annotation; falls back to a titlecased name.
+	DisplayName string `json:"displayName"`
+
+	// IsProduction From Environment.spec.isProduction. Never inferred from the name.
+	IsProduction bool `json:"isProduction"`
+
+	// Name Immutable OpenChoreo Environment name. Bindings and cell namespaces reference it.
 	Name string `json:"name"`
+
+	// Position 0-based index in promotion order. The array is already ordered; this is a convenience.
+	Position int32 `json:"position"`
+
+	// PromotesTo The next environment's name. Omitted on the last environment, which has no promote step.
+	PromotesTo string `json:"promotesTo,omitempty"`
+
+	// Validation From the aep.wso2.com/validation annotation. Always present in the response: when the annotation is missing or unrecognised on the Environment, the server serves "off".
+	Validation EnvironmentDTOValidation `json:"validation"`
 }
+
+// EnvironmentDTOValidation From the aep.wso2.com/validation annotation. Always present in the response: when the annotation is missing or unrecognised on the Environment, the server serves "off".
+type EnvironmentDTOValidation string
 
 // Error Flat error envelope returned by every non-2xx response.
 type Error struct {
@@ -1882,17 +1972,29 @@ type ExternalDependencyValueState string
 
 // ExternalResourceDTO defines model for ExternalResourceDTO.
 type ExternalResourceDTO struct {
-	Config                  []ConfigKeyDTO `json:"config"`
-	Consumers               []ConsumerDTO  `json:"consumers"`
-	ConsumptionInstructions string         `json:"consumptionInstructions,omitempty"`
-	Description             string         `json:"description,omitempty"`
+	Config                  []ConfigKeyDTO    `json:"config"`
+	Consumers               []ConsumerDTO     `json:"consumers"`
+	ConsumptionInstructions string            `json:"consumptionInstructions,omitempty"`
+	Contract                *ResourceContract `json:"contract,omitempty"`
+	Description             string            `json:"description,omitempty"`
 
 	// EnvCells Org value plane. Present with one cell per config key × OpenChoreo Environment on a Registered External resource. Omitted or empty on a Project External resource. Secrets never include value.
-	EnvCells     []EnvValueCellDTO       `json:"envCells,omitempty"`
-	Instances    []ResourceInstanceDTO   `json:"instances,omitempty"`
-	Name         string                  `json:"name"`
+	EnvCells  []EnvValueCellDTO     `json:"envCells,omitempty"`
+	Instances []ResourceInstanceDTO `json:"instances,omitempty"`
+	Name      string                `json:"name"`
+
+	// Project The project that holds this resource; set on scope project only.
+	Project      string                  `json:"project,omitempty"`
+	Provenance   *ResourceProvenance     `json:"provenance,omitempty"`
+	Provider     string                  `json:"provider,omitempty"`
 	ResourceDocs []ResourceDocPointerDTO `json:"resourceDocs,omitempty"`
+
+	// Scope org — a Registered External resource, held by the organization; project — a project's own resource, listed with its project so the organization can promote it. Org-only readers (the design agent's catalog, Register's uniqueness check) never see project rows.
+	Scope ExternalResourceDTOScope `json:"scope,omitempty"`
 }
+
+// ExternalResourceDTOScope org — a Registered External resource, held by the organization; project — a project's own resource, listed with its project so the organization can promote it. Org-only readers (the design agent's catalog, Register's uniqueness check) never see project rows.
+type ExternalResourceDTOScope string
 
 // FileBundle A set of files read at ONE commit. commitSha names that commit; every entry's sha is a blob of that same tree.
 type FileBundle struct {
@@ -2208,7 +2310,7 @@ type ProjectList struct {
 
 // ProjectRole One role THIS project owns on the identity provider. A different kind of object from ProjectRoleState, which is a SHARED org group. A project role is named `<project>/<Role>`, exactly one project creates it, and that project's builds converge it and its delete removes it.
 type ProjectRole struct {
-	// AssignedTo The groups holding the role, in binding order. EMPTY is meaningful, not missing data - it is the normal shape for a self-service role (the app's registration flow assigns it per account) and for a service role (an application principal holds it).
+	// AssignedTo The GROUPS holding the role, in binding order. EMPTY is meaningful, not missing data - it is the normal shape for a self-service role (which carries no assignTo, and whose test logins hold it as user principals instead) and for a service role (an application principal holds it).
 	AssignedTo []ProjectRoleAssignment `json:"assignedTo,omitempty"`
 
 	// DirectoryName The name the directory carries - `<project>/<Role>`. The prefix is the platform's ownership device; render `name`, not this.
@@ -2265,8 +2367,17 @@ type ProjectRolesView struct {
 	// Roles The WHOLE directory catalog, name-ordered — not just this project's roles. Roles are shared, so the panel shows which existing role a design reuses. Empty when directoryAvailable is false.
 	Roles []ProjectRoleState `json:"roles,omitempty"`
 
+	// SignIn Absent when the project declares no sign-in resource or its binding has not resolved yet.
+	SignIn *ProjectSignIn `json:"signIn,omitempty"`
+
 	// TestUsers The test accounts THIS project's design references, role-ordered.
 	TestUsers []ProjectTestUserState `json:"testUsers,omitempty"`
+}
+
+// ProjectSignIn How a client outside a project's own components signs in to it - the issuer to sign in AT and the public OAuth client to sign in AS. Both are public. Absent from a view when the project declares no sign-in resource or its binding has not resolved yet.
+type ProjectSignIn struct {
+	ClientID string `json:"clientId"`
+	Issuer   string `json:"issuer"`
 }
 
 // ProjectStatus Computed SDLC phase and artifact states.
@@ -2348,6 +2459,15 @@ type ProjectUsageList struct {
 	Projects []ProjectUsageCard `json:"projects"`
 }
 
+// PromoteExternalResourceRequest What the organization adds when it takes over a project's own resource: how its consumers should use it and a value for every key in every environment. Name, provider, keys, description and contract come from the project's copy. An environment left out of envValues is carried over from the project's own values when it has them.
+type PromoteExternalResourceRequest struct {
+	ConsumptionInstructions string `json:"consumptionInstructions"`
+
+	// Description Replaces the project's description when set.
+	Description string             `json:"description,omitempty"`
+	EnvValues   []EnvValueWriteDTO `json:"envValues,omitempty"`
+}
+
 // PromoteFromIssueRequest defines model for PromoteFromIssueRequest.
 type PromoteFromIssueRequest struct {
 	// ComponentName Component this issue is about
@@ -2405,17 +2525,36 @@ type RcaAgentReportList struct {
 
 // RegisterExternalResourceRequest defines model for RegisterExternalResourceRequest.
 type RegisterExternalResourceRequest struct {
-	Config                  []ConfigKeyDTO `json:"config"`
-	ConsumptionInstructions string         `json:"consumptionInstructions"`
-	Description             string         `json:"description"`
-	EnvValues               []struct {
-		Environment string `json:"environment"`
-		Key         string `json:"key"`
-		Value       string `json:"value"`
-	} `json:"envValues"`
-	Name         string                `json:"name"`
+	Config                  []ConfigKeyDTO            `json:"config"`
+	ConsumptionInstructions string                    `json:"consumptionInstructions"`
+	Contract                *ResourceContractWriteDTO `json:"contract,omitempty"`
+	Description             string                    `json:"description"`
+	EnvValues               []EnvValueWriteDTO        `json:"envValues"`
+	Name                    string                    `json:"name"`
+
+	// Provider The concrete system this resource is ("Open Exchange Rates").
+	Provider     string                `json:"provider"`
 	ResourceDocs []ResourceDocWriteDTO `json:"resourceDocs,omitempty"`
 }
+
+// ResourceContract The contract as held at one level — `{ type, path }`, the path relative to that level's store (the org docs repo for a registry record, the dependency directory for a project copy). No URL form exists. On a project copy, origin says where the file came from and accepted is the user's permission for an assumed one (platform-written).
+type ResourceContract = contracts.ResourceContract
+
+// ResourceContractType The kind of document a resource's contract is.
+type ResourceContractType string
+
+// ResourceContractWriteDTO The resource's contract document on register/update. Exactly one of url (fetched by the platform, hashed and committed to the org docs repo — the URL is kept only as provenance) or fileName+content (uploaded). At most 5 MiB. Accepted shapes, enforced by the server (any other is a 400 naming the rule): `{type, url}` or `{type, fileName, content}` — never both forms, never type alone. The pair is not expressed as a JSON-Schema oneOf on purpose: the generators this contract feeds turn it into an unusable union (a `json.RawMessage` union field in Go, `unknown` in TypeScript) that hides the three plain fields callers actually set.
+type ResourceContractWriteDTO struct {
+	Content  string `json:"content,omitempty"`
+	FileName string `json:"fileName,omitempty"`
+
+	// Type The kind of document a resource's contract is.
+	Type ResourceContractType `json:"type"`
+	URL  string               `json:"url,omitempty"`
+}
+
+// ResourceDefinition An External resource in the one shape it has at both levels — the org registry record and a dependency's `resource` block. Values are never here.
+type ResourceDefinition = contracts.ResourceDefinition
 
 // ResourceDocPointerDTO Org resource docs pointer (type + URL or repo path), not file bodies.
 type ResourceDocPointerDTO struct {
@@ -2446,6 +2585,9 @@ type ResourceInstanceDTO struct {
 	Project     string `json:"project"`
 	Status      string `json:"status"`
 }
+
+// ResourceProvenance Where a copy of a contract document came from, at either level — the internet address an org copy was fetched from, or the registry file a project copy was taken from — with the whole document's hash at the time and when it was read.
+type ResourceProvenance = contracts.ResourceProvenance
 
 // RevalidateAccepted The run that will answer the question. Its cycles stream on the ordinary run progress endpoint, and its verdict becomes the version's once it settles.
 type RevalidateAccepted struct {
@@ -2889,7 +3031,7 @@ type SkillDetailBody struct {
 	OrgID            string            `json:"orgId"`
 	References       map[string]string `json:"references"`
 
-	// Required True when the coding runner reads this skill on every run and cannot start without it (`aep`, and `aep-validation` for a validation task). The mirror only copies enabled skills, so disabling one of these would take the procedure away from every build in the org — `PATCH /skills/{name}` refuses it with 409. The console renders the availability toggle as unavailable rather than letting the call fail.
+	// Required True when the coding runner reads this skill on every run and cannot start without it (`aep`, and `acceptance-run` for a validation task). The mirror only copies enabled skills, so disabling one of these would take the procedure away from every build in the org — `PATCH /skills/{name}` refuses it with 409. The console renders the availability toggle as unavailable rather than letting the call fail.
 	Required  bool      `json:"required"`
 	SkillMd   string    `json:"skillMd"`
 	UpdatedAt time.Time `json:"updatedAt"`
@@ -2905,7 +3047,7 @@ type SkillSummary struct {
 	Kind        string `json:"kind"`
 	Name        string `json:"name"`
 
-	// Required True when the coding runner reads this skill on every run and cannot start without it (`aep`, and `aep-validation` for a validation task). The mirror only copies enabled skills, so disabling one of these would take the procedure away from every build in the org — `PATCH /skills/{name}` refuses it with 409. The console renders the availability toggle as unavailable rather than letting the call fail.
+	// Required True when the coding runner reads this skill on every run and cannot start without it (`aep`, and `acceptance-run` for a validation task). The mirror only copies enabled skills, so disabling one of these would take the procedure away from every build in the org — `PATCH /skills/{name}` refuses it with 409. The console renders the availability toggle as unavailable rather than letting the call fail.
 	Required bool `json:"required"`
 }
 
@@ -2983,6 +3125,9 @@ type StartConnectOutputBody struct {
 type StatusMsg struct {
 	Status string `json:"status"`
 }
+
+// SubscriptionProjection A stored Claude subscription token, masked. It bills the coding agent's runs to a Claude plan instead of the organization's API key, and only Claude Code can present it.
+type SubscriptionProjection = orgconfig.SubscriptionProjection
 
 // TagList defines model for TagList.
 type TagList struct {
@@ -3336,6 +3481,74 @@ type Usage struct {
 	OutputTokens int64  `json:"outputTokens"`
 }
 
+// ValidationDetail One version's validation history, already filtered to what asks the question.
+// `runs` holds only runs that ATTEMPTED validation — ones holding at least one VALIDATION cycle, which is the fact rather than the kind: a task run never holds one, and a run that did ask the criteria is listed whatever its kind says it was for. Each run's `cycles` holds only its VALIDATION cycles. Both filters are applied here rather than by the client: they are the platform's own rules, and the surface that re-derived them read a newer non-validating run as the version's answer and hid a real verdict. The views are the same MilestoneRunView and RunCycleView the run story serves, so one projection describes a cycle everywhere.
+type ValidationDetail struct {
+	// Deployed This version is the one currently deployed — the only version a revalidation can honestly judge.
+	// A revalidation drives whatever is serving RIGHT NOW: the runner's endpoint URLs are resolved from OpenChoreo at request time and its criteria come from the branch tip, neither pinned to the version the run is filed under. So asking an older version's criteria judges code that version never shipped, records the verdict on its milestone, and — with the default attempt budget — files one repair issue per failed scenario there too. revalidate-build refuses it; this flag is what lets the console stop offering it, rather than letting a reader discover the refusal by clicking.
+	Deployed bool `json:"deployed"`
+
+	// Live A run is in flight on this milestone. With `deployed` it makes the two conditions the console gates the validation trigger on; the remaining refusals (open work, no criteria) belong to revalidate-build, which owns them and says so in its error. It also decides whether an unvalidated version reads as "a verdict is coming" or "nothing will come unless you ask", which must not disagree with whether the trigger is offered.
+	Live            bool  `json:"live"`
+	MilestoneNumber int64 `json:"milestoneNumber"`
+
+	// Runs Newest run first, validating kinds only, each carrying its validation cycles in dispatch order.
+	Runs []MilestoneRunView `json:"runs"`
+
+	// State Where a version's validation stands — the one vocabulary every surface renders it with.
+	// This MIRRORS the run's verdict rather than folding it, so the chip says what the run concluded: a fold would have to discard `partial`, `inconclusive` and `unreported` at exactly the surface that needs them, and `completed` never said whether anything passed.
+	// Four LIFECYCLE values. none is PENDING, never settled: a verdict is expected and has not arrived, because a run is live or a dev run filed the version's validation task and nothing has started it yet. A client must not read it as "there is no verdict to wait for" — that is what skipped and inconclusive say. running is a validation CYCLE in flight, not merely a live run with no verdict yet. awaiting-fix is validation having failed with the run repairing it — the work in flight is a CODING cycle, which is why the state names the implementation rather than validation. cancelled is a person STOPPING the judging: a validation run settled cancelled before recording a verdict, so nothing will answer for this version unless somebody re-asks. The rest are the verdict verbatim. They are mutually exclusive in time, so nothing is hidden behind another.
+	// passed (every criterion was automated and passed), partial (some passed, none failed, some were never covered), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the validation cycle's merge commit), skipped (no validation criteria, and incident runs, which get no validation cycle).
+	// failed and unreported fail the run only once its validation attempts are spent: while attempts remain the run repairs and re-validates, and reads awaiting-fix in the meantime.
+	State ValidationState `json:"state"`
+	Tag   string          `json:"tag"`
+}
+
+// ValidationList The validation ledger — one entry per worked spec version, newest first.
+type ValidationList struct {
+	Validations []ValidationSummary `json:"validations"`
+}
+
+// ValidationSnapshot One attempt's report and the criteria it was judged against, read at a single commit.
+type ValidationSnapshot struct {
+	// Commit The commit both halves were read at — the cycle's merge SHA, or empty when the attempt is still running and the criteria came from HEAD.
+	Commit string `json:"commit"`
+
+	// Criteria Every specs/validation/acceptance/*.feature file at that commit. The report annotates these; they are the spine the view renders and the report is the overlay.
+	Criteria []AcceptanceCriteriaFile `json:"criteria"`
+
+	// Report The raw tests/acceptance/report.json at that commit, verbatim, for the client's own parser to read. Null while the attempt is still running: it has not committed one yet, and an absent report is not the same fact as an empty one.
+	Report *string `json:"report,omitempty"`
+}
+
+// ValidationState Where a version's validation stands — the one vocabulary every surface renders it with.
+// This MIRRORS the run's verdict rather than folding it, so the chip says what the run concluded: a fold would have to discard `partial`, `inconclusive` and `unreported` at exactly the surface that needs them, and `completed` never said whether anything passed.
+// Four LIFECYCLE values. none is PENDING, never settled: a verdict is expected and has not arrived, because a run is live or a dev run filed the version's validation task and nothing has started it yet. A client must not read it as "there is no verdict to wait for" — that is what skipped and inconclusive say. running is a validation CYCLE in flight, not merely a live run with no verdict yet. awaiting-fix is validation having failed with the run repairing it — the work in flight is a CODING cycle, which is why the state names the implementation rather than validation. cancelled is a person STOPPING the judging: a validation run settled cancelled before recording a verdict, so nothing will answer for this version unless somebody re-asks. The rest are the verdict verbatim. They are mutually exclusive in time, so nothing is hidden behind another.
+// passed (every criterion was automated and passed), partial (some passed, none failed, some were never covered), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the validation cycle's merge commit), skipped (no validation criteria, and incident runs, which get no validation cycle).
+// failed and unreported fail the run only once its validation attempts are spent: while attempts remain the run repairs and re-validates, and reads awaiting-fix in the meantime.
+type ValidationState string
+
+// ValidationSummary One row of the validation ledger: a spec version and where its validation stands.
+// Every version that has been worked appears, including ones never validated — an absent row and a never-validated one are indistinguishable to a reader, and "never validated" is the most actionable state this page shows.
+type ValidationSummary struct {
+	// EndedAt When the LATEST validation attempt finished. Null while one is in flight, which is the case the column renders as an em-dash rather than a blank: a running attempt has no end and never will until it settles.
+	EndedAt *time.Time `json:"endedAt,omitempty"`
+
+	// MilestoneNumber The GitHub milestone this version's work lives in — the platform key the tag resolves to, and the handle get-validation is read by.
+	MilestoneNumber int64 `json:"milestoneNumber"`
+
+	// StartedAt When the LATEST validation attempt began — the CYCLE's clock, not the run's. Paired with endedAt it is the attempt's duration, which counts up while the attempt is open and is the only thing on this page that moves; a run's wall clock would fold in the coding, build and deploy time between attempts and say nothing about a hung one. Null when the version has never been validated.
+	StartedAt *time.Time `json:"startedAt,omitempty"`
+
+	// State Where a version's validation stands — the one vocabulary every surface renders it with.
+	// This MIRRORS the run's verdict rather than folding it, so the chip says what the run concluded: a fold would have to discard `partial`, `inconclusive` and `unreported` at exactly the surface that needs them, and `completed` never said whether anything passed.
+	// Four LIFECYCLE values. none is PENDING, never settled: a verdict is expected and has not arrived, because a run is live or a dev run filed the version's validation task and nothing has started it yet. A client must not read it as "there is no verdict to wait for" — that is what skipped and inconclusive say. running is a validation CYCLE in flight, not merely a live run with no verdict yet. awaiting-fix is validation having failed with the run repairing it — the work in flight is a CODING cycle, which is why the state names the implementation rather than validation. cancelled is a person STOPPING the judging: a validation run settled cancelled before recording a verdict, so nothing will answer for this version unless somebody re-asks. The rest are the verdict verbatim. They are mutually exclusive in time, so nothing is hidden behind another.
+	// passed (every criterion was automated and passed), partial (some passed, none failed, some were never covered), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the validation cycle's merge commit), skipped (no validation criteria, and incident runs, which get no validation cycle).
+	// failed and unreported fail the run only once its validation attempts are spent: while attempts remain the run repairs and re-validates, and reads awaiting-fix in the meantime.
+	State ValidationState `json:"state"`
+	Tag   string          `json:"tag"`
+}
+
 // Warning defines model for Warning.
 type Warning struct {
 	Code    string `json:"code"`
@@ -3588,6 +3801,9 @@ type UpdateComponentConfigJSONRequestBody = UpdateConfigBody
 
 // ProvisionPlatformResourceJSONRequestBody defines body for ProvisionPlatformResource for application/json ContentType.
 type ProvisionPlatformResourceJSONRequestBody = ProvisionBody
+
+// PromoteExternalResourceJSONRequestBody defines body for PromoteExternalResource for application/json ContentType.
+type PromoteExternalResourceJSONRequestBody = PromoteExternalResourceRequest
 
 // CollectExternalResourceValuesJSONRequestBody defines body for CollectExternalResourceValues for application/json ContentType.
 type CollectExternalResourceValuesJSONRequestBody = SaveValuesBody

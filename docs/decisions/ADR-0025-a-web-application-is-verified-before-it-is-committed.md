@@ -110,8 +110,8 @@ skill, so a new skill needs no runner code change.
 What the platform did have to change is the envelope the session runs in:
 
 - **The runner image gains `agent-browser`** (`runners/remote-worker/Dockerfile`),
-  pointed at the Chromium ADR-0012 already bakes for Playwright via
-  `AGENT_BROWSER_EXECUTABLE_PATH`. No third browser is downloaded.
+  pointed via `AGENT_BROWSER_EXECUTABLE_PATH` at the chromium the image already
+  bakes (Debian's, since ADR-0016). No second browser is downloaded.
 - **The coding job's deadline names three hours** (`codingDeadlineSeconds`),
   with the OpenChoreo ComponentType schema ceiling raised to match. The coding
   path previously sent no deadline at all and inherited the schema default, so
@@ -192,9 +192,9 @@ The dev server moved out of the skill text into `scripts/walk.sh` beside it
 process-group launcher, a port-collision rule and a stop sequence that every
 walk re-typed; the one walk that improvised instead leaked four dev servers
 into its memory limit. The script reaps by process group, searches for a free
-port and moves on when a launch loses the bind to a sibling walk in the same
-instant, keys its state on the App Path so same-named apps stay apart, and
-closes the browser on `down`. The
+port and moves on when a launch loses the bind — a dev server outlives the walk
+that started it — keys its state on the App Path so same-named apps stay apart,
+and closes the browser on `down`. The
 runner image also gains `procps` as a backstop for an agent that reaches for
 `pkill` outside the procedure. This reverses the earlier call to keep the skill
 text-only, on the measured cost of that choice.
@@ -218,3 +218,24 @@ text-only, on the measured cost of that choice.
   assumes they were covered here.
 - A defect three attempts could not clear does not block the cycle. It is
   carried into the run's record naming the screen and what happens on it.
+
+## Amendment 2026-09-19 — one walk at a time
+
+The memory reservation above was measured against ONE Chromium and ONE dev
+server, and the dispatch rule did not bound how many of either a wave could have
+live at once. A wave with two web-applications dispatched two walks the moment
+each builder reported clean, and a run on 2026-09-19 (`test91921` v1) had four
+subagents alive together — three holding a browser, one running `bal test` — and
+was OOMKilled 20m41s in, inside the same 3Gi limit.
+
+**A walk now waits for the walk before it to report.** The rule is stated once,
+in `aep`'s walk-dispatch step, because that step is also the walk subagent's
+whole prompt. `scripts/walk.sh` still searches for a free port: serialization
+removes the sibling race, not the stale server a previous walk left bound.
+
+This narrows the dispatch consequence above — the lead dispatches a walk once
+the build reports clean AND no other walk is live — and leaves the memory
+measurement standing, since it is now the shape the pod is actually asked to
+hold. Raising the limit was rejected: it buys a slower leak, and the walk is the
+longer of a web-application's two dispatches, so the cost is wall clock inside
+one cycle rather than a second cycle.

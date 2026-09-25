@@ -36,6 +36,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  ClipboardCheck,
   Database,
   FileText,
   RefreshCw,
@@ -47,7 +48,7 @@ import {
   Workflow,
 } from "@wso2/oxygen-ui-icons-react";
 import { WorkingPulse } from "../../agent-chat/components/WorkingIndicator";
-import { PRD_PATH, type SpecFileEntry } from "../api/mapping";
+import type { SpecFileEntry } from "../api/mapping";
 import { fileLabel } from "../api/labels";
 import {
   mostSignificant,
@@ -60,6 +61,7 @@ import { ProblemsDialog } from "./ProblemsDialog";
 import type { DependencyState } from "../lib/dependencyStates";
 import {
   buildDesignSection,
+  buildValidationSection,
   selectionKey,
   DESIGN_CELL_PATH,
   DOMAIN_MODEL_PATH,
@@ -138,16 +140,8 @@ export function SpecFileList({
   // enough for every group.
   const allFiles = [...files, ...ghosts].sort((a, b) => a.path.localeCompare(b.path));
 
-
-  // The PRD leads, whatever it sorts as. Everything else under Requirements
-  // elaborates it — a feature file is depth on a story the PRD defines — and on
-  // path alone `features/…` sorts ABOVE `prd.md`, burying the document the
-  // whole flow is written against beneath its own footnotes. `files` arrives
-  // path-sorted and sort is stable, so the rest keeps that order.
-  const requirements = allFiles
-    .filter((f) => f.group === "requirements")
-    .sort((a, b) => Number(b.path === PRD_PATH) - Number(a.path === PRD_PATH));
-  const validation = allFiles.filter((f) => f.group === "validation");
+  const requirements = allFiles.filter((f) => f.group === "requirements");
+  const validation = buildValidationSection(allFiles, committed, plan ?? []);
   const design = buildDesignSection(allFiles);
 
   // Per-component expand/collapse — default expanded, remembered by name so
@@ -416,11 +410,16 @@ export function SpecFileList({
     );
   };
 
-  const flatGroup = (section: RailSection, groupFiles: SpecFileEntry[]) => (
+  const flatGroup = (
+    section: RailSection,
+    groupFiles: SpecFileEntry[],
+    lead?: React.ReactNode,
+  ) => (
     <Box sx={{ mb: 1 }}>
       {sectionHeader(section)}
-      {groupFiles.length > 0 ? (
+      {groupFiles.length > 0 || lead !== undefined ? (
         <List dense disablePadding>
+          {lead}
           {groupFiles.map((f) =>
             row(fileSel(f.path), fileLabel(f.path), <FileText size={16} />),
           )}
@@ -572,7 +571,24 @@ export function SpecFileList({
         )}
       </Box>
 
-      {flatGroup(sectionOf("validation"), validation)}
+      {/* ONE entry for every specs/validation/acceptance/*.feature, because the pane reads
+          them as one document set — which is what lets a reader search across
+          capabilities instead of picking the right file first (ADR-0031). Which
+          files keep an ordinary row and whether this entry appears are decided
+          together in buildValidationSection, so they cannot disagree. */}
+      {flatGroup(
+        sectionOf("validation"),
+        validation.files,
+        validation.hasAcceptance
+          ? row(
+              { kind: "acceptance" },
+              "Acceptance criteria",
+              <ClipboardCheck size={16} />,
+              false,
+              validation.acceptanceStatusPath,
+            )
+          : undefined,
+      )}
 
       <ProblemsDialog
         open={problemsFor !== null}

@@ -72,7 +72,10 @@ const (
 type landing int
 
 const (
-	landingMergeSignalled landing = iota
+	// landingSignalled — a fact arrived (a merge, an agent death). Which one is
+	// deliberately not distinguished: the cycle RECORD decides what happened, so
+	// every such wake leads to the same re-read.
+	landingSignalled landing = iota
 	landingConflict
 	landingCancelled
 	landingTimeout
@@ -207,10 +210,10 @@ func (l *loop) dispatchUntilLanded(ctx workflow.Context, kind string, anchorIssu
 				return false, cycleConflict, nil
 			case landingTimeout:
 				expired = true
-			case landingMergeSignalled:
+			case landingSignalled:
 				// Never act on the payload: a human's pull request merging during
-				// the cycle raises the same signal, and only the CYCLE RECORD says
-				// whether the agent's own work landed.
+				// the cycle raises the same signal as the agent's own, and only
+				// the CYCLE RECORD says which happened.
 			}
 			facts, ferr := l.cycleFacts(ctx)
 			if ferr != nil {
@@ -231,6 +234,21 @@ func (l *loop) dispatchUntilLanded(ctx workflow.Context, kind string, anchorIssu
 				// Landed: the verdict is the next stage's, not this loop's.
 				return true, cycleNone, nil
 			}
+			// Closed with nothing to land. The cycle is over, not merely this
+			// attempt: both writes a re-dispatch would make are fenced on
+			// `ended_at IS NULL`, so NoteDispatch could not record one and the
+			// watcher could not close one — the budget has nothing left to buy.
+			// The loop agrees with the store rather than spending a second
+			// deadline proving it.
+			//
+			// This is the GROUND TRUTH behind SigRunAgentDied, and why losing that
+			// signal costs latency rather than correctness: the deadline wakes the
+			// loop into this same check. Checked last so a cycle the event plane
+			// closed on a merge is read as the merge it was.
+			if facts.Ended {
+				stopDeadline()
+				return false, cycleAgentDead, nil
+			}
 		}
 		stopDeadline()
 	}
@@ -241,7 +259,7 @@ func (l *loop) dispatchUntilLanded(ctx workflow.Context, kind string, anchorIssu
 // future is created once per ATTEMPT, so a spurious wake-up re-enters the wait
 // without extending the agent's allowance.
 func (l *loop) awaitLanding(ctx workflow.Context, deadline workflow.Future) landing {
-	out := landingMergeSignalled
+	out := landingSignalled
 	sel := workflow.NewSelector(ctx)
 	sel.AddReceive(l.cancel, func(c workflow.ReceiveChannel, _ bool) {
 		c.Receive(ctx, nil)
@@ -253,7 +271,14 @@ func (l *loop) awaitLanding(ctx workflow.Context, deadline workflow.Future) land
 	})
 	sel.AddReceive(l.merged, func(c workflow.ReceiveChannel, _ bool) {
 		c.Receive(ctx, nil)
-		out = landingMergeSignalled
+		out = landingSignalled
+	})
+	// After cancel: Select takes the first READY case in registration order, and
+	// cancelling REAPS the agent's pod, so a cancel would otherwise be read as
+	// the death it causes.
+	sel.AddReceive(l.agentDied, func(c workflow.ReceiveChannel, _ bool) {
+		c.Receive(ctx, nil)
+		out = landingSignalled
 	})
 	// A workable or build signal during the coding phase is noise (an issue
 	// joined the milestone, a stale build reported). Drained so it cannot wake

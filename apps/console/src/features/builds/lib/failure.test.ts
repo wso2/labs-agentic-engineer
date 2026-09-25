@@ -174,9 +174,30 @@ describe("failureCopy — runs with no record", () => {
     expect(copy?.body).toContain("The runner reported: timed_out");
   });
 
+  it("counts the dispatches that actually happened, not the budget", () => {
+    const once = failureCopy(
+      run({
+        terminalReason: "redispatch-budget",
+        cycles: [{ id: "c1", kind: "coding", attempts: 1, createdAt: "2026-09-11T07:40:00Z", agentReason: "agent_failed:OOMKilled", recording: "none" }] as MilestoneRunView["cycles"],
+      }),
+    );
+    // A cycle the pod-truth watcher closed cannot be re-dispatched, so this run
+    // settled on one launch. Saying "twice" would describe an attempt nobody made.
+    expect(once?.body).toContain("dispatched it once");
+    expect(once?.body).not.toContain("twice");
+
+    const twice = failureCopy(
+      run({
+        terminalReason: "redispatch-budget",
+        cycles: [{ id: "c1", kind: "coding", attempts: 2, createdAt: "2026-09-11T07:40:00Z", recording: "none" }] as MilestoneRunView["cycles"],
+      }),
+    );
+    expect(twice?.body).toContain("dispatched it twice");
+  });
+
   it("points a deploy failure at Deployments and a validation failure at Validation", () => {
     expect(failureCopy(run({ terminalReason: "deploy-budget" }))?.next?.to).toBe("/projects/$projectName/deployments");
-    expect(failureCopy(run({ terminalReason: "validation-failed" }))?.next?.to).toBe("/projects/$projectName/validation");
+    expect(failureCopy(run({ terminalReason: "validation-failed" }))?.next?.to).toBe("/projects/$projectName/validations");
   });
 
   it("renders an unknown reason rather than swallowing it", () => {

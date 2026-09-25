@@ -263,7 +263,7 @@ type ReleaseBindingSummary struct {
 	ExternalURL string
 }
 
-// -- ComponentOpenAPI (Test tab) ----------------------------------------------
+// -- ComponentOpenAPI (Try API) ------------------------------------------------
 
 // BuildRunSummary is one build WorkflowRun reduced to the facts the milestone
 // loop decides on, with OpenChoreo's condition vocabulary already mapped.

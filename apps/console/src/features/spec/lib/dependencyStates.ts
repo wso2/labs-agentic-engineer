@@ -45,6 +45,8 @@ const FLAG_LABEL: Record<string, string> = {
   assumed: "Assumed",
   derived: "Derived from docs",
   "sdk-only": "SDK only",
+  // The copy's document no longer matches the organization's.
+  stale: "Stale",
 };
 
 /** The one thing the user must do for an external dependency, or "". */

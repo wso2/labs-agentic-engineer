@@ -23,7 +23,7 @@ const OPENAPI_RE = /\/openapi\.ya?ml$/;
 const GRAPHQL_SCHEMA_RE = /^specs\/design\/dependencies\/[^/]+\/schema\.graphql$/;
 const COMPONENT_DESIGN_RE = /^specs\/design\/components\/[^/]+\/design\.json$/;
 const SDK_MANIFEST_RE = /^specs\/design\/dependencies\/[^/]+\/sdk\.json$/;
-const VALIDATION_CRITERIA_RE = /^specs\/validation\/validation-criteria\.json$/;
+const AGENT_AFM_RE = /^specs\/design\/components\/[^/]+\/agent\.afm\.md$/;
 
 function basename(path: string): string {
   return path.split("/").at(-1) ?? path;
@@ -54,17 +54,39 @@ export function fileLabel(path: string): string {
   // Under the component's own header, so the label adds the artifact and
   // never repeats the subject — `orders › Design · API · Wireframe`.
   if (COMPONENT_DESIGN_RE.test(path)) return "Design";
+  // An ai-agent's definition. Named like its siblings — the file is
+  // `agent.afm.md`, but what the reader is opening is the agent's spec.
+  if (AGENT_AFM_RE.test(path)) return "Agent spec";
   // A dependency's directory reads the same way under its own header —
   // `stripe › Definition · API · SDK` — the interface file taking the name
   // a component's does, whichever style wrote it.
   if (isDependencyDefinition(path)) return "Definition";
   if (GRAPHQL_SCHEMA_RE.test(path)) return "API";
   if (SDK_MANIFEST_RE.test(path)) return "SDK";
-  if (VALIDATION_CRITERIA_RE.test(path)) return "Validation criteria";
   // A document nothing above names — a feature file most of the time, where
   // the filename IS the feature's name once the extension is off it. Keeping
-  // `.md` would leave the one surface the user reads throughout still showing
-  // them a file.
-  return basename(path).replace(/\.md$/, "");
+  // the extension would leave the one surface the user reads throughout still
+  // showing them a file.
+  //
+  // Both senses of "feature file" land here and want the same treatment: a
+  // requirement's `<slug>.md` depth document, and a `<capability>.feature` of
+  // acceptance criteria. Each is named for what it covers, under a section
+  // header that already says which phase it belongs to.
+  const name = basename(path).replace(/\.(md|feature)$/, "");
+  // A `.feature` slug is a capability name the agent chose (`bought-items`), so
+  // it is title-cased. The RAIL no longer shows these — one "Acceptance criteria"
+  // entry stands for the set, and the pane names each capability from its own
+  // `Feature:` heading — but a path still needs a label wherever one is asked
+  // for, such as the pane's "Waiting for the agent to write …". A requirement's
+  // `<slug>.md` keeps its verbatim name: those are referenced by name in the PRD,
+  // and re-casing one would stop the two matching.
+  return path.endsWith(".feature") ? titleCase(name) : name;
+}
+
+// `bought-items` -> `Bought items`. First word only: a capability is a phrase, not
+// a heading, and Title Casing Every Word reads as a product name.
+function titleCase(slug: string): string {
+  const words = slug.split(/[-_]+/).filter(Boolean).join(" ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 

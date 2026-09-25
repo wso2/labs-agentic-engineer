@@ -1,6 +1,13 @@
 # ADR-0017: The validation log is now-first, and the line between attempts is drawn at the run boundary
 
-Status: Accepted. Amends ADR-0013 (version-run-surface) §9, which fixed *which* cycle
+Status: Accepted, and **amended by
+[ADR-0033](./ADR-0033-validation-is-a-version-ledger.md)** — §5's caption wording and §6's
+`Run N · Cycle M` are replaced (the surface now says `EARLIER ATTEMPTS OF <tag>` and
+`Attempt N`), and §4's one-open-section is narrowed from per-page to per-card. **Decisions
+1–3 stand**: sections read newest-first, a number counts from the oldest, and the wire order
+does not move.
+
+Amends ADR-0013 (version-run-surface) §9, which fixed *which* cycle
 section opens but never where it sits, and extends ADR-0015's now-first principle to the
 validation surface. Both remain in force.
 

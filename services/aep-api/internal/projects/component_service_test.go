@@ -51,7 +51,7 @@ func TestComponentService_ListComponents_PassthroughAndError(t *testing.T) {
 			return &gen.ComponentList{Items: []gen.Component{{Name: "svc"}}}, nil
 		},
 	}
-	svc := NewComponentService(oc, nil, nil, nil, nil)
+	svc := NewComponentService(oc, nil, nil, nil, nil, nil, nil)
 	list, err := svc.ListComponents(context.Background(), "acme", "web", 100, "")
 	if err != nil || list == nil || len(list.Items) != 1 {
 		t.Fatalf("list happy: got list=%+v err=%v", list, err)
@@ -66,7 +66,7 @@ func TestComponentService_ListComponents_PassthroughAndError(t *testing.T) {
 			return nil, openchoreo.ErrNotFound
 		},
 	}
-	if _, err := NewComponentService(ocErr, nil, nil, nil, nil).ListComponents(context.Background(), "acme", "web", 100, ""); !errors.Is(err, openchoreo.ErrNotFound) {
+	if _, err := NewComponentService(ocErr, nil, nil, nil, nil, nil, nil).ListComponents(context.Background(), "acme", "web", 100, ""); !errors.Is(err, openchoreo.ErrNotFound) {
 		t.Fatalf("list error must propagate the raw OC sentinel, got %v", err)
 	}
 }
@@ -78,7 +78,7 @@ func TestComponentService_GetComponent_PassthroughAndError(t *testing.T) {
 			return &gen.Component{Name: comp, ProjectName: proj}, nil
 		},
 	}
-	svc := NewComponentService(oc, nil, nil, nil, nil)
+	svc := NewComponentService(oc, nil, nil, nil, nil, nil, nil)
 	got, err := svc.GetComponent(context.Background(), "acme", "web", "hello-api")
 	if err != nil || got == nil || got.Name != "hello-api" {
 		t.Fatalf("get happy: got=%+v err=%v", got, err)
@@ -87,7 +87,7 @@ func TestComponentService_GetComponent_PassthroughAndError(t *testing.T) {
 	ocErr := &ocmocks.ComponentClientMock{GetComponentFunc: func(context.Context, string, string, string) (*gen.Component, error) {
 		return nil, openchoreo.ErrNotFound
 	}}
-	if _, err := NewComponentService(ocErr, nil, nil, nil, nil).GetComponent(context.Background(), "acme", "web", "x"); !errors.Is(err, openchoreo.ErrNotFound) {
+	if _, err := NewComponentService(ocErr, nil, nil, nil, nil, nil, nil).GetComponent(context.Background(), "acme", "web", "x"); !errors.Is(err, openchoreo.ErrNotFound) {
 		t.Fatalf("get error must propagate, got %v", err)
 	}
 }
@@ -97,7 +97,7 @@ func TestComponentService_ListDeployments_PassthroughAndError(t *testing.T) {
 	oc := &ocmocks.ComponentClientMock{ListDeploymentsFunc: func(context.Context, string, string, string) (*gen.DeploymentList, error) {
 		return &gen.DeploymentList{Items: []gen.Deployment{{Name: "d1"}}}, nil
 	}}
-	list, err := NewComponentService(oc, nil, nil, nil, nil).ListDeployments(context.Background(), "acme", "web", "svc")
+	list, err := NewComponentService(oc, nil, nil, nil, nil, nil, nil).ListDeployments(context.Background(), "acme", "web", "svc")
 	if err != nil || list == nil || len(list.Items) != 1 {
 		t.Fatalf("deployments happy: %+v %v", list, err)
 	}
@@ -105,7 +105,7 @@ func TestComponentService_ListDeployments_PassthroughAndError(t *testing.T) {
 	ocErr := &ocmocks.ComponentClientMock{ListDeploymentsFunc: func(context.Context, string, string, string) (*gen.DeploymentList, error) {
 		return nil, errors.New("oc down")
 	}}
-	if _, err := NewComponentService(ocErr, nil, nil, nil, nil).ListDeployments(context.Background(), "a", "p", "c"); err == nil {
+	if _, err := NewComponentService(ocErr, nil, nil, nil, nil, nil, nil).ListDeployments(context.Background(), "a", "p", "c"); err == nil {
 		t.Fatal("deployments error must propagate")
 	}
 }
@@ -115,7 +115,7 @@ func TestComponentService_ListBuilds_DelegatesToWorkflowRuns(t *testing.T) {
 	oc := &ocmocks.ComponentClientMock{ListWorkflowRunsFunc: func(_ context.Context, org, proj, comp string, limit int, cursor string) (*gen.WorkflowRunList, error) {
 		return &gen.WorkflowRunList{Items: []gen.WorkflowRun{{Name: "run-1"}}}, nil
 	}}
-	svc := NewComponentService(oc, nil, nil, nil, nil)
+	svc := NewComponentService(oc, nil, nil, nil, nil, nil, nil)
 	list, err := svc.ListBuilds(context.Background(), "acme", "web", "svc", 20, "")
 	if err != nil || list == nil || len(list.Items) != 1 {
 		t.Fatalf("builds happy: %+v %v", list, err)
@@ -128,7 +128,7 @@ func TestComponentService_ListBuilds_DelegatesToWorkflowRuns(t *testing.T) {
 	ocErr := &ocmocks.ComponentClientMock{ListWorkflowRunsFunc: func(context.Context, string, string, string, int, string) (*gen.WorkflowRunList, error) {
 		return nil, errors.New("boom")
 	}}
-	if _, err := NewComponentService(ocErr, nil, nil, nil, nil).ListBuilds(context.Background(), "a", "p", "c", 20, ""); err == nil {
+	if _, err := NewComponentService(ocErr, nil, nil, nil, nil, nil, nil).ListBuilds(context.Background(), "a", "p", "c", 20, ""); err == nil {
 		t.Fatal("builds error must propagate")
 	}
 }
@@ -144,7 +144,7 @@ func TestComponentService_TriggerBuild_NoStagerWhenPortsNil(t *testing.T) {
 	}}
 	// repoSvc + buildCredSvc nil ⇒ no staging: the build fires with an empty
 	// secretRef and a freshly-generated runName.
-	svc := NewComponentService(oc, nil, nil, nil, nil)
+	svc := NewComponentService(oc, nil, nil, nil, nil, nil, nil)
 	run, err := svc.TriggerBuild(context.Background(), "acme", "web", "svc")
 	if err != nil || run == nil {
 		t.Fatalf("trigger happy: run=%+v err=%v", run, err)
@@ -174,7 +174,7 @@ func TestComponentService_TriggerBuild_StagesSecretWithSameRunName(t *testing.T)
 		stagerSlug, stagerRun = repoSlug, runName
 		return "git-secret-ref", nil
 	}}
-	svc := NewComponentService(oc, nil, nil, repo, stager)
+	svc := NewComponentService(oc, nil, nil, repo, stager, nil, nil)
 	if _, err := svc.TriggerBuild(context.Background(), "acme", "web", "svc"); err != nil {
 		t.Fatalf("trigger with staging: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestComponentService_TriggerBuild_GetRepoFailuresAreBestEffort(t *testing.T
 				t.Error("StageBuildSecret must not run when there is no usable repo")
 				return "", nil
 			}}
-			svc := NewComponentService(oc, nil, nil, tc.repo, stager)
+			svc := NewComponentService(oc, nil, nil, tc.repo, stager, nil, nil)
 			if _, err := svc.TriggerBuild(context.Background(), "acme", "web", "svc"); err != nil {
 				t.Fatalf("a missing/failed repo lookup must NOT fail the build: %v", err)
 			}
@@ -245,7 +245,7 @@ func TestComponentService_TriggerBuild_StagerFailureAborts(t *testing.T) {
 	stager := &stubBuildStager{StageBuildSecretFunc: func(context.Context, string, string, string) (string, error) {
 		return "", errors.New("openbao unreachable")
 	}}
-	svc := NewComponentService(oc, nil, nil, repo, stager)
+	svc := NewComponentService(oc, nil, nil, repo, stager, nil, nil)
 	_, err := svc.TriggerBuild(context.Background(), "acme", "web", "svc")
 	if err == nil || !strings.Contains(err.Error(), "stage-build-secret") {
 		t.Fatalf("stager failure must abort the build with a wrapped error, got %v", err)
@@ -257,7 +257,7 @@ func TestComponentService_TriggerBuild_OCErrorPropagates(t *testing.T) {
 	oc := &ocmocks.ComponentClientMock{TriggerBuildFunc: func(context.Context, string, string, string, string, string) (*gen.WorkflowRun, error) {
 		return nil, openchoreo.ErrNotFound
 	}}
-	if _, err := NewComponentService(oc, nil, nil, nil, nil).TriggerBuild(context.Background(), "acme", "web", "svc"); !errors.Is(err, openchoreo.ErrNotFound) {
+	if _, err := NewComponentService(oc, nil, nil, nil, nil, nil, nil).TriggerBuild(context.Background(), "acme", "web", "svc"); !errors.Is(err, openchoreo.ErrNotFound) {
 		t.Fatalf("OC trigger error must propagate, got %v", err)
 	}
 }
@@ -268,7 +268,7 @@ func TestComponentService_GetBuildLogs_NotConfigured(t *testing.T) {
 	t.Parallel()
 	// nil observability client ⇒ the local ErrLogsUnavailable sentinel (the HTTP
 	// op maps it to 503).
-	svc := NewComponentService(&ocmocks.ComponentClientMock{}, nil, nil, nil, nil)
+	svc := NewComponentService(&ocmocks.ComponentClientMock{}, nil, nil, nil, nil, nil, nil)
 	if _, err := svc.GetBuildLogs(context.Background(), "acme", "web", "svc", "run-1", 0); !errors.Is(err, ErrLogsUnavailable) {
 		t.Fatalf("nil observ client must return ErrLogsUnavailable, got %v", err)
 	}
@@ -289,7 +289,7 @@ func TestComponentService_GetBuildLogs_SuccessAndError(t *testing.T) {
 			return &gen.WorkflowRun{Name: "run-1", Completed: true}, nil
 		},
 	}
-	logs, err := NewComponentService(terminal, observ, nil, nil, nil).GetBuildLogs(context.Background(), "acme", "web", "svc", "run-1", 0)
+	logs, err := NewComponentService(terminal, observ, nil, nil, nil, nil, nil).GetBuildLogs(context.Background(), "acme", "web", "svc", "run-1", 0)
 	if err != nil || logs == nil || logs.TotalCount != 2 {
 		t.Fatalf("logs happy: logs=%+v err=%v", logs, err)
 	}
@@ -297,7 +297,7 @@ func TestComponentService_GetBuildLogs_SuccessAndError(t *testing.T) {
 	observErr := &stubObservClient{GetBuildLogsFunc: func(context.Context, string, string, string, string, time.Time) (*gen.BuildLogs, error) {
 		return nil, errors.New("observ 500")
 	}}
-	_, err = NewComponentService(terminal, observErr, nil, nil, nil).GetBuildLogs(context.Background(), "a", "p", "c", "b", 0)
+	_, err = NewComponentService(terminal, observErr, nil, nil, nil, nil, nil).GetBuildLogs(context.Background(), "a", "p", "c", "b", 0)
 	if err == nil || !strings.Contains(err.Error(), "get build logs") {
 		t.Fatalf("observ error must wrap with 'get build logs', got %v", err)
 	}
@@ -329,12 +329,12 @@ func openAPISvc(t *testing.T, files map[string]string, listErr error) ComponentS
 	}
 	// The REAL ArtifactStore decorator wraps the fake, so ReadDesign +
 	// AssembleDesign run for real over the crafted tree.
-	return NewComponentService(&ocmocks.ComponentClientMock{}, nil, spec.NewArtifactStore(fake), nil, nil)
+	return NewComponentService(&ocmocks.ComponentClientMock{}, nil, spec.NewArtifactStore(fake), nil, nil, nil, nil)
 }
 
 func TestComponentService_GetComponentOpenAPI_NoArtifactStore(t *testing.T) {
 	t.Parallel()
-	svc := NewComponentService(&ocmocks.ComponentClientMock{}, nil, nil, nil, nil)
+	svc := NewComponentService(&ocmocks.ComponentClientMock{}, nil, nil, nil, nil, nil, nil)
 	if _, err := svc.GetComponentOpenAPI(context.Background(), "acme", "web", "svc"); err == nil || !strings.Contains(err.Error(), "artifact store not configured") {
 		t.Fatalf("nil artifact store must error, got %v", err)
 	}
@@ -402,7 +402,7 @@ func TestComponentService_CreateComponent_PassthroughAndError(t *testing.T) {
 			return &gen.Component{Name: req.Name}, nil
 		},
 	}
-	svc := NewComponentService(oc, nil, nil, nil, nil)
+	svc := NewComponentService(oc, nil, nil, nil, nil, nil, nil)
 	comp, err := svc.CreateComponent(context.Background(), "acme", "web", &openchoreo.CreateComponentRequest{Name: "svc-a"})
 	if err != nil || comp == nil || comp.Name != "svc-a" {
 		t.Fatalf("create happy: comp=%+v err=%v", comp, err)
@@ -416,7 +416,7 @@ func TestComponentService_CreateComponent_PassthroughAndError(t *testing.T) {
 			return nil, openchoreo.ErrConflict
 		},
 	}
-	if _, err := NewComponentService(ocErr, nil, nil, nil, nil).CreateComponent(context.Background(), "acme", "web", &openchoreo.CreateComponentRequest{Name: "svc-a"}); !errors.Is(err, openchoreo.ErrConflict) {
+	if _, err := NewComponentService(ocErr, nil, nil, nil, nil, nil, nil).CreateComponent(context.Background(), "acme", "web", &openchoreo.CreateComponentRequest{Name: "svc-a"}); !errors.Is(err, openchoreo.ErrConflict) {
 		t.Fatalf("create error must propagate the OC sentinel verbatim, got %v", err)
 	}
 }
@@ -439,6 +439,7 @@ func TestOcEntrypoint_CanonicalWebAppKind(t *testing.T) {
 		{"retired web-app spelling is not a web application", "web-app", "deployment/service"},
 		{"service", "service", "deployment/service"},
 		{"empty", "", "deployment/service"},
+		{"ai-agent", "ai-agent", "deployment/ai-agent"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -477,7 +478,7 @@ func buildLogsSvc(t *testing.T, completed bool, entries *gen.BuildLogs, capture 
 		}
 		return entries, nil
 	}}
-	return NewComponentService(oc, observ, nil, nil, nil)
+	return NewComponentService(oc, observ, nil, nil, nil, nil, nil)
 }
 
 func TestComponentService_GetBuildLogs_TerminalBuildIsComplete(t *testing.T) {
@@ -522,7 +523,7 @@ func TestComponentService_GetBuildLogs_UnreadableRunIsNotComplete(t *testing.T) 
 	observ := &stubObservClient{GetBuildLogsFunc: func(context.Context, string, string, string, string, time.Time) (*gen.BuildLogs, error) {
 		return logsAt("2026-07-27T10:42:01Z"), nil
 	}}
-	logs, err := NewComponentService(oc, observ, nil, nil, nil).
+	logs, err := NewComponentService(oc, observ, nil, nil, nil, nil, nil).
 		GetBuildLogs(context.Background(), "acme", "web", "svc", "run-1", 0)
 	if err != nil {
 		t.Fatalf("logs: %v", err)

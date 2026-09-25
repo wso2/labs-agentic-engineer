@@ -25,11 +25,18 @@
 // Kept out of the default `test` glob so `make test` stays node-only and fast;
 // invoke explicitly with `pnpm --filter @aep/console test:browser`.
 import { defineConfig } from "vitest/config";
+import { searchForWorkspaceRoot } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import { playwright } from "@vitest/browser-playwright";
 
 export default defineConfig({
   plugins: [react()],
+  // `page.screenshot({ path })` is written through Vite's fs layer, which
+  // refuses any path outside the project root. Shots a human is meant to look
+  // at do not belong in the source tree (`**/__screenshots__/` is ignored, and
+  // ignored files are easy to never see), so the lane is allowed to write to
+  // the machine's scratch directory as well.
+  server: { fs: { allow: [searchForWorkspaceRoot(process.cwd()), "/tmp"] } },
   test: {
     include: ["src/**/*.browser.test.{ts,tsx}"],
     globals: true,

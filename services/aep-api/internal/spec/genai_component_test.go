@@ -479,7 +479,8 @@ type genaiRig struct {
 	broker       *spec.TurnBroker
 	svc          *spec.Service
 	// knobs read at request time
-	key string
+	key   string
+	model string
 }
 
 // rigOption tweaks the rig before the service is wired.
@@ -589,7 +590,7 @@ func newGenaiRig(t *testing.T, seed map[string]string, opts ...rigOption) *genai
 	fake := newFakeAgents(t)
 	turns := &memTurnRepo{}
 	broker := spec.NewTurnBroker()
-	rig := &genaiRig{fx: fx, skillsOrigin: skillsOrigin, fake: fake, turns: turns, broker: broker, key: "sk-ant-test"}
+	rig := &genaiRig{fx: fx, skillsOrigin: skillsOrigin, fake: fake, turns: turns, broker: broker, key: "sk-ant-test", model: "claude-haiku-4-5"}
 
 	var client agentsvc.Client = agentsvc.New(agentsvc.Config{BaseURL: fake.URL})
 	if cfg.client != nil {
@@ -610,9 +611,11 @@ func newGenaiRig(t *testing.T, seed map[string]string, opts ...rigOption) *genai
 		snapshots = cfg.snapshots
 	}
 	svc := spec.NewService(spec.ServiceDeps{
-		Repos:         repos,
-		Git:           sourcecontrol.NewGitOpsService(stubResolver{}, fx.Engine),
-		Keys:          func(context.Context, string) (string, error) { return rig.key, nil },
+		Repos: repos,
+		Git:   sourcecontrol.NewGitOpsService(stubResolver{}, fx.Engine),
+		LLM: func(context.Context, string) (spec.AgentLLM, error) {
+			return spec.AgentLLM{Key: rig.key, Model: rig.model}, nil
+		},
 		Client:        client,
 		Turns:         turns,
 		Broker:        broker,
@@ -799,6 +802,10 @@ func Test202Flow_PreviewOnlyAndStreamReplays(t *testing.T) {
 	}
 	if k := sent.headers.Get("X-Anthropic-Key"); k != "sk-ant-test" {
 		t.Errorf("X-Anthropic-Key = %q", k)
+	}
+	// The org's model rides the turn body, resolved for THIS turn.
+	if sent.req.Model != "claude-haiku-4-5" {
+		t.Errorf("turn model = %q, want the org's model", sent.req.Model)
 	}
 	if sent.req.FilesChangedExternally {
 		t.Error("first turn must not carry filesChangedExternally")

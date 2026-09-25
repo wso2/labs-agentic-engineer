@@ -31,15 +31,15 @@ import {
 } from "@wso2/oxygen-ui";
 import { Copy, Eye, EyeOff, X } from "@wso2/oxygen-ui-icons-react";
 import type { PublishedTestUser } from "../lib/publishedTestUsers";
+import { TestUserScopesCell } from "./TestUserScopesDialog";
 
 /** The password's placeholder while it is hidden. Fixed width, monospace, so
  *  revealing swaps the characters without moving the icons beside them. */
 export const MASK = "**********";
 
-/** What an empty scope list renders as. The wire's empty array means the
- *  identity provider could not be asked, so the cell must not read as an
- *  account that may do nothing. */
-export const UNKNOWN_SCOPES = "\u2014";
+// Re-exported so the table's own tests and callers keep one import for the
+// row; it is defined beside the cell that renders it.
+export { UNKNOWN_SCOPES } from "./TestUserScopesDialog";
 
 function copyText(value: string): Promise<void> {
   if (!navigator.clipboard?.writeText) {
@@ -56,7 +56,7 @@ function copyText(value: string): Promise<void> {
  * open the rest — the dialog can hold a dozen accounts and only the one asked
  * for is ever on screen.
  */
-function TestUserRow({
+export function TestUserRow({
   login,
   revealPassword,
 }: {
@@ -185,25 +185,10 @@ function TestUserRow({
       </ListingTable.Cell>
 
       <ListingTable.Cell>
-        {login.scopes.length === 0 ? (
-          // Empty is "the directory could not be asked", not "grants nothing",
-          // so the cell says nothing rather than claiming an empty token.
-          <Typography variant="body2" color="text.secondary">
-            {UNKNOWN_SCOPES}
-          </Typography>
-        ) : (
-          <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap", rowGap: 0.5 }}>
-            {login.scopes.map((scope) => (
-              <Typography
-                key={scope}
-                variant="body2"
-                sx={{ fontFamily: "monospace" }}
-              >
-                {scope}
-              </Typography>
-            ))}
-          </Stack>
-        )}
+        {/* A count and a way in, not the list: stacked inline the scopes made
+            a six-scope row ~350px tall. Empty is "the directory could not be
+            asked", not "grants nothing", and gets no button. */}
+        <TestUserScopesCell username={login.username} scopes={login.scopes} />
       </ListingTable.Cell>
     </ListingTable.Row>
   );

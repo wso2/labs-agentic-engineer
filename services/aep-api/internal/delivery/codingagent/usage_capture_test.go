@@ -17,9 +17,11 @@
 package codingagent
 
 import (
+	"math"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/contracts"
+	"github.com/wso2/aep/aep-api/internal/platform/modelcost"
 )
 
 func TestUsageFromLogReadsTheResultLine(t *testing.T) {
@@ -137,5 +139,46 @@ func TestUsageFromLogNeverSumsTurnEnded(t *testing.T) {
 	}
 	if u.InputTokens != 90 || u.OutputTokens != 25 {
 		t.Fatalf("usage = %+v, want the terminal line's cumulative total, never a sum", u.TokenUsage)
+	}
+}
+
+// An OpenCode run settles in the same v2 envelope, with its usage summed per
+// model across every session and the model ids normalised to the platform's
+// (the adapter strips OpenCode's `anthropic/` prefix). Usage that reaches
+// capture as a multi-slice models[] must price whole: SumCost is all-or-nothing, so a slice the
+// stamper could not key would blank the cycle's cost. The producer's own
+// `costUsd` is ignored by construction (ADR-0011: USD is stamped at capture).
+func TestUsageFromLogPricesAnOpenCodeRun(t *testing.T) {
+	log := `2026-09-22T21:00:00.000000000Z {"v":2,"seq":1,"kind":"run_started","agentId":"ses_root","ts":"2026-09-22T21:00:00Z","runtime":"opencode","model":"claude-sonnet-5"}
+2026-09-22T21:09:00.000000000Z {"v":2,"seq":385,"kind":"run_settled","agentId":"ses_root","ts":"2026-09-22T21:09:00Z","outcome":"success","usage":{"inputTokens":1017,"outputTokens":1636,"cacheReadTokens":95000,"cacheCreationTokens":20500,"model":"","costUsd":0.076,"models":[{"inputTokens":17,"outputTokens":1536,"cacheReadTokens":95000,"cacheCreationTokens":13000,"model":"claude-sonnet-5"},{"inputTokens":1000,"outputTokens":100,"cacheReadTokens":0,"cacheCreationTokens":7500,"model":"claude-haiku-4-5"}]}}
+`
+	u := usageFromLog(log)
+	if u == nil {
+		t.Fatal("an OpenCode run settled with usage captured nothing — the run would be unbilled")
+	}
+	slices := u.PricingSlices()
+	if len(slices) != 2 || slices[0].Model != "claude-sonnet-5" || slices[1].Model != "claude-haiku-4-5" {
+		t.Fatalf("PricingSlices = %+v, want the sonnet and haiku split", slices)
+	}
+
+	rates := []modelcost.ModelRate{
+		{ModelID: "claude-sonnet-5", InputPerMTok: 2, OutputPerMTok: 10, CacheReadPerMTok: 0.2, CacheWritePerMTok: 2.5},
+		{ModelID: "claude-haiku-4-5", InputPerMTok: 1, OutputPerMTok: 5, CacheReadPerMTok: 0.1, CacheWritePerMTok: 1.25},
+	}
+	ts := make([]modelcost.Tokens, 0, len(slices))
+	for _, s := range slices {
+		ts = append(ts, modelcost.Tokens{
+			ModelID: s.Model, InputTokens: s.InputTokens, OutputTokens: s.OutputTokens,
+			CacheReadTokens: s.CacheReadTokens, CacheCreationTokens: s.CacheCreationTokens,
+		})
+	}
+	cost := modelcost.NewStamper(rates).SumCost(ts)
+	if cost == nil {
+		t.Fatal("an OpenCode run on the two offered models did not price")
+	}
+	// sonnet: 17*2 + 1536*10 + 95000*0.2 + 13000*2.5 = 66894 µ$
+	// haiku:  1000*1 + 100*5 + 7500*1.25          = 10875 µ$  → $0.077769
+	if want := math.Round(0.077769*100) / 100; *cost != want {
+		t.Errorf("cost = %v, want %v", *cost, want)
 	}
 }

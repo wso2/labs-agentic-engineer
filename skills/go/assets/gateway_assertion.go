@@ -52,10 +52,30 @@
 //	GATEWAY_ASSERTION_ISSUER       the `iss` every assertion carries
 //	GATEWAY_ASSERTION_HEADER       the header it arrives in
 //
-// NewVerifierFromEnv fails when any is missing, and main must treat that as
-// fatal. A service that starts without them cannot tell a real caller from a
-// forged one, and starting anyway is the failure mode this design exists to
-// remove.
+// NewVerifierFromEnv fails when SOME but not all are set: a half-configured
+// environment is a broken deployment, and guessing at it hides the break.
+//
+// # ⚠️ TEMPORARY FALLBACK — read this before relying on this service
+//
+// When all three are ABSENT, NewVerifierFromEnv no longer fails. It returns a
+// verifier that reads the caller's own token out of `x-forwarded-authorization`
+// and DECODES IT WITHOUT CHECKING ANY SIGNATURE.
+//
+// In that mode this service has no trust anchor at all. Anything that can open
+// a socket to this pod — every other pod in the project namespace — can name
+// itself any user and grant itself any scope:
+//
+//	curl http://<service>:<port>/<path> \
+//	  -H 'x-forwarded-authorization: Bearer <unsigned JWT of your choice>'
+//
+// The gateway is then the only thing between the internet and this data, and
+// nothing inside the cluster is standing there at all.
+//
+// This exists ONLY because environments provisioned before the gateway grew its
+// `backendjwt_v1` policy publish no keypair, and a service that cannot start
+// cannot be demonstrated. It is a stop-gap with a known expiry: provision the
+// environment gateway, and this branch goes away. Delete the fallback — not the
+// verification — when that lands.
 package auth
 
 import (
@@ -69,10 +89,27 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+)
+
+// defaultForwardedTokenHeader is where the gateway re-presents the caller's own
+// token. jwt-auth STRIPS the inbound Authorization and forwards the raw JWT
+// under this name (the `api-configuration` trait exposes it as
+// forwardedTokenHeader). Reading Authorization instead finds nothing.
+const defaultForwardedTokenHeader = "x-forwarded-authorization"
+
+// The unsigned headers the gateway maps the same claims onto. Read ONLY in the
+// temporary fallback mode, and only to backfill a claim the access token did not
+// carry. In the verified mode nothing here is read: the assertion is the only
+// evidence.
+const (
+	hdrUserID     = "x-user-id"
+	hdrUserOU     = "x-user-ou"
+	hdrUserScopes = "x-user-scopes"
 )
 
 // Caller is the authenticated caller, as the gateway's assertion names them.
@@ -141,6 +178,9 @@ type Verifier struct {
 	key    *rsa.PublicKey
 	issuer string
 	header string
+	// verifying is false in the TEMPORARY fallback mode described in the
+	// package comment: the caller is decoded, never verified.
+	verifying bool
 	// leeway absorbs clock skew between the gateway and this pod on the `exp`
 	// check. Small on purpose: the assertion is minted per request and lives
 	// 15 minutes, so nothing legitimate needs more.
@@ -153,6 +193,22 @@ func NewVerifierFromEnv() (*Verifier, error) {
 	certPEM := strings.TrimSpace(os.Getenv("GATEWAY_ASSERTION_CERTIFICATE"))
 	issuer := strings.TrimSpace(os.Getenv("GATEWAY_ASSERTION_ISSUER"))
 	header := strings.TrimSpace(os.Getenv("GATEWAY_ASSERTION_HEADER"))
+	// All three absent is the unprovisioned environment the package comment
+	// describes. SOME of them absent is a broken deployment and still fatal:
+	// falling back there would hide a real misconfiguration behind a mode that
+	// looks like it works.
+	if certPEM == "" && issuer == "" && header == "" {
+		forwarded := strings.TrimSpace(os.Getenv("USER_TOKEN_HEADER"))
+		if forwarded == "" {
+			forwarded = defaultForwardedTokenHeader
+		}
+		slog.Warn("TEMPORARY: no GATEWAY_ASSERTION_CERTIFICATE/_ISSUER/_HEADER, so this "+
+			"service is reading the caller WITHOUT verifying any signature. Any pod that "+
+			"can reach this one can now claim any identity and any scope. Provision the "+
+			"environment gateway's backend-JWT keypair to restore verification.",
+			"header", forwarded)
+		return &Verifier{header: forwarded, leeway: 60 * time.Second, verifying: false}, nil
+	}
 	switch {
 	case certPEM == "":
 		return nil, errors.New("auth: GATEWAY_ASSERTION_CERTIFICATE is not set")
@@ -178,7 +234,7 @@ func NewVerifierFromEnv() (*Verifier, error) {
 	// nothing on its own and expires on a schedule that has nothing to do with
 	// this request. What must be fresh is the ASSERTION, and its `exp` is
 	// checked on every one.
-	return &Verifier{key: key, issuer: issuer, header: header, leeway: 60 * time.Second}, nil
+	return &Verifier{key: key, issuer: issuer, header: header, leeway: 60 * time.Second, verifying: true}, nil
 }
 
 // Middleware verifies the assertion, if the request carries one, and puts the
@@ -203,7 +259,15 @@ func (v *Verifier) Middleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		caller, err := v.Verify(raw, time.Now())
+		var (
+			caller Caller
+			err    error
+		)
+		if v.verifying {
+			caller, err = v.Verify(raw, time.Now())
+		} else {
+			caller, err = v.decodeUnverified(r, raw)
+		}
 		if err != nil {
 			http.Error(w, "invalid gateway assertion", http.StatusUnauthorized)
 			return
@@ -293,6 +357,55 @@ func (v *Verifier) Verify(token string, now time.Time) (Caller, error) {
 		Scopes:    strings.Fields(claims.Scope),
 		OrgHandle: claims.OrgHandle,
 	}, nil
+}
+
+// decodeUnverified is the TEMPORARY path described in the package comment. It
+// reads the caller out of a token it does not check, so every value it returns
+// is one the sender chose.
+//
+// It keeps the SHAPE of Verify so the two cannot drift: a token that cannot be
+// read is an error (the middleware answers 401) rather than a downgrade to
+// anonymous, and a token naming no subject is refused. What it does not keep is
+// the only thing that mattered — evidence.
+//
+// Claims missing from the access token are backfilled from the gateway's
+// claim-mapped headers: an identity provider that publishes no `ouHandle` on the
+// access token would otherwise strip the caller of their organization for no
+// reason the operator could see.
+func (v *Verifier) decodeUnverified(r *http.Request, raw string) (Caller, error) {
+	token := strings.TrimSpace(raw)
+	// The gateway forwards `Bearer <jwt>`; a hand-rolled caller may not.
+	if len(token) > 7 && strings.EqualFold(token[:7], "bearer ") {
+		token = strings.TrimSpace(token[7:])
+	}
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return Caller{}, errors.New("auth: caller token is not a three-part JWT")
+	}
+	payload, err := decodeSegment(parts[1])
+	if err != nil {
+		return Caller{}, fmt.Errorf("auth: caller token payload: %w", err)
+	}
+	var claims assertionClaims
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return Caller{}, fmt.Errorf("auth: caller token payload: %w", err)
+	}
+	subject := strings.TrimSpace(claims.Subject)
+	if subject == "" {
+		subject = strings.TrimSpace(r.Header.Get(hdrUserID))
+	}
+	if subject == "" {
+		return Caller{}, errors.New("auth: caller token has no sub")
+	}
+	scopes := strings.Fields(claims.Scope)
+	if len(scopes) == 0 {
+		scopes = strings.Fields(r.Header.Get(hdrUserScopes))
+	}
+	orgHandle := strings.TrimSpace(claims.OrgHandle)
+	if orgHandle == "" {
+		orgHandle = strings.TrimSpace(r.Header.Get(hdrUserOU))
+	}
+	return Caller{UserID: subject, Scopes: scopes, OrgHandle: orgHandle}, nil
 }
 
 // decodeSegment decodes one base64url JWT segment. Raw (unpadded) encoding is

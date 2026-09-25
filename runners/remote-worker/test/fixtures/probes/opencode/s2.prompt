@@ -1,0 +1,8 @@
+You are in a spike about parallel work. Do exactly this:
+1. Use the task tool THREE times in ONE turn (three parallel tool calls), each with subagent_type "general" and background: true:
+   - alpha: prompt "Create the file src/alpha.txt containing the word alpha, using the write tool. Then reply: REPORT: alpha done."
+   - beta:  prompt "Create the file src/beta.txt containing the word beta, using the write tool. Then reply: REPORT: beta done."
+   - gamma: prompt "First use the task tool with subagent_type general (foreground, not background) and the prompt 'Create the file src/gamma-child.txt containing the word child, using the write tool. Reply: CHILD DONE.' Then create the file src/gamma.txt containing the word gamma. Then reply: REPORT: gamma done."
+2. Also write a todo list with the todowrite tool: three items alpha, beta, gamma, all pending.
+3. Then END YOUR TURN immediately with the text "DISPATCHED" and nothing else. Do not poll, do not sleep, do not check on the tasks.
+4. When you are notified that a task finished, mark its todo completed. When all three have reported, reply exactly: ALL DONE.

@@ -97,9 +97,10 @@ func newTeardownFixture(t *testing.T) *teardownFixture {
 	}); err != nil {
 		t.Fatalf("seed resource-server row: %v", err)
 	}
-	// The Employee row carries an EMPTY group: a self-service role is recorded
-	// and assigned to nobody, and the teardown has to find it by its id all the
-	// same.
+	// The Employee row carries an EMPTY group and a USER principal — the
+	// self-service shape: no group holds the role, so its test login is bound
+	// straight to it. The teardown has to find the role by its id, and unassign
+	// a principal that is not a group.
 	if err := store.ReplaceRoleBindings(ctx, scope, teardownProject, []IdPRoleBinding{
 		{Role: "Approver", GroupName: "Finance", DirectoryRoleID: string(approver)},
 		{Role: "Employee", GroupName: "", DirectoryRoleID: string(employee)},

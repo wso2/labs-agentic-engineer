@@ -1,0 +1,467 @@
+openapi: 3.0.3
+info:
+  title: Onboarding API
+  version: 0.1.0
+  description: Tracks new hires and their IT/HR/Facilities onboarding tasks.
+servers:
+  - url: /
+
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: /oauth2/authorize
+          tokenUrl: /oauth2/token
+          scopes:
+            new-hires:create: Create a new hire and generate their checklist
+            new-hires:read-all: Every new hire's record and onboarding progress
+            new-hires:read-team: New hires the caller is the hiring manager for
+            tasks:read: The caller's own assigned tasks
+            tasks:read-all: Every onboarding task across every new hire
+            tasks:complete: Mark the caller's own assigned task complete
+            tasks:set-due-date: Set or change any task's due date
+            templates:read: The standard template tasks
+            templates:manage: Create, update or remove template tasks
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: integer, description: HTTP or application error code }
+        message: { type: string, description: short human-readable label }
+        description: { type: string, description: detailed explanation }
+        moreInfo: { type: string, description: URI to documentation }
+    NewHire:
+      type: object
+      required: [id, fullName, role, startDate, hiringManagerUsername, status]
+      properties:
+        id: { type: string }
+        fullName: { type: string }
+        role: { type: string }
+        startDate: { type: string, format: date }
+        hiringManagerUsername: { type: string }
+        status: { type: string, enum: [in-progress, complete] }
+    NewHireCreate:
+      type: object
+      required: [fullName, role, startDate, hiringManagerUsername]
+      properties:
+        fullName: { type: string }
+        role: { type: string }
+        startDate: { type: string, format: date }
+        hiringManagerUsername: { type: string }
+    NewHireWithTasks:
+      allOf:
+        - $ref: '#/components/schemas/NewHire'
+        - type: object
+          properties:
+            tasks:
+              type: array
+              items: { $ref: '#/components/schemas/OnboardingTask' }
+    OnboardingTask:
+      type: object
+      required: [id, newHireId, department, title, assigneeUsername, status]
+      properties:
+        id: { type: string }
+        newHireId: { type: string }
+        department: { type: string, enum: [IT, HR, Facilities] }
+        title: { type: string }
+        assigneeUsername: { type: string }
+        dueDate: { type: string, format: date, nullable: true }
+        status: { type: string, enum: [pending, complete] }
+        completedAt: { type: string, format: date-time, nullable: true }
+    TaskDueDateUpdate:
+      type: object
+      required: [dueDate]
+      properties:
+        dueDate: { type: string, format: date }
+    TemplateTask:
+      type: object
+      required: [id, department, title, order]
+      properties:
+        id: { type: string }
+        department: { type: string, enum: [IT, HR, Facilities] }
+        title: { type: string }
+        description: { type: string }
+        order: { type: integer }
+    TemplateTaskInput:
+      type: object
+      required: [department, title, order]
+      properties:
+        department: { type: string, enum: [IT, HR, Facilities] }
+        title: { type: string }
+        description: { type: string }
+        order: { type: integer }
+
+security:
+  - oauth2: []
+
+paths:
+  /new-hires:
+    get:
+      operationId: listNewHires
+      summary: Every new hire's record and onboarding progress
+      security:
+        - oauth2: [new-hires:read-all]
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: status
+          in: query
+          schema: { type: string, enum: [in-progress, complete] }
+      responses:
+        '200':
+          description: Page of new hires
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count, data]
+                properties:
+                  count: { type: integer }
+                  next: { type: string, nullable: true }
+                  previous: { type: string, nullable: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/NewHireWithTasks' }
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    post:
+      operationId: createNewHire
+      summary: Create a new hire and generate their checklist from the template
+      security:
+        - oauth2: [new-hires:create]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NewHireCreate' }
+      responses:
+        '201':
+          description: New hire created, checklist generated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NewHireWithTasks' }
+        '400':
+          description: Invalid new hire data
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /new-hires/{newHireId}:
+    get:
+      operationId: getNewHire
+      summary: A single new hire's record and full checklist
+      security:
+        - oauth2: [new-hires:read-all]
+      parameters:
+        - name: newHireId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: The new hire and their onboarding tasks
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NewHireWithTasks' }
+        '404':
+          description: New hire not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /me/reports/new-hires:
+    get:
+      operationId: listMyReportsNewHires
+      summary: New hires the caller is the hiring manager for
+      security:
+        - oauth2: [new-hires:read-team]
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+      responses:
+        '200':
+          description: Page of the caller's own new hires with task progress
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count, data]
+                properties:
+                  count: { type: integer }
+                  next: { type: string, nullable: true }
+                  previous: { type: string, nullable: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/NewHireWithTasks' }
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /tasks:
+    get:
+      operationId: listAllTasks
+      summary: Every onboarding task across every new hire
+      security:
+        - oauth2: [tasks:read-all]
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: department
+          in: query
+          schema: { type: string, enum: [IT, HR, Facilities] }
+        - name: status
+          in: query
+          schema: { type: string, enum: [pending, complete] }
+        - name: overdue
+          in: query
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: Page of onboarding tasks
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count, data]
+                properties:
+                  count: { type: integer }
+                  next: { type: string, nullable: true }
+                  previous: { type: string, nullable: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/OnboardingTask' }
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /tasks/{taskId}/due-date:
+    put:
+      operationId: setTaskDueDate
+      summary: Set or change a task's due date
+      security:
+        - oauth2: [tasks:set-due-date]
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TaskDueDateUpdate' }
+      responses:
+        '200':
+          description: Task updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OnboardingTask' }
+        '404':
+          description: Task not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /me/tasks:
+    get:
+      operationId: listMyTasks
+      summary: The caller's own assigned tasks
+      security:
+        - oauth2: [tasks:read]
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: status
+          in: query
+          schema: { type: string, enum: [pending, complete] }
+      responses:
+        '200':
+          description: Page of the caller's own assigned tasks
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count, data]
+                properties:
+                  count: { type: integer }
+                  next: { type: string, nullable: true }
+                  previous: { type: string, nullable: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/OnboardingTask' }
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /me/tasks/{taskId}/complete:
+    post:
+      operationId: completeMyTask
+      summary: Mark the caller's own assigned task complete
+      security:
+        - oauth2: [tasks:complete]
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Task marked complete
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OnboardingTask' }
+        '404':
+          description: Task not found, or not assigned to the caller
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /templates:
+    get:
+      operationId: listTemplateTasks
+      summary: The standard template tasks
+      security:
+        - oauth2: [templates:read]
+      responses:
+        '200':
+          description: The standard template task list, ordered
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TemplateTask' }
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    post:
+      operationId: createTemplateTask
+      summary: Add a task to the standard template
+      security:
+        - oauth2: [templates:manage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TemplateTaskInput' }
+      responses:
+        '201':
+          description: Template task created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TemplateTask' }
+        '400':
+          description: Invalid template task data
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /templates/{templateTaskId}:
+    put:
+      operationId: updateTemplateTask
+      summary: Update a standard template task
+      security:
+        - oauth2: [templates:manage]
+      parameters:
+        - name: templateTaskId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TemplateTaskInput' }
+      responses:
+        '200':
+          description: Template task updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TemplateTask' }
+        '404':
+          description: Template task not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      operationId: deleteTemplateTask
+      summary: Remove a standard template task
+      security:
+        - oauth2: [templates:manage]
+      parameters:
+        - name: templateTaskId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          description: Template task removed
+        '404':
+          description: Template task not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }

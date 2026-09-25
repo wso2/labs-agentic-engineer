@@ -192,11 +192,26 @@ test("a sub-component that does not exist names the ones that do", () => {
   assert.match(out, /PageTitle has no sub-component "Caption"\. It has: PageTitle\.Header, PageTitle\.Actions/);
 });
 
-test("a plain MUI component is named as such, with its API page, and does not fail the other lookups", () => {
+test("a plain MUI component is named as such, with its API page, and the run SUCCEEDS", () => {
+  // Naming a re-export and pointing at its API page is the complete answer to
+  // "what are this component's props", so it exits 0. This pinned exit 1 until
+  // 2026-09-17: a live run (track-each-hire9665) asked for
+  // `ListingTable StatCard Form Dialog Chip`, got 7,587 bytes of correct
+  // listings, and the feed rendered it `✗ Bash exit 1 · iconColor? 'primary' …`
+  // — a prop line shown as an error message.
   const { status, out } = run(["--app", fixtureApp(), "TextField", "StatCard"]);
-  assert.equal(status, 1);
+  assert.equal(status, 0, out);
   assert.match(out, /TextField: not an Oxygen composite.*https:\/\/mui\.com\/material-ui\/api\/text-field\//);
   assert.match(out, /^  value\s+required/m);
+});
+
+test("a request the script cannot answer at all still fails", () => {
+  // The other side of the line: an unknown component is answered (MUI pointer),
+  // but a sub-component a real composite does not have is not — the caller
+  // asked for something that does not exist, and the exit code says so.
+  const { status, out } = run(["--app", fixtureApp(), "PageTitle.Caption", "StatCard"]);
+  assert.equal(status, 1);
+  assert.match(out, /^  value\s+required/m, "the other lookups still print");
 });
 
 test("a MUI X namespace is explained rather than looked up", () => {

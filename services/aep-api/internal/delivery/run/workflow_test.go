@@ -1464,6 +1464,37 @@ func TestDeployNeverReady_ExpiresIntoADeployFailure(t *testing.T) {
 		"the components that never came up are the ones named")
 }
 
+// The expiry files WHY each component was still pending, not just that it was.
+//
+// A hold is how a healthy component waits on something the platform has not
+// finished, so a run that expires on one has no failure record anywhere else to
+// draw a cause from. Without this the issue reads "this component did not come
+// up" and nothing more, and the agent it wakes goes looking inside a container
+// that was working the whole time.
+func TestDeployExpiry_FilesWhyEachComponentWasPending(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(
+		workable(1, 1),
+		MilestoneSnapshot{},
+	)
+	const held = `waiting: dependency "user-auth" has not registered this component's sign-in callback`
+	h.deploymentsAre(CycleDeployState{
+		Expected: 1,
+		Pending:  []string{"order-service"},
+		Reasons:  map[string]string{"order-service": held},
+	})
+	h.deployMintsAre(nil)
+	h.merges(1)
+
+	h.run(delivery.RunKindDev, 0)
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateFailed, delivery.RunReasonDeployBudget)
+	require.Positive(t, h.deployMintCount(), "the expiry files fix work")
+	require.Equal(t, held, h.deployMints[0].Reasons["order-service"],
+		"the hold reason from the last poll reaches the issue the expiry mints")
+}
+
 // The deadline belongs to the STAGE, not to a wave.
 //
 // It is created once in deployCycle and passed into every wait, so a design that
@@ -1841,6 +1872,8 @@ func TestValidationRun_Passes(t *testing.T) {
 	require.Len(t, h.taskCloses, 1, "the platform closes the task it adopted")
 	require.Equal(t, 77, h.taskCloses[0].Issue)
 	require.Equal(t, delivery.ValidationVerdictPassed, h.taskCloses[0].Verdict)
+	require.Empty(t, h.taskCloses[0].Repairs,
+		"an attempt that filed no repair work must not claim any in its close")
 	// The GREEN ENDING is where the version's milestone closes — zero open
 	// working-set issues and a terminal verdict on the newest validation run. A
 	// succeeded validation run is a green ending by construction: every fatal
@@ -1897,13 +1930,13 @@ func TestDevRun_CodingCycleCarriesNoValidationIssue(t *testing.T) {
 	}
 }
 
-// TestValidationRun_FailedFilesOneIssuePerCriterion is the repair hand-off. The
-// failure becomes ORDINARY WORK in the milestone — one issue per failed criterion
+// TestValidationRun_FailedFilesOneIssuePerScenario is the repair hand-off. The
+// failure becomes ORDINARY WORK in the milestone — one issue per failed scenario
 // — and the run then settles on the verdict it reached.
 //
-// One per criterion and never one omnibus issue: the no-progress rule compares
+// One per scenario and never one omnibus issue: the no-progress rule compares
 // working-set SIZES, so repairing two of three failures has to read as progress.
-func TestValidationRun_FailedFilesOneIssuePerCriterion(t *testing.T) {
+func TestValidationRun_FailedFilesOneIssuePerScenario(t *testing.T) {
 	h := newHarness(t)
 	h.validationIs(77, delivery.ValidationVerdictFailed)
 	h.repairMintsAre([]int{testRepairIssue, testRepairIssue + 1})
@@ -1921,9 +1954,11 @@ func TestValidationRun_FailedFilesOneIssuePerCriterion(t *testing.T) {
 	require.Len(t, h.repairMints, 1, "the mint is asked once")
 	require.Equal(t, testMergeSHA, h.repairMints[0].At,
 		"repair issues come from the report at the attempt's OWN merge commit")
-	require.Equal(t, testCycleID, h.repairMints[0].CycleID,
-		"THIS attempt's cycle id is the issues' dedupe key, so the next attempt files fresh work")
 	require.Len(t, h.taskCloses, 1, "the task closes even on a failing verdict")
+	require.Equal(t, []int{testRepairIssue, testRepairIssue + 1}, h.taskCloses[0].Repairs,
+		"the task's close names the repair work — the only edge from a repair issue "+
+			"back to the run that found it, and it points this way so a coding agent "+
+			"is never sent to read a brief written for the validation agent")
 }
 
 // TestValidationRun_UnreportedRedispatchesInsideTheWorkflow covers the one
@@ -3057,4 +3092,118 @@ func TestAgentDeath_WithNoCancelRecordedStillSpendsTheRedispatch(t *testing.T) {
 	h.assertSettled(t, res, delivery.RunStateFailed, delivery.RunReasonRedispatchBudget)
 	require.Equal(t, delivery.RunMaxRedispatchPerCycle, h.dispatchCount(),
 		"genuine agent death must still spend the whole re-dispatch budget")
+}
+
+// ---- agent death is told, not waited out ------------------------------------
+
+// TestAgentDeath_SignalEndsTheCycleWithoutTheLandingDeadline is the whole point
+// of SigRunAgentDied. The landing wait is the only wait in the loop with no poll
+// behind it, so before this signal a cycle whose pod died after twenty minutes
+// held its run for cycleLandingTimeout, re-dispatched into a cycle record the
+// store would no longer write to, and held it for another — four hours of wall
+// clock, measured on a live OOMKill.
+//
+// ONE death signal, because one is all a cycle can raise: FinishAgentFailed is
+// fenced on `ended_at IS NULL`, so the second replica — and the second attempt —
+// close nothing and signal nothing.
+func TestAgentDeath_SignalEndsTheCycleWithoutTheLandingDeadline(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(workable(1, 1))
+	// What the pod-truth watcher leaves behind: the cycle closed, nothing landed.
+	h.factsAre(CycleFacts{CycleID: testCycleID, Ended: true})
+	h.signal(delivery.SigRunAgentDied, 20*time.Minute)
+	start := h.env.Now()
+
+	h.run(delivery.RunKindDev, 0)
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateFailed, delivery.RunReasonRedispatchBudget)
+	require.Less(t, h.env.Now().Sub(start), cycleLandingTimeout,
+		"the run must settle on the signal, not on the landing deadline")
+}
+
+// TestAgentDeath_AClosedCycleBuysNoRedispatch is the half the signal alone would
+// get wrong. A re-dispatch writes through NoteDispatch and is read back by the
+// watcher, and BOTH are fenced on `ended_at IS NULL` — so once the watcher has
+// closed the cycle, a second attempt cannot be recorded, cannot be watched, and
+// cannot raise the death that would end its wait. Spending the budget on it buys
+// a second cycleLandingTimeout and nothing else.
+//
+// The budget is not gone: it belongs to deaths the watcher never recorded, which
+// TestAgentDeath_WithNoCancelRecordedStillSpendsTheRedispatch pins.
+func TestAgentDeath_AClosedCycleBuysNoRedispatch(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(workable(1, 1))
+	h.factsAre(CycleFacts{CycleID: testCycleID, Ended: true})
+	h.signal(delivery.SigRunAgentDied, 20*time.Minute)
+
+	h.run(delivery.RunKindDev, 0)
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateFailed, delivery.RunReasonRedispatchBudget)
+	require.Equal(t, 1, h.dispatchCount(),
+		"a cycle the watcher closed cannot be re-dispatched, so the loop must not try")
+}
+
+// TestAgentDeath_WithoutTheSignalTheDeadlineStillSettlesTheRun is the property
+// the whole signal vocabulary rests on: a lost signal costs latency, never
+// correctness. CycleFacts.Ended is the ground truth — already computed, already
+// read on every wake-up, and never looked at until now — so the deadline wakes
+// the loop into the same verdict it would have reached at once.
+func TestAgentDeath_WithoutTheSignalTheDeadlineStillSettlesTheRun(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(workable(1, 1))
+	h.factsAre(CycleFacts{CycleID: testCycleID, Ended: true})
+	start := h.env.Now()
+
+	h.run(delivery.RunKindDev, 0)
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateFailed, delivery.RunReasonRedispatchBudget)
+	require.Equal(t, cycleLandingTimeout, h.env.Now().Sub(start),
+		"with the signal lost the run falls back to the one deadline it always had")
+}
+
+// TestAgentDeath_EndedIsNotALanding guards the ground-truth check itself. Reading
+// `Ended` as "this cycle is over" must not read it as "something landed" — a run
+// that treated a closed cycle as a merge would carry an empty SHA into the build
+// stage.
+func TestAgentDeath_EndedIsNotALanding(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(workable(1, 1))
+	h.factsAre(CycleFacts{CycleID: testCycleID, Ended: true})
+	h.signal(delivery.SigRunAgentDied, time.Second)
+
+	h.run(delivery.RunKindDev, 0)
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateFailed, delivery.RunReasonRedispatchBudget)
+	require.Equal(t, []FinishCycleInput{{CycleID: testCycleID}}, h.finishes,
+		"the cycle closes with no merge SHA")
+	require.Empty(t, h.deploys, "a cycle that landed nothing never reaches the deploy stage")
+}
+
+// TestAgentDeath_CancelStillWinsOverAReapedPod is the regression this signal
+// could most easily reintroduce. Cancelling reaps the agent's Component, so the
+// watcher now SEES that pod die and signals death on a run the user just
+// stopped. The cancel stamp on the run row is the evidence and the death signal
+// is only a wake-up, so cancel comes first in awaitLanding's selector and first
+// in the checks after it.
+func TestAgentDeath_CancelStillWinsOverAReapedPod(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(workable(1, 1))
+	h.factsAre(
+		// The boundary asks first, before anything is dispatched.
+		CycleFacts{CycleID: testCycleID},
+		// Then the landing wait, woken by the reaped pod's death.
+		CycleFacts{CycleID: testCycleID, Ended: true, CancelRequested: true},
+	)
+	h.signal(delivery.SigRunAgentDied, time.Second)
+
+	h.run(delivery.RunKindDev, 0)
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateCancelled, "")
+	require.Equal(t, 1, h.dispatchCount(),
+		"a reaped pod's death must not buy a re-dispatch on a run the user cancelled")
 }

@@ -103,7 +103,7 @@ func newHarness(t *testing.T, f compFakes) *componenttest.Harness {
 			return &gen.WorkflowRun{Name: runName, Completed: true}, nil
 		}
 	}
-	compSvc := projects.NewComponentService(f.oc, f.observ, f.store, nil, nil)
+	compSvc := projects.NewComponentService(f.oc, f.observ, f.store, nil, nil, nil, nil)
 	var cfgSvc projects.ConfigService
 	if f.configRepo != nil {
 		// The env-var mirror onto OC is unit-tested; disable it here (nil).

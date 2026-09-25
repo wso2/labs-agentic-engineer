@@ -18,25 +18,20 @@ package spec
 
 import "testing"
 
-// TestComputeDependencyStatus is the single table test for the precedence
-// table ComputeDependencyStatus owns — every external state, precedence
-// ordering (including the registry-reuse rule beating every later rule), and
-// the org-service 4-state regression (pinned here directly as a pure-function
-// test; artifacts.resolveOrgServices' own tests pin the same outcomes through
-// the read path unchanged).
 func TestComputeDependencyStatus(t *testing.T) {
 	twoSuggestions := []DependencySuggestion{
 		{Name: "sendgrid-rest", Style: DependencyStyleRestAPI},
 		{Name: "resend-sdk", Style: DependencyStyleSDK},
 	}
+	registered := RegistryHit{Registered: true}
 
 	cases := []struct {
-		name        string
-		dep         Dependency
-		registryHit bool
-		orgSvc      OrgServiceHit
-		wantStatus  string
-		wantReason  string
+		name       string
+		dep        Dependency
+		registry   RegistryHit
+		orgSvc     OrgServiceHit
+		wantStatus string
+		wantReason string
 	}{
 		// --- component / platform-resource: always resolved -----------------
 		{
@@ -82,29 +77,33 @@ func TestComputeDependencyStatus(t *testing.T) {
 			wantReason: DependencyReasonNeedsInput,
 		},
 		{
-			name: "a registry hit resolves over open suggestions",
-			dep: Dependency{Kind: DependencyKindExternal, Name: "email-provider",
-				Suggestions: twoSuggestions},
-			registryHit: true,
-			wantStatus:  DependencyStatusResolved,
-		},
-		{
-			name:        "rule 2: registry reuse resolves with nothing else known",
-			dep:         Dependency{Kind: DependencyKindExternal, Name: "stripe"},
-			registryHit: true,
-			wantStatus:  DependencyStatusResolved,
-		},
-		{
-			name:       "rule 2: a platform-stamped org copy resolves with nothing else known",
-			dep:        Dependency{Kind: DependencyKindExternal, Name: "stripe", Source: DependencySourceOrg},
+			name: "rule 1: a copy of a registered resource, with its contract copied, resolves",
+			dep: Dependency{Kind: DependencyKindExternal, Name: "stripe", ResourceRef: "stripe", Source: DependencySourceOrg,
+				Provider: "Stripe", Contract: "openapi.yaml", ContractType: DependencyContractTypeOpenAPI, ContractOrigin: DependencyContractOriginRegistry},
+			registry:   registered,
 			wantStatus: DependencyStatusResolved,
 		},
 		{
-			name: "rule 2: registry reuse resolves ahead of the contract rules",
-			dep: Dependency{Kind: DependencyKindExternal, Name: "stripe",
-				Provider: "Stripe", Style: DependencyStyleRestAPI},
-			registryHit: true,
-			wantStatus:  DependencyStatusResolved,
+			name: "rule 1 then 4: a registered copy whose document has not landed needs its contract",
+			dep: Dependency{Kind: DependencyKindExternal, Name: "stripe", ResourceRef: "stripe", Source: DependencySourceOrg,
+				Provider: "Stripe"},
+			registry:   registered,
+			wantStatus: DependencyStatusUnresolved,
+			wantReason: DependencyReasonNeedsContract,
+		},
+		{
+			name: "rule 2: a ref nobody registered is needs-input, whatever else the copy carries",
+			dep: Dependency{Kind: DependencyKindExternal, Name: "currency-service", ResourceRef: "currency-service", Source: DependencySourceOrg,
+				Provider: "Open Exchange Rates", Contract: "openapi.yaml", ContractType: DependencyContractTypeOpenAPI},
+			registry:   RegistryHit{},
+			wantStatus: DependencyStatusUnresolved,
+			wantReason: DependencyReasonNeedsInput,
+		},
+		{
+			name:       "rule 2: a stub ref with the registry unreachable is needs-input, never resolved",
+			dep:        Dependency{Kind: DependencyKindExternal, Name: "currency-service", ResourceRef: "currency-service", Source: DependencySourceOrg},
+			wantStatus: DependencyStatusUnresolved,
+			wantReason: DependencyReasonNeedsInput,
 		},
 		{
 			name:       "rule 3: nothing identified is unresolved/needs-input",
@@ -113,42 +112,35 @@ func TestComputeDependencyStatus(t *testing.T) {
 			wantReason: DependencyReasonNeedsInput,
 		},
 		{
-			name:       "rule 4: a provider named but no style is unresolved/needs-input",
-			dep:        Dependency{Kind: DependencyKindExternal, Name: "crm", Provider: "HubSpot"},
+			name:       "a registry hit on a project resource (no ref) changes nothing: the file decides",
+			dep:        Dependency{Kind: DependencyKindExternal, Name: "crm"},
+			registry:   registered,
 			wantStatus: DependencyStatusUnresolved,
 			wantReason: DependencyReasonNeedsInput,
 		},
 		{
-			name: "rule 5: sdk with no manifest on disk is unresolved/needs-contract",
-			dep: Dependency{Kind: DependencyKindExternal, Name: "stripe",
-				Provider: "Stripe", Style: DependencyStyleSDK},
+			name:       "rule 4: a provider with no contract file on disk is unresolved/needs-contract (no style rule any more)",
+			dep:        Dependency{Kind: DependencyKindExternal, Name: "crm", Provider: "HubSpot"},
 			wantStatus: DependencyStatusUnresolved,
 			wantReason: DependencyReasonNeedsContract,
 		},
 		{
-			name: "rule 6: rest-api with no contract file is unresolved/needs-contract",
+			name: "rule 4: an sdk contract with no manifest on disk is unresolved/needs-contract",
 			dep: Dependency{Kind: DependencyKindExternal, Name: "stripe",
-				Provider: "Stripe", Style: DependencyStyleRestAPI},
+				Provider: "Stripe", ContractType: DependencyContractTypeSDK, Style: DependencyStyleSDK},
 			wantStatus: DependencyStatusUnresolved,
 			wantReason: DependencyReasonNeedsContract,
 		},
 		{
-			name: "rule 6: graphql with no contract file is unresolved/needs-contract",
-			dep: Dependency{Kind: DependencyKindExternal, Name: "shopify",
-				Provider: "Shopify", Style: DependencyStyleGraphQL},
-			wantStatus: DependencyStatusUnresolved,
-			wantReason: DependencyReasonNeedsContract,
-		},
-		{
-			name: "rest-api WITH its contract resolves",
+			name: "openapi contract on disk resolves",
 			dep: Dependency{Kind: DependencyKindExternal, Name: "stripe",
-				Provider: "Stripe", Style: DependencyStyleRestAPI, Contract: "openapi.yaml"},
+				Provider: "Stripe", Style: DependencyStyleRestAPI, ContractType: DependencyContractTypeOpenAPI, Contract: "openapi.yaml"},
 			wantStatus: DependencyStatusResolved,
 		},
 		{
-			name: "sdk WITH its manifest resolves, contract or not",
+			name: "sdk manifest on disk resolves",
 			dep: Dependency{Kind: DependencyKindExternal, Name: "stripe",
-				Provider: "Stripe", Style: DependencyStyleSDK, SDK: "sdk.json"},
+				Provider: "Stripe", Style: DependencyStyleSDK, ContractType: DependencyContractTypeSDK, SDK: "sdk.json"},
 			wantStatus: DependencyStatusResolved,
 		},
 		{
@@ -158,14 +150,14 @@ func TestComputeDependencyStatus(t *testing.T) {
 			wantStatus: DependencyStatusResolved,
 		},
 		{
-			name: "no provider is unchosen even with a contract named (hydration names the provider off the document on disk)",
+			name: "no provider is unchosen even with a contract on disk",
 			dep: Dependency{Kind: DependencyKindExternal, Name: "openweather",
 				Style: DependencyStyleRestAPI, Contract: "openapi.yaml"},
 			wantStatus: DependencyStatusUnresolved,
 			wantReason: DependencyReasonNeedsInput,
 		},
 		{
-			name: "rule 7: an agent-written contract nobody accepted is unresolved/needs-acceptance",
+			name: "rule 5: an agent-written contract nobody accepted is unresolved/needs-acceptance",
 			dep: Dependency{Kind: DependencyKindExternal, Name: "dhl",
 				Provider: "DHL", Style: DependencyStyleRestAPI, Contract: "openapi.yaml", ContractAssumed: true},
 			wantStatus: DependencyStatusUnresolved,
@@ -189,10 +181,10 @@ func TestComputeDependencyStatus(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotStatus, gotReason := ComputeDependencyStatus(tc.dep, tc.registryHit, tc.orgSvc)
+			gotStatus, gotReason := ComputeDependencyStatus(tc.dep, tc.registry, tc.orgSvc)
 			if gotStatus != tc.wantStatus || gotReason != tc.wantReason {
-				t.Errorf("ComputeDependencyStatus(%+v, registryHit=%v, %+v) = (%q, %q), want (%q, %q)",
-					tc.dep, tc.registryHit, tc.orgSvc, gotStatus, gotReason, tc.wantStatus, tc.wantReason)
+				t.Errorf("ComputeDependencyStatus(%+v, registry=%+v, %+v) = (%q, %q), want (%q, %q)",
+					tc.dep, tc.registry, tc.orgSvc, gotStatus, gotReason, tc.wantStatus, tc.wantReason)
 			}
 		})
 	}
@@ -202,26 +194,39 @@ func TestComputeDependencyStatus(t *testing.T) {
 // dependency — what the rail, the drawer and the deploy page show beside it —
 // and that nothing else carries flags.
 func TestComputeDependencyFlags(t *testing.T) {
+	registered := RegistryHit{Registered: true, DocumentSHA256: "aaaa"}
+	copied := Dependency{Kind: DependencyKindExternal, Name: "github", ResourceRef: "github", Source: DependencySourceOrg,
+		Provider: "GitHub", Style: DependencyStyleRestAPI, Contract: "openapi.yaml", ContractType: DependencyContractTypeOpenAPI,
+		Provenance: &ResourceProvenance{Registry: "github/openapi.yaml", SHA256: "aaaa"}}
+	staleCopy := copied
+	staleCopy.Provenance = &ResourceProvenance{Registry: "github/openapi.yaml", SHA256: "bbbb"}
 	cases := []struct {
-		name        string
-		dep         Dependency
-		registryHit bool
-		want        []string
+		name     string
+		dep      Dependency
+		registry RegistryHit
+		want     []string
 	}{
 		{
 			name: "a plain resolved rest-api has no flags",
 			dep:  Dependency{Kind: DependencyKindExternal, Name: "stripe", Provider: "Stripe", Style: DependencyStyleRestAPI, Contract: "openapi.yaml"},
 		},
 		{
-			name:        "registry hit → registered",
-			dep:         Dependency{Kind: DependencyKindExternal, Name: "github"},
-			registryHit: true,
-			want:        []string{DependencyFlagRegistered},
+			name:     "a copy of a registered resource → registered",
+			dep:      copied,
+			registry: registered,
+			want:     []string{DependencyFlagRegistered},
 		},
 		{
-			name: "org copy → registered",
-			dep:  Dependency{Kind: DependencyKindExternal, Name: "github", Source: DependencySourceOrg},
-			want: []string{DependencyFlagRegistered},
+			name:     "a copy whose document no longer matches the registry's → registered, stale",
+			dep:      staleCopy,
+			registry: registered,
+			want:     []string{DependencyFlagRegistered, DependencyFlagStale},
+		},
+		{
+			name:     "a registered record with no document never reads stale",
+			dep:      staleCopy,
+			registry: RegistryHit{Registered: true},
+			want:     []string{DependencyFlagRegistered},
 		},
 		{
 			name: "accepted assumption → assumed",
@@ -235,13 +240,14 @@ func TestComputeDependencyFlags(t *testing.T) {
 				Assumed: &DependencyAssumption{By: "admin", At: "now"}},
 		},
 		{
-			name: "sdk with manifest and no API slice → sdk-only",
+			name: "sdk with manifest and no API document → sdk-only",
 			dep:  Dependency{Kind: DependencyKindExternal, Name: "twilio", Provider: "Twilio", Style: DependencyStyleSDK, SDK: "sdk.json"},
 			want: []string{DependencyFlagSDKOnly},
 		},
 		{
-			name: "sdk with manifest AND API slice → no flag",
-			dep:  Dependency{Kind: DependencyKindExternal, Name: "stripe", Provider: "Stripe", Style: DependencyStyleSDK, SDK: "sdk.json", Contract: "openapi.yaml"},
+			name: "derived → derived",
+			dep:  Dependency{Kind: DependencyKindExternal, Name: "star", Provider: "Star", Style: DependencyStyleRestAPI, Contract: "openapi.yaml", ContractDerived: true},
+			want: []string{DependencyFlagDerived},
 		},
 		{
 			name: "assumed sdk-only carries both, in a fixed order",
@@ -255,13 +261,18 @@ func TestComputeDependencyFlags(t *testing.T) {
 				Assumed: &DependencyAssumption{By: "admin", At: "now"}},
 		},
 		{
+			name:     "a ref nobody registered has no flags: it is not resolved",
+			dep:      copied,
+			registry: RegistryHit{},
+		},
+		{
 			name: "a component dependency never has flags",
 			dep:  Dependency{Kind: DependencyKindComponent, Name: "cart"},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ComputeDependencyFlags(tc.dep, tc.registryHit)
+			got := ComputeDependencyFlags(tc.dep, tc.registry)
 			if len(got) != len(tc.want) {
 				t.Fatalf("flags = %v, want %v", got, tc.want)
 			}

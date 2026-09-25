@@ -18,25 +18,29 @@
 // read-time Status/Reason/Flags (ADR-0003: never authored, never persisted).
 //
 // For an external dependency the state is read off its hydrated definition
-// (dependency_json.go): what is on disk decides, so a stale flag can never
-// contradict the files. Precedence, first match wins:
+// (dependency_json.go) plus ONE registry lookup: what is on disk decides, so a
+// stale flag can never contradict the files. Precedence, first match wins:
 //
-//  1. Source "org" or registry hit  → resolved, flag registered
-//  2. no Provider                   → unresolved / needs-input (no service chosen;
+//  1. Ref set, registry has a REGISTERED resource of that name
+//                                   → continue at 4 (the copy carries the
+//                                     provider; only the contract is checked)
+//  2. Ref set, no such resource     → unresolved / needs-input ("The organization
+//                                     has no registered resource with this name")
+//  3. no Provider                   → unresolved / needs-input (no service chosen;
 //     Suggestions may be open — the user chooses, the agent never does)
-//  3. no Style                      → unresolved / needs-input (a provider named, its shape not)
-//  4. sdk with no manifest on disk  → unresolved / needs-contract
-//  5. rest-api/graphql, no contract → unresolved / needs-contract
-//  6. contract agent-written, not
-//     yet accepted by a user          → unresolved / needs-acceptance
-//  7. otherwise                     → resolved; flag assumed when the contract
-//     is agent-written under the user's permission, flag derived when it was
-//     written from the provider's own documentation (no permission needed),
-//     flag sdk-only when an sdk dependency has no API contract beside its
-//     manifest.
+//  4. no contract file on disk      → unresolved / needs-contract
+//  5. contract assumed, not yet
+//     accepted by a user            → unresolved / needs-acceptance
+//  6. otherwise                     → resolved; flag registered when the copy
+//     came from the registry, assumed when the contract is agent-written under
+//     the user's permission, derived when it was written from the provider's
+//     own documentation, stale when the registry's document hash no longer
+//     matches the copy's provenance.
 //
-// The build gate blocks on unresolved and on nothing else: an
-// assumed or sdk-only dependency builds, flagged everywhere it appears.
+// Style is not a rule: it is computed from the contract type, so a dependency
+// with a contract always has one. The build gate blocks on unresolved and on
+// nothing else: an assumed, derived or stale dependency builds, flagged
+// everywhere it appears.
 
 package spec
 
@@ -48,10 +52,20 @@ type OrgServiceHit struct {
 	Exists  bool
 }
 
+// RegistryHit is the org resource registry's answer for one dependency name.
+// Registered is true only for a resource an organization registered (a type
+// with scope org) — never for the type a project's build left behind.
+// DocumentSHA256 is the hash of the registered resource's contract document,
+// when it has one, so a project copy can be compared against it.
+type RegistryHit struct {
+	Registered     bool
+	DocumentSHA256 string
+}
+
 // ComputeDependencyStatus returns the read-time (status, reason) pair for one
 // dependency. ComputeDependencyFlags is its companion for the qualifiers on a
 // resolved external dependency; ApplyDependencyStatus sets all three.
-func ComputeDependencyStatus(dep Dependency, registryHit bool, orgSvc OrgServiceHit) (status, reason string) {
+func ComputeDependencyStatus(dep Dependency, registry RegistryHit, orgSvc OrgServiceHit) (status, reason string) {
 	switch dep.Kind {
 	case DependencyKindComponent, DependencyKindPlatformResource:
 		return DependencyStatusResolved, ""
@@ -67,15 +81,11 @@ func ComputeDependencyStatus(dep Dependency, registryHit bool, orgSvc OrgService
 
 	case DependencyKindExternal:
 		switch {
-		case dep.Source == DependencySourceOrg || registryHit:
-			return DependencyStatusResolved, ""
-		case dep.Provider == "":
+		case dep.ResourceRef != "" && !registry.Registered:
 			return DependencyStatusUnresolved, DependencyReasonNeedsInput
-		case dep.Style == "":
+		case dep.ResourceRef == "" && dep.Provider == "":
 			return DependencyStatusUnresolved, DependencyReasonNeedsInput
-		case dep.Style == DependencyStyleSDK && dep.SDK == "":
-			return DependencyStatusUnresolved, DependencyReasonNeedsContract
-		case dep.Style != DependencyStyleSDK && dep.Contract == "":
+		case dep.Contract == "" && dep.SDK == "":
 			return DependencyStatusUnresolved, DependencyReasonNeedsContract
 		case dep.ContractAssumed && dep.Assumed == nil:
 			return DependencyStatusUnresolved, DependencyReasonNeedsAcceptance
@@ -90,15 +100,15 @@ func ComputeDependencyStatus(dep Dependency, registryHit bool, orgSvc OrgService
 
 // ComputeDependencyFlags returns the qualifiers on a RESOLVED external
 // dependency, in a fixed order; nil for anything else.
-func ComputeDependencyFlags(dep Dependency, registryHit bool) []string {
+func ComputeDependencyFlags(dep Dependency, registry RegistryHit) []string {
 	if dep.Kind != DependencyKindExternal {
 		return nil
 	}
-	if status, _ := ComputeDependencyStatus(dep, registryHit, OrgServiceHit{}); status != DependencyStatusResolved {
+	if status, _ := ComputeDependencyStatus(dep, registry, OrgServiceHit{}); status != DependencyStatusResolved {
 		return nil
 	}
 	var flags []string
-	if dep.Source == DependencySourceOrg || registryHit {
+	if dep.ResourceRef != "" {
 		flags = append(flags, DependencyFlagRegistered)
 	}
 	// Assumed means the contract on disk is the agent-written one AND the user
@@ -112,11 +122,15 @@ func ComputeDependencyFlags(dep Dependency, registryHit bool) []string {
 	if dep.Style == DependencyStyleSDK && dep.Contract == "" {
 		flags = append(flags, DependencyFlagSDKOnly)
 	}
+	if dep.ResourceRef != "" && registry.DocumentSHA256 != "" && dep.Provenance != nil &&
+		dep.Provenance.SHA256 != "" && dep.Provenance.SHA256 != registry.DocumentSHA256 {
+		flags = append(flags, DependencyFlagStale)
+	}
 	return flags
 }
 
 // ApplyDependencyStatus stamps Status, Reason and Flags on dep in place.
-func ApplyDependencyStatus(dep *Dependency, registryHit bool, orgSvc OrgServiceHit) {
-	dep.Status, dep.Reason = ComputeDependencyStatus(*dep, registryHit, orgSvc)
-	dep.Flags = ComputeDependencyFlags(*dep, registryHit)
+func ApplyDependencyStatus(dep *Dependency, registry RegistryHit, orgSvc OrgServiceHit) {
+	dep.Status, dep.Reason = ComputeDependencyStatus(*dep, registry, orgSvc)
+	dep.Flags = ComputeDependencyFlags(*dep, registry)
 }

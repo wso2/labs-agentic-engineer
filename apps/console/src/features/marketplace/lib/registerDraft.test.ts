@@ -17,6 +17,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { emptyContractRow } from "../components/ContractFields";
 import {
   applyRegisterDraft,
   parseRegisterDraft,
@@ -29,10 +30,12 @@ function snapshot(
 ): RegisterFormSnapshot {
   return {
     name: "",
+    provider: "",
     description: "",
     consumptionInstructions: "",
     keys: [],
     values: {},
+    contract: emptyContractRow(),
     docs: [],
     ...overrides,
   };
@@ -55,6 +58,38 @@ describe("parseRegisterDraft", () => {
     });
     expect(draft).toEqual({ name: "stripe" });
     expect(JSON.stringify(draft)).not.toContain("sk-from-chat");
+  });
+
+  it("reads the provider and a contract URL from the draft", () => {
+    expect(
+      parseRegisterDraft({
+        name: "currency-service",
+        provider: "Open Exchange Rates",
+        contract: { type: "openapi", url: "https://openexchangerates.org/openapi.yaml" },
+      }),
+    ).toEqual({
+      name: "currency-service",
+      provider: "Open Exchange Rates",
+      contract: { type: "openapi", url: "https://openexchangerates.org/openapi.yaml" },
+    });
+  });
+
+  // The agent proposes an ADDRESS; the bytes of a document are the user's own
+  // upload, so a draft carrying them is not a draft the form applies.
+  it("skips a contract of an unknown type, without a url, or carrying file bytes", () => {
+    expect(parseRegisterDraft({ contract: { type: "bogus", url: "https://x/y" } })).toEqual({});
+    expect(parseRegisterDraft({ contract: { type: "openapi" } })).toEqual({});
+    // A blank address is no address: the form trims before submitting, so a
+    // whitespace URL would replace a real one and then vanish on the wire.
+    expect(parseRegisterDraft({ contract: { type: "openapi", url: "   " } })).toEqual({});
+    expect(
+      parseRegisterDraft({ contract: { type: "openapi", url: "  https://x/y  " } }),
+    ).toEqual({ contract: { type: "openapi", url: "https://x/y" } });
+    expect(
+      parseRegisterDraft({
+        contract: { type: "openapi", url: "https://x/y", content: "openapi: 3.1.0" },
+      }),
+    ).toEqual({});
   });
 
   it("skips malformed config and docs entries", () => {
@@ -81,14 +116,7 @@ describe("parseRegisterDraft", () => {
 
 describe("applyRegisterDraft", () => {
   it("does not copy env values or secret bytes from a draft", () => {
-    const current = {
-      name: "",
-      description: "",
-      consumptionInstructions: "",
-      keys: [],
-      values: { "development:API_KEY": "typed-by-human" },
-      docs: [],
-    };
+    const current = snapshot({ values: { "development:API_KEY": "typed-by-human" } });
     const next = applyRegisterDraft(
       current,
       {
@@ -105,7 +133,7 @@ describe("applyRegisterDraft", () => {
   });
 
   it("does not rename when freezeName is true", () => {
-    const current = { name: "stripe", description: "old", consumptionInstructions: "", keys: [], values: {}, docs: [] };
+    const current = snapshot({ name: "stripe", description: "old" });
     const next = applyRegisterDraft(current, { name: "renamed", description: "new" }, { freezeName: true, freezeKeys: true });
     expect(next.name).toBe("stripe");
     expect(next.description).toBe("new");
@@ -143,6 +171,43 @@ describe("applyRegisterDraft", () => {
     expect(next.keys).toEqual([
       { key: "API_KEY", description: "new desc", secret: true },
     ]);
+  });
+
+  it("fills the provider and the contract block from the draft", () => {
+    const next = applyRegisterDraft(
+      snapshot(),
+      {
+        provider: "Open Exchange Rates",
+        contract: { type: "openapi", url: "https://openexchangerates.org/openapi.yaml" },
+      },
+      { freezeName: false, freezeKeys: false },
+    );
+    expect(next.provider).toBe("Open Exchange Rates");
+    expect(next.contract).toEqual({
+      type: "openapi",
+      url: "https://openexchangerates.org/openapi.yaml",
+      fileName: "",
+      content: "",
+      path: "",
+    });
+  });
+
+  // An upload is the user's own act, and its TYPE goes with the bytes: a draft
+  // may propose a different document, but it never relabels the file on file.
+  it("keeps an uploaded contract file, and its type, when a draft proposes a URL", () => {
+    const uploaded = {
+      type: "openapi" as const,
+      url: "",
+      fileName: "openapi.yaml",
+      content: "openapi: 3.1.0",
+      path: "",
+    };
+    const next = applyRegisterDraft(
+      snapshot({ contract: uploaded }),
+      { contract: { type: "graphql", url: "https://example.com/schema.graphql" } },
+      { freezeName: false, freezeKeys: false },
+    );
+    expect(next.contract).toEqual(uploaded);
   });
 
   it("applies URL resource-docs from the draft", () => {

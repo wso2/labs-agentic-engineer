@@ -114,21 +114,25 @@ func TestMovedDependencyFieldsRejected(t *testing.T) {
 	}
 }
 
-const validDependency = `{"name":"payment-provider","description":"Charges shipping.","provider":"Stripe","style":"rest-api","contract":"openapi.yaml","config":[{"key":"PAYMENT_API_KEY","secret":true}]}`
+// A definition holds the resource in the one shape a resource has everywhere
+// (ADR-0030): the block is nested under `resource`, the contract is an object,
+// and `style` / a bare `contract` string / `source` are retired.
+const validDependency = `{"name":"payment-provider","resource":{"name":"payment-provider","description":"Charges shipping.","provider":"Stripe","contract":{"type":"openapi","path":"openapi.yaml","origin":"provider"},"config":[{"key":"PAYMENT_API_KEY","secret":true}]}}`
 
 func TestDependencyDesign_AcceptsTheDefinitionShape(t *testing.T) {
 	if err := ValidateDependencyDesignInDir([]byte(validDependency), "payment-provider"); err != nil {
 		t.Fatalf("valid definition rejected: %v", err)
 	}
-	stub := `{"name":"payment-provider","source":"org"}`
+	// Reuse: the agent writes the name and a ref, and the platform fills the rest.
+	stub := `{"name":"payment-provider","resource":{"ref":"payment-provider","name":"payment-provider"}}`
 	if err := ValidateDependencyDesignInDir([]byte(stub), "payment-provider"); err != nil {
-		t.Fatalf("registered-org stub rejected: %v", err)
+		t.Fatalf("registry stub rejected: %v", err)
 	}
-	open := `{"name":"email","suggestions":[{"name":"a","style":"rest-api"},{"name":"b"}]}`
+	open := `{"name":"email","resource":{"name":"email"},"suggestions":[{"name":"a","style":"rest-api"},{"name":"b"}]}`
 	if err := ValidateDependencyDesignInDir([]byte(open), "email"); err != nil {
 		t.Fatalf("open suggestions rejected: %v", err)
 	}
-	one := `{"name":"email","suggestions":[{"name":"a"}]}`
+	one := `{"name":"email","resource":{"name":"email"},"suggestions":[{"name":"a"}]}`
 	if err := ValidateDependencyDesignInDir([]byte(one), "email"); err != nil {
 		t.Fatalf("a single suggestion rejected: %v", err)
 	}
@@ -136,16 +140,22 @@ func TestDependencyDesign_AcceptsTheDefinitionShape(t *testing.T) {
 
 func TestDependencyDesign_RejectsUnknownKeysStateAndDirMismatch(t *testing.T) {
 	wantCode(t, ValidateDependencyDesignInDir([]byte(`{nope`), "payment-provider"), CodeInvalidJSON)
-	wantCode(t, ValidateDependencyDesignInDir([]byte(`{"name":"payment-provider","status":"resolved"}`), "payment-provider"), CodeSchemaViolation)
-	wantCode(t, ValidateDependencyDesignInDir([]byte(`{"name":"payment-provider","specPath":"x"}`), "payment-provider"), CodeSchemaViolation)
-	wantCode(t, ValidateDependencyDesignInDir([]byte(`{"name":"payment-provider","style":"soap"}`), "payment-provider"), CodeSchemaViolation)
-	wantCode(t, ValidateDependencyDesignInDir([]byte(`{"name":"email","candidates":[{"name":"a","style":"rest-api"},{"name":"b","style":"sdk"}]}`), "email"), CodeSchemaViolation)
+	// Read-time state is never written.
+	wantCode(t, ValidateDependencyDesignInDir([]byte(`{"name":"payment-provider","resource":{"name":"payment-provider"},"status":"resolved"}`), "payment-provider"), CodeSchemaViolation)
+	// The retired flat fields: a bare contract string, specPath, style, source.
+	wantCode(t, ValidateDependencyDesignInDir([]byte(`{"name":"payment-provider","resource":{"name":"payment-provider"},"specPath":"x"}`), "payment-provider"), CodeSchemaViolation)
+	wantCode(t, ValidateDependencyDesignInDir([]byte(`{"name":"payment-provider","resource":{"name":"payment-provider"},"style":"soap"}`), "payment-provider"), CodeSchemaViolation)
+	wantCode(t, ValidateDependencyDesignInDir([]byte(`{"name":"payment-provider","resource":{"name":"payment-provider","contract":"openapi.yaml"}}`), "payment-provider"), CodeSchemaViolation)
+	wantCode(t, ValidateDependencyDesignInDir([]byte(`{"name":"payment-provider","source":"org","resource":{"name":"payment-provider"}}`), "payment-provider"), CodeSchemaViolation)
+	// The block itself is required: a definition without it says nothing about the resource.
+	wantCode(t, ValidateDependencyDesignInDir([]byte(`{"name":"payment-provider"}`), "payment-provider"), CodeSchemaViolation)
+	wantCode(t, ValidateDependencyDesignInDir([]byte(`{"name":"email","resource":{"name":"email"},"candidates":[{"name":"a","style":"rest-api"},{"name":"b","style":"sdk"}]}`), "email"), CodeSchemaViolation)
 	wantCode(t, ValidateDependencyDesignInDir([]byte(validDependency), "stripe"), CodeSchemaViolation)
 }
 
 func TestSuggestions_NameRequiredStyleOptional(t *testing.T) {
-	wantCode(t, ValidateDependencyDesignInDir([]byte(`{"name":"email","suggestions":[{"style":"rest-api"}]}`), "email"), CodeSchemaViolation)
-	wantCode(t, ValidateDependencyDesignInDir([]byte(`{"name":"email","suggestions":[{"name":"a","package":"npm:a"}]}`), "email"), CodeSchemaViolation)
+	wantCode(t, ValidateDependencyDesignInDir([]byte(`{"name":"email","resource":{"name":"email"},"suggestions":[{"style":"rest-api"}]}`), "email"), CodeSchemaViolation)
+	wantCode(t, ValidateDependencyDesignInDir([]byte(`{"name":"email","resource":{"name":"email"},"suggestions":[{"name":"a","package":"npm:a"}]}`), "email"), CodeSchemaViolation)
 }
 
 // TestRetiredExternalFieldsRejected documents the hard-break: specUrl (URL

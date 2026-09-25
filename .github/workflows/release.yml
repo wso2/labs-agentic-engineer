@@ -22,8 +22,9 @@ jobs:
     name: Build + push ${{ matrix.name }}
     if: ${{ inputs.component == 'platform' || inputs.component == 'all' }}
     runs-on: ubuntu-latest
-    # Generous because remote-worker is the outlier: it cannot cross-compile (see
-    # its Dockerfile) so its arm64 half stays emulated, and a cold build of it has
+    # Generous because remote-worker (and remote-worker-opencode, which rebuilds
+    # it on its own runner) is the outlier: it cannot cross-compile (see its
+    # Dockerfile) so its arm64 half stays emulated, and a cold build of it has
     # been measured at 28 min. The ceiling is here to catch a wedged build rather
     # than let it hold a runner slot for the GitHub 6h default, not to enforce a
     # budget — raise it rather than trim it if a build legitimately grows.
@@ -33,12 +34,12 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
-      # No max-parallel: all seven start at once. GitHub already queues a job
+      # No max-parallel: all eight start at once. GitHub already queues a job
       # when the org's concurrency limit is reached, so a cap prevents no
       # failure — it only stops the release using runners that are idle.
       matrix:
         include:
-          # DECLARED FIRST so the long pole takes a slot in the first batch when
+          # DECLARED FIRST so the long poles take a slot in the first batch when
           # the pool is short, rather than queueing behind six shorter builds.
           # Slot order following declaration order is observed, not documented —
           # a hint, so the worst case is a slower run, never a wrong one.
@@ -48,13 +49,31 @@ jobs:
           - name: remote-worker
             dockerfile: runners/remote-worker/Dockerfile
             context: runners/remote-worker
-            # Two named contexts, both outside this image's context: the authored
-            # skill library, and the `bal library` tool's SOURCE — the image's
-            # first stage compiles it, so nothing has to be built before this job
-            # and no artifact can be stale (ADR-0008).
+            # Three named contexts, all outside this image's context: the
+            # authored skill library; the `bal library` tool's SOURCE — the
+            # image's first stage compiles it, so nothing has to be built before
+            # this job and no artifact can be stale (ADR-0008); and the
+            # agent-evaluation harness, which a build runs before opening the PR
+            # for an ai-agent and which therefore has to exist in the pod.
             buildContexts: |
               skills=skills
               bal-library-tool=packages/bal-library-tool
+              agent-eval=packages/agent-eval
+          # The OpenCode variant: the same Dockerfile's `runner-opencode` stage,
+          # the image above plus the pinned OpenCode binary, for organizations
+          # whose coding-agent runtime is OpenCode (aep-api
+          # AGENT_RUNNER_IMAGE_OPENCODE). Same context and named contexts; its
+          # cache-from also reads remote-worker's cache, which holds every
+          # layer the two share.
+          - name: remote-worker-opencode
+            dockerfile: runners/remote-worker/Dockerfile
+            context: runners/remote-worker
+            target: runner-opencode
+            buildContexts: |
+              skills=skills
+              bal-library-tool=packages/bal-library-tool
+              agent-eval=packages/agent-eval
+            sharesCacheWith: remote-worker
           - name: aep-api
             dockerfile: services/aep-api/Dockerfile
             context: services/aep-api
@@ -97,6 +116,9 @@ jobs:
           # skills repos, and the runner's local (playground) mode mirrors it into
           # a project dir. See the COPY --from=skills line in each Dockerfile.
           build-contexts: ${{ matrix.buildContexts }}
+          # Empty for every image but remote-worker-opencode: the Dockerfile's
+          # last stage, which for remote-worker is the Claude Code runner.
+          target: ${{ matrix.target }}
           # remote-worker's tool stage needs to read ballerina-platform's GitHub
           # Packages; a repo-scoped GITHUB_TOKEN suffices (ADR-0008).
           #
@@ -123,7 +145,13 @@ jobs:
           # package. mode=max caches the builder stages, which is where the time
           # goes — and therefore publishes those intermediate layers, so no build
           # stage may hold a secret.
-          cache-from: type=registry,ref=${{ env.IMAGE_PREFIX }}/buildcache/${{ matrix.name }}:main
+          #
+          # sharesCacheWith names a second image whose cache is read too, set
+          # only where an image shares its heavy layers with another (an empty
+          # line is skipped).
+          cache-from: |
+            type=registry,ref=${{ env.IMAGE_PREFIX }}/buildcache/${{ matrix.name }}:main
+            ${{ matrix.sharesCacheWith && format('type=registry,ref={0}/buildcache/{1}:main', env.IMAGE_PREFIX, matrix.sharesCacheWith) || '' }}
           cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/buildcache/${{ matrix.name }}:main,mode=max
 
   # ─── Platform: package + push charts, then cut the release ──────────────────
@@ -183,6 +211,7 @@ jobs:
           yq -i '.console.image.tag = strenv(VERSION)' /tmp/platform/values.yaml
           yq -i '.console.image.pullPolicy = "IfNotPresent"' /tmp/platform/values.yaml
           yq -i '.codingAgentRunner.image = strenv(IMAGE_PREFIX) + "/remote-worker:" + strenv(VERSION)' /tmp/platform/values.yaml
+          yq -i '.codingAgentRunner.opencodeImage = strenv(IMAGE_PREFIX) + "/remote-worker-opencode:" + strenv(VERSION)' /tmp/platform/values.yaml
 
           helm package /tmp/platform --destination /tmp/charts
 
@@ -223,6 +252,7 @@ jobs:
           - \`ghcr.io/wso2/aep/collab:${{ inputs.version }}\`
           - \`ghcr.io/wso2/aep/aep-mcp-server:${{ inputs.version }}\`
           - \`ghcr.io/wso2/aep/remote-worker:${{ inputs.version }}\`
+          - \`ghcr.io/wso2/aep/remote-worker-opencode:${{ inputs.version }}\`
           - \`ghcr.io/wso2/aep/console:${{ inputs.version }}\`
           - \`ghcr.io/wso2/aep/thunder-app-operator:${{ inputs.version }}\`"
 

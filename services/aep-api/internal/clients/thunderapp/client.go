@@ -31,6 +31,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -148,7 +149,7 @@ func (c *Client) FindByResource(ctx context.Context, resourceName, environment s
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("thunderapp: LIST %s → %d: %s", path, resp.StatusCode, string(raw))
+		return nil, &HTTPError{StatusCode: resp.StatusCode, Path: path, Body: string(raw)}
 	}
 	var list thunderList
 	if err := json.Unmarshal(raw, &list); err != nil {
@@ -168,6 +169,27 @@ func (c *Client) FindByResource(ctx context.Context, resourceName, environment s
 	default:
 		return nil, fmt.Errorf("thunderapp: %d ThunderApplications match resource %q env %q", len(list.Items), resourceName, environment)
 	}
+}
+
+// HTTPError is a non-2xx Kubernetes API response from FindByResource.
+type HTTPError struct {
+	StatusCode int
+	Path       string
+	Body       string
+}
+
+func (e *HTTPError) Error() string {
+	if e == nil {
+		return "thunderapp: HTTP error"
+	}
+	return fmt.Sprintf("thunderapp: LIST %s → %d: %s", e.Path, e.StatusCode, e.Body)
+}
+
+// IsNotFound reports a 404 from the Kubernetes API — the CRD is not served
+// on this apiserver (control-plane on a split-plane install).
+func IsNotFound(err error) bool {
+	var he *HTTPError
+	return errors.As(err, &he) && he.StatusCode == http.StatusNotFound
 }
 
 func (c *Client) authorization() (string, error) {

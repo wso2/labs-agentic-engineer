@@ -117,3 +117,34 @@ it up today — the operator only ever targets the one Platform IdP.
   Such files must be hand-edited to drop the key before they can be read
   again — consistent with the codec's existing strict-unknown-key
   philosophy, but a breaking change for any design authored before this ADR.
+
+## Amended 2026-09-19 — the redirect URIs are a SET, registered per project
+
+The body above says aep-api "patches the binding's
+`environmentConfigs.redirectUris` with the SPA's `/callback` URL", singular.
+That was true only of a project with ONE web application, and the code matched
+the sentence: the deploy read registered from inside its per-component loop, so
+each web app's write REPLACED the one before it.
+
+A dependency is a project-level resource. `cell-design` models `user-auth` as a
+single external that several components edge into, so two web apps legitimately
+share one `thunder-app` resource, one OAuth application and therefore one
+`redirectUris` field. With two SPAs the field held whichever app the design
+listed last; the other never had its callback registered, never satisfied the
+deploy wait, and the version expired on the deploy budget every time. No project
+with two web apps behind one sign-in could deploy.
+
+What holds now: `redirectUris` carries the SORTED set of EVERY declaring web
+app's resolved callback, computed from the design and written once per
+dependency per read. A component whose public URL has not resolved contributes
+nothing and is the one held. A component OpenChoreo is undeploying is dropped
+from the set; a component whose latest release FAILED is not, because its
+previous release is usually still serving at that URL and de-registering it
+would sign users out of an app that works.
+
+The placeholder story in Consequences is unchanged —
+`https://pending.invalid/callback` is still what Thunder holds until the first
+real URL resolves.
+
+See [ADR-0007](ADR-0007-metadata-driven-resource-consumption.md)'s amendment of
+the same date for the marker-level statement.

@@ -423,29 +423,18 @@ describe("BuildDetailPage — the Deployments link", () => {
     expect(deploymentsLink()).toBeNull();
   });
 
-  it("appears once a cycle records a merge", () => {
+  it("stays away after a merge until the platform reports a rollout", () => {
+    // A merge is not a deployment: the board has nothing for the version
+    // until the aggregate names it (ADR-0032 — the button is the primary way
+    // into the flow, so it must land on one).
     mockBuilds = [build()];
     mockTasks = [merged(1), merged(2)];
     mockRuns = [run({ cycles: [cycle({ prNumber: 4, mergeSha: "abc1234" })] })];
     renderPage();
-    expect(deploymentsLink()).toBeInTheDocument();
+    expect(deploymentsLink()).toBeNull();
   });
 
-  it("asks every run of the version, not just the newest", () => {
-    // A version whose coding cycle merged pull request #15, later reworked by a
-    // `task` run that opened no cycle at all. Reading only the newest run made
-    // merged code look unmerged.
-    mockBuilds = [build()];
-    mockTasks = [merged(1)];
-    mockRuns = [
-      run({ id: "newer", kind: "task", state: "cancelled", cycles: [] }),
-      run({ id: "older", cycles: [cycle({ prNumber: 15, mergeSha: "c185b23" })] }),
-    ];
-    renderPage();
-    expect(deploymentsLink()).toBeInTheDocument();
-  });
-
-  it("appears for a version the platform has already deployed", () => {
+  it("is the primary action once the platform has deployed the version", () => {
     mockBuilds = [build()];
     mockTasks = [merged(1), task(2)];
     mockRuns = [run({ cycles: [cycle({ prNumber: 0 })] })];
@@ -456,8 +445,25 @@ describe("BuildDetailPage — the Deployments link", () => {
       validation: "passed",
     };
     renderPage();
-    expect(deploymentsLink()).toBeInTheDocument();
+    const link = screen.getByRole("link", { name: /Go to Deployments/ });
+    expect(link).toHaveAttribute("href", "/projects/demo-shop/deployments");
+    expect(link.className).toMatch(/MuiButton-contained/);
     expect(screen.getByText("v2 is live.")).toBeInTheDocument();
+  });
+
+  it("appears while the rollout is still converging, and not after it failed", () => {
+    mockBuilds = [build()];
+    mockTasks = [merged(1)];
+    mockRuns = [run({ cycles: [cycle({ prNumber: 4, mergeSha: "abc1234" })] })];
+    mockDeploy = { version: "v2", status: "deploying", components: { total: 3, ready: 1 }, validation: "none" };
+    const { unmount } = renderPage();
+    expect(deploymentsLink()).toBeInTheDocument();
+    unmount();
+
+    mockDeploy = { version: "v2", status: "failed", components: { total: 3, ready: 1 }, validation: "none" };
+    renderPage();
+    expect(deploymentsLink()).toBeNull();
+    expect(screen.getByText("v2 failed to deploy.")).toBeInTheDocument();
   });
 
   it("stays away when there is no run to have merged anything", () => {

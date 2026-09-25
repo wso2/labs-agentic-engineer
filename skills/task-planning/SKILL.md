@@ -49,6 +49,15 @@ citations — you never write it.
 emit no Task for a gate. Each design dependency is accounted for exactly once
 — in `dependsOn` (component kind) or in a rationale (the other three).
 
+**A dependency is read off the design, never inferred from the PRD.** The
+entries this table classifies are the component's `design.json`
+`dependencies[]` — the edges `design.cell` draws — and nothing else. A system
+the PRD's prose names that no edge reaches is either a constraint the design
+resolved another way (`domain-model.md` says how) or a gap in the design: name
+it in your final text and recommend extending the design. It goes in no Scope,
+rationale or References line — the coding agent has no contract to build a
+planned dependency against, and nothing downstream can tell it was invented.
+
 ## Fresh and incremental are the same flow
 
 - **Pending Task of an affected component** → `updateTask` it (re-state scope,

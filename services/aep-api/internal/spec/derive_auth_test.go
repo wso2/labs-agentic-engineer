@@ -134,6 +134,70 @@ func TestDeriveEndUserAuth_WebAppUntouched(t *testing.T) {
 	}
 }
 
+// An `ai-agent` is a protected backend on exactly the same terms as a service:
+// a SPA calls it with the signed-in user's token, so it sits behind the API
+// Platform Gateway and derives the same stamp from the same shared
+// `thunder-app` dependency name. Before this, an agent that declared the
+// dependency got a provisioned OAuth client and NO stamp — a design that reads
+// as protected and deploys unprotected, which is the one failure mode this
+// derivation exists to prevent.
+func TestDeriveEndUserAuth_AIAgentStampedLikeAService(t *testing.T) {
+	t.Parallel()
+	comps := []DesignComponent{{
+		Name:          "booking-agent",
+		ComponentType: ComponentTypeAIAgent,
+		Dependencies:  []Dependency{thunderDep("user-auth")},
+	}}
+
+	if err := deriveEndUserAuth(comps, authRole("thunder-app")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if comps[0].ExposesAPI == nil || comps[0].ExposesAPI.Auth != authEndUserRequired {
+		t.Fatalf("ExposesAPI = %+v, want Auth=%q", comps[0].ExposesAPI, authEndUserRequired)
+	}
+}
+
+// The conflict rule is part of "same terms", not an extra: an agent that both
+// declares the sign-in dependency and asserts service-required is the same
+// self-contradiction a service would be, and must fail the save rather than
+// have one of the two silently win.
+func TestDeriveEndUserAuth_AIAgentServiceRequiredConflictErrors(t *testing.T) {
+	t.Parallel()
+	comps := []DesignComponent{{
+		Name:          "booking-agent",
+		ComponentType: ComponentTypeAIAgent,
+		Dependencies:  []Dependency{thunderDep("user-auth")},
+		ExposesAPI:    &ExposesAPI{Auth: authServiceRequired},
+	}}
+
+	err := deriveEndUserAuth(comps, authRole("thunder-app"))
+	if err == nil {
+		t.Fatal("want a conflict error, got nil")
+	}
+	if !strings.Contains(err.Error(), "booking-agent") {
+		t.Fatalf("error must name the component: %v", err)
+	}
+}
+
+// Widening the gate must not make the stamp unconditional for agents: an agent
+// that never joins the project's sign-in (an internal one, reached only by a
+// sibling service) still derives nothing.
+func TestDeriveEndUserAuth_DepLessAIAgentUntouched(t *testing.T) {
+	t.Parallel()
+	comps := []DesignComponent{{
+		Name:          "booking-agent",
+		ComponentType: ComponentTypeAIAgent,
+		Dependencies:  []Dependency{{Kind: DependencyKindComponent, Name: "booking-api"}},
+	}}
+
+	if err := deriveEndUserAuth(comps, authRole("thunder-app")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if comps[0].ExposesAPI != nil {
+		t.Fatalf("dep-less agent ExposesAPI must stay nil, got %+v", comps[0].ExposesAPI)
+	}
+}
+
 // (e) service without the dependency → untouched.
 func TestDeriveEndUserAuth_DepLessServiceUntouched(t *testing.T) {
 	t.Parallel()

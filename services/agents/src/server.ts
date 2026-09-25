@@ -25,7 +25,8 @@
  *
  * Every conversation route is behind the M2M gate (`aud`-checked Bearer JWT).
  * The turn requires an `X-Anthropic-Key` header — the model is built PER TURN
- * from it (§12.3.1), so the service holds no key of its own. While a turn
+ * from it (§12.3.1) and from the body's optional `model` id (the org's model;
+ * absent → `AGENT_MODEL`), so the service holds no key and pins no model. While a turn
  * streams, a `: keep-alive` comment is emitted every `keepAliveMs` so long
  * generations survive an idle ingress.
  *
@@ -80,17 +81,16 @@ import { conversationOrgId, resolveWorkspace, WorkspaceRefError } from "./shared
 import { createAuthMiddleware, type AgentsAuthConfig } from "./shared/auth.js";
 import { startKeepAlive } from "./shared/keepalive.js";
 import { config } from "./shared/config.js";
+import { isOfferedModel, OFFERED_MODELS, resolveModelId } from "./shared/model.js";
 
 export interface CreateAppDeps {
   store: ConversationStore;
-  /** Build the model from the request's `X-Anthropic-Key` (§12.3.1). Injected so tests pass a mock. */
-  buildModel: (apiKey: string) => LanguageModel;
   /**
-   * The resolved model id `buildModel` instantiates — usage attribution on the
-   * terminal manifest (#249). Optional so mock-model callers (tests, evals)
-   * need not invent one; absent → the manifest usage carries `model: ""`.
+   * Build the turn's model from the request's `X-Anthropic-Key` (§12.3.1) and
+   * the model id the turn resolved (the body's `model`, else `AGENT_MODEL`).
+   * Injected so tests pass a mock.
    */
-  modelId?: string;
+  buildModel: (apiKey: string, modelId: string) => LanguageModel;
   /** M2M gate config (always on): JWKS or shared secret. */
   auth: AgentsAuthConfig;
   /** SSE keep-alive cadence in ms (default `config.keepAliveMs`). */
@@ -192,6 +192,7 @@ export function createApp(deps: CreateAppDeps): Express {
       webSearch?: unknown;
       surface?: unknown;
       eagerSkills?: unknown;
+      model?: unknown;
     };
 
     // The retired pre-composition contract — reject it loudly, exactly as the
@@ -420,10 +421,25 @@ export function createApp(deps: CreateAppDeps): Express {
     const derivedEager = eagerSkillsFor(turn);
     const eagerSkills = derivedEager.length > 0 ? derivedEager : undefined;
 
-    // Build the per-turn model from the request key (fail as a pre-stream 500).
+    // model (optional): the organization's model for this turn, resolved by the
+    // caller. Absent → the service default (AGENT_MODEL); present but empty or
+    // not an offered model → a clean 400 rather than a provider error mid-stream.
+    if (body.model !== undefined && (typeof body.model !== "string" || body.model.trim() === "")) {
+      res.status(400).json({ error: "model must be a non-empty string" });
+      return;
+    }
+    const requestedModel = typeof body.model === "string" ? body.model.trim() : undefined;
+    if (requestedModel !== undefined && !isOfferedModel(requestedModel)) {
+      res.status(400).json({ error: `model "${requestedModel}" is not offered (${OFFERED_MODELS.join(", ")})` });
+      return;
+    }
+    const modelId = resolveModelId(requestedModel !== undefined ? { model: requestedModel } : {});
+
+    // Build the per-turn model from the request key + model id (fail as a
+    // pre-stream 500).
     let model: LanguageModel;
     try {
-      model = deps.buildModel(apiKey);
+      model = deps.buildModel(apiKey, modelId);
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : "model init failed" });
       return;
@@ -502,7 +518,7 @@ export function createApp(deps: CreateAppDeps): Express {
         ...(surface ? { surface } : {}),
         ...(roomPeer ? { collabPeer: roomPeer } : {}),
         model,
-        ...(deps.modelId ? { modelId: deps.modelId } : {}),
+        modelId,
         store: deps.store,
         guard,
         onEvent: send,

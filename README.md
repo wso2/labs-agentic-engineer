@@ -63,7 +63,7 @@ flowchart LR
     TASK["tasks — GitHub issues in the milestone"]
     CYCLE["cycle — one coding-agent pod → one pull request"]
     MERGE["auto-merge → per-component build"]
-    VAL["validation cycle — Playwright vs the criteria"]
+    VAL["validation cycle — scenarios driven against the deployed system"]
     TASK --> CYCLE --> MERGE --> VAL
     VAL -.->|not settled| CYCLE
   end
@@ -157,6 +157,7 @@ Tear down with `k3d cluster delete openchoreo`, which drops all OpenChoreo state
 | Path | What it is |
 |---|---|
 | [`apps/console`](apps/console/README.md) | the human surface: React SPA over the BFF, its only backend |
+| [`apps/tryit`](apps/tryit/AGENTS.md) | the test app: a static SPA the console opens to sign in as a project's test user and talk to a deployed agent; no backend of its own |
 | [`services/aep-api`](services/aep-api/README.md) | the Go BFF — seven domains behind one tenant-gated edge; owns spec git, the milestone run supervisor (Temporal), provisioning, and the GitHub webhook plane |
 | [`services/agents`](services/agents/AGENTS.md) | design-time agent runtime (Vercel AI SDK). One turn = one POST, streamed as SSE; writes no files itself |
 | [`services/collab`](services/collab/AGENTS.md) | Yjs server hosting the live spec document, one room per project |

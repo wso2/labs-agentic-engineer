@@ -18,7 +18,7 @@
 
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { DesignView } from "./DesignView.js";
 
@@ -255,6 +255,91 @@ describe("DesignView — resolved-dependency hamburger (#252 Task 17)", () => {
 
     expect(onResolveDependency).toHaveBeenCalledTimes(1);
     expect(onResolveDependency).toHaveBeenCalledWith("stripe", "resolve");
+  });
+
+  // The console passes the reason its spec view computes for every other
+  // turn-firing affordance; this package only renders it.
+  describe("while a turn holds the room (busyReason)", () => {
+    const BUSY = "An agent is still working — this is available once it finishes";
+
+    it("disables the chat button with the reason as its tooltip", () => {
+      const onResolveDependency = vi.fn();
+      render(
+        <DesignView
+          design={designJson([{ kind: "external", name: "stripe" }])}
+          dependencyStatus={{ stripe: { status: "unresolved" } }}
+          onResolveDependency={onResolveDependency}
+          busyReason={BUSY}
+        />,
+      );
+      const button = screen.getByRole("button", { name: /resolve in chat/i });
+      expect(button).toBeDisabled();
+      fireEvent.click(button);
+      expect(onResolveDependency).not.toHaveBeenCalled();
+      // MUI puts a string title on the wrapped span as its accessible label.
+      expect(screen.getByLabelText(BUSY)).toBeInTheDocument();
+    });
+
+    it("disables the resolved card's hamburger with the reason as its tooltip", () => {
+      render(
+        <DesignView
+          design={designJson([{ kind: "external", name: "stripe" }])}
+          dependencyStatus={{ stripe: { status: "resolved" } }}
+          onResolveDependency={vi.fn()}
+          busyReason={BUSY}
+        />,
+      );
+      const button = screen.getByRole("button", { name: /actions for stripe/i });
+      expect(button).toBeDisabled();
+      fireEvent.click(button);
+      expect(screen.queryByRole("menuitem")).not.toBeInTheDocument();
+      expect(screen.getByLabelText(BUSY)).toBeInTheDocument();
+    });
+
+    it("closes a menu already open when the turn starts, and its item no longer fires", async () => {
+      const onResolveDependency = vi.fn();
+      const view = (busyReason: string) => (
+        <DesignView
+          design={designJson([{ kind: "external", name: "stripe" }])}
+          dependencyStatus={{ stripe: { status: "resolved" } }}
+          onResolveDependency={onResolveDependency}
+          busyReason={busyReason}
+        />
+      );
+      const { rerender } = render(view(""));
+      fireEvent.click(screen.getByRole("button", { name: /actions for stripe/i }));
+      const item = screen.getByRole("menuitem", { name: /discuss in chat & modify/i });
+
+      rerender(view(BUSY));
+
+      // The item may linger through the close transition; clicking it does nothing.
+      fireEvent.click(item);
+      expect(onResolveDependency).not.toHaveBeenCalled();
+      await waitFor(() => expect(screen.queryByRole("menuitem")).not.toBeInTheDocument());
+      expect(screen.getByRole("button", { name: /actions for stripe/i })).toBeDisabled();
+
+      // The gate lifts: the menu stays closed until the next click.
+      rerender(view(""));
+      expect(screen.queryByRole("menuitem")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /actions for stripe/i }));
+      fireEvent.click(screen.getByRole("menuitem", { name: /discuss in chat & modify/i }));
+      expect(onResolveDependency).toHaveBeenCalledWith("stripe", "reconsider");
+    });
+
+    it("an empty reason leaves both live, and callers that pass none are unaffected", () => {
+      const onResolveDependency = vi.fn();
+      render(
+        <DesignView
+          design={designJson([{ kind: "external", name: "stripe" }])}
+          dependencyStatus={{ stripe: { status: "unresolved" } }}
+          onResolveDependency={onResolveDependency}
+          busyReason=""
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: /resolve in chat/i }));
+      expect(onResolveDependency).toHaveBeenCalledWith("stripe", "resolve");
+      expect(screen.queryByLabelText(BUSY)).not.toBeInTheDocument();
+    });
   });
 
   it("without onResolveDependency: a resolved dependency renders no hamburger", () => {

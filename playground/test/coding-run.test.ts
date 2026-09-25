@@ -26,7 +26,10 @@ import { tmpdir } from "node:os";
 import {
   createTimelineRenderer,
   dockerInvocation,
+  FORWARDED_AGENT_SETTINGS,
   hostInvocation,
+  resolveRuntime,
+  runnerImage,
   isFailedAgent,
   renderMergedTimeline,
   toolJarOverlay,
@@ -554,4 +557,54 @@ test("the bal library tool's source carries what the image install needs", () =>
       `the mount target must be the path install.sh wrote: ${overlay.imageJar}`,
     );
   }
+});
+
+// --- the coding-agent runtime ---------------------------------------------------
+
+// The platform's own setting, read from the shell: a playground run is shaped
+// like a dispatched one, and the image that carries the runtime is the one run.
+test("runtime: AEP_AGENT_RUNTIME picks the image; unset is the default runtime", () => {
+  assert.deepEqual(resolveRuntime("docker", undefined, {}), { runtime: "claude-code" });
+  assert.deepEqual(resolveRuntime("docker", undefined, { AEP_AGENT_RUNTIME: " opencode " }), { runtime: "opencode" });
+  assert.equal(runnerImage("claude-code", {}), "aep-runner:dev");
+  assert.equal(runnerImage("opencode", {}), "aep-runner-opencode:dev");
+  assert.equal(runnerImage("opencode", { AGENT_RUNNER_IMAGE_OPENCODE: "oc:x" }), "oc:x");
+  assert.equal(runnerImage("claude-code", { AGENT_RUNNER_IMAGE: "cc:x", AGENT_RUNNER_IMAGE_OPENCODE: "oc:x" }), "cc:x");
+});
+
+test("runtime: docker mode forwards the agent settings BY NAME, and runs the runtime's image", () => {
+  const restore = process.env.AEP_AGENT_RUNTIME;
+  process.env.AEP_AGENT_RUNTIME = "opencode";
+  try {
+    const { args } = dockerInvocation(invocationOpts, "/r", "c1");
+    for (const name of FORWARDED_AGENT_SETTINGS) {
+      const at = args.indexOf(name);
+      assert.ok(at > 0 && args[at - 1] === "-e", `${name} is not forwarded by name`);
+    }
+    assert.ok(args.includes("aep-runner-opencode:dev"), "an OpenCode run needs the OpenCode image");
+  } finally {
+    if (restore === undefined) delete process.env.AEP_AGENT_RUNTIME;
+    else process.env.AEP_AGENT_RUNTIME = restore;
+  }
+});
+
+test("runtime: an unknown AEP_AGENT_RUNTIME is refused, never read as Claude Code", () => {
+  const cursor = { AEP_AGENT_RUNTIME: "cursor" };
+  const resolved = resolveRuntime("docker", undefined, cursor);
+  assert.ok("refusal" in resolved);
+  assert.match(resolved.refusal, /"cursor" is not available: no runtime by that name exists/);
+});
+
+test("runtime: OpenCode is refused in host mode and with an OAuth coding token, before anything starts", () => {
+  const opencode = { AEP_AGENT_RUNTIME: "opencode" };
+  const refusal = (mode: "docker" | "host", credential?: Parameters<typeof resolveRuntime>[1]) => {
+    const resolved = resolveRuntime(mode, credential, opencode);
+    return "refusal" in resolved ? resolved.refusal : undefined;
+  };
+  assert.match(refusal("host") ?? "", /docker mode only/);
+  assert.match(refusal("docker", { value: "sk-ant-oat01-x", envVar: "CLAUDE_CODE_OAUTH_TOKEN" }) ?? "", /API key only/);
+  assert.deepEqual(resolveRuntime("docker", { value: "sk-ant-api-x", envVar: "ANTHROPIC_API_KEY" }, opencode), { runtime: "opencode" });
+  assert.deepEqual(resolveRuntime("docker", undefined, opencode), { runtime: "opencode" });
+  // Claude Code has neither restriction.
+  assert.deepEqual(resolveRuntime("host", { value: "sk-ant-oat01-x", envVar: "CLAUDE_CODE_OAUTH_TOKEN" }, {}), { runtime: "claude-code" });
 });

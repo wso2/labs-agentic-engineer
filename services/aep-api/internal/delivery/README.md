@@ -26,7 +26,7 @@ flowchart LR
     EXEC["execution — the executions READ surface + task-log stream"] --> ROOT
     EVENT["eventcore — merge policy · build fan-out · issue minting · sweep"] --> ROOT
     RUN["run — the milestone run supervisor (dev · task · validation workflows + one worker)"] --> ROOT
-    RREAD["runread — the run read surface: version runs · run + version progress SSE · cancel"] --> ROOT
+    RREAD["runread — the run read surface: version runs · validations · run + version progress SSE · cancel"] --> ROOT
     CODE["codingagent"] --> ROOT
     VAL["validation — S2S context/credentials · report verdict"] --> ROOT
     HTTP --> BUILD & TASK & EXEC & RREAD
@@ -83,10 +83,11 @@ outside that lock is the duplicate-issue race the lock exists to close.
 | `execution` | the executions READ surface: the per-Task progress endpoint, the task-log SSE stream, `OpsExecutionReader`. It writes nothing and dispatches nothing — the only execution rows left are the provisioning gates' | `TaskStreamHub`, the executions kernel |
 | `eventcore` | the event plane of the milestone-run loop: the auto-merge policy seam, the merged-PR path-diff build fan-out + per-`(component, SHA)` re-trigger budget, fix/conflict/red-main issue minting, the halt of a failed run's unfinished work and the close of a cancelled run's in-flight work, milestone-matched predicate re-evaluation, adoption, the reconcile sweep (trigger router; halted-aware, and blind to cancelled increments), and the build sweep that observes those builds reaching terminal | the milestone model (labels, `MilestoneRun`/`RunCycle`, run signals), `DiffComponents`/`BuildRunName` and `BuildTerminalObserver`; **no Temporal** — it reaches the supervisor only through the `RunSignaler`/`RunStarter` ports |
 | `run` | the milestone run SUPERVISOR — three workflows over one shared loop: the wait state + dispatch predicate, the cycle loop, the four budgets + no-progress + ceiling, the version's judgement, settle, and cancel. Plus the `Supervisor` handle the event plane and the build click signal and start runs through | `Runtime`, the milestone model, `RunStatus`/`MilestoneRunWorkflowID`, `MilestoneDispatch`, `DiffComponents`/`BuildRunNamePrefix`; **no GitHub client, no gorm** |
-| `runread` | the run READ surface: a version's runs + their cycles, TWO SSE streams over the per-cycle agent logs (one per run, one per version), and the two writes beside them — cancel, and revalidate. Owns no state and decides nothing: both writes resolve their target through the org-scoped read, then hand off | the run/cycle entities and `IsTerminalRunState`; reaches the pod log through `CycleLogReader` (OC API while the Component lives, observer archive while retained), the supervisor through `RunCanceller` and the event plane through `Revalidator`, so it drags in neither a cluster client, a workflow engine nor GitHub |
+| `runread` | the run READ surface: a version's runs + their cycles, TWO SSE streams over the per-cycle agent logs (one per run, one per version), the VALIDATION read model (the ledger, one version's attempts, one attempt's evidence at its commit), and the two writes beside them — cancel, and revalidate. Owns no state and decides nothing: both writes resolve their target through the org-scoped read, then hand off | the run/cycle entities, `IsTerminalRunState` and the validation vocabulary (`ValidationStageFromRun`, `AnsweringRunOnMilestone`, `DeployedRun`); reaches the pod log through `CycleLogReader` (OC API while the Component lives, observer archive while retained), the repo at a commit through `ValidationSnapshotReader`, the supervisor through `RunCanceller` and the event plane through `Revalidator`, so it drags in neither a cluster client, a workflow engine nor GitHub |
 | `codingagent` | the CodingExecutor (ONE dispatch entry point: dispatch a run cycle as an ephemeral OpenChoreo `coding-agent` job Component), the build-auth retry, the pod-truth watcher, retention/LRU and the cancel-time delete. Design: [`codingagent/design/oc-job-dispatch.md`](codingagent/design/oc-job-dispatch.md) | `MilestoneDispatch`/`MilestoneDispatcher`, `TaskStreamHub`, `BuildTerminalObserver` |
 | `validation` | the S2S validation runner callback (validation-context: the deployed endpoint URLs, kept out of the public issue), the per-version validation issue, and the report → verdict rule. A test user's login is NOT served here — it is published on the roles gate ticket (ADR-0022) | — (no cross-edges; least entangled) |
 | `httpapi` | the aggregator: embeds build/task/execution/runread handlers; **holds `Deps`** (see below) | imports the sub-packages (the exempt aggregator) |
+| `agentgovernance` | the GOVERN stage of a deploy, plus the build-time half the version's `provision` gate calls (`EnsureRegistration` — registration only, never the one-time key): make Agent Manager's view of an `ai-agent` true — org LLM provider, external agent record, the agent's own model binding — and leave that binding's one-time key where composition can read it. Fail-closed: an environment whose binding promises governance never deploys ungoverned. Design: [`agentgovernance/design/governed-model-access.md`](agentgovernance/design/governed-model-access.md) | `GovernAgentInput`/`GovernAgentOutcome` (root) |
 
 **`Deps` lives in `httpapi`, not the root.** Every other domain keeps its `Deps` in the domain root, but
 delivery's services live in sub-packages the root may not import (`root ⊥ slice`). The `httpapi` aggregator
@@ -100,12 +101,12 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
 | `SpecTagger` (`*spec.SpecSaveResult`) · `SpecCollector` · `AuthDeriver` | needs | `spec` — the whole-spec gate + tag cut + design reads |
 | `RepoLookup` (`owner/name`) | needs | `sourcecontrol` — repo full-name resolution |
 | org-credential reads | needs | `platform/secrets` / P3a org repositories — the GitHub + publisher halves of a coding-agent run's secrets |
-| `CodingKeyResolver` (`organization.SecretRefTriplet`) | needs | `organization` — WHICH Anthropic credential this org's coding runs bill (its coding-agent override, else its default key) and the env var it must be mounted as. A domain decision, so the port exposes no way to ask "is there an override?"; dispatch only mounts what it is handed. See ADR-0016 |
+| `CodingKeyResolver` (`organization.SecretRefTriplet`) | needs | `organization` — WHICH Anthropic credential a run on a given runtime bills (the org's Claude subscription on Claude Code, else its API key) and the env var it must be mounted as. A domain decision, so the port exposes no way to ask "is there a subscription?"; dispatch only mounts what it is handed. See ADR-0036 |
 | `ExecutionReader` (`ops.ExecutionFact`) | offers | `ops` — latest-execution-per-kind correlation (`execution.OpsExecutionReader`, P6-retired the app bridge) |
 | `BuildTerminalObserver` (root) | offers | the OpenChoreo watcher → the event plane: a settled build reported outwards, so watcher and event plane stay peer sub-packages |
 | `MilestoneDispatcher` (root, over `MilestoneDispatch`) | offers | the coding agent → the supervisor: launch one agent run at a milestone and answer with its Job ref. The dispatch prompt is a milestone reference; the runner discovers its own working set. Satisfied by `*codingagent.CodingExecutor`, which writes no execution row — the cycle record is the supervisor's bookkeeping |
 | `ComponentEnsurer` | needs | `eventcore` → the projects component service + the runtime-config emitter. Provision a component's OpenChoreo CR immediately before its first build; see the invariant below |
-| `RunReader` · `CycleReader` · `CycleLogReader` · `RunCanceller` · `Revalidator` | needs | `runread` → the root run/cycle repositories, `codingagent`'s cycle-log reader (the pod's log through the OC API while it lives, the observer's archive while the Component is retained), `*run.Supervisor` and the event plane. Four reads and two writes, which is the whole dependency surface of the read model. `Revalidator` is a port for the same reason `RunCanceller` is: deciding a revalidation needs GitHub (is there open work?) and the project repo (is there an oracle?), and this surface must stay free-to-poll |
+| `RunReader` · `CycleReader` · `CycleLogReader` · `ValidationRunReader` · `ValidationCycleReader` · `ValidationSnapshotReader` · `RunCanceller` · `Revalidator` | needs | `runread` → the root run/cycle repositories, `codingagent`'s cycle-log reader (the pod's log through the OC API while it lives, the observer's archive while the Component is retained), an app adapter over `spec.FilesService` for a report and its criteria AT ONE COMMIT, `*run.Supervisor` and the event plane. Six reads and two writes, which is the whole dependency surface of the read model. `Revalidator` is a port for the same reason `RunCanceller` is: deciding a revalidation needs GitHub (is there open work?) and the project repo (is there an oracle?), and this surface must stay free-to-poll |
 | `Gates` · `Planner` | needs | `run` → `dependencies/provisioning` (through an app-root adapter) and `task`. Mint the version's dependency gates, then plan its Tasks — the run's first phase. Declared here rather than imported for the same reason `build` declares its own: `task ⊥ run` is an import ban in both directions, and a port over root types satisfies it |
 | `RunFailedRecorder` | needs | `run` → the projects domain's activity service (through an app-root adapter). Told once per FAILED settle so the project's feed carries a `run_failed` line; the fault itself is the run row's `failure` record, written by `ProvisionGates` / `PlanMilestone` through `RunStore.RecordFailure` — see [`design/run-failure-record.md`](../../design/run-failure-record.md) |
 | `Deployer` · `DeploymentReader` | needs | `run` → `projects.DeploymentService`. Promote a cycle's built components and read back whether they are serving. The supervisor owns the ORDER and the verdict; the projects domain owns the OpenChoreo writes, which is why `run` still names no cluster client |
@@ -405,6 +406,13 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   to decide whether the agent's pull request landed — a human's pull request merging mid-cycle raises the
   identical signal. That is what makes a lost delivery cost latency rather than correctness, and it is why
   the wait state can be unbounded with cancel as its only expiry.
+- **Every wait has something behind its signal.** The gate has `waitPollInterval`, the build wait has
+  `buildPollInterval`, and the LANDING wait — the one with no poll at all — has `CycleFacts.Ended`, read on
+  every wake-up. That is why a dead agent is told (`run-agent-died`) rather than waited out, and why losing
+  that signal costs one `cycleLandingTimeout` and not the verdict. A cycle the watcher has CLOSED also ends
+  the dispatch loop rather than spending the re-dispatch budget: `NoteDispatch` and `FinishAgentFailed` are
+  both fenced on `ended_at IS NULL`, so a second attempt on a closed cycle can be neither recorded nor
+  watched. Measured before this: a pod that OOMed at 20m41s settled its run 4h00m later.
 - **The supervisor counts its own budgets.** They are workflow state, written OUT to the run row for the
   read model and never read back: a replay must reproduce the same decisions without a database. The one
   budget it does not count is the automatic build re-trigger — that is the event plane's, derived from the
@@ -727,8 +735,9 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   settle — and minting last is also what makes the coverage honest, because mid-run adoption postpones
   deployed-green by construction. It then settles SUCCEEDED with an EMPTY verdict, which is the honest
   reading of "delivered, not yet judged". The one exception is a project with no acceptance oracle: no
-  task is filed, nothing will ever judge the version, and `skipped` says so. The acceptance oracle
-  `specs/validation/validation-criteria.json` is read-only input authored in the design phase (spec domain).
+  task is filed, nothing will ever judge the version, and `skipped` says so. The acceptance oracle — every
+  `specs/validation/acceptance/<slug>.feature` — is read-only input authored in the design phase
+  (spec domain).
   **ONE validation issue per version, filed into the version's milestone by the create itself** — like a
   Task, it carries no version label, because the milestone is the pin. Per version and not per project:
   the body embeds the criteria as they stood at mint time, so adopting an older version's issue would
@@ -758,13 +767,17 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   one click from being asked again. Dropping the reference entirely is the trap: the auto-merge policy
   requires a pull request to name an armed issue in the milestone, so a body referencing nothing is read
   as somebody else's work, never merges, and every judgement settles `unreported`.
-- **One repair issue per failed criterion, never one omnibus issue.** The no-progress rule compares
+- **One repair issue per failed SCENARIO, never one omnibus issue.** The no-progress rule compares
   working-set SIZES, so repairing two of three failures has to read as progress; a single issue holding
   three failures could only be open or closed. They are `bug` + `src/validation`, dedupe-keyed on the
-  ATTEMPT's cycle id, so a retry within one attempt files nothing new while the next attempt files
-  fresh work. The `src/validation` source is what makes the chain CLOSE: the ordinary run that fixes them
-  reopens the version's validation task when its working set drains, so the same oracle judges the repair
-  without a human asking.
+  SCENARIO alone, so one defect keeps one issue however many attempts meet it: an attempt that finds a
+  scenario still failing resolves onto its open issue and leaves that attempt's evidence there as a
+  comment (ADR-0029). The `src/validation` source is what makes the chain CLOSE: the ordinary run
+  that fixes them reopens the version's validation task when its working set drains, so the same oracle
+  judges the repair without a human asking.
+- **The repair issues are named in the validation task's CLOSE COMMENT, and nowhere else.** That is the
+  only edge between a repair issue and the run that found it, and it points that way deliberately so a
+  repair body stays answerable from one read (ADR-0029).
 - **A version can be judged more than once, and the NEWEST validating run owns its verdict.** Each
   attempt is its own validation run — started by the reconcile sweep off the open task, whether a dev run
   filed it at deployed-green or a task run REOPENED it having delivered a verdict-sourced repair, or by a

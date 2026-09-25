@@ -51,6 +51,7 @@ function registerBody(
 ): RegisterExternalResourceRequest {
   return {
     name: "twilio",
+    provider: "Twilio",
     description: "Twilio SMS",
     consumptionInstructions: "Use the auth token as Bearer.",
     config: [
@@ -208,7 +209,7 @@ describe("POST /dependencies/external-resources", () => {
     expect(res.status).toBe(201);
 
     const listed = (await (await fetch(EXTERNAL)).json()) as ExternalResourceDTO[];
-    expect(listed.map((r) => r.name)).toEqual(["stripe", "github", "twilio"]);
+    expect(listed.map((r) => r.name)).toEqual(["stripe", "github", "fx-rates", "twilio"]);
     expect(seedExternalResources).toHaveLength(seedLen);
   });
 

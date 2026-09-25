@@ -1123,6 +1123,76 @@ func TestBuild_DependencyGate_OrgServiceUnresolved_NotGatedHere(t *testing.T) {
 	}
 }
 
+// An ai-agent component's unresolved allow-list entry (spec.ComputeAgentToolStatus
+// ran at design-save and stamped AgentToolStatuses — see internal/spec/agent_tools.go)
+// blocks the tag-cut exactly like an unresolved external dependency does: no
+// tag, no claimed version.
+func TestBuild_DependencyGate_AgentToolUnresolved_Blocks(t *testing.T) {
+	design := &gateDesign{comps: []spec.DesignComponent{{Name: "concierge", ComponentType: spec.ComponentTypeAIAgent,
+		Dependencies: []spec.Dependency{
+			{Kind: spec.DependencyKindComponent, Name: "leave-service"},
+		},
+		AgentToolStatuses: []spec.AgentToolStatus{
+			{Component: "leave-service", Operation: "submitLeave",
+				Status: spec.DependencyStatusUnresolved, Reason: "submitLeave is not an operation of leave-service"},
+		},
+	}}}
+	spy := newPlanSpy()
+	tagger := &fakeTagger{res: &spec.SpecSaveResult{Tag: "v1"}}
+	svc := withPlanPath(build.NewService(build.Deps{
+		Repos: fakeRepos{}, Tagger: tagger, Design: design,
+	}), spy)
+
+	code, body := postBuild(t, svc, "shop")
+	if code != 200 {
+		t.Fatalf("build: got %d body=%s", code, body)
+	}
+	out := decodeBody[gen.BuildResponse](t, body)
+	if len(out.Failures) != 1 {
+		t.Fatalf("failures = %+v, want 1", out.Failures)
+	}
+	if f := out.Failures[0]; f.Component != "concierge" || f.Dependency != "leave-service" || f.Kind != "agent-tool-unresolved" {
+		t.Errorf("failure = %+v, want {concierge, leave-service, agent-tool-unresolved}", f)
+	}
+	if out.Tag != "" {
+		t.Errorf("tag = %q, want empty — no tag on a gated build", out.Tag)
+	}
+	if tagger.called != 0 {
+		t.Errorf("tagger called %d times, want 0 — the gate must block before the tag-cut", tagger.called)
+	}
+	if len(spy.milestones()) != 0 {
+		t.Errorf("a version was claimed despite the agent-tool gate blocking: %v", spy.milestones())
+	}
+}
+
+// An "unchecked" agent-tool entry (the named component's openapi.yaml isn't
+// in the design tree yet — a legitimate, order-independent write-race per
+// agent_tools.go, not a broken reference) must NOT block the tag-cut.
+func TestBuild_DependencyGate_AgentToolUnchecked_NotGated(t *testing.T) {
+	design := &gateDesign{comps: []spec.DesignComponent{{Name: "concierge", ComponentType: spec.ComponentTypeAIAgent,
+		Dependencies: []spec.Dependency{
+			{Kind: spec.DependencyKindComponent, Name: "leave-service"},
+		},
+		AgentToolStatuses: []spec.AgentToolStatus{
+			{Component: "leave-service", Operation: "submitLeave",
+				Status: spec.AgentToolStatusUnchecked, Reason: "no openapi.yaml for leave-service in this design"},
+		},
+	}}}
+	tagger := &fakeTagger{res: &spec.SpecSaveResult{Tag: "v1"}}
+	svc := build.NewService(build.Deps{
+		Repos: fakeRepos{}, Tagger: tagger, Design: design,
+	})
+
+	code, body := postBuild(t, svc, "shop")
+	if code != 200 {
+		t.Fatalf("build: got %d body=%s", code, body)
+	}
+	out := decodeBody[gen.BuildResponse](t, body)
+	if out.Tag != "v1" || len(out.Failures) != 0 {
+		t.Errorf("response = %+v, want a clean tag — unchecked must never block", out)
+	}
+}
+
 // No Design port wired (mirrors every OTHER test in this file, which never set
 // one) — the gate must fail OPEN, not panic or block, so this feature never
 // regresses a build whose composition root hasn't wired it.

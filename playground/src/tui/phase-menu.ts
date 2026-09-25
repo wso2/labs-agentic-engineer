@@ -23,10 +23,10 @@
  */
 
 import * as clack from "@clack/prompts";
-import { designGate, tasksGate } from "../engine/gates.js";
+import { designGate, tasksGate, wireGate } from "../engine/gates.js";
 import { designStatus, listIssueSummaries, requirementsStatus } from "../state/status.js";
 
-export type MenuAction = "requirements" | "design" | "tasks" | "code" | "chat" | "check" | "undo" | "quit";
+export type MenuAction = "requirements" | "design" | "tasks" | "code" | "wire" | "chat" | "check" | "undo" | "quit";
 
 function ago(d: Date | undefined): string {
   if (!d) return "";
@@ -70,6 +70,11 @@ export async function phaseMenu(projectDir: string, slug: string, skillCount: nu
         ? `4 Code           run — ${pending} pending, one session →`
         : "4 Code           ✓ all issues look resolved";
 
+  const wGate = wireGate(projectDir);
+  const wireLabel = wGate.ok
+    ? "5 Wire           run it locally — pick a role, click through it with real data"
+    : `5 Wire           ✗ blocked: ${wGate.reason}`;
+
   const choice = await clack.select<MenuAction>({
     message: `AEP playground — ${slug} (${projectDir}) · skills: ${skillCount} (working tree)`,
     options: [
@@ -77,6 +82,7 @@ export async function phaseMenu(projectDir: string, slug: string, skillCount: nu
       { value: "design", label: designLabel },
       { value: "tasks", label: tasksLabel },
       { value: "code", label: codeLabel },
+      { value: "wire", label: wireLabel },
       { value: "chat", label: "chat — free turn in the spec conversation" },
       { value: "check", label: "check — validate design artifacts" },
       { value: "undo", label: "undo — restore the last pre-coding snapshot" },

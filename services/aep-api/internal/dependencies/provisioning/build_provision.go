@@ -111,6 +111,15 @@ func (s *Service) ProvisionForBuild(ctx context.Context, orgID, ocOrgID, project
 		failures = append(failures, *f)
 	}
 
+	// The Agent Manager gate is driven by the DESIGN at the tag for the same
+	// reason: model access is granted by component type, never declared as a
+	// dependency, so it carries no drawer input and must run on every build
+	// that declares an ai-agent. agent_gate.go carries why, and why the
+	// credential is not settled here.
+	if f := s.ensureAgentGate(ctx, orgID, projectID, tag, milestoneNumber); f != nil {
+		failures = append(failures, *f)
+	}
+
 	provisioned := make(map[string]bool, len(inputs))
 	for _, in := range inputs {
 		provisioned[strings.ToLower(in.Dependency)] = true
@@ -267,13 +276,31 @@ func (s *Service) authorExternalPrepared(ctx context.Context, orgID, ocOrgID, pr
 	er := &dependencies.ExternalResource{
 		Name:        in.Dependency,
 		Description: dep.Description,
+		Provider:    dep.Provider,
 		ConfigKeys:  keys,
 	}
 	byEnv := designPreparedValues(keys)
-	registered := false
-	if cells := s.registeredEnvCells(ctx, orgID, in.Dependency); len(cells) > 0 {
-		byEnv = preparedValuesFromOrgCells(keys, cells)
-		registered = true
+	// A copy (the definition names the registry) binds to the organization's
+	// type and takes the organization's values; a resource the project defined
+	// gets its own type and the design's defaults. The RECORD decides, not the
+	// value plane: a registered resource whose values are not warmed — or that
+	// declares no keys at all — is still the organization's, and authoring a
+	// project type for it would strand the build on a type nobody holds values
+	// for.
+	if dep.ResourceRef != "" {
+		if def, ok := s.registeredCatalogDef(ctx, orgID, in.Dependency); ok && def.Registered() {
+			er.Registered = true
+			// The record's own schema names the organization's type. The copy's
+			// keys can lag it (the record gained or renamed one since the copy
+			// landed), and BuildExternalResourceType hashes the schema into the
+			// type NAME — so authoring from stale keys would bind to a type the
+			// organization does not have.
+			er.ConfigKeys = toConfigKeys(def.Config)
+			byEnv = designPreparedValues(er.ConfigKeys)
+			if cells := s.registeredEnvCells(ctx, orgID, in.Dependency); len(cells) > 0 {
+				byEnv = preparedValuesFromOrgCells(er.ConfigKeys, cells)
+			}
+		}
 	}
 
 	// External dependencies do not mint config-collection gates. When the caller
@@ -305,7 +332,7 @@ func (s *Service) authorExternalPrepared(ctx context.Context, orgID, ocOrgID, pr
 		return fmt.Errorf("%w: %w", dependencies.ErrProvisionFailed, perr)
 	}
 
-	if registered {
+	if er.Registered {
 		recordResourceInstances(s.catalogValuePlane, orgID, projectID, in.Dependency, byEnv)
 	}
 

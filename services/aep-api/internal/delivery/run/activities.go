@@ -945,13 +945,16 @@ func (a *Activities) ReadValidationHistory(ctx context.Context, in ValidationHis
 	return out, nil
 }
 
-// CloseValidationIssueInput closes the version's validation task. Verdict is
-// carried only for the comment the close leaves behind.
+// CloseValidationIssueInput closes the version's validation task. Verdict and
+// Repairs are carried only for the comment the close leaves behind.
 type CloseValidationIssueInput struct {
 	OrgID     string `json:"orgId"`
 	ProjectID string `json:"projectId"`
 	Issue     int    `json:"issue"`
 	Verdict   string `json:"verdict,omitempty"`
+	// Repairs are the issue numbers this attempt filed. Empty on every ending
+	// that filed none, which is most of them.
+	Repairs []int `json:"repairs,omitempty"`
 }
 
 // CloseValidationIssue closes the validation task the run adopted.
@@ -970,10 +973,12 @@ func (a *Activities) CloseValidationIssue(ctx context.Context, in CloseValidatio
 	if a.validation == nil || in.Issue == 0 {
 		return nil
 	}
-	return sourceControlErr(a.validation.CloseValidationIssue(ctx, in.OrgID, in.ProjectID, in.Issue, in.Verdict))
+	return sourceControlErr(a.validation.CloseValidationIssue(ctx, in.OrgID, in.ProjectID, in.Issue, in.Verdict, in.Repairs))
 }
 
 // MintValidationRepairIssuesInput names the attempt whose failures become work.
+// It carries no attempt identity: the issues are keyed to the SCENARIO, so an
+// attempt meeting a defect again resolves onto its open issue.
 type MintValidationRepairIssuesInput struct {
 	OrgID           string `json:"orgId"`
 	ProjectID       string `json:"projectId"`
@@ -981,12 +986,11 @@ type MintValidationRepairIssuesInput struct {
 	// At is the validation cycle's merge commit — the same pin the verdict was read
 	// at, so the failures filed are the ones this attempt actually reported.
 	At string `json:"at"`
-	// CycleID is the attempt's identity and the issues' dedupe key.
-	CycleID string `json:"cycleId"`
 }
 
-// MintValidationRepairIssues files one issue per failed criterion into the
-// milestone, and returns their numbers.
+// MintValidationRepairIssues files one issue per failed scenario into the
+// milestone, and returns their numbers — including any it resolved onto rather
+// than filed.
 //
 // An unwired coordinator mints nothing, like the other optional collaborators —
 // but the count matters to the caller here, because an empty result means the next
@@ -995,7 +999,7 @@ func (a *Activities) MintValidationRepairIssues(ctx context.Context, in MintVali
 	if a.validation == nil {
 		return nil, nil
 	}
-	filed, err := a.validation.MintRepairIssues(ctx, in.OrgID, in.ProjectID, in.MilestoneNumber, in.At, in.CycleID)
+	filed, err := a.validation.MintRepairIssues(ctx, in.OrgID, in.ProjectID, in.MilestoneNumber, in.At)
 	return filed, sourceControlErr(err)
 }
 

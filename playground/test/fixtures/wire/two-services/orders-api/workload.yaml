@@ -1,0 +1,31 @@
+apiVersion: openchoreo.dev/v1alpha1
+metadata:
+  name: orders-api
+
+endpoints:
+  - name: http
+    type: HTTP
+    port: 9090
+    basePath: /
+    visibility:
+      - project
+      - external
+
+dependencies:
+  endpoints:
+    - component: two-services-billing-api
+      name: http
+      visibility: project
+      envBindings:
+        address: BILLING_API_URL
+  resources:
+    - ref: orders-db
+      envBindings:
+        host: ORDERS_DB_HOST
+        port: ORDERS_DB_PORT
+        user: ORDERS_DB_USER
+        password: ORDERS_DB_PASSWORD
+        dbname: ORDERS_DB_DBNAME
+    - ref: stripe
+      envBindings:
+        api_key: STRIPE_API_KEY

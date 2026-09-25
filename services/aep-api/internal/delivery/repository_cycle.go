@@ -129,6 +129,17 @@ type RunCycleRepository interface {
 	// ListByRun returns a run's cycles oldest first — the cycle timeline.
 	ListByRun(ctx context.Context, orgID, runID string) ([]RunCycle, error)
 
+	// ListValidationCyclesByProject returns every VALIDATION cycle in a project,
+	// oldest first — the whole validation ledger's timing in one read.
+	//
+	// Project-wide rather than per-run because the ledger has one row per
+	// VERSION and a version's attempts can span several runs (a self-heal repeat
+	// stays on one row; a revalidation is a new one). Asking per run would make
+	// a single page load one query per milestone to answer a question about the
+	// project, which is the cost that kept validation off the build ledger in the
+	// first place.
+	ListValidationCyclesByProject(ctx context.Context, orgID, projectID string) ([]RunCycle, error)
+
 	// ListRecentDispatched returns every cycle that has launched a Job and is
 	// either still open or closed no earlier than `since` — the JobWatcher's
 	// claim set for pod-truth reads and terminal usage capture.
@@ -331,6 +342,18 @@ func (r *runCycleRepository) ListByRun(ctx context.Context, orgID, runID string)
 	var rows []RunCycle
 	err := r.db.WithContext(ctx).
 		Where("org_id = ? AND run_id = ?", orgID, runID).
+		Order("created_at ASC").
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+func (r *runCycleRepository) ListValidationCyclesByProject(ctx context.Context, orgID, projectID string) ([]RunCycle, error) {
+	var rows []RunCycle
+	err := r.db.WithContext(ctx).
+		Where("org_id = ? AND project_id = ? AND kind = ?", orgID, projectID, CycleKindValidation).
 		Order("created_at ASC").
 		Find(&rows).Error
 	if err != nil {

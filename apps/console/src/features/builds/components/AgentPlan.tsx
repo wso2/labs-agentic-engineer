@@ -27,6 +27,12 @@ import { toneColor } from "../../../components/logTone";
 // of that sentence the console owes: the run states its intent, and a reader can
 // see it beside the work rather than having to infer it from tool calls.
 //
+// It is shown HERE and only here — in the inspector, for the one agent a reader
+// picked. It is not in the crew tree: a lead's entries sit `in progress` for
+// most of a run, so in the column that answers "is anything stuck" they were the
+// rows that changed least while taking the most space. `CrewTree` carries the
+// longer version.
+//
 // It is deliberately QUIET. A plan is context for the agent row it sits under,
 // not the headline — the headline is whether anything is stuck. So the title
 // stays in the body colour every other sub-row uses, and only the glyph carries
@@ -58,13 +64,13 @@ function planStatusLabel(status: string): string {
 }
 
 /**
- * One plan entry, as a row under the agent whose plan it is.
+ * One plan entry, as a row.
  *
- * `depth` indents it under its owner in the tree exactly as a backgrounded
- * command is indented; the inspector passes none, because there is only one
- * agent in that panel and nothing to be nested under.
+ * Only the inspector draws these now — there is one agent in that panel, so the
+ * row needs no depth and takes none. The crew tree used to nest them under each
+ * agent and no longer does; `CrewTree` says why.
  */
-export function PlanRow({ item, depth = 0 }: { item: CrewPlanItem; depth?: number }) {
+function PlanRow({ item }: { item: CrewPlanItem }) {
   // The title is the entry's subject, but only the creating event is guaranteed
   // to carry one — an id is a poor name and a true one, and better than a row
   // that renders as an empty line.
@@ -75,7 +81,7 @@ export function PlanRow({ item, depth = 0 }: { item: CrewPlanItem; depth?: numbe
         display: "flex",
         alignItems: "baseline",
         gap: 1,
-        pl: 2 + depth * 2,
+        pl: 2,
         py: 0.25,
         color: "grey.500",
       }}
@@ -104,9 +110,8 @@ export function PlanRow({ item, depth = 0 }: { item: CrewPlanItem; depth?: numbe
 /**
  * One agent's whole plan, for the inspector.
  *
- * Labelled, unlike the tree's rows: there the owning row directly above says
- * whose list it is, and here the panel is already about one agent but the rows
- * would otherwise sit unexplained between its report and its steps.
+ * Labelled, because the panel is about one agent already and the rows would
+ * otherwise sit unexplained between its report and its steps.
  *
  * Renders nothing at all when the agent kept no list. Most agents do not — an
  * empty "Plan" heading would report an absence as a section.

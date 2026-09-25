@@ -67,8 +67,12 @@ off the stream. The plan tool contract (inputs, results, error codes, the
 - `pnpm --filter @aep/agents dev` — SSE server, watch/reload. `start` — run once.
 - Endpoints: `GET /healthz` (open) · `POST /conversations/:id/turns` (SSE) ·
   `GET /conversations/:id` — the last two behind the M2M gate.
-- **No boot-time Anthropic key**: the model is built per turn from the
-  `X-Anthropic-Key` header (missing → 400). `X-Org-Id` is LOAD-BEARING: the
+- **No boot-time Anthropic key or model**: the model is built per turn from the
+  `X-Anthropic-Key` header (missing → 400) and the body's optional `model` (the
+  organization's model, resolved by aep-api each turn; not a non-empty string →
+  400). `AGENT_MODEL` is only the default when a caller sends no `model` (the
+  playground). Reasoning effort (`AGENT_REASONING_EFFORT`) is sent only to models
+  that accept it — not Haiku 4.5 / Sonnet 4.5 (`shared/model.ts`). `X-Org-Id` is LOAD-BEARING: the
   conversation's `org_` segment must equal it (403 otherwise — the §12 fence).
 - **One turn shape**: `turn` (a `TurnSpec` — what the turn is FOR) + `workspace`
   (IDs + shas; files/skills read from `WORKSPACE_MOUNT_ROOT` snapshots via

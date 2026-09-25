@@ -30,12 +30,12 @@ cp env.local.example .env.local     # fill in the four required values
 ```
 
 The runner streams progress NDJSON to stdout. After exit, the cloned
-workspace (including `.logs/claude.log`, the full SDK transcript) is kept
+workspace (including `.logs/runtime.log`, the full SDK transcript) is kept
 under `workspace/<org>/<project>/<taskId>/` for inspection.
 
 ## Validation tasks
 
-The same image serves validation runs (it bakes Playwright + chromium),
+The same image serves validation runs (it bakes a chromium),
 so only the dispatch env differs. Point the harness at an alternate env
 file:
 
@@ -51,7 +51,7 @@ The prompt must say "validation task" and point at an issue labelled
 `aep` + `validation` whose body follows the validation issue contract
 (criteria file path, Deployed endpoints table, test layout, report
 requirements) — see `scripts/create-validation-issue.mjs` at the repo
-root for the interim issue generator. The `aep-validation` skill drives
+root for the interim issue generator. The `acceptance-run` skill drives
 the rest.
 
 ## Testing a custom task
@@ -79,3 +79,57 @@ the rest.
   `STUB_BIND=0.0.0.0` — the bearer check is what keeps that tolerable.
 - `.env.local` and `workspace/` are gitignored; `local/` is dockerignored
   so secrets never enter the image build context.
+
+## Running agent-browser on a developer machine
+
+The runner image bakes the CLI and its browser; a host run has neither. Nothing
+in this repo provisions them, and `skills/agent-browser/SKILL.md` tells an agent
+that finds no `agent-browser` on `PATH` to stop rather than hunt — commit
+`2760190a` exists because two playground agents each burned ~25 minutes
+searching and hit the 600s tool timeout twice. **Provision before the run, not
+during it.**
+
+### Install
+
+```bash
+npm install -g agent-browser@0.35.2      # match runners/remote-worker/Dockerfile
+```
+
+`npm warn EBADENGINE` (package wants node ≥24, this repo runs 22) is expected
+and ignored on purpose: the tarball ships prebuilt Rust binaries and no node
+ever runs the CLI. The Dockerfile documents the same choice.
+
+### Get a browser
+
+```bash
+agent-browser install
+```
+
+On a Mac that is all of it — the CLI downloads Chrome for Testing and finds it
+without being told. The image gets its browser a different way (ADR-0016); for
+driving a page they are the same CDP.
+
+Never set `AGENT_BROWSER_ARGS=--no-sandbox` on a host. The image sets it because
+a pod has no usable chromium sandbox; your machine does.
+
+### Verify — the round trip, not `doctor`
+
+```bash
+printf '<h1>agent-browser-ok</h1>' > /tmp/ab-smoke.html
+agent-browser open file:///tmp/ab-smoke.html
+agent-browser get text h1 | grep agent-browser-ok
+agent-browser close --all
+```
+
+`agent-browser doctor --quick` is **not** a health check: the Dockerfile records
+that it passes with `AGENT_BROWSER_EXECUTABLE_PATH` pointing at nothing at all.
+
+### Always take a named session
+
+```bash
+export AGENT_BROWSER_SESSION="$(agent-browser session id --scope worktree --prefix acc)"
+```
+
+The default session is one shared browser per machine, persisting across
+conversations. Working in it can hijack another agent's page mid-task or
+navigate away from something a person left open.

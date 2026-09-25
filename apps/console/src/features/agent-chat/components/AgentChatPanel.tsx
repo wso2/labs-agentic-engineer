@@ -66,7 +66,7 @@ import { DESIGN_COMMAND } from "@aep/contracts/commands";
 
 // Default a touch wider than the old 380 so the activity rail + narration
 // breathe; the user can drag-resize and the choice persists.
-const AGENT_CHAT_PANEL_WIDTH = 440;
+export const AGENT_CHAT_PANEL_WIDTH = 440;
 const MIN_WIDTH = 360;
 const MAX_WIDTH = 720;
 const WIDTH_STEP = 24; // keyboard resize increment

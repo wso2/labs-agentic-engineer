@@ -24,7 +24,6 @@ describe("fileLabel — a document's name, never its filename", () => {
     expect(fileLabel("specs/requirements/prd.md")).toBe("Product requirements");
     expect(fileLabel("specs/design/domain-model.md")).toBe("Domain model");
     expect(fileLabel("specs/design/security.json")).toBe("Security");
-    expect(fileLabel("specs/validation/validation-criteria.json")).toBe("Validation criteria");
   });
 
   it("names a component's artifacts without repeating the component", () => {
@@ -42,5 +41,22 @@ describe("fileLabel — a document's name, never its filename", () => {
   it("falls back to the slug for feature and flow files", () => {
     expect(fileLabel("specs/requirements/features/checkout.md")).toBe("checkout");
     expect(fileLabel("specs/design/flows/checkout.md")).toBe("checkout");
+  });
+
+  // A `.feature` slug is a capability name the agent chose, and the rail reads as
+  // a document tree — so it is cased like one. First word only: a capability is a
+  // phrase, and Title Casing Every Word reads as a product name.
+  it("title-cases an acceptance capability", () => {
+    expect(fileLabel("specs/validation/acceptance/bought-items.feature")).toBe("Bought items");
+    expect(fileLabel("specs/validation/acceptance/checkout.feature")).toBe("Checkout");
+    expect(fileLabel("specs/validation/acceptance/shared_list_access.feature")).toBe(
+      "Shared list access",
+    );
+  });
+
+  // A requirement's depth document keeps its verbatim name: the PRD references
+  // those by name, and re-casing one would stop the two matching.
+  it("leaves a requirement's own feature document uncased", () => {
+    expect(fileLabel("specs/requirements/features/bought-items.md")).toBe("bought-items");
   });
 });

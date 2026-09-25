@@ -25,10 +25,14 @@ const UNSURE_REMAINDER = "an API";
 /** Stripe-like sure draft. Never includes env values or secret bytes. */
 const SURE_DRAFT_INPUT = {
   name: "stripe",
+  provider: "Stripe",
   description: "Payments API",
   consumptionInstructions: "Use the secret key as Bearer.",
   config: [{ key: "API_KEY", description: "Secret API key", secret: true }],
-  resourceDocs: [{ type: "openapi", url: "https://example.com/stripe/openapi.yaml" }],
+  // An ADDRESS for the contract, never the document's bytes: the upload is the
+  // user's own act on the form.
+  contract: { type: "openapi", url: "https://example.com/stripe/openapi.yaml" },
+  resourceDocs: [{ type: "documentation", url: "https://example.com/stripe/README.md" }],
 };
 
 /** Same shape as the grill `ask_question` payload in agent-chat.ts. */

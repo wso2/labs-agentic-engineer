@@ -21,7 +21,7 @@ package organization
 // /v1/messages probe — faked at the HTTP boundary (WithAnthropicAPIBase →
 // httptest). Proves the key-shape guard, the prefix/last4 preview the golden
 // projection depends on, projectionFromAnthropicRow, every
-// validateAnthropicKey status branch, and Connect's fail-before-persist
+// validateAnthropicKey status branch, and ValidateKey's reject-before-probe
 // ordering. The persistence contract (upsert, org_secrets, org isolation)
 // lives in anthropic_dbtest_test.go; the HTTP contract (status codes, bodies,
 // golden field-set) in anthropic_component_test.go.
@@ -120,7 +120,7 @@ func TestAnthropicKeyPreview(t *testing.T) {
 	}
 
 	// Under 20 chars the whole key is returned as the "prefix" with no last4.
-	// Unreachable via Connect (looksLikeAnthropicKey gates length first) but
+	// Unreachable via ValidateKey (looksLikeAnthropicKey gates length first) but
 	// pinned so a refactor can't silently start slicing short strings.
 	prefix, last4 = anthropicKeyPreview("sk-ant-tiny")
 	if prefix != "sk-ant-tiny" || last4 != "" {
@@ -280,43 +280,36 @@ func TestAnthropicValidateKey_NetworkFailureIsUnreachable(t *testing.T) {
 	}
 }
 
-// --- Connect ordering: reject before any I/O ------------------------------------
+// --- ValidateKey ordering: reject before any I/O ---------------------------------
 
-func TestAnthropicConnect_ShapeGuardsRejectBeforeAnyIO(t *testing.T) {
+// The shape guards and the role's kind are checked before any probe: a nil
+// repo/store and an unreachable API base prove no I/O happens on these paths.
+func TestAnthropicValidateKey_ShapeGuardsRejectBeforeAnyIO(t *testing.T) {
 	t.Parallel()
-	// db, store AND the API base are all unusable (nil / real anthropic.com is
-	// never dialed because the guards fire first) — reaching any of them would
-	// panic or hang, so a clean ValidationError proves the ordering.
 	svc := NewAnthropicCredentialService(nil, nil).WithAnthropicAPIBase("http://127.0.0.1:0")
 	cases := []struct {
 		name     string
+		role     AnthropicRole
 		key      string
 		wantCode string
 	}{
-		{"empty", "", "anthropic_key_missing"},
-		{"whitespace only trims to empty", "   \n", "anthropic_key_missing"},
-		{"wrong prefix", strings.Repeat("x", 30), "anthropic_key_invalid"},
-		{"too short", "sk-ant-short", "anthropic_key_invalid"},
+		{"empty", AnthropicRoleDefault, "", "anthropic_key_missing"},
+		{"whitespace only trims to empty", AnthropicRoleDefault, "   \n", "anthropic_key_missing"},
+		{"wrong prefix", AnthropicRoleDefault, strings.Repeat("x", 30), "anthropic_key_invalid"},
+		{"too short", AnthropicRoleDefault, "sk-ant-short", "anthropic_key_invalid"},
+		// The coding role is a Claude subscription: an API key pasted there is
+		// refused, not stored as a separate coding key.
+		{"api key as a subscription", AnthropicRoleCoding, anthropicUnitKey, "agents_subscription_token_required"},
+		// The org's key serves the spec agents, which cannot present a token.
+		{"token as the org key", AnthropicRoleDefault, "sk-ant-oat01-" + strings.Repeat("t", 20), "anthropic_oauth_token_coding_only"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := svc.Connect(context.Background(), "acme", AnthropicRoleDefault, AnthropicConnectRequest{APIKey: tc.key})
+			err := svc.ValidateKey(context.Background(), tc.role, tc.key)
 			if got := anthropicValidationCode(t, err); got != tc.wantCode {
 				t.Fatalf("code: got %q, want %q (err %v)", got, tc.wantCode, err)
 			}
 		})
-	}
-}
-
-func TestAnthropicConnect_UpstreamRejectionShortCircuitsPersistence(t *testing.T) {
-	t.Parallel()
-	base, _ := anthropicFakeAPI(t, http.StatusUnauthorized)
-	// nil db/store: any persistence attempt would panic — passing proves the
-	// upstream 401 fails Connect BEFORE the transaction begins.
-	svc := NewAnthropicCredentialService(nil, nil).WithAnthropicAPIBase(base)
-	_, err := svc.Connect(context.Background(), "acme", AnthropicRoleDefault, AnthropicConnectRequest{APIKey: anthropicUnitKey})
-	if got := anthropicValidationCode(t, err); got != "anthropic_key_invalid" {
-		t.Fatalf("code: got %q, want anthropic_key_invalid (err %v)", got, err)
 	}
 }

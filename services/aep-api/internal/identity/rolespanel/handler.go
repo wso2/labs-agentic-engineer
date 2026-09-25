@@ -133,6 +133,9 @@ func toView(v identity.PanelView) gen.ProjectRolesView {
 		DirectoryAvailable: v.DirectoryAvailable,
 		ResourceServer:     v.ResourceServer,
 	}
+	if v.SignIn != nil {
+		out.SignIn = &gen.ProjectSignIn{Issuer: v.SignIn.Issuer, ClientID: v.SignIn.ClientID}
+	}
 	for _, r := range v.Roles {
 		out.Roles = append(out.Roles, gen.ProjectRoleState{
 			Name:            r.Name,

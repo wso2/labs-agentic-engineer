@@ -1,0 +1,50 @@
+{
+  "source": "derived from opencode-s4i-instructions.jsonl (the recording probe writes no read-back)",
+  "events": {
+    "server.connected": 1,
+    "session.created": 1,
+    "session.updated": 3,
+    "message.updated": 4,
+    "message.part.updated": 5,
+    "session.status": 4,
+    "session.diff": 1,
+    "plugin.added": 45,
+    "catalog.updated": 2,
+    "reference.updated": 1,
+    "integration.updated": 1,
+    "message.part.delta": 8,
+    "session.idle": 1
+  },
+  "parts": {
+    "text": 2,
+    "step-start": 1,
+    "step-finish": 1
+  },
+  "tools": {},
+  "children": [],
+  "perms": [],
+  "usage": {
+    "anthropic/claude-haiku-4-5": {
+      "messages": 1,
+      "input": 2,
+      "output": 48,
+      "reasoning": 0,
+      "cacheRead": 0,
+      "cacheWrite": 7916,
+      "cost": 0.010137,
+      "sessions": 1
+    }
+  },
+  "todos": 0,
+  "rootLastText": "(1) The marker string is: `GLOSSARY-MARKER-9931`\n\n(2) The fan-out tool is called `task` with `subagent_type: \"general\"`.",
+  "durationMs": 3830,
+  "eventCount": 77,
+  "sessions": [
+    {
+      "id": "ses_f2d45d9ccffe6qsKirfZmIYlF0 (root)",
+      "title": "probe opencode-s4i-instructions.jsonl",
+      "created": 1153,
+      "idleAt": 3830
+    }
+  ]
+}

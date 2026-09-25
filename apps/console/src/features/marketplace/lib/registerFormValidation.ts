@@ -26,6 +26,7 @@ export const REQUIRED_CONFIG_KEY = "Add at least one config key";
 
 export type RegisterFormErrors = {
   name?: string;
+  provider?: string;
   description?: string;
   consumptionInstructions?: string;
   configKeys?: string;
@@ -50,6 +51,7 @@ function cellConfigured(
 /** Field errors for a Register/Save click. Empty object keys mean that slot is valid. */
 export function validateRegisterForm(input: {
   name: string;
+  provider: string;
   description: string;
   consumptionInstructions: string;
   keys: ConfigKeyDTO[];
@@ -57,12 +59,24 @@ export function validateRegisterForm(input: {
   envNames: string[];
   isEdit: boolean;
   envCells?: EnvValueCellDTO[];
+  /**
+   * Environments whose values may stay blank: on a Promote, the ones the
+   * project already holds a value for — the platform carries them over.
+   */
+  carriedEnvs?: string[];
 }): RegisterFormErrors | null {
   const errors: RegisterFormErrors = { keys: [], values: {} };
   let invalid = false;
 
   if (!input.name.trim()) {
     errors.name = REQUIRED_FIELD;
+    invalid = true;
+  }
+  // The concrete system this resource IS ("Open Exchange Rates"). A copy of
+  // this record names it on every project that reuses the resource, so it is
+  // never left to the name alone.
+  if (!input.provider.trim()) {
+    errors.provider = REQUIRED_FIELD;
     invalid = true;
   }
   if (!input.description.trim()) {
@@ -95,6 +109,7 @@ export function validateRegisterForm(input: {
     for (const environment of input.envNames) {
       const filled = (input.values[envValueCellKey(environment, key)] ?? "").trim();
       if (filled) continue;
+      if (input.carriedEnvs?.includes(environment)) continue;
       if (
         input.isEdit &&
         cfg.secret &&

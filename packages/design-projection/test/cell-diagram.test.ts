@@ -99,6 +99,29 @@ test("maps ProjectDesign to the cell-diagram Project shape (legacy buildProjectM
   ]);
 });
 
+test("an ai-agent component renders as its own kind, not a plain service", () => {
+  const design: ProjectDesign = {
+    modelVersion: "0.4.0",
+    id: "p",
+    name: "p",
+    components: [
+      {
+        id: "leave-agent",
+        type: "ai-agent",
+        version: "0.1.0",
+        skillsPinned: [],
+        build: {},
+        connections: [],
+        artifacts: {},
+      },
+    ],
+  };
+
+  const p = toCellDiagramProject(design);
+  const node = p.components.find((c) => c.id === "leave-agent");
+  assert.equal(node?.type, "ai-agent");
+});
+
 test("a platform-resource dependency carries type:datastore + onPlatform:true, not a plain external API", () => {
   const design: ProjectDesign = {
     modelVersion: "0.4.0",

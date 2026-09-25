@@ -2,18 +2,17 @@
 
 One-shot / job images (not long-lived services). Run to completion in a pod.
 
-**Status:** `remote-worker/` is the coding-agent runner — a TS Claude Agent SDK
-one-shot pod that provisions a workspace and runs the Agent SDK against it.
+**Status:** `remote-worker/` is the coding-agent runner — a TS one-shot pod
+that provisions a workspace and runs a coding-agent RUNTIME against it: Claude
+Code through the Agent SDK (the default), or OpenCode through its headless
+server (ADR-0015), chosen by the org's setting.
 Skills are **authored in `<repo>/skills/`, not here** (`skills/AGENTS.md` has
 the authoring rules) and **delivered by the BFF, not here either**: a run reads
 the `.claude/skills/` mirror in its own clone. What this package owns is
 consuming that mirror correctly — the always-on workflow, the allowlist, and the
-playground's stand-in for the BFF write. There is no live bind-mount into the
-runner pod for a local edit to skip: a skill reaches a real run only through
-the org's git-mirror clone (same as production), and reaches `aep-api`'s own
-copy (which seeds that mirror) only via `make dev-update` in the aectl-based
-local-dev flow (`deployments/README.md`). The playground is the one path that
-stays live (`pnpm play`), since it writes the mirror itself.
+playground's stand-in for the BFF write. The dev flow bind-mounts the library
+into the runner pod at `/app/skills` for live skill edits (see
+`deployments/scripts/setup-k3d.sh`), which is what the playground mirrors from.
 
 ## Conventions
 
@@ -33,6 +32,10 @@ stays live (`pnpm play`), since it writes the mirror itself.
   `git -c`, then the same script installed durably). No GIT_ASKPASS, no token
   in argv or URL. Don't add a third path. Changes to the generated refresh
   scripts must keep `credhelper.test.ts` green — it drives them with real `git`.
+  `.aep/` (the publisher bearer, the credential helper, the `gh` wrapper) and
+  `.gh-config/`, which `provisionWorkspace` drops inside the clone, are in the
+  clone's `.git/info/exclude`: one `git add -A` would otherwise push the bearer
+  into the customer's repository.
 - Runner `console.*` is a **user-facing** channel, and it shares the file
   descriptor the NDJSON progress feed writes to. `installConsoleScrubber()`
   converts every call into a scrubbed `notice` run event, so
@@ -108,25 +111,38 @@ stays live (`pnpm play`), since it writes the mirror itself.
   SDK's MCP config only accepts a static header. The test for whether something
   belongs in the port is whether a second runtime would write it the same way; if
   it names a tool, a hook or an SDK option, it does not.
-  **There is exactly ONE adapter**, and `runtime/registry.ts` refuses `opencode`
-  by name with the reason — three spikes are owed (pre-dispatch tool/permission
-  parity, whether the stream declares an agent's id/depth/parent, and how usage
-  is reported for cost stamping) and each unanswered one fails SILENTLY: an
-  unenforced guard, an inferred tree, a blanked cost. A seam that says "not
-  implemented" is the deliverable; a stub would be a claim.
+  **There are TWO adapters**: `runtime/claude/` and `runtime/opencode/`.
+  OpenCode's silent failure modes (an unloaded guard plugin, a tool hidden by
+  rule order, a leaked background flag) are asserted at start before the prompt
+  is sent (`runtime/opencode/startup.ts`); why each mechanism is what it is —
+  the one guard plugin, the server not `opencode run`, the close rule, the
+  API-key-only credential — is
+  `remote-worker/design/decisions/ADR-0015-opencode-is-the-second-adapter.md`.
   Every deviation from the design's sketch is recorded at its field in
   `port.ts` and argued in
-  `remote-worker/design/decisions/ADR-0012-the-runtime-is-a-port-with-one-adapter.md`
+  `remote-worker/design/decisions/ADR-0012-the-runtime-is-a-port-with-two-adapters.md`
   — read it before reshaping the interface, because the largest one (the session
-  exposes `stream` + `translate`, not a flat `events()`) is a measured constraint
-  of the WATCHDOG's contract, not a preference.
-- **`lib/progress/claude_adapter.ts` is the TRANSLATION half of that adapter.** SDK messages in, run events v2 out. Runtime names must not reach
+  exposes `stream` + `translate` + `classify`, not a flat `events()`) is a
+  measured constraint of the WATCHDOG's contract, not a preference.
+  **The run loop reads no message shape.** It branches only on the
+  `MessageClass` each runtime's per-session classifier returns
+  (`runtime/<runtime>/classify.ts`), so a `type === …` or `subtype` test outside
+  a runtime's own directory is the coupling coming back. The classes and their
+  treatment: `MessageClass` in `port.ts` and ADR-0012's amendment.
+  The loop's whole transcript over Claude Code's two probe recordings is pinned
+  byte for byte by `lib/run_loop.replay.test.ts` against
+  `test/fixtures/probe*.loop.ndjson`, and over each OpenCode recording by
+  `runtime/opencode/replay.test.ts` against `test/fixtures/opencode-*.loop.ndjson`;
+  a diff there is a behaviour change, regenerated only with `AEP_UPDATE_GOLDEN=1`
+  and a reason. `runtime/contract.test.ts` holds BOTH adapters to one run-event
+  shape.
+- **`runtime/claude/translate.ts` is the TRANSLATION half of that adapter.** SDK messages in, run events v2 out. Runtime names must not reach
   a consumer's logic: `tool` carries the SDK's own tool name because that is what
   a row prints, but fan-out is `agent_started`, never "a `tool_result` whose tool
   is called `Agent`". It is a per-run factory — the agent registry, the in-flight
   calls and the heartbeat clocks describe ONE run, and two runs sharing them
-  would mislabel lines rather than merely lose detail. A second runtime is a
-  second adapter and nothing else.
+  would mislabel lines rather than merely lose detail. What is not a runtime's
+  is shared, not copied (ADR-0012's amendment).
 - **The run settles when the SDK stream CLOSES, and the feed gets exactly one
   `result` line.** `remote-worker/src/lib/run_loop.ts` owns both, and both are
   counter-intuitive. A `result` message is one TURN ending: a lead can launch a
@@ -169,8 +185,9 @@ stays live (`pnpm play`), since it writes the mirror itself.
 - **API retries are on the feed for every run; the rest of the diagnostics are
   developer-only files.** A stalled model turn used to be reported as bare
   silence. The SDK emits `system`/`api_retry` for every retryable failure and
-  the translator was discarding it, so `progress/diagnostics.ts` reads it into a
-  `warn` notice and the watchdog names it in its own. Ungated on purpose: a healthy
+  the translator was discarding it, so the classifier
+  (`runtime/claude/classify.ts`) reads it as a `retry`, the loop turns that into a
+  `warn` notice, and the watchdog names it in its own. Ungated on purpose: a healthy
   run emits nothing, the `error` field is a closed enum (no prompt or credential
   can ride it into a console build log), and overload is load-dependent so a flag
   would be off during every incident. **A retry must never reach
@@ -183,42 +200,29 @@ stays live (`pnpm play`), since it writes the mirror itself.
   LINE it produced, which was a few seconds late and the only start that stream
   carried; v2 has the runtime's own declaration. **A failed spawn prints its
   error text as an `error`-level notice**, because that text is the last copy of
-  the reason: the agent's transcript is not on the feed and `claude.log` dies
+  the reason: the agent's transcript is not on the feed and `runtime.log` dies
   with the pod. `debugFile`, `stderr`,
   `includePartialMessages` and the reasoning pair (`thinking` +
   `forwardSubagentText`) are the opposite call: on for every playground run,
   off in a pod unless `AEP_RUNNER_DEBUG=1`, and they land in files beside
-  `claude.log` rather than on the feed — nothing collects a pod's files and the
+  `runtime.log` rather than on the feed — nothing collects a pod's files and the
   debug log holds prompt text. Streaming frames reach neither the feed nor
-  `claude.log`. **The reasoning pair only works as a pair**: without a
+  `runtime.log`. **The reasoning pair only works as a pair**: without a
   `thinking` display the blocks arrive signed and empty, and without
   `forwardSubagentText` the subagents forward none at all — which is why a
   transcript could show 120 subagent tool calls and not one word of why. Adding
   either alone re-creates a log that says reasoning happened without saying what
   it was. ADR-0002 decisions 14–16 have the measurements, including why stderr
   is *not* where retry detail lives.
-- **A validation run keeps its own issue's status line, and the platform writes
-  it.** `lib/validation_status_line.ts` is a WATCHER on
-  `RuntimePolicy.observe.toolUse` beside the per-criterion one, sharing its
-  `ValidationProgressState` so a row and the line above it cannot disagree (the
-  two are fanned out in `runner.ts`, rows first, so neither can swallow the
-  other's call). Two things make it unlike every other watcher here.
-  It performs **I/O on the agent's path** — an awaited `gh issue comment`
-  through the REAL `gh` (`resolveRealGhPath`, never the `.aep/gh` wrapper) —
-  because the whole value is that the line lands BEFORE the silence it explains;
-  a detached post during a twenty-minute exploration could land after it, and
-  `RuntimeObservers.toolUse` is awaited for exactly this one caller (ADR-0012).
-  And it reads the **outcome** as well as the call, through the same
-  `observe.toolOutcome` seam the rows settle on, because the report generator
-  FAILING is what puts a run into its repair mode. A failure is warned and swallowed: two hours of work
-  must never die because it could not be watched. The issue number arrives as
-  `AEP_VALIDATION_ISSUE`, stamped by the BFF — nothing else in the pod answers
-  "which issue", since `AEP_TASK_ID` is the cycle's uuid and the number reaches
-  the agent only as prose inside `AEP_PROMPT`. Rungs are one-way and the repair
-  mode absorbs the exit-2 loop, which is what keeps a lapping run to six lines
-  instead of three per criterion; `design/decisions/ADR-0011-the-platform-writes-a-validation-runs-status-line.md`
-  has the measurements, including the p44 run that produced two wrong lines
-  before either rule existed.
+- **What a run's agents were GIVEN is on record, for both runtimes, on every
+  run** (`lib/run_context.ts`). The feed gets one `[skills] workflow: … ·
+  pinned: … · N available: …` notice before the session starts; beside
+  `runtime.log` land `prompt-appendix.md` (the exact `skills.preloadBodies`) and
+  `session-context.jsonl` (per session: agent, whether the appendix reached it,
+  each skill-tool load). The appendix is skill text and the constant glossary
+  only, never an env value, which is why it is not debug-gated. In a pod these
+  are files nothing collects, like `runtime.log`; `.logs/` is in the clone's
+  `.git/info/exclude` so none of them can be staged.
 - **Fan-out is NOT forced into the foreground any more, and the hook that did it
   is deleted.** `lib/fanout_foreground.ts` rewrote `run_in_background` to `false`
   on every `Agent`/`Task` call, for two measured reasons. The first — that a
@@ -256,11 +260,17 @@ stays live (`pnpm play`), since it writes the mirror itself.
   able to read the toolchain's own installation for a library's real signature.
   Bash is not gated either; a build writes where it writes, and the pod is the
   containment boundary. The guard catches the one expensive mistake, it is not a
-  sandbox.
-- **`allowedTools` restricts nothing here.** `bypassPermissions` +
-  `allowDangerouslySkipPermissions` allow every harness tool regardless, so
-  `BASE_ALLOWED_TOOLS` documents intent while the DENY list is the boundary
-  that holds. Both live in `runtime/claude/tools.ts`, and the deny list is
+  sandbox. On OpenCode the guard plugin enforces this same rule, and
+  `external_directory` is `allow`: that permission gates reads and bash paths
+  outside the project too, so `deny` refused the run's own context file
+  (ADR-0015).
+- **`allowedTools` restricts nothing here, but it can ADD.** `bypassPermissions` +
+  `allowDangerouslySkipPermissions` allow every harness tool regardless, so the
+  DENY list is the boundary that holds. `BASE_ALLOWED_TOOLS` is still
+  load-bearing the other way: a tool the CLI holds behind a rollout gate (the
+  task list, on the sonnet-5 / opus-4.8 families in CLI 2.1.247) is registered
+  only when named there — so it is the surface the platform asks for, not
+  documentation. Both live in `runtime/claude/tools.ts`, and the deny list is
   derived: the port states CAPABILITY CLASSES (`interactive_prompt`,
   `scheduling`, `durable_session`, `peer_messaging`, `artifact_publishing`) and
   that file maps each to this runtime's names. There are no runtime-neutral tool
@@ -281,8 +291,13 @@ stays live (`pnpm play`), since it writes the mirror itself.
   watching this one. A lead's plan is the only statement of intent a run
   produces, and v2 puts it on the feed as `work_item {source: "plan"}` rows a
   console folds by item — so the plan being true is worth more than the turn it
-  costs. Corollary: a typo in `BASE_ALLOWED_TOOLS` cannot fail loudly — it named
-  `Task` for a whole SDK generation after the tool became `Agent`.
+  costs. Taking them off the deny list was not enough, though: three real runs
+  started with no task tool in their `init` list, because the CLI gates them
+  per model, and only naming them in `BASE_ALLOWED_TOOLS` registers them
+  (probed against the SDK directly, 2026-09-17). Corollary: a typo in
+  `BASE_ALLOWED_TOOLS` cannot fail loudly — it named `Task` for a whole SDK
+  generation after the tool became `Agent`, and the task list was "allowed" for
+  weeks without existing.
 - **`settingSources` is `["project"]`, and that is load-bearing.** It lives in
   `runtime/claude/runtime.ts` now, with the other two invariants that are
   conditions of running this platform's workload rather than policy anyone
@@ -318,14 +333,15 @@ stays live (`pnpm play`), since it writes the mirror itself.
   listed skill cannot state a codeword from its body until it calls the tool.
 - **The RUNTIME and the MODEL are an organization setting, and they arrive as
   env.** `AEP_AGENT_RUNTIME` and `AEP_AGENT_MODEL` are stamped onto the Workload
-  by `delivery/codingagent`, copied from the org's `/config` `codingAgent`
+  by `delivery/codingagent`, copied from the org's `/config` `agents`
   section — copied, not referenced, so a change applies from the NEXT cycle and a
   run in flight keeps the model its usage lines were billed against. Unset means
   the platform defaults (`claude-code`, `claude-sonnet-5`), which is what every
   dispatch carried before the setting existed and what the playground still runs
   under. An unrecognised runtime is an error, never a silent fallback: running
   the one we do have would bill an org for a runtime it did not choose. The model
-  is no longer a literal in `runner.ts`.
+  is no longer a literal in `runner.ts`, and it is the run's only model
+  (ADR-0015).
 - Self-contained: all agent and SDK-specific wiring lives here.
 - **The runner's contract types are GENERATED and DELIBERATELY NOT COMMITTED.**
   `pnpm --filter remote-worker gen` (wired into root `make gen` via turbo) runs
@@ -364,7 +380,7 @@ stays live (`pnpm play`), since it writes the mirror itself.
   components — there is no single one to name.
 - **There are NO plugins, and the mirror is the only skill source.** The runner
   once loaded two — one it assembled from the library, one it materialised per
-  task — and both are gone. `aep`, `aep-validation` and `playwright-cli` are
+  task — and both are gone. `aep`, `acceptance-run` and `agent-browser` are
   library skills carrying `audience: [coding]`, so the BFF mirrors them into the
   project repo exactly like `go`, and a coding session reads one directory. What
   reaches a build is therefore decided in one place, by the BFF: `design`'s
@@ -373,18 +389,18 @@ stays live (`pnpm play`), since it writes the mirror itself.
   a library. ADR:
   `remote-worker/design/decisions/ADR-0005-the-workflow-rides-the-project-mirror.md`.
 - **The always-on set is the runner's, not the design's.** `alwaysOnSkills`
-  (`lib/runner.ts`) names `aep` for every run and `aep-validation` for a
+  (`lib/runner.ts`) names `aep` for every run and `acceptance-run` for a
   validation task; `requireWorkflowBodies` reads those bodies out of the mirror
   and appends them to the `claude_code` preset. Everything else a component needs
   is a `skillsPinned` entry someone put in a `design.json` — but no design decides
-  whether a coding run follows the coding workflow. `playwright-cli` is
-  deliberately NOT always-on: `aep-validation` names it, and mechanics a run may
+  whether a coding run follows the coding workflow. `agent-browser` is
+  deliberately NOT always-on: `acceptance-run` names it, and mechanics a run may
   not reach for should cost a load, not every turn. **That decision only works
   in pairs** — `onDemandSkills` (same file) must then ALLOW it, because `skills:`
   gates the Skill tool and a skill in neither list is unreachable rather than
   deferred. It was in neither for three weeks: validation runs looked healthy
   (their workflow arrives as prompt text, not through the tool) while every
-  `Skill playwright-cli` call was rejected and the agent grepped the mirror's
+  `Skill agent-browser` call was rejected and the agent grepped the mirror's
   files by hand.
 - **The workflow names tool ROLES; `lib/tool_glossary.ts` binds them.** The `aep`
   skill says "the fan-out tool", "the wait tool", "the task list" rather than
@@ -394,9 +410,13 @@ stays live (`pnpm play`), since it writes the mirror itself.
   does. `systemPromptAppend` (`lib/runner.ts`) is the order that makes it work:
   the workflow body, then the pinned skill bodies, then the glossary LAST,
   because the skill points at it by position ("the tool glossary at the end of
-  your instructions"). Append nothing after it. A second runtime is one more
-  entry in `GLOSSARIES` and nothing else — this is not the runtime port, which is
-  the seam `progress/claude_adapter.ts` sits on. `make workflow-skill` prints the
+  your instructions"). Append nothing after it. Each runtime is one entry in
+  `GLOSSARIES` and nothing else — this is not the runtime port, which is the seam
+  the translators sit on. The OpenCode entry is also where the skill's
+  background-shaped prose is translated for a foreground-only runtime ("dispatch
+  in the background" = parallel `task` calls in one message), so the skill
+  itself needs no runtime edit; `workflow_skill.test.ts` checks every role is
+  bound on every runtime. `make workflow-skill` prints the
   glossary after the composed body in both modes, since the roles do not resolve
   without it. ADR-0014.
 - **A mirror with no workflow skill is FATAL.** `requireWorkflowBodies` throws and
@@ -411,8 +431,8 @@ stays live (`pnpm play`), since it writes the mirror itself.
   entrypoint can start a procedure-less session.
 - **Anything a skill must invoke by absolute path reads `$AEP_SKILLS_DIR`**, now
   `<workspace>/.claude/skills`. The runner stamps it (`lib/runner.ts`) because it
-  is still the only layer that knows the value. `aep-validation` runs the
-  platform's report generator through it, and the component contract a lead hands
+  is still the only layer that knows the value. `acceptance-run` runs the
+  platform's report checker through it, and the component contract a lead hands
   to fan-out subagents (`contractReferencePath`) resolves the same way. A
   hardcoded path is wrong somewhere — it was, and it named `/app/plugin`.
 - **`lib/workflow_skill.ts` composes ONE file**: `skills/aep/SKILL.md` for a mode.
@@ -465,6 +485,27 @@ stays live (`pnpm play`), since it writes the mirror itself.
   on an out-of-sync `npm ci`, which is the loud outcome. The quiet one is worse:
   a range that still resolves leaves the pod running a version the tests never
   saw.
+- **The agent-evaluation harness ships in the image too**, at
+  `/opt/aep/agent-eval` (`$AEP_AGENT_EVAL_HOME`) with `agent-eval` on `PATH`. A
+  build that generates an ai-agent evaluates it before opening its PR, and a
+  build pod holds no monorepo — so a harness resolved from the checkout would run
+  on a developer's machine and nowhere else, which is the worst kind of step:
+  one that looks wired and silently is not. `packages/agent-eval` arrives as the
+  `agent-eval` named build context, so all three build paths must pass it
+  (`build-runner.sh`, `release.yml`'s matrix row, `local/run-local.sh`);
+  `src/agent_eval_packaging.test.ts` pins all three, because a context passed by
+  one builder and not another differs between local and cloud rather than
+  failing. It installs with `npm ci` from `packages/agent-eval/package-lock.json`
+  — the same two-lockfile rule as `/app` — and runs from source under `tsx`. It
+  installs promptfoo with `--omit=optional` (its optional provider SDKs are not
+  the harness's; ~0.3 GB instead of ~2.5 GB — `packages/agent-eval/design/running-in-a-build-pod.md`)
+  and sits before the runner's sources so a source edit does not re-run it.
+- **`AEP_EVAL_ANTHROPIC_API_KEY` is a THIRD credential on the pod** — the org's
+  default Anthropic key, for the evaluation step's agent and judge. It is not
+  `ANTHROPIC_API_KEY` because that name belongs to Claude Code, which ranks it
+  above `CLAUDE_CODE_OAUTH_TOKEN` (docs/decisions ADR-0016). It is enrolled
+  with the other mounted credentials in `credential_env.ts`: the agent invokes the
+  harness through its Bash tool, whose output is the progress feed.
 - **The image states what the environment IS, so no agent has to discover it.**
   Two entries earn their place there rather than in a skill or a prompt.
   `AGENT_BROWSER_ARGS=--no-sandbox` (Dockerfile): a pod has no usable chromium
@@ -494,14 +535,35 @@ stays live (`pnpm play`), since it writes the mirror itself.
   covers the JVM's own `hs_err_pid*.log`, which no rlimit suppresses), and
   neither is redundant with the patterns `skills/aep/SKILL.md` names — that is
   the only copy a reader meets when they wonder why `core` is not in
-  `git status`.
-- **One image**, `remote-worker/Dockerfile`, serves BOTH task kinds
-  (`AEP_TASK_KIND=implementation` and `=validation`). It is Debian-based
-  because Playwright's browsers are glibc-linked; do not reintroduce a second,
-  slimmer image without moving the Helm/compose/release/`AGENT_RUNNER_IMAGE`
-  consumers with it. Build + k3d-import it locally with `make build-runner`.
-  The build is skipped when the tag exists, so use `FORCE=1 make build-runner`
-  after changing the Dockerfile or `src/`.
+  `git status`. **The SHAPE of each pattern is load-bearing, and getting it
+  wrong costs more than the dump does.** A crash picks names people pick too:
+  the list read `core` + `core.*` until 2026-09-19, which ignored `core.ts`,
+  `core.css` and every `src/core/` directory — so a live run built two
+  components that `git add -A` skipped in silence and never committed them. The
+  patterns are now `core` / `!core/` / `core.[0-9]*`, argued at the constant and
+  proven against a real `git init` in `workspace.test.ts`, which asserts the
+  NEGATIVE cases (a `core.ts` and a `src/core/` still stage) beside the positive
+  one. Both copies have to move together.
+- **One Dockerfile, one image per RUNTIME**, each serving BOTH task kinds
+  (`AEP_TASK_KIND=implementation` and `=validation`): `--target runner`
+  (`aep-runner:dev`, Claude Code) and `--target runner-opencode`
+  (`aep-runner-opencode:dev`: the same plus the pinned `opencode` binary, the
+  guard plugin at `/app/runtime/opencode/aep-guard`, and a home pre-warmed by
+  BOOTING an instance at build time so a pod never reaches npm, GitHub or
+  models.dev — `opencode-prewarm.sh`). The file ends in a bare `FROM runner` so
+  every build that names no target (ci.yml, `local/run-local.sh`, the
+  `remote-worker` rows of release.yml and images.yml) still produces the Claude
+  Code image; the `remote-worker-opencode` rows name `runner-opencode`, and the
+  release pins it into the chart's `codingAgentRunner.opencodeImage`. It is
+  Debian-based because its chromium comes from Debian's archive and is
+  glibc-linked; do not reintroduce a slimmer image without moving the
+  Helm/compose/release/`AGENT_RUNNER_IMAGE` consumers with it. Build +
+  k3d-import BOTH locally with `make build-runner`.
+  Full `deployments/scripts/setup.sh` pre-builds it in the background (off the
+  critical path) and imports it in `setup-aep.sh`; `PREBUILD_RUNNER=0` reverts
+  to a serial build. The build is skipped when both tags exist, so use
+  `FORCE=1 make build-runner` after changing the Dockerfile or `src/` — it
+  rebuilds both, since the OpenCode image is FROM the Claude one.
 - **The imported tag is pinned in containerd** — `build-runner.sh` calls
   `pin_node_image` (`deployments/scripts/utils.sh`) after a successful
   `k3d image import`. `aep-runner:dev` is local-only, so there is no registry to

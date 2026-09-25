@@ -21,8 +21,11 @@
 // agent would self-correct against one rule and the fold would enforce
 // another. Kept as a hand-written mirror (like designgate.go) rather than a
 // JSON-schema check because half the rules are shape rules the schema cannot
-// say — name equals directory, suggestions and a provider never coexist, config keys follow a chosen provider, the
-// contract file name fits the style, `assumed` is echoed but never authored.
+// say — name equals directory, the resource block's name equals it too,
+// suggestions and a provider never coexist, config keys follow a chosen
+// provider, the contract path fits its type, a copy (`ref`) and the
+// organization's instructions are the platform's to write, `accepted` is
+// echoed but never authored.
 
 package agentfold
 
@@ -40,40 +43,43 @@ var (
 	sha256HexRe        = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	packageRefRe       = regexp.MustCompile(`^[a-z][a-z0-9-]*:.+`)
 
-	dependencyStyles          = map[string]bool{"rest-api": true, "graphql": true, "sdk": true}
-	dependencySources         = map[string]bool{"project": true, "org": true}
-	dependencyDefinitionKeys  = map[string]bool{"name": true, "description": true, "source": true, "provider": true, "style": true, "contract": true, "sdk": true, "provenance": true, "suggestions": true, "config": true, "assumed": true}
-	provenanceKeys            = map[string]bool{"sourceUrl": true, "sha256": true, "fetchedAt": true, "sliced": true}
-	assumptionKeys            = map[string]bool{"by": true, "at": true, "note": true}
-	suggestionKeys            = map[string]bool{"name": true, "style": true, "description": true}
-	configKeyKeys             = map[string]bool{"key": true, "secret": true, "description": true, "defaultValue": true}
-	sdkManifestKeys           = map[string]bool{"packages": true, "docsUrl": true, "calls": true, "derived": true, "assumed": true}
-	contractFilesByStyle      = map[string][]string{"rest-api": {"openapi.yaml", "openapi.yml", "openapi.json"}, "graphql": {"schema.graphql", "schema.graphqls"}}
-	sdkManifestFile           = "sdk.json"
-	dependencyContractAnyFile = append(append([]string{}, contractFilesByStyle["rest-api"]...), contractFilesByStyle["graphql"]...)
+	dependencyStyles         = map[string]bool{"rest-api": true, "graphql": true, "sdk": true}
+	dependencyDefinitionKeys = map[string]bool{"name": true, "resource": true, "provenance": true, "suggestions": true}
+	resourceKeys             = map[string]bool{"ref": true, "name": true, "description": true, "provider": true, "config": true, "contract": true, "consumptionInstructions": true, "provenance": true}
+	contractKeys             = map[string]bool{"type": true, "path": true, "origin": true, "accepted": true}
+	contractTypes            = map[string]bool{"openapi": true, "graphql": true, "sdk": true}
+	contractOrigins          = map[string]bool{"registry": true, "provider": true, "derived": true, "assumed": true}
+	provenanceKeys           = map[string]bool{"sourceUrl": true, "registry": true, "sha256": true, "readOn": true}
+	assumptionKeys           = map[string]bool{"by": true, "at": true, "note": true}
+	suggestionKeys           = map[string]bool{"name": true, "style": true, "description": true}
+	configKeyKeys            = map[string]bool{"key": true, "secret": true, "description": true, "defaultValue": true}
+	sdkManifestKeys          = map[string]bool{"packages": true, "docsUrl": true, "calls": true, "derived": true, "assumed": true}
+	contractFilesByType      = map[string][]string{"openapi": {"openapi.yaml", "openapi.yml", "openapi.json"}, "graphql": {"schema.graphql", "schema.graphqls"}, "sdk": {"sdk.json"}}
+	// retiredDefinitionKeys are the previous flat shape's top-level fields.
+	// Naming one is the one mistake a model trained on the old shape makes,
+	// so it gets its own message.
+	retiredDefinitionKeys = map[string]bool{"source": true, "provider": true, "style": true, "contract": true, "sdk": true, "config": true, "assumed": true, "candidates": true, "description": true}
 )
 
 // CheckDependencyFileForSave is the save-time gate's view of the same rules
 // (spec/save_gate.go): the shape checks the JSON schema cannot express, over a
-// file already on the way to the repo. The `assumed` rule does not apply — at
-// save the record is the file's own, whoever wrote it — so the file stands in
-// as its own prior. Returns ("", "") when the path is not a dependency file or
-// the content passes.
+// file already on the way to the repo. The platform-only rules (`ref`,
+// `consumptionInstructions`, `accepted`) do not apply — at save the record is
+// the file's own, whoever wrote it — so the file stands in as its own prior.
+// Returns ("", "") when the path is not a dependency file or the content
+// passes.
 func CheckDependencyFileForSave(path, content string) (code, message string) {
 	c, m := checkDependencyDesignGuard(path, content, &content)
 	return string(c), m
 }
 
-// checkDependencyDesignGuard mirrors checkDependencyDesign: a dependency.json
-// or sdk.json body must validate before it folds. `prior` is the file as it
-// stands before this write (nil when it does not exist) — the one input the
-// assumed-is-echoed rule needs.
-// preserveAssumption is the fold's twin of the TS bundle's: the user's
-// `assumed` record on a dependency's definition rides through every agent
-// write of the file, put back from the prior content when the write leaves
-// it out. Any other path, an unparseable write, or nothing on file returns
-// content unchanged.
-func preserveAssumption(path, content string, prior *string) string {
+// preservePlatformFields is the fold's twin of the TS bundle's: the fields
+// only the platform writes on a dependency's definition — the organization's
+// `consumptionInstructions` (while the write keeps the copy's `ref`) and the
+// contract's `accepted` record — ride through every agent write of the file,
+// put back from the prior content when the write leaves them out. Any other
+// path, an unparseable write, or nothing on file returns content unchanged.
+func preservePlatformFields(path, content string, prior *string) string {
 	if prior == nil || dependencyDesignRe.FindStringSubmatch(path) == nil {
 		return content
 	}
@@ -81,14 +87,41 @@ func preserveAssumption(path, content string, prior *string) string {
 	if json.Unmarshal([]byte(*prior), &before) != nil || json.Unmarshal([]byte(content), &next) != nil || next == nil {
 		return content
 	}
-	was, had := before["assumed"]
-	if !had || was == nil {
+	beforeRes := priorResource(before)
+	nextRes, _ := next["resource"].(map[string]any)
+	if beforeRes == nil || nextRes == nil {
 		return content
 	}
-	if _, present := next["assumed"]; present {
+	changed := false
+	// The organization's instructions ride through a write that leaves them
+	// out — but only while the write still names the copy (`ref`). A write
+	// that drops the ref is the agent replacing the copy with a resource the
+	// project defines (Select a provider on a name the organization never
+	// registered, or Reconsider), and an inline resource never carries the
+	// organization's instructions; putting them back would re-create the copy
+	// the agent just gave up. The ref itself is therefore never put back.
+	if _, keepsRef := nextRes["ref"]; keepsRef {
+		if was, had := beforeRes["consumptionInstructions"]; had && was != nil {
+			if _, present := nextRes["consumptionInstructions"]; !present {
+				nextRes["consumptionInstructions"] = was
+				changed = true
+			}
+		}
+	}
+	if beforeC, ok := beforeRes["contract"].(map[string]any); ok {
+		if was, had := beforeC["accepted"]; had && was != nil {
+			if nextC, ok := nextRes["contract"].(map[string]any); ok {
+				if _, present := nextC["accepted"]; !present {
+					nextC["accepted"] = was
+					changed = true
+				}
+			}
+		}
+	}
+	if !changed {
 		return content
 	}
-	next["assumed"] = was
+	next["resource"] = nextRes
 	out, err := json.MarshalIndent(next, "", "  ")
 	if err != nil {
 		return content
@@ -127,8 +160,8 @@ func validateDependencyDesign(content, dirName string, prior *string) *designPro
 	}
 	for k := range obj {
 		if !dependencyDefinitionKeys[k] {
-			if k == "candidates" {
-				return &designProblem{code: ErrSchemaViolation, message: `"candidates" is retired — write "suggestions" (services the user might choose, any number); the user chooses the service, never you.`}
+			if retiredDefinitionKeys[k] {
+				return &designProblem{code: ErrSchemaViolation, message: fmt.Sprintf(`%q is not a top-level field any more — the resource's own fields (name, description, provider, config, contract) live in the "resource" block; style is not stored (the contract's type says it); "source" is the presence of "resource.ref"; the acceptance record is "resource.contract.accepted".`, k)}
 			}
 			return &designProblem{code: ErrSchemaViolation, message: "unknown property " + k}
 		}
@@ -137,30 +170,59 @@ func validateDependencyDesign(content, dirName string, prior *string) *designPro
 	if !ok || name == "" {
 		return &designProblem{code: ErrSchemaViolation, message: "name: must be a non-empty string"}
 	}
-	for _, f := range []string{"description", "provider", "contract", "sdk"} {
-		if v, present := obj[f]; present {
+	if name != dirName {
+		return &designProblem{code: ErrSchemaViolation, message: fmt.Sprintf("\"name\" must equal the dependency directory (%q), got %q.", dirName, name)}
+	}
+	resV, hasRes := obj["resource"]
+	if !hasRes {
+		return &designProblem{code: ErrSchemaViolation, message: `"resource" is required — the block that says what the thing is (name, description; provider, config and contract once a service is chosen).`}
+	}
+	res, ok := resV.(map[string]any)
+	if !ok {
+		return &designProblem{code: ErrSchemaViolation, message: "resource: must be an object"}
+	}
+	for k := range res {
+		if !resourceKeys[k] {
+			return &designProblem{code: ErrSchemaViolation, message: "resource: unknown property " + k}
+		}
+	}
+	for _, f := range []string{"ref", "name", "description", "provider", "consumptionInstructions"} {
+		if v, present := res[f]; present {
 			s, ok := v.(string)
-			if !ok || (f != "description" && s == "") {
-				return &designProblem{code: ErrSchemaViolation, message: f + ": must be a non-empty string"}
+			if !ok || (f != "description" && f != "consumptionInstructions" && s == "") {
+				return &designProblem{code: ErrSchemaViolation, message: "resource." + f + ": must be a non-empty string"}
 			}
 		}
 	}
-	if v, present := obj["source"]; present {
-		if s, ok := v.(string); !ok || !dependencySources[s] {
-			return &designProblem{code: ErrSchemaViolation, message: fmt.Sprintf("source: %q is not an allowed value", v)}
-		}
+	resName, _ := res["name"].(string)
+	if resName == "" {
+		return &designProblem{code: ErrSchemaViolation, message: "resource.name: must be a non-empty string"}
 	}
-	style, _ := obj["style"].(string)
-	if v, present := obj["style"]; present {
-		if s, ok := v.(string); !ok || !dependencyStyles[s] {
-			return &designProblem{code: ErrSchemaViolation, message: fmt.Sprintf("style: %q is not an allowed value", v)}
-		}
+	if resName != name {
+		return &designProblem{code: ErrSchemaViolation, message: fmt.Sprintf(`"resource.name" must equal the dependency name (%q), got %q.`, name, resName)}
 	}
-	if p := validateProvenance(obj["provenance"]); p != nil {
+	ref, _ := res["ref"].(string)
+	if ref != "" && ref != name {
+		return &designProblem{code: ErrSchemaViolation, message: fmt.Sprintf(`"resource.ref" must equal the dependency name (%q) — a registered resource is always used under its own name; got %q.`, name, ref)}
+	}
+	if p := validateProvenance(obj["provenance"], "provenance"); p != nil {
 		return p
 	}
-	if p := validateAssumption(obj["assumed"]); p != nil {
+	if p := validateProvenance(res["provenance"], "resource.provenance"); p != nil {
 		return p
+	}
+	// zod's `.optional()` admits an absent field, never an explicit null; the
+	// fold must refuse the same nulls or a write would fold here that the
+	// agent's own gate had rejected.
+	for _, f := range []string{"provenance", "suggestions"} {
+		if v, present := obj[f]; present && v == nil {
+			return &designProblem{code: ErrSchemaViolation, message: f + ": must not be null — omit the field instead"}
+		}
+	}
+	for _, f := range []string{"provenance", "contract", "config"} {
+		if v, present := res[f]; present && v == nil {
+			return &designProblem{code: ErrSchemaViolation, message: "resource." + f + ": must not be null — omit the field instead"}
+		}
 	}
 	suggestions, hasSuggestions := obj["suggestions"]
 	if hasSuggestions {
@@ -168,113 +230,173 @@ func validateDependencyDesign(content, dirName string, prior *string) *designPro
 			return p
 		}
 	}
-	provider, _ := obj["provider"].(string)
-	source, _ := obj["source"].(string)
-	if cfg, present := obj["config"]; present {
+	provider, _ := res["provider"].(string)
+	if cfg, present := res["config"]; present {
 		if p := validateConfigKeys(cfg); p != nil {
 			return p
 		}
-		if list, ok := cfg.([]any); ok && len(list) > 0 && provider == "" && source != "org" {
-			return &designProblem{code: ErrSchemaViolation, message: `"config" is derived from the chosen service and is written only once "provider" is set — leave it out until the user has chosen; the resolve flow derives the keys.`}
+		if list, ok := cfg.([]any); ok && len(list) > 0 && provider == "" && ref == "" {
+			return &designProblem{code: ErrSchemaViolation, message: `"resource.config" is derived from the chosen service and is written only once "resource.provider" is set — leave it out until the user has chosen; the resolve flow derives the keys.`}
 		}
 	}
-
-	contract, hasContract := obj["contract"].(string)
-	sdk, hasSDK := obj["sdk"].(string)
-	if name != dirName {
-		return &designProblem{code: ErrSchemaViolation, message: fmt.Sprintf("\"name\" must equal the dependency directory (%q), got %q.", dirName, name)}
-	}
+	contractV, hasContract := res["contract"]
 	if hasSuggestions && provider != "" {
-		return &designProblem{code: ErrSchemaViolation, message: `"suggestions" and "provider" never coexist — once the user chose a service, REMOVE suggestions and set provider + style; keep suggestions only while no service is chosen.`}
+		return &designProblem{code: ErrSchemaViolation, message: `"suggestions" and "resource.provider" never coexist — once the user chose a service, REMOVE suggestions and set the provider; keep suggestions only while no service is chosen.`}
 	}
-	if hasSuggestions && (style != "" || hasContract || hasSDK) {
-		return &designProblem{code: ErrSchemaViolation, message: `while "suggestions" are open, "style", "contract" and "sdk" stay unset — they describe the chosen service, and none is chosen yet.`}
-	}
-	if (hasContract || hasSDK) && style == "" {
-		return &designProblem{code: ErrSchemaViolation, message: `"style" is required once a "contract" or "sdk" is named — it says how the component talks to the system.`}
+	if hasSuggestions && (hasContract || ref != "") {
+		return &designProblem{code: ErrSchemaViolation, message: `while "suggestions" are open, "resource.contract" and "resource.ref" stay unset — they describe the chosen service, and none is chosen yet.`}
 	}
 	if hasContract {
-		if strings.Contains(contract, "/") {
-			return &designProblem{code: ErrSchemaViolation, message: fmt.Sprintf(`"contract" is a file name in this directory (e.g. "openapi.yaml"), not a path — got %q.`, contract)}
-		}
-		allowed := contractFilesByStyle[style]
-		if style == "sdk" {
-			allowed = dependencyContractAnyFile
-		}
-		if !containsString(allowed, contract) {
-			return &designProblem{code: ErrSchemaViolation, message: fmt.Sprintf(`"contract" for style %q must be one of %s, got %q.`, style, quoteAll(allowed), contract)}
+		if p := validateContract(contractV); p != nil {
+			return p
 		}
 	}
-	if hasSDK {
-		if style != "sdk" {
-			return &designProblem{code: ErrSchemaViolation, message: fmt.Sprintf(`"sdk" is only meaningful on style "sdk", got style %q.`, style)}
-		}
-		if sdk != sdkManifestFile {
-			return &designProblem{code: ErrSchemaViolation, message: fmt.Sprintf(`"sdk" must be %q (the manifest beside this file), got %q.`, sdkManifestFile, sdk)}
-		}
-	}
-	if style == "sdk" && !hasSDK {
-		return &designProblem{code: ErrSchemaViolation, message: fmt.Sprintf(`style "sdk" needs its manifest: write specs/design/dependencies/%s/%s and set "sdk": %q.`, dirName, sdkManifestFile, sdkManifestFile)}
-	}
-	if assumptionAuthored(obj["assumed"], prior) {
-		return &designProblem{code: ErrSchemaViolation, message: `"assumed" is the user's permission record — it is written when the user accepts your proposal from the dependency's definition in the spec view, never by you. Leave the field exactly as the file already has it (or omit it), and ask the user to accept the assumption instead.`}
+	if p := platformFieldsAuthored(res, prior); p != nil {
+		return p
 	}
 	return nil
 }
 
-func validateProvenance(v any) *designProblem {
+// validateContract checks a project contract object: `{ type, path, origin?,
+// accepted? }` with the path a bare file name in the dependency directory
+// that fits the type, and no URL form at all.
+func validateContract(v any) *designProblem {
+	obj, ok := v.(map[string]any)
+	if !ok {
+		return &designProblem{code: ErrSchemaViolation, message: "resource.contract: must be an object"}
+	}
+	for k := range obj {
+		if !contractKeys[k] {
+			if k == "url" {
+				return &designProblem{code: ErrSchemaViolation, message: `resource.contract has no "url" form — a contract is a FILE in this directory ({ "type", "path" }); an internet address belongs in "provenance.sourceUrl" and the document itself is copied beside this file.`}
+			}
+			return &designProblem{code: ErrSchemaViolation, message: "resource.contract: unknown property " + k}
+		}
+	}
+	t, _ := obj["type"].(string)
+	if !contractTypes[t] {
+		return &designProblem{code: ErrSchemaViolation, message: fmt.Sprintf(`resource.contract.type: %q is not an allowed value (openapi, graphql, sdk)`, obj["type"])}
+	}
+	path, _ := obj["path"].(string)
+	if path == "" {
+		return &designProblem{code: ErrSchemaViolation, message: "resource.contract.path: must be a non-empty string"}
+	}
+	if strings.Contains(path, "/") {
+		return &designProblem{code: ErrSchemaViolation, message: fmt.Sprintf(`resource.contract.path is a file name in this directory (e.g. "openapi.yaml"), not a path — got %q.`, path)}
+	}
+	if allowed := contractFilesByType[t]; !containsString(allowed, path) {
+		return &designProblem{code: ErrSchemaViolation, message: fmt.Sprintf(`resource.contract.path for type %q must be one of %s, got %q.`, t, quoteAll(allowed), path)}
+	}
+	if ov, present := obj["origin"]; present {
+		if o, ok := ov.(string); !ok || !contractOrigins[o] {
+			return &designProblem{code: ErrSchemaViolation, message: fmt.Sprintf(`resource.contract.origin: %q is not an allowed value (registry, provider, derived, assumed)`, ov)}
+		}
+	}
+	if v, present := obj["accepted"]; present && v == nil {
+		return &designProblem{code: ErrSchemaViolation, message: "resource.contract.accepted: must not be null — omit the field instead"}
+	}
+	if p := validateAssumption(obj["accepted"], "resource.contract.accepted"); p != nil {
+		return p
+	}
+	return nil
+}
+
+// platformFieldsAuthored reports the first platform-only field the write
+// introduces or alters relative to the prior file:
+// `resource.consumptionInstructions` (the organization's, landed by the
+// platform's copy) and `resource.contract.accepted` (the user's permission
+// record). `resource.ref` is NOT one: the agent writes it as the stub that
+// asks for the copy. Omitting a field the file has is allowed — the preserve
+// step puts it back.
+func platformFieldsAuthored(res map[string]any, prior *string) *designProblem {
+	var beforeRes map[string]any
+	if prior != nil {
+		var before map[string]any
+		if json.Unmarshal([]byte(*prior), &before) == nil {
+			beforeRes, _ = before["resource"].(map[string]any)
+		}
+	}
+	if next, present := res["consumptionInstructions"]; present {
+		var was any
+		if beforeRes != nil {
+			was = beforeRes["consumptionInstructions"]
+		}
+		if prior == nil || canonicalJSON(was) != canonicalJSON(next) {
+			return &designProblem{code: ErrSchemaViolation, message: `"resource.consumptionInstructions" is the organization's, copied by the platform when a registered resource is used here — write the stub { "name", "resource": { "ref", "name" } } and the platform fills the block at save. Leave the field exactly as the file already has it (or omit it).`}
+		}
+	}
+	nextC, _ := res["contract"].(map[string]any)
+	if nextC == nil {
+		return nil
+	}
+	next, present := nextC["accepted"]
+	if !present {
+		return nil
+	}
+	var was any
+	if beforeC, ok := beforeRes["contract"].(map[string]any); ok {
+		was = beforeC["accepted"]
+	}
+	if prior == nil || canonicalJSON(was) != canonicalJSON(next) {
+		return &designProblem{code: ErrSchemaViolation, message: `"resource.contract.accepted" is the user's permission record — it is written when the user accepts your proposal from the dependency's definition in the spec view, never by you. Leave the field exactly as the file already has it (or omit it), and ask the user to accept the assumption instead.`}
+	}
+	return nil
+}
+
+func validateProvenance(v any, where string) *designProblem {
 	if v == nil {
 		return nil
 	}
 	obj, ok := v.(map[string]any)
 	if !ok {
-		return &designProblem{code: ErrSchemaViolation, message: "provenance: must be an object"}
+		return &designProblem{code: ErrSchemaViolation, message: where + ": must be an object"}
 	}
 	for k := range obj {
 		if !provenanceKeys[k] {
-			return &designProblem{code: ErrSchemaViolation, message: "provenance: unknown property " + k}
+			if k == "fetchedAt" || k == "sliced" {
+				return &designProblem{code: ErrSchemaViolation, message: where + ": " + k + ` is retired — write "readOn" for the instant the source was read; a contract is a whole document, never a slice.`}
+			}
+			return &designProblem{code: ErrSchemaViolation, message: where + ": unknown property " + k}
 		}
 	}
-	for _, f := range []string{"sourceUrl", "sha256", "fetchedAt"} {
+	for _, f := range []string{"sourceUrl", "registry", "sha256", "readOn"} {
 		if fv, present := obj[f]; present {
 			if _, ok := fv.(string); !ok {
-				return &designProblem{code: ErrSchemaViolation, message: "provenance." + f + ": must be a string"}
+				return &designProblem{code: ErrSchemaViolation, message: where + "." + f + ": must be a string"}
 			}
 		}
 	}
 	if s, present := obj["sha256"].(string); present && !sha256HexRe.MatchString(s) {
-		return &designProblem{code: ErrSchemaViolation, message: "provenance.sha256: a lower-case hex SHA-256"}
+		return &designProblem{code: ErrSchemaViolation, message: where + ".sha256: a lower-case hex SHA-256"}
 	}
-	if sv, present := obj["sliced"]; present {
-		if _, ok := sv.(bool); !ok {
-			return &designProblem{code: ErrSchemaViolation, message: "provenance.sliced: must be a boolean"}
-		}
+	if r, present := obj["registry"].(string); present && (strings.Contains(r, "://") || strings.HasPrefix(r, "/")) {
+		return &designProblem{code: ErrSchemaViolation, message: where + `.registry: the org-resource-docs path ("<name>/<file>"), never a URL`}
 	}
 	return nil
 }
 
-func validateAssumption(v any) *designProblem {
+func validateAssumption(v any, where string) *designProblem {
 	if v == nil {
 		return nil
 	}
 	obj, ok := v.(map[string]any)
 	if !ok {
-		return &designProblem{code: ErrSchemaViolation, message: "assumed: must be an object"}
+		return &designProblem{code: ErrSchemaViolation, message: where + ": must be an object"}
 	}
 	for k := range obj {
 		if !assumptionKeys[k] {
-			return &designProblem{code: ErrSchemaViolation, message: "assumed: unknown property " + k}
+			return &designProblem{code: ErrSchemaViolation, message: where + ": unknown property " + k}
 		}
 	}
 	for _, f := range []string{"by", "at"} {
 		s, ok := obj[f].(string)
 		if !ok || s == "" {
-			return &designProblem{code: ErrSchemaViolation, message: "assumed." + f + ": must be a non-empty string"}
+			return &designProblem{code: ErrSchemaViolation, message: where + "." + f + ": must be a non-empty string"}
 		}
 	}
 	if nv, present := obj["note"]; present {
 		if _, ok := nv.(string); !ok {
-			return &designProblem{code: ErrSchemaViolation, message: "assumed.note: must be a string"}
+			return &designProblem{code: ErrSchemaViolation, message: where + ".note: must be a string"}
 		}
 	}
 	return nil
@@ -415,24 +537,18 @@ func validateSdkManifest(content string) *designProblem {
 	return nil
 }
 
-// assumptionAuthored mirrors the zod gate's assumptionChanged: the write
-// introduces or alters the record relative to the file already there. No
-// prior file means the write is authoring it; omitting a record the file has
-// is allowed — the platform's own path when a real contract replaces one.
-func assumptionAuthored(next any, prior *string) bool {
-	if next == nil {
-		return false
+// canonicalJSON is JSON with sorted object keys — the TS gate compares the
+// same way (its `canonical`), so a re-ordered echo reads equal on both sides.
+// encoding/json sorts map keys, so one marshal round trip is the canon.
+func canonicalJSON(v any) string {
+	if v == nil {
+		return "null"
 	}
-	if prior == nil {
-		return true
+	out, err := json.Marshal(v)
+	if err != nil {
+		return "undefined"
 	}
-	var before map[string]any
-	if err := json.Unmarshal([]byte(*prior), &before); err != nil {
-		return true
-	}
-	was, _ := json.Marshal(before["assumed"])
-	now, _ := json.Marshal(next)
-	return string(was) != string(now)
+	return string(out)
 }
 
 func containsString(list []string, s string) bool {
@@ -450,4 +566,20 @@ func quoteAll(list []string) string {
 		q = append(q, fmt.Sprintf("%q", x))
 	}
 	return strings.Join(q, ", ")
+}
+
+// priorResource is the prior file's resource block. A file written before the
+// nested shape has none, and its acceptance record sits at the top level as
+// `assumed` — the codec lifts that when it DECODES, but the gate reads the raw
+// prior, so it lifts it here too. Without this, the first nested write over a
+// flat file silently drops the user's acceptance.
+func priorResource(before map[string]any) map[string]any {
+	if res, ok := before["resource"].(map[string]any); ok {
+		return res
+	}
+	assumed, ok := before["assumed"].(map[string]any)
+	if !ok || assumed == nil {
+		return nil
+	}
+	return map[string]any{"contract": map[string]any{"accepted": assumed}}
 }

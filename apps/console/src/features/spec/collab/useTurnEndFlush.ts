@@ -69,7 +69,14 @@ export function useTurnEndFlush(
   const cancelPollRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    const unregisterDeterministicFlush = registerDeterministicFlush(chatKey);
+    // The flush itself, not just the claim: a turn about to be dispatched
+    // lands the room through this same owner (`flushRoomBeforeDispatch`), and
+    // this hook is mounted exactly where the room lives. Read through the ref
+    // for the reason the turn-end path does — `collab` is a fresh object each
+    // render, and a closure captured at subscribe time goes stale.
+    const unregisterDeterministicFlush = registerDeterministicFlush(chatKey, () =>
+      collabRef.current.flush(),
+    );
     const unsubscribe = subscribeTurnEnd(chatKey, () => {
       cancelPollRef.current?.();
       cancelPollRef.current = null;

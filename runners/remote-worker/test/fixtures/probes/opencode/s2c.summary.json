@@ -1,0 +1,126 @@
+{
+  "source": "derived from opencode-s2c-background-experimental.jsonl (the recording probe writes no read-back)",
+  "events": {
+    "server.connected": 1,
+    "session.created": 5,
+    "session.updated": 36,
+    "message.updated": 56,
+    "message.part.updated": 100,
+    "session.status": 46,
+    "session.diff": 23,
+    "plugin.added": 45,
+    "catalog.updated": 2,
+    "reference.updated": 1,
+    "integration.updated": 1,
+    "message.part.delta": 49,
+    "todo.updated": 4,
+    "file.edited": 4,
+    "file.watcher.updated": 4,
+    "session.idle": 7,
+    "server.heartbeat": 2
+  },
+  "parts": {
+    "text": 18,
+    "step-start": 16,
+    "tool": 12,
+    "step-finish": 16
+  },
+  "tools": {
+    "task:pending": 4,
+    "task:running": 4,
+    "task:completed": 4,
+    "todowrite:pending": 4,
+    "write:pending": 4,
+    "todowrite:running": 4,
+    "todowrite:completed": 4,
+    "write:running": 4,
+    "write:completed": 4
+  },
+  "children": [
+    {
+      "id": "ses_f2d402a5affeCO9o41c662esCa",
+      "parentID": "ses_f2d40363affelD7i0iEH62viAk",
+      "title": "alpha task (@general subagent)",
+      "at": 4450,
+      "report": "REPORT: alpha done.",
+      "messages": 3
+    },
+    {
+      "id": "ses_f2d4028f8ffeExbrP0p7cIwNGS",
+      "parentID": "ses_f2d40363affelD7i0iEH62viAk",
+      "title": "beta task (@general subagent)",
+      "at": 4792,
+      "report": "REPORT: beta done.",
+      "messages": 3
+    },
+    {
+      "id": "ses_f2d4026ccffeOymKJgcNFYHtzd",
+      "parentID": "ses_f2d40363affelD7i0iEH62viAk",
+      "title": "gamma task (@general subagent)",
+      "at": 5340,
+      "report": "REPORT: gamma done.",
+      "messages": 4
+    },
+    {
+      "id": "ses_f2d401ea1ffeUs93Oqa2kykHHY",
+      "parentID": "ses_f2d4026ccffeOymKJgcNFYHtzd",
+      "title": "Create child file (@general subagent)",
+      "at": 7432,
+      "report": "CHILD DONE.",
+      "messages": 3
+    }
+  ],
+  "perms": [],
+  "usage": {
+    "anthropic/claude-haiku-4-5": {
+      "messages": 16,
+      "input": 67,
+      "output": 1637,
+      "reasoning": 0,
+      "cacheRead": 110302,
+      "cacheWrite": 18893,
+      "cost": 0.04289845,
+      "sessions": 5
+    }
+  },
+  "todos": 4,
+  "rootLastText": "ALL DONE.",
+  "durationMs": 21378,
+  "eventCount": 386,
+  "sessions": [
+    {
+      "id": "ses_f2d40363affelD7i0iEH62viAk (root)",
+      "title": "probe opencode-s2c-background-experimental.jsonl",
+      "created": 1394,
+      "idleAt": 14347
+    },
+    {
+      "id": "ses_f2d402a5affeCO9o41c662esCa",
+      "parentID": "ses_f2d40363affelD7i0iEH62viAk",
+      "title": "alpha task (@general subagent)",
+      "created": 4450,
+      "idleAt": 7298
+    },
+    {
+      "id": "ses_f2d4028f8ffeExbrP0p7cIwNGS",
+      "parentID": "ses_f2d40363affelD7i0iEH62viAk",
+      "title": "beta task (@general subagent)",
+      "created": 4792,
+      "idleAt": 7830
+    },
+    {
+      "id": "ses_f2d4026ccffeOymKJgcNFYHtzd",
+      "parentID": "ses_f2d40363affelD7i0iEH62viAk",
+      "title": "gamma task (@general subagent)",
+      "created": 5340,
+      "idleAt": 12256
+    },
+    {
+      "id": "ses_f2d401ea1ffeUs93Oqa2kykHHY",
+      "parentID": "ses_f2d4026ccffeOymKJgcNFYHtzd",
+      "title": "Create child file (@general subagent)",
+      "created": 7432,
+      "idleAt": 9409
+    }
+  ]
+}

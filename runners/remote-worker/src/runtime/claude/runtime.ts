@@ -20,9 +20,9 @@
 // session out.
 //
 // This is the only module in the runner that calls `query()`, and — with
-// `progress/claude_adapter.ts` (messages → run events) and
-// `progress/diagnostics.ts` (the message shapes the loop classifies) — the only
-// place the SDK's vocabulary appears at all. Everything in it was in
+// `translate.ts` (messages → run events) and `classify.ts` (messages → what the
+// run loop is told) beside it — the only place the SDK's vocabulary appears at
+// all. Everything in it was in
 // `lib/runner.ts` before the port, mixed in with the wiring that is genuinely
 // the platform's.
 //
@@ -38,10 +38,9 @@
 //   policy.skills.dir          → discovered because `cwd` holds the mirror AND
 //                                the project setting source is admitted
 //   policy.mcp                 → an `http` server behind a loopback auth proxy
-//   policy.model               → `model:`
+//   policy.model               → `model:`, every alias's pin and the
+//                                subagent model (modelPinEnv)
 //   policy.debug               → the SDK's own debug/stderr/streaming options
-//   policy.observe             → a watching PreToolUse hook, and the adapter's
-//                                own tool-outcome seam
 //   the prompt                 → a streaming input held open until the run loop
 //                                ends it (see openPromptStream)
 //
@@ -60,18 +59,21 @@
 //      — a one-shot pod has nobody to prompt. Which is exactly why the deny list
 //      and the hooks above are the boundary that actually holds.
 
+import path from "node:path";
 import { query, type HookCallback, type Query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { debugQueryOptions, openDebugSinks, type DebugSinks } from "../../lib/logger.js";
 import { startMcpAuthProxy } from "../../lib/mcp_auth_proxy.js";
 import type { AccessTokenSource } from "../../lib/auth_retry.js";
-import { createClaudeAdapter } from "../../lib/progress/claude_adapter.js";
 import { scrubber } from "../../lib/progress/scrubber.js";
+import { appendSessionContext, SESSION_CONTEXT_FILE, type SessionContextRecord } from "../../lib/run_context.js";
 import { toolGlossary } from "../../lib/tool_glossary.js";
 import { createWebFetchGuardHook } from "../../lib/webfetch_guard.js";
 import { createWebSearchDlpHook } from "../../lib/websearch_dlp.js";
 import { createWorkspaceWriteGuard } from "../../lib/workspace_guard.js";
 import type { Runtime, RuntimeArtifact, RuntimePolicy, RuntimeSession } from "../port.js";
+import { createClaudeClassifier } from "./classify.js";
 import { buildMcpOptions, deniedTools } from "./tools.js";
+import { createClaudeAdapter } from "./translate.js";
 
 /**
  * The filesystem settings sources a dispatched run admits.
@@ -104,26 +106,56 @@ export const AGENT_SETTING_SOURCES = ["project"] as const;
  */
 export const CLAUDE_CODE_DEFAULT_MODEL = "claude-sonnet-5";
 
+/**
+ * The CLI's model pins, every one bound to the organization's one model.
+ *
+ * Left alone, the CLI resolves each alias (`sonnet`, `haiku`, `opus`, `fable`)
+ * to its own release default and runs its helper calls through the `haiku`
+ * alias, so a run would bill models the org never chose, its key may not reach
+ * and the platform cannot price (one unpriced slice blanks the cycle's cost,
+ * `modelcost.SumCost`). Pinning every alias, plus `CLAUDE_CODE_SUBAGENT_MODEL`
+ * for the fan-out tool, makes the lead, its subagents and the CLI's helper
+ * calls all run on `model` whatever alias a call names.
+ */
+export function modelPinEnv(model: string): Record<string, string> {
+  return {
+    ANTHROPIC_DEFAULT_SONNET_MODEL: model,
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: model,
+    ANTHROPIC_DEFAULT_OPUS_MODEL: model,
+    ANTHROPIC_DEFAULT_FABLE_MODEL: model,
+    CLAUDE_CODE_SUBAGENT_MODEL: model,
+  };
+}
+
 /** Placeholder header the SDK sends to the loopback proxy; never sent upstream. */
 const LOOPBACK_TOKEN = "loopback";
 
+/** The lead's name in the session-context record: the feed's own word for it. */
+const LEAD_SESSION = "lead";
+
 /**
- * A PreToolUse hook that only WATCHES.
+ * The session-context record (`lib/run_context.ts`) from this runtime's hooks:
+ * a subagent from `SubagentStart`, a skill load from `PreToolUse` on `Skill`
+ * (`agent_id` is absent on the main thread, which is the lead). A subagent's
+ * `appendix` is `false` by construction — the preset `append` is the main
+ * thread's system prompt only — where OpenCode's is observed per session.
  *
- * `policy.observe.toolUse` is not a decision — see `RuntimeObservers` — so this
- * adapts the platform's watcher onto the SDK's hook shape and always returns an
- * empty decision. It exists so the port never has to mention `HookCallback`.
- *
- * The watcher is AWAITED, which is the one thing this adapter has to get right
- * for it: a watcher that posts (the validation status line) is only worth
- * having if its line lands before the call it describes, and the SDK awaiting
- * this callback is what holds the call until it has.
+ * Exported for its test.
  */
-export function watchHook(observe: NonNullable<RuntimePolicy["observe"]>["toolUse"]): HookCallback {
+export function sessionContextHook(record: (r: SessionContextRecord) => void): HookCallback {
   return async (input) => {
-    const hookInput = input as { hook_event_name?: string; tool_name?: string; tool_input?: unknown; tool_use_id?: string };
-    if (hookInput?.hook_event_name !== "PreToolUse") return {};
-    await observe?.(hookInput.tool_name ?? "", hookInput.tool_input, hookInput.tool_use_id ?? "");
+    const h = input as {
+      hook_event_name?: string;
+      agent_id?: string;
+      agent_type?: string;
+      tool_name?: string;
+      tool_input?: { skill?: unknown };
+    };
+    if (h.hook_event_name === "SubagentStart" && h.agent_id) {
+      record({ session: h.agent_id, agent: h.agent_type || "subagent", appendix: false });
+    } else if (h.hook_event_name === "PreToolUse" && h.tool_name === "Skill" && typeof h.tool_input?.skill === "string") {
+      record({ session: h.agent_id || LEAD_SESSION, skill: h.tool_input.skill });
+    }
     return {};
   };
 }
@@ -216,14 +248,14 @@ async function startClaudeCodeSession(prompt: string, policy: RuntimePolicy): Pr
   );
   const webSearchHook = createWebSearchDlpHook(policy.webSearch.deny);
   const webFetchHook = createWebFetchGuardHook(policy.webFetch.deny);
-  const observeHook = policy.observe?.toolUse ? watchHook(policy.observe.toolUse) : undefined;
+  const sessionContextFile = path.join(policy.logDir, SESSION_CONTEXT_FILE);
+  const recordContext = (r: SessionContextRecord): void => appendSessionContext(sessionContextFile, r);
+  recordContext({ session: LEAD_SESSION, agent: LEAD_SESSION, appendix: policy.skills.preloadBodies !== "" });
+  const contextHook = sessionContextHook(recordContext);
 
   // One adapter per run — it carries this run's agent registry and in-flight
   // tool calls (see createClaudeAdapter).
-  const adapter = createClaudeAdapter({
-    taskKind: policy.taskKind,
-    ...(policy.observe?.toolOutcome ? { onToolOutcome: policy.observe.toolOutcome } : {}),
-  });
+  const adapter = createClaudeAdapter({ taskKind: policy.taskKind });
 
   const input = openPromptStream(prompt);
   let q: Query;
@@ -257,7 +289,10 @@ async function startClaudeCodeSession(prompt: string, policy: RuntimePolicy): Pr
         persistSession: false,
         settingSources: [...AGENT_SETTING_SOURCES],
         strictMcpConfig: true,
-        env: policy.env,
+        // Every alias and the subagent model, bound to the org's one model —
+        // see modelPinEnv. Spread last so a stray pin in the pod's own env
+        // cannot point an alias at a model the org did not choose.
+        env: { ...policy.env, ...modelPinEnv(policy.model) },
         ...debugQueryOptions(debugSinks),
         // NOT canUseTool — the Task 12 spike found canUseTool is never invoked
         // for the server-executed WebSearch tool (confirmed under
@@ -273,6 +308,7 @@ async function startClaudeCodeSession(prompt: string, policy: RuntimePolicy): Pr
           // the design's storage decision is that transcripts stay on the local
           // plane and are never uploaded from a pod, so this is what
           // `artifacts()` reads, not a second channel.
+          SubagentStart: [{ hooks: [contextHook] }],
           SubagentStop: [
             {
               hooks: [
@@ -294,17 +330,7 @@ async function startClaudeCodeSession(prompt: string, policy: RuntimePolicy): Pr
             { matcher: "Write", hooks: [workspaceWriteGuard] },
             { matcher: "Edit", hooks: [workspaceWriteGuard] },
             { matcher: "NotebookEdit", hooks: [workspaceWriteGuard] },
-            // Neither a guard nor a rewrite: this one only watches, and returns
-            // an empty decision. `Bash` is in the set because a validation run's
-            // per-spec `npm test` call is what says a criterion is running.
-            ...(observeHook
-              ? [
-                  { matcher: "Write", hooks: [observeHook] },
-                  { matcher: "Edit", hooks: [observeHook] },
-                  { matcher: "NotebookEdit", hooks: [observeHook] },
-                  { matcher: "Bash", hooks: [observeHook] },
-                ]
-              : []),
+            { matcher: "Skill", hooks: [contextHook] },
           ],
         },
       },
@@ -322,11 +348,15 @@ async function startClaudeCodeSession(prompt: string, policy: RuntimePolicy): Pr
         { path: debugSinks.stderrFilePath, kind: "log" },
       ]
     : [];
+  const contextArtifact: RuntimeArtifact = { path: sessionContextFile, kind: "log" };
 
   return {
     stream: { messages: q, stopTask: (taskId) => q.stopTask(taskId), endInput: input.release },
     translate: adapter.translate,
-    artifacts: async () => [...adapter.artifacts(), ...debugArtifacts],
+    // Per session, like the adapter: it remembers the last rate-limit line.
+    classify: createClaudeClassifier(),
+    usage: adapter.usage,
+    artifacts: async () => [...adapter.artifacts(), contextArtifact, ...debugArtifacts],
     close: async () => {
       // A closed session must not leave the prompt stream pending: the SDK
       // would otherwise wait on a generator nothing will ever resume.

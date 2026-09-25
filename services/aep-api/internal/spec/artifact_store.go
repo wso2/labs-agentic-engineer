@@ -50,8 +50,8 @@ type ArtifactStore struct {
 	// externals resolves `external` dependencies against the live org
 	// ResourceType catalog at design-read time (see resolveExternalDependencies).
 	// Nil until the composition root wires a concrete provider via
-	// SetExternalResourceResolver — until then, registryHit is false and status
-	// derives from stored intent alone.
+	// SetExternalResourceResolver — until then, the registry answers nothing
+	// and a copied resource reads needs-input.
 	externals ExternalResourceResolver
 }
 
@@ -91,7 +91,10 @@ func (s *ArtifactStore) SetOrgServiceResolver(r OrgServiceResolver) {
 // the concrete provider (*dependencies.ExternalResourceCatalog) is wired in
 // by the composition root via SetExternalResourceResolver.
 type ExternalResourceResolver interface {
-	IsRegistered(ctx context.Context, orgID, name string) (bool, error)
+	// Lookup answers for one dependency name: is a REGISTERED resource (an
+	// org-scoped record, never a project's leftover type) in the org catalog
+	// under that name, and what is its contract document's hash.
+	Lookup(ctx context.Context, orgID, name string) (RegistryHit, error)
 }
 
 // SetExternalResourceResolver wires the org external-resource catalog used to
@@ -142,6 +145,13 @@ const DesignRootFile = "design.cell"
 // componentDirPrefix is the path prefix under specs/design/ for per-component
 // directories.
 const componentDirPrefix = "components/"
+
+// agentAFMFileName is the sibling AFM document name inside an ai-agent
+// component's directory (components/<name>/agent.afm.md) — mirrors the path
+// agentfold's write-gate matches (agentAfmRe in
+// internal/platform/agentfold/designgate.go), a different package this one
+// cannot reference.
+const agentAFMFileName = "agent.afm.md"
 
 // dependencyDirPrefix is the path prefix under specs/design/ for per-dependency
 // directories — one external dependency, one definition (dependency_json.go).
@@ -206,6 +216,12 @@ func (s *ArtifactStore) AssembleDesignFrom(ctx context.Context, orgID string, fi
 	}
 	s.resolveOrgServices(ctx, orgID, design)
 	s.resolveExternalDependencies(ctx, orgID, design)
+	// Agent tool resolution (derive_agent_tools.go / agent_tools.go): read-time
+	// computed, exactly like the Status/Reason the two calls above just set —
+	// never persisted, recomputed on every design read so a GET reflects the
+	// current openapi.yaml/agent.afm.md pair even when neither triggered a
+	// save. A design with no ai-agent component does no work here at all.
+	deriveAgentToolStatuses(ctx, design.Components)
 	return design, nil
 }
 
@@ -245,7 +261,7 @@ func (s *ArtifactStore) resolveOrgServices(ctx context.Context, orgID string, d 
 				continue
 			}
 			if visible {
-				dep.Status, dep.Reason = ComputeDependencyStatus(*dep, false, OrgServiceHit{Visible: true})
+				dep.Status, dep.Reason = ComputeDependencyStatus(*dep, RegistryHit{}, OrgServiceHit{Visible: true})
 				continue
 			}
 			// Not namespace-visible: refine into `blocked` (project-only —
@@ -259,7 +275,7 @@ func (s *ArtifactStore) resolveOrgServices(ctx context.Context, orgID string, d 
 					"org", orgID, "dependency", dep.Name, "error", err)
 				continue
 			}
-			dep.Status, dep.Reason = ComputeDependencyStatus(*dep, false, OrgServiceHit{Exists: exists})
+			dep.Status, dep.Reason = ComputeDependencyStatus(*dep, RegistryHit{}, OrgServiceHit{Exists: exists})
 		}
 	}
 }
@@ -273,34 +289,39 @@ func (s *ArtifactStore) resolveOrgServices(ctx context.Context, orgID string, d 
 // them (its per-call fail-open error handling doesn't fit this simpler loop).
 //
 // Fail-open: a resolver error never fails the design read — that dependency
-// is resolved from stored intent (registryHit=false), matching org-service.
+// is resolved from stored intent (an empty RegistryHit), matching org-service.
+// Fail-open here means a copied resource reads needs-input while the catalog
+// is unreachable — the definition says so — never that it reads resolved.
 func (s *ArtifactStore) resolveExternalDependencies(ctx context.Context, orgID string, d *DesignFile) {
 	if s == nil || d == nil {
 		return
 	}
-	hits := map[string]bool{}
+	hits := map[string]RegistryHit{}
 	for i := range d.Components {
 		for j := range d.Components[i].Dependencies {
 			dep := &d.Components[i].Dependencies[j]
 			if dep.Kind == DependencyKindOrgService {
 				continue
 			}
-			registryHit := false
-			if dep.Kind == DependencyKindExternal && s.externals != nil {
+			var registry RegistryHit
+			// Only a copy (Ref set) asks the registry: a project's own resource
+			// has nothing there to compare against, and the catalog must not
+			// be consulted for every external name on every read.
+			if dep.Kind == DependencyKindExternal && dep.ResourceRef != "" && s.externals != nil {
 				if cached, ok := hits[dep.Name]; ok {
-					registryHit = cached
+					registry = cached
 				} else {
-					hit, err := s.externals.IsRegistered(ctx, orgID, dep.Name)
+					hit, err := s.externals.Lookup(ctx, orgID, dep.Name)
 					if err != nil {
 						slog.WarnContext(ctx, "external-resource resolver: catalog check failed",
 							"org", orgID, "dependency", dep.Name, "error", err)
 					} else {
-						registryHit = hit
+						registry = hit
 					}
-					hits[dep.Name] = registryHit
+					hits[dep.Name] = registry
 				}
 			}
-			ApplyDependencyStatus(dep, registryHit, OrgServiceHit{})
+			ApplyDependencyStatus(dep, registry, OrgServiceHit{})
 		}
 	}
 }
@@ -386,6 +407,14 @@ func AssembleDesign(files map[string]string) (*DesignFile, error) {
 			openapi = files[componentDirPrefix+name+"/openapi.yml"]
 		}
 		comp.OpenAPISpec = openapi
+		// AgentAFM, likewise, is not a design.json key — fill it from the
+		// sibling agent.afm.md, only for ai-agent components (the file may
+		// legitimately be absent: skills/design's per-component writes have
+		// no guaranteed order, so an agent's document can be written before
+		// its own directory's design.json settles, or vice versa).
+		if comp.ComponentType == ComponentTypeAIAgent {
+			comp.AgentAFM = files[componentDirPrefix+name+"/"+agentAFMFileName]
+		}
 		out.Components = append(out.Components, comp)
 	}
 

@@ -68,6 +68,15 @@ describe("ProjectStatusBadge", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  // Before the first build there is no delivery state, and the spec's is not
+  // this chip's to report — a v2 spec can be amended while v1 builds, so one
+  // line cannot carry both. The overview's spec leg owns it.
+  it("renders nothing before the first build", () => {
+    query.current = { data: status({}) };
+    const { container } = render(<ProjectStatusBadge />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
   it("names the project's state, announced as a status", () => {
     query.current = {
       data: status({ build: { version: "v1", status: "running" } } as Partial<ProjectStatus>),
@@ -86,8 +95,6 @@ describe("ProjectStatusBadge", () => {
       build: { version: "v1", status: "succeeded" },
       deploy: { version: "v1", status: "deploying", components: { total: 3, ready: 1 } },
     }, true],
-    ["Spec in progress", { spec: { exists: true, version: "", dirty: false } }, true],
-    ["Spec published", {}, false],
     ["Built", { build: { version: "v1", status: "succeeded" } }, false],
     ["Build failed", { build: { version: "v1", status: "failed" } }, false],
     ["Active", {

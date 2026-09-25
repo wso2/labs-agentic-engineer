@@ -190,5 +190,5 @@ func toIgenValidationContext(r validation.ValidationContextResponse) igen.Valida
 			eps[i] = igen.ComponentEndpoint{Component: e.Component, URL: e.URL}
 		}
 	}
-	return igen.ValidationContextResponse{Endpoints: eps, CriteriaPath: r.CriteriaPath}
+	return igen.ValidationContextResponse{Endpoints: eps}
 }

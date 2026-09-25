@@ -26,6 +26,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 // thunderMock is a minimal in-memory Thunder admin API for exercising
@@ -35,6 +36,12 @@ type thunderMock struct {
 	appName  string
 	clientID string
 	ouID     string // OU the existing app is registered under
+
+	// tokenCount counts mints; tokenExp, when set, is the exp claim issued;
+	// ouUnauthorized answers 401 to that many GET /organization-units/{id} calls.
+	tokenCount     int
+	tokenExp       int64
+	ouUnauthorized int
 
 	deleted      bool
 	deleteStatus int    // override delete response code (0 = 204); app is removed regardless
@@ -80,7 +87,11 @@ func (m *thunderMock) server(t *testing.T) *httptest.Server {
 		case r.Method == http.MethodPost && r.URL.Path == "/oauth2/token":
 			_ = r.ParseForm()
 			m.tokenForm = r.PostForm
+			m.tokenCount++
 			claims := map[string]any{"iss": "mock", "aud": "urn:mock"}
+			if m.tokenExp != 0 {
+				claims["exp"] = m.tokenExp
+			}
 			if m.systemRS == "" || r.PostForm.Get("resource") == m.systemRS {
 				claims["scope"] = "system"
 			}
@@ -119,6 +130,11 @@ func (m *thunderMock) server(t *testing.T) *httptest.Server {
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": "default-ou"})
 
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/organization-units/"):
+			if m.ouUnauthorized > 0 {
+				m.ouUnauthorized--
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
 			// OU-existence check (ouExists) used by the non-destructive heal
 			// guard. By default the target OU exists (200); ouMissing models a
 			// stale/phantom ouId (404).
@@ -465,5 +481,83 @@ func TestEnsurePublisherApp_KeepsTokenClaimsWhenPresent(t *testing.T) {
 	}
 	if m.putCount != 0 {
 		t.Fatalf("putCount=%d, want no PUT when the claims are already declared", m.putCount)
+	}
+}
+
+// The cache is judged by the wall clock, not by how long this process thinks
+// it has been running. A paused VM stops Go's monotonic clock while Thunder's
+// clock — and the token's exp — run on; the observed failure was a token
+// served from the cache an hour after it had expired, 401 after 401, with no
+// re-mint. Here the clock is stepped forward as the wall does on resume.
+func TestSystemToken_ExpiryFollowsTheWallClock(t *testing.T) {
+	m := &thunderMock{}
+	srv := m.server(t)
+	defer srv.Close()
+	c := New(Config{BaseURL: srv.URL, ClientID: "sys", ClientSecret: "sec"}).(*client)
+	now := time.Date(2026, 9, 22, 8, 34, 51, 0, time.UTC)
+	c.now = func() time.Time { return now }
+
+	if _, err := c.OUExists(context.Background(), "ou-1"); err != nil {
+		t.Fatalf("OUExists: %v", err)
+	}
+	now = now.Add(40 * time.Minute)
+	if _, err := c.OUExists(context.Background(), "ou-1"); err != nil {
+		t.Fatalf("OUExists: %v", err)
+	}
+	if m.tokenCount != 1 {
+		t.Fatalf("mints after 40 min = %d, want 1 (still within the hour)", m.tokenCount)
+	}
+	now = now.Add(20*time.Minute + time.Second) // 60m01s: past expires_in minus the skew
+	if _, err := c.OUExists(context.Background(), "ou-1"); err != nil {
+		t.Fatalf("OUExists: %v", err)
+	}
+	if m.tokenCount != 2 {
+		t.Fatalf("mints after the hour = %d, want 2 (a re-mint)", m.tokenCount)
+	}
+}
+
+// The token's own exp is the server's verdict and wins over expires_in when
+// it is sooner — a clock this side cannot count down more truthfully than that.
+func TestSystemToken_TheTokensOwnExpWins(t *testing.T) {
+	now := time.Date(2026, 9, 22, 9, 0, 0, 0, time.UTC)
+	m := &thunderMock{tokenExp: now.Add(2 * time.Minute).Unix()} // expires_in still says 3600
+	srv := m.server(t)
+	defer srv.Close()
+	c := New(Config{BaseURL: srv.URL, ClientID: "sys", ClientSecret: "sec"}).(*client)
+	c.now = func() time.Time { return now }
+
+	if _, err := c.OUExists(context.Background(), "ou-1"); err != nil {
+		t.Fatalf("OUExists: %v", err)
+	}
+	now = now.Add(91 * time.Second) // past exp minus the 30s skew
+	if _, err := c.OUExists(context.Background(), "ou-1"); err != nil {
+		t.Fatalf("OUExists: %v", err)
+	}
+	if m.tokenCount != 2 {
+		t.Fatalf("mints = %d, want 2: exp two minutes out must beat expires_in of an hour", m.tokenCount)
+	}
+}
+
+// A 401 answered to the system token is Thunder saying it no longer honours
+// it — after a restart that dropped issued tokens, or because it expired while
+// this side's clock disagreed. The token is evicted so the NEXT call mints
+// afresh, instead of every call failing until the cache would have expired.
+func TestSystemToken_EvictedWhenThunderAnswers401(t *testing.T) {
+	m := &thunderMock{ouUnauthorized: 1}
+	srv := m.server(t)
+	defer srv.Close()
+	c := New(Config{BaseURL: srv.URL, ClientID: "sys", ClientSecret: "sec"}).(*client)
+
+	if _, err := c.OUExists(context.Background(), "ou-1"); err == nil {
+		t.Fatal("the 401 must surface to this caller")
+	}
+	if c.cachedToken != "" {
+		t.Fatal("a token Thunder refused with 401 must not stay cached")
+	}
+	if ok, err := c.OUExists(context.Background(), "ou-1"); err != nil || !ok {
+		t.Fatalf("second call = (%v, %v), want a fresh mint and success", ok, err)
+	}
+	if m.tokenCount != 2 {
+		t.Fatalf("mints = %d, want 2", m.tokenCount)
 	}
 }

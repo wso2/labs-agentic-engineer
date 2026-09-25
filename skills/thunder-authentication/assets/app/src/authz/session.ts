@@ -38,7 +38,7 @@
 
 import { UserManager, WebStorageStateStore, type User } from "oidc-client-ts";
 import { env } from "../env";
-import { tokenIsValid as expiryIsValid } from "./core";
+import { sessionAction, tokenIsValid as expiryIsValid } from "./core";
 
 // RFC 8707 resource indicator: the project's resource-server identifier. The
 // IdP mints an access token whose `aud` is this value and whose `scope` is
@@ -120,8 +120,21 @@ export async function signIn(): Promise<void> {
   await userManager.signinRedirect();
 }
 
-export async function handleCallback(): Promise<User> {
-  return userManager.signinRedirectCallback();
+/**
+ * Finishes whichever leg landed on this route. `signinCallback()`, NOT
+ * `signinRedirectCallback()`: `silent_redirect_uri` defaults to `redirect_uri`,
+ * so a silent renew's hidden iframe lands here too, and only the SILENT
+ * callback posts its answer back to the parent window. Finish the wrong leg and
+ * the parent hears nothing and waits out `silentRequestTimeoutInSeconds`.
+ * `signinCallback()` reads `request_type` off the stored state and dispatches
+ * both. One registered redirect URI is all the platform gives you, so this one
+ * route has to serve both.
+ *
+ * Returns nothing: the silent leg has no User to hand a hidden iframe. A
+ * /callback page renders from this promise SETTLING, never from a value.
+ */
+export async function handleCallback(): Promise<void> {
+  await userManager.signinCallback();
 }
 
 // The IdP's discovery document advertises no end_session_endpoint, so
@@ -141,10 +154,16 @@ export async function signOut(): Promise<void> {
  * An EXPIRED session renews silently — never call signIn() merely because the
  * access token expired, which turns a silent refresh into a full-screen
  * redirect on every visit. The explicit `resource` is leg 3 above.
+ *
+ * A MISSING session is a different case: ./core's `sessionAction` keeps it out
+ * of `signinSilent()` entirely, because there is nothing to renew.
  */
 export async function currentUser(): Promise<User | null> {
-  const user = await userManager.getUser();
-  if (user && !user.expired) return user;
+  const stored = await userManager.getUser();
+  const action = sessionAction(stored);
+  if (action === "use") return stored;
+  // Nothing stored: nothing to renew. The caller signs in.
+  if (action === "none") return null;
   try {
     return await userManager.signinSilent({
       resource: RESOURCE,

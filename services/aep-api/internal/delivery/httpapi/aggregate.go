@@ -43,6 +43,9 @@ type Deps struct {
 	RunProgress    *runread.ProgressService
 	RunCommands    *runread.Commands
 	RunCycleBuilds *runread.CycleBuilds
+	// RunValidation is the validation read model — the ledger, a version's
+	// attempts, and one attempt's evidence.
+	RunValidation *runread.ValidationReads
 
 	// PublisherProvisioner is nil in tests that do not care. Wired on
 	// Handler via WithPublisherProvisioner so StartProjectBuild cannot see it.
@@ -79,6 +82,6 @@ func New(d Deps) (*Handlers, error) {
 		buildHandler:     bh,
 		taskHandler:      task.NewHandler(d.TaskReads, d.TaskCommands),
 		executionHandler: execution.NewHandler(d.TaskStream),
-		runreadHandler:   runread.NewHandler(d.RunReads, d.RunProgress, d.RunCommands, d.RunCycleBuilds),
+		runreadHandler:   runread.NewHandler(d.RunReads, d.RunProgress, d.RunCommands, d.RunCycleBuilds).WithValidation(d.RunValidation),
 	}, nil
 }

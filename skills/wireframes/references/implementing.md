@@ -48,8 +48,10 @@ over the issue text when the two differ.
   `src/authz/screens.ts` (`loads: "GET /me/claims"`), then
   `<RequireOperation op={…} />` around the route and `<Can op={…}>` around the
   nav item that reaches it, both reading the generated operations table rather
-  than a handle typed into JSX. A screen with no load call is any signed-in
-  user's (`loads: null`); a screen in a flow with no `role` line is public and
+  than a handle typed into JSX. A form with no load call names the operation its
+  submit makes, so the rail, the route and the button agree; `loads: null` is
+  only for a screen that needs no operation at all. A screen in a flow with no
+  `role` line is public and
   is routed above the sign-in guard. Treat all of it as **presentation only** —
   the gateway enforces the operation's scope and answers 401 whatever the
   reason. A user who holds scopes but opens a gated screen by URL sees

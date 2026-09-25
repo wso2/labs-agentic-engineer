@@ -82,6 +82,14 @@ const (
 	// so issues left open would have it restart the very run the person stopped,
 	// within a tick. A Temporal cancellation could not run those writes.
 	SigRunCancel = "run-cancel"
+	// SigRunAgentDied — the pod-truth watcher closed the cycle's agent without a
+	// pull request (OOMKilled, a non-zero exit, a startup that never came up, a
+	// Component that went away). Carries the classified reason in Message.
+	//
+	// It ends the LANDING wait, the one wait in the loop with no poll behind it.
+	// Losing it costs that wait and nothing else: CycleFacts.Ended is the ground
+	// truth, and the landing deadline reaches the same verdict.
+	SigRunAgentDied = "run-agent-died"
 )
 
 // RunSignal is the payload of every milestone-run signal. One struct rather

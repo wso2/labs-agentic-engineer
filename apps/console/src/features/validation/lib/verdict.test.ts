@@ -17,9 +17,8 @@
  */
 
 import { describe, expect, it } from "vitest";
-import type { CriterionTally } from "@aep/ui-validation-view";
 import {
-  countsFromTally,
+  countsFromScenarios,
   verdictCounts,
   verdictSentence,
   type ValidationCounts,
@@ -29,49 +28,62 @@ function counts(over: Partial<ValidationCounts> = {}): ValidationCounts {
   return { total: 40, passed: 0, failed: 0, uncovered: 0, ...over };
 }
 
-describe("countsFromTally", () => {
-  // The tile holds a tally and the rail holds counts; one derivation keeps them from
-  // disagreeing about what "uncovered" means.
-  it("splits a tally into passed, failed and uncovered", () => {
-    const tally: CriterionTally = {
-      total: 40,
-      states: [
-        { status: "pass", count: 33 },
-        { status: "fail", count: 2 },
-        { status: "manual", count: 3 },
-        { status: "not_run", count: 2 },
-      ],
-    };
-    expect(countsFromTally(tally)).toEqual({
-      total: 40,
-      passed: 33,
-      failed: 2,
-      uncovered: 5,
+describe("countsFromScenarios", () => {
+  // The tile and the deployments rail both read this; one derivation keeps them
+  // from disagreeing about what "uncovered" means.
+  const scenarios = (...outcomes: string[]) =>
+    outcomes.map((outcome, i) => ({
+      feature: "F",
+      rule: "R",
+      scenario: `S${i}`,
+      outcome,
+      steps: [],
+    }));
+
+  it("counts everything that is neither passed nor failed as uncovered", () => {
+    expect(
+      countsFromScenarios(scenarios("passed", "passed", "failed", "blocked", "unjudgeable")),
+    ).toEqual({ total: 5, passed: 2, failed: 1, uncovered: 2 });
+  });
+
+  // The complement, deliberately: an outcome word a newer runner invents still has
+  // to land somewhere, and it is certainly not coverage — which is the same call
+  // the Go verdict ladder makes for an unrecognised outcome.
+  it("counts an outcome word it has never seen as uncovered", () => {
+    expect(countsFromScenarios(scenarios("passed", "abandoned"))).toEqual({
+      total: 2,
+      passed: 1,
+      failed: 0,
+      uncovered: 1,
     });
+  });
+
+  it("has nothing to say about a report with no scenarios", () => {
+    expect(countsFromScenarios([])).toEqual({ total: 0, passed: 0, failed: 0, uncovered: 0 });
   });
 });
 
 describe("verdictSentence", () => {
   // `passed` REQUIRES full coverage, so its sentence must say so — claiming only
-  // "everything passed" is what let a green banner sit over criteria nobody checked.
+  // "everything passed" is what let a green banner sit over scenarios nobody settled.
   it("passed names coverage, not just the result", () => {
     expect(verdictSentence("passed", counts({ passed: 40 }))).toBe(
-      "All 40 criteria were covered by a test and passed.",
+      "All 40 scenarios were settled and passed.",
     );
   });
 
   // The pair the vocabulary exists for. The numbers are the whole point: without
   // them "Validated" leaves the reader asking which part.
-  it("partial counts the uncovered criteria against the authored total", () => {
+  it("partial counts the unsettled scenarios against the run's total", () => {
     expect(verdictSentence("partial", counts({ passed: 35, uncovered: 5 }))).toBe(
-      "Everything that ran passed, but 5 of 40 criteria couldn't be automated — please validate them manually.",
+      "Everything that ran passed, but 5 of 40 scenarios couldn't be settled against the deployed app — please check them yourself.",
     );
   });
 
-  it("partial inflects for a single uncovered criterion", () => {
+  it("partial inflects for a single unsettled scenario", () => {
     expect(
       verdictSentence("partial", counts({ passed: 39, uncovered: 1 })),
-    ).toContain("1 of 40 criteria couldn't be automated — please validate it manually");
+    ).toContain("1 of 40 scenarios couldn't be settled against the deployed app — please check it yourself");
   });
 
   // A failing verdict ENDS the run once its attempts are spent, which is a
@@ -79,7 +91,7 @@ describe("verdictSentence", () => {
   it("failed counts the failures and states what it did to the run", () => {
     const s = verdictSentence("failed", counts({ failed: 2, passed: 38 }));
     expect(s).toBe(
-      "2 of 40 criteria failed. The run stopped here, so the milestone stays open for the fix.",
+      "2 of 40 scenarios failed. The run stopped here, so the milestone stays open for the fix.",
     );
   });
 
@@ -90,7 +102,7 @@ describe("verdictSentence", () => {
   it("failed swaps its ending, not its evidence, while a repair is in flight", () => {
     const s = verdictSentence("failed", counts({ failed: 2, passed: 38 }), "awaiting-fix");
     expect(s).toBe(
-      "2 of 40 criteria failed. The implementation is being fixed. Validation will run again.",
+      "2 of 40 scenarios failed. The implementation is being fixed. Validation will run again.",
     );
   });
 
@@ -100,7 +112,7 @@ describe("verdictSentence", () => {
   it("failed marks its numbers stale while a repeat attempt runs", () => {
     const s = verdictSentence("failed", counts({ failed: 2, passed: 38 }), "running", true);
     expect(s).toBe(
-      "2 of 40 criteria failed in the last attempt. The implementation has been fixed and deployed. Validation is running again.",
+      "2 of 40 scenarios failed in the last attempt. The implementation has been fixed and deployed. Validation is running again.",
     );
   });
 
@@ -111,13 +123,13 @@ describe("verdictSentence", () => {
   it("failed claims no fix when the attempt is a revalidation, not a repair", () => {
     const s = verdictSentence("failed", counts({ failed: 2, passed: 38 }), "running");
     expect(s).toBe(
-      "2 of 40 criteria failed in the last attempt. Validation is running again.",
+      "2 of 40 scenarios failed in the last attempt. Validation is running again.",
     );
     expect(s).not.toContain("fixed and deployed");
   });
 
   // `unreported` gets its OWN live sentences rather than the failed one's ending: the
-  // platform files nothing for it (there is no failing criterion to turn into work),
+  // platform files nothing for it (there is no failing scenario to turn into work),
   // so promising a fix would name work that does not exist.
   it("unreported promises a retry, never a fix, while the loop repeats it", () => {
     expect(verdictSentence("unreported", undefined, "awaiting-fix")).toBe(
@@ -158,24 +170,24 @@ describe("verdictSentence", () => {
   // what is left to do by hand.
   it("marks a green verdict as the last attempt's while a revalidation runs", () => {
     expect(verdictSentence("passed", counts({ passed: 6, total: 6 }), "running")).toBe(
-      "All 6 criteria passed in the last attempt. Validation is running again.",
+      "All 6 scenarios passed in the last attempt. Validation is running again.",
     );
     expect(
       verdictSentence("partial", counts({ passed: 4, uncovered: 2, total: 6 }), "running"),
     ).toBe(
-      "2 of 6 criteria were never covered in the last attempt. Validation is running again.",
+      "2 of 6 scenarios weren't settled in the last attempt. Validation is running again.",
     );
     expect(
       verdictSentence("inconclusive", counts({ uncovered: 6, total: 6 }), "running"),
-    ).toBe("No criteria could be automated in the last attempt. Validation is running again.");
+    ).toBe("No scenario could be settled in the last attempt. Validation is running again.");
   });
 
   it("gives the stale summaries a count-free form too", () => {
     expect(verdictSentence("passed", undefined, "running")).toBe(
-      "Every criterion passed in the last attempt. Validation is running again.",
+      "Every scenario passed in the last attempt. Validation is running again.",
     );
     expect(verdictSentence("partial", undefined, "running")).toBe(
-      "Some criteria were never covered in the last attempt. Validation is running again.",
+      "Some scenarios weren't settled in the last attempt. Validation is running again.",
     );
   });
 
@@ -191,7 +203,7 @@ describe("verdictSentence", () => {
 
   it("inconclusive asks for manual validation", () => {
     expect(verdictSentence("inconclusive", counts({ uncovered: 12, total: 12 }))).toBe(
-      "None of the 12 criteria could be automated — please validate them manually.",
+      "None of the 12 scenarios could be settled against the deployed app — please check them yourself.",
     );
   });
 
@@ -209,18 +221,18 @@ describe("verdictSentence", () => {
   // most likely: `unreported` mid-loop never has a report to count.
   it("degrades count-free in the lifecycle states as well", () => {
     expect(verdictSentence("failed", undefined, "awaiting-fix")).toBe(
-      "At least one criterion failed. The implementation is being fixed. Validation will run again.",
+      "At least one scenario failed. The implementation is being fixed. Validation will run again.",
     );
     expect(verdictSentence("failed", undefined, "running", true)).toBe(
-      "At least one criterion failed in the last attempt. The implementation has been fixed and deployed. Validation is running again.",
+      "At least one scenario failed in the last attempt. The implementation has been fixed and deployed. Validation is running again.",
     );
   });
 
   // A total of one would force verb agreement on every numbered form, so the numbered
   // forms are gated on total > 1 rather than inflected six ways.
-  it("skips the numbers for a single-criterion oracle", () => {
+  it("skips the numbers for a single-scenario oracle", () => {
     expect(verdictSentence("passed", counts({ total: 1, passed: 1 }))).toBe(
-      "Every criterion was covered by a test and passed.",
+      "Every scenario was settled and passed.",
     );
   });
 
@@ -260,17 +272,12 @@ describe("verdictSentence", () => {
 });
 
 describe("verdictCounts", () => {
-  const t: CriterionTally = {
-    total: 40,
-    states: [
-      { status: "fail", count: 2 },
-      { status: "pass", count: 35 },
-      { status: "manual", count: 3 },
-    ],
-  };
+  // The words come from the acceptance package, which reads them off the report;
+  // this only decides whether they need marking as stale.
+  const t = "35 of 40 passed · 2 failed · 3 blocked";
 
-  it("reads as a run-on line, lowercased", () => {
-    expect(verdictCounts(t)).toBe("2 failed · 35 passed · 3 manual");
+  it("passes the line through untouched in a settled state", () => {
+    expect(verdictCounts(t)).toBe("35 of 40 passed · 2 failed · 3 blocked");
   });
 
   // The tally is the most standalone-readable thing on the tile, so in the one state
@@ -280,7 +287,7 @@ describe("verdictCounts", () => {
   // tacked onto a list of numbers reads as another entry in the list.
   it("marks the numbers as the last attempt's while a repeat attempt runs", () => {
     expect(verdictCounts(t, "running")).toBe(
-      "2 failed · 35 passed · 3 manual (last attempt)",
+      "35 of 40 passed · 2 failed · 3 blocked (last attempt)",
     );
   });
 
@@ -288,20 +295,14 @@ describe("verdictCounts", () => {
   it("leaves the numbers unmarked in every other state", () => {
     for (const state of ["awaiting-fix", "failed", "passed", ""]) {
       expect(verdictCounts(t, state), `${state} marked its counts`).toBe(
-        "2 failed · 35 passed · 3 manual",
+        "35 of 40 passed · 2 failed · 3 blocked",
       );
     }
   });
 
-  it("names an unknown status verbatim rather than dropping it", () => {
-    expect(verdictCounts({ total: 1, states: [{ status: "quarantined", count: 1 }] })).toBe(
-      "1 quarantined",
-    );
-  });
-
-  it("is empty with no report and with no tally — marked or not", () => {
-    expect(verdictCounts({ total: 40, states: [] })).toBe("");
-    expect(verdictCounts({ total: 40, states: [] }, "running")).toBe("");
+  it("is empty with no report — marked or not", () => {
+    expect(verdictCounts("")).toBe("");
+    expect(verdictCounts("", "running")).toBe("");
     expect(verdictCounts(undefined, "running")).toBe("");
   });
 });

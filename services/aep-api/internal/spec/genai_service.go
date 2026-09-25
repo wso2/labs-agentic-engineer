@@ -112,10 +112,19 @@ type GitReader interface {
 	ResolveSaveIdentities(cred secrets.Credential) (*sourcecontrol.GitIdentity, *sourcecontrol.GitIdentity)
 }
 
-// AnthropicKeyResolver resolves the effective org Anthropic key. An empty key
-// with a nil error means "org has none" → the service raises ErrNoAnthropicKey
-// pre-202 (no platform fallback). Wired from AnthropicCredentialService.
-type AnthropicKeyResolver func(ctx context.Context, orgID string) (string, error)
+// AgentLLM is what a spec-agent turn runs on: the org's Anthropic API key and
+// the one model its agents use. Resolved together, per turn, so a model change
+// in Settings reaches the very next turn.
+type AgentLLM struct {
+	Key   string
+	Model string
+}
+
+// AgentLLMResolver resolves the org's AgentLLM. An empty Key with a nil error
+// means "org has none" → the service raises ErrNoAnthropicKey pre-202 (no
+// platform fallback); an empty Model leaves the agents service on its default.
+// Wired at the composition root from the organization domain.
+type AgentLLMResolver func(ctx context.Context, orgID string) (AgentLLM, error)
 
 // SkillsRepoResolver returns the org _skills git row used as a turn's
 // SkillsRef snapshot source. Production wires SkillsRepoForTurns so the
@@ -220,7 +229,7 @@ type MCPTokenMinter interface {
 type ServiceDeps struct {
 	Repos      RepoResolver
 	Git        GitReader
-	Keys       AnthropicKeyResolver
+	LLM        AgentLLMResolver
 	Client     agentsvc.Client
 	Turns      TurnRepository
 	Broker     *TurnBroker
@@ -265,7 +274,7 @@ type TurnActivityRecorder interface {
 type Service struct {
 	repos  RepoResolver
 	git    GitReader
-	keys   AnthropicKeyResolver
+	llm    AgentLLMResolver
 	client agentsvc.Client
 	turns  TurnRepository
 	broker *TurnBroker
@@ -286,7 +295,7 @@ func NewService(d ServiceDeps) *Service {
 	return &Service{
 		repos:          d.Repos,
 		git:            d.Git,
-		keys:           d.Keys,
+		llm:            d.LLM,
 		client:         d.Client,
 		turns:          d.Turns,
 		broker:         d.Broker,
@@ -325,7 +334,7 @@ func (s *Service) StartTurn(ctx context.Context, orgID, projectID string, in Tur
 	if strings.TrimSpace(in.Instruction) == "" {
 		return "", ErrEmptyInstruction
 	}
-	key, err := s.resolveKey(ctx, orgID)
+	llm, err := s.resolveLLM(ctx, orgID)
 	if err != nil {
 		return "", err
 	}
@@ -464,7 +473,7 @@ func (s *Service) StartTurn(ctx context.Context, orgID, projectID string, in Tur
 		repoRef:      ref,
 		baseRef:      baseRef,
 		skillsRef:    skillsRef,
-		anthropicKey: key,
+		llm:          llm,
 		collabRoomID: collabRoomID,
 		collabToken:  collabToken,
 	}
@@ -588,18 +597,18 @@ func (s *Service) resolveRepo(ctx context.Context, orgID, projectID string) (*so
 	return repo, nil
 }
 
-func (s *Service) resolveKey(ctx context.Context, orgID string) (string, error) {
-	if s.keys == nil {
-		return "", ErrNoAnthropicKey
+func (s *Service) resolveLLM(ctx context.Context, orgID string) (AgentLLM, error) {
+	if s.llm == nil {
+		return AgentLLM{}, ErrNoAnthropicKey
 	}
-	key, err := s.keys(ctx, orgID)
+	llm, err := s.llm(ctx, orgID)
 	if err != nil {
-		return "", fmt.Errorf("resolve anthropic key: %w", err)
+		return AgentLLM{}, fmt.Errorf("resolve agent llm: %w", err)
 	}
-	if key == "" {
-		return "", ErrNoAnthropicKey
+	if llm.Key == "" {
+		return AgentLLM{}, ErrNoAnthropicKey
 	}
-	return key, nil
+	return llm, nil
 }
 
 // ---- pure helpers ----------------------------------------------------------

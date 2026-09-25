@@ -60,32 +60,33 @@ describe("projectChip — repo lifecycle still comes from phase", () => {
     });
   });
   it("cloning → info", () => {
-    expect(projectChip(status({ phase: "repo-cloning" })).label).toBe(
+    expect(projectChip(status({ phase: "repo-cloning" }))?.label).toBe(
       "Preparing repository",
     );
   });
   it("repo error → error", () => {
-    expect(projectChip(status({ phase: "repo-error" })).tone).toBe("error");
+    expect(projectChip(status({ phase: "repo-error" }))?.tone).toBe("error");
   });
 });
 
-describe("projectChip — before the first build, the spec aggregate decides", () => {
-  it("no spec yet → Starting", () => {
-    const c = projectChip(status({ phase: "prompt", spec: { exists: false, version: "" } }));
-    expect(c.label).toBe("Starting");
-  });
-  it("spec unpublished → Spec in progress", () => {
-    expect(projectChip(status({ spec: { version: "" } })).label).toBe("Spec in progress");
-  });
-  it("published spec edited since → Spec in progress", () => {
-    expect(projectChip(status({ spec: { dirty: true } })).label).toBe("Spec in progress");
-  });
-  it("published and clean, nothing built → Spec published", () => {
-    expect(projectChip(status({}))).toEqual({ label: "Spec published", tone: "success", busy: false });
+// The spec is not part of the chip. It used to fall through to the spec
+// aggregate before the first build, and "Spec in progress" spun over a spec
+// that was waiting on the user to publish it. The spec and delivery are
+// independent axes — a v2 spec can be amended while v1 builds — so the chip
+// reports delivery only and says nothing until there is some.
+describe("projectChip — the spec is not part of the state", () => {
+  it.each([
+    ["no spec yet", { phase: "prompt", spec: { exists: false, version: "" } }],
+    ["spec unpublished", { spec: { version: "" } }],
+    ["published spec edited since", { spec: { dirty: true } }],
+    ["published and clean, nothing built", {}],
+    ["agent writing the spec", { spec: { version: "", agent: "working" } }],
+  ] as const)("%s → no chip", (_, over) => {
+    expect(projectChip(status(over as Parameters<typeof status>[0]))).toBeNull();
   });
 });
 
-describe("projectChip — delivery state outranks the spec", () => {
+describe("projectChip — delivery state", () => {
   it("build running → Building", () => {
     expect(projectChip(status({ build: { version: "v1", status: "running" } }))).toEqual({
       label: "Building",
@@ -94,7 +95,7 @@ describe("projectChip — delivery state outranks the spec", () => {
     });
   });
   it("build failed → Build failed", () => {
-    expect(projectChip(status({ build: { version: "v1", status: "failed" } })).tone).toBe(
+    expect(projectChip(status({ build: { version: "v1", status: "failed" } }))?.tone).toBe(
       "error",
     );
   });
@@ -118,7 +119,7 @@ describe("projectChip — delivery state outranks the spec", () => {
           build: { version: "v2", status: "cancelled" },
           deploy: { version: "v1", status: "deployed" },
         }),
-      ).label,
+      )?.label,
     ).toBe("Build cancelled");
   });
   it("built, nothing deployed → Built", () => {
@@ -191,7 +192,7 @@ describe("projectChip — delivery state outranks the spec", () => {
         deploy: { version: "v1", status: "none", validation: "passed" },
       }),
     );
-    expect(c.label).toBe("Active");
+    expect(c?.label).toBe("Active");
   });
 
   // build.version is the NEWEST run, so a v2 in flight over a live v1 is the
@@ -207,7 +208,7 @@ describe("projectChip — delivery state outranks the spec", () => {
         },
       }),
     );
-    expect(c.label).toBe("Building");
+    expect(c?.label).toBe("Building");
   });
 });
 
@@ -218,8 +219,6 @@ describe("projectChip — delivery state outranks the spec", () => {
 describe("projectChip — busy marks the states that move by themselves", () => {
   const cases: [string, ReturnType<typeof status>, boolean][] = [
     ["Preparing repository", status({ phase: "repo-cloning" }), true],
-    ["Starting", status({ phase: "prompt", spec: { exists: false, version: "" } }), true],
-    ["Spec in progress", status({ spec: { version: "" } }), true],
     ["Building", status({ build: { version: "v1", status: "running" } }), true],
     [
       "Deploying",
@@ -231,7 +230,6 @@ describe("projectChip — busy marks the states that move by themselves", () => 
     ],
     ["No repository", status({ phase: "no-repo" }), false],
     ["Repository error", status({ phase: "repo-error" }), false],
-    ["Spec published", status({}), false],
     ["Built", status({ build: { version: "v1", status: "succeeded" } }), false],
     ["Build failed", status({ build: { version: "v1", status: "failed" } }), false],
     [
@@ -259,7 +257,7 @@ describe("projectChip — busy marks the states that move by themselves", () => 
 
   it.each(cases)("%s → busy %s", (label, input, busy) => {
     const chip = projectChip(input);
-    expect(chip.label).toBe(label);
-    expect(chip.busy).toBe(busy);
+    expect(chip?.label).toBe(label);
+    expect(chip?.busy).toBe(busy);
   });
 });

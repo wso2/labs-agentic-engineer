@@ -19,7 +19,7 @@
 // The validation run's PREFLIGHT: where the deployed system actually is.
 //
 // This is a platform fact, so platform code fetches it — before the agent
-// starts, and fatally. It used to be a `curl` in the aep-validation skill, with
+// starts, and fatally. It used to be a `curl` in the validation skill, with
 // prose telling the agent to stop if the fetch failed. The agent did not stop: on
 // a 404 it spent half an hour scanning the pod network and reading an Envoy admin
 // config dump trying to infer the URL itself. An unanswerable platform question
@@ -29,13 +29,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { fetchWith401Retry, staticTokenSource, type AccessTokenSource } from "./auth_retry.js";
 
-// The file the aep-validation skill reads. Deliberately under /tmp and NOT under
+// The file the validation skill reads. Deliberately under /tmp and NOT under
 // the workspace's `.aep/` — the base skill forbids the agent from looking in
 // there at all, and it must not need to break that rule to find its targets.
 // Outside the work tree either way, so it can never be committed.
 export const VALIDATION_CONTEXT_FILE = "/tmp/validation-context.json";
 
-/** One deployed component's reachable URL — the runner's e2e target. */
+/** One deployed component's reachable URL — what a scenario is driven against. */
 export interface ComponentEndpoint {
   component: string;
   url: string;
@@ -43,7 +43,6 @@ export interface ComponentEndpoint {
 
 export interface ValidationContext {
   endpoints: ComponentEndpoint[];
-  criteriaPath: string;
 }
 
 export interface FetchValidationContextOptions {
@@ -131,19 +130,6 @@ export async function fetchValidationContext(
       "validation context names no deployed endpoints — there is nothing to validate against",
     );
   }
-  // The oracle's path is required by the internal contract, and the skill is told
-  // in so many words that the context "is present and non-empty whenever you are
-  // running … there is no failure mode here for you to recover from". Defaulting a
-  // missing one to "" would hand the agent a well-formed file that quietly fails
-  // that promise, and an agent that cannot find the oracle goes looking — the exact
-  // behaviour this preflight exists to prevent. Same reasoning as the endpoints
-  // check above, so it fails the same way.
-  if (typeof ctx.criteriaPath !== "string" || ctx.criteriaPath === "") {
-    throw new Error(
-      "validation context names no validation-criteria path — there is nothing to validate against",
-    );
-  }
-
   const file = opts.file ?? VALIDATION_CONTEXT_FILE;
   const dir = path.dirname(file);
   await fs.promises.mkdir(dir, { recursive: true });
@@ -170,5 +156,5 @@ export async function fetchValidationContext(
   } finally {
     await fs.promises.rm(staging, { recursive: true, force: true });
   }
-  return { endpoints: ctx.endpoints, criteriaPath: ctx.criteriaPath };
+  return { endpoints: ctx.endpoints };
 }

@@ -23,6 +23,9 @@ var _ openchoreo.ProjectCellClient = &ProjectCellClientMock{}
 //			EnsureProjectReleaseBindingFunc: func(ctx context.Context, namespace string, projectName string, environment string) error {
 //				panic("mock out the EnsureProjectReleaseBinding method")
 //			},
+//			ListPipelineNamesFunc: func(ctx context.Context, namespace string) ([]string, error) {
+//				panic("mock out the ListPipelineNames method")
+//			},
 //			PipelineEnvironmentsFunc: func(ctx context.Context, namespace string, pipelineName string) ([]string, error) {
 //				panic("mock out the PipelineEnvironments method")
 //			},
@@ -35,6 +38,9 @@ var _ openchoreo.ProjectCellClient = &ProjectCellClientMock{}
 type ProjectCellClientMock struct {
 	// EnsureProjectReleaseBindingFunc mocks the EnsureProjectReleaseBinding method.
 	EnsureProjectReleaseBindingFunc func(ctx context.Context, namespace string, projectName string, environment string) error
+
+	// ListPipelineNamesFunc mocks the ListPipelineNames method.
+	ListPipelineNamesFunc func(ctx context.Context, namespace string) ([]string, error)
 
 	// PipelineEnvironmentsFunc mocks the PipelineEnvironments method.
 	PipelineEnvironmentsFunc func(ctx context.Context, namespace string, pipelineName string) ([]string, error)
@@ -52,6 +58,13 @@ type ProjectCellClientMock struct {
 			// Environment is the environment argument value.
 			Environment string
 		}
+		// ListPipelineNames holds details about calls to the ListPipelineNames method.
+		ListPipelineNames []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Namespace is the namespace argument value.
+			Namespace string
+		}
 		// PipelineEnvironments holds details about calls to the PipelineEnvironments method.
 		PipelineEnvironments []struct {
 			// Ctx is the ctx argument value.
@@ -63,6 +76,7 @@ type ProjectCellClientMock struct {
 		}
 	}
 	lockEnsureProjectReleaseBinding sync.RWMutex
+	lockListPipelineNames           sync.RWMutex
 	lockPipelineEnvironments        sync.RWMutex
 }
 
@@ -107,6 +121,42 @@ func (mock *ProjectCellClientMock) EnsureProjectReleaseBindingCalls() []struct {
 	mock.lockEnsureProjectReleaseBinding.RLock()
 	calls = mock.calls.EnsureProjectReleaseBinding
 	mock.lockEnsureProjectReleaseBinding.RUnlock()
+	return calls
+}
+
+// ListPipelineNames calls ListPipelineNamesFunc.
+func (mock *ProjectCellClientMock) ListPipelineNames(ctx context.Context, namespace string) ([]string, error) {
+	if mock.ListPipelineNamesFunc == nil {
+		panic("ProjectCellClientMock.ListPipelineNamesFunc: method is nil but ProjectCellClient.ListPipelineNames was just called")
+	}
+	callInfo := struct {
+		Ctx       context.Context
+		Namespace string
+	}{
+		Ctx:       ctx,
+		Namespace: namespace,
+	}
+	mock.lockListPipelineNames.Lock()
+	mock.calls.ListPipelineNames = append(mock.calls.ListPipelineNames, callInfo)
+	mock.lockListPipelineNames.Unlock()
+	return mock.ListPipelineNamesFunc(ctx, namespace)
+}
+
+// ListPipelineNamesCalls gets all the calls that were made to ListPipelineNames.
+// Check the length with:
+//
+//	len(mockedProjectCellClient.ListPipelineNamesCalls())
+func (mock *ProjectCellClientMock) ListPipelineNamesCalls() []struct {
+	Ctx       context.Context
+	Namespace string
+} {
+	var calls []struct {
+		Ctx       context.Context
+		Namespace string
+	}
+	mock.lockListPipelineNames.RLock()
+	calls = mock.calls.ListPipelineNames
+	mock.lockListPipelineNames.RUnlock()
 	return calls
 }
 

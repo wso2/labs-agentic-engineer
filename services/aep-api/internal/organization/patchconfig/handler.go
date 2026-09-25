@@ -62,7 +62,14 @@ func mapPatchError(err error) error {
 		case http.StatusBadGateway:
 			return apierr.New(http.StatusBadGateway, apierr.CodeBadGateway, se.Message, details)
 		default:
-			return apierr.New(http.StatusBadRequest, apierr.CodeValidationFailed, se.Message, details)
+			// The refusal's own slug when it has one (agents_subscription_requires_claude_code,
+			// anthropic_key_invalid, …), so a client can branch on the reason
+			// without parsing prose; validation_failed otherwise.
+			code := apierr.CodeValidationFailed
+			if se.Code != "" {
+				code = se.Code
+			}
+			return apierr.New(http.StatusBadRequest, code, se.Message, details)
 		}
 	}
 	return apierr.Internal("internal error")

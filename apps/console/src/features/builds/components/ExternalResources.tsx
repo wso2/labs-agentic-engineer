@@ -26,7 +26,7 @@ import {
   Stack,
   Typography,
 } from "@wso2/oxygen-ui";
-import { CircleCheck } from "@wso2/oxygen-ui-icons-react";
+import { Building2, CircleCheck } from "@wso2/oxygen-ui-icons-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { LogSection } from "../../../components/LogSection";
 import { StatusChip } from "../../../components/StatusChip";
@@ -124,6 +124,9 @@ export function ExternalResources({ projectName }: { projectName: string }) {
 
   // Only meaningful once both reads answered — see `known` below.
   const outstanding = rows.filter((row) => row.display === "needs-values").length;
+  // Rows a person can actually supply. A copy of a Registered External resource
+  // is listed to be explained, never to be asked for.
+  const suppliable = rows.filter((row) => row.display !== "org-held").length;
   // Whether the section may speak about what is outstanding. A failed readiness
   // read leaves react-query's last good `data` in place, so `rows` can be
   // non-empty and stale; a summary drawn from it would sit above the error card
@@ -156,9 +159,11 @@ export function ExternalResources({ projectName }: { projectName: string }) {
           color="text.secondary"
           sx={SECTION_PADDING}
         >
-          {outstanding === 0
-            ? "Every external dependency has its development configuration."
-            : "The agent builds while you supply these. The version is not deployed until every one of them has its development configuration."}
+          {suppliable === 0
+            ? "Every external dependency here is the organization's to configure."
+            : outstanding === 0
+              ? "Every external dependency has its development configuration."
+              : "The agent builds while you supply these. The version is not deployed until every one of them has its development configuration."}
         </Typography>
       )}
 
@@ -206,6 +211,10 @@ export function ExternalResources({ projectName }: { projectName: string }) {
         <Box>
           {rows.map((row) => {
             const done = row.display === "configured";
+            // The organization holds this one's values (ADR-0023): saving them
+            // from a project answers 409, and the deploy gate does not wait on
+            // it — so the row states where they live and offers no button.
+            const orgHeld = row.display === "org-held";
             return (
               <Stack
                 key={row.name}
@@ -247,10 +256,16 @@ export function ExternalResources({ projectName }: { projectName: string }) {
                   sx={{
                     alignItems: "center",
                     flexShrink: 0,
-                    color: done ? "success.main" : "warning.main",
+                    color: orgHeld
+                      ? "text.secondary"
+                      : done
+                        ? "success.main"
+                        : "warning.main",
                   }}
                 >
-                  {done ? (
+                  {orgHeld ? (
+                    <Building2 size={16} aria-hidden />
+                  ) : done ? (
                     <CircleCheck size={16} aria-hidden />
                   ) : (
                     <Box
@@ -267,9 +282,10 @@ export function ExternalResources({ projectName }: { projectName: string }) {
                     variant="body2"
                     sx={{ color: "inherit", fontWeight: 500 }}
                   >
-                    {done ? "Configured" : "Needs configuration"}
+                    {statusText(row)}
                   </Typography>
                 </Stack>
+                {!orgHeld && (
                 <Button
                   size="small"
                   // The outstanding row is the only thing on this page a person
@@ -291,6 +307,7 @@ export function ExternalResources({ projectName }: { projectName: string }) {
                 >
                   {done ? "Edit configuration" : "Configure now"}
                 </Button>
+                )}
               </Stack>
             );
           })}
@@ -358,9 +375,24 @@ function readErrorDetail(error: unknown): string {
   return error instanceof Error && error.message ? `: ${error.message}` : "";
 }
 
+/** Where the row stands, in the words the page uses for it. */
+function statusText(row: ExternalResourceRow): string {
+  switch (row.display) {
+    case "org-held":
+      return "Values held by the organization";
+    case "configured":
+      return "Configured";
+    default:
+      return "Needs configuration";
+  }
+}
+
 /** The row's second line: the design's own sentence when it has one, otherwise
  *  what is outstanding — never nothing, so rows keep an even height. */
 function secondaryLine(row: ExternalResourceRow): string {
+  // A copy's own description is on its dependency page; here the only question
+  // a person has is why there is no button, so that is the whole line.
+  if (row.display === "org-held") return "Nothing to configure here.";
   if (row.description) return row.description;
   if (row.display === "configured") {
     return `${row.config.length} setting${row.config.length === 1 ? "" : "s"} stored`;

@@ -34,18 +34,19 @@
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { chatTurn, codeCommand, tasksCommand, undoCommand, type PhaseOptions } from "../commands.js";
+import { wireCommand } from "../engine/wire/session.js";
 import { checkProject } from "../engine/check.js";
 import { loadRepoSkills } from "../kit/skills.js";
 import { collectAnswers } from "./questions.js";
 import { buildChatBanner, commandGuide } from "./banner.js";
 import { classifyChatInput, type ChatIntent } from "./chat-commands.js";
-import { confirmCodingDir } from "./consent.js";
+import { confirmCodingDir, confirmWireDir } from "./consent.js";
 import { chatSpec, startSpec } from "../engine/turn-spec.js";
 import { readReferences } from "../state/references.js";
 import { readIdea } from "../state/descriptor.js";
 import type { PlaygroundSession } from "../engine/session.js";
 
-/** Run one phase-runner (`/task`, `/code`, `/validate`, `/undo`) to completion. */
+/** Run one phase-runner (`/task`, `/code`, `/wire`, `/validate`, `/undo`) to completion. */
 async function runPhase(session: PlaygroundSession, intent: Extract<ChatIntent, { kind: "phase" }>, opts: PhaseOptions): Promise<void> {
   const dir = session.projectDir;
   switch (intent.name) {
@@ -66,6 +67,14 @@ async function runPhase(session: PlaygroundSession, intent: Extract<ChatIntent, 
     case "task": {
       const outcome = await tasksCommand(dir, opts); // streams its own fold summary
       if (!outcome.ok) output.write(`  ✗ tasks: ${outcome.detail ?? "failed"}\n`);
+      return;
+    }
+    case "wire": {
+      // Holds the terminal until you quit it, the same as from the CLI: the
+      // session IS the process, so there is nothing to come back to chat for
+      // until it is torn down.
+      const outcome = await wireCommand(dir, intent.arg !== undefined ? { role: intent.arg } : {}, confirmWireDir(dir));
+      if (!outcome.ok) output.write(`  ✗ wire: ${outcome.detail ?? "failed"}\n`);
       return;
     }
     case "code": {

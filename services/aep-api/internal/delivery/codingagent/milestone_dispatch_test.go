@@ -75,7 +75,7 @@ func TestDispatch_EveryNonValidationKind_CarriesTheMilestoneReference(t *testing
 }
 
 // TestDispatch_ValidationCycle_AnchorsToItsIssue: validation is the one anchored
-// kind — the aep-validation skill and a prompt pointing at the single issue.
+// kind — the acceptance-run skill and a prompt pointing at the single issue.
 func TestDispatch_ValidationCycle_AnchorsToItsIssue(t *testing.T) {
 	req := milestoneDispatch(delivery.CycleKindValidation)
 	req.IssueNumber = 9

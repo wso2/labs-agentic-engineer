@@ -304,11 +304,9 @@ func externalValueState(binding *openchoreo.ResourceReleaseBinding, keys []spec.
 		}
 		return ValueStateNotProvisioned, missing, nil
 	}
-	values := map[string]string{}
-	if len(binding.Spec.ResourceTypeEnvironmentConfigs) > 0 {
-		if err := json.Unmarshal(binding.Spec.ResourceTypeEnvironmentConfigs, &values); err != nil {
-			return "", nil, err
-		}
+	values, err := bindingValues(binding)
+	if err != nil {
+		return "", nil, err
 	}
 	for _, key := range keys {
 		lookup := key.Key
@@ -323,4 +321,18 @@ func externalValueState(binding *openchoreo.ResourceReleaseBinding, keys []spec.
 		return ValueStateUnset, missing, nil
 	}
 	return ValueStateConfigured, missing, nil
+}
+
+// bindingValues decodes a binding's environment configs: the plain keys by
+// name plus secretStorePath. A nil binding or one without configs reads as
+// an empty map.
+func bindingValues(binding *openchoreo.ResourceReleaseBinding) (map[string]string, error) {
+	values := map[string]string{}
+	if binding == nil || len(binding.Spec.ResourceTypeEnvironmentConfigs) == 0 {
+		return values, nil
+	}
+	if err := json.Unmarshal(binding.Spec.ResourceTypeEnvironmentConfigs, &values); err != nil {
+		return nil, err
+	}
+	return values, nil
 }

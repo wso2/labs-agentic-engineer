@@ -25,7 +25,6 @@ import {
   CircularProgress,
   Divider,
   IconButton,
-  Link as MuiLink,
   Menu,
   MenuItem,
   Skeleton,
@@ -38,7 +37,7 @@ import {
   Copy,
   Ellipsis,
   GitHub,
-  RotateCcw,
+  RotateCw,
   X,
 } from "@wso2/oxygen-ui-icons-react";
 import { createLink, Link } from "@tanstack/react-router";
@@ -54,7 +53,7 @@ import { runStamp } from "../lib/format";
 import {
   buildDuration,
   countTasks,
-  isDeployable,
+  hasDeployment,
   isDurationOpen,
   isLedgerLive,
   ledgerStatus,
@@ -94,7 +93,6 @@ type BuildSummary = components["schemas"]["BuildSummary"];
 // typed `to`/`params`; createLink is the console's established adapter.
 const LinkButton = createLink(Button);
 const LinkMenuItem = createLink(MenuItem);
-const RouterLink = createLink(MuiLink);
 
 /**
  * One version's build (ADR-0021 §2, §3).
@@ -265,7 +263,6 @@ export function BuildDetailPage({
           build={build}
           tasks={tasks}
           claims={claims}
-          runs={runList}
           park={park}
           {...(projectStatus.data?.deploy ? { deploy: projectStatus.data.deploy } : {})}
         />
@@ -368,7 +365,6 @@ function BuildSummaryCard({
   build,
   tasks,
   claims,
-  runs,
   park,
   deploy,
 }: {
@@ -376,7 +372,6 @@ function BuildSummaryCard({
   build: BuildSummary;
   tasks: components["schemas"]["TaskView"][];
   claims: RunClaims;
-  runs: components["schemas"]["MilestoneRunView"][];
   /** The external dependencies this version's run is parked on at the deploy
    *  gate, or null when it is not parked. Empty means parked, naming nothing. */
   park: string[] | null;
@@ -391,7 +386,7 @@ function BuildSummaryCard({
   // Derived from the tasks this page already holds — the same TAG-SCOPED read
   // the Tasks section below renders.
   const breakdown = taskBreakdown(countTasks(tasks, claims));
-  const deployable = isDeployable(build, runs, deploy);
+  const deployed = hasDeployment(build, deploy);
 
   const cells: Array<{ label: string; value: React.ReactNode }> = [
     { label: "Milestone", value: milestoneLabel(build) },
@@ -483,19 +478,21 @@ function BuildSummaryCard({
 
       <Divider sx={{ my: 2 }} />
 
-      <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", flexWrap: "wrap" }}>
-        {/* Only once the version's work has actually merged — see
-            `isDeployable`. Until then the note below says what has to happen,
-            and a link to a board with nothing on it would contradict it. */}
-        {deployable && (
-          <RouterLink
+      <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", flexWrap: "wrap", rowGap: 1 }}>
+        {/* The PRIMARY way forward from a build — into the flow the version
+            is now on (ADR-0032) — and only once there is a deployment to go
+            and look at (`hasDeployment`). Until then the note beside it says
+            what has to happen, and a button to a board with nothing on it
+            would contradict it. */}
+        {deployed && (
+          <LinkButton
+            variant="contained"
             to="/projects/$projectName/deployments"
             params={{ projectName }}
-            underline="hover"
-            sx={{ fontSize: "0.8125rem", fontWeight: 500, display: "inline-flex", alignItems: "center", gap: 0.5 }}
+            endIcon={<ArrowRight size={16} aria-hidden />}
           >
-            Go to Deployments <ArrowRight size={14} />
-          </RouterLink>
+            Go to Deployments
+          </LinkButton>
         )}
         <Typography variant="caption" color="text.secondary">
           {park
@@ -588,7 +585,7 @@ function BuildActions({
           params={{ projectName }}
           onClick={close}
         >
-          <RotateCcw size={15} style={{ marginRight: 10 }} />
+          <RotateCw size={15} style={{ marginRight: 10 }} />
           Retry this build
         </LinkMenuItem>
         <Divider />

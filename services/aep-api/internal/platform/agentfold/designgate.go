@@ -38,6 +38,10 @@ import (
 // componentDesignRe is COMPONENT_DESIGN_JSON_RE.
 var componentDesignRe = regexp.MustCompile(`^specs/design/components/([^/]+)/design\.json$`)
 
+// agentAfmRe mirrors the path an agent.afm.md write is matched against
+// (component-design-schema.ts's COMPONENT_DESIGN_JSON_RE, sibling filename).
+var agentAfmRe = regexp.MustCompile(`^specs/design/components/([^/]+)/agent\.afm\.md$`)
+
 type designProblem struct {
 	code    ErrCode
 	message string

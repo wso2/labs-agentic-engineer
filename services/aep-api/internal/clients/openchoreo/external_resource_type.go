@@ -60,6 +60,30 @@ const (
 	externalDescriptionAnnotation     = "aep.wso2.com/description"
 	consumptionInstructionsAnnotation = "aep.wso2.com/consumption-instructions"
 	resourceDocsAnnotation            = "aep.wso2.com/resource-docs"
+	// The resource record proper (one shape at both levels — see the spec
+	// domain's ResourceDefinition): the provider, the contract document as a
+	// `{type, path}` pointer into the org docs repo, and where that document
+	// came from. Written by register; absent on a type a project's build
+	// authored, which carries no document of its own.
+	externalProviderAnnotation   = "aep.wso2.com/provider"
+	externalContractAnnotation   = "aep.wso2.com/contract"
+	externalProvenanceAnnotation = "aep.wso2.com/provenance"
+	// Scope markers: `org` for a Registered External resource (register wrote
+	// it); `project` plus the owning project for a type a project's build
+	// authored for its own resource. Org-level reads list `org` only — a
+	// project's resource belongs to its project and is never offered for
+	// reuse or counted as a taken name. A type from before the markers
+	// existed has neither; Registered() then falls back to the presence of
+	// consumption instructions (ADR-0021).
+	externalScopeAnnotation   = "aep.wso2.com/scope"
+	externalProjectAnnotation = "aep.wso2.com/project"
+)
+
+// ExternalResourceScopeOrg / ExternalResourceScopeProject are the two values
+// of the scope marker.
+const (
+	ExternalResourceScopeOrg     = "org"
+	ExternalResourceScopeProject = "project"
 )
 
 // ExternalResourceRTName is the cluster ResourceType name for an external
@@ -74,15 +98,25 @@ const (
 // generator change never collides with — and silently reuses — a stale RT
 // of the same schema.
 func ExternalResourceRTName(name string, keys []ExternalResourceConfigKey) string {
-	return fmt.Sprintf("%s-%s-t%d", name, shortHash(keys), ExternalResourceRTTemplateVersion)
+	return fmt.Sprintf("%s-%s-t%d", name, shortHash("", keys), ExternalResourceRTTemplateVersion)
+}
+
+// ExternalResourceRTNameForProject is the cluster ResourceType name for a
+// PROJECT's own external resource: the project is folded into the hash, so a
+// project type and a registered type of the same logical name can never
+// collide, and two projects that each define a `currency-service` get their
+// own. Within one project the same schema still yields the same name.
+func ExternalResourceRTNameForProject(name, project string, keys []ExternalResourceConfigKey) string {
+	return fmt.Sprintf("%s-%s-t%d", name, shortHash(project, keys), ExternalResourceRTTemplateVersion)
 }
 
 // shortHash is a short hex digest (first 10 hex chars of a sha256) over a
-// config schema's (key, secret) pairs, sorted by key for order-independence.
+// config schema's (key, secret) pairs, sorted by key for order-independence,
+// prefixed by the owning project for a project-scoped type ("" for the org).
 // It deliberately ignores Description/DefaultValue — those can be edited
 // freely without minting a new ResourceType — mirroring exactly what
 // repositories.SchemaEqual compares.
-func shortHash(keys []ExternalResourceConfigKey) string {
+func shortHash(project string, keys []ExternalResourceConfigKey) string {
 	type kv struct {
 		key    string
 		secret bool
@@ -94,11 +128,50 @@ func shortHash(keys []ExternalResourceConfigKey) string {
 	sort.Slice(pairs, func(i, j int) bool { return pairs[i].key < pairs[j].key })
 
 	var b strings.Builder
+	if project != "" {
+		fmt.Fprintf(&b, "project=%s;", project)
+	}
 	for _, p := range pairs {
 		fmt.Fprintf(&b, "%s=%t;", p.key, p.secret)
 	}
 	sum := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(sum[:])[:10]
+}
+
+// ExternalResourceTypeSpec is everything BuildExternalResourceType authors
+// onto a ResourceType: the schema that shapes it and the record it carries.
+type ExternalResourceTypeSpec struct {
+	// Name is the logical external-resource name ("currency-service").
+	Name        string
+	Description string
+	Keys        []ExternalResourceConfigKey
+	// Scope is ExternalResourceScopeOrg (register) or
+	// ExternalResourceScopeProject (a project's build); Project names the
+	// owner for the latter and folds into the type's name.
+	Scope   string
+	Project string
+	// Record fields, written by register; a project type leaves them empty.
+	Provider                string
+	Contract                *ResourceContractPointer
+	Provenance              *ResourceRecordProvenance
+	ConsumptionInstructions string
+	ResourceDocs            []ResourceDoc
+}
+
+// ResourceContractPointer is a registry record's contract: `{type, path}`,
+// the path relative to the org docs repo. Never a URL.
+type ResourceContractPointer struct {
+	Type string `json:"type"`
+	Path string `json:"path"`
+}
+
+// ResourceRecordProvenance is where the registry's copy of the document came
+// from: the internet address it was fetched from, the whole document's hash,
+// and when it was read.
+type ResourceRecordProvenance struct {
+	SourceURL string `json:"sourceUrl,omitempty"`
+	SHA256    string `json:"sha256,omitempty"`
+	ReadOn    string `json:"readOn,omitempty"`
 }
 
 // ExternalResourceConfigKey is one env-var key in an external resource's
@@ -168,9 +241,19 @@ const retainPolicyDelete = "Delete"
 // authored RT without a DB round-trip. ResourceTypes are effectively
 // immutable — a changed key/secret schema mints a new RT name
 // (see ExternalResourceRTName); a description/default-only edit does not.
-func BuildExternalResourceType(name, description string, keys []ExternalResourceConfigKey, consumptionInstructions string, resourceDocs []ResourceDoc) (*ResourceType, error) {
+func BuildExternalResourceType(ts ExternalResourceTypeSpec) (*ResourceType, error) {
+	name, description, keys := ts.Name, ts.Description, ts.Keys
+	consumptionInstructions, resourceDocs := ts.ConsumptionInstructions, ts.ResourceDocs
 	if name == "" {
 		return nil, fmt.Errorf("external resourcetype: empty name")
+	}
+	switch ts.Scope {
+	case ExternalResourceScopeOrg, ExternalResourceScopeProject:
+	default:
+		return nil, fmt.Errorf("external resourcetype %q: scope must be %q or %q", name, ExternalResourceScopeOrg, ExternalResourceScopeProject)
+	}
+	if ts.Scope == ExternalResourceScopeProject && ts.Project == "" {
+		return nil, fmt.Errorf("external resourcetype %q: a project-scoped type names its project", name)
 	}
 	if len(keys) == 0 {
 		return nil, fmt.Errorf("external resourcetype %q: at least one config key required", name)
@@ -321,12 +404,32 @@ func BuildExternalResourceType(name, description string, keys []ExternalResource
 		}
 	}
 
-	annotations := map[string]string{externalNameAnnotation: name}
+	annotations := map[string]string{externalNameAnnotation: name, externalScopeAnnotation: ts.Scope}
+	if ts.Scope == ExternalResourceScopeProject {
+		annotations[externalProjectAnnotation] = ts.Project
+	}
 	if description != "" {
 		annotations[externalDescriptionAnnotation] = description
 	}
 	if consumptionInstructions != "" {
 		annotations[consumptionInstructionsAnnotation] = consumptionInstructions
+	}
+	if ts.Provider != "" {
+		annotations[externalProviderAnnotation] = ts.Provider
+	}
+	if ts.Contract != nil {
+		raw, jerr := json.Marshal(ts.Contract)
+		if jerr != nil {
+			return nil, fmt.Errorf("external resourcetype %q: marshal contract: %w", name, jerr)
+		}
+		annotations[externalContractAnnotation] = string(raw)
+	}
+	if ts.Provenance != nil {
+		raw, jerr := json.Marshal(ts.Provenance)
+		if jerr != nil {
+			return nil, fmt.Errorf("external resourcetype %q: marshal provenance: %w", name, jerr)
+		}
+		annotations[externalProvenanceAnnotation] = string(raw)
 	}
 	if len(resourceDocs) > 0 {
 		raw, jerr := json.Marshal(resourceDocs)
@@ -335,12 +438,16 @@ func BuildExternalResourceType(name, description string, keys []ExternalResource
 		}
 		annotations[resourceDocsAnnotation] = string(raw)
 	}
+	rtName := ExternalResourceRTName(name, keys)
+	if ts.Scope == ExternalResourceScopeProject {
+		rtName = ExternalResourceRTNameForProject(name, ts.Project, keys)
+	}
 
 	return &ResourceType{
 		APIVersion: ocResourceAPIVersion,
 		Kind:       kindResourceType,
 		Metadata: OCObjectMeta{
-			Name:        ExternalResourceRTName(name, keys),
+			Name:        rtName,
 			Labels:      map[string]string{rtTemplateVersionLabel: fmt.Sprintf("%d", ExternalResourceRTTemplateVersion)},
 			Annotations: annotations,
 		},
@@ -367,6 +474,37 @@ type ExternalResourceDefinition struct {
 	Config                  []ExternalResourceConfigKey
 	ConsumptionInstructions string
 	ResourceDocs            []ResourceDoc
+	// Record fields and scope markers (see the annotation constants). Scope
+	// is empty on a type from before the markers existed.
+	Provider   string
+	Contract   *ResourceContractPointer
+	Provenance *ResourceRecordProvenance
+	Scope      string
+	Project    string
+}
+
+// Registered reports whether this is a Registered External resource — an
+// org-scoped record — as opposed to the type a project's build authored for
+// its own resource. A type from before the scope marker existed is judged
+// by its consumption instructions (ADR-0021): register always writes them,
+// project provisioning never did.
+func (d ExternalResourceDefinition) Registered() bool {
+	switch d.Scope {
+	case ExternalResourceScopeOrg:
+		return true
+	case ExternalResourceScopeProject:
+		return false
+	}
+	return strings.TrimSpace(d.ConsumptionInstructions) != ""
+}
+
+// DocumentSHA256 is the hash of the record's contract document, or "" when
+// the record names none.
+func (d ExternalResourceDefinition) DocumentSHA256() string {
+	if d.Provenance == nil {
+		return ""
+	}
+	return d.Provenance.SHA256
 }
 
 // ResourceDoc is an org resource-docs pointer (type + URL or repo path),
@@ -385,6 +523,7 @@ var resourceDocTypes = map[string]struct{}{
 	"graphql":       {},
 	"asyncapi":      {},
 	"protobuf":      {},
+	"sdk":           {},
 }
 
 func parseResourceDocs(raw string) []ResourceDoc {
@@ -461,13 +600,29 @@ func ExternalDefinitionFromRT(rt *ResourceType) (def ExternalResourceDefinition,
 		docs = parseResourceDocs(raw)
 	}
 
-	return ExternalResourceDefinition{
+	def = ExternalResourceDefinition{
 		Name:                    name,
 		Description:             rt.Metadata.Annotations[externalDescriptionAnnotation],
 		Config:                  config,
 		ConsumptionInstructions: rt.Metadata.Annotations[consumptionInstructionsAnnotation],
 		ResourceDocs:            docs,
-	}, true
+		Provider:                rt.Metadata.Annotations[externalProviderAnnotation],
+		Scope:                   rt.Metadata.Annotations[externalScopeAnnotation],
+		Project:                 rt.Metadata.Annotations[externalProjectAnnotation],
+	}
+	if raw := rt.Metadata.Annotations[externalContractAnnotation]; raw != "" {
+		var c ResourceContractPointer
+		if json.Unmarshal([]byte(raw), &c) == nil && c.Type != "" && c.Path != "" {
+			def.Contract = &c
+		}
+	}
+	if raw := rt.Metadata.Annotations[externalProvenanceAnnotation]; raw != "" {
+		var p ResourceRecordProvenance
+		if json.Unmarshal([]byte(raw), &p) == nil {
+			def.Provenance = &p
+		}
+	}
+	return def, true
 }
 
 func toRawTemplate(m map[string]any) (json.RawMessage, error) {

@@ -36,6 +36,7 @@ import {
   heldRoles,
   parseScopes,
   rolesGranting,
+  sessionAction,
   tokenIsValid,
 } from "../app/src/authz/core.ts";
 
@@ -168,6 +169,26 @@ test("tokenIsValid: the skew is a GRACE window, not a shortening", () => {
   assert.equal(tokenIsValid(nowSeconds - 100, NOW, 300), true);
   assert.equal(tokenIsValid(nowSeconds - 100, NOW, 0), false);
   assert.equal(tokenIsValid(nowSeconds - 400, NOW, 300), false);
+});
+
+// --- sessionAction ----------------------------------------------------------
+
+test("sessionAction: a live stored session is used as-is", () => {
+  assert.equal(sessionAction({ expired: false }), "use");
+});
+
+test("sessionAction: an EXPIRED stored session renews", () => {
+  // It still holds a refresh token, so this is a token POST, not an iframe —
+  // and signing in on it instead re-logs the user in on every visit.
+  assert.equal(sessionAction({ expired: true }), "renew");
+});
+
+test("sessionAction: NO stored session never renews", () => {
+  // The regression this pins: `renew` here sends a signed-out visitor into a
+  // hidden iframe that can only answer login_required, and the app waits out
+  // the whole silent-request timeout behind its splash first.
+  assert.equal(sessionAction(null), "none");
+  assert.equal(sessionAction(undefined), "none");
 });
 
 // --- classifyApiFailure + the handler: DECISION A1 --------------------------

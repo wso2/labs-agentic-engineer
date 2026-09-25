@@ -28,8 +28,8 @@ import assert from "node:assert/strict";
 import { checkPreload, preloadWarning } from "./skills_preload_check.js";
 
 test("a pinned skill absent from the SDK's resolved set is reported missing", () => {
-  // Verbatim shape of the failing run: plugin skills resolved, repo ones gone.
-  const resolvedSkills = ["aep:aep", "aep:aep-validation", "aep:playwright-cli", "deep-research"];
+  // Shape of the failing run: plugin skills resolved, repo ones gone.
+  const resolvedSkills = ["aep:aep", "aep:acceptance-run", "aep:agent-browser", "deep-research"];
   const { missing, resolved } = checkPreload(["aep:aep", "go", "api-management"], resolvedSkills);
 
   assert.deepEqual(missing, ["go", "api-management"]);

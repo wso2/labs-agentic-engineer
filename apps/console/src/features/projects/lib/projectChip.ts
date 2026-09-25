@@ -36,7 +36,18 @@ export interface ProjectChip {
 
 // The header chip beside a project's name: one line for "where is this project
 // right now", folded from the same aggregates the overview pipeline renders
-// (`pipeline.ts`).
+// (`pipeline.ts`). null when there is nothing to say, and there is nothing to
+// say until the first build: the chip reports the repo and the delivery stages,
+// never the spec.
+//
+// The spec is NOT part of the state, and it used to be. Before the first build
+// the chip fell through to the spec aggregate — "Starting", "Spec in progress",
+// "Spec published" — and "Spec in progress" spun a spinner over a spec that
+// was waiting on the USER to publish it, which read as an agent at work. The
+// deeper fault is that the spec and delivery are independent axes: a v2 spec
+// can be amended while v1 builds, so a one-line chip cannot fold both without
+// misreporting one. The overview's spec leg (`track.ts`) owns the spec's state,
+// with the agent field and the local chat log that a fold like this never had.
 //
 // It is deliberately NOT keyed on `status.phase`. That ladder only tells the
 // truth up to the repo and spec rungs: its terminal rung is `tasks`, and the
@@ -45,7 +56,7 @@ export interface ProjectChip {
 // every project that had a design as "Building" — for good, however long ago
 // the build finished and the components went live. Delivery state has real
 // sources now, the build and deploy aggregates, so read those.
-export function projectChip(status: ProjectStatus): ProjectChip {
+export function projectChip(status: ProjectStatus): ProjectChip | null {
   // Repo lifecycle is the phase field's remaining honest job: until the repo is
   // ready the stage aggregates are zero-valued, because the status read returns
   // before it ever looks at them.
@@ -57,13 +68,13 @@ export function projectChip(status: ProjectStatus): ProjectChip {
     case "repo-error":
       return { label: "Repository error", tone: "error", busy: false };
   }
-  return deliveryChip(status) ?? specChip(status);
+  return deliveryChip(status);
 }
 
 // Delivery state, loudest first: a failure outranks progress, and progress
 // outranks whatever settled behind it (a v2 building over a live v1 reads
 // "Building", matching build.version — the newest run — not the live one).
-// null when nothing has been delivered yet, which hands the chip to specChip.
+// null when nothing has been delivered yet, which is the chip's own answer.
 function deliveryChip(status: ProjectStatus): ProjectChip | null {
   const { build, deploy } = status;
   if (build.status === "failed") return { label: "Build failed", tone: "error", busy: false };
@@ -100,14 +111,4 @@ function deliveryChip(status: ProjectStatus): ProjectChip | null {
   // Built but nothing live: the build settled and the deploy has not started.
   if (build.status === "succeeded") return { label: "Built", tone: "success", busy: false };
   return null;
-}
-
-// Before the first build, the spec aggregate is the whole story — the same
-// three states the spec stage card renders, minus its version chip. A dirty
-// spec reads as in-progress: the published version has been edited since.
-function specChip(status: ProjectStatus): ProjectChip {
-  const { exists, version, dirty } = status.spec;
-  if (!exists) return { label: "Starting", tone: "info", busy: true };
-  if (!version || dirty) return { label: "Spec in progress", tone: "info", busy: true };
-  return { label: "Spec published", tone: "success", busy: false };
 }

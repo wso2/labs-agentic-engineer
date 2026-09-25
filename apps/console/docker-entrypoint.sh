@@ -30,6 +30,7 @@ VITE_API_BASE_URL_VAL="${VITE_API_BASE_URL:-/aep-api-service}"
 THUNDER_URL="${VITE_THUNDER_URL:-}"
 THUNDER_CLIENT_ID="${VITE_THUNDER_CLIENT_ID:-aep-console-client}"
 THUNDER_SCOPES="${VITE_THUNDER_SCOPES:-openid profile email}"
+TRY_IT_URL="${VITE_TRY_IT_URL:-http://tryit.aep.localhost:8095}"
 COLLAB_WS_URL="${COLLAB_WS_URL:-}"
 # WSO2 Cloud only — set by the ReleaseBinding. Empty locally so the SPA skips
 # the first-login billing activation call.
@@ -47,6 +48,7 @@ window._env_ = {
   VITE_THUNDER_URL: "${THUNDER_URL}",
   VITE_THUNDER_CLIENT_ID: "${THUNDER_CLIENT_ID}",
   VITE_THUNDER_SCOPES: "${THUNDER_SCOPES}",
+  VITE_TRY_IT_URL: "${TRY_IT_URL}",
   collabWsUrl: "${COLLAB_WS_URL}",
   BILLING_API_BASE_URL: "${BILLING_API_BASE_URL_VAL}",
 };
@@ -92,6 +94,7 @@ echo "Configuration summary:"
 echo "  API Proxy:     /aep-api-service/ -> ${AEP_API_PROXY_URL}/"
 echo "  Thunder URL:   ${THUNDER_URL:-[NOT SET]}"
 echo "  Client ID:     ${THUNDER_CLIENT_ID}"
+echo "  Test app:      ${TRY_IT_URL}"
 echo "  Billing API:   ${BILLING_API_BASE_URL_VAL:-[NOT SET — activation skipped]}"
 echo "  Collab Server: ${COLLAB_SERVER_URL:-[default: collab-server:3400 via lazy DNS — 502s if upstream missing]}"
 

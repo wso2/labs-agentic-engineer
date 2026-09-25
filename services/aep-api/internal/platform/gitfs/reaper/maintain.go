@@ -27,9 +27,9 @@ import (
 )
 
 const (
-	maintainLooseGate   = 1000
-	maintainPackGate    = 20
-	maintainRepoBudget  = 10
+	maintainLooseGate  = 1000
+	maintainPackGate   = 20
+	maintainRepoBudget = 10
 	// maintainWorkTimeout caps one mirror's repack/prune/pack-refs so a
 	// stuck git child cannot pin the leader sweep indefinitely. Lock
 	// acquisition is bounded inside Engine.MaintainMirror (~2s), not here.

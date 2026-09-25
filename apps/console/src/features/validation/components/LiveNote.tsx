@@ -30,9 +30,9 @@ export const FULL_WIDTH_ALERT_MESSAGE = {
 
 /**
  * What the run is doing right now, above the criterion rows. Shared by both
- * tiles — a first attempt renders PendingTile, a repeat renders VerdictTile.
+ * the verdict card, under the sentence that explains the run's answer.
  *
- * Rendered ONLY while validation is running (see ValidationPage): the pulse
+ * Rendered ONLY while validation is running (see ValidationMilestonePage): the pulse
  * claims an agent is working, and it would be a lie over a settled verdict.
  *
  * The note may be a plain sentence the console derived from the rows, or one

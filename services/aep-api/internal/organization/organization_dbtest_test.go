@@ -225,19 +225,19 @@ func TestEnsureForOuHandle_MissingNamespaceIsNotProvisioned_DB(t *testing.T) {
 // namespace is NOT re-verified (cache still warm); once the entry ages past the
 // TTL, the next call re-verifies against OC. Proven by GetNamespace call count.
 //
-// The production TTL is 5 minutes, far too long to elapse in a test. This
-// black-box test can't reach into the unexported ensureCache map to fake
-// elapsed time either (the previous in-package version did), so it uses
-// WithEnsureCacheTTL — a test-only production seam — to shrink the TTL to a
-// few milliseconds and then lets it actually elapse via a real sleep. Same
-// observable (OC-hit count) proves the same property.
+// The production TTL is 5 minutes, far too long to elapse in a test, and this
+// black-box test cannot reach into the unexported ensureCache map to fake
+// elapsed time. It moves the TTL instead of the clock: the effective TTL is
+// read per call, so the within-TTL leg runs under one long enough that no DB
+// round-trip can outlast it, and the expiry leg shrinks it under the entry's
+// age. Same observable (OC-hit count) proves the same property, with no sleep
+// and nothing to lose a race with.
 func TestEnsureForOuHandle_CacheExpiryReverifies_DB(t *testing.T) {
 	t.Parallel()
 	db := dbtest.New(t)
 	ctx := context.Background()
 	ns := nsMockReturning()
-	const shortTTL = 40 * time.Millisecond
-	svc := organization.NewOrganizationService(organization.NewOrganizationRepository(db), ns).WithEnsureCacheTTL(shortTTL)
+	svc := organization.NewOrganizationService(organization.NewOrganizationRepository(db), ns).WithEnsureCacheTTL(time.Hour)
 
 	// Call 1: cold cache → verify + backfill (OC hit #1).
 	if err := svc.EnsureForOuHandle(ctx, "acme", ""); err != nil {
@@ -261,8 +261,9 @@ func TestEnsureForOuHandle_CacheExpiryReverifies_DB(t *testing.T) {
 		t.Fatalf("call 2 (within TTL) must be cache-served, got %d OC hits", got)
 	}
 
-	// Let the short TTL actually elapse, then call again → re-verify (OC hit #2).
-	time.Sleep(5 * shortTTL)
+	// Age the entry past the TTL by shrinking the TTL under it, then call
+	// again → re-verify (OC hit #2).
+	svc.WithEnsureCacheTTL(time.Nanosecond)
 
 	if err := svc.EnsureForOuHandle(ctx, "acme", ""); err != nil {
 		t.Fatalf("call 3: %v", err)

@@ -31,6 +31,7 @@ import assert from "node:assert/strict";
 import { buildCrew, type RunEventView } from "@aep/progress-view";
 import { renderCrewBlock } from "../src/engine/crew-block.js";
 import { openCrewPane } from "../src/engine/crew-pane.js";
+import { drawWidth } from "../src/engine/pinned-pane.js";
 import { createAgentTags } from "../src/engine/agent-tags.js";
 import { createTimelineRenderer } from "../src/engine/coding-run.js";
 
@@ -71,14 +72,15 @@ const RUN: RunEventView[] = [
   },
 ];
 
+/** `terminalColumns` is what the terminal reports; the pane decides the draw width from it. */
 const block = (
   events: readonly RunEventView[],
-  columns = 100,
+  terminalColumns = 100,
   maxRows = 30,
   now = NOW,
 ): string[] =>
   renderCrewBlock(buildCrew(events, now), now, {
-    columns,
+    columns: drawWidth(terminalColumns),
     maxRows,
     tag: createAgentTags(),
   }).map((r) => r.text);
@@ -279,7 +281,7 @@ test("the feed and the block agree on which agent is #1", () => {
   });
   assert.match(opened[0] as string, /\[#1\]/);
 
-  const rows = renderCrewBlock(buildCrew(RUN, NOW), NOW, { columns: 100, maxRows: 30, tag: tags }).map(
+  const rows = renderCrewBlock(buildCrew(RUN, NOW), NOW, { columns: drawWidth(100), maxRows: 30, tag: tags }).map(
     (r) => r.text,
   );
   assert.ok(

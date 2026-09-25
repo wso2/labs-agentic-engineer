@@ -191,11 +191,17 @@ func (r Role) EnrolmentKind() string {
 	return r.Enrolment
 }
 
-// NeedsTestUser reports whether the build owes this role a login. Only an
-// admin-enrolment user role: a self-service role's accounts are made by the
-// app's registration flow, and a service role is held by an app principal.
+// NeedsTestUser reports whether the build owes this role a login. Every user
+// role does, whatever its enrolment — a test user is a disposable agent
+// account, not a model of how a person signs up, and a role nobody can sign in
+// as cannot be validated. Only a service role gets none: its principal is an
+// application.
+//
+// How the login HOLDS the role still follows enrolment: an admin role's account
+// joins an assignTo group, a self-service role's binds straight to the role as
+// a user principal (it has no assignTo, and the gate refuses one).
 func (r Role) NeedsTestUser() bool {
-	return r.RoleKind() == KindUser && r.EnrolmentKind() == EnrolmentAdmin
+	return r.RoleKind() == KindUser
 }
 
 // TestUser is one account that exists so a role's behaviour can be exercised. A
@@ -519,13 +525,14 @@ type EnsurePlan struct {
 // Plan expands doc into the exact set of groups, roles and test accounts to
 // ensure.
 //
-// The mandatory-test-user rule lives here: every admin-enrolment USER role that
-// the design gave no test user gets one named `test-<role-slug>`, marked
-// Supplied. A build is never refused for the omission — refusing would trade a
-// real blocked build for a documentation nicety the platform can obviously
-// handle itself. A self-service role gets none (its accounts come from the
-// app's registration flow) and neither does a service role (its principal is an
-// application, not a person).
+// The mandatory-test-user rule lives here: every USER role that the design gave
+// no test user gets one named `test-<role-slug>`, marked Supplied. A build is
+// never refused for the omission — refusing would trade a real blocked build
+// for a documentation nicety the platform can obviously handle itself. Only a
+// service role gets none: its principal is an application, not a person.
+//
+// A self-service role's supplied account carries no Groups (the role has no
+// assignTo), and ensure binds it directly to the role instead.
 //
 // A generated name that collides with an authored username in the same document
 // is disambiguated by suffixing the role's ordinal, so the plan can never carry

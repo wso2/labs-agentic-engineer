@@ -41,3 +41,9 @@ export const projectKeys = {
   dependencyReadiness: (name: string, environment: string) =>
     [...projectKeys.detail(name), "dependency-readiness", environment] as const,
 };
+
+// Org-level, not project-scoped: the platform's environments (dev/prod/...)
+// apply across every project, so this key lives outside projectKeys.all.
+export const environmentKeys = {
+  all: ["environments"] as const,
+};

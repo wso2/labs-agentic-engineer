@@ -22,7 +22,7 @@
  * load-bearing:
  *
  *   1. control words     — /menu, /quit, /help (the loop's own affordances)
- *   2. phase-runners      — /task, /code, /validate, /undo (invoke the
+ *   2. phase-runners      — /task, /code, /wire, /validate, /undo (invoke the
  *                           existing engine commands, NOT chat turns)
  *   3. skill-load / chat  — /spec, /design, /grilling, /<skill> become a FLOW
  *                           turn via the shared `parseFlowCommand`; anything
@@ -36,7 +36,7 @@ import { parseStartCommand, parseFlowCommand } from "@aep/contracts/commands";
 import type { TurnSpec } from "@aep/agent-stream";
 import { chatSpec, flowSpec } from "../engine/turn-spec.js";
 
-export type PhaseName = "task" | "code" | "validate" | "undo";
+export type PhaseName = "task" | "code" | "wire" | "validate" | "undo";
 
 export type ChatIntent =
   | { kind: "control"; name: "menu" | "quit" | "help" }
@@ -44,7 +44,7 @@ export type ChatIntent =
   | { kind: "start"; inlineIdea?: string }
   | { kind: "turn"; turn: TurnSpec };
 
-const PHASES = new Set<PhaseName>(["task", "code", "validate", "undo"]);
+const PHASES = new Set<PhaseName>(["task", "code", "wire", "validate", "undo"]);
 
 const isPhase = (s: string): s is PhaseName => (PHASES as Set<string>).has(s);
 

@@ -42,9 +42,19 @@ type mcpTool struct {
 type externalResourceView struct {
 	Name                    string           `json:"name"`
 	Description             string           `json:"description,omitempty"`
+	Provider                string           `json:"provider,omitempty"`
 	ConfigKeys              []configKeyDTO   `json:"configKeys"`
+	Contract                *contractDTO     `json:"contract,omitempty"`
 	ConsumptionInstructions string           `json:"consumptionInstructions,omitempty"`
 	ResourceDocs            []resourceDocDTO `json:"resourceDocs,omitempty"`
+}
+
+// contractDTO is the record's contract document pointer — `{type, path}` into
+// the org docs repo. The design agent never reads it: it writes the stub and
+// the platform copies the document into the project at save.
+type contractDTO struct {
+	Type string `json:"type"`
+	Path string `json:"path"`
 }
 
 type configKeyDTO struct {
@@ -176,12 +186,15 @@ func mcpTools() []mcpTool {
 	return []mcpTool{
 		{
 			Name: "list_external_resources",
-			Description: "List the external resources (third-party APIs/services) already registered in " +
-				"this organization — including Registered records that no project has consumed yet. Use this " +
-				"BEFORE proposing an `external` dependency so you reuse an existing external resource name + " +
-				"its config-key schema instead of inventing a new one. Returns each external resource's name, " +
-				"description, config keys (with which are secret), consumptionInstructions, and resourceDocs " +
-				"pointers ({type, url} or {type, path} — never file bodies).",
+			Description: "List the Registered External resources (third-party APIs/services) the organization " +
+				"registered — including ones no project has used yet. A resource another project defined for " +
+				"itself is NOT listed: it belongs to that project. Use this BEFORE proposing an `external` " +
+				"dependency: when a row fits, write the stub dependency.json " +
+				"`{ \"name\": <row name>, \"resource\": { \"ref\": <row name>, \"name\": <row name> } }` and the " +
+				"platform copies the record (provider, config keys, instructions, contract document) into the " +
+				"project at save — never retype them. Returns each resource's name, description, provider, config " +
+				"keys (with which are secret), consumptionInstructions, its contract pointer ({type, path}) and " +
+				"resourceDocs pointers — never file bodies.",
 			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
 		},
 		{
@@ -607,13 +620,18 @@ func toExternalResourceView(er *openchoreo.ExternalResourceDefinition) externalR
 	for _, d := range er.ResourceDocs {
 		docs = append(docs, resourceDocDTO{Type: d.Type, URL: d.URL, Path: d.Path})
 	}
-	return externalResourceView{
+	view := externalResourceView{
 		Name:                    er.Name,
 		Description:             er.Description,
+		Provider:                er.Provider,
 		ConfigKeys:              keys,
 		ConsumptionInstructions: er.ConsumptionInstructions,
 		ResourceDocs:            docs,
 	}
+	if er.Contract != nil {
+		view.Contract = &contractDTO{Type: er.Contract.Type, Path: er.Contract.Path}
+	}
+	return view
 }
 
 // maxToolFileBytes caps the file content one tool result may carry. A tool

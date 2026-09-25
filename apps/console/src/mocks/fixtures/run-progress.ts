@@ -21,6 +21,7 @@ import type { components } from "../../generated/aep-api";
 type RunCycleView = components["schemas"]["RunCycleView"];
 type RunEvent = components["schemas"]["RunEvent"];
 type RunProgressLine = components["schemas"]["RunProgressLine"];
+type AgentRuntime = components["schemas"]["AgentRuntime"];
 
 // Per-cycle agent output for the run progress stream, in the v2 envelope.
 //
@@ -109,7 +110,14 @@ const CRITERION_LIFECYCLE: [string, string][] = [
  * produced it; `seq` is monotonic from the attempt's first event, which is what
  * the console dedupes replays on.
  */
-export function runCycleEvents(cycle: RunCycleView, startSeq: number): RunEvent[] {
+export function runCycleEvents(
+  cycle: RunCycleView,
+  startSeq: number,
+  runtime: AgentRuntime = "claude-code",
+): RunEvent[] {
+  if (runtime === "opencode" && cycle.kind !== "validation") {
+    return openCodeCycleEvents(cycle, startSeq);
+  }
   let seq = startSeq;
   const at = (
     agentId: string,
@@ -128,7 +136,7 @@ export function runCycleEvents(cycle: RunCycleView, startSeq: number): RunEvent[
     return [
       lead({ kind: "run_started", taskKind: "validation", runtime: "claude-code", model: "claude-opus-4" }),
       lead({ kind: "agent_started", role: "validator", model: "claude-opus-4" }),
-      lead({ kind: "tool_use", tool: "Read", summary: "specs/validation/validation-criteria.json", toolUseId: "v0" }),
+      lead({ kind: "tool_use", tool: "Read", summary: "specs/validation/acceptance/checkout.feature", toolUseId: "v0" }),
       lead({ kind: "tool_result", tool: "Read", ok: true, durationMs: 120, toolUseId: "v0" }),
       // The per-criterion story, which is what the Validation page's rows are
       // painted from — and which renders as NO row here, on purpose. Only for an
@@ -139,7 +147,7 @@ export function runCycleEvents(cycle: RunCycleView, startSeq: number): RunEvent[
         : CRITERION_LIFECYCLE.map(([itemId, itemStatus]) =>
             lead({ kind: "work_item", source: "criterion", itemId, itemStatus: itemStatus as NonNullable<RunEvent["itemStatus"]> }),
           )),
-      lead({ kind: "tool_use", tool: "Bash", summary: "pnpm playwright test", toolUseId: "v1" }),
+      lead({ kind: "tool_use", tool: "Bash", summary: "agent-browser snapshot -i", toolUseId: "v1" }),
       lead({ kind: "heartbeat", waitingOn: "tool", ref: "v1", elapsedMs: 42_000 }),
       lead({ kind: "tool_result", tool: "Bash", ok: true, durationMs: 61_400, toolUseId: "v1" }),
       lead({ kind: "git_commit", sha: "7ab41c90ee31d5f0", files: 4 }),
@@ -284,6 +292,86 @@ export function runCycleEvents(cycle: RunCycleView, startSeq: number): RunEvent[
             toolCount: 48,
             tokens: 812_000,
             report: `Opened PR #${String(cycle.prNumber ?? 0)} with the shortener API and the front-end scaffold. The front end does not build yet and is called out in the description.`,
+          }),
+          lead({ kind: "run_settled", outcome: "success" }),
+        ]
+      : []),
+  ];
+}
+
+/**
+ * A coding cycle as an OpenCode run reports it: the runtime's own spellings
+ * (`bash`, `write`, role `general`) and its fan-out shape, a wave of parallel
+ * FOREGROUND agents with no background task pair.
+ */
+function openCodeCycleEvents(cycle: RunCycleView, startSeq: number): RunEvent[] {
+  let seq = startSeq;
+  const at = (
+    agentId: string,
+    rest: Omit<RunEvent, "v" | "seq" | "ts" | "agentId">,
+  ): RunEvent => ({
+    v: 2,
+    seq: seq++,
+    ts: iso(seq),
+    agentId,
+    ...rest,
+  });
+  const lead = (rest: Omit<RunEvent, "v" | "seq" | "ts" | "agentId">) => at(LEAD, rest);
+  // OpenCode's agent ids are its session ids.
+  const api = "ses_oc_api";
+  const web = "ses_oc_web";
+  return [
+    lead({ kind: "run_started", taskKind: "implementation", runtime: "opencode", model: "claude-sonnet-5" }),
+    lead({ kind: "agent_started", role: "lead", model: "claude-sonnet-5" }),
+    lead({ kind: "tool_use", tool: "bash", summary: "git status", toolUseId: "o1" }),
+    lead({ kind: "tool_result", tool: "bash", ok: true, durationMs: 180, toolUseId: "o1" }),
+    at(api, { kind: "agent_started", label: "Implement the shortener API (issue #3)", role: "general", depth: 1, background: false, model: "claude-sonnet-5" }),
+    at(web, { kind: "agent_started", label: "Implement the web front end (issue #4)", role: "general", depth: 1, background: false, model: "claude-sonnet-5" }),
+    at(api, { kind: "tool_use", tool: "write", summary: "src/api/shorten.ts", toolUseId: "oa1" }),
+    at(api, { kind: "tool_result", tool: "write", ok: true, durationMs: 40, toolUseId: "oa1" }),
+    at(api, { kind: "tool_use", tool: "bash", summary: "go test ./...", toolUseId: "oa2" }),
+    at(api, { kind: "tool_result", tool: "bash", ok: true, summary: "ok  github.com/acme/shortener  0.391s", durationMs: 8_900, toolUseId: "oa2" }),
+    at(api, {
+      kind: "agent_settled",
+      status: "completed",
+      durationMs: 184_000,
+      toolCount: 14,
+      linesAdded: 402,
+      linesRemoved: 3,
+      tokens: 156_000,
+      report: "Implemented POST /links and GET /{code}. `go test ./...` is clean.",
+    }),
+    at(web, { kind: "tool_use", tool: "bash", summary: "npm run build", toolUseId: "ow2" }),
+    at(web, { kind: "tool_result", tool: "bash", ok: true, durationMs: 21_400, toolUseId: "ow2" }),
+    at(web, {
+      kind: "agent_settled",
+      status: "completed",
+      durationMs: 241_000,
+      toolCount: 22,
+      linesAdded: 318,
+      linesRemoved: 9,
+      tokens: 171_000,
+      report: "Built the front end against the generated client; `npm run build` passes.",
+    }),
+    ...(cycle.endedAt && !cycle.mergeSha
+      ? [
+          lead({ kind: "notice", level: "warn", code: "terminated", detail: "cancelled from the console" }),
+          lead({ kind: "agent_settled", status: "stopped", durationMs: 158_000, toolCount: 9 }),
+          lead({ kind: "run_settled", outcome: "cancelled" }),
+        ]
+      : []),
+    ...(cycle.mergeSha
+      ? [
+          lead({ kind: "git_commit", sha: cycle.mergeSha, files: 5, toolUseId: "o9" }),
+          lead({ kind: "git_push", branch: cycle.branch ?? "" }),
+          lead({ kind: "gh_action", summary: `pr create — #${String(cycle.prNumber ?? 0)}` }),
+          lead({
+            kind: "agent_settled",
+            status: "completed",
+            durationMs: 498_000,
+            toolCount: 31,
+            tokens: 604_000,
+            report: `Opened PR #${String(cycle.prNumber ?? 0)} with the shortener API and the front end.`,
           }),
           lead({ kind: "run_settled", outcome: "success" }),
         ]

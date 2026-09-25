@@ -26,6 +26,7 @@ import {
 
 const filled = {
   name: "github",
+  provider: "GitHub",
   description: "GitHub REST API",
   consumptionInstructions: "Call api.github.com with a bearer token.",
   keys: [{ key: "GITHUB_TOKEN", description: "PAT", secret: true }],
@@ -41,14 +42,16 @@ describe("validateRegisterForm", () => {
     expect(validateRegisterForm(filled)).toBeNull();
   });
 
-  it("flags empty name, description, and consumption instructions", () => {
+  it("flags empty name, provider, description, and consumption instructions", () => {
     const errors = validateRegisterForm({
       ...filled,
       name: "  ",
+      provider: " ",
       description: "",
       consumptionInstructions: "",
     });
     expect(errors?.name).toBe(REQUIRED_FIELD);
+    expect(errors?.provider).toBe(REQUIRED_FIELD);
     expect(errors?.description).toBe(REQUIRED_FIELD);
     expect(errors?.consumptionInstructions).toBe(REQUIRED_FIELD);
   });
@@ -83,6 +86,27 @@ describe("validateRegisterForm", () => {
         envCells: [
           { environment: "development", key: "GITHUB_TOKEN", status: "configured" },
         ],
+      }),
+    ).toBeNull();
+  });
+
+  // On a Promote the platform carries an environment's values over from the
+  // project, so those fields may stay blank; every other environment still needs
+  // a value.
+  it("lets a carried-over environment stay blank and still requires the others", () => {
+    const input = {
+      ...filled,
+      values: {},
+      envNames: ["development", "production"],
+      carriedEnvs: ["development"],
+    };
+    const errors = validateRegisterForm(input);
+    expect(errors?.values[envValueCellKey("development", "GITHUB_TOKEN")]).toBeUndefined();
+    expect(errors?.values[envValueCellKey("production", "GITHUB_TOKEN")]).toBe(REQUIRED_FIELD);
+    expect(
+      validateRegisterForm({
+        ...input,
+        values: { [envValueCellKey("production", "GITHUB_TOKEN")]: "x" },
       }),
     ).toBeNull();
   });

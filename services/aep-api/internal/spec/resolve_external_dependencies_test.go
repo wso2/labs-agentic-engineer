@@ -29,23 +29,24 @@ type fakeExternalResourceResolver struct {
 	err   error
 }
 
-func (f fakeExternalResourceResolver) IsRegistered(_ context.Context, _, name string) (bool, error) {
+func (f fakeExternalResourceResolver) Lookup(_ context.Context, _, name string) (RegistryHit, error) {
 	if f.err != nil {
-		return false, f.err
+		return RegistryHit{}, f.err
 	}
-	return f.names[name], nil
+	return RegistryHit{Registered: f.names[name]}, nil
 }
 
 // TestResolveExternalDependencies_AppliesStoredRules asserts that with no
-// resolver wired (or a miss), `external` precedence derives from the hydrated
-// definition (provider/style/contract/sdk) — the registry rule does not fire.
+// resolver wired, a project's own `external` dependencies derive from the
+// hydrated definition (provider/contract) — the registry is never consulted
+// for a resource the project defined itself.
 func TestResolveExternalDependencies_AppliesStoredRules(t *testing.T) {
 	store := &ArtifactStore{}
 
 	d := &DesignFile{Components: []DesignComponent{{
 		Name: "checkout",
 		Dependencies: []Dependency{
-			{Kind: DependencyKindExternal, Name: "no-style"},
+			{Kind: DependencyKindExternal, Name: "no-provider"},
 			{Kind: DependencyKindExternal, Name: "sdk-ready", Provider: "Stripe", Style: DependencyStyleSDK, SDK: "sdk.json", Package: "npm:stripe@^14"},
 			{Kind: DependencyKindExternal, Name: "rest-no-spec", Provider: "Partner", Style: DependencyStyleRestAPI},
 		},
@@ -55,7 +56,7 @@ func TestResolveExternalDependencies_AppliesStoredRules(t *testing.T) {
 
 	deps := d.Components[0].Dependencies
 	if deps[0].Status != DependencyStatusUnresolved || deps[0].Reason != DependencyReasonNeedsInput {
-		t.Errorf("no-style: status/reason = %q/%q, want %q/%q", deps[0].Status, deps[0].Reason,
+		t.Errorf("no-provider: status/reason = %q/%q, want %q/%q", deps[0].Status, deps[0].Reason,
 			DependencyStatusUnresolved, DependencyReasonNeedsInput)
 	}
 	if deps[1].Status != DependencyStatusResolved {
@@ -67,19 +68,27 @@ func TestResolveExternalDependencies_AppliesStoredRules(t *testing.T) {
 	}
 }
 
-// TestResolveExternalDependencies_RegistryHitResolvesWithoutStyle asserts rule
-// 2: a name in the org catalog is resolved even with no style/specPath/package.
-func TestResolveExternalDependencies_RegistryHitResolvesWithoutStyle(t *testing.T) {
+// TestResolveExternalDependencies_RefAsksTheRegistry asserts rules 1 and 2:
+// a copy (ResourceRef set) is resolved only when the registry holds a
+// registered resource of that name; a ref nobody registered reads needs-input
+// whatever else the copy carries; and a project's own resource of the same
+// name never asks the registry at all.
+func TestResolveExternalDependencies_RefAsksTheRegistry(t *testing.T) {
 	store := &ArtifactStore{}
 	store.SetExternalResourceResolver(fakeExternalResourceResolver{
 		names: map[string]bool{"github": true},
 	})
 
+	copyOf := func(name string) Dependency {
+		return Dependency{Kind: DependencyKindExternal, Name: name, ResourceRef: name, Source: DependencySourceOrg,
+			Provider: "P", Style: DependencyStyleRestAPI, Contract: "openapi.yaml", ContractType: DependencyContractTypeOpenAPI}
+	}
 	d := &DesignFile{Components: []DesignComponent{{
 		Name: "api",
 		Dependencies: []Dependency{
-			{Kind: DependencyKindExternal, Name: "github", Provider: "GitHub", Style: DependencyStyleRestAPI},
-			{Kind: DependencyKindExternal, Name: "stripe", Provider: "Stripe", Style: DependencyStyleRestAPI},
+			copyOf("github"),
+			copyOf("stripe"),
+			{Kind: DependencyKindExternal, Name: "github", Provider: "GitHub", Style: DependencyStyleRestAPI, Contract: "openapi.yaml"},
 		},
 	}}}
 
@@ -87,21 +96,25 @@ func TestResolveExternalDependencies_RegistryHitResolvesWithoutStyle(t *testing.
 
 	deps := d.Components[0].Dependencies
 	if deps[0].Status != DependencyStatusResolved || deps[0].Reason != "" {
-		t.Errorf("github (catalog hit): status/reason = %q/%q, want %q/empty",
+		t.Errorf("github copy (registered): status/reason = %q/%q, want %q/empty",
 			deps[0].Status, deps[0].Reason, DependencyStatusResolved)
 	}
 	if len(deps[0].Flags) != 1 || deps[0].Flags[0] != DependencyFlagRegistered {
-		t.Errorf("github (catalog hit): flags = %v, want [registered]", deps[0].Flags)
+		t.Errorf("github copy: flags = %v, want [registered]", deps[0].Flags)
 	}
-	if deps[1].Status != DependencyStatusUnresolved || deps[1].Reason != DependencyReasonNeedsContract {
-		t.Errorf("stripe (catalog miss): status/reason = %q/%q, want %q/%q",
-			deps[1].Status, deps[1].Reason, DependencyStatusUnresolved, DependencyReasonNeedsContract)
+	if deps[1].Status != DependencyStatusUnresolved || deps[1].Reason != DependencyReasonNeedsInput {
+		t.Errorf("stripe copy (nobody registered it): status/reason = %q/%q, want %q/%q",
+			deps[1].Status, deps[1].Reason, DependencyStatusUnresolved, DependencyReasonNeedsInput)
+	}
+	if deps[2].Status != DependencyStatusResolved || len(deps[2].Flags) != 0 {
+		t.Errorf("a project's own github: status %q flags %v, want resolved with no registered flag", deps[2].Status, deps[2].Flags)
 	}
 }
 
 // TestResolveExternalDependencies_ResolverErrorFailsOpen asserts a catalog
-// error never fails the design read: stored-intent resolution still runs
-// (registryHit=false).
+// error never fails the design read: a copy then reads needs-input (never
+// resolved — the registry did not answer), and a project's own dependency is
+// untouched by the error.
 func TestResolveExternalDependencies_ResolverErrorFailsOpen(t *testing.T) {
 	store := &ArtifactStore{}
 	store.SetExternalResourceResolver(fakeExternalResourceResolver{
@@ -111,16 +124,21 @@ func TestResolveExternalDependencies_ResolverErrorFailsOpen(t *testing.T) {
 	d := &DesignFile{Components: []DesignComponent{{
 		Name: "api",
 		Dependencies: []Dependency{
-			{Kind: DependencyKindExternal, Name: "github", Provider: "GitHub", Style: DependencyStyleRestAPI},
+			{Kind: DependencyKindExternal, Name: "github", ResourceRef: "github", Source: DependencySourceOrg, Provider: "GitHub", Style: DependencyStyleRestAPI, Contract: "openapi.yaml"},
+			{Kind: DependencyKindExternal, Name: "stripe", Provider: "Stripe", Style: DependencyStyleRestAPI},
 		},
 	}}}
 
 	store.resolveExternalDependencies(context.Background(), "org", d)
 
-	dep := d.Components[0].Dependencies[0]
-	if dep.Status != DependencyStatusUnresolved || dep.Reason != DependencyReasonNeedsContract {
-		t.Errorf("resolver error: status/reason = %q/%q, want stored-intent %q/%q",
-			dep.Status, dep.Reason, DependencyStatusUnresolved, DependencyReasonNeedsContract)
+	deps := d.Components[0].Dependencies
+	if deps[0].Status != DependencyStatusUnresolved || deps[0].Reason != DependencyReasonNeedsInput {
+		t.Errorf("copy with the registry down: status/reason = %q/%q, want %q/%q",
+			deps[0].Status, deps[0].Reason, DependencyStatusUnresolved, DependencyReasonNeedsInput)
+	}
+	if deps[1].Status != DependencyStatusUnresolved || deps[1].Reason != DependencyReasonNeedsContract {
+		t.Errorf("project resource: status/reason = %q/%q, want stored-intent %q/%q",
+			deps[1].Status, deps[1].Reason, DependencyStatusUnresolved, DependencyReasonNeedsContract)
 	}
 }
 
@@ -169,7 +187,7 @@ func TestResolveExternalDependencies_OrgServiceUntouched(t *testing.T) {
 // TestAssembleDesignFrom_ResolvesBothOrgServiceAndExternal is the read-path
 // wiring test: a single design mixing an `org-service` and an `external`
 // dependency gets BOTH resolved by one AssembleDesignFrom call. The external
-// dependency resolves off a catalog hit (rule 2), even without style/specPath.
+// dependency is a copy of a registered resource whose document landed.
 func TestAssembleDesignFrom_ResolvesBothOrgServiceAndExternal(t *testing.T) {
 	store := &ArtifactStore{}
 	store.SetOrgServiceResolver(fakeOrgServiceResolver{visible: map[string]bool{"billing": true}})
@@ -182,10 +200,12 @@ func TestAssembleDesignFrom_ResolvesBothOrgServiceAndExternal(t *testing.T) {
   "type": "service",
   "dependencies": [
     {"kind": "org-service", "name": "billing"},
-    {"kind": "external", "name": "github", "style": "rest-api"}
+    {"kind": "external", "name": "github"}
   ]
 }
 `,
+		"dependencies/github/dependency.json": `{"name":"github","resource":{"ref":"github","name":"github","provider":"GitHub","config":[{"key":"GITHUB_TOKEN","secret":true}],"contract":{"type":"openapi","path":"openapi.yaml","origin":"registry"}}}`,
+		"dependencies/github/openapi.yaml":    "openapi: 3.0.3\ninfo: {title: GitHub, version: '1'}\npaths: {}\n",
 	}
 
 	design, err := store.AssembleDesignFrom(context.Background(), "org", files)
@@ -196,7 +216,7 @@ func TestAssembleDesignFrom_ResolvesBothOrgServiceAndExternal(t *testing.T) {
 	if deps[0].Status != DependencyStatusResolved {
 		t.Errorf("org-service: status = %q, want %q", deps[0].Status, DependencyStatusResolved)
 	}
-	if deps[1].Status != DependencyStatusResolved {
-		t.Errorf("external (catalog hit, rest-api no specPath): status = %q, want %q", deps[1].Status, DependencyStatusResolved)
+	if deps[1].Status != DependencyStatusResolved || len(deps[1].Flags) != 1 || deps[1].Flags[0] != DependencyFlagRegistered {
+		t.Errorf("external (registered copy): status = %q flags %v, want resolved/[registered]", deps[1].Status, deps[1].Flags)
 	}
 }

@@ -21,9 +21,10 @@
 // and commit them, gated by the terminal integrity manifest. Every op
 // reproduces the TS semantics exactly — literal substring matching, CRLF→LF
 // canonicalization at the same points, idempotent already-applied/noop
-// results, the YAML reparse guard and the component design.json schema gate
-// (an exact port of the agent's zod gate — see designgate.go for why
-// internal/platform/designspec could NOT be reused), and the npm-yaml-parity
+// results, the YAML reparse guard, the component design.json schema gate and
+// its agent.afm.md sibling (both exact ports of the agent's zod gates — see
+// designgate.go for why internal/platform/designspec could NOT be reused,
+// and afmgate.go for the agent.afm.md port), and the npm-yaml-parity
 // frontmatter re-stringify (yamlemit.go).
 //
 // Gates that exist only on the TS side (openapi.yaml, security.json, the
@@ -211,7 +212,7 @@ func (f *Fold) AddFile(ctx context.Context, path, content string) (OpResult, err
 	}
 	// A definition removed this turn to be re-added wholesale is still judged
 	// against what was on disk: the user's authorization record rides through
-	// (preserveAssumption), and an altered record is still refused.
+	// (preservePlatformFields), and an altered record is still refused.
 	prior, err := f.removedThisTurn(ctx, path)
 	if err != nil {
 		return OpResult{}, err
@@ -327,9 +328,12 @@ func (f *Fold) commit(path string, op Op, content string, prior *string, rejectM
 		return opErr(path, op, code, msg)
 	}
 	// The user's authorization record on a dependency's definition rides
-	// through every agent write of the file (preserveAssumption).
-	content = preserveAssumption(path, content, prior)
+	// through every agent write of the file (preservePlatformFields).
+	content = preservePlatformFields(path, content, prior)
 	if code, msg := checkDependencyDesignGuard(path, content, prior); code != "" {
+		return opErr(path, op, code, msg)
+	}
+	if code, msg := checkAgentAfmGuard(path, content); code != "" {
 		return opErr(path, op, code, msg)
 	}
 	if code, msg := checkWireframeDslGuard(path, content); code != "" {
@@ -638,6 +642,21 @@ func checkComponentDesignGuard(path, content string) (ErrCode, string) {
 		return "", ""
 	}
 	err := validateComponentDesign(content, m[1])
+	if err == nil {
+		return "", ""
+	}
+	return err.code, path + ": " + err.message
+}
+
+// checkAgentAfmGuard mirrors checkAgentAfm: authored agent.afm.md is
+// schema-gated on every write, the sibling of checkComponentDesignGuard for
+// the ai-agent component kind's front matter (agentfold/afmgate.go).
+func checkAgentAfmGuard(path, content string) (ErrCode, string) {
+	m := agentAfmRe.FindStringSubmatch(path)
+	if m == nil {
+		return "", ""
+	}
+	err := validateAgentAfm(content, m[1])
 	if err == nil {
 		return "", ""
 	}

@@ -99,6 +99,11 @@ type JobWatcher struct {
 	// recorded and every feed reports `none`.
 	recorder *CycleRecorder
 
+	// deaths wakes the run supervisor when a cycle's agent ended without a pull
+	// request. Discovery belongs here for the same reason the recorder's does:
+	// this is the one pass that learns a pod died.
+	deaths AgentDeathNotifier
+
 	// asService lifts the tick into the service identity — the watcher has no
 	// inbound request to borrow a user token from. nil in tests.
 	asService func(ctx context.Context) context.Context
@@ -149,6 +154,13 @@ func NewJobWatcher(runtime openchoreo.RuntimeClient, cycles cycleWatchStore, asS
 // WithRecorder attaches the run-feed recorder. Optional. Returns the receiver.
 func (w *JobWatcher) WithRecorder(rec *CycleRecorder) *JobWatcher {
 	w.recorder = rec
+	return w
+}
+
+// WithAgentDeathNotifier attaches the run wake-up. Optional. Returns the
+// receiver.
+func (w *JobWatcher) WithAgentDeathNotifier(n AgentDeathNotifier) *JobWatcher {
+	w.deaths = n
 	return w
 }
 
@@ -332,7 +344,18 @@ func (w *JobWatcher) failCycle(ctx context.Context, cycle *delivery.RunCycle, re
 		return // another replica got there, or the cycle has a pull request
 	}
 	slog.InfoContext(ctx, "codingagent.JobWatcher: cycle agent terminal",
-		"cycle", cycle.ID, "run", cycle.JobRef, "reason", reason)
+		"cycle", cycle.ID, "run", cycle.RunID, "job", cycle.JobRef, "reason", reason)
+	// AFTER the durable write and only on the branch that won it: record, then
+	// signal, the order the cancel surface uses. Riding the once-only fence is
+	// also what keeps a second replica from waking the same run twice. Identity
+	// comes from the cycle being reconciled — cycleWatchStore promises nothing
+	// about which columns `closed` carries.
+	if w.deaths != nil && cycle.RunID != "" {
+		if err := w.deaths.AgentDied(ctx, cycle.OrgID, cycle.RunID, reason); err != nil {
+			slog.WarnContext(ctx, "codingagent.JobWatcher: agent-death notify failed (run waits out its landing deadline)",
+				"cycle", cycle.ID, "run", cycle.RunID, "error", err)
+		}
+	}
 }
 
 // captureUsage banks the run's token spend from the runner's terminal NDJSON

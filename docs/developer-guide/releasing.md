@@ -24,13 +24,33 @@ Images are built for `linux/amd64` and `linux/arm64`. Builder stages that can be
 architecture-independent are pinned to `$BUILDPLATFORM` so they run once,
 natively, instead of under QEMU — read the note in `services/aep-api/Dockerfile`
 before removing a pin. `remote-worker` is the notable exception: it installs a
-per-arch Go toolchain, Ballerina, and Playwright browsers, so its arm64 half
-genuinely is emulated and it is the slowest job in the release. One consequence:
-chromium cannot run under QEMU, so the runner Dockerfile's browser smoke test
-runs only on native builds. The release asserts the arm64 image's browser
+per-arch Go toolchain, Ballerina, and a per-arch chromium, so its arm64 half
+genuinely is emulated and it is the slowest job in the release, together with
+`remote-worker-opencode` (its `runner-opencode` target, the OpenCode runner),
+which rebuilds the same layers on its own runner, reading `remote-worker`'s
+cache. One consequence: chromium cannot run under QEMU, so the runner
+Dockerfile's browser smoke test runs only on native builds. The release asserts the arm64 image's browser
 launch nowhere; native arm64 builds (every Apple-silicon bring-up) do. The
 emulated arm64 build itself is exercised before a release by the `Images`
-workflow, which builds `remote-worker` for both platforms on its PR.
+workflow, which builds both runner images for both platforms on its PR.
+
+**Deploy `remote-worker`, `remote-worker-opencode` and `aep-api` from one
+version, never from `latest`.** The runners and aep-api speak a private contract
+(`packages/contracts/api/internal/v1`) that is versioned with this repo and
+deliberately not kept backward compatible, so a runner older than the aep-api
+dispatching it can reject the payload in its preflight and kill the validation
+run before it starts.
+
+The release cannot order them for you: all eight images are one matrix with no
+`max-parallel` and no `needs` between the legs, so `aep-api` may well publish
+first. What protects you is the chart — it is packaged after every image job and
+pins `aepApi.image.tag`, `codingAgentRunner.image` and
+`codingAgentRunner.opencodeImage` to the same version — so deploy the versioned
+chart once the release has completed. The exposure is the floating
+`remote-worker:latest` this repo's `values.yaml` defaults to, which is what lets
+a new caller meet an old image, and which a partial release splits (see the tags
+note below). Guaranteeing runner-first publication would be a change to
+`release.yml`, not a step someone can take at release time.
 
 Layer cache lives in GHCR under `ghcr.io/wso2/aep/buildcache/<image>` rather than
 the Actions cache, which is capped at 10 GB per repository and which CI's own

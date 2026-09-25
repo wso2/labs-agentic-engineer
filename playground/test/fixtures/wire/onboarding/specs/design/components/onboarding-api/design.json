@@ -1,0 +1,66 @@
+{
+  "name": "onboarding-api",
+  "type": "service",
+  "version": "0.1.0",
+  "language": "Ballerina",
+  "buildpack": "docker",
+  "appPath": "onboarding-api",
+  "entrypoint": "deployment/service",
+  "exposure": "intranet",
+  "stories": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12
+  ],
+  "description": "Owns new hire records, the standard onboarding task template, and the onboarding tasks generated for each new hire across IT, HR and Facilities. Generates a hire's checklist from the template on creation, and tracks due dates and completion. Flags a task overdue once its due date passes without completion, surfaced in-app to the assigned staff member and to HR — it sends no external notification. Does not manage payroll/benefits, or track physical asset inventory.",
+  "dependencies": [
+    {
+      "kind": "platform-resource",
+      "name": "onboarding-db",
+      "resourceType": "postgres-cnpg",
+      "wiring": {
+        "ref": "track-each-hire96-74fda3c2",
+        "envBindings": {
+          "dbname": "ONBOARDING_DB_DBNAME",
+          "host": "ONBOARDING_DB_HOST",
+          "password": "ONBOARDING_DB_PASSWORD",
+          "port": "ONBOARDING_DB_PORT",
+          "user": "ONBOARDING_DB_USER"
+        }
+      }
+    },
+    {
+      "kind": "platform-resource",
+      "name": "user-auth",
+      "resourceType": "thunder-app",
+      "wiring": {
+        "ref": "track-each-hire96-e321d814",
+        "envBindings": {
+          "client_id": "USER_AUTH_CLIENT_ID",
+          "issuer": "USER_AUTH_ISSUER",
+          "jwks_url": "USER_AUTH_JWKS_URL",
+          "resource": "USER_AUTH_RESOURCE",
+          "scopes": "USER_AUTH_SCOPES"
+        }
+      }
+    }
+  ],
+  "exposesAPI": {
+    "auth": "end-user-required"
+  },
+  "skillsPinned": [
+    "openapi-conventions",
+    "ballerina",
+    "api-management",
+    "thunder-authentication"
+  ]
+}

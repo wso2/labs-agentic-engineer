@@ -144,6 +144,20 @@ type CatalogValuePlane interface {
 // and SecretStorePath then stays empty on the value plane.
 type OrgSecretWriter interface {
 	WriteOrgCatalogSecret(ctx context.Context, orgID, entityName string, data map[string]string) (vaultKey string, err error)
+	// CopyOrgCatalogSecret copies the secret fields a project holds at
+	// fromVaultKey (its own external resource's per-environment secret) into
+	// an org-catalog entity. Promote carries a value over this way so it
+	// never passes through a request.
+	CopyOrgCatalogSecret(ctx context.Context, orgID, fromVaultKey, entityName string) (vaultKey string, err error)
+}
+
+// ProjectResourcePromoter is the project side of Promote: it reads a project's
+// own external resource (the dependency file and the contract document beside
+// it) and, once the organization holds the record, rewrites that file as a
+// copy of the record. The design service satisfies it. Nil disables Promote.
+type ProjectResourcePromoter interface {
+	ReadProjectResource(ctx context.Context, orgID, projectID, name string) (*spec.ProjectResource, error)
+	RewriteAsRegistryCopy(ctx context.Context, orgID, projectID, name string, rec spec.RegisteredResource) error
 }
 
 // OrgResourceDocs commits UTF-8 resource-docs files into the per-org
@@ -152,12 +166,56 @@ type OrgSecretWriter interface {
 // nil store returns a 500-class wrap.
 type OrgResourceDocs interface {
 	CommitUTF8(ctx context.Context, orgID, logicalName, fileName, content string) (path string, err error)
+	// ReadUTF8 reads one committed file back by its repo path
+	// (`<logicalName>/<fileName>`). The design write path copies a registered
+	// resource's contract document into a project through it.
+	ReadUTF8(ctx context.Context, orgID, path string) (content string, err error)
 }
 
-// EnvironmentLister lists OpenChoreo Environment names for the org namespace.
+// EnvironmentInfo is one OpenChoreo environment as the BFF reads it: name,
+// display name, production flag, validation setting. Owned here, like every
+// other domain type in this ports file (ProjectRef, EnvCell, ...) — the
+// openchoreo client has its own wire-mapping struct of the same shape, and
+// the composition root (internal/app) adapts between the two at the wiring
+// site instead of the two packages sharing a type.
+type EnvironmentInfo struct {
+	Name         string
+	DisplayName  string
+	IsProduction bool
+	Validation   string
+	// PromotesTo is the next environment's name in the deployment pipeline's
+	// promotion order, as resolved by ListOrgEnvironments. Empty means no known
+	// next step — either this is the last environment in a resolved pipeline,
+	// or the org has no pipeline the service can resolve (see PipelineLister):
+	// inventing a promotion chain the platform does not have would be worse
+	// than omitting it.
+	PromotesTo string
+}
+
+// EnvironmentLister lists OpenChoreo Environments for the org namespace.
 // Empty org → empty slice, never nil error-for-empty.
 type EnvironmentLister interface {
-	ListNames(ctx context.Context, orgID string) ([]string, error)
+	List(ctx context.Context, orgID string) ([]EnvironmentInfo, error)
+}
+
+// PipelineLister resolves a deployment pipeline's ordered environment names.
+// ListOrgEnvironments is org-scoped with no project in view, so it cannot
+// simply read a project's spec.deploymentPipelineRef — it resolves the org's
+// OWN pipeline by convention instead: the pipeline named "default" (the
+// platform's own setup convention), falling back to the sole pipeline in the
+// namespace when there is exactly one. ListPipelineNames answers that
+// resolution question; PipelineEnvironments then reads the chosen pipeline's
+// promotion order. openchoreo.ProjectCellClient satisfies both — the
+// composition root adapts it onto this port the same way it adapts
+// EnvironmentClient onto EnvironmentLister.
+type PipelineLister interface {
+	// ListPipelineNames returns the names of every DeploymentPipeline in the
+	// namespace, so the service can apply its "default" / sole-pipeline
+	// resolution convention.
+	ListPipelineNames(ctx context.Context, orgID string) ([]string, error)
+	// PipelineEnvironments returns the environment names the named pipeline
+	// promotes through, in promotion order.
+	PipelineEnvironments(ctx context.Context, orgID, pipelineName string) ([]string, error)
 }
 
 // ProjectRef identifies one project (org + project id) for the cross-project
@@ -303,6 +361,25 @@ type RolesEnsureOutcome struct {
 	// for this `resource`, and asking for another one (or none) produces a
 	// token the gateway rejects.
 	ResourceIdentifier string
+	// ClientID is the OAuth client of the project's sign-in resource — the
+	// `user-auth` thunder-app every protected component shares. It is published
+	// beside the logins because a username and a password START no OAuth flow:
+	// the authorize leg names a CLIENT, and this project's one is resolved into
+	// components as `<DEP>_CLIENT_ID` and nowhere a reader of this ticket can
+	// see it. Publishing it is safe — it is a public PKCE client id, already
+	// shipped to every browser that loads the project's SPA, and it is carried
+	// on a ConfigMap, not a Secret.
+	//
+	// Empty when the project declares no sign-in resource, or its binding has
+	// not resolved yet: the trailer then omits the line rather than printing a
+	// blank that reads as "this project has no client".
+	ClientID string
+	// CallbackURL is the platform tester's redirect URI, registered on the
+	// sign-in resource by the deploy stage (runtimeconfig). Published because
+	// an authorize request has to name a registered redirect_uri, and for a
+	// project with no web app this is the only one there is. Empty when the
+	// platform has none configured.
+	CallbackURL string
 }
 
 // RolesCredential is one published test-account login.
@@ -339,4 +416,62 @@ type RolesEnsurer interface {
 	// is a real failure, never "no roles".
 	DeclaresRoles(ctx context.Context, orgID, projectID, tag string) (bool, error)
 	EnsureRolesForBuild(ctx context.Context, orgID, projectID, tag string) (RolesEnsureOutcome, error)
+}
+
+// AgentRegistrationOutcome is what one build-time agent-registration ensure did.
+type AgentRegistrationOutcome struct {
+	// Agents is one row per ai-agent component the ensure settled, in the order
+	// the design lists them. The gate's closing comment is built from these, so
+	// a human reading the ticket can see which agent got which proxy and follow
+	// the link to attach a guardrail to it.
+	Agents []RegisteredAgent
+	// Provider is the handle of the org's LLM provider every row above is bound
+	// to — stated once because it is shared, unlike the proxies.
+	Provider string
+}
+
+// RegisteredAgent is one agent's registration, as the gate reports it.
+//
+// It carries NO credential. The key is settled at deploy time, not here, so
+// there is nothing secret to keep off this struct — which is the opposite of
+// the roles gate, whose outcome carries logins and is redacted everywhere.
+type RegisteredAgent struct {
+	Component string
+	// ProxyURL is the agent's own model endpoint in Agent Manager. Generated
+	// there and read back, so it can only be reported, never derived.
+	ProxyURL string
+	// Skipped says this component was deliberately not governed, and Reason
+	// says why — an org with no connected Anthropic key, most often. Not a
+	// failure: the agent deploys on the path that predates Agent Manager.
+	Skipped bool
+	Reason  string
+}
+
+// AgentRegistrar makes Agent Manager's view of a version's agents true at BUILD
+// time, with no model in the loop. Wired to the agent-governance slice at the
+// composition root.
+//
+// It deliberately registers ONLY: the org's LLM provider, each agent's record,
+// and each agent's model binding. The credential stays with the deploy, because
+// the key reconcile can rotate — and a rotation here would cut off the agent
+// currently running for the whole coding cycle that follows. See
+// agentgovernance.Governor.EnsureRegistration.
+//
+// Enabled is false when no Agent Manager client is wired at all; the gate is
+// then skipped entirely rather than failing every build. An environment with no
+// AI gateway binding is different, and not an error either — that is the
+// ungoverned path, reported per agent as Skipped.
+type AgentRegistrar interface {
+	Enabled() bool
+	// GovernedAgents names the ai-agent components in the project's design.
+	// Asked FIRST so the gate can be minted open before the work starts — the
+	// shape every other provisioning gate has. An error here is a real failure,
+	// never "this version has no agents".
+	//
+	// It takes no tag, for the same reason EnsureProvisionIssues' design read
+	// does not: the version was tagged from this design moments earlier, so the
+	// committed design IS the version's. The tag is a label and a dedupe key,
+	// not a revision to read at.
+	GovernedAgents(ctx context.Context, orgID, projectID string) ([]string, error)
+	RegisterAgentsForBuild(ctx context.Context, orgID, projectID string, components []string) (AgentRegistrationOutcome, error)
 }

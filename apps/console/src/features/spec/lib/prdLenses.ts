@@ -201,9 +201,9 @@ function assumedLenses(block: DocBlock, run: EmphasisRun): PrdLens[] {
  * What the document offers, in document order.
  *
  * The flags outrank the plain entries: an assumption or an open question is
- * the more urgent thing to take up, so a flagged story offers its verdicts
- * rather than `/expand`. Every bullet offers Discuss (#652) — a conversation
- * is something any line can start.
+ * the more urgent thing to take up, so a flagged story offers its verdicts.
+ * Every bullet offers Discuss (#652) — a conversation is something any line
+ * can start.
  */
 export function prdAffordances(blocks: DocBlock[]): PrdAffordances {
   const lenses: PrdLens[] = [];
@@ -262,16 +262,6 @@ export function prdAffordances(blocks: DocBlock[]): PrdAffordances {
 
     if (b.kind !== "listItem") continue;
 
-    if (sectionLens(section)?.command === "/feature") {
-      lenses.push({
-        kind: "command",
-        command: `/expand ${subject}`,
-        label: "Go deeper",
-        title: "Go deeper on this feature with the agent",
-        at: b.contentEnd,
-        placement: "line",
-      });
-    }
     lenses.push(discussLens(b));
   }
 

@@ -200,6 +200,20 @@ Reconstruct exactly that in the browser: `window.location.origin + '/callback'`,
 and serve the route at `/callback`. Post-sign-in landing is
 `window.location.origin`. Neither is an env key.
 
+**That ONE registered URI serves BOTH legs, so the route must dispatch.**
+`silent_redirect_uri` defaults to `redirect_uri` in oidc-client-ts 3.5.0, so a
+silent renew's hidden iframe lands on `/callback` too — and a second, dedicated
+URI is not an option, because the platform registers only this one and the IdP
+answers `invalid_request: Invalid redirect URI` for anything else. So the route
+calls **`signinCallback()`**, which reads `request_type` off the stored state
+and dispatches (`si:r` → redirect, `si:s` → silent). `signinRedirectCallback()`
+finishes only the redirect leg: on the silent leg it never calls the iframe
+navigator's `callback()`, so the parent window is never notified and waits out
+the full 10s `silentRequestTimeoutInSeconds` before the renew rejects. MEASURED
+on a deployed app: **11.1s** from first paint to the sign-in page, on every
+signed-out visit, 10.0s of it that timeout. `react-oidc-context`, which the
+platform's own console is built on, calls the same dispatching function.
+
 **Token endpoint is cross-origin.** The browser posts straight to
 `<DEP>_ISSUER/oauth2/token`; discovery is
 `<DEP>_ISSUER/.well-known/openid-configuration`. Nothing is proxied same-origin,
@@ -213,6 +227,20 @@ third-party-cookie dependency. The session lives in `localStorage` (a
 `WebStorageStateStore`) with `automaticSilentRenew: true`. `sessionStorage` is
 per-tab and wiped on close, which forces a re-login on every visit; and without
 persistent web storage the PKCE verifier does not survive the redirect at all.
+
+**Renew what EXISTS; sign in when nothing does.** `signinSilent()` is for a
+stored session that has expired — it posts the refresh token and nobody sees it.
+With no stored session there is nothing to refresh, so the library falls back to
+a hidden iframe whose only possible answer is `login_required`, and the app
+waits behind its splash for it: measured at 0.8s of actual round trip inside a
+10s wait, plus a second full boot of the SPA inside that iframe. That fork is
+`sessionAction` in `assets/app/src/authz/core.ts` — `use` / `renew` / `none` —
+kept out of `session.ts` so it can be tested; `none` goes straight to `signIn()`.
+
+What it costs: a visitor holding an IdP session from a sibling app is signed in
+by a visible redirect rather than a hidden iframe. Same destination, one visible
+hop — and the iframe leg is cross-site (the app and the IdP are separate hosts),
+so a browser blocking third-party cookies answers `login_required` anyway.
 
 **A refresh narrows, never widens.** Permission scopes are re-evaluated on
 renewal, so a grant REMOVED from a role disappears at the next silent renew —
@@ -319,9 +347,10 @@ is `env.ts` and this module that make the import graph browser-only: `env.ts`
 throws at module load when `/env-config.js` did not run, and the `UserManager`
 is constructed at module load.
 
-Its surface: `signIn`, `handleCallback`, `signOut`, `currentUser` (renews
-silently; `null` ONLY when there is no session to renew), `accessToken`, and
-`tokenIsValid`.
+Its surface: `signIn`, `handleCallback` (`signinCallback()`, and `void` — see
+the callback rule above), `signOut`, `currentUser` (renews an EXPIRED session
+silently; `null` when there is no session, without asking the IdP),
+`accessToken`, and `tokenIsValid`.
 
 **Gate the app's first render on `currentUser()`**: a user → proceed; `null` →
 `signIn()`. Do **not** call `signIn()` merely because the access token expired —
@@ -445,16 +474,19 @@ once, here.** The screen table is yours to write from `wireframes.dsl`, in
 ```ts
 export const SCREEN_ROUTES: readonly ScreenRoute[] = [
   { key: "my-claims", label: "My Claims",    path: "/claims/mine", loads: "GET /me/claims" },
-  { key: "submit",    label: "Submit Claim", path: "/claims/new",  loads: null },
+  { key: "submit",    label: "Submit Claim", path: "/claims/new",  loads: "POST /me/claims" },
   { key: "approvals", label: "Approvals",    path: "/approvals",   loads: "GET /claims" },
 ];
 ```
 
-`loads` is the operation whose answer the screen renders when it opens — the
-list or the detail call, at the reach the screen shows: an every-row queue
-loads `GET /claims`, a "mine" page loads `GET /me/claims`. `loads: null` is a
-screen with no load call (a form), reachable by any signed-in caller. A screen
-in a flow with **no `role` line** is `public: true` and is routed above the
+`loads` is the operation the screen exists to perform, at the reach the screen
+shows: an every-row queue loads `GET /claims`, a "mine" page loads
+`GET /me/claims`. **A form that only writes names the operation its submit
+makes** — it has no load call, but naming its one operation is what keeps the
+rail, the route guard and the button enabled from the same fact; leaving it
+`null` lets a caller reach a form whose only control they can never use.
+`loads: null` is reserved for a screen that needs no operation at all, which is
+rare. A screen in a flow with **no `role` line** is `public: true` and is routed above the
 sign-in guard (§6). `reachableScreens(scopes, signedIn)` filters the table
 through `canCall`, and the rail, the landing redirect and `NoAccess` all read
 it.
@@ -497,7 +529,7 @@ redirects to the first **reachable** screen in `SCREEN_ROUTES` order.
 
 - `loads: "<operation>"` → `<RequireOperation op={…}>` around the route and
   `<Can op={…}>` around its nav item.
-- `loads: null` → any signed-in caller; no guard.
+- `loads: null` → any signed-in caller; no guard. Rare — a form names its submit operation instead.
 - `public: true` (a screen in a flow with no `role` line) → reachable before
   sign-in; keep it outside the sign-in gate entirely. `App.example.tsx` routes
   those screens **above** `SignedIn`, still inside `AuthzProvider` (so `<Can>`
@@ -546,9 +578,14 @@ verifies that signature. That is the whole of backend authentication.
 Both read the same three variables, which the platform sets on the container
 when the environment's gateway publishes a keypair:
 `GATEWAY_ASSERTION_CERTIFICATE`, `GATEWAY_ASSERTION_ISSUER`,
-`GATEWAY_ASSERTION_HEADER`. **A missing one stops the service from starting**,
-in both stacks, on purpose: a service that runs without them cannot tell a real
-caller from a forged one.
+`GATEWAY_ASSERTION_HEADER`. **A partial trio stops the service from starting**,
+in both stacks, on purpose: a service that starts on half of them cannot tell a
+real caller from a forged one, and a half-configured assertion is a broken
+deployment rather than an unconfigured one. All three **absent** is a separate
+and temporary case — an environment gateway provisioned before the backend-JWT
+keypair existed sets none of them, and the asset then reads the caller without
+verifying any signature and warns on every boot. That fallback is tracked for
+removal in issue #789; author nothing that relies on it.
 
 **You author no new check.** The asset verifies the signature, pins the issuer
 to the gateway (never the IdP), checks the expiry and puts the caller on the
@@ -631,7 +668,7 @@ that skill already sets.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| The service will not start: `GATEWAY_ASSERTION_CERTIFICATE is not set` | Running outside a deployed cell, or in an environment whose gateway has no keypair | Locally, set the three variables from a throwaway keypair. In a cell this is fail-closed on purpose: the environment's gateway needs provisioning. |
+| The service will not start: `…must be set together or not at all` | Some of the three are set, not all | Set all three from a throwaway keypair locally; in a cell, the environment's gateway needs provisioning. |
 | Every request 401s right after a deploy | The environment's gateway was re-provisioned; this component still holds the previous certificate | Redeploy the component — the certificate rides its ReleaseBinding. |
 | A forged request is served as an anonymous caller | An unverifiable assertion was treated as "no caller" | A present-but-invalid assertion is always a 401. |
 | Signed-in user loops back to the login page forever, ~160 ms per cycle | `if (res.status === 401) signIn()` in the API client: the gateway answers 401 for a missing scope exactly as for a dead token | The 401 rule — 401 + `tokenIsValid()` ⇒ Forbidden; only an absent/expired token signs in. Copy `src/authz/client.ts` from the assets. |
@@ -646,5 +683,6 @@ that skill already sets.
 | A public endpoint trusts an identity | A public operation has no policy, so every inbound header is the caller's own and no assertion is minted | A handler behind `security: []` reads no identity at all. |
 | A newly granted permission does not show up for a user who is already signed in | A refresh narrows but never widens — RFC 6749 §6 | Sign out and in again; a removed grant, by contrast, disappears at the next renew. |
 | Sign-in loops at the right path, or the user is sent to login on every visit / new tab | No persistent `WebStorageStateStore` (the in-memory default loses the PKCE verifier across the redirect), session in `sessionStorage`, or the load path calls `signIn()` on a merely-expired token | `WebStorageStateStore({ store: localStorage })` + `automaticSilentRenew`; renew via `signinSilent()` and only `signIn()` when there is no session. |
+| The splash ("Checking your session…") sits ~10 s on every signed-out visit before the IdP appears | `/callback` calls `signinRedirectCallback()`, so the silent renew's hidden iframe never reports back and the parent waits out `silentRequestTimeoutInSeconds` — and a signed-out visitor was sent into that renew at all | `handleCallback()` → `signinCallback()`; `currentUser()` renews only what `sessionAction` calls `renew`. Both are in the assets. |
 | After login, "invalid redirect URI" | `redirect_uri` doesn't match the `<origin>/callback` the platform registered | Compute `window.location.origin + '/callback'`. |
 | Logout button does nothing | `signOut()` calls only `signoutRedirect()`, which rejects (no `end_session_endpoint`), and the handler swallows it | Wrap it in the try/catch fallback to `removeUser()` + reload. |

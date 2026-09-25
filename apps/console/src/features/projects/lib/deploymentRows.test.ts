@@ -81,11 +81,18 @@ describe("statusKind", () => {
 });
 
 describe("groupDeploymentCards", () => {
+  // The pipeline's entry environment — where a build lands, and so the one
+  // column that also accounts for components with nothing bound.
+  const ENTRY = "development";
+
   it("routes bindings to their environment's column", () => {
-    const { development, production } = groupDeploymentCards(
+    const board = groupDeploymentCards(
       [component("catalog-api", "Catalog API")],
       [devReady, prodReady],
+      ENTRY,
     );
+    const development = board.get("development") ?? [];
+    const production = board.get("production") ?? [];
     expect(development).toHaveLength(1);
     expect(development[0]?.deployment?.environment).toBe("development");
     expect(production).toHaveLength(1);
@@ -93,63 +100,81 @@ describe("groupDeploymentCards", () => {
     expect(production[0]?.displayName).toBe("Catalog API");
   });
 
-  it("gives every component a development card, greyed Not deployed when unbound", () => {
-    const { development, production } = groupDeploymentCards(
+  it("gives every component an entry-environment card, greyed Not deployed when unbound", () => {
+    const board = groupDeploymentCards(
       [component("storefront", "Storefront"), component("catalog-api")],
       [devReady],
+      ENTRY,
     );
+    const development = board.get("development") ?? [];
     expect(development).toHaveLength(2);
     const storefront = development.find((c) => c.componentName === "storefront");
     expect(storefront?.kind).toBe("notDeployed");
     expect(storefront?.deployment).toBeUndefined();
-    expect(production).toHaveLength(0);
+    expect(board.get("production")).toBeUndefined();
   });
 
-  it("keeps a component deployed only in production visible as Not deployed in dev", () => {
-    const { development, production } = groupDeploymentCards(
-      [component("catalog-api")],
-      [prodReady],
-    );
-    expect(production).toHaveLength(1);
+  it("keeps a component deployed only in production visible as Not deployed in the entry environment", () => {
+    const board = groupDeploymentCards([component("catalog-api")], [prodReady], ENTRY);
+    expect(board.get("production")).toHaveLength(1);
+    const development = board.get("development") ?? [];
     expect(development).toHaveLength(1);
     expect(development[0]?.kind).toBe("notDeployed");
   });
 
-  it("puts non-production environments in the development column", () => {
+  it("gives an environment between the two its own column, not development's", () => {
+    // Intent changed with the N-environment board (task 6): staging used to
+    // be folded into the development column because the console knew only two
+    // environments. It is now a column of its own.
     const staging: Deployment = {
       componentName: "catalog-api",
       environment: "staging",
       status: "Ready",
     };
-    const { development, production } = groupDeploymentCards(
-      [component("catalog-api")],
-      [devReady, staging],
-    );
-    expect(production).toHaveLength(0);
-    expect(development).toHaveLength(2);
-    expect(development.map((c) => c.deployment?.environment)).toEqual([
+    const board = groupDeploymentCards([component("catalog-api")], [devReady, staging], ENTRY);
+    expect([...board.keys()]).toEqual(["development", "staging"]);
+    expect(board.get("development")?.map((c) => c.deployment?.environment)).toEqual([
       "development",
-      "staging",
     ]);
+    expect(board.get("staging")?.map((c) => c.deployment?.environment)).toEqual(["staging"]);
+  });
+
+  it("holds only the bindings when no entry environment is named", () => {
+    const board = groupDeploymentCards([component("catalog-api"), component("storefront")], [
+      prodReady,
+    ]);
+    expect([...board.keys()]).toEqual(["production"]);
+    expect(board.get("production")).toHaveLength(1);
   });
 
   it("shows deployments whose component is missing from the list", () => {
-    const { development } = groupDeploymentCards([], [devReady]);
+    const development = groupDeploymentCards([], [devReady], ENTRY).get("development") ?? [];
     expect(development).toHaveLength(1);
     expect(development[0]?.componentName).toBe("catalog-api");
     expect(development[0]?.displayName).toBe("catalog-api");
   });
 
-  it("sorts each column by component name", () => {
-    const { development } = groupDeploymentCards(
+  it("keeps the components list's own order, a stray binding last", () => {
+    const board = groupDeploymentCards(
       [component("zeta"), component("alpha")],
-      [],
+      [
+        { componentName: "alpha", environment: "development", status: "Ready" },
+        { componentName: "gone", environment: "development", status: "Ready" },
+        { componentName: "alpha", environment: "production", status: "Ready" },
+        { componentName: "zeta", environment: "production", status: "Ready" },
+      ],
+      ENTRY,
     );
-    expect(development.map((c) => c.componentName)).toEqual(["alpha", "zeta"]);
+    expect(board.get("development")?.map((c) => c.componentName)).toEqual([
+      "zeta",
+      "alpha",
+      "gone",
+    ]);
+    expect(board.get("production")?.map((c) => c.componentName)).toEqual(["zeta", "alpha"]);
   });
 
   it("marks intentionally undeployed bindings", () => {
-    const { development } = groupDeploymentCards(
+    const board = groupDeploymentCards(
       [component("orders-api")],
       [
         {
@@ -158,8 +183,9 @@ describe("groupDeploymentCards", () => {
           status: "Undeployed",
         },
       ],
+      ENTRY,
     );
-    expect(development[0]?.kind).toBe("undeployed");
+    expect(board.get("development")?.[0]?.kind).toBe("undeployed");
   });
 });
 

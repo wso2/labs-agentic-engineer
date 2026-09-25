@@ -24,4 +24,23 @@ export const validationKeys = {
   // cache-buster that invalidates a stale criteria/report read.
   file: (name: string, path: string, version: string) =>
     [...projectKeys.detail(name), "validation", "file", path, version] as const,
+  // The validation ledger — one row per version.
+  list: (name: string) => [...projectKeys.detail(name), "validations"] as const,
+  // One version's validation history.
+  detail: (name: string, tag: string) =>
+    [...projectKeys.detail(name), "validations", tag] as const,
+  // One attempt's report and the criteria it was judged against. Keyed by the
+  // CYCLE and by WHICH COMMIT it is read at: an attempt in flight is answered
+  // from the branch tip, the same attempt once merged from its own commit. Two
+  // contents, so two entries — sharing one, the tip's empty answer is what the
+  // settled read caches forever.
+  snapshot: (name: string, tag: string, cycleId: string, settled: boolean) =>
+    [
+      ...projectKeys.detail(name),
+      "validations",
+      tag,
+      "cycles",
+      cycleId,
+      settled ? "merged" : "head",
+    ] as const,
 };

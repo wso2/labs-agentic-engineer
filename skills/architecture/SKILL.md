@@ -53,7 +53,7 @@ Never substitute a design system the organization defaults do not name.
 **Pin the design system; do not consult it.** A design system is built against,
 not designed with — it is the coding run's to load, and its theming is a settled
 organization decision that no design-time question reopens. Never ask the user
-about colors, themes, or look and feel. **Pin the auth skills the same way,
+about colors, themes, or look and feel. An ai-agent → `["agent-building"]`. **Pin the auth skills the same way,
 never leave them to a description:** `"thunder-authentication"` on **both**
 sides of sign-in — every component that declares the `thunder-app` dependency,
 the SPA *and* each protected backend it calls — and `"api-management"` on every
@@ -101,10 +101,54 @@ Do NOT split by:
   owning service starts, not a component of its own. Only a genuinely different
   runtime or scaling profile (above) justifies splitting one off.
 
-When nothing above forces a split, a small system naturally lands at one
-service + one web-application — that is an outcome of the rule, not a target. Name
-components in kebab-case after their responsibility (`expense-api`,
-`expense-webapp`, `report-worker`).
+**Never invent a user-facing surface the requirements did not ask for.** A
+system whose requirements describe a browser app lands at one service + one
+web-application; a system whose only surface is an agent lands at one service +
+one ai-agent and NO web-application. An agent is a complete surface on its own —
+the console's Test tab talks to a deployed agent directly — so "there must be
+something for the user to open" is not a reason to add a SPA. Adding an
+unrequested web-application is the same failure as splitting by domain concept:
+a shape imposed on the requirements instead of read from them. Name components
+in kebab-case after their responsibility (`expense-api`, `expense-webapp`,
+`report-worker`, `packing-agent`).
+
+**An AI agent is `"ai-agent"`.** Reach for it when the requirements call for a
+conversational or autonomous surface — a user talking to the system in their own
+words rather than filling in a form. Its behaviour is authored as
+`agent.afm.md` (the `agent-building` skill), it is implemented in TypeScript, and
+it pins `["agent-building"]`. It is a normal deployable that calls other
+components over HTTP: give it a `component` dependency for every API it uses.
+**An agent a signed-in user reaches is a protected backend** — whether the
+caller is a sibling web-application or the console's Test tab, set
+`"exposure": "internet"` (a browser cannot reach an intranet address, so an
+intranet agent has nothing that can talk to it) AND give it the project's
+shared `thunder-app`
+dependency, under the same dependency NAME the SPA and the sibling APIs use,
+exactly as you would for a service. It is the same sign-in and the same OAuth
+app, not a second one. Do this even when the agent stores nothing and every API
+behind it already authorises: a service you can call without a token costs CPU,
+an agent you can call without a token costs money on the organisation's model
+key, so an unauthenticated agent endpoint is a billing hole rather than a
+tolerable one.
+**Declare no dependency for model access** — every `ai-agent` gets it from its
+component type, on the organisation's own key, so there is nothing to choose.
+**An `ai-agent` with server memory needs a Postgres for its conversation
+store.** Give it a `platform-resource` dependency with `resourceType:
+"postgres-cnpg"` — the PVC-backed type, so a conversation survives a pod
+restart; the older ephemeral `postgres` type is not installed and referencing
+it fails provisioning. Dedicated is the default — `{ "kind":
+"platform-resource", "name": "memory-db", "resourceType": "postgres-cnpg" }`,
+injected as `MEMORY_DB_HOST` / `MEMORY_DB_PORT` / `MEMORY_DB_DBNAME` /
+`MEMORY_DB_USER` / `MEMORY_DB_PASSWORD` (`postgres-cnpg` has no `url` output;
+the generic platform-resource wiring injects each of its five outputs as
+`<DEP_NAME>_<OUTPUT>`, uppercased). When the project already carries a
+Postgres and the user prefers one instance, declare the SAME dependency name
+the sibling service uses — same-name resolution to one shared instance is the
+`thunder-app` sharing rule, and it applies here too. Either way the agent owns
+its `conversations` table exclusively: no other component touches it, and the
+agent touches nothing else in a shared instance. Business data is still not
+the agent's to hold — anything beyond its own conversation belongs behind a
+service that owns it.
 
 **Component `type` is a fixed vocabulary — use the EXACT string.** A backend is
 `"service"`; a browser app is `"web-application"` (OpenChoreo's own term). Write
@@ -131,7 +175,7 @@ violations:
   "language": "Ballerina",            // implementation language — "Ballerina" for a service unless the requirements say otherwise; "TypeScript" for a web-application
   "buildpack": "docker",              // always "docker"
   "appPath": "expense-api",           // repo-relative source dir — the component name
-  "entrypoint": "deployment/service", // deploy entry — PAIRS with `type`: "deployment/service" for a service, "deployment/web-application" for a web-application
+  "entrypoint": "deployment/service", // deploy entry — PAIRS with `type`: "deployment/service" for a service, "deployment/web-application" for a web-application, "deployment/ai-agent" for an ai-agent
   "exposure": "internet",             // "internet" (public) | "intranet" (internal only)
   "dependencies": [ /* see below — every dependency edge touching this component appears here */ ],
   "description": "One paragraph: single responsibility, port/entrypoint expectations, and what it explicitly does NOT do.",
@@ -288,79 +332,104 @@ entry per dependency keeps the rail honest). The name is the same
 identifier everywhere: the directory, the cell's `south` node, the
 component's reference, and — for a reuse — the org registry.
 
-`dependency.json`:
+`dependency.json` — ONE PROJECT'S USE OF A RESOURCE. The `resource` block is
+what the thing is, in the one shape a resource has everywhere (the org
+registry holds the same shape); around it sit this project's provenance and
+open suggestions:
 
 ```json
 {
-  "name": "payment-provider",
-  "description": "Charges the customer for shipping once a box is priced.",
-  "provider": "Stripe",
-  "style": "rest-api",
-  "contract": "openapi.yaml",
-  "provenance": { "sourceUrl": "https://…/spec3.json", "sha256": "…", "fetchedAt": "…", "sliced": true },
-  "config": [ { "key": "PAYMENT_API_KEY", "secret": true, "description": "Stripe secret API key" } ]
+  "name": "payment-service",
+  "resource": {
+    "name": "payment-service",
+    "description": "Charges the customer for shipping once a box is priced.",
+    "provider": "Stripe",
+    "config": [ { "key": "PAYMENT_API_KEY", "secret": true, "description": "Stripe secret API key" } ],
+    "contract": { "type": "openapi", "path": "openapi.yaml", "origin": "provider" }
+  },
+  "provenance": { "sourceUrl": "https://…/spec3.json" }
 }
 ```
 
+There is no `style`: how the component consumes the system is computed from
+`contract.type` (`openapi` → a REST client, `graphql` → a GraphQL client, `sdk`
+→ a vendor library). The contract is ONE WHOLE DOCUMENT beside the file, never
+a slice — the coding agent cuts what its component calls at coding time — and
+it is always `{ "type", "path" }`, a file name in the directory: there is no
+URL form, and the coding agent must find nothing in the repo it could follow
+off it. `contract.origin` says where the file came from: `registry` (copied
+from the organization's record), `provider` (the provider's published
+document, fetched by the platform), `derived` (you wrote it from the
+provider's developer reference), `assumed` (you wrote it from less, under the
+user's authorization — `contract.accepted` is that record, and the platform
+writes it, never you).
+
 Work each one in order:
 
-1. **Reuse first.** Call `list_external_resources`. When a **Registered
-   External resource** fits, write the stub `{ "name": "<its exact name>",
-   "source": "org" }` — the platform fills provider, contract and config from
-   the org record, and the build collects no values for it, because
-   org values stay on the Registered name.
-   Write consumption instructions into the dependency `description` — the
-   row's consumption instructions and its org resource docs pointers, as the
-   tool returns them — because the coding agent reads them there and never
-   calls the catalog. Then stop. A user-asked reconsider may switch to a
-   different Registered name, or create a **Project External resource** under
-   a **new** name.
+1. **Reuse first.** Call `list_external_resources`. It lists the resources
+   the ORGANIZATION registered — never one another project defined for
+   itself. When a row fits, write the stub and nothing more:
+   `{ "name": "<its exact name>", "resource": { "ref": "<its exact name>", "name": "<its exact name>" } }`.
+   The platform fills the block at save — provider, config keys, the
+   organization's consumption instructions — and copies the record's contract
+   document beside the file (`origin: "registry"`). Never retype the keys or
+   the instructions: their identities are load-bearing, and a retyped key is
+   how they drift. The build collects no values for it — org values stay on
+   the registered name. Then stop. A user-asked reconsider may switch to a
+   different registered name, or define a **Project External resource**
+   inline under a new name.
 2. **The PRD names the service, or nobody has.** The user chooses providers;
    you never do. Two outcomes, never a `status`:
    - **The PRD's Product Decisions name a service for this capability**
-     ("Payments: Stripe") → write `provider` + `style` and go on to the
+     ("Payments: Stripe") → write `resource.provider` and go on to the
      contract (step 3). An org or platform skill that mandates a vendor
      counts the same way. Nothing else does: "the requirement implies it",
      "this one is popular", "there is only one real option" are guesses, and
      a guess is the user's to make.
-   - **No provider named** → write the NEED only: `name`, `description`, and
-     `suggestions` — providers commonly used for this capability, from what
-     you know, any number, each `{ "name", "style"?, "description"? }` with
-     the one distinction that matters for THIS product. No `web_search`, no
-     `provider`, no `style`, no `contract`, no `config` — the config keys
-     follow the provider, and none is chosen. The definition then offers
-     **Select a provider**, which runs the `resolve-dependency` flow: it asks
-     the user, with your suggestions as the options, and does the research.
-     This is the EXPECTED outcome for a choosable dependency; do not force a
-     pick the PRD does not make.
+   - **No provider named** → write the NEED only: `name`, `resource.name`,
+     `resource.description`, and `suggestions` — providers commonly used for
+     this capability, from what you know, any number, each
+     `{ "name", "style"?, "description"? }` with the one distinction that
+     matters for THIS product. No `web_search`, no `provider`, no `contract`,
+     no `config` — the config keys follow the provider, and none is chosen.
+     The definition then offers **Select a provider**, which runs the
+     `resolve-dependency` flow: it asks the user, with your suggestions as
+     the options, and does the research. This is the EXPECTED outcome for a
+     choosable dependency; do not force a pick the PRD does not make.
    The dependency IS the service the product needs, so name it
    `<capability>-service` (`currency-service`, `payment-service`,
    `email-service`); the chosen system is its provider.
-3. **Get the contract on disk — for a named provider only.** `style` says
-   how: `rest-api` and `graphql` need a document in the directory
-   (`openapi.yaml` / `schema.graphql`), `sdk` needs `sdk.json` (and the API
-   slice beside it when the provider has one). The contract is a SLICE: name
-   the operations the design's flows actually call and let
-   `slice_openapi_spec` cut them from the provider's published document with
-   their referenced schemas — it fetches outside your context, so the
-   document's size does not matter — then `addFile` the returned content as
-   `openapi.yaml` and copy the returned `provenance` into `dependency.json`.
-   A user-supplied document goes through the same tool. With no document to
-   be found, climb one rung: **derive** the interface from the provider's
-   OWN developer reference when it names every operation the design calls
-   with parameters and responses — `openapi.yaml` with `x-aep-derived: true`
-   at the root and `x-aep-source: <page>` on every operation, `provenance.
-   sourceUrl` = the reference's root page. That needs no permission: the
-   dependency reads resolved, flagged *derived*. With no such documentation
-   either, never guess during the design turn: leave `contract` unset, say so
-   under **Needs your input**, and the `resolve-dependency` flow takes it
-   from there (it may write an ASSUMED contract, but only under the user's
-   authorization). This rung is for a NAMED provider only — an open
-   capability gets no interface search at all.
-4. **Derive `config` keys** from the contract — a `rest-api`'s
-   `components.securitySchemes`, an `sdk`'s auth documentation — for a named
+3. **Get the contract document on disk — for a named provider only.** A
+   ladder, climbed in order:
+   - **Point at the published document.** `web_search` for the provider's
+     published OpenAPI or GraphQL document, then write, INSIDE `resource`,
+     `"contract": { "type": "openapi", "path": "openapi.yaml", "origin": "provider" }`
+     (or `graphql` / `schema.graphql`), and `"provenance": { "sourceUrl": "<its URL>" }`
+     beside `resource` at the top level — and STOP. A `contract` written
+     anywhere but inside `resource` is refused. Do NOT fetch the document and
+     do NOT `addFile` it: the
+     platform fetches it at save (https only, at most 5 MiB), lands it beside
+     the definition and fills the hash. A document a user hands over goes
+     through **Provide interface** on the definition and lands the same way.
+   - **Derive** it from the provider's OWN developer reference when it names
+     every operation the design calls with parameters and responses:
+     `addFile` an `openapi.yaml` with an `x-aep-source: <page>` on every
+     operation, `resource.contract.origin: "derived"`, `provenance.sourceUrl` =
+     the reference's root page. That needs no permission: the dependency reads
+     resolved, flagged *derived*.
+   - With no such documentation either, never guess during the design turn:
+     leave `contract` unset, say so under **Needs your input**, and the
+     `resolve-dependency` flow takes it from there (it may write an ASSUMED
+     contract, but only under the user's authorization).
+   An SDK is a contract of its own type: `{ "type": "sdk", "path": "sdk.json" }`,
+   and `sdk.json` names the package per implementation language. This rung
+   is for a NAMED provider only — an open capability gets no interface
+   search at all.
+4. **Derive `resource.config` keys** from the contract — a REST API's
+   `components.securitySchemes`, an SDK's auth documentation — for a named
    provider only; a definition with no provider carries no keys (the gate
-   refuses them). A reused Registered row already named the keys — keep them.
+   refuses them). A copied registered resource already carries its keys —
+   keep them.
 5. **Reference it** from each consuming component:
    `{ "kind": "external", "name": "<name>", "description": "<why this component uses it>" }`.
    `style`, `package`, `specPath`, `suggestions`, `config` on the component
@@ -368,7 +437,7 @@ Work each one in order:
 
 ### Config-key conventions
 
-`config` is the env-var schema the consuming component codes against. Use
+`resource.config` is the env-var schema the consuming component codes against. Use
 `SCREAMING_SNAKE_CASE` keys and keep them minimal — only what the component
 reads. `secret` is opt-in: set `"secret": true` ONLY for credentials (they route
 through the secret path), and OMIT it entirely otherwise. Give each key a
@@ -384,20 +453,24 @@ value-collection gate needs something to collect.
 #### How the platform derives status/reason
 
 You never author `status`/`reason`. The platform reads them off the dependency
-file at read time, first match wins:
+file at read time, plus one registry lookup for a copy, first match wins:
 
-1. `source: "org"`, or `name` matches a registered external resource →
-   `resolved` (flagged `registered`)
-2. no `provider` (`suggestions` open or not) → `unresolved`/`needs-input` —
-   the user has not chosen a service; the definition asks them
-3. a `style` whose contract is not on disk (no `openapi.yaml` /
-   `schema.graphql` for `rest-api` / `graphql`; no `sdk.json` for `sdk`) →
-   `unresolved`/`needs-contract`
-4. a contract marked assumed with no user acceptance → `unresolved`/
+1. `resource.ref` set and the organization has a registered resource of that
+   name → the copy stands; only the contract is checked (rule 4)
+2. `resource.ref` set and NO registered resource of that name → `unresolved`/
+   `needs-input` — the definition says "The organization has no registered
+   resource with this name" and offers Select a provider
+3. no `resource.provider` (`suggestions` open or not) → `unresolved`/
+   `needs-input` — the user has not chosen a service; the definition asks them
+4. no `resource.contract`, or a contract whose file is not on disk (the
+   platform's fetch may still be owed or may have failed) → `unresolved`/
+   `needs-contract`
+5. `contract.origin: "assumed"` with no `accepted` → `unresolved`/
    `needs-acceptance`
-5. otherwise → `resolved` — flagged `assumed` when the contract was accepted
-   as an assumption, `derived` when it was written from the provider's own
-   documentation, `sdk-only` when an `sdk` dependency has no API slice
+6. otherwise → `resolved` — flagged `registered` for a copy, `assumed` when
+   the contract was accepted as an assumption, `derived` when it was written
+   from the provider's own documentation, `sdk-only` for an sdk contract,
+   `stale` when a copy's document no longer matches the organization's
 
 `component` is always `resolved` here. A `platform-resource` is too — once
 emitted — so only emit one whose `resourceType` is a `name` from this turn's
@@ -413,9 +486,10 @@ The design-generate turn runs in the chat panel, so your turn text is what the
 user watches live. **Narrate each dependency decision in one plain-prose line as
 you settle it**, before moving to the next:
 
-- resolved → `✓ <capability>: using <choice>` (say `, contract sliced` when
-  you cut one, `, interface derived from docs` when you wrote it from the
-  provider's reference, `, registered` for an org reuse)
+- resolved → `✓ <capability>: using <choice>` (say `, document fetched at
+  save` when you pointed at a published one, `, interface derived from docs`
+  when you wrote it from the provider's reference, `, registered — the
+  organization's resource, copied here` for a reuse)
 - needs-input → `<capability>: your choice — A / B / C are common; select a
   provider on its definition`
 - needs-contract → `<capability>: <provider> chosen, no published contract

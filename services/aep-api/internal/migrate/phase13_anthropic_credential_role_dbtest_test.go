@@ -88,10 +88,11 @@ func TestPhase13AnthropicCredentialRole_CheckRejectsUnknownRole(t *testing.T) {
 func TestPhase13AnthropicCredentialRole_BothRolesCoexist(t *testing.T) {
 	db := dbtest.New(t)
 
-	for _, role := range []string{"default", "coding"} {
+	// Each role with the only kind phase16's CHECK lets it hold.
+	for role, kind := range map[string]string{"default": "api_key", "coding": "oauth_token"} {
 		if err := db.Exec(`
-			INSERT INTO org_anthropic_credentials (oc_org_id, role, key_prefix, key_last4, status)
-			VALUES ('acme', ?, 'sk-ant-ap03-x', 'wxyz', 'active')`, role).Error; err != nil {
+			INSERT INTO org_anthropic_credentials (oc_org_id, role, credential_kind, key_prefix, key_last4, status)
+			VALUES ('acme', ?, ?, 'sk-ant-ap03-x', 'wxyz', 'active')`, role, kind).Error; err != nil {
 			t.Fatalf("insert role %s: %v", role, err)
 		}
 	}

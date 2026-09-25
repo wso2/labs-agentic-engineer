@@ -258,7 +258,21 @@ func (s *Service) GetProject(ctx context.Context, orgName, projectName string) (
 	return project, nil
 }
 
+// CreateProject creates the project and everything that hangs off it.
+//
+// A project with no display name of its own is given its NAME as one, and that
+// is not cosmetic. The display name is written to the OpenChoreo Project as
+// `openchoreo.dev/display-name`, and Agent Manager projects OpenChoreo's
+// Projects into its own catalogue — reading that annotation. Left empty, AMP's
+// console has nothing to show and falls back to the project's deployment
+// PIPELINE name, so every AEP project appears there as "default deployment
+// pipeline". Defaulting it here rather than in the console covers every caller
+// — the console's create form has no display-name field, and seeds and direct
+// API callers have none either.
 func (s *Service) CreateProject(ctx context.Context, orgName string, req *gen.CreateProjectRequest) (*gen.Project, error) {
+	if req != nil && strings.TrimSpace(req.DisplayName) == "" {
+		req.DisplayName = req.Name
+	}
 	project, err := s.client.CreateProject(ctx, orgName, req)
 	if err != nil {
 		return nil, translateHTTPError(err)

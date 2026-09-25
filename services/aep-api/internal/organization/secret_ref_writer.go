@@ -134,6 +134,163 @@ func (w *SecretRefWriter) WriteAnthropic(ctx context.Context, ocOrgID string, ro
 	return secretRefName, nil
 }
 
+// WriteAMPModelKey stores one agent's Agent-Manager-issued model key and
+// returns the SecretReference name and vault property a ReleaseBinding can
+// secretKeyRef.
+//
+// PER (AGENT, ENVIRONMENT), not per org. Agent Manager issues one key per model
+// config per environment, and the point of routing an agent's model traffic
+// through the AI gateway is that each agent holds a credential that can be
+// revoked on its own. Two agents sharing an entity name would share one key and
+// give that up.
+//
+// Unlike WriteAnthropic this stamps no DB columns: the AMP key is not an org
+// credential a user connected, it is a platform-issued credential whose only
+// consumer is the ReleaseBinding composed moments later. Its coordinates are
+// derived from (org, component, environment) by every reader, so there is
+// nothing to record.
+//
+// The caller must supply a context carrying an ouId claim. In a request that is
+// the user's JWT; the govern stage has no user, so it mints a system token and
+// attaches its claims before calling this.
+func (w *SecretRefWriter) WriteAMPModelKey(ctx context.Context, ocOrgID, component, environment, apiKey, proxyURL string) (string, string, error) {
+	if !w.Enabled() {
+		return "", "", nil
+	}
+	for _, required := range []struct{ name, value string }{
+		{"ocOrgID", ocOrgID},
+		{"component", component},
+		{"environment", environment},
+		{"apiKey", apiKey},
+	} {
+		if strings.TrimSpace(required.value) == "" {
+			return "", "", fmt.Errorf("secret-ref writer: amp model key: %s required", required.name)
+		}
+	}
+	orgUUID, err := orgUUIDForSecretLocation(ctx)
+	if err != nil {
+		return "", "", fmt.Errorf("secret-ref writer: amp model key: %w", err)
+	}
+	loc := secretmanagersvc.SecretLocation{
+		OrgName:               orgUUID,
+		ControlPlaneNamespace: ocOrgID,
+		EntityName:            ampModelKeyEntity(component, environment),
+		SecretKey:             secretmanagersvc.SecretKeyAPIKey,
+	}
+	// The URL rides in the same secret as the key. They are useless apart — the
+	// key authenticates against that proxy alone — and one secret means the
+	// deployment composes both from one SecretReference instead of needing a
+	// second source of truth for an address Agent Manager generated.
+	payload := map[string]string{secretmanagersvc.SecretKeyAPIKey: apiKey}
+	if strings.TrimSpace(proxyURL) != "" {
+		payload[AMPModelURLKey] = proxyURL
+	}
+	secretRefName, err := w.client.CreateSecret(ctx, loc, payload)
+	if err != nil {
+		return "", "", fmt.Errorf("secret-ref writer: amp model key upload: %w", err)
+	}
+	slog.InfoContext(ctx, "secret-ref writer: AMP model key stored",
+		"ocOrgId", ocOrgID,
+		"component", component,
+		"environment", environment,
+		"secretRefName", secretRefName)
+	return secretRefName, secretmanagersvc.SecretKeyAPIKey, nil
+}
+
+// WriteAMPTracingToken stores one agent's OTLP credential — what it sends as
+// `x-amp-api-key` when it POSTs spans to the gateway's /otel route.
+//
+// ITS OWN SecretReference, not a property beside the model key, and the reason
+// is composition rather than tidiness. Minting this token is allowed to fail
+// without stopping a deploy: an agent with no tracing token runs correctly and
+// is merely unobserved. That is only true if the deployment can avoid
+// REFERENCING a token that was never written — and OpenChoreo's secretKeyRef
+// has no `optional` flag, so a reference to an absent key does not degrade to
+// "no traces", it stops the container from starting. A separate reference
+// turns the question composition must answer into one it can: does this
+// SecretReference exist?
+//
+// No endpoint rides along, unlike WriteAMPModelKey. The OTLP address is the
+// environment's gateway plus a fixed route — derivable by anything holding the
+// AI gateway binding, and not a secret — so composing it there costs one less
+// stored value that could go stale.
+//
+// Callers treat a failure here as non-fatal — see the governor's
+// reconcileTracingToken — so this returns a plain error and stamps nothing.
+func (w *SecretRefWriter) WriteAMPTracingToken(ctx context.Context, ocOrgID, component, environment, token string) error {
+	if !w.Enabled() {
+		return nil
+	}
+	for _, required := range []struct{ name, value string }{
+		{"ocOrgID", ocOrgID},
+		{"component", component},
+		{"environment", environment},
+		{"token", token},
+	} {
+		if strings.TrimSpace(required.value) == "" {
+			return fmt.Errorf("secret-ref writer: amp tracing token: %s required", required.name)
+		}
+	}
+	orgUUID, err := orgUUIDForSecretLocation(ctx)
+	if err != nil {
+		return fmt.Errorf("secret-ref writer: amp tracing token: %w", err)
+	}
+	loc := secretmanagersvc.SecretLocation{
+		OrgName:               orgUUID,
+		ControlPlaneNamespace: ocOrgID,
+		EntityName:            ampTracingTokenEntity(component, environment),
+		SecretKey:             secretmanagersvc.SecretKeyAPIKey,
+	}
+	if _, err := w.client.CreateSecret(ctx, loc, map[string]string{AMPTracingTokenKey: token}); err != nil {
+		return fmt.Errorf("secret-ref writer: amp tracing token upload: %w", err)
+	}
+	slog.InfoContext(ctx, "secret-ref writer: AMP tracing token stored",
+		"ocOrgId", ocOrgID,
+		"component", component,
+		"environment", environment)
+	return nil
+}
+
+// AMPTracingTokenKey is the property inside an agent's tracing secret holding
+// the token — what AMP_AGENT_API_KEY is composed from.
+const AMPTracingTokenKey = "tracingToken"
+
+// AMPTracingTokenSecretRefName is the SecretReference a deployment
+// secretKeyRefs to reach one agent's tracing token. Derived from (component,
+// environment) by both sides, exactly as AMPModelKeySecretRefName is.
+func AMPTracingTokenSecretRefName(component, environment string) string {
+	return secretmanagersvc.SecretLocation{
+		EntityName: ampTracingTokenEntity(component, environment),
+	}.SecretRefName()
+}
+
+func ampTracingTokenEntity(component, environment string) string {
+	return fmt.Sprintf("amp-tracing-%s-%s", component, environment)
+}
+
+// AMPModelURLKey is the property inside an agent's AMP secret holding the proxy
+// URL its key authenticates against — the value MODEL_ENDPOINT is composed from.
+const AMPModelURLKey = "url"
+
+// AMPModelKeySecretRefName is the SecretReference a deployment secretKeyRefs to
+// reach one agent's AMP model key.
+//
+// DERIVED, not recorded. SM-API names a SecretReference deterministically from
+// its location (secretsprovider.SecretLocation.SecretRefName), so the writer and
+// the deployment that consumes it can each compute the name from (component,
+// environment) without a row to look it up in. Both sides go through this
+// function so there is exactly one spelling: a second, divergent one would not
+// error, it would simply never find the secret.
+func AMPModelKeySecretRefName(component, environment string) string {
+	return secretmanagersvc.SecretLocation{
+		EntityName: ampModelKeyEntity(component, environment),
+	}.SecretRefName()
+}
+
+func ampModelKeyEntity(component, environment string) string {
+	return fmt.Sprintf("amp-model-%s-%s", component, environment)
+}
+
 // WriteGitHubPAT uploads a per-org GitHub PAT to SM-API and stamps the
 // triplet (plus written_at) onto `org_credentials`. Same semantics as
 // WriteAnthropic: errors are returned, ctx must carry the user JWT.
@@ -226,6 +383,27 @@ func (w *SecretRefWriter) WriteExternalResourceSecret(ctx context.Context, ocOrg
 // WriteExternalResourceSecret path.
 const orgCatalogProjectName = "org-catalog"
 
+// CopyOrgCatalogSecret reads the secret fields at fromVaultKey — a project's
+// own external-resource secret, whose vault key its per-environment binding
+// carries as secretStorePath — and writes them as an org-catalog entity. The
+// values move vault to vault; nothing is echoed to the caller.
+func (w *SecretRefWriter) CopyOrgCatalogSecret(ctx context.Context, ocOrgID, fromVaultKey, entityName string) (string, error) {
+	if !w.Enabled() {
+		return "", nil
+	}
+	if strings.TrimSpace(fromVaultKey) == "" {
+		return "", errors.New("secret-ref writer: no vault key to copy from")
+	}
+	data, err := w.client.GetSecretWithValue(ctx, fromVaultKey)
+	if err != nil {
+		return "", fmt.Errorf("secret-ref writer: read %s for the org catalog: %w", fromVaultKey, err)
+	}
+	if len(data) == 0 {
+		return "", fmt.Errorf("secret-ref writer: %s holds no secret data", fromVaultKey)
+	}
+	return w.WriteOrgCatalogSecret(ctx, ocOrgID, entityName, data)
+}
+
 // WriteOrgCatalogSecret uploads Registered External secret fields using the
 // existing vault layout with projectName "org-catalog" and returns the vault
 // key the ResourceType CEL reads from the binding (secretStorePath).
@@ -292,18 +470,13 @@ func (w *SecretRefWriter) resolveVaultKey(ctx context.Context, secretRefName str
 	return vaultKey, nil
 }
 
-// DeleteAnthropic best-effort removes one role's SM-API secret + clears the
-// triplet on that role's `org_anthropic_credentials` row. Tolerates "already
+// DeleteAnthropic best-effort removes one role's SM-API secret. The caller
+// passes the secret-ref name it captured from the row before deleting it — the
+// credential row is already gone by the time this runs (the delete commits
+// first), so there is no triplet left to read or clear. Tolerates "already
 // gone" responses (the underlying client returns nil on 404).
-func (w *SecretRefWriter) DeleteAnthropic(ctx context.Context, ocOrgID string, role AnthropicRole) error {
+func (w *SecretRefWriter) DeleteAnthropic(ctx context.Context, ocOrgID string, role AnthropicRole, secretRefName string) error {
 	if !w.Enabled() {
-		return nil
-	}
-	row, err := w.anthropicRepo.GetByOrg(ctx, ocOrgID, role)
-	if err != nil {
-		return fmt.Errorf("secret-ref writer: load anthropic row: %w", err)
-	}
-	if row == nil {
 		return nil
 	}
 	orgUUID, err := orgUUIDForSecretLocation(ctx)
@@ -316,11 +489,10 @@ func (w *SecretRefWriter) DeleteAnthropic(ctx context.Context, ocOrgID string, r
 		EntityName:            role.SecretRefEntity(),
 		SecretKey:             secretmanagersvc.SecretKeyAPIKey,
 	}
-	refName := derefOrEmpty(row.SecretRefName)
-	if err := w.client.DeleteSecret(ctx, loc, refName); err != nil {
+	if err := w.client.DeleteSecret(ctx, loc, secretRefName); err != nil {
 		return fmt.Errorf("secret-ref writer: delete anthropic secret: %w", err)
 	}
-	return w.anthropicRepo.UpdateColumns(ctx, ocOrgID, role, clearSecretRefTriplet())
+	return nil
 }
 
 // PublisherSecretFieldClientID and PublisherSecretFieldClientSecret are the

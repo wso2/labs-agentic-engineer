@@ -1728,6 +1728,66 @@ paths:
       summary: Collect an external dependency's values and provision it
       tags:
       - Dependencies
+  /projects/{projectName}/dependencies/external-resources/{name}/promote:
+    post:
+      operationId: promote-external-resource
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          description: Project name (DNS-label slug)
+          type: string
+      - description: The project's own external resource (dependency) name
+        in: path
+        name: name
+        required: true
+        schema:
+          description: The project's own external resource (dependency) name
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromoteExternalResourceRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalResourceDTO'
+          description: The organization now holds the record; the project's dependency file was rewritten as a copy of it
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Missing instructions, a key without a value in some environment and nothing to carry over, or a project resource with no provider or keys
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: The project has no such external dependency
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: The dependency already reuses a record, or the organization already registered this name
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: Promote a project's own external resource to the organization's registry
+      tags:
+      - Dependencies
   /projects/{projectName}/dependencies/{depName}/contract:
     post:
       operationId: provide-dependency-contract
@@ -2030,12 +2090,12 @@ paths:
           type: string
       - description: 'Repo-relative file path (trailing wildcard: may span multiple segments, i.e. contain
           slashes). Reads are scoped to specs/ plus a small read-only allow-list — currently the
-          runner-authored validation report at tests/validation/report.json.'
+          runner-authored validation report at tests/acceptance/report.json.'
         in: path
         name: path
         required: true
         schema:
-          description: Repo-relative file path — specs/ or an allow-listed read-only path (tests/validation/report.json)
+          description: Repo-relative file path — specs/ or an allow-listed read-only path (tests/acceptance/report.json)
           type: string
       - description: >-
           Commit to read the file AT. Omitted reads the default-branch tip.
@@ -3259,6 +3319,163 @@ paths:
       summary: Update a custom skill
       tags:
       - Skills
+  /projects/{projectName}/validations:
+    get:
+      description: >-
+        The validation ledger — one entry per spec version that has been worked, newest first,
+        carrying that version's validation state and the timing of its latest validation attempt.
+
+        It is a sibling of list-project-builds rather than a field on it: the two pages ask
+        different questions of the same rows, and folding validation into the build ledger would
+        make every builds poll load each milestone's validation cycles to answer a question that
+        page never asks. DB-only, so the console may poll it while a run is live.
+      operationId: list-validations
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          description: Project name (DNS-label slug)
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationList'
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: List every version's validation state
+      tags:
+      - Validation
+  /projects/{projectName}/validations/{tag}:
+    get:
+      description: >-
+        One version's validation history — every run that attempted it, newest first, each
+        carrying its VALIDATION cycles only. Coding, fix and conflict cycles are filtered out
+        here rather than by the client: which cycles ask the criteria is the platform's answer,
+        and a client re-deriving it is a second place for that rule to drift from the supervisor.
+
+        `live` and `deployed` are the two conditions the console gates its trigger on; every other
+        refusal belongs to revalidate-build, which owns them.
+      operationId: get-validation
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          description: Project name (DNS-label slug)
+          type: string
+      - description: Spec version tag — the name the user gave the version, resolved to a milestone
+          number through the run rows — never by matching titles against GitHub.
+        in: path
+        name: tag
+        required: true
+        schema:
+          description: >-
+            Spec version tag — the name the user gave the version. The pattern is
+            the character set; the server applies the same full rule it applies
+            when a version is created, which additionally refuses a leading `-`
+            or `.`, a trailing `.` or `.lock`, and `..` anywhere. A name that
+            could never have been created is refused here too.
+          pattern: ^[A-Za-z0-9._-]+$
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationDetail'
+          description: OK
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: No run has ever worked this version.
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: One version's validation runs and attempts
+      tags:
+      - Validation
+  /projects/{projectName}/validations/{tag}/cycles/{cycleId}/report:
+    get:
+      description: >-
+        One attempt's report AND the acceptance criteria it was judged against, read at the SAME
+        commit.
+
+        Reading them together is the point. The report lives at one fixed path that every run and
+        every attempt overwrites, so it is addressable only by the cycle's own merge commit; the
+        criteria drift independently in the branch. Pairing a historical report with the criteria as
+        they are NOW reports scenarios written since as unanswered, which is a defect of the pairing
+        and not a fact about the run. A single snapshot makes that pairing impossible to get wrong.
+
+        Three cases, by the cycle's own record. A MERGED cycle answers at its merge SHA. A cycle
+        still RUNNING has no commit yet, so the criteria come from HEAD — which is genuinely what
+        the runner is driving, since it reads them at HEAD when it executes — and `report` is null.
+        A cycle that ended WITHOUT merging never landed a report and is a 404: it is a different
+        fact from an empty report and the two read as different sentences.
+      operationId: get-validation-report
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          description: Project name (DNS-label slug)
+          type: string
+      - description: Spec version tag the cycle belongs to.
+        in: path
+        name: tag
+        required: true
+        schema:
+          pattern: ^[A-Za-z0-9._-]+$
+          type: string
+      - description: The validation cycle whose attempt is being read.
+        in: path
+        name: cycleId
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationSnapshot'
+          description: OK
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: No such cycle on this version, or the attempt ended without landing a report.
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: One attempt's report and the criteria it was judged against
+      tags:
+      - Validation
 components:
   schemas:
     ConversationMessage:
@@ -3440,11 +3657,9 @@ components:
         that cannot.
 
 
-        `opencode` is in the enum because the design carries it and because a
-        client should be able to render the choice; it is NOT selectable while
-        the platform ships no adapter for it, and the API rejects it with a
-        reason naming what is missing. Do not treat membership of this enum as
-        availability.
+        Both runtimes run on the organization's Anthropic API key. Only
+        `claude-code` can bill a Claude subscription instead, so choosing
+        `opencode` deletes a stored subscription (ADR-0028, ADR-0036).
       enum:
       - claude-code
       - opencode
@@ -3452,6 +3667,119 @@ components:
       x-enum-varnames:
       - AgentRuntimeClaudeCode
       - AgentRuntimeOpencode
+    AgentModel:
+      description: >-
+        The model every agent of an organization bills to: the requirements,
+        design and task-planning agents and the coding agent alike.
+
+
+        Offered only once the platform can price it. The platform stamps a run's
+        cost from a per-model rate table, and that stamp is ALL-OR-NOTHING across
+        a cycle's capture — one model with no rate blanks the cost of the whole
+        cycle, not just its own share. Adding one is a rate row and a contract
+        change together, never one without the other.
+      enum:
+      - claude-sonnet-5
+      - claude-haiku-4-5
+      type: string
+      x-enum-varnames:
+      - AgentModelClaudeSonnet5
+      - AgentModelClaudeHaiku45
+    AgentsProjection:
+      x-go-type: orgconfig.AgentsProjection
+      x-go-type-import:
+        path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
+      description: >-
+        How an organization's agents run: the one model every agent uses, the
+        coding agent's runtime, and the Claude subscription coding bills to
+        instead of the API key.
+
+
+        ALWAYS present: every org has an effective model and runtime whether or
+        not anyone has chosen them, so the section carries the platform's
+        defaults until someone does. `updatedAt`/`updatedBy` are null exactly
+        when nobody has — which is what tells "the platform's defaults" apart
+        from "somebody chose the same values".
+
+
+        The spec agents read the model at the start of every turn. A coding run
+        copies the model and runtime when it is dispatched, so a run in flight
+        keeps what it was launched with.
+      additionalProperties: false
+      properties:
+        model:
+          $ref: '#/components/schemas/AgentModel'
+        runtime:
+          $ref: '#/components/schemas/AgentRuntime'
+        availableRuntimes:
+          description: >-
+            The runtimes this installation can run, and so the only ones an
+            organization may choose. Claude Code, the default, is always
+            listed; OpenCode only when the platform is deployed with its
+            runner image. `runtime` can name one missing here (an
+            organization that chose OpenCode on an installation that later
+            lost its image); every coding dispatch then fails until the
+            organization chooses an available runtime.
+          items:
+            $ref: '#/components/schemas/AgentRuntime'
+          type: array
+        subscription:
+          allOf:
+          - $ref: '#/components/schemas/SubscriptionProjection'
+          description: >-
+            The stored Claude subscription token, masked, or null when coding
+            bills the organization's API key.
+          nullable: true
+        updatedAt:
+          format: date-time
+          nullable: true
+          type: string
+        updatedBy:
+          nullable: true
+          type: string
+      required:
+      - model
+      - runtime
+      - availableRuntimes
+      - subscription
+      - updatedAt
+      - updatedBy
+      type: object
+    SubscriptionProjection:
+      x-go-type: orgconfig.SubscriptionProjection
+      x-go-type-import:
+        path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
+      additionalProperties: false
+      description: >-
+        A stored Claude subscription token, masked. It bills the coding agent's
+        runs to a Claude plan instead of the organization's API key, and only
+        Claude Code can present it.
+      properties:
+        kind:
+          enum:
+          - claude
+          type: string
+        keyPrefix:
+          type: string
+        keyLast4:
+          type: string
+        status:
+          type: string
+        connectedAt:
+          format: date-time
+          type: string
+        lastValidatedAt:
+          format: date-time
+          type: string
+        validationError:
+          type: string
+      required:
+      - kind
+      - keyPrefix
+      - keyLast4
+      - status
+      - connectedAt
+      type: object
     ApplyRequest:
       additionalProperties: false
       properties:
@@ -3888,60 +4216,6 @@ components:
       - status
       - startedAt
       type: object
-    CodingAgentModel:
-      description: >-
-        The model an organization's coding runs bill to.
-
-
-        Narrower than the list any runtime can serve, and narrow for one reason:
-        the platform stamps a run's cost from a per-model rate table, and that
-        stamp is ALL-OR-NOTHING across a cycle's capture — one model with no rate
-        blanks the cost of the whole cycle, not just its own share. So a model is
-        offered here only once the platform can price it. Adding one is a rate
-        row and a contract change together, never one without the other.
-      enum:
-      - claude-sonnet-5
-      - claude-haiku-4-5
-      type: string
-      x-enum-varnames:
-      - CodingAgentModelClaudeSonnet5
-      - CodingAgentModelClaudeHaiku45
-    CodingAgentProjection:
-      x-go-type: orgconfig.CodingAgentProjection
-      x-go-type-import:
-        path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
-      description: >-
-        The runtime and model an organization's coding runs use.
-
-
-        ALWAYS present, unlike the credential sections: every org has an
-        effective runtime and model whether or not anyone has ever opened the
-        setting. `updatedAt`/`updatedBy` are null exactly when nobody has — which
-        is what tells "the platform's defaults" apart from "somebody chose the
-        same values".
-
-
-        A change applies from the NEXT cycle. Dispatch copies these onto the run
-        it starts, so a run already in flight keeps the runtime and model it was
-        launched with; re-reading the setting mid-run would leave a feed whose
-        model names disagree with the tokens they were billed for.
-      additionalProperties: false
-      properties:
-        runtime:
-          $ref: '#/components/schemas/AgentRuntime'
-        model:
-          $ref: '#/components/schemas/CodingAgentModel'
-        updatedAt:
-          format: date-time
-          nullable: true
-          type: string
-        updatedBy:
-          nullable: true
-          type: string
-      required:
-      - runtime
-      - model
-      type: object
     ClientSecretOutputBody:
       additionalProperties: false
       properties:
@@ -4164,42 +4438,56 @@ components:
         path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
       additionalProperties: false
       properties:
-        codingAgent:
+        agents:
           description: >-
-            Which runtime and model this organization's coding runs use.
+            How the organization's agents run. Every field is optional: an
+            absent field keeps what is stored, so a client changes the model
+            without restating the runtime and never has to send the stored
+            token back.
 
 
-            Unlike every other section here this one carries no secret and has no
-            external probe: the values are validated against the contract's enums
-            and against what this build can actually run. A runtime the platform
-            ships no adapter for is rejected with a reason, never silently
-            replaced by the one it can run.
+            `subscription` is three-state: absent keeps it, an object sets or
+            replaces it, `null` deletes it. A subscription needs the
+            `claude-code` runtime and a connected API key, judged on the state
+            the patch leaves: choosing `opencode` deletes the stored token in the
+            same write, and `opencode` with a new subscription in one patch is
+            refused (`agents_subscription_requires_claude_code`), as is a
+            subscription with no API key (`agents_subscription_requires_api_key`).
+            A `runtime` this installation cannot run (absent from the
+            projection's `availableRuntimes`) is refused
+            (`agents_runtime_unavailable`).
 
 
-            Both fields are optional, so a client can change the model without
-            restating the runtime. `null` resets the section to the platform's
-            defaults, which is a real state and not the same as never having set
-            it — the projection's `updatedBy` tells them apart.
+            `null` on the section resets it to the platform's defaults and
+            deletes the subscription — a real state, not the same as never
+            having set it; the projection's `updatedBy` tells them apart.
           additionalProperties: false
           properties:
             model:
-              $ref: '#/components/schemas/CodingAgentModel'
+              $ref: '#/components/schemas/AgentModel'
             runtime:
               $ref: '#/components/schemas/AgentRuntime'
-          type: object
-          nullable: true
-        codingLlm:
-          additionalProperties: false
-          properties:
-            apiKey:
-              type: string
-            kind:
-              enum:
-              - anthropic
-              type: string
-          required:
-          - kind
-          - apiKey
+            subscription:
+              additionalProperties: false
+              description: >-
+                A long-lived token from `claude setup-token`
+                (`sk-ant-oat…`). Write-only: probed against Anthropic, never
+                echoed.
+              properties:
+                kind:
+                  enum:
+                  - claude
+                  type: string
+                token:
+                  type: string
+                  writeOnly: true
+                  minLength: 1
+                  maxLength: 512
+              required:
+              - kind
+              - token
+              type: object
+              nullable: true
           type: object
           nullable: true
         gitProvider:
@@ -4241,10 +4529,18 @@ components:
           type: object
           nullable: true
         llm:
+          description: >-
+            The organization's Anthropic API key (`sk-ant-api…`), used by every
+            agent. Write-only: probed against Anthropic before anything in the
+            patch is written. `null` disconnects it and deletes the stored Claude
+            subscription with it.
           additionalProperties: false
           properties:
             apiKey:
               type: string
+              writeOnly: true
+              minLength: 1
+              maxLength: 512
             kind:
               enum:
               - anthropic
@@ -4261,12 +4557,8 @@ components:
         path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
       additionalProperties: false
       properties:
-        codingAgent:
-          $ref: '#/components/schemas/CodingAgentProjection'
-        codingLlm:
-          allOf:
-          - $ref: '#/components/schemas/LLMProjection'
-          nullable: true
+        agents:
+          $ref: '#/components/schemas/AgentsProjection'
         gitProvider:
           allOf:
           - $ref: '#/components/schemas/GitProviderProjection'
@@ -4277,10 +4569,17 @@ components:
           allOf:
           - $ref: '#/components/schemas/LLMProjection'
           nullable: true
+        llmDisconnectedAt:
+          description: >-
+            When the organization's Anthropic API key was last disconnected.
+            Present only while `llm` is null, so a client can tell an org whose
+            key was disconnected from one that never set a key. Cleared when a
+            key is connected again.
+          format: date-time
+          type: string
       required:
       - llm
-      - codingLlm
-      - codingAgent
+      - agents
       - gitProvider
       - idp
       type: object
@@ -4413,10 +4712,12 @@ components:
       description: A component's unified, kind-discriminated dependency entry. status/reason/flags
         are read-time computed by spec.ComputeDependencyStatus — never authored,
         never persisted (Design.json write-gate rejects them). An external
-        dependency's definition (source, provider, style, contract, sdk, package,
-        provenance, suggestions, config, assumed) is HYDRATED from its own file,
+        dependency is HYDRATED from its own file,
         specs/design/dependencies/<name>/dependency.json — one dependency, one
-        definition, referenced by name from every component that uses it.
+        definition, holding a full `resource` block (a copy from the org registry
+        when resourceRef is set, else one the project defined). style,
+        contractAssumed and contractDerived are COMPUTED from the contract's type
+        and origin; nothing here is stored as such.
       x-go-type: contracts.Dependency
       x-go-type-import:
         path: github.com/wso2/aep/aep-api/internal/contracts
@@ -4433,22 +4734,34 @@ components:
         reason:
           type: string
         flags:
-          description: Read-time qualifiers on a resolved external dependency — registered, assumed, derived, sdk-only.
+          description: Read-time qualifiers on a resolved external dependency — registered, assumed, derived, sdk-only, stale.
           items:
             type: string
           type: array
           nullable: true
         source:
-          description: project (agent-authored here) or org (a platform-stamped copy of a Registered External resource).
+          description: project (the resource block was defined here) or org (it was copied from a Registered External resource — resourceRef is set). Computed.
+          type: string
+        resourceRef:
+          description: The registry name the resource block was copied from; empty for a Project External resource.
           type: string
         provider:
           description: The concrete system chosen; absent until the user chose one (suggestions may be open).
           type: string
+        consumptionInstructions:
+          description: The organization's instructions for a copied resource; never on a project-defined one.
+          type: string
         style:
-          description: rest-api | graphql | sdk
+          description: rest-api | graphql | sdk — computed from contractType.
+          type: string
+        contractType:
+          description: openapi | graphql | sdk — the contract object's type.
+          type: string
+        contractOrigin:
+          description: registry | provider | derived | assumed — where the project's contract file came from.
           type: string
         contract:
-          description: The contract file name in the dependency's directory, present only when the file is on disk.
+          description: The contract file name in the dependency's directory, present only when the file is on disk (sdk contracts report it under sdk).
           type: string
         sdk:
           description: The SDK manifest file name (sdk.json), present only when it is on disk.
@@ -4463,7 +4776,7 @@ components:
           description: For an sdk dependency, the package for this component's language, from the manifest.
           type: string
         provenance:
-          $ref: '#/components/schemas/DependencyProvenance'
+          $ref: '#/components/schemas/ResourceProvenance'
         assumed:
           $ref: '#/components/schemas/DependencyAssumption'
         suggestions:
@@ -4481,6 +4794,16 @@ components:
         parameters:
           additionalProperties: {}
           type: object
+          nullable: true
+        operations:
+          description: Read-time computed resolution of every allow-listed
+            operation an ai-agent component's `x-aep.tools.openapi[]` entry
+            names against THIS dependency — populated only when this
+            Dependency is the provider such an entry targets. Never authored,
+            never persisted.
+          items:
+            $ref: '#/components/schemas/DependencyOperationStatus'
+          type: array
           nullable: true
       required:
       - kind
@@ -4511,22 +4834,82 @@ components:
           description: Optional note recorded with the acceptance; defaults to the agent's own note of what it was unsure about.
           type: string
       type: object
-    DependencyProvenance:
-      description: Where a committed contract came from — the source document, its full-document
-        hash, when it was read, and whether the committed file is a slice of it.
-      x-go-type: contracts.DependencyProvenance
+    ResourceProvenance:
+      description: Where a copy of a contract document came from, at either level — the
+        internet address an org copy was fetched from, or the registry file a project copy
+        was taken from — with the whole document's hash at the time and when it was read.
+      x-go-type: contracts.ResourceProvenance
       x-go-type-import:
         path: github.com/wso2/aep/aep-api/internal/contracts
       additionalProperties: false
       properties:
         sourceUrl:
           type: string
+        registry:
+          description: The org-resource-docs path (<name>/<file>) a project copy was taken from. Never a URL.
+          type: string
         sha256:
           type: string
-        fetchedAt:
+        readOn:
           type: string
-        sliced:
-          type: boolean
+      type: object
+    ResourceContract:
+      description: The contract as held at one level — `{ type, path }`, the path relative to that
+        level's store (the org docs repo for a registry record, the dependency directory for a
+        project copy). No URL form exists. On a project copy, origin says where the file came from
+        and accepted is the user's permission for an assumed one (platform-written).
+      x-go-type: contracts.ResourceContract
+      x-go-type-import:
+        path: github.com/wso2/aep/aep-api/internal/contracts
+      additionalProperties: false
+      properties:
+        type:
+          $ref: '#/components/schemas/ResourceContractType'
+        path:
+          type: string
+        origin:
+          enum:
+          - registry
+          - provider
+          - derived
+          - assumed
+          type: string
+        accepted:
+          $ref: '#/components/schemas/DependencyAssumption'
+      required:
+      - type
+      - path
+      type: object
+    ResourceDefinition:
+      description: An External resource in the one shape it has at both levels — the org registry
+        record and a dependency's `resource` block. Values are never here.
+      x-go-type: contracts.ResourceDefinition
+      x-go-type-import:
+        path: github.com/wso2/aep/aep-api/internal/contracts
+      additionalProperties: false
+      properties:
+        ref:
+          description: Project copy only — the registry name the block was copied from; equals the dependency name.
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        provider:
+          type: string
+        config:
+          items:
+            $ref: '#/components/schemas/ConfigKey'
+          type: array
+          nullable: true
+        contract:
+          $ref: '#/components/schemas/ResourceContract'
+        consumptionInstructions:
+          type: string
+        provenance:
+          $ref: '#/components/schemas/ResourceProvenance'
+      required:
+      - name
       type: object
     DependencyAssumption:
       description: The user's permission to build against a contract the agent wrote from research —
@@ -4687,49 +5070,11 @@ components:
           x-go-type: string
         validation:
           description: >-
-            Validation state of the newest milestone run. This MIRRORS the run's
-            verdict rather than folding it, so the chip says what the run
-            concluded: a fold would have to discard `partial`, `inconclusive` and
-            `unreported` at exactly the surface that needs them, and `completed`
-            never said whether anything passed.
-
-            Four LIFECYCLE values. none is PENDING, never settled: a verdict is
-            expected and has not arrived, because a run is live or a dev run filed
-            the version's validation task and nothing has started it yet. A client
-            must not read it as "there is no verdict to wait for" — that is what
-            skipped and inconclusive say. running is a validation CYCLE in flight,
-            not merely a live run with no verdict yet. awaiting-fix is validation
-            having failed with the run repairing it — the work in flight is a CODING
-            cycle, which is why the state names the implementation rather than
-            validation. cancelled is a person STOPPING the judging: a validation run
-            settled cancelled before recording a verdict, so nothing will answer for
-            this version unless somebody re-asks. The rest are the verdict verbatim.
-            They are mutually exclusive in time, so nothing is hidden behind another.
-
-            passed (every criterion was automated and passed), partial (some
-            passed, none failed, some were never covered), failed (a criterion
-            asserted and lost), inconclusive (no test results at all), unreported
-            (no usable report at the validation cycle's merge commit), skipped (no
-            validation criteria, and incident runs, which get no validation cycle).
-
-            failed and unreported fail the run only once its validation attempts
-            are spent: while attempts remain the run repairs and re-validates, and
-            reads awaiting-fix in the meantime.
-
-            The report path and per-cycle detail live on the version's run story
-            (list-build-runs).
-          enum:
-          - none
-          - running
-          - awaiting-fix
-          - cancelled
-          - passed
-          - partial
-          - failed
-          - inconclusive
-          - unreported
-          - skipped
-          type: string
+            Where the deployed version's validation stands, in the shared ValidationState
+            vocabulary. The report path and the per-attempt detail behind it live on the version's
+            run story (list-build-runs) and its validation history (get-validation).
+          allOf:
+          - $ref: '#/components/schemas/ValidationState'
         version:
           description: Spec tag live in dev; "" if nothing deployed.
           type: string
@@ -4921,6 +5266,12 @@ components:
           - asyncapi
           - protobuf
           type: string
+          x-enum-varnames:
+          - ResourceDocWriteDTOTypeDocumentation
+          - ResourceDocWriteDTOTypeOpenapi
+          - ResourceDocWriteDTOTypeGraphql
+          - ResourceDocWriteDTOTypeAsyncapi
+          - ResourceDocWriteDTOTypeProtobuf
         url:
           type: string
         path:
@@ -4949,11 +5300,43 @@ components:
       type: object
     EnvironmentDTO:
       additionalProperties: false
+      description: >-
+        One environment in the org's deployment pipeline, in promotion order.
+        `name` is the OpenChoreo Environment's immutable identity; everything
+        else is presentation or flow. `validation` says whether this
+        environment runs a validation step; it is always present in the
+        response, because an Environment whose annotation is missing or
+        unrecognised is served as "off".
       properties:
         name:
           type: string
+          description: Immutable OpenChoreo Environment name. Bindings and cell namespaces reference it.
+        displayName:
+          type: string
+          description: From the openchoreo.dev/display-name annotation; falls back to a titlecased name.
+        isProduction:
+          type: boolean
+          description: From Environment.spec.isProduction. Never inferred from the name.
+        validation:
+          type: string
+          enum: [on, off]
+          description: >-
+            From the aep.wso2.com/validation annotation. Always present in the
+            response: when the annotation is missing or unrecognised on the
+            Environment, the server serves "off".
+        position:
+          type: integer
+          format: int32
+          description: 0-based index in promotion order. The array is already ordered; this is a convenience.
+        promotesTo:
+          type: string
+          description: The next environment's name. Omitted on the last environment, which has no promote step.
       required:
       - name
+      - displayName
+      - isProduction
+      - validation
+      - position
       type: object
     RegisterExternalResourceRequest:
       additionalProperties: false
@@ -4964,25 +5347,20 @@ components:
           type: array
         consumptionInstructions:
           type: string
+        contract:
+          allOf:
+          - $ref: '#/components/schemas/ResourceContractWriteDTO'
+          x-go-type-skip-optional-pointer: false
         description:
           type: string
         envValues:
           items:
-            additionalProperties: false
-            properties:
-              environment:
-                type: string
-              key:
-                type: string
-              value:
-                type: string
-            required:
-            - environment
-            - key
-            - value
-            type: object
+            $ref: '#/components/schemas/EnvValueWriteDTO'
           type: array
         name:
+          type: string
+        provider:
+          description: The concrete system this resource is ("Open Exchange Rates").
           type: string
         resourceDocs:
           items:
@@ -4992,9 +5370,79 @@ components:
       required:
       - name
       - description
+      - provider
       - consumptionInstructions
       - config
       - envValues
+      type: object
+    EnvValueWriteDTO:
+      additionalProperties: false
+      description: One value of one config key in one environment, as written by a form.
+      properties:
+        environment:
+          type: string
+        key:
+          type: string
+        value:
+          type: string
+      required:
+      - environment
+      - key
+      - value
+      type: object
+    PromoteExternalResourceRequest:
+      additionalProperties: false
+      description: >
+        What the organization adds when it takes over a project's own resource: how
+        its consumers should use it and a value for every key in every environment.
+        Name, provider, keys, description and contract come from the project's copy.
+        An environment left out of envValues is carried over from the project's own
+        values when it has them.
+      properties:
+        consumptionInstructions:
+          type: string
+        description:
+          description: Replaces the project's description when set.
+          type: string
+        envValues:
+          items:
+            $ref: '#/components/schemas/EnvValueWriteDTO'
+          type: array
+      required:
+      - consumptionInstructions
+      type: object
+    ResourceContractType:
+      description: The kind of document a resource's contract is.
+      enum:
+      - openapi
+      - graphql
+      - sdk
+      - asyncapi
+      - protobuf
+      - documentation
+      type: string
+    ResourceContractWriteDTO:
+      additionalProperties: false
+      description: >
+        The resource's contract document on register/update. Exactly one of url (fetched
+        by the platform, hashed and committed to the org docs repo — the URL is kept only
+        as provenance) or fileName+content (uploaded). At most 5 MiB.
+        Accepted shapes, enforced by the server (any other is a 400 naming the rule):
+        `{type, url}` or `{type, fileName, content}` — never both forms, never type alone.
+        The pair is not expressed as a JSON-Schema oneOf on purpose: the generators this
+        contract feeds turn it into an unusable union (a `json.RawMessage` union field in
+        Go, `unknown` in TypeScript) that hides the three plain fields callers actually set.
+      properties:
+        type:
+          $ref: '#/components/schemas/ResourceContractType'
+        url:
+          type: string
+        fileName:
+          type: string
+        content:
+          type: string
+      required:
+      - type
       type: object
     ExternalResourceDTO:
       additionalProperties: false
@@ -5028,6 +5476,29 @@ components:
           nullable: true
           type: array
         name:
+          type: string
+        provider:
+          type: string
+        contract:
+          allOf:
+          - $ref: '#/components/schemas/ResourceContract'
+          x-go-type-skip-optional-pointer: false
+        provenance:
+          allOf:
+          - $ref: '#/components/schemas/ResourceProvenance'
+          x-go-type-skip-optional-pointer: false
+        scope:
+          description: >
+            org — a Registered External resource, held by the organization; project — a
+            project's own resource, listed with its project so the organization can
+            promote it. Org-only readers (the design agent's catalog, Register's
+            uniqueness check) never see project rows.
+          enum:
+          - org
+          - project
+          type: string
+        project:
+          description: The project that holds this resource; set on scope project only.
           type: string
         resourceDocs:
           items:
@@ -5345,9 +5816,12 @@ components:
           format: date-time
           type: string
         credentialKind:
+          description: >-
+            Always `api_key`: the organization's key is a Console API key,
+            because the spec agents are AI SDK calls that cannot present a
+            Claude subscription token. A subscription lives on `agents`.
           enum:
           - api_key
-          - oauth_token
           type: string
         keyLast4:
           type: string
@@ -5744,9 +6218,10 @@ components:
         and its delete removes it.
       properties:
         assignedTo:
-          description: The groups holding the role, in binding order. EMPTY is meaningful, not
-            missing data - it is the normal shape for a self-service role (the app's registration
-            flow assigns it per account) and for a service role (an application principal holds it).
+          description: The GROUPS holding the role, in binding order. EMPTY is meaningful, not
+            missing data - it is the normal shape for a self-service role (which carries no
+            assignTo, and whose test logins hold it as user principals instead) and for a service
+            role (an application principal holds it).
           items:
             $ref: '#/components/schemas/ProjectRoleAssignment'
           type: array
@@ -5825,6 +6300,18 @@ components:
       - name
       - platformCreated
       type: object
+    ProjectSignIn:
+      additionalProperties: false
+      description: How a client outside a project's own components signs in to it - the issuer to
+        sign in AT and the public OAuth client to sign in AS. Both are public. Absent from a view
+        when the project declares no sign-in resource or its binding has not resolved yet.
+      properties:
+        issuer:
+          type: string
+        clientId:
+          type: string
+      required: [issuer, clientId]
+      type: object
     ProjectRolesView:
       additionalProperties: false
       description: The Security panel's read model.
@@ -5860,6 +6347,12 @@ components:
             scoped to an environment at all, which is the same condition that empties every other
             field.
           type: string
+        signIn:
+          allOf:
+          - $ref: '#/components/schemas/ProjectSignIn'
+          description: Absent when the project declares no sign-in resource or its binding has not
+            resolved yet.
+          x-go-type-skip-optional-pointer: false
         testUsers:
           description: The test accounts THIS project's design references, role-ordered.
           items:
@@ -7344,7 +7837,7 @@ components:
         required:
           description: >-
             True when the coding runner reads this skill on every run and cannot
-            start without it (`aep`, and `aep-validation` for a validation task).
+            start without it (`aep`, and `acceptance-run` for a validation task).
             The mirror only copies enabled skills, so disabling one of these would
             take the procedure away from every build in the org — `PATCH
             /skills/{name}` refuses it with 409. The console renders the
@@ -7385,7 +7878,7 @@ components:
         required:
           description: >-
             True when the coding runner reads this skill on every run and cannot
-            start without it (`aep`, and `aep-validation` for a validation task).
+            start without it (`aep`, and `acceptance-run` for a validation task).
             The mirror only copies enabled skills, so disabling one of these would
             take the procedure away from every build in the org — `PATCH
             /skills/{name}` refuses it with 409. The console renders the
@@ -8374,6 +8867,211 @@ components:
         - model
         - costUsd
       type: object
+    AcceptanceCriteriaFile:
+      additionalProperties: false
+      description: One acceptance criteria file as it stood at the snapshot's commit.
+      properties:
+        content:
+          description: The file's Gherkin source, verbatim.
+          type: string
+        path:
+          description: Repository path, e.g. specs/validation/acceptance/checkout.feature.
+          type: string
+      required:
+      - path
+      - content
+      type: object
+    ValidationDetail:
+      additionalProperties: false
+      description: >-
+        One version's validation history, already filtered to what asks the question.
+
+        `runs` holds only runs that ATTEMPTED validation — ones holding at least one VALIDATION
+        cycle, which is the fact rather than the kind: a task run never holds one, and a run that
+        did ask the criteria is listed whatever its kind says it was for. Each run's `cycles`
+        holds only its VALIDATION cycles. Both filters are applied here rather than by the client:
+        they are the platform's own rules, and the surface that re-derived them read a newer
+        non-validating run as the version's answer and hid a real verdict. The views are the same
+        MilestoneRunView and RunCycleView the run story serves, so one projection describes a
+        cycle everywhere.
+      properties:
+        deployed:
+          description: >-
+            This version is the one currently deployed — the only version a revalidation can
+            honestly judge.
+
+            A revalidation drives whatever is serving RIGHT NOW: the runner's endpoint URLs are
+            resolved from OpenChoreo at request time and its criteria come from the branch tip,
+            neither pinned to the version the run is filed under. So asking an older version's
+            criteria judges code that version never shipped, records the verdict on its milestone,
+            and — with the default attempt budget — files one repair issue per failed scenario
+            there too. revalidate-build refuses it; this flag is what lets the console stop
+            offering it, rather than letting a reader discover the refusal by clicking.
+          type: boolean
+        live:
+          description: >-
+            A run is in flight on this milestone. With `deployed` it makes the two conditions the
+            console gates the validation trigger on; the remaining refusals (open work, no
+            criteria) belong to revalidate-build, which owns them and says so in its error. It also
+            decides whether an unvalidated version reads as "a verdict is coming" or "nothing will
+            come unless you ask", which must not disagree with whether the trigger is offered.
+          type: boolean
+        milestoneNumber:
+          format: int64
+          type: integer
+        runs:
+          description: Newest run first, validating kinds only, each carrying its validation cycles
+            in dispatch order.
+          items:
+            $ref: '#/components/schemas/MilestoneRunView'
+          type: array
+        state:
+          $ref: '#/components/schemas/ValidationState'
+        tag:
+          type: string
+      required:
+      - tag
+      - milestoneNumber
+      - state
+      - live
+      - deployed
+      - runs
+      type: object
+    ValidationList:
+      additionalProperties: false
+      description: The validation ledger — one entry per worked spec version, newest first.
+      properties:
+        validations:
+          items:
+            $ref: '#/components/schemas/ValidationSummary'
+          type: array
+      required:
+      - validations
+      type: object
+    ValidationSummary:
+      additionalProperties: false
+      description: >-
+        One row of the validation ledger: a spec version and where its validation stands.
+
+        Every version that has been worked appears, including ones never validated — an absent row
+        and a never-validated one are indistinguishable to a reader, and "never validated" is the
+        most actionable state this page shows.
+      properties:
+        endedAt:
+          description: >-
+            When the LATEST validation attempt finished. Null while one is in flight, which is the
+            case the column renders as an em-dash rather than a blank: a running attempt has no end
+            and never will until it settles.
+          format: date-time
+          type: string
+          nullable: true
+          x-go-type: '*time.Time'
+        milestoneNumber:
+          description: The GitHub milestone this version's work lives in — the platform key the tag
+            resolves to, and the handle get-validation is read by.
+          format: int64
+          type: integer
+        startedAt:
+          description: >-
+            When the LATEST validation attempt began — the CYCLE's clock, not the run's. Paired with
+            endedAt it is the attempt's duration, which counts up while the attempt is open and is
+            the only thing on this page that moves; a run's wall clock would fold in the coding,
+            build and deploy time between attempts and say nothing about a hung one. Null when the
+            version has never been validated.
+          format: date-time
+          type: string
+          nullable: true
+          x-go-type: '*time.Time'
+        state:
+          $ref: '#/components/schemas/ValidationState'
+        tag:
+          type: string
+      required:
+      - tag
+      - milestoneNumber
+      - state
+      type: object
+    ValidationSnapshot:
+      additionalProperties: false
+      description: >-
+        One attempt's report and the criteria it was judged against, read at a single commit.
+      properties:
+        commit:
+          description: >-
+            The commit both halves were read at — the cycle's merge SHA, or empty when the attempt
+            is still running and the criteria came from HEAD.
+          type: string
+        criteria:
+          description: Every specs/validation/acceptance/*.feature file at that commit. The report annotates
+            these; they are the spine the view renders and the report is the overlay.
+          items:
+            $ref: '#/components/schemas/AcceptanceCriteriaFile'
+          type: array
+        report:
+          description: >-
+            The raw tests/acceptance/report.json at that commit, verbatim, for the client's own
+            parser to read. Null while the attempt is still running: it has not committed one yet,
+            and an absent report is not the same fact as an empty one.
+          type: string
+          nullable: true
+          x-go-type: '*string'
+      required:
+      - commit
+      - criteria
+      type: object
+    ValidationState:
+      description: >-
+        Where a version's validation stands — the one vocabulary every surface renders it with.
+
+        This MIRRORS the run's verdict rather than folding it, so the chip says what the run
+        concluded: a fold would have to discard `partial`, `inconclusive` and `unreported` at
+        exactly the surface that needs them, and `completed` never said whether anything passed.
+
+        Four LIFECYCLE values. none is PENDING, never settled: a verdict is expected and has not
+        arrived, because a run is live or a dev run filed the version's validation task and nothing
+        has started it yet. A client must not read it as "there is no verdict to wait for" — that is
+        what skipped and inconclusive say. running is a validation CYCLE in flight, not merely a
+        live run with no verdict yet. awaiting-fix is validation having failed with the run
+        repairing it — the work in flight is a CODING cycle, which is why the state names the
+        implementation rather than validation. cancelled is a person STOPPING the judging: a
+        validation run settled cancelled before recording a verdict, so nothing will answer for this
+        version unless somebody re-asks. The rest are the verdict verbatim. They are mutually
+        exclusive in time, so nothing is hidden behind another.
+
+        passed (every criterion was automated and passed), partial (some passed, none failed, some
+        were never covered), failed (a criterion asserted and lost), inconclusive (no test results
+        at all), unreported (no usable report at the validation cycle's merge commit), skipped (no
+        validation criteria, and incident runs, which get no validation cycle).
+
+        failed and unreported fail the run only once its validation attempts are spent: while
+        attempts remain the run repairs and re-validates, and reads awaiting-fix in the meantime.
+      enum:
+      - none
+      - running
+      - awaiting-fix
+      - cancelled
+      - passed
+      - partial
+      - failed
+      - inconclusive
+      - unreported
+      - skipped
+      # Without these the generated Go constants are bare words — None, Failed,
+      # Passed — at package scope in gen, where any later top-level enum sharing
+      # a value would collide and break codegen. Inline enums get their parent's
+      # name for free; a named schema has to ask.
+      x-enum-varnames:
+      - ValidationStateNone
+      - ValidationStateRunning
+      - ValidationStateAwaitingFix
+      - ValidationStateCancelled
+      - ValidationStatePassed
+      - ValidationStatePartial
+      - ValidationStateFailed
+      - ValidationStateInconclusive
+      - ValidationStateUnreported
+      - ValidationStateSkipped
+      type: string
     Warning:
       additionalProperties: false
       properties:
@@ -8449,6 +9147,26 @@ components:
       - path
       - content
       type: object
+    DependencyOperationStatus:
+      description: One `x-aep.tools.openapi[].allow` entry's read-time computed
+        resolution against the dependency it targets — status/reason are
+        computed by spec.ComputeAgentToolStatus, never authored, never persisted.
+      x-go-type: contracts.DependencyOperationStatus
+      x-go-type-import:
+        path: github.com/wso2/aep/aep-api/internal/contracts
+      additionalProperties: false
+      properties:
+        operation:
+          type: string
+        status:
+          type: string
+        reason:
+          type: string
+      required:
+      - operation
+      - status
+      type: object
+
   securitySchemes:
     userJWT:
       bearerFormat: JWT

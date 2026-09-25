@@ -483,8 +483,16 @@ type CycleDeployState struct {
 	// perfectly. Counting was enough while the only question was "are we done
 	// yet"; the deadline made "which ones aren't" a question too.
 	Pending []string `json:"pending,omitempty"`
-	// Reasons carries OpenChoreo's own condition reason per failed component,
-	// for the issue body a failed deploy mints. Never branched on.
+	// Reasons carries the per-component cause for the issue body a failed deploy
+	// mints — OpenChoreo's own condition reason for a FAILED component, and for a
+	// PENDING one whatever is holding it (an unregistered sign-in callback, an
+	// external URL that does not answer). Never branched on.
+	//
+	// Pending components are in here because the deadline reports THEM as the
+	// failure. A hold is the ordinary way a healthy component waits, so the run
+	// that expires on one has no failure record anywhere else to draw a cause
+	// from: leaving them out mints an issue that names a component and no reason,
+	// which is an agent cycle spent auditing a container that was never broken.
 	Reasons map[string]string `json:"reasons,omitempty"`
 }
 
@@ -498,20 +506,25 @@ func (s CycleDeployState) Green() bool { return len(s.Failed) == 0 && s.Ready >=
 // rollout finished or broken.
 func classifyCycleDeploys(expected int, states []delivery.ComponentDeploy) CycleDeployState {
 	out := CycleDeployState{Expected: expected}
+	note := func(component, reason string) {
+		if reason == "" {
+			return
+		}
+		if out.Reasons == nil {
+			out.Reasons = map[string]string{}
+		}
+		out.Reasons[component] = reason
+	}
 	for _, st := range states {
 		switch {
 		case st.Failed:
 			out.Failed = append(out.Failed, st.Component)
-			if st.Reason != "" {
-				if out.Reasons == nil {
-					out.Reasons = map[string]string{}
-				}
-				out.Reasons[st.Component] = st.Reason
-			}
+			note(st.Component, st.Reason)
 		case st.Ready:
 			out.Ready++
 		default:
 			out.Pending = append(out.Pending, st.Component)
+			note(st.Component, st.Reason)
 		}
 	}
 	return out

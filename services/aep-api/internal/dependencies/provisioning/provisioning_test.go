@@ -467,7 +467,10 @@ func designWithDeps() []spec.DesignComponent {
 	return []spec.DesignComponent{{
 		Name: "orders",
 		Dependencies: []spec.Dependency{
-			{Kind: spec.DependencyKindExternal, Name: "stripe", Config: []spec.ConfigKey{
+			// A COPY of the organization's registered `stripe` (ResourceRef set):
+			// the build binds it to the org's type and takes the org's values
+			// when the plane has them; with no cells it authors like any other.
+			{Kind: spec.DependencyKindExternal, Name: "stripe", ResourceRef: "stripe", Config: []spec.ConfigKey{
 				{Key: "api_key", Secret: true}, {Key: "region"},
 			}},
 			{Kind: spec.DependencyKindPlatformResource, Name: "orders-db", ResourceType: "postgres-cnpg", Parameters: map[string]any{"size": "small"}},

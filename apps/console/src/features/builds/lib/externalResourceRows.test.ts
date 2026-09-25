@@ -44,6 +44,11 @@ function external(
   };
 }
 
+/** An external that COPIES a Registered External resource: `resourceRef` set. */
+function copied(name: string, keys: string[], description?: string): Dependency {
+  return { ...external(name, keys, description), source: "org", resourceRef: name };
+}
+
 function design(...deps: Dependency[][]): ComponentDependencies[] {
   return deps.map((dependencies, i) => ({
     componentName: `component-${i + 1}`,
@@ -231,6 +236,52 @@ describe("externalResourceRows", () => {
     expect(rows.map((r) => r.name)).toEqual(["stripe"]);
   });
 
+  // …but a COPY of a Registered External resource is the one thing readiness
+  // omits that a person still needs to see: its keys are on the dependency
+  // page, and without a row here they simply vanish with nothing saying why.
+  it("renders a copy of a registered resource, from the design alone", () => {
+    const rows = externalResourceRows(
+      design([
+        external("stripe", ["api_key"]),
+        copied("currency-service", ["OPENEXCHANGERATES_APP_ID"], "Exchange rates"),
+      ]),
+      readiness({ name: "stripe", state: "unset", missingKeys: ["api_key"] }),
+    );
+    expect(rows.map((r) => r.name)).toEqual(["currency-service", "stripe"]);
+    expect(rows[0]).toEqual({
+      name: "currency-service",
+      description: "Exchange rates",
+      config: [{ key: "OPENEXCHANGERATES_APP_ID" }],
+      display: "org-held",
+      missingCount: 0,
+      resourceRef: "currency-service",
+    });
+    // No readiness word is invented for it — readiness never reported on it.
+    expect(rows[0]!.state).toBeUndefined();
+  });
+
+  // A copy with no keys at all is still worth a row: the question it answers is
+  // "why is there nothing to configure here", not "what do I type".
+  it("renders a copy that declares no config keys", () => {
+    const rows = externalResourceRows(design([copied("currency-service", [])]), readiness());
+    expect(rows.map((r) => r.display)).toEqual(["org-held"]);
+  });
+
+  // Should readiness ever name one, it is still the organization's to hold —
+  // the row must not sprout a Configure button on the strength of a state.
+  it("keeps a copy org-held even when readiness reports on it", () => {
+    const rows = externalResourceRows(
+      design([copied("currency-service", ["OPENEXCHANGERATES_APP_ID"])]),
+      readiness({
+        name: "currency-service",
+        state: "unset",
+        missingKeys: ["OPENEXCHANGERATES_APP_ID"],
+      }),
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.display).toBe("org-held");
+  });
+
   // The same rule at its limit: readiness that names nothing renders nothing,
   // rather than every declared dependency as outstanding.
   it("renders no rows when a successful readiness read names none", () => {
@@ -311,6 +362,26 @@ describe("externalResourceHeadline", () => {
     expect(externalResourceHeadline(rows)).toBe("1 of 1 need configuration");
   });
 
+  // A copy is in the list to be explained, not to be counted against a person.
+  it("leaves a copy of a registered resource out of both sides of the count", () => {
+    const rows = externalResourceRows(
+      design([
+        external("stripe", ["api_key"]),
+        copied("currency-service", ["OPENEXCHANGERATES_APP_ID"]),
+      ]),
+      readiness({ name: "stripe", state: "unset", missingKeys: ["api_key"] }),
+    );
+    expect(externalResourceHeadline(rows)).toBe("1 of 1 need configuration");
+  });
+
+  it("says there is nothing to configure when every row is the organization's", () => {
+    const rows = externalResourceRows(
+      design([copied("currency-service", ["OPENEXCHANGERATES_APP_ID"])]),
+      readiness(),
+    );
+    expect(externalResourceHeadline(rows)).toBe("Nothing to configure");
+  });
+
   it("says so once every one is configured", () => {
     const rows = externalResourceRows(
       design([external("stripe", ["api_key"])]),
@@ -344,6 +415,14 @@ describe("declaredExternalCount", () => {
         ),
       ),
     ).toBe(2);
+  });
+
+  // The count is the fallback for "how many could somebody be asked for", and
+  // nobody can be asked for values the organization holds.
+  it("does not count a copy of a registered resource", () => {
+    expect(
+      declaredExternalCount(design([external("stripe", ["api_key"]), copied("currency-service", ["TOKEN"])])),
+    ).toBe(1);
   });
 
   it("is 0 without a design", () => {

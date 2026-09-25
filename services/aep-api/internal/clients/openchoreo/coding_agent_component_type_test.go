@@ -209,3 +209,44 @@ func TestCodingAgentSizesDevShm(t *testing.T) {
 		t.Error("shmSize must have an enum ceiling, like every other resource pin on this type")
 	}
 }
+
+// The runtime is a first-class fact of the ComponentType: an enum-bounded
+// parameter defaulting to Claude Code, rendered as the aep.wso2.com/runtime
+// label on the Job AND its pod. The pod's label set must still be built from
+// podSelectors, because the observer finds the pod by them.
+func TestCodingAgentCarriesTheRuntime(t *testing.T) {
+	ct := CodingAgentComponentType()
+	spec, _ := ct["spec"].(map[string]any)
+
+	props := mustFindSchemaProps(t, spec)
+	runtime, _ := props["runtime"].(map[string]any)
+	if runtime == nil {
+		t.Fatal("missing runtime parameter")
+	}
+	if runtime["default"] != "claude-code" {
+		t.Errorf("runtime default = %v, want claude-code", runtime["default"])
+	}
+	enum, _ := runtime["enum"].([]any)
+	if len(enum) != 2 || enum[0] != "claude-code" || enum[1] != "opencode" {
+		t.Errorf("runtime enum = %v, want [claude-code opencode]", enum)
+	}
+
+	var job map[string]any
+	for _, r := range spec["resources"].([]any) {
+		if res, _ := r.(map[string]any); res["id"] == "job" {
+			job, _ = res["template"].(map[string]any)
+		}
+	}
+	jobMeta, _ := job["metadata"].(map[string]any)
+	want := `${oc_merge(metadata.labels, {"aep.wso2.com/runtime": parameters.runtime})}`
+	if jobMeta["labels"] != want {
+		t.Errorf("job labels = %v, want %s", jobMeta["labels"], want)
+	}
+	jobSpec, _ := job["spec"].(map[string]any)
+	podTmpl, _ := jobSpec["template"].(map[string]any)
+	podMeta, _ := podTmpl["metadata"].(map[string]any)
+	wantPod := `${oc_merge(metadata.podSelectors, {"aep.wso2.com/runtime": parameters.runtime})}`
+	if podMeta["labels"] != wantPod {
+		t.Errorf("pod labels = %v, want %s", podMeta["labels"], wantPod)
+	}
+}

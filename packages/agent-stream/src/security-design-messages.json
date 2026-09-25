@@ -14,7 +14,7 @@
   "invalid_test_username": "test user \"{username}\" is not a usable directory username — use lowercase letters, digits, \".\", \"_\" or \"-\", starting with a letter or digit.",
   "duplicate_test_user": "test user \"{username}\" is listed twice.",
   "test_user_unknown_role": "test user \"{username}\" holds role \"{role}\", which no roles[] entry declares.",
-  "test_user_role_not_user_kind": "test user \"{username}\" holds role \"{role}\", which is not an admin-enrolment user role — a service role belongs to an app principal and a self-service role is taken at registration, so neither gets a test account.",
+  "test_user_role_not_user_kind": "test user \"{username}\" holds role \"{role}\", which is a service role — its principal is an application, not a person, so it gets no test account. Every user role gets one, whatever its enrolment.",
   "handle_used_nowhere": "catalog handle \"{handle}\" is declared, used nowhere — no operation requires it. Remove it, or require it from the operation it was meant to guard.",
   "handle_unreachable": "catalog handle \"{handle}\" is unreachable by any role — an operation requires it and no roles[].grants holds it. Grant it to the role that needs it, or make the operation public.",
   "v1_document": "security.json v1 is not accepted: {fields}. Version 3 declares the permission catalog in permissions[] (resource, component, actions[{handle, description}]), roles grant handles from it in roles[].grants and name their org groups in assignTo, and testUsers[].roles is a list.",

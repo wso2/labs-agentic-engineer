@@ -21,10 +21,12 @@ import type { components } from "../../../generated/aep-api";
 type Component = components["schemas"]["Component"];
 type Deployment = components["schemas"]["Deployment"];
 
-// Deployments board (#216): two columns — Development and Production — fed
-// by the components list joined client-side with each component's release
-// bindings. Absence is information ("what's running AND what isn't"), so
-// every component gets a Development card even with no binding.
+// Deployments board (#216): one column per environment the platform's
+// pipeline names, fed by the components list joined client-side with each
+// component's release bindings. Absence is information ("what's running AND
+// what isn't"), so every component gets a card in the pipeline's ENTRY
+// environment even with no binding — that is where a build lands first, so a
+// component with nothing bound there is a component that has not shipped.
 
 // "Undeployed" is the distinguished status for an intentional
 // spec.state == Undeploy binding (rendered if the backend ever emits it);
@@ -52,65 +54,97 @@ export type DeploymentCard = {
   // "notDeployed" marks a component with no binding at all; otherwise the
   // binding's status kind.
   kind: StatusKind | "notDeployed";
+  componentType?: string;
   deployment?: Deployment;
 };
 
-export type DeploymentBoard = {
-  development: DeploymentCard[];
-  production: DeploymentCard[];
-};
+/** The board, keyed by ENVIRONMENT NAME — the platform's own name for it. A
+ *  Map, not an object: environment names come from the platform, and an
+ *  environment called `constructor` must not read as a card list. */
+export type DeploymentBoard = Map<string, DeploymentCard[]>;
 
-// Production gets exactly its bindings; everything else (development,
-// staging, …) lands on the Development board, and a component with no
-// non-production binding still gets a greyed "Not deployed" card there —
-// the Development column always accounts for every component.
+// Each binding lands in the column its own `environment` names; the console
+// invents no column the platform did not. `entryEnvironment` — the first of
+// the pipeline, where every completed build auto-deploys — is the one column
+// that also accounts for components with NO binding, as a greyed
+// "Not deployed" card: absence is information exactly where something was
+// expected. Pass it from the environments list (`environments[0].name`);
+// without it the board is the bindings alone.
+//
+// Cards keep the COMPONENTS LIST's order — the platform's own, which is also
+// the design's — rather than sorting by name: a name sort put a project's API
+// above the app it serves, and the Try-it-out page reads top to bottom
+// (ADR-0032). A binding for a component the list does not know (a component
+// just removed from the design) trails, in the order the bindings came.
 export function groupDeploymentCards(
   componentItems: Component[] | null | undefined,
   deploymentItems: Deployment[] | null | undefined,
+  entryEnvironment?: string,
 ): DeploymentBoard {
   const displayNames = new Map<string, string>();
+  const componentTypes = new Map<string, string>();
+  const ctOf = (n: string): string | undefined => componentTypes.get(n);
+  for (const c of componentItems ?? []) {
+    if (c.type) componentTypes.set(c.name, c.type);
+  }
   for (const c of componentItems ?? []) {
     displayNames.set(c.name, c.displayName || c.name);
   }
   const cardOf = (d: Deployment): DeploymentCard => {
     const componentName = d.componentName ?? "";
+    // Narrow on the VALUE, not on `has()`: under exactOptionalPropertyTypes a
+    // `Map.get()` inside a `has()` guard is still `string | undefined`, which
+    // cannot be assigned to an optional property.
+    const componentType = componentTypes.get(componentName);
     return {
       componentName,
       displayName: displayNames.get(componentName) ?? componentName,
+      ...(componentType ? { componentType } : {}),
       kind: statusKind(d.status),
       deployment: d,
     };
   };
 
-  const development: DeploymentCard[] = [];
-  const production: DeploymentCard[] = [];
-  const inDevelopment = new Set<string>();
+  // environment -> component -> its bindings there.
+  const bindings = new Map<string, Map<string, Deployment[]>>();
+  const bucket = (environment: string): Map<string, Deployment[]> => {
+    const existing = bindings.get(environment);
+    if (existing) return existing;
+    const fresh = new Map<string, Deployment[]>();
+    bindings.set(environment, fresh);
+    return fresh;
+  };
+  if (entryEnvironment) bucket(entryEnvironment);
   for (const d of deploymentItems ?? []) {
-    if (d.environment === "production") {
-      production.push(cardOf(d));
-    } else {
-      development.push(cardOf(d));
-      inDevelopment.add(d.componentName ?? "");
-    }
-  }
-  for (const c of componentItems ?? []) {
-    if (!inDevelopment.has(c.name)) {
-      development.push({
-        componentName: c.name,
-        displayName: displayNames.get(c.name) ?? c.name,
-        kind: "notDeployed",
-      });
-    }
+    const into = bucket(d.environment ?? "");
+    const name = d.componentName ?? "";
+    into.set(name, [...(into.get(name) ?? []), d]);
   }
 
-  const byName = (a: DeploymentCard, b: DeploymentCard) =>
-    a.componentName.localeCompare(b.componentName) ||
-    (a.deployment?.environment ?? "").localeCompare(
-      b.deployment?.environment ?? "",
-    );
-  development.sort(byName);
-  production.sort(byName);
-  return { development, production };
+  const board: DeploymentBoard = new Map();
+  for (const [environment, perComponent] of bindings) {
+    const cards: DeploymentCard[] = [];
+    const placed = new Set<string>();
+    for (const c of componentItems ?? []) {
+      placed.add(c.name);
+      const bound = perComponent.get(c.name) ?? [];
+      if (bound.length > 0) {
+        cards.push(...bound.map(cardOf));
+      } else if (environment === entryEnvironment) {
+        cards.push({
+          componentName: c.name,
+          displayName: displayNames.get(c.name) ?? c.name,
+          ...(ctOf(c.name) ? { componentType: ctOf(c.name) as string } : {}),
+          kind: "notDeployed",
+        });
+      }
+    }
+    for (const [name, ds] of perComponent) {
+      if (!placed.has(name)) cards.push(...ds.map(cardOf));
+    }
+    board.set(environment, cards);
+  }
+  return board;
 }
 
 // Adaptive-poll signal (the STATUS_ACTIVE/IDLE convention, #183): a binding

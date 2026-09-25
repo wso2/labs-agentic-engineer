@@ -50,6 +50,7 @@ export function commandGuide(): string {
     "    /<skill> [text]        load any working-tree skill and follow it (e.g. /grilling)",
     "    /task                  plan implementation tasks",
     "    /code                  run the coding agent (one session, whole plan)",
+    "    /wire [role]           run what was built, locally, as a role — browser + panel",
     "    /validate              check design artifacts against the schema",
     "    /undo                  restore the last pre-coding snapshot",
     "    /menu  /help  /quit    dashboard · this guide · leave",

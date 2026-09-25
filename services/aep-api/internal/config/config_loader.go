@@ -64,6 +64,7 @@ func Load() (Config, error) {
 		TenantGateMode:           r.readOptionalString("TENANT_GATE_MODE", "enforce"),
 		OAuthStateSigningKey:     r.readOptionalString("OAUTH_STATE_SIGNING_KEY", ""),
 		BFFPublicURL:             r.readOptionalString("BFF_PUBLIC_URL", "http://localhost:8090"),
+		TryItCallbackURL:         r.readOptionalString("TRY_IT_CALLBACK_URL", ""),
 		BuildAuthRetryBudget:     r.readOptionalInt("BUILD_AUTH_RETRY_BUDGET", 3),
 		SkillsDir:                r.readOptionalString("SKILLS_DIR", "/app/skills"),
 		ThunderAdmin: ThunderAdminConfig{
@@ -126,6 +127,18 @@ func Load() (Config, error) {
 			HostHeader:   r.readOptionalString("SERVICE_AUTH_HOST_HEADER", ""),
 		},
 
+		// Agent Manager. Defaults match the client AEP publishes into the
+		// platform IdP's bootstrap, so a local stack governs agents without any
+		// .env entry; the token URL falls back to the one the rest of the
+		// service already uses.
+		AgentManager: AgentManagerConfig{
+			TokenURL:     r.readOptionalString("AMP_TOKEN_URL", r.readOptionalString("SERVICE_AUTH_TOKEN_URL", "")),
+			ClientID:     r.readOptionalString("AMP_CLIENT_ID", "amp-publisher-aep"),
+			ClientSecret: r.readOptionalString("AMP_CLIENT_SECRET", "amp-publisher-aep-secret"),
+			Resource:     r.readOptionalString("AMP_RESOURCE", "urn:wso2:amp"),
+			HostHeader:   r.readOptionalString("AMP_TOKEN_HOST_HEADER", r.readOptionalString("SERVICE_AUTH_HOST_HEADER", "")),
+		},
+
 		// Git-service config. Uses the same env-var names git-service used so
 		// existing local .env files / release-bindings keep working.
 		GitProvider:                 r.readOptionalString("GIT_PROVIDER", "github"),
@@ -158,6 +171,9 @@ func Load() (Config, error) {
 		// callbacks deploy as a matched pair. Empty disables dispatch, which
 		// fails loudly, rather than silently running an unpinned image.
 		AgentRunnerImage: r.readOptionalString("AGENT_RUNNER_IMAGE", ""),
+		// The OpenCode variant of the same image, pinned the same way (Helm
+		// codingAgentRunner.opencodeImage / compose AGENT_RUNNER_IMAGE_OPENCODE).
+		AgentRunnerImageOpenCode: r.readOptionalString("AGENT_RUNNER_IMAGE_OPENCODE", ""),
 		// Finished cycle Components stay queryable via the observer until
 		// pruned. Default 10 matches codingagent.DefaultCodingAgentComponentRetention;
 		// local compose lowers this (often to 2) to make LRU prune observable.
@@ -257,23 +273,41 @@ func (r *configReader) thunderEnvAdminRoute() string {
 
 // kubeAPI resolves the Kubernetes API endpoint for ThunderApplication CR LISTs.
 // Empty BaseURL is valid (local compose) — Assemble leaves the thunder reader nil.
+//
+// KUBE_API_BASE_URL wins over the in-cluster apiserver. Split-plane installs
+// render ThunderApplication on the data-plane cluster; aep-api runs on the
+// control-plane cluster, so the in-cluster host 404s the CRD. When the
+// override is set, in-cluster SA token/CA are NOT used — they belong to the
+// other cluster. Pair the override with KUBE_API_BEARER or KUBE_API_TOKEN_FILE
+// and KUBE_API_CA_FILE.
 func (r *configReader) kubeAPI() KubeAPIConfig {
 	cfg := KubeAPIConfig{}
+	override := os.Getenv("KUBE_API_BASE_URL")
 	host := os.Getenv("KUBERNETES_SERVICE_HOST")
 	port := os.Getenv("KUBERNETES_SERVICE_PORT")
 	switch {
+	case override != "":
+		cfg.BaseURL = override
 	case host != "" && port != "":
 		cfg.BaseURL = "https://" + net.JoinHostPort(host, port)
-	default:
-		cfg.BaseURL = r.readOptionalString("KUBE_API_BASE_URL", "")
 	}
+
 	if v := os.Getenv("KUBE_API_BEARER"); v != "" {
 		cfg.BearerToken = v
-	} else if _, err := os.Stat(kubeSATokenPath); err == nil {
-		cfg.TokenFile = kubeSATokenPath
+	} else if v := os.Getenv("KUBE_API_TOKEN_FILE"); v != "" {
+		cfg.TokenFile = v
+	} else if override == "" {
+		if _, err := os.Stat(kubeSATokenPath); err == nil {
+			cfg.TokenFile = kubeSATokenPath
+		}
 	}
-	if _, err := os.Stat(kubeSACAPath); err == nil {
-		cfg.CAFile = kubeSACAPath
+
+	if v := os.Getenv("KUBE_API_CA_FILE"); v != "" {
+		cfg.CAFile = v
+	} else if override == "" {
+		if _, err := os.Stat(kubeSACAPath); err == nil {
+			cfg.CAFile = kubeSACAPath
+		}
 	}
 	return cfg
 }

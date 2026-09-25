@@ -30,7 +30,9 @@
   "pnpm": {
     "overrides": {
       "@tanstack/router-cli>chokidar": "^4.0.3",
-      "js-yaml": "^4.3.1"
+      "js-yaml": "^4.3.1",
+      "promptfoo>js-yaml": "5.3.0",
+      "@apidevtools/json-schema-ref-parser>js-yaml": "^5.2.3"
     },
     "onlyBuiltDependencies": [
       "better-sqlite3"

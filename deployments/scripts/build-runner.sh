@@ -15,9 +15,16 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# Builds the runner image (runners/remote-worker/Dockerfile — ONE image for both
-# task kinds: Debian + Go + Playwright + baked chromium) and imports it into the
-# local k3d cluster. This is the LOCAL/DEV path: every machine builds the :dev
+# Builds the runner images (runners/remote-worker/Dockerfile — one image per
+# coding-agent RUNTIME, each serving both task kinds: Debian + Go + a baked
+# chromium) and imports them into the local k3d cluster:
+#
+#   aep-runner:dev            --target runner           Claude Code
+#   aep-runner-opencode:dev   --target runner-opencode  the same, plus OpenCode
+#
+# The second is FROM the first, so it costs one binary, one plugin and a
+# pre-warmed home on top of a shared cache (ADR-0015). The dispatcher picks one
+# per the org's runtime; the playground picks one per AEP_AGENT_RUNTIME. This is the LOCAL/DEV path: every machine builds the :dev
 # tag once — self-contained, no shared registry needed. Dispatch reads it via
 # the compose AGENT_RUNNER_IMAGE env, which defaults to the same tag built here.
 #
@@ -25,8 +32,8 @@
 # ghcr.io/wso2/aep/remote-worker:<version> by .github/workflows/release.yml
 # and wired into aep-api via the platform Helm chart's codingAgentRunner.image.
 #
-# Idempotent: the (multi-minute, downloads chromium) build is skipped when the
-# image already exists. FORCE=1 rebuilds — use it after changing the Dockerfile
+# Idempotent: the (multi-minute, downloads chromium) build is skipped when BOTH
+# images already exist. FORCE=1 rebuilds both — use it after changing the Dockerfile
 # or the runner's TS/toolchain, or the bal library tool (skill edits are picked
 # up live via the skills hostPath overlay and never need a rebuild; so is the
 # `bal library` tool, but only for playground runs — see
@@ -44,6 +51,7 @@ source "$SCRIPT_DIR/env.sh"
 source "$SCRIPT_DIR/utils.sh"
 
 IMAGE="${AGENT_RUNNER_IMAGE:-aep-runner:dev}"
+IMAGE_OPENCODE="${AGENT_RUNNER_IMAGE_OPENCODE:-aep-runner-opencode:dev}"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 WORKER_DIR="$REPO_ROOT/runners/remote-worker"
 DOCKERFILE="$WORKER_DIR/Dockerfile"
@@ -73,9 +81,11 @@ if [ -z "$PACKAGE_PAT" ]; then
     exit 1
 fi
 
-if [ "${FORCE:-0}" = "1" ] || ! docker image inspect "$IMAGE" &>/dev/null; then
-    echo "🐳 Building runner image ($IMAGE)..."
-    echo "   First build downloads Playwright + a baked chromium — expect a few minutes."
+# One target per call, both through the same flags. The second build reuses every
+# layer of the first from the cache, so it adds only the OpenCode stage.
+build_target() {
+    local target="$1" tag="$2"
+    echo "🐳 Building runner image ($tag, --target $target)..."
     # --provenance=false --sbom=false: with the containerd image store (colima/
     # Docker Desktop) buildx defaults to emitting an OCI image index with
     # attestation manifests. `k3d image import` reports success on such an index
@@ -89,16 +99,32 @@ if [ "${FORCE:-0}" = "1" ] || ! docker image inspect "$IMAGE" &>/dev/null; then
     # --build-context bal-library-tool=<repo>/packages/bal-library-tool: same
     # mechanism, for the same reason — the tool's source is outside this image's
     # context and its first stage compiles it.
+    # --build-context agent-eval=<repo>/packages/agent-eval: same mechanism
+    # again, for the agent-evaluation harness a build runs before opening an
+    # ai-agent's PR. A build pod holds no monorepo, so the harness has to be in
+    # the image or the step cannot run at all.
     # --secret: never a --build-arg. Build args land in image history, and
     # release.yml publishes this image's builder stages to a public buildcache.
+    # --target: always named. The Dockerfile's default (last) stage is the Claude
+    # Code runner, which is what every path that names none gets.
     docker build --provenance=false --sbom=false \
+        --target "$target" \
         --build-context "skills=$REPO_ROOT/skills" \
         --build-context "bal-library-tool=$BAL_TOOL_DIR" \
+        --build-context "agent-eval=$REPO_ROOT/packages/agent-eval" \
         --secret "id=packagePAT,env=PACKAGE_PAT" \
-        -f "$DOCKERFILE" -t "$IMAGE" "$WORKER_DIR"
-    echo "✅ built $IMAGE"
+        -f "$DOCKERFILE" -t "$tag" "$WORKER_DIR"
+    echo "✅ built $tag"
+}
+
+# FORCE rebuilds BOTH: the OpenCode image is FROM the Claude one, so rebuilding
+# only the first would leave the second running last build's runner code.
+if [ "${FORCE:-0}" = "1" ] || ! docker image inspect "$IMAGE" &>/dev/null || ! docker image inspect "$IMAGE_OPENCODE" &>/dev/null; then
+    echo "   First build installs a chromium — expect a few minutes."
+    build_target runner "$IMAGE"
+    build_target runner-opencode "$IMAGE_OPENCODE"
 else
-    echo "✅ runner image already present ($IMAGE) — skipping build (FORCE=1 to rebuild)"
+    echo "✅ runner images already present ($IMAGE, $IMAGE_OPENCODE) — skipping build (FORCE=1 to rebuild)"
 fi
 
 # Import into the k3d node so the runner Job can start without a cold registry
@@ -114,26 +140,28 @@ elif command -v k3d &>/dev/null && k3d cluster list "$CLUSTER_NAME" &>/dev/null;
     # Both callers already expect a non-zero exit here and turn it into their own
     # message (setup-aep.sh's "dispatch stays disabled until fixed", setup.sh's
     # background-build branch), so exiting non-zero is what makes those fire.
-    if k3d image import "$IMAGE" -c "$CLUSTER_NAME"; then
-        # A successful import is not durable on its own: an idle local-only tag is
-        # collected early by kubelet's image GC, and the next Job then has nothing to
-        # pull. pin_node_image both pins it and verifies it actually landed on every
-        # node — `k3d image import` is known to flake and still exit 0, which shows
-        # up here as exit 2 and is an import failure rather than a pinning one.
-        PIN_RC=0
-        pin_node_image "$IMAGE" || PIN_RC=$?
-        case "$PIN_RC" in
-            0) echo "✅ imported $IMAGE into k3d cluster '$CLUSTER_NAME' (verified in node containerd)" ;;
-            2) echo "❌ import reported success but the image is not in the node — re-run 'make build-runner'"
-               exit 1 ;;
-            # Pinned-but-unlabelled: the image IS there, so dispatch works today. Not
-            # worth failing a build over — it only means GC can still evict it.
-            *) echo "✅ imported $IMAGE into k3d cluster '$CLUSTER_NAME' (unpinned — see the warning above)" ;;
-        esac
-    else
-        echo "❌ k3d image import failed — $IMAGE is not in the node and has no registry to pull from"
-        exit 1
-    fi
+    for tag in "$IMAGE" "$IMAGE_OPENCODE"; do
+        if k3d image import "$tag" -c "$CLUSTER_NAME"; then
+            # A successful import is not durable on its own: an idle local-only tag is
+            # collected early by kubelet's image GC, and the next Job then has nothing to
+            # pull. pin_node_image both pins it and verifies it actually landed on every
+            # node — `k3d image import` is known to flake and still exit 0, which shows
+            # up here as exit 2 and is an import failure rather than a pinning one.
+            PIN_RC=0
+            pin_node_image "$tag" || PIN_RC=$?
+            case "$PIN_RC" in
+                0) echo "✅ imported $tag into k3d cluster '$CLUSTER_NAME' (verified in node containerd)" ;;
+                2) echo "❌ import reported success but $tag is not in the node — re-run 'make build-runner'"
+                   exit 1 ;;
+                # Pinned-but-unlabelled: the image IS there, so dispatch works today. Not
+                # worth failing a build over — it only means GC can still evict it.
+                *) echo "✅ imported $tag into k3d cluster '$CLUSTER_NAME' (unpinned — see the warning above)" ;;
+            esac
+        else
+            echo "❌ k3d image import failed — $tag is not in the node and has no registry to pull from"
+            exit 1
+        fi
+    done
 else
-    echo "ℹ️  k3d cluster '$CLUSTER_NAME' not found — built the image only; setup-aep.sh imports it at cluster setup."
+    echo "ℹ️  k3d cluster '$CLUSTER_NAME' not found — built the images only; setup-aep.sh imports them at cluster setup."
 fi

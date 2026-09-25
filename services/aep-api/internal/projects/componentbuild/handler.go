@@ -32,7 +32,9 @@ import (
 // it to the service as an explicit argument. projectName/componentName/buildName
 // path params are validated as DNS-label slugs (400 on malformed) before any
 // service (OC client / repo) is touched.
-type Handler struct{ comp projects.ComponentService }
+type Handler struct {
+	comp projects.ComponentService
+}
 
 // New returns the slice's handler.
 func New(comp projects.ComponentService) *Handler { return &Handler{comp: comp} }
@@ -98,7 +100,7 @@ func (h *Handler) ListDeployments(ctx context.Context, request gen.ListDeploymen
 	return gen.ListDeployments200JSONResponse(*list), nil
 }
 
-// --- OpenAPI spec (drives the Test tab) ----------------------------------------
+// --- OpenAPI spec (drives the Try API dialog) ----------------------------------------
 // Read from specs/design/components/<name>/openapi.yaml. Service components
 // have a guaranteed OpenAPI 3.0 doc; non-service components return 409 with
 // the componentType so the UI can render a typed empty state.

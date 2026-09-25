@@ -20,12 +20,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { components } from "../../../generated/aep-api";
 import { client } from "../../../api/client";
 import { configKeys, resourceKeys, skillsKeys } from "./keys";
-import { apiErrorMessage } from "../../../api/errors";
+import { ApiRequestError, apiErrorMessage } from "../../../api/errors";
 
 type ConfigProjection = components["schemas"]["ConfigProjection"];
-type CodingAgentPatch = NonNullable<
-  components["schemas"]["ConfigPatch"]["codingAgent"]
->;
+type ConfigPatch = components["schemas"]["ConfigPatch"];
 type CreateSkillInput = components["schemas"]["CreateSkillInput"];
 type UpdateSkillInput = components["schemas"]["UpdateSkillInput"];
 
@@ -50,112 +48,16 @@ export function useConfig() {
   });
 }
 
-// Connect and replace are the same call (issue #96 decision: inline, no
-// confirm — the PATCH's server-side probe-before-persist validation is the
-// safety net).
-export function useConnectAnthropic() {
+// The AI agents card's one Save: sends the patch aiSettingsPatch built.
+export function useSaveAiSettings() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (apiKey: string) => {
-      const { data, error } = await client.PATCH("/config", {
-        body: { llm: { kind: "anthropic", apiKey } },
-      });
+    mutationFn: async (patch: ConfigPatch) => {
+      const { data, error } = await client.PATCH("/config", { body: patch });
       if (error) {
-        throw new Error(errorMessage(error, "Failed to connect the Anthropic key"));
-      }
-      return data;
-    },
-    onSuccess: (data: ConfigProjection) => {
-      queryClient.setQueryData(configKeys.all, data);
-    },
-  });
-}
-
-// The coding-agent key is an OVERRIDE on the key above, so these two mutations
-// are "set/rotate the override" and "remove it", NOT connect/disconnect: with no
-// override the coding agent reuses the org's default key, which is the default
-// state and the one a fresh org is already in. Removing it therefore breaks
-// nothing — it only changes which key coding runs bill.
-export function useConnectCodingAnthropic() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (apiKey: string) => {
-      const { data, error } = await client.PATCH("/config", {
-        body: { codingLlm: { kind: "anthropic", apiKey } },
-      });
-      if (error) {
-        throw new Error(
-          errorMessage(error, "Failed to save the coding agent key"),
-        );
-      }
-      return data;
-    },
-    onSuccess: (data: ConfigProjection) => {
-      queryClient.setQueryData(configKeys.all, data);
-    },
-  });
-}
-
-// codingLlm:null removes the override — the coding agent goes back to reusing
-// the org's default key. Idempotent server-side.
-export function useRemoveCodingAnthropic() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async () => {
-      const { data, error } = await client.PATCH("/config", {
-        body: { codingLlm: null },
-      });
-      if (error) {
-        throw new Error(
-          errorMessage(error, "Failed to remove the coding agent key"),
-        );
-      }
-      return data;
-    },
-    onSuccess: (data: ConfigProjection) => {
-      queryClient.setQueryData(configKeys.all, data);
-    },
-  });
-}
-
-// Runtime + model, not a credential: no probe, no secret, and both fields are
-// optional server-side, so a caller sends ONLY the field it is changing rather
-// than restating the other. Sending both would let a stale read of one silently
-// overwrite a change someone else made to it.
-//
-// The write lands on the org, not on the run in flight: dispatch copies these
-// onto the run it starts, so the change takes effect from the next cycle.
-export function useSetCodingAgent() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (patch: CodingAgentPatch) => {
-      const { data, error } = await client.PATCH("/config", {
-        body: { codingAgent: patch },
-      });
-      if (error) {
-        throw new Error(
-          errorMessage(error, "Failed to save the coding agent settings"),
-        );
-      }
-      return data;
-    },
-    onSuccess: (data: ConfigProjection) => {
-      queryClient.setQueryData(configKeys.all, data);
-    },
-  });
-}
-
-// llm:null disconnects directly (unlike gitProvider, which the BE rejects
-// as null and requires the dedicated disconnect endpoint instead).
-export function useDisconnectAnthropic() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async () => {
-      const { data, error } = await client.PATCH("/config", {
-        body: { llm: null },
-      });
-      if (error) {
-        throw new Error(errorMessage(error, "Failed to disconnect the Anthropic key"));
+        // ApiRequestError keeps `details[].field`, which names the section the
+        // server refused, so the card can show it on the field it came from.
+        throw new ApiRequestError(error, "Failed to save the AI settings");
       }
       return data;
     },

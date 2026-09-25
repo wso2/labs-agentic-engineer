@@ -39,14 +39,9 @@
 //     messages into RUN EVENTS v2.
 //   - `lib/runner.ts` becomes wiring: it builds the policy and hands it over.
 //
-// **There is exactly ONE implementation today: `claude-code`.** `opencode` is in
-// `RuntimeName` because the organization setting's contract carries it and
-// because a port with one implementation proves nothing about its own shape —
-// but `runtime/registry.ts` refuses to build it, by name, with a reason. The
-// design owes three live spikes (tool/permission parity, message-stream
-// fidelity for the agent tree, and cost/usage reporting) before any OpenCode
-// code is worth merging, and none of them has been run. A seam that says "not
-// implemented" is the honest deliverable; a stub adapter would be a claim.
+// **There are two implementations: `claude-code` (`runtime/claude/`) and
+// `opencode` (`runtime/opencode/`, ADR-0015).** Every clause below is enforced
+// by both, through different mechanisms.
 //
 // ## Where this deviates from the design's sketch, and why
 //
@@ -56,21 +51,42 @@
 // RunEventInput>` as the session's whole output, and that shape cannot carry
 // what `lib/run_loop.ts` measurably needs — see the note there.
 
+import type { components } from "../generated/aep-api";
+import type { RunEventInput, RunEventUsage } from "../lib/progress/emitter.js";
 import type { RunEventTranslator, RunStream } from "../lib/run_loop.js";
 
 /**
- * The runtimes the organization setting can name.
- *
- * `claude-code` is the only one the platform can run. The value is the wire
- * spelling shared by the org-config contract (`AgentRuntime` in
- * `packages/contracts/api/v1/openapi.yaml`), the `AEP_AGENT_RUNTIME` env the
- * dispatcher stamps, and `lib/tool_glossary.ts`'s lookup key — one spelling, so
- * a mismatch is a type error rather than a run that silently gets no glossary.
+ * The runtimes the organization setting can name — the contract's own
+ * `AgentRuntime` (`packages/contracts/api/v1/openapi.yaml`), which is also the
+ * `AEP_AGENT_RUNTIME` env the dispatcher stamps and `lib/tool_glossary.ts`'s
+ * lookup key. A name the contract gains is a compile error wherever a runtime
+ * is looked up by name (the registry, the glossary), not a silent default.
  */
-export type RuntimeName = "claude-code" | "opencode";
+export type RuntimeName = components["schemas"]["AgentRuntime"];
+
+/** Every name `RuntimeName` holds, for reading one off the environment. */
+export const RUNTIME_NAMES = ["claude-code", "opencode"] as const satisfies readonly RuntimeName[];
 
 /** What the platform starts a run as when nobody has chosen. */
 export const DEFAULT_RUNTIME: RuntimeName = "claude-code";
+
+/**
+ * `AEP_AGENT_RUNTIME`, as the dispatcher stamps it from the organization's
+ * setting (and as the playground forwards it from a developer's shell).
+ *
+ * Unset means the platform default, which is what every dispatch made before the
+ * setting existed carries — so an org that never opens the page keeps exactly
+ * the run it had. An unrecognised VALUE is not defaulted: the org asked for
+ * something, and quietly giving it something else would bill it for a runtime
+ * it did not choose.
+ */
+export function runtimeNameFromEnv(env: NodeJS.ProcessEnv = process.env): RuntimeName {
+  const raw = (env.AEP_AGENT_RUNTIME ?? "").trim();
+  if (raw === "") return DEFAULT_RUNTIME;
+  const name = RUNTIME_NAMES.find((n) => n === raw);
+  if (name) return name;
+  throw new UnsupportedRuntimeError(raw, "no runtime by that name exists");
+}
 
 /** The two kinds of run this platform dispatches. */
 export type TaskKind = "implementation" | "validation";
@@ -113,6 +129,24 @@ export const DENIED_CAPABILITIES: readonly DeniedCapability[] = [
   "peer_messaging",
   "artifact_publishing",
 ];
+
+/**
+ * A runtime's tool names denied by a set of capability classes, read off that
+ * runtime's table. Order is the classes' order and then each class's own, so a
+ * diff on the list means a policy change and nothing else.
+ */
+export function deniedToolNames(
+  table: Readonly<Record<DeniedCapability, readonly string[]>>,
+  capabilities: readonly DeniedCapability[],
+): string[] {
+  const names: string[] = [];
+  for (const capability of capabilities) {
+    for (const tool of table[capability] ?? []) {
+      if (!names.includes(tool)) names.push(tool);
+    }
+  }
+  return names;
+}
 
 /**
  * Where authored files may land, and who hears about a refusal.
@@ -203,29 +237,6 @@ export interface SkillsPolicy {
 }
 
 /**
- * Watchers, never deciders.
- *
- * Both of these existed before the port and neither is a guard: the validation
- * run derives per-criterion progress from the calls it sees going out, and
- * settles a criterion from the same `ok` the feed reports. They are on the
- * policy because they are the platform's, and they are separate from the guards
- * above because a progress feature that could block a write would be a worse
- * bargain than no progress feature.
- */
-export interface RuntimeObservers {
-  /**
-   * A tool call, before it runs. The return value is ignored — but a promise
-   * is AWAITED, so a watcher that has to reach the outside world lands before
-   * the call it describes. The validation status line does: its whole value is
-   * that the line explaining a twenty-minute silence is posted before the
-   * silence, not after it (`lib/validation_status_line.ts`).
-   */
-  toolUse?(toolName: string, toolInput: unknown, toolUseId: string): void | Promise<void>;
-  /** A plain tool call settling, with the same `ok` that reaches the feed. */
-  toolOutcome?(toolUseId: string, ok: boolean): void;
-}
-
-/**
  * Everything a runtime needs to start this platform's kind of run.
  *
  * Read it as the sentence "a coding run may author files under X, may not do Y,
@@ -248,7 +259,10 @@ export interface RuntimePolicy {
   env: Record<string, string>;
   /**
    * The model this run bills to — the organization's setting, reaching the pod
-   * as `AEP_AGENT_MODEL`.
+   * as `AEP_AGENT_MODEL`. The ONE model of the run: the lead, every subagent and
+   * the runtime's own helper calls (titles, summaries) all run on it, because
+   * the platform is bring-your-own-key and a second model is one the org's key
+   * may not reach.
    *
    * Pinned rather than left to the runtime's default, which drifts across
    * releases (seen live: an unpinned run resolved to `claude-sonnet-4-6`). The
@@ -262,7 +276,7 @@ export interface RuntimePolicy {
    * per-token detail it can produce. Files under `logDir`, never the feed.
    */
   debug: boolean;
-  /** Where a debug run's developer files go. Beside `claude.log`. */
+  /** Where a debug run's developer files go. Beside `runtime.log`. */
   logDir: string;
   write: WritePolicy;
   deniedCapabilities: readonly DeniedCapability[];
@@ -273,7 +287,6 @@ export interface RuntimePolicy {
   skills: SkillsPolicy;
   /** Absent when the dispatch carried no MCP url or no token to present. */
   mcp?: McpPolicy;
-  observe?: RuntimeObservers;
 }
 
 /** One runtime-owned file worth keeping, once the run is over. */
@@ -292,6 +305,116 @@ export interface RuntimeArtifact {
   kind: "transcript" | "log";
 }
 
+/** One retryable API failure, as the runtime reports it. */
+export interface ApiRetryInfo {
+  attempt: number;
+  /**
+   * The runtime's retry ceiling, or null when it does not state one. Claude
+   * Code reports it on every retry; OpenCode's `session.status {retry}` carries
+   * the attempt and the next attempt's time and nothing else, and a guessed
+   * ceiling would print a bound nobody enforces.
+   */
+  maxRetries: number | null;
+  retryDelayMs: number;
+  /** null for connection errors (timeouts, refused) that never got an HTTP response. */
+  errorStatus: number | null;
+  /** The runtime's error CLASS — a closed enum, never free text. */
+  error: string;
+}
+
+/**
+ * A message that explains a stall or a death, rendered for the feed.
+ *
+ * `code` is the closed condition a consumer branches on and `detail` is what a
+ * reader reads — the two halves of a v2 `notice`. The classifier composes both
+ * so the wording and the code cannot drift apart, which they would if the run
+ * loop picked a code per call site.
+ */
+export interface StallSignal {
+  level: NonNullable<RunEventInput["level"]>;
+  code: NonNullable<RunEventInput["code"]>;
+  detail: string;
+}
+
+/**
+ * What the run loop is TOLD about one runtime message — the port's answer to
+ * "which of the loop's rules does this message trigger".
+ *
+ * The loop reads no message shape: a runtime says which class a message is, so
+ * no runtime has to fake another's messages to flow through it. The classes are
+ * CLOSED and they are exactly the loop's own vocabulary; a runtime
+ * with a condition none of them names maps it to the nearest honest one, and a
+ * condition the loop genuinely has no rule for is `activity`.
+ *
+ * Every message is exactly ONE class. No message triggers two of the loop's
+ * rules (a turn end is never task bookkeeping, `init` is never a task message, a
+ * retry is never a stall signal). What
+ * several classes DO share is the treatment of `activity` — `turn_end`,
+ * `task_bookkeeping` and `init` are each translated, observed by the watchdog as
+ * activity and emitted exactly like it, and then carry the one extra step that
+ * is theirs. They are refinements of activity, not alternatives to it.
+ *
+ * Grouped by what the loop does:
+ *
+ *   NOT translated, NOT activity — the loop writes the line itself:
+ *     `retry`         watchdog.observeRetry + an `api_retry` notice
+ *     `stall_signal`  a notice with the signal's own level, code and detail
+ *
+ *   translated, NOT activity (the watchdog's idle clock keeps running), and
+ *   proof of life (the input grace is disarmed):
+ *     `model_wait`    watchdog.observeStream — the model is producing
+ *     `tool_progress` a tool is still running; says nothing about the model
+ *
+ *   recorded and nothing else:
+ *     `noise`         a message about the server, not about this run
+ *
+ *   translated AND activity:
+ *     `turn_end`          one turn ended; input may end if nothing is live
+ *     `task_bookkeeping`  the live-task set moves; may ARM the input grace
+ *     `init`              the preload check
+ *     `activity`          everything else
+ */
+export type MessageClass =
+  | { kind: "retry"; info: ApiRetryInfo }
+  | { kind: "stall_signal"; signal: StallSignal }
+  /**
+   * `streaming` marks a per-token frame, which is never written to the raw
+   * message log: one JSON line per token would turn a diagnostic into the hang
+   * it exists to report. A coarser "still thinking" message is logged.
+   */
+  | { kind: "model_wait"; streaming: boolean }
+  | { kind: "tool_progress" }
+  | { kind: "turn_end" }
+  /**
+   * A task's lifecycle, and nothing the lead said. `started` / `ended` are the
+   * task ids that entered or left the running set with this message; both
+   * absent is bookkeeping that moves nothing (a progress tick, a roster, a
+   * non-terminal status). The ids are what `RunStream.stopTask` takes.
+   */
+  | { kind: "task_bookkeeping"; started?: string; ended?: string }
+  /** The session's opening declaration: the skills it actually resolved. */
+  | { kind: "init"; resolvedSkills: string[] }
+  /**
+   * A message that says NOTHING about this run: a server keep-alive, a plugin
+   * or catalog announcement, a file-watcher echo of a write the tool part
+   * already reported. Recorded, and otherwise ignored — not translated, not
+   * activity, and not proof of life.
+   *
+   * Claude Code's stream has no such message (every SDK message is about the
+   * session). OpenCode's bus is the whole server's, and routing its keep-alives
+   * as `activity` would call `watchdog.observe([])`, which RESETS the idle clock
+   * — a stalled run would look busy for as long as the server stayed up.
+   */
+  | { kind: "noise" }
+  | { kind: "activity" };
+
+/**
+ * One runtime message → its class. Per SESSION and allowed to be stateful: the
+ * Claude classifier remembers the last rate-limit sentence it let through, so an
+ * unchanged one is `activity` rather than a repeated notice.
+ */
+export type MessageClassifier = (message: unknown) => MessageClass;
+
 /**
  * A started run.
  *
@@ -304,27 +427,43 @@ export interface RuntimeArtifact {
  *     a heartbeat dropped by the rate limiter produces no event at all. So "route
  *     on the events that came back" silently converts every rate-limited wait
  *     into activity, which is the exact stall the heartbeat exists to report.
- *     `run_loop.ts` therefore routes by MESSAGE TYPE, and says so.
+ *     `run_loop.ts` therefore routes by MESSAGE, not by event, and says so.
  *   - `observeRetry` and `observeStream` are two DIFFERENT non-activity signals,
  *     and the watchdog needs both to name a stall's cause. A flat event stream
  *     collapses them into "a notice arrived".
- *   - every raw message is written to `claude.log`, which a flat event stream no
+ *   - every raw message is written to `runtime.log`, which a flat event stream no
  *     longer carries.
  *
  * So the session exposes the run at the level the loop actually reads it: the
- * runtime's `messages`, plus the `translate` that turns each one into canonical
- * events. `lib/run_loop.ts` is unchanged and stays the neutral owner of the one
- * rule that matters — a run settles when the stream CLOSES — and the classifiers
- * it consults (`progress/diagnostics.ts`) sit beside the adapter that knows the
- * same message shapes. Collapsing those into a flat event stream is a real
- * improvement and a real risk; it is a change to the watchdog's contract, not to
- * this port, and it is not this phase's to make.
+ * runtime's `messages`, the `translate` that turns each one into canonical
+ * events, and the `classify` that says which of the loop's rules each one
+ * triggers. `lib/run_loop.ts` stays the neutral owner of the one rule that
+ * matters — a run settles when the stream CLOSES — and reads no message shape
+ * of its own: it branches on the `MessageClass` the runtime answers. Collapsing
+ * all of it into a flat event
+ * stream is still a change to the watchdog's contract, not to this port.
  */
 export interface RuntimeSession {
   /** The message stream and the task-stop, as `consumeRun` reads them. */
   readonly stream: RunStream;
   /** One runtime message → the canonical run events it produced, in order. */
   readonly translate: RunEventTranslator;
+  /**
+   * One runtime message → what the run loop is told about it (see
+   * `MessageClass`). Per session, and called exactly once per message, before
+   * that message is translated (if its class is translated at all): a
+   * classifier may keep state — the Claude one dedupes rate-limit lines — so
+   * sharing one between sessions, or asking twice, would change its answers.
+   */
+  readonly classify: MessageClassifier;
+  /**
+   * The run's usage so far, cumulative and per model, as the adapter holds it —
+   * undefined before any was reported. What the loop settles with when the run
+   * ends early (the deadline, a fatal) and no turn is left to carry it: tokens
+   * spent on an unfinished run are still spent, and a settle without them
+   * blanks the cycle's cost.
+   */
+  usage(): RunEventUsage | undefined;
   /**
    * The files this run produced that outlive its messages.
    *
@@ -369,9 +508,8 @@ export interface Runtime {
    *
    * A STRING, not the sketch's `{fanOut, wait, stop, edit, write, shell}` record.
    * The repo already had this working (`lib/tool_glossary.ts`) and its content is
-   * more than a name per role: it carries the model aliases a lead picks from and
-   * the argument that makes each role work (`run_in_background: true`,
-   * `block: true`). A record of bare names would drop exactly the part that
+   * more than a name per role: it carries the argument that makes each role
+   * work (`run_in_background: true`, `block: true`). A record of bare names would drop exactly the part that
    * stopped leads guessing, and the caller would have to render it back into
    * prose anyway. Reformatting a working artefact to match a sketch is churn.
    */
@@ -384,7 +522,7 @@ export interface Runtime {
  *
  * A distinct type so a caller can report "the platform does not run that" rather
  * than a generic startup crash — and so the one place that refuses is
- * greppable when the second adapter does land.
+ * greppable.
  */
 export class UnsupportedRuntimeError extends Error {
   readonly runtime: string;

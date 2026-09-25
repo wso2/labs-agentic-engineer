@@ -28,11 +28,11 @@
 // the issue). Without it the local validation run exits before the agent starts:
 //
 //   GET /internal/v1/validation/{cycleId}/context
-//     -> { endpoints:[{component,url}], credentials:null, criteriaPath }
+//     -> { endpoints:[{component,url}], credentials:null }
 //
 // The endpoints point at localhost dev servers the agent starts in-container
-// (the local-dev-servers path in the aep-validation skill); credentials are
-// null (auth-gated criteria then land not_run). Override the endpoints with
+// (the local-dev-servers path in the acceptance-run skill); credentials are
+// null (auth-gated scenarios then land blocked). Override the endpoints with
 // VALIDATION_CONTEXT_JSON to validate a different sample.
 //
 // The taskId echo satisfies credhelper.sh's anti-misroute tripwire.
@@ -82,7 +82,6 @@ const validationContext = process.env.VALIDATION_CONTEXT_JSON
         { component: "hello-api", url: "http://localhost:9090" },
       ],
       credentials: null,
-      criteriaPath: "specs/validation/validation-criteria.json",
     };
 
 const server = http.createServer((req, res) => {

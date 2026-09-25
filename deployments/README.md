@@ -61,6 +61,21 @@ everything on the cluster. That is a naming defect in that chart (it already
 prefixes a fifth as `amp-generate-workload`), to be fixed there rather than
 worked around here.
 
+- **One AI gateway per environment, alongside the API gateway.** Agent Manager
+  has two: the **API gateway** fronts an agent's own inbound API, the **AI
+  gateway** is the LLM proxy an agent calls outbound, and guardrails run on the
+  second. `scripts/setup-environment-aigateway.sh` registers it with `amp-api`,
+  installs `wso2-amp-ai-gateway-extension` into `<org>-<env>` with
+  `bootstrap.enabled=false`, and writes the binding onto the OpenChoreo
+  `Environment` as annotations — endpoint, internal endpoint, admin URL,
+  gateway id, secret path. **The binding record is the contract**, exactly as
+  it is for Thunder (`design/two-tier-thunder.md`): `aep-api` reads it to
+  decide whether an environment is governed at all, and an environment without
+  one deploys agents on the org's own Anthropic key, as before Agent Manager
+  existed. `scripts/verify-convergence.sh` check 15 asserts it is bound and
+  ACTIVE. What aep-api then does with it is
+  `services/aep-api/internal/delivery/agentgovernance/design/governed-model-access.md`.
+
 ## What was removed from the previous v1
 
 - The Docker Compose local-dev path in its entirety: `scripts/setup.sh` and

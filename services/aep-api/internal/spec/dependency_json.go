@@ -18,30 +18,42 @@
 // `specs/design/dependencies/<name>/dependency.json`, and the hydration that
 // copies it onto every component edge that references it.
 //
-// One dependency, one definition. A component's design.json says only
-// `{ "kind": "external", "name": "payment-provider" }`; the provider, style,
-// contract file, config keys and open suggestions live once, here, shared by
-// every component that uses the dependency. The read path (AssembleDesign)
-// hydrates each reference so downstream readers — wiring derivation, the build
-// preflight, the deploy gate, the console — keep the flat `Dependency` they
-// always had; the write path (SplitDesign) writes both halves back.
+// One dependency, one definition, and the definition holds a full RESOURCE
+// block in the one shape a resource has everywhere: the org registry record
+// and a project's copy (or its own inline resource) are the same object. A
+// component's design.json says only `{ "kind": "external", "name": "…" }`; the
+// provider, the config keys, the contract and (for a copy) the organization's
+// instructions live once, here, shared by every component that uses the
+// dependency. The read path (AssembleDesign) hydrates each reference so
+// downstream readers — wiring derivation, the build preflight, the deploy
+// gate, the console — keep the flat `Dependency` they always had; the write
+// path (SplitDesign) writes both halves back.
 //
-// What "resolved" means is on disk: a Provider, a Contract file beside this
-// one, and the Config key names. State is never written (ADR-0003 stands) —
-// ComputeDependencyStatus derives it from which of these are present.
+// What "resolved" means is on disk: a Provider, a contract file beside this
+// one, the Config key names — or a Ref to a registered resource. State is
+// never written (ADR-0003 stands) — ComputeDependencyStatus derives it from
+// which of these are present, plus one registry lookup for a Ref.
 //
-// A design written before the file existed still carries the definition on
-// the component (the legacy fields dependencyJSON decodes). liftLegacyDefinitions
-// turns those into definitions in memory, so the next SplitDesign writes the
-// directory and the component loses the fields — the migration is the ordinary
-// save.
+// Style is not stored: it is computed from the contract type (openapi → a REST
+// client, graphql → a GraphQL client, sdk → a vendor library). Nor is where a
+// contract came from stored as a file marker: `contract.origin` says it, and
+// the old `x-aep-derived` / `x-aep-assumed` markers are read only as a
+// fallback for files written before origin existed.
+//
+// A file in the previous FLAT shape (provider / style / contract as a name /
+// source / assumed at the top level) still decodes: liftFlatDefinition turns
+// it into the nested shape in memory, so the next SplitDesign writes the new
+// shape — the migration is the ordinary save. So does a design from before the
+// file existed (liftLegacyDefinitions).
 
 package spec
 
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 
@@ -68,22 +80,67 @@ func ContractPath(depName, contractFile string) string {
 	return DesignDir + "/" + dependencyDirPrefix + depName + "/" + contractFile
 }
 
+// StyleForContractType is the computed consumption style for a contract type:
+// how the component talks to the system. Empty for a type no project contract
+// has (asyncapi, protobuf, documentation exist only on a registry record).
+func StyleForContractType(contractType string) DependencyStyle {
+	switch contractType {
+	case DependencyContractTypeOpenAPI:
+		return DependencyStyleRestAPI
+	case DependencyContractTypeGraphQL:
+		return DependencyStyleGraphQL
+	case DependencyContractTypeSDK:
+		return DependencyStyleSDK
+	}
+	return ""
+}
+
+// ContractTypeForStyle is StyleForContractType's inverse, for lifting a flat
+// (pre-resource) file whose only evidence of the contract's kind is its style.
+func ContractTypeForStyle(style DependencyStyle) string {
+	switch style {
+	case DependencyStyleRestAPI:
+		return DependencyContractTypeOpenAPI
+	case DependencyStyleGraphQL:
+		return DependencyContractTypeGraphQL
+	case DependencyStyleSDK:
+		return DependencyContractTypeSDK
+	}
+	return ""
+}
+
+// --- on-disk shapes -------------------------------------------------------
+
 type dependencyDefinitionJSON struct {
 	Name        string           `json:"name"`
-	Description string           `json:"description,omitempty"`
-	Source      string           `json:"source,omitempty"`
-	Provider    string           `json:"provider,omitempty"`
-	Style       string           `json:"style,omitempty"`
-	Contract    string           `json:"contract,omitempty"`
-	SDK         string           `json:"sdk,omitempty"`
+	Resource    resourceJSON     `json:"resource"`
 	Provenance  *provenanceJSON  `json:"provenance,omitempty"`
 	Suggestions []suggestionJSON `json:"suggestions,omitempty"`
-	// Candidates is the retired 2+-options field: decoded so a file written
-	// before suggestions existed still reads (its options become suggestions),
-	// never encoded — the next save writes suggestions.
-	Candidates []candidateJSON `json:"candidates,omitempty"`
-	Config     []configKeyJSON `json:"config,omitempty"`
-	Assumed    *assumptionJSON `json:"assumed,omitempty"`
+}
+
+type resourceJSON struct {
+	Ref                     string          `json:"ref,omitempty"`
+	Name                    string          `json:"name"`
+	Description             string          `json:"description,omitempty"`
+	Provider                string          `json:"provider,omitempty"`
+	Config                  []configKeyJSON `json:"config,omitempty"`
+	Contract                *contractJSON   `json:"contract,omitempty"`
+	ConsumptionInstructions string          `json:"consumptionInstructions,omitempty"`
+	Provenance              *provenanceJSON `json:"provenance,omitempty"`
+}
+
+type contractJSON struct {
+	Type     string          `json:"type"`
+	Path     string          `json:"path"`
+	Origin   string          `json:"origin,omitempty"`
+	Accepted *assumptionJSON `json:"accepted,omitempty"`
+}
+
+type provenanceJSON struct {
+	SourceURL string `json:"sourceUrl,omitempty"`
+	Registry  string `json:"registry,omitempty"`
+	SHA256    string `json:"sha256,omitempty"`
+	ReadOn    string `json:"readOn,omitempty"`
 }
 
 // suggestionJSON is the on-disk shape of one entry in a dependency's
@@ -92,13 +149,6 @@ type suggestionJSON struct {
 	Name        string `json:"name"`
 	Style       string `json:"style,omitempty"`
 	Description string `json:"description,omitempty"`
-}
-
-type provenanceJSON struct {
-	SourceURL string `json:"sourceUrl,omitempty"`
-	SHA256    string `json:"sha256,omitempty"`
-	FetchedAt string `json:"fetchedAt,omitempty"`
-	Sliced    bool   `json:"sliced,omitempty"`
 }
 
 type assumptionJSON struct {
@@ -115,48 +165,178 @@ type sdkManifestJSON struct {
 	Assumed  bool              `json:"assumed,omitempty"`
 }
 
+// flatDefinitionJSON is the PREVIOUS file shape — provider, style, a contract
+// file name, source and the acceptance record at the top level. Decoded only
+// to lift; never encoded.
+type flatDefinitionJSON struct {
+	Name        string              `json:"name"`
+	Description string              `json:"description,omitempty"`
+	Source      string              `json:"source,omitempty"`
+	Provider    string              `json:"provider,omitempty"`
+	Style       string              `json:"style,omitempty"`
+	Contract    string              `json:"contract,omitempty"`
+	SDK         string              `json:"sdk,omitempty"`
+	Provenance  *flatProvenanceJSON `json:"provenance,omitempty"`
+	Suggestions []suggestionJSON    `json:"suggestions,omitempty"`
+	Candidates  []candidateJSON     `json:"candidates,omitempty"`
+	Config      []configKeyJSON     `json:"config,omitempty"`
+	Assumed     *assumptionJSON     `json:"assumed,omitempty"`
+}
+
+type flatProvenanceJSON struct {
+	SourceURL string `json:"sourceUrl,omitempty"`
+	SHA256    string `json:"sha256,omitempty"`
+	FetchedAt string `json:"fetchedAt,omitempty"`
+	Sliced    bool   `json:"sliced,omitempty"`
+}
+
+// --- decode / encode -------------------------------------------------------
+
 // parseDependencyDefinitionJSON decodes one dependency.json. Strict on unknown
 // keys (the agent's write-gate is; a file that got past it is a bug worth
-// surfacing, not smoothing over) and on the name-equals-directory rule.
+// surfacing, not smoothing over) and on the name-equals-directory rule. A
+// file in the previous flat shape is lifted into the nested one.
 func parseDependencyDefinitionJSON(dir, raw string) (DependencyDefinition, error) {
-	dec := json.NewDecoder(strings.NewReader(raw))
-	dec.DisallowUnknownFields()
-	var dj dependencyDefinitionJSON
-	if err := dec.Decode(&dj); err != nil {
-		return DependencyDefinition{}, fmt.Errorf("decode %s: %w", DependencyDesignFile, err)
-	}
-	if dec.More() {
-		return DependencyDefinition{}, fmt.Errorf("decode %s: unexpected trailing content", DependencyDesignFile)
-	}
 	if !componentDesignName.MatchString(dir) {
 		return DependencyDefinition{}, fmt.Errorf("dependency directory %q is not kebab-case", dir)
 	}
-	if dj.Name != dir {
-		return DependencyDefinition{}, fmt.Errorf("%s name %q must equal the dependency directory %q", DependencyDesignFile, dj.Name, dir)
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &probe); err != nil {
+		return DependencyDefinition{}, fmt.Errorf("decode %s: %w", DependencyDesignFile, err)
 	}
-	def := DependencyDefinition{
-		Name:        dj.Name,
-		Description: dj.Description,
-		Source:      dj.Source,
-		Provider:    dj.Provider,
-		Style:       dj.Style,
-		Contract:    dj.Contract,
-		SDK:         dj.SDK,
-		Suggestions: append(toModelSuggestions(dj.Suggestions), toModelCandidates(dj.Candidates)...),
-		Config:      toModelConfigKeys(dj.Config),
-	}
-	if dj.Provenance != nil {
-		def.Provenance = &DependencyProvenance{
-			SourceURL: dj.Provenance.SourceURL,
-			SHA256:    dj.Provenance.SHA256,
-			FetchedAt: dj.Provenance.FetchedAt,
-			Sliced:    dj.Provenance.Sliced,
+	var def DependencyDefinition
+	if _, nested := probe["resource"]; nested {
+		dj, err := strictDecode[dependencyDefinitionJSON](raw)
+		if err != nil {
+			return DependencyDefinition{}, err
 		}
+		def = toModelDefinition(dj)
+	} else {
+		fj, err := strictDecode[flatDefinitionJSON](raw)
+		if err != nil {
+			return DependencyDefinition{}, err
+		}
+		def = liftFlatDefinition(fj)
 	}
-	if dj.Assumed != nil {
-		def.Assumed = &DependencyAssumption{By: dj.Assumed.By, At: dj.Assumed.At, Note: dj.Assumed.Note}
+	if def.Name != dir {
+		return DependencyDefinition{}, fmt.Errorf("%s name %q must equal the dependency directory %q", DependencyDesignFile, def.Name, dir)
+	}
+	if def.Resource.Name == "" {
+		def.Resource.Name = def.Name
+	}
+	if def.Resource.Name != def.Name {
+		return DependencyDefinition{}, fmt.Errorf("%s resource.name %q must equal the dependency name %q", DependencyDesignFile, def.Resource.Name, def.Name)
+	}
+	if def.Resource.Ref != "" && def.Resource.Ref != def.Name {
+		return DependencyDefinition{}, fmt.Errorf("%s resource.ref %q must equal the dependency name %q — a registered resource is used under its own name", DependencyDesignFile, def.Resource.Ref, def.Name)
 	}
 	return def, nil
+}
+
+func strictDecode[T any](raw string) (T, error) {
+	var out T
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&out); err != nil {
+		return out, fmt.Errorf("decode %s: %w", DependencyDesignFile, err)
+	}
+	// More() answers "another element in the array or object being read", so a
+	// stray closing delimiter slips past it. Asking for one more value and
+	// requiring EOF is the whole-stream check.
+	var rest json.RawMessage
+	if err := dec.Decode(&rest); !errors.Is(err, io.EOF) {
+		return out, fmt.Errorf("decode %s: unexpected trailing content", DependencyDesignFile)
+	}
+	return out, nil
+}
+
+func toModelDefinition(dj dependencyDefinitionJSON) DependencyDefinition {
+	def := DependencyDefinition{
+		Name:        dj.Name,
+		Resource:    toModelResource(dj.Resource),
+		Provenance:  toModelProvenance(dj.Provenance),
+		Suggestions: toModelSuggestions(dj.Suggestions),
+	}
+	return def
+}
+
+func toModelResource(rj resourceJSON) ResourceDefinition {
+	r := ResourceDefinition{
+		Ref:                     rj.Ref,
+		Name:                    rj.Name,
+		Description:             rj.Description,
+		Provider:                rj.Provider,
+		Config:                  toModelConfigKeys(rj.Config),
+		ConsumptionInstructions: rj.ConsumptionInstructions,
+		Provenance:              toModelProvenance(rj.Provenance),
+	}
+	if rj.Contract != nil {
+		r.Contract = &ResourceContract{Type: rj.Contract.Type, Path: rj.Contract.Path, Origin: rj.Contract.Origin}
+		if rj.Contract.Accepted != nil {
+			r.Contract.Accepted = &DependencyAssumption{By: rj.Contract.Accepted.By, At: rj.Contract.Accepted.At, Note: rj.Contract.Accepted.Note}
+		}
+	}
+	return r
+}
+
+func toModelProvenance(pj *provenanceJSON) *ResourceProvenance {
+	if pj == nil {
+		return nil
+	}
+	return &ResourceProvenance{SourceURL: pj.SourceURL, Registry: pj.Registry, SHA256: pj.SHA256, ReadOn: pj.ReadOn}
+}
+
+// liftFlatDefinition turns the previous flat file shape into the nested one.
+// The style names the contract type; the sdk manifest, when the style is sdk,
+// IS the contract; `source: org` becomes a Ref; `assumed` becomes the
+// contract's acceptance; `fetchedAt` becomes `readOn`; `sliced` is dropped (a
+// contract is a whole document now — a slice on disk still reads, it is
+// simply the file the project has). Origin is left empty: the file markers
+// decide it at hydration, as they always did for these files.
+func liftFlatDefinition(fj flatDefinitionJSON) DependencyDefinition {
+	def := DependencyDefinition{
+		Name: fj.Name,
+		Resource: ResourceDefinition{
+			Name:        fj.Name,
+			Description: fj.Description,
+			Provider:    fj.Provider,
+			Config:      toModelConfigKeys(fj.Config),
+		},
+		Suggestions: append(toModelSuggestions(fj.Suggestions), toModelCandidates(fj.Candidates)...),
+	}
+	if fj.Source == DependencySourceOrg {
+		def.Resource.Ref = fj.Name
+	}
+	path := fj.Contract
+	if fj.Style == DependencyStyleSDK && fj.SDK != "" {
+		path = fj.SDK
+	}
+	if path != "" {
+		def.Resource.Contract = &ResourceContract{Type: ContractTypeForStyle(fj.Style), Path: path}
+		if def.Resource.Contract.Type == "" {
+			def.Resource.Contract.Type = contractTypeForFile(path)
+		}
+		if fj.Assumed != nil {
+			def.Resource.Contract.Accepted = &DependencyAssumption{By: fj.Assumed.By, At: fj.Assumed.At, Note: fj.Assumed.Note}
+		}
+	}
+	if fj.Provenance != nil {
+		def.Provenance = &ResourceProvenance{SourceURL: fj.Provenance.SourceURL, SHA256: fj.Provenance.SHA256, ReadOn: fj.Provenance.FetchedAt}
+	}
+	return def
+}
+
+// contractTypeForFile names a contract type from a file name alone, for a
+// lifted file that recorded no style.
+func contractTypeForFile(file string) string {
+	switch {
+	case file == SdkManifestFile:
+		return DependencyContractTypeSDK
+	case strings.HasSuffix(file, ".graphql"), strings.HasSuffix(file, ".graphqls"):
+		return DependencyContractTypeGraphQL
+	default:
+		return DependencyContractTypeOpenAPI
+	}
 }
 
 func marshalDependencyDefinitionJSON(dir string, def DependencyDefinition) ([]byte, error) {
@@ -169,27 +349,18 @@ func marshalDependencyDefinitionJSON(dir string, def DependencyDefinition) ([]by
 	if def.Name != dir {
 		return nil, fmt.Errorf("dependency name %q must equal the dependency directory %q", def.Name, dir)
 	}
+	if def.Resource.Ref != "" && def.Resource.Ref != def.Name {
+		return nil, fmt.Errorf("dependency %q: resource.ref %q must equal the dependency name", def.Name, def.Resource.Ref)
+	}
+	res := def.Resource
+	if res.Name == "" {
+		res.Name = def.Name
+	}
 	dj := dependencyDefinitionJSON{
 		Name:        def.Name,
-		Description: def.Description,
-		Source:      def.Source,
-		Provider:    def.Provider,
-		Style:       def.Style,
-		Contract:    def.Contract,
-		SDK:         def.SDK,
+		Resource:    toJSONResource(res),
+		Provenance:  toJSONProvenance(def.Provenance),
 		Suggestions: toJSONSuggestions(def.Suggestions),
-		Config:      toJSONConfigKeys(def.Config),
-	}
-	if def.Provenance != nil {
-		dj.Provenance = &provenanceJSON{
-			SourceURL: def.Provenance.SourceURL,
-			SHA256:    def.Provenance.SHA256,
-			FetchedAt: def.Provenance.FetchedAt,
-			Sliced:    def.Provenance.Sliced,
-		}
-	}
-	if def.Assumed != nil {
-		dj.Assumed = &assumptionJSON{By: def.Assumed.By, At: def.Assumed.At, Note: def.Assumed.Note}
 	}
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
@@ -199,6 +370,32 @@ func marshalDependencyDefinitionJSON(dir string, def DependencyDefinition) ([]by
 		return nil, fmt.Errorf("encode %s: %w", DependencyDesignFile, err)
 	}
 	return buf.Bytes(), nil
+}
+
+func toJSONResource(r ResourceDefinition) resourceJSON {
+	rj := resourceJSON{
+		Ref:                     r.Ref,
+		Name:                    r.Name,
+		Description:             r.Description,
+		Provider:                r.Provider,
+		Config:                  toJSONConfigKeys(r.Config),
+		ConsumptionInstructions: r.ConsumptionInstructions,
+		Provenance:              toJSONProvenance(r.Provenance),
+	}
+	if r.Contract != nil {
+		rj.Contract = &contractJSON{Type: r.Contract.Type, Path: r.Contract.Path, Origin: r.Contract.Origin}
+		if r.Contract.Accepted != nil {
+			rj.Contract.Accepted = &assumptionJSON{By: r.Contract.Accepted.By, At: r.Contract.Accepted.At, Note: r.Contract.Accepted.Note}
+		}
+	}
+	return rj
+}
+
+func toJSONProvenance(p *ResourceProvenance) *provenanceJSON {
+	if p == nil {
+		return nil
+	}
+	return &provenanceJSON{SourceURL: p.SourceURL, Registry: p.Registry, SHA256: p.SHA256, ReadOn: p.ReadOn}
 }
 
 // parseSdkManifestJSON decodes one sdk.json.
@@ -265,16 +462,16 @@ func liftLegacyDefinitions(defs []DependencyDefinition, comps []DesignComponent)
 				continue
 			}
 			if i, ok := lifted[d.Name]; ok {
-				defs[i].Config = unionConfigKeys(defs[i].Config, d.Config)
+				defs[i].Resource.Config = unionConfigKeys(defs[i].Resource.Config, d.Config)
 				continue
 			}
 			// The legacy shape had no provider name — the style is the only
 			// evidence a system was chosen, and nothing here invents one — and
 			// the coding agent's research pointer (the old specPath) is
 			// provenance, not a contract.
-			def := DependencyDefinition{Name: d.Name, Description: d.Description, Style: d.Style}
+			def := DependencyDefinition{Name: d.Name, Resource: ResourceDefinition{Name: d.Name, Description: d.Description}}
 			def.Suggestions = append([]DependencySuggestion(nil), d.Suggestions...)
-			def.Config = append([]ConfigKey(nil), d.Config...)
+			def.Resource.Config = append([]ConfigKey(nil), d.Config...)
 			if d.Provenance != nil {
 				p := *d.Provenance
 				def.Provenance = &p
@@ -317,9 +514,12 @@ func unionConfigKeys(a, b []ConfigKey) []ConfigKey {
 
 // hydrateExternalDependencies copies each definition onto every component edge
 // that references it, and reads the directory for what the definition points
-// at: the contract file's presence, and the SDK manifest's package for the
-// component's language. An edge with no definition keeps only what the
-// component said (kind, name, description, wiring) and reads as needs-input.
+// at: the contract file's presence, and — for an sdk contract — the manifest's
+// package for the component's language. Style, ContractAssumed and
+// ContractDerived are COMPUTED here from the contract's type and origin (with
+// the file markers as a fallback for a file that recorded no origin). An edge
+// with no definition keeps only what the component said (kind, name,
+// description, wiring) and reads as needs-input.
 func hydrateExternalDependencies(d *DesignFile, files map[string]string) {
 	defs := make(map[string]DependencyDefinition, len(d.Dependencies))
 	for _, def := range d.Dependencies {
@@ -340,59 +540,85 @@ func hydrateExternalDependencies(d *DesignFile, files map[string]string) {
 				dep.Style, dep.Package, dep.Suggestions, dep.Config, dep.Provenance = "", "", nil, nil, nil
 				continue
 			}
-			dep.Source = def.Source
-			dep.Provider = def.Provider
-			dep.Style = def.Style
+			res := def.Resource
+			dep.ResourceRef = res.Ref
+			dep.Source = DependencySourceProject
+			if res.Ref != "" {
+				dep.Source = DependencySourceOrg
+			}
+			dep.Provider = res.Provider
+			dep.ConsumptionInstructions = res.ConsumptionInstructions
 			dep.Suggestions = append([]DependencySuggestion(nil), def.Suggestions...)
-			dep.Config = append([]ConfigKey(nil), def.Config...)
+			dep.Config = append([]ConfigKey(nil), res.Config...)
 			dep.Provenance = nil
 			if def.Provenance != nil {
 				p := *def.Provenance
 				dep.Provenance = &p
 			}
-			dep.Assumed = nil
-			if def.Assumed != nil {
-				a := *def.Assumed
-				dep.Assumed = &a
-			}
 			if dep.Description == "" {
-				dep.Description = def.Description
+				dep.Description = res.Description
 			}
 			// The contract counts only when the file is actually beside the
-			// definition — a name pointing at nothing is no contract. One the
-			// agent wrote from research says so in the file itself, and counts
-			// only once a user has accepted it.
-			dep.Contract, dep.ContractAssumed, dep.ContractDerived = "", false, false
-			if def.Contract != "" {
-				if raw, present := files[dependencyDirPrefix+dep.Name+"/"+def.Contract]; present {
-					dep.Contract = def.Contract
-					dep.ContractAssumed, dep.ContractDerived = contractMarkers(raw)
-				}
+			// definition — a path pointing at nothing is no contract.
+			dep.Contract, dep.SDK, dep.Package = "", "", ""
+			dep.ContractType, dep.ContractOrigin, dep.Style = "", "", ""
+			dep.ContractAssumed, dep.ContractDerived, dep.Assumed = false, false, nil
+			if res.Contract == nil {
+				continue
 			}
-			dep.SDK, dep.Package = "", ""
-			if def.Style == DependencyStyleSDK && def.SDK != "" {
-				key := dependencyDirPrefix + dep.Name + "/" + def.SDK
+			dep.ContractType = res.Contract.Type
+			dep.ContractOrigin = res.Contract.Origin
+			dep.Style = StyleForContractType(res.Contract.Type)
+			if res.Contract.Accepted != nil {
+				a := *res.Contract.Accepted
+				dep.Assumed = &a
+			}
+			raw, present := files[dependencyDirPrefix+dep.Name+"/"+res.Contract.Path]
+			if !present {
+				continue
+			}
+			switch res.Contract.Origin {
+			case DependencyContractOriginAssumed:
+				dep.ContractAssumed = true
+			case DependencyContractOriginDerived:
+				dep.ContractDerived = true
+			case "":
+				// A file that predates origin says it in its own body.
+				dep.ContractAssumed, dep.ContractDerived = contractMarkers(raw)
+			}
+			if res.Contract.Type == DependencyContractTypeSDK {
+				key := dependencyDirPrefix + dep.Name + "/" + res.Contract.Path
 				m, cached := manifests[key]
 				if !cached {
-					if raw, present := files[key]; present {
-						if parsed, err := parseSdkManifestJSON(raw); err == nil {
-							m = parsed
-						}
+					if parsed, err := parseSdkManifestJSON(raw); err == nil {
+						m = parsed
 					}
 					manifests[key] = m
 				}
-				// The manifest's presence is what "has its SDK" means.
-				if len(m.Packages) > 0 {
-					dep.SDK = def.SDK
-					dep.Package = m.Packages[strings.ToLower(strings.TrimSpace(comp.Language))]
-					if m.Assumed {
-						dep.ContractAssumed = true
-					}
-					if m.Derived {
-						dep.ContractDerived = true
-					}
+				// Having its SDK means having a package the component can
+				// install. A manifest that names packages for other languages
+				// only is not this component's contract: setting SDK from it
+				// would read resolved while the coding agent has nothing to
+				// add to its manifest. A component with no language yet has
+				// nothing to select against, so the manifest still counts.
+				language := strings.ToLower(strings.TrimSpace(comp.Language))
+				pkg, named := m.Packages[language], false
+				if language != "" {
+					_, named = m.Packages[language]
+				} else {
+					named = len(m.Packages) > 0
 				}
+				if !named {
+					continue
+				}
+				dep.SDK = res.Contract.Path
+				dep.Package = pkg
+				if res.Contract.Origin == "" {
+					dep.ContractAssumed, dep.ContractDerived = m.Assumed, m.Derived
+				}
+				continue
 			}
+			dep.Contract = res.Contract.Path
 		}
 	}
 }
@@ -414,14 +640,11 @@ func contractTitle(raw string) string {
 	return strings.TrimSpace(doc.Info.Title)
 }
 
-// contractMarkers reports what a contract file declares itself to be: an
-// OpenAPI document (YAML or JSON) with `x-aep-assumed: true` or
-// `x-aep-derived: true` at the root, or a GraphQL schema carrying the same as
-// a `# …: true` comment line. Assumed: written from research with no
-// documentation behind it (needs the user's authorization). Derived: written
-// from the provider's own developer reference, every operation cited
-// (resolved, flagged). The marker lives in the file so a reader of the file
-// alone knows.
+// contractMarkers reports what a contract file written before `origin`
+// existed declares itself to be: an OpenAPI document (YAML or JSON) with
+// `x-aep-assumed: true` or `x-aep-derived: true` at the root, or a GraphQL
+// schema carrying the same as a `# …: true` comment line. Read only as the
+// fallback for a contract with no recorded origin.
 func contractMarkers(raw string) (assumed, derived bool) {
 	var doc map[string]any
 	if err := yaml.Unmarshal([]byte(raw), &doc); err == nil && doc != nil {

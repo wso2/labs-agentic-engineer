@@ -72,20 +72,17 @@ func (a eventcoreRuns) LiveRunsForProject(ctx context.Context, orgID, projectID 
 }
 
 // DeployedMilestoneRun is the project's most recent SUCCEEDED DEV run — the
-// version that is live, and therefore the milestone an incident belongs to.
-// Only a dev run delivers a version; ListByProject is newest-first, so the first
-// match is the answer.
+// version that is live, and therefore the milestone an incident belongs to and
+// the only one a revalidation may judge. The rule is delivery's, so this adapter
+// fetches the rows and asks rather than scanning them itself: the flag the
+// validation page reads comes from the same function, and two scans would be two
+// answers to "what is deployed".
 func (a eventcoreRuns) DeployedMilestoneRun(ctx context.Context, orgID, projectID string) (*delivery.MilestoneRun, error) {
 	rows, err := a.runs.ListByProject(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
-	for i := range rows {
-		if rows[i].Kind == delivery.RunKindDev && rows[i].State == delivery.RunStateSucceeded {
-			return &rows[i], nil
-		}
-	}
-	return nil, nil
+	return delivery.DeployedRun(rows), nil
 }
 
 // NewestRunForMilestone is the milestone's most recent row of any kind.

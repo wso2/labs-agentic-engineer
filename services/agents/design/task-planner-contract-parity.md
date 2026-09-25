@@ -47,9 +47,9 @@ same: "behind the platform BFF, which authenticates; this service does not
 re-authenticate"). `agents-legacy` gated these routes with `requireOrgId` +
 `requireAnthropicKey`; per the migration plan we match the **current** posture
 and do not invent auth. The per-org Anthropic key still arrives on
-`X-Anthropic-Key` (aep-api always forwards it) → the route builds a per-request
-model from it, falling back to the injected composition-root model for
-dev/eval/playground/tests.
+`X-Anthropic-Key` (aep-api always forwards it), and the org's model on the
+turn body's `model` → the route builds a per-turn model from both, with
+`AGENT_MODEL` as the default when no model is sent (dev/eval/playground).
 
 ## Cutover checklist (open items)
 

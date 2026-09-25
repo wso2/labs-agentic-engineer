@@ -215,16 +215,16 @@ func (a runValidation) Verdict(ctx context.Context, orgID, projectID, at string)
 	return validation.VerdictFromReport(raw), validation.ReportDigest(raw), nil
 }
 
-func (a runValidation) CloseValidationIssue(ctx context.Context, orgID, projectID string, issue int, verdict string) error {
-	return a.svc.CloseValidationIssue(ctx, orgID, projectID, issue, verdict)
+func (a runValidation) CloseValidationIssue(ctx context.Context, orgID, projectID string, issue int, verdict string, repairs []int) error {
+	return a.svc.CloseValidationIssue(ctx, orgID, projectID, issue, verdict, repairs)
 }
 
-func (a runValidation) MintRepairIssues(ctx context.Context, orgID, projectID string, milestoneNumber int, at, cycleID string) ([]int, error) {
+func (a runValidation) MintRepairIssues(ctx context.Context, orgID, projectID string, milestoneNumber int, at string) ([]int, error) {
 	raw, err := a.report(ctx, orgID, projectID, at)
 	if err != nil {
 		return nil, err
 	}
-	return a.svc.MintRepairIssues(ctx, orgID, projectID, milestoneNumber, raw, cycleID)
+	return a.svc.MintRepairIssues(ctx, orgID, projectID, milestoneNumber, raw)
 }
 
 // report reads the runner's committed report at a pinned commit. It is the ONE
@@ -312,6 +312,43 @@ func (n valuesSavedNotifier) ValuesSaved(ctx context.Context, orgID, projectID s
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// agentDeathNotifier bridges the coding agent's pod-truth watcher onto the run
+// supervisor: a dispatched cycle's agent ended without a pull request, so the
+// run waiting on it should stop waiting NOW rather than at its 2h landing
+// deadline.
+//
+// It lives at the composition root for the reason the port exists at all —
+// codingagent must not import delivery/run — and it does the run-row read here
+// rather than in the watcher because the row is the ROUTING TABLE: the workflow
+// id is built from the RUN's kind (dev/task/validation), and a cycle's kind
+// (coding/fix/conflict/validation) is a different vocabulary that merely
+// overlaps on one word. Guessing one from the other would deliver a fix cycle's
+// death to whichever run holds that milestone's dev id.
+type agentDeathNotifier struct {
+	runs       delivery.MilestoneRunRepository
+	supervisor *run.Supervisor
+}
+
+func (n agentDeathNotifier) AgentDied(ctx context.Context, orgID, runID, reason string) error {
+	row, err := n.runs.GetByIDScoped(ctx, orgID, runID)
+	if err != nil {
+		return err
+	}
+	// The run settled between the watcher's write and this read, or its rows are
+	// gone. Nothing to wake, and not a failure: the cycle's terminal reason is
+	// already durable either way.
+	if row == nil {
+		return nil
+	}
+	// The reason rides in Message, which the loop never parses: it re-reads the
+	// cycle record for the fact itself.
+	return n.supervisor.SignalRun(ctx, row, delivery.SigRunAgentDied, delivery.RunSignal{
+		Signal:          delivery.SigRunAgentDied,
+		MilestoneNumber: row.MilestoneNumber,
+		Message:         reason,
+	})
 }
 
 // deployGate projects the provisioning service's readiness read onto the run

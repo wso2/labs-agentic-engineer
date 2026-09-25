@@ -22,7 +22,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { installCrashArtefactExclude, writeBearerFile } from "./workspace.js";
+import {
+  installCrashArtefactExclude,
+  installCredentialExclude,
+  installRunLogExclude,
+  writeBearerFile,
+} from "./workspace.js";
 
 test("writeBearerFile: concurrent writers do not share a tmp path", async () => {
   const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "aep-bearer-"));
@@ -65,6 +70,86 @@ test("installCrashArtefactExclude: a core dump cannot be staged, even by `git ad
     git("add", "-A");
     const staged = git("diff", "--cached", "--name-only").trim().split("\n").filter(Boolean);
     assert.deepEqual(staged, ["expense-webapp/App.tsx"]);
+  } finally {
+    await fs.promises.rm(dir, { recursive: true, force: true });
+  }
+});
+
+// The other half of the same guarantee, and the half that was wrong. Same
+// discipline: asserted through `git add -A` against a real repository, because
+// what the exclude file SAYS and what git does with it are not the same claim.
+//
+// `core` + `core.*` ignored `src/authz/core.ts` — which the
+// `thunder-authentication` skill writes into every generated web app — and
+// `src/core/` whole. A live run (2026-09-19) built two components whose sources
+// git then skipped in silence, and it committed neither.
+test("installCrashArtefactExclude: source named core is still staged by `git add -A`", async () => {
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "aep-exclude-"));
+  const git = (...args: string[]): string =>
+    execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+  try {
+    git("init", "--quiet");
+    await installCrashArtefactExclude(dir);
+
+    // A generated web app, as the skills actually lay one out.
+    await fs.promises.mkdir(path.join(dir, "blog-webapp", "src", "authz"), { recursive: true });
+    await fs.promises.mkdir(path.join(dir, "blog-webapp", "src", "core"), { recursive: true });
+    await fs.promises.writeFile(path.join(dir, "blog-webapp", "src", "authz", "core.ts"), "export const x = 1;");
+    await fs.promises.writeFile(path.join(dir, "blog-webapp", "src", "core", "index.ts"), "export const y = 2;");
+    // …and, beside it, the two things that must still be ignored.
+    await fs.promises.writeFile(path.join(dir, "blog-webapp", "core"), "not really a core");
+    await fs.promises.writeFile(path.join(dir, "core.4711"), "not really a core");
+
+    git("add", "-A");
+    const staged = git("diff", "--cached", "--name-only").trim().split("\n").filter(Boolean);
+    assert.deepEqual(staged, ["blog-webapp/src/authz/core.ts", "blog-webapp/src/core/index.ts"]);
+  } finally {
+    await fs.promises.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("installRunLogExclude: the run's log directory cannot be staged; a project's own logs can", async () => {
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "aep-exclude-"));
+  const git = (...args: string[]): string =>
+    execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+  try {
+    git("init", "--quiet");
+    await installRunLogExclude(dir);
+
+    await fs.promises.mkdir(path.join(dir, ".logs"));
+    await fs.promises.writeFile(path.join(dir, ".logs", "prompt-appendix.md"), "# Your workflow");
+    await fs.promises.writeFile(path.join(dir, ".logs", "runtime.log"), "{}");
+    await fs.promises.mkdir(path.join(dir, "api", ".logs"), { recursive: true });
+    await fs.promises.writeFile(path.join(dir, "api", ".logs", "keep.txt"), "project file");
+
+    git("add", "-A");
+    const staged = git("diff", "--cached", "--name-only").trim().split("\n").filter(Boolean);
+    assert.deepEqual(staged, ["api/.logs/keep.txt"]);
+  } finally {
+    await fs.promises.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("installCredentialExclude: the bearer and gh config cannot be staged; a project's own .aep can", async () => {
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "aep-exclude-"));
+  const git = (...args: string[]): string =>
+    execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+  try {
+    git("init", "--quiet");
+    await installCredentialExclude(dir);
+
+    await fs.promises.mkdir(path.join(dir, ".aep"));
+    await fs.promises.writeFile(path.join(dir, ".aep", "bearer"), "secret-bearer");
+    await fs.promises.writeFile(path.join(dir, ".aep", "gh"), "#!/bin/sh");
+    await fs.promises.mkdir(path.join(dir, ".gh-config"));
+    await fs.promises.writeFile(path.join(dir, ".gh-config", "hosts.yml"), "github.com: {}");
+    await fs.promises.mkdir(path.join(dir, "api", ".aep"), { recursive: true });
+    await fs.promises.writeFile(path.join(dir, "api", ".aep", "keep.txt"), "project file");
+    await fs.promises.writeFile(path.join(dir, "README.md"), "# project");
+
+    git("add", "-A");
+    const staged = git("diff", "--cached", "--name-only").trim().split("\n").filter(Boolean);
+    assert.deepEqual(staged.sort(), ["README.md", "api/.aep/keep.txt"]);
   } finally {
     await fs.promises.rm(dir, { recursive: true, force: true });
   }

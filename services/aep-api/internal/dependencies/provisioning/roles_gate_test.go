@@ -22,7 +22,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
+	"github.com/wso2/aep/aep-api/internal/platform/ocname"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
+	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
 // fakeRolesEnsurer records what the gate asked it to do.
@@ -490,7 +493,7 @@ func TestRolesGate_AnUnfilableTicketFailsTheBuild(t *testing.T) {
 }
 
 // The label and the marker are HALF A CONTRACT: the other half is a `gh issue
-// list --label` query and a table scan in skills/aep-validation/SKILL.md, which
+// list --label` query and a table scan in skills/acceptance-run/SKILL.md, which
 // no Go test can execute. So they are asserted as LITERALS here. Asserted
 // against their own constants they can never fail, and renaming either one
 // silently breaks credential delivery for every project with every test green.
@@ -784,5 +787,115 @@ func TestRolesGate_TheTrailerCarriesTheIssuerTheResourceAndTheRefreshRule(t *tes
 		if !strings.Contains(comment, want) {
 			t.Errorf("the trailer is missing %q:\n%s", want, comment)
 		}
+	}
+}
+
+// The client id is the third value a login needs, and the one that used to be
+// published nowhere: a validation agent holding the username, the password, the
+// issuer and the resource still cannot START an OAuth flow without naming a
+// client. Read off the sign-in resource's own resolved binding — the same
+// output the runtime injects as <DEP>_CLIENT_ID.
+func TestRolesGate_TheTrailerCarriesTheSignInClientID(t *testing.T) {
+	const clientID = "aep-dp-acme-workouts-r-workouts-auth-default-22b7cd7b"
+	roles := &fakeRolesEnsurer{
+		declared: true,
+		outcome: RolesEnsureOutcome{
+			Issuer: "http://default-idp.amp.localhost:8080", Environment: "default",
+			ResourceIdentifier: "https://aep.wso2.com/orgs/acme/projects/workouts",
+			Credentials: []RolesCredential{
+				{Username: "test-trainer", Password: "Aep1!x", Roles: []string{"Trainer"}},
+			},
+		},
+	}
+	issues := newFakeIssues(nil)
+	binding := ocname.ExternalResourceBindingName("workouts", "user-auth", openchoreo.DevEnvironmentName)
+	svc := NewService(Deps{
+		Issues: issues, Roles: roles, Markers: endUserAuthMarkers(),
+		Design: fakeProjectDesign{byProject: map[string][]spec.DesignComponent{
+			"workouts": {{Name: "api", Dependencies: []spec.Dependency{
+				{Kind: spec.DependencyKindPlatformResource, Name: "user-auth", ResourceType: "thunder-app"},
+			}}},
+		}},
+		Bindings: &fakeBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{
+			binding: {Status: &openchoreo.ResourceReleaseBindingStatus{
+				Outputs: []openchoreo.ResolvedOutput{
+					{Name: "issuer", Value: "http://default-idp.amp.localhost:8080"},
+					{Name: "client_id", Value: clientID},
+				},
+			}},
+		}},
+	})
+
+	if f := svc.ensureRolesGate(context.Background(), "acme", "workouts", "v1", 7); f != nil {
+		t.Fatalf("unexpected failure: %+v", f)
+	}
+	comment := allComments(issues)[0]
+	if !strings.Contains(comment, clientID) {
+		t.Errorf("the trailer does not name the sign-in client:\n%s", comment)
+	}
+}
+
+// A project that signs nobody in publishes no client line — and still publishes
+// its logins. The read is a convenience, never a gate: failing a build because
+// a project has no sign-in resource would take down every project that has none.
+func TestRolesGate_NoSignInResourcePublishesLoginsWithoutAClient(t *testing.T) {
+	roles := &fakeRolesEnsurer{
+		declared: true,
+		outcome: RolesEnsureOutcome{
+			Issuer: "http://default-idp.amp.localhost:8080", Environment: "default",
+			Credentials: []RolesCredential{{Username: "test-trainer", Password: "Aep1!x"}},
+		},
+	}
+	issues := newFakeIssues(nil)
+	svc := NewService(Deps{
+		Issues: issues, Roles: roles, Markers: endUserAuthMarkers(),
+		Design: fakeProjectDesign{byProject: map[string][]spec.DesignComponent{
+			"workouts": {{Name: "api", Dependencies: []spec.Dependency{
+				{Kind: spec.DependencyKindPlatformResource, Name: "orders-db", ResourceType: "postgres-cnpg"},
+			}}},
+		}},
+		Bindings: &fakeBindings{},
+	})
+
+	if f := svc.ensureRolesGate(context.Background(), "acme", "workouts", "v1", 7); f != nil {
+		t.Fatalf("a project with no sign-in resource must still publish: %+v", f)
+	}
+	comment := allComments(issues)[0]
+	if !strings.Contains(comment, "test-trainer") {
+		t.Errorf("the logins were not published:\n%s", comment)
+	}
+	if strings.Contains(comment, "**client_id**") {
+		t.Errorf("a project with no sign-in resource named a client:\n%s", comment)
+	}
+}
+
+// The redirect_uri is the fourth value a login needs on a project with no web
+// app: an authorize request must name a REGISTERED redirect, and the platform
+// tester's callback is the only one such a project has.
+func TestRolesGate_TheTrailerCarriesTheRegisteredRedirectURI(t *testing.T) {
+	const cb = "http://tryit.aep.localhost:8095/callback"
+	roles := &fakeRolesEnsurer{
+		declared: true,
+		outcome: RolesEnsureOutcome{
+			Issuer: "http://default-idp.amp.localhost:8080", Environment: "default",
+			Credentials: []RolesCredential{{Username: "test-trainer", Password: "Aep1!x"}},
+		},
+	}
+	issues := newFakeIssues(nil)
+	svc := NewService(Deps{Issues: issues, Roles: roles, TryItCallbackURL: " " + cb + " "})
+	if f := svc.ensureRolesGate(context.Background(), "acme", "workouts", "v1", 7); f != nil {
+		t.Fatalf("unexpected failure: %+v", f)
+	}
+	if comment := allComments(issues)[0]; !strings.Contains(comment, "`"+cb+"`") {
+		t.Errorf("the trailer does not name the registered redirect_uri:\n%s", comment)
+	}
+
+	// Unconfigured: the line is absent, the logins still publish.
+	issues2 := newFakeIssues(nil)
+	if f := NewService(Deps{Issues: issues2, Roles: roles}).ensureRolesGate(context.Background(), "acme", "workouts", "v1", 7); f != nil {
+		t.Fatalf("unexpected failure: %+v", f)
+	}
+	if comment := allComments(issues2)[0]; strings.Contains(comment, "**redirect_uri**") {
+		t.Errorf("no callback configured, yet the trailer names one:\n%s", comment)
 	}
 }

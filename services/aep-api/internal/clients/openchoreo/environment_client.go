@@ -27,12 +27,37 @@ import (
 )
 
 // EnvironmentClient reads OpenChoreo Environments in an org namespace.
-// ListNames is the provisioning.EnvironmentLister surface; GetThunderBinding is
-// how aep-api finds the environment's own identity provider.
+// List returns this package's own wire-mapping EnvironmentInfo; the
+// environmentLister adapter in internal/app/tasks_adapters.go converts those
+// rows to provisioning's domain type to satisfy provisioning.EnvironmentLister,
+// so neither package depends on the other's type. GetThunderBinding is how
+// aep-api finds the environment's own identity provider.
 type EnvironmentClient interface {
-	ListNames(ctx context.Context, orgID string) ([]string, error)
+	List(ctx context.Context, orgID string) ([]EnvironmentInfo, error)
 	GetThunderBinding(ctx context.Context, orgID, environment string) (ThunderBinding, error)
+	// GetAIGatewayBinding is how aep-api finds the environment's AI gateway —
+	// the LLM proxy an Agent-Manager-governed agent's model traffic flows
+	// through. An environment without one is not an error; see
+	// ErrNoAIGatewayBinding.
+	GetAIGatewayBinding(ctx context.Context, orgID, environment string) (AIGatewayBinding, error)
 	GetGatewayAssertion(ctx context.Context, orgID, environment string) (GatewayAssertion, error)
+}
+
+// EnvironmentInfo is one OpenChoreo Environment as the BFF reads it: name,
+// the openchoreo.dev/display-name annotation (empty when unset — the
+// provisioning service fills the titlecased fallback, not this client),
+// spec.isProduction, and the aep.wso2.com/validation annotation verbatim
+// (empty or unrecognised is normalized to "off" by the provisioning service,
+// not here — this type is a plain read, not a policy decision).
+//
+// provisioning has its own EnvironmentInfo; this one is the wire read, and
+// environmentLister in internal/app/tasks_adapters.go converts between them,
+// which keeps the two types — and the two packages — independent.
+type EnvironmentInfo struct {
+	Name         string
+	DisplayName  string
+	IsProduction bool
+	Validation   string
 }
 
 // Thunder binding annotations, written onto the Environment by
@@ -90,6 +115,15 @@ type ThunderBinding struct {
 	SecretPath string
 	// Name is the binding record's own name, for logs and diagnostics.
 	Name string
+	// OTelEndpoint is where this environment ingests traces — the OTLP base an
+	// agent's exporter appends /v1/traces to.
+	//
+	// A DIFFERENT GATEWAY from Endpoint above, and that is the whole reason it
+	// is carried rather than derived. Model traffic goes to the AI gateway;
+	// AMP's trace route is served by the API platform gateway. Empty when the
+	// environment predates the annotation — tracing is then simply not
+	// composed, which is the safe direction.
+	OTelEndpoint string
 }
 
 type environmentClient struct {
@@ -106,9 +140,14 @@ func NewEnvironmentClient(cfg Config) EnvironmentClient {
 	return &environmentClient{oc: oc}
 }
 
-func (c *environmentClient) ListNames(ctx context.Context, orgID string) ([]string, error) {
+// List reads the org's Environments and maps the display-name and validation
+// annotations and spec.isProduction onto each row. It does not apply the
+// display-name fallback or the absent/unrecognised-is-off validation default
+// — those are policy, applied once in
+// provisioning.Service.ListOrgEnvironments, not here.
+func (c *environmentClient) List(ctx context.Context, orgID string) ([]EnvironmentInfo, error) {
 	if strings.TrimSpace(orgID) == "" {
-		return []string{}, nil
+		return []EnvironmentInfo{}, nil
 	}
 	resp, err := c.oc.ListEnvironmentsWithResponse(ctx, orgID, nil)
 	if err != nil {
@@ -122,11 +161,19 @@ func (c *environmentClient) ListNames(ctx context.Context, orgID string) ([]stri
 			JSON500: resp.JSON500,
 		})
 	}
-	names := make([]string, 0, len(resp.JSON200.Items))
+	infos := make([]EnvironmentInfo, 0, len(resp.JSON200.Items))
 	for _, item := range resp.JSON200.Items {
-		names = append(names, item.Metadata.Name)
+		info := EnvironmentInfo{
+			Name:        item.Metadata.Name,
+			DisplayName: annotation(item.Metadata.Annotations, AnnotationKeyDisplayName),
+			Validation:  annotation(item.Metadata.Annotations, AnnotationKeyValidation),
+		}
+		if item.Spec != nil && item.Spec.IsProduction != nil {
+			info.IsProduction = *item.Spec.IsProduction
+		}
+		infos = append(infos, info)
 	}
-	return names, nil
+	return infos, nil
 }
 
 // GetThunderBinding reads the environment's identity-provider binding off its
@@ -282,6 +329,129 @@ func thunderBindingFromAnnotations(orgID, environment string, annotations map[st
 	if len(missing) > 0 {
 		return ThunderBinding{}, fmt.Errorf("%w: %s/%s is missing %s — run setup-environment-thunder.sh %s %s",
 			ErrNoThunderBinding, orgID, environment, strings.Join(missing, ", "), orgID, environment)
+	}
+	return binding, nil
+}
+
+// AI gateway binding annotations, written onto the Environment by
+// deployments/scripts/setup-environment-aigateway.sh. Same shape and the same
+// reasoning as the Thunder binding above: aep-api runs outside the cluster, so
+// the Environment is the one projection of the record it can read.
+const (
+	annAIGatewayEndpoint   = "aep.wso2.com/aigateway-endpoint"
+	annAIGatewayInternal   = "aep.wso2.com/aigateway-internal-endpoint"
+	annAIGatewayAdminURL   = "aep.wso2.com/aigateway-admin-url"
+	annAIGatewayGateway    = "aep.wso2.com/aigateway-gateway"
+	annAIGatewaySecretPath = "aep.wso2.com/aigateway-secret-path"
+	annAIGatewayBinding    = "aep.wso2.com/aigateway-binding"
+	// annOTelEndpoint is the environment's OTLP trace-ingest base, written by
+	// setup-environment-gateway.sh. It is NOT on the AI gateway: AMP serves
+	// /otel from the API PLATFORM gateway, a different Service on a different
+	// port in the same namespace, so it cannot be derived from the AI gateway
+	// endpoint. Posting spans to the AI gateway answers 404.
+	annOTelEndpoint = "aep.wso2.com/otel-endpoint"
+)
+
+// ErrNoAIGatewayBinding is the answer for an environment with no AI gateway.
+//
+// Its own error because the recovery is specific and a caller cannot guess it:
+// run setup-environment-aigateway.sh. It is ALSO not a failure — an environment
+// that was never provisioned for Agent Manager deploys agents the way it did
+// before, on the org's own Anthropic key. Callers distinguish this from a
+// transport error precisely so they can take that path.
+var ErrNoAIGatewayBinding = errors.New("openchoreo: environment has no AI gateway binding")
+
+// AIGatewayBinding is one environment's AI gateway, as the Environment records
+// it.
+type AIGatewayBinding struct {
+	OrgID       string
+	Environment string
+	// Endpoint is the gateway's PUBLIC address — the one a browser or a host
+	// process reaches it at.
+	Endpoint string
+	// InternalEndpoint is the same gateway's in-cluster Service address, and it
+	// is the one an AGENT uses: an agent runs in a pod, the public vhost is
+	// published on no host port, and the gateway's router matches on "*" so it
+	// serves whichever Host arrives. Empty falls back to Endpoint, which keeps
+	// a binding written before this field existed working.
+	InternalEndpoint string
+	// AdminURL is Agent Manager's control API, including its /api/v1 base. It is
+	// per-binding rather than configuration because two environments may be
+	// governed by two different Agent Managers.
+	AdminURL string
+	// GatewayID is the AMP gateway UUID a provider is attached to.
+	GatewayID string
+	// SecretPath is where AEP's own AMP credential lives in the secret store.
+	SecretPath string
+	// Name is the binding record's own name, for logs and diagnostics.
+	Name string
+	// OTelEndpoint is where this environment ingests traces — the OTLP base an
+	// agent's exporter appends /v1/traces to.
+	//
+	// A DIFFERENT GATEWAY from Endpoint above, and that is the whole reason it
+	// is carried rather than derived. Model traffic goes to the AI gateway;
+	// AMP's trace route is served by the API platform gateway. Empty when the
+	// environment predates the annotation — tracing is then simply not
+	// composed, which is the safe direction.
+	OTelEndpoint string
+}
+
+// GetAIGatewayBinding reads the environment's AI gateway binding off its
+// annotations. Mirrors GetThunderBinding exactly, including the choice to
+// report a partial record as absent.
+func (c *environmentClient) GetAIGatewayBinding(ctx context.Context, orgID, environment string) (AIGatewayBinding, error) {
+	if strings.TrimSpace(orgID) == "" || strings.TrimSpace(environment) == "" {
+		return AIGatewayBinding{}, fmt.Errorf("get ai gateway binding: org and environment are both required")
+	}
+	resp, err := c.oc.GetEnvironmentWithResponse(ctx, orgID, environment)
+	if err != nil {
+		return AIGatewayBinding{}, fmt.Errorf("failed to get environment %s/%s: %w", orgID, environment, err)
+	}
+	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
+		return AIGatewayBinding{}, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+			JSON401: resp.JSON401,
+			JSON403: resp.JSON403,
+			JSON404: resp.JSON404,
+			JSON500: resp.JSON500,
+		})
+	}
+	var annotations map[string]string
+	if resp.JSON200.Metadata.Annotations != nil {
+		annotations = *resp.JSON200.Metadata.Annotations
+	}
+	return aiGatewayBindingFromAnnotations(orgID, environment, annotations)
+}
+
+// aiGatewayBindingFromAnnotations is the parse, split out so it can be tested
+// without a server.
+//
+// OTelEndpoint is deliberately NOT required: an environment set up before the
+// annotation existed still governs model traffic correctly, and the agent simply
+// runs untraced. Requiring it would turn a missing graph into a broken deploy.
+//
+// Endpoint, AdminURL and GatewayID are each required: without the endpoint an
+// agent has nowhere to send model traffic, without the admin URL nothing can be
+// registered, and without the gateway id a provider cannot be attached to
+// anything. A record missing any of them is reported ABSENT rather than half
+// used — the same rule thunderBindingFromAnnotations applies, for the same
+// reason: the failure would otherwise surface far from its cause.
+func aiGatewayBindingFromAnnotations(orgID, environment string, annotations map[string]string) (AIGatewayBinding, error) {
+	binding := AIGatewayBinding{
+		OrgID:            orgID,
+		Environment:      environment,
+		Endpoint:         strings.TrimSpace(annotations[annAIGatewayEndpoint]),
+		InternalEndpoint: strings.TrimSpace(annotations[annAIGatewayInternal]),
+		AdminURL:         strings.TrimSpace(annotations[annAIGatewayAdminURL]),
+		GatewayID:        strings.TrimSpace(annotations[annAIGatewayGateway]),
+		SecretPath:       strings.TrimSpace(annotations[annAIGatewaySecretPath]),
+		Name:             strings.TrimSpace(annotations[annAIGatewayBinding]),
+		OTelEndpoint:     strings.TrimSpace(annotations[annOTelEndpoint]),
+	}
+	if binding.Endpoint == "" || binding.AdminURL == "" || binding.GatewayID == "" {
+		return AIGatewayBinding{}, ErrNoAIGatewayBinding
+	}
+	if binding.InternalEndpoint == "" {
+		binding.InternalEndpoint = binding.Endpoint
 	}
 	return binding, nil
 }

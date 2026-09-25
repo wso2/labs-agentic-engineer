@@ -1,0 +1,45 @@
+# AEP's machine identity for calling Agent Manager's API.
+#
+# THE NAME IS LOAD-BEARING. agent-manager-service's KEY_MANAGER_AUDIENCE is an
+# allow-list, and the entry that admits this client is the wildcard
+# `amp-publisher-*`. A client named outside that pattern mints perfectly good
+# tokens that amp-api rejects with "invalid jwt" no matter which scopes they
+# carry — the failure says nothing about the audience, so it is worth stating
+# here rather than rediscovering.
+#
+# ouId (not ouHandle), for the reason Agent Manager's own 50-amp-api-client.yaml
+# gives at length: the declarative importer resolves ouHandle for roles, groups
+# and users but NOT for applications, and an application bootstrapped without an
+# OU mints tokens carrying no ouId/ouHandle claim. agent-manager-service's
+# RequireOrgMatch then rejects them as "missing ou identity in token".
+#
+# The scopes listed below are what the client may ASK for. They are not what it
+# gets: ThunderID issues amp: scopes from a role assignment on
+# amp-resource-server, which is 93-aep-amp-publisher-role.yaml. Both documents
+# are required, and a mint that omits the scope parameter gets neither.
+resource_type: application
+id: amp-publisher-aep
+type: m2m # client_credentials only, no interactive login
+name: "AEP Agent Manager Publisher"
+description: "AEP's client for registering its agents, providers and model bindings in Agent Manager"
+ouId: "01900000-0000-7000-8000-000000000001"
+inboundAuthConfig:
+  - type: oauth2
+    config:
+      clientId: "amp-publisher-aep"
+      clientSecret: "amp-publisher-aep-secret"
+      grantTypes: ["client_credentials"]
+      tokenEndpointAuthMethod: "client_secret_basic"
+      pkceRequired: false
+      publicClient: false
+      scopes: ["amp:org:view","amp:project:create","amp:project:read","amp:agent:create","amp:agent:read","amp:agent:update","amp:llm-provider:create","amp:llm-provider:read","amp:llm-provider:update","amp:llm-provider:api-key-manage","amp:agent:api-key-manage","amp:llm-provider-template:read","amp:gateway:read","amp:environment:read"]
+      # ouId on the application above sets the OU; `attributes` is what puts the
+      # claims INTO the token. Without this block the mint succeeds, the token
+      # carries the right audience and scopes, and every amp-api call still
+      # fails — RequireOrgMatch reads ouId/ouHandle and finds neither. Verified
+      # the hard way: a token minted without it decoded to ou=None.
+      token:
+        accessToken:
+          clientConfig:
+            validityPeriod: 3600
+            attributes: ["ouId", "ouHandle"]

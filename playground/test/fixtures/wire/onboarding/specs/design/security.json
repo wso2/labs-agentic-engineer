@@ -1,0 +1,77 @@
+{
+  "version": 3,
+  "permissions": [
+    {
+      "resource": "new-hires",
+      "component": "onboarding-api",
+      "description": "New hire records and their generated onboarding checklists",
+      "actions": [
+        { "handle": "create", "description": "Create a new hire and generate their checklist from the template" },
+        { "handle": "read-all", "description": "Every new hire's record and onboarding progress" },
+        { "handle": "read-team", "description": "New hires the caller is the hiring manager for" }
+      ]
+    },
+    {
+      "resource": "tasks",
+      "component": "onboarding-api",
+      "description": "Onboarding tasks generated for a new hire, owned by IT, HR or Facilities",
+      "actions": [
+        { "handle": "read", "description": "The caller's own assigned tasks" },
+        { "handle": "read-all", "description": "Every onboarding task across every new hire" },
+        { "handle": "complete", "description": "Mark the caller's own assigned task complete" },
+        { "handle": "set-due-date", "description": "Set or change any task's due date" }
+      ]
+    },
+    {
+      "resource": "templates",
+      "component": "onboarding-api",
+      "description": "The standard onboarding task template",
+      "actions": [
+        { "handle": "read", "description": "The standard template tasks" },
+        { "handle": "manage", "description": "Create, update or remove template tasks" }
+      ]
+    }
+  ],
+  "groups": [
+    { "name": "HRCoordinators", "description": "HR staff who coordinate onboarding across departments" },
+    { "name": "ITStaff", "description": "IT staff who complete IT onboarding tasks" },
+    { "name": "FacilitiesStaff", "description": "Facilities staff who complete facilities onboarding tasks" },
+    { "name": "HiringManagers", "description": "Managers who hire and oversee new hires' onboarding" }
+  ],
+  "roles": [
+    {
+      "name": "HRCoordinator",
+      "description": "Creates new hires, oversees onboarding across all departments, sets due dates and maintains the template.",
+      "stories": [1, 2, 3, 4, 5, 10, 12],
+      "grants": ["new-hires:create", "new-hires:read-all", "tasks:read", "tasks:read-all", "tasks:complete", "tasks:set-due-date", "templates:read", "templates:manage"],
+      "assignTo": ["HRCoordinators"]
+    },
+    {
+      "name": "ITOnboardingStaff",
+      "description": "Completes IT onboarding tasks assigned to them.",
+      "stories": [6, 7, 10],
+      "grants": ["tasks:read", "tasks:complete"],
+      "assignTo": ["ITStaff"]
+    },
+    {
+      "name": "FacilitiesOnboardingStaff",
+      "description": "Completes Facilities onboarding tasks assigned to them.",
+      "stories": [8, 9, 10],
+      "grants": ["tasks:read", "tasks:complete"],
+      "assignTo": ["FacilitiesStaff"]
+    },
+    {
+      "name": "HiringManagerRole",
+      "description": "Views read-only onboarding progress for their own new hires.",
+      "stories": [11],
+      "grants": ["new-hires:read-team"],
+      "assignTo": ["HiringManagers"]
+    }
+  ],
+  "testUsers": [
+    { "username": "test-hrcoordinator", "roles": ["HRCoordinator"] },
+    { "username": "test-itonboardingstaff", "roles": ["ITOnboardingStaff"] },
+    { "username": "test-facilitiesonboardingstaff", "roles": ["FacilitiesOnboardingStaff"] },
+    { "username": "test-hiringmanagerrole", "roles": ["HiringManagerRole"] }
+  ]
+}

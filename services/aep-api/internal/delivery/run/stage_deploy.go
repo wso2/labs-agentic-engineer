@@ -494,7 +494,14 @@ func (l *loop) awaitDeployments(ctx workflow.Context, components []string,
 			// come up — and ONLY those: a pass can expire with some components
 			// serving and others still rolling out, and filing fix work against
 			// one that deployed fine would send an agent after nothing.
+			//
+			// The last poll's reasons come with them. A component pending on a
+			// platform-side hold knows exactly why it is waiting, and the expiry is
+			// the only place that fact can still reach the issue — failDeploy takes
+			// no cause here because the deadline is not itself an error anyone can
+			// be filed against.
 			l.failDeploy(state.Pending, version, nil)
+			l.deployFailures = state.Reasons
 			return cycleDeployFailed, nil
 		}
 
@@ -509,6 +516,12 @@ func (l *loop) awaitDeployments(ctx workflow.Context, components []string,
 // ---- deploy activity calls -------------------------------------------------
 
 // promote writes one wave — or the converge, whose targets carry no commit.
+//
+// Agent Manager governance is NOT called here. It lives inside the deploy
+// itself (projects.DeploymentService.Deploy), because that is the one path
+// every deployment takes — this promote, Converge's drift repair, and a config
+// change's redeploy — and governance hung off one caller is governance the
+// others skip.
 func (l *loop) promote(ctx workflow.Context, targets []delivery.DeployTarget) error {
 	return workflow.ExecuteActivity(activityCtx(ctx), (*Activities).PromoteWave, PromoteInput{
 		OrgID: l.in.OrgID, ProjectID: l.in.ProjectID, Targets: targets,

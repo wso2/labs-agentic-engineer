@@ -23,8 +23,10 @@ import (
 func TestKubeAPI_InClusterHostPort(t *testing.T) {
 	t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
 	t.Setenv("KUBERNETES_SERVICE_PORT", "443")
-	t.Setenv("KUBE_API_BASE_URL", "http://should-not-win")
+	t.Setenv("KUBE_API_BASE_URL", "")
 	t.Setenv("KUBE_API_BEARER", "override-token")
+	t.Setenv("KUBE_API_TOKEN_FILE", "")
+	t.Setenv("KUBE_API_CA_FILE", "")
 
 	r := &configReader{}
 	got := r.kubeAPI()
@@ -33,6 +35,30 @@ func TestKubeAPI_InClusterHostPort(t *testing.T) {
 	}
 	if got.BearerToken != "override-token" {
 		t.Errorf("BearerToken = %q, want override", got.BearerToken)
+	}
+}
+
+func TestKubeAPI_BaseURLOverrideWinsInCluster(t *testing.T) {
+	t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+	t.Setenv("KUBERNETES_SERVICE_PORT", "443")
+	t.Setenv("KUBE_API_BASE_URL", "https://dataplane.example:6443")
+	t.Setenv("KUBE_API_BEARER", "")
+	t.Setenv("KUBE_API_TOKEN_FILE", "/var/run/dp-kube/token")
+	t.Setenv("KUBE_API_CA_FILE", "/var/run/dp-kube/ca.crt")
+
+	r := &configReader{}
+	got := r.kubeAPI()
+	if got.BaseURL != "https://dataplane.example:6443" {
+		t.Errorf("BaseURL = %q, want KUBE_API_BASE_URL", got.BaseURL)
+	}
+	if got.TokenFile != "/var/run/dp-kube/token" {
+		t.Errorf("TokenFile = %q, want override path", got.TokenFile)
+	}
+	if got.CAFile != "/var/run/dp-kube/ca.crt" {
+		t.Errorf("CAFile = %q, want override path", got.CAFile)
+	}
+	if got.BearerToken != "" {
+		t.Errorf("BearerToken = %q, want empty when token file is set", got.BearerToken)
 	}
 }
 

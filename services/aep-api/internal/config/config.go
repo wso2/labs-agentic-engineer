@@ -93,6 +93,13 @@ type Config struct {
 	// the App-mode redirect after callback (302 → console settings page).
 	BFFPublicURL string
 
+	// TryItCallbackURL is the platform tester's OAuth callback, registered as a
+	// redirect URI on every project's sign-in resource so a client that is not
+	// one of the project's own components — the platform's test app — can
+	// complete a sign-in there. One fixed URL for the whole platform. Empty
+	// disables the registration.
+	TryItCallbackURL string
+
 	// TaskTokenSigningKey is the PEM-encoded RSA private key used to sign
 	// Task JWTs. The matching public key is published at /auth/external/jwks.json.
 	TaskTokenSigningKey string
@@ -133,9 +140,10 @@ type Config struct {
 	// Anything but `binding` reads as `issuer`.
 	ThunderEnvAdminRoute string
 
-	// KubeAPI is the in-cluster (or override) Kubernetes API the Thunder
-	// Application CR GET uses. BaseURL empty ⇒ thunder wait stays unwired
-	// (local compose has no kube API). See KubeAPIConfig.
+	// KubeAPI is the Kubernetes API the Thunder Application CR LIST uses.
+	// Set KUBE_API_BASE_URL to the dataplane apiserver on a split-plane
+	// install; otherwise the in-cluster host is used. BaseURL empty ⇒
+	// thunder wait stays unwired (local compose has no kube API).
 	KubeAPI KubeAPIConfig
 
 	// APIGatewayHost is an OVERRIDE for host:port of the API Platform gateway
@@ -160,6 +168,7 @@ type Config struct {
 	Observability ObservabilityConfig
 	AgentsSvc     AgentsSvcConfig
 	ServiceAuth   ServiceAuthConfig
+	AgentManager  AgentManagerConfig
 	Workspace     WorkspaceConfig
 
 	// SkillsDir is the on-disk platform skill library the BFF seeds + reconciles
@@ -232,11 +241,20 @@ type Config struct {
 	CredentialValidatorInterval time.Duration
 
 	// AgentRunnerImage is the docker image the runner Job uses — ONE image
-	// for BOTH task kinds (implementation and validation; it bakes
-	// Playwright + chromium). Pinned at deploy time, no built-in default;
+	// for BOTH task kinds (implementation and validation). Pinned at deploy
+	// time, no built-in default;
 	// `:latest` is OK in dev but the cloud release-binding should resolve to
 	// a digest. Empty ⇒ dispatch is off and fails loudly.
 	AgentRunnerImage string
+
+	// AgentRunnerImageOpenCode is the runner image for an organization whose
+	// coding-agent runtime is OpenCode: the same Dockerfile's runner-opencode
+	// stage, which adds the pinned OpenCode binary on top of AgentRunnerImage's
+	// layers. Pinned at deploy time like AgentRunnerImage and for the same
+	// reason (no built-in default; compose defaults it to aep-runner-opencode:dev,
+	// Helm reads codingAgentRunner.opencodeImage). Empty ⇒ an OpenCode cycle's
+	// dispatch fails naming this setting; Claude Code orgs are unaffected.
+	AgentRunnerImageOpenCode string
 
 	// CodingAgentComponentRetention is how many finished coding-agent
 	// Components a project may keep (LRU reap before each create). Defaults
@@ -303,12 +321,16 @@ type ThunderAdminConfig struct {
 // KubeAPIConfig is the Kubernetes API endpoint used to LIST ThunderApplication
 // CRs (plain net/http — not controller-runtime). Resolved at Load:
 //
-//	BaseURL — https://$KUBERNETES_SERVICE_HOST:$KUBERNETES_SERVICE_PORT when
-//	both are set (Helm pods); else optional KUBE_API_BASE_URL.
+//	BaseURL — KUBE_API_BASE_URL when set (dataplane apiserver on a split
+//	install); else https://$KUBERNETES_SERVICE_HOST:$KUBERNETES_SERVICE_PORT
+//	when both are set (Helm pods on the same cluster as the CRD).
 //	BearerToken — KUBE_API_BEARER static override (not a rotating SA token).
-//	TokenFile — in-cluster service-account token path when no bearer override;
-//	the client reads the file per request so projected rotations are picked up.
-//	CAFile — in-cluster service-account ca.crt when present.
+//	TokenFile — KUBE_API_TOKEN_FILE when set; else the in-cluster SA token
+//	when BaseURL is not an override. The client reads the file per request
+//	so a projected rotation is picked up.
+//	CAFile — KUBE_API_CA_FILE when set; else the in-cluster SA ca.crt when
+//	BaseURL is not an override. An override without this file uses system
+//	roots, which will not verify an EKS cluster CA.
 type KubeAPIConfig struct {
 	BaseURL     string
 	BearerToken string
@@ -398,6 +420,30 @@ type ObservabilityConfig struct {
 	ClientID     string
 	ClientSecret string
 	HostHeader   string
+}
+
+// AgentManagerConfig holds the machine credentials AEP calls Agent Manager
+// with.
+//
+// No base URL: Agent Manager's address is per ENVIRONMENT, read from that
+// environment's AI gateway binding record, because two environments may be
+// governed by different Agent Managers. Only the identity is configuration.
+//
+// The client id must match the `amp-publisher-*` wildcard in amp-api's
+// KEY_MANAGER_AUDIENCE, or its tokens are rejected as "invalid jwt" whatever
+// scopes they carry. Declared in
+// deployments/single-cluster/thunder-resources/92-aep-amp-publisher-client.yaml.
+type AgentManagerConfig struct {
+	TokenURL     string
+	ClientID     string
+	ClientSecret string
+	// Resource is the OAuth resource indicator. Agent Manager's resource server
+	// is urn:wso2:amp, and a mint that omits it can come back with no scopes.
+	Resource string
+	// HostHeader is the vhost the token URL is routed by — see
+	// agentmanager.Config.HostHeader. Defaults to the one the service's other
+	// Thunder clients already use.
+	HostHeader string
 }
 
 // PlatformAPIConfig holds connection settings for the OpenChoreo platform API.

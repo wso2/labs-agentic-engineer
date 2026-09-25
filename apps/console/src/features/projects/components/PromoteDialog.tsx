@@ -67,10 +67,13 @@ function verdictSentence(label: string, tone: StageTone): string {
 function ConnectionCard({
   row,
   values,
+  focused,
   onValueChange,
 }: {
   row: ConnectionRow;
   values: ConnectionValues;
+  /** The dialog was opened FOR this connection — its first field takes focus. */
+  focused: boolean;
   onValueChange: (rowId: string, key: string, value: string) => void;
 }) {
   const set = row.provisioned || connectionIsSet(row, values);
@@ -120,9 +123,10 @@ function ConnectionCard({
             mt: 1.5,
           }}
         >
-          {row.config.map((key) => (
+          {row.config.map((key, i) => (
             <TextField
               key={key.key}
+              {...(focused && i === 0 && { autoFocus: true })}
               // The KEY labels the field; the description wraps below as
               // helper text instead of truncating in the floating label
               // (#401 feedback).
@@ -154,6 +158,7 @@ export function PromoteDialog({
   validation,
   rows,
   values,
+  focusRowId,
   onValueChange,
   onPromote,
 }: {
@@ -166,6 +171,9 @@ export function PromoteDialog({
   validation: string;
   rows: ConnectionRow[];
   values: ConnectionValues;
+  /** The connection a Configure on the board asked for (ADR-0032): the
+   *  dialog opens with that connection's first field focused. */
+  focusRowId?: string;
   onValueChange: (rowId: string, key: string, value: string) => void;
   /** Called when Promote is pressed with every required value set. */
   onPromote: () => void;
@@ -212,7 +220,7 @@ export function PromoteDialog({
                 {verdictSentence(verdict.label, verdict.tone)}
               </Typography>
               <LinkButton
-                to="/projects/$projectName/validation"
+                to="/projects/$projectName/validations"
                 params={{ projectName }}
                 size="small"
                 color="inherit"
@@ -236,6 +244,7 @@ export function PromoteDialog({
                     key={row.id}
                     row={row}
                     values={values}
+                    focused={row.id === focusRowId}
                     onValueChange={onValueChange}
                   />
                 ))}

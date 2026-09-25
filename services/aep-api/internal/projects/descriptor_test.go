@@ -133,3 +133,65 @@ func TestCreateProject_NilDescriptorWriterIsNoOp(t *testing.T) {
 		t.Fatalf("create with no descriptor writer: %v", err)
 	}
 }
+
+// A project created with no display name of its own is given its NAME as one.
+//
+// The value becomes the OpenChoreo Project's `openchoreo.dev/display-name`, and
+// Agent Manager projects OpenChoreo's Projects into its own catalogue reading
+// that annotation. Left empty, AMP's console falls back to the project's
+// deployment PIPELINE name, so every AEP project appeared there as "default
+// deployment pipeline" — one name in the AEP console and another in AMP's.
+func TestCreateProject_DefaultsDisplayNameToTheName(t *testing.T) {
+	t.Parallel()
+	var got *gen.CreateProjectRequest
+	oc := &ocmocks.ProjectClientMock{
+		CreateProjectFunc: func(_ context.Context, org string, req *gen.CreateProjectRequest) (*gen.Project, error) {
+			got = req
+			return &gen.Project{Name: req.Name, NamespaceName: org}, nil
+		},
+	}
+	svc := NewProjectService(oc, &fakeRepoSvc{
+		CreateRepoFunc: func(_ context.Context, _, _, _, _ string) (*sourcecontrol.GitRepository, error) {
+			return &sourcecontrol.GitRepository{Status: "ready"}, nil
+		},
+	}, &fakeWebhookSvc{}, nil, nil)
+
+	if _, err := svc.CreateProject(context.Background(), "acme",
+		&gen.CreateProjectRequest{Name: "expense-tracker"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if got == nil {
+		t.Fatal("no create request reached the OpenChoreo client")
+	}
+	if got.DisplayName != "expense-tracker" {
+		t.Errorf("displayName = %q, want the project name", got.DisplayName)
+	}
+}
+
+// A display name the caller DID supply is never overwritten — the default is a
+// fallback, not a policy.
+func TestCreateProject_KeepsACallersDisplayName(t *testing.T) {
+	t.Parallel()
+	var got *gen.CreateProjectRequest
+	oc := &ocmocks.ProjectClientMock{
+		CreateProjectFunc: func(_ context.Context, org string, req *gen.CreateProjectRequest) (*gen.Project, error) {
+			got = req
+			return &gen.Project{Name: req.Name, NamespaceName: org}, nil
+		},
+	}
+	svc := NewProjectService(oc, &fakeRepoSvc{
+		CreateRepoFunc: func(_ context.Context, _, _, _, _ string) (*sourcecontrol.GitRepository, error) {
+			return &sourcecontrol.GitRepository{Status: "ready"}, nil
+		},
+	}, &fakeWebhookSvc{}, nil, nil)
+
+	if _, err := svc.CreateProject(context.Background(), "acme", &gen.CreateProjectRequest{
+		Name:        "expense-tracker",
+		DisplayName: "Expense Tracker",
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if got.DisplayName != "Expense Tracker" {
+		t.Errorf("displayName = %q, want the caller's own", got.DisplayName)
+	}
+}

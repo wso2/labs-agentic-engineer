@@ -28,6 +28,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/delivery/codingagent"
 	"github.com/wso2/aep/aep-api/internal/delivery/execution"
 	"github.com/wso2/aep/aep-api/internal/delivery/task"
@@ -270,6 +271,48 @@ func (p provisionProjects) ListProjects(ctx context.Context, orgID string) ([]pr
 		out = append(out, provisioning.ProjectRef{OrgID: rows[i].OrgID, ProjectID: rows[i].ProjectID})
 	}
 	return out, nil
+}
+
+// environmentLister adapts openchoreo.EnvironmentClient onto
+// provisioning.EnvironmentLister: the client's List returns its own
+// wire-mapping EnvironmentInfo (openchoreo owns the OC read — annotations,
+// spec.isProduction), and this adapter converts it field-by-field to the
+// service layer's own domain type. Keeps the two packages' types distinct
+// (see provisioning.EnvironmentInfo) without an import cycle, since only
+// this composition-root package needs to import both.
+type environmentLister struct{ client openchoreo.EnvironmentClient }
+
+func (e environmentLister) List(ctx context.Context, orgID string) ([]provisioning.EnvironmentInfo, error) {
+	infos, err := e.client.List(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]provisioning.EnvironmentInfo, 0, len(infos))
+	for _, info := range infos {
+		out = append(out, provisioning.EnvironmentInfo{
+			Name:         info.Name,
+			DisplayName:  info.DisplayName,
+			IsProduction: info.IsProduction,
+			Validation:   info.Validation,
+		})
+	}
+	return out, nil
+}
+
+// pipelineLister adapts openchoreo.ProjectCellClient onto
+// provisioning.PipelineLister: both methods already match the port's shape
+// 1:1 (both read plain names off the OC deployment-pipeline CRs), so this
+// adapter exists only to keep the provisioning package from depending on the
+// openchoreo client type directly — the same boundary environmentLister
+// draws for EnvironmentClient.
+type pipelineLister struct{ client openchoreo.ProjectCellClient }
+
+func (p pipelineLister) ListPipelineNames(ctx context.Context, orgID string) ([]string, error) {
+	return p.client.ListPipelineNames(ctx, orgID)
+}
+
+func (p pipelineLister) PipelineEnvironments(ctx context.Context, orgID, pipelineName string) ([]string, error) {
+	return p.client.PipelineEnvironments(ctx, orgID, pipelineName)
 }
 
 // identities projects organization.CredentialService.IdentityFor onto the

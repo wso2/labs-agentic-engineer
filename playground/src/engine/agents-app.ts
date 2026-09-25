@@ -53,7 +53,7 @@ export interface BootOptions {
 export async function bootAgentsApp(opts: BootOptions): Promise<AgentsApp> {
   const app = createApp({
     store: opts.store,
-    buildModel: opts.model ? () => opts.model! : (key) => createModel({ apiKey: key }),
+    buildModel: opts.model ? () => opts.model! : (key, model) => createModel({ apiKey: key, model }),
     auth: { audience: EVAL_AUTH.audience, secret: EVAL_AUTH.secret },
     workspaceMountRoot: opts.workspaceMountRoot,
   });

@@ -181,6 +181,120 @@ func TestDesignComponent_ListDependencies_ComputesStatusPerKind(t *testing.T) {
 	}
 }
 
+// agentToolDesignFiles is a design tree for an ai-agent component
+// ("concierge") that declares a `component` dependency on a sibling
+// ("leave-service") and an agent.afm.md allow-listing two operations against
+// it: one matching leave-service's openapi.yaml (submit_leave) and one that
+// does not (approveLeave, a typo for approve_leave) — exercising both a
+// resolved and an unresolved agent-tool entry in the same request.
+func agentToolDesignFiles() map[string]string {
+	return map[string]string{
+		spec.DesignRootFile: "Overview.\n",
+		"components/concierge/design.json": `{
+  "name": "concierge",
+  "type": "ai-agent",
+  "dependencies": [
+    {"kind": "component", "name": "leave-service"}
+  ]
+}
+`,
+		"components/concierge/agent.afm.md": "---\n" +
+			"x-aep:\n" +
+			"  tools:\n" +
+			"    openapi:\n" +
+			"      - component: leave-service\n" +
+			"        allow: [submit_leave, approveLeave]\n" +
+			"---\n" +
+			"Concierge agent body.\n",
+		"components/leave-service/design.json": `{
+  "name": "leave-service",
+  "type": "service",
+  "dependencies": []
+}
+`,
+		"components/leave-service/openapi.yaml": `openapi: 3.0.3
+info:
+  title: leave-service
+  version: "1.0"
+paths:
+  /leave:
+    post:
+      operationId: submit_leave
+      responses:
+        "200":
+          description: ok
+`,
+	}
+}
+
+// TestDesignComponent_ListDependencies_AgentToolOperationsRideTheWire proves
+// the HTTP contract for Part 1 of the agent-tool-status task: an ai-agent
+// component's `component` dependency carries the read-time computed
+// per-operation resolution (spec.ComputeAgentToolStatus, run at design-save)
+// on its new Operations field — resolved for an allow entry matching a real
+// operationId, unresolved (with a reason) for one that does not.
+func TestDesignComponent_ListDependencies_AgentToolOperationsRideTheWire(t *testing.T) {
+	t.Parallel()
+	h := newDesignHarness(t, agentToolDesignFiles(), nil)
+
+	resp := h.AsOrg("acme").Get(depsPath)
+	if resp.Code != 200 {
+		t.Fatalf("list: want 200, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	var got []gen.ComponentDependencies
+	if err := json.Unmarshal(resp.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body: %v\n%s", err, resp.Body.String())
+	}
+
+	var concierge *gen.ComponentDependencies
+	var leaveService *gen.ComponentDependencies
+	for i := range got {
+		switch got[i].ComponentName {
+		case "concierge":
+			concierge = &got[i]
+		case "leave-service":
+			leaveService = &got[i]
+		}
+	}
+	if concierge == nil {
+		t.Fatalf("no concierge entry in %+v", got)
+	}
+	if len(concierge.Dependencies) != 1 || concierge.Dependencies[0].Name != "leave-service" {
+		t.Fatalf("concierge dependencies = %+v, want one entry for leave-service", concierge.Dependencies)
+	}
+	ops := concierge.Dependencies[0].Operations
+	if len(ops) != 2 {
+		t.Fatalf("leave-service dependency operations = %+v, want 2", ops)
+	}
+	byOperation := map[string]struct {
+		Status string
+		Reason string
+	}{}
+	for _, o := range ops {
+		byOperation[o.Operation] = struct {
+			Status string
+			Reason string
+		}{o.Status, o.Reason}
+	}
+	if o := byOperation["submit_leave"]; o.Status != spec.DependencyStatusResolved {
+		t.Errorf("submit_leave: status = %q, want %q", o.Status, spec.DependencyStatusResolved)
+	}
+	if o := byOperation["approveLeave"]; o.Status != spec.DependencyStatusUnresolved || o.Reason == "" {
+		t.Errorf("approveLeave: status/reason = %q/%q, want unresolved with a reason", o.Status, o.Reason)
+	}
+
+	// leave-service is not itself an agent's tool provider from ANY OTHER
+	// agent's perspective here, and it carries no Operations of its own —
+	// Operations is absent for every non-agent-targeted dependency.
+	if leaveService != nil {
+		for _, d := range leaveService.Dependencies {
+			if len(d.Operations) != 0 {
+				t.Errorf("leave-service dependency %q carries Operations %+v, want none", d.Name, d.Operations)
+			}
+		}
+	}
+}
+
 // TestDesignComponent_ListDependencies_NoDesignIs404 asserts an absent design
 // (no design.cell at all) surfaces as 404, not an empty list or a 500.
 func TestDesignComponent_ListDependencies_NoDesignIs404(t *testing.T) {

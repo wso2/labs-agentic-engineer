@@ -49,7 +49,8 @@ flowchart LR
 | `catalog.go` | The design-time read: every group on the org's environment directory, with whether the platform created it, how many members it has, and how many projects bind a role to it. Backs the `list_groups` MCP tool. |
 | `target.go` | `Scope` — the `(org, environment)` pair that names one directory — and the `TargetResolver` port that turns an org into a `Target`: that pair, the issuer, and a `Directory` already bound to it. |
 | `repository.go` | `idp_roles`, `test_users`, `test_user_refs` — all three keyed by `Scope` — and the sealed password column. |
-| `panel.go` | The Security panel's domain service: the live-state read (degrading to `directoryAvailable: false` rather than failing), and reveal / rotate / delete behind the org+project and ownership fences. The read answers with TWO role lists — the shared org-group catalog and this project's OWN roles, with the groups each is assigned to, how many projects lean on those groups, and what each role grants — plus, per test login, every role it holds and the union of their scopes. |
+| `sign_in_coords.go` | `SignInCoords` and the `SignInCoordinates` port — the project's sign-in client, resource and issuer, read off its sign-in binding by provisioning. |
+| `panel.go` | The Security panel's domain service: the live-state read (degrading to `directoryAvailable: false` rather than failing; its `SignIn` block — issuer and client id for the platform's test app — is read off the binding, so it survives the directory being down), and reveal / rotate / delete behind the org+project and ownership fences. The read answers with TWO role lists — the shared org-group catalog and this project's OWN roles, with the groups each is assigned to, how many projects lean on those groups, and what each role grants — plus, per test login, every role it holds and the union of their scopes. |
 | `teardown.go` | The project delete's counterpart to the ensure: remove this project's `<project>/<Role>` roles (assignments first), its resource server and the whole catalog under it, and its own rows. Shared objects — org groups, accounts — are never deleted, and every step is best-effort and reported rather than fatal. |
 | `resource_server.go` | The two names a project's authorization objects are known by — `ResourceServerIdentifier` (the token's `aud`) and `RoleName`/`RoleNamePrefix` — derived from `(org, project)` alone, because the parties that agree on them never speak to each other. |
 | `entities.go` | The stored rows — `IdPRole`, `TestUser`, `TestUserRef`, `IdPResourceServer`, `IdPRoleBinding` — and the `Scope` fences on them. |
@@ -62,6 +63,7 @@ flowchart LR
 | `TargetResolver` | the Environment's `aep.wso2.com/thunder-*` annotations (`clients/openchoreo`) + the admin credential at the binding's secret path (`platform/secrets`) | `app/identity_targets.go` |
 | `Directory` | `clients/thundersvc`, one client per `(org, environment)` — groups and users, plus resource servers, resources, actions, roles and assignments | `app/identity_adapters.go` |
 | `DesignReader` | `spec.ArtifactService.GetDesignAtTag` | `app/identity_adapters.go` |
+| `SignInCoordinates` | `provisioning.Service.SignInCoordinates` — the sign-in resource's binding outputs | `app/sign_in_coords_adapter.go` (late-bound: provisioning is built after the panel) |
 
 `TargetResolver` has two methods split by whether they can fail. `Scope(orgID)`
 is pure — it is the choice of environment alone, and the panel needs it to read
@@ -97,7 +99,7 @@ the order is load-bearing.
 | # | Pass | What it does |
 |---|---|---|
 | 0 | Classify | Reads only. Each org group the design needs is settled as one the platform owns, one somebody else made, or one that is absent. An `assignTo` naming a group that neither `groups[]` declares nor the directory holds **fails the gate by name**, before any account is minted — creating it instead would mint an org-wide group nobody asked for and leave the role the design meant to reach unreachable. |
-| 1 | Accounts | Test users, and the decision of **how** each will come to hold each of its roles: through a group the platform owns (enrolment, pass 2) or bound to the account itself (a user principal, pass 5). An account whose every role assigns to no group at all is not created — see *A test login always holds its roles* below. |
+| 1 | Accounts | Test users, and the decision of **how** each will come to hold each of its roles: through a group the platform owns (enrolment, pass 2) or bound to the account itself (a user principal, pass 5). An account holding no role the design declares is not created — see *A test login always holds its roles* below. |
 | 2 | Groups | Additive. Each absent declared group is created complete with its members; missing members are added to the ones the platform owns. Enrolment rides here, in the union of the `assignTo` groups of every role the account holds. |
 | 3 | Resource server | Find by the derived identifier (`ResourceServerIdentifier`), create when absent, record `idp_resource_servers`. |
 | 4 | Resources and actions | Converge the permission catalog to the tag. Creates first, then deletes leaf-first. Handles are immutable, so a rename is a delete plus a create; deleting an action cascades out of every role that granted it, so nothing has to strip permissions first — and nothing may cache a role's grants across a catalog edit. |
@@ -161,12 +163,19 @@ are two ways it can, and pass 1 picks one per role:
   change. A `<project>/<Role>` is created and owned by this project and grants
   only what this project's catalog declares, so binding one to a disposable
   account carries none of the authority membership of a reused org group would.
+- the role assigns to **no group at all** — the self-service shape — → the role
+  is bound to the **account**, the same way. It is the only way such a login can
+  hold it: the design gate refuses an `assignTo` on a self-service role.
+  ADR-0030's 2026-09-20 amendment holds the argument.
 
-A role that assigns to no group at all (self-service, service) is granted by
-neither, and an account whose every role is of that shape is **not created** and
-is reported in `UsersSkipped`: a standing credential for a login that holds
-nothing is worse than no credential, because validation would sign in as it and
-grade role-gated criteria against it.
+Either binding to the account is reported in `UsersBoundDirectly` and named on
+the gate ticket, because a project role assigned straight to a person otherwise
+reads as somebody's hand edit.
+
+An account holding no role the design declares is **not created** and is
+reported in `UsersSkipped`: a standing credential for a login that holds nothing
+is worse than no credential, because validation would sign in as it and grade
+role-gated criteria against it.
 
 The converge never REMOVES a user principal, the platform's own included. A test
 account that is deleted and recreated gets a new directory id, so the principal
@@ -197,9 +206,12 @@ when the directory already matches, and that is not an optimisation — deleting
 action cascades out of every role that granted it, so a converge that churned the
 catalog would briefly revoke every grant in the project on every build. And **the
 assignment converge touches GROUPS only**: a user principal is somebody
-self-service registration or an administrator put on the role, and an app
-principal is a service identity, neither of which `security.json` can describe —
-so reading "not in `assignTo`" as "remove" would silently revoke them all.
+self-service registration or an administrator put on the role, one of the
+platform's own test logins bound in pass 5, or an app principal that is a
+service identity — none of which `assignTo` can describe, so reading "not in
+`assignTo`" as "remove" would silently revoke them all. A role whose enrolment
+changes from self-service to admin therefore picks up its group and KEEPS the
+direct principal. Harmless: same account, same role, same grants.
 
 **The login is PUBLISHED, and only the ensure decides what goes out.** The gate
 posts every referenced account's username and password as a comment on its

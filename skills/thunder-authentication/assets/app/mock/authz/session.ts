@@ -106,7 +106,14 @@ function activeRoleNames(): string[] {
     } catch {
       /* private mode */
     }
-    if (stored === null) return mockRoles.slice(0, 1).map((role) => role.name);
+    // NOBODY, not the first role in the catalog. A caller who never named a
+    // role has not signed in as anyone, and defaulting to the first one hands
+    // out whatever grants that role happens to hold — measured: entering with
+    // `?auth=out` landed on a full dashboard and issued a real gateway call
+    // carrying every scope of the first role, which made "nobody is signed in"
+    // impossible to walk. A default in an auth mock must fall towards no
+    // access, so the case that needs proving is the one you get for free.
+    if (stored === null) return [];
     asked = stored;
   }
   return asked
@@ -139,7 +146,11 @@ function user(): MockUser {
       name: `Mock ${who}`,
       email: `${slug}@example.test`,
     },
-    access_token: `mock:${scopes.map(encodeURIComponent).join(",")}`,
+    // `mock:<roles>;<scopes>` — the roles are named as well as resolved to
+    // grants, because the wired gateway (mock/wired.ts) mints an assertion whose
+    // `username` comes from the role's `testUsers` row and two roles can hold
+    // identical grants. gateway.ts's scopesFromToken reads past the segment.
+    access_token: `mock:${encodeURIComponent(names.join("+"))};${scopes.map(encodeURIComponent).join(",")}`,
     scope: [...BASE_SCOPES, ...scopes].join(" "),
     expires_at: Math.floor(Date.now() / 1000) + 3600,
     expired: false,
@@ -167,9 +178,10 @@ export async function signIn(): Promise<void> {
   window.location.assign(url.toString());
 }
 
-export async function handleCallback(): Promise<MockUser> {
-  return user();
-}
+// Resolves, and does nothing else: mock sign-in is a URL rewrite, so nothing
+// ever lands on /callback here. `void` to match src/authz/session.ts — the swap
+// is a bundler alias, so nothing type-checks the two against each other.
+export async function handleCallback(): Promise<void> {}
 
 /**
  * Signing out forgets the role. The persisted `?role=` stands in for the OIDC

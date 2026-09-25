@@ -596,10 +596,10 @@ func TestRealLibrary_RunnerSkillsAreCodingAudienceAndMirrored(t *testing.T) {
 			t.Errorf("%s kind = %q, want %q (read-only in the console)", name, sk.Kind, SkillKindPlatform)
 		}
 	}
-	// playwright-cli is not in RequiredSkills (it loads on demand), but it is still
+	// agent-browser is not in RequiredSkills (it loads on demand), but it is still
 	// the coding agent's and still has to reach the mirror.
-	if got := byName["playwright-cli"].Audience; len(got) != 1 || got[0] != SkillAudienceCoding {
-		t.Errorf("playwright-cli audience = %v, want exactly [coding]", got)
+	if got := byName["agent-browser"].Audience; len(got) != 1 || got[0] != SkillAudienceCoding {
+		t.Errorf("agent-browser audience = %v, want exactly [coding]", got)
 	}
 
 	// …and the copy rule admits them with nothing pinned, which is what a real
@@ -619,7 +619,7 @@ func TestRealLibrary_RunnerSkillsAreCodingAudienceAndMirrored(t *testing.T) {
 		enabled = append(enabled, sk)
 	}
 	mirror := desiredMirror(enabled, nil)
-	for _, name := range []string{"aep", "aep-validation", "playwright-cli"} {
+	for _, name := range []string{"aep", "acceptance-run", "agent-browser"} {
 		if _, ok := mirror[claudeSkillsDir+"/"+name+"/SKILL.md"]; !ok {
 			t.Errorf("%s is absent from the mirror — a dispatched run would not receive it", name)
 		}
@@ -629,10 +629,18 @@ func TestRealLibrary_RunnerSkillsAreCodingAudienceAndMirrored(t *testing.T) {
 	if _, ok := mirror[claudeSkillsDir+"/aep/references/component-contract.md"]; !ok {
 		t.Error("aep/references/component-contract.md is absent from the mirror — fan-out subagents get a dead path")
 	}
-	// aep-validation is useless without its report generator, which lives under
-	// scripts/ rather than references/ — proving References is not refs-only.
-	if _, ok := mirror[claudeSkillsDir+"/aep-validation/scripts/generate-report.mjs"]; !ok {
-		t.Error("aep-validation/scripts/generate-report.mjs is absent from the mirror")
+	// A skill's scripts/ travel too, not just its references/ — proving References
+	// is not refs-only. Asserted on the acceptance run's report checker because
+	// that is the one where a miss is silent: a validation pod has no checkout of
+	// this repo, so a guard that does not ride the mirror never runs, and the run
+	// goes green on a report nothing held to its contract.
+	for _, rel := range []string{
+		"/acceptance-run/scripts/check-report.mjs",
+		"/mock-verification/scripts/walk.sh",
+	} {
+		if _, ok := mirror[claudeSkillsDir+rel]; !ok {
+			t.Errorf("%s is absent from the mirror", rel)
+		}
 	}
 	// And the design-flow skills stay out, which is what replaced the runner's
 	// explicit base-plugin selection.

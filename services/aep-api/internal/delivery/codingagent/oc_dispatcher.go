@@ -26,6 +26,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/gen"
+	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
 )
 
 // RetentionEnforcer frees finished coding-agent Component slots before create.
@@ -50,11 +51,15 @@ type OCJobSurface interface {
 type OCDispatchInputs struct {
 	OrgID, ProjectID, CycleID string
 	// RunID is the milestone run the cycle belongs to — Component description only.
-	RunID                 string
-	MilestoneNumber       int
-	MilestoneTitle        string
-	Kind                  string // coding|validation|…
-	RunName               string // ca-… deterministic for this attempt
+	RunID           string
+	MilestoneNumber int
+	MilestoneTitle  string
+	Kind            string // coding|validation|…
+	RunName         string // ca-… deterministic for this attempt
+	// Runtime is the coding-agent runtime this cycle runs on. It picks the
+	// runner image and is stamped as the ComponentType's `runtime` parameter
+	// and the aep.wso2.com/runtime label. Empty means the platform default.
+	Runtime               orgconfig.AgentRuntime
 	Image                 string
 	ActiveDeadlineSeconds int
 	Env                   map[string]string
@@ -79,13 +84,39 @@ const codingAgentWorkspacePath = "/home/aep/aep-workspace"
 // SecretReference the org's row names.
 const (
 	envAnthropicAPIKey = "ANTHROPIC_API_KEY"
+	envGitHubToken     = "GITHUB_TOKEN"
+
+	// envEvalAnthropicAPIKey carries the org's DEFAULT Anthropic key for the
+	// build's agent-evaluation step, which needs a model twice over: for the
+	// generated agent it boots and for the judge that grades it.
+	//
+	// It has its OWN name rather than reusing ANTHROPIC_API_KEY because that
+	// variable already belongs to Claude Code, which ranks it above
+	// CLAUDE_CODE_OAUTH_TOKEN (ADR-0016). Mounting the evaluation key under it
+	// would silently move the coding session of every OAuth-billing org onto the
+	// credential that org deliberately moved away from — the exact mis-bill
+	// ADR-0016 exists to prevent. A distinct name keeps the two budgets apart,
+	// and the harness reads it in preference to ANTHROPIC_API_KEY.
+	envEvalAnthropicAPIKey = "AEP_EVAL_ANTHROPIC_API_KEY"
+
+	// envEvalKeyManaged declares that the PLATFORM owns this pod's evaluation
+	// credential: if envEvalAnthropicAPIKey is not set here, this run has no
+	// evaluation key at all.
+	//
+	// It exists because the pod's ANTHROPIC_API_KEY, when present, is the CODING
+	// credential — possibly an override the org chose to bill coding and nothing
+	// else. Without this declaration the harness cannot tell that pod apart from
+	// a developer's machine, where ANTHROPIC_API_KEY is simply "the key", and it
+	// would quietly grade agents on a budget the org ring-fenced. Set on EVERY
+	// dispatch, including the ones carrying no evaluation key: that is the case
+	// it exists for.
+	envEvalKeyManaged = "AEP_EVAL_KEY_MANAGED"
 
 	// The organization's coding-agent setting, as the runner reads it
-	// (`runtime/registry.ts`). Plain env, never a secret: they are two enum
-	// values, and the runner needs both before it can start a session.
+	// (`runtime/registry.ts`). Plain env, never a secret: they are enum values,
+	// and the runner needs them before it can start a session.
 	envAgentRuntime = "AEP_AGENT_RUNTIME"
 	envAgentModel   = "AEP_AGENT_MODEL"
-	envGitHubToken  = "GITHUB_TOKEN"
 )
 
 // OCDispatcher creates the ephemeral coding-agent Component chain:
@@ -94,20 +125,43 @@ const (
 type OCDispatcher struct {
 	oc        OCJobSurface
 	retention RetentionEnforcer
-	// image is THE runner image (adaptation of the brief's NewOCJobDispatcher
-	// image arg). Used when OCDispatchInputs.Image is empty.
-	image string
+	// images is the runner image per runtime, used when OCDispatchInputs.Image
+	// is empty. Two tags built from one Dockerfile, sharing every heavy layer.
+	images map[orgconfig.AgentRuntime]runnerImage
+}
+
+// runnerImage is one runtime's runner image and the deploy setting it comes
+// from. A cycle whose runtime has no image fails its dispatch naming the
+// setting, never falling back to another runtime's image (which would start a
+// pod without that runtime's binary).
+type runnerImage struct {
+	ref     string
+	setting string
 }
 
 // NewOCDispatcher wires the dispatcher against an OC surface.
 func NewOCDispatcher(oc OCJobSurface) *OCDispatcher {
-	return &OCDispatcher{oc: oc}
+	return &OCDispatcher{oc: oc, images: map[orgconfig.AgentRuntime]runnerImage{
+		orgconfig.AgentRuntimeClaudeCode: {setting: "AGENT_RUNNER_IMAGE"},
+		orgconfig.AgentRuntimeOpenCode:   {setting: "AGENT_RUNNER_IMAGE_OPENCODE"},
+	}}
 }
 
-// WithImage sets the runner image used when OCDispatchInputs.Image is empty.
-// Returns the receiver for chained construction.
+// WithImage sets the Claude Code runner image. Returns the receiver for
+// chained construction.
 func (d *OCDispatcher) WithImage(image string) *OCDispatcher {
-	d.image = image
+	return d.withRunnerImage(orgconfig.AgentRuntimeClaudeCode, image)
+}
+
+// WithOpenCodeImage sets the OpenCode runner image.
+func (d *OCDispatcher) WithOpenCodeImage(image string) *OCDispatcher {
+	return d.withRunnerImage(orgconfig.AgentRuntimeOpenCode, image)
+}
+
+func (d *OCDispatcher) withRunnerImage(runtime orgconfig.AgentRuntime, image string) *OCDispatcher {
+	img := d.images[runtime]
+	img.ref = strings.TrimSpace(image)
+	d.images[runtime] = img
 	return d
 }
 
@@ -178,11 +232,20 @@ func (d *OCDispatcher) Dispatch(ctx context.Context, in OCDispatchInputs) (strin
 	return in.RunName, nil
 }
 
+// resolveImage picks the runner image: an explicit one on the inputs, else the
+// image configured for the cycle's runtime.
 func (d *OCDispatcher) resolveImage(in OCDispatchInputs) string {
 	if img := strings.TrimSpace(in.Image); img != "" {
 		return img
 	}
-	return strings.TrimSpace(d.image)
+	return d.images[runtimeOrDefault(in.Runtime)].ref
+}
+
+func runtimeOrDefault(runtime orgconfig.AgentRuntime) orgconfig.AgentRuntime {
+	if runtime == "" {
+		return orgconfig.DefaultAgentRuntime
+	}
+	return runtime
 }
 
 func (d *OCDispatcher) validate(in OCDispatchInputs) error {
@@ -196,11 +259,21 @@ func (d *OCDispatcher) validate(in OCDispatchInputs) error {
 	check("ProjectID", in.ProjectID)
 	check("CycleID", in.CycleID)
 	check("RunName", in.RunName)
-	check("Image", d.resolveImage(in))
+	check(d.imageField(in), d.resolveImage(in))
 	if len(missing) > 0 {
 		return fmt.Errorf("oc dispatch: missing required field(s): %s", strings.Join(missing, ", "))
 	}
 	return nil
+}
+
+// imageField names the image in a missing-field error by the setting that
+// supplies it for the cycle's runtime.
+func (d *OCDispatcher) imageField(in OCDispatchInputs) string {
+	runtime := runtimeOrDefault(in.Runtime)
+	if img, ok := d.images[runtime]; ok {
+		return fmt.Sprintf("Image (%s)", img.setting)
+	}
+	return fmt.Sprintf("Image (no runner image for runtime %q)", runtime)
 }
 
 func (d *OCDispatcher) markers(in OCDispatchInputs) map[string]string {
@@ -209,17 +282,22 @@ func (d *OCDispatcher) markers(in OCDispatchInputs) map[string]string {
 		string(openchoreo.LabelKeyAepMilestone): fmt.Sprintf("%d", in.MilestoneNumber),
 		string(openchoreo.LabelKeyAepCycle):     in.CycleID,
 		string(openchoreo.LabelKeyAepRunName):   in.RunName,
+		string(openchoreo.LabelKeyAepRuntime):   string(runtimeOrDefault(in.Runtime)),
 		string(openchoreo.LabelKeyK8sManagedBy): openchoreo.LabelValueAep,
 		string(openchoreo.LabelKeyK8sPartOf):    openchoreo.LabelValueAep,
 		string(openchoreo.LabelKeyK8sName):      openchoreo.CodingAgentComponentTypeName,
 	}
 }
 
+// componentParameters are the ComponentType parameters this cycle sets. The
+// runtime is always stamped, so the rendered Job's label states the runtime
+// rather than inheriting the schema's default.
 func componentParameters(in OCDispatchInputs) map[string]any {
-	if in.ActiveDeadlineSeconds <= 0 {
-		return nil
+	params := map[string]any{"runtime": string(runtimeOrDefault(in.Runtime))}
+	if in.ActiveDeadlineSeconds > 0 {
+		params["activeDeadlineSeconds"] = in.ActiveDeadlineSeconds
 	}
-	return map[string]any{"activeDeadlineSeconds": in.ActiveDeadlineSeconds}
+	return params
 }
 
 func displayNameFor(in OCDispatchInputs) string {

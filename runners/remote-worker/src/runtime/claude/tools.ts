@@ -26,7 +26,7 @@
 // without editing the module every run goes through.
 
 import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
-import type { DeniedCapability } from "../port.js";
+import { deniedToolNames, type DeniedCapability } from "../port.js";
 
 // Phase 0 allowed-tools: git, gh, build/test/lint via Bash; standard file
 // tools. Endpoint Spec Discovery (B2) re-introduces MCP — but only as an
@@ -55,6 +55,18 @@ import type { DeniedCapability } from "../port.js";
 // this list still said `Task` afterwards — a name with no tool behind it in
 // 0.3.220 (`sdk-tools.d.ts` declares `AgentInput` and no `TaskInput`). Nothing
 // broke loudly, which is the point of the note below.
+//
+// The TASK LIST tools are named here because naming them is what makes them
+// exist. CLI 2.1.247 registers `TaskCreate`/`TaskUpdate`/`TaskGet`/`TaskList`
+// behind a per-model rollout gate (`isEnabled` reads an env flag or a remote
+// gate for the sonnet-5 / opus-4.8 families), so a session that merely does not
+// DENY them still starts without them: three real runs' `init` tool lists had
+// no task tool, a `ToolSearch select:TaskCreate` found nothing, and the lead
+// gave up on its plan in prose — while the glossary told it the tools were
+// there. Probed 2026-09-17 with the SDK directly: baseline absent; named in
+// `allowedTools`, all four are in `init` and dispatch. `Options.tools` in
+// sdk.d.ts states the mechanism ("List Grep/Glob here or in `allowedTools` to
+// get them"), which is also why Glob and Grep are listed below.
 export const BASE_ALLOWED_TOOLS = [
   "Read",
   "Write",
@@ -65,15 +77,20 @@ export const BASE_ALLOWED_TOOLS = [
   "WebSearch",
   "WebFetch",
   "Agent",
+  "TaskCreate",
+  "TaskUpdate",
+  "TaskGet",
+  "TaskList",
 ];
 
-// allowedTools does NOT restrict anything in this run: `bypassPermissions` plus
+// allowedTools does not RESTRICT anything in this run: `bypassPermissions` plus
 // `allowDangerouslySkipPermissions` (see the query() options in runtime.ts)
-// allows every tool the harness has, whether or not it is named above. Measured
-// on a live run — the agent called `Agent` and `ScheduleWakeup`, neither of
-// which was in the list, and both dispatched. So BASE_ALLOWED_TOOLS documents
-// the intended surface, and the deny list below is what actually holds a
-// boundary.
+// allows every tool the harness registers, whether or not it is named above.
+// Measured on a live run — the agent called `ScheduleWakeup`, which was not in
+// the list, and it dispatched. What the list CAN do is ADD: a tool the harness
+// holds behind a gate is registered when named here (the task list, above). So
+// BASE_ALLOWED_TOOLS is the surface the platform asks for, and the deny list
+// below is what actually holds a boundary.
 //
 // What the deny list excludes is the harness's *session-management* surface:
 // tools that assume an interactive user, a scheduler, a durable session or a
@@ -84,7 +101,7 @@ export const BASE_ALLOWED_TOOLS = [
 // File/shell/search tools are deliberately absent: `aep`'s deny-list governs
 // those by path and command, and blocking them wholesale would end the run.
 //
-// The whole TASK surface is now ALLOWED, and that took two corrections. The
+// The whole TASK surface is ALLOWED, and that took three corrections. The
 // WAIT tools went first: a lead that backgrounds work has to be able to wait on
 // it, and denying `TaskOutput`/`TaskStop` while the SDK's own default is to
 // background a fan-out left the lead reaching for `ScheduleWakeup` instead —
@@ -97,6 +114,9 @@ export const BASE_ALLOWED_TOOLS = [
 // being true is worth more than the turn it costs. `TaskCreate`/`TaskUpdate`
 // are the writes the adapter reads; `TaskGet`/`TaskList` are the reads that let
 // a lead pick its plan back up after a compaction, and they emit nothing.
+// The third correction is the one above BASE_ALLOWED_TOOLS: taking them off
+// the deny list registered nothing, so no plan row ever reached a feed until
+// they were named in the allowlist too.
 //
 // Each entry sits under the CLASS that explains it, which is what lets the port
 // state the policy without naming a runtime (see `DeniedCapability`). A second
@@ -114,21 +134,9 @@ const DENIED_TOOLS_BY_CAPABILITY: Record<DeniedCapability, readonly string[]> = 
   artifact_publishing: ["Artifact"],
 };
 
-/**
- * The Claude Code tool names denied by a set of capability classes.
- *
- * Order is the classes' order and then each class's own, so the list a query
- * receives is stable — a diff on it should mean a policy change and nothing
- * else.
- */
+/** The Claude Code tool names denied by a set of capability classes. */
 export function deniedTools(capabilities: readonly DeniedCapability[]): string[] {
-  const names: string[] = [];
-  for (const capability of capabilities) {
-    for (const tool of DENIED_TOOLS_BY_CAPABILITY[capability] ?? []) {
-      if (!names.includes(tool)) names.push(tool);
-    }
-  }
-  return names;
+  return deniedToolNames(DENIED_TOOLS_BY_CAPABILITY, capabilities);
 }
 
 // The server key the platform's MCP endpoint is registered under. The SDK

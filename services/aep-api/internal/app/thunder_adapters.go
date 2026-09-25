@@ -36,6 +36,9 @@ func (r thunderApplicationReader) FindByResource(ctx context.Context, resourceNa
 	}
 	app, err := r.client.FindByResource(ctx, resourceName, environment)
 	if err != nil {
+		if thunderapp.IsNotFound(err) {
+			return nil, projects.ErrThunderApplicationAPIMissing
+		}
 		return nil, err
 	}
 	if app == nil {

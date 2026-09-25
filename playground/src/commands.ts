@@ -245,7 +245,7 @@ export async function codeCommand(
  * `play <dir> log [--steps|--slow|--thinking]` — the DEVELOPER view of a coding
  * run, derived on demand from the archived transcript.
  *
- * Deliberately a reader rather than a file the run writes: `claude.log` already
+ * Deliberately a reader rather than a file the run writes: `runtime.log` already
  * holds every message, so a second artifact would be a cache of an analysis, and
  * one that can drift from the truth is worse than none. What was missing was
  * only the ergonomics of asking.

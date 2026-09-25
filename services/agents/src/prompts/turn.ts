@@ -134,7 +134,7 @@ const PLAN_CONTEXT_HEADER = "\n\n## Existing open Tasks in this version (referen
  * A command names the user's INTENT — `/feature` says what they came to do —
  * while a skill name is engineer-facing and routes by catalog description.
  * `amend` never needed renaming; it needed to stop being what the user reads.
- * So the three scoped edits share the one scoped-edit playbook and arrive at it
+ * So the two scoped edits share the one scoped-edit playbook and arrive at it
  * carrying the branch they want, with whatever the user clicked as its subject.
  *
  * The mapping is WORDING — "which branch of which playbook, said how" — so it
@@ -152,10 +152,6 @@ const PLAN_CONTEXT_HEADER = "\n\n## Existing open Tasks in this version (referen
 const COMMAND_FLOWS: Record<string, { skill: string; scope: (subject: string) => string }> = {
   feature: { skill: "amend", scope: (s) => (s ? `Add a feature: ${s}` : "Add a feature.") },
   actor: { skill: "amend", scope: (s) => (s ? `Add an actor: ${s}` : "Add an actor.") },
-  expand: {
-    skill: "amend",
-    scope: (s) => (s ? `Go deeper on this feature: ${s}` : "Go deeper on a feature."),
-  },
   // The plural walks every open dependency; the singular's token IS its skill.
   "resolve-dependencies": {
     skill: "resolve-dependency",
@@ -207,7 +203,10 @@ const FLOW_SUPPORTING_SKILLS: Record<string, string[]> = {
   // turn — there is nothing to condition on when the prompt is composed, and a
   // cached read costs a tenth of a re-prefill. Org-authored design skills stay
   // lazy: this map is flow wording and cannot know a given org's catalog.
-  design: ["grilling", "cell-design", "architecture", "security-design", "openapi-conventions", "wireframes", "validation-criteria"],
+  //
+  // `acceptance-criteria` writes the Gherkin features a validation run drives
+  // (ADR-0029), authored from the PRD alone.
+  design: ["grilling", "cell-design", "architecture", "security-design", "openapi-conventions", "wireframes", "agent-building", "acceptance-criteria"],
 };
 
 /** The branch a command names, or undefined for a token that IS its skill. */

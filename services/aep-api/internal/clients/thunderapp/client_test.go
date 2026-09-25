@@ -157,6 +157,28 @@ func TestFindByResource_TwoItemsReturnsError(t *testing.T) {
 	}
 }
 
+func TestFindByResource_404IsNotFound(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, "404 page not found")
+	}))
+	t.Cleanup(srv.Close)
+
+	c := mustClient(t, thunderapp.Config{
+		BaseURL:     srv.URL,
+		BearerToken: "t",
+		HTTPClient:  tlsClientFor(t, srv),
+	})
+	view, err := c.FindByResource(context.Background(), testResource, testEnv)
+	if view != nil {
+		t.Fatalf("want nil view on 404; got %+v", view)
+	}
+	if !thunderapp.IsNotFound(err) {
+		t.Fatalf("IsNotFound(%v) = false, want true", err)
+	}
+}
+
 func TestFindByResource_5xxReturnsError(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

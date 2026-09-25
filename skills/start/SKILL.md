@@ -133,8 +133,6 @@ order this flow runs them in.
    still standing would change nothing but its own line if the user overturned
    it — the same blast-radius test, run to decide you are done.
 
-Depth is opt-in: the user can go deeper in chat on any feature at any point.
-
 ## An unanswered form stays live
 
 A form the user walked away from keeps its questions owed: when anything else
@@ -144,8 +142,7 @@ arrives while one stands, re-present that form and wait for the answer.
 
 Write `specs/requirements/prd.md` — always that full path. Follow the
 `prd-contract` skill exactly: it defines every section, the story numbering
-rules, and what the PRD deliberately excludes. Per-feature depth goes to
-`specs/requirements/features/<slug>.md`, never into the PRD body.
+rules, and what the PRD deliberately excludes.
 
 Anything genuinely unanswerable now goes to **Open Questions** — mark it, never
 guess it.

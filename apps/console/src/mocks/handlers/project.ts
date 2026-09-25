@@ -1,11 +1,15 @@
 import type { components } from "../../generated/aep-api";
 
+type AgentRuntime = components["schemas"]["AgentRuntime"];
 type ApiError = components["schemas"]["Error"];
 type ApplyRequest = components["schemas"]["ApplyRequest"];
 type ApplyResult = components["schemas"]["ApplyResult"];
 type BuildRunList = components["schemas"]["BuildRunList"];
+type MilestoneRunView = components["schemas"]["MilestoneRunView"];
 import { http, HttpResponse, type JsonBodyType } from "msw";
 import {
+  heldRun,
+  heldRunForTag,
   appliedFileContent,
   appliedFileMetas,
   applyFilesError,
@@ -48,16 +52,21 @@ import {
   runHeartbeatEvent,
 } from "../fixtures/run-progress";
 import {
-  CRITERIA_PATH,
+  ACCEPTANCE_PATHS,
   VALIDATION_ATTEMPTS,
   VALIDATION_FILE_PATHS,
   VALIDATION_SCENARIOS,
+  validationDetail,
   validationFiles,
+  validationLedger,
   validationRuns,
+  validationSnapshot,
   validationStatusThread,
   type ValidationAttempt,
   type ValidationScenario,
+  type ValidationStory,
 } from "../fixtures/validation";
+
 
 function scenario(): ProjectScenario {
   const chosen = localStorage.getItem("aep:mock:project") as ProjectScenario | null;
@@ -94,6 +103,38 @@ function trackScenario(): TrackScenario | null {
 // changed.
 const MOCK_LINE_MS = 1_000;
 
+// ONE version's run story, chosen the same way for every endpoint that
+// narrates a run — the runs list and both progress feeds — so the story a
+// page's rows came from is the one its feed then tells:
+//
+//   1. a validation override replaces the whole story (the verdict lives on
+//      the RUN, and its cycles are what the page reads the report at);
+//   2. the `on-hold` track parks the newest run at the deploy gate — the
+//      status override alone cannot say WHY nothing is deployed, so the run
+//      story has to say it (ADR-0032), stamped with the tag asked for;
+//   3. otherwise the scenario's own story for that tag.
+function runStory(s: Exclude<ProjectScenario, "error">, tag: string): BuildRunList {
+  const v = validationStory();
+  if (v) return { ...validationRuns(v), tag };
+  if (trackScenario() === "on-hold") return heldRunForTag(s, tag);
+  return buildRunsForTag(s, tag);
+}
+
+// The same choice where no tag is asked for (the per-run feed): the override
+// or the track decides which story's runs narrate, else the scenario's.
+function scenarioRuns(s: Exclude<ProjectScenario, "error">): MilestoneRunView[] {
+  const v = validationStory();
+  if (v) return validationRuns(v).runs ?? [];
+  if (trackScenario() === "on-hold") return heldRun.runs ?? [];
+  return projectBuildRuns[s].runs ?? [];
+}
+
+// aep:mock:runtime=opencode replays the run feed as an OpenCode run; anything
+// else is Claude Code.
+function mockRuntime(): AgentRuntime {
+  return localStorage.getItem("aep:mock:runtime") === "opencode" ? "opencode" : "claude-code";
+}
+
 function validationScenario(): ValidationScenario | null {
   const raw = localStorage.getItem("aep:mock:validation");
   return raw && VALIDATION_SCENARIOS.includes(raw as ValidationScenario)
@@ -101,10 +142,24 @@ function validationScenario(): ValidationScenario | null {
     : null;
 }
 
-// Which attempt a `running` scenario is on (aep:mock:validation-attempt). It splits
-// the one scenario the switch cannot: `deploy.validation` is `running` for both a
-// first attempt and a repeat, and only the repeat carries a verdict to render.
-// Ignored by every other scenario, and by an unknown value.
+// The story the validation keys pick together, or null when the project
+// scenario's own fixtures should stand. The scenario key is the switch: the
+// attempt key narrows it and means nothing on its own.
+function validationStory(): ValidationStory | null {
+  const scenario = validationScenario();
+  return scenario ? { scenario, attempt: validationAttempt() } : null;
+}
+
+// The story a validation read answers with when no override is set: the project
+// scenario's own verdict, which is `partial` on the settled run.
+const DEFAULT_STORY: ValidationStory = { scenario: "partial" };
+
+// Whether the newest attempt is the version's first or a repeat over a failed
+// one (aep:mock:validation-attempt). A repeat is the one story the platform
+// produces beyond a single attempt — dev run, failed attempt, repair, the
+// scenario's attempt — and what gives both cards on the page a history to
+// stack. Ignored where a validation run has no shape for the scenario, and by
+// an unknown value; the fixture says which.
 function validationAttempt(): ValidationAttempt {
   const raw = localStorage.getItem("aep:mock:validation-attempt");
   return raw && VALIDATION_ATTEMPTS.includes(raw as ValidationAttempt)
@@ -113,33 +168,33 @@ function validationAttempt(): ValidationAttempt {
 }
 
 // Whether the repo should read as having no acceptance oracle at all
-// (aep:mock:validation-criteria=missing). A separate key from the two above because
+// (aep:mock:acceptance-criteria=missing). A separate key from the two above because
 // it names what is IN THE REPO rather than which run or which attempt: the page
 // treats a `not_found` on the criteria as "none were authored" — the state a version
 // eventually settles as `skipped` for — and nothing else can produce it, since every
 // scenario that has a verdict also has an oracle.
 function criteriaMissing(): boolean {
-  return localStorage.getItem("aep:mock:validation-criteria") === "missing";
+  return localStorage.getItem("aep:mock:acceptance-criteria") === "missing";
 }
 
-// Whether the oracle should carry a criterion the pinned report predates
-// (aep:mock:validation-criteria=drifted). Shares the key with `missing` because both
+// Whether the oracle should carry a scenario the pinned report predates
+// (aep:mock:acceptance-criteria=drifted). Shares the key with `missing` because both
 // describe the criteria FILE rather than a run, and the two are mutually exclusive:
 // a file that is absent cannot also have drifted.
 function criteriaDrifted(): boolean {
-  return localStorage.getItem("aep:mock:validation-criteria") === "drifted";
+  return localStorage.getItem("aep:mock:acceptance-criteria") === "drifted";
 }
 
 // The project's files with the two validation artifacts swapped for the ones the
 // overridden verdict implies. Dropping them first is what makes `unreported` and
 // `skipped` reachable: those scenarios contribute FEWER files, not different ones.
 function specFiles(s: Exclude<ProjectScenario, "error">) {
-  const v = validationScenario();
+  const v = validationStory();
   if (!v) return projectSpecFiles[s];
   return [
     ...projectSpecFiles[s].filter((f) => !VALIDATION_FILE_PATHS.includes(f.path)),
-    ...validationFiles(v, validationAttempt(), criteriaDrifted()).filter(
-      (f) => !(criteriaMissing() && f.path === CRITERIA_PATH),
+    ...validationFiles(v, criteriaDrifted()).filter(
+      (f) => !(criteriaMissing() && ACCEPTANCE_PATHS.includes(f.path)),
     ),
   ];
 }
@@ -278,19 +333,36 @@ export const projectHandlers = [
   ),
   // …and one version's whole run story: run rows + cycle records, DB-only.
   http.get("*/api/v1/projects/:projectName/builds/:tag/runs", ({ params }) =>
-    respond((s) => {
-      const v = validationScenario();
-      // The verdict lives on the RUN, and its cycles are what the page reads the
-      // report at — so an override has to replace the whole story, not patch a
-      // field onto the project scenario's.
-      const tag = String(params.tag);
-      // Keyed BY TAG: a run story stamped with another version's identity is a
-      // fixture that contradicts its own envelope.
-      const story = v
-        ? { ...validationRuns(v, validationAttempt()), tag }
-        : buildRunsForTag(s, tag);
-      return withCancellations(story);
-    }),
+    // Keyed BY TAG: a run story stamped with another version's identity is a
+    // fixture that contradicts its own envelope (see `runStory`).
+    respond((s) => withCancellations(runStory(s, String(params.tag)))),
+  ),
+  // The validation ledger — one row per version, including versions never
+  // validated. Three rows even in the single-scenario fixtures, because the
+  // whole point of the page is that older versions are reachable.
+  http.get("*/api/v1/projects/:projectName/validations", () =>
+    respond(() => validationLedger(validationStory() ?? DEFAULT_STORY)),
+  ),
+  // One version's validation history, already filtered to the runs that
+  // attempted it and their validation cycles.
+  http.get("*/api/v1/projects/:projectName/validations/:tag", ({ params }) =>
+    respond(() => validationDetail(validationStory() ?? DEFAULT_STORY, String(params.tag))),
+  ),
+  // One attempt's report AND the criteria it was judged against, at one commit —
+  // the cycle's own, which is what tells a failed first attempt's report from
+  // the repeat's. The tag as well, so an older version answers with its own
+  // verdict rather than with the scenario's.
+  http.get(
+    "*/api/v1/projects/:projectName/validations/:tag/cycles/:cycleId/report",
+    ({ params }) =>
+      respond(() =>
+        validationSnapshot(
+          validationStory() ?? DEFAULT_STORY,
+          criteriaDrifted(),
+          String(params.cycleId),
+          String(params.tag),
+        ),
+      ),
   ),
   // A build session's fan-out. Derived from the cluster on the real server, so
   // the console only ever asks for a session whose merge landed — and asks per
@@ -326,17 +398,18 @@ export const projectHandlers = [
       }
       // The same runs list-build-runs answers with. Without this the feed
       // streamed the PROJECT scenario's runs while the page's rows came from the
-      // validation override — two answers about one run, and the validation
-      // cycle a reader had selected was not the one narrating itself.
-      const v = validationScenario();
-      const runs = v
-        ? validationRuns(v, validationAttempt()).runs
-        : projectBuildRuns[s].runs;
-      const run = runs[0];
-      // Cancellation is checked against the id the CLIENT asked for, not the
-      // fixture's own: `buildRunsForTag` restamps run ids per version so a run
-      // story cannot contradict its envelope, and the console therefore cancels
-      // an id this list has never heard of.
+      // validation override or the on-hold track — two answers about one run,
+      // and the validation cycle a reader had selected was not the one
+      // narrating itself.
+      //
+      // The run ASKED FOR where the list knows it — a judged version holds
+      // several, and each one's feed narrates its own cycles — else the newest:
+      // `buildRunsForTag` restamps run ids per version so a run story cannot
+      // contradict its envelope, and the console then asks for an id this list
+      // has never heard of. Cancellation is likewise checked against the
+      // client's id, not the fixture's.
+      const runs = scenarioRuns(s);
+      const run = runs.find((r) => r.id === String(params.runId)) ?? runs[0];
       const cancelled = cancelledRuns.has(String(params.runId));
       const encoder = new TextEncoder();
       let timer: ReturnType<typeof setInterval> | undefined;
@@ -356,7 +429,7 @@ export const projectHandlers = [
           for (const cycle of run?.cycles ?? []) {
             if (request.signal.aborted) return controller.close();
             send(JSON.stringify({ type: "cycle", cycle }));
-            for (const event of runCycleEvents(cycle, seq)) {
+            for (const event of runCycleEvents(cycle, seq, mockRuntime())) {
               if (request.signal.aborted) return controller.close();
               send(
                 JSON.stringify({
@@ -451,14 +524,14 @@ export const projectHandlers = [
   // mock that moved ahead of it would be testing a contract nothing serves.
   http.get(
     "*/api/v1/projects/:projectName/builds/:tag/progress",
-    ({ request }) => {
+    ({ request, params }) => {
       const s = scenario();
       if (s === "error") {
         return HttpResponse.json(projectSectionError, { status: 500 });
       }
       // Oldest first: the run list is newest-first, and the narrative reads the
-      // other way.
-      const runs = [...projectBuildRuns[s].runs].reverse();
+      // other way. The same story the runs list answered with for this tag.
+      const runs = [...(runStory(s, String(params.tag)).runs ?? [])].reverse();
       const encoder = new TextEncoder();
 
       const stream = new ReadableStream<Uint8Array>({
