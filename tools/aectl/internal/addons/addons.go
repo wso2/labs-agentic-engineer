@@ -86,12 +86,23 @@ var Available = []Addon{
 		Operator: OperatorSpec{
 			ReleaseName: "thunder-app-operator",
 			Chart:       "oci://ghcr.io/wso2/thunder-app-operator",
+			// Set for two reasons, either of which alone breaks the install.
+			//
 			// The chart publishes only prereleases (0.6.0-rc.N; no stable tag
-			// exists yet). Helm's default resolution considers stable versions
-			// only, so omitting --version matches nothing and the install fails
+			// exists yet), and Helm's default resolution considers stable
+			// versions only — so omitting --version matches nothing and fails
 			// at chart resolution with "Could not locate a version matching
-			// provided version string". This constraint admits prereleases,
-			// selecting the highest rc — equivalent to Helm's --devel.
+			// provided version string". This constraint admits prereleases and
+			// selects the highest rc, which is what --devel desugars to. It
+			// degrades correctly: a stable 0.6.0 outranks its own prereleases
+			// and would be chosen without a change here.
+			//
+			// An empty Version is also not inert. runAddonInstall gives an
+			// addon that omits it the resolved PLATFORM version, so this
+			// operator would be pinned to AEP's chart version — 0.0.0-dev on a
+			// local install — which its registry has never published
+			// ("FetchReference ... not found"). This operator is on its own
+			// release line, so it opts out of that inheritance deliberately.
 			Version:     ">0.0.0-0",
 			Namespace:   "thunder-app-operator-system",
 			DisplayName: "thunder-app-operator",

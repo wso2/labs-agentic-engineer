@@ -452,10 +452,17 @@ func TestRunAddonInstall_AddonsFlag_UnknownID(t *testing.T) {
 }
 
 // TestRunAddonInstall_OperatorVersion verifies how the resolved platform version
-// flows into each operator's Helm --version:
-//   - an addon whose OperatorSpec omits Version inherits a non-empty platformVersion;
-//   - an addon with an explicit Version keeps it (platformVersion is ignored);
-//   - an empty platformVersion leaves an unset Version empty (no --version pin).
+// flows into each operator's Helm --version.
+//
+// runAddonInstall still lets an addon that omits Version inherit a non-empty
+// platformVersion, but NO addon does so today and none of the cases below can
+// exercise it: both operators ship on their own release lines, unrelated to
+// AEP's platform chart, and each carries an explicit Version for that reason.
+// Inheriting would pin them to whatever the platform release happens to be —
+// 0.0.0-dev on a local install, a tag neither registry publishes.
+//
+// So what is asserted here is that an explicit Version survives regardless of
+// platformVersion, in both directions.
 func TestRunAddonInstall_OperatorVersion(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -464,10 +471,12 @@ func TestRunAddonInstall_OperatorVersion(t *testing.T) {
 		wantVersion     string
 	}{
 		{
-			name:            "empty operator version inherits platform version",
-			addonID:         "thunder-app", // OperatorSpec.Version == ""
+			// The prerelease constraint is the operator's own; a platform
+			// version must not displace it.
+			name:            "prerelease constraint survives a set platform version",
+			addonID:         "thunder-app", // OperatorSpec.Version == ">0.0.0-0"
 			platformVersion: "0.6.0-rc.17",
-			wantVersion:     "0.6.0-rc.17",
+			wantVersion:     ">0.0.0-0",
 		},
 		{
 			name:            "explicit operator version is preserved",
@@ -476,10 +485,13 @@ func TestRunAddonInstall_OperatorVersion(t *testing.T) {
 			wantVersion:     "0.29.0",
 		},
 		{
-			name:            "empty platform version leaves unset version empty",
+			// And an unresolvable platform version must not empty it either:
+			// no --version at all is what produced "Could not locate a version
+			// matching provided version string" on a chart with no stable tag.
+			name:            "prerelease constraint survives an empty platform version",
 			addonID:         "thunder-app",
 			platformVersion: "",
-			wantVersion:     "",
+			wantVersion:     ">0.0.0-0",
 		},
 	}
 	for _, tc := range tests {
