@@ -69,7 +69,7 @@ An org Admin creates a project in the console. The API creates the project in [O
 | AE-03-3 | Repudiation | An Admin denies creating or deleting a project. | No | **Planned:** record who creates or deletes a project (H-6). |
 | AE-03-4 | Information disclosure | A project's spec and code are readable by anyone on GitHub. | No | **Planned:** project repositories become private (H-9), when Agentic Engineer moves to the GitHub App install path that OpenChoreo uses for private repositories. |
 | AE-03-5 | Denial of service | A malicious actor floods the org gateway. | No | **Inherited:** the org gateway is WSO2 Cloud's. |
-| AE-03-6 | Elevation of privilege | The API's signing key leaks, and a malicious actor signs tokens for any org's design studio. | No | **By design:** the key is a platform secret of the API only. Each token names one org and one container and lives 5 minutes. **Planned:** tokens come from the org's [Environment Thunder](../../01-introduction-and-architecture.md#c-environment-thunder) once WSO2 Cloud turns on token exchange (GAP-2). |
+| AE-03-6 | Elevation of privilege | The API's signing key leaks, and a malicious actor signs tokens for any org's design studio. | No | **By design:** the key is a platform secret of the API only. Each token names one org and one container and lives 5 minutes. **Planned:** tokens come from the org's [Environment Thunder](../../01-introduction-and-architecture.md#c-environment-thunder) once WSO2 Cloud turns on token exchange, which trades a Platform IdP token for a new one there (GAP-2). |
 
 **Product improvements flagged**
 

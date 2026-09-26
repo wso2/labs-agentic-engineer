@@ -26,7 +26,7 @@ These are Agentic Engineer parts, but they are not modelled here.
 
 - **Parts not deployed on WSO2 Cloud:** the playground, the tryit test page (a page to try API calls), the `/_dev` routes and the smee webhook relay (a tool that forwards webhooks to a developer's machine).
 - **The GitHub App sign-in path.** Agentic Engineer uses a GitHub token. A GitHub App may come later.
-- **Work in progress:** the incident agent loop (SRE/RCA: an agent that finds the cause of an alert), and sending the Default AI key to the Agent Manager AI gateway (a gateway that passes AI model calls on). Its API routes (`CreateIssue`, `PromoteTaskFromIssue`, `CreateRcaAgentReport`) exist; its tool server and agent are not on WSO2 Cloud.
+- **Work in progress:** the incident agent loop (SRE/RCA: an agent that finds the cause of an alert), and sending the Default AI key to the Agent Manager AI gateway (a gateway that passes AI model calls on). The incident loop's API routes (`CreateIssue`, `PromoteTaskFromIssue`, `CreateRcaAgentReport`) exist; its tool server and agent are not on WSO2 Cloud.
 
 ## Outside Agentic Engineer
 

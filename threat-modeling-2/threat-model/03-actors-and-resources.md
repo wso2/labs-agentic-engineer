@@ -81,7 +81,7 @@ These are the resources Agentic Engineer controls, besides the systems above.
 | Console | Web app served over HTTPS by its own web server, which passes API calls to the API. Sign-in at the Platform IdP (identity provider). See AE-01. |
 | API signing key | Signs the short tokens the dataplane trusts. [C-High]. See AE-03. |
 | Org secrets | GitHub token, AI keys, webhook HMAC, machine login secret. Only in the secret store, delivered to the containers that need them. [C-High]. See AE-02. |
-| Postgres | Org records, projects, conversations, runs. No secret values. Test-user passwords are to be kept in the secret store (H-2). |
+| Postgres | Org records, projects, conversations, runs. No org secret values. **Planned:** test-user passwords move to the secret store (H-2). |
 | Temporal | Engine that runs background workflows for runs, builds and deploys. |
 | Project `ae-system` | The org's OpenChoreo project that holds the design studio. See AE-03. |
 
@@ -92,7 +92,7 @@ These are resources we do not control.
 | Dependency | Description (usage, purpose, authentication, authorizations, and security) |
 | :---- | :---- |
 | Platform IdP | WSO2 Cloud sign-in. Signs user and machine login tokens. |
-| Environment Thunder | Per org and environment sign-in. Future token-exchange issuer (GAP-2). |
+| Environment Thunder | Per org and environment sign-in. Future issuer of tokens made by token exchange, which trades a Platform IdP token for a new one there (GAP-2). |
 | Secret store (secret manager API, called SM API; vault; secret sync) | Stores org secrets write-only and syncs them into the dataplane. Our boundary ends at the write. |
 | OpenChoreo | Runs projects, the design studio, coding runs, builds and deploys. |
 | GitHub | Repositories, issues, pull requests, webhooks. Reached with the org's GitHub token. A GitHub App may come later. |
