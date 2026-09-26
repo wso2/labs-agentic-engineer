@@ -905,7 +905,7 @@ No row in AE-01 to AE-08 or PW-1 to PW-4 is Materializable **Yes** or **Partiall
 - [ ] The threat model moved to [Security Review Documents](https://drive.google.com/drive/folders/1xKJ0HfPaufYSouC_Rma7S2z3fKUPQega)
 - [ ] Threat model reviewed by the security team and leads
 - [ ] Created GitHub issues for tracking threats that need to be addressed
-- [ ] Risk registry entries updated with [Asela Jayatilleke](mailto:aselaj@wso2.com) (if applicable)
+- [ ] Risk registry entries updated with Asela Jayatilleke (if applicable)
 
 # Appendix
 
