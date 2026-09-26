@@ -890,6 +890,13 @@ func buildCreateComponentBody(projectName string, req *CreateComponentRequest) o
 // componentTraitsToGen converts the BFF-internal slice into the gen shape.
 // Returns nil for an empty input so we don't stamp an empty traits array
 // onto Components without API security configured.
+//
+// Every entry carries an explicit kind, defaulting to ClusterTrait. A trait
+// reference is (kind, name), and OpenChoreo accepts both ClusterTrait and the
+// namespaced Trait: a name on its own is not an address. On a cluster that also
+// runs another platform there can be a namespaced Trait of the same name in the
+// org's own namespace, and a kind-less reference would leave the choice between
+// them to OpenChoreo. This platform attaches ClusterTraits only.
 func componentTraitsToGen(traits []ComponentTrait) *[]ocgen.ComponentTrait {
 	if len(traits) == 0 {
 		return nil
@@ -900,10 +907,12 @@ func componentTraitsToGen(traits []ComponentTrait) *[]ocgen.ComponentTrait {
 			InstanceName: t.InstanceName,
 			Name:         t.Name,
 		}
-		if t.Kind != "" {
-			k := ocgen.ComponentTraitKind(t.Kind)
-			entry.Kind = &k
+		kind := t.Kind
+		if kind == "" {
+			kind = string(ocgen.ComponentTraitKindClusterTrait)
 		}
+		k := ocgen.ComponentTraitKind(kind)
+		entry.Kind = &k
 		if len(t.Parameters) > 0 {
 			p := cloneParameterMap(t.Parameters)
 			entry.Parameters = &p

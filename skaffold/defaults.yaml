@@ -1,0 +1,118 @@
+platform:
+  workspaces:
+    # PVC access mode for the shared git workspaces volume.
+    # Leave empty to use the chart default (ReadWriteOnce).
+    # Set to ReadWriteMany only if your storage class supports it and pods
+    # run across multiple nodes — most cloud storage classes do not.
+    access_mode: ""
+
+oc:
+  # In-cluster URL of the OpenChoreo platform API.
+  # aep-api uses this to create Components, Deployments, and read pod logs.
+  # Override if OC is on a different cluster or exposed via an external URL.
+  api_url: "http://openchoreo-api.openchoreo-control-plane.svc.cluster.local:8080"
+
+  # Namespace where the OpenChoreo control-plane is installed.
+  # Used during install to verify the OC version meets the minimum requirement.
+  # Override if your OC is deployed under a different namespace.
+  system_namespace: "openchoreo-control-plane"
+
+  # In-cluster URL of the OpenChoreo Observer — feeds build-log reading and
+  # coding-cycle log archiving. Matches the "openchoreo-observability-plane"
+  # namespace `aectl sre install` itself defaults to. Override if the
+  # observability plane lives under a different namespace or release name.
+  observability_api_url: "http://observer.openchoreo-observability-plane.svc.cluster.local:8080"
+
+  # The OpenChoreo Environment AEP provisions into and patches gateway ingress
+  # onto. Not every OpenChoreo setup names it "default": aep-api itself never
+  # hardcodes this — it computes it live from DeploymentPipeline/default's
+  # promotion graph (whichever environment is a source but never a target).
+  # On a cluster built from the official k3d quickstart's sample
+  # (development -> staging -> production), that computed answer is
+  # "development", not "default" — leave this empty only if your pipeline's
+  # true source really is named "default" (e.g. deployments/scripts/setup-aep.sh's
+  # own convention: one environment, self-referential pipeline).
+  pipeline_source_environment: "development"
+
+  # The k8s namespace of the one org AEP ships with — AEP is single-org
+  # today, so this is that default org's home namespace: where its Project,
+  # Environment(s), DeploymentPipeline, and (when local_org_provisioning.enabled,
+  # see below) per-org ComponentTypes all live.
+  default_org_namespace: "default"
+
+  local_org_provisioning:
+    # Creates per-org OC ComponentTypes (service, web-application) directly
+    # from the Helm chart. Required for local k3d installs where OC's
+    # ProvisionOrgUnit is not running. Must be false in production — OC
+    # handles this per-org automatically there.
+    enabled: true
+
+  # Whether the data-plane gateway this cluster's components deploy behind
+  # terminates TLS. False here because this gateway (envidp's Thunder+gateway
+  # install) always advertises plain http://*.openchoreoapis.localhost URLs —
+  # there is no certificate-issuance step to wait for. aep-api gates its
+  # endpoint-reachability wait on this: left at the chart's own true default,
+  # it would probe those plain-HTTP URLs assuming a cert window exists, which
+  # on this cluster can never resolve (the hostname resolves to loopback from
+  # inside the pod) and holds every component with an external URL — a
+  # web-application proxying to a sibling service, for instance — at
+  # "converging" forever. Set true only against a gateway that genuinely
+  # fronts TLS.
+  data_plane_gateway_tls: false
+
+codingagent:
+  openbao_direct:
+    # Injects OPENBAO_ADDR/TOKEN into aep-api so it can write user secrets
+    # (e.g. Anthropic API keys) directly into OpenBao. Required for local/OSS
+    # installs. Production overlays inject a managed SecretsProvider instead
+    # and must leave this false.
+    enabled: true
+
+openbao:
+  # In-cluster URL of the OpenBao service — used when openbao_direct.enabled=true.
+  # Override if OpenBao is deployed under a different namespace or service name.
+  addr: "http://openbao.openbao.svc.cluster.local:8200"
+  # token is intentionally absent — prompted interactively during install, or set via AEP_OPENBAO_TOKEN env var
+
+gateway:
+  # External hostname used for component HTTP endpoints (HTTPRoute hosts).
+  # When set, aectl platform install configures ClusterDataPlane and
+  # Environment/development automatically without an interactive prompt —
+  # required for CI. Leave empty to be prompted during install.
+  # Local: typically "openchoreoapis.localhost". Production: your public API hostname.
+  hostname: "openchoreoapis.localhost"
+
+webhook:
+  # Public URL registered on each GitHub repo's webhook.
+  # GitHub posts pull_request/push/issues events here so aep-api can advance
+  # task state (e.g. merged PR ends a coding task and triggers a build).
+  # Local: set to your smee.io channel URL.
+  # Production: set to the public HTTPS URL of aep-api's /api/v1/webhooks/github.
+  delivery_url: "https://smee.io/woTo6w45shQo21QQ"
+
+  local_smee:
+    # Deploys an in-cluster smee-client that subscribes to the smee.io channel
+    # in delivery_url and forwards GitHub events to aep-api. Needed for local
+    # k3d installs that have no public ingress. Never true in production.
+    enabled: true
+
+thunder:
+  # Kubernetes namespace where Thunder is deployed.
+  # Used when patching Thunder's CORS config and rolling its Deployment.
+  namespace: "thunder"
+
+  # In-cluster URL of the Thunder service.
+  # Used for all server-to-server OAuth calls: getting admin tokens,
+  # registering AEP OAuth clients, and deriving the JWKS/token endpoints.
+  url: "http://thunder-service.thunder.svc.cluster.local:8090"
+
+  # OAuth client ID of AEP's system-level Thunder client.
+  # Used to authenticate as admin during install to register other OAuth clients.
+  # The corresponding secret is prompted interactively — never stored here.
+  admin_client_id: "ae-install-client"
+
+  # Externally reachable URL of Thunder — what the browser hits for login flows.
+  # Must match the JWT issuer configured in Thunder. Injected into the console
+  # and the SRE agent's auth config.
+  # Local: the k3d ingress hostname. Production: your real public Thunder URL.
+  public_url: "http://thunder.openchoreo.localhost:8080"

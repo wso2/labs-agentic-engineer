@@ -1,0 +1,33 @@
+# ThunderID's built-in Administrator role — a composed singleton.
+#
+# The IdP ships ONE Administrator role at this fixed id, and a document naming
+# it replaces the whole record rather than adding to it. Both products need a
+# client in that role and each shipped its own copy of this document, identical
+# but for the single assignment:
+#
+#   AEP  assignments: [{id: ae-install-client,  type: app}]
+#   AMP  assignments: [{id: amp-system-client,  type: app}]
+#
+# Whichever imported last silently dropped the other's client, leaving it
+# without the `system` permission and no error anywhere to say so.
+#
+# Replaces, and is imported INSTEAD of:
+#   87-ae-install-client-admin-role.yaml      (setup-env-for-aectl.sh)
+#   68-amp-role-system-client-thunder-admin.yaml  (wso2-amp-thunder-extension)
+#
+# Both clients are assigned here. Adding a third product means adding a third
+# assignment to this file, not shipping a fourth copy of the document.
+resource_type: role
+id: "01900000-0000-7000-8000-000000000050"
+name: Administrator
+description: System administrator role with full permissions
+ouHandle: default
+permissions:
+  - resourceServerId: "01900000-0000-7000-8000-000000000020"
+    permissions:
+      - system
+assignments:
+  - id: ae-install-client
+    type: app
+  - id: amp-system-client
+    type: app

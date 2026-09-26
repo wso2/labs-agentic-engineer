@@ -28,7 +28,9 @@ type OperatorSpec struct {
 	ReleaseName string
 	// Chart is the OCI or local chart reference.
 	Chart string
-	// Version is the chart version string; empty omits --version (uses registry default).
+	// Version is the chart version passed to --version; empty omits the flag.
+	// Helm resolves this as a semver constraint, not only a literal version, so
+	// a range is valid here — see the thunder-app addon for why one is needed.
 	Version string
 	// Namespace is the target namespace for the operator deployment.
 	Namespace string
@@ -84,12 +86,41 @@ var Available = []Addon{
 		Operator: OperatorSpec{
 			ReleaseName: "thunder-app-operator",
 			Chart:       "oci://ghcr.io/wso2/thunder-app-operator",
+			// Set for two reasons, either of which alone breaks the install.
+			//
+			// The chart publishes only prereleases (0.6.0-rc.N; no stable tag
+			// exists yet), and Helm's default resolution considers stable
+			// versions only — so omitting --version matches nothing and fails
+			// at chart resolution with "Could not locate a version matching
+			// provided version string". This constraint admits prereleases and
+			// selects the highest rc, which is what --devel desugars to. It
+			// degrades correctly: a stable 0.6.0 outranks its own prereleases
+			// and would be chosen without a change here.
+			//
+			// An empty Version is also not inert. runAddonInstall gives an
+			// addon that omits it the resolved PLATFORM version, so this
+			// operator would be pinned to AEP's chart version — 0.0.0-dev on a
+			// local install — which its registry has never published
+			// ("FetchReference ... not found"). This operator is on its own
+			// release line, so it opts out of that inheritance deliberately.
+			Version:     ">0.0.0-0",
 			Namespace:   "thunder-app-operator-system",
 			DisplayName: "thunder-app-operator",
-			// The platform chart creates an ESO ExternalSecret that syncs to
-			// this Secret. ESO sync is async; wait before Helm install so the
-			// operator Pod starts with credentials already present.
-			WaitForSecrets: []string{"thunder-app-operator-credentials"},
+			// The operator carries no fixed credentials of its own (the
+			// two-tier Thunder change removed the old
+			// thunder-app-operator-credentials Secret this used to name —
+			// see operator-namespace.yaml's own comment). It resolves
+			// Thunder per (org, environment) from that pair's binding
+			// record instead: a Secret named "thunder-binding-<org>-<env>"
+			// (envidp.BindingName) mirrored into this namespace by
+			// internal/envidp's Install step (cmd.runAEPInit runs that step
+			// before this addon installs). The org/env pair is only known at
+			// install time, so WaitForSecrets is left empty here and
+			// installAddons fills in the real name before waiting — see its
+			// own comment. Waiting on it is a regression guard, not dead
+			// weight: it fails loudly if that step is ever skipped or its
+			// naming drifts, rather than leaving the operator running with
+			// no environment it can register apps into.
 		},
 		Manifests: []string{thunderAppResourceType, thunderAppRBAC},
 		VerifyResources: []VerifySpec{
@@ -121,20 +152,26 @@ var Available = []Addon{
 // thunderAppResourceType is the ClusterResourceType that makes the thunder-app
 // OAuth provisioning available as a platform-resource dependency type in AEP.
 // Source: deployments/single-cluster/resource-types/thunder-app/resourcetype.yaml
+// — a mirror, not a verbatim copy: aectl's own module can't reach across the
+// repo with go:embed, so this string literal has to be kept manually in sync.
 //
-// DERIVED, not verbatim — and deliberately so. It differs from the source in
-// exactly two places, both of which addons_test.go pins:
-//
-//   - the prose comments are stripped (the source's are for whoever edits the
-//     type; this literal is shipped to a cluster);
-//   - `issuer` and `jwks_url` are rendered LITERALS pointing at the bundled
-//     local Thunder, not `${applied.app.status.*}`, because aectl installs the
-//     add-on before any environment binding record exists to resolve them from.
+// The only intentional difference from the source is that its prose comments
+// are stripped (they are for whoever edits the type; this literal is shipped
+// to a cluster). `issuer`/`jwks_url` must otherwise match exactly:
+// `${applied.app.status.issuer}`/`${applied.app.status.jwksUrl}`, read from
+// the rendered ThunderApplication's live status, not a literal Thunder URL. A
+// literal here once pointed at the single, pre-two-tier-Thunder platform
+// instance; with a per-environment Thunder (internal/envidp), a project's
+// thunder-app dependency registers on THAT environment's Thunder, so a
+// literal silently sends every generated app's login to the wrong Thunder —
+// which authenticates the client_id but not the issuer, so every login fails
+// there with a generic "invalid request".
 //
 // Everything else — parameters (names, types, defaults), the rendered
-// ThunderApplication template, and the remaining outputs — must stay in step
-// with the source. addons_test.go compares them field by field, so adding a
-// parameter or an output on one side and not the other fails the build.
+// ThunderApplication template, and the remaining outputs — must also stay in
+// step with the source. addons_test.go compares the two field by field, so
+// adding a parameter or an output on one side and not the other fails the
+// build.
 const thunderAppResourceType = `
 apiVersion: openchoreo.dev/v1alpha1
 kind: ClusterResourceType
@@ -145,8 +182,8 @@ metadata:
   annotations:
     aep.wso2.com/description: >-
       End-user sign-in for this project's apps: provisions an OAuth (PKCE)
-      client on the platform IdP. Declare on both the web app that signs
-      users in and the service whose API it protects.
+      client on this environment's identity provider. Declare on both the
+      web app that signs users in and the service whose API it protects.
     aep.wso2.com/consumer-url-env-config: redirectUris
     aep.wso2.com/skill: thunder-authentication
 spec:
@@ -194,9 +231,9 @@ spec:
     - name: client_id
       value: aep-${metadata.namespace}-${metadata.name}
     - name: issuer
-      value: http://thunder.openchoreo.localhost:8080
+      value: ${applied.app.status.issuer}
     - name: jwks_url
-      value: http://thunder.openchoreo.localhost:8080/oauth2/jwks
+      value: ${applied.app.status.jwksUrl}
     - name: scopes
       value: ${parameters.scopes}
     - name: resource

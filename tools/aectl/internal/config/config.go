@@ -47,14 +47,15 @@ const ThunderAdminCredsSecretKey = "client-secret"
 var ConfigMapKeys = []string{
 	"thunder.namespace",
 	"thunder.url",
-	"thunder.config_map",
-	"thunder.deployment",
 	"thunder.admin_client_id",
 	"thunder.public_url",
 	"oc.api_url",
+	"oc.observability_api_url",
 	"oc.system_namespace",
-	"oc.org_namespace",
+	"oc.default_org_namespace",
+	"oc.pipeline_source_environment",
 	"oc.local_org_provisioning.enabled",
+	"oc.data_plane_gateway_tls",
 	"platform.workspaces.access_mode",
 	"codingagent.openbao_direct.enabled",
 	"openbao.addr",
@@ -81,21 +82,41 @@ type configKeyMeta struct {
 
 // keyRegistry maps each ConfigMapKey to its validation metadata.
 var keyRegistry = map[string]configKeyMeta{
-	"thunder.namespace":                 {required: true, kind: kindString},
-	"thunder.url":                       {required: true, kind: kindURL},
-	"thunder.config_map":                {required: true, kind: kindString},
-	"thunder.deployment":                {required: true, kind: kindString},
-	"thunder.admin_client_id":           {required: true, kind: kindString},
-	"thunder.public_url":                {required: true, kind: kindURL},
-	"oc.api_url":                        {required: true, kind: kindURL},
-	"oc.system_namespace":               {required: true, kind: kindString},
-	"oc.org_namespace":                  {required: false, kind: kindString},
+	"thunder.namespace":       {required: true, kind: kindString},
+	"thunder.url":             {required: true, kind: kindURL},
+	"thunder.admin_client_id": {required: true, kind: kindString},
+	"thunder.public_url":      {required: true, kind: kindURL},
+	"oc.api_url":              {required: true, kind: kindURL},
+	// In-cluster URL of the OpenChoreo Observer. Empty leaves the chart's own
+	// default (see values.yaml's observer.baseURL) — build-log reading and
+	// coding-cycle log archiving degrade gracefully when neither is reachable.
+	"oc.observability_api_url": {required: false, kind: kindURL},
+	"oc.system_namespace":      {required: true, kind: kindString},
+	// The k8s namespace of the one org AEP ships with — AEP is single-org
+	// today, so this is that default org's home namespace: where its Project,
+	// Environment(s), DeploymentPipeline, and per-org ComponentTypes
+	// (localOrgProvisioning) all live. Empty falls back to "default" (see
+	// ocOrgNamespace in cmd/platform_gateway.go).
+	"oc.default_org_namespace": {required: false, kind: kindString},
+	// The single OpenChoreo Environment AEP provisions into and patches gateway
+	// ingress onto. Empty falls back to "default" (see ocPipelineSourceEnvironment in
+	// cmd/platform_gateway.go).
+	"oc.pipeline_source_environment":    {required: false, kind: kindString},
 	"oc.local_org_provisioning.enabled": {required: false, kind: kindBool},
-	"platform.workspaces.access_mode":   {required: false, kind: kindEnum, enumValues: []string{"", "ReadWriteOnce", "ReadWriteMany", "ReadOnlyMany"}},
+	// Whether the data-plane gateway aectl is pointing at terminates TLS.
+	// Unset (false) matches aectl's typical target — its own gateway setup
+	// (envidp's Thunder+gateway install) always advertises plain http:// URLs
+	// with no certificate-issuance step to wait for, so aep-api's
+	// endpoint-reachability wait (gated on this exact flag) would otherwise
+	// hold every web component at "converging" forever probing a URL that can
+	// never answer. Set true only when aectl is installing against a gateway
+	// that genuinely fronts TLS.
+	"oc.data_plane_gateway_tls":          {required: false, kind: kindBool},
+	"platform.workspaces.access_mode":    {required: false, kind: kindEnum, enumValues: []string{"", "ReadWriteOnce", "ReadWriteMany", "ReadOnlyMany"}},
 	"codingagent.openbao_direct.enabled": {required: false, kind: kindBool},
-	"openbao.addr":                      {required: false, kind: kindURL},
-	"webhook.delivery_url":              {required: false, kind: kindURL},
-	"webhook.local_smee.enabled":        {required: false, kind: kindBool},
+	"openbao.addr":                       {required: false, kind: kindURL},
+	"webhook.delivery_url":               {required: false, kind: kindURL},
+	"webhook.local_smee.enabled":         {required: false, kind: kindBool},
 	// gateway.hostname, when set, lets `aectl platform install` configure the
 	// external gateway ingress non-interactively (CI-friendly path).
 	"gateway.hostname": {required: false, kind: kindString},

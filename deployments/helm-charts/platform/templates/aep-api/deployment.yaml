@@ -110,10 +110,31 @@ spec:
               value: {{ .Values.taskSigning.audience | quote }}
             - name: BFF_PUBLIC_URL
               value: {{ .Values.aepApi.publicURL | quote }}
+            {{- if (default dict .Values.tryIt).enabled }}
+            # Registered as a redirect URI on every project's sign-in client at
+            # deploy time, so the test app can complete an OAuth round-trip
+            # against that project's identity provider. Left unset, the app loads
+            # and the sign-in is then refused — which reads as the app being
+            # broken rather than unregistered. Origin must match the console's
+            # VITE_TRY_IT_URL; both come from tryIt.publicURL.
+            - name: TRY_IT_CALLBACK_URL
+              value: "{{ .Values.tryIt.publicURL | trimSuffix "/" }}/callback"
+            {{- end }}
             - name: OBSERVER_OAUTH_CLIENT_ID
               value: {{ .Values.observer.clientId | quote }}
             - name: OBSERVER_OAUTH_HOST_HEADER
               value: ""
+            {{- if .Values.observer.baseURL }}
+            - name: OBSERVER_URL
+              value: {{ .Values.observer.baseURL | quote }}
+            {{- end }}
+            # Without this, aep-api's own default assumes the data-plane
+            # gateway terminates TLS and holds every component with an
+            # external URL at "converging" forever waiting on a certificate
+            # window that does not exist here — see dataPlaneGateway.tls's
+            # comment in values.yaml.
+            - name: DATA_PLANE_GATEWAY_TLS
+              value: {{ .Values.dataPlaneGateway.tls | quote }}
             - name: PLATFORM_API_SERVICE_BASE_URL
               valueFrom: 
                 configMapKeyRef:
@@ -125,6 +146,23 @@ spec:
                   name: platform-configs
                   key: THUNDER_JWKS_URL
             - name: JWT_ISSUER
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-configs
+                  key: THUNDER_ISSUER
+            # The platform IdP the coding-agent dispatch mints its own
+            # (PUBLISHER_*) client_credentials token against — same instance
+            # as JWKS_URL/JWT_ISSUER above, read again under the names
+            # config_loader.go's PlatformIDP struct expects. Without these,
+            # PlatformIDP.JWKSURL falls back to a hostname no deployment of
+            # this chart actually has, and every coding-agent dispatch fails
+            # before it mints its first token.
+            - name: PLATFORM_IDP_JWKS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-configs
+                  key: THUNDER_JWKS_URL
+            - name: PLATFORM_IDP_ISSUER
               valueFrom:
                 configMapKeyRef:
                   name: platform-configs
@@ -159,12 +197,18 @@ spec:
               value: {{ .Values.codingAgentRunner.opencodeImage | quote }}
             # OpenBao-direct secrets delivery (local-only). Cloud injects a
             # different SecretsProvider via the overlay; OPENBAO_* must be
-            # absent there.
+            # absent there. OPENBAO_TOKEN comes from the ESO-synced
+            # aep-openbao-secrets Secret, same as every other credential below
+            # — never a literal Helm value (it would otherwise sit in plaintext
+            # in the release's values/history and this Deployment's own spec).
             {{- if .Values.codingAgentDispatch.openBaoDirect.enabled }}
             - name: OPENBAO_ADDR
               value: {{ .Values.openbao.addr | quote }}
             - name: OPENBAO_TOKEN
-              value: {{ .Values.openbao.token | default "root" | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: aep-openbao-secrets
+                  key: OPENBAO_TOKEN
             {{- end }}
             # GitHub webhook delivery URL registered on each repo. Local → smee.io
             # channel (forwarded in-cluster by the smee-client); prod → the real

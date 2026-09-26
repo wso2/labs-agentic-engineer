@@ -14,15 +14,29 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# Local dev inner loop: build → load into k3d → deploy via Helm → watch.
+# Local dev inner loop: build → load into k3d. Build-only — no `deploy:`
+# section — one-shot, not a watch loop: edit source, then `make dev-update`
+# (which runs `skaffold build` here, then a plain `helm upgrade --reuse-values`
+# in the Makefile to re-point the aep-platform release at the new images).
 #
-# Prerequisites (run once per cluster):
-#   ./deployments/scripts/setup-k3d.sh   # k3d + OpenChoreo
-#   make setup-local                      # secrets + Thunder clients
+# Why no `deploy:` here: this v4beta11 HelmRelease schema has no field for
+# passing `--reuse-values` (or any other raw CLI flag) to `helm upgrade` —
+# skaffold's own helm deploy would otherwise reset every value `aectl platform
+# install` set (Thunder/OpenBao/webhook URLs, etc.) back to chart defaults on
+# every redeploy. A plain `helm upgrade --reuse-values` run directly has no
+# such restriction, so that step lives in the Makefile instead.
+#
+# tagPolicy is pinned to a fixed string, not skaffold's default (gitCommit),
+# so the Makefile's `helm upgrade --set ...image.tag=` can hardcode the same
+# value without parsing skaffold's build output.
+#
+# Runs AFTER `make dev-env` (deployments/scripts/setup-env-for-aectl.sh +
+# `aectl platform config import` + `aectl platform install`), which is what
+# actually installs the aep-platform release.
 #
 # Usage:
-#   make dev-cluster      # skaffold dev (watch + rebuild on change)
-#   make deploy-local     # skaffold run (one-shot build + deploy)
+#   make dev-env       # one-time: cluster + platform install, via aectl
+#   make dev-update    # this file — edit source, then run to redeploy the change
 
 apiVersion: skaffold/v4beta11
 kind: Config
@@ -30,6 +44,9 @@ metadata:
   name: aep
 
 build:
+  tagPolicy:
+    customTemplate:
+      template: "dev-local"
   local:
     # k3d is detected automatically — Skaffold loads images via `k3d image import`
     # instead of pushing to a registry. TS service images use this path.
@@ -80,37 +97,17 @@ build:
       docker:
         dockerfile: apps/console/Dockerfile
 
-deploy:
-  helm:
-    releases:
-      - name: aep-platform
-        namespace: wso2-aep
-        createNamespace: false  # namespace + secrets created by setup-local-secrets.sh
-        chartPath: deployments/helm-charts/platform
-        valuesFiles:
-          - deployments/helm-charts/platform/values.yaml
-          - deployments/helm-charts/platform/values.local.yaml
-          # Per-developer overrides (git-ignored), layered last so it wins. Copy
-          # values.local.dev.yaml.example to values.local.dev.yaml and edit — e.g.
-          # webhook.deliveryURL for local GitHub webhook delivery. The
-          # dev-cluster/deploy-local Make targets create an empty stub if it is
-          # missing, so skaffold never fails on a fresh checkout.
-          - deployments/helm-charts/platform/values.local.dev.yaml
-        setValueTemplates:
-          aepApi.image.repository: "{{.IMAGE_REPO_ghcr_io_wso2_aep_aep_api}}"
-          aepApi.image.tag: "{{.IMAGE_TAG_ghcr_io_wso2_aep_aep_api}}"
-          aepAgents.image.repository: "{{.IMAGE_REPO_ghcr_io_wso2_aep_agents}}"
-          aepAgents.image.tag: "{{.IMAGE_TAG_ghcr_io_wso2_aep_agents}}"
-          collab.image.repository: "{{.IMAGE_REPO_ghcr_io_wso2_aep_collab}}"
-          collab.image.tag: "{{.IMAGE_TAG_ghcr_io_wso2_aep_collab}}"
-          aepMcpServer.image.repository: "{{.IMAGE_REPO_ghcr_io_wso2_aep_aep_mcp_server}}"
-          aepMcpServer.image.tag: "{{.IMAGE_TAG_ghcr_io_wso2_aep_aep_mcp_server}}"
-          console.image.repository: "{{.IMAGE_REPO_ghcr_io_wso2_aep_console}}"
-          console.image.tag: "{{.IMAGE_TAG_ghcr_io_wso2_aep_console}}"
+    # Try it, the test app an agent's "Try agent" button opens. Built here
+    # because no registry publishes it — it arrived as a Docker Compose service
+    # and this is the flow that replaced Compose.
+    - image: ghcr.io/wso2/aep/tryit
+      context: .
+      docker:
+        dockerfile: apps/tryit/Dockerfile
 
-portForward:
-  - resourceType: service
-    resourceName: aep-api
-    namespace: wso2-aep
-    port: 9090
-    localPort: 9090
+# No deploy: section (see header) — the Makefile's `dev-update` target runs
+# `helm upgrade --reuse-values` directly after `skaffold build` finishes.
+#
+# No portForward stanza either: that's a `skaffold dev`/`run --port-forward`
+# behavior, and this file only ever runs `skaffold build`. Reach the BFF with
+# `kubectl -n wso2-aep port-forward svc/aep-api 9090:9090` instead.

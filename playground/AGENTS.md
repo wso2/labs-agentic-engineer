@@ -112,7 +112,7 @@ Relative project paths resolve against where you launched `pnpm play` (pnpm's
 may live (a gitignored dot-dir, invisible to lint + license gates). Anywhere
 else inside the repo is refused.
 
-Requires `ANTHROPIC_API_KEY` (env or `deployments/.env`) for the **engineering**
+Requires `ANTHROPIC_API_KEY` (env) for the **engineering**
 agent, which is an AI SDK model call with no other way to authenticate. The
 **coding** agent is a Claude Code session and authenticates by mode: a docker run
 gets the key (a container reaches no credential store), while `--host` withholds

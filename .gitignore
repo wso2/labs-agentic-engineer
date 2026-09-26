@@ -76,9 +76,6 @@ playground/.projects/
 # Draft design notes (scratch, not part of the committed design record)
 docs/design/draft/
 
-# Per-developer local chart overrides (copy from values.local.dev.yaml.example)
-deployments/helm-charts/platform/values.local.dev.yaml
-
 # Local build output of the dev secret-manager stub (15MB binary; rebuild with
 # `GOWORK=off go build -o local-secret-manager-api .` in that directory).
 deployments/local-secret-manager-api/local-secret-manager-api
@@ -112,3 +109,8 @@ deployments/scripts/setup-local
 
 # Ballerina eval sweeps: scratch packages, transcripts and reports (on-demand, never CI)
 evals/ballerina/.runs/
+tools/aectl/aectlv2
+
+# Python bytecode from the deployment helper scripts
+__pycache__/
+*.pyc

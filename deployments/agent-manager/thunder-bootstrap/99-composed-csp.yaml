@@ -1,0 +1,37 @@
+# Content Security Policy — a composed singleton.
+#
+# The IdP keeps ONE `csp` server_config, governing what the browser may load on
+# the IdP's own `/gate/` and `/console/` pages. A redeclaration replaces it
+# wholesale, and the failure mode is a sign-in page that renders blank with the
+# reason only in the browser console.
+#
+# Replaces, and is imported INSTEAD of:
+#   73-amp-csp-config.yaml       (wso2-amp-thunder-extension)
+#
+# The VALUE below is Agent Manager's, unchanged. AEP publishes no CSP directives
+# of its own — the AEP console is a separate origin and is not served by the
+# IdP, and it reaches the IdP only for the hosted sign-in page. What this
+# document changes is ownership, not policy: the installer holds the last word
+# so a renumber on either side cannot decide it.
+#
+# If Agent Manager's chart stops declaring a CSP, drop this document from the
+# bundle rather than import a policy the installer invented.
+resource_type: server_config
+name: csp
+value:
+  reportOnly: false
+  paths:
+    - location: "/gate/"
+      directives:
+        style-src-elem: ["'self'", "'unsafe-inline'"]
+        style-src-attr: ["'self'", "'unsafe-inline'"]
+        img-src: ["'self'", "data:", "https://wso2.cachefly.net", "https://www.gstatic.com", "https://upload.wikimedia.org"]
+        font-src: ["'self'", "data:", "https://fonts.gstatic.com"]
+    - location: "/console/"
+      directives:
+        style-src-elem: ["'self'", "'unsafe-inline'"]
+        style-src-attr: ["'self'", "'unsafe-inline'"]
+        img-src: ["'self'", "data:", "https://wso2.cachefly.net", "https://www.gstatic.com", "https://upload.wikimedia.org"]
+        font-src: ["'self'", "data:", "https://fonts.gstatic.com"]
+        connect-src: ["'self'", "https://thunderid.dev"]
+        worker-src: ["'self'", "blob:"]
