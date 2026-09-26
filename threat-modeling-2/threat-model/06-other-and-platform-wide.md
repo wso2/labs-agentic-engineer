@@ -41,7 +41,7 @@ Changes the team plans to make. Chapters mark them **Planned**.
 | **H-1** | Auto-merge merges only pull requests the coding agent opened from its own branch, and can be turned off. | AE-07, AE-08 |
 | **H-2** | Test-user passwords are not posted in GitHub issue comments. | AE-08 |
 | **H-3** | The coding agent's container holds only its one AI key. Other secrets stay where the agent's shell cannot read them. | AE-06 |
-| **H-4** | Guardrails on the internet calls the AI agents make or ask for, such as web search and web fetch: allowed sites only, and requests checked for secrets. | AE-04, AE-06 |
+| **H-4** | Guardrails on the internet calls the AI agents make or ask for, such as web search, web fetch and an OpenAPI address the agent asks for: allowed sites only, and requests checked for secrets. | AE-04, AE-06 |
 | **H-6** | Changes to the GitHub token or an AI key, and creating or deleting a project, record who did it. | AE-02, AE-03 |
 | **GAP-2** | Tokens from the control plane to the dataplane, and Room tokens, come from the org's [Environment Thunder](01-introduction-and-architecture.md#c-environment-thunder) once WSO2 Cloud turns on token exchange (trading the user's token for a new one there). Until then the API signs short tokens, which the dataplane checks. | AE-03, AE-04, AE-05 |
 | **GAP-3** | Both agent pods run in gVisor, a stronger container sandbox, once WSO2 Cloud offers it. | AE-04, AE-06 |

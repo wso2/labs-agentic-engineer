@@ -22,7 +22,7 @@ under the License.
 
 **Description**
 
-A Developer sends a message in the console, and the [design agent](../../01-introduction-and-architecture.md#c-design-agent) answers it in one turn. Along the way the agent reads text it cannot trust: the spec, uploads, the org's skills (instruction files the org writes for its agents), web search results and OpenAPI documents (API descriptions) from the internet. Any of it can try to steer the model, which is called prompt injection. The design limits what a steered agent can reach: it holds only the Default AI key, and it gets platform facts from the [studio tools](../../01-introduction-and-architecture.md#c-studio-tools) container, which holds the secrets and answers only 11 read-only tools.
+The [design agent](../../01-introduction-and-architecture.md#c-design-agent) is the AI that helps people write a project's spec: they describe what they want in the console, and it writes and updates the requirements and design. To do this it reads text that nobody has checked, such as uploaded documents, the org's skills (instruction files the org writes for its agents), web search results and API descriptions from the internet. Some of that text may try to give the agent orders, which is called prompt injection. So the design keeps what the agent can reach small: it holds only one AI key, and for platform facts it must ask the [studio tools](../../01-introduction-and-architecture.md#c-studio-tools) container beside it, which keeps the secrets and answers only 11 read-only tools.
 
 **Assets Involved**
 
@@ -36,12 +36,11 @@ A Developer sends a message in the console, and the [design agent](../../01-intr
 
 **Steps**
 
-1. The Developer sends a message (see AE-01 for sign-in). The [API](../../01-introduction-and-architecture.md#c-api) checks that the user may change the design, then streams the agent's reply back to the browser as it comes.
+1. The Developer sends a message (see AE-01 for sign-in). The [API](../../01-introduction-and-architecture.md#c-api) checks that the user may change the design, and streams the agent's reply back to the browser as it comes.
 2. The API signs a short token for this org and the design agent, and starts the turn through the org gateway.
 3. The design agent reads the spec from a copy that studio tools wrote for it, and calls the AI model at Anthropic with the Default key. The model may also run a web search, up to four times per turn.
 4. For platform facts, the agent calls studio tools on its own socket inside the pod. It uses MCP (Model Context Protocol, a standard way for an AI to call tools). The socket answers only 11 read-only tools.
-5. Studio tools reads a file from the org's GitHub repositories with the GitHub token, or passes the call to the API as the org's machine login (publisher client).
-6. The API runs the tool for this org. For example, it lists the org's services, or fetches an OpenAPI document from a public web address. In a Room, the agent's edits go into the live session (see AE-05).
+5. Studio tools answers the call. It reads repository files on GitHub itself, with the GitHub token. For the other tools it calls the API as the org's machine login (publisher client), and the API runs the tool for this org: for example, it lists the org's services or fetches an API description (OpenAPI document) from a public web address. In a Room, the agent's edits go into the live session (see AE-05).
 
 **Payload**
 
