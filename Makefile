@@ -194,10 +194,13 @@ workflow-skill:
 # a cluster with only AEP on it cannot exercise either sharing decision, so the
 # convergence is only actually tested when both are installed. Its step 4 also
 # hands two OpenChoreo objects to Helm, which has to happen after
-# `platform install` has finished patching them.
+# `platform install` has finished patching them. Its last step provisions the
+# environment's AI gateway, so an agent deployed here reaches its model through
+# Agent Manager rather than calling Anthropic directly.
 #
 # WITH_AGENT_MANAGER=0 skips it, for when the AEP half is all that is being
-# worked on — it is the slowest step here by a wide margin.
+# worked on — it is the slowest step here by a wide margin. WITH_AI_GATEWAY=0
+# keeps Agent Manager but skips the gateway alone.
 #
 # `platform install` otherwise prompts interactively for two secrets — set as
 # env vars here so it doesn't:

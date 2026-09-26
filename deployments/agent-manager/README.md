@@ -9,6 +9,12 @@ Inputs for putting Agent Manager onto a cluster that already runs AEP — built 
 products on it, because a cluster with only AEP cannot exercise anything the two
 share. `WITH_AGENT_MANAGER=0 make dev-env` stops after AEP.
 
+Its own last step runs `setup-environment-aigateway.sh`, which provisions the
+environment's LLM proxy and writes the `aep.wso2.com/aigateway-*` annotations
+`aep-api` resolves it by. Without those an `ai-agent` reaches Anthropic directly
+— nothing fails, there is just no governed path to route onto, so no guardrail
+can be attached to a running agent. `WITH_AI_GATEWAY=0` skips that step alone.
+
 The files here are that script's inputs, kept separate from it because they are
 the decided answers rather than the procedure — reviewable on their own, and
 re-derivable against a newer chart without reading the script.

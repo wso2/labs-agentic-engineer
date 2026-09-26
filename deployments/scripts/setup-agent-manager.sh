@@ -653,6 +653,35 @@ env_idp_host="$(kubectl -n "$ENV_IDP_RELEASE" get httproute \
 echo "   ✅ resolves to http://${env_idp_host}:8080 — the instance aectl installed"
 
 # ============================================================================
+# Step 11: The environment's AI gateway
+# ============================================================================
+# The LLM proxy an AMP-governed agent's model traffic flows through, and the
+# Environment annotations aep-api resolves it by. Without it an ai-agent
+# deployed here reaches Anthropic directly — nothing fails, there is simply no
+# governed path to route onto, and no guardrail can be attached to a running
+# agent.
+#
+# Last, because it needs step 10's registration: it resolves this environment's
+# id out of amp-api before it can bind a gateway to it. Kept in its own script
+# because a gateway is per-environment — adding a second environment means
+# running that script again, not re-running this one.
+#
+# WITH_AI_GATEWAY=0 skips it, for an install that only needs the two products
+# standing up rather than governed model access.
+if [ "${WITH_AI_GATEWAY:-1}" = "1" ]; then
+    AIGW_SCRIPT="${SCRIPT_DIR}/setup-environment-aigateway.sh"
+    [ -x "$AIGW_SCRIPT" ] \
+        || fail "Missing or non-executable ${AIGW_SCRIPT}." "chmod +x it, or set WITH_AI_GATEWAY=0 to skip."
+    ORG_NS="$ORG_NS" OC_ENV="$OC_ENV" CLUSTER_NAME="$CLUSTER_NAME" \
+        PUBLIC_THUNDER_URL="$PUBLIC_THUNDER_URL" THUNDER_NS="$THUNDER_NS" \
+        THUNDER_RELEASE="$THUNDER_RELEASE" AMP_NS="$AMP_NS" AMP_API_URL="$AMP_API_URL" \
+        bash "$AIGW_SCRIPT" "$ORG_NS" "$OC_ENV"
+else
+    echo ""
+    echo "⏭️  Skipping the AI gateway (WITH_AI_GATEWAY=0) — agents will call their model directly"
+fi
+
+# ============================================================================
 # Done — and the one step that is Agent Manager's own
 # ============================================================================
 echo ""
