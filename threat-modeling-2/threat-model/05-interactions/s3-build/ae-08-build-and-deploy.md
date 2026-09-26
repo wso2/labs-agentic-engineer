@@ -38,7 +38,7 @@ After a merge, Agentic Engineer turns the code into a running app on [OpenChoreo
 
 1. After a merge (see AE-07), the API asks OpenChoreo to build each changed part.
 2. OpenChoreo clones the repository and builds the image in its own build plane (the part of WSO2 Cloud that runs builds, apart from where apps run).
-3. A Developer enters each dependency's secret values in the console, and the API writes them to the write-only [secret store](../../01-introduction-and-architecture.md#c-secret-store) (see AE-02). The API also creates test users and posts their logins in a comment on a GitHub issue that the build opens for them. **Planned:** passwords are no longer posted; they are kept in the secret store, and for a validation run [coding tools](../../01-introduction-and-architecture.md#c-coding-tools) holds the password the run signs in to the app with (H-2, open decision O-11).
+3. A Developer enters each dependency's secret values in the console, and the API writes them to the write-only [secret store](../../01-introduction-and-architecture.md#c-secret-store) (see AE-02). The API also creates test users and posts their logins in a comment on a GitHub issue that the build opens for those test users. **Planned:** passwords are no longer posted; they are kept in the secret store, and for a validation run [coding tools](../../01-introduction-and-architecture.md#c-coding-tools) holds the password the run signs in to the app with (H-2, open decision O-11).
 4. When every dependency is ready, the API asks OpenChoreo to deploy the app to the development environment. The validation run then starts (see AE-06).
 
 **Payload**

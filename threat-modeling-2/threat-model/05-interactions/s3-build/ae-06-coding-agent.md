@@ -46,7 +46,7 @@ The [coding agent](../../01-introduction-and-architecture.md#c-coding-agent) is 
 
 - Run start: the repository, the milestone, the skill (`aep` or `validation-task`) and secret names.
 - Model call: the prompt, spec, code, issue text and that token or key.
-- Calls to coding tools: an action or tool name and its inputs. Coding tools never returns a secret.
+- Calls to coding tools: an action or tool name and its inputs. Coding tools never returns a secret it holds. Issue text it returns can carry test-user passwords (H-2).
 
 **Security Considerations**
 
@@ -66,7 +66,7 @@ The [coding agent](../../01-introduction-and-architecture.md#c-coding-agent) is 
 | AE-06-1 | Spoofing | Another workload calls the coding tools port to use the GitHub token. | No | **By design:** the port listens only inside the pod, and the pod accepts no calls from other pods. |
 | AE-06-2 | Tampering | An issue comment, a repository file (such as `CLAUDE.md`), an org skill, the spec or a web page tells the agent to add harmful code. | No | **By design:** there is no filter for prompt injection. The agent holds only the org's AI keys, and its code arrives as a pull request on this run's repository (see AE-07). **Implemented:** only an Admin can change org skills. **Planned:** private repositories, so outsiders cannot comment (H-9). |
 | AE-06-3 | Repudiation | A run's changes cannot be tied to the person who started it. | No | **Implemented:** the API records who clicked Build to start a coding run; a validation run belongs to the deploy that started it. Git keeps every commit. |
-| AE-06-4 | Information disclosure | A steered agent sends code or a secret out through its shell, a web fetch or a search. | No | **By design:** the agent has no GitHub token or machine login, and the dataplane blocks private addresses and cloud metadata (TB-8). This egress rule is the main control. **Implemented:** web fetch refuses literal private IP addresses and known cluster host names, and web search refuses a query that holds a secret. **Planned:** dependency secrets stay out of the agent's container (H-3), and guardrails on internet calls (H-4). |
+| AE-06-4 | Information disclosure | A steered agent sends code or a secret out through its shell, a web fetch or a search. | No | **By design:** the agent has no GitHub token or machine login, and the dataplane blocks private addresses and cloud metadata (TB-8). This egress rule is the main control. **Implemented:** web fetch refuses literal private IP addresses and known cluster host names, and web search refuses a query that holds a secret. **Planned:** dependency secrets stay out of the agent's container (H-3), test-user passwords are no longer posted in issue comments (H-2), and guardrails on internet calls (H-4). |
 | AE-06-5 | Denial of service | A steered agent loops and spends the org's AI budget. | No | **Implemented:** a run stops after 3 hours (validation: 2), with fixed CPU and memory, and one coding run per project at a time. See PW-3. |
 | AE-06-6 | Elevation of privilege | A steered agent tries to read the GitHub token or reach the cluster from its shell. | No | **By design:** the secrets live only in coding tools. The pod runs non-root, with a read-only file system, no Kubernetes token and no shared processes (TB-6, TB-7). **Planned:** a stronger sandbox, gVisor (GAP-3). |
 

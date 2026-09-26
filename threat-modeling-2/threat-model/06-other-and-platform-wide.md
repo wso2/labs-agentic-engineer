@@ -31,7 +31,7 @@ Chapters point to these IDs.
 | **O-5** | How the design studio starts before the org sets its Default AI key | AE-02 |
 | **O-6** | How the machine login's secret is created and rotated without the control plane reading it | AE-02 |
 | **O-10** | How dataplane containers get the API's public signing keys | AE-03, AE-04, AE-05 |
-| **O-11** | Where dependency secrets and test-user passwords live during a coding run. The intended design is that [coding tools](01-introduction-and-architecture.md#c-coding-tools) holds both, and the AI container holds neither (H-2, H-3). | AE-06, AE-08 |
+| **O-11** | Where dependency secrets and test-user passwords live during a coding run. The intended design is that [coding tools](01-introduction-and-architecture.md#c-coding-tools) holds both, and the AI container holds neither (H-2, H-3). Once the passwords are in the write-only store, the API cannot read them back, so how a Developer sees a test-user password is not yet decided. | AE-06, AE-08 |
 
 **Improvements to make**
 
@@ -40,8 +40,8 @@ Changes the team plans to make. Chapters mark them **Planned**. GAP-n items are 
 | ID | Improvement | Chapters |
 | :---- | :---- | :---- |
 | **H-1** | Auto-merge merges only pull requests the coding agent opened from its own branch, and can be turned off. | AE-07, AE-08 |
-| **H-2** | Test-user passwords are kept in the secret store (through the secret manager API) and are not posted in GitHub issue comments. For a validation run, coding tools holds the password, and the AI container never holds it. This needs a new architecture decision record (ADR) that replaces ADR-0022, which accepted posting these passwords in issue comments. Decides O-11. | AE-02, AE-06, AE-07, AE-08 |
-| **H-3** | Dependency secrets (for example the app's database password) do not land in the coding agent's container. [Coding tools](01-introduction-and-architecture.md#c-coding-tools) holds them, as it holds the GitHub token. Decides O-11. | AE-06 |
+| **H-2** | Test-user passwords are kept in the secret store (through the secret manager API) and are not posted in GitHub issue comments. For a validation run, coding tools holds the password, and the AI container never holds it. This needs a new architecture decision record (ADR) that replaces ADR-0022, which accepted posting these passwords in issue comments. Once the passwords are in the write-only store, the API cannot read them back, so how a Developer sees a test-user password is not yet decided. Open decision O-11. | AE-02, AE-06, AE-07, AE-08 |
+| **H-3** | Dependency secrets (for example the app's database password) do not land in the coding agent's container. [Coding tools](01-introduction-and-architecture.md#c-coding-tools) holds them, as it holds the GitHub token. Open decision O-11. | AE-06 |
 | **H-4** | Guardrails on the internet calls the AI agents make or ask for, such as web search, web fetch and an OpenAPI address the agent asks for: allowed sites only, and requests checked for secrets. | AE-04, AE-06 |
 | **H-6** | Changes to the GitHub token or an AI key, and creating or deleting a project, record who did it. | AE-02, AE-03 |
 | **H-7** | WSO2 Cloud sign-in issues the `ae-admin` and `ae-developer` roles and their `ae:*` permissions, and the console asks for them. | AE-01 |

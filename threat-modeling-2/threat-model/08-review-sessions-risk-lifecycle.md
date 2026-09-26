@@ -52,12 +52,12 @@ No row in AE-01 to AE-08 or PW-1 to PW-4 is Materializable **Yes** or **Partiall
 | ID | Item | Chapters | Tracking issue |
 | :---- | :---- | :---- | :---- |
 | H-1 | Auto-merge merges only pull requests the coding agent opened from its own branch, and can be turned off. | AE-07, AE-08 | |
-| H-2 | Test-user passwords are kept in the secret store and are not posted in GitHub issue comments; for a validation run, coding tools holds them (open decision O-11). Needs a new architecture decision record (ADR) that replaces ADR-0022, which accepted posting these passwords in issue comments. | AE-02, AE-06, AE-07, AE-08 | |
+| H-2 | Test-user passwords are kept in the secret store and are not posted in GitHub issue comments; for a validation run, coding tools holds them and the AI container never holds them (open decision O-11). Needs a new architecture decision record (ADR) that replaces ADR-0022, which accepted posting these passwords in issue comments. Once the passwords are in the write-only store, the API cannot read them back, so how a Developer sees a test-user password is not yet decided. | AE-02, AE-06, AE-07, AE-08 | |
 | H-3 | Dependency secrets do not land in the coding agent's container; coding tools holds them (open decision O-11). | AE-06 | |
 | H-4 | Guardrails on the AI agents' internet calls. | AE-04, AE-06 | |
 | H-6 | Changes to the GitHub token or an AI key, and creating or deleting a project, record who did it. | AE-02, AE-03 | |
 | H-7 | WSO2 Cloud sign-in issues the `ae-admin` and `ae-developer` roles and their `ae:*` permissions, and the console asks for them. | AE-01 | |
-| H-8 | The console calls the API through the public gateway. | AE-01 | |
+| H-8 | The console calls the API through the public gateway, not only through its own web server. | AE-01 | |
 | H-9 | Project repositories are private. | AE-03, AE-06, AE-07, AE-08 | |
 | GAP-2 | Tokens from the control plane to the dataplane, and Room tokens, come from the org's Environment Thunder. | AE-03, AE-04, AE-05 | |
 | GAP-3 | Both agent pods run in gVisor. | AE-04, AE-06 | |
