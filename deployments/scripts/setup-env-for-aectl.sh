@@ -849,6 +849,97 @@ YAML
 
 fi
 
+# ── 3c-ii. AEP's own client for calling Agent Manager ───────────────────────
+# aep-api registers an ai-agent's provider, model binding and keys in Agent
+# Manager, and mints for that with this client. Without it the mint answers 401,
+# agent governance fails, and aep-api REFUSES the deploy rather than running an
+# agent ungoverned — so a build goes green and nothing ever deploys, with the
+# reason only in aep-api's log.
+#
+# Both documents are required and neither is sufficient: the client declares
+# what it may ASK for, the role is what ThunderID issues those scopes from.
+#
+# The role's `amp-resource-server` is Agent Manager's, declared in its frozen
+# 60-amp-resource-server.yaml. The numbering is what makes that resolve — 60
+# imports before 93 — so these two must stay numbered above Agent Manager's
+# documents, and this pair cannot be imported into an IdP that has none of them.
+#
+# Duplicated from deployments/single-cluster/thunder-resources/92- and 93-.
+# That directory is AEP's bundle for the setup-thunder.sh flow, which this one
+# replaced; it is no longer read here, and the copies must be kept in step until
+# one of the two flows goes. Upstream added those files and this flow silently
+# did not pick them up, which is how a green build came to deploy nothing.
+cat > "${BOOTSTRAP_DIR}/92-aep-amp-publisher-client.yaml" <<YAML
+# THE NAME IS LOAD-BEARING. agent-manager-service's KEY_MANAGER_AUDIENCE is an
+# allow-list and the entry admitting this client is the wildcard
+# \`amp-publisher-*\`. A client named outside it mints perfectly good tokens that
+# amp-api rejects as "invalid jwt" whatever scopes they carry.
+#
+# ouId (not ouHandle): the importer resolves ouHandle for roles, groups and
+# users but NOT for applications, and an application without an OU mints tokens
+# carrying no ouId claim — which amp-api's RequireOrgMatch rejects.
+resource_type: application
+id: amp-publisher-aep
+type: m2m
+name: "AEP Agent Manager Publisher"
+description: "AEP's client for registering its agents, providers and model bindings in Agent Manager"
+ouId: "${DEFAULT_OU_ID}"
+inboundAuthConfig:
+  - type: oauth2
+    config:
+      clientId: "amp-publisher-aep"
+      clientSecret: "amp-publisher-aep-secret"
+      grantTypes: ["client_credentials"]
+      tokenEndpointAuthMethod: "client_secret_basic"
+      pkceRequired: false
+      publicClient: false
+      scopes: ["amp:org:view","amp:project:create","amp:project:read","amp:agent:create","amp:agent:read","amp:agent:update","amp:llm-provider:create","amp:llm-provider:read","amp:llm-provider:update","amp:llm-provider:api-key-manage","amp:agent:api-key-manage","amp:llm-provider-template:read","amp:gateway:read","amp:environment:read"]
+      # ouId above sets the OU; \`attributes\` is what puts the claim INTO the
+      # token. Without it the mint succeeds and every amp-api call still fails.
+      token:
+        accessToken:
+          clientConfig:
+            validityPeriod: 3600
+            attributes: ["ouId", "ouHandle"]
+YAML
+
+cat > "${BOOTSTRAP_DIR}/93-aep-amp-publisher-role.yaml" <<YAML
+# A NEW role, not an assignment into Agent Manager's amp-role-admin: the
+# importer replaces a document wholesale, so editing theirs would make AEP's
+# copy the definition of their admin role. Deliberately narrower than it, too —
+# AEP registers agents and maintains its own provider, and has no business
+# deleting either.
+resource_type: role
+id: aep-amp-publisher-role
+name: AEP Agent Manager Publisher
+description: Lets AEP register its agents, providers and model bindings in Agent Manager
+ouHandle: default
+permissions:
+  - resourceServerId: amp-resource-server
+    permissions:
+      - "amp:org:view"
+      - "amp:project:read"
+      - "amp:agent:create"
+      - "amp:agent:read"
+      - "amp:agent:update"
+      - "amp:llm-provider:create"
+      - "amp:llm-provider:read"
+      - "amp:llm-provider:update"
+      - "amp:llm-provider:api-key-manage"
+      # An AGENT's model-config keys are gated by the agent permission, not the
+      # provider one.
+      - "amp:agent:api-key-manage"
+      # The agent's TRACING token is a third key family again: without this the
+      # mint answers 403 and the agent emits no traces, silently.
+      - "amp:agent:token-manage"
+      - "amp:llm-provider-template:read"
+      - "amp:gateway:read"
+      - "amp:environment:read"
+assignments:
+  - id: amp-publisher-aep
+    type: app
+YAML
+
 # ── 3d. Agent Manager's documents ───────────────────────────────────────────
 # Both products share one IdP (ADR-0027) and ThunderID reads its bootstrap
 # folder only once, at install — so Agent Manager's documents have to be in
