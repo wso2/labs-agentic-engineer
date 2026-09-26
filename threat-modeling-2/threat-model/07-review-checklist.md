@@ -25,23 +25,23 @@ under the License.
 | Security Consideration | State | Comments |
 | :---- | :---- | :---- |
 | Are all inputs and outputs validated? (Syntactic and Semantic Validation) | Yes | Inputs have size limits, the org comes from the login token, and webhooks are checked by signature. |
-| Are rate limits in place where necessary? | Yes | Rate limits are WSO2 Cloud's, at its gateways. Agentic Engineer also limits turns, runs and builds (PW-3). |
+| Are rate limits in place where necessary? | Partial | WSO2 Cloud's edge has a per-IP rate limit (WAF). Per-API gateway rate limits are not set for Agentic Engineer. Agentic Engineer limits turns, runs and builds itself (PW-3). |
 | Are permissions, roles, and entitlements defined on least privilege and business needs? | Yes | Two roles and 14 permissions (see Actors). Secrets and skills are Admin only. |
 | Are authentication and authorization validated at both UI and API, front and back end? | Yes | The API checks the login token and the permission on every call. Dataplane containers check their own tokens. |
 | Are proper isolations in place between components (least-privilege, blast-radius reduction)? | Yes | Each org has its own dataplane pods, and the AI is kept apart from the secrets (TB-5, TB-7). |
 | Have default credentials been changed / default superuser accounts disabled? | Yes | WSO2 Cloud settings turn off every development path. |
-| Has implementation followed best-practice guidelines (OWASP/Kubernetes/vendor)? | Yes | Pods run non-root, with a read-only file system and no Kubernetes token. |
+| Has implementation followed best-practice guidelines (OWASP/Kubernetes/vendor)? | Yes | By design: agent pods run non-root, with a read-only file system and no Kubernetes token (TB-4, TB-6). Inherited: control-plane pods run non-root with no Kubernetes token. |
 | Is the source code kept private where applicable? | Yes | WSO2 Cloud related configs and source are kept private. |
 | Was a security-focused code review conducted, and were findings addressed? | No | — |
 | Is Static (SAST) or IaC scanning conducted and are findings addressed? | No | — |
 | Is Software Composition Analysis (SCA) conducted (e.g., FOSSA, JFrog XRay, Trivy)? | No | — |
 | Is Dynamic (DAST) or API scanning conducted on non-production setups? | No | — |
-| Are audit logs generated in a standardized format, available to authorized users, with a defined retention period? | Partial | Builds and deploys record who started them. More is planned (H-6). No retention period is set. |
-| Do audit logs for critical configuration changes include before/after values? | Yes | A change to the GitHub token or an AI key logs which section changed, never the value. |
+| Are audit logs generated in a standardized format, available to authorized users, with a defined retention period? | Partial | The API records who clicked Build and who edited the spec. More is planned (H-6). No retention period is set. |
+| Do audit logs for critical configuration changes include before/after values? | No | A change to the GitHub token or an AI key logs only which section changed. The values are secrets, so they are never logged. |
 | Has a Business Impact Analysis (BIA) been conducted (MTTD, uptime, RPO, RTO)? | No | — |
 | Are data in transit and at rest encrypted? | Yes | TLS on every call across the internet. Encryption at rest is WSO2 Cloud's. |
 | Is sensitive data (credentials, keys) stored in a secret store / key vault? | Yes | Org secrets live only in the write-only secret store. |
-| Have you ensured personal, sensitive, or confidential data is not logged? | Yes | The API never logs secret values. |
+| Have you ensured personal, sensitive, or confidential data is not logged? | Partial | The API never logs secret values. Whether logs carry the user's name and email has not been checked. |
 | Have users been given proper instructions on secure usage? | No | — |
 
 ## Vulnerability Management
@@ -60,7 +60,7 @@ Agentic Engineer processes the name and email on the login token, and test-user 
 | :---- | :---- | :---- |
 | Is the purpose and legal basis for processing personal data clearly defined? | — | — |
 | Is creation/collection, storage, usage, sharing, archival, and disposal of personal data in line with data minimization? | Yes | Only the name and email on the login token. |
-| Is personal data stored securely? | Yes | Rows are limited to the user's org. Test-user passwords are stored sealed. |
+| Is personal data stored securely? | Partial | Rows are limited to the user's org. Planned: test-user passwords are kept in the secret store (H-2). |
 | Are privacy policies updated to reflect new personal data processing? | — | — |
 | Is access to personal data granted on a need-to-know basis? | Yes | People see only their own org. Test-user passwords need `ae:build`. |
 | Are data retention requirements considered? | Partial | Conversations are deleted after 7 days. Activity records have no set limit. |
@@ -74,6 +74,6 @@ Agentic Engineer processes the name and email on the login token, and test-user 
 | How is namespace management done? | OpenChoreo manages them. Each org has its own dataplane. |
 | Has the default namespace been used, and have resources been created in it? | No |
 | Have resource quotas and limits been defined? | Partial. Coding pods have fixed CPU and memory limits. Project quotas are WSO2 Cloud's. |
-| Have Network Policies been configured to control traffic? | Yes. Agent pods reach only public addresses, and accept calls only through the org gateway (TB-8). |
-| Have RBAC policies been implemented for least-privilege access? | Yes. Agent pods have no Kubernetes token, and the API has no Kubernetes access on WSO2 Cloud. |
-| Are non-root users being used? | Yes. Agent pods run as non-root. |
+| Have Network Policies been configured to control traffic? | Yes. By design (TB-8): agent pods reach only public addresses. The design studio accepts calls only through the org gateway; coding pods accept none. |
+| Have RBAC policies been implemented for least-privilege access? | Yes. By design: agent pods have no Kubernetes token. The API has no Kubernetes access on WSO2 Cloud. |
+| Are non-root users being used? | Yes. By design: agent pods run as non-root (TB-4, TB-6). |

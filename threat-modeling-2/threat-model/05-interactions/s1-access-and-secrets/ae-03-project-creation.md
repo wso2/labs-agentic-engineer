@@ -22,7 +22,7 @@ under the License.
 
 **Description**
 
-An org Admin creates a project in the console. The API creates the project in [OpenChoreo](../../01-introduction-and-architecture.md#c-openchoreo) and makes sure the org's [design studio](../../01-introduction-and-architecture.md#c-design-studio) is running and up to date. It then asks the [studio tools](../../01-introduction-and-architecture.md#c-studio-tools) container to create the GitHub repository and copy the org's skills (instruction files the org writes for its agents) into it. The control plane has no private path into the dataplane, so this call goes through the org gateway with a short token that the API signs.
+An org Admin creates a project in the console. The API creates the project in [OpenChoreo](../../01-introduction-and-architecture.md#c-openchoreo); the org's [design studio](../../01-introduction-and-architecture.md#c-design-studio) is kept up to date on each console load. The API then asks the [studio tools](../../01-introduction-and-architecture.md#c-studio-tools) container to create the GitHub repository and copy the org's skills (instruction files the org writes for its agents) into it. The control plane has no private path into the dataplane, so this call goes through the org gateway with a short token that the API signs.
 
 **Assets Involved**
 
@@ -38,7 +38,7 @@ An org Admin creates a project in the console. The API creates the project in [O
 
 1. The Admin creates a project in the console (see AE-01 for sign-in).
 2. The API creates the project in OpenChoreo with the user's token.
-3. The API checks the org's design studio. If its version is old, the API updates the same studio in place, passing secret names only. It never creates a second one.
+3. The API keeps the org's design studio current. It checks the studio on each console load, and if its version is old, the API updates the same studio in place, passing secret names only. It never creates a second one.
 4. The API signs a short token for this org and the studio tools container, and calls studio tools through the org gateway.
 5. Studio tools checks the token, then creates the GitHub repository and copies the org's skills into it with the org's GitHub token. The API then starts the first design turn, where the design agent reads the first prompt and starts the spec (see AE-04).
 
@@ -67,11 +67,11 @@ An org Admin creates a project in the console. The API creates the project in [O
 | AE-03-1 | Spoofing | A malicious actor calls studio tools through the public org gateway, pretending to be the control plane. | No | **By design:** studio tools accepts only a short token signed by the API, and checks the signature, audience, expiry and org itself. The gateway only ends TLS. How studio tools gets the API's public keys is still to decide (O-10). |
 | AE-03-2 | Tampering | A token made for one org, or for another container, is reused to act on this org's studio tools. | No | **By design:** the audience names one org and one container, studio tools checks that the org is its own, and the token lives 5 minutes. |
 | AE-03-3 | Repudiation | An Admin denies creating or deleting a project. | No | **Planned:** record who creates or deletes a project (H-6). |
-| AE-03-4 | Information disclosure | A project's spec and code are readable by anyone on GitHub. | No | **Planned:** project repositories become private when Agentic Engineer moves to the GitHub App install path that OpenChoreo uses for private repositories. |
+| AE-03-4 | Information disclosure | A project's spec and code are readable by anyone on GitHub. | No | **Planned:** project repositories become private (H-9), when Agentic Engineer moves to the GitHub App install path that OpenChoreo uses for private repositories. |
 | AE-03-5 | Denial of service | A malicious actor floods the org gateway. | No | **Inherited:** the org gateway is WSO2 Cloud's. |
 | AE-03-6 | Elevation of privilege | The API's signing key leaks, and a malicious actor signs tokens for any org's design studio. | No | **By design:** the key is a platform secret of the API only. Each token names one org and one container and lives 5 minutes. **Planned:** tokens come from the org's [Environment Thunder](../../01-introduction-and-architecture.md#c-environment-thunder) once WSO2 Cloud turns on token exchange (GAP-2). |
 
 **Product improvements flagged**
 
-- **Planned:** project repositories become private (GitHub App install path).
+- **Planned:** project repositories become private (GitHub App install path, H-9).
 - **Planned:** record who creates or deletes a project (H-6).

@@ -64,11 +64,11 @@ GitHub tells Agentic Engineer when a pull request or an issue changes, with a we
 | ID | Category | Threat | Materializable | Mitigations / Comment |
 | :---- | :---- | :---- | :---- | :---- |
 | AE-07-1 | Spoofing | A malicious actor posts fake events, or one org sends events for another org's repository. | No | **By design:** studio tools checks every signature with the org's own secret. The API takes the org from the machine login and looks up the repository only in that org. **Inherited:** only people the repository allows can add labels. |
-| AE-07-2 | Tampering | An outsider opens a pull request that names a run's issue, and it is merged. | No | **Planned:** auto-merge merges only the coding agent's own pull requests, and can be turned off (H-1). **Planned:** private repositories (see AE-03-4). |
+| AE-07-2 | Tampering | An outsider opens a pull request that names a run's issue, and it is merged. | No | **Planned:** auto-merge merges only the coding agent's own pull requests, and can be turned off (H-1). **Planned:** private repositories (H-9). |
 | AE-07-3 | Repudiation | Nobody can tell why a pull request was merged. | No | **Implemented:** every event is stored. GitHub keeps the merge and the pull request. |
 | AE-07-4 | Information disclosure | Test-user passwords in an issue comment are copied into the stored events. | No | **Implemented:** the API removes them before storing. **Planned:** passwords are not posted in issue comments (H-2). |
 | AE-07-5 | Denial of service | A malicious actor floods the webhook address or replays events. | No | **Implemented:** a repeated event is dropped. **By design:** unsigned calls are refused. **Inherited:** the org gateway is WSO2 Cloud's. |
-| AE-07-6 | Elevation of privilege | A steered coding agent's pull request (see AE-06-2) is merged and deployed. | No | **By design:** the person reviews at the Build click. The deploy goes only to the development environment, and the validation agent tests it (see AE-08). **Planned:** auto-merge can be turned off (H-1). |
+| AE-07-6 | Elevation of privilege | A steered coding agent's pull request (see AE-06-2) is merged and deployed. | No | **By design:** a person starts each run with Build, but no person reviews the code before auto-merge. The deploy goes only to the development environment, and the validation agent tests it (see AE-08). **Planned:** auto-merge can be turned off (H-1). |
 
 **Product improvements flagged**
 

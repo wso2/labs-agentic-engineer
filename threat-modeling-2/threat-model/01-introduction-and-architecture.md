@@ -40,14 +40,14 @@ The model describes the design in the Agentic Engineer architecture spec: organi
 | ↳ <a id="c-live-editing"></a>Live editing | Design studio | Hosts Rooms, the live sessions where people and the agent edit together. |
 | ↳ <a id="c-studio-tools"></a>Studio tools | Design studio | Does git and GitHub work and checks webhooks. Runs no AI. Holds the GitHub token. |
 | <a id="c-coding-agent-pod"></a>Coding agent pod | Org dataplane, the app's project | Started for one run to build or test the app. It has two parts: |
-| ↳ <a id="c-coding-agent"></a>Coding agent | Coding agent pod | The AI that writes or tests code. Holds only one AI key. |
+| ↳ <a id="c-coding-agent"></a>Coding agent | Coding agent pod | The AI that writes or tests code. Holds only the org's AI keys. |
 | ↳ <a id="c-coding-tools"></a>Coding tools | Coding agent pod | Does git, GitHub and platform actions for that run. Runs no AI. |
 
 **WSO2 Cloud platform (inherited)**
 
 | Component | What it does |
 | :---- | :---- |
-| <a id="c-platform-idp"></a>Platform IdP | WSO2 Cloud sign-in for people and machine logins. |
+| <a id="c-platform-idp"></a>Platform IdP | WSO2 Cloud sign-in (identity provider, IdP) for people and machine logins. |
 | <a id="c-environment-thunder"></a>Environment Thunder | Sign-in service for one org and environment. |
 | <a id="c-openchoreo"></a>OpenChoreo | Runs, builds and deploys workloads. |
 | <a id="c-secret-store"></a>Secret store and secret sync | Write-only vault, and the job that copies a secret into a container. |

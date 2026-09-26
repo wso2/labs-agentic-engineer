@@ -47,16 +47,19 @@ Session 3: Build (AE-06 to AE-08, platform-wide risks)
 
 # Risk registry entries
 
-No row in AE-01 to AE-08 or PW-1 to PW-4 is Materializable **Yes** or **Partially**. The items below are the planned changes those rows rely on. A tracking issue is created for each after the review.
+No row in AE-01 to AE-08 or PW-1 to PW-4 is Materializable **Yes** or **Partially**. The items below are the planned changes those rows rely on. Rows whose only mitigation is Planned are covered by the tracked items below. A tracking issue is created for each after the review.
 
 | ID | Item | Chapters | Tracking issue |
 | :---- | :---- | :---- | :---- |
 | H-1 | Auto-merge merges only pull requests the coding agent opened from its own branch, and can be turned off. | AE-07, AE-08 | |
-| H-2 | Test-user passwords are not posted in GitHub issue comments. | AE-07, AE-08 | |
-| H-3 | The coding agent's container holds only its one AI key. | AE-06 | |
+| H-2 | Test-user passwords are kept in the secret store and are not posted in GitHub issue comments. Needs a new ADR that replaces the accepted risk in ADR-0022. | AE-07, AE-08 | |
+| H-3 | Dependency secrets do not land in the coding agent's container; coding tools holds them. | AE-06 | |
 | H-4 | Guardrails on the AI agents' internet calls. | AE-04, AE-06 | |
 | H-6 | Changes to the GitHub token or an AI key, and creating or deleting a project, record who did it. | AE-02, AE-03 | |
-| GAP-2 | Control-plane-to-dataplane and Room tokens come from the org's Environment Thunder. | AE-03, AE-04, AE-05 | |
+| H-7 | WSO2 Cloud sign-in issues the `ae-admin` and `ae-developer` roles and their `ae:*` permissions, and the console asks for them. | AE-01 | |
+| H-8 | The console calls the API through the public gateway. | AE-01 | |
+| H-9 | Project repositories are private. | AE-03, AE-06, AE-07, AE-08 | |
+| GAP-2 | Tokens from the control plane to the dataplane, and Room tokens, come from the org's Environment Thunder. | AE-03, AE-04, AE-05 | |
 | GAP-3 | Both agent pods run in gVisor. | AE-04, AE-06 | |
 
 # Document lifecycle

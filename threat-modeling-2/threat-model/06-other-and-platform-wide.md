@@ -26,11 +26,11 @@ Chapters point to these IDs.
 
 | ID | Decision | Chapters |
 | :---- | :---- | :---- |
-| **O-3** | How the API and the secret sync sign in to the secret store | AE-02 |
+| **O-3** | How the secret sync signs in to the secret store, and how the API writes a secret when no user is on the request. A user's own write carries the user's token. | AE-02 |
 | **O-4** | How a changed secret reaches a running pod | AE-02 |
 | **O-5** | How the design studio starts before the org sets an AI key | AE-02 |
 | **O-6** | How the machine login's secret is created and rotated without the control plane reading it | AE-02 |
-| **O-10** | How dataplane containers get the API's public signing keys | AE-03 |
+| **O-10** | How dataplane containers get the API's public signing keys | AE-03, AE-04, AE-05 |
 
 **Improvements to make**
 
@@ -39,11 +39,14 @@ Changes the team plans to make. Chapters mark them **Planned**.
 | ID | Improvement | Chapters |
 | :---- | :---- | :---- |
 | **H-1** | Auto-merge merges only pull requests the coding agent opened from its own branch, and can be turned off. | AE-07, AE-08 |
-| **H-2** | Test-user passwords are not posted in GitHub issue comments. | AE-07, AE-08 |
-| **H-3** | The coding agent's container holds only its one AI key. Other secrets stay where the agent's shell cannot read them. | AE-06 |
+| **H-2** | Test-user passwords are kept in the secret store (through the secret manager API) and are not posted in GitHub issue comments. This needs a new ADR that replaces the accepted risk in ADR-0022. | AE-07, AE-08 |
+| **H-3** | Dependency secrets (for example the app's database password) do not land in the coding agent's container. [Coding tools](01-introduction-and-architecture.md#c-coding-tools) holds them, as it holds the GitHub token. | AE-06 |
 | **H-4** | Guardrails on the internet calls the AI agents make or ask for, such as web search, web fetch and an OpenAPI address the agent asks for: allowed sites only, and requests checked for secrets. | AE-04, AE-06 |
 | **H-6** | Changes to the GitHub token or an AI key, and creating or deleting a project, record who did it. | AE-02, AE-03 |
-| **GAP-2** | Tokens from the control plane to the dataplane, and Room tokens, come from the org's [Environment Thunder](01-introduction-and-architecture.md#c-environment-thunder) once WSO2 Cloud turns on token exchange (trading the user's token for a new one there). Until then the API signs short tokens, which the dataplane checks. | AE-03, AE-04, AE-05 |
+| **H-7** | WSO2 Cloud sign-in issues the `ae-admin` and `ae-developer` roles and their `ae:*` permissions, and the console asks for them. | AE-01 |
+| **H-8** | The console calls the API through the public gateway, not only through its own web server. | AE-01 |
+| **H-9** | Project repositories are private. | AE-03, AE-06, AE-07, AE-08 |
+| **GAP-2** | Tokens from the control plane to the dataplane, and Room tokens, come from the org's [Environment Thunder](01-introduction-and-architecture.md#c-environment-thunder) once WSO2 Cloud turns on token exchange (trading a token from the Platform IdP, the WSO2 Cloud identity provider, for a new one there). Until then the API signs short tokens, which the dataplane checks. | AE-03, AE-04, AE-05 |
 | **GAP-3** | Both agent pods run in gVisor, a stronger container sandbox, once WSO2 Cloud offers it. | AE-04, AE-06 |
 
 ## Platform-wide risks
@@ -52,7 +55,7 @@ Risks that run across all chapters.
 
 | ID | Risk | Why it matters | Control or plan | Materializable |
 | :---- | :---- | :---- | :---- | :---- |
-| **PW-1** | One org reaches another org's data or workloads. | All orgs share the API, its database and its background jobs. | **Implemented:** the org always comes from the login token, and every query and platform call is limited to it. **By design:** each org has its own dataplane pods. | No |
-| **PW-2** | A changed image or skill changes what the agents do. | The agents run with a shell, near the org's secrets. | **Implemented:** images are pinned to a fixed version. Only an Admin can change org skills, and git keeps their history. | No |
-| **PW-3** | Runaway agents spend an org's AI budget. | Each org pays for its own AI key. | **Implemented:** time and step limits on design turns, a time limit on runs, and one turn and one build per project at a time. Admins can see usage and cost. An org-wide spend cap is flagged as a product improvement. | No |
-| **PW-4** | Nobody can show who did what, or data is kept too long. | Needed for incident response and privacy. | **Implemented:** builds and deploys record who started them, and conversations are deleted after 7 days. **Planned:** record who changes secrets and who creates or deletes projects (H-6). | No |
+| **PW-1** | One org reaches another org's data or workloads. | All orgs share the API, its database and its background jobs. | **Implemented:** the org always comes from the login token, and every query is limited to it. **Inherited:** the platform limits each platform call to that org. **By design:** each org has its own dataplane pods. | No |
+| **PW-2** | A changed image or skill changes what the agents do. | The agents run with a shell, near the org's secrets. | **Implemented:** images are pinned by version tag, not by digest. Only an Admin can change org skills, and git keeps their history. | No |
+| **PW-3** | Runaway agents spend an org's AI budget. | Each org pays for its own AI key. | **Implemented:** time and step limits on design turns, a time limit on runs, and one turn and one coding run per project at a time. Admins can see usage and cost. There is no org-wide spend cap. | No |
+| **PW-4** | Nobody can show who did what, or data is kept too long. | Needed for incident response and privacy. | **Implemented:** the API records who clicked Build and who edited the spec, and conversations are deleted after 7 days. **Planned:** record who changes secrets and who creates or deletes projects (H-6). | No |
