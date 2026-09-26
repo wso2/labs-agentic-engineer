@@ -24,6 +24,8 @@ under the License.
 
 An org Admin pastes the org's GitHub token or an AI key into the console. The API checks the value once and writes it to the WSO2 Cloud secret store, which is write-only: the API gets back names, never the value. The platform's [secret sync](../../01-introduction-and-architecture.md#c-secret-store) then delivers each value only to the dataplane container that needs it. When a GitHub token is saved, the API also creates the org's [design studio](../../01-introduction-and-architecture.md#c-design-studio) and registers the GitHub webhook once, then forgets the token.
 
+Agentic Engineer needs these secrets to function: the **GitHub token** to create the project repository and commit specs and code to the org's GitHub, the **Default AI key** and **Coding agent AI key** for the design and coding agents' calls to Anthropic, and the **webhook secret** so [studio tools](../../01-introduction-and-architecture.md#c-studio-tools) can check that a webhook really came from GitHub.
+
 **Assets Involved**
 
 | Initiator | Intermediate | Target |
