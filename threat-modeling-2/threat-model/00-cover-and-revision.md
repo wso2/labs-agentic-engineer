@@ -28,7 +28,7 @@ Threat Model
 
 This product was previously called App Factory / AEP.
 
-> **Baseline.** Written against `main` `a8567890`, PR #778 (roles and permissions) treated as merged (reviewed at `ee2ba084`), and the architecture spec at `3dd05e5f`. WSO2 Cloud settings are taken from the Cloud overlay `fc6bd9f` and wso2cloud-deployment `ac9fb79da`.
+> **Baseline.** Written against `main` `4b6142d4`, PR #778 (roles and permissions) treated as merged (reviewed at `ee2ba084`), and the architecture spec at `3dd05e5f`. WSO2 Cloud settings are taken from the Cloud overlay `fc6bd9f` and wso2cloud-deployment `ac9fb79da`.
 
 # Revision History
 
