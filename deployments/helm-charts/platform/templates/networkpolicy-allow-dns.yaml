@@ -1,0 +1,27 @@
+{{- if .Values.networkPolicies.enabled }}
+# Every pod needs DNS to resolve in-cluster Service names and external hosts
+# (GitHub, model provider APIs, smee.io). Without this, aep-default-deny's
+# egress lockdown breaks name resolution for the entire namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: aep-allow-dns
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: wso2-aep
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+{{- end }}

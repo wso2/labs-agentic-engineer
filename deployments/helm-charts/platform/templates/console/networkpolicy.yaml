@@ -1,0 +1,43 @@
+{{- if .Values.networkPolicies.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: aep-console
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: wso2-aep
+spec:
+  podSelector:
+    matchLabels:
+      app: aep-console
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # OpenChoreo gateway (httproute.yaml routes "/" here cross-namespace).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openchoreo-control-plane
+      ports:
+        - protocol: TCP
+          port: {{ .Values.console.port }}
+  egress:
+    # AEP_API_PROXY_URL — the console's server-side reverse proxy.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: aep-api
+      ports:
+        - protocol: TCP
+          port: {{ .Values.aepApi.port }}
+    # COLLAB_SERVER_URL — nginx /collab WebSocket proxy.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: collab-server
+      ports:
+        - protocol: TCP
+          port: {{ .Values.collab.port }}
+{{- end }}
