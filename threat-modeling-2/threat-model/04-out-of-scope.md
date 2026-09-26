@@ -24,9 +24,9 @@ This review covers Agentic Engineer on WSO2 Cloud. It does not cover the items b
 
 These are Agentic Engineer parts, but they are not modelled here.
 
-- **Local-only parts:** the playground, the `/_dev` routes and the smee webhook relay.
+- **Parts not deployed on WSO2 Cloud:** the playground, the tryit test page, the `/_dev` routes and the smee webhook relay.
 - **The GitHub App sign-in path.** Agentic Engineer uses a GitHub token. A GitHub App may come later.
-- **Work in progress:** the incident (SRE/RCA) agent loop, and sending the Default AI key to the Agent Manager AI gateway.
+- **Work in progress:** the incident (SRE/RCA) agent loop, and sending the Default AI key to the Agent Manager AI gateway. Its API routes (`CreateIssue`, `PromoteTaskFromIssue`, `CreateRcaAgentReport`) exist; its tool server and agent are not on WSO2 Cloud.
 
 ## Outside Agentic Engineer
 
@@ -38,4 +38,5 @@ These are not Agentic Engineer. We cover only the calls Agentic Engineer makes i
 - **The secret store and its sync:** how they store and deliver values. We cover what Agentic Engineer writes and which container reads it.
 - **Kubernetes and the container runtime.**
 - **The customer's running app and its users.**
+- **WSO2 Cloud billing:** the console shows the org's plan by calling WSO2 Cloud's billing API with the user's login token.
 - **GitHub and Anthropic as companies,** and how Anthropic handles the data it receives.
