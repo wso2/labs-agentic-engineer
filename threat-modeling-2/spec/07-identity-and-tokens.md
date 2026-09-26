@@ -14,9 +14,9 @@ Every token in the intended architecture: who issues it, who it is for, how long
 
 | Token | Issuer | Subject / org | `aud` | TTL | Carried on | Checked by |
 |---|---|---|---|---|---|---|
-| User JWT | Platform IdP | the user | unchanged | unchanged | flow 1 | Public `aep-api` gateway `jwt-auth`; `aep-api` authorizes user and org. |
+| User JWT | Platform IdP | the user | unchanged | unchanged | flow 1 | `aep-api` itself: signature, `iss=platform-idp`, `aud`, `exp`; then it authorizes user and org. On WSO2 Cloud the call comes through the console's own web server, not the gateway. |
 | CP → DP service token | `aep-api` (RS256) | org in claims (`ocOrgId`) | org + `ae-studio-tools` (flow 3); org + `ae-design-agent` (flow 2) | 5 minutes | flows 2, 3 | The receiving container (below). |
-| Room token | `aep-api` (RS256) | org in claims | org + `ae-collab` + Room | 5 minutes | flow 4 | `ae-collab` (below). |
+| Room token | `aep-api` (RS256) | `sub` = the user; org in claims | org + `ae-collab` + Room | 5 minutes | flow 4 | `ae-collab` (below). |
 | Agent Room token | `aep-api` (RS256) | `sub` = the user who started the turn, `act` = `ae-design-agent`, org in claims | org + `ae-collab` + Room | until the turn deadline (at most 30 minutes) | inside the flow-2 turn body, then `ae-design-agent` → `ae-collab` on `localhost` | `ae-collab` (below). |
 | Publisher client token | Platform IdP (`client_credentials`) | the org's publisher client `aep-publisher-<org>` | prefix checked by `aep-api` | what the Platform IdP issues today | flows 6, 7a, 12 | Public `aep-api` gateway `jwt-auth`; `aep-api` checks `aud` prefix and `ouHandle`. |
 
@@ -35,7 +35,7 @@ The container does not trust the gateway for identity. The org kgateway is TLS o
 
 ### Room token
 
-The browser asks `aep-api` for a Room token over flow 1. `aep-api` authorizes this user, this org and this Room, then mints the token. It is not a second service identity and not the CP → DP service token: its `aud` is `ae-collab` + Room, never `ae-studio-tools`.
+The browser asks `aep-api` for a Room token over flow 1. `aep-api` authorizes this user, this org and this Room, then mints the token. The console names the project. `aep-api` looks up that project in the user's org and puts its Room in the token. It never parses a Room id string to find the org or the project. It is not a second service identity and not the CP → DP service token: its `aud` is `ae-collab` + Room, never `ae-studio-tools`.
 
 `ae-collab` checks the signature against the aep-api JWKS, `aud`, `exp`, and that the claim org equals this pod's org. It does not call `collab/validate` for authorization: `aep-api` already bound the Room when it minted the token.
 
@@ -51,7 +51,7 @@ For a Room-mode turn, `aep-api` authorizes this user, this org and this Room, as
 - `sub`: the user who started the turn. `act`: `ae-design-agent`.
 - `exp`: the turn deadline, at most 30 minutes. There is no refresh. The token stays valid for a reconnect during the turn.
 
-`ae-collab` checks it exactly as the browser's Room token: the signature against the aep-api JWKS, `aud`, `exp`, and that the claim org equals this pod's org. It has no extra rules for an agent peer. Commits credit the user in `sub`, as today. Agent edits stay held for review.
+`ae-collab` checks it exactly as the browser's Room token: the signature against the aep-api JWKS, `aud`, `exp`, and that the claim org equals this pod's org. It has no extra rules for an agent peer. Commits credit the user in `sub`, as today. Agent edits are shown in the Room for review. They are not held back: a save commits what the Room holds, and Build uses it.
 
 The token lives only in `ae-design-agent` memory. If it leaks, it opens this one Room until the turn ends. A token is needed even on `localhost`: `ae-collab` serves every Room of the org, and only `aep-api` knows which Room this turn may join.
 

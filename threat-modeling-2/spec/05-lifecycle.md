@@ -44,7 +44,7 @@ sequenceDiagram
 
 ## Key writes
 
-The Default key and the Coding agent key are written the same way as the gitpat:
+The Default key and the Coding agent token are written the same way as the gitpat:
 
 1. The person enters the key in the console. It reaches `aep-api` over flow 1.
 2. `aep-api` writes it through the SM API (flow 10). The console shows only a projection (for example a prefix and the last four characters).
@@ -98,7 +98,7 @@ The coding agent Job is created per run cycle, as today. What changes is the pod
 2. The Temporal worker inside `aep-api` dispatches the run cycle. It reads secret **reference names** only.
 3. `aep-api` creates the `coding-agent` Component and its release through the OpenChoreo API. The Workload carries references only.
 4. OpenChoreo renders the Job into the project's dataplane release namespace. ESO mounts:
-   - on `ae-coding-agent`: the Coding agent key, or the Default key when the org has no Coding agent key;
+   - on `ae-coding-agent`: the Coding agent token, or the Default key when the org has no Coding agent token;
    - on `ae-coding-tools`: the gitpat and the publisher client.
 5. `ae-coding-tools` gets a publisher client token at the Platform IdP (`client_credentials`), then calls `aep-api` for this run (flow 7a) and GitHub for this run's repository (flow 7b).
 6. The run cycle settles on GitHub webhooks (pull request opened or merged), which now arrive through `ae-studio-tools` (flows 5 and 6).

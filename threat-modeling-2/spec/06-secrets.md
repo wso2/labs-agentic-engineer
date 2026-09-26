@@ -12,7 +12,7 @@ Source: [S3-secrets-one-way.excalidraw](diagrams/S3-secrets-one-way.excalidraw).
 - **The SM API is write-only to `aep-api`.** A write returns keys and `secretReferenceName` only. GET returns the same. Reading a value back (`GetSecretWithValue`) is not supported. There is no path for a value to return to the control plane.
 - **`aep-api` holds a value only while it writes it.** The gitpat and the org HMAC exist in `aep-api` memory only during gitpat submit ([05-lifecycle.md](05-lifecycle.md)). A key exists in `aep-api` memory only during its write request.
 - **Every value reaches its container the same way:** SecretReference → ExternalSecret → Kubernetes Secret → container env.
-- **Each container mounts only what it needs** (table below). Model containers hold only an Anthropic key.
+- **Each container mounts only what it needs** (table below). Model containers hold only the org's Anthropic keys (the Default key or the Coding agent token). Where a coding run's dependency secrets and test-user passwords live is open item O-11.
 - **No container returns a secret value** over any API, and `ae-coding-tools` never writes one into the shared workspace.
 
 ## Write path
@@ -71,12 +71,13 @@ sequenceDiagram
 | Secret | `ae-design-agent` | `ae-studio-tools` | `ae-collab` | `ae-coding-agent` | `ae-coding-tools` |
 |---|---|---|---|---|---|
 | Default key | ✓ | | | (✓) | |
-| Coding agent key | | | | ✓ | |
+| Coding agent token | | | | ✓ | |
 | gitpat | | ✓ | | | ✓ |
 | org HMAC | | ✓ | | | |
 | publisher client (`client_id` / `client_secret`) | | ✓ | | | ✓ |
 
-- (✓): `ae-coding-agent` gets the Default key only when the org has no Coding agent key.
+- (✓): `ae-coding-agent` gets the Default key only when the org has no Coding agent token.
+- Dependency secrets and test-user passwords for a coding run are not in this table. Where they live is open item O-11 ([12-gaps-and-open-items.md](12-gaps-and-open-items.md)).
 - `ae-collab` mounts no secrets.
 - `ae-design-agent`, `ae-studio-tools` and `ae-collab` run in Resource `ae-studio` (one pod). `ae-coding-agent` and `ae-coding-tools` run in the coding agent Job (a separate pod).
 

@@ -81,12 +81,13 @@ without one cannot run any agent; there is no platform-provided fallback.
 _Avoid_: platform key (the platform provides none), primary key (implies a
 secondary that does not exist, and collides with the SQL sense).
 
-**Coding agent key**:
-An organization's optional second Anthropic API key, used by the coding agent and
-by nothing else. It is an override on the default key, not a peer: it can only
-exist while a default key exists, and it changes which key is billed, never
-whether an agent can run.
-_Avoid_: secondary key, coding LLM credential.
+**Coding agent token**:
+An organization's optional Claude subscription token, used by the coding agent and
+by nothing else (ADR-0036). It is not a second API key: it bills a Claude plan,
+not API credits. It can only exist while a default key exists, and it changes
+what is billed, never whether an agent can run. Without one, coding runs bill the
+default key.
+_Avoid_: coding agent key, second API key, secondary key, coding LLM credential.
 
 **Platform IdP**:
 The single Thunder instance every generated app's end-user sign-in and every
@@ -136,11 +137,11 @@ Words used only in this spec. The `ae-*` names are implementation names, so they
 | **`ae-design-agent`** | Container (and image) in `ae-studio` that runs the design agent model. Mounts the Default key only. |
 | **`ae-collab`** | Container (and image) in `ae-studio` that serves Room WebSockets. Mounts no secrets. |
 | **`ae-studio-tools`** | Container (and image) in `ae-studio` that runs no model: git, GitHub, webhook receive and HMAC check, the MCP server for `ae-design-agent`, publisher client calls. |
-| **`ae-coding-agent`** | Container (and image) in the coding agent Job that runs the coding agent model. Mounts an Anthropic key only. |
+| **`ae-coding-agent`** | Container (and image) in the coding agent Job that runs the coding agent model. Mounts only the org's AI keys (the Coding agent token or the Default key). |
 | **`ae-coding-tools`** | Container (and image) in the coding agent Job that runs no model: git and GitHub for this run's repository, platform calls for this run. |
-| **`*-agent` / `*-tools`** | Naming rule: a `*-agent` container runs a model and holds only an Anthropic key; a `*-tools` container holds the gitpat, the org HMAC (studio only) and the publisher client. |
+| **`*-agent` / `*-tools`** | Naming rule: a `*-agent` container runs a model and holds only the org's AI keys; a `*-tools` container holds the gitpat, the org HMAC (studio only) and the publisher client. |
 | **CP → DP service token** | Short RS256 JWT minted by `aep-api` per call, `aud` org + the receiving container, TTL 5 minutes. |
-| **Room token** | Short RS256 JWT minted by `aep-api` for the browser, `aud` org + `ae-collab` + Room, TTL 5 minutes. |
+| **Room token** | Short RS256 JWT minted by `aep-api` for the browser, `sub` the user, `aud` org + `ae-collab` + Room, TTL 5 minutes. |
 | **Agent Room token** | RS256 JWT minted by `aep-api` for one Room-mode turn and sent in the turn body. `aud` org + `ae-collab` + Room, `sub` the user, `act` `ae-design-agent`, valid until the turn deadline. `ae-collab` checks it like the Room token. |
 | **JWKS** | The public keys an issuer publishes so receivers can check its tokens. |
 | **Token exchange** | RFC 8693: trade one token for another at an identity provider. Intended at Environment Thunder. |
@@ -151,6 +152,6 @@ Words used only in this spec. The `ae-*` names are implementation names, so they
 | **smee** | A public relay that forwards GitHub webhooks to a local cluster. Local install only. |
 | **brain vs hands** | The split between a model container (brain) and its tools container (hands). |
 | **TB-n** | Trust boundary n in WSO2 Cloud, TB-1 to TB-9 ([10-cloud-trust-boundaries.md](10-cloud-trust-boundaries.md)). |
-| **GAP-n** | A control designed but not yet in place in WSO2 Cloud, GAP-1 to GAP-3 ([12-gaps-and-open-items.md](12-gaps-and-open-items.md)). |
+| **GAP-n** | A control designed but not yet in place in WSO2 Cloud, GAP-2 and GAP-3 ([12-gaps-and-open-items.md](12-gaps-and-open-items.md)). |
 | **O-n** | An open item this spec does not decide ([12-gaps-and-open-items.md](12-gaps-and-open-items.md)). |
-| **Flow n** | Network flow n, 1 to 11 ([04-flows.md](04-flows.md)). |
+| **Flow n** | Network flow n, 1 to 12 ([04-flows.md](04-flows.md)). |

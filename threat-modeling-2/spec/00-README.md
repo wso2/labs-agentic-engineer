@@ -9,7 +9,7 @@ There is one architecture for a local install and for WSO2 Cloud. Where the two 
 
 ## Status
 
-**Locked on 2026-09-24.** This is the spec the WSO2 Cloud threat model is written from. A change after the lock needs a new decision; do not edit this spec in place. The open items O-3 to O-10 in [12-gaps-and-open-items.md](12-gaps-and-open-items.md) are named, not decided. The threat model tags them.
+**Locked on 2026-09-24.** This is the spec the WSO2 Cloud threat model is written from. A change after the lock needs a new decision; do not edit this spec in place. The open items O-3 to O-11 in [12-gaps-and-open-items.md](12-gaps-and-open-items.md) are named, not decided. The threat model tags those that bear on a threat.
 
 ### Changes after the lock
 
@@ -18,6 +18,7 @@ Each change below came from a new decision and is applied across the chapters it
 | Date | Change | Chapters |
 |---|---|---|
 | 2026-09-24 | O-2 closed: `ae-design-agent` calls platform MCP tools through `ae-studio-tools` on its own Unix socket; `ae-studio-tools` serves remote-git and passes the rest to `aep-api` as the publisher client (new flow 12). `/internal/v1/mcp` accepts only the publisher client token. `ae-studio` pods do not share a process namespace. Pictures 01 and 02 are redrawn: they draw flow 12 on the flow-6 line, labelled `6·12` (same hop, same credential), and add the MCP socket arrow. The repository `CONTEXT.md` entries for Publisher client and Coding agent are updated to match. | `03`, `04`, `07`, `08`, `09`, `10`, `12`, `13`, `14`, `diagrams/01`, `diagrams/02`, `CONTEXT.md` |
+| 2026-09-26 | Lock review fixes. The webhook gap is retired; GAP-2 and GAP-3 keep their numbers (the webhook move is an AE change in `13`). On WSO2 Cloud, flow 1 goes through the console's own web server and `aep-api` checks the user JWT itself. `aep-api` finds a Room by looking up the project, and finds a flow 6 event's repository only in the publisher token's org. Agent edits are shown in the Room for review, not held back. The coding agent's own credential is now called the "Coding agent token" (a Claude subscription token, ADR-0036). O-3 is narrowed (user-started flow 10 writes carry the user's JWT). New O-11: dependency secrets and test-user passwords during a coding run. Smaller rows: the skills mirror runs on `ae-studio-tools`, the Room token names the user, design agent web search, the `specs/` and 5 MiB save rules on `ae-studio-tools`, flows 1 to 12 in the glossary, and a note that no owner is named for the 7-day conversation delete. | `00`, `02`, `03`, `04`, `05`, `06`, `07`, `08`, `09`, `10`, `12`, `13`, `14`, `diagrams/01`, `diagrams/02`, `CONTEXT.md` |
 
 This spec does not cover the console UI. It is not an implementation plan.
 
@@ -36,7 +37,7 @@ This spec does not cover the console UI. It is not an implementation plan.
 | [09-sandboxing-and-guardrails.md](09-sandboxing-and-guardrails.md) | Pod controls, egress, tool rules for both agent pods |
 | [10-cloud-trust-boundaries.md](10-cloud-trust-boundaries.md) | TB-1 to TB-9 in WSO2 Cloud |
 | [11-local-vs-cloud.md](11-local-vs-cloud.md) | What differs in a local install |
-| [12-gaps-and-open-items.md](12-gaps-and-open-items.md) | GAP-1 to GAP-3, accepted risks, open items |
+| [12-gaps-and-open-items.md](12-gaps-and-open-items.md) | GAP-2 and GAP-3, accepted risks, open items |
 | [13-change-inventory.md](13-change-inventory.md) | Per component: what is added, changed, removed |
 | [14-glossary.md](14-glossary.md) | Every term this spec uses |
 | [diagrams/](diagrams/) | PNG and Excalidraw source for every picture |

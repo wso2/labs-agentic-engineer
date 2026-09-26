@@ -130,15 +130,16 @@ without one cannot run any agent; there is no platform-provided fallback.
 _Avoid_: platform key (the platform provides none), primary key (implies a
 secondary that does not exist, and collides with the SQL sense).
 
-**Coding agent key**:
-An organization's optional second Anthropic API key, used by the coding agent and
-by nothing else. It is an override on the default key, not a peer: it can only
-exist while a default key exists, and it changes which key is billed, never
-whether an agent can run.
-_Avoid_: secondary key, coding LLM credential.
+**Coding agent token**:
+An organization's optional Claude subscription token, used by the coding agent and
+by nothing else (ADR-0036). It is not a second API key: it bills a Claude plan,
+not API credits. It can only exist while a default key exists, and it changes
+what is billed, never whether an agent can run. Without one, coding runs bill the
+default key.
+_Avoid_: coding agent key, second API key, secondary key, coding LLM credential.
 
 **Reuse**:
-The state of an org that has no coding agent key, so the coding agent runs on the
+The state of an org that has no coding agent token, so the coding agent runs on the
 default key. It is the absence of a key, not a stored setting — nothing records
 "reuse", and there is no configuration that can claim isolation without a key
 behind it.

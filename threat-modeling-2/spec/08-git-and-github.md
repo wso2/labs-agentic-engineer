@@ -10,6 +10,7 @@ After gitpat submit, the control plane can never read the gitpat. Every operatio
 | GitHub REST: issues, pull requests, milestones, merge | `ae-studio-tools` | flow 3 |
 | MCP remote-git (file contents, code search) | `ae-studio-tools` for `ae-design-agent`; `ae-coding-tools` for a coding run | MCP Unix socket from `ae-design-agent`, then flow 9; `127.0.0.1` from `ae-coding-agent`, then flow 7b |
 | repo create | GitHub call on `ae-studio-tools`; the Postgres row on `aep-api` | flow 3 |
+| skills mirror: copy the org's skills into a project repo, reading the org-skills repo | `ae-studio-tools` (`aep-api` has no gitpat) | flow 3 |
 | webhook **register** | `aep-api`, during gitpat submit, with the in-memory gitpat. The hook URL is the public address of `ae-studio-tools`. | [05-lifecycle.md](05-lifecycle.md) |
 | webhook **verify** | `ae-studio-tools`, with the org HMAC from vault | flow 5 |
 | gitpat check at submit | `aep-api`, with the gitpat from the request body, in memory | flow 1 |
@@ -42,13 +43,13 @@ After the HMAC check, `ae-studio-tools` calls `aep-api` as the publisher client 
 
 It never sends the signature or the HMAC secret.
 
-`aep-api` redacts the body as it does today, dedups on the delivery id, stores it, and dispatches to Temporal in the same process. `ae-studio-tools` returns GitHub's status from that result, so a failure is still retried by GitHub.
+`aep-api` takes the org from the publisher client token (`ouHandle`) and looks up the event's repository only among that org's repositories. It does not store or dispatch an event for a repository the org does not have. `aep-api` redacts the body as it does today, dedups on the delivery id, stores it, and dispatches to Temporal in the same process. `ae-studio-tools` returns GitHub's status from that result, so a failure is still retried by GitHub.
 
 ### What gitpat submit registers
 
 gitpat submit waits until `ae-studio-tools` can accept the POST, then registers that address **once**. If the wait ends with no address, no hook is registered. There is no second URL, and the control-plane webhook URL is not a stand-in. The full procedure is in [05-lifecycle.md](05-lifecycle.md).
 
-Today's hook still ends on the control-plane webhook RestApi. That is GAP-1 ([12-gaps-and-open-items.md](12-gaps-and-open-items.md)).
+Today's hook ends on the control-plane webhook RestApi. That RestApi is removed once the org kgateway route is live. It is an AE change, listed in [13-change-inventory.md](13-change-inventory.md).
 
 ## Not chosen, and why
 

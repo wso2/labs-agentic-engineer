@@ -11,6 +11,7 @@ What stops a misbehaving `ae-design-agent` or coding agent from freely using sec
 - `ae-design-agent` mounts the **Default key only**. It does not mount the gitpat, the org HMAC or the publisher client. For a Room-mode turn, the agent Room token (this Room, until the turn ends) sits in memory.
 - File tools stay inside the snapshot. Paths with `..`, and symlinks that leave the snapshot, are refused.
 - `ae-design-agent` has **no URL-fetch tool**. Fetching an external spec stays on `aep-api`.
+- Web search runs at Anthropic as a model tool, at most four uses a turn. It does not leave from the pod.
 - The whole pod (`ae-design-agent`, `ae-collab`, `ae-studio-tools`):
   - runs as non-root;
   - has a read-only root filesystem;
@@ -22,7 +23,7 @@ What stops a misbehaving `ae-design-agent` or coding agent from freely using sec
   - does **not** share a process namespace (`shareProcessNamespace: false`). The Unix sockets below keep containers apart only because one container cannot reach another's files through `/proc`.
 - **Egress** allows DNS and public ports 80 and 443. It denies private addresses, link-local, metadata addresses and the Kubernetes API. `ae-design-agent` shares this egress with `ae-studio-tools`.
 - **In-pod channels.** All containers in a pod share one network, so a `localhost` port cannot keep `ae-design-agent` out.
-  - The Files API of `ae-studio-tools` listens on a Unix socket in an emptyDir mounted only into `ae-collab` and `ae-studio-tools`. No token. `ae-design-agent` cannot reach it.
+  - The Files API of `ae-studio-tools` listens on a Unix socket in an emptyDir mounted only into `ae-collab` and `ae-studio-tools`. No token. `ae-design-agent` cannot reach it. A save writes only files under `specs/`, at most 5 MiB a file, as today.
   - The platform MCP tools of `ae-studio-tools` listen on a second Unix socket in its own emptyDir, mounted only into `ae-design-agent` and `ae-studio-tools`. No token. `ae-collab` cannot reach it. It serves a fixed allow-list of eleven read-only tools and refuses anything else ([07-identity-and-tokens.md](07-identity-and-tokens.md)).
   - `ae-design-agent` joins a Room on `ae-collab` with the agent Room token ([07-identity-and-tokens.md](07-identity-and-tokens.md)).
   - The API of `ae-studio-tools` never returns gitpat or HMAC bytes.
@@ -48,7 +49,7 @@ What stops a misbehaving `ae-design-agent` or coding agent from freely using sec
 ### Required
 
 - Two containers in the Job pod: `ae-coding-agent` runs the coding agent; `ae-coding-tools` runs no model.
-- `ae-coding-agent` mounts the Anthropic key for the run: the Coding agent key when the org has one, otherwise the Default key. It does not mount the gitpat, the publisher client or the HMAC. It keeps Bash, the build tools and the workspace.
+- `ae-coding-agent` mounts the Anthropic key for the run: the Coding agent token (the org's Claude subscription token, ADR-0036) when the org has one, otherwise the Default key. It does not mount the gitpat, the publisher client or the HMAC. It keeps Bash, the build tools and the workspace.
 - `ae-coding-tools` mounts the gitpat and the publisher client. The coding agent calls it on a `127.0.0.1` listener that is not an endpoint, with no token. The agent is the only other container, and the run's scope is fixed when the Job is created. It never returns those values and never writes them into the shared workspace.
 - Git and GitHub actions only for **this run's repository**. The publisher client only for **this run's** calls to the platform, including the platform MCP tools. `ae-coding-tools` serves the remote-git tools itself. Other repositories and other platform calls are refused.
 - The same pod controls, the same egress and the same ingress rule as `ae-studio`. Writable emptyDirs are the workspace, `/tmp`, `/dev/shm`, and the home directories for tool caches.
@@ -78,7 +79,7 @@ No prompt-injection filter on either agent. The threat model records that as an 
 - **In-process tools on the model container.** Puts the gitpat and the publisher client in the model's environment (today's problem 4).
 - **Copy the agent-manager single-container sandbox as is.** Its one `main` container has no secrets split; AE copies its pod hardening, no ServiceAccount token and optional gVisor, not its secret story.
 - **One socket, or `localhost` TCP, for both the Files API and the MCP tools.** Every container could reach both: `ae-design-agent` could call `files/apply`, and `ae-collab` could call the tools.
-- **Tokenless `localhost` for the Files API.** `ae-design-agent` shares the pod network and could call `files/apply` and flush directly, skipping the Room and review.
+- **Tokenless `localhost` for the Files API.** `ae-design-agent` shares the pod network and could call `files/apply` and flush directly, skipping the Room.
 - **gVisor as required.** Not every cluster has the RuntimeClass; missing it is a tagged gap, not a failure.
 - **A hostname allow-list for egress.** Out of scope. The control is the rule that denies private, link-local, metadata and Kubernetes API targets.
 - **A per-run push limit of one branch, or a GitHub App.** Out of scope for this change; the gitpat stays the GitHub path.

@@ -18,6 +18,7 @@ flowchart LR
   end
 
   subgraph CP[Control plane: cloud-cp]
+    CWS[console web server]
     GW1[Public aep-api gateway<br/>jwt-auth iss=platform-idp]
     API[aep-api + Temporal in-process<br/>mints RS256, JWKS]
     PG[(Postgres<br/>rows only, no secret values)]
@@ -35,17 +36,17 @@ flowchart LR
       GHD[ae-studio-tools<br/>gitpat, HMAC, publisher client]:::hands
     end
     subgraph JOB[Coding-agent Job pod]
-      MAIN[ae-coding-agent<br/>LLM, Coding agent key or Default key]:::llm
+      MAIN[ae-coding-agent<br/>LLM, Coding agent token or Default key]:::llm
       CAT[ae-coding-tools<br/>gitpat, publisher client]:::hands
     end
     ESO[ESO + ClusterSecretStore]
   end
 
-  B -- "1 REST + design-turn SSE<br/>Platform IdP user JWT" --> GW1 --> API
+  B -- "1 REST + design-turn SSE<br/>Platform IdP user JWT" --> CWS --> API
   API -- "2 turns / SSE source<br/>RS256 aud=org+ae-design-agent" --> KGW --> AS
   API -- "3 git ops<br/>RS256 aud=org+ae-studio-tools" --> KGW --> GHD
   B -- "4 Room WebSocket<br/>Room token aud=org+ae-collab+Room" --> KGW --> CS
-  GH -- "5 webhook POST, X-Hub-Signature-256<br/>GAP-1" --> KGW --> GHD
+  GH -- "5 webhook POST, X-Hub-Signature-256" --> KGW --> GHD
   GHD -- "6 delivery id + event + body<br/>publisher client" --> GW1
   CAT -- "7a publisher client" --> GW1
   CAT -- "7b gitpat, this run's repo only" --> GH
@@ -77,7 +78,7 @@ flowchart LR
 
 Each dataplane pod is an **agent** plus its **tools**:
 
-- A `*-agent` container runs a model. It holds only an Anthropic key.
+- A `*-agent` container runs a model. It holds only the org's AI keys: the Default key, or for a coding run the Coding agent token. Where a coding run's other secrets go is open item O-11.
 - A `*-tools` container runs no model. It holds the gitpat, the org HMAC (on `ae-studio-tools` only) and the publisher client.
 
 Each image has the same name as its container.
@@ -86,8 +87,8 @@ Each image has the same name as its container.
 
 | Component | Job | Holds | Exposes |
 |---|---|---|---|
-| console | The browser app. | Nothing secret. | Browser UI. |
-| `aep-api` (BFF) | Authorizes users. Keeps rows in Postgres. Writes secrets through the SM API. Ensures the dataplane Resource. Mints short RS256 tokens (the CP → DP service token and the Room token). Runs the Temporal worker in the same process. | The signing key for its minted tokens. A gitpat or org HMAC only in memory, only during gitpat submit. | Public `aep-api` gateway (`jwt-auth`, `iss=platform-idp`); its JWKS. |
+| console | The browser app. | Nothing secret. | Browser UI. Its web server passes API calls to `aep-api` inside the control plane (flow 1). |
+| `aep-api` (BFF) | Authorizes users. Keeps rows in Postgres. Writes secrets through the SM API. Ensures the dataplane Resource. Mints short RS256 tokens (the CP → DP service token and the Room token). Runs the Temporal worker in the same process. | The signing key for its minted tokens. A gitpat or org HMAC only in memory, only during gitpat submit. | The console web server's API path (flow 1); the public `aep-api` gateway (`jwt-auth`, `iss=platform-idp`) for flows 6, 7a and 12; its JWKS. |
 | Postgres | Rows: repositories, webhook deliveries, conversations. | **No organization secret values.** | Only to `aep-api`. |
 | SM API | Writes secret values into vault through the OpenChoreo Secret API, and creates a SecretReference with names only. | Nothing it gives back. | Write-only. GET returns keys and `secretReferenceName` only. |
 | Platform IdP | The shared Thunder issuer (`iss=platform-idp`). Issues user JWTs and publisher client tokens. | Inherited platform. | Inherited platform. |
@@ -102,9 +103,9 @@ An OpenChoreo **Resource** of a custom ResourceType, also named `ae-studio`. It 
 
 | Container | Job | Mounts | Exposes |
 |---|---|---|---|
-| `ae-design-agent` | Runs the design agent model. Streams design turns. Reads snapshots from the shared emptyDir. Calls platform MCP tools on `ae-studio-tools` over a Unix socket. No URL-fetch tool; its file tools stay inside the snapshot. | **Default key only.** For a Room-mode turn, the agent Room token that `aep-api` puts on the turn sits in memory. | Turn / SSE route behind the org kgateway (flow 2). |
+| `ae-design-agent` | Runs the design agent model. Streams design turns. Reads snapshots from the shared emptyDir. Calls platform MCP tools on `ae-studio-tools` over a Unix socket. No URL-fetch tool; web search runs at Anthropic as a model tool; its file tools stay inside the snapshot. | **Default key only.** For a Room-mode turn, the agent Room token that `aep-api` puts on the turn sits in memory. | Turn / SSE route behind the org kgateway (flow 2). |
 | `ae-collab` | The Yjs Room WebSocket server. Talks the Files API to `ae-studio-tools` over a Unix socket (`files/bundle`, `files/apply`, seed, flush). It does not speak git. | **No secrets.** | Room WebSocket behind the org kgateway (flow 4), for the browser and for `ae-design-agent`. Both present a Room token. |
-| `ae-studio-tools` | Runs no model. Clone, fetch, commit, push. GitHub REST (issues, PRs, milestones, merge, repo create). The MCP server for `ae-design-agent`: remote-git tools with the gitpat, other tools passed to `aep-api` (flow 12). Webhook receive and HMAC check. Writes snapshots to the shared emptyDir. Calls `aep-api` as the publisher client. | gitpat, org HMAC, publisher client (`client_id`, `client_secret`). | Service route (flow 3) and webhook route (flow 5) behind the org kgateway. Files API on a Unix socket that only `ae-collab` can reach. MCP tools on a second Unix socket that only `ae-design-agent` can reach. It never returns a secret value. |
+| `ae-studio-tools` | Runs no model. Clone, fetch, commit, push. GitHub REST (issues, PRs, milestones, merge, repo create). The skills mirror into a project repo. The MCP server for `ae-design-agent`: remote-git tools with the gitpat, other tools passed to `aep-api` (flow 12). Webhook receive and HMAC check. Writes snapshots to the shared emptyDir. Calls `aep-api` as the publisher client. | gitpat, org HMAC, publisher client (`client_id`, `client_secret`). | Service route (flow 3) and webhook route (flow 5) behind the org kgateway. Files API on a Unix socket that only `ae-collab` can reach. MCP tools on a second Unix socket that only `ae-design-agent` can reach. It never returns a secret value. |
 
 All containers in a pod share one network: any container can reach any `localhost` port. So a `localhost` port cannot keep `ae-design-agent` out. Inside the pod:
 
@@ -121,7 +122,7 @@ A separate, one-shot pod per run cycle. OpenChoreo renders it from a `coding-age
 
 | Container | Job | Mounts | Exposes |
 |---|---|---|---|
-| `ae-coding-agent` | Runs the coding agent model with Bash, the build tools and the workspace. | The Coding agent key when the org has one, otherwise the Default key. No gitpat, no publisher client, no HMAC. | Nothing inbound. |
+| `ae-coding-agent` | Runs the coding agent model with Bash, the build tools and the workspace. | The Coding agent token (the org's Claude subscription token) when the org has one, otherwise the Default key. No gitpat, no publisher client, no HMAC. Dependency secrets and test-user passwords: open item O-11. | Nothing inbound. |
 | `ae-coding-tools` | Runs no model. Does git and GitHub for **this run's repository only**, and platform calls for **this run only**. Serves the platform MCP tools to `ae-coding-agent`: remote-git with the gitpat, the rest over flow 7a. | gitpat, publisher client. | An API on `127.0.0.1` for `ae-coding-agent`, not an endpoint. It never returns a secret value and never writes one into the shared workspace. |
 
 ### Shared dataplane parts
@@ -135,7 +136,7 @@ A separate, one-shot pod per run cycle. OpenChoreo renders it from a `coding-age
 
 | Party | Talks to |
 |---|---|
-| Browser | `aep-api` gateway (flow 1), `ae-collab` Room WebSocket (flow 4). |
+| Browser | The console web server, then `aep-api` (flow 1); `ae-collab` Room WebSocket (flow 4). |
 | GitHub | Receives git and REST calls with the gitpat (flows 7b, 9). Posts webhooks to `ae-studio-tools` (flow 5). |
 | Anthropic API | Called by `ae-design-agent` and `ae-coding-agent` on public 443 (flow 8). |
 

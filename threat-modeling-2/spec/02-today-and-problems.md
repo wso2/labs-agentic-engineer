@@ -24,7 +24,7 @@ In WSO2 Cloud dev, App Factory orgs have no `wc-system` Project, no per-org API 
 |---|---|---|
 | gitpat | Postgres `org_secrets`, AES-256-GCM. A vault copy is written "best effort": if it fails, a warning is logged and Postgres stays the source of truth. | `aep-api`, for every git and GitHub call. |
 | Default key | Postgres `org_secrets`. | `aep-api` decrypts it and sends it to the agents service on every design turn as `X-Anthropic-Key`, over plain HTTP inside the cluster. |
-| Coding agent key | Postgres `org_secrets`. | The coding agent Job, through ESO. `aep-api` passes only references. |
+| Coding agent token | Postgres `org_secrets`. | The coding agent Job, through ESO. `aep-api` passes only references. |
 | Webhook HMAC | One platform secret `GITHUB_WEBHOOK_SECRET`, copied into every org's `org_credentials` row at gitpat connect. | `aep-api`, to check `X-Hub-Signature-256`. |
 | Publisher client secret | Postgres `organization_idp_profiles` column **and** a SecretReference. | The coding agent Job, through ESO. |
 
