@@ -110,6 +110,16 @@ spec:
               value: {{ .Values.taskSigning.audience | quote }}
             - name: BFF_PUBLIC_URL
               value: {{ .Values.aepApi.publicURL | quote }}
+            {{- if (default dict .Values.tryIt).enabled }}
+            # Registered as a redirect URI on every project's sign-in client at
+            # deploy time, so the test app can complete an OAuth round-trip
+            # against that project's identity provider. Left unset, the app loads
+            # and the sign-in is then refused — which reads as the app being
+            # broken rather than unregistered. Origin must match the console's
+            # VITE_TRY_IT_URL; both come from tryIt.publicURL.
+            - name: TRY_IT_CALLBACK_URL
+              value: "{{ .Values.tryIt.publicURL | trimSuffix "/" }}/callback"
+            {{- end }}
             - name: OBSERVER_OAUTH_CLIENT_ID
               value: {{ .Values.observer.clientId | quote }}
             - name: OBSERVER_OAUTH_HOST_HEADER

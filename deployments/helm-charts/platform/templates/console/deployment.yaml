@@ -37,6 +37,12 @@ spec:
               value: "collab-server.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.collab.port }}"
             - name: VITE_THUNDER_URL
               value: {{ .Values.console.thunderPublicURL | quote }}
+            {{- if (default dict .Values.tryIt).enabled }}
+            # The origin of the test app an agent's "Try agent" button opens.
+            # Must match aep-api's TRY_IT_CALLBACK_URL origin — see values.yaml.
+            - name: VITE_TRY_IT_URL
+              value: {{ .Values.tryIt.publicURL | quote }}
+            {{- end }}
             - name: VITE_THUNDER_CLIENT_ID
               value: {{ .Values.console.thunder.clientId | quote }}
             - name: VITE_THUNDER_SCOPES

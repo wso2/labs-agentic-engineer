@@ -97,6 +97,14 @@ build:
       docker:
         dockerfile: apps/console/Dockerfile
 
+    # Try it, the test app an agent's "Try agent" button opens. Built here
+    # because no registry publishes it — it arrived as a Docker Compose service
+    # and this is the flow that replaced Compose.
+    - image: ghcr.io/wso2/aep/tryit
+      context: .
+      docker:
+        dockerfile: apps/tryit/Dockerfile
+
 # No deploy: section (see header) — the Makefile's `dev-update` target runs
 # `helm upgrade --reuse-values` directly after `skaffold build` finishes.
 #

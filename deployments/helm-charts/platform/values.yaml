@@ -114,6 +114,39 @@ console:
     clientId: "aep-console-client"
     scopes: "openid profile email"
 
+# Try it — the platform's test app (apps/tryit), the page an agent does not have
+# of its own. The console links to it from "Try agent"; without it that button
+# leads nowhere, while a web application's "Visit app" is unaffected because it
+# opens the component's own URL.
+#
+# publicURL is agreed by THREE places and they move together:
+#   - this route's hostname (templates/tryit/httproute.yaml)
+#   - the console's VITE_TRY_IT_URL, which is the link it builds
+#   - aep-api's TRY_IT_CALLBACK_URL, which registers {publicURL}/callback as a
+#     redirect URI on every project's sign-in client at deploy time
+# Two of the three agreeing is the failure that looks like a working install:
+# the link opens and the sign-in is then refused as an unregistered redirect.
+tryIt:
+  enabled: true
+  replicas: 1
+  image:
+    repository: ghcr.io/wso2/aep/tryit
+    tag: latest
+    pullPolicy: IfNotPresent
+  port: 3000
+  publicURL: "http://tryit.openchoreo.localhost:8080"
+  # Where the app may send a token: the environments' public gateway vhost, which
+  # is the ClusterDataPlane's ingress host. An endpoint on any other host is
+  # refused before sign-in.
+  gatewayHosts: "openchoreoapis.localhost"
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "64Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+
 codingAgentRunner:
   # Docker image for the runner Job — ONE image for both task kinds
   # (implementation and validation).
