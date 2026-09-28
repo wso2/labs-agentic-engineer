@@ -30,6 +30,7 @@ import (
 
 	"github.com/wso2/aep/aectl/internal/thunder"
 	"github.com/wso2/aep/aectl/internal/ui"
+	"github.com/wso2/aep/aep-api/aeperms"
 )
 
 // registerThunderFlags adds Thunder connection flags to cmd and binds each one
@@ -73,17 +74,28 @@ var aepThunderClients = []thunderClientDef{
 const (
 	thunderSecretsName  = "aep-thunder-secrets"
 	thunderSystemClient = "aep-system-client"
+
+	// The seeded AE admin. A fixed username and email — neither is a secret,
+	// and a predictable login is the point — with the password supplied per
+	// install (prompted, or from AEP_AE_ADMIN_PASSWORD) so no credential this
+	// binary knows is the same on two clusters.
+	aeAdminUsername = "aeadmin"
+	aeAdminEmail    = "aeadmin@localhost"
 )
 
-// doThunderSetup registers all AEP OAuth clients in Thunder. It port-forwards
-// to Thunder directly rather than waiting for the thunder-app-operator to
-// reconcile ThunderApplication CRs. Thunder's CORS configuration is handled by
-// the aep-platform chart's own TrafficPolicy (templates/thunder/cors-policy.yaml),
-// not by this function.
+// doThunderSetup registers all AEP OAuth clients in Thunder, then provisions
+// the AE permission model (resource server, actions, groups, roles, and the
+// seeded admin account). It port-forwards to Thunder directly rather than
+// waiting for the thunder-app-operator to reconcile ThunderApplication CRs.
+// Thunder's CORS configuration is handled by the aep-platform chart's own
+// TrafficPolicy (templates/thunder/cors-policy.yaml), not by this function.
+//
+// aeAdminPassword seeds the `aeadmin` account; empty seeds no account at all,
+// leaving the groups and roles in place for a real member to be added to.
 func doThunderSetup(
 	ctx context.Context,
 	k8sClient *kubernetes.Clientset,
-	platformNamespace, thunderNamespace, consoleURL string,
+	platformNamespace, thunderNamespace, consoleURL, aeAdminPassword string,
 ) error {
 	// 1. Read client secrets from the ESO-synced aep-thunder-secrets K8s Secret.
 	//    ESO may take a few seconds after pod readiness to complete its first sync,
@@ -179,6 +191,36 @@ func doThunderSetup(
 		return fmt.Errorf("assign admin role to %q: %w", thunderSystemClient, err)
 	}
 	sp.Success("System client role assigned")
+
+	// 6. Provision the AE permission model. This runs against whatever Thunder
+	//    the install found, which is why it is here and not a bootstrap
+	//    document — see internal/thunder/ae.go's header. The identifier must
+	//    match what the console sends as its OAuth resource indicator and what
+	//    aep-api accepts as an audience; the platform chart derives all three
+	//    from the same public URL, so this does too.
+	sp = ui.NewSpinner("Provisioning AE permissions")
+	sp.Start()
+	account := thunder.AEAdminAccount{}
+	if aeAdminPassword != "" {
+		account = thunder.AEAdminAccount{
+			Username: aeAdminUsername,
+			Password: aeAdminPassword,
+			Email:    aeAdminEmail,
+			Name:     "AE Admin",
+		}
+	}
+	aeResource := aeperms.ResourceServerIdentifier(viper.GetString("thunder.public_url"))
+	if err := client.EnsureAEPermissions(ctx, aeResource, account); err != nil {
+		sp.Fail("AE permission provisioning failed")
+		return fmt.Errorf("provision AE permissions: %w", err)
+	}
+	if account.Username == "" {
+		sp.Success("AE permissions provisioned (no seeded account)")
+		ui.Detail("No account holds ae-admin — add a member to the ae-admin group in Thunder before signing in to the console.")
+	} else {
+		sp.Success("AE permissions provisioned")
+		ui.Detail(fmt.Sprintf("Console sign-in: %s", account.Username))
+	}
 
 	ui.Detail("Thunder setup complete")
 	return nil

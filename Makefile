@@ -224,7 +224,7 @@ workflow-skill:
 # An SRE-only profile that saves the most memory:
 #   WITH_AGENT_MANAGER=0 make dev-env
 #
-# `platform install` otherwise prompts interactively for two secrets — set as
+# `platform install` otherwise prompts interactively for three secrets — set as
 # env vars here so it doesn't:
 #   ANTHROPIC_API_KEY               platform.go treats an EMPTY value the same
 #                                    as unset (still prompts, then refuses) —
@@ -235,11 +235,19 @@ workflow-skill:
 #                                    client WITH_SKAFFOLD_CLIENT=1 bootstraps
 #                                    above (skaffold/defaults.yaml's
 #                                    thunder.admin_client_id)
+#   AEP_AE_ADMIN_PASSWORD           the console login for the seeded `aeadmin`
+#                                    account, which aectl creates and puts in
+#                                    the ae-admin group so the permission gate
+#                                    has a real holder to answer. Fixed to
+#                                    "admin" HERE, and only here: aectl itself
+#                                    defaults to nothing, so a real install
+#                                    picks its own or seeds no account at all.
 dev-env:
 	cd tools/aectl && go build -o aectl-skaffold .
 	WITH_SKAFFOLD_CLIENT=1 bash deployments/scripts/setup-env-for-aectl.sh
 	./tools/aectl/aectl-skaffold platform config import --config skaffold/defaults.yaml
 	ANTHROPIC_API_KEY=none AEP_THUNDER_ADMIN_CLIENT_SECRET=ae-install-client-secret \
+	AEP_AE_ADMIN_PASSWORD=admin \
 		./tools/aectl/aectl-skaffold platform install --addons=all --platform-version=latest --platform-chart=deployments/helm-charts/platform
 	@if [ "$${WITH_AGENT_MANAGER:-1}" != "1" ]; then \
 		echo "⏭️  Skipping Agent Manager (WITH_AGENT_MANAGER=0)"; \

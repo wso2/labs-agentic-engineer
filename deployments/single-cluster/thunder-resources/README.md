@@ -21,24 +21,27 @@ because a redeclaration replaces it silently; and any client here that asks for
 the `system` scope must send the System resource server as its OAuth `resource`
 indicator, or the scope is dropped and every admin call afterwards 403s.
 
-**`94-ae-roles.yaml` sorts after the composed singletons on purpose.** It
-declares the `ae` resource server, its permission actions, the
-`ae-admin`/`ae-developer` groups + roles, and a seeded `aeadmin` admin
-account — mirroring `services/aep-api/internal/authz/role_permissions_catalog.go`.
-80-88 were already taken by existing AEP documents, and the ordering guard
-below only constrains `server_config` singletons, not this file's resource
-types, so any slot after them does. `aeadmin` is a plain `Person`-type user —
-this bundle does not gate console login by user type. An earlier version
-tried that (a custom `AEUser` type + `allowedUserTypes` on
-`87-aep-console-app.yaml`), on the assumption it would keep the platform
-IdP's own built-in admin out of the console; confirmed against a live
-Thunder (`GET /flows/{id}` on the app's AUTHENTICATION flow) that
-`allowedUserTypes` is only consulted by the separate `USER_ONBOARDING`
-flow's `UserTypeResolver` executor — i.e. only when a new account is being
-auto-provisioned/invited into an app — never by the plain login flow this
-console uses, so it gated nothing. Access control is aep-api's AE
-permission gate: anyone can sign in, but only `ae-admin`/`ae-developer`
-members can do anything AE-gated.
+**The AE permission model is NOT declared here.** The `ae` resource server, its
+permission actions, the `ae-admin`/`ae-developer` groups and roles, and the
+seeded `aeadmin` account are provisioned by `aectl platform install` over
+Thunder's admin API — see `tools/aectl/internal/thunder/ae.go`, whose header
+explains why. Short version: a bootstrap document is read once, at install, by
+a pre-install hook Job, so it can only seed an IdP that AEP itself installs —
+but the platform IdP is shared infrastructure (ADR-0027/ADR-0028) that AEP may
+find already running. A document in this directory could not provision into
+one; an admin-API call can.
+
+One consequence worth knowing when reading the login flow: `aeadmin` is a plain
+`Person`-type user, and nothing gates console login by user type. An earlier
+design tried that (a custom `AEUser` type plus `allowedUserTypes` on
+`87-aep-console-app.yaml`), on the assumption it would keep the platform IdP's
+own built-in admin out of the console. Confirmed against a live Thunder (`GET
+/flows/{id}` on the app's AUTHENTICATION flow) that `allowedUserTypes` is
+consulted only by the separate `USER_ONBOARDING` flow's `UserTypeResolver`
+executor — i.e. only when an account is being auto-provisioned or invited into
+an app — never by the plain login flow this console uses, so it gated nothing.
+Access control is aep-api's AE permission gate: anyone can sign in, but only
+`ae-admin`/`ae-developer` members can do anything AE-gated.
 
 **Three files here are not AEP documents.** `89-platform-cors-config.yaml`,
 `90-platform-default-resource-server.yaml` and `91-platform-csp.yaml` are the

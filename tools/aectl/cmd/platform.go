@@ -327,11 +327,37 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 	// deadlock whenever Thunder already has this client registered under a
 	// different secret, e.g. a reinstall against a Thunder that was never
 	// wiped.
+	// The seeded AE admin's password. Read here rather than inside the Thunder
+	// step so every prompt this command makes happens before the install does
+	// anything slow. NOT an OpenBao secret and deliberately not synced as one:
+	// it is used once, to create a Thunder account, and Thunder stores it
+	// hashed from then on — there is nothing for the platform to read back, so
+	// nothing to keep.
+	//
+	// Set AEP_AE_ADMIN_PASSWORD to skip the prompt (the pattern
+	// ANTHROPIC_API_KEY uses, and what makes an unattended install possible).
+	// Left blank at the prompt, the install creates the groups and roles but
+	// seeds no account — the right answer for a cluster whose operators sign
+	// in through their own IdP identities, and the reason this is not an
+	// error the way a missing Anthropic key is.
+	aeAdminPassword := strings.TrimSpace(os.Getenv("AEP_AE_ADMIN_PASSWORD"))
+	if aeAdminPassword == "" {
+		fmt.Println()
+		var err error
+		aeAdminPassword, err = readMaskedInput("Password for the seeded console admin (aeadmin) — blank to seed no account")
+		if err != nil {
+			return fmt.Errorf("read AE admin password: %w", err)
+		}
+	} else {
+		ui.Success("AE admin password (from env)")
+	}
+
 	fmt.Println()
 	ui.Step("Registering Thunder OAuth clients")
 	if err := doThunderSetup(ctx, k8sClient, initPlatformNamespace,
 		viper.GetString("thunder.namespace"),
 		initConsoleURL,
+		aeAdminPassword,
 	); err != nil {
 		return err
 	}

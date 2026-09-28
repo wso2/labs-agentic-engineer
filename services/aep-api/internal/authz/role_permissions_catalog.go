@@ -16,108 +16,60 @@
 
 package authz
 
-// Permission is an AE-level permission key, e.g. "ae:build". It is the unit
-// both this role catalog and the OC action catalog
-// (oc_permissions_catalog.go) resolve, and the same string arrives on a
-// caller's JWT as an OAuth scope entry.
-type Permission string
+import "github.com/wso2/aep/aep-api/aeperms"
+
+// The AE permission vocabulary and the roles that hold it live in the public
+// aeperms package, not here, because aectl needs the same list: it provisions
+// the `ae` resource server, its actions, and these roles into Thunder at
+// install time, and a permission Thunder never declares is one no token can
+// ever carry. Sharing the vocabulary in Go makes that agreement a compile-time
+// fact — see aeperms' own doc comment for the failure it prevents.
+//
+// This file is the alias layer, so the rest of aep-api goes on saying
+// authz.PermissionBuild and authz.Permission with no idea the definitions
+// moved. What stays aep-api's own is everything that maps a permission to THIS
+// service's behaviour: the operations it gates (internal/edge) and the OC
+// actions it implies (oc_permissions_catalog.go).
+
+// Permission is an AE-level permission key, e.g. "ae:build". A type alias, not
+// a defined type, so a value crosses between here and aeperms freely.
+type Permission = aeperms.Permission
 
 const (
-	PermissionBuild     Permission = "ae:build"
-	PermissionBuildView Permission = "ae:build-view"
-	// PermissionDesign authorizes changing a project's design: the spec
-	// editor's writes (ApplyFiles, the collab room's git flush), design
-	// generation, and dependency-contract commits. Paired with
-	// PermissionDesignView the same way every other surface pairs a write
-	// permission with its view-only sibling — viewing a spec room never implies
-	// committing into it, which is enforced on the socket as well as the route
-	// (see the collab handler's canWrite). No OC action maps to it: the design
-	// tree is git-backed, so nothing here reaches OpenChoreo.
-	PermissionDesign            Permission = "ae:design"
-	PermissionDesignView        Permission = "ae:design-view"
-	PermissionGitHubConfig      Permission = "ae:github-config"
-	PermissionModelConfig       Permission = "ae:model-config"
-	PermissionRequirementUpdate Permission = "ae:requirement-update"
-	PermissionRequirementView   Permission = "ae:requirement-view"
-	PermissionSkillConfig       Permission = "ae:skill-config"
-	PermissionSkillView         Permission = "ae:skill-view"
-	PermissionUsageView         Permission = "ae:usage-view"
-	PermissionObservabilityView Permission = "ae:observability-view"
-	PermissionResourceView      Permission = "ae:resource-view"
-	PermissionResourceConfig    Permission = "ae:resource-config"
+	PermissionBuild             = aeperms.PermissionBuild
+	PermissionBuildView         = aeperms.PermissionBuildView
+	PermissionDesign            = aeperms.PermissionDesign
+	PermissionDesignView        = aeperms.PermissionDesignView
+	PermissionGitHubConfig      = aeperms.PermissionGitHubConfig
+	PermissionModelConfig       = aeperms.PermissionModelConfig
+	PermissionRequirementUpdate = aeperms.PermissionRequirementUpdate
+	PermissionRequirementView   = aeperms.PermissionRequirementView
+	PermissionSkillConfig       = aeperms.PermissionSkillConfig
+	PermissionSkillView         = aeperms.PermissionSkillView
+	PermissionUsageView         = aeperms.PermissionUsageView
+	PermissionObservabilityView = aeperms.PermissionObservabilityView
+	PermissionResourceView      = aeperms.PermissionResourceView
+	PermissionResourceConfig    = aeperms.PermissionResourceConfig
 )
 
 // AllPermissions is every AE permission key the platform recognizes.
-var AllPermissions = []Permission{
-	PermissionBuild,
-	PermissionBuildView,
-	PermissionDesign,
-	PermissionDesignView,
-	PermissionGitHubConfig,
-	PermissionModelConfig,
-	PermissionRequirementUpdate,
-	PermissionRequirementView,
-	PermissionSkillConfig,
-	PermissionSkillView,
-	PermissionUsageView,
-	PermissionObservabilityView,
-	PermissionResourceView,
-	PermissionResourceConfig,
-}
+var AllPermissions = aeperms.AllPermissions
 
-var rolePermissionsCatalog = map[string][]string{
-	"ae-admin": {
-		string(PermissionBuild),
-		string(PermissionBuildView),
-		string(PermissionDesign),
-		string(PermissionDesignView),
-		string(PermissionGitHubConfig),
-		string(PermissionModelConfig),
-		string(PermissionRequirementUpdate),
-		string(PermissionRequirementView),
-		string(PermissionSkillConfig),
-		string(PermissionSkillView),
-		string(PermissionUsageView),
-		string(PermissionObservabilityView),
-		string(PermissionResourceView),
-		string(PermissionResourceConfig),
-	},
-	// ae:usage-view/ae:observability-view are NOT included — those read org
-	// spend and incident/alert reports, which reads as an admin-facing
-	// concern absent a decision to extend it. ae:design pairs with the
-	// ae:design-view already held here — same full write/view pair as
-	// ae:build/ae:build-view below, since ae-developer is the role that
-	// actually authors specs; it's also what keeps this role able to use
-	// the AI chat panel (permission_gate.go's CreateTurn/GetActiveTurn/etc.
-	// gate on ae:design, not a dedicated chat permission — the panel is a
-	// facet of the design workspace, not a separate feature).
-	"ae-developer": {
-		string(PermissionRequirementView),
-		string(PermissionDesign),
-		string(PermissionDesignView),
-		string(PermissionBuild),
-		string(PermissionBuildView),
-	},
-}
-
-// RolePermissions returns the AE permissions for the given role, or nil if the
-// role has no entry in the catalog. The result is a defensive copy: the
-// catalog itself is not exported, so nothing outside this function can
-// mutate it.
+// RolePermissions returns the AE permissions for the given role as plain
+// strings, or nil if the role is unknown. Strings rather than Permissions
+// because the only caller feeds PermissionResolver.ResolveOcPermissions, which
+// keys the OC action catalog by the raw key.
 func RolePermissions(role string) []string {
-	perms, ok := rolePermissionsCatalog[role]
-	if !ok {
+	perms := aeperms.RolePermissions(role)
+	if perms == nil {
 		return nil
 	}
-	cp := make([]string, len(perms))
-	copy(cp, perms)
-	return cp
+	out := make([]string, len(perms))
+	for i, p := range perms {
+		out[i] = string(p)
+	}
+	return out
 }
 
-func Roles() []string {
-	roles := make([]string, 0, len(rolePermissionsCatalog))
-	for role := range rolePermissionsCatalog {
-		roles = append(roles, role)
-	}
-	return roles
-}
+// Roles returns the AE role names.
+func Roles() []string { return aeperms.Roles() }
