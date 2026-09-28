@@ -109,6 +109,7 @@ type issueService struct {
 	repo     RepoRepository
 	github   IssueOps
 	resolver secrets.Resolver
+	incident IncidentPorts
 	// createLocks serializes dedupe-checked creation per "owner/repo" so two
 	// concurrent CreateIssue calls with the same DedupeKey can't both pass the
 	// existing-issue check before either creates — the exact race that produced
@@ -179,17 +180,52 @@ func (k *keyedMutex) lock(key string) func() {
 	}
 }
 
-func NewIssueService(repo RepoRepository, github IssueOps, resolver secrets.Resolver) IssueService {
-	return &issueService{
+func NewIssueService(repo RepoRepository, github IssueOps, resolver secrets.Resolver, incident ...IncidentPorts) *issueService {
+	s := &issueService{
 		repo:     repo,
 		github:   github,
 		resolver: resolver,
 	}
+	if len(incident) > 0 {
+		s.incident = incident[0]
+	}
+	if s.incident.Recurrence == nil {
+		s.incident.Recurrence = s
+	}
+	return s
+}
+
+// WithAdopter injects the SRE/RCA handoff's promote-from-issue leg after
+// construction — the composition root builds the event plane (the only
+// IssueAdopter implementation) from services that themselves depend on this
+// issue service, so the two can't be constructed in either order alone.
+// nil-safe (adoptIncident already reports "not configured" for a nil
+// Adopter); omitting this call keeps that behaviour, matching every test that
+// constructs an issueService without one. Returns the receiver to allow
+// chained construction, matching organization.CredentialService's With* idiom.
+func (s *issueService) WithAdopter(adopter IssueAdopter) *issueService {
+	s.incident.Adopter = adopter
+	return s
 }
 
 func (s *issueService) CreateIssue(ctx context.Context, orgID, projectID string, req CreateIssueRequest) (*IssueResult, error) {
 	if strings.TrimSpace(req.Title) == "" {
 		return nil, fmt.Errorf("title is required")
+	}
+	if incidentID, ok := ctx.Value(incidentContextKey{}).(string); ok {
+		return s.createIncidentIssue(ctx, orgID, projectID, req, incidentID)
+	}
+	if req.ComponentName != "" || req.ActionStatuses != nil {
+		return nil, ErrIncidentContextRequired
+	}
+	if reservedIncidentLabel(dedupeLabelFor(req.DedupeKey)) {
+		return nil, ErrIncidentContextRequired
+	}
+	for _, label := range req.Labels {
+		normalized := strings.ToLower(strings.TrimSpace(label))
+		if normalized == incidentTrackingLabel || normalized == legacyIncidentTrackingLabel || reservedIncidentLabel(label) {
+			return nil, ErrIncidentContextRequired
+		}
 	}
 
 	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
@@ -291,7 +327,14 @@ func (s *issueService) ListIssues(ctx context.Context, orgID, projectID string, 
 	if err != nil {
 		return nil, err
 	}
-	return s.github.ListIssues(ctx, owner, repoName, cred, labels)
+	issues, err := s.github.ListIssues(ctx, owner, repoName, cred, labels)
+	if err != nil {
+		return nil, err
+	}
+	for i := range issues {
+		issues[i].AttentionReason = AttentionReasonFor(issues[i])
+	}
+	return issues, nil
 }
 
 func (s *issueService) GetIssue(ctx context.Context, orgID, projectID string, number int) (*IssueInfo, error) {
@@ -299,7 +342,14 @@ func (s *issueService) GetIssue(ctx context.Context, orgID, projectID string, nu
 	if err != nil {
 		return nil, err
 	}
-	return s.github.GetIssue(ctx, owner, repoName, cred, number)
+	issue, err := s.github.GetIssue(ctx, owner, repoName, cred, number)
+	if err != nil {
+		return nil, err
+	}
+	if issue != nil {
+		issue.AttentionReason = AttentionReasonFor(*issue)
+	}
+	return issue, nil
 }
 
 func (s *issueService) ListIssueComments(ctx context.Context, orgID, projectID string, number, limit int) ([]IssueComment, error) {

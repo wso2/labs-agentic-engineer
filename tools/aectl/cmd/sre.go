@@ -33,6 +33,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 
@@ -40,19 +41,26 @@ import (
 	"github.com/wso2/aep/aectl/internal/ui"
 )
 
-// SRE (RCA) agent install. Brings the OpenChoreo Observability Plane + SRE/RCA
-// agent up to parity with the local docker-compose path
-// (deployments/scripts/setup-observability.sh), adapted for the in-cluster Helm
-// install: secrets flow OpenBao->ESO (never plaintext), and the RCA->AEP handoff
-// targets in-cluster Service DNS instead of host.k3d.internal.
+// SRE (RCA) agent install: the OpenChoreo SRE agent, wired to hand incidents to
+// AEP. Secrets flow OpenBao->ESO (never plaintext), and the RCA->AEP handoff
+// targets in-cluster Service DNS.
 //
-// Prerequisite: `aectl init` must have run first (it registers the
+// Two modes, picked by what the cluster already has:
+//   - an observability plane is installed (e.g. by setup-env-for-aectl.sh):
+//     aectl adopts it. It enables the plane's own SRE agent at the plane's
+//     installed chart version, so the plane is never replaced by a second
+//     release of another version, and leaves the plane's secrets, logs chart
+//     and ClusterObservabilityPlane to whoever installed them.
+//   - none is installed: aectl installs the plane and logs charts itself at
+//     --obs-plane-version / --obs-logs-version.
+//
+// The agent's Anthropic key is the org's model connection key as saved in the
+// AE Console (sre_plane.go). Prerequisite: `aectl platform install` (it registers the
 // openchoreo-rca-agent Thunder client and seeds the OpenBao secrets this reads).
 
 var (
 	sreNamespace       string // where AEP + OpenBao live (secret source)
 	sreObsNamespace    string // observability plane namespace
-	sreOpenBaoAddr     string
 	sreObsPlaneVersion string
 	sreObsLogsVersion  string
 	sreRcaImageRepo    string
@@ -65,6 +73,10 @@ var (
 	sreAEPublishReport bool
 	sreObserverHost    string
 	sreRcaHost         string
+	sreAssetsRoot      string
+	sreOrgNamespace    string
+	sreOrgSecretStore  string
+	srePlatformStore   string
 )
 
 var sreCmd = &cobra.Command{
@@ -92,33 +104,42 @@ func init() {
 	f := sreInstallCmd.Flags()
 	f.StringVar(&sreNamespace, "namespace", "wso2-aep", "Namespace where AEP + OpenBao are installed")
 	f.StringVar(&sreObsNamespace, "obs-namespace", "openchoreo-observability-plane", "Observability plane namespace")
-	f.StringVar(&sreOpenBaoAddr, "openbao-addr", "http://openbao.openbao.svc.cluster.local:8200", "In-cluster OpenBao address for the obs-namespace SecretStore")
-	f.StringVar(&sreObsPlaneVersion, "obs-plane-version", "1.0.1-hotfix.1", "openchoreo-observability-plane chart version")
-	f.StringVar(&sreObsLogsVersion, "obs-logs-version", "0.5.1", "observability-logs-opensearch chart version")
-	f.StringVar(&sreRcaImageRepo, "rca-image-repo", "tharindulak/openchoreo-sre-agent", "RCA/SRE agent image repository")
-	f.StringVar(&sreRcaImageTag, "rca-image-tag", "handoff-v14", "RCA/SRE agent image tag")
+	f.StringVar(&sreObsPlaneVersion, "obs-plane-version", "1.0.1-hotfix.1", "openchoreo-observability-plane chart version, when no plane is installed yet (an installed plane keeps its own)")
+	f.StringVar(&sreObsLogsVersion, "obs-logs-version", "0.5.1", "observability-logs-opensearch chart version, when no plane is installed yet")
+	f.StringVar(&sreRcaImageRepo, "rca-image-repo", "tharindulak/sre-agent", "RCA/SRE agent image repository")
+	f.StringVar(&sreRcaImageTag, "rca-image-tag", "v1.0.1-hotfix.1-anthropic", "RCA/SRE agent image tag")
 	f.StringVar(&sreRcaPullPolicy, "rca-image-pull-policy", "IfNotPresent", "RCA/SRE agent image pull policy")
 	f.StringVar(&sreRcaModel, "rca-model", "anthropic:claude-sonnet-4-6", "RCA/SRE agent LLM model")
 	f.StringVar(&sreAdapterImage, "adapter-image", "docker.io/tharindulak/observability-logs-opensearch-adapter:0.5.1-case-insensitive", "logs-adapter image (repo:tag)")
-	f.BoolVar(&sreAEHandoff, "ae-handoff", true, "Enable the RCA->AEP coding-agent handoff (issue create + dispatch)")
+	f.BoolVar(&sreAEHandoff, "ae-handoff", true, "Enable the RCA->AEP coding-agent handoff (mounts the SRE remediation extension)")
 	f.BoolVar(&sreAEAutoDispatch, "ae-auto-dispatch", true, "Auto-dispatch the coding agent after issue creation (false = issue-only)")
 	f.BoolVar(&sreAEPublishReport, "ae-publish-reports", true, "Publish RCA reports to aep-api (console Alerts)")
 	f.StringVar(&sreObserverHost, "observer-hostname", "observer.openchoreo.localhost", "Observer gateway hostname")
 	f.StringVar(&sreRcaHost, "rca-hostname", "rca-agent.openchoreo.localhost", "RCA agent gateway hostname")
+	f.StringVar(&sreAssetsRoot, "assets-root", "", "AE repository checkout holding the SRE extension assets (deployments/sre-agent-extensions, services/aep-mcp-server/skills); default: search upward from the working directory")
+	f.StringVar(&sreOrgNamespace, "org-namespace", "", "OpenChoreo namespace of the org whose Console-saved model connection key (an Anthropic key) the agent uses (default: config oc.default_org_namespace, else \"default\")")
+	f.StringVar(&sreOrgSecretStore, "org-secret-store", "default", "ClusterSecretStore that resolves the org's secret paths")
+	f.StringVar(&srePlatformStore, "platform-secret-store", "aep-platform", "ClusterSecretStore the platform chart installs for the aep/* OpenBao paths")
 	f.String("oc-api-url", "", "In-cluster OpenChoreo platform API URL (overrides config)")
 	_ = viper.BindPFlag("oc.api_url", f.Lookup("oc-api-url"))
 }
 
 // sreParams holds everything the value/manifest templates need.
 type sreParams struct {
-	ObsNamespace, OpenBaoAddr                                 string
+	ObsNamespace, PlatformSecretStore                         string
 	OCApiURL, ThunderJwksURL, ThunderTokenURL, ThunderAuthURL string
 	RcaImageRepo, RcaImageTag, RcaPullPolicy, RcaModel        string
 	AdapterRepo, AdapterTag                                   string
 	ObserverHost, RcaHost                                     string
-	// In-cluster handoff wiring (svc DNS, not host.k3d.internal).
-	RcaServiceURL, AEApiURL, AEPApiURL   string
-	AEHandoff, AEAutoDispatch, AEPublish bool
+	// In-cluster handoff wiring (svc DNS, not host.k3d.internal). AEMCPURL is
+	// aep-mcp-server's MCP endpoint (AEApiURL + /mcp), built once and used for
+	// both the rendered remediation mcp.json and the SRE pod's AEP_MCP_URL, so
+	// the two cannot disagree.
+	RcaServiceURL, AEApiURL, AEPApiURL, AEMCPURL string
+	AEHandoff, AEAutoDispatch, AEPublish         bool
+	// The org's Console-saved model connection key (sreAnthropicSecretTmpl).
+	OrgSecretStore string
+	AnthropicRef   kvRef
 }
 
 func runSreInstall(cmd *cobra.Command, args []string) error {
@@ -139,25 +160,26 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 
 	thunderURL := viper.GetString("thunder.url")
 	p := sreParams{
-		ObsNamespace:    sreObsNamespace,
-		OpenBaoAddr:     sreOpenBaoAddr,
-		OCApiURL:        viper.GetString("oc.api_url"),
-		ThunderJwksURL:  thunderURL + "/oauth2/jwks",
-		ThunderTokenURL: thunderURL + "/oauth2/token",
-		ThunderAuthURL:  viper.GetString("thunder.public_url"),
-		RcaImageRepo:    sreRcaImageRepo,
-		RcaImageTag:     sreRcaImageTag,
-		RcaPullPolicy:   sreRcaPullPolicy,
-		RcaModel:        sreRcaModel,
-		ObserverHost:    sreObserverHost,
-		RcaHost:         sreRcaHost,
-		RcaServiceURL:   "http://ai-rca-agent:8080",
-		AEApiURL:        fmt.Sprintf("http://aep-mcp-server.%s.svc.cluster.local:3400", sreNamespace),
-		AEPApiURL:       fmt.Sprintf("http://aep-api.%s.svc.cluster.local:9090", sreNamespace),
-		AEHandoff:       sreAEHandoff,
-		AEAutoDispatch:  sreAEAutoDispatch,
-		AEPublish:       sreAEPublishReport,
+		ObsNamespace:        sreObsNamespace,
+		PlatformSecretStore: srePlatformStore,
+		OCApiURL:            viper.GetString("oc.api_url"),
+		ThunderJwksURL:      thunderURL + "/oauth2/jwks",
+		ThunderTokenURL:     thunderURL + "/oauth2/token",
+		ThunderAuthURL:      viper.GetString("thunder.public_url"),
+		RcaImageRepo:        sreRcaImageRepo,
+		RcaImageTag:         sreRcaImageTag,
+		RcaPullPolicy:       sreRcaPullPolicy,
+		RcaModel:            sreRcaModel,
+		ObserverHost:        sreObserverHost,
+		RcaHost:             sreRcaHost,
+		AEApiURL:            fmt.Sprintf("http://aep-mcp-server.%s.svc.cluster.local:3400", sreNamespace),
+		AEPApiURL:           fmt.Sprintf("http://aep-api.%s.svc.cluster.local:9090", sreNamespace),
+		AEHandoff:           sreAEHandoff,
+		AEAutoDispatch:      sreAEAutoDispatch,
+		AEPublish:           sreAEPublishReport,
+		OrgSecretStore:      sreOrgSecretStore,
 	}
+	p.AEMCPURL = p.AEApiURL + "/mcp"
 	// Split on the LAST colon so a registry port (registry:5000/img:tag) is
 	// kept in the repo; image tags never contain a colon.
 	if i := strings.LastIndex(sreAdapterImage, ":"); i > 0 && i < len(sreAdapterImage)-1 {
@@ -166,46 +188,112 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--adapter-image must be repo:tag, got %q", sreAdapterImage)
 	}
 
-	// 1. Detect + warn.
-	if _, err := client.AppsV1().Deployments(sreObsNamespace).Get(ctx, "observer", metav1.GetOptions{}); err != nil {
-		if apierrors.IsNotFound(err) {
-			ui.Warn(fmt.Sprintf("Observability plane not found in namespace %q — installing it now.", sreObsNamespace))
+	// Resolve the handoff extension before touching the cluster, so a missing
+	// checkout fails fast instead of leaving a half-installed plane.
+	var assets sreExtensionAssets
+	if sreAEHandoff {
+		if assets, err = loadSreExtensionAssets(sreAssetsRoot); err != nil {
+			return err
 		}
-	} else {
-		ui.Detail(fmt.Sprintf("Observability plane detected in %q — reconciling (idempotent upgrade).", sreObsNamespace))
 	}
+
+	// 1. Detect the plane and the org's model connection key.
+	plane, adopt, err := installedObsPlane(ctx, sreObsNamespace)
+	if err != nil {
+		return err
+	}
+	if adopt {
+		ui.Detail(fmt.Sprintf("Observability plane %q (chart %s) found in %q — enabling its SRE agent at that version.", plane.Name, plane.Version, sreObsNamespace))
+	} else {
+		ui.Warn(fmt.Sprintf("No observability plane in %q — installing chart %s.", sreObsNamespace, sreObsPlaneVersion))
+	}
+	orgNS := sreOrgNamespace
+	if orgNS == "" {
+		orgNS = viper.GetString("oc.default_org_namespace")
+	}
+	if orgNS == "" {
+		orgNS = "default"
+	}
+	anthropicRef, haveKey, err := resolveOrgAnthropicKVRef(ctx, applier, orgNS)
+	if err != nil {
+		return fmt.Errorf("resolve the org's model connection key: %w", err)
+	}
+	p.AnthropicRef = anthropicRef
 
 	// 2. Namespace + cluster-gateway-ca + secrets via OpenBao->ESO.
 	if err := ensureNamespace(ctx, client, sreObsNamespace); err != nil {
 		return err
 	}
-	// The obs-plane chart mounts a cluster-gateway-ca ConfigMap into its
-	// cluster-agent pod but does not create it (same as the DP/WF planes).
-	// Without it the cluster-agent sits in ContainerCreating forever.
-	if err := ensureClusterGatewayCA(ctx, client, sreObsNamespace); err != nil {
-		return fmt.Errorf("cluster-gateway-ca: %w", err)
+	ui.Step("Applying obs-namespace ExternalSecrets (OpenBao->ESO)")
+	// Earlier aectl versions authored their own obs-namespace SecretStore,
+	// logging in as an OpenBao role nothing creates; it never became Ready.
+	if err := applier.Delete(ctx, "external-secrets.io/v1", "SecretStore", sreObsNamespace, "openbao"); err != nil {
+		return fmt.Errorf("remove the legacy openbao SecretStore: %w", err)
 	}
-	ui.Step("Applying obs-namespace SecretStore + ExternalSecrets (OpenBao->ESO)")
-	if err := applyTemplate(ctx, applier, "sre-secrets", sreObsNamespace, sreSecretsTmpl, p); err != nil {
-		return fmt.Errorf("apply secrets: %w (did you run `aectl init`?)", err)
+	if err := applyTemplate(ctx, applier, "sre-secrets", sreObsNamespace, sreAgentSecretsTmpl, p); err != nil {
+		return fmt.Errorf("apply secrets: %w (did you run `aectl platform install`?)", err)
 	}
-	// ESO must materialise the OpenSearch creds before the charts start.
-	for _, s := range []string{"opensearch-admin-credentials", "rca-agent-secret", "observer-secret"} {
+	wantSecrets := []string{"rca-agent-secret"}
+	if adopt {
+		applied := time.Now()
+		if err := applyTemplate(ctx, applier, "sre-observer-secret", sreObsNamespace, sreObserverClientSecretTmpl, p); err != nil {
+			return fmt.Errorf("apply observer client secret: %w", err)
+		}
+		// The Secret already exists with the plane installer's value, so wait
+		// for ESO to rewrite it rather than for it to appear.
+		if err := waitForExternalSecretRefresh(ctx, applier, sreObsNamespace, "observer-secret", applied, 2*time.Minute); err != nil {
+			return err
+		}
+	} else {
+		// The obs-plane chart mounts a cluster-gateway-ca ConfigMap into its
+		// cluster-agent pod but does not create it (same as the DP/WF planes).
+		// Without it the cluster-agent sits in ContainerCreating forever.
+		if err := ensureClusterGatewayCA(ctx, client, sreObsNamespace); err != nil {
+			return fmt.Errorf("cluster-gateway-ca: %w", err)
+		}
+		if err := applyTemplate(ctx, applier, "sre-plane-secrets", sreObsNamespace, srePlaneSecretsTmpl, p); err != nil {
+			return fmt.Errorf("apply plane secrets: %w", err)
+		}
+		wantSecrets = append(wantSecrets, "opensearch-admin-credentials", "observer-secret")
+	}
+	if haveKey {
+		if err := applyTemplate(ctx, applier, "sre-anthropic-secret", sreObsNamespace, sreAnthropicSecretTmpl, p); err != nil {
+			return fmt.Errorf("apply Anthropic key ExternalSecret: %w", err)
+		}
+		wantSecrets = append(wantSecrets, "rca-agent-anthropic-secret")
+	}
+	// ESO must materialise these before the charts start.
+	for _, s := range wantSecrets {
 		if err := waitForSecret(ctx, client, sreObsNamespace, s, 2*time.Minute); err != nil {
-			return fmt.Errorf("%w\nESO did not sync %q — check the SecretStore/ExternalSecrets and that `aectl init` seeded OpenBao", err, s)
+			return fmt.Errorf("%w\nESO did not sync %q — check the ExternalSecrets, the %s ClusterSecretStore, and that `aectl platform install` seeded OpenBao", err, s, srePlatformStore)
 		}
 	}
 	ui.Success("Secrets synced")
 
-	// 3. Helm install the two OpenChoreo charts.
-	if err := helmInstallObsPlane(ctx, p); err != nil {
+	// 3. Helm: enable the SRE agent on the installed plane, or install both
+	// OpenChoreo charts.
+	if adopt {
+		if err := helmEnableSREAgent(ctx, p, plane); err != nil {
+			return err
+		}
+		if _, err := client.AppsV1().DaemonSets(sreObsNamespace).Get(ctx, "fluent-bit", metav1.GetOptions{}); err != nil {
+			ui.Warn(fmt.Sprintf("No fluent-bit DaemonSet in %q — container logs are not collected, so log alerts never fire.", sreObsNamespace))
+		}
+	} else {
+		if err := helmInstallObsPlane(ctx, p); err != nil {
+			return err
+		}
+		if err := helmInstallObsLogs(ctx, p); err != nil {
+			return err
+		}
+	}
+	agentDeploy, err := findSREAgentDeployment(ctx, client, sreObsNamespace)
+	if err != nil {
 		return err
 	}
-	if err := helmInstallObsLogs(ctx, p); err != nil {
-		return err
-	}
+	p.RcaServiceURL = fmt.Sprintf("http://%s:8080", agentDeploy)
 
-	// 4. Best-effort readiness (do NOT wait on ai-rca-agent — it stays
+	// 4. Best-effort readiness (do NOT wait on the SRE agent — it stays
 	// unwired until step 5). Warn (don't abort) so name/version drift in the
 	// upstream charts can't wedge the install.
 	waitForDeployment(ctx, client, sreObsNamespace, "observer", 5*time.Minute)
@@ -223,6 +311,13 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 	}
 	_ = rolloutRestart(ctx, client, sreObsNamespace, "observer")
 	if sreAEHandoff {
+		ui.Step("Wiring the remediation agent's SRE-agent extensions (mcp.json/CONTEXT.md/skill)")
+		if err := applyExtensionsConfigMap(ctx, client, sreObsNamespace, assets, p.AEMCPURL); err != nil {
+			return fmt.Errorf("apply sre-agent-extensions configmap: %w", err)
+		}
+		if err := mountSREAgentRuntime(ctx, client, sreObsNamespace, agentDeploy, p.AEMCPURL); err != nil {
+			return fmt.Errorf("mount SRE agent runtime: %w", err)
+		}
 		if err := patchConfigMap(ctx, client, sreObsNamespace, "rca-agent-config", map[string]string{
 			"AE_HANDOFF":         "true",
 			"AE_AUTO_DISPATCH":   fmt.Sprintf("%t", sreAEAutoDispatch),
@@ -232,16 +327,23 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		}); err != nil {
 			return err
 		}
-		_ = rolloutRestart(ctx, client, sreObsNamespace, "ai-rca-agent")
-		ui.Detail(fmt.Sprintf("AE handoff: enabled (auto-dispatch=%t, mcp=%s)", sreAEAutoDispatch, p.AEApiURL))
+		_ = rolloutRestart(ctx, client, sreObsNamespace, agentDeploy)
+		ui.Detail(fmt.Sprintf("AE handoff: enabled (auto-dispatch=%t, mcp=%s, assets=%s)", sreAEAutoDispatch, p.AEMCPURL, assets.RootHint))
 	} else {
 		ui.Detail("AE handoff: disabled (--ae-handoff=false)")
 	}
 
-	// 6. Authz grants + routes + ClusterObservabilityPlane CR.
-	ui.Step("Applying authz grants, HTTPRoute, and ClusterObservabilityPlane")
-	if err := applyTemplate(ctx, applier, "sre-crs", sreObsNamespace, sreCRsTmpl, p); err != nil {
-		return fmt.Errorf("apply CRs: %w", err)
+	// 6. Authz grants, plus the route and ClusterObservabilityPlane CR for a
+	// plane aectl installed.
+	ui.Step("Applying authz grants")
+	if err := applyTemplate(ctx, applier, "sre-grants", sreObsNamespace, sreGrantsTmpl, p); err != nil {
+		return fmt.Errorf("apply grants: %w", err)
+	}
+	if !adopt {
+		ui.Step("Applying HTTPRoute and ClusterObservabilityPlane")
+		if err := applyTemplate(ctx, applier, "sre-crs", sreObsNamespace, srePlaneCRsTmpl, p); err != nil {
+			return fmt.Errorf("apply CRs: %w", err)
+		}
 	}
 
 	// 7. OpenSearch index-template bootstrap (detect + self-heal).
@@ -251,6 +353,10 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		ui.Detail("Log-based alerts may misbehave until the container-logs template maps log as 'wildcard'.")
 	}
 
+	if !haveKey {
+		ui.Warn(fmt.Sprintf("No model connection saved for org namespace %q yet — the SRE agent waits for its key.", orgNS))
+		ui.Detail("Save the org's model connection (an Anthropic key) in the AE Console (Settings), then re-run `aectl sre install`.")
+	}
 	printSreCompletion(p)
 	return nil
 }
@@ -349,6 +455,46 @@ func waitForSecret(ctx context.Context, client *kubernetes.Clientset, ns, name s
 	}
 }
 
+// waitForExternalSecretRefresh waits until ESO has synced the ExternalSecret
+// at or after since: for a Secret that already exists, the point at which it
+// holds the ExternalSecret's current source.
+func waitForExternalSecretRefresh(ctx context.Context, applier *k8s.Applier, ns, name string, since time.Time, timeout time.Duration) error {
+	// refreshTime has second precision.
+	since = since.Truncate(time.Second)
+	deadline := time.Now().Add(timeout)
+	for {
+		es, err := applier.Get(ctx, "external-secrets.io/v1", "ExternalSecret", ns, name)
+		if err != nil {
+			return err
+		}
+		if es != nil && externalSecretSyncedSince(es, since) {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for ExternalSecret %s/%s to sync", ns, name)
+		}
+		time.Sleep(3 * time.Second)
+	}
+}
+
+// externalSecretSyncedSince reports whether es is Ready with a refresh at or
+// after since.
+func externalSecretSyncedSince(es *unstructured.Unstructured, since time.Time) bool {
+	refreshed, _, _ := unstructured.NestedString(es.Object, "status", "refreshTime")
+	t, err := time.Parse(time.RFC3339, refreshed)
+	if err != nil || t.Before(since) {
+		return false
+	}
+	conds, _, _ := unstructured.NestedSlice(es.Object, "status", "conditions")
+	for _, c := range conds {
+		m, ok := c.(map[string]interface{})
+		if ok && m["type"] == "Ready" && m["status"] == "True" {
+			return true
+		}
+	}
+	return false
+}
+
 // waitForDeployment is best-effort: it warns on timeout rather than failing,
 // since upstream chart resource names can drift across versions.
 func waitForDeployment(ctx context.Context, client *kubernetes.Clientset, ns, name string, timeout time.Duration) {
@@ -430,6 +576,26 @@ func helmForceConflictsArgs(ctx context.Context) []string {
 		return []string{"--force-conflicts"}
 	}
 	return nil
+}
+
+// helmEnableSREAgent turns on the SRE agent of a plane aectl did not install:
+// that release, at its own chart version, with its values kept.
+func helmEnableSREAgent(ctx context.Context, p sreParams, plane obsPlaneRelease) error {
+	vals, cleanup, err := writeTempValues("sre-agent", sreAgentValuesTmpl, p)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	args := []string{
+		"upgrade", plane.Name,
+		"oci://ghcr.io/openchoreo/helm-charts/" + obsPlaneChart,
+		"--namespace", p.ObsNamespace,
+		"--version", plane.Version,
+		"--reuse-values",
+		"--values", vals, "--timeout", "10m",
+	}
+	args = append(args, helmForceConflictsArgs(ctx)...)
+	return runHelm(ctx, "obs-plane (SRE agent)", args...)
 }
 
 func helmInstallObsLogs(ctx context.Context, p sreParams) error {

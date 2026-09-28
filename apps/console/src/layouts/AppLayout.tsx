@@ -448,20 +448,33 @@ export function AppLayout() {
                     </span>
                   </Tooltip>
                 )}
-                <Sidebar.Item
-                  id="issues"
-                  link={
-                    <Link
-                      to="/projects/$projectName/issues"
-                      params={{ projectName }}
-                    />
-                  }
-                >
-                  <Sidebar.ItemIcon>
-                    <CircleAlert />
-                  </Sidebar.ItemIcon>
-                  <Sidebar.ItemLabel>Issues</Sidebar.ItemLabel>
-                </Sidebar.Item>
+                {hasBuildNavAccess ? (
+                  <Sidebar.Item
+                    id="issues"
+                    link={
+                      <Link
+                        to="/projects/$projectName/issues"
+                        params={{ projectName }}
+                      />
+                    }
+                  >
+                    <Sidebar.ItemIcon>
+                      <CircleAlert />
+                    </Sidebar.ItemIcon>
+                    <Sidebar.ItemLabel>Issues</Sidebar.ItemLabel>
+                  </Sidebar.Item>
+                ) : (
+                  <Tooltip title="You don't have permission to view issues.">
+                    <span>
+                      <Sidebar.Item id="issues" sx={{ opacity: 0.5, pointerEvents: "none" }}>
+                        <Sidebar.ItemIcon>
+                          <CircleAlert />
+                        </Sidebar.ItemIcon>
+                        <Sidebar.ItemLabel>Issues</Sidebar.ItemLabel>
+                      </Sidebar.Item>
+                    </span>
+                  </Tooltip>
+                )}
               </Sidebar.Category>
             ) : (
               <Sidebar.Category>

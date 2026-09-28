@@ -50,6 +50,52 @@ func TestPermissionGateCoverage(t *testing.T) {
 	}
 }
 
+// TestSREHandoffIdentityPassesItsOwnOperations pins the pairing between the
+// SRE handoff identity's declared scope (auth.SREHandoffVerifier's synthetic
+// claims) and the rows gating the three operations aep-mcp-server exposes.
+//
+// The two are written in different files and nothing else couples them, so
+// either side can be edited alone: narrow the scope, or raise a row's
+// permission, and the agent starts 403-ing on a flow that has no console
+// caller to notice. It would fail in production, against a long-lived shared
+// secret nobody re-tests, which is the cost this test buys out.
+//
+// Driven through permissionGate itself rather than comparing the two lists,
+// so it exercises the same decision a real request gets.
+func TestSREHandoffIdentityPassesItsOwnOperations(t *testing.T) {
+	t.Parallel()
+
+	claims, ok := auth.NewSREHandoffVerifier("s3cr3t", "acme").Verify("Bearer s3cr3t")
+	if !ok {
+		t.Fatal("the handoff verifier must accept its own secret")
+	}
+	ctx := auth.WithClaims(context.Background(), claims)
+	next := func(context.Context, http.ResponseWriter, *http.Request, any) (any, error) {
+		return "ok", nil
+	}
+
+	// Every operation services/aep-mcp-server/src/server.ts can reach.
+	for _, op := range []string{"ListIssues", "CreateIssue", "PromoteTaskFromIssue"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/projects/p/issues", nil)
+		if _, err := permissionGate(next, op)(ctx, nil, req, nil); err != nil {
+			t.Errorf("the SRE handoff identity must satisfy %s, got %v", op, err)
+		}
+	}
+
+	// And nothing beyond them: the identity holds the build pair, so an
+	// operation on another permission is refused exactly as a person's would
+	// be. Guards against someone widening the scope to fix a 403 instead of
+	// deciding whether the agent should reach that surface at all.
+	for _, op := range []string{"GetConfig", "ListSkills", "ApplyFiles", "ListProjectUsage"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/x", nil)
+		_, err := permissionGate(next, op)(ctx, nil, req, nil)
+		var ae *apiError
+		if !errors.As(err, &ae) || ae.Status != http.StatusForbidden {
+			t.Errorf("the SRE handoff identity must NOT satisfy %s, got %v", op, err)
+		}
+	}
+}
+
 // TestPermissionGateCarveOutsNameContractOperations is the mirror check: every
 // carve-out key must be a real contract operationID, so a contract rename or
 // removal can't leave a dead entry masquerading as a deliberate decision.

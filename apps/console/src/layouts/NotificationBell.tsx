@@ -34,6 +34,8 @@ import { NoPermissionIllustration } from "../components/NoPermissionIllustration
 import { useRecentAlerts } from "../features/alerts/api/queries";
 import { useAlertsUnread } from "../features/alerts/hooks/useAlertsUnread";
 import { classificationLabel } from "../features/alerts/classification";
+import { attentionDescription, attentionLabel } from "../features/issues/attention";
+import { useAttentionUnread } from "../features/issues/hooks/useAttentionUnread";
 
 const NO_PERMISSION_TOOLTIP = "You don't have permission to view alerts.";
 
@@ -44,7 +46,15 @@ export function NotificationButton() {
   const { actions } = useAppShell();
   const hasObservabilityAccess = useHasPermission("ae:observability-view");
   const { data: reports = [] } = useRecentAlerts(undefined, hasObservabilityAccess);
-  const { unreadCount, markAllSeen } = useAlertsUnread(reports);
+  // Both counts start from the SAME list-rca-agent-reports read, so both are
+  // already covered by the permission that read is gated on — an SRE incident
+  // needing attention arrives as a report like any other. useAttentionUnread
+  // then reads each report's project issues, and needs no `enabled` of its
+  // own: it derives the projects to read FROM `reports`, so a caller the line
+  // above withheld has an empty list and it issues no query at all.
+  const alertsUnread = useAlertsUnread(reports);
+  const attentionUnread = useAttentionUnread(reports);
+  const unreadCount = alertsUnread.unreadCount + attentionUnread.unreadCount;
 
   return (
     <Tooltip title={hasObservabilityAccess ? "Alerts" : NO_PERMISSION_TOOLTIP}>
@@ -52,7 +62,8 @@ export function NotificationButton() {
         <IconButton
           onClick={() => {
             actions.toggleNotificationPanel();
-            markAllSeen();
+            alertsUnread.markAllSeen();
+            attentionUnread.markAllSeen();
           }}
           size="small"
           sx={{ color: "text.secondary" }}
@@ -84,11 +95,16 @@ export function AlertsNotificationPanel() {
     error,
     refetch,
   } = useRecentAlerts(undefined, hasObservabilityAccess);
+  const attention = useAttentionUnread(reports);
 
   const openAlert = (alertId: string) => {
     // Close the overlay so it doesn't linger over the destination page.
     actions.toggleNotificationPanel();
     void navigate({ to: "/alerts/$alertId", params: { alertId } });
+  };
+  const openIssues = (projectName: string) => {
+    actions.toggleNotificationPanel();
+    void navigate({ to: "/projects/$projectName/issues", params: { projectName } });
   };
 
   return (
@@ -124,25 +140,57 @@ export function AlertsNotificationPanel() {
             Retry
           </Button>
         </Box>
-      ) : reports.length === 0 ? (
+      ) : reports.length === 0 && attention.items.length === 0 ? (
         <NotificationPanel.EmptyState />
       ) : (
-        <NotificationPanel.List>
-          {reports.map((report) => (
-            <NotificationPanel.Item key={report.id} id={report.id!} type="info" read>
-              <NotificationPanel.ItemTitle>{report.title}</NotificationPanel.ItemTitle>
-              <NotificationPanel.ItemMessage>
-                {report.project} · {classificationLabel(report.classification)}
-              </NotificationPanel.ItemMessage>
-              <NotificationPanel.ItemTimestamp>
-                {report.createdAt ? formatRelativeTime(new Date(report.createdAt)) : ""}
-              </NotificationPanel.ItemTimestamp>
-              <NotificationPanel.ItemAction onClick={() => openAlert(report.id!)}>
-                View
-              </NotificationPanel.ItemAction>
-            </NotificationPanel.Item>
-          ))}
-        </NotificationPanel.List>
+        <>
+          {attention.failedProjects.length > 0 && (
+            // An issue list that failed to load hides that project's
+            // attention items; say so instead of implying there are none.
+            <Box sx={{ px: 3, py: 1.5, display: "flex", alignItems: "center", gap: 1.5 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>
+                Failed to load issue attention for {attention.failedProjects.join(", ")}
+              </Typography>
+              <Button size="small" onClick={attention.retryFailed}>
+                Retry
+              </Button>
+            </Box>
+          )}
+          <NotificationPanel.List>
+            {attention.items.map((item) => (
+              <NotificationPanel.Item
+                key={item.id}
+                id={item.id}
+                type={item.reason === "escalated" ? "error" : "warning"}
+                read
+              >
+                <NotificationPanel.ItemTitle>
+                  {attentionLabel(item.reason)}: #{item.issueNumber} {item.title}
+                </NotificationPanel.ItemTitle>
+                <NotificationPanel.ItemMessage>
+                  {item.projectName} · {attentionDescription(item.reason)}
+                </NotificationPanel.ItemMessage>
+                <NotificationPanel.ItemAction onClick={() => openIssues(item.projectName)}>
+                  Review
+                </NotificationPanel.ItemAction>
+              </NotificationPanel.Item>
+            ))}
+            {reports.map((report) => (
+              <NotificationPanel.Item key={report.id} id={report.id!} type="info" read>
+                <NotificationPanel.ItemTitle>{report.title}</NotificationPanel.ItemTitle>
+                <NotificationPanel.ItemMessage>
+                  {report.project} · {classificationLabel(report.classification)}
+                </NotificationPanel.ItemMessage>
+                <NotificationPanel.ItemTimestamp>
+                  {report.createdAt ? formatRelativeTime(new Date(report.createdAt)) : ""}
+                </NotificationPanel.ItemTimestamp>
+                <NotificationPanel.ItemAction onClick={() => openAlert(report.id!)}>
+                  View
+                </NotificationPanel.ItemAction>
+              </NotificationPanel.Item>
+            ))}
+          </NotificationPanel.List>
+        </>
       )}
     </NotificationPanel>
   );

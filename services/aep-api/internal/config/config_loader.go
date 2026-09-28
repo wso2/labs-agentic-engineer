@@ -62,6 +62,8 @@ func Load() (Config, error) {
 		PlatformResourcesEnabled: r.readOptionalBool("PLATFORM_RESOURCES_ENABLED", true),
 		AutoMergeCodingPRs:       r.readOptionalBool("AUTO_MERGE_CODING_PRS", false),
 		TenantGateMode:           r.readOptionalString("TENANT_GATE_MODE", "enforce"),
+		SREHandoffToken:          r.readOptionalString("SRE_HANDOFF_TOKEN", ""),
+		SREHandoffOrg:            r.readOptionalString("SRE_HANDOFF_ORG", ""),
 		OAuthStateSigningKey:     r.readOptionalString("OAUTH_STATE_SIGNING_KEY", ""),
 		BFFPublicURL:             r.readOptionalString("BFF_PUBLIC_URL", "http://localhost:8090"),
 		TryItCallbackURL:         r.readOptionalString("TRY_IT_CALLBACK_URL", ""),

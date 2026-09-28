@@ -113,6 +113,8 @@ type CycleStore interface {
 // a label-vocabulary or dedupe change is one edit rather than eight — and this
 // port cannot be used to route around it.
 type IssueClient interface {
+	// GetIssue resolves current state and labels for adoption by issue number.
+	GetIssue(ctx context.Context, orgID, projectID string, number int) (*sourcecontrol.IssueInfo, error)
 	// ListMilestoneIssues reads a milestone's issues, filtered by state and
 	// label. Pull requests are excluded by the host.
 	ListMilestoneIssues(ctx context.Context, orgID, projectID string, filter sourcecontrol.MilestoneIssuesFilter) ([]sourcecontrol.IssueInfo, error)

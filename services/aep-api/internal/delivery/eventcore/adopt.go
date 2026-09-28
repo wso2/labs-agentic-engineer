@@ -21,8 +21,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // ErrNoDeployedMilestone is adoption's honest refusal: a bare issue joins the
@@ -39,6 +41,7 @@ type AdoptTarget struct {
 	Number          int
 	MilestoneNumber int
 	MilestoneTitle  string
+	State           string
 	// Labels is the issue's label set, when the caller has it. Adoption starts a
 	// TASK run, so it routes on the KIND these carry and refuses an issue that
 	// belongs to another species (delivery.AdoptableByATaskRun).
@@ -79,6 +82,31 @@ func (e *Events) AdoptIssue(ctx context.Context, orgID, projectID string, target
 	if target.Number == 0 || e.p.Runs == nil {
 		return nil
 	}
+	// Number-only handoffs must use the host's labels, just like webhook
+	// adoption. The caller cannot turn a provision issue into unclassified work.
+	if target.Labels == nil && e.p.Issues != nil {
+		issue, err := e.p.Issues.GetIssue(ctx, orgID, projectID, target.Number)
+		if err != nil {
+			return err
+		}
+		if issue == nil {
+			return fmt.Errorf("adopt issue: issue %d not found", target.Number)
+		}
+		target.Labels = issue.Labels
+		target.State = issue.State
+	}
+	if sourcecontrol.HasIncidentLabel(target.Labels) {
+		if strings.EqualFold(target.State, "closed") {
+			return nil
+		}
+		// Task 3 owns classification; its durable identity namespace separates
+		// config-only records from code/mixed work without parsing issue prose.
+		for _, label := range target.Labels {
+			if strings.HasPrefix(strings.ToLower(label), "dedupe:sre-config-") {
+				return nil
+			}
+		}
+	}
 	// Route on the kind BEFORE anything is written. An issue that belongs to
 	// another species must not be pulled into a bug-fix run, and it must not be
 	// moved into the deployed version's milestone on the way there either.
@@ -86,6 +114,11 @@ func (e *Events) AdoptIssue(ctx context.Context, orgID, projectID string, target
 		slog.DebugContext(ctx, "eventcore: not adopting — this issue is another run species' work",
 			"issue", target.Number, "kind", delivery.KindOf(target.Labels))
 		return nil
+	}
+	if sourcecontrol.HasIncidentLabel(target.Labels) && !delivery.HasLabel(target.Labels, delivery.LabelAgentWork) {
+		if err := e.p.Writer.Label(ctx, orgID, projectID, target.Number, delivery.LabelAgentWork); err != nil {
+			return err
+		}
 	}
 	milestone := MilestoneRef{Number: target.MilestoneNumber, Title: target.MilestoneTitle}
 	if milestone.Number == 0 {

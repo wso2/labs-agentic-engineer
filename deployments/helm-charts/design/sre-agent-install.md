@@ -84,10 +84,14 @@ Tracked follow-ups:
 - **Auto-dispatch is ON by default** (`--ae-auto-dispatch=false` for issue-only).
   A fired alert can drive automated code changes; the RCA agent feeds pod logs to
   an LLM (prompt-injection surface).
-- **Non-WSO2 images**: `tharindulak/openchoreo-sre-agent` and the case-insensitive
+- **Non-WSO2 images**: `tharindulak/sre-agent:v1.0.1-hotfix.1-anthropic` and the case-insensitive
   logs-adapter. Mirror to WSO2/GHCR and pin by digest for prod.
-- **No NetworkPolicies** on the chart (platform-wide gap); `aep-mcp-server:3400` is
-  guarded only by aep-api JWT validation.
+- **NetworkPolicies are partial** (platform-wide gap). The only one is
+  `templates/aep-mcp-server/networkpolicy.yaml`, rendered with
+  `sreHandoff.enabled`: while aep-mcp-server applies the shared handoff bearer
+  (`AEP_MCP_DEFAULT_BEARER`), it admits only pods matching
+  `sreHandoff.callerPodLabels` in `sreHandoff.callerNamespace`. With
+  handoff off, `aep-mcp-server:3400` is guarded only by aep-api JWT validation.
 - **OpenSearch** is dev-sized (256M heap, no HA); no global LLM cost cap.
-- Per-org Anthropic key rotation (aep-api ExternalSecret push) is not yet wired;
-  the static org key from OpenBao is used.
+- Per-org Anthropic key rotation is AE-owned; the SRE pod consumes only the
+  mounted `RCA_LLM_API_KEY_FILE`, refreshed through the secret projection path.

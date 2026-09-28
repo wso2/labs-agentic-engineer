@@ -131,31 +131,40 @@ func (a *Applier) apply(ctx context.Context, fieldManager, defaultNamespace stri
 // is present in the cluster, false if it is not found, and an error for any
 // other failure (e.g. the CRD itself is not installed).
 func (a *Applier) Exists(ctx context.Context, apiVersion, kind, namespace, name string) (bool, error) {
+	obj, err := a.Get(ctx, apiVersion, kind, namespace, name)
+	return obj != nil, err
+}
+
+// Get returns the object identified by apiVersion/kind/namespace/name, nil
+// (and no error) when it is not found, and an error for any other failure
+// (e.g. the CRD itself is not installed).
+func (a *Applier) Get(ctx context.Context, apiVersion, kind, namespace, name string) (*unstructured.Unstructured, error) {
 	gv, err := schema.ParseGroupVersion(apiVersion)
 	if err != nil {
-		return false, fmt.Errorf("parse apiVersion %q: %w", apiVersion, err)
+		return nil, fmt.Errorf("parse apiVersion %q: %w", apiVersion, err)
 	}
 	gvk := gv.WithKind(kind)
 	mapping, err := a.mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
 	if err != nil {
-		return false, fmt.Errorf("resolve %s: %w", gvk.String(), err)
+		return nil, fmt.Errorf("resolve %s: %w", gvk.String(), err)
 	}
 	var ri dynamic.ResourceInterface
 	if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
 		if namespace == "" {
-			return false, fmt.Errorf("namespace is required for namespaced kind %s", gvk.String())
+			return nil, fmt.Errorf("namespace is required for namespaced kind %s", gvk.String())
 		}
 		ri = a.dyn.Resource(mapping.Resource).Namespace(namespace)
 	} else {
 		ri = a.dyn.Resource(mapping.Resource)
 	}
-	if _, err := ri.Get(ctx, name, metav1.GetOptions{}); err != nil {
+	obj, err := ri.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return false, nil
+			return nil, nil
 		}
-		return false, fmt.Errorf("get %s/%s: %w", kind, name, err)
+		return nil, fmt.Errorf("get %s/%s: %w", kind, name, err)
 	}
-	return true, nil
+	return obj, nil
 }
 
 // Delete removes a single object identified by apiVersion/kind/namespace/name,

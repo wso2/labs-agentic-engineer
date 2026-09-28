@@ -53,22 +53,19 @@ func runSreStatus(cmd *cobra.Command, args []string) error {
 
 	// Helm releases section
 	ui.Section(fmt.Sprintf("Helm Releases (%s)", sreStatusObsNamespace))
-	knownReleases := []string{"observability-plane", "observability-logs-opensearch"}
+	// Every observability release, whatever its name: `aectl sre install`
+	// installs "observability-plane" itself but adopts a plane installed under
+	// another name (setup-env-for-aectl.sh's "openchoreo-observability-plane").
 	allReleases, err := listHelmReleases(ctx, sreStatusObsNamespace, "observability.*")
-	if err != nil {
+	switch {
+	case err != nil:
 		ui.Warn(fmt.Sprintf("could not query helm: %v", err))
-	} else {
-		byName := make(map[string]helmRelease, len(allReleases))
-		for _, r := range allReleases {
-			byName[r.Name] = r
-		}
+	case len(allReleases) == 0:
+		ui.Detail(ui.Yellow("no observability releases installed"))
+	default:
 		t := ui.NewTable("NAME", "STATUS", "CHART")
-		for _, name := range knownReleases {
-			if r, ok := byName[name]; ok {
-				t.AddRow(r.Name, colorHelmStatus(r.Status), r.Chart)
-			} else {
-				t.AddRow(name, ui.Yellow("not installed"), "")
-			}
+		for _, r := range allReleases {
+			t.AddRow(r.Name, colorHelmStatus(r.Status), r.Chart)
 		}
 		t.Print()
 	}
@@ -96,7 +93,7 @@ func runSreStatus(cmd *cobra.Command, args []string) error {
 
 	// ESO secrets section
 	ui.Section("ESO Secrets")
-	esoSecrets := []string{"opensearch-admin-credentials", "rca-agent-secret", "observer-secret"}
+	esoSecrets := []string{"opensearch-admin-credentials", "rca-agent-secret", "rca-agent-anthropic-secret", "observer-secret"}
 	for _, name := range esoSecrets {
 		_, err := client.CoreV1().Secrets(sreStatusObsNamespace).Get(ctx, name, metav1.GetOptions{})
 		switch {

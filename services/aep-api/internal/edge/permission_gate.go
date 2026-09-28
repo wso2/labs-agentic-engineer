@@ -141,6 +141,22 @@ var operationPermissions = map[string][]authz.Permission{
 	"StreamTaskLog":                 {authz.PermissionBuildView},
 	"GetProjectDependencyReadiness": {authz.PermissionBuildView},
 
+	// --- Issues -----------------------------------------------------------
+	// Two callers, one permission each way round. The console's Issues page
+	// and sidebar leg read the list; the SRE agent's MCP tools read it and
+	// write the other two, presenting the handoff bearer, whose synthetic
+	// claims declare exactly this pair (auth.sreHandoffPermissions) — so these
+	// rows are decided by what the operations DO, and both callers satisfy
+	// them without either being special-cased.
+	//
+	// The writes take ae:build because each one starts a run: creating an
+	// issue IS the dispatch when the platform's classification says so, and
+	// promoting turns an issue into a coding task and dispatches it. Neither
+	// is a bookkeeping write that a reader of the page should be able to make.
+	"ListIssues":           {authz.PermissionBuildView},
+	"CreateIssue":          {authz.PermissionBuild},
+	"PromoteTaskFromIssue": {authz.PermissionBuild},
+
 	// Validation reports on what a version's runs did after they deployed, and
 	// is read from the same run rows the three reads above serve — the ledger
 	// is one row per version, the version page its runs and attempts, the
@@ -236,14 +252,6 @@ var permissionGateCarveOuts = map[string]struct{}{
 	// exists so the coverage test does not also demand a row above; it is not
 	// a bypass. See updateConfigPermissions.
 	"UpdateConfig": {},
-
-	// Reached only by a non-console caller: the SRE agent's MCP tools, which
-	// forward their caller's bearer as-is. What authorization means for an
-	// agent rather than a person is undecided, and guessing a permission here
-	// would break a working flow on a role that merely lacks the guess.
-	"CreateIssue":          {},
-	"ListIssues":           {},
-	"PromoteTaskFromIssue": {},
 
 	// No caller anywhere — console, MCP, collab, agents, aectl, or another Go
 	// caller of the same service method. Each is either built ahead of a

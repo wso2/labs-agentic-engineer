@@ -17,11 +17,29 @@
 package eventcore
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
+
+// Confidence is a declaration on a pull request, never a classification read
+// from an issue's prose. Only an explicit high-confidence fix closes SRE work.
+var confidenceRE = regexp.MustCompile(`(?im)^[ \t>*_-]*confidence[ \t]*:[ \t]*\*{0,2}(high|low)\*{0,2}[ \t.\r]*$`)
+
+func unverifiedMerge(body string) bool {
+	declarations := confidenceRE.FindAllStringSubmatch(body, -1)
+	if len(declarations) == 0 {
+		return true
+	}
+	for _, declaration := range declarations {
+		if !strings.EqualFold(declaration[1], "high") {
+			return true
+		}
+	}
+	return false
+}
 
 // This file holds the event plane's three DECISIONS as pure functions over
 // facts: may this pull request merge, which components does this diff touch,

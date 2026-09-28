@@ -43,8 +43,8 @@ middleware chain beside `tenantGate` and running after it (a claimless request d
 401, not a permission denial for holding none). Every contract operationID must appear in exactly one
 of `operationPermissions` or `permissionGateCarveOuts`; `TestPermissionGateCoverage` fails the build
 otherwise, and a mirror test rejects a carve-out naming an operation the contract no longer has. An
-operation reaching the gate with no declared permission denies rather than passes. Today that is 71
-gated operations against 22 carve-outs, each carve-out grouped by the reason it is one.
+operation reaching the gate with no declared permission denies rather than passes. Today that is 74
+gated operations against 19 carve-outs, each carve-out grouped by the reason it is one.
 
 **Entry to a surface is gated on its view permission exactly.** A write permission authorizes
 mutations; it never admits its holder to a page on its own. `ae:build` does not satisfy a row reading
@@ -97,9 +97,19 @@ not exist yet.
   the backend exposes it as a generated contract type.
 - Two roles ship: `ae-admin` holds every permission; `ae-developer` holds the requirement-view,
   design and build pair. Org spend and incident reports stay admin-facing.
-- The carve-out set is not yet a complete authorization boundary. Three operations are reached only
-  by the SRE agent's MCP tools, where what "authorized" means for an agent rather than a person is
-  undecided; the rest have no caller at all and carry a `TODO(authz)`.
+- **An agent is an ordinary principal.** The SRE agent reaches aep-api through aep-mcp-server with a
+  long-lived shared secret rather than a Thunder JWT, and `SREHandoffVerifier` used to mint claims
+  with no scope at all — which made its three operations un-gateable, and so carved out of the gate
+  entirely: a hole in front of the gate rather than a decision inside it. Those synthetic claims now
+  declare `ae:build-view` and `ae:build`, exactly what filing, listing and promoting an issue need
+  (each write starts a run), and the three operations are gated on that pair like any other. The
+  agent holds what it needs, is refused everything else by the same deny-by-default rule as a person,
+  and an MCP tool added later that needs more fails at the gate rather than inheriting a bypass.
+  Permissions describe what an operation does, not who tends to call it — which is why this is the
+  build pair and not `ae:observability-view`, though the caller is the SRE agent.
+- The remaining carve-outs have no caller at all and carry a `TODO(authz)`, plus the four that run
+  before a caller's permissions can be known or provisioned and `UpdateConfig`, which the gate
+  decides from the patch body instead.
 - A caller who cannot write a config section can no longer read its audit fields either: `GET /config`
   is answered on either credential permission and then redacted per section, including `agents`'
   `updatedBy`, which exists precisely because that endpoint's permissions are coarse. The org's model

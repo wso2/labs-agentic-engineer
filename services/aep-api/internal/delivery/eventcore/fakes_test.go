@@ -236,6 +236,10 @@ type fakeIssues struct {
 // every mint in this package goes through.
 func (f *fakeIssues) writer() *delivery.IssueWriter { return delivery.NewIssueWriter(f) }
 
+func (f *fakeIssues) GetIssue(_ context.Context, _, _ string, number int) (*sourcecontrol.IssueInfo, error) {
+	return &sourcecontrol.IssueInfo{Number: number, State: "open"}, nil
+}
+
 func (f *fakeIssues) CloseIssue(_ context.Context, _, _ string, number int, comment string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

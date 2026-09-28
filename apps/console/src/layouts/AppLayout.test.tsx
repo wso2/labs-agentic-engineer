@@ -260,7 +260,7 @@ describe("AppLayout — org sidebar", () => {
   });
 });
 
-// Spec/Builds/Deployments/Validations gate on the SAME permission each of
+// Spec/Builds/Deployments/Validations/Issues gate on the SAME permission each of
 // those pages' own PermissionRestrictedPage checks — disabling the item here
 // is what keeps a caller who lacks it from ever reaching that page's denial
 // screen in the first place, mirroring the org sidebar's Resources/Endpoints
@@ -294,7 +294,7 @@ describe("AppLayout — project sidebar", () => {
     expect(sidebarItem("Spec").closest("a")).toBeNull();
   });
 
-  it.each(["Builds", "Deployments", "Validations"])(
+  it.each(["Builds", "Deployments", "Validations", "Issues"])(
     "makes %s navigable when the caller holds ae:build-view",
     (label) => {
       render();
@@ -306,7 +306,7 @@ describe("AppLayout — project sidebar", () => {
   // gates mutations (BuildProject, CancelRun, …), never page entry — a
   // build-only holder (no separate view grant) is still non-navigable, same
   // rule as Spec above.
-  it.each(["Builds", "Deployments", "Validations"])(
+  it.each(["Builds", "Deployments", "Validations", "Issues"])(
     "does NOT make %s navigable on ae:build alone (not ae:build-view)",
     (label) => {
       heldPermissions.delete("ae:build-view");
@@ -316,7 +316,7 @@ describe("AppLayout — project sidebar", () => {
     },
   );
 
-  it.each(["Builds", "Deployments", "Validations"])(
+  it.each(["Builds", "Deployments", "Validations", "Issues"])(
     "makes %s non-navigable holding NEITHER build permission, with an explanatory tooltip",
     async (label) => {
       heldPermissions.delete("ae:build-view");

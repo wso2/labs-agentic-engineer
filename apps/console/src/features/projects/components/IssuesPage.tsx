@@ -16,20 +16,35 @@
  * under the License.
  */
 
-import { Link } from "@tanstack/react-router";
-import { CircleAlert } from "@wso2/oxygen-ui-icons-react";
-import { EmptyState } from "../../../components/EmptyState";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useHasPermission } from "../../../auth/permissions";
 import { PageHeader } from "../../../components/PageHeader";
+import { PermissionRestrictedPage } from "../../../components/PermissionRestrictedPage";
+import { IssuesList } from "../../issues/components/IssuesList";
 import { useProject } from "../api/queries";
 
-// Placeholder by decision (#173): Issues is the future surface for issues
-// the SRE agent raises against the running project; its own feature will
-// land the content. It gets the same PageHeader every other project
-// sub-page does (Task 5) — the EmptyState body keeps just the icon, title,
-// and description; the one-off orange "Back to overview" action it used to
-// carry is now the shared back link in the header.
 export function IssuesPage({ projectName }: { projectName: string }) {
+  // Exact-match ae:build-view, matching list-issues' own gate
+  // (permission_gate.go) and the Issues sidebar leg that reaches here. NOT
+  // OR'd with ae:build: that permission authorizes the writes on this surface
+  // — filing an issue, promoting one into a task, both of which start a run —
+  // and never page entry on its own.
+  const canViewIssues = useHasPermission("ae:build-view");
+  const navigate = useNavigate();
   const project = useProject(projectName);
+
+  if (!canViewIssues) {
+    return (
+      <PermissionRestrictedPage
+        title="You don't have access to this project's issues"
+        description="Issues raised against this project, and the incidents behind them, are restricted for your role. Ask a project admin to grant access."
+        backLabel="Back to project overview"
+        onBack={() =>
+          void navigate({ to: "/projects/$projectName", params: { projectName } })
+        }
+      />
+    );
+  }
 
   return (
     <>
@@ -43,11 +58,7 @@ export function IssuesPage({ projectName }: { projectName: string }) {
           label: "Back to Overview",
         }}
       />
-      <EmptyState
-        icon={<CircleAlert size={48} />}
-        title="Issues is on its way"
-        description="Issues the SRE agent raises against the running project will land here — triage them and follow their fixes."
-      />
+      <IssuesList projectName={projectName} />
     </>
   );
 }

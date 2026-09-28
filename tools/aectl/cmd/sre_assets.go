@@ -17,28 +17,16 @@
 package cmd
 
 // Manifest + Helm-values templates for `aectl sre install`. Rendered against
-// sreParams. Secrets are pulled from OpenBao via ESO (never plaintext); the
-// obs-namespace SecretStore authenticates as the ESO controller SA, which is
-// already bound to the eso-reader OpenBao role by `aectl init`.
+// sreParams. Secrets are pulled from OpenBao via ESO (never plaintext), through
+// the platform chart's ClusterSecretStore (aep-platform), which reads the
+// aep/* paths `aectl platform install` seeds.
 
-// obs-namespace SecretStore + ExternalSecrets. All sourced from secret/data/aep/*.
-const sreSecretsTmpl = `
-apiVersion: external-secrets.io/v1
-kind: SecretStore
-metadata:
-  name: openbao
-  namespace: {{.ObsNamespace}}
-spec:
-  provider:
-    vault:
-      server: "{{.OpenBaoAddr}}"
-      path: "secret"
-      version: "v2"
-      auth:
-        kubernetes:
-          mountPath: "kubernetes"
-          role: "eso-reader"
----
+// The SRE agent's own ExternalSecret, sourced from secret/data/aep/*. Applied
+// whether or not aectl installs the plane itself.
+// The chart requires RCA_LLM_API_KEY in this Secret, but the agent reads its
+// key from RCA_LLM_API_KEY_FILE (the Console key, sreAnthropicSecretTmpl) when
+// that is set, so the platform value here is only the chart's placeholder.
+const sreAgentSecretsTmpl = `
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
@@ -47,8 +35,8 @@ metadata:
 spec:
   refreshInterval: 1h
   secretStoreRef:
-    name: openbao
-    kind: SecretStore
+    name: {{.PlatformSecretStore}}
+    kind: ClusterSecretStore
   target:
     name: rca-agent-secret
   data:
@@ -56,7 +44,62 @@ spec:
       remoteRef: { key: aep/anthropic-api-key, property: value }
     - secretKey: OAUTH_CLIENT_SECRET
       remoteRef: { key: aep/thunder-clients/openchoreo-rca-agent, property: value }
----
+`
+
+// The SRE agent's Anthropic key: the org's model connection key as saved in the
+// AE Console, read from the KV path aep-api published in the org's
+// model-connection-secrets SecretReference (sre_plane.go). Through the org secret store (OpenChoreo's
+// "default" ClusterSecretStore, which every workload reading that path uses),
+// not the aep/* store above. The short refresh picks up a key re-saved
+// in the Console without a re-run.
+const sreAnthropicSecretTmpl = `
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: rca-agent-anthropic-secret
+  namespace: {{.ObsNamespace}}
+  labels:
+    aep.wso2.com/source: ae-org-anthropic
+spec:
+  refreshInterval: 1m
+  secretStoreRef:
+    name: {{.OrgSecretStore}}
+    kind: ClusterSecretStore
+  target:
+    name: rca-agent-anthropic-secret
+  data:
+    - secretKey: RCA_LLM_API_KEY
+      remoteRef: { key: "{{.AnthropicRef.Key}}", property: "{{.AnthropicRef.Property}}" }
+`
+
+// The observer's Thunder client secret, for a plane aectl did not install.
+// `aectl platform install` registers openchoreo-observer-resource-reader-client
+// in Thunder with aep/thunder-clients/oc-observer-reader, replacing whatever
+// secret the plane's installer gave it, so the observer must log in with that
+// one. Otherwise its project lookups 401 and every query the SRE agent makes
+// through it comes back empty. Takes over the plane installer's ExternalSecret
+// of the same name; srePlaneSecretsTmpl carries the same key.
+const sreObserverClientSecretTmpl = `
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: observer-secret
+  namespace: {{.ObsNamespace}}
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: {{.PlatformSecretStore}}
+    kind: ClusterSecretStore
+  target:
+    name: observer-secret
+  data:
+    - secretKey: UID_RESOLVER_OAUTH_CLIENT_SECRET
+      remoteRef: { key: aep/thunder-clients/oc-observer-reader, property: value }
+`
+
+// The plane's own secrets, applied only when aectl installs the plane: an
+// existing plane brought its own, under the same names.
+const srePlaneSecretsTmpl = `
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
@@ -65,8 +108,8 @@ metadata:
 spec:
   refreshInterval: 1h
   secretStoreRef:
-    name: openbao
-    kind: SecretStore
+    name: {{.PlatformSecretStore}}
+    kind: ClusterSecretStore
   target:
     name: opensearch-admin-credentials
   data:
@@ -83,8 +126,8 @@ metadata:
 spec:
   refreshInterval: 1h
   secretStoreRef:
-    name: openbao
-    kind: SecretStore
+    name: {{.PlatformSecretStore}}
+    kind: ClusterSecretStore
   target:
     name: observer-secret
   data:
@@ -97,7 +140,7 @@ spec:
 `
 
 // openchoreo-observability-plane values. Observer + RCA agent; the chart's own
-// :11080 gateway is disabled (the AEP main kgateway route in sreCRsTmpl exposes
+// :11080 gateway is disabled (the AEP main kgateway route in srePlaneCRsTmpl exposes
 // the Observer instead).
 const sreObsPlaneValuesTmpl = `
 observer:
@@ -107,6 +150,28 @@ observer:
     hostnames:
       - {{.ObserverHost}}
   controlPlaneApiUrl: "{{.OCApiURL}}"
+  security:
+    # ThunderID 1.0 puts a client_credentials token's subject in client_id,
+    # not sub (setup-env-for-aectl.sh step 3c switches the control plane the
+    # same way). Keyed on sub, the observer matches no service account, so
+    # the SRE agent's log queries come back empty.
+    subjectTypes:
+      - type: user
+        display_name: User
+        priority: 1
+        auth_mechanisms:
+          - type: jwt
+            entitlement:
+              claim: groups
+              display_name: User Group
+      - type: service_account
+        display_name: Service Account
+        priority: 2
+        auth_mechanisms:
+          - type: jwt
+            entitlement:
+              claim: client_id
+              display_name: Client ID
 security:
   enabled: true
   oidc:
@@ -137,6 +202,55 @@ rca:
       - {{.RcaHost}}
 gateway:
   enabled: false
+`
+
+// SRE agent overlay for a plane aectl did not install, applied with
+// --reuse-values at that release's own chart version: the rca block and the
+// observer's service-account claim the agent's queries need, so the plane's
+// installer keeps owning everything else. The image override is
+// the SRE build with the Anthropic structured-output fix and the AE handoff.
+const sreAgentValuesTmpl = `
+observer:
+  security:
+    # ThunderID 1.0 puts a client_credentials token's subject in client_id,
+    # not sub (setup-env-for-aectl.sh step 3c switches the control plane the
+    # same way). Keyed on sub, the observer matches no service account, so
+    # the SRE agent's log queries come back empty.
+    subjectTypes:
+      - type: user
+        display_name: User
+        priority: 1
+        auth_mechanisms:
+          - type: jwt
+            entitlement:
+              claim: groups
+              display_name: User Group
+      - type: service_account
+        display_name: Service Account
+        priority: 2
+        auth_mechanisms:
+          - type: jwt
+            entitlement:
+              claim: client_id
+              display_name: Client ID
+rca:
+  enabled: true
+  image:
+    repository: {{.RcaImageRepo}}
+    tag: {{.RcaImageTag}}
+    pullPolicy: {{.RcaPullPolicy}}
+  llm:
+    modelName: {{.RcaModel}}
+  secretName: rca-agent-secret
+  oauth:
+    clientId: openchoreo-rca-agent
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      cpu: "1"
+      memory: 2Gi
 `
 
 // observability-logs-opensearch values. OpenSearch + Fluent Bit + logs-adapter.
@@ -172,9 +286,9 @@ adapter:
     tag: {{.AdapterTag}}
 `
 
-// Authz grants + cross-namespace HTTPRoute + ClusterObservabilityPlane CR.
-// Mirrors setup-observability.sh §4/§4b/§5 and setup-aep.sh's rca-agent-dispatch.
-const sreCRsTmpl = `
+// Cross-namespace HTTPRoute + ClusterObservabilityPlane CR, applied only when
+// aectl installs the plane: an existing plane's installer registered its own.
+const srePlaneCRsTmpl = `
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -198,6 +312,27 @@ spec:
         backendRequest: "0s"
 ---
 apiVersion: openchoreo.dev/v1alpha1
+kind: ClusterObservabilityPlane
+metadata:
+  name: default
+spec:
+  planeID: default
+  clusterAgent:
+    clientCA:
+      secretKeyRef:
+        key: ca.crt
+        name: cluster-agent-tls
+        namespace: {{.ObsNamespace}}
+  observerURL: http://{{.ObserverHost}}:11080
+  rcaAgentURL: http://{{.RcaHost}}:11080
+`
+
+// Authz grants for the observer's reader client and the SRE agent's handoff
+// (component:create for the coding-agent dispatch pre-check). Applied in both
+// modes. Keyed on client_id, where ThunderID 1.0 puts a service account's
+// subject, like the control plane's own service-account bindings.
+const sreGrantsTmpl = `
+apiVersion: openchoreo.dev/v1alpha1
 kind: ClusterAuthzRole
 metadata:
   name: aep-observer-reader
@@ -217,7 +352,7 @@ metadata:
 spec:
   effect: allow
   entitlement:
-    claim: sub
+    claim: client_id
     value: openchoreo-observer-resource-reader-client
   roleMappings:
     - roleRef:
@@ -240,27 +375,12 @@ metadata:
 spec:
   effect: allow
   entitlement:
-    claim: sub
+    claim: client_id
     value: openchoreo-rca-agent
   roleMappings:
     - roleRef:
         kind: ClusterAuthzRole
         name: rca-agent-dispatch
----
-apiVersion: openchoreo.dev/v1alpha1
-kind: ClusterObservabilityPlane
-metadata:
-  name: default
-spec:
-  planeID: default
-  clusterAgent:
-    clientCA:
-      secretKeyRef:
-        key: ca.crt
-        name: cluster-agent-tls
-        namespace: {{.ObsNamespace}}
-  observerURL: http://{{.ObserverHost}}:11080
-  rcaAgentURL: http://{{.RcaHost}}:11080
 `
 
 // openSearchBootstrapScript is the detect+self-heal body from

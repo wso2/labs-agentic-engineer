@@ -22,6 +22,27 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
+// IncidentPorts connects authoritative incident filing to delivery and
+// recurrence evidence. A nil adopter cannot claim adoption; a nil recurrence
+// port uses the service's GitHub-body evidence writer.
+type IncidentPorts struct {
+	Adopter    IssueAdopter
+	Recurrence IncidentRecurrence
+}
+
+// IssueAdopter admits an issue to the existing delivery path. It must return an
+// error when delivery cannot accept the issue, including degraded boot.
+type IssueAdopter interface {
+	AdoptIssue(ctx context.Context, orgID, projectID string, issueNumber int) error
+}
+
+// IncidentRecurrence records recurrence evidence before an issue is reopened.
+// It owns recurrence eligibility and durable counting; errors leave the issue
+// closed. Repeating a failed reopen must not append duplicate evidence.
+type IncidentRecurrence interface {
+	RecordRecurrence(ctx context.Context, orgID, projectID string, issue IssueInfo, req CreateIssueRequest) (count int64, err error)
+}
+
 // The git-provider capability ports.
 //
 // These interfaces are the provider-neutral seam between gitrepo's domain
@@ -60,6 +81,9 @@ type RepoAdmin interface {
 // Consumed by issueService.
 type IssueOps interface {
 	CreateIssue(ctx context.Context, owner, repo string, cred secrets.Credential, req CreateIssueRequest) (*IssueResult, error)
+	// ListIssues returns issues only, never pull requests, newest first. The
+	// adapter bounds its page walk, so a very large repository answers its
+	// newest issues and GetIssue reaches the rest.
 	ListIssues(ctx context.Context, owner, repo string, cred secrets.Credential, labels []string) ([]IssueInfo, error)
 	// GetIssue fetches a single issue by number via GET /issues/{number} — an
 	// O(1) lookup, unlike ListIssues which pages the whole repo. Returns

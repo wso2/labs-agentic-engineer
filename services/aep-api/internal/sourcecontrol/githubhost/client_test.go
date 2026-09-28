@@ -19,9 +19,13 @@ package githubhost
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,6 +70,36 @@ func newFake(t *testing.T, status int, respBody string) (*Client, *capture) {
 		t.Fatalf("NewClient did not return *Client")
 	}
 	return c, cap
+}
+
+func TestRecurrenceStateReasonReads(t *testing.T) {
+	for _, reason := range []string{"completed", "not_planned", "reopened", ""} {
+		t.Run(reason, func(t *testing.T) {
+			payload := `{"number":42,"state":"closed","state_reason":"` + reason + `","closed_at":"2026-09-18T08:00:00Z","labels":[{"name":"incident"}]}`
+			client, _ := newFake(t, http.StatusOK, "["+payload+"]")
+			issues, err := client.ListIssues(context.Background(), "acme", "repo", stubCred{}, nil)
+			if err != nil || len(issues) != 1 {
+				t.Fatalf("list = %+v, %v", issues, err)
+			}
+			if issues[0].StateReason != reason {
+				t.Errorf("list state reason = %q, want %q", issues[0].StateReason, reason)
+			}
+			if issues[0].ClosedAt != "2026-09-18T08:00:00Z" {
+				t.Errorf("list closure identity = %q", issues[0].ClosedAt)
+			}
+			client, _ = newFake(t, http.StatusOK, payload)
+			issue, err := client.GetIssue(context.Background(), "acme", "repo", stubCred{}, 42)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if issue.StateReason != reason {
+				t.Errorf("detail state reason = %q, want %q", issue.StateReason, reason)
+			}
+			if issue.ClosedAt != "2026-09-18T08:00:00Z" {
+				t.Errorf("detail closure identity = %q", issue.ClosedAt)
+			}
+		})
+	}
 }
 
 func TestAddIssueLabels(t *testing.T) {
@@ -165,5 +199,100 @@ func TestUpdateWebhookEvents(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("events payload missing 'issues': %v", got["events"])
+	}
+}
+
+// fakeIssuePages serves GET /repos/acme/repo/issues through page(n), returning
+// the real client pointed at it and the query of every request received.
+func fakeIssuePages(t *testing.T, page func(n int) string) (*Client, *[]url.Values) {
+	t.Helper()
+	var queries []url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queries = append(queries, r.URL.Query())
+		n, err := strconv.Atoi(r.URL.Query().Get("page"))
+		if err != nil {
+			http.Error(w, "missing page", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, page(n))
+	}))
+	t.Cleanup(srv.Close)
+	c, ok := NewClient(WithAPIBase(srv.URL)).(*Client)
+	if !ok {
+		t.Fatalf("NewClient did not return *Client")
+	}
+	return c, &queries
+}
+
+// issueListPage renders count issues numbered from first; every prEvery-th
+// item (1-based, 0 for none) is a pull request.
+func issueListPage(first, count, prEvery int) string {
+	items := make([]string, 0, count)
+	for i := 0; i < count; i++ {
+		n := first + i
+		item := fmt.Sprintf(`{"number":%d,"title":"T%d","state":"open","labels":[]`, n, n)
+		if prEvery > 0 && (i+1)%prEvery == 0 {
+			item += fmt.Sprintf(`,"pull_request":{"url":"https://api.github.com/repos/acme/repo/pulls/%d"}`, n)
+		}
+		items = append(items, item+"}")
+	}
+	return "[" + strings.Join(items, ",") + "]"
+}
+
+// TestListIssuesExcludesPullRequests: GitHub's issues endpoint answers pull
+// requests alongside issues, each carrying a pull_request member.
+func TestListIssuesExcludesPullRequests(t *testing.T) {
+	c, _ := fakeIssuePages(t, func(int) string { return issueListPage(1, 2, 2) })
+	issues, err := c.ListIssues(context.Background(), "acme", "repo", stubCred{}, nil)
+	if err != nil {
+		t.Fatalf("ListIssues: %v", err)
+	}
+	if len(issues) != 1 || issues[0].Number != 1 {
+		t.Fatalf("issues = %+v, want only the non-PR issue #1", issues)
+	}
+}
+
+// TestListIssuesFollowsPages: a full page means more follow, and the page
+// length (pull requests included) decides the walk, not the kept count.
+func TestListIssuesFollowsPages(t *testing.T) {
+	c, queries := fakeIssuePages(t, func(n int) string {
+		if n == 1 {
+			return issueListPage(1, milestonePageSize, 10) // full page, 10 of them PRs
+		}
+		return issueListPage(101, 1, 0)
+	})
+	issues, err := c.ListIssues(context.Background(), "acme", "repo", stubCred{}, []string{"incident"})
+	if err != nil {
+		t.Fatalf("ListIssues: %v", err)
+	}
+	if len(issues) != 91 || issues[90].Number != 101 {
+		t.Fatalf("got %d issues (last %+v), want 91 ending at #101", len(issues), issues[len(issues)-1])
+	}
+	if len(*queries) != 2 {
+		t.Fatalf("requests = %d, want 2", len(*queries))
+	}
+	for i, q := range *queries {
+		if q.Get("page") != strconv.Itoa(i+1) || q.Get("labels") != "incident" || q.Get("state") != "all" {
+			t.Errorf("request %d query = %v", i+1, q)
+		}
+	}
+}
+
+// TestListIssuesStopsAtPageCap: the walk is bounded so one list call cannot
+// spend an unbounded share of the installation's rate budget.
+func TestListIssuesStopsAtPageCap(t *testing.T) {
+	c, queries := fakeIssuePages(t, func(n int) string {
+		return issueListPage((n-1)*milestonePageSize+1, milestonePageSize, 0)
+	})
+	issues, err := c.ListIssues(context.Background(), "acme", "repo", stubCred{}, nil)
+	if err != nil {
+		t.Fatalf("ListIssues: %v", err)
+	}
+	if len(*queries) != issueListMaxPages {
+		t.Fatalf("requests = %d, want the cap %d", len(*queries), issueListMaxPages)
+	}
+	if len(issues) != issueListMaxPages*milestonePageSize {
+		t.Fatalf("issues = %d, want %d", len(issues), issueListMaxPages*milestonePageSize)
 	}
 }

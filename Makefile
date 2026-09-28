@@ -208,6 +208,22 @@ workflow-skill:
 # worked on — it is the slowest step here by a wide margin. WITH_AI_GATEWAY=0
 # keeps Agent Manager but skips the gateway alone.
 #
+# The SRE agent (deployments/scripts/setup-sre.sh) then wires the OpenChoreo
+# SRE agent's alert → RCA → AE issue handoff onto the observability plane
+# (OpenSearch, Fluent Bit, the logs adapter) the cluster bring-up installed.
+# It uses the org's model connection key (an Anthropic one) as saved in the
+# Console, so its pod waits until that key is saved; re-run setup-sre.sh after
+# saving it.
+#
+#   WITH_OBSERVABILITY=0  skips the observability plane, and with it the SRE
+#                         agent (the agent has nothing to read alerts from)
+#   WITH_SRE=0            keeps the plane but skips the SRE agent, and parks
+#                         the plane's heavy half last (park-observability.sh)
+#                         since nothing then reads it
+#
+# An SRE-only profile that saves the most memory:
+#   WITH_AGENT_MANAGER=0 make dev-env
+#
 # `platform install` otherwise prompts interactively for two secrets — set as
 # env vars here so it doesn't:
 #   ANTHROPIC_API_KEY               platform.go treats an EMPTY value the same
@@ -232,13 +248,22 @@ dev-env:
 	else \
 		bash deployments/scripts/setup-agent-manager.sh; \
 	fi
-	@if [ "$${WITH_OBSERVABILITY:-1}" = "1" ]; then \
+	@if [ "$${WITH_OBSERVABILITY:-1}" != "1" ]; then \
+		echo "⏭️  Skipping the SRE agent (WITH_OBSERVABILITY=0)"; \
+	elif [ "$${WITH_SRE:-1}" = "1" ]; then \
+		bash deployments/scripts/setup-sre.sh; \
+	else \
+		echo "⏭️  Skipping the SRE agent (WITH_SRE=0)"; \
+	fi
+	@if [ "$${WITH_OBSERVABILITY:-1}" = "1" ] && [ "$${WITH_SRE:-1}" != "1" ]; then \
 		bash deployments/scripts/park-observability.sh down; \
 	fi
 
 # The observability plane's heavy half (OpenSearch, Prometheus, collectors,
-# adapters): `make dev-env` installs it running and parks it last. Unpark to
-# read traces, metrics or archived logs, between builds on an 8 GiB VM.
+# adapters): `make dev-env` installs it running and parks it last, unless the
+# SRE agent runs (the default), which needs OpenSearch, Fluent Bit and the logs
+# adapter up to evaluate alerts. Unpark to read traces, metrics or archived
+# logs, between builds on an 8 GiB VM.
 obs-park:
 	bash deployments/scripts/park-observability.sh down
 obs-unpark:

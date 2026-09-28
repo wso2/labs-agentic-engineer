@@ -66,6 +66,9 @@ const (
 	// never launched. Not a failure and not a spent budget: the run settles
 	// blocked with an actionable message.
 	cycleQuotaBlocked
+	// cycleNoWork returns to the ordinary boundary after an issue was closed
+	// or disarmed without a pull request. It is not an agent failure.
+	cycleNoWork
 	// cycleProviderLimit — the agent launched and its model provider's usage
 	// limit stopped it (delivery/provider_limit.go). The quota block's twin,
 	// met after launch instead of at it: not a failure and not a spent budget,
@@ -84,6 +87,7 @@ const (
 	landingConflict
 	landingCancelled
 	landingTimeout
+	landingNoWork
 )
 
 // noAnchorIssue is the anchor a cycle over a whole WORKING SET passes: none. A
@@ -206,7 +210,8 @@ func (l *loop) dispatchUntilLanded(ctx workflow.Context, kind string, anchorIssu
 		deadline := workflow.NewTimer(attemptCtx, cycleLandingTimeout)
 		expired := false
 		for !expired {
-			switch l.awaitLanding(ctx, deadline) {
+			ending := l.awaitLanding(ctx, deadline)
+			switch ending {
 			case landingCancelled:
 				stopDeadline()
 				return false, cycleCancelled, nil
@@ -261,6 +266,23 @@ func (l *loop) dispatchUntilLanded(ctx workflow.Context, kind string, anchorIssu
 				}
 				return false, cycleAgentDead, nil
 			}
+			// A signal is only a hint: a new issue may have arrived since it was
+			// sent. Validation never works this population and cannot use it.
+			if ending == landingNoWork && kind != delivery.CycleKindValidation && facts.PRNumber == 0 {
+				snapshot, err := l.pollMilestone(ctx)
+				if err != nil {
+					stopDeadline()
+					return false, cycleNone, err
+				}
+				work := snapshot.DevWork
+				if l.st.Kind == delivery.RunKindTask {
+					work = snapshot.TaskWork
+				}
+				if work == 0 {
+					stopDeadline()
+					return false, cycleNoWork, nil
+				}
+			}
 		}
 		stopDeadline()
 	}
@@ -291,6 +313,10 @@ func (l *loop) awaitLanding(ctx workflow.Context, deadline workflow.Future) land
 	sel.AddReceive(l.agentDied, func(c workflow.ReceiveChannel, _ bool) {
 		c.Receive(ctx, nil)
 		out = landingSignalled
+	})
+	sel.AddReceive(l.noWork, func(c workflow.ReceiveChannel, _ bool) {
+		c.Receive(ctx, nil)
+		out = landingNoWork
 	})
 	// A workable or build signal during the coding phase is noise (an issue
 	// joined the milestone, a stale build reported). Drained so it cannot wake

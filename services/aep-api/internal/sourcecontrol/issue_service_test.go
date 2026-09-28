@@ -46,6 +46,38 @@ func newIssueSvcOnStub(t *testing.T, stub *gittest.Stub) sourcecontrol.IssueServ
 	return sourcecontrol.NewIssueService(repo, client, fakeResolver{})
 }
 
+func TestRecurrence_RealGitHubPayloadPreservesEvidenceBeforeReopen(t *testing.T) {
+	t.Parallel()
+	stub := gittest.NewStub(t)
+	stub.On(http.MethodGet, "/repos/acme/widgets/issues", http.StatusOK,
+		`[{"number":7,"html_url":"https://github.com/acme/widgets/issues/7","state":"closed","state_reason":"completed","closed_at":"2026-09-18T08:00:00Z","body":"Original RCA evidence","labels":[{"name":"incident"}]}]`)
+	stub.On(http.MethodPatch, "/repos/acme/widgets/issues/7", http.StatusOK, `{}`)
+	svc := newIssueSvcOnStub(t, stub)
+	result, err := svc.CreateIssue(sourcecontrol.WithIncidentContext(testContext(), "alert-123"), "org1", "proj1", sourcecontrol.CreateIssueRequest{
+		Title: "Recurring timeout", ComponentName: "checkout", Body: "## Evidence\nNew timeout trace",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Reopened || result.Number != 7 || result.RecurrenceCount != 1 || result.Adopted || result.AdoptionError == "" {
+		t.Fatalf("result=%+v", result)
+	}
+	patches := requestsMatching(stub.Requests(), http.MethodPatch, "/repos/acme/widgets/issues/7")
+	if len(patches) != 2 {
+		t.Fatalf("patches=%+v", patches)
+	}
+	var evidence struct{ Body string }
+	decodeBody(t, patches[0].Body, &evidence)
+	if !strings.HasPrefix(evidence.Body, "Original RCA evidence\n\n## Recurrence 1\n") || !strings.HasSuffix(evidence.Body, "## Evidence\nNew timeout trace") {
+		t.Fatalf("evidence=%s", evidence.Body)
+	}
+	var reopen struct{ State string }
+	decodeBody(t, patches[1].Body, &reopen)
+	if reopen.State != "open" {
+		t.Fatalf("reopen=%s", patches[1].Body)
+	}
+}
+
 func TestCreateIssue_SendsTitleBodyLabelsAndParsesResult(t *testing.T) {
 	t.Parallel()
 	stub := gittest.NewStub(t)

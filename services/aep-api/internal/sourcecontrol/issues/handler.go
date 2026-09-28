@@ -29,10 +29,8 @@ import (
 
 // Handler serves create-issue and list-issues.
 //
-// These back external handoffs: the OpenChoreo SRE/RCA agent files an issue here
-// (searching for related ones first) via aep-mcp-server, ahead of dispatching the
-// coding agent with promote-task-from-issue. See AE-HANDOFF-DESIGN.md
-// (openchoreo/agents/sre-agent).
+// These back external handoffs: the SRE agent searches and files through MCP;
+// CreateIssue owns classification and adoption using trusted transport context.
 type Handler struct{ issues sourcecontrol.IssueService }
 
 // New returns the slice's handler. issues may be nil, which degrades both ops to
@@ -46,22 +44,36 @@ func (h *Handler) CreateIssue(ctx context.Context, request gen.CreateIssueReques
 	org := tenant.BoundOrgFromContext(ctx)
 
 	issue, err := h.issues.CreateIssue(ctx, org, request.ProjectName, sourcecontrol.CreateIssueRequest{
-		Title:     request.Body.Title,
-		Body:      request.Body.Body,
-		Labels:    request.Body.Labels,
-		DedupeKey: request.Body.DedupeKey,
+		Title:          request.Body.Title,
+		Body:           request.Body.Body,
+		Labels:         request.Body.Labels,
+		DedupeKey:      request.Body.DedupeKey,
+		ComponentName:  request.Body.ComponentName,
+		ActionStatuses: request.Body.ActionStatuses,
 	})
 	if err != nil {
+		if errors.Is(err, sourcecontrol.ErrIncidentContextRequired) {
+			return nil, apierr.BadRequest(err.Error())
+		}
+		if errors.Is(err, sourcecontrol.ErrIncidentRecurrenceIneligible) {
+			return nil, apierr.Conflict(err.Error())
+		}
 		if errors.Is(err, sourcecontrol.ErrRepoNotFound) {
 			return nil, apierr.NotFound("project repo not found")
 		}
 		return nil, apierr.Internal("failed to create issue")
 	}
 	return gen.CreateIssue200JSONResponse(gen.IssueResult{
-		Number:  int64(issue.Number),
-		URL:     issue.URL,
-		NodeID:  issue.NodeID,
-		Deduped: issue.Deduped,
+		Number:          int64(issue.Number),
+		URL:             issue.URL,
+		NodeID:          issue.NodeID,
+		Deduped:         issue.Deduped,
+		Classification:  issue.Classification,
+		Suppressed:      issue.Suppressed,
+		Reopened:        issue.Reopened,
+		Adopted:         issue.Adopted,
+		AdoptionError:   issue.AdoptionError,
+		RecurrenceCount: issue.RecurrenceCount,
 	}), nil
 }
 
@@ -83,15 +95,28 @@ func (h *Handler) ListIssues(ctx context.Context, request gen.ListIssuesRequestO
 	out := make([]gen.IssueInfo, 0, len(ranked))
 	for _, iss := range ranked {
 		out = append(out, gen.IssueInfo{
-			Number: int64(iss.Number),
-			Title:  iss.Title,
-			Body:   iss.Body,
-			URL:    iss.URL,
-			State:  iss.State,
-			Labels: iss.Labels,
+			Number:          int64(iss.Number),
+			Title:           iss.Title,
+			Body:            iss.Body,
+			URL:             iss.URL,
+			State:           iss.State,
+			StateReason:     iss.StateReason,
+			Labels:          iss.Labels,
+			AttentionReason: issueAttentionReason(iss.AttentionReason),
 		})
 	}
 	return gen.ListIssues200JSONResponse(out), nil
+}
+
+// issueAttentionReason prevents a domain value outside the public contract's
+// closed enum from reaching the console wire. The empty value omits the field.
+func issueAttentionReason(value string) gen.IssueInfoAttentionReason {
+	switch value {
+	case string(gen.UnverifiedFix), string(gen.NoChangeVerdict), string(gen.Escalated):
+		return gen.IssueInfoAttentionReason(value)
+	default:
+		return ""
+	}
 }
 
 // splitLabels parses the comma-separated `labels` query param, dropping blanks.

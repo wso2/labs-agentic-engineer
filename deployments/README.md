@@ -29,6 +29,13 @@ make dev-update
 make dev-runner
 ```
 
+`make dev-env` also enables the OpenChoreo SRE agent on the observability
+plane and wires its alert → RCA → AE issue handoff (`scripts/setup-sre.sh`),
+using the org's model connection key saved in the Console (an Anthropic key). `WITH_OBSERVABILITY=0`
+skips the plane and the SRE agent; `WITH_SRE=0` skips only the agent;
+`WITH_AGENT_MANAGER=0` is the lean profile for SRE work. See
+`docs/developer-guide/sre-handoff-runbook.md`.
+
 `make dev-env` builds `tools/aectl` as `aectl-skaffold` (git-ignored — this
 flow's own copy of the binary), installs a bare OpenChoreo + ThunderID cluster
 with `WITH_SKAFFOLD_CLIENT=1` (bootstraps `aectl`'s own Thunder admin client,
@@ -128,7 +135,7 @@ elsewhere and were deliberately NOT deleted along with the Compose chain:
   ComponentTypes name in `allowedTraits`. Not applied by `aectl platform
   install` — a fresh aectl-only cluster needs
   `kubectl apply -f manifests/api-platform/observability-alert-rule-trait.yaml`
-  by hand for auto-RCA to work.
+  by hand for auto-RCA to work (`scripts/setup-sre.sh` applies it).
 - `single-cluster/thunder-resources/`, `thunder-env-resources/`,
   `values-cp.yaml`, `values-dp.yaml`, `values-openbao.yaml` — the old
   Compose-chain's Thunder bootstrap bundle and OC values, genuinely unused now.

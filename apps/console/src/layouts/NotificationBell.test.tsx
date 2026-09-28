@@ -49,6 +49,20 @@ vi.mock("../features/alerts/api/queries", () => ({
   useRecentAlerts: () => recentAlertsResult,
 }));
 
+// The SRE-attention half of the badge. It reads a session and fires its own
+// per-project issue queries, neither of which this file is about — it tests
+// whether the bell is reachable at all. Its own permission story is the one
+// above it: the projects it reads come from `reports`, so withholding those
+// withholds these.
+const attentionUnreadCount = vi.hoisted(() => ({ current: 0 }));
+vi.mock("../features/issues/hooks/useAttentionUnread", () => ({
+  useAttentionUnread: () => ({
+    unreadCount: attentionUnreadCount.current,
+    items: [],
+    markAllSeen: vi.fn(),
+  }),
+}));
+
 import { NotificationButton } from "./NotificationBell";
 
 const render_ = (ui: React.ReactElement) =>

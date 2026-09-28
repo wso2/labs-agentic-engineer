@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ae": {
+      "type": "http",
+      "url": "${AEP_MCP_URL}"
+    }
+  }
+}
