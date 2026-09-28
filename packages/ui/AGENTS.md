@@ -10,5 +10,6 @@ project-status, excalidraw-dsl.
 ## Conventions
 
 - One component (or one tightly-related set) per package, independently versioned.
-- One public entry point: `src/index.ts`.
+- One public entry point: `src/index.ts` — plus a re-export subpath where a
+  non-React consumer needs part of the package, since the index pulls in React.
 - Build with the Oxygen UI design system; see the `oxygen-ui` skill.

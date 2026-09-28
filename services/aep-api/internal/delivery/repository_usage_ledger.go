@@ -84,6 +84,7 @@ const ledgerUpsertTail = `
 	  milestone_number      = EXCLUDED.milestone_number,
 	  tag                   = EXCLUDED.tag,
 	  model_id              = EXCLUDED.model_id,
+	  model_host            = EXCLUDED.model_host,
 	  input_tokens          = EXCLUDED.input_tokens,
 	  output_tokens         = EXCLUDED.output_tokens,
 	  cache_read_tokens     = EXCLUDED.cache_read_tokens,
@@ -105,12 +106,12 @@ func (r *agentUsageLedgerRepository) RecordCycleUsage(ctx context.Context, cycle
 	return r.db.WithContext(ctx).Exec(`
 		INSERT INTO agent_usage_ledger (
 		  org_id, project_id, source, source_id, phase, milestone_number, tag,
-		  model_id, input_tokens, output_tokens, cache_read_tokens,
+		  model_id, model_host, input_tokens, output_tokens, cache_read_tokens,
 		  cache_creation_tokens, cost_usd, captured_at)
 		SELECT c.org_id, c.project_id, ?, c.id::text, `+UsagePhaseCaseSQL("c.kind")+`,
 		       COALESCE(m.milestone_number, 0),
 		       COALESCE(NULLIF(m.tag, ''), m.milestone_title, ''),
-		       c.model_id, c.input_tokens, c.output_tokens, c.cache_read_tokens,
+		       c.model_id, c.model_host, c.input_tokens, c.output_tokens, c.cache_read_tokens,
 		       c.cache_creation_tokens, c.cost_usd, now()
 		FROM run_cycles c
 		LEFT JOIN milestone_runs m ON m.id::text = c.run_id
@@ -124,11 +125,11 @@ func (r *agentUsageLedgerRepository) RecordExecutionUsage(ctx context.Context, e
 	return r.db.WithContext(ctx).Exec(`
 		INSERT INTO agent_usage_ledger (
 		  org_id, project_id, source, source_id, phase, milestone_number, tag,
-		  model_id, input_tokens, output_tokens, cache_read_tokens,
+		  model_id, model_host, input_tokens, output_tokens, cache_read_tokens,
 		  cache_creation_tokens, cost_usd, captured_at)
 		SELECT e.org_id, e.project_id, ?, e.id::text, `+UsagePhaseCaseSQL("e.kind")+`,
 		       0, '',
-		       e.model_id, e.input_tokens, e.output_tokens, e.cache_read_tokens,
+		       e.model_id, e.model_host, e.input_tokens, e.output_tokens, e.cache_read_tokens,
 		       e.cache_creation_tokens, e.cost_usd, now()
 		FROM executions e
 		WHERE e.id::text = ? AND e.org_id <> '' AND e.project_id <> ''`+ledgerUpsertTail,
@@ -162,6 +163,8 @@ type ledgerPhaseUsageRow struct {
 	CostUsd             *float64
 	Models              int64
 	MaxModel            string
+	Hosts               int64
+	MaxHost             string
 }
 
 func (r *agentUsageLedgerRepository) SumUsageByProjectPhase(ctx context.Context, orgID string) (map[contracts.UsageScope]contracts.StampedUsage, map[contracts.UsageScope]contracts.StampedUsage, error) {
@@ -181,7 +184,11 @@ func (r *agentUsageLedgerRepository) SumUsageByProjectPhase(ctx context.Context,
 			// entries that spent nothing drop out instead of dragging a single-model
 			// phase to "unknown".
 			"COUNT(DISTINCT CASE WHEN "+ledgerHasTokens+" THEN model_id END) AS models, "+
-			"COALESCE(MAX(CASE WHEN "+ledgerHasTokens+" THEN model_id END), '') AS max_model").
+			"COALESCE(MAX(CASE WHEN "+ledgerHasTokens+" THEN model_id END), '') AS max_model, "+
+			// The host the phase was billed by, under the same agreement rule
+			// (contracts.StampedUsage.Add): an unstamped row counts as the "" host.
+			"COUNT(DISTINCT CASE WHEN "+ledgerHasTokens+" THEN COALESCE(model_host, '') END) AS hosts, "+
+			"COALESCE(MAX(CASE WHEN "+ledgerHasTokens+" THEN COALESCE(model_host, '') END), '') AS max_host").
 		Where("org_id = ? AND project_id <> ''", orgID).
 		Group("project_id, phase, (retired_at IS NOT NULL)").
 		// Only lifetimes with real token traffic — an entry that captured nothing
@@ -205,6 +212,9 @@ func (r *agentUsageLedgerRepository) SumUsageByProjectPhase(ctx context.Context,
 		}
 		scope := contracts.UsageScope{ProjectID: row.ProjectID, Retired: row.Retired}
 		stamped := contracts.StampedUsage{Tokens: u, CostUsd: row.CostUsd}
+		if row.Hosts == 1 {
+			stamped.Host = row.MaxHost
+		}
 		if row.Phase == UsagePhaseValidation {
 			validation[scope] = stamped
 		} else {

@@ -17,7 +17,8 @@
 // COMPONENT tier, Component+DB flavor: the REAL
 // orgconfig.Service over the REAL Anthropic/GitHub/IDP services, all sharing ONE
 // pristine dbtest Postgres + real AES-GCM store, with only the out-of-process
-// probes (Anthropic /v1/messages, api.github.com) faked at the HTTP boundary —
+// probes (the model endpoint, Anthropic /v1/messages for the subscription,
+// api.github.com) faked at the HTTP boundary —
 // behind the REAL production handler chain (faked auth at the jwt.WithClaims
 // seam → orgensure → Huma parsing/validation → tenant gate ENFORCE → the
 // section-pointered error mapping in config_huma.go), driven in-process via
@@ -37,6 +38,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -168,10 +170,11 @@ func (g *cfgFakeGH) patHappy() {
 // --- harness ----------------------------------------------------------------
 
 type configHarness struct {
-	h    *componenttest.Harness
-	db   *gorm.DB
-	gh   *cfgFakeGH
-	anth *anthropicFake
+	h     *componenttest.Harness
+	db    *gorm.DB
+	gh    *cfgFakeGH
+	anth  *anthropicFake // the Claude subscription probe
+	model *modelEndpoint // the model connection's endpoint, for every host
 	// svc is the same orchestrator the handlers hold. The idp section is
 	// refused at the edge's permission gate (no AE permission describes
 	// identity config, and nothing writes it yet), so its write semantics are
@@ -193,6 +196,31 @@ func newConfigHarness(t *testing.T) *configHarness {
 // a GitHub App client id (for the connect-sessions authorize URL).
 func newConfigHarnessOpts(t *testing.T, thunder thundersvc.Client, appClientID string) *configHarness {
 	t.Helper()
+	return newConfigHarnessOn(t, thunder, appClientID, orgconfig.AgentRuntimes)
+}
+
+// newConfigHarnessRuntimes is newConfigHarness on an installation that runs
+// only runtimes — one deployed without a runtime's runner image.
+func newConfigHarnessRuntimes(t *testing.T, runtimes []orgconfig.AgentRuntime) *configHarness {
+	t.Helper()
+	return newConfigHarnessOn(t, nil, "", runtimes)
+}
+
+func newConfigHarnessOn(t *testing.T, thunder thundersvc.Client, appClientID string, runtimes []orgconfig.AgentRuntime) *configHarness {
+	t.Helper()
+	return newConfigHarnessProbing(t, thunder, appClientID, runtimes, false)
+}
+
+// newConfigHarnessGuarded is newConfigHarness with the production probe
+// client: the SSRF guard in front of every connection probe, and no fake
+// endpoint to reach.
+func newConfigHarnessGuarded(t *testing.T) *configHarness {
+	t.Helper()
+	return newConfigHarnessProbing(t, nil, "", orgconfig.AgentRuntimes, true)
+}
+
+func newConfigHarnessProbing(t *testing.T, thunder thundersvc.Client, appClientID string, runtimes []orgconfig.AgentRuntime, guarded bool) *configHarness {
+	t.Helper()
 	db := dbtest.New(t) // self-skips under -short
 	gh := newCfgFakeGH(t)
 	anth := newAnthropicFake(t)
@@ -206,22 +234,29 @@ func newConfigHarnessOpts(t *testing.T, thunder thundersvc.Client, appClientID s
 		t.Fatalf("NewAppTokenMinter: %v", err)
 	}
 
-	anthropicSvc := organization.NewAnthropicCredentialService(organization.NewOrgAnthropicRepository(db), store).WithAnthropicAPIBase(anth.URL)
+	model := newModelEndpoint(t, http.StatusOK)
+	anthropicRepo := organization.NewOrgAnthropicRepository(db)
+	anthropicSvc := organization.NewAnthropicCredentialService(anthropicRepo, store).WithAnthropicAPIBase(anth.URL)
+	conns := organization.NewModelConnectionService(organization.NewOrgModelConnectionRepository(db), anthropicRepo, store, sonnetRates())
+	if !guarded {
+		conns.WithProbeClient(model.client())
+	}
 	credSvc := organization.NewCredentialService(organization.NewOrgCredentialRepository(db, nil), store, minter, configEnvSec, "", "", nil).WithGitHubAPIBase(gh.URL)
 	disconnectSvc := organization.NewOrgDisconnectService(credSvc, nil)
 	bearerSvc := organization.NewBearerService("state-key", time.Minute)
 	idpSvc := organization.NewIDPService(organization.NewIDPRepository(db, nil), organization.NewOrganizationRepository(db), thunder, organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS})
 
 	svc := organization.NewService(
-		anthropicSvc, credSvc, disconnectSvc, bearerSvc, idpSvc,
+		credSvc, disconnectSvc, bearerSvc, idpSvc,
 		organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS},
 		"http://localhost:8090", appClientID,
-	).WithCodingAgent(organization.NewCodingAgentService(organization.NewOrgCodingAgentRepository(db)))
+	).WithAgentSettings(organization.NewAgentSettingsService(organization.NewOrgAgentSettingsRepository(db),
+		organization.NewOrganizationRepository(db), anthropicSvc, conns, organization.NewAgentsCardRepository(db, store), runtimes))
 
 	// The harness wires the DOMAIN, not a loose service: the edge embeds
 	// organization's handlers, so this assembles the same graph production does.
 	h := componenttest.New(t, componenttest.Options{Deps: edge.Deps{Organization: mustNewOrgHandlers(t, organization.Deps{Config: svc})}})
-	return &configHarness{h: h, db: db, gh: gh, anth: anth, svc: svc}
+	return &configHarness{h: h, db: db, gh: gh, anth: anth, model: model, svc: svc}
 }
 
 // mustNewOrgHandlers assembles the real organization domain around the given
@@ -307,7 +342,7 @@ func TestConfigComponent_B2_AllConnectedNoSecrets(t *testing.T) {
 	body := resp.Body.String()
 	m := decodeCfg(t, resp.Body.Bytes())
 	llm := m["llm"].(map[string]any)
-	if llm["kind"] != "anthropic" || llm["status"] != "active" {
+	if llm["kind"] != "anthropic" || llm["baseURL"] != "https://api.anthropic.com/v1" || llm["model"] != "claude-sonnet-5" {
 		t.Fatalf("llm projection drifted: %v", llm)
 	}
 	gp := m["gitProvider"].(map[string]any)
@@ -318,9 +353,9 @@ func TestConfigComponent_B2_AllConnectedNoSecrets(t *testing.T) {
 	if idpSec["kind"] != "custom" || idpSec["hasClientSecret"] != true {
 		t.Fatalf("idp projection drifted: %v", idpSec)
 	}
-	// No FULL secret material anywhere in the body. (The keyPrefix/keyLast4
-	// display fragments are intentional and safe — only the full apiKey/pat/
-	// clientSecret must never appear.)
+	// No FULL secret material anywhere in the body. (The keyPreview display
+	// fragment is intentional and safe — only the full apiKey/pat/clientSecret
+	// must never appear.)
 	for _, secret := range []string{goodAnthKey, "ghp_live", "the-stored-secret"} {
 		if strings.Contains(body, secret) {
 			t.Fatalf("GET /config leaks secret material %q: %s", secret, body)
@@ -357,8 +392,12 @@ func TestConfigComponent_B2b_GitHubConfigOnlySeesGitProviderNotLLM(t *testing.T)
 	if m["llm"] != nil {
 		t.Fatalf("without ae:model-config, llm must be redacted to null: %v", m["llm"])
 	}
-	if m["codingLlm"] != nil {
-		t.Fatalf("without ae:model-config, codingLlm must be redacted to null: %v", m["codingLlm"])
+	// The agents section is always present by contract, so it is trimmed
+	// rather than cleared: its audit fields are the compensating control for
+	// this endpoint's coarse permissions, and belong to whoever may write it.
+	agents := m["agents"].(map[string]any)
+	if v, present := agents["updatedBy"]; !present || v != nil {
+		t.Fatalf("without ae:model-config, agents.updatedBy must be null: %v", agents)
 	}
 }
 
@@ -433,27 +472,25 @@ func TestConfigComponent_B2e_StatusNeedsNoPermission(t *testing.T) {
 	}
 }
 
-func TestConfigComponent_B3_LLMProbeFailedStatus(t *testing.T) {
+// A connection carried over by the migration has no author: updatedBy is
+// null, and the projection still reads in full.
+func TestConfigComponent_B3_MigratedConnectionHasNoAuthor(t *testing.T) {
 	t.Parallel()
 	c := newConfigHarness(t)
-
-	// Seed an llm row in a non-active state carrying a validation error.
-	if err := c.db.Create(&organization.OrgAnthropicCredential{
-		OcOrgID:         "acme",
-		KeyPrefix:       "sk-ant-api03-XX",
-		KeyLast4:        "9999",
-		Status:          "invalid",
-		ConnectedAt:     time.Now().UTC(),
-		ValidationError: ptr("Anthropic rejected the key (401 Unauthorized)"),
-	}).Error; err != nil {
-		t.Fatalf("seed llm row: %v", err)
+	if err := c.db.Exec(`INSERT INTO org_model_connections
+		(oc_org_id, format, base_url, host, model, auth_scheme, image_input, key_preview, connected_at, updated_at)
+		VALUES ('acme', 'anthropic', 'https://api.anthropic.com/v1', 'api.anthropic.com', 'claude-haiku-4-5',
+		        'x-api-key', 'yes', 'sk-a…9999', now(), now())`).Error; err != nil {
+		t.Fatalf("seed a migrated connection: %v", err)
 	}
 
-	resp := c.h.AsOrg("acme").Get(configPath)
-	m := decodeCfg(t, resp.Body.Bytes())
+	m := decodeCfg(t, c.h.AsOrg("acme").Get(configPath).Body.Bytes())
 	llm := m["llm"].(map[string]any)
-	if llm["status"] != "invalid" || llm["validationError"] != "Anthropic rejected the key (401 Unauthorized)" {
-		t.Fatalf("llm status/validationError drifted: %v", llm)
+	if v, present := llm["updatedBy"]; !present || v != nil {
+		t.Fatalf("updatedBy must be present and null on a migrated connection: %v", llm)
+	}
+	if llm["model"] != "claude-haiku-4-5" || llm["keyPreview"] != "sk-a…9999" || llm["priced"] != false {
+		t.Fatalf("llm projection drifted: %v", llm)
 	}
 }
 
@@ -554,12 +591,16 @@ func TestConfigComponent_C1_FirstConnect(t *testing.T) {
 	}
 	m := decodeCfg(t, resp.Body.Bytes())
 	llm := m["llm"].(map[string]any)
-	if llm["keyPrefix"] != goodAnthKey[:15] || llm["keyLast4"] != goodAnthKey[len(goodAnthKey)-4:] {
+	if llm["keyPreview"] != goodAnthKey[:4]+"…"+goodAnthKey[len(goodAnthKey)-4:] {
 		t.Fatalf("post-write projection preview drifted: %v", llm)
 	}
-	// A following GET is identical.
-	if g := c.h.AsOrg("acme").Get(configPath); g.Body.String() != resp.Body.String() {
-		t.Fatalf("PATCH body must equal a following GET:\nPATCH %s\nGET   %s", resp.Body.String(), g.Body.String())
+	// A following GET is identical, less the save's own probe result.
+	if _, ok := m["llmCheck"]; !ok {
+		t.Fatalf("a probing save must carry llmCheck: %s", resp.Body.String())
+	}
+	delete(m, "llmCheck")
+	if g := decodeCfg(t, c.h.AsOrg("acme").Get(configPath).Body.Bytes()); fmt.Sprint(g) != fmt.Sprint(m) {
+		t.Fatalf("PATCH body must equal a following GET:\nPATCH %v\nGET   %v", m, g)
 	}
 }
 
@@ -574,7 +615,7 @@ func TestConfigComponent_C2_ReplaceKey(t *testing.T) {
 		t.Fatalf("replace: %d %s", resp.Code, resp.Body.String())
 	}
 	llm := decodeCfg(t, resp.Body.Bytes())["llm"].(map[string]any)
-	if llm["keyPrefix"] != goodAnthKey2[:15] || llm["keyLast4"] != goodAnthKey2[len(goodAnthKey2)-4:] {
+	if llm["keyPreview"] != goodAnthKey2[:4]+"…"+goodAnthKey2[len(goodAnthKey2)-4:] {
 		t.Fatalf("replace did not swap the key preview: %v", llm)
 	}
 }
@@ -588,7 +629,7 @@ func TestConfigComponent_C3_ProbeFailsOldKeyStaysActive(t *testing.T) {
 	before := c.h.AsOrg("acme").Get(configPath).Body.String()
 
 	// Flip the probe to reject, then try to replace.
-	c.anth.setStatus(http.StatusUnauthorized)
+	c.model.setStatus(http.StatusUnauthorized)
 	resp := c.h.AsOrg("acme").Patch(configPath, llmConnect(goodAnthKey2))
 	if resp.Code != 400 {
 		t.Fatalf("probe fail: want 400, got %d body=%s", resp.Code, resp.Body.String())
@@ -615,9 +656,9 @@ func TestConfigComponent_C4_NullClearsWhileConnected(t *testing.T) {
 	if m := decodeCfg(t, resp.Body.Bytes()); m["llm"] != nil {
 		t.Fatalf("llm must be null after clear: %v", m["llm"])
 	}
-	// The credential row is purged.
+	// The connection row is purged.
 	var count int64
-	c.db.Model(&organization.OrgAnthropicCredential{}).Where("oc_org_id = ?", "acme").Count(&count)
+	c.db.Model(&organization.OrgModelConnection{}).Where("oc_org_id = ?", "acme").Count(&count)
 	if count != 0 {
 		t.Fatalf("llm:null must purge the row, found %d", count)
 	}
@@ -639,8 +680,9 @@ func TestConfigComponent_C6_SchemaRejections(t *testing.T) {
 	t.Parallel()
 	c := newConfigHarness(t)
 	cases := []struct{ name, body string }{
-		{"missing apiKey", `{"llm":{"kind":"anthropic"}}`},
 		{"unknown kind", `{"llm":{"kind":"openai","apiKey":"x"}}`},
+		{"unknown field", `{"llm":{"kind":"anthropic","apiKey":"x","status":"active"}}`},
+		{"model on agents", `{"agents":{"model":"claude-sonnet-5"}}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -905,7 +947,7 @@ func TestConfigComponent_F2_MultiSectionSuccess(t *testing.T) {
 		t.Fatalf("multi-section: want 200, got %d body=%s", resp.Code, resp.Body.String())
 	}
 	m := decodeCfg(t, resp.Body.Bytes())
-	if m["llm"].(map[string]any)["status"] != "active" {
+	if m["llm"].(map[string]any)["kind"] != "anthropic" {
 		t.Fatalf("llm not applied: %v", m["llm"])
 	}
 	if m["gitProvider"].(map[string]any)["githubLogin"] != "ada" {
@@ -928,7 +970,7 @@ func TestConfigComponent_F3_AtomicityLLMNotPersistedWhenGitFails(t *testing.T) {
 	}
 	// The valid llm section must NOT have been persisted (probe-before-persist).
 	var llmCount, gitCount int64
-	c.db.Model(&organization.OrgAnthropicCredential{}).Where("oc_org_id = ?", "acme").Count(&llmCount)
+	c.db.Model(&organization.OrgModelConnection{}).Where("oc_org_id = ?", "acme").Count(&llmCount)
 	c.db.Model(&organization.OrgCredential{}).Where("oc_org_id = ?", "acme").Count(&gitCount)
 	if llmCount != 0 || gitCount != 0 {
 		t.Fatalf("atomicity violated: llm rows=%d git rows=%d (both must be 0)", llmCount, gitCount)
@@ -963,7 +1005,10 @@ func TestConfigComponent_F6_PatchEqualsFollowingGet(t *testing.T) {
 	c := newConfigHarness(t)
 	patchResp := c.h.AsOrg("acme").Patch(configPath, llmConnect(goodAnthKey))
 	getResp := c.h.AsOrg("acme").Get(configPath)
-	if patchResp.Body.String() != getResp.Body.String() {
+	// The PATCH carries what its own probe found (llmCheck); GET never does.
+	patched := decodeCfg(t, patchResp.Body.Bytes())
+	delete(patched, "llmCheck")
+	if got := decodeCfg(t, getResp.Body.Bytes()); fmt.Sprint(patched) != fmt.Sprint(got) {
 		t.Fatalf("PATCH response must equal a following GET:\nPATCH %s\nGET   %s", patchResp.Body.String(), getResp.Body.String())
 	}
 }
@@ -1006,10 +1051,11 @@ func TestConfigComponent_G1_NoAuth401(t *testing.T) {
 func TestConfigComponent_G2_TenantIsolation(t *testing.T) {
 	t.Parallel()
 	c := newConfigHarness(t)
-	// Seed org B's llm row directly.
-	if err := c.db.Create(&organization.OrgAnthropicCredential{
-		OcOrgID: "orgb", KeyPrefix: "sk-ant-api03-BB", KeyLast4: "0000",
-		Status: "active", ConnectedAt: time.Now().UTC(),
+	// Seed org B's connection row directly.
+	if err := c.db.Create(&organization.OrgModelConnection{
+		OcOrgID: "orgb", Format: "anthropic", BaseURL: "https://api.anthropic.com/v1", Host: "api.anthropic.com",
+		Model: "claude-sonnet-5", AuthScheme: "x-api-key", ImageInput: "yes", KeyPreview: "sk-a…0000",
+		ConnectedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 	}).Error; err != nil {
 		t.Fatalf("seed org B: %v", err)
 	}
@@ -1131,7 +1177,7 @@ func normalizeTimes(body string) string {
 		}
 		for k, val := range obj {
 			switch k {
-			case "connectedAt", "lastValidatedAt", "identityChangedAt":
+			case "connectedAt", "lastValidatedAt", "identityChangedAt", "updatedAt":
 				obj[k] = ""
 			default:
 				strip(val)

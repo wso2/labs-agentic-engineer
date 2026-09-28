@@ -246,4 +246,31 @@ describe("ChatInput attachments", () => {
     });
     expect(onFilesChange.mock.calls[0]?.[0].map((f: File) => f.name)).toEqual(["sketch.png"]);
   });
+
+  describe("per the org's model", () => {
+    const textOnly = { model: "glm-5.3", imageInput: "no", nativePdf: false } as const;
+
+    it("refuses an image at attach time when the model does not read images", () => {
+      const { onFilesChange } = renderInput({ reads: textOnly });
+      fireEvent.change(picker(), { target: { files: [fileOf("screenshot.png"), fileOf("brief.pdf")] } });
+      expect(onFilesChange.mock.calls[0]?.[0].map((f: File) => f.name)).toEqual(["brief.pdf"]);
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "screenshot.png was not attached — glm-5.3 does not read images. Describe it in text, or switch to a model that reads images.",
+      );
+    });
+
+    it.each(["yes", "unknown"] as const)("sends an image when image input is %s", (imageInput) => {
+      const { onFilesChange } = renderInput({ reads: { ...textOnly, imageInput } });
+      fireEvent.change(picker(), { target: { files: [fileOf("screenshot.png")] } });
+      expect(onFilesChange).toHaveBeenCalledOnce();
+    });
+
+    it("says a PDF goes as text off a native-PDF model, and says nothing on one", () => {
+      renderInput({ reads: textOnly, files: [fileOf("brief.pdf")] });
+      expect(screen.getByText("· as text")).toBeInTheDocument();
+      cleanup();
+      renderInput({ reads: { ...textOnly, nativePdf: true }, files: [fileOf("brief.pdf")] });
+      expect(screen.queryByText("· as text")).not.toBeInTheDocument();
+    });
+  });
 });

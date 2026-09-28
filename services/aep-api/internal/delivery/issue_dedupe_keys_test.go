@@ -64,11 +64,11 @@ func TestIssueDedupeKeysAreFrozen(t *testing.T) {
 		{"unwired endpoints",
 			DedupeKeyUnwiredEndpoints(component, []string{"todo-api99-todo-api"}),
 			"aep unwired-endpoints order-service todo-api99-todo-api"},
-		// validation: one repair issue per failed criterion, keyed to the ATTEMPT
-		// so the next attempt's failures are fresh work.
+		// validation: one repair issue per failed scenario, keyed to the SCENARIO
+		// so every attempt that meets the same defect resolves onto one issue.
 		{"validation fix",
-			DedupeKeyValidationFix("AC-001-a", "cycle-abc"),
-			"aep validation-fix AC-001-a cycle-abc"},
+			DedupeKeyValidationFix("Lunch rounds / Only one round may be open at a time / A second round is refused"),
+			"aep validation-fix Lunch rounds / Only one round may be open at a time / A second round is refused"},
 		// validation: the version's own validation issue. Colon-delimited, unlike
 		// every other key — it mirrors the provision gate's `gate:<project>:…`.
 		{"validation issue",
@@ -98,14 +98,18 @@ func TestIssueDedupeKeys_ConformanceHalvesNeverCollide(t *testing.T) {
 
 // Scoping is the other half of the contract, and it is per-key on purpose. A
 // key that dropped one of these dimensions would suppress genuinely new work:
-// the next version's build failure, the next attempt's repair, the next
+// the next version's build failure, another scenario's repair, the next
 // version's validation issue.
+//
+// The repair key is the one that scopes DELIBERATELY NARROWLY. It names the
+// scenario and nothing else, so a defect that survives a repair meets its own
+// open issue on the next attempt instead of filing a second one beside it.
 func TestIssueDedupeKeys_ScopeTheirWork(t *testing.T) {
 	if DedupeKeyFix("svc", "aaaaaaaaaaaa") == DedupeKeyFix("svc", "bbbbbbbbbbbb") {
 		t.Error("a fix key ignores the commit — the next version's failure would dedupe onto the last")
 	}
-	if DedupeKeyValidationFix("AC-1", "cycle-1") == DedupeKeyValidationFix("AC-1", "cycle-2") {
-		t.Error("a repair key ignores the attempt — a criterion failing again would file nothing")
+	if DedupeKeyValidationFix("F / R / one") == DedupeKeyValidationFix("F / R / two") {
+		t.Error("a repair key ignores the scenario — two defects would share one issue")
 	}
 	if DedupeKeyValidationIssue("proj", 5) == DedupeKeyValidationIssue("proj", 6) {
 		t.Error("a validation key ignores the version — v6 would dedupe onto v5's oracle")

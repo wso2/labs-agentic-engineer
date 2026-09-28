@@ -30,6 +30,13 @@ import (
 const (
 	ComponentTypeService        = "service"
 	ComponentTypeWebApplication = "web-application"
+	// ComponentTypeAIAgent is the ai-agent component kind: its behaviour is an
+	// `agent.afm.md` document (specs/design/components/<name>/agent.afm.md)
+	// instead of a coding-agent-authored openapi.yaml/workload. Write-time
+	// shape validation lives in internal/platform/agentfold (afmgate.go);
+	// cross-file resolution of its `x-aep.tools.openapi` allow-lists against
+	// its declared dependencies lives in derive_agent_tools.go.
+	ComponentTypeAIAgent = "ai-agent"
 )
 
 // DesignComponent describes a single component within a design.
@@ -74,6 +81,24 @@ type DesignComponent struct {
 	// service components). Default false ⇒ auto-RCA on. Sourced from the
 	// design.json `disableAutoRca` key. See ResolveAutoRCAEnabled.
 	DisableAutoRca bool `json:"disableAutoRca,omitempty"`
+	// AgentAFM is the raw content of the sibling `agent.afm.md` for an
+	// ai-agent component (ComponentTypeAIAgent) — the AFM document IS the
+	// component's behaviour, the same role OpenAPISpec plays for a service.
+	// Filled by AssembleDesign for ai-agent components only, never a
+	// design.json key, and never re-emitted by SplitDesign: the document is
+	// agent-authored (write-gated by agentfold's afmgate.go), not a platform
+	// derivation, so nothing here ever writes it back. Internal to the spec
+	// domain (no external consumer needs the raw markdown yet), hence json:"-".
+	AgentAFM string `json:"-"`
+	// AgentToolStatuses is the read-time computed resolution of THIS
+	// ai-agent component's `x-aep.tools.openapi[].allow` entries against its
+	// declared dependencies and each named component's OpenAPI contract (see
+	// ComputeAgentToolStatus / derive_agent_tools.go). Populated in-memory by
+	// deriveAgentToolStatuses, called from AssembleDesignFrom on every design
+	// read; NOT persisted to design.json (recomputed every read, exactly like
+	// Dependency.Status/Reason) and always empty for a non-ai-agent component
+	// or one with no agent.afm.md yet.
+	AgentToolStatuses []AgentToolStatus `json:"agentToolStatuses,omitempty"`
 }
 
 // DefaultEndpointName is the conventional workload endpoint name the platform's

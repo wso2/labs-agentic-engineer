@@ -59,7 +59,27 @@ const (
 	turnReasonBaseMoved      = "base-moved"
 	turnReasonDispatchFailed = "dispatch-failed"
 	turnReasonInternal       = "internal"
+	// turnReasonAgentError: the agents service ended the turn with a coded
+	// error frame — a failure it could name (AgentTurn.Code says which) — in
+	// place of the manifest. Distinct from stream-died: the stream ended
+	// cleanly, it just vouched for nothing.
+	turnReasonAgentError = "agent-error"
 )
+
+// The error codes a coded agents error frame can carry (TurnErrorPart in
+// packages/agent-stream), stored on the failed turn (AgentTurn.Code) so a
+// reader can say why it failed. Mirrors the contract's TurnStatus.code enum.
+const (
+	TurnErrorProviderLimit   = "provider_limit"
+	TurnErrorOutputTruncated = "output_truncated"
+)
+
+// knownTurnErrorCode reports whether code is one aep-api stores. An unknown
+// code (a newer agents image) degrades to the uncoded path rather than
+// writing a value the contract cannot represent.
+func knownTurnErrorCode(code string) bool {
+	return code == TurnErrorProviderLimit || code == TurnErrorOutputTruncated
+}
 
 // ErrTurnActive is returned by TryStart when another turn holds the D18
 // one-active-turn-per-project guard; the accompanying row is the active turn.
@@ -73,9 +93,21 @@ type TurnTerminal struct {
 	Paths     []string
 	NoChanges bool
 	Message   string
+	// Code names why a failed turn failed when the agents service could say
+	// (TurnErrorProviderLimit / TurnErrorOutputTruncated); "" otherwise.
+	// ResetAt is when the provider said its limit resets (provider_limit
+	// only, and only when it said). Host is the model host the code is about —
+	// carried to the terminal event only; the row already holds it as
+	// model_host.
+	Code    string
+	ResetAt *time.Time
+	Host    string
 	// Usage is the turn's token usage off the terminal manifest (#249); nil
 	// when the stream carried none (failed turns, pre-capture agents).
 	Usage *contracts.TokenUsage
+	// ContextTokens is the conversation's context size at the turn's end
+	// (AgentTurn.ContextTokens); nil when the turn left no measure.
+	ContextTokens *int64
 	// SpecEdited is true when the turn authored real spec changes: a committed
 	// turn whose fold produced a net change, or a room-scoped turn whose agent
 	// edited the collab doc (issue #239 — the activity feed's agent-authorship
@@ -116,6 +148,13 @@ type TurnRepository interface {
 	// LastTerminal returns the most recent completed/failed turn of a
 	// conversation — the D20 filesChangedExternally / divergence-note input.
 	LastTerminal(ctx context.Context, orgID, projectID, conversationID string) (*AgentTurn, error)
+
+	// LastContextTokens returns the context size the conversation's newest
+	// MEASURED turn ended at (AgentTurn.ContextTokens), or nil when none of
+	// its turns has one. An unmeasured later turn (a dispatch failure, a
+	// severed stream) left the saved history as it was, so it is skipped
+	// rather than read as an empty conversation.
+	LastContextTokens(ctx context.Context, orgID, projectID, conversationID string) (*int64, error)
 
 	// NewestCompletedFlow returns the project's most recent COMPLETED turn of
 	// one flow ("design", "start", …), or (nil, nil) when it has run none.
@@ -205,6 +244,11 @@ func (r *turnRepository) Finish(ctx context.Context, id string, terminal TurnTer
 		"paths":      encodePaths(terminal.Paths),
 		"no_changes": terminal.NoChanges,
 		"message":    terminal.Message,
+		"code":       terminal.Code,
+		"reset_at":   terminal.ResetAt,
+	}
+	if terminal.ContextTokens != nil {
+		updates["context_tokens"] = *terminal.ContextTokens
 	}
 	if u := terminal.Usage; u != nil {
 		updates["input_tokens"] = u.InputTokens
@@ -214,9 +258,15 @@ func (r *turnRepository) Finish(ctx context.Context, id string, terminal TurnTer
 		updates["model_id"] = u.Model
 		// Stamp USD at capture from the rates in force now (#291): the cost is
 		// frozen on the row and never re-derived, so a later rate change can't
-		// rewrite this turn's spend. Null when unpriceable (no rate / no model).
+		// rewrite this turn's spend. Priced on the host the row was admitted
+		// with; null when unpriceable (no (host, model) rate, no host, no model).
 		if r.stamper != nil {
+			host, err := r.modelHost(ctx, id)
+			if err != nil {
+				return false, err
+			}
 			updates["cost_usd"] = r.stamper.Cost(modelcost.Tokens{
+				Host:                host,
 				ModelID:             u.Model,
 				InputTokens:         u.InputTokens,
 				OutputTokens:        u.OutputTokens,
@@ -233,6 +283,22 @@ func (r *turnRepository) Finish(ctx context.Context, id string, terminal TurnTer
 		return false, res.Error
 	}
 	return res.RowsAffected > 0, nil
+}
+
+// modelHost reads the host TryStart wrote on the turn at admission. A missing
+// row reads as no host (unpriced); Finish's guarded update then touches nothing.
+func (r *turnRepository) modelHost(ctx context.Context, id string) (string, error) {
+	var hosts []string
+	if err := r.db.WithContext(ctx).
+		Model(&AgentTurn{}).
+		Where("id = ?", id).
+		Pluck("COALESCE(model_host, '')", &hosts).Error; err != nil {
+		return "", err
+	}
+	if len(hosts) == 0 {
+		return "", nil
+	}
+	return hosts[0], nil
 }
 
 func (r *turnRepository) Get(ctx context.Context, orgID, projectID, turnID string) (*AgentTurn, error) {
@@ -277,6 +343,23 @@ func (r *turnRepository) LastTerminal(ctx context.Context, orgID, projectID, con
 		return nil, err
 	}
 	return &t, nil
+}
+
+// LastContextTokens reads through the conversation_id index; a conversation
+// holds tens of turns, not thousands, so the sort is over a handful of rows.
+func (r *turnRepository) LastContextTokens(ctx context.Context, orgID, projectID, conversationID string) (*int64, error) {
+	var tokens []int64
+	err := r.db.WithContext(ctx).
+		Model(&AgentTurn{}).
+		Where("org_id = ? AND project_id = ? AND conversation_id = ? AND context_tokens IS NOT NULL",
+			orgID, projectID, conversationID).
+		Order("created_at DESC").
+		Limit(1).
+		Pluck("context_tokens", &tokens).Error
+	if err != nil || len(tokens) == 0 {
+		return nil, err
+	}
+	return &tokens[0], nil
 }
 
 // Newest reads one row off `ix_agent_turns_project_newest`
@@ -366,7 +449,13 @@ func (r *turnRepository) SumUsageByProject(ctx context.Context, orgID string) (m
 			// makes the project's model degrade to '' (matching
 			// contracts.TokenUsage.Add: a mix of known + unknown is '').
 			"COUNT(DISTINCT model_id) AS models, "+
-			"COALESCE(MAX(model_id), '') AS max_model").
+			"COALESCE(MAX(model_id), '') AS max_model, "+
+			// The host survives only while every row that spent tokens agrees
+			// on it (a NULL, pre-stamping host counts as '' and so disagrees),
+			// matching contracts.StampedUsage.Add, where a zero-token
+			// contributor has no say.
+			"CASE WHEN COUNT(DISTINCT COALESCE(model_host, '')) FILTER (WHERE "+turnSpentTokens+") = 1 "+
+			"THEN MIN(COALESCE(model_host, '')) FILTER (WHERE "+turnSpentTokens+") ELSE '' END AS host").
 		Where("org_id = ?", orgID).
 		Group("project_id").
 		// Only projects with real token traffic — a failed turn that captured
@@ -379,6 +468,9 @@ func (r *turnRepository) SumUsageByProject(ctx context.Context, orgID string) (m
 	return usageRowsToMap(rows), nil
 }
 
+// turnSpentTokens is the SQL predicate for a turn row that captured usage.
+const turnSpentTokens = "input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens > 0"
+
 // usageByProjectRow is the per-project aggregate scan shape shared by the
 // turn and execution roll-ups (#291).
 type usageByProjectRow struct {
@@ -390,6 +482,7 @@ type usageByProjectRow struct {
 	CostUsd             *float64
 	Models              int64
 	MaxModel            string
+	Host                string
 }
 
 // usageRowsToMap folds the per-project scan rows into StampedUsage keyed by
@@ -406,7 +499,7 @@ func usageRowsToMap(rows []usageByProjectRow) map[string]contracts.StampedUsage 
 		if row.Models == 1 {
 			u.Model = row.MaxModel
 		}
-		out[row.ProjectID] = contracts.StampedUsage{Tokens: u, CostUsd: row.CostUsd}
+		out[row.ProjectID] = contracts.StampedUsage{Tokens: u, CostUsd: row.CostUsd, Host: row.Host}
 	}
 	return out
 }

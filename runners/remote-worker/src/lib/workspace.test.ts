@@ -22,7 +22,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { installCrashArtefactExclude, writeBearerFile } from "./workspace.js";
+import {
+  installCrashArtefactExclude,
+  installCredentialExclude,
+  installRunLogExclude,
+  writeBearerFile,
+} from "./workspace.js";
 
 test("writeBearerFile: concurrent writers do not share a tmp path", async () => {
   const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "aep-bearer-"));
@@ -98,6 +103,53 @@ test("installCrashArtefactExclude: source named core is still staged by `git add
     git("add", "-A");
     const staged = git("diff", "--cached", "--name-only").trim().split("\n").filter(Boolean);
     assert.deepEqual(staged, ["blog-webapp/src/authz/core.ts", "blog-webapp/src/core/index.ts"]);
+  } finally {
+    await fs.promises.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("installRunLogExclude: the run's log directory cannot be staged; a project's own logs can", async () => {
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "aep-exclude-"));
+  const git = (...args: string[]): string =>
+    execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+  try {
+    git("init", "--quiet");
+    await installRunLogExclude(dir);
+
+    await fs.promises.mkdir(path.join(dir, ".logs"));
+    await fs.promises.writeFile(path.join(dir, ".logs", "prompt-appendix.md"), "# Your workflow");
+    await fs.promises.writeFile(path.join(dir, ".logs", "runtime.log"), "{}");
+    await fs.promises.mkdir(path.join(dir, "api", ".logs"), { recursive: true });
+    await fs.promises.writeFile(path.join(dir, "api", ".logs", "keep.txt"), "project file");
+
+    git("add", "-A");
+    const staged = git("diff", "--cached", "--name-only").trim().split("\n").filter(Boolean);
+    assert.deepEqual(staged, ["api/.logs/keep.txt"]);
+  } finally {
+    await fs.promises.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("installCredentialExclude: the bearer and gh config cannot be staged; a project's own .aep can", async () => {
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "aep-exclude-"));
+  const git = (...args: string[]): string =>
+    execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+  try {
+    git("init", "--quiet");
+    await installCredentialExclude(dir);
+
+    await fs.promises.mkdir(path.join(dir, ".aep"));
+    await fs.promises.writeFile(path.join(dir, ".aep", "bearer"), "secret-bearer");
+    await fs.promises.writeFile(path.join(dir, ".aep", "gh"), "#!/bin/sh");
+    await fs.promises.mkdir(path.join(dir, ".gh-config"));
+    await fs.promises.writeFile(path.join(dir, ".gh-config", "hosts.yml"), "github.com: {}");
+    await fs.promises.mkdir(path.join(dir, "api", ".aep"), { recursive: true });
+    await fs.promises.writeFile(path.join(dir, "api", ".aep", "keep.txt"), "project file");
+    await fs.promises.writeFile(path.join(dir, "README.md"), "# project");
+
+    git("add", "-A");
+    const staged = git("diff", "--cached", "--name-only").trim().split("\n").filter(Boolean);
+    assert.deepEqual(staged.sort(), ["README.md", "api/.aep/keep.txt"]);
   } finally {
     await fs.promises.rm(dir, { recursive: true, force: true });
   }

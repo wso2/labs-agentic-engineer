@@ -28,7 +28,7 @@ import (
 // duplicated from delivery/validation's ReportFilePath rather than imported —
 // that is a sibling slice — and the two are pinned together by
 // TestValidationReportPathMatchesTheRunnersOwn.
-const validationReportPath = "tests/validation/report.json"
+const validationReportPath = "tests/acceptance/report.json"
 
 // Reads serves a version's run story from the platform's own tables. No GitHub,
 // no cluster, no Temporal: everything here is a row that a webhook or the
@@ -234,6 +234,8 @@ func failureView(row *delivery.MilestoneRun) *gen.RunFailure {
 		FirstAt:     f.FirstAt,
 		LastAt:      f.LastAt,
 		Detail:      f.Detail,
+		Host:        f.Host,
+		ResetAt:     f.ResetAt,
 		WorkflowID:  delivery.MilestoneRunWorkflowID(row.Kind, row.OrgID, row.ProjectID, row.MilestoneNumber),
 	}
 }

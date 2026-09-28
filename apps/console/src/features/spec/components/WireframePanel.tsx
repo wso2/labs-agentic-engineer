@@ -27,6 +27,7 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { ExcalidrawView, PrototypeView } from "@aep/ui-excalidraw-view";
+import { ErrorBoundary } from "../../../components/ErrorBoundary";
 import { useDerivedPrototype, useDerivedWireframe } from "../api/useDerivedDesign";
 import { deriveLiveWireframe, focusTargets, type LiveCompile } from "../derive/deriveWireframe";
 import { derivePrototypeModel } from "../derive/derivePrototype";
@@ -280,23 +281,34 @@ export function WireframePanel({
           )}
         </Box>
       )}
-      {mode === "prototype" && showToggle ? (
-        prototypePending ? (
-          <Box sx={{ flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <CircularProgress aria-label="Loading prototype" />
-          </Box>
-        ) : prototypeModel ? (
-          <PrototypeView key={sha} model={prototypeModel} fillHeight trailingSlot={viewSwitch} />
+      {/* The canvas is where render throws have been seen (a lazy, canvas-heavy
+          component fed a new scene every flush). Contained here so the rail,
+          the document and the chat keep working. Keyed on what is drawn: the
+          next flush or a newly committed sha retries on its own, so during a
+          generation a caught frame clears with the next one. */}
+      <ErrorBoundary
+        label={mode === "prototype" ? "The prototype" : "The wireframe canvas"}
+        resetKey={`${mode}:${hasLiveContent ? liveScene : `${sha}:${scene}`}`}
+        fill
+      >
+        {mode === "prototype" && showToggle ? (
+          prototypePending ? (
+            <Box sx={{ flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <CircularProgress aria-label="Loading prototype" />
+            </Box>
+          ) : prototypeModel ? (
+            <PrototypeView key={sha} model={prototypeModel} fillHeight trailingSlot={viewSwitch} />
+          ) : (
+            <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
+              This wireframe could not be rendered as a prototype.
+            </Typography>
+          )
+        ) : hasLiveContent ? (
+          <ExcalidrawView scene={liveScene!} focusScreens={focusScreens} fillHeight />
         ) : (
-          <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
-            This wireframe could not be rendered as a prototype.
-          </Typography>
-        )
-      ) : hasLiveContent ? (
-        <ExcalidrawView scene={liveScene!} focusScreens={focusScreens} fillHeight />
-      ) : (
-        <ExcalidrawView key={sha} scene={scene!} fillHeight />
-      )}
+          <ExcalidrawView key={sha} scene={scene!} fillHeight />
+        )}
+      </ErrorBoundary>
     </Box>
   );
 }

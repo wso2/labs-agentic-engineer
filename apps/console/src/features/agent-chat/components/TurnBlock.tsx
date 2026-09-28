@@ -44,13 +44,15 @@ function TurnFooter({
   status,
   onOpenSpec,
   showSpecLink,
+  workingLabel,
 }: {
   status: TurnFeedBlock["status"];
   onOpenSpec: () => void;
   showSpecLink: boolean;
+  workingLabel: string | undefined;
 }) {
   if (status === "running") {
-    return <WorkingIndicator label="Working…" />;
+    return <WorkingIndicator label={workingLabel ?? "Working…"} />;
   }
   if (status === "failed") {
     return (
@@ -235,6 +237,7 @@ export function TurnBlock({
   onOpenSpec,
   onOpenSpecFile,
   showSpecLink = true,
+  workingLabel,
 }: {
   turn: TurnFeedBlock;
   expandedGroups: Set<string>;
@@ -243,6 +246,8 @@ export function TurnBlock({
   /** A document link in a message (`aep://spec/<path>`) was clicked. */
   onOpenSpecFile?: ((path: string) => void) | undefined;
   showSpecLink?: boolean;
+  /** What the running footer says instead of "Working…" (a provider wait). */
+  workingLabel?: string | undefined;
 }) {
   return (
     <Box data-testid="turn-block">
@@ -269,7 +274,12 @@ export function TurnBlock({
         onOpenSpecFile={onOpenSpecFile}
         showSpecLink={showSpecLink}
       />
-      <TurnFooter status={turn.status} onOpenSpec={onOpenSpec} showSpecLink={showSpecLink} />
+      <TurnFooter
+        status={turn.status}
+        onOpenSpec={onOpenSpec}
+        showSpecLink={showSpecLink}
+        workingLabel={workingLabel}
+      />
     </Box>
   );
 }

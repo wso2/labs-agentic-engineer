@@ -64,10 +64,10 @@ type orgGitHubController struct {
 }
 
 // NewOrgGitHubController constructs the controller. publicURL is the
-// user-visible BFF base URL (default http://localhost:8090 for dev — the
-// console nginx proxies /api/* through to the BFF, so 8090 is correct).
-// appClientID is the GitHub App's OAuth client_id; empty disables
-// App-mode connect.
+// user-facing base URL (BFF_PUBLIC_URL): the console's origin, which
+// reverse-proxies the API, so both the GitHub callback and the settings page
+// it returns to are built on it. appClientID is the GitHub App's OAuth
+// client_id; empty disables App-mode connect.
 func NewOrgGitHubController(
 	credentialSvc *CredentialService,
 	disconnectSv *OrgDisconnectService,
@@ -89,6 +89,12 @@ func NewOrgGitHubController(
 		appClientID:   appClientID,
 	}
 }
+
+// consoleCredentialsPath is the console's Settings → Credentials page
+// (apps/console/src/routes/settings.credentials.tsx), where the callback lands
+// the user with its outcome in the query (`error`, `connected`, `candidates`).
+// The console's routes carry no org: it reads the org from the user's token.
+const consoleCredentialsPath = "/settings/credentials"
 
 // ConnectCallbackPath is the single GitHub-side callback URL configured
 // in both the App's "Setup URL" and "Callback URL" fields. Constant so
@@ -129,7 +135,7 @@ func (c *orgGitHubController) HandleConnectCallback(w http.ResponseWriter, r *ht
 		http.Error(w, "invalid state: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	settingsURL := c.publicURL + "/organizations/" + claims.OcOrgID + "/settings/github"
+	settingsURL := c.publicURL + consoleCredentialsPath
 
 	if code := q.Get("code"); code != "" {
 		c.handleOAuthCallback(w, r, claims, code, settingsURL)
@@ -189,9 +195,9 @@ func (c *orgGitHubController) handleOAuthCallback(w http.ResponseWriter, r *http
 	case 1:
 		c.bindAndRedirect(w, r, claims, candidates[0].InstallationID, settingsURL)
 	default:
-		// Picker. Encode the candidates in the URL so the picker page can
-		// render without another round-trip; the user will pick one and
-		// re-enter StartConnect with installationId pinned.
+		// Picker. Encode the candidates in the URL so the credentials page can
+		// offer them without another round-trip; the user picks one and
+		// re-enters StartConnect with installationId pinned.
 		raw, err := json.Marshal(candidates)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "connect callback: marshal candidates failed", "error", err)
@@ -199,7 +205,7 @@ func (c *orgGitHubController) handleOAuthCallback(w http.ResponseWriter, r *http
 			return
 		}
 		encoded := base64.RawURLEncoding.EncodeToString(raw)
-		http.Redirect(w, r, settingsURL+"/pick?candidates="+encoded, http.StatusSeeOther)
+		http.Redirect(w, r, settingsURL+"?candidates="+encoded, http.StatusSeeOther)
 	}
 }
 

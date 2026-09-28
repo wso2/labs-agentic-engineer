@@ -333,6 +333,11 @@ func turnStatusModel(st *spec.TurnStatus) gen.TurnStatus {
 		CreatedAt:      st.CreatedAt,
 		UpdatedAt:      st.UpdatedAt,
 
+		// Why a failed turn failed, when the agents service named it.
+		Code:    gen.TurnStatusCode(st.Code),
+		Host:    st.Host,
+		ResetAt: st.ResetAt,
+
 		// The turn's display record (#562) — what a client attaching to a
 		// running turn paints as the message that started it.
 		Instruction:       st.Instruction,
@@ -442,8 +447,8 @@ func mapGenAITurnError(ctx context.Context, err error) error {
 		return apierr.BadRequest(spec.ErrEmptyInstruction.Error())
 	case errors.Is(err, spec.ErrCollabNoToken):
 		return apierr.BadRequest(spec.ErrCollabNoToken.Error())
-	case errors.Is(err, spec.ErrNoAnthropicKey):
-		return apierr.BadRequest(spec.ErrNoAnthropicKey.Error())
+	case errors.Is(err, spec.ErrNoModelConnection):
+		return apierr.BadRequest(spec.ErrNoModelConnection.Error())
 	case errors.Is(err, spec.ErrTurnBufferTruncated):
 		return apierr.Conflict(spec.ErrTurnBufferTruncated.Error())
 	case errors.Is(err, spec.ErrSkillsRepoUnavailable):

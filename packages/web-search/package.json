@@ -1,0 +1,33 @@
+{
+  "name": "@aep/web-search",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Web search for a model connection that has no provider-side search tool: the Ollama web search API call, its result caps and its error text, and aep-web, the MCP server a coding run offers it through. Dependency-free, so the agents service and the runner image share one implementation.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./aep-web": {
+      "types": "./dist/aep-web.d.ts",
+      "default": "./dist/aep-web.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "test": "tsx --test \"test/**/*.test.ts\"",
+    "dev": "echo \"@aep/web-search: no dev server\""
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "tsx": "^4.21.0"
+  }
+}

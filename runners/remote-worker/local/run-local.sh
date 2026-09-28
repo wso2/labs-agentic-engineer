@@ -78,7 +78,7 @@ export AEP_GIT_SERVICE_URL="http://host.docker.internal:${STUB_PORT}"
 export PUBLISHER_TOKEN_URL="http://host.docker.internal:${STUB_PORT}/oauth2/token"
 # AEP_PLATFORM_URL: for an implementation run it stays unset (oneshot.ts skips
 # the per-task skills pull; credhelper/gh fall back to AEP_GIT_SERVICE_URL). A
-# validation run points it at the same stub so the aep-validation skill can
+# validation run points it at the same stub so the validation-task skill can
 # fetch its validation-context; the stub answers that path too. The skills-pull
 # to the stub 404s and is a harmless best-effort warning.
 if [ "${AEP_TASK_KIND}" = "validation" ]; then
@@ -129,6 +129,8 @@ fi
 docker build \
   --build-context "skills=$WORKER_DIR/../../skills" \
   --build-context "bal-library-tool=$WORKER_DIR/../../packages/bal-library-tool" \
+  --build-context "agent-eval=$WORKER_DIR/../../packages/agent-eval" \
+  --build-context "web-search=$WORKER_DIR/../../packages/web-search" \
   --secret "id=packagePAT,env=PACKAGE_PAT" \
   -f "$DOCKERFILE" -t "$IMAGE_TAG" "$WORKER_DIR"
 
@@ -142,6 +144,8 @@ docker run --rm \
   -v "$SCRIPT_DIR/workspace:/home/aep/aep-workspace" \
   -v "$WORKER_DIR/../../skills:/app/skills:ro" \
   -e ANTHROPIC_API_KEY \
+  -e AEP_EVAL_MODEL_API_KEY -e AEP_EVAL_MODEL_FORMAT -e AEP_EVAL_MODEL_BASE_URL \
+  -e AEP_EVAL_MODEL_NAME -e AEP_EVAL_MODEL_AUTH_SCHEME \
   -e AEP_TASK_ID -e AEP_ORG_ID -e AEP_PROJECT_ID -e AEP_COMPONENT_NAME \
   -e AEP_REPO_URL -e AEP_PROMPT -e AEP_BEARER -e AEP_GIT_SERVICE_URL \
   -e AEP_IDENTITY_NAME -e AEP_IDENTITY_EMAIL -e AEP_TASK_KIND -e AEP_PLATFORM_URL \
@@ -158,5 +162,5 @@ esac
 echo ""
 echo ">> runner finished: ${STATUS} (exit code ${EXIT_CODE})"
 echo ">> workspace kept at: $WS"
-echo ">> full SDK transcript: $WS/.logs/claude.log"
+echo ">> full SDK transcript: $WS/.logs/runtime.log"
 exit "$EXIT_CODE"

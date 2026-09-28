@@ -16,6 +16,8 @@
 
 package openchoreo
 
+import "github.com/wso2/aep/aep-api/internal/platform/orgconfig"
+
 // CodingAgentComponentTypeName is the namespaced ComponentType name seeded
 // per org. Billing aliases key on this exact string (and job/coding-agent).
 const CodingAgentComponentTypeName = "coding-agent"
@@ -155,12 +157,41 @@ func CodingAgentComponentType() map[string]any {
 							"type": "string", "default": "IfNotPresent",
 							"enum": []any{"Always", "IfNotPresent", "Never"},
 						},
+						// Which coding-agent runtime this run is. One ComponentType
+						// serves both: the pods differ only in their image (which
+						// the Workload carries) and in this label, so a second
+						// type would be a copy of every resource and deadline pin
+						// above for one string's difference. The parameter makes
+						// the runtime a fact OpenChoreo and kubectl can select on
+						// (`aep.wso2.com/runtime`) instead of an env var buried in
+						// the container. Enum-bounded like every other pin.
+						"runtime": map[string]any{
+							"type": "string", "default": string(orgconfig.DefaultAgentRuntime),
+							"enum": codingAgentRuntimeEnum(),
+						},
 					},
 				},
 			},
 			"resources": codingAgentComponentTypeResources(),
 		},
 	}
+}
+
+// codingAgentRuntimeEnum is the `runtime` parameter's enum: the contract's
+// AgentRuntime values, so a runtime an org can choose always renders a Job.
+func codingAgentRuntimeEnum() []any {
+	out := make([]any, 0, len(orgconfig.AgentRuntimes))
+	for _, r := range orgconfig.AgentRuntimes {
+		out = append(out, string(r))
+	}
+	return out
+}
+
+// runtimeLabeled is the CEL expression for a label set plus the run's runtime
+// under LabelKeyAepRuntime, merged with OpenChoreo's oc_merge the way the
+// platform's other ComponentTypes add labels to a rendered resource.
+func runtimeLabeled(base string) string {
+	return `${oc_merge(` + base + `, {"` + string(LabelKeyAepRuntime) + `": parameters.runtime})}`
 }
 
 // codingAgentComponentTypeResources is the CEL-templated resource list:
@@ -176,7 +207,7 @@ func codingAgentComponentTypeResources() []any {
 				"metadata": map[string]any{
 					"name":      "${metadata.name}",
 					"namespace": "${metadata.namespace}",
-					"labels":    "${metadata.labels}",
+					"labels":    runtimeLabeled("metadata.labels"),
 				},
 				"spec": map[string]any{
 					"backoffLimit":            "${parameters.backoffLimit}",
@@ -184,8 +215,11 @@ func codingAgentComponentTypeResources() []any {
 					"ttlSecondsAfterFinished": "${parameters.ttlSecondsAfterFinished}",
 					"template": map[string]any{
 						"metadata": map[string]any{
-							// Observer query footgun: must be podSelectors, not labels.
-							"labels": "${metadata.podSelectors}",
+							// Observer query footgun: must be podSelectors, not
+							// labels. The runtime label is merged ON TOP of them,
+							// so every selector the observer queries by is still
+							// there.
+							"labels": runtimeLabeled("metadata.podSelectors"),
 						},
 						"spec": map[string]any{
 							"restartPolicy": "${parameters.restartPolicy}",

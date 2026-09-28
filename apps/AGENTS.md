@@ -5,7 +5,9 @@ React webapps (Vite + Oxygen UI). One package per app; `apps/<name>` →
 
 **Status:** `apps/console/` (`@aep/console`) is scaffolded — Vite + React +
 Oxygen UI + TanStack Router/Query + openapi-fetch + MSW. Read
-`apps/console/AGENTS.md` before console work.
+`apps/console/AGENTS.md` before console work. `apps/tryit/` (`@aep/tryit`) is
+the platform's test app — a static SPA the console opens to sign in as a
+project's test user and talk to a deployed agent; read `apps/tryit/AGENTS.md`.
 
 ## Conventions
 

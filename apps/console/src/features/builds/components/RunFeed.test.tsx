@@ -110,7 +110,7 @@ describe("RunFeed", () => {
     mockCycles = [];
     render(<RunFeed projectName="acme" runId="run-1" />);
     const note = screen.getByText(
-      "No cycle output yet — the run's first agent has not written a line.",
+      "No output yet — the run's first agent has not written a line.",
     );
     expect(note.parentElement).toHaveStyle({ textAlign: "center" });
   });
@@ -216,6 +216,66 @@ describe("RunFeed", () => {
     ).toHaveAttribute("href", "https://github.com/acme/demo/pull/41");
   });
 
+  // A surface whose unit is not the cycle heads the boxes itself. The validation
+  // page calls a box an attempt on the version, numbered across every run, so it
+  // hands the feed a label and no run number; the feed still supplies the
+  // chronological position, so the surface's numbers descend with the stack.
+  it("heads its sections with the surface's own label when given one", () => {
+    mockCycles = [
+      section("c1", "validation", ["lead"]),
+      section("c2", "validation", ["lead"], {
+        number: 41,
+        url: "https://github.com/acme/demo/pull/41",
+      }),
+    ];
+    render(
+      <RunFeed
+        projectName="acme"
+        runId="run-1"
+        cycleKinds={["validation"]}
+        label={(ordinal) => `Attempt ${String(2 + ordinal)}`}
+      />,
+    );
+    expect(screen.getAllByText(/^Attempt \d+$/).map((el) => el.textContent)).toEqual([
+      "Attempt 4",
+      "Attempt 3",
+    ]);
+    expect(screen.queryByText(/Cycle/)).toBeNull();
+    // The pull request's accessible name follows the heading, as always.
+    expect(
+      screen.getByRole("link", { name: "Attempt 4 pull request #41" }),
+    ).toHaveAttribute("href", "https://github.com/acme/demo/pull/41");
+  });
+
+  // The kind chip tells cycles apart. A feed filtered to one kind would stamp the
+  // same word on every row, so it says nothing there; an unfiltered feed, and a
+  // builds feed showing three kinds, keep it.
+  it("drops the kind chip when the feed shows a single kind", () => {
+    mockCycles = [section("c1", "validation", ["lead"])];
+    const { unmount } = render(
+      <RunFeed projectName="acme" runId="run-1" cycleKinds={["validation"]} />,
+    );
+    expect(screen.queryByText("validation")).toBeNull();
+    unmount();
+
+    mockCycles = [section("c1", "coding", ["lead"])];
+    render(
+      <RunFeed projectName="acme" runId="run-1" cycleKinds={["coding", "fix", "conflict"]} />,
+    );
+    expect(screen.getByText("coding")).toBeInTheDocument();
+  });
+
+  // Dispatches of one cycle — an agent that died was started again for the same
+  // work. Said as "started", never "attempts": the validation page calls a box
+  // an attempt, and the two would otherwise share a row meaning different things.
+  it("says how many times a re-dispatched cycle was started", () => {
+    const twice = section("c1", "coding", ["lead"]);
+    mockCycles = [{ ...twice, cycle: { ...twice.cycle, attempts: 2 } }];
+    render(<RunFeed projectName="acme" runId="run-1" />);
+    expect(screen.getByText("started 2 times")).toBeInTheDocument();
+    expect(screen.queryByText(/attempts/)).toBeNull();
+  });
+
   // The stream keeps moving which cycle is newest, but a reader reading an earlier
   // one must not have it yanked shut underneath them.
   it("lets the reader open an earlier cycle instead of the newest", () => {
@@ -253,7 +313,10 @@ describe("RunFeed", () => {
     render(
       <RunFeed projectName="acme" runId="run-1" cycleKinds={["validation"]} />,
     );
-    expect(screen.getByText("validation")).toBeInTheDocument();
+    // One box, and it is the validation cycle's: the coding one is not drawn, and
+    // the ordinal counts within what is shown.
+    expect(screen.getAllByRole("button", { name: /Cycle \d/ })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: /Cycle 1/ })).toBeInTheDocument();
     expect(screen.queryByText("coding")).not.toBeInTheDocument();
   });
 

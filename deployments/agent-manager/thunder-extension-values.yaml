@@ -1,0 +1,38 @@
+# Values for Agent Manager's `wso2-amp-thunder-extension` chart (1.0.0-rc2),
+# rendered with `thunder.enabled=false` so it publishes bootstrap documents into
+# the ThunderID this cluster already runs rather than installing a second one.
+#
+# Pass this file on EVERY install and upgrade — the documented install uses
+# `--reset-values`, which drops any value not re-supplied on that invocation.
+#
+# `--set 'thunder.bootstrap.defaultUsers=[]'` does NOT work: Helm reads it as
+# the string "[]" and the render fails with "range can't iterate over []". It
+# has to come from this file or from --set-json.
+
+thunder:
+  # No Thunder of its own. The chart's ThunderID dependency is declared
+  # `condition: thunder.enabled`; with it false the chart emits the bootstrap
+  # ConfigMap, admin credentials, HTTPRoute and TLS chain and no Thunder — the
+  # supported way to publish into an identity provider it did not install.
+  enabled: false
+
+  bootstrap:
+    # The chart's 67-amp-default-users.yaml writes the admin account. It does
+    # not add to that record, it replaces it: ThunderID's own bootstrap creates
+    # the account with seven attributes (username, sub, email, name, given_name,
+    # family_name, mobile_number) and this document rewrites it with four,
+    # dropping `sub` — the subject claim the account is identified by — along
+    # with `name` and `mobile_number`.
+    #
+    # Empty, the document renders as an empty YAML document and the record is
+    # left as ThunderID's own bootstrap wrote it. Nothing of Agent Manager's
+    # depends on it: the document's stated purpose is to inherit Thunder's
+    # built-in "Administrators" group, which that account is already a member
+    # of, and the system client's Administrator role comes from a separate
+    # document (68-amp-role-system-client-thunder-admin.yaml), untouched here.
+    #
+    # Renaming instead of emptying does not work. The template branches on the
+    # literal username: `admin` merges into the built-in account, anything else
+    # creates a second user under the `engineer` schema and fails schema
+    # validation, because defaultUsers has no password field.
+    defaultUsers: []

@@ -198,3 +198,21 @@ test("createWebSearchDlpHook: ignores PreToolUse calls for tools other than WebS
   const output = await hook(input, "tool-use-2", { signal: new AbortController().signal });
   assert.deepEqual(output, {});
 });
+
+test("createWebSearchDlpHook: gates every tool it is given, the aep-web MCP tool included", async () => {
+  const hook = createWebSearchDlpHook(webSearchDenial(["staged-secret-value-123456"]), ["WebSearch", "mcp__aep-web__web_search"]);
+  const input = { ...preToolUseInput("docs for staged-secret-value-123456"), tool_name: "mcp__aep-web__web_search" };
+  const output = (await hook(input, "tool-use-3", { signal: new AbortController().signal })) as SyncOutput;
+  assert.equal(output.hookSpecificOutput?.permissionDecision, "deny");
+});
+
+test("stagedSecretValues: the dispatched model connection is not a secret, its key is", () => {
+  const values = stagedSecretValues({
+    AEP_AGENT_MODEL: "gpt-oss:20b",
+    AEP_MODEL_FORMAT: "openai-compatible",
+    AEP_MODEL_BASE_URL: "https://ollama.com/v1",
+    AEP_MODEL_WEB_SEARCH: "ollama-api",
+    AEP_MODEL_API_KEY: "ollama-key-0123456789",
+  });
+  assert.deepEqual(values, ["ollama-key-0123456789"]);
+});

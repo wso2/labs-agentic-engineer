@@ -204,6 +204,12 @@ type RunCycle struct {
 	CacheCreationTokens int64    `gorm:"not null;default:0" json:"-"`
 	ModelID             string   `gorm:"type:text;not null;default:''" json:"-"`
 	CostUsd             *float64 `gorm:"column:cost_usd" json:"-"`
+	// ModelHost is the host of the model connection the cycle was dispatched
+	// on, copied onto the row at launch (NoteModelHost) just as the runtime and
+	// model are copied into the Job, and the host its stamp is priced against:
+	// rates are keyed by (host, model). Empty on a cycle not yet dispatched.
+	// Nullable on purpose (see RunPhase18ModelHost).
+	ModelHost string `gorm:"type:text" json:"-"`
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`

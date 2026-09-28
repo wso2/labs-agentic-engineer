@@ -64,6 +64,14 @@ type ConversationRepository interface {
 	// one — the "New conversation" action, project-wide by design (#430 D4).
 	Rotate(ctx context.Context, orgID, projectID, useCase, createdBy string) (*ProjectConversation, error)
 
+	// RotateIfCurrent rotates like Rotate, but only while id is still the
+	// scope's current thread — the automatic rotation of a conversation near
+	// its model's context window (context_rotation.go). Returns the fresh
+	// thread, or nil when id had already been rotated away: concurrent
+	// senders that all saw the same full thread mint ONE successor, not one
+	// each.
+	RotateIfCurrent(ctx context.Context, orgID, projectID, useCase, id, createdBy string) (*ProjectConversation, error)
+
 	// IsCurrent reports whether id is the scope's current thread — the turn
 	// admission fence behind the single-era 409 (see StartTurn).
 	IsCurrent(ctx context.Context, orgID, projectID, useCase, id string) (bool, error)
@@ -193,4 +201,35 @@ func (r *conversationRepository) Exists(ctx context.Context, orgID, projectID, u
 		Where("org_id = ? AND project_id = ? AND use_case = ? AND id::text = ?", orgID, projectID, useCase, id).
 		Count(&n).Error
 	return n > 0, err
+}
+
+func (r *conversationRepository) RotateIfCurrent(ctx context.Context, orgID, projectID, useCase, id, createdBy string) (*ProjectConversation, error) {
+	fresh := &ProjectConversation{
+		OrgID:     orgID,
+		ProjectID: projectID,
+		UseCase:   useCase,
+		Current:   true,
+		CreatedBy: createdBy,
+	}
+	rotated := false
+	// The same scope lock as Rotate, so the demote is conditional on what the
+	// lock holder sees: a racer that rotated first has already demoted id,
+	// the guarded UPDATE matches nothing, and nothing is minted.
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := lockScope(tx, orgID, projectID, useCase); err != nil {
+			return err
+		}
+		res := tx.Model(&ProjectConversation{}).
+			Where("org_id = ? AND project_id = ? AND use_case = ? AND current AND id::text = ?", orgID, projectID, useCase, id).
+			Update("current", false)
+		if res.Error != nil || res.RowsAffected == 0 {
+			return res.Error
+		}
+		rotated = true
+		return tx.Create(fresh).Error
+	})
+	if err != nil || !rotated {
+		return nil, err
+	}
+	return fresh, nil
 }

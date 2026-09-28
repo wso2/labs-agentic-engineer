@@ -34,8 +34,8 @@ import (
 
 // Config drives the OpenChoreo client construction.
 type Config struct {
-	BaseURL      string
-	HostHeader   string
+	BaseURL    string
+	HostHeader string
 	// PreferPlainHTTPEndpoints picks the http external URL over the https one
 	// when a ReleaseBinding advertises BOTH.
 	//
@@ -56,8 +56,8 @@ type Config struct {
 	// dev-tier plane WITH TLS would be told to prefer plain http, the same bug
 	// mirrored.
 	PreferPlainHTTPEndpoints bool
-	AuthProvider ocauth.AuthProvider
-	RetryConfig  requests.RequestRetryConfig
+	AuthProvider             ocauth.AuthProvider
+	RetryConfig              requests.RequestRetryConfig
 
 	// RequestAuthStrategy selects the credential class per OC request.
 	// nil means AuthModeServiceM2M (direct-OC / all-M2M off-switch: never

@@ -7,6 +7,7 @@ boundaries without a browser.
 
 ## Conventions
 
-- Run against the cluster from `deployments/` — no mocked infra.
+- Run against the cluster from `deployments/` (`make dev-env` once, `make
+  dev-update` after each source edit) — no mocked infra.
 - DB resets between suites via the test-only reset endpoint (`TEST_MODE=true`).
 - Assert against the generated contract types from `@aep/contracts`.

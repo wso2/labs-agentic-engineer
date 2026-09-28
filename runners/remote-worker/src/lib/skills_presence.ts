@@ -58,6 +58,11 @@ export interface SkillPresence {
 
 export const SKILLS_MIRROR_DIR = path.join(".claude", "skills");
 
+/** Each task kind's workflow skill — the runner's to choose, never a design's (ADR-0037). */
+export const CODING_WORKFLOW_SKILL = "aep";
+export const VALIDATION_WORKFLOW_SKILL = "validation-task";
+export const WORKFLOW_SKILLS: readonly string[] = [CODING_WORKFLOW_SKILL, VALIDATION_WORKFLOW_SKILL];
+
 /**
  * Partition `names` into present vs dangling, checked against
  * `<workspace>/.claude/skills/<name>/SKILL.md`. Never throws — an absent

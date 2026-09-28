@@ -31,7 +31,7 @@ import (
 // The literal is repeated a third time here on purpose: reading it back out of
 // runread would make the test tautological.
 func TestValidationReportPathMatchesTheRunnersOwn(t *testing.T) {
-	const path = "tests/validation/report.json"
+	const path = "tests/acceptance/report.json"
 	if validation.ReportFilePath != path {
 		t.Fatalf("the validation runner writes %q but the run read surface links %q",
 			validation.ReportFilePath, path)

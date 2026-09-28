@@ -95,9 +95,9 @@ export function mockModel(
   opts: { delayMs?: number; provider?: string } = {},
 ): MockLanguageModelV4 {
   return new MockLanguageModelV4({
-    // `provider` drives the architect's `isAnthropicModel` web_search gate — a
-    // caller passes "anthropic.*" to assert the tool is injected, without ever
-    // reaching a real provider (the mock replays a scripted stream regardless).
+    // `provider` is the SDK provider string the model reports. Nothing may
+    // decide on it (an Anthropic-format model on another host reports
+    // "anthropic.messages" too); tests pass it to prove nothing does.
     ...(opts.provider ? { provider: opts.provider } : {}),
     doStream: steps.map((s, i) => streamForStep(s, i, opts.delayMs)),
   });

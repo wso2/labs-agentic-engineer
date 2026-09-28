@@ -55,16 +55,23 @@ import { ADD_FILE } from "../agents/main/tools/files.js";
 
 /**
  * Paths safe to optimistically stream: markdown (Y.XmlFragment) or Y.Text
- * artifacts — `.cell` architecture DSL, `.dsl` wireframes, `openapi.yaml`.
- * YAML is line-oriented like the DSLs, so line-boundary prefixes parse and
- * the OpenAPI view accumulates endpoints as the model writes them.
+ * artifacts — `.cell` architecture DSL, `.dsl` wireframes, `openapi.yaml`,
+ * `agent.afm.md`. YAML is line-oriented like the DSLs, so line-boundary
+ * prefixes parse and the OpenAPI view accumulates endpoints as the model
+ * writes them.
+ *
+ * `agent.afm.md` is named explicitly because it is deliberately NOT a prose
+ * markdown path (see collab-doc's isMarkdownPath: a markdown round-trip
+ * destroys its YAML front matter), but it streams as happily as any other
+ * line-oriented artifact.
  */
 function isStreamablePath(path: string): boolean {
   return (
     isMarkdownPath(path) ||
     path.endsWith('.cell') ||
     path.endsWith('.dsl') ||
-    path.endsWith('openapi.yaml')
+    path.endsWith('openapi.yaml') ||
+    path.endsWith('agent.afm.md')
   );
 }
 

@@ -28,12 +28,13 @@
 // the issue). Without it the local validation run exits before the agent starts:
 //
 //   GET /internal/v1/validation/{cycleId}/context
-//     -> { endpoints:[{component,url}], credentials:null, criteriaPath }
+//     -> { endpoints:[{component,url}] }
 //
-// The endpoints point at localhost dev servers the agent starts in-container
-// (the local-dev-servers path in the aep-validation skill); credentials are
-// null (auth-gated criteria then land not_run). Override the endpoints with
-// VALIDATION_CONTEXT_JSON to validate a different sample.
+// The default endpoints are localhost placeholders. The validation-task skill
+// judges an app that is already running and starts nothing, so set
+// VALIDATION_CONTEXT_JSON to an app reachable from the container. Test logins
+// are not here: the skill reads them off the roles gate ticket, as in a
+// dispatched run.
 //
 // The taskId echo satisfies credhelper.sh's anti-misroute tripwire.
 // Identity fields are deliberately omitted so the runner keeps the
@@ -72,8 +73,8 @@ const REFRESH_RE = /^\/internal\/v1\/(?:tasks|executions)\/([^/]+)\/credentials\
 const VALIDATION_CONTEXT_RE = /^\/internal\/v1\/validation\/([^/]+)\/context$/;
 const JSON_HEADERS = { "Content-Type": "application/json", "Cache-Control": "no-store" };
 
-// The validation-context payload the stub returns. Localhost dev servers the
-// agent starts in its own container; override via VALIDATION_CONTEXT_JSON.
+// The validation-context payload the stub returns: localhost placeholders unless
+// VALIDATION_CONTEXT_JSON names a running app.
 const validationContext = process.env.VALIDATION_CONTEXT_JSON
   ? JSON.parse(process.env.VALIDATION_CONTEXT_JSON)
   : {
@@ -81,8 +82,6 @@ const validationContext = process.env.VALIDATION_CONTEXT_JSON
         { component: "hello-web", url: "http://localhost:5173" },
         { component: "hello-api", url: "http://localhost:9090" },
       ],
-      credentials: null,
-      criteriaPath: "specs/validation/validation-criteria.json",
     };
 
 const server = http.createServer((req, res) => {

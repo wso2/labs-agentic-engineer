@@ -367,17 +367,21 @@ func (r *executionRepository) RecordUsage(ctx context.Context, id string, u cont
 		"cache_creation_tokens": u.CacheCreationTokens,
 		"model_id":              u.Model,
 	}
-	// Stamp USD at capture from the rates in force now (#291): frozen on the
-	// row, never re-derived. Null when unpriceable (any token-bearing slice
-	// without a rate row).
-	if r.stamper != nil {
-		updates["cost_usd"] = stampCapturedCost(r.stamper, u)
-	}
 	// One transaction, for the reason given on runCycleRepository.RecordUsage: the
 	// rollup reads the ledger alone, so a stamped row without its ledger copy is
 	// spend that is invisible everywhere it is reported. The row is written first
 	// inside the tx — the ledger copies it.
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Stamp USD at capture from the rates in force now (#291): frozen on the
+		// row, never re-derived. Priced on the row's own model host; null when
+		// unpriceable (any token-bearing slice without a (host, model) rate row).
+		if r.stamper != nil {
+			host, err := rowModelHost(tx, &Execution{}, id)
+			if err != nil {
+				return err
+			}
+			updates["cost_usd"] = stampCapturedCost(r.stamper, host, u)
+		}
 		if err := tx.Model(&Execution{}).
 			Where("id = ?", id).
 			Updates(updates).Error; err != nil {

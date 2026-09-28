@@ -95,8 +95,30 @@ describe("UsageSection", () => {
     };
     render(<UsageSection />);
     expect(screen.getByText("Storefront Webapp")).toBeTruthy();
-    expect(screen.getByText("storefront-webapp")).toBeTruthy();
+    expect(screen.getByText("storefront-webapp · claude-fable-5")).toBeTruthy();
     expect(screen.getByText("$12.34")).toBeTruthy();
+  });
+
+  it("names the host that billed a tokens-only figure", () => {
+    mockResult = {
+      isPending: false,
+      isError: false,
+      data: {
+        projects: [
+          {
+            projectName: "order-events",
+            displayName: "Order Events",
+            deleted: false,
+            usage: { ...usage(null), model: "kimi-k3", host: "ollama.com" },
+            phases: phasesOf(usage(null)),
+          },
+        ],
+      },
+    };
+    render(<UsageSection />);
+    expect(screen.getByText("order-events · kimi-k3 via ollama.com")).toBeTruthy();
+    expect(screen.getByText("1.4M tok")).toBeTruthy();
+    expect(screen.getByText("not priced · billed by ollama.com")).toBeTruthy();
   });
 
   it("marks deleted projects and falls back to tokens when no cost is stamped", () => {

@@ -52,3 +52,11 @@ export function totalTokens(u: Usage): number {
     u.inputTokens + u.outputTokens + u.cacheReadTokens + u.cacheCreationTokens
   );
 }
+
+// Beside a tokens-only figure: who billed the work the platform could not
+// price. Null when the figure is priced, or the host is unknown ("" on an
+// aggregate that mixes hosts or predates stamping).
+export function unpricedHostLine(u: Usage): string | null {
+  if (u.costUsd !== null || !u.host) return null;
+  return `not priced · billed by ${u.host}`;
+}

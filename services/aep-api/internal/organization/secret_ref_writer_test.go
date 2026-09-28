@@ -113,10 +113,10 @@ func (f *fakeSMClient) GetSecretWithValue(_ context.Context, kvPath string) (map
 func TestSecretRefWriter_Enabled(t *testing.T) {
 	t.Parallel()
 
-	if w := organization.NewSecretRefWriter(nil, nil, nil, nil); w.Enabled() {
+	if w := organization.NewSecretRefWriter(nil, nil, nil, nil, nil); w.Enabled() {
 		t.Fatalf("nil client must report Enabled() == false")
 	}
-	if w := organization.NewSecretRefWriter(&fakeSMClient{}, nil, nil, nil); !w.Enabled() {
+	if w := organization.NewSecretRefWriter(&fakeSMClient{}, nil, nil, nil, nil); !w.Enabled() {
 		t.Fatalf("non-nil client must report Enabled() == true")
 	}
 	// Quirk: Enabled() is nil-receiver-safe (w != nil check first), so callers
@@ -127,25 +127,25 @@ func TestSecretRefWriter_Enabled(t *testing.T) {
 	}
 }
 
-// --- WriteAnthropic ------------------------------------------------------------
+// --- WriteModelKey -------------------------------------------------------------
 
-func TestSecretRefWriter_WriteAnthropic(t *testing.T) {
+func TestSecretRefWriter_WriteModelKey(t *testing.T) {
 	t.Parallel()
 
 	t.Run("disabled (nil client) is a no-op", func(t *testing.T) {
 		t.Parallel()
-		w := organization.NewSecretRefWriter(nil, nil, nil, nil)
-		ref, err := w.WriteAnthropic(context.Background(), "acme", organization.AnthropicRoleDefault, "sk-ant-key")
+		w := organization.NewSecretRefWriter(nil, nil, nil, nil, nil)
+		ref, err := w.WriteModelKey(context.Background(), "acme", "sk-ant-key")
 		if err != nil || ref != "" {
-			t.Fatalf("disabled WriteAnthropic = (%q, %v); want (\"\", nil)", ref, err)
+			t.Fatalf("disabled WriteModelKey = (%q, %v); want (\"\", nil)", ref, err)
 		}
 	})
 
 	t.Run("empty ocOrgID is a validation error, SM-API never called", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, nil, nil, nil)
-		if _, err := w.WriteAnthropic(context.Background(), "  ", organization.AnthropicRoleDefault, "sk-ant-key"); err == nil {
+		w := organization.NewSecretRefWriter(fake, nil, nil, nil, nil)
+		if _, err := w.WriteModelKey(context.Background(), "  ", "sk-ant-key"); err == nil {
 			t.Fatalf("want an error for empty ocOrgID")
 		}
 		if len(fake.createCalls) != 0 {
@@ -156,8 +156,8 @@ func TestSecretRefWriter_WriteAnthropic(t *testing.T) {
 	t.Run("empty apiKey is a validation error, SM-API never called", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, nil, nil, nil)
-		if _, err := w.WriteAnthropic(context.Background(), "acme", organization.AnthropicRoleDefault, "   "); err == nil {
+		w := organization.NewSecretRefWriter(fake, nil, nil, nil, nil)
+		if _, err := w.WriteModelKey(context.Background(), "acme", "   "); err == nil {
 			t.Fatalf("want an error for empty apiKey")
 		}
 		if len(fake.createCalls) != 0 {
@@ -168,12 +168,12 @@ func TestSecretRefWriter_WriteAnthropic(t *testing.T) {
 	t.Run("uploads to the anthropic location with the api-key payload", func(t *testing.T) {
 		t.Parallel()
 		db := dbtest.New(t)
-		seedAnthropicRow(t, db, "acme", nil, nil, nil)
+		seedModelConnectionRow(t, db, "acme")
 		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil))
-		ref, err := w.WriteAnthropic(claimsCtx("ou-acme-uuid"), "acme", organization.AnthropicRoleDefault, "sk-ant-key")
+		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil), organization.NewOrgModelConnectionRepository(db))
+		ref, err := w.WriteModelKey(claimsCtx("ou-acme-uuid"), "acme", "sk-ant-key")
 		if err != nil {
-			t.Fatalf("WriteAnthropic: %v", err)
+			t.Fatalf("WriteModelKey: %v", err)
 		}
 		if ref != "ref-name" {
 			t.Fatalf("secretRefName = %q; want ref-name", ref)
@@ -182,7 +182,7 @@ func TestSecretRefWriter_WriteAnthropic(t *testing.T) {
 			t.Fatalf("want exactly 1 CreateSecret call, got %d", len(fake.createCalls))
 		}
 		call := fake.createCalls[0]
-		wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", ControlPlaneNamespace: "acme", EntityName: "anthropic", SecretKey: secretmanagersvc.SecretKeyAPIKey}
+		wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", ControlPlaneNamespace: "acme", EntityName: "model-connection", SecretKey: secretmanagersvc.SecretKeyAPIKey}
 		if call.loc != wantLoc {
 			t.Fatalf("SecretLocation = %+v; want %+v", call.loc, wantLoc)
 		}
@@ -194,9 +194,9 @@ func TestSecretRefWriter_WriteAnthropic(t *testing.T) {
 	t.Run("no ouId claim fails before CreateSecret", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, nil, nil, nil)
-		_, err := w.WriteAnthropic(context.Background(), "acme", organization.AnthropicRoleDefault, "sk-ant-key")
-		if err == nil || !strings.Contains(err.Error(), "anthropic upload") {
+		w := organization.NewSecretRefWriter(fake, nil, nil, nil, nil)
+		_, err := w.WriteModelKey(context.Background(), "acme", "sk-ant-key")
+		if err == nil || !strings.Contains(err.Error(), "model-connection upload") {
 			t.Fatalf("want a wrapped upload error, got %v", err)
 		}
 		if !strings.Contains(err.Error(), "no ouId claim") {
@@ -210,12 +210,12 @@ func TestSecretRefWriter_WriteAnthropic(t *testing.T) {
 	t.Run("CreateSecret error is wrapped and returned; db untouched", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeSMClient{createErr: errors.New("sm-api: 503")}
-		w := organization.NewSecretRefWriter(fake, nil, nil, nil)
-		ref, err := w.WriteAnthropic(claimsCtx("ou-acme-uuid"), "acme", organization.AnthropicRoleDefault, "sk-ant-key")
+		w := organization.NewSecretRefWriter(fake, nil, nil, nil, nil)
+		ref, err := w.WriteModelKey(claimsCtx("ou-acme-uuid"), "acme", "sk-ant-key")
 		if err == nil || ref != "" {
-			t.Fatalf("WriteAnthropic = (%q, %v); want (\"\", wrapped error)", ref, err)
+			t.Fatalf("WriteModelKey = (%q, %v); want (\"\", wrapped error)", ref, err)
 		}
-		if !strings.Contains(err.Error(), "anthropic upload") {
+		if !strings.Contains(err.Error(), "model-connection upload") {
 			t.Fatalf("error not wrapped as expected: %v", err)
 		}
 	})
@@ -228,7 +228,7 @@ func TestSecretRefWriter_WriteExternalResourceSecret(t *testing.T) {
 
 	t.Run("disabled (nil client) is a no-op", func(t *testing.T) {
 		t.Parallel()
-		w := organization.NewSecretRefWriter(nil, nil, nil, nil)
+		w := organization.NewSecretRefWriter(nil, nil, nil, nil, nil)
 		vaultKey, ref, err := w.WriteExternalResourceSecret(context.Background(), "acme", "proj", "extres-openweather-default", map[string]string{"K": "v"})
 		if err != nil || vaultKey != "" || ref != "" {
 			t.Fatalf("disabled WriteExternalResourceSecret = (%q, %q, %v); want (\"\", \"\", nil)", vaultKey, ref, err)
@@ -238,7 +238,7 @@ func TestSecretRefWriter_WriteExternalResourceSecret(t *testing.T) {
 	t.Run("empty ocOrgID/projectName/entityName is a validation error, SM-API never called", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, nil, nil, nil)
+		w := organization.NewSecretRefWriter(fake, nil, nil, nil, nil)
 		for _, args := range [][3]string{
 			{"  ", "proj", "extres-x-dev"},
 			{"acme", "", "extres-x-dev"},
@@ -256,7 +256,7 @@ func TestSecretRefWriter_WriteExternalResourceSecret(t *testing.T) {
 	t.Run("empty data is a validation error, SM-API never called", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, nil, nil, nil)
+		w := organization.NewSecretRefWriter(fake, nil, nil, nil, nil)
 		if _, _, err := w.WriteExternalResourceSecret(context.Background(), "acme", "proj", "extres-x-dev", nil); err == nil {
 			t.Fatalf("want an error for empty data")
 		}
@@ -268,7 +268,7 @@ func TestSecretRefWriter_WriteExternalResourceSecret(t *testing.T) {
 	t.Run("uploads to the project-scoped entity location with the full payload", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, nil, nil, nil)
+		w := organization.NewSecretRefWriter(fake, nil, nil, nil, nil)
 		vaultKey, ref, err := w.WriteExternalResourceSecret(claimsCtx("ou-acme-uuid"), "acme", "weatherproj", "extres-openweather-default",
 			map[string]string{"OPENWEATHER_API_KEY": "k123"})
 		if err != nil {
@@ -293,7 +293,7 @@ func TestSecretRefWriter_WriteExternalResourceSecret(t *testing.T) {
 	t.Run("CreateSecret error is wrapped and returned", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeSMClient{createErr: errors.New("sm-api: 503")}
-		w := organization.NewSecretRefWriter(fake, nil, nil, nil)
+		w := organization.NewSecretRefWriter(fake, nil, nil, nil, nil)
 		vaultKey, ref, err := w.WriteExternalResourceSecret(claimsCtx("ou-acme-uuid"), "acme", "proj", "extres-x-dev", map[string]string{"K": "v"})
 		if err == nil || vaultKey != "" || ref != "" {
 			t.Fatalf("WriteExternalResourceSecret = (%q, %q, %v); want (\"\", \"\", wrapped error)", vaultKey, ref, err)
@@ -307,7 +307,7 @@ func TestSecretRefWriter_WriteExternalResourceSecret(t *testing.T) {
 func TestSecretRefWriter_WriteOrgCatalogSecret(t *testing.T) {
 	t.Parallel()
 	fake := &fakeSMClient{}
-	w := organization.NewSecretRefWriter(fake, nil, nil, nil)
+	w := organization.NewSecretRefWriter(fake, nil, nil, nil, nil)
 	if _, err := w.WriteOrgCatalogSecret(claimsCtx("ou-acme-uuid"), "acme", "stripe-default",
 		map[string]string{"api_key": "sk_live"}); err != nil {
 		t.Fatalf("WriteOrgCatalogSecret: %v", err)
@@ -328,7 +328,7 @@ func TestSecretRefWriter_WriteOrgCatalogSecret(t *testing.T) {
 func TestSecretRefWriter_CopyOrgCatalogSecret(t *testing.T) {
 	t.Parallel()
 	fake := &fakeSMClient{readData: map[string]string{"OPENEXCHANGERATES_APP_ID": "dev-app-id"}}
-	w := organization.NewSecretRefWriter(fake, nil, nil, nil)
+	w := organization.NewSecretRefWriter(fake, nil, nil, nil, nil)
 	key, err := w.CopyOrgCatalogSecret(claimsCtx("ou-acme-uuid"), "acme", "secret/data/org-x/extres-fx-rates-development", "fx-rates-development")
 	if err != nil {
 		t.Fatalf("CopyOrgCatalogSecret: %v", err)
@@ -344,14 +344,14 @@ func TestSecretRefWriter_CopyOrgCatalogSecret(t *testing.T) {
 	}
 
 	empty := &fakeSMClient{readData: map[string]string{}}
-	if _, err := organization.NewSecretRefWriter(empty, nil, nil, nil).CopyOrgCatalogSecret(claimsCtx("ou-acme-uuid"), "acme", "secret/data/x", "e"); err == nil || len(empty.createCalls) != 0 {
+	if _, err := organization.NewSecretRefWriter(empty, nil, nil, nil, nil).CopyOrgCatalogSecret(claimsCtx("ou-acme-uuid"), "acme", "secret/data/x", "e"); err == nil || len(empty.createCalls) != 0 {
 		t.Fatalf("an empty source must be refused before anything is written: err=%v creates=%d", err, len(empty.createCalls))
 	}
 }
 
 func TestSecretRefWriter_OrgCatalogVaultKey(t *testing.T) {
 	t.Parallel()
-	w := organization.NewSecretRefWriter(&fakeSMClient{}, nil, nil, nil)
+	w := organization.NewSecretRefWriter(&fakeSMClient{}, nil, nil, nil, nil)
 	got, err := w.OrgCatalogVaultKey(claimsCtx("ou-acme-uuid"), "acme", "github-default")
 	if err != nil {
 		t.Fatalf("OrgCatalogVaultKey: %v", err)
@@ -368,7 +368,7 @@ func TestSecretRefWriter_WriteGitHubPAT(t *testing.T) {
 
 	t.Run("disabled (nil client) is a no-op", func(t *testing.T) {
 		t.Parallel()
-		w := organization.NewSecretRefWriter(nil, nil, nil, nil)
+		w := organization.NewSecretRefWriter(nil, nil, nil, nil, nil)
 		ref, err := w.WriteGitHubPAT(context.Background(), "acme", "ghp_token")
 		if err != nil || ref != "" {
 			t.Fatalf("disabled WriteGitHubPAT = (%q, %v); want (\"\", nil)", ref, err)
@@ -378,7 +378,7 @@ func TestSecretRefWriter_WriteGitHubPAT(t *testing.T) {
 	t.Run("empty ocOrgID is a validation error, SM-API never called", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, nil, nil, nil)
+		w := organization.NewSecretRefWriter(fake, nil, nil, nil, nil)
 		if _, err := w.WriteGitHubPAT(context.Background(), "", "ghp_token"); err == nil {
 			t.Fatalf("want an error for empty ocOrgID")
 		}
@@ -390,7 +390,7 @@ func TestSecretRefWriter_WriteGitHubPAT(t *testing.T) {
 	t.Run("empty pat is a validation error, SM-API never called", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, nil, nil, nil)
+		w := organization.NewSecretRefWriter(fake, nil, nil, nil, nil)
 		if _, err := w.WriteGitHubPAT(context.Background(), "acme", ""); err == nil {
 			t.Fatalf("want an error for empty pat")
 		}
@@ -404,7 +404,7 @@ func TestSecretRefWriter_WriteGitHubPAT(t *testing.T) {
 		db := dbtest.New(t)
 		seedUserPATRow(t, db, "acme", nil, nil)
 		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil))
+		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil), organization.NewOrgModelConnectionRepository(db))
 		ref, err := w.WriteGitHubPAT(claimsCtx("ou-acme-uuid"), "acme", "ghp_token")
 		if err != nil {
 			t.Fatalf("WriteGitHubPAT: %v", err)
@@ -428,7 +428,7 @@ func TestSecretRefWriter_WriteGitHubPAT(t *testing.T) {
 	t.Run("CreateSecret error is wrapped and returned", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeSMClient{createErr: errors.New("sm-api: 500")}
-		w := organization.NewSecretRefWriter(fake, nil, nil, nil)
+		w := organization.NewSecretRefWriter(fake, nil, nil, nil, nil)
 		ref, err := w.WriteGitHubPAT(claimsCtx("ou-acme-uuid"), "acme", "ghp_token")
 		if err == nil || ref != "" {
 			t.Fatalf("WriteGitHubPAT = (%q, %v); want (\"\", wrapped error)", ref, err)
@@ -446,7 +446,7 @@ func TestSecretRefWriter_WritePublisher(t *testing.T) {
 
 	t.Run("disabled (nil client) is a no-op", func(t *testing.T) {
 		t.Parallel()
-		w := organization.NewSecretRefWriter(nil, nil, nil, nil)
+		w := organization.NewSecretRefWriter(nil, nil, nil, nil, nil)
 		ref, err := w.WritePublisher(context.Background(), "acme", "cid", "csecret")
 		if err != nil || ref != "" {
 			t.Fatalf("disabled WritePublisher = (%q, %v); want (\"\", nil)", ref, err)
@@ -456,7 +456,7 @@ func TestSecretRefWriter_WritePublisher(t *testing.T) {
 	t.Run("empty ocOrgID/clientID/clientSecret are each validation errors", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, nil, nil, nil)
+		w := organization.NewSecretRefWriter(fake, nil, nil, nil, nil)
 		cases := []struct {
 			name, org, id, secret string
 		}{
@@ -479,7 +479,7 @@ func TestSecretRefWriter_WritePublisher(t *testing.T) {
 		db := dbtest.New(t)
 		seedIDPProfileRow(t, db, "acme", nil, nil)
 		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil))
+		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil), organization.NewOrgModelConnectionRepository(db))
 		ref, err := w.WritePublisher(claimsCtx("ou-acme-uuid"), "acme", "cid", "csecret")
 		if err != nil {
 			t.Fatalf("WritePublisher: %v", err)
@@ -507,7 +507,7 @@ func TestSecretRefWriter_WritePublisher(t *testing.T) {
 	t.Run("CreateSecret error is wrapped and returned", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeSMClient{createErr: errors.New("sm-api: 500")}
-		w := organization.NewSecretRefWriter(fake, nil, nil, nil)
+		w := organization.NewSecretRefWriter(fake, nil, nil, nil, nil)
 		ref, err := w.WritePublisher(claimsCtx("ou-acme-uuid"), "acme", "cid", "csecret")
 		if err == nil || ref != "" {
 			t.Fatalf("WritePublisher = (%q, %v); want (\"\", wrapped error)", ref, err)
@@ -522,18 +522,17 @@ func TestSecretRefWriter_WritePublisher(t *testing.T) {
 
 // TestSecretRefWriter_ResolveVaultKey_NoClaimsInContext pins resolveVaultKey's
 // exact error text. resolveVaultKey itself is unexported and unreachable from
-// this black-box test, so this drives it indirectly through WriteAnthropic
-// (any Write* would do — see the WriteAnthropic "resolve-vault-key failure"
-// subtest for the same path with a Contains check). Go's %w wrapping
-// preserves the wrapped error's Error() text verbatim as a suffix, so the
-// precise underlying message is still pinned exactly, just reached through
-// the public API instead of the private method. resolveVaultKey never touches
-// the DB (it derives the path from the JWT, deliberately not from the local
-// `organizations.uuid` row — see its doc comment), so db: nil is safe here too.
+// this black-box test, so this drives it indirectly through WriteModelKey.
+// Go's %w wrapping preserves the wrapped error's Error() text verbatim as a
+// suffix, so the precise underlying message is still pinned exactly, just
+// reached through the public API instead of the private method.
+// resolveVaultKey never touches the DB (it derives the path from the JWT,
+// deliberately not from the local `organizations.uuid` row — see its doc
+// comment), so db: nil is safe here too.
 func TestSecretRefWriter_ResolveVaultKey_NoClaimsInContext(t *testing.T) {
 	t.Parallel()
-	w := organization.NewSecretRefWriter(&fakeSMClient{}, nil, nil, nil)
-	_, err := w.WriteAnthropic(context.Background(), "acme", organization.AnthropicRoleDefault, "sk-ant-key")
+	w := organization.NewSecretRefWriter(&fakeSMClient{}, nil, nil, nil, nil)
+	_, err := w.WriteModelKey(context.Background(), "acme", "sk-ant-key")
 	if err == nil {
 		t.Fatalf("want an error when ctx carries no JWT claims")
 	}
@@ -544,114 +543,81 @@ func TestSecretRefWriter_ResolveVaultKey_NoClaimsInContext(t *testing.T) {
 
 // --- DeleteAnthropic (DB) -----------------------------------------------------
 
-// seedAnthropicRow inserts a minimal valid org_anthropic_credentials row,
-// optionally with the secret-ref triplet populated.
-func seedAnthropicRow(t testing.TB, db *gorm.DB, ocOrgID string, refName, kvPath, prop *string) {
+// seedModelConnectionRow inserts a minimal valid org_model_connections row
+// with no secret-ref triplet.
+func seedModelConnectionRow(t testing.TB, db *gorm.DB, ocOrgID string) {
 	t.Helper()
-	row := organization.OrgAnthropicCredential{
-		OcOrgID:           ocOrgID,
-		KeyPrefix:         "sk-ant-api03-",
-		KeyLast4:          "wxyz",
-		Status:            "active",
-		SecretRefName:     refName,
-		SecretRefKVPath:   kvPath,
-		SecretRefProperty: prop,
+	now := time.Now().UTC()
+	row := organization.OrgModelConnection{
+		OcOrgID: ocOrgID, Format: "anthropic", BaseURL: "https://api.anthropic.com/v1", Host: "api.anthropic.com",
+		Model: "claude-sonnet-5", AuthScheme: "x-api-key", ImageInput: "yes", KeyPreview: "sk-a…wxyz",
+		ConnectedAt: now, UpdatedAt: now,
 	}
 	if err := db.Create(&row).Error; err != nil {
-		t.Fatalf("seed anthropic row %s: %v", ocOrgID, err)
+		t.Fatalf("seed model connection row %s: %v", ocOrgID, err)
 	}
 }
 
 func strPtr(s string) *string { return &s }
 
-func TestSecretRefWriter_DeleteAnthropic_DB(t *testing.T) {
+// DeleteAnthropic runs after the card's transaction has deleted the row, so it
+// takes the secret-ref name the caller captured beforehand and reads nothing.
+func TestSecretRefWriter_DeleteAnthropic(t *testing.T) {
 	t.Run("disabled (nil client) is a no-op", func(t *testing.T) {
 		t.Parallel()
-		w := organization.NewSecretRefWriter(nil, nil, nil, nil)
-		if err := w.DeleteAnthropic(context.Background(), "acme", organization.AnthropicRoleDefault); err != nil {
+		w := organization.NewSecretRefWriter(nil, nil, nil, nil, nil)
+		if err := w.DeleteModelKey(context.Background(), "acme", "model-connection-secrets"); err != nil {
 			t.Fatalf("disabled DeleteAnthropic = %v; want nil", err)
 		}
 	})
 
-	t.Run("no row for org is a no-op (idempotent), SM-API never called", func(t *testing.T) {
+	t.Run("deletes the role's secret by the captured name", func(t *testing.T) {
 		t.Parallel()
-		db := dbtest.New(t)
 		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil))
-		if err := w.DeleteAnthropic(context.Background(), "ghost-org", organization.AnthropicRoleDefault); err != nil {
-			t.Fatalf("DeleteAnthropic on a missing row = %v; want nil", err)
-		}
-		if len(fake.deleteCalls) != 0 {
-			t.Fatalf("DeleteSecret must not be called when no row exists")
-		}
-	})
-
-	t.Run("clears the triplet after a successful SM-API delete", func(t *testing.T) {
-		t.Parallel()
-		db := dbtest.New(t)
-		seedAnthropicRow(t, db, "acme", strPtr("acme-anthropic-secrets"), strPtr("user-app-secrets/wc-xxx/acme-anthropic-secrets"), strPtr("api-key"))
-
-		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil))
-		if err := w.DeleteAnthropic(claimsCtx("ou-acme-uuid"), "acme", organization.AnthropicRoleDefault); err != nil {
+		w := organization.NewSecretRefWriter(fake, nil, nil, nil, nil)
+		if err := w.DeleteAnthropic(claimsCtx("ou-acme-uuid"), "acme", organization.AnthropicRoleCoding, "acme-anthropic-coding"); err != nil {
 			t.Fatalf("DeleteAnthropic: %v", err)
 		}
 		if len(fake.deleteCalls) != 1 {
 			t.Fatalf("want 1 DeleteSecret call, got %d", len(fake.deleteCalls))
 		}
 		call := fake.deleteCalls[0]
-		wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", ControlPlaneNamespace: "acme", EntityName: "anthropic", SecretKey: secretmanagersvc.SecretKeyAPIKey}
-		if call.loc != wantLoc || call.secretRefName != "acme-anthropic-secrets" {
-			t.Fatalf("DeleteSecret called with loc=%+v ref=%q; want loc=%+v ref=%q", call.loc, call.secretRefName, wantLoc, "acme-anthropic-secrets")
-		}
-		var got organization.OrgAnthropicCredential
-		if err := db.Where("oc_org_id = ?", "acme").First(&got).Error; err != nil {
-			t.Fatalf("reload: %v", err)
-		}
-		if got.SecretRefName != nil || got.SecretRefKVPath != nil || got.SecretRefProperty != nil {
-			t.Fatalf("triplet not cleared: %+v", got)
+		wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", ControlPlaneNamespace: "acme", EntityName: "anthropic-coding", SecretKey: secretmanagersvc.SecretKeyAPIKey}
+		if call.loc != wantLoc || call.secretRefName != "acme-anthropic-coding" {
+			t.Fatalf("DeleteSecret called with loc=%+v ref=%q; want loc=%+v ref=%q", call.loc, call.secretRefName, wantLoc, "acme-anthropic-coding")
 		}
 	})
 
-	t.Run("nil SecretRefName on the row passes an empty refName to DeleteSecret", func(t *testing.T) {
+	t.Run("SM-API delete error propagates", func(t *testing.T) {
 		t.Parallel()
-		db := dbtest.New(t)
-		seedAnthropicRow(t, db, "acme", nil, nil, nil)
-
-		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil))
-		if err := w.DeleteAnthropic(claimsCtx("ou-acme-uuid"), "acme", organization.AnthropicRoleDefault); err != nil {
-			t.Fatalf("DeleteAnthropic: %v", err)
-		}
-		if len(fake.deleteCalls) != 1 || fake.deleteCalls[0].secretRefName != "" {
-			t.Fatalf("want DeleteSecret called with empty secretRefName, got %+v", fake.deleteCalls)
-		}
-	})
-
-	t.Run("SM-API delete error propagates and the row is left untouched", func(t *testing.T) {
-		t.Parallel()
-		db := dbtest.New(t)
-		seedAnthropicRow(t, db, "acme", strPtr("acme-anthropic-secrets"), strPtr("kv/path"), strPtr("api-key"))
-
 		fake := &fakeSMClient{deleteErr: errors.New("sm-api: 500")}
-		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil))
-		if err := w.DeleteAnthropic(claimsCtx("ou-acme-uuid"), "acme", organization.AnthropicRoleDefault); err == nil {
+		w := organization.NewSecretRefWriter(fake, nil, nil, nil, nil)
+		if err := w.DeleteModelKey(claimsCtx("ou-acme-uuid"), "acme", "model-connection-secrets"); err == nil {
 			t.Fatalf("want the SM-API error to propagate")
 		}
-		var got organization.OrgAnthropicCredential
-		if err := db.Where("oc_org_id = ?", "acme").First(&got).Error; err != nil {
-			t.Fatalf("reload: %v", err)
-		}
-		if got.SecretRefName == nil || *got.SecretRefName != "acme-anthropic-secrets" {
-			t.Fatalf("row must be untouched on delete error: %+v", got)
-		}
 	})
+
+	// The entity follows the reference name: a row still on the Anthropic-era
+	// copy deletes that copy's vault path, never the new name's.
+	for _, tc := range []struct{ ref, entity string }{
+		{"model-connection-secrets", "model-connection"},
+		{"anthropic-secrets", "anthropic"},
+	} {
+		t.Run("model key "+tc.ref+" deletes entity "+tc.entity, func(t *testing.T) {
+			t.Parallel()
+			fake := &fakeSMClient{}
+			w := organization.NewSecretRefWriter(fake, nil, nil, nil, nil)
+			if err := w.DeleteModelKey(claimsCtx("ou-acme-uuid"), "acme", tc.ref); err != nil {
+				t.Fatalf("DeleteModelKey: %v", err)
+			}
+			wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", ControlPlaneNamespace: "acme", EntityName: tc.entity, SecretKey: secretmanagersvc.SecretKeyAPIKey}
+			if len(fake.deleteCalls) != 1 || fake.deleteCalls[0].loc != wantLoc || fake.deleteCalls[0].secretRefName != tc.ref {
+				t.Fatalf("DeleteSecret calls = %+v; want one at %+v named %q", fake.deleteCalls, wantLoc, tc.ref)
+			}
+		})
+	}
 }
 
-// --- DeletePublisher (DB) -----------------------------------------------------
-
-// seedIDPProfileRow inserts a minimal valid organization_idp_profiles row,
-// optionally with the secret-ref triplet populated.
 func seedIDPProfileRow(t testing.TB, db *gorm.DB, orgID string, refName, kvPath *string) {
 	t.Helper()
 	row := organization.OrganizationIDPProfile{
@@ -676,7 +642,7 @@ func seedIDPProfileRow(t testing.TB, db *gorm.DB, orgID string, refName, kvPath 
 func TestSecretRefWriter_DeletePublisher_DB(t *testing.T) {
 	t.Run("disabled (nil client) is a no-op", func(t *testing.T) {
 		t.Parallel()
-		w := organization.NewSecretRefWriter(nil, nil, nil, nil)
+		w := organization.NewSecretRefWriter(nil, nil, nil, nil, nil)
 		if err := w.DeletePublisher(context.Background(), "acme"); err != nil {
 			t.Fatalf("disabled DeletePublisher = %v; want nil", err)
 		}
@@ -686,7 +652,7 @@ func TestSecretRefWriter_DeletePublisher_DB(t *testing.T) {
 		t.Parallel()
 		db := dbtest.New(t)
 		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil))
+		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil), organization.NewOrgModelConnectionRepository(db))
 		if err := w.DeletePublisher(context.Background(), "ghost-org"); err != nil {
 			t.Fatalf("DeletePublisher on a missing row = %v; want nil", err)
 		}
@@ -701,7 +667,7 @@ func TestSecretRefWriter_DeletePublisher_DB(t *testing.T) {
 		seedIDPProfileRow(t, db, "acme", strPtr("acme-publisher-secrets"), strPtr("user-app-secrets/wc-xxx/acme-publisher-secrets"))
 
 		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil))
+		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil), organization.NewOrgModelConnectionRepository(db))
 		if err := w.DeletePublisher(claimsCtx("ou-acme-uuid"), "acme"); err != nil {
 			t.Fatalf("DeletePublisher: %v", err)
 		}
@@ -729,7 +695,7 @@ func TestSecretRefWriter_DeletePublisher_DB(t *testing.T) {
 		seedIDPProfileRow(t, db, "acme", nil, nil)
 
 		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil))
+		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil), organization.NewOrgModelConnectionRepository(db))
 		if err := w.DeletePublisher(claimsCtx("ou-acme-uuid"), "acme"); err != nil {
 			t.Fatalf("DeletePublisher: %v", err)
 		}
@@ -744,7 +710,7 @@ func TestSecretRefWriter_DeletePublisher_DB(t *testing.T) {
 		seedIDPProfileRow(t, db, "acme", strPtr("acme-publisher-secrets"), strPtr("kv/path"))
 
 		fake := &fakeSMClient{deleteErr: errors.New("sm-api: 500")}
-		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil))
+		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil), organization.NewOrgModelConnectionRepository(db))
 		if err := w.DeletePublisher(claimsCtx("ou-acme-uuid"), "acme"); err == nil {
 			t.Fatalf("want the SM-API error to propagate")
 		}
@@ -793,7 +759,7 @@ func seedUserPATRow(t testing.TB, db *gorm.DB, ocOrgID string, refName, kvPath *
 func TestSecretRefWriter_DeleteGitHubPAT_DB(t *testing.T) {
 	t.Run("disabled (nil client) is a no-op", func(t *testing.T) {
 		t.Parallel()
-		w := organization.NewSecretRefWriter(nil, nil, nil, nil)
+		w := organization.NewSecretRefWriter(nil, nil, nil, nil, nil)
 		if err := w.DeleteGitHubPAT(context.Background(), "acme"); err != nil {
 			t.Fatalf("disabled DeleteGitHubPAT = %v; want nil", err)
 		}
@@ -803,7 +769,7 @@ func TestSecretRefWriter_DeleteGitHubPAT_DB(t *testing.T) {
 		t.Parallel()
 		db := dbtest.New(t)
 		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil))
+		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil), organization.NewOrgModelConnectionRepository(db))
 		if err := w.DeleteGitHubPAT(context.Background(), "ghost-org"); err != nil {
 			t.Fatalf("DeleteGitHubPAT on a missing row = %v; want nil", err)
 		}
@@ -818,7 +784,7 @@ func TestSecretRefWriter_DeleteGitHubPAT_DB(t *testing.T) {
 		seedUserPATRow(t, db, "acme", strPtr("acme-github-pat-secrets"), strPtr("user-app-secrets/wc-xxx/acme-github-pat-secrets"))
 
 		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil))
+		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil), organization.NewOrgModelConnectionRepository(db))
 		if err := w.DeleteGitHubPAT(claimsCtx("ou-acme-uuid"), "acme"); err != nil {
 			t.Fatalf("DeleteGitHubPAT: %v", err)
 		}
@@ -845,7 +811,7 @@ func TestSecretRefWriter_DeleteGitHubPAT_DB(t *testing.T) {
 		seedUserPATRow(t, db, "acme", nil, nil)
 
 		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil))
+		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil), organization.NewOrgModelConnectionRepository(db))
 		if err := w.DeleteGitHubPAT(claimsCtx("ou-acme-uuid"), "acme"); err != nil {
 			t.Fatalf("DeleteGitHubPAT: %v", err)
 		}
@@ -860,7 +826,7 @@ func TestSecretRefWriter_DeleteGitHubPAT_DB(t *testing.T) {
 		seedUserPATRow(t, db, "acme", strPtr("acme-github-pat-secrets"), strPtr("kv/path"))
 
 		fake := &fakeSMClient{deleteErr: errors.New("sm-api: 500")}
-		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil))
+		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil), organization.NewOrgModelConnectionRepository(db))
 		if err := w.DeleteGitHubPAT(claimsCtx("ou-acme-uuid"), "acme"); err == nil {
 			t.Fatalf("want the SM-API error to propagate")
 		}
@@ -883,34 +849,34 @@ func claimsCtx(ouID string) context.Context {
 	return jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: ouID})
 }
 
-// TestSecretRefWriter_WriteAnthropic_StampsSecretRef proves UpdateColumns
-// stamps secret_ref_* only.
-func TestSecretRefWriter_WriteAnthropic_StampsSecretRef(t *testing.T) {
+// TestSecretRefWriter_WriteModelKey_StampsSecretRef proves UpdateColumns
+// stamps the connection row's secret_ref_* only.
+func TestSecretRefWriter_WriteModelKey_StampsSecretRef(t *testing.T) {
 	t.Parallel()
 	db := dbtest.New(t)
-	seedAnthropicRow(t, db, "acme", nil, nil, nil)
+	seedModelConnectionRow(t, db, "acme")
 
-	fake := &fakeSMClient{createRef: "acme-anthropic-secrets"}
-	w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil))
-	ref, err := w.WriteAnthropic(claimsCtx("ou-acme-uuid"), "acme", organization.AnthropicRoleDefault, "sk-ant-key")
+	fake := &fakeSMClient{createRef: "model-connection-secrets"}
+	w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil), organization.NewOrgModelConnectionRepository(db))
+	ref, err := w.WriteModelKey(claimsCtx("ou-acme-uuid"), "acme", "sk-ant-key")
 	if err != nil {
-		t.Fatalf("WriteAnthropic: %v", err)
+		t.Fatalf("WriteModelKey: %v", err)
 	}
-	if ref != "acme-anthropic-secrets" {
+	if ref != "model-connection-secrets" {
 		t.Fatalf("ref = %q", ref)
 	}
 
-	var got organization.OrgAnthropicCredential
+	var got organization.OrgModelConnection
 	if err := db.Where("oc_org_id = ?", "acme").First(&got).Error; err != nil {
 		t.Fatalf("reload: %v", err)
 	}
 	wantPath := "user-app-secrets/" // prefix; full path includes OrgBaseNamespace(ouId)
-	if got.SecretRefName == nil || *got.SecretRefName != "acme-anthropic-secrets" {
+	if got.SecretRefName == nil || *got.SecretRefName != "model-connection-secrets" {
 		t.Fatalf("secret_ref_name: %v", got.SecretRefName)
 	}
 	if got.SecretRefKVPath == nil ||
 		!strings.HasPrefix(*got.SecretRefKVPath, wantPath) ||
-		!strings.HasSuffix(*got.SecretRefKVPath, "/acme-anthropic-secrets") {
+		!strings.HasSuffix(*got.SecretRefKVPath, "/model-connection-secrets") {
 		t.Fatalf("secret_ref_kv_path: %v", got.SecretRefKVPath)
 	}
 	if got.SecretRefProperty == nil || *got.SecretRefProperty != "api-key" {
@@ -924,7 +890,7 @@ func TestSecretRefWriter_WriteGitHubPAT_StampsSecretRef(t *testing.T) {
 	seedUserPATRow(t, db, "acme", nil, nil)
 
 	fake := &fakeSMClient{createRef: "acme-github-pat-secrets"}
-	w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil))
+	w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil), organization.NewOrgModelConnectionRepository(db))
 	ref, err := w.WriteGitHubPAT(claimsCtx("ou-acme-uuid"), "acme", "ghp_live")
 	if err != nil {
 		t.Fatalf("WriteGitHubPAT: %v", err)
@@ -946,4 +912,98 @@ func TestSecretRefWriter_WriteGitHubPAT_StampsSecretRef(t *testing.T) {
 	if got.SecretRefWrittenAt == nil {
 		t.Fatalf("secret_ref_written_at: %v", got.SecretRefWrittenAt)
 	}
+}
+
+// --- WriteAMPModelKey ---------------------------------------------------------
+
+func TestSecretRefWriter_WriteAMPModelKey(t *testing.T) {
+	t.Parallel()
+
+	t.Run("disabled (nil client) is a no-op", func(t *testing.T) {
+		t.Parallel()
+		w := organization.NewSecretRefWriter(nil, nil, nil, nil, nil)
+		name, prop, err := w.WriteAMPModelKey(claimsCtx("ou-1"), "acme", "checkout-agent", "default", "amp-key", "http://gw/aep-default-anthropic")
+		if err != nil || name != "" || prop != "" {
+			t.Fatalf("disabled writer must no-op: name=%q prop=%q err=%v", name, prop, err)
+		}
+	})
+
+	t.Run("stores per agent and per environment in the org's CP namespace", func(t *testing.T) {
+		t.Parallel()
+		fake := &fakeSMClient{createRef: "amp-model-checkout-agent-default"}
+		w := organization.NewSecretRefWriter(fake, nil, nil, nil, nil)
+
+		name, prop, err := w.WriteAMPModelKey(claimsCtx("ou-1"), "acme", "checkout-agent", "default", "amp-key-value", "http://gw/aep-default-anthropic")
+		if err != nil {
+			t.Fatalf("WriteAMPModelKey: %v", err)
+		}
+		if name != "amp-model-checkout-agent-default" || prop != secretmanagersvc.SecretKeyAPIKey {
+			t.Fatalf("name=%q prop=%q", name, prop)
+		}
+		if len(fake.createCalls) != 1 {
+			t.Fatalf("CreateSecret calls = %d, want 1", len(fake.createCalls))
+		}
+		call := fake.createCalls[0]
+
+		// The CONTROL-PLANE namespace is the org id, not a vault path segment.
+		// A SecretReference must live where the ReleaseBinding that
+		// secretKeyRefs it lives; write it elsewhere and the create SUCCEEDS
+		// while OpenChoreo fails the render with "SecretReference not found".
+		if call.loc.ControlPlaneNamespace != "acme" {
+			t.Errorf("ControlPlaneNamespace = %q, want the org's CP namespace", call.loc.ControlPlaneNamespace)
+		}
+		if call.loc.OrgName != "ou-1" {
+			t.Errorf("OrgName = %q, want the ouId claim (the vault path segment)", call.loc.OrgName)
+		}
+		// Per agent AND per environment: AMP issues one key per model config per
+		// environment, and two agents sharing an entity would share a credential,
+		// defeating the per-agent revocation this whole path exists for.
+		if !strings.Contains(call.loc.EntityName, "checkout-agent") ||
+			!strings.Contains(call.loc.EntityName, "default") {
+			t.Errorf("EntityName = %q, want it to name both agent and environment", call.loc.EntityName)
+		}
+		if call.data[secretmanagersvc.SecretKeyAPIKey] != "amp-key-value" {
+			t.Errorf("payload = %v, want the issued key under the api-key key", call.data)
+		}
+		// The endpoint rides in the same secret: the key authenticates against
+		// that address alone, and one secret means the deployment composes both
+		// MODEL_API_KEY and MODEL_ENDPOINT from a single SecretReference.
+		if call.data[organization.AMPModelURLKey] != "http://gw/aep-default-anthropic" {
+			t.Errorf("payload = %v, want the endpoint stored beside the key", call.data)
+		}
+	})
+
+	t.Run("validation errors never reach SM-API", func(t *testing.T) {
+		t.Parallel()
+		for _, tc := range []struct {
+			name                             string
+			org, component, environment, key string
+		}{
+			{"no org", "  ", "agent", "default", "k"},
+			{"no component", "acme", " ", "default", "k"},
+			{"no environment", "acme", "agent", "", "k"},
+			{"no key", "acme", "agent", "default", "  "},
+		} {
+			fake := &fakeSMClient{}
+			w := organization.NewSecretRefWriter(fake, nil, nil, nil, nil)
+			if _, _, err := w.WriteAMPModelKey(claimsCtx("ou-1"), tc.org, tc.component, tc.environment, tc.key, "http://gw/ctx"); err == nil {
+				t.Errorf("%s: want a validation error", tc.name)
+			}
+			if len(fake.createCalls) != 0 {
+				t.Errorf("%s: CreateSecret must not be called", tc.name)
+			}
+		}
+	})
+
+	t.Run("without an ouId claim it refuses rather than writing to the wrong path", func(t *testing.T) {
+		t.Parallel()
+		fake := &fakeSMClient{}
+		w := organization.NewSecretRefWriter(fake, nil, nil, nil, nil)
+		if _, _, err := w.WriteAMPModelKey(context.Background(), "acme", "agent", "default", "k", "http://gw/ctx"); err == nil {
+			t.Fatal("want an error: SM-API derives the namespace from the JWT, so a missing claim cannot be guessed")
+		}
+		if len(fake.createCalls) != 0 {
+			t.Error("CreateSecret must not be called without an ouId claim")
+		}
+	})
 }

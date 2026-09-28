@@ -22,7 +22,7 @@ yet a product word.
 
 1. **A section names the class; an artifact names the document.** An artifact label adds
    information, never repeats its header outright — `VALIDATION › Validation` fails this;
-   `REQUIREMENTS › Product requirements` and `VALIDATION › Validation criteria` do not.
+   `REQUIREMENTS › Product requirements` and `VALIDATION › Acceptance criteria` do not.
 2. **Filenames are never labels.** The user reads a document tree, not a repo.
 3. **Plural for things that accumulate over time, singular for the one a project has.**
    Builds, Deployments, Issues, Validations — Overview, Spec.
@@ -42,7 +42,7 @@ concept for *the agreed description of what we're building*.
 |---|---|---|
 | `REQUIREMENTS` | **Product requirements** | `specs/requirements/prd.md` |
 | `DESIGN` (not `DESIGNS` — one design, several files) | **Architecture** · **Domain model** · **Security** as rows, then the groups: **Flows**, then one per component | `specs/design/` |
-| `VALIDATION` | **Validation criteria** | `specs/validation/validation-criteria.json` |
+| `VALIDATION` | **Acceptance criteria** | every `specs/validation/acceptance/<slug>.feature`, as ONE entry |
 
 **Security** is one rail entry, one page:
 
@@ -210,7 +210,8 @@ help — in that order, in the platform's recorded words:
 | The repository is gone | error · *check the repository connection in Settings* |
 | A run failed before the record existed | error · the terminal reason in words · *The platform recorded no further details for this run.* |
 | Cancelled | **no card** — a person stopping an increment is not a fault |
-| Blocked | no card — the existing quota / credentials message is that surface |
+| Blocked on the model provider's usage limit | warning · *ollama.com's usage limit was reached* · *The coding agent stopped when ollama.com refused further requests, and nothing from that build session was merged. Start the run again after it resets (14:05).* — the date joins the time when the reset is another day; with no reset stated, *Start the run again once it resets — the provider did not say when.* No host recorded: *The model provider's usage limit was reached* |
+| Blocked on quota or credentials | no card — the existing quota / credentials message is that surface |
 
 **Show details** opens the platform's facts as a dense list — `code` (with
 *permanent* / *retryable*), `attempts`, `window`, `recorded` (the platform's own
@@ -1019,176 +1020,170 @@ The chat panel is the spine and **never collapses itself**; only the user closes
 pointing at a form that already owns the screen, and its composer stays live during a form — the
 agent is waiting on the user, not working, and the user may want to talk instead of fill.
 
-## The criteria pane
+## The acceptance pane, and its one entry
 
-The read-only pane behind the Validation section's document. A reader meets it
-cold: the rail carries no explanation, a design turn mints the file as its last
-step with no announcement, and the only sentence in the product that said what
-criteria were for lived in the **Validations** empty state, on another page most
-readers never reach.
+**One rail entry, not one per capability.** **Acceptance criteria** stands for
+every `specs/validation/acceptance/<capability>.feature` at once, and the pane lists them
+all — the same set the Validations page shows. The capabilities are named inside
+it, as feature headings, never in the rail.
 
-| | |
-|---|---|
-| Description, under the heading | *Each criterion represents one thing your system must do, based on your requirements. After every deployment the ones that can be automated are checked against the deployed system, and the results appear under Validations. The rest you have to check yourself. To change one, ask the agent.* |
-| Checked by a test | the **agent glyph** — `Sparkles`, `primary.main` — tooltip *Validated automatically by the agent.* |
-| Checked by a person | the **person glyph** — `User`, `text.secondary` — tooltip *Requires manual validation.* |
+That follows naming rule 3: the rail names what a project HAS, and a project has
+one set of acceptance criteria however many files carry it. It is also what makes
+the pane's filter worth having — a search that reaches every capability answers
+*where is this asserted*, where a search inside one file can only answer it once
+the reader has already guessed right.
 
-**A glyph, never the word.** The stored value stays `e2e` — the validation
-runner, the report generator and the per-criterion spec path all key on it — and
-no row spells it out, because a row marks the method rather than naming it. That
-shuts naming rule 4's oldest hole here: `E2E` was never a copy decision, it was
-agent-authored JSON rendered verbatim, and an acronym can no longer reach a row
-even by accident. The display name **`auto`** survives where prose needs a word
-for the same thing — the Validations pending tile and its tally — and is not a
-row's vocabulary.
+The cost is real: you can no longer jump to a capability from the rail. The
+pane's search and its per-capability counts replace that, and do it better, but
+the rail is shorter than it was.
 
-**The agent glyph is the console's own.** `Sparkles` at `primary.main` is what
-the agent chat, the "ask the agent" action and the nav already mean *the agent*
-by, so a row inherits a meaning the reader arrives with instead of teaching a
-new one.
-
-**Everything that is not `e2e` takes the person glyph.** A third method exists in
-older documents, and a criterion can arrive with no method at all. Neither is ever
-automated, so both fall to the person rather than rendering bare — the glyph is
-already claiming a human does the work, and one sentence is honest for all three.
-
-**The mark is the accessible name, not the tooltip.** A tooltip exists only while
-hovered, and `Tooltip` puts its title on a bare span where an aria-label is
-ignored, so the same sentence is repeated as visually-hidden text.
-
-**"Ask the agent", not an edit control.** There is no way to edit a criterion
-here, by design: they are written from the requirements alone and never from the
-design, so they judge the work rather than describe it. The chat panel is on
-screen throughout, so this points at something the reader can use rather than
-narrating a procedure (rule 3).
-
-**The description belongs to the spec view, not to Validations.** Both surfaces
-render the same pane, and Validations suppresses it — a reader there came for run
-results, so a sentence promising that results appear under Validations is
-redundant on the page holding them.
-
-**`deployment`, not `build`, and `the deployed system`, not `your software`.**
-Validation runs against a running instance and needs its resolved endpoints, so
-the event before it is a deployment; the **Validations** empty state says so too.
-The subject takes the platform's own noun, the one the agent's status line, the
-validation task's title and the `aep-validation` skill all already use — so the
-description and the run name the same thing the same way.
-
-### What a criterion is doing, while a run is under way
-
-A validation cycle holds an agent for up to two hours. Before this, every row in
-the pane read **`Pending`** for all of it, and a repeat attempt was worse — it
-showed the *previous* attempt's verdict, so the criteria a repair was actively
-re-working sat on **`Failed`** while it fixed them.
-
-The row now says what is happening to it. In the order a reader meets them:
+The Gherkin acceptance criteria, and — on the Validations page — the same tree
+with a run's answers on it. One renderer, two surfaces, exactly as the criteria
+pane serves two (ADR-0029 replaced the compiled path on `vld-redesign`).
 
 | | |
 |---|---|
-| Nothing has happened to it yet | **`Pending`** |
-| The run has decided how it will check this one | **`Planned`** |
-| Driving the deployed system to learn how to check it | **`Exploring…`** |
-| Writing its check | **`Authoring…`** |
-| Its check is running | **`Running…`** |
-| It worked, then broke — being repaired | **`Healing…`** |
-| Settled | **`Passed`** / **`Failed`** |
-| The last run has no row for it | **`No result`** |
+| Description, under the heading, spec view only | *Each scenario is one concrete example of a rule your product must follow, taken from your requirements alone. After every deployment they are driven against the deployed system and the results appear under Validations. To change one, ask the agent.* |
+| A capability's name | its own `Feature:` heading, inside the pane — never the rail, which carries the one entry |
+| A refusal | the **`@negative` tag**, closing the sentence — a marked pill, informational blue |
+| A story reference | the **`@story-N` tag** on the rule — quiet mono text, no pill |
 
-**`Passed` and `Failed` carry a mark; nothing else does.** They are the two
-answers a run produces, and as outlined chips they would otherwise differ by hue
-alone, which is nothing to a red/green colour-blind reader. Every other word in
-the table is the ABSENCE of an answer, so marking one would spend the distinction
-where it is not needed.
+**A refusal is marked on every scenario that is one**, including the ones that
+inherit `@negative` from a rule that is itself a prohibition — which is most of
+the interesting half of a spec. The rule and the feature drop the tag from their
+own lists for that reason: every scenario beneath them carries it, and repeating
+it one level up says the same thing twice.
 
-**A trailing `*` qualifies the verdict.** A test that was flaky, or one the agent
-repaired, modifies the word beside it rather than earning a chip of its own; the
-tooltip says which applies. **`Failed*`** is a real row — a repair can leave a
-test still failing.
+**The two tags differ in form, not only colour.** `@negative` is a marked pill
+and `@story-N` is plain text, so the mark lands on the one a reviewer scans for
+and a citation is not dressed up as an object to click. `@negative` is
+informational blue rather than the brand accent — a refusal is a property of the
+scenario, not a thing the product is selling — and never amber, which on this
+page means a person has to look.
 
-**`No result` is about a run that finished without covering the row.** The
-criteria are read at the branch tip and the report at the merge commit of the
-attempt that wrote it, so a criterion authored or renamed since has no row in
-that report. Tooltip: *The last validation run produced no result for this
-criterion.* Neutral rather than a warning, because editing the spec after a run
-is the ordinary loop and colouring the expected state teaches the reader to
-discount the colour. It never appears while an attempt is in flight; such a row
-reads **`Pending`**, the run still being able to answer it.
+**The pane says nothing about the RUN** — no tally, no commit, no deployed URL,
+no isolation statement. The verdict tile above owns the numbers, and a second
+copy beneath it says them twice. The isolation statement is the one that costs
+something: the run is still held to it (a report that omits it fails its own
+contract check), the reader is simply not shown it.
 
-Above the rows, one line, and only while the run is under way. It is the newest
-comment on the run's validation issue, the same status line a dev cycle keeps on
-the issue it is working. It says where the RUN is; the rows say where each
-criterion stands. Different granularities, so they cannot contradict each other.
+### Finding one scenario among many
 
-**Two writers, and only one of them is labelled.** Most of the line is the
-platform's: it watches the run's own tool calls and posts what it saw — the
-harness, the exploration, the specs running, the report. That is what the pulse
-beside it already means, so it carries no label. The agent writes the two ends
-and anything between them that no command can show — a criterion it cannot
-reach, a login the roles gate never published — and those lines are prefixed
-**The agent:**, because a reader who cannot tell them apart over-trusts the
-mechanical one. Newest wins either way.
-
-The platform's words are not fixed here (`runners/.../validation_status_line.ts`
-holds them, one per rung); the agent's are not ours to fix at all. What this file
-asks of both is a shape: **one line, present tense, about the run and not about a
-criterion**, and **naming the evidence rather than the step** — the workflow
-loops, so a line claiming a step is wrong for most of a run, while one naming the
-call it just watched stays true.
-
-Three derived sentences remain as the **fallback**, for the window before the
-first comment lands and for a run whose posts failed:
+The pane carries a filter toolbar, and its words are the plainest available:
 
 | | |
 |---|---|
-| Nothing picked up yet | *Setting up the test harness…* |
-| Work under way | *Checking the criteria, N of M answered…* |
-| All settled, no results published | *Writing the validation report…* |
+| The search field | *Filter by scenario, step or capability* |
+| What it searches | the capability, the rule, the scenario, its tags and its steps — everything the row shows |
+| The outcome control | **All** plus the outcomes THIS run produced, and nothing else |
+| The tags | the file's own, `@negative` first, then the stories in order |
+| Clearing one | the field's own **×** |
+| Clearing all | **Reset** |
+| Bulk disclosure | **Expand all** / **Collapse all** |
+| While filtering | *12 of 15 scenarios match* |
+| Otherwise | *15 scenarios* |
+| Matching nothing | **No matching scenarios** · *Adjust the search term, the outcome or the tags.* · **Clear filters** |
 
-**The line is led by the working pulse, and shows only while validating.** The
-pulse is the console's one *an agent is working* dot (**The pulse**, above,
-unrecoloured), because this is the same fact it always marks. The panel behind it
-is a neutral tint with no border: a rule down a leading edge means *this needs
-reading* here (`RunHoldNotice`), and progress is not that. Nothing shows once a
-verdict is in — a
-settled run's last words sitting under its verdict restate it, and under a repair
-they describe a cycle that is no longer the one running.
+**A control that cannot change the answer is not offered.** The outcome options
+are derived from the run, so a run with nothing blocked carries no `Blocked`
+segment, and a run where every scenario came out the same way carries no control
+at all. An option whose every use selects the whole list is furniture, and
+furniture teaches a reader to stop looking at the toolbar.
 
-**The trailing `…` means in flight.** Every word that can still change carries
-one; the two settled words do not. It is the only signal separating "this is
-happening now" from "this is the answer", and both sets sit in the same column.
+**`No result` is not offered while an attempt is in flight**, because an
+uncovered scenario shows no outcome at all then — the segment would select rows
+displaying nothing.
 
-**Only `Healing…` is coloured.** It is the one live word that changes what a
-reader thinks is happening — something that worked has stopped working. Colouring
-ordinary progress would spend attention on the common case and leave none for
-this one.
+**"Capability", not "file".** The search placeholder names what the reader sees;
+the thing being searched is the `Feature:` name, which is a capability. Naming
+rule 2 is why the pane shows no filename anywhere, and the same rule picks the
+word here.
 
-**Live words are local; settled words are the report's.** `Passed` and `Failed`
-come from the report file the run commits, and the live words never enter that
-vocabulary — a report can only describe work in the past tense, so there is no
-report word for *Authoring…*. The reverse holds too: when the feed says a
-criterion passed, it renders as **`Passed`**, because that is the same fact
-whichever surface delivered it.
+### The four outcome words are the report's own
 
-**Rule 6, deliberately bent.** *Exploring*, *Authoring*, *Healing* name the
-system's behaviour, which rule 6 forbids. They stay because here the system's
-behaviour **is** the user's situation: the reader has handed work to an agent and
-is watching it, and "what is it doing right now" is the whole question. The rule
-protects against a reader being told about machinery they did not ask about —
-not against answering the one thing they came to find out.
+**Taken verbatim from `report.json`, title-cased, and that is the decision.**
+There is no mapping table, so there is no fifth vocabulary to fall out of step
+with `report.go`, the run's checker, the `validation-task` skill and ADR-0029 —
+and a word the console has never heard of renders as itself rather than as
+something wrong. It is the same call the Go verdict ladder makes for an
+unrecognised outcome: count it as a gap, never as coverage.
 
-**Unsettled: *test harness*, *validation report*, and *test issues*.** All name
-internal artifacts, which rule 6 has a better claim over — a reader does not have
-a harness or a test issue, they have criteria waiting to be checked. The middle
-line says it in those terms and the others do not; whoever finds better words
-changes them here first.
+| | |
+|---|---|
+| Every `Then` was settled by a command that could have said no | **`Passed`** |
+| A command said no | **`Failed`** |
+| The action could not be carried out at any interface, so the behaviour was never reached | **`Blocked`** |
+| The truth lives outside the running app — a stubbed backend, another system | **`Unjudgeable`** |
+| *(both of those)* | amber — **a person has to look** |
+| The last run has no entry for it | **`No result`** |
 
-That covers both writers. The derived fallbacks (*Setting up the test harness…*,
-*Writing the validation report…*) are the console's, now distant — the run posts
-its own line as it works, and they speak only before its first comment lands. The
-platform's rungs live in `validation_status_line.ts`, and two of them —
-*Generating the validation report from the automated test results…* and *Fixing the test
-issues…* — carry the same debt. `harness` is deliberately byte-identical to its
-fallback, so one phase reads the same sentence whichever source produced it.
+**Every one of them carries a mark.** ADR-0016 gave `Passed` and `Failed` marks
+because as outlined chips they would otherwise differ by hue alone, which is
+nothing to a red/green colour-blind reader. Four outcomes create two more such
+pairs, so the rule that exempted the others no longer applies to any of them.
+
+**Amber is `Blocked` AND `Unjudgeable`, and it means a person has to look.** No
+repair issue is filed for either — the agent cannot tell an app that correctly
+refuses from one too broken to act, and it cannot reach the truth at all when
+that truth is in another system — so both wait on a reader. The platform agrees
+in three places: its ladder pairs them, neither is filed as a failure, and the
+partial sentence counts them together. They differ by glyph, not by hue.
+
+**`No result` is the console's own word**, and the only one here that is: the
+scenario is absent from the report, so the report has no word for it. It is
+neutral rather than a warning, because the feature files are read at the branch
+tip and the report at the merge commit of the attempt that wrote it — a scenario
+authored since is the ordinary loop, and colouring the expected state teaches a
+reader to discount the colour. It never appears while an attempt is in flight.
+
+**Not `couldn't be automated`.** The criteria path's `partial` sentence said so,
+and it was true there: a criterion declared its method at design time. An
+acceptance scenario declares nothing — every one of them is driven — so the
+verdict copy says **couldn't be settled against the deployed app** and asks the
+reader to **check them yourself**.
+
+### A version's attempts, on the Validations page
+
+The page holds one section per time the version was judged, on both of its
+cards. The words name what a reader wants to know — how many times, which one,
+what it concluded — and nothing about the loop that produced them.
+
+| | |
+|---|---|
+| One judging of the version | an **attempt** — `Attempt 3`, counted from the oldest across every run |
+| The rest, under the newest | **`EARLIER ATTEMPTS OF V1`** |
+| How many, on the card | *3 attempts · last 14 Aug, 16:52* |
+| An attempt whose agent merged and delivered no report | its **`Unreported`** chip, and *This run produced no report* when opened |
+| An attempt that never landed | *This attempt never landed, so it has no report.* |
+| An agent started again for the same work | *started 2 times* — never "2 attempts" |
+
+**Never `cycle`, never `Run N`.** Both are the platform's words for how the
+work was scheduled. Since validation became its own run, an attempt IS a run, and
+a run holding two attempts is the platform dispatching again after an agent
+merged without a report — a remedy, not a distinction a reader needs in a
+heading. The number is version-wide for the same reason: it is the one a reader
+refers to, and it must not restart at 1 because the platform opened a new run.
+
+### The rest of the Validations vocabulary
+
+The page is **Validations**, plural (naming rule 3) — a ledger of every version, and a page per
+version under it.
+
+| | |
+|---|---|
+| The ledger's columns | **Version · Milestone · Verdict · Duration · Last validated** |
+| Its state filter | **All states · In progress · Validated · Needs attention · Not validated** |
+| The two cards on a version | **Acceptance reports** · **Validation logs** |
+| Ask the criteria again | **Revalidate**, or **Run validation** before anything has answered |
+| Stop the judging | **Cancel run** |
+
+**The cards are plural because each holds one section per attempt** (rule 3 again); singular titles
+read as though a version had one document. **`Revalidate` waits for a verdict** — it is the
+platform's own word for the trigger, and it misdescribes a version nothing has judged, which this
+page reaches routinely. **`Validated` and `Needs attention` filter by what a reader is looking
+for**, not by the verdict enum: `Needs attention` gathers every non-green answer, because a reader
+scanning a ledger wants the rows to act on rather than the distinction between `failed` and
+`inconclusive` — that distinction is on the row itself, in the verdict chip.
 
 ## What a change invalidates
 
@@ -1301,8 +1296,10 @@ five surfaces fill themselves.
 |---|---|---|
 | Builds | **No builds yet.** A build hands your design to coding agents, which write your components and open pull requests. | **Go to the spec** |
 | Deployments | **Nothing deployed yet.** Your components run here once they are built — each environment shows what is live and where to reach it. | — |
-| Validations *(never validated)* | **Nothing validated yet.** After a deployment, the deployed system is checked against the **validation criteria** in your spec. Results appear here. | — |
-| Validations *(version skipped)* | **This version was not validated** — it has no validation criteria, or it was an incident run, which gets no validation cycle. | — |
+| Validations *(no version built)* | **Nothing to validate yet.** Once a version is built and deployed, the deployed system is driven against the **acceptance criteria** in your spec. Results appear here. | **Go to Builds** |
+| Validations *(a version, nothing running)* | **Nothing validated yet.** Run validation to check this version against its acceptance criteria. | — |
+| Validations *(a version, a run working it)* | **Nothing validated yet.** After a deployment, the deployed system is validated against the **acceptance criteria** in your spec. Results appear here. | — |
+| Validations *(version skipped)* | **This version has no acceptance criteria, so there is nothing to validate against.** | — |
 | Components *(overview)* | **No components yet.** Components are the services and apps your design is made of — they appear as agents build them. | — |
 | Architecture *(overview)* | **No architecture yet.** Once the agent designs your app, its components and the connections between them are drawn here. | — |
 | Chat | **Hi! I'm your Agent.** This is where we talk through what you're building. Ask about a decision, change what's in scope, or take up anything I marked as assumed. | the composer, plus three suggestions |
@@ -1316,17 +1313,23 @@ that had already started, and narrated the *how* (a shared workspace, files chan
 on screen calls by those names. Its suggestions offered to draft requirements that exist. Both now
 open a conversation **about** the spec.
 
-**The document and its rows carry different names, on purpose.** The **Validation criteria** are
-the document; one row inside it is an **acceptance criterion**, which is what its `AC-` id says and
-what the term means everywhere else. Naming the document after one of its rows — the earlier
-*Acceptance criteria* label — cost the link between the criteria and the runs against them, and
-took a sentence of empty-state copy to restore. They share a root again, so nothing has to.
+**The document and its rows carry different names, on purpose.** Written when the **Validation
+criteria** were a rail entry: that document is plural, one row inside it is an **acceptance
+criterion** — what its `AC-` id says and what the term means everywhere else — and naming a
+document after one of its rows cost the link between the criteria and the runs against them, at a
+sentence of empty-state copy to restore. The rule stands; its example has moved. With the criteria
+document retired, **Acceptance criteria** now names the Gherkin set under
+`specs/validation/acceptance/` and nothing else, and the same discipline applies
+there: the entry is the set, a `Scenario:` inside it is one criterion.
 
-**Validations has two empty states, and only one narrates.** The page is version-scoped, so a
-version that was skipped — no criteria, or an incident run — is a different fact from a project
-that has never validated. The *version skipped* sentence explains **why** the page is empty
-without saying how to fill it, so it conforms as written
-([#577](https://github.com/wso2/labs-agentic-engineer/issues/577)).
+**Validations has four empty states, and only the first offers an action.** The ledger and the
+version page are different surfaces: a project with no built version cannot validate anything, and
+is sent to Builds. On a version, three facts stay apart — a run is working it (wait), nothing is
+(the trigger is there), or it has no criteria at all (nothing ever will). The last two explain
+**why** the page is empty without saying how to fill it, so they conform as written
+([#577](https://github.com/wso2/labs-agentic-engineer/issues/577)). The split on *a run working
+it* is the same boolean that enables the trigger, so the sentence and the control cannot
+contradict each other.
 
 **Retired from these strings**: *published* / *publish the plan* / *the published design* (there is
 no publish step — Build is the act), *plan* (not a term in this file), *AEP*.
@@ -1398,8 +1401,8 @@ too, in the same message as the text it overrides.
 
 ### The rules it carries
 
-1. **Name things the way the UI names them.** *Architecture*, not `design.cell`. *Validation
-   criteria*, not `specs/validation/validation-criteria.json`. The mapping is the table under
+1. **Name things the way the UI names them.** *Architecture*, not `design.cell`. *Acceptance
+   criteria*, not `specs/validation/acceptance/<slug>.feature`. The mapping is the table under
    [The spec workspace](#the-spec-workspace) — this file is its source, and the console skill is
    how it reaches the agent.
 2. **Never quote a repo path** to the user.
@@ -1526,8 +1529,36 @@ internal adapter or port name.
 | | |
 |---|---|
 | Card | **Coding agent** |
-| Fields | **Runtime** · **Model** |
+| Fields | **Runtime** (the model is the connection's, below) |
 | A runtime the platform cannot run | shown, disabled, with the reason — never hidden, so the choice is honest |
+| A runtime the connection's format cannot run | shown, disabled, *Needs the Anthropic Messages format.* |
+| A format change moved the runtime | *Coding moved to OpenCode: Claude Code speaks only the Anthropic Messages format.* |
+| Claude subscription | an optional **Claude subscription token** field inside the Claude Code tile, never a switch; *A Claude subscription token works only on Anthropic's own API.* elsewhere |
+
+## The model connection
+
+The one endpoint every agent calls, on Settings (the AI agents card) and in
+onboarding's **Connect a model** step. The user picks an **API format**, not a
+provider: no provider names in the controls, and the platform's host rules
+never reach the copy except as what a connection supports.
+
+| | |
+|---|---|
+| Section | **Model connection** · *Every agent uses this connection and model: requirements, design, task planning and coding.* |
+| Fields | **API format** (**Anthropic Messages** · **OpenAI-compatible**) · **Base URL** · **API key** · **Model** |
+| Model help | *Default for this format: \<model\> (\<note\>). Use the exact model ID your provider documents.* — the note only where the format has one (OpenAI-compatible: *Ollama's model ID*) |
+| Action | **Test connection** — optional; Save (onboarding: **Continue**) probes anyway |
+| Card chip | **ready** · **not connected** — two states only; a saved connection is usable by construction |
+| Probe status | *Connected to \<host\> · \<model\> is available*; unlisted and unlisting endpoints warn, never refuse |
+| Info box | where prompts go, then pricing (*Usage shows tokens, not dollars: the platform has no rate for \<model\>. Your provider bills you directly.*), web search and chat attachments |
+| Disconnect | **Disconnect the model connection?** · *Every agent stops until a new connection is saved.* |
+| Disconnected (onboarding) | *Your model connection was disconnected* · *Agents cannot run until a connection is saved.* |
+| Chat, an image the model cannot read | *\<file\> was not attached — \<model\> does not read images. Describe it in text, or switch to a model that reads images.* |
+| Chat, a PDF read as text | the attachment reads *· as text* |
+| Usage, a tokens-only figure | *not priced · billed by \<host\>* |
+
+"Anthropic key" is retired as a product word: the key belongs to the connection,
+whatever its host.
 
 ## Resources
 

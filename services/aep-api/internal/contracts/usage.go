@@ -86,9 +86,15 @@ func (c CapturedUsage) PricingSlices() []TokenUsage {
 // them at capture (#291). CostUsd is nil when NO contributing row carried a
 // stamp (SQL SUM(cost_usd) over all-null rows is NULL) — the console then shows
 // tokens only. It never reprices: this sums frozen per-row stamps.
+//
+// Host is the model host the rows were billed by, stamped by the platform at
+// launch, never by a producer; "" when the rows mix hosts (or predate
+// stamping). The console reads it beside a tokens-only figure: "not priced,
+// billed by <host>".
 type StampedUsage struct {
 	Tokens  TokenUsage
 	CostUsd *float64
+	Host    string
 }
 
 // UsageScope names ONE project lifetime's spend. It is the key the delivery
@@ -105,12 +111,24 @@ type UsageScope struct {
 	Retired   bool
 }
 
-// Add folds another stamped aggregate in: tokens via TokenUsage.Add, and the
-// USD sums only where present — nil + nil stays nil, nil + x is x.
+// Add folds another stamped aggregate in: tokens via TokenUsage.Add, the USD
+// sums only where present — nil + nil stays nil, nil + x is x — and the host
+// survives only while every non-zero contributor agrees on it, as the model
+// does.
 func (s StampedUsage) Add(other StampedUsage) StampedUsage {
+	host := s.Host
+	switch {
+	case s.Tokens.IsZero():
+		host = other.Host
+	case other.Tokens.IsZero():
+		// keep s.Host
+	case s.Host != other.Host:
+		host = ""
+	}
 	return StampedUsage{
 		Tokens:  s.Tokens.Add(other.Tokens),
 		CostUsd: addCost(s.CostUsd, other.CostUsd),
+		Host:    host,
 	}
 }
 

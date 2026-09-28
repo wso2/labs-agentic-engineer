@@ -75,7 +75,7 @@ func TestDispatch_EveryNonValidationKind_CarriesTheMilestoneReference(t *testing
 }
 
 // TestDispatch_ValidationCycle_AnchorsToItsIssue: validation is the one anchored
-// kind — the aep-validation skill and a prompt pointing at the single issue.
+// kind — the validation-task skill and a prompt pointing at the single issue.
 func TestDispatch_ValidationCycle_AnchorsToItsIssue(t *testing.T) {
 	req := milestoneDispatch(delivery.CycleKindValidation)
 	req.IssueNumber = 9
@@ -87,12 +87,8 @@ func TestDispatch_ValidationCycle_AnchorsToItsIssue(t *testing.T) {
 	if !strings.Contains(shape.prompt, "https://github.com/acme/widgets/issues/9") {
 		t.Errorf("validation prompt must name the issue URL, got %q", shape.prompt)
 	}
-	// The non-closing reference: the platform owns this task's close.
-	if !strings.Contains(shape.prompt, "Validates #9") {
-		t.Errorf("validation prompt must carry its `Validates #N` link contract, got %q", shape.prompt)
-	}
-	if strings.Contains(shape.prompt, "Closes #9") {
-		t.Errorf("validation prompt must not use a closing keyword, got %q", shape.prompt)
+	if !strings.Contains(shape.prompt, "`validation-task` skill") {
+		t.Errorf("validation prompt must defer to the validation-task skill, got %q", shape.prompt)
 	}
 	if strings.Contains(shape.prompt, "milestone 4") {
 		t.Errorf("validation must stay issue-anchored, got %q", shape.prompt)

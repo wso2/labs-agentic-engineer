@@ -38,7 +38,7 @@ import {
   Copy,
   Ellipsis,
   GitHub,
-  RotateCcw,
+  RotateCw,
   X,
 } from "@wso2/oxygen-ui-icons-react";
 import { createLink, Link, useNavigate } from "@tanstack/react-router";
@@ -615,6 +615,7 @@ function BuildActions({
         <Tooltip
           title={!hasBuild ? "You don't have permission to retry this build." : ""}
         >
+          {/* span so the tooltip works while the item is disabled */}
           <span>
             <LinkMenuItem
               to="/projects/$projectName/spec"
@@ -622,7 +623,7 @@ function BuildActions({
               onClick={close}
               disabled={!hasBuild}
             >
-              <RotateCcw size={15} style={{ marginRight: 10 }} />
+              <RotateCw size={15} style={{ marginRight: 10 }} />
               Retry this build
             </LinkMenuItem>
           </span>

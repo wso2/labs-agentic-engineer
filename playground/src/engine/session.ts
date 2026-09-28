@@ -25,8 +25,8 @@
 
 import { join } from "node:path";
 import type { LanguageModel } from "ai";
-import { loadDotenv, loadAnthropicKey } from "@aep/agents/shared/env";
 import { bootAgentsApp } from "./agents-app.js";
+import { playgroundModel, type PlaygroundModel } from "../kit/model-connection.js";
 import { REPO_ROOT } from "../paths.js";
 import { FsSpecWorkspace, playConversationId } from "../ports/spec-workspace.js";
 import { FileConversationStore } from "../ports/conversation-store.js";
@@ -44,16 +44,19 @@ export interface PlaygroundSession extends TurnSession {
 export interface OpenOptions {
   /** `--fresh`: rotate the project's `general` conversation before the first turn. */
   fresh?: boolean;
-  /** Test seam: scripted model instead of ANTHROPIC_API_KEY + real provider. */
+  /** Test seam: scripted model instead of the `AEP_MODEL_*` / `ANTHROPIC_API_KEY` connection. */
   model?: LanguageModel;
   /** Override the skills library dir (tests). */
   skillsDir?: string;
 }
 
-/** Open a session on `projectDir`. Throws when no ANTHROPIC_API_KEY is available (unless a model is injected). */
+/**
+ * Open a session on `projectDir`. Throws when the connection has no key
+ * (`AEP_MODEL_API_KEY`, or `ANTHROPIC_API_KEY` when no `AEP_MODEL_*` names a
+ * connection) unless a model is injected.
+ */
 export async function openSession(projectDir: string, opts: OpenOptions = {}): Promise<PlaygroundSession> {
-  loadDotenv();
-  const apiKey = opts.model ? "playground-mock" : loadAnthropicKey();
+  const turnModel: PlaygroundModel = opts.model ? { apiKey: "playground-mock" } : playgroundModel();
 
   const ws = new FsSpecWorkspace(projectDir);
   const state = loadProjectState(projectDir, ws.slug);
@@ -68,7 +71,7 @@ export async function openSession(projectDir: string, opts: OpenOptions = {}): P
   const app = await bootAgentsApp({
     store,
     workspaceMountRoot: ws.mountRoot,
-    apiKey,
+    apiKey: turnModel.apiKey,
     ...(opts.model ? { model: opts.model } : {}),
   });
 
@@ -77,6 +80,8 @@ export async function openSession(projectDir: string, opts: OpenOptions = {}): P
     ws,
     baseUrl: app.baseUrl,
     headers: app.headers,
+    ...(turnModel.connection ? { connection: turnModel.connection } : {}),
+    ...(turnModel.model ? { model: turnModel.model } : {}),
     state,
     skillsDir: opts.skillsDir ?? SKILLS_DIR,
     store,

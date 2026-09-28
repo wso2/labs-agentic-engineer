@@ -217,6 +217,7 @@ export function MessageList({
   onOpenSpecFile,
   showSpecLink = true,
   showWorkingTail,
+  workingLabel,
 }: {
   feed: FeedBlock[];
   expandedGroups: Set<string>;
@@ -228,6 +229,8 @@ export function MessageList({
   /** Show a tail "Working…" indicator when a turn is in flight but hasn't
    *  produced any content (and so has no running turn block of its own yet). */
   showWorkingTail: boolean;
+  /** What a working indicator says instead of "Working…" (a provider wait). */
+  workingLabel?: string | undefined;
 }) {
     // No dividers between blocks: each block's author header ("You" / "✦
     // Agent") plus the spacing already separates turns; hard rules made the
@@ -246,10 +249,11 @@ export function MessageList({
             onOpenSpec={onOpenSpec}
             onOpenSpecFile={onOpenSpecFile}
             showSpecLink={showSpecLink}
+            workingLabel={workingLabel}
           />
         ),
       )}
-      {showWorkingTail && <WorkingIndicator />}
+      {showWorkingTail && <WorkingIndicator label={workingLabel ?? "Working…"} />}
     </Stack>
   );
 }

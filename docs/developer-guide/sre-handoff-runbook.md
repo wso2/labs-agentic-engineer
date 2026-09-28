@@ -11,10 +11,16 @@ ERROR log → alert rule → observer → sre-agent (RCA → remediation → han
 > Moved here from the root `README.md`, which linked to this path but never carried
 > the file. The image tags below are pinned to a personal registry and are the values
 > this was last verified against; re-point them at your own build before running.
+>
+> **Stale as of the Docker Compose local-dev removal.** This runbook's
+> "AEP side" steps below assume `deployments/docker-compose.yml` and Agent
+> Manager, both removed — see `deployments/README.md`. It needs re-verification
+> against the current `aectl`-based local-dev flow (`make dev-env` / `make
+> dev-update`) before it can be trusted again.
 
 ## Prerequisites
 
-1. Local AEP stack up (`deployments/docker-compose.yml`) and a k3d OpenChoreo with the
+1. Local AEP stack up and a k3d OpenChoreo with the
    observability plane (`observer`, `opensearch`, `fluent-bit`, `sre-agent`).
 2. Both sides share one Thunder (`thunder.openchoreo.localhost:8080`).
 3. AEP org connected to GitHub + an Anthropic key in org settings.

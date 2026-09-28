@@ -24,6 +24,8 @@ interface RuntimeEnv {
   VITE_THUNDER_CLIENT_ID?: string;
   VITE_THUNDER_SCOPES?: string;
   VITE_THUNDER_RESOURCE?: string;
+  /** The platform's test app; the console opens a component there in a new tab. */
+  VITE_TRY_IT_URL?: string;
   /** WSO2 Cloud billing-user-api base; empty/absent disables first-login activation. */
   BILLING_API_BASE_URL?: string;
 }
@@ -67,10 +69,13 @@ export const env = {
   // resource server instead (whichever one that is — Agent Manager's on a
   // converged cluster) and silently drops the ae:* scope while overwriting
   // the token's aud, which then fails aep-api's own audience check. Empty by
-  // default: unset in a topology (e.g. dev-thunder-setup) that has no `ae`
-  // resource server bootstrapped, oidc-client-ts's `resource` is simply
-  // omitted from the request.
+  // default: unset in a topology whose IdP has no `ae` resource server,
+  // oidc-client-ts's `resource` is simply omitted from the request. The Helm
+  // chart sets it (console.thunder.resource, defaulting to
+  // "<thunderPublicURL>/ae"), so a chart install always sends one.
   thunderResource: getEnv("VITE_THUNDER_RESOURCE") || "",
+  // The platform's test app (apps/tryit); same origin as aep-api's TRY_IT_CALLBACK_URL.
+  tryItUrl: getEnv("VITE_TRY_IT_URL") || "http://tryit.aep.localhost:8095",
   // Empty outside WSO2 Cloud — presence of this URL is the gate for the
   // first-login billing activation call (GET …/organization?product=…).
   billingApiBaseUrl: getEnv("BILLING_API_BASE_URL") || "",

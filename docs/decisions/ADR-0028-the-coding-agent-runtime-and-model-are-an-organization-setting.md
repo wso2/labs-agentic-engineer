@@ -1,9 +1,12 @@
 # ADR-0028 — The coding agent's runtime and model are an organization setting
 
 **Status:** accepted · 2026-09-07
-**Related:** ADR-0016 (the coding-agent key is an override, not a peer) ·
+**Related:** ADR-0016 (the coding-agent key is an override, not a peer;
+superseded by ADR-0036) · ADR-0036 (the coding credential is a subscription) ·
 `runners/remote-worker/design/decisions/ADR-0012` (the runtime is a port) ·
-ADR-0027 (run recordings are observability, not ledger)
+ADR-0027 (run recordings are observability, not ledger) ·
+[ADR-0038](ADR-0038-an-organization-has-one-model-connection.md) (an
+organization has one model connection; amends this, 2026-09-26)
 
 ## Context
 
@@ -85,3 +88,67 @@ deliberately does not widen.
 - Authorization is unchanged: any authenticated member of the org may change it,
   compensated by the section-level `orgconfig.patched` audit line — which now
   names `codingAgent` — and by `updated_by` on the row itself.
+
+## Amendment 2026-09-24 — OpenCode is selectable; one `agents` section and one model
+
+[ADR-0036](ADR-0036-the-coding-credential-is-a-subscription.md) supersedes
+ADR-0016, and OpenCode is the second runtime adapter
+([`runners/remote-worker` ADR-0015](../../runners/remote-worker/design/decisions/ADR-0015-opencode-is-the-second-adapter.md)).
+Together they reshape this setting:
+
+- **A runtime is selectable when the installation can run it.** A runtime
+  enters the contract with its adapter; whether it can run is the deployment's
+  answer, since each runtime has its own runner image. Claude Code, the
+  default, is always offered; OpenCode only when `AGENT_RUNNER_IMAGE_OPENCODE`
+  is set. `agents.availableRuntimes` on GET says which, and a save naming any
+  other runtime is refused on `body.agents` (`agents_runtime_unavailable`).
+  OpenCode is opt-in per org.
+- **`agents` is the section.** It carries `model`, `runtime` and the optional
+  Claude subscription (`subscription`, masked on read, three-state on write),
+  stored in `org_agent_settings`; the row's absence is the platform defaults.
+- **One model for every agent.** The requirements, design and task-planning
+  agents resolve the org's model with its key at the start of every turn; a
+  coding run copies it at dispatch and uses it for the lead, every subagent and
+  the runtime's own helper calls. The runner never falls back to a model the org
+  did not choose, which also keeps every slice inside the all-or-nothing cost
+  stamp.
+- **The credential rule is the subscription rule.** OpenCode authenticates with
+  an API key only, so a subscription needs `claude-code` and a connected API
+  key, judged on the state the patch leaves. Choosing `opencode`, disconnecting
+  the key and resetting the section delete the stored token in the same
+  transaction. Dispatch asks for the credential of the run's runtime.
+- **The runtime picks the runner image**, and the `job/coding-agent`
+  ComponentType's `runtime` parameter labels the run's Job, pod, Component and
+  Workload `aep.wso2.com/runtime`. The release publishes both images and pins
+  both into the chart. An org already on OpenCode when the installation loses
+  its image keeps it: GET still answers with `runtime: opencode` beside an
+  `availableRuntimes` without it, a save that does not name the runtime is
+  accepted, the console marks the tile unavailable, and each dispatch fails
+  naming the missing setting. Never substituted, as above.
+
+## Amendment 2026-09-26 — the model belongs to the connection, and need not be priced
+
+[ADR-0038](ADR-0038-an-organization-has-one-model-connection.md) makes the
+org's model part of its one model connection (format, base URL, key, model).
+What changes here:
+
+- **The model moved from `agents` to `llm`.** `agents.model` and the
+  `AgentModel` enum are gone; `llm.model` is free text with a default per
+  format, and `org_agent_settings` holds only the runtime. `agents` keeps
+  `runtime` and `subscription`.
+- **"Only models the platform can PRICE are offered" is reversed.** Any model
+  the connection's host serves may be saved. Rates are keyed on
+  `(host, model_id)`; usage with no rate row shows tokens and "billed by
+  `<host>`" instead of a cost. `SumCost` stays all-or-nothing per capture, so a
+  cycle on an unpriced model shows tokens only, which is now the stated
+  behaviour rather than a hazard the setting avoids.
+- **The connection is copied onto the run with the runtime and model.**
+  Dispatch stamps `AEP_MODEL_FORMAT`, `AEP_MODEL_BASE_URL`,
+  `AEP_MODEL_AUTH_SCHEME`, `AEP_MODEL_WEB_SEARCH` and, off Anthropic's own
+  API, `AEP_MODEL_CONTEXT_WINDOW` / `AEP_MODEL_OUTPUT_LIMIT` beside
+  `AEP_AGENT_RUNTIME` and `AEP_AGENT_MODEL`, and writes the host on the
+  cycle for pricing. A run in flight keeps the connection it launched with.
+- **A format needs a runtime.** Claude Code needs the Anthropic format
+  (`agents_runtime_requires_anthropic_format`); a format no installed runtime
+  runs is refused (`llm_format_has_no_runtime`). `llmFormats[].runtimes`
+  says which runtimes run each format. A runtime is still never substituted.

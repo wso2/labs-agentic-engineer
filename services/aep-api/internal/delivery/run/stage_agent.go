@@ -66,6 +66,11 @@ const (
 	// never launched. Not a failure and not a spent budget: the run settles
 	// blocked with an actionable message.
 	cycleQuotaBlocked
+	// cycleProviderLimit — the agent launched and its model provider's usage
+	// limit stopped it (delivery/provider_limit.go). The quota block's twin,
+	// met after launch instead of at it: not a failure and not a spent budget,
+	// because re-dispatching would meet the same refusal until the plan resets.
+	cycleProviderLimit
 )
 
 // landing is how one dispatch attempt ended.
@@ -245,8 +250,15 @@ func (l *loop) dispatchUntilLanded(ctx workflow.Context, kind string, anchorIssu
 			// signal costs latency rather than correctness: the deadline wakes the
 			// loop into this same check. Checked last so a cycle the event plane
 			// closed on a merge is read as the merge it was.
+			//
+			// One closing reason is not a death: the runner stopping on its model
+			// provider's limit. It is read off the same record, so it costs the
+			// signal nothing either.
 			if facts.Ended {
 				stopDeadline()
+				if facts.AgentReason == delivery.CycleReasonModelProviderLimit {
+					return false, cycleProviderLimit, nil
+				}
 				return false, cycleAgentDead, nil
 			}
 		}

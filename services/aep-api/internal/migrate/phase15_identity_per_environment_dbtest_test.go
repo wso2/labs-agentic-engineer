@@ -195,3 +195,74 @@ func TestPhase15IdentityPerEnvironment_Idempotent(t *testing.T) {
 		t.Fatalf("test_users primary key after re-runs = (%s)", got)
 	}
 }
+
+// The shape a REAL upgrade presents, which the reconstruction above cannot.
+//
+// On the normal boot path AutoMigrate runs from the models first, so by the time
+// this migration executes the new columns already exist — added NULLABLE, with no
+// default, because the table was already there. Step 1's
+// `ADD COLUMN IF NOT EXISTS … NOT NULL DEFAULT ”` is then a silent no-op and
+// every legacy row carries NULL rather than ”.
+//
+// The test above drops the columns outright, so step 1 really does create them
+// with the default and every legacy row reads ”. That is the one shape no
+// upgraded database is ever in — which is how a discard predicate that could not
+// match NULL passed CI and aborted the boot of every existing install with
+// "column org_id contains null values".
+func TestPhase15IdentityPerEnvironment_DiscardsRowsAutoMigrateLeftNull(t *testing.T) {
+	db := dbtest.New(t)
+	ctx := context.Background()
+
+	// Pre-migration shape, but reached the way a real upgrade reaches it: the
+	// columns are dropped and then re-added NULLABLE, exactly as AutoMigrate
+	// would add them to a table that already exists.
+	for _, stmt := range []string{
+		`ALTER TABLE test_user_refs DROP COLUMN environment`,
+		`ALTER TABLE test_users DROP COLUMN environment, DROP COLUMN org_id`,
+		`ALTER TABLE idp_roles DROP COLUMN environment, DROP COLUMN org_id`,
+		`ALTER TABLE idp_roles ADD PRIMARY KEY (name)`,
+		`ALTER TABLE test_users ADD PRIMARY KEY (username)`,
+		`ALTER TABLE test_user_refs ADD PRIMARY KEY (org_id, project_id, username)`,
+		`ALTER TABLE idp_roles      ADD COLUMN org_id TEXT, ADD COLUMN environment TEXT`,
+		`ALTER TABLE test_users     ADD COLUMN org_id TEXT, ADD COLUMN environment TEXT`,
+		`ALTER TABLE test_user_refs ADD COLUMN environment TEXT`,
+	} {
+		if err := db.Exec(stmt).Error; err != nil {
+			t.Fatalf("reconstruct the upgraded shape (%s): %v", stmt, err)
+		}
+	}
+	if err := db.Exec(`
+		INSERT INTO idp_roles (name, thunder_group_id, created_by_org, created_by_project)
+		VALUES ('Viewer', 'grp-on-the-platform-idp', 'acme', 'expenses')`).Error; err != nil {
+		t.Fatalf("seed legacy role: %v", err)
+	}
+	if err := db.Exec(`
+		INSERT INTO test_users (username, thunder_user_id, role_name, password_sealed)
+		VALUES ('test-viewer', 'usr-on-the-platform-idp', 'Viewer', 'sealed')`).Error; err != nil {
+		t.Fatalf("seed legacy test user: %v", err)
+	}
+	if err := db.Exec(`
+		INSERT INTO test_user_refs (org_id, project_id, username, role_name)
+		VALUES ('acme', 'expenses', 'test-viewer', 'Viewer')`).Error; err != nil {
+		t.Fatalf("seed legacy ref: %v", err)
+	}
+
+	// The failure this pins is a FAILED BOOT, not a stale row: the composite key
+	// cannot be added over NULLs, so the error surfaces here.
+	if err := migrate.RunPhase15IdentityPerEnvironment(ctx, db); err != nil {
+		t.Fatalf("migrate over NULL-valued legacy columns: %v", err)
+	}
+
+	for _, table := range []string{"idp_roles", "test_users", "test_user_refs"} {
+		var n int64
+		if err := db.Raw(`SELECT count(*) FROM ` + table).Scan(&n).Error; err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if n != 0 {
+			t.Errorf("%s kept %d platform-IdP row(s); a NULL environment is still no environment", table, n)
+		}
+	}
+	if got := primaryKeyColumns(t, db, "idp_roles"); got != "org_id,environment,name" {
+		t.Errorf("idp_roles primary key = (%s) after the migration", got)
+	}
+}

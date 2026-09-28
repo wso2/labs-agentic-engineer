@@ -20,7 +20,7 @@
  * The composition root: pick a store (Postgres when DATABASE_URL is set, else
  * in-memory), wire the always-on M2M gate and the per-request model factory,
  * mount the SSE app, listen. The model is built per turn from the request's
- * `X-Anthropic-Key`, so there is NO boot-time key or model here.
+ * key and connection, so there is NO boot-time key or model here.
  *
  *   pnpm --filter @aep/agents dev     # watch + reload
  *   pnpm --filter @aep/agents start   # run once
@@ -29,7 +29,7 @@
 import pg from "pg";
 import { registerTelemetry } from "ai";
 import { createApp } from "./server.js";
-import { createModel, resolveModelId } from "./shared/model.js";
+import { createModel } from "./shared/model.js";
 import { captureTelemetry } from "./shared/telemetry.js";
 import { pruneDevtoolsFile } from "./shared/devtools-retention.js";
 import { intEnv } from "./shared/env.js";
@@ -100,8 +100,8 @@ async function main(): Promise<void> {
   const store = await buildStore();
   const app = createApp({
     store,
-    buildModel: (apiKey) => createModel({ apiKey }), // built PER TURN from X-Anthropic-Key
-    modelId: resolveModelId(), // the id createModel resolves above (usage attribution, #249)
+    // Built PER TURN from the turn's connection (key, format, URL, model).
+    buildModel: (conn, ctx) => createModel(conn, ctx),
     auth: buildAuthConfig(), // throws here if neither JWKS nor secret is set (gate is always on)
   });
 

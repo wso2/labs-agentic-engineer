@@ -51,7 +51,7 @@ func TestMapGenAITurnError_Table(t *testing.T) {
 		{"turn not found", spec.ErrTurnNotFound, 404},
 		{"invalid conversation id", spec.ErrInvalidConversationID, 400},
 		{"empty instruction", spec.ErrEmptyInstruction, 400},
-		{"no anthropic key", spec.ErrNoAnthropicKey, 400},
+		{"no model connection", spec.ErrNoModelConnection, 400},
 		{"buffer truncated", spec.ErrTurnBufferTruncated, 409},
 		{"skills repo unavailable", fmt.Errorf("%w: resolve head: boom", spec.ErrSkillsRepoUnavailable), 503},
 		{"wrapped skills unavailable", fmt.Errorf("start turn: %w", spec.ErrSkillsRepoUnavailable), 503},

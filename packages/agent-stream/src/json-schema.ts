@@ -41,10 +41,16 @@ import { componentDesignSchema } from "./component-design-schema.js";
 import { securityDesignSchema } from "./security-design-schema.js";
 import { dependencyDesignSchema } from "./dependency-design-schema.js";
 import { planTaskInputSchema, updateTaskInputSchema } from "./task-tools-schema.js";
+import { agentAfmFrontMatterSchema } from "./agent-afm-schema.js";
 
 /** The `ComponentDesign` structural schema as JSON Schema (draft 2020-12). */
 export function componentDesignJsonSchema(): Record<string, unknown> {
   return z.toJSONSchema(componentDesignSchema, { target: "draft-2020-12" }) as Record<string, unknown>;
+}
+
+/** The `agent.afm.md` front matter structural schema as JSON Schema (draft 2020-12). */
+export function agentAfmJsonSchema(): Record<string, unknown> {
+  return z.toJSONSchema(agentAfmFrontMatterSchema, { target: "draft-2020-12" }) as Record<string, unknown>;
 }
 
 /** The `SecurityDesign` structural schema as JSON Schema (draft 2020-12). */
@@ -53,7 +59,7 @@ export function dependencyDesignJsonSchema(): Record<string, unknown> {
 }
 
 export function securityDesignJsonSchema(): Record<string, unknown> {
-  return z.toJSONSchema(securityDesignSchema, { target: "draft-2020-12" }) as Record<string, unknown>;
+  return z.toJSONSchema(securityDesignSchema, { target: "draft-2020-12" }) as Record<string, unknown>
 }
 
 /** The `planTask` tool input as JSON Schema (draft 2020-12). */

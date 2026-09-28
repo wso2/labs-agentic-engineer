@@ -18,7 +18,7 @@ pnpm --filter @aep/sse-cassette record -- \
 # then run the console with API_PROXY_TARGET=http://localhost:9091
 ```
 
-`authorization`, `x-anthropic-key`, `cookie`, … are redacted before a cassette
+`authorization`, `x-model-key`, `x-api-key`, `cookie`, … are redacted before a cassette
 touches disk.
 
 ## Replay

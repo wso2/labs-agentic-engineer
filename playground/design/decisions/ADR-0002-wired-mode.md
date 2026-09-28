@@ -102,7 +102,7 @@ the client and the service agree on paths, shapes and status codes; business
 rules run against real persistence; reach returns the caller's rows per role;
 and every screen a role's rail shows loads without a 401.
 
-What stays with `aep-validation` after a deploy: Thunder sign-in and the real
+What stays with the validation run (`validation-task`) after a deploy: Thunder sign-in and the real
 token's claims (including whether the deployed gateway's assertion carries
 `username` — open since 2026-09-16 and only a deployed call settles it),
 platform env injection, `workload.yaml`, the webapp's nginx image and its `/api`

@@ -55,6 +55,14 @@ export type {
   PlanContextFile,
   TurnJournal,
   TurnAttachment,
+  TurnConnection,
+  ModelCapabilities,
+  ModelFormat,
+  ModelAuthScheme,
+  WebSearchStrategy,
+  Tristate,
+  TurnErrorPart,
+  ProviderWaitPart,
   TurnAnchor,
   TurnAnchorNode,
   TurnAim,
@@ -88,6 +96,7 @@ export {
   isTurnSpec,
   isTurnAttachment,
   isTurnAttachmentsOrAbsent,
+  isTurnConnection,
   isTurnAim,
   TURN_AIM_LIMITS,
   isCollabConfig,
@@ -153,6 +162,9 @@ export { checkDesignDiagram, cellNodeIds, prdActors, DOMAIN_MODEL_PATH, PRD_PATH
 export type { DesignDiagramProblem, DiagramBundleReader, CellNodes } from "./design-diagrams.js";
 export { checkComponentDependencies } from "./component-dependencies.js";
 export type { ComponentDependencyProblem } from "./component-dependencies.js";
+
+// --- The agent.afm.md structural write-gate (the ai-agent component kind) ---
+export { checkAgentAfm, splitAfm, type AfmProblem, type AgentAfmFrontMatter } from "./agent-afm-schema.js";
 
 // --- The dependency.json write-gate (one dependency, one definition) --------
 export {
@@ -220,6 +232,7 @@ export {
   securityDesignJsonSchema,
   planTaskJsonSchema,
   updateTaskJsonSchema,
+  agentAfmJsonSchema,
 } from "./json-schema.js";
 
 // --- The reference SSE reader ------------------------------------------------

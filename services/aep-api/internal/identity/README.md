@@ -49,7 +49,8 @@ flowchart LR
 | `catalog.go` | The design-time read: every group on the org's environment directory, with whether the platform created it, how many members it has, and how many projects bind a role to it. Backs the `list_groups` MCP tool. |
 | `target.go` | `Scope` — the `(org, environment)` pair that names one directory — and the `TargetResolver` port that turns an org into a `Target`: that pair, the issuer, and a `Directory` already bound to it. |
 | `repository.go` | `idp_roles`, `test_users`, `test_user_refs` — all three keyed by `Scope` — and the sealed password column. |
-| `panel.go` | The Security panel's domain service: the live-state read (degrading to `directoryAvailable: false` rather than failing), and reveal / rotate / delete behind the org+project and ownership fences. The read answers with TWO role lists — the shared org-group catalog and this project's OWN roles, with the groups each is assigned to, how many projects lean on those groups, and what each role grants — plus, per test login, every role it holds and the union of their scopes. |
+| `sign_in_coords.go` | `SignInCoords` and the `SignInCoordinates` port — the project's sign-in client, resource and issuer, read off its sign-in binding by provisioning. |
+| `panel.go` | The Security panel's domain service: the live-state read (degrading to `directoryAvailable: false` rather than failing; its `SignIn` block — issuer and client id for the platform's test app — is read off the binding, so it survives the directory being down), and reveal / rotate / delete behind the org+project and ownership fences. The read answers with TWO role lists — the shared org-group catalog and this project's OWN roles, with the groups each is assigned to, how many projects lean on those groups, and what each role grants — plus, per test login, every role it holds and the union of their scopes. |
 | `teardown.go` | The project delete's counterpart to the ensure: remove this project's `<project>/<Role>` roles (assignments first), its resource server and the whole catalog under it, and its own rows. Shared objects — org groups, accounts — are never deleted, and every step is best-effort and reported rather than fatal. |
 | `resource_server.go` | The two names a project's authorization objects are known by — `ResourceServerIdentifier` (the token's `aud`) and `RoleName`/`RoleNamePrefix` — derived from `(org, project)` alone, because the parties that agree on them never speak to each other. |
 | `entities.go` | The stored rows — `IdPRole`, `TestUser`, `TestUserRef`, `IdPResourceServer`, `IdPRoleBinding` — and the `Scope` fences on them. |
@@ -62,6 +63,7 @@ flowchart LR
 | `TargetResolver` | the Environment's `aep.wso2.com/thunder-*` annotations (`clients/openchoreo`) + the admin credential at the binding's secret path (`platform/secrets`) | `app/identity_targets.go` |
 | `Directory` | `clients/thundersvc`, one client per `(org, environment)` — groups and users, plus resource servers, resources, actions, roles and assignments | `app/identity_adapters.go` |
 | `DesignReader` | `spec.ArtifactService.GetDesignAtTag` | `app/identity_adapters.go` |
+| `SignInCoordinates` | `provisioning.Service.SignInCoordinates` — the sign-in resource's binding outputs | `app/sign_in_coords_adapter.go` (late-bound: provisioning is built after the panel) |
 
 `TargetResolver` has two methods split by whether they can fail. `Scope(orgID)`
 is pure — it is the choice of environment alone, and the panel needs it to read

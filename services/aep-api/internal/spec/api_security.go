@@ -35,6 +35,36 @@ func ResolveAPISecurityEnabled(comp DesignComponent) bool {
 	return false
 }
 
+// IsGatewayProtectableType reports whether a component of this TYPE can sit
+// behind the API Platform Gateway at all — the question that precedes
+// ResolveAPISecurityEnabled's "and does this one?".
+//
+// A `web-application` cannot: a SPA is downloaded and run in the browser, so
+// there is no server-side endpoint for the gateway to validate a token in
+// front of; it is the party that OBTAINS the token, not one that presents it.
+// A `service` and an `ai-agent` both can, and for the same reason — each is an
+// HTTP endpoint a signed-in user's request reaches, which the gateway can
+// front, validate against Thunder's JWKS, and hand the verified claims to as
+// `X-User-*` headers.
+//
+// The two are not merely similar here, they are the same case: an agent that a
+// SPA calls is a protected backend exactly as its sibling API is, joins the
+// project's ONE `thunder-app` registration by sharing the dependency name (see
+// skills/security-design), and forwards the caller's bearer downstream
+// unchanged. What an agent adds is not a different auth model but a sharper
+// reason to apply this one: an unauthenticated LLM endpoint is billable by
+// whoever finds it, so "the API behind it authorises anyway" is not a
+// sufficient defence the way it is for a plain proxy.
+//
+// Keyed on the type rather than open-coded at its call site so the question
+// has one answer. `deriveEndUserAuth` is that call site: it stamps
+// `exposesAPI.auth` on the design, and the deployment projection
+// (DesiredDeploymentFor) reads only that stamp — so a protectable type and a
+// component that actually gets the trait can never drift apart.
+func IsGatewayProtectableType(componentType string) bool {
+	return componentType == ComponentTypeService || componentType == ComponentTypeAIAgent
+}
+
 // ResolveEndUserSignIn is the narrower question the gateway projection asks:
 // does this component sit behind END-USER sign-in? It is the committed
 // consequence derive_auth.go stamps from the sign-in dependency, and the same

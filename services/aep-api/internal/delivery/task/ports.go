@@ -126,14 +126,16 @@ type ExecutionReader interface {
 	ListByIssueScoped(ctx context.Context, orgID, repo string, issueNumber int) ([]delivery.Execution, error)
 }
 
-// AnthropicKeyResolver resolves the org's effective Anthropic key. Empty key +
-// nil error means "org has none" → the plan turn raises ErrNoAnthropicKey.
-type AnthropicKeyResolver func(ctx context.Context, orgID string) (string, error)
+// AgentLLMResolver resolves the org's model connection and its key for the
+// plan turn. An empty key with a nil error means "org has none" → the plan
+// turn raises ErrNoModelConnection. An alias, so the composition root wires
+// the one resolver the spec turns use.
+type AgentLLMResolver = spec.AgentLLMResolver
 
 // TurnClient is the agents-service turn client — the plan turn POSTs a
 // toolset:"task-plan" turn and streams raw StreamPart frames back for the tap.
 type TurnClient interface {
-	Turn(ctx context.Context, conversationID, orgID, anthropicKey string, req agentsvc.TurnRequest) (io.ReadCloser, error)
+	Turn(ctx context.Context, conversationID, orgID, modelKey string, req agentsvc.TurnRequest) (io.ReadCloser, error)
 }
 
 // Adopter hands an issue to the coding agent: file it under the deployed

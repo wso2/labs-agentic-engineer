@@ -1,0 +1,68 @@
+# ThunderID's built-in "System" resource server — a composed singleton.
+#
+# ThunderID ships this resource server (fixed id, below) with
+# `identifier: https://localhost:8090/mcp` hardcoded rather than templated to
+# the deployment's publicUrl, so both products redeclare it under the same id to
+# correct it. Same id means update, not duplicate — and the update replaces both
+# the identifier AND the resources tree, so whichever document is imported last
+# decides both.
+#
+# Replaces, and is imported INSTEAD of:
+#   71-fix-system-resource-server-identifier.yaml  (setup-env-for-aectl.sh)
+#   70-fix-thunder-system-rs-identifier.yaml       (wso2-amp-thunder-extension)
+#
+# identifier: THIS deployment's. It must equal what the platform's own clients
+# compute and send as the OAuth `resource` indicator — `<thunder public URL>/mcp`
+# in both tools/aectl/internal/thunder.SystemResourceIdentifier and
+# services/aep-api/internal/clients/thundersvc.SystemResourceIdentifier. A
+# mismatch fails the token exchange with invalid_target, and ThunderID's own
+# /console login with it. Keep in step with thunder.public_url
+# (skaffold/defaults.yaml).
+#
+# resources: Agent Manager's, which is a superset. ThunderID 1.0.0's built-in
+# tree is the single `system` resource; Agent Manager's adds ou/user/group/
+# usertype with a view action each. The superset is additive — the platform's
+# own clients need only `system` — so taking it keeps whatever amp-api reads
+# without costing anything here.
+resource_type: resource_server
+id: "01900000-0000-7000-8000-000000000020"
+name: System
+description: System resource server
+identifier: "http://thunder.openchoreo.localhost:8080/mcp"
+ouHandle: default
+resources:
+  - name: System
+    handle: system
+    description: System resource
+  - name: Organization Unit
+    handle: ou
+    description: Organization unit resource
+    parent: system
+    actions:
+      - name: View
+        handle: view
+        description: Read-only access to organization units
+  - name: User
+    handle: user
+    description: User resource
+    parent: system
+    actions:
+      - name: View
+        handle: view
+        description: Read-only access to users
+  - name: Group
+    handle: group
+    description: Group resource
+    parent: system
+    actions:
+      - name: View
+        handle: view
+        description: Read-only access to groups
+  - name: User Type
+    handle: usertype
+    description: User type resource
+    parent: system
+    actions:
+      - name: View
+        handle: view
+        description: Read-only access to user types

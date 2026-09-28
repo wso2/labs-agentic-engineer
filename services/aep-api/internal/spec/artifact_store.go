@@ -146,6 +146,13 @@ const DesignRootFile = "design.cell"
 // directories.
 const componentDirPrefix = "components/"
 
+// agentAFMFileName is the sibling AFM document name inside an ai-agent
+// component's directory (components/<name>/agent.afm.md) — mirrors the path
+// agentfold's write-gate matches (agentAfmRe in
+// internal/platform/agentfold/designgate.go), a different package this one
+// cannot reference.
+const agentAFMFileName = "agent.afm.md"
+
 // dependencyDirPrefix is the path prefix under specs/design/ for per-dependency
 // directories — one external dependency, one definition (dependency_json.go).
 const dependencyDirPrefix = "dependencies/"
@@ -209,6 +216,12 @@ func (s *ArtifactStore) AssembleDesignFrom(ctx context.Context, orgID string, fi
 	}
 	s.resolveOrgServices(ctx, orgID, design)
 	s.resolveExternalDependencies(ctx, orgID, design)
+	// Agent tool resolution (derive_agent_tools.go / agent_tools.go): read-time
+	// computed, exactly like the Status/Reason the two calls above just set —
+	// never persisted, recomputed on every design read so a GET reflects the
+	// current openapi.yaml/agent.afm.md pair even when neither triggered a
+	// save. A design with no ai-agent component does no work here at all.
+	deriveAgentToolStatuses(ctx, design.Components)
 	return design, nil
 }
 
@@ -394,6 +407,14 @@ func AssembleDesign(files map[string]string) (*DesignFile, error) {
 			openapi = files[componentDirPrefix+name+"/openapi.yml"]
 		}
 		comp.OpenAPISpec = openapi
+		// AgentAFM, likewise, is not a design.json key — fill it from the
+		// sibling agent.afm.md, only for ai-agent components (the file may
+		// legitimately be absent: skills/design's per-component writes have
+		// no guaranteed order, so an agent's document can be written before
+		// its own directory's design.json settles, or vice versa).
+		if comp.ComponentType == ComponentTypeAIAgent {
+			comp.AgentAFM = files[componentDirPrefix+name+"/"+agentAFMFileName]
+		}
 		out.Components = append(out.Components, comp)
 	}
 

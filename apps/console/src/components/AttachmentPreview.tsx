@@ -109,10 +109,13 @@ export function AttachmentPreview({
   file,
   onRemove,
   disabled = false,
+  note,
 }: {
   file: File;
   onRemove: () => void;
   disabled?: boolean | undefined;
+  /** How the model will read the file when that differs from its type ("as text"). */
+  note?: string | undefined;
 }) {
   const isImage = isImageAttachment(file.name);
   const url = useObjectUrl(isImage ? file : null);
@@ -159,7 +162,7 @@ export function AttachmentPreview({
   return (
     <Box
       data-testid="attachment-preview-named"
-      sx={{ ...shell, display: "flex", alignItems: "center", gap: 0.5, px: 0.75, maxWidth: 150 }}
+      sx={{ ...shell, display: "flex", alignItems: "center", gap: 0.5, px: 0.75, maxWidth: note ? 200 : 150 }}
     >
       <FileIcon size={11} style={{ flexShrink: 0, opacity: 0.7 }} />
       <Typography
@@ -169,6 +172,11 @@ export function AttachmentPreview({
       >
         {file.name}
       </Typography>
+      {note && (
+        <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: "nowrap" }}>
+          · {note}
+        </Typography>
+      )}
       <RemoveButton name={file.name} onRemove={onRemove} disabled={disabled} />
     </Box>
   );
@@ -183,10 +191,13 @@ export function AttachmentPreviewStrip({
   files,
   onRemove,
   disabled = false,
+  noteFor,
 }: {
   files: File[];
   onRemove: (name: string) => void;
   disabled?: boolean | undefined;
+  /** A per-file note, e.g. a PDF the model reads as extracted text. */
+  noteFor?: ((name: string) => string | undefined) | undefined;
 }) {
   if (files.length === 0) return null;
   return (
@@ -217,6 +228,7 @@ export function AttachmentPreviewStrip({
           key={file.name}
           file={file}
           disabled={disabled}
+          note={noteFor?.(file.name)}
           onRemove={() => onRemove(file.name)}
         />
       ))}

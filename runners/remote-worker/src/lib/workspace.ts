@@ -62,6 +62,7 @@ import {
   resolveRealGhPath,
 } from "./gh_git_auth.js";
 import { cloneCredentialScope, cloneWithHelper } from "./git_clone.js";
+import { TASK_LOG_DIR } from "./logger.js";
 import { shellQuote } from "./shell.js";
 
 const execAsync = promisify(exec);
@@ -108,14 +109,17 @@ export async function writeBearerFile(file: string, token: string, previous?: st
   return token;
 }
 
+const AEP_DIR = ".aep";
+const GH_CONFIG_DIR = ".gh-config";
+
 // computeLayout names every path the dispatch flow touches. Pure function
 // so tests can verify the path layout without filesystem effects.
 export function computeLayout(orgId: string, projectId: string, taskId: string): WorkspaceLayout {
   const workspace = path.join(config.workspaceBasePath, orgId, projectId, taskId);
-  const aepDir = path.join(workspace, ".aep");
+  const aepDir = path.join(workspace, AEP_DIR);
   return {
     workspace,
-    ghConfigDir: path.join(workspace, ".gh-config"),
+    ghConfigDir: path.join(workspace, GH_CONFIG_DIR),
     bearerFile: path.join(aepDir, "bearer"),
     aepDir,
     helperBin: path.join(aepDir, CREDHELPER_FILE),
@@ -209,6 +213,29 @@ const CRASH_ARTEFACT_PATTERNS = ["core", "!core/", "core.[0-9]*", "hs_err_pid*.l
 // `core.ts` and a `src/core/` directory do not — the only assertions that prove
 // the guarantee rather than the file's contents.
 export async function installCrashArtefactExclude(workspace: string): Promise<void> {
+  await appendCloneExclude(workspace, "crash artefacts", CRASH_ARTEFACT_PATTERNS);
+}
+
+// installRunLogExclude keeps the run's own log directory (`openTaskLog`: the
+// transcript, the prompt appendix, the session-context record) out of anything
+// the agent stages. Root-anchored, so a project's own `logs/` or a nested
+// `.logs/` is untouched.
+export async function installRunLogExclude(workspace: string): Promise<void> {
+  await appendCloneExclude(workspace, "the runner's logs", [`/${TASK_LOG_DIR}/`]);
+}
+
+// installCredentialExclude keeps the credential directories provisionWorkspace
+// drops inside the clone (the publisher bearer, the credential helper, the gh
+// wrapper and gh's config) out of anything the agent stages: one `git add -A`
+// would otherwise push the bearer into the customer's repository.
+export async function installCredentialExclude(workspace: string): Promise<void> {
+  await appendCloneExclude(workspace, "the runner's credentials", [
+    `/${AEP_DIR}/`,
+    `/${GH_CONFIG_DIR}/`,
+  ]);
+}
+
+async function appendCloneExclude(workspace: string, what: string, patterns: readonly string[]): Promise<void> {
   // `.git/info/` is not created by every clone (a worktree or a `--separate-git-dir`
   // layout puts the real git dir elsewhere), so resolve it from git rather than
   // assuming `<workspace>/.git/info`.
@@ -220,7 +247,7 @@ export async function installCrashArtefactExclude(workspace: string): Promise<vo
   // replacing one would silently drop whatever it said.
   await fs.promises.appendFile(
     path.join(infoDir, "exclude"),
-    `\n# AEP: crash artefacts. Written per clone by the runner, never committed.\n${CRASH_ARTEFACT_PATTERNS.join("\n")}\n`,
+    `\n# AEP: ${what}. Written per clone by the runner, never committed.\n${patterns.join("\n")}\n`,
   );
 }
 
@@ -310,6 +337,8 @@ export async function provisionWorkspace(req: ProvisionRequest): Promise<Workspa
 
     await installCommitIdentity(layout.workspace, req.identity);
     await installCrashArtefactExclude(layout.workspace);
+    await installRunLogExclude(layout.workspace);
+    await installCredentialExclude(layout.workspace);
 
     const scope = cloneCredentialScope(req.repoUrl);
     if (scope) {

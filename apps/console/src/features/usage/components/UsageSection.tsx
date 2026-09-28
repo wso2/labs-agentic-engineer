@@ -118,6 +118,8 @@ function ProjectCard({ card }: { card: ProjectUsageCard }) {
           </Typography>
           <Typography variant="caption" color="text.secondary" noWrap>
             {card.projectName}
+            {card.usage.model && ` · ${card.usage.model}`}
+            {card.usage.costUsd === null && card.usage.host && ` via ${card.usage.host}`}
           </Typography>
         </Box>
         {card.deleted && (

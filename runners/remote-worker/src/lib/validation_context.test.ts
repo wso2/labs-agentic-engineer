@@ -65,7 +65,6 @@ test("writes the platform's payload verbatim and reports its endpoints", async (
   const file = await tmpFile();
   const payload = JSON.stringify({
     endpoints: [{ component: "hello-webapp", url: "https://hello.example" }],
-    criteriaPath: "specs/validation/validation-criteria.json",
     somethingNewer: "must survive",
   });
   const { impl, calls } = stubFetch(200, payload);
@@ -111,7 +110,7 @@ test("a 404 throws and writes nothing", async () => {
 // that made the agent start probing, so it is a failure and not an empty success.
 test("a context with no endpoints throws", async () => {
   const file = await tmpFile();
-  const { impl } = stubFetch(200, JSON.stringify({ endpoints: [], criteriaPath: "x" }));
+  const { impl } = stubFetch(200, JSON.stringify({ endpoints: [] }));
 
   await assert.rejects(
     fetchValidationContext({
@@ -157,34 +156,6 @@ test("a body that parses to a non-object throws a named error, not a TypeError",
   }
 });
 
-// The oracle's path is required by the internal contract, and the skill is told
-// it is always there. Defaulting it to "" handed the agent a well-formed file
-// that broke that promise, and an agent that cannot find the oracle goes looking.
-test("a context with no criteria path throws", async () => {
-  for (const criteria of [undefined, "", 42]) {
-    const file = await tmpFile();
-    const { impl } = stubFetch(
-      200,
-      JSON.stringify({
-        endpoints: [{ component: "c", url: "https://x.example" }],
-        ...(criteria === undefined ? {} : { criteriaPath: criteria }),
-      }),
-    );
-    await assert.rejects(
-      fetchValidationContext({
-        platformUrl: "https://bff.example",
-        cycleId: CYCLE,
-        bearer: BEARER,
-        file,
-        fetchImpl: impl,
-      }),
-      /no validation-criteria path/,
-      `criteriaPath ${JSON.stringify(criteria)}`,
-    );
-    assert.equal(fs.existsSync(file), false);
-  }
-});
-
 // `mode` is honoured only when the write CREATES the file, so a context file left
 // at this fixed path under a world-writable /tmp would otherwise keep whatever
 // permissions it already had.
@@ -196,7 +167,6 @@ test("the context file ends up 0600 even when the path already exists", async ()
     200,
     JSON.stringify({
       endpoints: [{ component: "c", url: "https://x.example" }],
-      criteriaPath: "specs/validation/validation-criteria.json",
     }),
   );
 
@@ -224,7 +194,6 @@ test("a symlink squatting on the target path is replaced, not followed", async (
   await fs.promises.symlink(decoy, file);
   const payload = JSON.stringify({
     endpoints: [{ component: "c", url: "https://x.example" }],
-    criteriaPath: "specs/validation/validation-criteria.json",
   });
   const { impl } = stubFetch(200, payload);
 
@@ -249,7 +218,6 @@ test("a failed write leaves the previous context intact", async () => {
   const file = await tmpFile();
   const good = JSON.stringify({
     endpoints: [{ component: "c", url: "https://good.example" }],
-    criteriaPath: "specs/validation/validation-criteria.json",
   });
   const first = stubFetch(200, good);
   await fetchValidationContext({
@@ -265,7 +233,6 @@ test("a failed write leaves the previous context intact", async () => {
     200,
     JSON.stringify({
       endpoints: [{ component: "c", url: "https://new.example" }],
-      criteriaPath: "specs/validation/validation-criteria.json",
     }),
   );
   try {
@@ -302,7 +269,6 @@ test("no staging directory is left behind", async () => {
     200,
     JSON.stringify({
       endpoints: [{ component: "c", url: "https://x.example" }],
-      criteriaPath: "specs/validation/validation-criteria.json",
     }),
   );
 
@@ -341,7 +307,6 @@ test("source path remints once on 401 then writes the context", async () => {
   const file = await tmpFile();
   const payload = JSON.stringify({
     endpoints: [{ component: "hello-webapp", url: "https://hello.example" }],
-    criteriaPath: "specs/validation/validation-criteria.json",
   });
   let n = 0;
   const impl = (async (_url: string | URL | Request, init?: RequestInit) => {

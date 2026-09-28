@@ -1,0 +1,62 @@
+{{- if (default dict .Values.tryIt).enabled }}
+# Try it — the platform's test app (apps/tryit). A static SPA the console opens
+# in a new tab from an agent's "Try agent" button: an agent is a secured service
+# with no page of its own, so this app is its page. It signs a person in on the
+# PROJECT's identity provider as one of that project's test users, then calls the
+# component's public gateway URL directly.
+#
+# It never calls aep-api and holds no aep-api credential — every coordinate it
+# needs arrives in the launch URL, all of it public. So this is plain static
+# hosting, and the only settings it takes are the gateway-host allowlist below
+# and the origin the console and aep-api must both agree on.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aep-tryit
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: aep-tryit
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: wso2-aep
+spec:
+  replicas: {{ .Values.tryIt.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app: aep-tryit
+  template:
+    metadata:
+      labels:
+        app: aep-tryit
+        app.kubernetes.io/part-of: wso2-aep
+    spec:
+      containers:
+        - name: aep-tryit
+          image: "{{ .Values.tryIt.image.repository }}:{{ .Values.tryIt.image.tag }}"
+          imagePullPolicy: {{ .Values.tryIt.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.tryIt.port }}
+              name: http
+          resources: {{ toYaml .Values.tryIt.resources | nindent 12 }}
+          env:
+            # Where this app may send a token. The launch URL is public input
+            # anyone can write, so the allowlist is what keeps a real sign-in
+            # from being paired with an attacker's endpoint — a refused link
+            # never reaches sign-in. It is the environments' public gateway
+            # vhost, which is the ClusterDataPlane's ingress host.
+            - name: TRY_IT_GATEWAY_HOSTS
+              value: {{ .Values.tryIt.gatewayHosts | quote }}
+          # nginx runs as the image's own non-root user (10001) and writes its
+          # temp paths under /tmp; nothing here needs a volume.
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+{{- end }}

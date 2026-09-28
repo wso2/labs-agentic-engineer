@@ -197,7 +197,7 @@ describe("failureCopy — runs with no record", () => {
 
   it("points a deploy failure at Deployments and a validation failure at Validation", () => {
     expect(failureCopy(run({ terminalReason: "deploy-budget" }))?.next?.to).toBe("/projects/$projectName/deployments");
-    expect(failureCopy(run({ terminalReason: "validation-failed" }))?.next?.to).toBe("/projects/$projectName/validation");
+    expect(failureCopy(run({ terminalReason: "validation-failed" }))?.next?.to).toBe("/projects/$projectName/validations");
   });
 
   it("renders an unknown reason rather than swallowing it", () => {
@@ -218,5 +218,62 @@ describe("failureCopy — nothing to explain", () => {
 
   it("leaves a blocked run to its existing message", () => {
     expect(failureCopy(run({ state: "blocked", terminalReason: "agent-quota-blocked" }))).toBeUndefined();
+  });
+});
+
+describe("failureCopy — a model provider's usage limit", () => {
+  // Local-time stamps, so "the same day" holds in whatever zone the suite runs.
+  const now = new Date(2026, 8, 26, 10, 0);
+  const limit = (over: Partial<RunFailure> = {}): RunFailure => ({
+    code: "model-provider-limit",
+    phase: "coding",
+    permanent: false,
+    attempts: 1,
+    maxAttempts: 1,
+    firstAt: "2026-09-26T10:05:00Z",
+    lastAt: "2026-09-26T10:05:00Z",
+    host: "ollama.com",
+    ...over,
+  });
+  const blocked = (failure?: RunFailure) =>
+    run({ state: "blocked", terminalReason: "model-provider-limit", ...(failure ? { failure } : {}) });
+
+  it("names the host and the reset time, in amber, on a blocked run", () => {
+    const resetAt = new Date(2026, 8, 26, 14, 5).toISOString();
+    const copy = failureCopy(blocked(limit({ resetAt })), now);
+    expect(copy?.tone).toBe("warning");
+    expect(copy?.title).toBe("ollama.com's usage limit was reached");
+    expect(copy?.body).toMatch(/^The coding agent stopped when ollama\.com refused further requests, and nothing from that build session was merged\. /);
+    expect(copy?.body).toMatch(/Start the run again after it resets \((14:05|0?2:05\s?PM)\)\.$/);
+  });
+
+  it("adds the date when the plan resets another day", () => {
+    const resetAt = new Date(2026, 8, 29, 9, 30).toISOString();
+    const copy = failureCopy(blocked(limit({ resetAt })), now);
+    expect(copy?.body).toMatch(/Start the run again after it resets \(.*29.*\)\.$/);
+  });
+
+  it("promises no time when the provider stated none", () => {
+    const copy = failureCopy(blocked(limit()), now);
+    expect(copy?.title).toBe("ollama.com's usage limit was reached");
+    expect(copy?.body).toMatch(/Start the run again once it resets — the provider did not say when\.$/);
+    expect(copy?.body).not.toMatch(/\(/);
+  });
+
+  it("still explains itself when the record was never written", () => {
+    const copy = failureCopy(blocked(), now);
+    expect(copy?.title).toBe("The model provider's usage limit was reached");
+    expect(copy?.body).toMatch(/when its model provider refused further requests/);
+    expect(copy?.details.code).toBe("model-provider-limit");
+  });
+
+  it("reads the same while the run is still settling on it", () => {
+    const copy = failureCopy(run({ state: "running", failure: limit() }), now);
+    expect(copy?.tone).toBe("warning");
+    expect(copy?.title).toBe("ollama.com's usage limit was reached");
+  });
+
+  it("has a short label for the ledger", () => {
+    expect(failureLabel("model-provider-limit")).toBe("Model provider limit reached");
   });
 });

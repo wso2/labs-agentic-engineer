@@ -93,14 +93,15 @@ const (
 	RunStateFailed    = "failed"
 	RunStateCancelled = "cancelled"
 	// RunStateBlocked is terminal and is NOT a failure: the org has no agent
-	// concurrency slot left, so the cycle was never launched. It is its own
+	// concurrency slot left, so the cycle was never launched — or the model
+	// provider's usage limit stopped the agent that was. It is its own
 	// state rather than a failure reason because the distinction is what the
 	// user acts on — "wait or stop a run" versus "something went wrong" — and
 	// because a failed run reads as the platform's fault.
 	//
 	// Terminal, so the run row releases the build mutex and the user can
-	// start the version again once a slot frees; the run is never resurrected
-	// in place.
+	// start the version again once a slot frees (or the plan resets); the run
+	// is never resurrected in place.
 	RunStateBlocked = "blocked"
 
 	// Terminal reasons. Each names exactly ONE failure class so the reason a run
@@ -157,6 +158,11 @@ const (
 	// had no publisher SecretReference to mount. Retrying the Job cannot stamp
 	// it. The console text is PublisherCredentialsMissingMessage.
 	RunReasonPublisherCredentials = "publisher-credentials-missing"
+	// RunReasonModelProviderLimit explains RunStateBlocked: the model
+	// provider's usage limit stopped the coding agent (provider_limit.go). The
+	// run's failure record carries the host and, when the provider stated one,
+	// the reset time the console's sentence names.
+	RunReasonModelProviderLimit = "model-provider-limit"
 
 	// Validation verdicts — what the run learned about the deployed system. Empty
 	// until the validation cycle settles.

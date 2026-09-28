@@ -26,87 +26,209 @@ import (
 	"github.com/wso2/aep/aep-api/internal/delivery"
 )
 
-// ReportFilePath is the run report the validation runner commits, and the
-// console renders. It is the counterpart of criteriaFilePath: the oracle says
-// what must hold, the report says what did.
-const ReportFilePath = "tests/validation/report.json"
+// ReportFilePath is the run report the acceptance run commits, and the console
+// renders. It is the counterpart of the feature files: the scenarios say what
+// must hold, the report says what did.
+const ReportFilePath = "tests/acceptance/report.json"
 
 // reportDoc is the slice of the runner's report a VERDICT is derived from. The
-// console reads the whole document per criterion; the run only needs to know
-// whether anything the runner could decide came out negative.
+// console reads the whole document; the run only needs to know whether anything
+// the agent could decide came out negative.
 type reportDoc struct {
-	Criteria []reportCriterion `json:"criteria"`
+	Scenarios []reportScenario `json:"scenarios"`
 }
 
-type reportCriterion struct {
-	ID     string `json:"id"`
+// reportScenario is one scenario the agent drove. There is no generated test
+// code, so the steps ARE the evidence: each one carries the command that ran it
+// and, where the exit code is not the verdict, what was observed.
+type reportScenario struct {
+	Feature     string `json:"feature"`
+	FeatureFile string `json:"featureFile"`
+	Line        int    `json:"line"`
+	Rule        string `json:"rule"`
+	Scenario    string `json:"scenario"`
+	// Outcome is the agent's per-scenario verdict: passed | failed | blocked |
+	// unjudgeable.
+	Outcome string       `json:"outcome"`
+	Steps   []reportStep `json:"steps"`
+	// Evidence is what the agent read AT THE MOMENT the scenario failed, while
+	// the page was still open. Required on a `failed` scenario and absent
+	// everywhere else — the report checker holds the agent to that, because after
+	// the run the page is gone and nothing can be recovered.
+	Evidence reportEvidence `json:"evidence"`
+}
+
+// reportEvidence is the failure-time capture: what the system was doing when the
+// assertion lost.
+//
+// Network is the discriminating half. A request that left and came back 201 with
+// the page unchanged is a different defect from no request at all, and they need
+// opposite fixes.
+//
+// An EMPTY Network slice is evidence: nothing left the page. An absent one is a
+// hole, and the checker refuses it. NotCaptured is the honest escape — set when
+// the capture genuinely could not happen (the page had already navigated away),
+// so the gap is stated rather than filled with something plausible.
+type reportEvidence struct {
+	Network     []networkRequest `json:"network"`
+	Console     []string         `json:"console"`
+	Snapshot    string           `json:"snapshot"`
+	NotCaptured string           `json:"notCaptured"`
+}
+
+// networkRequest is one request the page made around the deciding step.
+type networkRequest struct {
 	Method string `json:"method"`
-	// Status is the runner's per-criterion outcome: pass | fail | not_run |
-	// not_validated | manual.
-	Status string `json:"status"`
-	// Must is the criterion's requirement, echoed into the report by the generator.
-	// Having it here is what makes a report self-contained: a repair issue can name
-	// what the criterion demanded without a second read of the oracle.
-	Must string `json:"must"`
-	// Failure is what the assertion said, on a `fail`. generate-report.mjs writes
-	// it as an OBJECT — a bare string is tolerated because reports already merged
-	// into project repos carry that older shape, and a report is read long after it
-	// was written. Same reasoning as the console parser's parseFailure.
-	Failure reportFailure `json:"failure"`
-	// Spec is the Playwright spec file that produced the outcome.
-	Spec string `json:"spec"`
+	URL    string `json:"url"`
+	Status int    `json:"status"`
 }
 
-// reportFailure is a criterion's failure detail, decoded from either shape.
-type reportFailure struct {
-	Message  string `json:"message"`
-	Location string `json:"location"`
+// reportStep is one Gherkin step as executed.
+type reportStep struct {
+	Text    string `json:"text"`
+	Keyword string `json:"keyword"`
+	Command string `json:"command"`
+	// Exit is a POINTER so "the command was not run" is distinguishable from
+	// "it exited 0". A blocked scenario's later steps carry neither.
+	Exit *int `json:"exit"`
+	// Observed is what the agent read, required wherever the exit code does not
+	// settle the step — a nonzero exit, a step with no command, or a command
+	// that prints a value (`get count`) and so exits 0 merely by running.
+	Observed string `json:"observed"`
 }
 
-// UnmarshalJSON accepts both the object shape generate-report.mjs writes and the
-// bare string older reports carry.
-func (f *reportFailure) UnmarshalJSON(data []byte) error {
-	var s string
-	if err := json.Unmarshal(data, &s); err == nil {
-		f.Message, f.Location = s, ""
-		return nil
+// id is the scenario's natural key: Gherkin carries no ids, so identity is what
+// the scenario IS. ASCII-joined on purpose — this string becomes a GitHub dedupe
+// label, which issue_service.go normalises and, past 50 chars, hashes.
+func (s reportScenario) id() string {
+	parts := make([]string, 0, 3)
+	for _, p := range []string{s.Feature, s.Rule, s.Scenario} {
+		if strings.TrimSpace(p) != "" {
+			parts = append(parts, strings.TrimSpace(p))
+		}
 	}
-	var obj struct {
-		Message  string `json:"message"`
-		Location string `json:"location"`
-	}
-	if err := json.Unmarshal(data, &obj); err != nil {
-		// Neither shape. A failure we cannot read is not a reason to discard the
-		// verdict the status already carries, so it degrades to no detail.
-		f.Message, f.Location = "", ""
-		return nil
-	}
-	f.Message, f.Location = obj.Message, obj.Location
-	return nil
+	return strings.Join(parts, " / ")
 }
 
-// FailedCriterion is one criterion the report says lost its assertion, with
-// everything a repair issue needs to name it — including the `must`, which the
-// generator echoes into the report so this is answerable from one read.
-type FailedCriterion struct {
-	ID       string
-	Method   string
-	Must     string
-	Message  string
-	Location string
-	Spec     string
+// deciding returns the INDEX of the step that settled the scenario, or -1. A
+// nonzero exit wins; otherwise the first `Then` carrying an observation, which
+// is how a value-returning command (`get count`) records its verdict.
+//
+// An index rather than the step itself, because the whole trace is now rendered
+// and the deciding step has to be MARKED within it — and two steps of one
+// scenario can carry the same text.
+//
+// **A `Then` wins over position.** Only a `Then` decides anything; a `When` may
+// record what it saw on the way past, and taking the first observation of any
+// keyword let one win on position alone — which also fed ReportDigest the
+// request rather than the assertion.
+func (s reportScenario) deciding() int {
+	for i, st := range s.Steps {
+		if st.Exit != nil && *st.Exit != 0 {
+			return i
+		}
+	}
+	keywords := s.effectiveKeywords()
+	for i, st := range s.Steps {
+		if keywords[i] == keywordThen && strings.TrimSpace(st.Observed) != "" {
+			return i
+		}
+	}
+	// No `Then` observed anything: fall back to whatever did, so a scenario that
+	// records its reason on a `When` is still answerable rather than silent.
+	for i, st := range s.Steps {
+		if strings.TrimSpace(st.Observed) != "" {
+			return i
+		}
+	}
+	return -1
+}
+
+const keywordThen = "Then"
+
+// effectiveKeywords resolves each step's keyword, carrying `And` / `But` / `*`
+// onto the one they inherit — which is what Gherkin means by them, and what the
+// run skill tells the agent they mean. Without this a `Then` continued by `And`
+// is invisible to any predicate asking which steps assert, and the assertion
+// that actually settled a scenario is routinely the continuation.
+func (s reportScenario) effectiveKeywords() []string {
+	out := make([]string, len(s.Steps))
+	current := ""
+	for i, st := range s.Steps {
+		switch k := strings.TrimSpace(st.Keyword); k {
+		case "And", "But", "*", "":
+			// inherits whatever came before, including "" at the top of a scenario
+		default:
+			current = k
+		}
+		out[i] = current
+	}
+	return out
+}
+
+// FailedScenario is one scenario the report says the app did not satisfy, with
+// everything a repair issue needs — so the issue is answerable from one read and
+// never sends its reader back to the specification or to another ticket.
+type FailedScenario struct {
+	ID          string
+	Feature     string
+	Rule        string
+	Scenario    string
+	FeatureFile string
+	Line        int
+	// Steps is the scenario's own Given/When/Then AS EXECUTED — every step, with
+	// the command that ran it and what that command said.
+	//
+	// Every step, not just the one that settled it: only the whole trace
+	// distinguishes "the `When` never happened" from "the `When` happened and the
+	// app disagreed with the `Then`", and those need opposite fixes.
+	Steps []FailedStep
+	// Deciding indexes the step that settled the scenario, or -1.
+	Deciding int
+	// Evidence is what the run saw when it failed.
+	Evidence FailedEvidence
+}
+
+// FailedStep is one Gherkin step as executed.
+type FailedStep struct {
+	Keyword  string
+	Text     string
+	Command  string
+	Exit     *int
+	Observed string
+}
+
+// FailedEvidence is the failure-time capture, as the report recorded it.
+type FailedEvidence struct {
+	Network  []NetworkRequest
+	Console  []string
+	Snapshot string
+	// NotCaptured is why there is no capture, when the run said so explicitly.
+	// It is rendered rather than hidden: a stated gap is information, and the
+	// alternative to stating it is an agent inventing a plausible trace.
+	NotCaptured string
+}
+
+// NetworkRequest is one request the page made around the deciding step.
+type NetworkRequest struct {
+	Method string
+	URL    string
+	Status int
 }
 
 // ReportDigest fingerprints WHAT A REPORT CONCLUDED, so two validation attempts
 // can be compared. Empty for an absent or unparseable report — there is nothing to
 // compare, and two empty digests must not read as "the same answer twice".
 //
-// It covers the criteria only: each one's id, status and failure message, sorted by
-// id. Explicitly NOT the file bytes. The runner generates the report with
-// `--commit "$(git rev-parse HEAD)"`, so a whole-file hash changes on every attempt
-// and would make an identical-answer check dead code that silently never fires.
+// It covers the scenarios only: each one's id, outcome, and what was observed at
+// the step that settled it, sorted by id. Explicitly NOT the file bytes — the
+// report stamps `commit` and `generatedAt`, so a whole-file hash would change on
+// every attempt and make the identical-answer check dead code that never fires.
 //
-// Sorted because report order is the runner's spec-discovery order, which is not a
+// The observation is part of the answer: the same scenario failing for a different
+// reason means the repair changed something, even if it is still red.
+//
+// Sorted because report order is the agent's file-discovery order, which is not a
 // promise; two attempts that found the same outcomes in a different order reached
 // the same answer.
 func ReportDigest(raw []byte) string {
@@ -117,29 +239,36 @@ func ReportDigest(raw []byte) string {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return ""
 	}
-	if len(doc.Criteria) == 0 {
+	if len(doc.Scenarios) == 0 {
 		return ""
 	}
-	lines := make([]string, 0, len(doc.Criteria))
-	for _, c := range doc.Criteria {
-		// The failure message is part of the answer: the same criterion failing for a
-		// different reason means the repair changed something, even if it is still red.
-		lines = append(lines, c.ID+"\x00"+c.Status+"\x00"+c.Failure.Message)
+	lines := make([]string, 0, len(doc.Scenarios))
+	for _, s := range doc.Scenarios {
+		observed := ""
+		if i := s.deciding(); i >= 0 {
+			observed = s.Steps[i].Observed
+		}
+		lines = append(lines, s.id()+"\x00"+s.Outcome+"\x00"+observed)
 	}
 	sort.Strings(lines)
 	sum := sha256.Sum256([]byte(strings.Join(lines, "\x1e")))
 	return hex.EncodeToString(sum[:])
 }
 
-// FailedCriteria returns the criteria the report records as failed, in report
+// FailedScenarios returns the scenarios the report records as failed, in report
 // order. Empty for an absent, unparseable or all-green report — every case where
 // there is nothing to repair.
+//
+// `blocked` is deliberately NOT included. The agent cannot tell an app that
+// correctly refuses an action from one too broken to perform it, so filing repair
+// work on a block would have a coding run add an affordance the requirement never
+// asked for. A block is reported and left for a person.
 //
 // It is deliberately separate from VerdictFromReport rather than folded into it.
 // The verdict is a single value the run stores; this is a list the supervisor turns
 // into issues, and the two are read by different callers at different moments (the
 // second only when the first came back `failed`).
-func FailedCriteria(raw []byte) []FailedCriterion {
+func FailedScenarios(raw []byte) []FailedScenario {
 	if len(raw) == 0 {
 		return nil
 	}
@@ -147,53 +276,69 @@ func FailedCriteria(raw []byte) []FailedCriterion {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return nil
 	}
-	var out []FailedCriterion
-	for _, c := range doc.Criteria {
-		if c.Status != criterionFail {
+	var out []FailedScenario
+	for _, s := range doc.Scenarios {
+		if s.Outcome != outcomeFailed {
 			continue
 		}
-		out = append(out, FailedCriterion{
-			ID:       c.ID,
-			Method:   c.Method,
-			Must:     c.Must,
-			Message:  c.Failure.Message,
-			Location: c.Failure.Location,
-			Spec:     c.Spec,
-		})
+		f := FailedScenario{
+			ID:          s.id(),
+			Feature:     s.Feature,
+			Rule:        s.Rule,
+			Scenario:    s.Scenario,
+			FeatureFile: s.FeatureFile,
+			Line:        s.Line,
+			Deciding:    s.deciding(),
+			Evidence: FailedEvidence{
+				Console:     s.Evidence.Console,
+				Snapshot:    s.Evidence.Snapshot,
+				NotCaptured: s.Evidence.NotCaptured,
+			},
+		}
+		for _, st := range s.Steps {
+			f.Steps = append(f.Steps, FailedStep{
+				Keyword: st.Keyword, Text: st.Text,
+				Command: st.Command, Exit: st.Exit, Observed: st.Observed,
+			})
+		}
+		for _, r := range s.Evidence.Network {
+			f.Evidence.Network = append(f.Evidence.Network,
+				NetworkRequest{Method: r.Method, URL: r.URL, Status: r.Status})
+		}
+		out = append(out, f)
 	}
 	return out
 }
 
-// Per-criterion outcomes the runner writes. Shared with the console's
-// validation-view parser, which renders the same five states per criterion.
+// Per-scenario outcomes the agent writes. Shared with the report checker, which
+// holds the agent to them.
 //
-// The last three are not failures and not passes: they are the automatic path
-// declining to judge. `not_run` is an e2e criterion whose spec was skipped or was
-// never written; `manual` and `not_validated` are the criterion's own method
-// (manual and scenario) echoed back, and neither is ever executed.
+// `failed` and `blocked` are both defects and are not merged: one says the
+// behaviour is wrong, the other says the behaviour was never reached.
+// `unjudgeable` is for truth that lives outside the running app. The last two are
+// neither passes nor failures — they are the agent declining to judge, which is
+// the honest answer and always better than a guess.
 const (
-	criterionPass         = "pass"
-	criterionFail         = "fail"
-	criterionNotRun       = "not_run"
-	criterionManual       = "manual"
-	criterionNotValidated = "not_validated"
+	outcomePassed      = "passed"
+	outcomeFailed      = "failed"
+	outcomeBlocked     = "blocked"
+	outcomeUnjudgeable = "unjudgeable"
 )
 
 // VerdictFromReport derives a run's validation verdict from the committed report,
 // returning one of the delivery.ValidationVerdict* values. Applied in order:
 //
-//  1. no usable report (absent, unparseable, or carrying no criteria) → unreported
-//  2. any criterion failed                                           → failed
-//  3. no criterion passed                                            → inconclusive
-//  4. any criterion was never covered                                → partial
-//  5. otherwise every criterion passed                               → passed
+//  1. no usable report (absent, unparseable, or carrying no scenarios) → unreported
+//  2. any scenario failed                                              → failed
+//  3. no scenario passed                                               → inconclusive
+//  4. any scenario was never judged                                    → partial
+//  5. otherwise every scenario passed                                  → passed
 //
 // Order carries the meaning. A real assertion failure wins outright (2), because
 // it is the one thing the report says about the *software* rather than about the
-// harness. Rule 5 then requires FULL coverage for `passed`: the previous rule
-// returned passed whenever one criterion passed and none failed, so a project
-// could read "passed" over twenty manual criteria nobody had looked at — `partial`
-// exists to say that honestly instead.
+// run. Rule 5 then requires FULL coverage for `passed`: a project must not read
+// "passed" over scenarios nobody could drive — `partial` exists to say that
+// honestly instead.
 //
 // Rules 1 and 3 look similar and are not. `inconclusive` means we read the
 // evidence and it records that nothing ran; `unreported` means there was nothing
@@ -208,23 +353,23 @@ func VerdictFromReport(raw []byte) string {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return delivery.ValidationVerdictUnreported
 	}
-	// No criteria is not a vacuous pass: "nothing failed" over an empty set would
+	// No scenarios is not a vacuous pass: "nothing failed" over an empty set would
 	// otherwise report success for a run that judged nothing.
-	if len(doc.Criteria) == 0 {
+	if len(doc.Scenarios) == 0 {
 		return delivery.ValidationVerdictUnreported
 	}
 
 	passed, uncovered := false, false
-	for _, c := range doc.Criteria {
-		switch c.Status {
-		case criterionFail:
+	for _, s := range doc.Scenarios {
+		switch s.Outcome {
+		case outcomeFailed:
 			return delivery.ValidationVerdictFailed
-		case criterionPass:
+		case outcomePassed:
 			passed = true
-		case criterionNotRun, criterionManual, criterionNotValidated:
+		case outcomeBlocked, outcomeUnjudgeable:
 			uncovered = true
 		default:
-			// An unrecognised state is evidence we cannot interpret; treat it as a
+			// An unrecognised outcome is evidence we cannot interpret; treat it as a
 			// gap rather than silently counting it towards full coverage.
 			uncovered = true
 		}

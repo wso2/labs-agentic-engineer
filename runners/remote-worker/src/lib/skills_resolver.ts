@@ -39,6 +39,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { WORKFLOW_SKILLS } from "./skills_presence.js";
 
 /**
  * Which design files contribute `skillsPinned` to this run.
@@ -69,12 +70,22 @@ export interface ResolveTaskSkillsArgs {
  * Resolve the run's pinned skill NAMES at the given scope. Returns an empty
  * list (NOT an error) when the design applies no skills or the design files
  * are absent — there is no network involved, so nothing here throws.
+ *
+ * A pin on a workflow skill is dropped: the runner already preloads the run's
+ * own workflow, and a pinned one would either load it twice or load another
+ * run kind's procedure beside it.
  */
 export async function resolveTaskSkills(args: ResolveTaskSkillsArgs): Promise<string[]> {
   const log = args.log ?? ((l: string) => console.log(l));
-  return args.scope.kind === "project"
-    ? readProjectSkillsPinned(args.workspace, log)
-    : readSkillsPinned(args.workspace, args.scope.componentName, log);
+  const pinned =
+    args.scope.kind === "project"
+      ? await readProjectSkillsPinned(args.workspace, log)
+      : await readSkillsPinned(args.workspace, args.scope.componentName, log);
+  const workflows = pinned.filter((name) => WORKFLOW_SKILLS.includes(name));
+  if (workflows.length > 0) {
+    log(`[skills-resolve] ignoring pin(s) on workflow skill(s): ${workflows.join(", ")} — the runner picks a run's workflow`);
+  }
+  return pinned.filter((name) => !WORKFLOW_SKILLS.includes(name));
 }
 
 // The component's authored design file; its `skillsPinned` key lists the

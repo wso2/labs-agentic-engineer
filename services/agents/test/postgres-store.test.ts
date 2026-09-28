@@ -348,6 +348,23 @@ test("the journal's attachment names survive the jsonb round-trip", async () => 
   assert.deepEqual(got.turns[0]?.attachments, ["2025-Motor Claim Form.pdf"]);
 });
 
+// The connection fingerprint is rebuilt field by field like the rest of the
+// entry; a turn journaled before it existed reads back without one.
+test("the journal's connection fingerprint survives the jsonb round-trip", async () => {
+  const store = new PostgresConversationStore(new FakePg());
+  await store.save({
+    ...fresh("c-conn"),
+    turns: [
+      { turnId: "t1", text: "hello", messageIndex: 0, connection: "anthropic@api.anthropic.com", createdAt: new Date(0) },
+      { turnId: "t0", text: "older", messageIndex: 2, createdAt: new Date(0) },
+    ],
+  });
+  const got = await store.get("c-conn");
+  assert.ok(got);
+  assert.equal(got.turns[0]?.connection, "anthropic@api.anthropic.com");
+  assert.equal("connection" in (got.turns[1] ?? {}), false);
+});
+
 test("a turn with no attachments round-trips without the field", async () => {
   const store = new PostgresConversationStore(new FakePg());
   await store.save({

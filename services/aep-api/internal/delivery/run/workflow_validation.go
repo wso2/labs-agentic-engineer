@@ -162,17 +162,21 @@ func (l *loop) judgeVersion(ctx workflow.Context) (RunResult, error) {
 		}
 
 		if out.Verdict == delivery.ValidationVerdictFailed {
-			if _, merr := l.mintRepairIssues(ctx, issue); merr != nil {
+			filed, merr := l.mintRepairIssues(ctx, issue)
+			if merr != nil {
 				return l.result(), merr
 			}
+			// Read by the close below, which names them in the task's comment —
+			// the one edge from a repair issue back to the run that found it.
+			l.filedRepairs = filed
 		}
 		return l.settleJudged(ctx, delivery.RunStateFailed, reason)
 	}
 }
 
 // stateForUnlandedValidation maps an agent stage that never landed onto the run's
-// terminal state and reason. Every one of the four is an existing failure class,
-// which is the point: a validation run invents no new way to end.
+// terminal state and reason. Every one is an ending the dev loop has too, which
+// is the point: a validation run invents no new way to end.
 //
 // A conflict is the odd one and is reported as the conflict chain running out,
 // because from this workflow's position it has: the event plane has already minted
@@ -187,6 +191,8 @@ func stateForUnlandedValidation(res cycleResult) (state, reason string) {
 		return delivery.RunStateBlocked, delivery.RunReasonAgentQuotaBlocked
 	case cyclePublisherCredentials:
 		return delivery.RunStateBlocked, delivery.RunReasonPublisherCredentials
+	case cycleProviderLimit:
+		return delivery.RunStateBlocked, delivery.RunReasonModelProviderLimit
 	case cycleConflict:
 		return delivery.RunStateFailed, delivery.RunReasonConflictBudget
 	default:
@@ -254,6 +260,7 @@ func (l *loop) closeValidationIssue(ctx workflow.Context) error {
 			ProjectID: l.in.ProjectID,
 			Issue:     l.st.ValidationIssue,
 			Verdict:   l.st.ValidationVerdict,
+			Repairs:   l.filedRepairs,
 		}).Get(ctx, nil)
 }
 
@@ -296,12 +303,16 @@ func (l *loop) readVerdict(ctx workflow.Context) (ValidationOutcome, error) {
 	return out, err
 }
 
-// mintRepairIssues files ONE issue per failed criterion from the attempt whose
+// mintRepairIssues files ONE issue per failed scenario from the attempt whose
 // report was just read, at the same pinned commit.
 //
-// One per criterion and never one omnibus issue: the no-progress rule compares
+// One per scenario and never one omnibus issue: the no-progress rule compares
 // working-set SIZES, so repairing two of three failures has to read as progress.
 // A single issue holding three failures could only be open or closed.
+//
+// The returned numbers include issues this attempt RESOLVED ONTO rather than
+// filed — a scenario still failing keeps the issue the last attempt opened — so
+// the count is "defects outstanding", not "issues created".
 func (l *loop) mintRepairIssues(ctx workflow.Context, issue int) ([]int, error) {
 	var filed []int
 	err := workflow.ExecuteActivity(activityCtx(ctx), (*Activities).MintValidationRepairIssues,
@@ -310,7 +321,6 @@ func (l *loop) mintRepairIssues(ctx workflow.Context, issue int) ([]int, error) 
 			ProjectID:       l.in.ProjectID,
 			MilestoneNumber: l.in.MilestoneNumber,
 			At:              l.mergeSHA,
-			CycleID:         l.cycleID,
 		}).Get(ctx, &filed)
 	if err != nil {
 		return nil, err

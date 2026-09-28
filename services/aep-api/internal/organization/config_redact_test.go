@@ -30,16 +30,20 @@ import (
 func fullConfigProjection() *orgconfig.ConfigProjection {
 	setAt := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	setBy := "ada@example.com"
+	disconnectedAt := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
 	return &orgconfig.ConfigProjection{
-		LLM:         &orgconfig.LLMProjection{Kind: "anthropic"},
-		CodingLLM:   &orgconfig.LLMProjection{Kind: "anthropic"},
-		GitProvider: &orgconfig.GitProviderProjection{Kind: "github"},
-		IDP:         orgconfig.IDPProjection{Kind: "platform"},
-		CodingAgent: orgconfig.CodingAgentProjection{
-			Runtime:   "claude-code",
-			Model:     "claude-sonnet-5",
-			UpdatedAt: &setAt,
-			UpdatedBy: &setBy,
+		LLM:               &orgconfig.LLMProjection{Kind: "anthropic"},
+		LLMCheck:          &orgconfig.LLMCheck{Kind: "anthropic"},
+		LLMDisconnectedAt: &disconnectedAt,
+		LLMFormats:        []orgconfig.LLMFormatOption{{Kind: "anthropic"}},
+		GitProvider:       &orgconfig.GitProviderProjection{Kind: "github"},
+		IDP:               orgconfig.IDPProjection{Kind: "platform"},
+		Agents: orgconfig.AgentsProjection{
+			Runtime:           "claude-code",
+			AvailableRuntimes: []orgconfig.AgentRuntime{"claude-code", "opencode"},
+			Subscription:      &orgconfig.SubscriptionProjection{Kind: orgconfig.SubscriptionKindClaude},
+			UpdatedAt:         &setAt,
+			UpdatedBy:         &setBy,
 		},
 	}
 }
@@ -51,11 +55,14 @@ func TestRedactConfigForPermissions_BothHeld_NothingRedacted(t *testing.T) {
 	if proj.GitProvider == nil {
 		t.Fatal("gitProvider must survive holding ae:github-config")
 	}
-	if proj.LLM == nil || proj.CodingLLM == nil {
-		t.Fatal("llm/codingLlm must survive holding ae:model-config")
+	if proj.LLM == nil || proj.LLMCheck == nil || proj.LLMDisconnectedAt == nil {
+		t.Fatal("the model connection and its probe/disconnect detail must survive holding ae:model-config")
 	}
-	if proj.CodingAgent.UpdatedBy == nil || proj.CodingAgent.UpdatedAt == nil {
-		t.Fatal("codingAgent's audit fields must survive holding ae:model-config")
+	if proj.Agents.Subscription == nil {
+		t.Fatal("agents.subscription must survive holding ae:model-config")
+	}
+	if proj.Agents.UpdatedBy == nil || proj.Agents.UpdatedAt == nil {
+		t.Fatal("agents' audit fields must survive holding ae:model-config")
 	}
 }
 
@@ -69,8 +76,13 @@ func TestRedactConfigForPermissions_GitHubConfigOnly_LLMRedacted(t *testing.T) {
 	if proj.LLM != nil {
 		t.Fatalf("llm must be redacted without ae:model-config, got %+v", proj.LLM)
 	}
-	if proj.CodingLLM != nil {
-		t.Fatalf("codingLlm must be redacted without ae:model-config, got %+v", proj.CodingLLM)
+	if proj.LLMCheck != nil {
+		t.Fatalf("llmCheck must be redacted without ae:model-config, got %+v", proj.LLMCheck)
+	}
+	// Left behind, this still says the org once had a connection and lost it —
+	// the very fact clearing llm is meant to withhold.
+	if proj.LLMDisconnectedAt != nil {
+		t.Fatalf("llmDisconnectedAt must be redacted without ae:model-config, got %v", proj.LLMDisconnectedAt)
 	}
 }
 
@@ -78,8 +90,8 @@ func TestRedactConfigForPermissions_ModelConfigOnly_GitProviderRedacted(t *testi
 	proj := fullConfigProjection()
 	RedactConfigForPermissions(proj, []authz.Permission{authz.PermissionModelConfig})
 
-	if proj.LLM == nil || proj.CodingLLM == nil {
-		t.Fatal("llm/codingLlm must survive holding ae:model-config")
+	if proj.LLM == nil {
+		t.Fatal("llm must survive holding ae:model-config")
 	}
 	if proj.GitProvider != nil {
 		t.Fatalf("gitProvider must be redacted without ae:github-config, got %+v", proj.GitProvider)
@@ -93,8 +105,8 @@ func TestRedactConfigForPermissions_NeitherHeld_BothRedacted(t *testing.T) {
 	if proj.GitProvider != nil {
 		t.Fatalf("gitProvider must be redacted holding no permission, got %+v", proj.GitProvider)
 	}
-	if proj.LLM != nil || proj.CodingLLM != nil {
-		t.Fatalf("llm/codingLlm must be redacted holding no permission, got llm=%+v codingLlm=%+v", proj.LLM, proj.CodingLLM)
+	if proj.LLM != nil {
+		t.Fatalf("llm must be redacted holding no permission, got %+v", proj.LLM)
 	}
 }
 
@@ -111,24 +123,42 @@ func TestRedactConfigForPermissions_IDPNeverRedacted(t *testing.T) {
 	}
 }
 
-// TestRedactConfigForPermissions_CodingAgentAuditFieldsNeedModelConfig pins the
-// trim: runtime/model stay (enum-constrained state the console renders, and the
-// section is always present by contract), but updatedAt/updatedBy go. Those two
-// are the compensating control for this endpoint's coarse RBAC, so a caller who
-// cannot write the section must not learn who last did.
-func TestRedactConfigForPermissions_CodingAgentAuditFieldsNeedModelConfig(t *testing.T) {
+// llmFormats is a property of the INSTALLATION — which API formats exist and
+// which of this deployment's runtimes serve each — identical for every org and
+// disclosing nothing about this one. It is also required by contract, so there
+// is no null to clear it to.
+func TestRedactConfigForPermissions_LLMFormatsNeverRedacted(t *testing.T) {
+	proj := fullConfigProjection()
+	RedactConfigForPermissions(proj, nil)
+
+	if len(proj.LLMFormats) != 1 {
+		t.Fatalf("llmFormats must never be redacted, got %+v", proj.LLMFormats)
+	}
+}
+
+// TestRedactConfigForPermissions_AgentsTrimNeedsModelConfig pins the trim:
+// runtime/availableRuntimes stay (enum-constrained state the console renders,
+// and the section is always present by contract), but the stored subscription
+// and updatedAt/updatedBy go. The audit pair is the compensating control for
+// this endpoint's coarse RBAC, so a caller who cannot write the section must
+// not learn who last did — and the subscription is a credential, masked but
+// still evidence the org holds one.
+func TestRedactConfigForPermissions_AgentsTrimNeedsModelConfig(t *testing.T) {
 	for _, held := range [][]authz.Permission{nil, {authz.PermissionGitHubConfig}} {
 		proj := fullConfigProjection()
 		RedactConfigForPermissions(proj, held)
 
-		if proj.CodingAgent.UpdatedBy != nil {
-			t.Fatalf("held %v: updatedBy must be redacted without ae:model-config, got %q", held, *proj.CodingAgent.UpdatedBy)
+		if proj.Agents.Subscription != nil {
+			t.Fatalf("held %v: subscription must be redacted without ae:model-config, got %+v", held, proj.Agents.Subscription)
 		}
-		if proj.CodingAgent.UpdatedAt != nil {
-			t.Fatalf("held %v: updatedAt must be redacted without ae:model-config, got %v", held, *proj.CodingAgent.UpdatedAt)
+		if proj.Agents.UpdatedBy != nil {
+			t.Fatalf("held %v: updatedBy must be redacted without ae:model-config, got %q", held, *proj.Agents.UpdatedBy)
 		}
-		if proj.CodingAgent.Runtime != "claude-code" || proj.CodingAgent.Model != "claude-sonnet-5" {
-			t.Fatalf("held %v: runtime/model must survive — the section is always present by contract, got %+v", held, proj.CodingAgent)
+		if proj.Agents.UpdatedAt != nil {
+			t.Fatalf("held %v: updatedAt must be redacted without ae:model-config, got %v", held, *proj.Agents.UpdatedAt)
+		}
+		if proj.Agents.Runtime != "claude-code" || len(proj.Agents.AvailableRuntimes) != 2 {
+			t.Fatalf("held %v: runtime/availableRuntimes must survive — the section is always present by contract, got %+v", held, proj.Agents)
 		}
 	}
 }

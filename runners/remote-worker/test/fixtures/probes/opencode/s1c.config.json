@@ -1,0 +1,75 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "anthropic/claude-sonnet-5",
+  "small_model": "anthropic/claude-sonnet-5",
+  "default_agent": "aep",
+  "subagent_depth": 3,
+  "autoupdate": false,
+  "share": "disabled",
+  "instructions": [
+    "/scratch/ocbin/instructions.md"
+  ],
+  "plugin": [
+    "/scratch/ocbin/aep-guard"
+  ],
+  "snapshot": false,
+  "provider": {
+    "anthropic": {
+      "options": {
+        "apiKey": "{env:ANTHROPIC_API_KEY}"
+      }
+    }
+  },
+  "agent": {
+    "aep": {
+      "mode": "primary",
+      "description": "AEP coding run lead"
+    },
+    "general": {
+      "mode": "subagent",
+      "model": "anthropic/claude-haiku-4-5",
+      "permission": {
+        "todowrite": "deny",
+        "task": "allow"
+      }
+    },
+    "build": {
+      "disable": true
+    },
+    "plan": {
+      "disable": true
+    },
+    "explore": {
+      "disable": true
+    },
+    "scout": {
+      "disable": true
+    }
+  },
+  "permission": {
+    "read": "allow",
+    "glob": "allow",
+    "grep": "allow",
+    "list": "allow",
+    "edit": "allow",
+    "bash": "allow",
+    "task": {
+      "*": "deny",
+      "general": "allow"
+    },
+    "todowrite": "allow",
+    "webfetch": "allow",
+    "websearch": "allow",
+    "skill": {
+      "*": "deny",
+      "allowed-skill": "allow"
+    },
+    "question": "deny",
+    "external_directory": "allow",
+    "doom_loop": "allow",
+    "lsp": "deny"
+  },
+  "tools": {
+    "lsp": false
+  }
+}

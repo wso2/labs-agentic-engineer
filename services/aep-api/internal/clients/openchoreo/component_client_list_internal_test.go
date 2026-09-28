@@ -266,3 +266,50 @@ func TestCreateComponent_StampsMarkerLabels(t *testing.T) {
 		t.Errorf("labels = %v, want the cycle marker", labels)
 	}
 }
+
+// Registering an agent with Agent Manager leaves AMP's own marker component in
+// the project — same display name, a type that never deploys. The user's agent
+// is listed once, under its real type; the marker is AMP's record, not ours.
+func TestListComponents_DropsAgentManagerMarker(t *testing.T) {
+	const project = "small-call-triage"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusOK, map[string]any{
+			"items": []any{
+				map[string]any{
+					"metadata": map[string]any{
+						"name":        "incident-triage-2edbc6a8",
+						"labels":      map[string]string{"openchoreo.dev/provisioning-type": "external"},
+						"annotations": map[string]string{"openchoreo.dev/display-name": "incident-triage", "openchoreo.dev/description": "Deployed by AEP"},
+					},
+					"spec": map[string]any{
+						"componentType": map[string]any{"kind": "ComponentType", "name": agentManagerMarkerTypeName},
+						"owner":         map[string]any{"projectName": project},
+					},
+				},
+				map[string]any{
+					"metadata": map[string]any{
+						"name":        ScopedComponentName(project, "incident-triage"),
+						"annotations": map[string]string{"openchoreo.dev/display-name": "incident-triage"},
+					},
+					"spec": map[string]any{
+						"componentType": map[string]any{"kind": "ComponentType", "name": "deployment/ai-agent"},
+						"owner":         map[string]any{"projectName": project},
+					},
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := NewComponentClient(Config{BaseURL: srv.URL})
+	list, err := c.ListComponents(context.Background(), "default", project, 100, "")
+	if err != nil {
+		t.Fatalf("ListComponents: %v", err)
+	}
+	if len(list.Items) != 1 {
+		t.Fatalf("Items length = %d, want 1 (the marker must be dropped): %+v", len(list.Items), list.Items)
+	}
+	if list.Items[0].Name != "incident-triage" || list.Items[0].Type != "ai-agent" {
+		t.Fatalf("surviving item = %q/%q, want incident-triage/ai-agent", list.Items[0].Name, list.Items[0].Type)
+	}
+}

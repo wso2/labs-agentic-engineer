@@ -298,6 +298,10 @@ type CycleFacts struct {
 	PRNumber int    `json:"prNumber,omitempty"`
 	MergeSHA string `json:"mergeSha,omitempty"`
 	Ended    bool   `json:"ended"`
+	// AgentReason is why the cycle's agent stopped without landing, as the
+	// pod-truth watcher closed it. Read for the one reason that is not agent
+	// death: delivery.CycleReasonModelProviderLimit.
+	AgentReason string `json:"agentReason,omitempty"`
 	// CancelRequested is the run row's cancellation stamp, not the signal. The
 	// signal is a wake-up; this is the evidence — which is what stops a reaped
 	// agent pod from reading as agent death and buying a re-dispatch.
@@ -334,6 +338,7 @@ func (a *Activities) ReadCycleFacts(ctx context.Context, in CycleFactsInput) (Cy
 	facts.PRNumber = row.PRNumber
 	facts.MergeSHA = row.MergeSHA
 	facts.Ended = row.EndedAt != nil
+	facts.AgentReason = row.AgentReason
 	return facts, nil
 }
 
@@ -945,13 +950,16 @@ func (a *Activities) ReadValidationHistory(ctx context.Context, in ValidationHis
 	return out, nil
 }
 
-// CloseValidationIssueInput closes the version's validation task. Verdict is
-// carried only for the comment the close leaves behind.
+// CloseValidationIssueInput closes the version's validation task. Verdict and
+// Repairs are carried only for the comment the close leaves behind.
 type CloseValidationIssueInput struct {
 	OrgID     string `json:"orgId"`
 	ProjectID string `json:"projectId"`
 	Issue     int    `json:"issue"`
 	Verdict   string `json:"verdict,omitempty"`
+	// Repairs are the issue numbers this attempt filed. Empty on every ending
+	// that filed none, which is most of them.
+	Repairs []int `json:"repairs,omitempty"`
 }
 
 // CloseValidationIssue closes the validation task the run adopted.
@@ -970,10 +978,12 @@ func (a *Activities) CloseValidationIssue(ctx context.Context, in CloseValidatio
 	if a.validation == nil || in.Issue == 0 {
 		return nil
 	}
-	return sourceControlErr(a.validation.CloseValidationIssue(ctx, in.OrgID, in.ProjectID, in.Issue, in.Verdict))
+	return sourceControlErr(a.validation.CloseValidationIssue(ctx, in.OrgID, in.ProjectID, in.Issue, in.Verdict, in.Repairs))
 }
 
 // MintValidationRepairIssuesInput names the attempt whose failures become work.
+// It carries no attempt identity: the issues are keyed to the SCENARIO, so an
+// attempt meeting a defect again resolves onto its open issue.
 type MintValidationRepairIssuesInput struct {
 	OrgID           string `json:"orgId"`
 	ProjectID       string `json:"projectId"`
@@ -981,12 +991,11 @@ type MintValidationRepairIssuesInput struct {
 	// At is the validation cycle's merge commit — the same pin the verdict was read
 	// at, so the failures filed are the ones this attempt actually reported.
 	At string `json:"at"`
-	// CycleID is the attempt's identity and the issues' dedupe key.
-	CycleID string `json:"cycleId"`
 }
 
-// MintValidationRepairIssues files one issue per failed criterion into the
-// milestone, and returns their numbers.
+// MintValidationRepairIssues files one issue per failed scenario into the
+// milestone, and returns their numbers — including any it resolved onto rather
+// than filed.
 //
 // An unwired coordinator mints nothing, like the other optional collaborators —
 // but the count matters to the caller here, because an empty result means the next
@@ -995,23 +1004,37 @@ func (a *Activities) MintValidationRepairIssues(ctx context.Context, in MintVali
 	if a.validation == nil {
 		return nil, nil
 	}
-	filed, err := a.validation.MintRepairIssues(ctx, in.OrgID, in.ProjectID, in.MilestoneNumber, in.At, in.CycleID)
+	filed, err := a.validation.MintRepairIssues(ctx, in.OrgID, in.ProjectID, in.MilestoneNumber, in.At)
 	return filed, sourceControlErr(err)
 }
 
 // ---- dispatch --------------------------------------------------------------
 
-// DispatchAgent launches the cycle's agent run and returns the Job reference.
+// DispatchAgent launches the cycle's agent run, records on the cycle the model
+// host it launched on, and returns the Job reference.
+//
+// The host is written HERE, not by NoteCycleDispatch, because only the launch
+// knows it and this activity's result is frozen by workflow history: it has
+// always been the bare Job reference, and a run in flight across a deploy
+// replays that recorded value. Writing it before returning keeps the
+// copy-at-dispatch rule (the host is the one the Job was launched with) without
+// changing what the workflow reads back.
+//
+// A failed host write is logged, not returned. The Job is already running, and
+// this activity runs with retries off because a failed launch is agent death:
+// returning the error would spend a re-dispatch and launch a second agent beside
+// the first. The cost of the missed write is honest — the cycle's capture finds
+// no host and stamps a null cost, which the console shows as tokens only.
 //
 // Three non-retryable failure classes are stamped here (Temporal must not
 // retry any): agent death — a launch that did not happen, answered by the
 // cycle's re-dispatch budget; quota blocked — entitlement refused, not death;
 // publisher credentials missing — Job create cannot stamp the SecretReference.
 func (a *Activities) DispatchAgent(ctx context.Context, in delivery.MilestoneDispatch) (string, error) {
-	if a.dispatcher == nil {
+	if a.dispatcher == nil || a.cycles == nil {
 		return "", errNotConfigured
 	}
-	jobRef, err := a.dispatcher.Dispatch(ctx, in)
+	launch, err := a.dispatcher.Dispatch(ctx, in)
 	if errors.Is(err, delivery.ErrAgentQuotaExceeded) {
 		// A sentinel does not survive the activity boundary — Temporal
 		// round-trips errors as data — so the refusal is re-expressed as a
@@ -1024,5 +1047,12 @@ func (a *Activities) DispatchAgent(ctx context.Context, in delivery.MilestoneDis
 		return "", temporal.NewNonRetryableApplicationError(
 			delivery.PublisherCredentialsMissingMessage, delivery.ErrTypePublisherCredentialsMissing, err)
 	}
-	return jobRef, err
+	if err != nil {
+		return "", err
+	}
+	if err := a.cycles.NoteModelHost(ctx, in.CycleID, launch.ModelHost); err != nil {
+		slog.WarnContext(ctx, "run: the agent launched but its model host was not recorded — the cycle's usage will be unpriced",
+			"cycle", in.CycleID, "host", launch.ModelHost, "error", err)
+	}
+	return launch.JobRef, nil
 }

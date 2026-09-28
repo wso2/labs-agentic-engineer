@@ -30,7 +30,8 @@ package codingagent
 //     (ADR-0027) — so a viewer reads a file instead of re-deriving the pod's
 //     log per connection. Postgres is still not the log system of record. The
 //     one thing this watcher takes out of the log itself is the runner's
-//     terminal token-usage line.
+//     terminal line: its token usage, and whether its model provider's limit
+//     is what stopped it.
 //  3. It NEVER deletes a Component on a natural terminal. Deletion frees the
 //     billing slot but also destroys the archive, so it belongs to the
 //     retention pass (and to cancel), which decide with the whole picture.
@@ -42,6 +43,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -56,7 +58,7 @@ import (
 // and returns whatever the platform still holds for the pod — never a
 // head-anchored k8s `limitBytes` window — so trimming to the last N bytes
 // here keeps the run's ENDING (where the outcome and any failure live), not
-// its opening. These bytes are scanned for the runner's usage line and then
+// its opening. These bytes are scanned for the runner's terminal line and then
 // dropped — never written to Postgres.
 const finalLogTailBytes = 256 * 1024
 
@@ -103,6 +105,12 @@ type JobWatcher struct {
 	// request. Discovery belongs here for the same reason the recorder's does:
 	// this is the one pass that learns a pod died.
 	deaths AgentDeathNotifier
+
+	// failures records the run's failure record for the one fault this pass
+	// learns first: a provider limit, whose host and reset time only the
+	// runner's settle carries. nil → the run still settles blocked, and the
+	// console says so without naming either.
+	failures RunFailureRecorder
 
 	// asService lifts the tick into the service identity — the watcher has no
 	// inbound request to borrow a user token from. nil in tests.
@@ -161,6 +169,13 @@ func (w *JobWatcher) WithRecorder(rec *CycleRecorder) *JobWatcher {
 // receiver.
 func (w *JobWatcher) WithAgentDeathNotifier(n AgentDeathNotifier) *JobWatcher {
 	w.deaths = n
+	return w
+}
+
+// WithRunFailures attaches the run failure recorder. Optional. Returns the
+// receiver.
+func (w *JobWatcher) WithRunFailures(r RunFailureRecorder) *JobWatcher {
+	w.failures = r
 	return w
 }
 
@@ -265,9 +280,16 @@ func (w *JobWatcher) checkCycle(ctx context.Context, cycle *delivery.RunCycle) {
 		// The agent's process ended. Whether the WORK landed is the pull
 		// request's answer, and it reaches the run as a webhook — so nothing is
 		// concluded here beyond banking the run's token spend.
-		w.captureUsage(ctx, cycle, binding, pod)
+		w.captureUsage(ctx, cycle, w.readTerminal(ctx, cycle, binding, pod, false))
 	case OutcomeFailed:
-		w.captureUsage(ctx, cycle, binding, pod)
+		// An open cycle still needs its verdict, and the runner's last line is
+		// where a provider limit says it was one.
+		report := w.readTerminal(ctx, cycle, binding, pod, cycle.EndedAt == nil)
+		w.captureUsage(ctx, cycle, report)
+		if report.providerLimit != nil {
+			w.failOnProviderLimit(ctx, cycle, *report.providerLimit)
+			return
+		}
 		w.failCycle(ctx, cycle, FailureReason(pod))
 	case OutcomePending:
 		if !pod.Found {
@@ -358,28 +380,94 @@ func (w *JobWatcher) failCycle(ctx context.Context, cycle *delivery.RunCycle, re
 	}
 }
 
-// captureUsage banks the run's token spend from the runner's terminal NDJSON
-// line. It is the ONLY reason this watcher reads a log, and the bytes are
-// dropped straight after: the console reads logs from OpenChoreo and the
-// observability plane, never from a table.
+// failOnProviderLimit closes a cycle whose runner stopped because its model
+// provider refused every call (delivery/provider_limit.go), under the reason
+// the supervisor settles BLOCKED on instead of reading agent death.
 //
-// Idempotence is DB-driven: a cycle that already carries a model id has been
-// captured, so a restart re-reads nothing.
-func (w *JobWatcher) captureUsage(ctx context.Context, cycle *delivery.RunCycle, binding string, pod openchoreo.RuntimePod) {
-	if cycle.ModelID != "" || !pod.Found {
+// The failure record is written FIRST, and that order is load-bearing:
+// RecordFailure only writes a run that is not yet terminal, and closing the
+// cycle is what wakes the supervisor into settling it. Best-effort, like every
+// record write — the cycle's reason is the fact the run settles on; the record
+// is what lets the console name the host and the reset time.
+func (w *JobWatcher) failOnProviderLimit(ctx context.Context, cycle *delivery.RunCycle, limit providerLimit) {
+	if cycle.EndedAt != nil {
 		return
+	}
+	// The provider is named by the host the cycle was DISPATCHED on — stamped by
+	// aep-api from the connection whose key the Job mounted — rather than the
+	// one the runner reported: the platform's own record wins over a producer's
+	// claim, as it does for pricing. The runner's is the fallback for a cycle
+	// dispatched before the host was stamped.
+	host := cycle.ModelHost
+	if host == "" {
+		host = limit.host
+	}
+	// The operator's evidence: what a spent plan actually returns is learned
+	// from production, one line per stopped run, grouped by host. The runner
+	// saw no response headers (its runtime made the call), so its retry delay
+	// is folded into resetAt and the provider's own words ride `body`. Never
+	// stored, never shown: it is a third party's text.
+	slog.WarnContext(ctx, "model_provider_429",
+		"source", "runner", "org", cycle.OrgID, "run", cycle.RunID, "cycle", cycle.ID,
+		// The runner's rule counts only 429s (by status, or by the rate-limit
+		// class when the runtime did not know the status).
+		"host", host, "status", http.StatusTooManyRequests,
+		"resetAt", limit.resetAt, "body", limit.detail, "verdict", "provider_limit")
+	if w.failures != nil && cycle.RunID != "" {
+		now := time.Now().UTC()
+		phase := delivery.RunPhaseCoding
+		if cycle.Kind == delivery.CycleKindValidation {
+			phase = delivery.RunPhaseValidating
+		}
+		if _, err := w.failures.RecordFailure(ctx, cycle.RunID, delivery.RunFailure{
+			Code:  delivery.RunFailureCodeModelProviderLimit,
+			Phase: phase,
+			// Not retried: the answer cannot change before the plan resets, so
+			// the one attempt it took is the whole of it.
+			Attempts:    1,
+			MaxAttempts: 1,
+			FirstAt:     now,
+			LastAt:      now,
+			Host:        host,
+			ResetAt:     limit.resetAt,
+		}); err != nil {
+			slog.WarnContext(ctx, "codingagent.JobWatcher: record provider-limit failure failed (the run still settles blocked)",
+				"cycle", cycle.ID, "run", cycle.RunID, "error", err)
+		}
+	}
+	w.failCycle(ctx, cycle, delivery.CycleReasonModelProviderLimit)
+}
+
+// readTerminal reads the runner's last words off a finished pod — the only
+// reason this watcher reads a log, and the bytes are dropped straight after:
+// the console reads logs from OpenChoreo and the observability plane, never
+// from a table.
+//
+// It reads nothing when nothing is left to learn: the usage is banked once a
+// cycle carries a model id (a restart re-reads nothing), and a verdict is only
+// wanted while the cycle is open (needVerdict). An empty report is also what a
+// failed read degrades to, so a pod whose log is gone fails as agent death.
+func (w *JobWatcher) readTerminal(ctx context.Context, cycle *delivery.RunCycle, binding string, pod openchoreo.RuntimePod, needVerdict bool) terminalReport {
+	if !pod.Found || (cycle.ModelID != "" && !needVerdict) {
+		return terminalReport{}
 	}
 	lines, err := w.runtime.PodLogs(ctx, cycle.OrgID, binding, pod.Name, 0)
 	if err != nil {
 		slog.WarnContext(ctx, "codingagent.JobWatcher: terminal log read failed; usage not captured",
 			"cycle", cycle.ID, "pod", pod.Name, "error", err)
+		return terminalReport{}
+	}
+	return terminalFromLog(joinTail(lines, finalLogTailBytes))
+}
+
+// captureUsage banks the run's token spend from its terminal report.
+// Idempotence is DB-driven: a cycle that already carries a model id has been
+// captured.
+func (w *JobWatcher) captureUsage(ctx context.Context, cycle *delivery.RunCycle, report terminalReport) {
+	if cycle.ModelID != "" || report.usage == nil {
 		return
 	}
-	u := usageFromLog(joinTail(lines, finalLogTailBytes))
-	if u == nil {
-		return
-	}
-	if err := w.cycles.RecordUsage(ctx, cycle.ID, *u); err != nil {
+	if err := w.cycles.RecordUsage(ctx, cycle.ID, *report.usage); err != nil {
 		slog.WarnContext(ctx, "codingagent.JobWatcher: record cycle usage failed", "cycle", cycle.ID, "error", err)
 	}
 }

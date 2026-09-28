@@ -24,6 +24,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/contracts"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/platform/dbtest"
+	"github.com/wso2/aep/aep-api/internal/platform/modelconn"
 	"github.com/wso2/aep/aep-api/internal/platform/modelcost"
 )
 
@@ -36,6 +37,15 @@ func admitRun(t *testing.T, repo delivery.MilestoneRunRepository, org, project s
 		t.Fatalf("TryAdmit(%s/%s) = (%v, %v)", org, project, ok, err)
 	}
 	return row
+}
+
+// dispatchedOn records the model host a cycle's agent launched on, as the
+// dispatch activity does — the host its capture is then priced against.
+func dispatchedOn(t *testing.T, cycles delivery.RunCycleRepository, c *delivery.RunCycle, host string) {
+	t.Helper()
+	if _, err := cycles.NoteModelHost(context.Background(), c.ID, host); err != nil {
+		t.Fatalf("NoteModelHost(%s): %v", c.ID, err)
+	}
 }
 
 // TestRunCycleRepository_AppendDispatchAndFinish pins one cycle's whole life:
@@ -343,7 +353,7 @@ func TestRunCycleRepository_RecordUsageAndPhaseRollup(t *testing.T) {
 	// $1/MTok in, $10/MTok out, $0.10/MTok cache read — round figures so the
 	// expected stamp is obvious by inspection rather than reverse-engineered.
 	stamper := modelcost.NewStamper([]modelcost.ModelRate{{
-		ModelID: "model-a", InputPerMTok: 1, OutputPerMTok: 10, CacheReadPerMTok: 0.1,
+		Host: modelconn.AnthropicHost, ModelID: "model-a", InputPerMTok: 1, OutputPerMTok: 10, CacheReadPerMTok: 0.1,
 	}})
 	cycles := delivery.NewRunCycleRepository(db, stamper)
 	// The rollup reads the LEDGER, which RecordUsage mirrors into as it stamps —
@@ -360,6 +370,7 @@ func TestRunCycleRepository_RecordUsageAndPhaseRollup(t *testing.T) {
 		if err := cycles.Append(ctx, c); err != nil {
 			t.Fatalf("Append(%s): %v", kind, err)
 		}
+		dispatchedOn(t, cycles, c, modelconn.AnthropicHost)
 		return c
 	}
 
@@ -469,8 +480,8 @@ func TestRunCycleRepository_RecordUsageStampsMultiModelSplit(t *testing.T) {
 	db := dbtest.New(t)
 	runs := delivery.NewMilestoneRunRepository(db)
 	stamper := modelcost.NewStamper([]modelcost.ModelRate{
-		{ModelID: "model-a", InputPerMTok: 1, OutputPerMTok: 10, CacheReadPerMTok: 0.1},
-		{ModelID: "model-b", InputPerMTok: 2, OutputPerMTok: 20},
+		{Host: modelconn.AnthropicHost, ModelID: "model-a", InputPerMTok: 1, OutputPerMTok: 10, CacheReadPerMTok: 0.1},
+		{Host: modelconn.AnthropicHost, ModelID: "model-b", InputPerMTok: 2, OutputPerMTok: 20},
 	})
 	cycles := delivery.NewRunCycleRepository(db, stamper)
 	ctx := context.Background()
@@ -482,6 +493,7 @@ func TestRunCycleRepository_RecordUsageStampsMultiModelSplit(t *testing.T) {
 		if err := cycles.Append(ctx, c); err != nil {
 			t.Fatalf("Append: %v", err)
 		}
+		dispatchedOn(t, cycles, c, modelconn.AnthropicHost)
 		return c
 	}
 	mixed := appendCycle()
@@ -536,6 +548,10 @@ func TestRunCycleRepository_RecordUsageStampsMultiModelSplit(t *testing.T) {
 	}
 	if b.Tokens.InputTokens != 2_500_010 {
 		t.Fatalf("build input tokens = %d, want 2_500_010", b.Tokens.InputTokens)
+	}
+	// Every contributing cycle was dispatched on one host, so the phase names it.
+	if b.Host != modelconn.AnthropicHost {
+		t.Fatalf("build host = %q, want %q", b.Host, modelconn.AnthropicHost)
 	}
 }
 
@@ -673,5 +689,88 @@ func TestRunCycleRepository_ListRecentDispatched(t *testing.T) {
 	}
 	if !found {
 		t.Error("an open cycle is in scope regardless of the window")
+	}
+}
+
+// TestRunCycleRepository_ModelHostPricesTheCapture pins host-aware pricing on
+// the cycle: a new cycle carries the host its dispatch copied onto it, the
+// capture is priced on (host, model), and the ledger entry names the same host.
+// A cycle whose host has no rate for the model, and one never dispatched, stamp
+// null — never another host's figure.
+func TestRunCycleRepository_ModelHostPricesTheCapture(t *testing.T) {
+	t.Parallel()
+	db := dbtest.New(t)
+	runs := delivery.NewMilestoneRunRepository(db)
+	stamper := modelcost.NewStamper([]modelcost.ModelRate{
+		{Host: modelconn.AnthropicHost, ModelID: "claude-sonnet-5", InputPerMTok: 2, OutputPerMTok: 10},
+	})
+	cycles := delivery.NewRunCycleRepository(db, stamper)
+	ctx := context.Background()
+
+	run := admitRun(t, runs, "orgh", "shop", 1, "v1")
+	appendCycle := func() *delivery.RunCycle {
+		t.Helper()
+		c := &delivery.RunCycle{OrgID: run.OrgID, ProjectID: run.ProjectID, RunID: run.ID, Kind: delivery.CycleKindCoding}
+		if err := cycles.Append(ctx, c); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+		return c
+	}
+	anthropic := appendCycle()
+	ollama := appendCycle()
+	undispatched := appendCycle()
+	dispatchedOn(t, cycles, anthropic, modelconn.AnthropicHost)
+	dispatchedOn(t, cycles, ollama, modelconn.OllamaHost)
+
+	got, err := cycles.GetByIDScoped(ctx, "orgh", anthropic.ID)
+	if err != nil || got == nil {
+		t.Fatalf("GetByIDScoped = (%+v, %v)", got, err)
+	}
+	if got.ModelHost != modelconn.AnthropicHost {
+		t.Fatalf("new cycle model_host = %q, want %q", got.ModelHost, modelconn.AnthropicHost)
+	}
+
+	sonnet := contracts.CapturedUsage{TokenUsage: contracts.TokenUsage{
+		InputTokens: 1_000_000, OutputTokens: 100_000, Model: "claude-sonnet-5", // $2 + $1
+	}}
+	for _, c := range []*delivery.RunCycle{anthropic, ollama, undispatched} {
+		if err := cycles.RecordUsage(ctx, c.ID, sonnet); err != nil {
+			t.Fatalf("RecordUsage(%s): %v", c.ID, err)
+		}
+	}
+
+	timeline, err := cycles.ListByRun(ctx, "orgh", run.ID)
+	if err != nil {
+		t.Fatalf("ListByRun: %v", err)
+	}
+	byID := map[string]delivery.RunCycle{}
+	for _, c := range timeline {
+		byID[c.ID] = c
+	}
+	if c := byID[anthropic.ID]; c.CostUsd == nil || *c.CostUsd != 3.00 {
+		t.Fatalf("(api.anthropic.com, claude-sonnet-5) cost_usd = %v, want 3.00", c.CostUsd)
+	}
+	if c := byID[ollama.ID]; c.CostUsd != nil {
+		t.Fatalf("(ollama.com, claude-sonnet-5) cost_usd = %v, want null: the rate is api.anthropic.com's", *c.CostUsd)
+	}
+	if c := byID[undispatched.ID]; c.CostUsd != nil {
+		t.Fatalf("undispatched cycle cost_usd = %v, want null: it has no host", *c.CostUsd)
+	}
+
+	var ledgerHosts []string
+	if err := db.Raw(`SELECT model_host FROM agent_usage_ledger WHERE source_id = ?`, anthropic.ID).
+		Scan(&ledgerHosts).Error; err != nil {
+		t.Fatalf("read ledger host: %v", err)
+	}
+	if len(ledgerHosts) != 1 || ledgerHosts[0] != modelconn.AnthropicHost {
+		t.Fatalf("ledger model_host = %v, want [%s] copied from the cycle", ledgerHosts, modelconn.AnthropicHost)
+	}
+
+	// Copy-at-dispatch: a closed cycle's host is never rewritten.
+	if _, err := cycles.Finish(ctx, anthropic.ID, "deadbeef"); err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+	if row, err := cycles.NoteModelHost(ctx, anthropic.ID, modelconn.OllamaHost); err != nil || row != nil {
+		t.Fatalf("NoteModelHost(closed) = (%+v, %v), want (nil, nil)", row, err)
 	}
 }

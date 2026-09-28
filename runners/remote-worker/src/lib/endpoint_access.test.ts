@@ -17,22 +17,27 @@
  */
 
 import { test } from "node:test";
+
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import {
   AUTH_BRIDGE_HOST,
   CURL_CONFIG_FILE,
-  PLAYWRIGHT_CLI_CONFIG_FILE,
   curlResolveEntries,
   hostResolverRules,
   probeEndpoints,
-  resolveAuthGatewayAddress,
+  resolveBridgeAddress,
   writeCurlResolveConfig,
-  writePlaywrightCliConfig,
+  agentBrowserWrapperScript,
+  writeAgentBrowserWrapper,
 } from "./endpoint_access.js";
 
+
+const execFileAsync = promisify(execFile);
 const GATEWAY = "10.43.246.32";
 
 /** A lookup stub that answers every name with one address. */
@@ -182,112 +187,138 @@ test("writeCurlResolveConfig replaces an existing config", async () => {
   assert.deepEqual(await fs.promises.readdir(dir), [CURL_CONFIG_FILE]);
 });
 
-// One MAP per host and no port: Chromium's rule maps names, and the URL keeps
-// its own port. Per-host rather than the wildcard the test config uses, so a
-// name nobody probed is never captured.
-test("hostResolverRules maps each resolved host once, without a port", () => {
-  const args = hostResolverRules([
-    { host: "a.localhost", port: 19080, address: GATEWAY },
-    { host: "b.localhost", port: 443, address: "10.0.0.9" },
-    // Same host on a second port — one MAP, not two.
-    { host: "a.localhost", port: 8443, address: GATEWAY },
-  ]);
-  assert.deepEqual(args, [
-    `--host-resolver-rules=MAP a.localhost ${GATEWAY},MAP b.localhost 10.0.0.9`,
-  ]);
+// One rule for the whole family, mapped to the bridge — no port, because
+// Chromium maps names and each URL keeps its own. Endpoint addresses are NOT
+// used: they name the data-plane gateway, which does not serve the IdP.
+test("hostResolverRules maps the whole .localhost family to the bridge", () => {
+  const args = hostResolverRules(
+    [
+      { host: "a.localhost", port: 19080, address: GATEWAY },
+      { host: "b.localhost", port: 443, address: "10.0.0.9" },
+    ],
+    "172.18.0.1",
+  );
+  assert.deepEqual(args, ["--host-resolver-rules=MAP *.localhost 172.18.0.1"]);
+});
+
+// THE regression guard. Chromium separates this flag's own MAP rules with
+// commas, and agent-browser splits AGENT_BROWSER_ARGS on commas as readily as on
+// newlines — so a comma anywhere in the value is a split, including one inside a
+// single flag. Measured on the runner image: with two MAPs in one value, the
+// first host resolves and the second returns ERR_NAME_NOT_RESOLVED. That cost a
+// whole validation run, reported as 15 of 15 scenarios blocked on an
+// unreachable IdP, which reads as a verdict about the app.
+test("the emitted rule carries no comma, so nothing can be split off it", () => {
+  const args = hostResolverRules(
+    [
+      { host: "a.localhost", port: 19080, address: GATEWAY },
+      { host: "b.localhost", port: 443, address: "10.0.0.9" },
+      { host: "c.localhost", port: 8443, address: "10.0.0.7" },
+    ],
+    "172.18.0.1",
+  );
+  assert.equal(args.length, 1, "more than one arg is more than one thing to lose");
+  assert.ok(!(args[0] as string).includes(","), `a comma is a silent split: ${args[0]}`);
 });
 
 test("hostResolverRules returns nothing when there is nothing to map", () => {
+  // No endpoint is no local plane to be on, whether or not a bridge resolved.
   assert.deepEqual(hostResolverRules([]), []);
-  // …and an auth address alone is not something to map: with no endpoint there
-  // is no local plane to be on.
   assert.deepEqual(hostResolverRules([], "172.18.0.1"), []);
+  // A local plane whose bridge did not resolve: no single address serves both
+  // planes, so emit none rather than one that maps the IdP to the wrong gateway.
+  assert.deepEqual(hostResolverRules([{ host: "a.localhost", port: 19080, address: GATEWAY }]), []);
 });
 
-// The IdP is the one wildcard, because the validation context names the app's
-// endpoints and never the IdP — a pattern is the only handle. Appended last so a
-// reader sees the specific rules first.
-test("hostResolverRules appends the IdP pattern when an auth address is known", () => {
-  const args = hostResolverRules([{ host: "a.localhost", port: 19080, address: GATEWAY }], "172.18.0.1");
-  assert.deepEqual(args, [
-    `--host-resolver-rules=MAP a.localhost ${GATEWAY},MAP *.openchoreo.localhost 172.18.0.1`,
-  ]);
-});
-
-// DNS is measurably wrong for the IdP (the rewrite sends *.openchoreo.localhost
-// to the DATA plane, which does not serve it), so the bridge is looked up by
-// name — and an unresolvable bridge must not cost the app endpoints their rules.
-test("resolveAuthGatewayAddress resolves the bridge, and swallows a failure", async () => {
-  const ok = await resolveAuthGatewayAddress(async (host) => {
+// DNS is measurably wrong here (the rewrite sends *.openchoreo.localhost to the
+// DATA plane, which does not serve it), so the bridge is looked up by name. A
+// failure is answered, not thrown: a cloud plane has no bridge and no
+// `.localhost` endpoints either, so the two absences agree.
+test("resolveBridgeAddress resolves the bridge, and answers undefined on failure", async () => {
+  const ok = await resolveBridgeAddress(async (host) => {
     assert.equal(host, AUTH_BRIDGE_HOST);
     return { address: "172.18.0.1" };
   });
   assert.equal(ok, "172.18.0.1");
 
-  const missing = await resolveAuthGatewayAddress(async () => {
+  const missing = await resolveBridgeAddress(async () => {
     throw new Error("ENOTFOUND");
   });
   assert.equal(missing, undefined);
 });
 
-// launchOptions.args ONLY. Naming browser.browserName here would leave `channel`
-// undefined, which re-enables the Chromium sandbox — and that cannot start as
-// the pod's non-root user (ADR-0007). This assertion is the guard on that.
-test("writePlaywrightCliConfig writes only launch args, 0600", async () => {
+// The wrapper is BASH, and every bug it can have is a quoting bug — so these
+// run it rather than reading it. The stand-in "real binary" prints the
+// AGENT_BROWSER_ARGS it was handed, which is the whole contract.
+async function runWrapper(callerArgs: string | undefined, rule: string): Promise<string> {
   const dir = await tmpDir();
-  const written = await writePlaywrightCliConfig(
-    dir,
-    [{ host: "a.localhost", port: 19080, address: GATEWAY }],
-    async () => ({ address: "172.18.0.1" }),
-  );
-  assert.equal(written, path.join(dir, PLAYWRIGHT_CLI_CONFIG_FILE));
+  const stub = path.join(dir, "stub");
+  await fs.promises.writeFile(stub, '#!/usr/bin/env bash\nprintf %s "$AGENT_BROWSER_ARGS"\n', { mode: 0o755 });
+  const wrapper = path.join(dir, "agent-browser");
+  await fs.promises.writeFile(wrapper, agentBrowserWrapperScript(stub, rule), { mode: 0o755 });
+  const env = { ...process.env };
+  if (callerArgs === undefined) delete env.AGENT_BROWSER_ARGS;
+  else env.AGENT_BROWSER_ARGS = callerArgs;
+  const { stdout } = await execFileAsync(wrapper, [], { env });
+  return stdout;
+}
 
-  const body = await fs.promises.readFile(written as string, "utf8");
-  assert.doesNotMatch(body, /browserName/);
-  assert.deepEqual(JSON.parse(body), {
-    browser: {
-      launchOptions: {
-        args: [
-          `--host-resolver-rules=MAP a.localhost ${GATEWAY},MAP *.openchoreo.localhost 172.18.0.1`,
-        ],
-      },
-    },
-  });
-  assert.equal((await fs.promises.stat(written as string)).mode & 0o777, 0o600);
-  assert.deepEqual(await fs.promises.readdir(dir), [PLAYWRIGHT_CLI_CONFIG_FILE]);
+// The rule the platform actually emits: ONE MAP, no comma. A wrapper test
+// cannot prove the browser's own parse — this shell only hands the variable on —
+// which is precisely why the no-comma invariant is pinned upstream, on
+// hostResolverRules, where it is the thing that can be got wrong.
+const RULE = `--host-resolver-rules=MAP *.localhost 172.18.0.1`;
+
+test("the wrapper passes the platform rule through as one argument", async () => {
+  const out = await runWrapper("--no-sandbox", RULE);
+  const args = out.split("\n").filter(Boolean);
+  assert.deepEqual(args, ["--no-sandbox", RULE]);
 });
 
-// An unresolvable bridge is not a reason to lose the endpoint rules: those are
-// what the preflight already proved reachable, and the IdP hop may never be
-// taken. It degrades to exactly the coverage this file had before the IdP rule.
-test("writePlaywrightCliConfig still maps the endpoints when the bridge will not resolve", async () => {
-  const dir = await tmpDir();
-  const written = await writePlaywrightCliConfig(
-    dir,
-    [{ host: "a.localhost", port: 19080, address: GATEWAY }],
-    async () => {
-      throw new Error("ENOTFOUND");
-    },
+// The reason this is a wrapper at all: the agent-browser skill tells an agent to
+// export AGENT_BROWSER_ARGS when the browser will not launch. One that does must
+// not be able to un-map the deployed hosts — measured as 7 of 8 scenarios
+// `blocked` on an unreachable auth issuer.
+test("a caller's own resolver rule is discarded, not merged", async () => {
+  const out = await runWrapper(
+    `--no-sandbox --host-resolver-rules=MAP only-this.localhost 1.2.3.4`,
+    RULE,
   );
-  const cfg = JSON.parse(await fs.promises.readFile(written as string, "utf8"));
-  assert.deepEqual(cfg.browser.launchOptions.args, [
-    `--host-resolver-rules=MAP a.localhost ${GATEWAY}`,
-  ]);
+  assert.ok(!out.includes("only-this.localhost"), `caller rule survived:\n${out}`);
+  assert.ok(out.includes("MAP *.localhost"), `platform rule missing:\n${out}`);
 });
 
-// $PLAYWRIGHT_MCP_CONFIG is fatal when it points at a missing file, so the env
-// is derived from this file's existence. A file left by an earlier run would
-// therefore pin a cluster that no longer exists — it has to be removed, not just
-// left unwritten.
-test("writePlaywrightCliConfig removes a stale config when nothing needs mapping", async () => {
+// A caller that comma-joined its own rule leaves bare `MAP …` fragments once the
+// value is split on commas. They are arguments to nothing and Chromium would
+// refuse them.
+test("bare MAP fragments from a caller's comma join are dropped", async () => {
+  const out = await runWrapper(
+    `--no-sandbox,--host-resolver-rules=MAP x.localhost 9.9.9.9,MAP y.localhost 9.9.9.9`,
+    RULE,
+  );
+  const args = out.split("\n").filter(Boolean);
+  assert.deepEqual(args, ["--no-sandbox", RULE]);
+});
+
+// --no-sandbox is not decoration: Chromium cannot start as the pod's non-root
+// user without it (ADR-0007), and the image sets it.
+test("everything the caller set that is not a resolver rule passes through", async () => {
+  const out = await runWrapper("--no-sandbox\n--disable-gpu", RULE);
+  const args = out.split("\n").filter(Boolean);
+  assert.deepEqual(args, ["--no-sandbox", "--disable-gpu", RULE]);
+});
+
+test("an unset AGENT_BROWSER_ARGS yields the rule alone, with no empty argument", async () => {
+  const out = await runWrapper(undefined, RULE);
+  assert.deepEqual(out.split("\n").filter(Boolean), [RULE]);
+  assert.ok(!out.startsWith("\n"), "leading newline parses as an empty first argument");
+});
+
+// A cloud plane resolves its hostnames normally: nothing to map, so no wrapper,
+// so the image's own agent-browser stays on PATH unshadowed.
+test("no endpoints to map writes no wrapper", async () => {
   const dir = await tmpDir();
-  const stale = path.join(dir, PLAYWRIGHT_CLI_CONFIG_FILE);
-  await fs.promises.writeFile(stale, "stale\n");
-  // A resolvable bridge must not be enough on its own — no endpoint means no
-  // local plane to map, and the file has to go.
-  const written = await writePlaywrightCliConfig(dir, [], async () => ({ address: "172.18.0.1" }));
-  assert.equal(written, undefined);
-  assert.equal(fs.existsSync(stale), false);
+  assert.equal(await writeAgentBrowserWrapper(dir, [], async () => ({ address: "172.18.0.1" })), undefined);
   assert.deepEqual(await fs.promises.readdir(dir), []);
 });
 

@@ -370,7 +370,7 @@ describe("the declared plan", () => {
           entry("specs/design/design.cell", "done"),
           entry("specs/design/domain-model.md", "writing"),
           entry("specs/design/components/a/design.json", "planned"),
-          entry("specs/validation/validation-criteria.json", "planned", "validation"),
+          entry("specs/validation/acceptance/bought-items.feature", "planned", "validation"),
         ],
       }),
     );
@@ -385,7 +385,7 @@ describe("the declared plan", () => {
         agentWorking: true,
         agentFlow: "design",
         planEntries: [
-          entry("specs/validation/validation-criteria.json", "writing", "validation"),
+          entry("specs/validation/acceptance/bought-items.feature", "writing", "validation"),
         ],
       }),
     );
@@ -419,7 +419,7 @@ describe("the declared plan", () => {
         hasValidation: false,
         planWreckage: true,
         planEntries: [
-          entry("specs/validation/validation-criteria.json", "planned", "validation"),
+          entry("specs/validation/acceptance/bought-items.feature", "planned", "validation"),
         ],
       }),
     );

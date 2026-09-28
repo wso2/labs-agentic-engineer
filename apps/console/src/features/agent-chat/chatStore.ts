@@ -219,7 +219,7 @@ export function addMessage(key: string, msg: WithoutId<ChatMessage>): string {
  * Settle an optimistic user row once the dispatch answers.
  *
  * A send paints its row BEFORE the POST — that request resolves the repo, the
- * workspace ref, the Anthropic key, two git heads and two snapshot extracts
+ * workspace ref, the model connection key, two git heads and two snapshot extracts
  * before it returns a turn id, and the user watching their own message not
  * appear for all of that has no way to tell a slow platform from a dropped
  * one. So the row goes up first and is settled here: stamped with the turn it

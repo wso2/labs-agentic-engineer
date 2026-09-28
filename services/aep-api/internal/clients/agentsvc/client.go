@@ -30,9 +30,10 @@
 // Auth is a plain M2M bearer JWT (aud: agents-service) minted per call. The
 // acting org rides the X-Org-Id header — for workspace turns it is
 // LOAD-BEARING: the agents service 403s when it does not match the org
-// segment woven into the conversation id (the tenancy fence). The per-org
-// Anthropic key travels in X-Anthropic-Key (resolved by the caller — there is
-// no platform fallback). The client performs NO stream parsing: Turn hands
+// segment woven into the conversation id (the tenancy fence). The org's model
+// connection key travels in X-Model-Key and the connection itself in the body
+// (both resolved by the caller — there is no platform fallback). The client
+// performs NO stream parsing: Turn hands
 // back the raw response body, and non-2xx pre-stream responses come back as a
 // typed *UpstreamError the caller maps to a BFF status.
 package agentsvc
@@ -46,6 +47,7 @@ import (
 	"net/http"
 
 	"github.com/wso2/aep/aep-api/internal/clients/httpx"
+	"github.com/wso2/aep/aep-api/internal/platform/modelconn"
 )
 
 // WorkspaceRef names the immutable snapshot dirs a turn reads (design D9,
@@ -140,9 +142,18 @@ type PlanContextFile struct {
 // ref differs from the current base). The tool set and the flow's eager skills
 // are NOT sent: the agents service derives both from Turn.
 type TurnRequest struct {
-	Turn                   TurnSpec     `json:"turn"`
-	Workspace              WorkspaceRef `json:"workspace"`
-	FilesChangedExternally bool         `json:"filesChangedExternally,omitempty"`
+	Turn TurnSpec `json:"turn"`
+	// Model is the organization's chosen model for this turn (its one agent
+	// model, resolved per turn). Omitted → the agents service's default
+	// (AGENT_MODEL), which is what a local playground run relies on. Pinned by
+	// @aep/agent-stream's TurnRequest.
+	Model string `json:"model,omitempty"`
+	// Connection is the organization's model connection Model is served from,
+	// resolved per turn beside the key (ConnectionFor). Omitted → the agents
+	// service runs on Anthropic's own API.
+	Connection             *TurnConnection `json:"connection,omitempty"`
+	Workspace              WorkspaceRef    `json:"workspace"`
+	FilesChangedExternally bool            `json:"filesChangedExternally,omitempty"`
 	// Target is the spec-bundle path this turn should write to, when the caller
 	// pins one. The agents service renders it; the BFF never formats it.
 	Target string `json:"target,omitempty"`
@@ -182,14 +193,14 @@ type TurnRequest struct {
 	// in its own turn snapshot. Wire shape pinned by @aep/agent-stream's
 	// TurnAim.
 	Aim *AimBlock `json:"aim,omitempty"`
-	// WebSearch, when true, has the agents service register Anthropic's
-	// provider-executed web_search tool for this turn (external-dependency-
-	// discovery #252) — it lets the model verify a candidate external API/SDK
-	// actually exists before proposing a dependency for it. Unlike MCP, no
-	// BFF-minted credential is needed, so the caller sets this under the SAME
-	// gate as MCP (design-generate or any collab room-scoped turn) without
-	// depending on the MCP minter being wired. Anthropic-only on the agents
-	// side; false/omitted is byte-identical to a turn without it.
+	// WebSearch, when true, gives the turn a web_search tool (external-
+	// dependency-discovery #252) — it lets the model verify a candidate
+	// external API/SDK actually exists before proposing a dependency for it.
+	// Unlike MCP, no BFF-minted credential is needed, so the caller sets this
+	// under the SAME gate as MCP (design-generate or any collab room-scoped
+	// turn) without depending on the MCP minter being wired. Which tool it is
+	// follows the connection's capabilities.webSearch; false/omitted is
+	// byte-identical to a turn without it.
 	WebSearch bool `json:"webSearch,omitempty"`
 	// Surface names where the person reading this turn's prose is sitting
 	// (#580). The agents service inlines that surface's narration skill into
@@ -200,6 +211,55 @@ type TurnRequest struct {
 	// byte-identical to a surface-free turn. Pinned by @aep/agent-stream's
 	// Surface.
 	Surface string `json:"surface,omitempty"`
+}
+
+// TurnConnection is the turn's model connection on the wire: everything the
+// agents service needs to build the model except the key, which rides
+// X-Model-Key. Field names are pinned by @aep/agent-stream's TurnConnection.
+type TurnConnection struct {
+	Format     modelconn.Format     `json:"format"`
+	BaseURL    string               `json:"baseURL"`
+	AuthScheme modelconn.AuthScheme `json:"authScheme"`
+	// ContextWindow and OutputLimit are omitted where the model is known to
+	// the runtime (Anthropic's own API).
+	ContextWindow *int             `json:"contextWindow,omitempty"`
+	OutputLimit   *int             `json:"outputLimit,omitempty"`
+	Capabilities  TurnCapabilities `json:"capabilities"`
+}
+
+// TurnCapabilities is modelconn.Capabilities on the wire, pinned by
+// @aep/agent-stream's ModelCapabilities.
+type TurnCapabilities struct {
+	ClaudeCode         bool                `json:"claudeCode"`
+	ClaudeSubscription bool                `json:"claudeSubscription"`
+	PromptCache        bool                `json:"promptCache"`
+	GeneratedAgents    bool                `json:"generatedAgents"`
+	NativePDF          bool                `json:"nativePdf"`
+	WebSearch          modelconn.WebSearch `json:"webSearch"`
+	ImageInput         modelconn.Tristate  `json:"imageInput"`
+}
+
+// ConnectionFor is c as a turn body carries it, with its capabilities
+// computed here (modelconn.CapabilitiesOf) so the agents service never
+// re-derives them from the host.
+func ConnectionFor(c modelconn.Connection) *TurnConnection {
+	caps := modelconn.CapabilitiesOf(c)
+	return &TurnConnection{
+		Format:        c.Format,
+		BaseURL:       c.BaseURL,
+		AuthScheme:    c.AuthScheme,
+		ContextWindow: c.ContextWindow,
+		OutputLimit:   c.OutputLimit,
+		Capabilities: TurnCapabilities{
+			ClaudeCode:         caps.ClaudeCode,
+			ClaudeSubscription: caps.ClaudeSubscription,
+			PromptCache:        caps.PromptCache,
+			GeneratedAgents:    caps.GeneratedAgents,
+			NativePDF:          caps.NativePDF,
+			WebSearch:          caps.WebSearch,
+			ImageInput:         caps.ImageInput,
+		},
+	}
 }
 
 // SurfaceConsole is the only surface the BFF speaks for: it exists to serve the
@@ -314,10 +374,10 @@ type Client interface {
 	// passthrough (caller must Close). conversationID is the already-namespaced
 	// service id; orgID rides X-Org-Id, which carries the org tenancy claim the
 	// agents service enforces (a mismatch vs the conversation-id org segment
-	// 403s — it is not merely logged); anthropicKey is forwarded as
-	// X-Anthropic-Key (must be non-empty — resolve + 4xx before calling).
-	// A non-200 pre-stream response is returned as *UpstreamError.
-	Turn(ctx context.Context, conversationID, orgID, anthropicKey string, req TurnRequest) (io.ReadCloser, error)
+	// 403s — it is not merely logged); modelKey is the connection's key,
+	// forwarded as X-Model-Key (must be non-empty — resolve + 4xx before
+	// calling). A non-200 pre-stream response is returned as *UpstreamError.
+	Turn(ctx context.Context, conversationID, orgID, modelKey string, req TurnRequest) (io.ReadCloser, error)
 
 	// GetConversation returns the raw {messages: [...]} JSON for chat rehydrate.
 	// A non-200 (e.g. 404 unknown id) is returned as *UpstreamError.
@@ -360,7 +420,7 @@ func New(cfg Config) Client {
 	}
 }
 
-func (c *client) Turn(ctx context.Context, conversationID, orgID, anthropicKey string, req TurnRequest) (io.ReadCloser, error) {
+func (c *client) Turn(ctx context.Context, conversationID, orgID, modelKey string, req TurnRequest) (io.ReadCloser, error) {
 	payload, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal turn request: %w", err)
@@ -372,8 +432,8 @@ func (c *client) Turn(ctx context.Context, conversationID, orgID, anthropicKey s
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
-	if anthropicKey != "" {
-		httpReq.Header.Set("X-Anthropic-Key", anthropicKey)
+	if modelKey != "" {
+		httpReq.Header.Set("X-Model-Key", modelKey)
 	}
 	if err := c.attachAuth(orgID, httpReq); err != nil {
 		return nil, err

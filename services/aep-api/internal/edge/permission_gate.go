@@ -76,6 +76,11 @@ var operationPermissions = map[string][]authz.Permission{
 	// hold (organization.RedactConfigForPermissions). The gate can only allow
 	// or deny a request; it cannot return half of one.
 	"GetConfig": {authz.PermissionGitHubConfig, authz.PermissionModelConfig},
+	// Probes a connection supplied in the body without saving it — the same
+	// key, URL and model a save would write, so the same permission that
+	// authorizes writing them. Not a view: nothing stored is read back, and a
+	// caller who may not configure the model has no connection to test.
+	"TestLlmConnection": {authz.PermissionModelConfig},
 
 	// --- Projects & requirements ----------------------------------------
 	"CreateProject":        {authz.PermissionRequirementUpdate},
@@ -113,6 +118,12 @@ var operationPermissions = map[string][]authz.Permission{
 	// Triggering a build, not reading one: the pre-build dependency/approval
 	// check is part of starting the build it precedes.
 	"GetBuildPreflight": {authz.PermissionBuild},
+	// Starts a fresh validation run against the deployed version — the version
+	// page's "Validate again" action. A run somebody deliberately starts, so it
+	// takes the write permission, not the view permission the page is entered
+	// on (ADR-0034 limits it to the deployed version; that is a lifecycle rule,
+	// not a permission one).
+	"RevalidateBuild": {authz.PermissionBuild},
 	// Discloses a live test-user credential, so it takes the write permission
 	// rather than the view permission its page is entered on.
 	"RevealTestUserPassword": {authz.PermissionBuild},
@@ -129,6 +140,18 @@ var operationPermissions = map[string][]authz.Permission{
 	"StreamRunProgress":             {authz.PermissionBuildView},
 	"StreamTaskLog":                 {authz.PermissionBuildView},
 	"GetProjectDependencyReadiness": {authz.PermissionBuildView},
+
+	// Validation reports on what a version's runs did after they deployed, and
+	// is read from the same run rows the three reads above serve — the ledger
+	// is one row per version, the version page its runs and attempts, the
+	// report one attempt's verdict. So it takes the permission its own surface
+	// is entered on, the one the Validations sidebar leg and the Deployments
+	// pages beside it already lock on. Not ae:design-view: the criteria a run
+	// is judged against are written on the design surface, but nothing here
+	// reads or changes them — these three read outcomes.
+	"ListValidations":     {authz.PermissionBuildView},
+	"GetValidation":       {authz.PermissionBuildView},
+	"GetValidationReport": {authz.PermissionBuildView},
 
 	// --- Design & spec ---------------------------------------------------
 	"ListFiles": {authz.PermissionDesignView},
@@ -240,7 +263,6 @@ var permissionGateCarveOuts = map[string]struct{}{
 	"ListAccessRequests":        {},
 	"CreateRcaAgentReport":      {},
 	"TriggerBuild":              {},
-	"RevalidateBuild":           {},
 	"UpdateComponentConfig":     {},
 	"GetComponent":              {},
 	"GetComponentConfig":        {},
@@ -396,11 +418,12 @@ func containsPermission(held []authz.Permission, want authz.Permission) bool {
 
 // updateConfigPermissions resolves the permission(s) UpdateConfig requires from
 // which section(s) of the patch body are actually populated — gitProvider needs
-// ae:github-config, llm/codingLlm/codingAgent need ae:model-config (the
-// runtime/model pair CodingAgentCard writes is grouped with the credential it
-// bills, per ADR-0016). A patch touching both needs BOTH: unlike
-// operationPermissions' OR semantics, permissionGate requires every permission
-// this function returns.
+// ae:github-config, llm and agents need ae:model-config. The two model sections
+// take one permission between them because they are one setting: the org's
+// model connection (ADR-0038) and the runtime that spends it, including the
+// Claude subscription token that bills in its place (ADR-0036). A patch
+// touching both needs BOTH: unlike operationPermissions' OR semantics,
+// permissionGate requires every permission this function returns.
 //
 // An idp section is refused outright rather than mapped to a permission. It
 // repoints the issuer the org's protected APIs pin JWT validation to (the
@@ -425,7 +448,7 @@ func updateConfigPermissions(request any) ([]authz.Permission, error) {
 	if req.Body.GitProvider.Sent {
 		required = append(required, authz.PermissionGitHubConfig)
 	}
-	if req.Body.LLM.Sent || req.Body.CodingLLM.Sent || req.Body.CodingAgent.Sent {
+	if req.Body.LLM.Sent || req.Body.Agents.Sent {
 		required = append(required, authz.PermissionModelConfig)
 	}
 	return required, nil

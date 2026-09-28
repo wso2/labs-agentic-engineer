@@ -47,7 +47,7 @@ type PlanService struct {
 	repos      RepoResolver
 	versions   VersionReader
 	git        GitReader
-	keys       AnthropicKeyResolver
+	llm        AgentLLMResolver
 	client     TurnClient
 	issues     IssueClient
 	writer     *delivery.IssueWriter
@@ -69,8 +69,8 @@ func (s *PlanService) SetComponentPaths(r ComponentPathReader) { s.paths = r }
 // workspace dispatch (snapshot refs + lineage diffs); issues is the READ half
 // the turn's context is assembled from and writer is the domain's issue-write
 // surface, which is what the tap mints each planned Task through.
-func NewPlanService(repos RepoResolver, versions VersionReader, git GitReader, keys AnthropicKeyResolver, client TurnClient, issues IssueClient, writer *delivery.IssueWriter, snapshots sourcecontrol.SnapshotProvider, skillsRepo SkillsRepoResolver) *PlanService {
-	return &PlanService{repos: repos, versions: versions, git: git, keys: keys, client: client, issues: issues, writer: writer, snapshots: snapshots, skillsRepo: skillsRepo}
+func NewPlanService(repos RepoResolver, versions VersionReader, git GitReader, llm AgentLLMResolver, client TurnClient, issues IssueClient, writer *delivery.IssueWriter, snapshots sourcecontrol.SnapshotProvider, skillsRepo SkillsRepoResolver) *PlanService {
+	return &PlanService{repos: repos, versions: versions, git: git, llm: llm, client: client, issues: issues, writer: writer, snapshots: snapshots, skillsRepo: skillsRepo}
 }
 
 // planSession is a started plan turn: the raw upstream SSE body, the tap that
@@ -102,7 +102,7 @@ func (s *planSession) drain() int {
 // is an error rather than a warning: the run this plan feeds is about to be
 // supervised against the milestone's contents, so a silently short plan would
 // become a run that settles early.
-// Pre-stream failures are typed errors (ErrNoSpecVersion, ErrNoAnthropicKey,
+// Pre-stream failures are typed errors (ErrNoSpecVersion, ErrNoModelConnection,
 // ErrProjectRepoNotFound, ErrPlanInProgress, ErrSkillsRepoUnavailable) or an
 // *agentsvc.UpstreamError.
 func (s *PlanService) PlanIntoMilestone(ctx context.Context, orgID, projectID string, milestoneNumber int) error {
@@ -170,12 +170,12 @@ func (s *PlanService) startPlanLocked(ctx context.Context, orgID, projectID stri
 		return nil, ErrNoSpecVersion
 	}
 
-	apiKey, err := s.keys(ctx, orgID)
+	llm, err := s.llm(ctx, orgID)
 	if err != nil {
-		return nil, fmt.Errorf("resolve anthropic key: %w", err)
+		return nil, fmt.Errorf("resolve agent llm: %w", err)
 	}
-	if apiKey == "" {
-		return nil, ErrNoAnthropicKey
+	if llm.Key == "" {
+		return nil, ErrNoModelConnection
 	}
 
 	ref, err := sourcecontrol.ResolveWorkspaceRef(ctx, s.git.Resolver(), orgID, repo)
@@ -253,7 +253,9 @@ func (s *PlanService) startPlanLocked(ctx context.Context, orgID, projectID stri
 
 	// Detached context so the turn drains even if the client disconnects (§6).
 	detached := context.WithoutCancel(ctx)
-	body, err := s.client.Turn(detached, conversationID, orgID, apiKey, agentsvc.TurnRequest{
+	body, err := s.client.Turn(detached, conversationID, orgID, llm.Key, agentsvc.TurnRequest{
+		Model:      llm.Connection.Model,
+		Connection: agentsvc.ConnectionFor(llm.Connection),
 		Turn: agentsvc.TurnSpec{
 			Kind:        agentsvc.TurnKindPlan,
 			Scope:       planScopeFor(scope, covered),

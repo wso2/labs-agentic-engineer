@@ -494,3 +494,160 @@ func TestTick_FoundPendingPodPastGraceFailsAtOnce(t *testing.T) {
 		t.Fatalf("finished = %q, want startup_failed:pod_not_running on the first tick", got)
 	}
 }
+
+// ---- provider limits ---------------------------------------------------------
+
+// recordingFailures is the run repository's RecordFailure, recorded whole.
+type recordingFailures struct {
+	runID    string
+	failures []delivery.RunFailure
+	err      error
+	// order is shared with the cycle double so a test can see which write came
+	// first — the record has to land while the run is still non-terminal.
+	order *[]string
+}
+
+func (r *recordingFailures) RecordFailure(_ context.Context, id string, f delivery.RunFailure) (*delivery.MilestoneRun, error) {
+	r.runID = id
+	r.failures = append(r.failures, f)
+	if r.order != nil {
+		*r.order = append(*r.order, "record")
+	}
+	return &delivery.MilestoneRun{}, r.err
+}
+
+// orderedCycles notes when the cycle closes, against the same order slice.
+type orderedCycles struct {
+	*watchedCycles
+	order *[]string
+}
+
+func (c orderedCycles) FinishAgentFailed(ctx context.Context, id, reason string) (*delivery.RunCycle, error) {
+	*c.order = append(*c.order, "close")
+	return c.watchedCycles.FinishAgentFailed(ctx, id, reason)
+}
+
+// providerLimitedPod is a runner that stopped on its provider's limit: exit 1,
+// and a terminal `run_settled` carrying the code.
+func providerLimitedPod(settle string) *fakeRuntime {
+	return &fakeRuntime{
+		pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Failed", TerminatedReason: "Error"},
+		logs: []openchoreo.PodLogLine{
+			{Timestamp: time.Now().UTC(), Log: `{"v":2,"seq":7,"ts":"2026-09-26T10:05:00Z","agentId":"lead","kind":"notice","level":"error","code":"terminated","detail":"[provider] terminated"}`},
+			{Timestamp: time.Now().UTC(), Log: settle},
+		},
+	}
+}
+
+// The runner's settle is what separates "the provider refused" from "the agent
+// died": the cycle closes under the reason the supervisor settles BLOCKED on,
+// and the run's failure record carries what the console's sentence names. The
+// record lands BEFORE the close, because closing wakes the supervisor into
+// settling the run, and a settled run takes no record.
+func TestTick_ProviderLimitClosesTheCycleUnderItsOwnReasonAndRecordsTheLimit(t *testing.T) {
+	rt := providerLimitedPod(`{"v":2,"seq":8,"ts":"2026-09-26T10:05:00Z","agentId":"lead","kind":"run_settled","outcome":"failure",` +
+		`"error":"model provider limit reached on ollama.com until 2026-09-26T14:00:00Z","code":"provider_limit",` +
+		`"host":"ollama.com","resetAt":"2026-09-26T14:00:00Z","providerDetail":"Too Many Requests: weekly usage limit reached",` +
+		`"usage":{"inputTokens":5,"outputTokens":1,"model":"gpt-oss:20b"}}`)
+	var order []string
+	cycles := orderedCycles{newWatchedCycles(dispatchedCycle("c9", time.Minute)), &order}
+	failures := &recordingFailures{order: &order}
+	deaths := &recordingDeaths{}
+
+	newTestWatcher(rt, cycles).WithAgentDeathNotifier(deaths).WithRunFailures(failures).Tick(context.Background())
+
+	if got := cycles.finished["c9"]; got != delivery.CycleReasonModelProviderLimit {
+		t.Fatalf("finished = %q, want %q", got, delivery.CycleReasonModelProviderLimit)
+	}
+	if failures.runID != "run-1" || len(failures.failures) != 1 {
+		t.Fatalf("record = %q %+v, want one record on run-1", failures.runID, failures.failures)
+	}
+	f := failures.failures[0]
+	wantReset := time.Date(2026, 9, 26, 14, 0, 0, 0, time.UTC)
+	if f.Code != delivery.RunFailureCodeModelProviderLimit || f.Phase != delivery.RunPhaseCoding ||
+		f.Host != "ollama.com" || f.ResetAt == nil || !f.ResetAt.Equal(wantReset) || f.Permanent {
+		t.Fatalf("record = %+v", f)
+	}
+	if f.Detail != "" {
+		t.Fatalf("the provider's text is logged, never stored: detail = %q", f.Detail)
+	}
+	if !reflect.DeepEqual(order, []string{"record", "close"}) {
+		t.Fatalf("write order = %v, want the record before the close", order)
+	}
+	// The run is still woken — on the same once-only fence as a death.
+	if len(deaths.notices) != 1 || deaths.notices[0].reason != delivery.CycleReasonModelProviderLimit {
+		t.Fatalf("notices = %+v", deaths.notices)
+	}
+	// And the usage on the same line is banked as on any terminal pod.
+	if got := cycles.usage["c9"]; got.InputTokens != 5 {
+		t.Fatalf("usage = %+v", cycles.usage)
+	}
+}
+
+// No reset stated (the five-minute fallback) records no reset time, and a
+// validation cycle records the validating phase.
+func TestTick_ProviderLimitWithNoResetOnAValidationCycle(t *testing.T) {
+	rt := providerLimitedPod(`{"v":2,"seq":8,"ts":"2026-09-26T10:05:00Z","agentId":"lead","kind":"run_settled","outcome":"failure",` +
+		`"error":"model provider limit reached on ollama.com","code":"provider_limit","host":"ollama.com","providerDetail":"429 rate_limit"}`)
+	row := dispatchedCycle("c10", time.Minute)
+	row.Kind = delivery.CycleKindValidation
+	cycles := newWatchedCycles(row)
+	failures := &recordingFailures{}
+
+	newTestWatcher(rt, cycles).WithRunFailures(failures).Tick(context.Background())
+
+	if cycles.finished["c10"] != delivery.CycleReasonModelProviderLimit {
+		t.Fatalf("finished = %+v", cycles.finished)
+	}
+	if len(failures.failures) != 1 || failures.failures[0].ResetAt != nil || failures.failures[0].Phase != delivery.RunPhaseValidating {
+		t.Fatalf("record = %+v", failures.failures)
+	}
+}
+
+// The provider is named by the host the cycle was dispatched on, not by the
+// runner's report: the platform's own record of which connection the Job
+// mounted wins, and the report is only the fallback for an unstamped cycle.
+func TestTick_ProviderLimitNamesTheDispatchedHost(t *testing.T) {
+	rt := providerLimitedPod(`{"v":2,"seq":8,"ts":"2026-09-26T10:05:00Z","agentId":"lead","kind":"run_settled","outcome":"failure",` +
+		`"code":"provider_limit","host":"proxy.example.com"}`)
+	row := dispatchedCycle("c13", time.Minute)
+	row.ModelHost = "ollama.com"
+	cycles := newWatchedCycles(row)
+	failures := &recordingFailures{}
+
+	newTestWatcher(rt, cycles).WithRunFailures(failures).Tick(context.Background())
+
+	if len(failures.failures) != 1 || failures.failures[0].Host != "ollama.com" {
+		t.Fatalf("record = %+v, want the cycle's dispatched host", failures.failures)
+	}
+}
+
+// A failed settle with no code is agent death: no record,
+// and the pod's own reason on the cycle.
+func TestTick_AFailedSettleWithoutTheCodeIsStillAgentDeath(t *testing.T) {
+	rt := providerLimitedPod(`{"v":2,"seq":8,"ts":"2026-09-26T10:05:00Z","agentId":"lead","kind":"run_settled","outcome":"failure","error":"agent stream ended without result"}`)
+	cycles := newWatchedCycles(dispatchedCycle("c11", time.Minute))
+	failures := &recordingFailures{}
+
+	newTestWatcher(rt, cycles).WithRunFailures(failures).Tick(context.Background())
+
+	if cycles.finished["c11"] != "agent_failed:Error" {
+		t.Fatalf("finished = %+v, want the pod's own reason", cycles.finished)
+	}
+	if len(failures.failures) != 0 {
+		t.Fatalf("no provider limit, no record: %+v", failures.failures)
+	}
+}
+
+// The record is best-effort: a repository that refuses it must not stop the
+// cycle closing under the reason the run settles on.
+func TestTick_ProviderLimitRecordFailureStillClosesTheCycle(t *testing.T) {
+	rt := providerLimitedPod(`{"v":2,"seq":8,"ts":"2026-09-26T10:05:00Z","agentId":"lead","kind":"run_settled","outcome":"failure","code":"provider_limit","host":"ollama.com"}`)
+	cycles := newWatchedCycles(dispatchedCycle("c12", time.Minute))
+
+	newTestWatcher(rt, cycles).WithRunFailures(&recordingFailures{err: errors.New("db down")}).Tick(context.Background())
+
+	if cycles.finished["c12"] != delivery.CycleReasonModelProviderLimit {
+		t.Fatalf("finished = %+v", cycles.finished)
+	}
+}

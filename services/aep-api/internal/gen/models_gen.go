@@ -223,66 +223,6 @@ func (e BuildSummaryWaitingReason) Valid() bool {
 	}
 }
 
-// Defines values for CodingAgentModel.
-const (
-	CodingAgentModelClaudeHaiku45 CodingAgentModel = "claude-haiku-4-5"
-	CodingAgentModelClaudeSonnet5 CodingAgentModel = "claude-sonnet-5"
-)
-
-// Valid indicates whether the value is a known member of the CodingAgentModel enum.
-func (e CodingAgentModel) Valid() bool {
-	switch e {
-	case CodingAgentModelClaudeHaiku45:
-		return true
-	case CodingAgentModelClaudeSonnet5:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for DeployStageValidation.
-const (
-	DeployStageValidationAwaitingFix  DeployStageValidation = "awaiting-fix"
-	DeployStageValidationCancelled    DeployStageValidation = "cancelled"
-	DeployStageValidationFailed       DeployStageValidation = "failed"
-	DeployStageValidationInconclusive DeployStageValidation = "inconclusive"
-	DeployStageValidationNone         DeployStageValidation = "none"
-	DeployStageValidationPartial      DeployStageValidation = "partial"
-	DeployStageValidationPassed       DeployStageValidation = "passed"
-	DeployStageValidationRunning      DeployStageValidation = "running"
-	DeployStageValidationSkipped      DeployStageValidation = "skipped"
-	DeployStageValidationUnreported   DeployStageValidation = "unreported"
-)
-
-// Valid indicates whether the value is a known member of the DeployStageValidation enum.
-func (e DeployStageValidation) Valid() bool {
-	switch e {
-	case DeployStageValidationAwaitingFix:
-		return true
-	case DeployStageValidationCancelled:
-		return true
-	case DeployStageValidationFailed:
-		return true
-	case DeployStageValidationInconclusive:
-		return true
-	case DeployStageValidationNone:
-		return true
-	case DeployStageValidationPartial:
-		return true
-	case DeployStageValidationPassed:
-		return true
-	case DeployStageValidationRunning:
-		return true
-	case DeployStageValidationSkipped:
-		return true
-	case DeployStageValidationUnreported:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for EnvValueCellDTOStatus.
 const (
 	EnvValueCellDTOStatusConfigured EnvValueCellDTOStatus = "configured"
@@ -713,6 +653,7 @@ const (
 	RunEventCodeCompaction             RunEventCode = "compaction"
 	RunEventCodeGap                    RunEventCode = "gap"
 	RunEventCodePermissionDenied       RunEventCode = "permission_denied"
+	RunEventCodeProviderLimit          RunEventCode = "provider_limit"
 	RunEventCodeRateLimit              RunEventCode = "rate_limit"
 	RunEventCodeRefusal                RunEventCode = "refusal"
 	RunEventCodeRunnerConfigError      RunEventCode = "runner_config_error"
@@ -739,6 +680,8 @@ func (e RunEventCode) Valid() bool {
 	case RunEventCodeGap:
 		return true
 	case RunEventCodePermissionDenied:
+		return true
+	case RunEventCodeProviderLimit:
 		return true
 	case RunEventCodeRateLimit:
 		return true
@@ -1050,28 +993,28 @@ func (e RunProgressLineEmitter) Valid() bool {
 
 // Defines values for RunValidationVerdict.
 const (
-	Failed       RunValidationVerdict = "failed"
-	Inconclusive RunValidationVerdict = "inconclusive"
-	Partial      RunValidationVerdict = "partial"
-	Passed       RunValidationVerdict = "passed"
-	Skipped      RunValidationVerdict = "skipped"
-	Unreported   RunValidationVerdict = "unreported"
+	RunValidationVerdictFailed       RunValidationVerdict = "failed"
+	RunValidationVerdictInconclusive RunValidationVerdict = "inconclusive"
+	RunValidationVerdictPartial      RunValidationVerdict = "partial"
+	RunValidationVerdictPassed       RunValidationVerdict = "passed"
+	RunValidationVerdictSkipped      RunValidationVerdict = "skipped"
+	RunValidationVerdictUnreported   RunValidationVerdict = "unreported"
 )
 
 // Valid indicates whether the value is a known member of the RunValidationVerdict enum.
 func (e RunValidationVerdict) Valid() bool {
 	switch e {
-	case Failed:
+	case RunValidationVerdictFailed:
 		return true
-	case Inconclusive:
+	case RunValidationVerdictInconclusive:
 		return true
-	case Partial:
+	case RunValidationVerdictPartial:
 		return true
-	case Passed:
+	case RunValidationVerdictPassed:
 		return true
-	case Skipped:
+	case RunValidationVerdictSkipped:
 		return true
-	case Unreported:
+	case RunValidationVerdictUnreported:
 		return true
 	default:
 		return false
@@ -1246,6 +1189,66 @@ func (e TurnInputMultipartIntent) Valid() bool {
 	}
 }
 
+// Defines values for TurnStatusCode.
+const (
+	TurnStatusCodeOutputTruncated TurnStatusCode = "output_truncated"
+	TurnStatusCodeProviderLimit   TurnStatusCode = "provider_limit"
+)
+
+// Valid indicates whether the value is a known member of the TurnStatusCode enum.
+func (e TurnStatusCode) Valid() bool {
+	switch e {
+	case TurnStatusCodeOutputTruncated:
+		return true
+	case TurnStatusCodeProviderLimit:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ValidationState.
+const (
+	ValidationStateAwaitingFix  ValidationState = "awaiting-fix"
+	ValidationStateCancelled    ValidationState = "cancelled"
+	ValidationStateFailed       ValidationState = "failed"
+	ValidationStateInconclusive ValidationState = "inconclusive"
+	ValidationStateNone         ValidationState = "none"
+	ValidationStatePartial      ValidationState = "partial"
+	ValidationStatePassed       ValidationState = "passed"
+	ValidationStateRunning      ValidationState = "running"
+	ValidationStateSkipped      ValidationState = "skipped"
+	ValidationStateUnreported   ValidationState = "unreported"
+)
+
+// Valid indicates whether the value is a known member of the ValidationState enum.
+func (e ValidationState) Valid() bool {
+	switch e {
+	case ValidationStateAwaitingFix:
+		return true
+	case ValidationStateCancelled:
+		return true
+	case ValidationStateFailed:
+		return true
+	case ValidationStateInconclusive:
+		return true
+	case ValidationStateNone:
+		return true
+	case ValidationStatePartial:
+		return true
+	case ValidationStatePassed:
+		return true
+	case ValidationStateRunning:
+		return true
+	case ValidationStateSkipped:
+		return true
+	case ValidationStateUnreported:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for WorkloadDependencyDTOKind.
 const (
 	WorkloadDependencyDTOKindOrgService WorkloadDependencyDTOKind = "org-service"
@@ -1309,6 +1312,15 @@ type AcceptAssumptionBody struct {
 	Note string `json:"note,omitempty"`
 }
 
+// AcceptanceCriteriaFile One acceptance criteria file as it stood at the snapshot's commit.
+type AcceptanceCriteriaFile struct {
+	// Content The file's Gherkin source, verbatim.
+	Content string `json:"content"`
+
+	// Path Repository path, e.g. specs/validation/acceptance/checkout.feature.
+	Path string `json:"path"`
+}
+
 // AccessRequest defines model for AccessRequest.
 type AccessRequest struct {
 	ConsumerComponentName string    `json:"consumerComponentName"`
@@ -1358,12 +1370,19 @@ type ActivityFeed struct {
 //
 // The values are the same two RunEvent.runtime records, and deliberately so: what an org SELECTS and what a finished run REPORTS have to be the same vocabulary or a reader cannot line them up. The lifetimes differ — this is a setting that can change, that one is a fact about an attempt that cannot.
 //
-// `opencode` is in the enum because the design carries it and because a client should be able to render the choice; it is NOT selectable while the platform ships no adapter for it, and the API rejects it with a reason naming what is missing. Do not treat membership of this enum as availability.
+// Both runtimes run on the organization's model connection. `claude-code` speaks only the Anthropic format, so an OpenAI-compatible connection needs `opencode` (`agents_runtime_requires_anthropic_format`). Only `claude-code` can bill a Claude subscription instead, so choosing `opencode` deletes a stored subscription (ADR-0028, ADR-0036).
 type AgentRuntime string
 
 // AgentStatus How an agent, or a backgrounded task an agent owns, ended — as the runtime itself reported it. `running` is the only non-terminal value and exists so a consumer can repaint a row without waiting for the end; `completed` is a clean finish; `failed` is one the runtime called an error; `stopped` is a cancellation or a kill from outside, which is NOT a failure — the work did not go wrong, it was taken away, and a run a user stopped must not be shown as broken.
 // Carried by RunEvent's `agent_settled` and `task_settled`, which are the only places a status is authoritative. A settle event that never arrives means the platform never learned how the agent ended; it does not mean the agent is still running.
 type AgentStatus string
+
+// AgentsProjection How an organization's agents run: the coding agent's runtime and the Claude subscription coding bills to instead of the connection's key. The model is part of the connection (`llm.model`).
+//
+// ALWAYS present: every org has an effective runtime whether or not anyone has chosen it, so the section carries the platform's default until someone does. `updatedAt`/`updatedBy` are null exactly when nobody has — which is what tells "the platform's default" apart from "somebody chose the same value".
+//
+// A coding run copies the runtime (and the connection) when it is dispatched, so a run in flight keeps what it was launched with.
+type AgentsProjection = orgconfig.AgentsProjection
 
 // ApplyConflict One file whose baseSha no longer matches HEAD.
 type ApplyConflict struct {
@@ -1570,18 +1589,6 @@ type BuildSummaryStatus string
 
 // BuildSummaryWaitingReason Why an in-progress version is waiting rather than moving. Empty for the ordinary between-cycles park, which needs no explanation. `external-values` is the deploy gate — the run is built and ready to deploy, and every remaining blocker is a value only a human can supply. It is carried here so a ledger row can say the version is waiting on the reader instead of reading as a run an agent is still working; the dependency NAMES stay on MilestoneRunView, where the run read that has them is already being made.
 type BuildSummaryWaitingReason string
-
-// CodingAgentModel The model an organization's coding runs bill to.
-//
-// Narrower than the list any runtime can serve, and narrow for one reason: the platform stamps a run's cost from a per-model rate table, and that stamp is ALL-OR-NOTHING across a cycle's capture — one model with no rate blanks the cost of the whole cycle, not just its own share. So a model is offered here only once the platform can price it. Adding one is a rate row and a contract change together, never one without the other.
-type CodingAgentModel string
-
-// CodingAgentProjection The runtime and model an organization's coding runs use.
-//
-// ALWAYS present, unlike the credential sections: every org has an effective runtime and model whether or not anyone has ever opened the setting. `updatedAt`/`updatedBy` are null exactly when nobody has — which is what tells "the platform's defaults" apart from "somebody chose the same values".
-//
-// A change applies from the NEXT cycle. Dispatch copies these onto the run it starts, so a run already in flight keeps the runtime and model it was launched with; re-reading the setting mid-run would leave a feed whose model names disagree with the tokens they were billed for.
-type CodingAgentProjection = orgconfig.CodingAgentProjection
 
 // CollabSessionOutputBody defines model for CollabSessionOutputBody.
 type CollabSessionOutputBody struct {
@@ -1816,6 +1823,9 @@ type DependencyContractResponse struct {
 	Contract string `json:"contract"`
 }
 
+// DependencyOperationStatus One `x-aep.tools.openapi[].allow` entry's read-time computed resolution against the dependency it targets — status/reason are computed by spec.ComputeAgentToolStatus, never authored, never persisted.
+type DependencyOperationStatus = contracts.DependencyOperationStatus
+
 // DependencyStatus defines model for DependencyStatus.
 type DependencyStatus struct {
 	Outputs    []string                     `json:"outputs"`
@@ -1836,23 +1846,12 @@ type DeployStage struct {
 	} `json:"components"`
 	Status string `json:"status"`
 
-	// Validation Validation state of the newest milestone run. This MIRRORS the run's verdict rather than folding it, so the chip says what the run concluded: a fold would have to discard `partial`, `inconclusive` and `unreported` at exactly the surface that needs them, and `completed` never said whether anything passed.
-	// Four LIFECYCLE values. none is PENDING, never settled: a verdict is expected and has not arrived, because a run is live or a dev run filed the version's validation task and nothing has started it yet. A client must not read it as "there is no verdict to wait for" — that is what skipped and inconclusive say. running is a validation CYCLE in flight, not merely a live run with no verdict yet. awaiting-fix is validation having failed with the run repairing it — the work in flight is a CODING cycle, which is why the state names the implementation rather than validation. cancelled is a person STOPPING the judging: a validation run settled cancelled before recording a verdict, so nothing will answer for this version unless somebody re-asks. The rest are the verdict verbatim. They are mutually exclusive in time, so nothing is hidden behind another.
-	// passed (every criterion was automated and passed), partial (some passed, none failed, some were never covered), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the validation cycle's merge commit), skipped (no validation criteria, and incident runs, which get no validation cycle).
-	// failed and unreported fail the run only once its validation attempts are spent: while attempts remain the run repairs and re-validates, and reads awaiting-fix in the meantime.
-	// The report path and per-cycle detail live on the version's run story (list-build-runs).
-	Validation DeployStageValidation `json:"validation"`
+	// Validation Where the deployed version's validation stands, in the shared ValidationState vocabulary. The report path and the per-attempt detail behind it live on the version's run story (list-build-runs) and its validation history (get-validation).
+	Validation ValidationState `json:"validation"`
 
 	// Version Spec tag live in dev; "" if nothing deployed.
 	Version string `json:"version"`
 }
-
-// DeployStageValidation Validation state of the newest milestone run. This MIRRORS the run's verdict rather than folding it, so the chip says what the run concluded: a fold would have to discard `partial`, `inconclusive` and `unreported` at exactly the surface that needs them, and `completed` never said whether anything passed.
-// Four LIFECYCLE values. none is PENDING, never settled: a verdict is expected and has not arrived, because a run is live or a dev run filed the version's validation task and nothing has started it yet. A client must not read it as "there is no verdict to wait for" — that is what skipped and inconclusive say. running is a validation CYCLE in flight, not merely a live run with no verdict yet. awaiting-fix is validation having failed with the run repairing it — the work in flight is a CODING cycle, which is why the state names the implementation rather than validation. cancelled is a person STOPPING the judging: a validation run settled cancelled before recording a verdict, so nothing will answer for this version unless somebody re-asks. The rest are the verdict verbatim. They are mutually exclusive in time, so nothing is hidden behind another.
-// passed (every criterion was automated and passed), partial (some passed, none failed, some were never covered), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the validation cycle's merge commit), skipped (no validation criteria, and incident runs, which get no validation cycle).
-// failed and unreported fail the run only once its validation attempts are spent: while attempts remain the run repairs and re-validates, and reads awaiting-fix in the meantime.
-// The report path and per-cycle detail live on the version's run story (list-build-runs).
-type DeployStageValidation string
 
 // Deployment defines model for Deployment.
 type Deployment struct {
@@ -2073,7 +2072,19 @@ type IssueResult struct {
 	URL     string `json:"url"`
 }
 
-// LLMProjection defines model for LLMProjection.
+// LLMCapabilities What a connection supports, computed by the platform from its format, host and probe, so the console holds no host rules of its own.
+type LLMCapabilities = orgconfig.LLMCapabilities
+
+// LLMCheck What probing a connection found: the connection as it would be saved, whether the endpoint lists the model, and what it supports. The card draws its info box and Claude Code tile from `capabilities` and `priced` here before a save, and from the projection after.
+type LLMCheck = orgconfig.LLMCheck
+
+// LLMFormatOption One API format a connection may speak.
+type LLMFormatOption = orgconfig.LLMFormatOption
+
+// LLMPatch A model connection, field by field: an absent field keeps the saved value (or, on first connect, the format's default). Any public https endpoint speaking one of the formats; private, cluster and plain-http hosts are refused.
+type LLMPatch = orgconfig.LLMPatch
+
+// LLMProjection The organization's model connection, as every agent uses it. A stored connection is usable by construction: a save is refused unless the probe passes.
 type LLMProjection = orgconfig.LLMProjection
 
 // Lineage defines model for Lineage.
@@ -2110,10 +2121,10 @@ type MilestoneRunView struct {
 	Origin    MilestoneRunViewOrigin `json:"origin"`
 	StartedAt *time.Time             `json:"startedAt,omitempty"`
 
-	// State planning is the fill window — the version's milestone is still being written (gates minted, then issues planned in). waiting is the unbounded wait between cycles, where something outside the platform is needed. blocked is terminal and is NOT a failure — the org has no agent concurrency slot left, so the cycle was never launched (see terminalReason agent-quota-blocked).
+	// State planning is the fill window — the version's milestone is still being written (gates minted, then issues planned in). waiting is the unbounded wait between cycles, where something outside the platform is needed. blocked is terminal and is NOT a failure — the org has no agent concurrency slot left, so the cycle was never launched (see terminalReason agent-quota-blocked), or the model provider's usage limit stopped the coding agent (terminalReason model-provider-limit); either way a person starts the run again.
 	State MilestoneRunViewState `json:"state"`
 
-	// TerminalReason Why a non-succeeded run stopped. Each value names exactly one failure class; empty while the run is non-terminal and on a succeeded run. agent-quota-blocked explains state=blocked.
+	// TerminalReason Why a non-succeeded run stopped. Each value names exactly one failure class; empty while the run is non-terminal and on a succeeded run. agent-quota-blocked, publisher-credentials-missing and model-provider-limit explain state=blocked.
 	TerminalReason string `json:"terminalReason,omitempty"`
 
 	// Validation The run's validation outcome. The verdict is a RUN property, not a per-issue one, and this is where the deployment surface reads it.
@@ -2129,7 +2140,7 @@ type MilestoneRunViewKind string
 // MilestoneRunViewOrigin Where this run was started from. A label on the trigger — the behaviour is the run's kind.
 type MilestoneRunViewOrigin string
 
-// MilestoneRunViewState planning is the fill window — the version's milestone is still being written (gates minted, then issues planned in). waiting is the unbounded wait between cycles, where something outside the platform is needed. blocked is terminal and is NOT a failure — the org has no agent concurrency slot left, so the cycle was never launched (see terminalReason agent-quota-blocked).
+// MilestoneRunViewState planning is the fill window — the version's milestone is still being written (gates minted, then issues planned in). waiting is the unbounded wait between cycles, where something outside the platform is needed. blocked is terminal and is NOT a failure — the org has no agent concurrency slot left, so the cycle was never launched (see terminalReason agent-quota-blocked), or the model provider's usage limit stopped the coding agent (terminalReason model-provider-limit); either way a person starts the run again.
 type MilestoneRunViewState string
 
 // MilestoneRunViewWaitingReason Why a `waiting` run is waiting. Empty for the ordinary between-cycles park, which needs no explanation. `external-values` is the deploy gate — the run is built and ready to deploy, and every remaining blocker is a value only a human can supply. That park is unbounded and only cancellation or the values arriving exits it, so a client that renders `waiting` without this reads a working run as a hung one.
@@ -2363,8 +2374,17 @@ type ProjectRolesView struct {
 	// Roles The WHOLE directory catalog, name-ordered — not just this project's roles. Roles are shared, so the panel shows which existing role a design reuses. Empty when directoryAvailable is false.
 	Roles []ProjectRoleState `json:"roles,omitempty"`
 
+	// SignIn Absent when the project declares no sign-in resource or its binding has not resolved yet.
+	SignIn *ProjectSignIn `json:"signIn,omitempty"`
+
 	// TestUsers The test accounts THIS project's design references, role-ordered.
 	TestUsers []ProjectTestUserState `json:"testUsers,omitempty"`
+}
+
+// ProjectSignIn How a client outside a project's own components signs in to it - the issuer to sign in AT and the public OAuth client to sign in AS. Both are public. Absent from a view when the project declares no sign-in resource or its binding has not resolved yet.
+type ProjectSignIn struct {
+	ClientID string `json:"clientId"`
+	Issuer   string `json:"issuer"`
 }
 
 // ProjectStatus Computed SDLC phase and artifact states.
@@ -2681,9 +2701,10 @@ type RunEvent struct {
 	// Branch `git_push` and `gh_action`: the branch pushed to, or the branch the workflow run is on.
 	Branch string `json:"branch,omitempty"`
 
-	// Code `notice` only: WHICH condition, as a closed set. Closed on purpose, twice over — a consumer can react to one condition without parsing prose, and no free text (a prompt, a credential, a path) can ride a notice into a user-visible build log. It is also where the WORDING comes from: a surface renders a code's own sentence (`@aep/progress-view` owns those), so the same condition cannot read one way in the console and another in the playground, which is exactly what happened while each producer wrote its own prose.
+	// Code `notice`, and `run_settled`'s one code below: WHICH condition, as a closed set. Closed on purpose, twice over — a consumer can react to one condition without parsing prose, and no free text (a prompt, a credential, a path) can ride a notice into a user-visible build log. It is also where the WORDING comes from: a surface renders a code's own sentence (`@aep/progress-view` owns those), so the same condition cannot read one way in the console and another in the playground, which is exactly what happened while each producer wrote its own prose.
 	// Nine conditions the RUN can hit. `api_retry` a retryable model failure the runtime is re-attempting; `compaction` the session's context being compacted; `refusal` the model declining to answer; `rate_limit` the provider throttling; `permission_denied` a tool call the harness refused; `terminated` the run being killed from outside; `workspace_guard` a write denied outside the workspace; `gap` the feed itself losing events (which also shows up as RunCycleView.recording `gaps`); `artifact_failed` something the run produced that could not be stored.
 	// Eight more describe the stretch BEFORE the first model turn — the dark zone, which is the slowest part of a run and used to show as a dead "waiting…". Six are the platform's reading of pod truth: `runner_scheduling` no runner has a node yet; `runner_unschedulable` the cluster has no room for one; `runner_pulling_image` the image is being fetched and the container prepared; `runner_image_pull_backoff` that fetch is failing and retrying; `runner_config_error` the container cannot start because its configuration or secrets are wrong; `runner_starting` the container is up and the agent is booting. Two are the runner's own, once it has a process but no session: `workspace_provisioning` it is cloning the repo, mirroring skills and installing credentials; `workspace_ready` that finished and the agent is about to start. They are notices rather than agent events for the same reason throughout: a pod that has not started is not an agent, and there is no session to report a phrase about.
+	// `run_settled` carries one code of its own: `provider_limit`, the model provider refused the run's calls with HTTP 429 for longer than a wait (a `retry-after` of five minutes or more, or five minutes of 429 retries in total). The run stopped rather than retry until its deadline; `host` and, when the provider gave one, `resetAt` say whose limit and until when. No other code appears on `run_settled`, and `provider_limit` appears nowhere else.
 	Code RunEventCode `json:"code,omitempty"`
 
 	// Command `tool_use`, `tool_result` and the `git_*` kinds: the command line that ran, as the producer scrubbed it. The producer is the only layer that can scrub it — by the time it reaches a consumer it is already on a user-visible feed — so a producer that cannot redact a command omits this rather than sending it.
@@ -2709,6 +2730,9 @@ type RunEvent struct {
 
 	// Files `git_commit` only: how many files the commit touched.
 	Files int `json:"files,omitempty"`
+
+	// Host `run_settled` with `code: provider_limit` only: the host of the model endpoint whose limit stopped the run (`ollama.com`), as the run's connection named it. It is what the reader's sentence names — whose plan is spent — and it is display only: nothing prices or routes on a producer's host.
+	Host string `json:"host,omitempty"`
 
 	// ItemID `work_item` only: WHICH named unit of work this event is about — the key a consumer folds on, since one item's status changes several times over a run and a reader wants one row repainted rather than five rows printed. A criterion id ("AC-003-a") when `source` is `criterion`, the runtime's own task id when it is `plan`.
 	ItemID string `json:"itemId,omitempty"`
@@ -2752,11 +2776,17 @@ type RunEvent struct {
 	// Phrase `agent_progress` only: what the agent says it is doing right now, in its own words, capped and scrubbed. It is a state, not a log line — a new phrase REPLACES the previous one on that agent's row rather than appending, which is the whole reason the kind exists separately from `notice`.
 	Phrase string `json:"phrase,omitempty"`
 
+	// ProviderDetail `run_settled` with `code: provider_limit` only: the provider's own words on the last 429 the runtime reported (its retry message, or its status and error class), capped and scrubbed. It is evidence for the operator, who learns each provider's limit shape from it; the platform logs it and neither stores nor shows it, because it is a third party's text.
+	ProviderDetail string `json:"providerDetail,omitempty"`
+
 	// Ref `heartbeat` only: WHAT is being waited on — the `toolUseId` when `waitingOn` is `tool`, the `agentId` when it is `agent`. Absent when `waitingOn` is `model`, because the wait is then the emitting agent's own turn and `agentId` already names it.
 	Ref string `json:"ref,omitempty"`
 
 	// Report `agent_settled` only: the agent's closing summary of what it did, capped and scrubbed. Treat it as the only copy — a spawned agent's transcript does not reach this feed and dies with the pod — so an agent that settles without one leaves a reader nothing but counters.
 	Report string `json:"report,omitempty"`
+
+	// ResetAt `run_settled` with `code: provider_limit` only: when the provider said its limit resets — the runtime's retry delay behind a `retry-after` of five minutes or more. Absent when the provider stated no reset, which is the case the five-minute fallback exists for: a reader is told to try again later rather than given a time nobody promised.
+	ResetAt *time.Time `json:"resetAt,omitempty"`
 
 	// Role `agent_started`: what KIND of agent this is, in the runtime's own vocabulary (`subagent_type` under claude-code, the agent name under opencode). Distinct from `label`: `role` is the reusable definition somebody configured, `label` is this one instance's job.
 	Role string `json:"role,omitempty"`
@@ -2816,9 +2846,10 @@ type RunEvent struct {
 	WaitingOn RunEventWaitingOn `json:"waitingOn,omitempty"`
 }
 
-// RunEventCode `notice` only: WHICH condition, as a closed set. Closed on purpose, twice over — a consumer can react to one condition without parsing prose, and no free text (a prompt, a credential, a path) can ride a notice into a user-visible build log. It is also where the WORDING comes from: a surface renders a code's own sentence (`@aep/progress-view` owns those), so the same condition cannot read one way in the console and another in the playground, which is exactly what happened while each producer wrote its own prose.
+// RunEventCode `notice`, and `run_settled`'s one code below: WHICH condition, as a closed set. Closed on purpose, twice over — a consumer can react to one condition without parsing prose, and no free text (a prompt, a credential, a path) can ride a notice into a user-visible build log. It is also where the WORDING comes from: a surface renders a code's own sentence (`@aep/progress-view` owns those), so the same condition cannot read one way in the console and another in the playground, which is exactly what happened while each producer wrote its own prose.
 // Nine conditions the RUN can hit. `api_retry` a retryable model failure the runtime is re-attempting; `compaction` the session's context being compacted; `refusal` the model declining to answer; `rate_limit` the provider throttling; `permission_denied` a tool call the harness refused; `terminated` the run being killed from outside; `workspace_guard` a write denied outside the workspace; `gap` the feed itself losing events (which also shows up as RunCycleView.recording `gaps`); `artifact_failed` something the run produced that could not be stored.
 // Eight more describe the stretch BEFORE the first model turn — the dark zone, which is the slowest part of a run and used to show as a dead "waiting…". Six are the platform's reading of pod truth: `runner_scheduling` no runner has a node yet; `runner_unschedulable` the cluster has no room for one; `runner_pulling_image` the image is being fetched and the container prepared; `runner_image_pull_backoff` that fetch is failing and retrying; `runner_config_error` the container cannot start because its configuration or secrets are wrong; `runner_starting` the container is up and the agent is booting. Two are the runner's own, once it has a process but no session: `workspace_provisioning` it is cloning the repo, mirroring skills and installing credentials; `workspace_ready` that finished and the agent is about to start. They are notices rather than agent events for the same reason throughout: a pod that has not started is not an agent, and there is no session to report a phrase about.
+// `run_settled` carries one code of its own: `provider_limit`, the model provider refused the run's calls with HTTP 429 for longer than a wait (a `retry-after` of five minutes or more, or five minutes of 429 retries in total). The run stopped rather than retry until its deadline; `host` and, when the provider gave one, `resetAt` say whose limit and until when. No other code appears on `run_settled`, and `provider_limit` appears nowhere else.
 type RunEventCode string
 
 // RunEventItemStatus `work_item` only: where that item now stands. The enum is the union of both sources and `source` says which half applies. `planned | exploring | authoring | running | healing | pass | fail` is a validation criterion moving through the method in ADR-0009; `pending | in_progress | completed | deleted` is an entry of an agent's own plan, in the vocabulary the runtime's task-list tool uses. They are not interchangeable: `completed` says a plan entry was ticked off, `pass` says a criterion was asserted and held.
@@ -2854,7 +2885,7 @@ type RunFailure struct {
 	// Attempts Attempts that have hit this fault so far.
 	Attempts int64 `json:"attempts"`
 
-	// Code Which failure class. `dependency-unprovisionable` a dependency the platform cannot author however often it tries (a schema the ResourceType builder refuses, a ClusterResourceType nobody installed, a Resource that never cuts a release) — the design has to change; `dependency-provision-failed` provisioning failed for a reason the platform could not call permanent, and the bounded retry is being or has been spent; `plan-turn-failed` the planning turn errored (an LLM or transport error, retried); `repository-unavailable` the run's repository, issue or credential is gone.
+	// Code Which failure class. `dependency-unprovisionable` a dependency the platform cannot author however often it tries (a schema the ResourceType builder refuses, a ClusterResourceType nobody installed, a Resource that never cuts a release) — the design has to change; `dependency-provision-failed` provisioning failed for a reason the platform could not call permanent, and the bounded retry is being or has been spent; `plan-turn-failed` the planning turn errored (an LLM or transport error, retried); `repository-unavailable` the run's repository, issue or credential is gone; `model-provider-limit` the model provider's usage limit stopped the coding agent — the run is `blocked`, not failed, and `host` and `resetAt` say whose limit and until when.
 	Code string `json:"code"`
 
 	// Component The component that declared the failing dependency, when the fault has one.
@@ -2866,7 +2897,10 @@ type RunFailure struct {
 	// Detail The platform's recorded error text, scrubbed and capped at the producer.
 	Detail  string    `json:"detail,omitempty"`
 	FirstAt time.Time `json:"firstAt"`
-	LastAt  time.Time `json:"lastAt"`
+
+	// Host `model-provider-limit` only: the host of the model endpoint whose limit was reached.
+	Host   string    `json:"host,omitempty"`
+	LastAt time.Time `json:"lastAt"`
 
 	// MaxAttempts The activity's retry bound; 0 when unbounded.
 	MaxAttempts int64 `json:"maxAttempts"`
@@ -2876,6 +2910,9 @@ type RunFailure struct {
 
 	// Phase The run phase the fault was met in.
 	Phase string `json:"phase"`
+
+	// ResetAt `model-provider-limit` only: when the provider said its limit resets. Absent when it stated no reset.
+	ResetAt *time.Time `json:"resetAt,omitempty"`
 
 	// WorkflowID The run's workflow id — the handle an operator reads history by. Derived at read time, never stored.
 	WorkflowID string `json:"workflowId,omitempty"`
@@ -3018,7 +3055,7 @@ type SkillDetailBody struct {
 	OrgID            string            `json:"orgId"`
 	References       map[string]string `json:"references"`
 
-	// Required True when the coding runner reads this skill on every run and cannot start without it (`aep`, and `aep-validation` for a validation task). The mirror only copies enabled skills, so disabling one of these would take the procedure away from every build in the org — `PATCH /skills/{name}` refuses it with 409. The console renders the availability toggle as unavailable rather than letting the call fail.
+	// Required True when the runner reads this skill as a run's workflow and cannot start without it: `aep` for a coding run, `validation-task` for a validation run. The mirror only copies enabled skills, so disabling one of these would take the procedure away from every build in the org — `PATCH /skills/{name}` refuses it with 409. The console renders the availability toggle as unavailable rather than letting the call fail.
 	Required  bool      `json:"required"`
 	SkillMd   string    `json:"skillMd"`
 	UpdatedAt time.Time `json:"updatedAt"`
@@ -3034,7 +3071,7 @@ type SkillSummary struct {
 	Kind        string `json:"kind"`
 	Name        string `json:"name"`
 
-	// Required True when the coding runner reads this skill on every run and cannot start without it (`aep`, and `aep-validation` for a validation task). The mirror only copies enabled skills, so disabling one of these would take the procedure away from every build in the org — `PATCH /skills/{name}` refuses it with 409. The console renders the availability toggle as unavailable rather than letting the call fail.
+	// Required True when the runner reads this skill as a run's workflow and cannot start without it: `aep` for a coding run, `validation-task` for a validation run. The mirror only copies enabled skills, so disabling one of these would take the procedure away from every build in the org — `PATCH /skills/{name}` refuses it with 409. The console renders the availability toggle as unavailable rather than letting the call fail.
 	Required bool `json:"required"`
 }
 
@@ -3112,6 +3149,9 @@ type StartConnectOutputBody struct {
 type StatusMsg struct {
 	Status string `json:"status"`
 }
+
+// SubscriptionProjection A stored Claude subscription token, masked. It bills the coding agent's runs to a Claude plan instead of the organization's API key, and only Claude Code can present it.
+type SubscriptionProjection = orgconfig.SubscriptionProjection
 
 // TagList defines model for TagList.
 type TagList struct {
@@ -3402,10 +3442,16 @@ type TurnStatus struct {
 	AuthorDisplayName string `json:"authorDisplayName,omitempty"`
 
 	// AuthorID Who started this turn — EMAIL-anchored, matching the console's live author identity, which is what lets a client tell its own turn from a teammate's. Empty when no attributable human sent it (an M2M token, a minimal user token, or a turn dispatched before the display record was stored). Flat rather than a nested object so "absent" is one convention across this schema: the empty string, exactly as `instruction` uses it.
-	AuthorID       string    `json:"authorId,omitempty"`
-	CommitSha      string    `json:"commitSha,omitempty"`
-	ConversationID string    `json:"conversationId"`
-	CreatedAt      time.Time `json:"createdAt"`
+	AuthorID string `json:"authorId,omitempty"`
+
+	// Code Why a failed turn failed, when the agents service could name it (reason `agent-error`): `provider_limit`, the model provider refused the turn's calls with HTTP 429 for longer than a wait (a `retry-after` of five minutes or more, or five minutes of 429 retries in total); `output_truncated`, the connection's output limit cut a file write off before it finished, so nothing was written. `message` carries the agents service's sentence for it. Absent on every other turn.
+	Code           TurnStatusCode `json:"code,omitempty"`
+	CommitSha      string         `json:"commitSha,omitempty"`
+	ConversationID string         `json:"conversationId"`
+	CreatedAt      time.Time      `json:"createdAt"`
+
+	// Host `code: provider_limit` only: the host of the model endpoint whose limit stopped the turn (`ollama.com`), as the turn's connection named it. Display only — what the reader's sentence names.
+	Host string `json:"host,omitempty"`
 
 	// Instruction What this turn's DISPLAY record says — the transcript line for the message that started it. Present so a client attaching to a turn it did not send can render the sender's message immediately, instead of narration under a blank space: the conversation store persists a turn's transcript only when the turn ENDS, so a history read mid-turn cannot supply it. Empty on turns dispatched before this field existed. Not the model's prompt — the agents service composes that from the turn spec and it never crosses this boundary.
 	Instruction string   `json:"instruction,omitempty"`
@@ -3414,12 +3460,18 @@ type TurnStatus struct {
 	Paths       []string `json:"paths,omitempty"`
 	Reason      string   `json:"reason,omitempty"`
 
+	// ResetAt `code: provider_limit` only: when the provider said its limit resets. Absent when it stated no reset, so a reader is told to try again later rather than given a time nobody promised.
+	ResetAt *time.Time `json:"resetAt,omitempty"`
+
 	// Status running, completed, failed
 	Status    string    `json:"status"`
 	TurnID    string    `json:"turnId"`
 	UpdatedAt time.Time `json:"updatedAt"`
 	UseCase   string    `json:"useCase"`
 }
+
+// TurnStatusCode Why a failed turn failed, when the agents service could name it (reason `agent-error`): `provider_limit`, the model provider refused the turn's calls with HTTP 429 for longer than a wait (a `retry-after` of five minutes or more, or five minutes of 429 retries in total); `output_truncated`, the connection's output limit cut a file write off before it finished, so nothing was written. `message` carries the agents service's sentence for it. Absent on every other turn.
+type TurnStatusCode string
 
 // TurnUsage The token usage RunEvent carries: the folded aggregate every reader already consumes, plus the per-model split the platform prices against its rate table. It is Usage with one field added, rather than Usage itself, because `models` is meaningful only on a producer's own report of what it just spent — the project and cycle roll-ups that Usage serves sum already-stamped rows and have nothing to break down.
 // The split is not a nicety. Cost is stamped per model, from that model's own rate row, so an aggregate whose `model` is "" (see below) cannot be priced at all — and a real coding run regularly touches a second model, both because the runtime reaches for small-model helpers of its own and because a lead is expected to pick the model for the job. Without `models` those runs are simply unpriceable, which is the defect this schema exists to close (#291).
@@ -3457,12 +3509,83 @@ type Usage struct {
 	CacheReadTokens     int64 `json:"cacheReadTokens"`
 
 	// CostUsd Write-time-stamped USD (sum, for aggregates); null when no stamp exists.
-	CostUsd     *float64 `json:"costUsd"`
-	InputTokens int64    `json:"inputTokens"`
+	CostUsd *float64 `json:"costUsd"`
+
+	// Host The model endpoint's host the work was billed by (e.g. `api.anthropic.com`, `ollama.com`); "" or absent on an aggregate that mixes hosts or a row that predates stamping. Stamped by the platform, never by a producer. With a null `costUsd`, the console reads "not priced, billed by <host>".
+	Host        string `json:"host,omitempty"`
+	InputTokens int64  `json:"inputTokens"`
 
 	// Model Model id the work ran on; "" on mixed-model aggregates.
 	Model        string `json:"model"`
 	OutputTokens int64  `json:"outputTokens"`
+}
+
+// ValidationDetail One version's validation history, already filtered to what asks the question.
+// `runs` holds only runs that ATTEMPTED validation — ones holding at least one VALIDATION cycle, which is the fact rather than the kind: a task run never holds one, and a run that did ask the criteria is listed whatever its kind says it was for. Each run's `cycles` holds only its VALIDATION cycles. Both filters are applied here rather than by the client: they are the platform's own rules, and the surface that re-derived them read a newer non-validating run as the version's answer and hid a real verdict. The views are the same MilestoneRunView and RunCycleView the run story serves, so one projection describes a cycle everywhere.
+type ValidationDetail struct {
+	// Deployed This version is the one currently deployed — the only version a revalidation can honestly judge.
+	// A revalidation drives whatever is serving RIGHT NOW: the runner's endpoint URLs are resolved from OpenChoreo at request time and its criteria come from the branch tip, neither pinned to the version the run is filed under. So asking an older version's criteria judges code that version never shipped, records the verdict on its milestone, and — with the default attempt budget — files one repair issue per failed scenario there too. revalidate-build refuses it; this flag is what lets the console stop offering it, rather than letting a reader discover the refusal by clicking.
+	Deployed bool `json:"deployed"`
+
+	// Live A run is in flight on this milestone. With `deployed` it makes the two conditions the console gates the validation trigger on; the remaining refusals (open work, no criteria) belong to revalidate-build, which owns them and says so in its error. It also decides whether an unvalidated version reads as "a verdict is coming" or "nothing will come unless you ask", which must not disagree with whether the trigger is offered.
+	Live            bool  `json:"live"`
+	MilestoneNumber int64 `json:"milestoneNumber"`
+
+	// Runs Newest run first, validating kinds only, each carrying its validation cycles in dispatch order.
+	Runs []MilestoneRunView `json:"runs"`
+
+	// State Where a version's validation stands — the one vocabulary every surface renders it with.
+	// This MIRRORS the run's verdict rather than folding it, so the chip says what the run concluded: a fold would have to discard `partial`, `inconclusive` and `unreported` at exactly the surface that needs them, and `completed` never said whether anything passed.
+	// Four LIFECYCLE values. none is PENDING, never settled: a verdict is expected and has not arrived, because a run is live or a dev run filed the version's validation task and nothing has started it yet. A client must not read it as "there is no verdict to wait for" — that is what skipped and inconclusive say. running is a validation CYCLE in flight, not merely a live run with no verdict yet. awaiting-fix is validation having failed with the run repairing it — the work in flight is a CODING cycle, which is why the state names the implementation rather than validation. cancelled is a person STOPPING the judging: a validation run settled cancelled before recording a verdict, so nothing will answer for this version unless somebody re-asks. The rest are the verdict verbatim. They are mutually exclusive in time, so nothing is hidden behind another.
+	// passed (every criterion was automated and passed), partial (some passed, none failed, some were never covered), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the validation cycle's merge commit), skipped (no validation criteria, and incident runs, which get no validation cycle).
+	// failed and unreported fail the run only once its validation attempts are spent: while attempts remain the run repairs and re-validates, and reads awaiting-fix in the meantime.
+	State ValidationState `json:"state"`
+	Tag   string          `json:"tag"`
+}
+
+// ValidationList The validation ledger — one entry per worked spec version, newest first.
+type ValidationList struct {
+	Validations []ValidationSummary `json:"validations"`
+}
+
+// ValidationSnapshot One attempt's report and the criteria it was judged against, read at a single commit.
+type ValidationSnapshot struct {
+	// Commit The commit both halves were read at — the cycle's merge SHA, or empty when the attempt is still running and the criteria came from HEAD.
+	Commit string `json:"commit"`
+
+	// Criteria Every specs/validation/acceptance/*.feature file at that commit. The report annotates these; they are the spine the view renders and the report is the overlay.
+	Criteria []AcceptanceCriteriaFile `json:"criteria"`
+
+	// Report The raw tests/acceptance/report.json at that commit, verbatim, for the client's own parser to read. Null while the attempt is still running: it has not committed one yet, and an absent report is not the same fact as an empty one.
+	Report *string `json:"report,omitempty"`
+}
+
+// ValidationState Where a version's validation stands — the one vocabulary every surface renders it with.
+// This MIRRORS the run's verdict rather than folding it, so the chip says what the run concluded: a fold would have to discard `partial`, `inconclusive` and `unreported` at exactly the surface that needs them, and `completed` never said whether anything passed.
+// Four LIFECYCLE values. none is PENDING, never settled: a verdict is expected and has not arrived, because a run is live or a dev run filed the version's validation task and nothing has started it yet. A client must not read it as "there is no verdict to wait for" — that is what skipped and inconclusive say. running is a validation CYCLE in flight, not merely a live run with no verdict yet. awaiting-fix is validation having failed with the run repairing it — the work in flight is a CODING cycle, which is why the state names the implementation rather than validation. cancelled is a person STOPPING the judging: a validation run settled cancelled before recording a verdict, so nothing will answer for this version unless somebody re-asks. The rest are the verdict verbatim. They are mutually exclusive in time, so nothing is hidden behind another.
+// passed (every criterion was automated and passed), partial (some passed, none failed, some were never covered), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the validation cycle's merge commit), skipped (no validation criteria, and incident runs, which get no validation cycle).
+// failed and unreported fail the run only once its validation attempts are spent: while attempts remain the run repairs and re-validates, and reads awaiting-fix in the meantime.
+type ValidationState string
+
+// ValidationSummary One row of the validation ledger: a spec version and where its validation stands.
+// Every version that has been worked appears, including ones never validated — an absent row and a never-validated one are indistinguishable to a reader, and "never validated" is the most actionable state this page shows.
+type ValidationSummary struct {
+	// EndedAt When the LATEST validation attempt finished. Null while one is in flight, which is the case the column renders as an em-dash rather than a blank: a running attempt has no end and never will until it settles.
+	EndedAt *time.Time `json:"endedAt,omitempty"`
+
+	// MilestoneNumber The GitHub milestone this version's work lives in — the platform key the tag resolves to, and the handle get-validation is read by.
+	MilestoneNumber int64 `json:"milestoneNumber"`
+
+	// StartedAt When the LATEST validation attempt began — the CYCLE's clock, not the run's. Paired with endedAt it is the attempt's duration, which counts up while the attempt is open and is the only thing on this page that moves; a run's wall clock would fold in the coding, build and deploy time between attempts and say nothing about a hung one. Null when the version has never been validated.
+	StartedAt *time.Time `json:"startedAt,omitempty"`
+
+	// State Where a version's validation stands — the one vocabulary every surface renders it with.
+	// This MIRRORS the run's verdict rather than folding it, so the chip says what the run concluded: a fold would have to discard `partial`, `inconclusive` and `unreported` at exactly the surface that needs them, and `completed` never said whether anything passed.
+	// Four LIFECYCLE values. none is PENDING, never settled: a verdict is expected and has not arrived, because a run is live or a dev run filed the version's validation task and nothing has started it yet. A client must not read it as "there is no verdict to wait for" — that is what skipped and inconclusive say. running is a validation CYCLE in flight, not merely a live run with no verdict yet. awaiting-fix is validation having failed with the run repairing it — the work in flight is a CODING cycle, which is why the state names the implementation rather than validation. cancelled is a person STOPPING the judging: a validation run settled cancelled before recording a verdict, so nothing will answer for this version unless somebody re-asks. The rest are the verdict verbatim. They are mutually exclusive in time, so nothing is hidden behind another.
+	// passed (every criterion was automated and passed), partial (some passed, none failed, some were never covered), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the validation cycle's merge commit), skipped (no validation criteria, and incident runs, which get no validation cycle).
+	// failed and unreported fail the run only once its validation attempts are spent: while attempts remain the run repairs and re-validates, and reads awaiting-fix in the meantime.
+	State ValidationState `json:"state"`
+	Tag   string          `json:"tag"`
 }
 
 // Warning defines model for Warning.
@@ -3684,6 +3807,9 @@ type UpdateConfigJSONRequestBody = ConfigPatch
 
 // StartGitProviderConnectJSONRequestBody defines body for StartGitProviderConnect for application/json ContentType.
 type StartGitProviderConnectJSONRequestBody = StartConnectInputBody
+
+// TestLlmConnectionJSONRequestBody defines body for TestLlmConnection for application/json ContentType.
+type TestLlmConnectionJSONRequestBody = LLMPatch
 
 // RegisterExternalResourceJSONRequestBody defines body for RegisterExternalResource for application/json ContentType.
 type RegisterExternalResourceJSONRequestBody = RegisterExternalResourceRequest

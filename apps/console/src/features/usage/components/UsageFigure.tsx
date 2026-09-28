@@ -16,11 +16,12 @@
  * under the License.
  */
 
-import { Tooltip, Typography } from "@wso2/oxygen-ui";
+import { Box, Tooltip, Typography } from "@wso2/oxygen-ui";
 import {
   formatTokens,
   formatUsd,
   totalTokens,
+  unpricedHostLine,
   type PhaseUsage,
   type Usage,
 } from "../lib/format";
@@ -53,8 +54,9 @@ export function UsageFigure({
     usage.costUsd !== null
       ? formatUsd(usage.costUsd)
       : `${formatTokens(tokens)} tok`;
+  const billedBy = unpricedHostLine(usage);
 
-  return (
+  const tooltip = (
     <Tooltip
       title={<UsageBreakdown usage={usage} phases={phases} context={context} />}
       slotProps={{
@@ -80,5 +82,17 @@ export function UsageFigure({
         {figure}
       </Typography>
     </Tooltip>
+  );
+
+  if (!billedBy) return tooltip;
+  // A tokens-only figure says why there is no dollar figure: the platform
+  // holds no rate for the host that billed the work.
+  return (
+    <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+      {tooltip}
+      <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: "nowrap" }}>
+        {billedBy}
+      </Typography>
+    </Box>
   );
 }

@@ -194,6 +194,37 @@ Generate types from it and call through `openapi-fetch`'s typed client (Layout);
 don't hand-write request/response shapes. Commit `src/generated/` — the
 per-component Docker build's context is this app's own folder alone.
 
+**An `ai-agent` dependency has no OpenAPI contract — it has one fixed chat
+contract.** It is a sibling like any other: reached **same-origin**, never
+through a `window._env_` URL — an agent has no browser-visible `<AGENT>_URL`
+any more than an API sibling does. If it is the primary dependency, call it at
+`/api`; if it is an extra sibling, call it at `/api/<agent-component-name>/`
+(Layout's nginx section covers wiring either into the drop-in). It is called
+with the same bearer token as any sibling service, but there is nothing to
+generate from; hand-write this one small client against the shape every
+platform agent speaks:
+
+```ts
+// POST /api/chat  (or /api/<agent-component-name>/chat for an extra sibling)
+// in:  { conversationId?: string, message: string }
+// out: { conversationId: string, text: string, toolCalls: unknown[] }
+```
+
+The agent keeps the conversation. Your state is exactly two things:
+
+- **`conversationId`** — from the first response; send it on every later
+  message. "New conversation" = drop it. Persist it in `sessionStorage` if the
+  conversation should survive a refresh.
+- **Your own transcript** — `{ role: "user" | "assistant", text: string }[]`,
+  built as you go: push the user's text when they send, push `response.text`
+  when the agent replies. That list is for RENDERING and is yours alone; the
+  agent never sees it and never returns one. No `messages` array crosses the
+  wire in either direction.
+
+A `404` from `/chat` means the conversation is gone or was never yours — drop
+the stored id, start fresh, and tell the user the previous conversation
+expired. Do not retry the same id.
+
 ## Layout
 
 ```

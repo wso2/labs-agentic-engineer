@@ -124,29 +124,21 @@ func TestBuildPrompt_IsAMilestoneReferenceOnly(t *testing.T) {
 }
 
 // TestBuildValidationPrompt_StaysIssueAnchored pins the other half of §9: the
-// validation cycle stays issue-anchored — one validation issue, one run.
+// validation cycle stays issue-anchored — one validation issue, one run — and,
+// like the coding prompt, defers every step to its skill.
 func TestBuildValidationPrompt_StaysIssueAnchored(t *testing.T) {
-	got := buildValidationPrompt("https://github.com/acme/widgets/issues/9", 9)
+	got := buildValidationPrompt("https://github.com/acme/widgets/issues/9")
 
 	if !strings.Contains(got, "https://github.com/acme/widgets/issues/9") {
 		t.Errorf("validation prompt must name its issue URL, got %q", got)
 	}
-	// `Validates #N`, and NOT a closing keyword. The platform owns the validation
-	// task's lifecycle — it reopens the task for the next attempt and closes it even
-	// on an ending where no pull request merged — so a closing keyword would put two
-	// owners on one issue. The reference still has to be there: the auto-merge policy
-	// requires a pull request to name an armed issue in the milestone.
-	if !strings.Contains(got, "Validates #9") {
-		t.Errorf("validation prompt must carry its `Validates #N` link contract, got %q", got)
+	if !strings.Contains(got, "`validation-task` skill") {
+		t.Errorf("validation prompt must defer the procedure to the validation-task skill, got %q", got)
 	}
-	for _, closing := range []string{"Closes #9", "Fixes #9", "Resolves #9"} {
-		if strings.Contains(got, closing) {
-			t.Errorf("validation prompt must not use a GitHub closing keyword (%q): the platform "+
-				"closes this task itself, got %q", closing, got)
+	for _, banned := range []string{"Validates #", "Closes #", "Fixes #", "Resolves #", "check-report", "gh pr create", "milestone"} {
+		if strings.Contains(got, banned) {
+			t.Errorf("validation prompt must carry no procedure and no milestone, but contains %q: %q", banned, got)
 		}
-	}
-	if strings.Contains(got, "milestone") {
-		t.Errorf("validation dispatch must stay issue-anchored, got %q", got)
 	}
 }
 

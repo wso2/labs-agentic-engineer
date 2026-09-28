@@ -31,22 +31,19 @@
 //     affected (`dns.lookup` returns the real address), which is why the probe
 //     below needs no override of its own.
 //
-//     The fix is per-client, because no one mechanism reaches all three: a
-//     `resolve` entry per endpoint in curl's own config file, and the equivalent
-//     `--host-resolver-rules` in a config playwright-cli is pointed at, so a
-//     plain `curl <url>` and a bare `playwright-cli open <url>` both work with
+//     The fix is per-client, because no one mechanism reaches both: a `resolve`
+//     entry per endpoint in curl's own config file, and the equivalent
+//     `--host-resolver-rules` in the browser's launch args, so a plain
+//     `curl <url>` and a bare `agent-browser open <url>` both work with
 //     the real hostname, through the real gateway, carrying the real Host header
-//     the HTTPRoute matches on. (The third client, the browser `playwright test`
-//     launches, is configured by `playwright.config.template.ts` in the project's
-//     own repo — it is the one the specs run in, and it is not ours to set from
-//     here.) Rewriting the URL
+//     the HTTPRoute matches on. Rewriting the URL
 //     was the alternative and is worse: an IP in the URL sends `Host: <ip>` and
 //     matches no route, and a Service-DNS URL bypasses the gateway altogether —
 //     dropping the api-configuration trait's auth, CORS and path rewrites, so an
 //     auth-gated criterion could pass through a side door.
 //
 //  2. Whether the deployment answers at all is a PLATFORM fact. It used to be a
-//     `curl` in the aep-validation skill with prose telling the agent to stop if
+//     `curl` in the validation skill with prose telling the agent to stop if
 //     it failed; the agent did not stop — it read RFC 6761's connection refused
 //     as a broken deployment and went hunting through the pod's DNS
 //     configuration. Same reasoning, and the same shape, as the context fetch in
@@ -57,12 +54,16 @@
 // and `curlResolveEntries` returns nothing — so no config is written and the
 // whole local-plane concession costs the cloud path exactly nothing.
 
+import { execFile } from "node:child_process";
 import dns from "node:dns";
 import fs from "node:fs";
+import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
 
 import type { ComponentEndpoint } from "./validation_context.js";
+
+const execFileAsync = promisify(execFile);
 
 /** curl's per-user config file, read from `$CURL_HOME` then `$HOME`. */
 export const CURL_CONFIG_FILE = ".curlrc";
@@ -204,45 +205,24 @@ export async function writeCurlResolveConfig(
 }
 
 /**
- * playwright-cli's config file, pointed at by `$PLAYWRIGHT_MCP_CONFIG`.
+ * The deployed name family, and the one address that serves all of it.
  *
- * Deliberately NOT `.playwright/cli.config.json`, the name the CLI looks for by
- * default: that default is resolved against the CWD, and an exploring agent
- * moves between the repo root and `tests/e2e`, so a CWD-relative config is
- * present for some of its commands and absent for the rest. An absolute path in
- * the env holds for every invocation from every directory.
- */
-export const PLAYWRIGHT_CLI_CONFIG_FILE = ".aep-playwright-cli.json";
-
-/**
- * Where that config goes. Same home-directory reasoning as `curlConfigHome`,
- * and the same one-function rule so the writer and the env record cannot drift.
- */
-export function playwrightCliConfigHome(): string {
-  return os.homedir();
-}
-
-/** The absolute path the env variable carries — writer and reader share it. */
-export function playwrightCliConfigPath(): string {
-  return path.join(playwrightCliConfigHome(), PLAYWRIGHT_CLI_CONFIG_FILE);
-}
-
-/**
- * The IdP's name family, and where it is actually reachable from inside a pod.
- *
- * A wildcard, unlike every endpoint rule below it, because the runner never
- * learns the IdP's hostname: the validation context carries the app's endpoints
- * and nothing else, so a pattern is the only handle there is. The same pattern
- * `playwright.config.template.ts` uses, for the same reason.
+ * A wildcard because the runner never learns every name it must reach: the
+ * validation context carries the app's endpoints and nothing else, so the IdP —
+ * which every signed-in scenario needs — has no entry to map. A pattern is the
+ * only handle there is. `*.localhost` matches across labels, so it covers the
+ * data plane's `…openchoreoapis.localhost` and the control plane's
+ * `…openchoreo.localhost` alike.
  *
  * `host.k3d.internal` rather than the address DNS returns, because DNS is
  * measurably wrong here: the CoreDNS rewrite maps `(openchoreo|openchoreoapis)
  * .localhost` alike onto the DATA-plane gateway, while `*.openchoreo.localhost`
  * is served by the CONTROL-plane one. Following DNS gets a transport failure
- * (curl exit 7); the k3d bridge, which publishes the control-plane gateway,
- * answers. Local-plane only — see the caller's gate.
+ * (curl exit 7); the k3d bridge answers for both, because k3d publishes every
+ * gateway port on the host — each name reaches its own service there on its own
+ * port. Local-plane only — see the caller's gate.
  */
-export const AUTH_HOST_PATTERN = "*.openchoreo.localhost";
+export const LOCAL_HOST_PATTERN = "*.localhost";
 export const AUTH_BRIDGE_HOST = "host.k3d.internal";
 
 /**
@@ -250,44 +230,53 @@ export const AUTH_BRIDGE_HOST = "host.k3d.internal";
  *
  * `--host-resolver-rules` is the one override Chromium honours for RFC 6761:
  * it maps `localhost` and every `*.localhost` name to loopback itself, ahead of
- * DNS and `/etc/hosts`, so nothing else reaches it. One `MAP <host> <address>`
- * per endpoint rather than a pattern — these are the hosts this run actually
- * resolved, and a wildcard would also capture names nobody probed. The IdP is
- * the one exception, appended last and explained above.
+ * DNS and `/etc/hosts`, so nothing else reaches it.
  *
- * No port in any rule: Chromium maps names, and each URL keeps its own port.
+ * ONE rule, and that is a constraint rather than a simplification. Chromium
+ * separates this flag's own `MAP` rules with COMMAS, and `AGENT_BROWSER_ARGS` —
+ * the only channel agent-browser offers — is documented comma-OR-newline
+ * separated. A value carrying two MAPs is therefore split mid-flag by the
+ * browser itself: the first mapping survives, and every later one is handed to
+ * Chromium as an argument to nothing. Measured on the runner image: with
+ * `MAP first.test 127.0.0.1,MAP second.test 127.0.0.1` in one value,
+ * `first.test` is mapped (connection refused) and `second.test` comes back
+ * ERR_NAME_NOT_RESOLVED. A second rule is not extra coverage — it is discarded,
+ * silently. Emitting one is the only shape that survives the channel.
+ *
+ * That rule maps the whole `.localhost` family to the k3d bridge, which is the
+ * one address serving all of it (see the pattern's own note). Per-endpoint
+ * rules could not work here even without the splitting, because the IdP every
+ * signed-in scenario needs is not among the endpoints the context names.
+ *
+ * `entries` no longer supplies addresses; it is the LOCAL-PLANE SIGNAL, since
+ * `curlResolveEntries` yields `.localhost` hosts and nothing else. Without the
+ * bridge there is no single address that serves both planes, so rather than
+ * emit a rule that maps some names to the wrong gateway, emit none and let the
+ * caller say so.
+ *
+ * No port in the rule: Chromium maps names, and each URL keeps its own port.
  */
 export function hostResolverRules(
   entries: readonly CurlResolveEntry[],
-  authAddress?: string,
+  bridgeAddress?: string,
 ): string[] {
-  const seen = new Set<string>();
-  const rules: string[] = [];
-  for (const e of entries) {
-    if (seen.has(e.host)) continue;
-    seen.add(e.host);
-    rules.push(`MAP ${e.host} ${e.address}`);
-  }
-  if (rules.length === 0) {
+  if (entries.length === 0 || bridgeAddress === undefined) {
     return [];
   }
-  // Specific first, pattern last. The suffixes cannot overlap
-  // (`…openchoreoapis.localhost` never matches `*.openchoreo.localhost`), so
-  // this is for a reader rather than for Chromium.
-  if (authAddress !== undefined) {
-    rules.push(`MAP ${AUTH_HOST_PATTERN} ${authAddress}`);
-  }
-  return [`--host-resolver-rules=${rules.join(",")}`];
+  return [`--host-resolver-rules=MAP ${LOCAL_HOST_PATTERN} ${bridgeAddress}`];
 }
 
 /**
- * Where the IdP is reachable from this pod, or undefined if it is not.
+ * Where the deployed system is reachable from this pod, or undefined if the
+ * bridge does not resolve.
  *
- * Forgiving on purpose: a cloud plane has no k3d bridge to resolve, and an
- * exploration hop the agent may never take is not worth failing a run over. The
- * app endpoints — which the preflight DOES prove — are unaffected either way.
+ * Not fatal: a cloud plane has no k3d bridge, and there `curlResolveEntries`
+ * yields nothing either, so the two absences agree and no wrapper is wanted.
+ * On a local plane the absence is real — it costs the browser every mapping,
+ * not just the IdP — so the caller reports it rather than letting the run
+ * discover it as an unreachable app.
  */
-export async function resolveAuthGatewayAddress(
+export async function resolveBridgeAddress(
   lookup: LookupFn = dns.promises.lookup as LookupFn,
 ): Promise<string | undefined> {
   try {
@@ -299,61 +288,105 @@ export async function resolveAuthGatewayAddress(
 }
 
 /**
- * Write the browser's half of the same override, for the EXPLORATION browser.
+ * Write the `agent-browser` PATH wrapper that makes the deployed hostnames
+ * resolvable in the browser, and return its path (undefined when nothing needs
+ * mapping, or when there is no real binary to wrap).
  *
- * `.curlrc` is a curl mechanism and never reaches a browser, and
- * `playwright.config.template.ts` covers only the browser `playwright test`
- * launches — so playwright-cli, which reads neither, was the one client left
- * dialling loopback. The agent then rediscovered RFC 6761 from scratch each
- * authoring run: 180s of DNS spelunking, a throwaway probe spec and two edits
- * to a config that was never in the path, on the run that measured it (#570).
+ * **Why a wrapper and not an environment variable.** The rules used to ride
+ * `AGENT_BROWSER_ARGS`, and that was wrong: `skills/agent-browser` tells an
+ * agent to `export AGENT_BROWSER_ARGS=--no-sandbox` whenever the browser will
+ * not launch, so the one variable carrying the mappings is the one a skill
+ * instructs agents to overwrite. Measured on a real run — the agent re-exported
+ * it per command, dropped the IdP rule, and reported 7 of 8 scenarios `blocked`
+ * on an unreachable auth issuer. A config file is no better: the CLI documents
+ * `AGENT_BROWSER_*` as overriding config-file values. Only something the caller
+ * cannot address survives, and `layout.aepDir` is already first on the agent's
+ * PATH and already holds the `gh` wrapper.
  *
- * `launchOptions.args` ONLY. Naming `browser.browserName` here would leave
- * `channel` undefined and re-enable the Chromium sandbox, which cannot start as
- * the pod's non-root user — the failure ADR-0007 exists to keep out of this
- * file. The browser is chosen by `PLAYWRIGHT_MCP_BROWSER` in the image; this
- * only says how to resolve a name.
+ * The wrapper OWNS `--host-resolver-rules`: it drops any the caller supplied
+ * (and any bare `MAP …` fragment left by a caller who comma-joined its own)
+ * before appending this run's. Everything else the caller set — `--no-sandbox`
+ * above all, without which Chromium cannot start as the pod's non-root user
+ * (ADR-0007) — is passed through untouched.
  *
- * The IdP is mapped alongside them, so an exploration that follows a login
- * redirect does not meet an unresolvable host — the gap that used to leave a
- * dead hop for the agent to misread as a broken deployment, which is the exact
- * fault ADR-0006 exists to remove. Gated on there being an endpoint to map at
- * all: `curlResolveEntries` yields only `.localhost` hosts, so a non-empty list
- * IS the local-plane signal, and a cloud run writes no file and gets no rule.
+ * It joins with NEWLINES. `AGENT_BROWSER_ARGS` is comma-or-newline separated and
+ * `--host-resolver-rules` separates its own `MAP` rules with commas, so a comma
+ * join splits the value mid-flag: the first mapping stays attached to the flag
+ * and every later one becomes a bogus Chromium argument.
  *
- * Returns the path written, or undefined when there is nothing to map — and in
- * that case REMOVES any file a previous run left behind. `$PLAYWRIGHT_MCP_CONFIG`
- * is fatal when it points at a missing file (the daemon exits on ENOENT), so the
- * env is set from this file's existence; a stale file would silently pin a
- * cluster that no longer exists.
+ * Gated on there being an endpoint to map at all: `curlResolveEntries` yields
+ * only `.localhost` hosts, so a non-empty list IS the local-plane signal and a
+ * cloud run writes no wrapper.
  */
-export async function writePlaywrightCliConfig(
+export async function writeAgentBrowserWrapper(
   dir: string,
   entries: readonly CurlResolveEntry[],
   lookup: LookupFn = dns.promises.lookup as LookupFn,
 ): Promise<string | undefined> {
-  const file = path.join(dir, PLAYWRIGHT_CLI_CONFIG_FILE);
-  if (entries.length === 0) {
-    await fs.promises.rm(file, { force: true });
-    return undefined;
-  }
-  const args = hostResolverRules(entries, await resolveAuthGatewayAddress(lookup));
-  if (args.length === 0) {
-    await fs.promises.rm(file, { force: true });
-    return undefined;
-  }
-  const body = `${JSON.stringify({ browser: { launchOptions: { args } } }, null, 2)}\n`;
+  if (entries.length === 0) return undefined;
+  const rules = hostResolverRules(entries, await resolveBridgeAddress(lookup));
+  if (rules.length === 0) return undefined;
+  const real = await resolveRealAgentBrowserPath();
+  if (real === undefined) return undefined;
 
+  const file = path.join(dir, "agent-browser");
   await fs.promises.mkdir(dir, { recursive: true });
-  const staging = await fs.promises.mkdtemp(path.join(dir, ".aep-pwcli-"));
-  try {
-    const staged = path.join(staging, PLAYWRIGHT_CLI_CONFIG_FILE);
-    await fs.promises.writeFile(staged, body, { mode: 0o600 });
-    await fs.promises.rename(staged, file);
-  } finally {
-    await fs.promises.rm(staging, { recursive: true, force: true });
-  }
+  await fs.promises.writeFile(file, agentBrowserWrapperScript(real, rules[0] as string), { mode: 0o755 });
   return file;
+}
+
+/** The real binary, resolved off PATH before this wrapper shadows it. */
+async function resolveRealAgentBrowserPath(): Promise<string | undefined> {
+  try {
+    const { stdout } = await execFileAsync("which", ["agent-browser"]);
+    const p = stdout.trim().split("\n")[0]?.trim();
+    return p !== undefined && p.startsWith("/") ? p : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The wrapper's text. Exported for the test that pins the separator. */
+export function agentBrowserWrapperScript(realPath: string, rule: string): string {
+  return `#!/usr/bin/env bash
+# agent-browser wrapper — written by the runner's endpoint preflight.
+#
+# The deployed hostnames are *.localhost, which RFC 6761 pins to loopback ahead
+# of DNS, so the browser needs --host-resolver-rules to reach them. This file
+# owns that flag: a caller that sets AGENT_BROWSER_ARGS (the agent-browser skill
+# tells agents to, when the browser will not launch) would otherwise silently
+# un-map every deployed host.
+set -e
+
+RULE=${JSON.stringify(rule)}
+
+# AGENT_BROWSER_ARGS is comma OR newline separated, and a caller may also have
+# space-joined it (which never worked, but says what it meant). Split on all
+# three, then KEEP ONLY FLAGS: every Chromium switch starts with "-", so any
+# other fragment is the tail of a split value - a MAP keyword, a hostname, an
+# address - and passing it on would hand Chromium an argument to nothing.
+keep=""
+while IFS= read -r a; do
+  [ -z "$a" ] && continue
+  case "$a" in
+    --host-resolver-rules=*) continue ;;  # this file owns that flag
+    -*) ;;                                # a real switch: keep it
+    *) continue ;;                        # a fragment of a split value
+  esac
+  keep="\${keep}\${a}
+"
+done <<EOF
+$(printf '%s' "\${AGENT_BROWSER_ARGS:-}" | tr ',\t ' '\n\n\n')
+EOF
+
+# Newline join, and RULE itself carries no comma — agent-browser splits this
+# variable on commas as readily as on newlines, so a comma anywhere inside it is
+# a split, including one INSIDE a single flag's value. That is why the rule is
+# built as exactly one MAP (see hostResolverRules); a comma join here, or a
+# second MAP there, silently drops everything after the first.
+export AGENT_BROWSER_ARGS="\${keep}\${RULE}"
+exec ${JSON.stringify(realPath)} "$@"
+`;
 }
 
 /**

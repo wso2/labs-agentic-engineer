@@ -24,10 +24,12 @@
  *   GET  /conversations/:id        → rehydrate { status, messages, ... } (404 if unknown)
  *
  * Every conversation route is behind the M2M gate (`aud`-checked Bearer JWT).
- * The turn requires an `X-Anthropic-Key` header — the model is built PER TURN
- * from it (§12.3.1), so the service holds no key of its own. While a turn
- * streams, a `: keep-alive` comment is emitted every `keepAliveMs` so long
- * generations survive an idle ingress.
+ * The turn requires an `X-Model-Key` header — the model is built PER TURN
+ * from it (§12.3.1), the body's optional `model` id (the org's model; absent →
+ * `AGENT_MODEL`) and its optional `connection` (absent → Anthropic's own API),
+ * so the service holds no key and pins no model. While a turn streams, a
+ * `: keep-alive` comment is emitted every `keepAliveMs` so long generations
+ * survive an idle ingress.
  *
  * The ONLY turn shape is the workspace shape (§12/D9): the body carries IDs +
  * shas, never file content. `snapshot-path.ts` fences + derives the snapshot
@@ -38,9 +40,11 @@
  *
  * The route maps `runConversationTurn`'s `onEvent` straight to `data: <part>`
  * frames (no envelope). The stream starts LAZILY (on the first event), so a
- * pre-stream failure (400 missing key / invalid body / unknown snapshot, 403
- * org-fence, 409 concurrent turn) is still an HTTP status; once streaming,
- * every failure is an `error` frame then `[DONE]`.
+ * pre-stream failure (400 missing key / invalid body / unknown snapshot / an
+ * attachment the connection cannot read, 403 org-fence, 409 concurrent turn)
+ * is still an HTTP status; once streaming, every failure is an `error` frame
+ * then `[DONE]` — a coded one when the service can name the failure
+ * (`conversation/turn-error.ts`).
  */
 
 import express from "express";
@@ -53,9 +57,11 @@ import {
   isSurface,
   isTurnAim,
   isTurnAttachmentsOrAbsent,
+  isTurnConnection,
   SURFACES,
   type CollabConfig,
   type McpConfig,
+  type ProviderWaitPart,
   type StreamPart,
   type Surface,
   type Toolset,
@@ -76,21 +82,40 @@ import {
   overlayReferenceTexts,
   toAttachmentParts,
 } from "./conversation/load-workspace.js";
+import { AttachmentRefusedError, fitAttachments, fitReferences } from "./conversation/attachments.js";
+import { codedErrorFrame, turnErrorFrame } from "./conversation/turn-error.js";
 import { conversationOrgId, resolveWorkspace, WorkspaceRefError } from "./shared/snapshot-path.js";
 import { createAuthMiddleware, type AgentsAuthConfig } from "./shared/auth.js";
 import { startKeepAlive } from "./shared/keepalive.js";
 import { config } from "./shared/config.js";
+import {
+  anthropicConnection,
+  connectionFromTurn,
+  connectionHost,
+  resolveModelId,
+  type ModelConnection,
+} from "./shared/model.js";
+
+/** What a turn's model is built for, beyond its connection. */
+export interface TurnModelContext {
+  /** The organization the turn runs for (`X-Org-Id`), named on its provider log lines. */
+  orgId?: string;
+  /**
+   * Told when a model call waits out a short 429, so the turn's stream can say
+   * it is waiting on the model provider (a `provider-wait` frame).
+   */
+  onProviderWait?: (host: string) => void;
+}
 
 export interface CreateAppDeps {
   store: ConversationStore;
-  /** Build the model from the request's `X-Anthropic-Key` (§12.3.1). Injected so tests pass a mock. */
-  buildModel: (apiKey: string) => LanguageModel;
   /**
-   * The resolved model id `buildModel` instantiates — usage attribution on the
-   * terminal manifest (#249). Optional so mock-model callers (tests, evals)
-   * need not invent one; absent → the manifest usage carries `model: ""`.
+   * Build the turn's model from its connection: the request's key (§12.3.1),
+   * the body's `connection` (else Anthropic's own API) and the model id the
+   * turn resolved (the body's `model`, else `AGENT_MODEL`). Injected so tests
+   * pass a mock.
    */
-  modelId?: string;
+  buildModel: (conn: ModelConnection, ctx: TurnModelContext) => LanguageModel;
   /** M2M gate config (always on): JWKS or shared secret. */
   auth: AgentsAuthConfig;
   /** SSE keep-alive cadence in ms (default `config.keepAliveMs`). */
@@ -105,6 +130,13 @@ function isMcpConfig(v: unknown): v is McpConfig {
   const c = v as Record<string, unknown>;
   return typeof c.url === "string" && c.url !== "" && typeof c.token === "string" && c.token !== "";
 }
+
+/**
+ * A model id's shape: printable ASCII without spaces, as every host's ids are
+ * (`claude-sonnet-5`, `gpt-oss:20b`, `vendor/model:tag`). Whether the host
+ * serves it is the host's answer, not this service's.
+ */
+const MODEL_ID = /^[\x21-\x7e]{1,200}$/;
 
 /** Runtime guard for an untrusted `journal` value (#463). */
 function isJournal(v: unknown): v is TurnJournal {
@@ -160,10 +192,10 @@ export function createApp(deps: CreateAppDeps): Express {
   app.post("/conversations/:id/turns", requireAuth, jsonParser, async (req: Request, res: Response) => {
     const id = req.params.id as string;
 
-    // Per-request Anthropic key (§12.3.1): required, model built per turn.
-    const apiKey = req.header("x-anthropic-key");
+    // Per-request model key (§12.3.1): required, model built per turn.
+    const apiKey = req.header("x-model-key");
     if (!apiKey || apiKey.trim() === "") {
-      res.status(400).json({ error: "X-Anthropic-Key header is required" });
+      res.status(400).json({ error: "X-Model-Key header is required" });
       return;
     }
     // Org id: LOAD-BEARING — the §12 fence asserts the conversation's org
@@ -192,6 +224,8 @@ export function createApp(deps: CreateAppDeps): Express {
       webSearch?: unknown;
       surface?: unknown;
       eagerSkills?: unknown;
+      model?: unknown;
+      connection?: unknown;
     };
 
     // The retired pre-composition contract — reject it loudly, exactly as the
@@ -335,6 +369,35 @@ export function createApp(deps: CreateAppDeps): Express {
       mcp = body.mcp;
     }
 
+    // model (optional): the organization's model for this turn, resolved by the
+    // caller. Absent → the service default (AGENT_MODEL); present but not an
+    // id's shape → a clean 400 rather than a provider error mid-stream.
+    if (body.model !== undefined && (typeof body.model !== "string" || !MODEL_ID.test(body.model.trim()))) {
+      res.status(400).json({ error: "model must be a model id (printable characters, no spaces)" });
+      return;
+    }
+    const requestedModel = typeof body.model === "string" ? body.model.trim() : undefined;
+    const modelId = resolveModelId(requestedModel !== undefined ? { model: requestedModel } : {});
+
+    // connection (optional): the organization's model connection, resolved by
+    // the caller with the key. Absent → Anthropic's own API.
+    if (body.connection !== undefined && !isTurnConnection(body.connection)) {
+      res.status(400).json({
+        error:
+          "connection must be { format, baseURL (https), authScheme, contextWindow?, outputLimit?, capabilities }",
+      });
+      return;
+    }
+    const conn: ModelConnection = body.connection
+      ? connectionFromTurn(body.connection, apiKey, modelId)
+      : anthropicConnection(apiKey, modelId);
+
+    // Reference documents fitted to the connection (attachments.ts). Fitted
+    // before the chat attachments are budgeted, so a reference left out costs
+    // nothing.
+    const references = await fitReferences(referenceAttachments, conn.capabilities);
+    referenceAttachments = references.parts;
+
     // Chat attachments (#428): bytes INLINE on the body, because nothing stores
     // them (console ADR-0019). Converted to native file parts and appended to the
     // reference parts — the per-turn encoded budget is SHARED between the two
@@ -357,6 +420,18 @@ export function createApp(deps: CreateAppDeps): Express {
         0,
       );
       chatAttachments = toAttachmentParts(body.attachments, spent);
+    }
+    // Chat attachments fitted the same way, except that one the model cannot
+    // take is refused here, naming the file: attaching it was the user's act
+    // on this message, so they hear about it instead of the model.
+    try {
+      chatAttachments = await fitAttachments(chatAttachments, conn.capabilities);
+    } catch (err) {
+      if (err instanceof AttachmentRefusedError) {
+        res.status(400).json({ error: err.message });
+        return;
+      }
+      throw err;
     }
 
     // journal (#463): the turn's display record — raw client-sent text + acting
@@ -420,10 +495,18 @@ export function createApp(deps: CreateAppDeps): Express {
     const derivedEager = eagerSkillsFor(turn);
     const eagerSkills = derivedEager.length > 0 ? derivedEager : undefined;
 
-    // Build the per-turn model from the request key (fail as a pre-stream 500).
+    // Build the per-turn model from the connection (fail as a pre-stream 500).
     let model: LanguageModel;
     try {
-      model = deps.buildModel(apiKey);
+      // `send` is declared below; the wait callback only fires once the turn
+      // is running, by which point it is.
+      model = deps.buildModel(conn, {
+        ...(orgId ? { orgId } : {}),
+        onProviderWait: (host) => {
+          const wait: ProviderWaitPart = { type: "provider-wait", host };
+          send(wait);
+        },
+      });
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : "model init failed" });
       return;
@@ -447,6 +530,12 @@ export function createApp(deps: CreateAppDeps): Express {
     // The socket is writable only while the client is attached and the response
     // has not been finished/closed.
     const canWrite = (): boolean => !clientGone && !res.writableEnded && !res.closed;
+    // A failure the service can name ends the turn with ONE coded frame
+    // (turn-error.ts). The SDK reports a failed model call twice — as an
+    // `error` part on the stream and again as the turn's throw — so the part
+    // is coded where it streams and the throw does not repeat it.
+    const host = connectionHost(conn);
+    let codedFrameSent = false;
 
     // Lazy stream start: headers (and the keep-alive timer) go out on the FIRST
     // event. A failure BEFORE any event (e.g. a concurrent turn) is still a clean
@@ -458,7 +547,9 @@ export function createApp(deps: CreateAppDeps): Express {
         started = true;
         keepAlive.stop = startKeepAlive((frame) => res.write(frame), keepAliveMs);
       }
-      res.write(`data: ${JSON.stringify(part)}\n\n`);
+      const coded = part.type === "error" ? codedErrorFrame(part.error, host) : undefined;
+      if (coded) codedFrameSent = true;
+      res.write(`data: ${JSON.stringify(coded ?? part)}\n\n`);
     };
 
     // Room-scoped turn (#86 phase 4): join as a live peer BEFORE streaming —
@@ -492,6 +583,7 @@ export function createApp(deps: CreateAppDeps): Express {
         filesChangedExternally: body.filesChangedExternally === true,
         skillSource,
         ...(referenceAttachments.length ? { referenceAttachments } : {}),
+        ...(references.unreadable.length ? { unreadableReferences: references.unreadable } : {}),
         ...(chatAttachments.length ? { chatAttachments } : {}),
         ...(toolset ? { toolset } : {}),
         ...(wantsRegisterDraftTool(turn, projectId) ? { registerDraft: true } : {}),
@@ -502,7 +594,7 @@ export function createApp(deps: CreateAppDeps): Express {
         ...(surface ? { surface } : {}),
         ...(roomPeer ? { collabPeer: roomPeer } : {}),
         model,
-        ...(deps.modelId ? { modelId: deps.modelId } : {}),
+        connection: conn,
         store: deps.store,
         guard,
         onEvent: send,
@@ -524,9 +616,10 @@ export function createApp(deps: CreateAppDeps): Express {
           res.status(500).json({ error: err instanceof Error ? err.message : "internal error" });
         }
       } else {
-        // Already streaming → cannot change status; emit an error frame then [DONE].
-        const message = err instanceof Error ? err.message : String(err);
-        res.write(`data: ${JSON.stringify({ type: "error", error: message })}\n\n`);
+        // Already streaming → cannot change status; emit an error frame then
+        // [DONE] — unless the coded frame for this failure already streamed.
+        const frame = turnErrorFrame(err, host);
+        if (!("code" in frame && codedFrameSent)) res.write(`data: ${JSON.stringify(frame)}\n\n`);
         res.write(`data: ${SSE_DONE}\n\n`);
         res.end();
       }

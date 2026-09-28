@@ -18,8 +18,11 @@ So a skill's path to a coding session runs entirely through the org's library,
 which means an org's edit to one reaches its builds. The playground has no BFF
 and writes the mirror itself (`local_skill_mirror.ts`), applying the same rule.
 
-The library is bind-mounted from the working tree in dev (`setup-k3d.sh` for the
-cluster, `pnpm play` for the playground), so **a skill edit needs no rebuild**.
+The playground reads the working tree directly (`pnpm play`), so **a skill edit
+needs no rebuild there**. In-cluster (`make dev-env` / `make dev-update`),
+`aep-api` reads `/app/skills` baked into its image at build time (the same
+`--build-context skills=./skills` mechanism `skaffold.yaml` uses) — a skill
+edit needs `make dev-update` to reach it.
 
 A **tool** a skill names by command is the exception — it is installed, not
 mounted, so a change to one is NOT live until it is. `evals/ballerina/AGENTS.md`
@@ -38,12 +41,12 @@ An absent kind means `org`, which is a real decision, not a default to lean on:
 - **`platform`** — AE-owned, read-only in the console. The design-flow skills
   (`start`, `amend`, `settle`, `grilling`, `prd-contract`, `design`,
   `cell-design`, `architecture`, `security-design`, `openapi-conventions`,
-  `wireframes`, `validation-criteria`, `task-planning`), the `console`
-  narration policy, the coding run's own workflow skills (`aep`,
-  `aep-validation`, `mock-verification`) and the browser CLIs they drive
-  (`playwright-cli`, `agent-browser`), and one reference skill both sides
-  read: `authorization-model`, the platform's authorization invariants stated
-  once (ADR-0030 to ADR-0033) so no design or stack skill restates them.
+  `wireframes`, `acceptance-criteria`, `task-planning`), the `console`
+  narration policy, the runner's own workflow skills (`aep`,
+  `validation-task`, `mock-verification`) and the browser CLI they drive
+  (`agent-browser`), and one reference skill both sides read:
+  `authorization-model`, the platform's authorization invariants stated once
+  (ADR-0030 to ADR-0033) so no design or stack skill restates them.
 - **`org`** — the org-visible stack skills (`go`, `ballerina`, `react-webapp`,
   `oxygen-ui-design-system`, `astryx-design-system`, `api-management`,
   `thunder-authentication`). Editable and deletable by an org.
@@ -62,14 +65,19 @@ mirror, so a coding session cannot see it at all; `[coding]` makes `loadSkill`
 refuse it on the design side, and refuse it *distinguishably* from a missing name
 (ADR-0014) — the design agent has to be able to name a coding skill to pin it.
 
+`coding` means "the runner", and both task kinds read the one project mirror, so
+there is no value that says *validation only*. The one skill that needs it —
+`validation-task` — is dropped from an implementation run's allowlist by the
+runner instead (`implementationSkills`, `runners/AGENTS.md`).
+
 A component's `design.json` may pin a skill of any kind via `skillsPinned`, and a
 pin overrides both audience and availability: the pinned body is copied and
 appended to the coding run's system prompt. Everything else in the mirror is
 listed by description and loaded on demand, so a run's startup context does not
 grow with the number of components a project designed.
 
-Two names in this library cannot be disabled — `aep` and `aep-validation`
-(`spec.RequiredSkills`). They carry the coding run's procedure, the mirror only
+Two names in this library cannot be disabled — `aep` and `validation-task`
+(`spec.RequiredSkills`). Each is one task kind's whole procedure, the mirror only
 copies enabled skills, and the runner refuses to start without them, so a toggle
 would take every build in the org down. `PATCH /skills/{name}` returns 409 and
 the console renders the switch as unavailable.
@@ -157,6 +165,12 @@ build reads.
 
 ## Who owns what
 
+- **Each run reads exactly one workflow skill.** `aep` is a coding run's,
+  `validation-task` a validation run's, and neither is layered on the other.
+  `validation-task` restates the few rails it shares with `aep` in the form a
+  validation run obeys; that is deliberate, not the duplication the rules below
+  forbid, because the rules differ. Nothing about validation belongs in `aep`
+  (ADR-0037).
 - **`aep` is the umbrella**, and it is split by reader. `SKILL.md` is the **run**
   (start the cycle → work the issues → finish) and only the lead ever reads it.
   The platform contract every component obeys — App Path, port, config + error

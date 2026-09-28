@@ -34,8 +34,10 @@ import {
   ATTACHMENT_ACCEPT,
   MAX_ATTACHMENT_FILES,
   screenChatAttachments,
+  type ModelReads,
   type RejectedFile,
 } from "../lib/chatAttachments";
+import { readNote } from "../../../lib/attachments";
 
 // The composer (task 3): context chip, textarea, send. Disabled while a turn
 // runs; when the running turn is a TEAMMATE's, `hint` explains why so the input
@@ -71,6 +73,7 @@ export function ChatInput({
   hint,
   files,
   onFilesChange,
+  reads = null,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -82,13 +85,18 @@ export function ChatInput({
   /** Files attached to the message being composed. */
   files: File[];
   onFilesChange: (files: File[]) => void;
+  /**
+   * What the org's model reads: an image it cannot read is refused at attach
+   * time, and a PDF it reads as text says so. Null refuses nothing.
+   */
+  reads?: ModelReads | null;
 }) {
   const [dragOver, setDragOver] = useState(false);
   const [rejected, setRejected] = useState<RejectedFile[]>([]);
 
   const addFiles = (incoming: FileList | null) => {
     if (!incoming || incoming.length === 0) return;
-    const screening = screenChatAttachments(files, Array.from(incoming));
+    const screening = screenChatAttachments(files, Array.from(incoming), reads);
     setRejected(screening.rejected);
     if (screening.accepted.length > 0) {
       onFilesChange([...files, ...screening.accepted]);
@@ -160,6 +168,7 @@ export function ChatInput({
             files={files}
             disabled={disabled}
             onRemove={(name) => onFilesChange(files.filter((f) => f.name !== name))}
+            noteFor={(name) => readNote(name, reads)}
           />
           <Stack direction="row" spacing={1} sx={{ alignItems: "flex-end" }}>
             <Tooltip

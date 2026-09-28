@@ -46,6 +46,11 @@ type StreamPart struct {
 	Output       json.RawMessage `json:"output,omitempty"`
 	Error        json.RawMessage `json:"error,omitempty"`
 	FinishReason string          `json:"finishReason,omitempty"`
+	// Coded error-part fields (type == "error" with a code — TurnErrorPart in
+	// packages/agent-stream/src/contracts/sse-events.ts). See TurnErrorOf.
+	Code    string `json:"code,omitempty"`
+	Host    string `json:"host,omitempty"`
+	ResetAt string `json:"resetAt,omitempty"`
 	// Manifest-part fields (type == "manifest", D14).
 	Files   map[string]string `json:"files,omitempty"`
 	Deleted []string          `json:"deleted,omitempty"`

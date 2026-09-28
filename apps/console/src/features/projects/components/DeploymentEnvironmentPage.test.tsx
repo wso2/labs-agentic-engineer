@@ -19,7 +19,7 @@
 // @vitest-environment jsdom
 
 import type { ElementType } from "react";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 
@@ -68,6 +68,14 @@ let mockDeployments: Deployment[] = [];
 let mockStatusError = false;
 const mockStatusRefetch = vi.fn();
 let mockComponentsPending = false;
+// The board's components. Two by default — a service and the web app that
+// calls it; the agent cases add a third.
+type BoardComponent = { name: string; displayName: string; type: string };
+const defaultComponents = (): BoardComponent[] => [
+  { name: "claims-api", displayName: "claims-api", type: "service" },
+  { name: "approvals-web", displayName: "approvals-web", type: "web-application" },
+];
+let mockComponents: BoardComponent[] = defaultComponents();
 let mockFailedCount = 0;
 
 type ProjectDependencyReadiness = components["schemas"]["ProjectDependencyReadiness"];
@@ -104,10 +112,7 @@ vi.mock("../api/queries", () => ({
   }),
   useProjectComponents: () => ({
     data: {
-      items: [
-        { name: "claims-api", displayName: "claims-api", type: "service" },
-        { name: "approvals-web", displayName: "approvals-web", type: "web-application" },
-      ],
+      items: mockComponents,
     },
     isPending: mockComponentsPending,
     isError: false,
@@ -211,9 +216,19 @@ vi.mock("../../validation/api/counts", () => ({
 type ProjectTestUserState = components["schemas"]["ProjectTestUserState"];
 let mockTestUsers: ProjectTestUserState[] = [];
 let mockRolesPending = false;
+// The project's sign-in as the test app performs it; absent by default, as it
+// is for a project whose design declares no sign-in resource.
+let mockSignIn: { issuer: string; clientId: string } | undefined;
 vi.mock("../../spec/api/roles", () => ({
+  resourceServerOf: (live: { resourceServer?: string } | undefined) => live?.resourceServer,
   useProjectRoles: () => ({
-    data: { directoryAvailable: true, roles: [], testUsers: mockTestUsers },
+    data: {
+      directoryAvailable: true,
+      roles: [],
+      testUsers: mockTestUsers,
+      resourceServer: "https://aep.wso2.com/orgs/acme/projects/expense",
+      signIn: mockSignIn,
+    },
     isPending: mockRolesPending,
     isError: false,
   }),
@@ -295,6 +310,7 @@ beforeEach(() => {
   mockBuildsError = false;
   mockBuildsRefetch.mockClear();
   mockComponentsPending = false;
+  mockComponents = defaultComponents();
   mockFailedCount = 0;
   mockRuns = [];
   mockRunsPending = false;
@@ -304,6 +320,7 @@ beforeEach(() => {
   mockCounts = undefined;
   mockTestUsers = [];
   mockRolesPending = false;
+  mockSignIn = undefined;
   mockReadiness = undefined;
   mockReadinessPending = false;
   mockReadinessError = false;
@@ -665,6 +682,58 @@ describe("DeploymentEnvironmentPage — try it out (ADR-0032)", () => {
     expect(screen.getByText(/Talks to/)).toHaveTextContent("Talks to claims-api on this environment");
     fireEvent.click(screen.getByRole("button", { name: "Copy the URL of approvals-web" }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("https://approvals.dev.expense.localhost"));
+  });
+
+  // An agent has no page of its own, so the platform's test app is its page:
+  // the console hands it everything public it needs to sign a person in as
+  // one of the project's test users and reach the agent's gateway URL.
+  describe("an agent is tried in the test app", () => {
+    const agent = (): Deployment => ({
+      componentName: "triage",
+      environment: "development",
+      status: "Ready",
+      releaseName: "triage-v1-4e8a0d6",
+      endpointUrl: "https://gw.dev.expense.localhost/expense-triage-http",
+      createdAt: "2026-08-14T16:55:00Z",
+    });
+    beforeEach(() => {
+      mockComponents = [...defaultComponents(), { name: "triage", displayName: "triage", type: "ai-agent" }];
+      mockDeployments = [...devDeployments(), agent()];
+      mockTestUsers = [
+        { username: "test-engineer", roles: ["Engineer"], scopes: ["triage:use"], exists: true, owned: true, supplied: false },
+      ];
+    });
+
+    it("carries the sign-in coordinates, the test users' scopes and the gateway URL", () => {
+      mockSignIn = { issuer: "http://default-idp.amp.localhost:8080", clientId: "aep-dp-x-r-y" };
+      render(<DeploymentEnvironmentPage projectName="expense" environment="development" />);
+
+      const link = screen.getByRole("link", { name: "Try triage" });
+      const href = new URL(link.getAttribute("href") ?? "");
+      expect(href.origin).toBe("http://tryit.aep.localhost:8095");
+      const query = new URLSearchParams(href.hash.slice("#/agent?".length));
+      expect(query.get("project")).toBe("expense");
+      expect(query.get("component")).toBe("triage");
+      expect(query.get("issuer")).toBe("http://default-idp.amp.localhost:8080");
+      expect(query.get("client_id")).toBe("aep-dp-x-r-y");
+      expect(query.get("resource")).toBe("https://aep.wso2.com/orgs/acme/projects/expense");
+      expect(query.get("scopes")).toBe("openid profile email triage:use");
+      expect(query.get("endpoint")).toBe("https://gw.dev.expense.localhost/expense-triage-http");
+      expect(link).toHaveAttribute("target", "_blank");
+      // The accounts still render once, in the web app's panel, not again in the agent's.
+      expect(screen.getAllByText("Sign in with a test user")).toHaveLength(1);
+    });
+
+    it("offers no launch the app could not honour: no sign-in client, or no account to sign in as", () => {
+      render(<DeploymentEnvironmentPage projectName="expense" environment="development" />);
+      expect(screen.queryByRole("link", { name: "Try triage" })).toBeNull();
+
+      cleanup();
+      mockSignIn = { issuer: "http://default-idp.amp.localhost:8080", clientId: "aep-dp-x-r-y" };
+      mockTestUsers = [];
+      render(<DeploymentEnvironmentPage projectName="expense" environment="development" />);
+      expect(screen.queryByRole("link", { name: "Try triage" })).toBeNull();
+    });
   });
 });
 

@@ -22,7 +22,7 @@
 # whole interface, and the only friction in calling it is minting a token. This
 # is that curl with the Thunder client_credentials dance folded in.
 #
-# The loop it was written for: change the `aep-validation` skill, rebuild and
+# The loop it was written for: change the `validation-task` skill, rebuild and
 # deploy aep-api — the BFF carries the skills mirror a dispatched runner reads,
 # so `make build-runner` does NOT reach it — confirm the mirror landed, then run
 # this and watch the agent work against the app already deployed. Nothing is

@@ -35,6 +35,7 @@ type Handler struct {
 	progress    *ProgressService
 	commands    *Commands
 	cycleBuilds *CycleBuilds
+	validation  *ValidationReads
 }
 
 // NewHandler returns the slice's handler. Any nil service leaves its operations
@@ -42,6 +43,12 @@ type Handler struct {
 // handler follows.
 func NewHandler(reads *Reads, progress *ProgressService, commands *Commands, cycleBuilds *CycleBuilds) *Handler {
 	return &Handler{reads: reads, progress: progress, commands: commands, cycleBuilds: cycleBuilds}
+}
+
+// WithValidation attaches the validation read model. Returns the receiver.
+func (h *Handler) WithValidation(v *ValidationReads) *Handler {
+	h.validation = v
+	return h
 }
 
 // ListBuildRuns serves GET /projects/{p}/builds/{tag}/runs.
@@ -66,6 +73,43 @@ func (h *Handler) ListCycleBuilds(ctx context.Context, request gen.ListCycleBuil
 		return nil, mapRunError(err)
 	}
 	return gen.ListCycleBuilds200JSONResponse(*out), nil
+}
+
+// ListValidations serves GET /projects/{p}/validations.
+func (h *Handler) ListValidations(ctx context.Context, request gen.ListValidationsRequestObject) (gen.ListValidationsResponseObject, error) {
+	if h.validation == nil {
+		return nil, apierr.ServiceUnavailable("validation reads not configured")
+	}
+	out, err := h.validation.Validations(ctx, tenant.BoundOrgFromContext(ctx), request.ProjectName)
+	if err != nil {
+		return nil, mapRunError(err)
+	}
+	return gen.ListValidations200JSONResponse(*out), nil
+}
+
+// GetValidation serves GET /projects/{p}/validations/{tag}.
+func (h *Handler) GetValidation(ctx context.Context, request gen.GetValidationRequestObject) (gen.GetValidationResponseObject, error) {
+	if h.validation == nil {
+		return nil, apierr.ServiceUnavailable("validation reads not configured")
+	}
+	out, err := h.validation.ValidationForTag(ctx, tenant.BoundOrgFromContext(ctx), request.ProjectName, request.Tag)
+	if err != nil {
+		return nil, mapRunError(err)
+	}
+	return gen.GetValidation200JSONResponse(*out), nil
+}
+
+// GetValidationReport serves GET /projects/{p}/validations/{tag}/cycles/{cycleId}/report.
+func (h *Handler) GetValidationReport(ctx context.Context, request gen.GetValidationReportRequestObject) (gen.GetValidationReportResponseObject, error) {
+	if h.validation == nil {
+		return nil, apierr.ServiceUnavailable("validation reads not configured")
+	}
+	out, err := h.validation.ValidationSnapshot(
+		ctx, tenant.BoundOrgFromContext(ctx), request.ProjectName, request.Tag, request.CycleID)
+	if err != nil {
+		return nil, mapRunError(err)
+	}
+	return gen.GetValidationReport200JSONResponse(*out), nil
 }
 
 // StreamRunProgress serves GET /projects/{p}/runs/{runId}/progress.
@@ -170,6 +214,11 @@ func mapRunError(err error) error {
 		return apierr.NotFound("run not found")
 	case errors.Is(err, ErrCycleNotFound):
 		return apierr.NotFound("cycle not found")
+	case errors.Is(err, delivery.ErrVersionNotDeployed):
+		// "Not in this state" like the two below, and it clears the same way — deploy
+		// this version and it becomes validatable. A 409 rather than a 422 for that
+		// reason: the request is not malformed, the project is simply somewhere else.
+		return apierr.Conflict(err.Error())
 	case errors.Is(err, delivery.ErrRunAlreadyLive), errors.Is(err, delivery.ErrMilestoneHasOpenWork):
 		// Both mean "not in this state" rather than "not allowed", and both clear on
 		// their own — the live run settles, the open work gets worked. The message is

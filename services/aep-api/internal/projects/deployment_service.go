@@ -58,6 +58,15 @@ type DeploymentService struct {
 	// files computes the literal files a component needs mounted
 	// (env-config.js). Optional, same unmanaged-vs-empty rule.
 	files RuntimeFileProvider
+	// governor registers each ai-agent with Agent Manager and leaves its model
+	// credential where the composition below can read it. Optional: nil governs
+	// nothing and deploys exactly as the platform did before Agent Manager.
+	governor AgentGovernor
+	// modelAccess grants an ai-agent the org's Anthropic key. Optional: nil
+	// deploys agents without MODEL_*, which agent-building answers with a 503
+	// from /healthz rather than a broken turn.
+	modelAccess ModelAccessProvider
+
 	// gatewayHostOverride pins host:port of the API gateway runtime for every
 	// environment, overriding the per-(org, environment) derivation. Empty — the
 	// normal case — derives it (see gateway_address.go).
@@ -95,6 +104,16 @@ type envAuth struct {
 	Assertion openchoreo.GatewayAssertion
 }
 
+// ModelAccessProvider yields the MODEL_* env vars an ai-agent needs, having
+// first ensured the SecretReference MODEL_API_KEY names exists. Model access is
+// granted by component TYPE, not declared as a dependency (ADR-0016), so
+// OpenChoreo never resolves it while rendering a release — the platform composes
+// it into the binding write itself. An org with no connected key yields
+// (nil, nil).
+type ModelAccessProvider interface {
+	ModelAccessEnvVars(ctx context.Context, orgID, component string) ([]openchoreo.WorkflowEnvVarRef, error)
+}
+
 // ComponentEnvVarReader is the user's component config, consumer-side.
 // *configService satisfies it.
 type ComponentEnvVarReader interface {
@@ -120,6 +139,32 @@ func NewDeploymentService(components openchoreo.ComponentClient, store *spec.Art
 func (s *DeploymentService) SetIDPService(idp OrgPublisher) {
 	if s != nil {
 		s.idp = idp
+	}
+}
+
+// AgentGovernor registers one agent with Agent Manager before it is deployed.
+//
+// IT IS CALLED FROM Deploy, not from the delivery workflow, and that placement
+// is the point: Deploy is the one path every deployment passes through —
+// the workflow's promote, Converge's drift repair, and a config change's
+// redeploy all land here. Governance hung off any one caller is governance the
+// next caller silently skips, which is exactly how an earlier version of this
+// left config-change redeploys ungoverned.
+type AgentGovernor interface {
+	GovernAgent(ctx context.Context, in delivery.GovernAgentInput) (delivery.GovernAgentOutcome, error)
+}
+
+// SetGovernor wires Agent Manager governance. Optional, like the others.
+func (s *DeploymentService) SetGovernor(g AgentGovernor) {
+	s.governor = g
+}
+
+// SetModelAccess wires an ai-agent's model access. Optional like the others,
+// but its absence is invisible at deploy time and only shows up as a 500 on
+// the agent's first turn — which is how it shipped once, unwired.
+func (s *DeploymentService) SetModelAccess(m ModelAccessProvider) {
+	if s != nil {
+		s.modelAccess = m
 	}
 }
 
@@ -182,6 +227,17 @@ func (s *DeploymentService) Deploy(ctx context.Context, orgID, projectID string,
 		return nil, nil
 	}
 
+	// Governance FIRST, for the whole wave, and before anything is composed:
+	// ai_agent_model_access.go reads the agent's stored credential while
+	// building the ReleaseBinding, so a key that arrives after composition has
+	// nowhere to go until the next version. A failure here fails the deploy —
+	// an environment that carries an AI gateway binding has promised its agents
+	// are governed, and half a governed wave is the state nobody can reason
+	// about afterwards.
+	if err := s.govern(ctx, orgID, projectID, targets); err != nil {
+		return nil, err
+	}
+
 	// Resolved ONCE for the pass: both are (org, environment) facts, and asking
 	// per component would issue the same reads N times for the same answer.
 	auth := envAuth{
@@ -199,6 +255,35 @@ func (s *DeploymentService) Deploy(ctx context.Context, orgID, projectID string,
 		}
 	}
 	return out, errors.Join(failures...)
+}
+
+// govern registers each target with Agent Manager.
+//
+// The governor decides what is and is not an agent — this service does not
+// filter, because "which components are governed" is a governance question and
+// splitting it across two packages is how the two drift.
+func (s *DeploymentService) govern(ctx context.Context, orgID, projectID string, targets []delivery.DeployTarget) error {
+	if s.governor == nil || len(targets) == 0 {
+		return nil
+	}
+	for _, t := range targets {
+		outcome, err := s.governor.GovernAgent(ctx, delivery.GovernAgentInput{
+			OrgID:       orgID,
+			ProjectID:   projectID,
+			Component:   t.Component,
+			Environment: openchoreo.DevEnvironmentName,
+		})
+		if err != nil {
+			slog.ErrorContext(ctx, "deployment: agent governance failed; the deploy is refused",
+				"org", orgID, "project", projectID, "component", t.Component, "error", err)
+			return fmt.Errorf("govern %q: %w", t.Component, err)
+		}
+		if outcome.Skipped {
+			slog.InfoContext(ctx, "deployment: component is not governed by Agent Manager",
+				"org", orgID, "project", projectID, "component", t.Component, "reason", outcome.Reason)
+		}
+	}
+	return nil
 }
 
 // PlanDeploymentWaves plans one reconcile pass over the version's state: what
@@ -310,7 +395,7 @@ func (s *DeploymentService) deployOne(ctx context.Context, orgID, projectID, com
 		// THIS project carries as `aud`, and therefore what the gateway checks
 		// to reject one minted for any other.
 		Audience: ProjectAudience(orgID, projectID),
-		EnvVars:  s.envVarsFor(ctx, orgID, projectID, componentName),
+		EnvVars:  s.envVarsWithModelAccess(ctx, orgID, projectID, componentName, comp.ComponentType),
 		Files:    s.filesFor(ctx, orgID, projectID, componentName),
 		// The org IS the OC namespace components are created in, and that
 		// namespace is a segment of every managed API's gateway context path.
@@ -334,6 +419,28 @@ func (s *DeploymentService) deployOne(ctx context.Context, orgID, projectID, com
 	slog.InfoContext(ctx, "deployment: release pinned",
 		"org", orgID, "project", projectID, "component", componentName, "release", releaseName)
 	return outcome, nil
+}
+
+// envVarsWithModelAccess is the user's component config plus, for an ai-agent,
+// its model access. Appended rather than merged: the two never collide because
+// MODEL_* is platform-owned and a user's config keys are their own.
+//
+// A model-access failure is logged and the deploy continues with the user's
+// vars alone. Failing the deploy would be worse: the agent would not exist at
+// all, where an agent without MODEL_* comes up and reports 503 from /healthz —
+// a state an operator can see and fix by connecting a key.
+func (s *DeploymentService) envVarsWithModelAccess(ctx context.Context, orgID, projectID, componentName, componentType string) []openchoreo.WorkflowEnvVarRef {
+	envVars := s.envVarsFor(ctx, orgID, projectID, componentName)
+	if componentType != spec.ComponentTypeAIAgent || s.modelAccess == nil {
+		return envVars
+	}
+	modelVars, err := s.modelAccess.ModelAccessEnvVars(ctx, orgID, componentName)
+	if err != nil {
+		slog.WarnContext(ctx, "deployment: model access unavailable; ai-agent deploys without MODEL_* and will report 503 from /healthz",
+			"org", orgID, "project", projectID, "component", componentName, "error", err)
+		return envVars
+	}
+	return append(envVars, modelVars...)
 }
 
 // DeploymentState reads back what the cluster says about each component's

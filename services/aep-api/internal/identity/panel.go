@@ -178,11 +178,43 @@ type PanelView struct {
 	// `aud`. It is a fact about the PROJECT, not about any role, so it is
 	// answered whether or not a build has created a role yet.
 	ResourceServer string
-	TestUsers      []TestUserState
+	// SignIn is how a client outside the project's own components signs in to
+	// it: the issuer to sign in AT and the public OAuth client to sign in AS.
+	// Both are read off the project's sign-in resource; nil when the project
+	// declares none (or its binding has not resolved), so a reader never builds
+	// an authorize URL around an empty client id.
+	SignIn    *SignInInfo
+	TestUsers []TestUserState
 	// DirectoryAvailable is false when the identity provider could not be
 	// reached. Roles is then empty and Exists is false throughout — neither means
 	// "absent", and the console must say so.
 	DirectoryAvailable bool
+}
+
+// signIn is the public sign-in the view publishes: the client the binding
+// resolved and the issuer it names. Read off the binding alone, so it survives
+// the directory being unreachable — the platform's own record answers a public
+// fact, and the console keeps offering the test app while the admin half of
+// the panel says "unknown". The directory's issuer is only a fallback for a
+// binding that predates the `issuer` output.
+func (s *PanelService) signIn(ctx context.Context, scope Scope, orgID, projectID, fallbackIssuer string) *SignInInfo {
+	if s.coords == nil {
+		return nil
+	}
+	c, err := s.coords.SignInCoordinates(ctx, orgID, projectID)
+	if err != nil {
+		slog.WarnContext(ctx, "roles panel: sign-in client unavailable, omitting it from the read",
+			"scope", scope.String(), "project", projectID, "error", err)
+		return nil
+	}
+	issuer := c.Issuer
+	if issuer == "" {
+		issuer = fallbackIssuer
+	}
+	if c.ClientID == "" || issuer == "" {
+		return nil
+	}
+	return &SignInInfo{Issuer: issuer, ClientID: c.ClientID}
 }
 
 // PasswordDisclosure is what reveal and rotate answer with. It is the only shape
@@ -199,7 +231,19 @@ type PasswordDisclosure struct {
 type PanelService struct {
 	targets TargetResolver
 	store   Store
+	// coords reads the project's sign-in client; optional, see SetSignInCoordinates.
+	coords SignInCoordinates
 }
+
+// SignInInfo is the public half of a project's sign-in: where, and as which client.
+type SignInInfo struct {
+	Issuer   string
+	ClientID string
+}
+
+// SetSignInCoordinates wires the reader of the project's sign-in client.
+// Optional: without it the view carries no SignIn block.
+func (s *PanelService) SetSignInCoordinates(c SignInCoordinates) { s.coords = c }
 
 // NewPanelService builds the panel. The store is required; the resolver may be
 // nil — a stack that cannot reach an identity provider still has the platform's
@@ -286,6 +330,12 @@ func (s *PanelService) View(ctx context.Context, orgID, projectID string) (Panel
 		return PanelView{}, err
 	}
 	view.ResourceServer = identifier
+	// The directory's issuer only backs a binding that predates the `issuer` output.
+	fallbackIssuer := ""
+	if terr == nil {
+		fallbackIssuer = target.Issuer
+	}
+	view.SignIn = s.signIn(ctx, scope, orgID, projectID, fallbackIssuer)
 	projectRoles, err := s.projectRoles(ctx, scope, projectID, identifier, directory, bindings)
 	if err != nil {
 		return PanelView{}, err

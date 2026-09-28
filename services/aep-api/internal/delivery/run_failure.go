@@ -64,6 +64,12 @@ type RunFailure struct {
 	LastAt  time.Time `json:"lastAt"`
 	// Detail is the platform's own error text, scrubbed (ScrubFailureDetail).
 	Detail string `json:"detail,omitempty"`
+	// Host and ResetAt belong to RunFailureCodeModelProviderLimit: whose limit
+	// stopped the agent, and when the provider said it resets — nil when it
+	// stated no reset. They are what the console's sentence names, which is why
+	// they are fields and not words folded into Detail.
+	Host    string     `json:"host,omitempty"`
+	ResetAt *time.Time `json:"resetAt,omitempty"`
 }
 
 // Failure codes. Each names exactly one class a reader acts on differently.
@@ -83,6 +89,12 @@ const (
 	// RunFailureCodeRepositoryUnavailable — the run's repository, issue or
 	// credential is gone (sourcecontrol.IsPermanent). Permanent.
 	RunFailureCodeRepositoryUnavailable = "repository-unavailable"
+	// RunFailureCodeModelProviderLimit — the model provider's usage limit
+	// stopped the coding agent (provider_limit.go). Recorded by the pod-truth
+	// watcher from the runner's settle; it explains RunReasonModelProviderLimit
+	// on a BLOCKED run, and carries Host and ResetAt. Not permanent: the plan
+	// resets, and the user starts the run again.
+	RunFailureCodeModelProviderLimit = "model-provider-limit"
 )
 
 // Value / Scan make RunFailure encode itself as jsonb, for the same reason

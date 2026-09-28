@@ -2,10 +2,11 @@
 
 **Status:** Accepted
 
-This image runs a headless Chromium — `agent-browser` during a mock-verification
-walk, playwright during a validation run — and Chromium mmaps its shared buffers
-out of `/dev/shm`. On 64Mi of it Chromium does not degrade, it **aborts**: the
-browser process dies mid-page and the CLI reports a closed CDP channel, which
+This image runs a headless Chromium — `agent-browser` drives it in a
+mock-verification walk and in a validation run alike — and Chromium mmaps its
+shared buffers out of `/dev/shm`. On 64Mi of it Chromium does not degrade, it
+**aborts**: the browser process dies mid-page and the CLI reports a closed CDP
+channel, which
 reaches an agent as a browser that will not start rather than as a resource
 problem.
 
@@ -39,6 +40,13 @@ reason it is written the way it is:
   on its own. That is why `shmSize` is enum-bounded rather than free-form, and
   why raising it is a deliberate choice made against `memoryLimit`, not a knob
   to turn when a browser misbehaves.
+
+**Measured since, and unresolved:** `agent-browser` passes
+`--disable-dev-shm-usage` on every launch regardless — the flag is baked into the
+CLI's own binary, so the browser has been running with it. That does not change
+the sizing below, which still has to hold for anything else in the pod, but it
+does mean the rejection immediately after was never actually in force for the
+browser this image drives.
 
 ## Rejected
 

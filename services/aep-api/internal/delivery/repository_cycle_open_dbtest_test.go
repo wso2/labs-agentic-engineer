@@ -68,3 +68,43 @@ func TestListOpenCycleIDs_OnlyTheProjectsUnendedCycles(t *testing.T) {
 		t.Errorf("cross-org read returned %v, want nothing", other)
 	}
 }
+
+// TestHasOpenCycle_AnyUnendedCycleInTheOrg is the model key rename's gate: an
+// open cycle in any of the org's projects may still be starting on the key's
+// previous copy, an ended one cannot, and another org's cycles never count.
+func TestHasOpenCycle_AnyUnendedCycleInTheOrg(t *testing.T) {
+	db := dbtest.New(t)
+	repo := delivery.NewRunCycleRepository(db, nil)
+	ctx := context.Background()
+
+	has := func(org string) bool {
+		t.Helper()
+		open, err := repo.HasOpenCycle(ctx, org)
+		if err != nil {
+			t.Fatalf("HasOpenCycle(%s): %v", org, err)
+		}
+		return open
+	}
+	if has("acme") {
+		t.Fatal("an org with no cycles reports an open one")
+	}
+	c := &delivery.RunCycle{
+		ID: "44444444-4444-4444-4444-444444444444", OrgID: "acme", ProjectID: "widgets",
+		RunID: "run-widgets", Kind: delivery.CycleKindCoding,
+	}
+	if err := repo.Append(ctx, c); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if !has("acme") {
+		t.Error("an appended, unended cycle does not count as open")
+	}
+	if has("globex") {
+		t.Error("another org's open cycle counts")
+	}
+	if _, err := repo.Finish(ctx, c.ID, "sha"); err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+	if has("acme") {
+		t.Error("an ended cycle still counts as open")
+	}
+}

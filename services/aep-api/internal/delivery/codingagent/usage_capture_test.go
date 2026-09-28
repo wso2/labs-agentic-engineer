@@ -17,9 +17,12 @@
 package codingagent
 
 import (
+	"math"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/contracts"
+	"github.com/wso2/aep/aep-api/internal/platform/modelconn"
+	"github.com/wso2/aep/aep-api/internal/platform/modelcost"
 )
 
 func TestUsageFromLogReadsTheResultLine(t *testing.T) {
@@ -27,7 +30,7 @@ func TestUsageFromLogReadsTheResultLine(t *testing.T) {
 2026-07-21T10:00:01.000000000Z [oneshot] plain bootstrap line
 2026-07-21T10:00:02.000000000Z {"schemaVersion":1,"ts":"t","seq":9,"kind":"result","status":"success","usage":{"inputTokens":100,"outputTokens":20,"cacheReadTokens":3000,"cacheCreationTokens":40,"model":"claude-fable-5"}}
 `
-	u := usageFromLog(log)
+	u := terminalFromLog(log).usage
 	if u == nil {
 		t.Fatal("expected usage, got nil")
 	}
@@ -41,7 +44,7 @@ func TestUsageFromLogLastResultWins(t *testing.T) {
 	log := `{"schemaVersion":1,"ts":"t","seq":1,"kind":"result","status":"failure","usage":{"inputTokens":1,"outputTokens":1,"cacheReadTokens":0,"cacheCreationTokens":0,"model":"claude-fable-5"}}
 {"schemaVersion":1,"ts":"t","seq":2,"kind":"result","status":"success","usage":{"inputTokens":7,"outputTokens":3,"cacheReadTokens":0,"cacheCreationTokens":0,"model":"claude-fable-5"}}
 `
-	u := usageFromLog(log)
+	u := terminalFromLog(log).usage
 	if u == nil || u.InputTokens != 7 {
 		t.Fatalf("expected the last result's usage, got %+v", u)
 	}
@@ -50,7 +53,7 @@ func TestUsageFromLogLastResultWins(t *testing.T) {
 func TestUsageFromLogKeepsThePerModelSplit(t *testing.T) {
 	log := `{"schemaVersion":1,"ts":"t","seq":1,"kind":"result","status":"success","usage":{"inputTokens":110,"outputTokens":55,"cacheReadTokens":1000,"cacheCreationTokens":200,"model":"","models":[{"inputTokens":100,"outputTokens":50,"cacheReadTokens":1000,"cacheCreationTokens":200,"model":"claude-sonnet-5"},{"inputTokens":10,"outputTokens":5,"cacheReadTokens":0,"cacheCreationTokens":0,"model":"claude-haiku-4-5"}]}}
 `
-	u := usageFromLog(log)
+	u := terminalFromLog(log).usage
 	if u == nil {
 		t.Fatal("expected usage, got nil")
 	}
@@ -79,7 +82,7 @@ func TestUsageFromLogAbsentForPreCaptureRunners(t *testing.T) {
 	log := `{"schemaVersion":1,"ts":"t","seq":1,"kind":"result","status":"success"}
 some stray text mentioning "result" and "usage" but not JSON
 `
-	if u := usageFromLog(log); u != nil {
+	if u := terminalFromLog(log).usage; u != nil {
 		t.Fatalf("expected nil for a usage-less log, got %+v", u)
 	}
 }
@@ -94,7 +97,7 @@ func TestUsageFromLogReadsAV2RunSettledLine(t *testing.T) {
 	log := `2026-09-04T09:25:39.000000000Z {"v":2,"seq":1,"kind":"run_started","agentId":"lead","ts":"2026-09-04T09:25:39Z"}
 2026-09-04T09:55:02.000000000Z {"v":2,"seq":812,"kind":"run_settled","agentId":"lead","ts":"2026-09-04T09:55:02Z","outcome":"success","usage":{"inputTokens":110,"outputTokens":55,"cacheReadTokens":1000,"cacheCreationTokens":200,"model":"","models":[{"inputTokens":100,"outputTokens":50,"cacheReadTokens":1000,"cacheCreationTokens":200,"model":"claude-sonnet-5"},{"inputTokens":10,"outputTokens":5,"cacheReadTokens":0,"cacheCreationTokens":0,"model":"claude-haiku-4-5"}]}}
 `
-	u := usageFromLog(log)
+	u := terminalFromLog(log).usage
 	if u == nil {
 		t.Fatal("a v2 run settled with usage captured nothing — the run would be unbilled")
 	}
@@ -131,11 +134,52 @@ func TestUsageFromLogNeverSumsTurnEnded(t *testing.T) {
 {"v":2,"seq":20,"kind":"turn_ended","agentId":"lead","outcome":"success","usage":{"inputTokens":90,"outputTokens":25,"cacheReadTokens":0,"cacheCreationTokens":0,"model":"claude-fable-5"}}
 {"v":2,"seq":30,"kind":"run_settled","agentId":"lead","outcome":"success","usage":{"inputTokens":90,"outputTokens":25,"cacheReadTokens":0,"cacheCreationTokens":0,"model":"claude-fable-5"}}
 `
-	u := usageFromLog(log)
+	u := terminalFromLog(log).usage
 	if u == nil {
 		t.Fatal("expected usage, got nil")
 	}
 	if u.InputTokens != 90 || u.OutputTokens != 25 {
 		t.Fatalf("usage = %+v, want the terminal line's cumulative total, never a sum", u.TokenUsage)
+	}
+}
+
+// An OpenCode run settles in the same v2 envelope, with its usage summed per
+// model across every session and the model ids normalised to the platform's
+// (the adapter strips OpenCode's `anthropic/` prefix). Usage that reaches
+// capture as a multi-slice models[] must price whole: SumCost is all-or-nothing, so a slice the
+// stamper could not key would blank the cycle's cost. The producer's own
+// `costUsd` is ignored by construction (ADR-0011: USD is stamped at capture).
+func TestUsageFromLogPricesAnOpenCodeRun(t *testing.T) {
+	log := `2026-09-22T21:00:00.000000000Z {"v":2,"seq":1,"kind":"run_started","agentId":"ses_root","ts":"2026-09-22T21:00:00Z","runtime":"opencode","model":"claude-sonnet-5"}
+2026-09-22T21:09:00.000000000Z {"v":2,"seq":385,"kind":"run_settled","agentId":"ses_root","ts":"2026-09-22T21:09:00Z","outcome":"success","usage":{"inputTokens":1017,"outputTokens":1636,"cacheReadTokens":95000,"cacheCreationTokens":20500,"model":"","costUsd":0.076,"models":[{"inputTokens":17,"outputTokens":1536,"cacheReadTokens":95000,"cacheCreationTokens":13000,"model":"claude-sonnet-5"},{"inputTokens":1000,"outputTokens":100,"cacheReadTokens":0,"cacheCreationTokens":7500,"model":"claude-haiku-4-5"}]}}
+`
+	u := terminalFromLog(log).usage
+	if u == nil {
+		t.Fatal("an OpenCode run settled with usage captured nothing — the run would be unbilled")
+	}
+	slices := u.PricingSlices()
+	if len(slices) != 2 || slices[0].Model != "claude-sonnet-5" || slices[1].Model != "claude-haiku-4-5" {
+		t.Fatalf("PricingSlices = %+v, want the sonnet and haiku split", slices)
+	}
+
+	rates := []modelcost.ModelRate{
+		{Host: modelconn.AnthropicHost, ModelID: "claude-sonnet-5", InputPerMTok: 2, OutputPerMTok: 10, CacheReadPerMTok: 0.2, CacheWritePerMTok: 2.5},
+		{Host: modelconn.AnthropicHost, ModelID: "claude-haiku-4-5", InputPerMTok: 1, OutputPerMTok: 5, CacheReadPerMTok: 0.1, CacheWritePerMTok: 1.25},
+	}
+	ts := make([]modelcost.Tokens, 0, len(slices))
+	for _, s := range slices {
+		ts = append(ts, modelcost.Tokens{
+			Host: modelconn.AnthropicHost, ModelID: s.Model, InputTokens: s.InputTokens, OutputTokens: s.OutputTokens,
+			CacheReadTokens: s.CacheReadTokens, CacheCreationTokens: s.CacheCreationTokens,
+		})
+	}
+	cost := modelcost.NewStamper(rates).SumCost(ts)
+	if cost == nil {
+		t.Fatal("an OpenCode run on the two offered models did not price")
+	}
+	// sonnet: 17*2 + 1536*10 + 95000*0.2 + 13000*2.5 = 66894 µ$
+	// haiku:  1000*1 + 100*5 + 7500*1.25          = 10875 µ$  → $0.077769
+	if want := math.Round(0.077769*100) / 100; *cost != want {
+		t.Errorf("cost = %v, want %v", *cost, want)
 	}
 }

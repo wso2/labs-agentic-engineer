@@ -225,7 +225,7 @@ func TestProvisionPublisherForBuild_FreshCreateWritesSecretRef(t *testing.T) {
 		return "aep-publisher-acme", "secret-once", true, nil
 	}}
 	svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).
-		WithSecretRefWriter(NewSecretRefWriter(sm, nil, nil, repo))
+		WithSecretRefWriter(NewSecretRefWriter(sm, nil, nil, repo, nil))
 	ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: "ou-acme-uuid"})
 	if err := svc.ProvisionPublisherForBuild(ctx, "acme"); err != nil {
 		t.Fatalf("provision: %v", err)
@@ -254,7 +254,7 @@ func TestProvisionPublisherForBuild_ExistingRefDoesNotRotate(t *testing.T) {
 	}}
 	sm := &provFakeSM{ref: "should-not-write"}
 	svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).
-		WithSecretRefWriter(NewSecretRefWriter(sm, nil, nil, repo))
+		WithSecretRefWriter(NewSecretRefWriter(sm, nil, nil, repo, nil))
 	ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: "ou-acme-uuid"})
 	if err := svc.ProvisionPublisherForBuild(ctx, "acme"); err != nil {
 		t.Fatalf("provision: %v", err)
@@ -278,7 +278,7 @@ func TestProvisionPublisherForBuild_CreatedFalseEmptyRefRotatesOnce(t *testing.T
 	}
 	sm := &provFakeSM{ref: "cred-after-rotate"}
 	svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).
-		WithSecretRefWriter(NewSecretRefWriter(sm, nil, nil, repo))
+		WithSecretRefWriter(NewSecretRefWriter(sm, nil, nil, repo, nil))
 	ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: "ou-acme-uuid"})
 	if err := svc.ProvisionPublisherForBuild(ctx, "acme"); err != nil {
 		t.Fatalf("provision: %v", err)
@@ -300,7 +300,7 @@ func TestProvisionPublisherForBuild_WritePublisherErrorFails(t *testing.T) {
 	}}
 	sm := &provFakeSM{err: errors.New("sm-api: no JWT in context")}
 	svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).
-		WithSecretRefWriter(NewSecretRefWriter(sm, nil, nil, repo))
+		WithSecretRefWriter(NewSecretRefWriter(sm, nil, nil, repo, nil))
 	ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: "ou-acme-uuid"})
 	err := svc.ProvisionPublisherForBuild(ctx, "acme")
 	if err == nil {
@@ -342,10 +342,10 @@ func TestProvisionPublisherForBuild_DisabledWriterViaNewSecretRefWriter(t *testi
 	thunder := &fakeThunder{ensureFn: func(context.Context, string, string) (string, string, bool, error) {
 		return "aep-publisher-acme", "secret-once", true, nil
 	}}
-	// NewSecretRefWriter(nil, nil, nil, repo) is Enabled()==false (no
+	// NewSecretRefWriter(nil, nil, nil, repo, nil) is Enabled()==false (no
 	// SecretManagementClient) — same fail-closed contract as a nil writer.
 	svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).
-		WithSecretRefWriter(NewSecretRefWriter(nil, nil, nil, repo))
+		WithSecretRefWriter(NewSecretRefWriter(nil, nil, nil, repo, nil))
 	ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: "ou-acme-uuid"})
 	err := svc.ProvisionPublisherForBuild(ctx, "acme")
 	if err == nil {
@@ -368,7 +368,7 @@ func TestProvisionPublisherForBuild_EnsureErrorPropagates(t *testing.T) {
 	}}
 	sm := &provFakeSM{}
 	svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).
-		WithSecretRefWriter(NewSecretRefWriter(sm, nil, nil, repo))
+		WithSecretRefWriter(NewSecretRefWriter(sm, nil, nil, repo, nil))
 	ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: "ou-acme-uuid"})
 	err := svc.ProvisionPublisherForBuild(ctx, "acme")
 	if err == nil {
@@ -388,7 +388,7 @@ func TestProvisionPublisherForBuild_EmptyOrgID(t *testing.T) {
 	thunder := &fakeThunder{}
 	sm := &provFakeSM{}
 	svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).
-		WithSecretRefWriter(NewSecretRefWriter(sm, nil, nil, repo))
+		WithSecretRefWriter(NewSecretRefWriter(sm, nil, nil, repo, nil))
 	err := svc.ProvisionPublisherForBuild(context.Background(), "")
 	if err == nil {
 		t.Fatal("expected error for empty orgID")
@@ -413,7 +413,7 @@ func TestRegenerateClientSecret_WritePublisherErrorReturned(t *testing.T) {
 	thunder := &fakeThunder{regenFn: func(context.Context, string) (string, error) { return "rotated", nil }}
 	sm := &provFakeSM{err: errors.New("sm-api down")}
 	svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).
-		WithSecretRefWriter(NewSecretRefWriter(sm, nil, nil, repo))
+		WithSecretRefWriter(NewSecretRefWriter(sm, nil, nil, repo, nil))
 	ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: "ou-acme-uuid"})
 	_, err := svc.RegenerateClientSecret(ctx, "acme", "ada@x.io")
 	if err == nil {

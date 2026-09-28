@@ -1,0 +1,26 @@
+# CORS allowed origins — a composed singleton.
+#
+# ThunderID keeps ONE `cors` server_config for the whole server and a
+# redeclaration replaces the whole value, so two publishers cannot each hold
+# their own. This document is the union of both, and its `99-` prefix makes it
+# the last one imported, whatever either side numbers its own.
+#
+# Replaces, and is imported INSTEAD of:
+#   95-cors.yaml                 (setup-env-for-aectl.sh)
+#   71-amp-cors-config.yaml      (wso2-amp-thunder-extension)
+#
+# AEP's console does not depend on this document: its Thunder CORS headers come
+# from the kgateway TrafficPolicy the platform chart attaches to Thunder's
+# HTTPRoute (helm-charts/platform/templates/thunder/cors-policy.yaml). The
+# origins below are OpenChoreo's own (Backstage, the OC portal) and Agent
+# Manager's console.
+resource_type: server_config
+name: cors
+value:
+  allowedOrigins:
+    # OpenChoreo — from the official values-thunder.yaml, via 95-cors.yaml
+    - "http://openchoreo.localhost:8080"
+    - "http://localhost:7007"
+    # Agent Manager — from 71-amp-cors-config.yaml, chart 1.0.0-rc2
+    - "http://localhost:3000"
+    - "http://console.amp.localhost:8080"

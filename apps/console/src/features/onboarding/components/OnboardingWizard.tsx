@@ -30,7 +30,7 @@ import type { components } from "../../../generated/aep-api";
 import { useSession } from "../../../auth/SessionContext";
 import { WorkspaceAuthzStep } from "./WorkspaceAuthzStep";
 import { GitHubStep } from "./GitHubStep";
-import { AnthropicStep } from "./AnthropicStep";
+import { AiAgentsStep } from "./AiAgentsStep";
 import { RepositorySetupStep } from "./RepositorySetupStep";
 
 type ConfigStatus = components["schemas"]["ConfigStatus"];
@@ -38,7 +38,7 @@ type ConfigStatus = components["schemas"]["ConfigStatus"];
 const STEPS = [
   "Configure workspace",
   "Connect GitHub",
-  "Connect Anthropic",
+  "Connect a model",
   "Set up repository",
 ];
 
@@ -114,7 +114,7 @@ export function OnboardingWizard({
 
         {step === 0 && <WorkspaceAuthzStep onDone={() => setAuthzReady(true)} />}
         {step === 1 && <GitHubStep />}
-        {step === 2 && <AnthropicStep />}
+        {step === 2 && <AiAgentsStep />}
         {step === 3 && <RepositorySetupStep onComplete={onComplete} />}
       </Paper>
 

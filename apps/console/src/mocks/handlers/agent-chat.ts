@@ -18,8 +18,10 @@
 
 // Agent-chat turn endpoints (#130): start (202), rehydrate (empty), active
 // (204), and a scripted SSE stream — narration, one tool result, terminal —
-// so the panel is fully drivable in mock mode. Error scenario: instruction
-// containing "fail" streams a turn-failed terminal.
+// so the panel is fully drivable in mock mode. Error scenarios: instruction
+// containing "fail" streams a turn-failed terminal; containing "usage limit"
+// streams the model provider's usage limit (a coded `provider_limit` failure
+// naming ollama.com and a reset ten minutes out).
 //
 // Multi-user scenarios (task 2, `aep:mock:chat` — see fixtures/chat.ts):
 //   "multiuser"      — settled history, two authors, no running turn.
@@ -309,6 +311,14 @@ export const agentChatHandlers = [
     // checked before the generic failing stream.
     if (instruction.trim().startsWith("/design")) {
       return sse(designPlanFrames(turnId, failing));
+    }
+    if (instruction.includes("usage limit")) {
+      const resetAt = new Date(Date.now() + 10 * 60_000).toISOString();
+      const host = "ollama.com";
+      return sse([
+        { type: "error", code: "provider_limit", error: `${host}'s usage limit is reached.`, host, resetAt },
+        { type: "turn-failed", reason: "agent-error", code: "provider_limit", host, resetAt, message: "429 Too Many Requests" },
+      ]);
     }
     if (failing) {
       return sse([

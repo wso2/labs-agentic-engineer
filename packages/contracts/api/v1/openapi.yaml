@@ -110,6 +110,51 @@ paths:
       summary: Patch the organization's integration config (per-section, atomic)
       tags:
       - Org Config
+  /config/llm/test:
+    post:
+      operationId: test-llm-connection
+      description: >-
+        Probes a model connection WITHOUT saving anything: the same checks a
+        save of the `llm` section runs, on the connection the body describes
+        merged over the saved one (an omitted field keeps the saved value, and
+        on first connect the format's defaults fill `baseURL` and `model`).
+
+
+        `apiKey` may be omitted only when the connection's host equals the
+        saved connection's host; the stored key is then used, server side, and
+        never returned. A new host without a key is refused
+        (`llm_key_required_for_new_host`), so a stored key never follows a
+        host. The probe follows no redirects.
+
+
+        Refusals use the `llm` section's codes (see ConfigPatch.llm) on
+        `body.llm`. Rate-limited per organization: more than 10 calls in a
+        minute answer 429 `llm_test_rate_limited`. Every call is logged with
+        the organization and the host it probed.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LLMPatch'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMCheck'
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: Test a model connection without saving it
+      tags:
+      - Org Config
   /config/git-provider/connect-sessions:
     post:
       operationId: start-git-provider-connect
@@ -2140,12 +2185,12 @@ paths:
           type: string
       - description: 'Repo-relative file path (trailing wildcard: may span multiple segments, i.e. contain
           slashes). Reads are scoped to specs/ plus a small read-only allow-list — currently the
-          runner-authored validation report at tests/validation/report.json.'
+          runner-authored validation report at tests/acceptance/report.json.'
         in: path
         name: path
         required: true
         schema:
-          description: Repo-relative file path — specs/ or an allow-listed read-only path (tests/validation/report.json)
+          description: Repo-relative file path — specs/ or an allow-listed read-only path (tests/acceptance/report.json)
           type: string
       - description: >-
           Commit to read the file AT. Omitted reads the default-branch tip.
@@ -3369,6 +3414,163 @@ paths:
       summary: Update a custom skill
       tags:
       - Skills
+  /projects/{projectName}/validations:
+    get:
+      description: >-
+        The validation ledger — one entry per spec version that has been worked, newest first,
+        carrying that version's validation state and the timing of its latest validation attempt.
+
+        It is a sibling of list-project-builds rather than a field on it: the two pages ask
+        different questions of the same rows, and folding validation into the build ledger would
+        make every builds poll load each milestone's validation cycles to answer a question that
+        page never asks. DB-only, so the console may poll it while a run is live.
+      operationId: list-validations
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          description: Project name (DNS-label slug)
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationList'
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: List every version's validation state
+      tags:
+      - Validation
+  /projects/{projectName}/validations/{tag}:
+    get:
+      description: >-
+        One version's validation history — every run that attempted it, newest first, each
+        carrying its VALIDATION cycles only. Coding, fix and conflict cycles are filtered out
+        here rather than by the client: which cycles ask the criteria is the platform's answer,
+        and a client re-deriving it is a second place for that rule to drift from the supervisor.
+
+        `live` and `deployed` are the two conditions the console gates its trigger on; every other
+        refusal belongs to revalidate-build, which owns them.
+      operationId: get-validation
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          description: Project name (DNS-label slug)
+          type: string
+      - description: Spec version tag — the name the user gave the version, resolved to a milestone
+          number through the run rows — never by matching titles against GitHub.
+        in: path
+        name: tag
+        required: true
+        schema:
+          description: >-
+            Spec version tag — the name the user gave the version. The pattern is
+            the character set; the server applies the same full rule it applies
+            when a version is created, which additionally refuses a leading `-`
+            or `.`, a trailing `.` or `.lock`, and `..` anywhere. A name that
+            could never have been created is refused here too.
+          pattern: ^[A-Za-z0-9._-]+$
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationDetail'
+          description: OK
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: No run has ever worked this version.
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: One version's validation runs and attempts
+      tags:
+      - Validation
+  /projects/{projectName}/validations/{tag}/cycles/{cycleId}/report:
+    get:
+      description: >-
+        One attempt's report AND the acceptance criteria it was judged against, read at the SAME
+        commit.
+
+        Reading them together is the point. The report lives at one fixed path that every run and
+        every attempt overwrites, so it is addressable only by the cycle's own merge commit; the
+        criteria drift independently in the branch. Pairing a historical report with the criteria as
+        they are NOW reports scenarios written since as unanswered, which is a defect of the pairing
+        and not a fact about the run. A single snapshot makes that pairing impossible to get wrong.
+
+        Three cases, by the cycle's own record. A MERGED cycle answers at its merge SHA. A cycle
+        still RUNNING has no commit yet, so the criteria come from HEAD — which is genuinely what
+        the runner is driving, since it reads them at HEAD when it executes — and `report` is null.
+        A cycle that ended WITHOUT merging never landed a report and is a 404: it is a different
+        fact from an empty report and the two read as different sentences.
+      operationId: get-validation-report
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          description: Project name (DNS-label slug)
+          type: string
+      - description: Spec version tag the cycle belongs to.
+        in: path
+        name: tag
+        required: true
+        schema:
+          pattern: ^[A-Za-z0-9._-]+$
+          type: string
+      - description: The validation cycle whose attempt is being read.
+        in: path
+        name: cycleId
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationSnapshot'
+          description: OK
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: No such cycle on this version, or the attempt ended without landing a report.
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: One attempt's report and the criteria it was judged against
+      tags:
+      - Validation
 components:
   schemas:
     ConversationMessage:
@@ -3550,11 +3752,11 @@ components:
         that cannot.
 
 
-        `opencode` is in the enum because the design carries it and because a
-        client should be able to render the choice; it is NOT selectable while
-        the platform ships no adapter for it, and the API rejects it with a
-        reason naming what is missing. Do not treat membership of this enum as
-        availability.
+        Both runtimes run on the organization's model connection. `claude-code`
+        speaks only the Anthropic format, so an OpenAI-compatible connection
+        needs `opencode` (`agents_runtime_requires_anthropic_format`). Only
+        `claude-code` can bill a Claude subscription instead, so choosing
+        `opencode` deletes a stored subscription (ADR-0028, ADR-0036).
       enum:
       - claude-code
       - opencode
@@ -3562,6 +3764,98 @@ components:
       x-enum-varnames:
       - AgentRuntimeClaudeCode
       - AgentRuntimeOpencode
+    AgentsProjection:
+      x-go-type: orgconfig.AgentsProjection
+      x-go-type-import:
+        path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
+      description: >-
+        How an organization's agents run: the coding agent's runtime and the
+        Claude subscription coding bills to instead of the connection's key.
+        The model is part of the connection (`llm.model`).
+
+
+        ALWAYS present: every org has an effective runtime whether or not
+        anyone has chosen it, so the section carries the platform's default
+        until someone does. `updatedAt`/`updatedBy` are null exactly when
+        nobody has — which is what tells "the platform's default" apart from
+        "somebody chose the same value".
+
+
+        A coding run copies the runtime (and the connection) when it is
+        dispatched, so a run in flight keeps what it was launched with.
+      additionalProperties: false
+      properties:
+        runtime:
+          $ref: '#/components/schemas/AgentRuntime'
+        availableRuntimes:
+          description: >-
+            The runtimes this installation can run, and so the only ones an
+            organization may choose. Claude Code, the default, is always
+            listed; OpenCode only when the platform is deployed with its
+            runner image. `runtime` can name one missing here (an
+            organization that chose OpenCode on an installation that later
+            lost its image); every coding dispatch then fails until the
+            organization chooses an available runtime.
+          items:
+            $ref: '#/components/schemas/AgentRuntime'
+          type: array
+        subscription:
+          allOf:
+          - $ref: '#/components/schemas/SubscriptionProjection'
+          description: >-
+            The stored Claude subscription token, masked, or null when coding
+            bills the connection's key. Only possible while the connection has
+            `capabilities.claudeSubscription` and the runtime is `claude-code`.
+          nullable: true
+        updatedAt:
+          format: date-time
+          nullable: true
+          type: string
+        updatedBy:
+          nullable: true
+          type: string
+      required:
+      - runtime
+      - availableRuntimes
+      - subscription
+      - updatedAt
+      - updatedBy
+      type: object
+    SubscriptionProjection:
+      x-go-type: orgconfig.SubscriptionProjection
+      x-go-type-import:
+        path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
+      additionalProperties: false
+      description: >-
+        A stored Claude subscription token, masked. It bills the coding agent's
+        runs to a Claude plan instead of the organization's API key, and only
+        Claude Code can present it.
+      properties:
+        kind:
+          enum:
+          - claude
+          type: string
+        keyPrefix:
+          type: string
+        keyLast4:
+          type: string
+        status:
+          type: string
+        connectedAt:
+          format: date-time
+          type: string
+        lastValidatedAt:
+          format: date-time
+          type: string
+        validationError:
+          type: string
+      required:
+      - kind
+      - keyPrefix
+      - keyLast4
+      - status
+      - connectedAt
+      type: object
     ApplyRequest:
       additionalProperties: false
       properties:
@@ -3998,60 +4292,6 @@ components:
       - status
       - startedAt
       type: object
-    CodingAgentModel:
-      description: >-
-        The model an organization's coding runs bill to.
-
-
-        Narrower than the list any runtime can serve, and narrow for one reason:
-        the platform stamps a run's cost from a per-model rate table, and that
-        stamp is ALL-OR-NOTHING across a cycle's capture — one model with no rate
-        blanks the cost of the whole cycle, not just its own share. So a model is
-        offered here only once the platform can price it. Adding one is a rate
-        row and a contract change together, never one without the other.
-      enum:
-      - claude-sonnet-5
-      - claude-haiku-4-5
-      type: string
-      x-enum-varnames:
-      - CodingAgentModelClaudeSonnet5
-      - CodingAgentModelClaudeHaiku45
-    CodingAgentProjection:
-      x-go-type: orgconfig.CodingAgentProjection
-      x-go-type-import:
-        path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
-      description: >-
-        The runtime and model an organization's coding runs use.
-
-
-        ALWAYS present, unlike the credential sections: every org has an
-        effective runtime and model whether or not anyone has ever opened the
-        setting. `updatedAt`/`updatedBy` are null exactly when nobody has — which
-        is what tells "the platform's defaults" apart from "somebody chose the
-        same values".
-
-
-        A change applies from the NEXT cycle. Dispatch copies these onto the run
-        it starts, so a run already in flight keeps the runtime and model it was
-        launched with; re-reading the setting mid-run would leave a feed whose
-        model names disagree with the tokens they were billed for.
-      additionalProperties: false
-      properties:
-        runtime:
-          $ref: '#/components/schemas/AgentRuntime'
-        model:
-          $ref: '#/components/schemas/CodingAgentModel'
-        updatedAt:
-          format: date-time
-          nullable: true
-          type: string
-        updatedBy:
-          nullable: true
-          type: string
-      required:
-      - runtime
-      - model
-      type: object
     CollabSessionOutputBody:
       additionalProperties: false
       properties:
@@ -4275,42 +4515,58 @@ components:
         path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
       additionalProperties: false
       properties:
-        codingAgent:
+        agents:
           description: >-
-            Which runtime and model this organization's coding runs use.
+            How the organization's agents run. Every field is optional: an
+            absent field keeps what is stored, so a client changes the runtime
+            without re-sending the stored token.
 
 
-            Unlike every other section here this one carries no secret and has no
-            external probe: the values are validated against the contract's enums
-            and against what this build can actually run. A runtime the platform
-            ships no adapter for is rejected with a reason, never silently
-            replaced by the one it can run.
+            `subscription` is three-state: absent keeps it, an object sets or
+            replaces it, `null` deletes it. A subscription needs the
+            `claude-code` runtime and a connection with
+            `capabilities.claudeSubscription` (Anthropic's own API), judged on
+            the state the patch leaves: choosing `opencode`, or moving the
+            connection off Anthropic's API, deletes the stored token in the same
+            write. A new token the end state cannot use is refused:
+            `agents_subscription_requires_claude_code` (runtime),
+            `agents_subscription_requires_anthropic_host` (connection lacks
+            `claudeSubscription`), `agents_subscription_requires_connection`
+            (no connection). `claude-code` with an OpenAI-compatible connection
+            is refused (`agents_runtime_requires_anthropic_format`); send
+            `runtime: opencode` in the same patch that switches the format. A
+            `runtime` this installation cannot run (absent from the projection's
+            `availableRuntimes`) is refused (`agents_runtime_unavailable`).
 
 
-            Both fields are optional, so a client can change the model without
-            restating the runtime. `null` resets the section to the platform's
-            defaults, which is a real state and not the same as never having set
-            it — the projection's `updatedBy` tells them apart.
+            `null` on the section resets it to the platform's default and
+            deletes the subscription — a real state, not the same as never
+            having set it; the projection's `updatedBy` tells them apart.
           additionalProperties: false
           properties:
-            model:
-              $ref: '#/components/schemas/CodingAgentModel'
             runtime:
               $ref: '#/components/schemas/AgentRuntime'
-          type: object
-          nullable: true
-        codingLlm:
-          additionalProperties: false
-          properties:
-            apiKey:
-              type: string
-            kind:
-              enum:
-              - anthropic
-              type: string
-          required:
-          - kind
-          - apiKey
+            subscription:
+              additionalProperties: false
+              description: >-
+                A long-lived token from `claude setup-token`
+                (`sk-ant-oat…`). Write-only: probed against Anthropic, never
+                echoed.
+              properties:
+                kind:
+                  enum:
+                  - claude
+                  type: string
+                token:
+                  type: string
+                  writeOnly: true
+                  minLength: 1
+                  maxLength: 512
+              required:
+              - kind
+              - token
+              type: object
+              nullable: true
           type: object
           nullable: true
         gitProvider:
@@ -4352,18 +4608,38 @@ components:
           type: object
           nullable: true
         llm:
-          additionalProperties: false
-          properties:
-            apiKey:
-              type: string
-            kind:
-              enum:
-              - anthropic
-              type: string
-          required:
-          - kind
-          - apiKey
-          type: object
+          allOf:
+          - $ref: '#/components/schemas/LLMPatch'
+          description: >-
+            The organization's model connection, patched field by field: an
+            absent field keeps what is stored. Probed before anything in the
+            patch is written; the probe's result rides the response's
+            `llmCheck`. `null` disconnects: the connection, its key and the
+            Claude subscription go, and `llmDisconnectedAt` is set.
+
+
+            First connect needs `kind` and `apiKey`; `baseURL` and `model`
+            default from `llmFormats`, so `{kind: anthropic, apiKey}` connects
+            to Anthropic's API with the default model. A changed host needs a
+            new `apiKey` in the same patch; a format change on the same host
+            keeps the stored key.
+
+
+            Refusal codes, each on `body.llm` (400 unless noted):
+            `llm_field_required` (first connect without `kind` or `apiKey`, or
+            without `baseURL` on a format with no default),
+            `llm_base_url_invalid` (not https, or carries userinfo, a query or a
+            fragment), `llm_host_refused` (the host resolves to a non-public
+            address), `llm_key_required_for_new_host`, `llm_key_too_short`
+            (under 12 characters), `llm_key_rejected` (the endpoint answered 401
+            or 403), `llm_unexpected_status` (any other 4xx, including a 429
+            without a rate-limit shape), `llm_unreachable` (network failure,
+            timeout, or a redirect, which is never followed),
+            `llm_upstream_error` (502: the endpoint answered 5xx),
+            `llm_format_has_no_runtime` (no available runtime runs the format),
+            `anthropic_oauth_token_coding_only` (a Claude subscription token as
+            the key on Anthropic's API), `anthropic_key_invalid` (a key on
+            Anthropic's API without the `sk-ant-` shape).
           nullable: true
       type: object
     ConfigProjection:
@@ -4372,12 +4648,8 @@ components:
         path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
       additionalProperties: false
       properties:
-        codingAgent:
-          $ref: '#/components/schemas/CodingAgentProjection'
-        codingLlm:
-          allOf:
-          - $ref: '#/components/schemas/LLMProjection'
-          nullable: true
+        agents:
+          $ref: '#/components/schemas/AgentsProjection'
         gitProvider:
           allOf:
           - $ref: '#/components/schemas/GitProviderProjection'
@@ -4387,11 +4659,36 @@ components:
         llm:
           allOf:
           - $ref: '#/components/schemas/LLMProjection'
+          description: The organization's model connection; null while it has none.
           nullable: true
+        llmCheck:
+          allOf:
+          - $ref: '#/components/schemas/LLMCheck'
+          description: >-
+            Present only on the PATCH response of a save that probed the
+            connection (the key, URL, format or model changed): what the probe
+            found, including `modelListed` (an unlisted model is a warning, not
+            a refusal) and `warning`. Never present on GET.
+        llmDisconnectedAt:
+          description: >-
+            When the organization's model connection was last disconnected.
+            Present only while `llm` is null, so a client can tell an org whose
+            connection was disconnected from one that never set one. Cleared
+            when a connection is saved again.
+          format: date-time
+          type: string
+        llmFormats:
+          description: >-
+            The API formats a connection may speak, with the values a first
+            connect fills in and the runtimes on this installation that run
+            each. Read by the Settings card instead of hard-coding them.
+          items:
+            $ref: '#/components/schemas/LLMFormatOption'
+          type: array
       required:
       - llm
-      - codingLlm
-      - codingAgent
+      - llmFormats
+      - agents
       - gitProvider
       - idp
       type: object
@@ -4622,6 +4919,16 @@ components:
         parameters:
           additionalProperties: {}
           type: object
+          nullable: true
+        operations:
+          description: Read-time computed resolution of every allow-listed
+            operation an ai-agent component's `x-aep.tools.openapi[]` entry
+            names against THIS dependency — populated only when this
+            Dependency is the provider such an entry targets. Never authored,
+            never persisted.
+          items:
+            $ref: '#/components/schemas/DependencyOperationStatus'
+          type: array
           nullable: true
       required:
       - kind
@@ -4888,49 +5195,11 @@ components:
           x-go-type: string
         validation:
           description: >-
-            Validation state of the newest milestone run. This MIRRORS the run's
-            verdict rather than folding it, so the chip says what the run
-            concluded: a fold would have to discard `partial`, `inconclusive` and
-            `unreported` at exactly the surface that needs them, and `completed`
-            never said whether anything passed.
-
-            Four LIFECYCLE values. none is PENDING, never settled: a verdict is
-            expected and has not arrived, because a run is live or a dev run filed
-            the version's validation task and nothing has started it yet. A client
-            must not read it as "there is no verdict to wait for" — that is what
-            skipped and inconclusive say. running is a validation CYCLE in flight,
-            not merely a live run with no verdict yet. awaiting-fix is validation
-            having failed with the run repairing it — the work in flight is a CODING
-            cycle, which is why the state names the implementation rather than
-            validation. cancelled is a person STOPPING the judging: a validation run
-            settled cancelled before recording a verdict, so nothing will answer for
-            this version unless somebody re-asks. The rest are the verdict verbatim.
-            They are mutually exclusive in time, so nothing is hidden behind another.
-
-            passed (every criterion was automated and passed), partial (some
-            passed, none failed, some were never covered), failed (a criterion
-            asserted and lost), inconclusive (no test results at all), unreported
-            (no usable report at the validation cycle's merge commit), skipped (no
-            validation criteria, and incident runs, which get no validation cycle).
-
-            failed and unreported fail the run only once its validation attempts
-            are spent: while attempts remain the run repairs and re-validates, and
-            reads awaiting-fix in the meantime.
-
-            The report path and per-cycle detail live on the version's run story
-            (list-build-runs).
-          enum:
-          - none
-          - running
-          - awaiting-fix
-          - cancelled
-          - passed
-          - partial
-          - failed
-          - inconclusive
-          - unreported
-          - skipped
-          type: string
+            Where the deployed version's validation stands, in the shared ValidationState
+            vocabulary. The report path and the per-attempt detail behind it live on the version's
+            run story (list-build-runs) and its validation history (get-validation).
+          allOf:
+          - $ref: '#/components/schemas/ValidationState'
         version:
           description: Spec tag live in dev; "" if nothing deployed.
           type: string
@@ -5651,42 +5920,237 @@ components:
       - State
       - Labels
       type: object
+    LLMCapabilities:
+      x-go-type: orgconfig.LLMCapabilities
+      x-go-type-import:
+        path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
+      additionalProperties: false
+      description: >-
+        What a connection supports, computed by the platform from its format,
+        host and probe, so the console holds no host rules of its own.
+      properties:
+        claudeSubscription:
+          description: A Claude subscription may bill coding runs (Anthropic's own API only).
+          type: boolean
+        generatedAgents:
+          description: >-
+            Generated AI agents, Agent Manager and build evaluation can run on
+            this connection. True on every format.
+          type: boolean
+        imageInput:
+          description: >-
+            Whether the model reads images: `yes` on Anthropic's API and where
+            the probe learned it, `no` where the probe learned it does not
+            (attachments are refused), `unknown` elsewhere (sent; the provider's
+            error names the problem).
+          enum:
+          - 'yes'
+          - 'no'
+          - unknown
+          type: string
+        nativePdf:
+          description: PDFs go to the model natively; otherwise they are sent as extracted text.
+          type: boolean
+        webSearch:
+          description: >-
+            How agents search the web on this connection: Anthropic's server
+            tool, Ollama's web search API, or `none` (web search is off).
+          enum:
+          - anthropic-server-tool
+          - ollama-api
+          - none
+          type: string
+      required:
+      - claudeSubscription
+      - webSearch
+      - imageInput
+      - nativePdf
+      - generatedAgents
+      type: object
+    LLMCheck:
+      x-go-type: orgconfig.LLMCheck
+      x-go-type-import:
+        path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
+      additionalProperties: false
+      description: >-
+        What probing a connection found: the connection as it would be saved,
+        whether the endpoint lists the model, and what it supports. The card
+        draws its info box and Claude Code tile from `capabilities` and
+        `priced` here before a save, and from the projection after.
+      properties:
+        baseURL:
+          description: >-
+            The URL as it is (or would be) saved. An Anthropic-format URL with
+            no path gains `/v1`, because the SDKs append `/messages` to it.
+          type: string
+        capabilities:
+          $ref: '#/components/schemas/LLMCapabilities'
+        kind:
+          enum:
+          - anthropic
+          - openai-compatible
+          type: string
+        model:
+          type: string
+        modelListed:
+          description: >-
+            `yes` when the endpoint's model listing names the model, `no` when
+            it lists models but not this one (a warning: some endpoints serve
+            models they do not list, and the save goes through), `unknown` when
+            the endpoint has no listing.
+          enum:
+          - 'yes'
+          - 'no'
+          - unknown
+          type: string
+        priced:
+          description: >-
+            The platform holds a rate for this host and model, so usage shows a
+            dollar figure; otherwise usage shows tokens only.
+          type: boolean
+        warning:
+          description: >-
+            `provider_limit`: the endpoint answered with a rate limit, which
+            proves the key; agents will wait on (or be blocked by) the
+            provider's limit until it resets.
+          enum:
+          - provider_limit
+          type: string
+      required:
+      - kind
+      - baseURL
+      - model
+      - modelListed
+      - priced
+      - capabilities
+      type: object
+    LLMFormatOption:
+      x-go-type: orgconfig.LLMFormatOption
+      x-go-type-import:
+        path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
+      additionalProperties: false
+      description: One API format a connection may speak.
+      properties:
+        defaultBaseURL:
+          description: >-
+            The URL a first connect fills in when none is sent; null when the
+            format has no default host and `baseURL` is required.
+          nullable: true
+          type: string
+        defaultModel:
+          description: >-
+            The model a first connect fills in when none is sent (`glm-5.3` is
+            Ollama's model ID; model IDs must match the endpoint's exactly).
+          type: string
+        kind:
+          enum:
+          - anthropic
+          - openai-compatible
+          type: string
+        runtimes:
+          description: >-
+            The runtimes on this installation that run this format (a subset of
+            `agents.availableRuntimes`). Empty means no runtime here can run it,
+            and a save is refused (`llm_format_has_no_runtime`).
+          items:
+            $ref: '#/components/schemas/AgentRuntime'
+          type: array
+      required:
+      - kind
+      - defaultBaseURL
+      - defaultModel
+      - runtimes
+      type: object
+    LLMPatch:
+      x-go-type: orgconfig.LLMPatch
+      x-go-type-import:
+        path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
+      additionalProperties: false
+      description: >-
+        A model connection, field by field: an absent field keeps the saved
+        value (or, on first connect, the format's default). Any public https
+        endpoint speaking one of the formats; private, cluster and plain-http
+        hosts are refused.
+      properties:
+        apiKey:
+          description: >-
+            Write-only; never echoed. At least 12 characters. Required on first
+            connect and whenever the host changes.
+          maxLength: 512
+          minLength: 1
+          type: string
+          writeOnly: true
+        baseURL:
+          description: >-
+            The API root, ending in its version segment (e.g.
+            `https://ollama.com/v1`). An Anthropic-format URL with no path gains
+            `/v1`, because the SDKs append `/messages` to it.
+          maxLength: 2048
+          minLength: 1
+          type: string
+        kind:
+          enum:
+          - anthropic
+          - openai-compatible
+          type: string
+        model:
+          description: The model ID exactly as the endpoint names it.
+          maxLength: 256
+          minLength: 1
+          type: string
+      type: object
     LLMProjection:
       x-go-type: orgconfig.LLMProjection
       x-go-type-import:
         path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
       additionalProperties: false
+      description: >-
+        The organization's model connection, as every agent uses it. A stored
+        connection is usable by construction: a save is refused unless the
+        probe passes.
       properties:
+        baseURL:
+          type: string
+        capabilities:
+          $ref: '#/components/schemas/LLMCapabilities'
         connectedAt:
+          description: When a key was first connected on this connection's host.
           format: date-time
           type: string
-        credentialKind:
-          enum:
-          - api_key
-          - oauth_token
-          type: string
-        keyLast4:
-          type: string
-        keyPrefix:
+        keyPreview:
+          description: >-
+            The key's last 4 characters, prefixed by its first 4 and an ellipsis
+            only when the key is at least 24 long.
           type: string
         kind:
           enum:
           - anthropic
+          - openai-compatible
           type: string
-        lastValidatedAt:
+        model:
+          type: string
+        priced:
+          description: >-
+            The platform holds a rate for this host and model, so usage shows a
+            dollar figure; otherwise usage shows tokens only.
+          type: boolean
+        updatedAt:
           format: date-time
           type: string
-        status:
-          type: string
-        validationError:
+        updatedBy:
+          description: Who last saved the connection; null for one carried over by a migration.
+          nullable: true
           type: string
       required:
       - kind
-      - credentialKind
-      - keyPrefix
-      - keyLast4
-      - status
+      - baseURL
+      - model
+      - keyPreview
       - connectedAt
+      - updatedAt
+      - updatedBy
+      - priced
+      - capabilities
       type: object
     Lineage:
       additionalProperties: false
@@ -5756,7 +6220,9 @@ components:
             written (gates minted, then issues planned in). waiting is the unbounded wait
             between cycles, where something outside the platform is needed. blocked is
             terminal and is NOT a failure — the org has no agent concurrency slot left, so
-            the cycle was never launched (see terminalReason agent-quota-blocked).
+            the cycle was never launched (see terminalReason agent-quota-blocked), or the
+            model provider's usage limit stopped the coding agent (terminalReason
+            model-provider-limit); either way a person starts the run again.
           enum:
           - planning
           - waiting
@@ -5768,8 +6234,8 @@ components:
           type: string
         terminalReason:
           description: Why a non-succeeded run stopped. Each value names exactly one failure class;
-            empty while the run is non-terminal and on a succeeded run. agent-quota-blocked
-            explains state=blocked.
+            empty while the run is non-terminal and on a succeeded run. agent-quota-blocked,
+            publisher-credentials-missing and model-provider-limit explain state=blocked.
           type: string
         waitingReason:
           description: Why a `waiting` run is waiting. Empty for the ordinary between-cycles park,
@@ -6142,6 +6608,18 @@ components:
       - name
       - platformCreated
       type: object
+    ProjectSignIn:
+      additionalProperties: false
+      description: How a client outside a project's own components signs in to it - the issuer to
+        sign in AT and the public OAuth client to sign in AS. Both are public. Absent from a view
+        when the project declares no sign-in resource or its binding has not resolved yet.
+      properties:
+        issuer:
+          type: string
+        clientId:
+          type: string
+      required: [issuer, clientId]
+      type: object
     ProjectRolesView:
       additionalProperties: false
       description: The Security panel's read model.
@@ -6177,6 +6655,12 @@ components:
             scoped to an environment at all, which is the same condition that empties every other
             field.
           type: string
+        signIn:
+          allOf:
+          - $ref: '#/components/schemas/ProjectSignIn'
+          description: Absent when the project declares no sign-in resource or its binding has not
+            resolved yet.
+          x-go-type-skip-optional-pointer: false
         testUsers:
           description: The test accounts THIS project's design references, role-ordered.
           items:
@@ -6754,7 +7238,8 @@ components:
           type: string
         code:
           description: >-
-            `notice` only: WHICH condition, as a closed set. Closed on purpose,
+            `notice`, and `run_settled`'s one code below: WHICH condition, as a
+            closed set. Closed on purpose,
             twice over — a consumer can react to one condition without parsing
             prose, and no free text (a prompt, a credential, a path) can ride a
             notice into a user-visible build log. It is also where the WORDING
@@ -6789,6 +7274,14 @@ components:
             They are notices rather than agent events for the same reason
             throughout: a pod that has not started is not an agent, and there is
             no session to report a phrase about.
+
+            `run_settled` carries one code of its own: `provider_limit`, the
+            model provider refused the run's calls with HTTP 429 for longer
+            than a wait (a `retry-after` of five minutes or more, or five
+            minutes of 429 retries in total). The run stopped rather than
+            retry until its deadline; `host` and, when the provider gave one,
+            `resetAt` say whose limit and until when. No other code appears on
+            `run_settled`, and `provider_limit` appears nowhere else.
           enum:
           - api_retry
           - compaction
@@ -6807,6 +7300,7 @@ components:
           - runner_starting
           - workspace_provisioning
           - workspace_ready
+          - provider_limit
           type: string
           x-enum-varnames:
           - RunEventCodeAPIRetry
@@ -6826,6 +7320,7 @@ components:
           - RunEventCodeRunnerStarting
           - RunEventCodeWorkspaceProvisioning
           - RunEventCodeWorkspaceReady
+          - RunEventCodeProviderLimit
         command:
           description: >-
             `tool_use`, `tool_result` and the `git_*` kinds: the command line
@@ -6885,6 +7380,14 @@ components:
         files:
           description: '`git_commit` only: how many files the commit touched.'
           type: integer
+        host:
+          description: >-
+            `run_settled` with `code: provider_limit` only: the host of the
+            model endpoint whose limit stopped the run (`ollama.com`), as the
+            run's connection named it. It is what the reader's sentence names —
+            whose plan is spent — and it is display only: nothing prices or
+            routes on a producer's host.
+          type: string
         itemId:
           description: >-
             `work_item` only: WHICH named unit of work this event is about — the
@@ -7033,6 +7536,16 @@ components:
             `notice`.
           maxLength: 200
           type: string
+        providerDetail:
+          description: >-
+            `run_settled` with `code: provider_limit` only: the provider's own
+            words on the last 429 the runtime reported (its retry message, or
+            its status and error class), capped and scrubbed. It is evidence for
+            the operator, who learns each provider's limit shape from it; the
+            platform logs it and neither stores nor shows it, because it is a
+            third party's text.
+          maxLength: 300
+          type: string
         ref:
           description: >-
             `heartbeat` only: WHAT is being waited on — the `toolUseId` when
@@ -7048,6 +7561,17 @@ components:
             agent that settles without one leaves a reader nothing but counters.
           maxLength: 500
           type: string
+        resetAt:
+          description: >-
+            `run_settled` with `code: provider_limit` only: when the provider
+            said its limit resets — the runtime's retry delay behind a
+            `retry-after` of five minutes or more. Absent when the provider
+            stated no reset, which is the case the five-minute fallback exists
+            for: a reader is told to try again later rather than given a time
+            nobody promised.
+          format: date-time
+          type: string
+          x-go-type-skip-optional-pointer: false
         role:
           description: >-
             `agent_started`: what KIND of agent this is, in the runtime's own
@@ -7504,12 +8028,16 @@ components:
             platform could not call permanent, and the bounded retry is being or
             has been spent; `plan-turn-failed` the planning turn errored (an LLM
             or transport error, retried); `repository-unavailable` the run's
-            repository, issue or credential is gone.
+            repository, issue or credential is gone; `model-provider-limit` the
+            model provider's usage limit stopped the coding agent — the run is
+            `blocked`, not failed, and `host` and `resetAt` say whose limit and
+            until when.
           enum:
           - dependency-unprovisionable
           - dependency-provision-failed
           - plan-turn-failed
           - repository-unavailable
+          - model-provider-limit
           type: string
           x-go-type: string
         phase:
@@ -7543,6 +8071,16 @@ components:
         detail:
           description: The platform's recorded error text, scrubbed and capped at the producer.
           type: string
+        host:
+          description: '`model-provider-limit` only: the host of the model endpoint whose limit was
+            reached.'
+          type: string
+        resetAt:
+          description: '`model-provider-limit` only: when the provider said its limit resets. Absent
+            when it stated no reset.'
+          format: date-time
+          type: string
+          x-go-type-skip-optional-pointer: false
         workflowId:
           description: The run's workflow id — the handle an operator reads history by. Derived at
             read time, never stored.
@@ -7660,8 +8198,9 @@ components:
           type: string
         required:
           description: >-
-            True when the coding runner reads this skill on every run and cannot
-            start without it (`aep`, and `aep-validation` for a validation task).
+            True when the runner reads this skill as a run's workflow and cannot
+            start without it: `aep` for a coding run, `validation-task` for a
+            validation run.
             The mirror only copies enabled skills, so disabling one of these would
             take the procedure away from every build in the org — `PATCH
             /skills/{name}` refuses it with 409. The console renders the
@@ -7701,8 +8240,9 @@ components:
           type: string
         required:
           description: >-
-            True when the coding runner reads this skill on every run and cannot
-            start without it (`aep`, and `aep-validation` for a validation task).
+            True when the runner reads this skill as a run's workflow and cannot
+            start without it: `aep` for a coding run, `validation-task` for a
+            validation run.
             The mirror only copies enabled skills, so disabling one of these would
             take the procedure away from every build in the org — `PATCH
             /skills/{name}` refuses it with 409. The console renders the
@@ -8495,12 +9035,35 @@ components:
             is one convention across this schema: the empty string, exactly as `instruction`
             uses it.
           type: string
+        code:
+          description: >-
+            Why a failed turn failed, when the agents service could name it
+            (reason `agent-error`): `provider_limit`, the model provider refused
+            the turn's calls with HTTP 429 for longer than a wait (a
+            `retry-after` of five minutes or more, or five minutes of 429
+            retries in total); `output_truncated`, the connection's output
+            limit cut a file write off before it finished, so nothing was
+            written. `message` carries the agents service's sentence for it.
+            Absent on every other turn.
+          enum:
+          - provider_limit
+          - output_truncated
+          type: string
+          x-enum-varnames:
+          - TurnStatusCodeProviderLimit
+          - TurnStatusCodeOutputTruncated
         commitSha:
           type: string
         conversationId:
           type: string
         createdAt:
           format: date-time
+          type: string
+        host:
+          description: >-
+            `code: provider_limit` only: the host of the model endpoint whose
+            limit stopped the turn (`ollama.com`), as the turn's connection
+            named it. Display only — what the reader's sentence names.
           type: string
         instruction:
           description: >-
@@ -8523,6 +9086,14 @@ components:
           nullable: true
         reason:
           type: string
+        resetAt:
+          description: >-
+            `code: provider_limit` only: when the provider said its limit
+            resets. Absent when it stated no reset, so a reader is told to try
+            again later rather than given a time nobody promised.
+          format: date-time
+          type: string
+          x-go-type-skip-optional-pointer: false
         status:
           description: running, completed, failed
           type: string
@@ -8674,6 +9245,14 @@ components:
           type: number
           nullable: true
           x-go-type: '*float64'
+        host:
+          description: >-
+            The model endpoint's host the work was billed by (e.g.
+            `api.anthropic.com`, `ollama.com`); "" or absent on an aggregate
+            that mixes hosts or a row that predates stamping. Stamped by the
+            platform, never by a producer. With a null `costUsd`, the console
+            reads "not priced, billed by <host>".
+          type: string
         inputTokens:
           format: int64
           type: integer
@@ -8691,6 +9270,211 @@ components:
         - model
         - costUsd
       type: object
+    AcceptanceCriteriaFile:
+      additionalProperties: false
+      description: One acceptance criteria file as it stood at the snapshot's commit.
+      properties:
+        content:
+          description: The file's Gherkin source, verbatim.
+          type: string
+        path:
+          description: Repository path, e.g. specs/validation/acceptance/checkout.feature.
+          type: string
+      required:
+      - path
+      - content
+      type: object
+    ValidationDetail:
+      additionalProperties: false
+      description: >-
+        One version's validation history, already filtered to what asks the question.
+
+        `runs` holds only runs that ATTEMPTED validation — ones holding at least one VALIDATION
+        cycle, which is the fact rather than the kind: a task run never holds one, and a run that
+        did ask the criteria is listed whatever its kind says it was for. Each run's `cycles`
+        holds only its VALIDATION cycles. Both filters are applied here rather than by the client:
+        they are the platform's own rules, and the surface that re-derived them read a newer
+        non-validating run as the version's answer and hid a real verdict. The views are the same
+        MilestoneRunView and RunCycleView the run story serves, so one projection describes a
+        cycle everywhere.
+      properties:
+        deployed:
+          description: >-
+            This version is the one currently deployed — the only version a revalidation can
+            honestly judge.
+
+            A revalidation drives whatever is serving RIGHT NOW: the runner's endpoint URLs are
+            resolved from OpenChoreo at request time and its criteria come from the branch tip,
+            neither pinned to the version the run is filed under. So asking an older version's
+            criteria judges code that version never shipped, records the verdict on its milestone,
+            and — with the default attempt budget — files one repair issue per failed scenario
+            there too. revalidate-build refuses it; this flag is what lets the console stop
+            offering it, rather than letting a reader discover the refusal by clicking.
+          type: boolean
+        live:
+          description: >-
+            A run is in flight on this milestone. With `deployed` it makes the two conditions the
+            console gates the validation trigger on; the remaining refusals (open work, no
+            criteria) belong to revalidate-build, which owns them and says so in its error. It also
+            decides whether an unvalidated version reads as "a verdict is coming" or "nothing will
+            come unless you ask", which must not disagree with whether the trigger is offered.
+          type: boolean
+        milestoneNumber:
+          format: int64
+          type: integer
+        runs:
+          description: Newest run first, validating kinds only, each carrying its validation cycles
+            in dispatch order.
+          items:
+            $ref: '#/components/schemas/MilestoneRunView'
+          type: array
+        state:
+          $ref: '#/components/schemas/ValidationState'
+        tag:
+          type: string
+      required:
+      - tag
+      - milestoneNumber
+      - state
+      - live
+      - deployed
+      - runs
+      type: object
+    ValidationList:
+      additionalProperties: false
+      description: The validation ledger — one entry per worked spec version, newest first.
+      properties:
+        validations:
+          items:
+            $ref: '#/components/schemas/ValidationSummary'
+          type: array
+      required:
+      - validations
+      type: object
+    ValidationSummary:
+      additionalProperties: false
+      description: >-
+        One row of the validation ledger: a spec version and where its validation stands.
+
+        Every version that has been worked appears, including ones never validated — an absent row
+        and a never-validated one are indistinguishable to a reader, and "never validated" is the
+        most actionable state this page shows.
+      properties:
+        endedAt:
+          description: >-
+            When the LATEST validation attempt finished. Null while one is in flight, which is the
+            case the column renders as an em-dash rather than a blank: a running attempt has no end
+            and never will until it settles.
+          format: date-time
+          type: string
+          nullable: true
+          x-go-type: '*time.Time'
+        milestoneNumber:
+          description: The GitHub milestone this version's work lives in — the platform key the tag
+            resolves to, and the handle get-validation is read by.
+          format: int64
+          type: integer
+        startedAt:
+          description: >-
+            When the LATEST validation attempt began — the CYCLE's clock, not the run's. Paired with
+            endedAt it is the attempt's duration, which counts up while the attempt is open and is
+            the only thing on this page that moves; a run's wall clock would fold in the coding,
+            build and deploy time between attempts and say nothing about a hung one. Null when the
+            version has never been validated.
+          format: date-time
+          type: string
+          nullable: true
+          x-go-type: '*time.Time'
+        state:
+          $ref: '#/components/schemas/ValidationState'
+        tag:
+          type: string
+      required:
+      - tag
+      - milestoneNumber
+      - state
+      type: object
+    ValidationSnapshot:
+      additionalProperties: false
+      description: >-
+        One attempt's report and the criteria it was judged against, read at a single commit.
+      properties:
+        commit:
+          description: >-
+            The commit both halves were read at — the cycle's merge SHA, or empty when the attempt
+            is still running and the criteria came from HEAD.
+          type: string
+        criteria:
+          description: Every specs/validation/acceptance/*.feature file at that commit. The report annotates
+            these; they are the spine the view renders and the report is the overlay.
+          items:
+            $ref: '#/components/schemas/AcceptanceCriteriaFile'
+          type: array
+        report:
+          description: >-
+            The raw tests/acceptance/report.json at that commit, verbatim, for the client's own
+            parser to read. Null while the attempt is still running: it has not committed one yet,
+            and an absent report is not the same fact as an empty one.
+          type: string
+          nullable: true
+          x-go-type: '*string'
+      required:
+      - commit
+      - criteria
+      type: object
+    ValidationState:
+      description: >-
+        Where a version's validation stands — the one vocabulary every surface renders it with.
+
+        This MIRRORS the run's verdict rather than folding it, so the chip says what the run
+        concluded: a fold would have to discard `partial`, `inconclusive` and `unreported` at
+        exactly the surface that needs them, and `completed` never said whether anything passed.
+
+        Four LIFECYCLE values. none is PENDING, never settled: a verdict is expected and has not
+        arrived, because a run is live or a dev run filed the version's validation task and nothing
+        has started it yet. A client must not read it as "there is no verdict to wait for" — that is
+        what skipped and inconclusive say. running is a validation CYCLE in flight, not merely a
+        live run with no verdict yet. awaiting-fix is validation having failed with the run
+        repairing it — the work in flight is a CODING cycle, which is why the state names the
+        implementation rather than validation. cancelled is a person STOPPING the judging: a
+        validation run settled cancelled before recording a verdict, so nothing will answer for this
+        version unless somebody re-asks. The rest are the verdict verbatim. They are mutually
+        exclusive in time, so nothing is hidden behind another.
+
+        passed (every criterion was automated and passed), partial (some passed, none failed, some
+        were never covered), failed (a criterion asserted and lost), inconclusive (no test results
+        at all), unreported (no usable report at the validation cycle's merge commit), skipped (no
+        validation criteria, and incident runs, which get no validation cycle).
+
+        failed and unreported fail the run only once its validation attempts are spent: while
+        attempts remain the run repairs and re-validates, and reads awaiting-fix in the meantime.
+      enum:
+      - none
+      - running
+      - awaiting-fix
+      - cancelled
+      - passed
+      - partial
+      - failed
+      - inconclusive
+      - unreported
+      - skipped
+      # Without these the generated Go constants are bare words — None, Failed,
+      # Passed — at package scope in gen, where any later top-level enum sharing
+      # a value would collide and break codegen. Inline enums get their parent's
+      # name for free; a named schema has to ask.
+      x-enum-varnames:
+      - ValidationStateNone
+      - ValidationStateRunning
+      - ValidationStateAwaitingFix
+      - ValidationStateCancelled
+      - ValidationStatePassed
+      - ValidationStatePartial
+      - ValidationStateFailed
+      - ValidationStateInconclusive
+      - ValidationStateUnreported
+      - ValidationStateSkipped
+      type: string
     Warning:
       additionalProperties: false
       properties:
@@ -8766,6 +9550,26 @@ components:
       - path
       - content
       type: object
+    DependencyOperationStatus:
+      description: One `x-aep.tools.openapi[].allow` entry's read-time computed
+        resolution against the dependency it targets — status/reason are
+        computed by spec.ComputeAgentToolStatus, never authored, never persisted.
+      x-go-type: contracts.DependencyOperationStatus
+      x-go-type-import:
+        path: github.com/wso2/aep/aep-api/internal/contracts
+      additionalProperties: false
+      properties:
+        operation:
+          type: string
+        status:
+          type: string
+        reason:
+          type: string
+      required:
+      - operation
+      - status
+      type: object
+
   securitySchemes:
     userJWT:
       bearerFormat: JWT

@@ -19,6 +19,7 @@ package openchoreo
 import (
 	"context"
 	"fmt"
+	"github.com/wso2/aep/aep-api/internal/clients/agentmanager"
 	"net/http"
 	"strings"
 	"time"
@@ -385,6 +386,22 @@ func isInternalComponent(annotations, labels map[string]string) bool {
 	return labels[annotationInternal] == "true"
 }
 
+// agentManagerMarkerTypeName is the component type Agent Manager creates when
+// AEP registers an agent with it as externally hosted (agentmanager.client's
+// `external-agent-api` registration). It is AMP's own record of the agent, not
+// a second component of the user's: it never deploys, and it carries the same
+// display name as the real `deployment/ai-agent`, so a listing that kept it
+// would show a duplicate that reads as "not deployed" forever.
+const agentManagerMarkerTypeName = "proxy/" + agentmanager.ExternalAgentAPIType
+
+// isAgentManagerMarker reports whether a component is Agent Manager's marker
+// for an agent AEP already lists under its real type. Kept separate from
+// isInternalComponent: that one is the platform's own scaffolding, written and
+// reaped by AEP; this one is another product's record, only ever read.
+func isAgentManagerMarker(spec *ocgen.ComponentSpec) bool {
+	return spec != nil && spec.ComponentType.Name == agentManagerMarkerTypeName
+}
+
 // internalMarkerLabels is the label set that marks an object as the platform's
 // own ephemeral scaffolding rather than one of the user's components. One
 // spelling for the pair, because the writer (EnsureReleaseBinding) and the
@@ -429,7 +446,7 @@ func (c *componentClient) ListComponents(ctx context.Context, orgName, projectNa
 		if comp.Metadata.Labels != nil {
 			lbls = *comp.Metadata.Labels
 		}
-		if isInternalComponent(ann, lbls) {
+		if isInternalComponent(ann, lbls) || isAgentManagerMarker(comp.Spec) {
 			continue
 		}
 		items = append(items, componentToModel(comp))
@@ -873,6 +890,13 @@ func buildCreateComponentBody(projectName string, req *CreateComponentRequest) o
 // componentTraitsToGen converts the BFF-internal slice into the gen shape.
 // Returns nil for an empty input so we don't stamp an empty traits array
 // onto Components without API security configured.
+//
+// Every entry carries an explicit kind, defaulting to ClusterTrait. A trait
+// reference is (kind, name), and OpenChoreo accepts both ClusterTrait and the
+// namespaced Trait: a name on its own is not an address. On a cluster that also
+// runs another platform there can be a namespaced Trait of the same name in the
+// org's own namespace, and a kind-less reference would leave the choice between
+// them to OpenChoreo. This platform attaches ClusterTraits only.
 func componentTraitsToGen(traits []ComponentTrait) *[]ocgen.ComponentTrait {
 	if len(traits) == 0 {
 		return nil
@@ -883,10 +907,12 @@ func componentTraitsToGen(traits []ComponentTrait) *[]ocgen.ComponentTrait {
 			InstanceName: t.InstanceName,
 			Name:         t.Name,
 		}
-		if t.Kind != "" {
-			k := ocgen.ComponentTraitKind(t.Kind)
-			entry.Kind = &k
+		kind := t.Kind
+		if kind == "" {
+			kind = string(ocgen.ComponentTraitKindClusterTrait)
 		}
+		k := ocgen.ComponentTraitKind(kind)
+		entry.Kind = &k
 		if len(t.Parameters) > 0 {
 			p := cloneParameterMap(t.Parameters)
 			entry.Parameters = &p

@@ -227,8 +227,8 @@ func TestDiffThreeDot(t *testing.T) {
 		adds[f.Filename] = f.Additions
 	}
 	want := map[string]string{
-		"README.md":                          "modified",
-		"specs/design/design.md":             "added",
+		"README.md":                 "modified",
+		"specs/design/design.md":    "added",
 		"specs/requirements/prd.md": "removed",
 	}
 	for path, status := range want {

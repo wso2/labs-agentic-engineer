@@ -26,6 +26,7 @@ import {
   toChange,
   opForTool,
   readToolInputPath,
+  type ProviderWaitPart,
   type StreamPart,
 } from "@aep/agent-stream";
 import {
@@ -49,6 +50,8 @@ import {
   WRITE_TOOLS,
 } from "./planStore.js";
 import { extractStreamingQuestions, isQuestionTool, parseQuestionsInput } from "./questionCards.js";
+import { turnFailureText, type TurnFailure } from "./lib/turnFailure.js";
+import { clearProviderWait, setProviderWait } from "./providerWait.js";
 import { getTurn, isTurnStreamNotFound, openTurnStream } from "./api/turns.js";
 import {
   DRAFT_EXTERNAL_RESOURCE_TOOL,
@@ -101,7 +104,7 @@ async function sleep(ms: number, signal: AbortSignal): Promise<void> {
 function settleFromTurnStatus(
   chatKey: string,
   turnId: string,
-  status: { status?: string; message?: string } | null | undefined,
+  status: ({ status?: string } & TurnFailure) | null | undefined,
   onCommitted?: () => void,
   askedQuestion = false,
 ): boolean {
@@ -116,10 +119,7 @@ function settleFromTurnStatus(
     setTurnStatus(chatKey, turnId, "failed");
     planTurnEnded(chatKey, turnId, "failed");
     notifyTurnEnd(chatKey, "failed");
-    addMessage(chatKey, {
-      role: "error",
-      content: status.message ?? "The agent turn failed.",
-    });
+    addMessage(chatKey, { role: "error", content: turnFailureText(status) });
     return true;
   }
   return false;
@@ -223,7 +223,13 @@ export async function attachAndFoldTurn(
   };
 
   const fold = (part: StreamPart): void => {
+    // A provider wait is status, not content: any other frame means the model
+    // answered (or the turn ended), so the wait is over.
+    if (part.type !== "provider-wait") clearProviderWait(chatKey);
     switch (part.type) {
+      case "provider-wait":
+        setProviderWait(chatKey, (part as ProviderWaitPart).host);
+        break;
       case "text-delta":
         appendAssistantText(chatKey, turnId, part.delta ?? part.text ?? "");
         break;
@@ -365,6 +371,10 @@ export async function attachAndFoldTurn(
         break;
       }
       case "error":
+        // A coded error (the provider's usage limit, a write the output limit
+        // cut off) is the turn's failure, and the `turn-failed` that follows
+        // carries it — phrased there once, rather than twice here.
+        if ((part as { code?: string }).code) break;
         addMessage(chatKey, {
           role: "error",
           content: typeof part.error === "string" ? part.error : "The agent hit an error.",
@@ -385,11 +395,7 @@ export async function attachAndFoldTurn(
         setTurnStatus(chatKey, turnId, "failed");
         planTurnEnded(chatKey, turnId, "failed");
         notifyTurnEnd(chatKey, "failed");
-        addMessage(chatKey, {
-          role: "error",
-          content:
-            (part as { message?: string }).message ?? "The agent turn failed.",
-        });
+        addMessage(chatKey, { role: "error", content: turnFailureText(part as TurnFailure) });
         break;
       default:
         break; // start/finish plumbing — nothing to render
@@ -430,6 +436,8 @@ export async function attachAndFoldTurn(
     // getTurn): nothing further can flip a streaming card. Do NOT finalize
     // inside the per-attempt catch — that would settle question cards mid-turn.
     finalizeStreamingQuestions();
+    // Nor is anything still waiting on the provider through this stream.
+    clearProviderWait(chatKey);
   }
 
   if (sawTerminal || signal.aborted) return;

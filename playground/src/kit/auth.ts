@@ -19,7 +19,7 @@
 /**
  * The M2M gate is always on (§12.3.2). The evals and playground boot the real
  * app in-process, so — like any caller — they must present a Bearer token and
- * the per-request Anthropic key. This is the CLIENT half: a shared-secret HS256
+ * the per-request model key. This is the CLIENT half: a shared-secret HS256
  * token (fine for a local in-process server) plus the header pair `streamTurn`
  * sends. The service half (verification) lives in `src/shared/auth.ts`.
  */
@@ -43,14 +43,15 @@ export async function signM2mToken(secret: string, audience: string): Promise<st
 }
 
 /**
- * The headers a turn POST needs: the M2M token + the per-request Anthropic key,
- * plus `X-Org-Id` (load-bearing for the §12 fence on every turn).
+ * The headers a turn POST needs: the M2M token + the per-request model key
+ * (`X-Model-Key`, for whichever connection the turn names), plus `X-Org-Id`
+ * (load-bearing for the §12 fence on every turn).
  */
 export async function evalTurnHeaders(apiKey: string, orgId?: string): Promise<Record<string, string>> {
   const token = await signM2mToken(EVAL_AUTH.secret, EVAL_AUTH.audience);
   return {
     Authorization: `Bearer ${token}`,
-    "X-Anthropic-Key": apiKey,
+    "X-Model-Key": apiKey,
     ...(orgId !== undefined ? { "X-Org-Id": orgId } : {}),
   };
 }

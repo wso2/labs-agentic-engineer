@@ -76,6 +76,19 @@ function unstamped(
   };
 }
 
+// Work billed by a host the platform holds no rate for (an open model on
+// Ollama Cloud): tokens and the host, never a guessed dollar figure.
+function unpriced(
+  inputTokens: number,
+  outputTokens: number,
+  cacheReadTokens: number,
+  cacheCreationTokens: number,
+  model: string,
+  host: string,
+): Usage {
+  return { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, model, host, costUsd: null };
+}
+
 export const zeroUsage: Usage = usage(0, 0, 0, 0);
 
 function sum(items: Usage[], model = FABLE): Usage {
@@ -116,6 +129,7 @@ function scale(u: Usage, f: number): Usage {
     cacheReadTokens: Math.round(u.cacheReadTokens * f),
     cacheCreationTokens: Math.round(u.cacheCreationTokens * f),
     model: u.model,
+    ...(u.host !== undefined ? { host: u.host } : {}),
     costUsd: u.costUsd === null ? null : Math.round(u.costUsd * f * 100) / 100,
   };
 }
@@ -180,6 +194,12 @@ export const orgUsage: Record<Exclude<UsageScenario, "error">, ProjectUsageList>
         "Basic Calculator",
         false,
         usage(12_000, 4_500, 60_000, 9_000),
+      ),
+      card(
+        "order-events",
+        "Order Events",
+        false,
+        unpriced(410_000, 160_000, 760_000, 0, "kimi-k3", "ollama.com"),
       ),
       card(
         "spike-notifications",

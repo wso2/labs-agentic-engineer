@@ -227,6 +227,12 @@ test("tool_use and tool_result read exactly as they do on the v1 feed", () => {
   assert.equal(formatEvent({ ...LEAD, kind: "tool_use", tool: "Write", summary: "src/App.tsx" }).text, "$ Write src/App.tsx");
   assert.equal(formatEvent({ ...LEAD, kind: "tool_use", tool: "Bash", summary: "bal build" }).text, "$ bal build");
   assert.equal(formatEvent({ ...LEAD, kind: "tool_use", tool: "Bash", command: "bal test" }).text, "$ bal test");
+  // OpenCode spells its shell `bash`; the wire keeps each runtime's own tool
+  // name, so the renderer is what has to read both as the shell.
+  assert.equal(formatEvent({ ...LEAD, kind: "tool_use", tool: "bash", summary: "bal build" }).text, "$ bal build");
+  assert.equal(formatEvent({ ...LEAD, kind: "tool_use", tool: "bash", command: "npm test" }).text, "$ npm test");
+  // A tool that merely contains the word is not the shell.
+  assert.equal(formatEvent({ ...LEAD, kind: "tool_use", tool: "bashful", summary: "x" }).text, "$ bashful x");
   assert.equal(
     formatEvent({ ...LEAD, kind: "tool_result", tool: "Bash", ok: false, exitCode: 1, summary: "compilation failed", durationMs: 25_100 }).text,
     "✗ Bash exit 1 · compilation failed 25.1s",

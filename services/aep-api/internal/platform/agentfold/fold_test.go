@@ -258,6 +258,24 @@ func TestComponentDesignGate(t *testing.T) {
 	mustOK(t, res, err, StatusApplied)
 }
 
+func TestAgentAfmGate(t *testing.T) {
+	const path = "specs/design/components/lunch-agent/agent.afm.md"
+	f := NewFromSnapshot(map[string]string{})
+
+	res, err := f.AddFile(ctx, path, "no front matter here")
+	mustErrCode(t, res, err, ErrInvalidJSON)
+	res, err = f.AddFile(ctx, path, strings.Replace(validAfm, "type: webchat", "type: webhook", 1))
+	mustErrCode(t, res, err, ErrSchemaViolation)
+	if len(f.Touched()) != 0 {
+		t.Fatal("gate rejections must not touch")
+	}
+	res, err = f.AddFile(ctx, path, validAfm)
+	mustOK(t, res, err, StatusApplied)
+	// Non-component agent.afm.md paths are not gated.
+	res, err = f.AddFile(ctx, "other/agent.afm.md", "no front matter here")
+	mustOK(t, res, err, StatusApplied)
+}
+
 func TestBaseReader_LazyAndErrorPropagation(t *testing.T) {
 	reads := 0
 	base := func(_ context.Context, path string) ([]byte, bool, error) {
@@ -368,7 +386,7 @@ func TestSnapshotFilter(t *testing.T) {
 		!KeepInTurnSnapshot("a.dsl") ||
 		!KeepInTurnSnapshot("specs/design/design.cell") ||
 		!KeepInTurnSnapshot("specs/design/components/x/design.json") ||
-		!KeepInTurnSnapshot("specs/validation/validation-criteria.json") ||
+		!KeepInTurnSnapshot("specs/validation/acceptance/checkout.feature") ||
 		!KeepInTurnSnapshot("specs/design/components/x/openapi.yaml") ||
 		!KeepInTurnSnapshot("specs/design/components/x/dependencies/stripe.openapi.yaml") {
 		t.Fatal("keep-filter rejects agent-authored sources")

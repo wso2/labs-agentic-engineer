@@ -40,4 +40,13 @@ type Organization struct {
 	// lazily by orgensure middleware on the first authed request that
 	// carries an `ouId` claim. Nullable for backward compatibility.
 	ThunderOrgUUID *uuid.UUID `gorm:"type:uuid;column:thunder_org_uuid;index" json:"thunderOrgUuid,omitempty"`
+	// LLMDisconnectedAt is when the org's model connection was last
+	// disconnected, and nil while one is connected or none ever was. Kept
+	// here rather than on the connection row because a disconnect deletes that
+	// row: this is the one trace that the org HAD a connection, which is what
+	// lets the console tell "your connection was disconnected" apart from "you
+	// never set one".
+	// Written by the AI agents card's unit of work in the same transaction as
+	// the delete.
+	LLMDisconnectedAt *time.Time `gorm:"column:llm_disconnected_at" json:"llmDisconnectedAt,omitempty"`
 }

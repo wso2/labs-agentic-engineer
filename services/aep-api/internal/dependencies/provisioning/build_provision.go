@@ -111,6 +111,15 @@ func (s *Service) ProvisionForBuild(ctx context.Context, orgID, ocOrgID, project
 		failures = append(failures, *f)
 	}
 
+	// The Agent Manager gate is driven by the DESIGN at the tag for the same
+	// reason: model access is granted by component type, never declared as a
+	// dependency, so it carries no drawer input and must run on every build
+	// that declares an ai-agent. agent_gate.go carries why, and why the
+	// credential is not settled here.
+	if f := s.ensureAgentGate(ctx, orgID, projectID, tag, milestoneNumber); f != nil {
+		failures = append(failures, *f)
+	}
+
 	provisioned := make(map[string]bool, len(inputs))
 	for _, in := range inputs {
 		provisioned[strings.ToLower(in.Dependency)] = true

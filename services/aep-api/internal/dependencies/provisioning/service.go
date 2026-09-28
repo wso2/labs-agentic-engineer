@@ -62,6 +62,9 @@ type Service struct {
 	orgSecrets      OrgSecretWriter
 	orgResourceDocs OrgResourceDocs
 	promoter        ProjectResourcePromoter
+	// agents resolves the build-time Agent Manager gate (agent_gate.go). Nil is
+	// a documented no-op.
+	agents AgentRegistrar
 	// orgPublish commits the exposesAPI.orgPublished durability marker on a
 	// provider component when its access request is granted. Wired via a setter
 	// (SetOrgPublishMarker) at the composition root — it points BACK at the
@@ -96,6 +99,10 @@ type Service struct {
 	// securityJSON reads security.json at HEAD (empty tag) or a spec tag.
 	// Nil skips overlay.
 	securityJSON SecurityJSONReader
+	// tryItCallbackURL is the platform tester's OAuth callback, published in
+	// the roles gate beside the logins so a reader knows which redirect_uri to
+	// ask for. Empty omits the line.
+	tryItCallbackURL string
 }
 
 // OrgPublishMarker persists a provider component's deliberate publish decision.
@@ -116,10 +123,16 @@ func (s *Service) SetProviderBuildTrigger(t ProviderBuildTrigger) { s.providerBu
 // listens for. Nil is a documented no-op — the run's wait-poll still re-derives.
 func (s *Service) SetValuesSavedNotifier(n ValuesSavedNotifier) { s.valuesSaved = n }
 
+// SetAgentRegistrar wires the build-time Agent Manager gate. Nil skips it, which
+// is the whole pre-Agent-Manager deployment.
+func (s *Service) SetAgentRegistrar(r AgentRegistrar) { s.agents = r }
+
 // Deps is the provisioning service's collaborator set. projects / access /
 // providers may be nil (a nil projects skips the cross-project consumer scan;
 // nil access / providers disable the access-request surface).
 type Deps struct {
+	// TryItCallbackURL is config.TryItCallbackURL — see Service.tryItCallbackURL.
+	TryItCallbackURL  string
 	Issues            IssueClient
 	Execs             ExecutionStore
 	Design            DesignReader
@@ -181,6 +194,7 @@ func NewService(d Deps) *Service {
 		markers:           d.Markers,
 		securityJSON:      d.SecurityJSON,
 		projectNames:      d.ProjectNames,
+		tryItCallbackURL:  strings.TrimSpace(d.TryItCallbackURL),
 	}
 }
 

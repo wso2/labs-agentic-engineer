@@ -82,12 +82,12 @@ func RunAgentUsageLedger(ctx context.Context, db *gorm.DB) error {
 		if err := db.WithContext(ctx).Exec(`
 			INSERT INTO agent_usage_ledger (
 			  org_id, project_id, source, source_id, phase, milestone_number, tag,
-			  model_id, input_tokens, output_tokens, cache_read_tokens,
+			  model_id, model_host, input_tokens, output_tokens, cache_read_tokens,
 			  cache_creation_tokens, cost_usd, captured_at)
 			SELECT c.org_id, c.project_id, ?, c.id::text, `+delivery.UsagePhaseCaseSQL("c.kind")+`,
 			       COALESCE(m.milestone_number, 0),
 			       COALESCE(NULLIF(m.tag, ''), m.milestone_title, ''),
-			       c.model_id, c.input_tokens, c.output_tokens, c.cache_read_tokens,
+			       c.model_id, c.model_host, c.input_tokens, c.output_tokens, c.cache_read_tokens,
 			       c.cache_creation_tokens, c.cost_usd, COALESCE(c.created_at, now())
 			FROM run_cycles c
 			LEFT JOIN milestone_runs m ON m.id::text = c.run_id
@@ -104,11 +104,11 @@ func RunAgentUsageLedger(ctx context.Context, db *gorm.DB) error {
 		if err := db.WithContext(ctx).Exec(`
 			INSERT INTO agent_usage_ledger (
 			  org_id, project_id, source, source_id, phase, milestone_number, tag,
-			  model_id, input_tokens, output_tokens, cache_read_tokens,
+			  model_id, model_host, input_tokens, output_tokens, cache_read_tokens,
 			  cache_creation_tokens, cost_usd, captured_at)
 			SELECT e.org_id, e.project_id, ?, e.id::text, `+delivery.UsagePhaseCaseSQL("e.kind")+`,
 			       0, '',
-			       e.model_id, e.input_tokens, e.output_tokens, e.cache_read_tokens,
+			       e.model_id, e.model_host, e.input_tokens, e.output_tokens, e.cache_read_tokens,
 			       e.cache_creation_tokens, e.cost_usd, COALESCE(e.created_at, now())
 			FROM executions e
 			WHERE e.org_id <> '' AND e.project_id <> ''

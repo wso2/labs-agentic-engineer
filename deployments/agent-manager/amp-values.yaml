@@ -1,0 +1,91 @@
+# Values for Agent Manager's `wso2-amp-platform-resources-extension` chart
+# (1.0.0-rc2) on a cluster built by deployments/scripts/setup-env-for-aectl.sh
+# and installed by `aectl platform install`.
+#
+# The chart's defaults assume it is the only product on the cluster: one
+# environment named "default", a single-node promotion graph, and a project
+# named "default". None of those hold here. Every value below overrides a
+# default that would otherwise take an object AEP depends on.
+#
+# Pass this file on EVERY install and upgrade. The documented install uses
+# `--reset-values`, which drops any value not re-supplied on that invocation,
+# so an upgrade without `-f` restores the chart defaults.
+#
+# Helm accepts an unknown `--set`/values path silently. After editing, render
+# and read the objects back before installing:
+#
+#   helm template amp <chart> -f deployments/agent-manager/amp-values.yaml \
+#     | awk '/kind: DeploymentPipeline/,/^---/'
+
+# ── Deployment pipeline ─────────────────────────────────────────────────────
+# OpenChoreo's samples (samples/getting-started/all.yaml) own
+# DeploymentPipeline/default and run development -> staging -> production.
+# aep-api resolves its write-target from this graph at boot: the environment
+# that is a source and never a target (openchoreo.PipelineSourceEnvironment).
+# The chart's default single path {source: default, targets: []} is itself a
+# valid graph, so a flatten resolves cleanly to "default" and moves every
+# subsequent write into an environment with no environment Thunder or API
+# Platform gateway under it.
+#
+# Passing OpenChoreo's graph verbatim makes the chart re-assert what is already
+# on the cluster. displayName/description match the sample's so the adopt
+# changes no field at all.
+deploymentPipeline:
+  name: default
+  displayName: "Default Pipeline"
+  description: "Standard deployment pipeline with dev, staging, and prod environments"
+  promotionOrder:
+    - sourceEnvironmentRef:
+        name: development
+      targetEnvironmentRefs:
+        - name: staging
+    - sourceEnvironmentRef:
+        name: staging
+      targetEnvironmentRefs:
+        - name: production
+
+# ── Environment ─────────────────────────────────────────────────────────────
+# Both products share one environment tier: one environment Thunder and one
+# API Platform gateway between them. That tier is provisioned for the
+# pipeline's source environment (oc.pipeline_source_environment, "development"
+# on this cluster), so Agent Manager is pointed at the same one rather than at
+# its own "default".
+#
+# The gateway host must be the ClusterDataPlane's own. Component routes are
+# built from it, and the chart's `am-gateway.localhost` default does not
+# resolve from inside a pod, which is where the validation runner executes.
+# This block is the same shape `aectl platform install` patches onto the
+# Environment, so either install order converges.
+environment:
+  name: development
+  displayName: "Development"
+  description: "Development"
+  gateway:
+    name: gateway-default
+    namespace: openchoreo-data-plane
+    http:
+      host: openchoreoapis.localhost
+      port: 19080
+
+# ── Project ─────────────────────────────────────────────────────────────────
+# OpenChoreo's samples also own Project/default in namespace "default". Helm
+# will not adopt an object it did not create, so the chart's own Project must
+# carry a different name.
+#
+# Only the project's name moves. `projectType` has no name value: the chart
+# hardcodes ProjectType/default as a contract with amp-api's compiled-in
+# client.DefaultProjectTypeName, and a namespaced ProjectType resolves only
+# from within openchoreoNamespace. ProjectType/default and OpenChoreo's
+# ClusterProjectType/default are different kinds and do not contend.
+#
+# Set this before the first install. Changing it afterwards is a Helm
+# delete-then-create: the old Project and its ProjectReleaseBinding go, and the
+# binding owns the cell namespace the agents run in.
+project:
+  name: agent-manager
+  displayName: "Agent Manager"
+  description: "Default project for WSO2 Agent Manager"
+
+# Namespace the resources above are created in. Must match amp-api's
+# OPEN_CHOREO_DEFAULT_NAMESPACE, which is the namespace it creates projects in.
+openchoreoNamespace: default

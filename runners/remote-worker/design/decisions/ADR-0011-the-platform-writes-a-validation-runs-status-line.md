@@ -1,6 +1,9 @@
 # ADR-0011 — The platform writes a validation run's status line, not the agent
 
-**Status:** Accepted
+**Status:** Accepted · decision 7's premise (`aep` preloaded beside the
+validation skill) is gone since
+[ADR-0037](../../../../docs/decisions/ADR-0037-a-validation-run-reads-one-workflow.md),
+which also renamed `aep-validation`'s successor to `validation-task`.
 
 ## Context
 

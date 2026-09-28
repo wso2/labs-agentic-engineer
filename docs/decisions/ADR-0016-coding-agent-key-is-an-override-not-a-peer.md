@@ -1,5 +1,9 @@
 # ADR-0016 — The coding agent's Anthropic key is an override on the org's key, not a peer
 
+**Status:** Superseded by [ADR-0036](ADR-0036-the-coding-credential-is-a-subscription.md)
+(2026-09-24): the coding credential is a Claude subscription token only, there
+is no separate coding API key, and `codingLlm` is folded into `agents`.
+
 An organization brings one Anthropic API key, and every agent in the platform
 runs on it. Orgs asked to bill the **coding agent** separately — it is the
 expensive, long-running, unattended one, and its spend is the number they want
@@ -10,7 +14,7 @@ different consumers, and they are not equivalent:
 
 | Consumer | How it reads the key |
 |---|---|
-| Design agent | `EffectiveKey` → `X-Anthropic-Key` header → `createModel` per turn |
+| Design agent | `EffectiveKey` → `X-Anthropic-Key` header → `createModel` per turn (now `ConnectionReader.Effective` → `X-Model-Key`, [ADR-0038](ADR-0038-an-organization-has-one-model-connection.md)) |
 | Coding agent | SM-API triplet → per-run ExternalSecret → runner `ANTHROPIC_API_KEY` |
 | Coding agent (workflow plane) | `ApplyWPSecret` → `anthropic-credentials` Secret → ClusterWorkflow |
 | RCA agent | `pushExternalSecret` → `RCA_LLM_API_KEY` ExternalSecret |

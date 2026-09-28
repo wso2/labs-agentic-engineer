@@ -33,6 +33,7 @@ import (
 // migrate.RunAll, so this reads the resulting schema rather than re-running it.
 func TestPhase13AnthropicCredentialRole_RekeysToCompositePK(t *testing.T) {
 	db := dbtest.New(t)
+	preModelConnectionShape(t, db)
 
 	var pkCols []string
 	if err := db.Raw(`
@@ -71,6 +72,7 @@ func TestPhase13AnthropicCredentialRole_RekeysToCompositePK(t *testing.T) {
 // silently skips (GetByOrg filters by role, so it would simply never be found).
 func TestPhase13AnthropicCredentialRole_CheckRejectsUnknownRole(t *testing.T) {
 	db := dbtest.New(t)
+	preModelConnectionShape(t, db)
 
 	err := db.Exec(`
 		INSERT INTO org_anthropic_credentials (oc_org_id, role, key_prefix, key_last4, status)
@@ -87,11 +89,13 @@ func TestPhase13AnthropicCredentialRole_CheckRejectsUnknownRole(t *testing.T) {
 // re-key. Under the old single-column PK this second insert was a conflict.
 func TestPhase13AnthropicCredentialRole_BothRolesCoexist(t *testing.T) {
 	db := dbtest.New(t)
+	preModelConnectionShape(t, db)
 
-	for _, role := range []string{"default", "coding"} {
+	// Each role with the only kind phase16's CHECK lets it hold.
+	for role, kind := range map[string]string{"default": "api_key", "coding": "oauth_token"} {
 		if err := db.Exec(`
-			INSERT INTO org_anthropic_credentials (oc_org_id, role, key_prefix, key_last4, status)
-			VALUES ('acme', ?, 'sk-ant-ap03-x', 'wxyz', 'active')`, role).Error; err != nil {
+			INSERT INTO org_anthropic_credentials (oc_org_id, role, credential_kind, key_prefix, key_last4, status)
+			VALUES ('acme', ?, ?, 'sk-ant-ap03-x', 'wxyz', 'active')`, role, kind).Error; err != nil {
 			t.Fatalf("insert role %s: %v", role, err)
 		}
 	}
@@ -110,6 +114,7 @@ func TestPhase13AnthropicCredentialRole_BothRolesCoexist(t *testing.T) {
 // exactly what the DO blocks in the migration are guarding.
 func TestPhase13AnthropicCredentialRole_Idempotent(t *testing.T) {
 	db := dbtest.New(t)
+	preModelConnectionShape(t, db)
 	ctx := context.Background()
 
 	for i := range 2 {
@@ -139,6 +144,7 @@ func TestPhase13AnthropicCredentialRole_Idempotent(t *testing.T) {
 // is the one-way door: get it wrong and every existing org loses its key.
 func TestPhase13AnthropicCredentialRole_BackfillsExistingRowsAsDefault(t *testing.T) {
 	db := dbtest.New(t)
+	preModelConnectionShape(t, db)
 	ctx := context.Background()
 
 	// Reconstruct the pre-migration shape: drop role (which cascades the

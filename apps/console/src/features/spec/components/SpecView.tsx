@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   AlertTitle,
@@ -45,12 +45,14 @@ import {
   useProjectStatus,
   useProjectTags,
 } from "../../projects/api/queries";
+import { isMarkdownPath } from "@aep/collab-doc";
 import {
   useDesignDependencies,
   useSpecFileContent,
   useSpecFiles,
 } from "../api/queries";
-import { PRD_PATH, specGroupOf, toSpecEntry } from "../api/mapping";
+import {
+  isAcceptanceCriteriaFile, PRD_PATH, specGroupOf, toSpecEntry } from "../api/mapping";
 import { fileLabel } from "../api/labels";
 import { computeDependencyUsedBy } from "../lib/dependencyUsedBy";
 import { useCollabSpec } from "../collab/useCollabSpec";
@@ -59,6 +61,7 @@ import { SecurityPanel } from "./SecurityPanel";
 import { useApiViewSecurity } from "../hooks/useApiViewSecurity";
 import { useSecurityEntry } from "../hooks/useSecurityEntry";
 import { useRoomQuestion } from "../../agent-chat/useRoomQuestion";
+import { hasFrontMatter, reassembleAfm } from "../collab/afmBody";
 import { CollabTextArea } from "../collab/CollabTextArea";
 import { SpecMdEditor } from "../collab/SpecMdEditor";
 import { useYTextString } from "../collab/useYTextString";
@@ -102,7 +105,11 @@ import { WireframePanel } from "./WireframePanel";
 import { OpenApiView } from "@aep/ui-openapi-view";
 import { DesignView } from "@aep/ui-design-view";
 import type { DependencyStatusInfo } from "@aep/ui-design-view";
-import { ValidationView } from "@aep/ui-validation-view";
+import { AcceptanceView } from "@aep/ui-acceptance-view";
+import { useAcceptanceEntry } from "../hooks/useAcceptanceEntry";
+import { AgentView } from "@aep/ui-agent-view";
+import { MarkdownView } from "../../../components/MarkdownView";
+import type { AgentToolStatusInfo } from "@aep/ui-agent-view";
 import {
   type SpecSelection,
   DESIGN_CELL_PATH,
@@ -354,7 +361,9 @@ function SpecViewContent({ projectName }: { projectName: string }) {
   const linkedFile = search.file;
   useEffect(() => {
     if (!linkedFile) return;
-    setSelection({ kind: "file", path: linkedFile });
+    // Through followSelection, so a link to a path whose rail row is not a file
+    // row — an acceptance .feature — lands where a click would have.
+    setSelection(followSelection(linkedFile));
     void navigate({
       to: "/projects/$projectName/spec",
       params: { projectName },
@@ -385,6 +394,13 @@ function SpecViewContent({ projectName }: { projectName: string }) {
   // the follow must still fire.
   useEffect(() => {
     if (!writingPath || !followingRef.current) return;
+    // Never follow a write into a document this view HIDES. There is no rail row
+    // to come back to and no renderer behind it, so the pane can only announce
+    // that it is waiting for something the reader cannot see — which is how the
+    // retired validation criteria would have named themselves mid-turn despite
+    // being hidden everywhere else. `specGroupOf` rather than that one path: the
+    // rule holds for every path the view drops, and stays right once it goes.
+    if (specGroupOf(writingPath) === null) return;
     setSelection(followSelection(writingPath));
   }, [planTurnId, writingPath]);
   const selectManually = (sel: SpecSelection) => {
@@ -409,8 +425,8 @@ function SpecViewContent({ projectName }: { projectName: string }) {
   const firstRequirements = files.find((f) => f.group === "requirements");
   // A fresh project may hold no requirements file yet; fall back to whatever
   // the spec view does list. Named for what it IS — any listed entry, which may
-  // be a structured path (`openapi.yaml`, a component `design.json`,
-  // `validation-criteria.json`) that renders as a read-only structured view
+  // be a structured path (`openapi.yaml`, a component `design.json`, a
+  // `.feature` file) that renders as a read-only structured view
   // rather than in the editor. That is the right fallback: showing the one
   // artifact a bare project has beats showing an empty pane, and every path
   // reaching here has a renderer.
@@ -462,6 +478,25 @@ function SpecViewContent({ projectName }: { projectName: string }) {
           d.name,
           { status: d.status, reason: d.reason },
         ]),
+      ),
+    [componentDependencies],
+  );
+  // Keyed "<providerComponent>:<operationId>" for AgentView's optional
+  // toolStatus prop. `operations` is populated server-side only on the
+  // dependency an ai-agent's `x-aep.tools.openapi[]` entry targets, and
+  // status/reason are computed there (spec.ComputeAgentToolStatus) on every
+  // read — the agent-view package deliberately does not derive them from
+  // agent.afm.md, exactly as DesignView doesn't derive dependency status from
+  // design.json. Empty for every non-agent component, which renders no chips.
+  const agentToolStatus = useMemo<Record<string, AgentToolStatusInfo>>(
+    () =>
+      Object.fromEntries(
+        componentDependencies.flatMap((d) =>
+          (d.operations ?? []).map((op) => [
+            `${d.name}:${op.operation}`,
+            { status: op.status, reason: op.reason },
+          ]),
+        ),
       ),
     [componentDependencies],
   );
@@ -546,19 +581,35 @@ function SpecViewContent({ projectName }: { projectName: string }) {
     /^specs\/design\/components\/[^/]+\/design\.json$/.test(
       selectedFile?.path ?? "",
     );
-  // The validation acceptance oracle renders as a read-only structured view —
-  // like design.json, it never goes through the collab text editor.
-  const isValidationCriteriaFile =
-    /^specs\/validation\/validation-criteria\.json$/.test(
-      selectedFile?.path ?? "",
-    );
+  // An ai-agent's agent.afm.md renders as a read-only structured Agent spec —
+  // like design.json, it never goes through the collab text editor. It was
+  // already excluded from the PROSE markdown editor (@aep/collab-doc's
+  // NON_PROSE_MARKDOWN set: the ProseMirror round-trip corrupts YAML front
+  // matter), so before this it fell through to the raw collab textarea.
+  const isAgentAfmFile = /^specs\/design\/components\/[^/]+\/agent\.afm\.md$/.test(
+    selectedFile?.path ?? "",
+  );
+
+  // The Gherkin acceptance criteria render as a read-only structured view.
+  // Without this they are neither .md nor structured, so they fall through to
+  // CollabTextArea — an editable monospace box over a document nobody edits by
+  // hand, which is the dishonesty CommittedFileView was written to remove.
+  // Nothing should now produce a FILE selection for an acceptance path — the
+  // rail has one entry for the set and followSelection routes to it. This stays
+  // as the guard: without it such a selection falls through to CollabTextArea,
+  // an editable textarea over a generated document, silently.
+  const isAcceptanceCriteriaSelected = isAcceptanceCriteriaFile(selectedFile?.path ?? "");
   // A dependency's definition renders as its own structured view (ADR-0028)
   // — the same path a component's design.json takes.
   const isDependencyDefinitionFile = isDependencyDefinition(selectedFile?.path ?? "");
   // The structured files share the read-only render path (no collab editor,
   // sourced from the live doc or the committed fetch).
   const isStructuredFile =
-    isOpenApiFile || isComponentDesignFile || isValidationCriteriaFile || isDependencyDefinitionFile;
+    isOpenApiFile ||
+    isComponentDesignFile ||
+    isAgentAfmFile ||
+    isAcceptanceCriteriaSelected ||
+    isDependencyDefinitionFile;
   // Canvas-based views (cell diagram, Excalidraw) need a flex-column,
   // overflow-hidden ancestor so their own `flex: 1` roots get a real
   // measured height to stretch into — a plain overflow:auto block (used for
@@ -567,7 +618,11 @@ function SpecViewContent({ projectName }: { projectName: string }) {
   const isDiagramView =
     effectiveSelection.kind === "cell-diagram" ||
     effectiveSelection.kind === "wireframe";
-  const selectedIsMd = selectedFile?.path.endsWith(".md") ?? false;
+  // Ask collab-doc, never the extension: a `.md` file is only a rich-text
+  // fragment if it is PROSE. `agent.afm.md` is structured (YAML front matter a
+  // markdown round-trip would destroy), so it shares as Y.Text like
+  // design.json — and reading it as a fragment renders an empty pane.
+  const selectedIsMd = selectedFile ? isMarkdownPath(selectedFile.path) : false;
   const fragment =
     selectedFile && selectedIsMd && !isOpenApiFile
       ? collab.getFileFragment(selectedFile.path)
@@ -581,6 +636,32 @@ function SpecViewContent({ projectName }: { projectName: string }) {
   // document area scrolls inside — #206 rework), so its pane must be the
   // same flex-column/overflow-hidden shape the canvas views need.
   const isMdEditorView = Boolean(fragment && collab.provider);
+
+  // Saving an edited prompt: the caller (AgentView) hands back the BODY only,
+  // and this reassembles the document.
+  //
+  // The front matter is taken from the doc as it stands AT SAVE TIME, byte for
+  // byte, never re-serialised from parsed YAML — so an agent that rewired tools
+  // or memory while the prompt was being edited keeps its change, and the
+  // formatting of a block nobody touched is not quietly rewritten. Only the
+  // prose the author actually edited is replaced.
+  const afmText = isAgentAfmFile && selectedFile ? collab.getFileText(selectedFile.path) : null;
+  const handleSaveBehaviour = useCallback(
+    async (body: string) => {
+      if (!afmText) throw new Error("The design is offline — reconnect before saving.");
+      const raw = afmText.toString();
+      if (!hasFrontMatter(raw)) {
+        throw new Error("This document has no front matter to preserve.");
+      }
+      const next = reassembleAfm(raw, body);
+      if (next === raw) return;
+      afmText.doc?.transact(() => {
+        afmText.delete(0, afmText.length);
+        afmText.insert(0, next);
+      });
+    },
+    [afmText],
+  );
   // The collab doc is the SOURCE for the structured views while collab is up
   // (the design.md rule): rooms are seeded with every committed specs/ file
   // (non-md as Y.Text) and the agents service mirrors each applied write, so
@@ -600,6 +681,14 @@ function SpecViewContent({ projectName }: { projectName: string }) {
       : null;
   // The Security entry's own wiring lives in its hook — see useSecurityEntry
   // for why this page does not carry it.
+  const isAcceptanceView = effectiveSelection.kind === "acceptance";
+  const acceptance = useAcceptanceEntry({
+    projectName,
+    active: isAcceptanceView,
+    files,
+    collab,
+    agentInRoom,
+  });
   const isSecurityView = effectiveSelection.kind === "security";
   const security = useSecurityEntry({
     projectName,
@@ -1429,6 +1518,22 @@ function SpecViewContent({ projectName }: { projectName: string }) {
                   writeSecurityJson={security.writeSecurityJson}
                   dependencies={dependencies.data}
                 />
+              ) : effectiveSelection.kind === "acceptance" ? (
+                acceptance.features.length > 0 ? (
+                  <AcceptanceView features={acceptance.features} />
+                ) : acceptance.isPending ? (
+                  <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
+                    <CircularProgress aria-label="Loading the acceptance criteria" />
+                  </Box>
+                ) : acceptance.isError ? (
+                  <Alert severity="error">
+                    The acceptance criteria couldn&apos;t be loaded.
+                  </Alert>
+                ) : (
+                  // No documents and nothing in flight: the design turn has not
+                  // written them yet. The view's own empty state says so.
+                  <AcceptanceView features={[]} />
+                )
               ) : effectiveSelection.kind === "wireframe" ? (
                 <WireframePanel
                   projectName={projectName}
@@ -1451,8 +1556,17 @@ function SpecViewContent({ projectName }: { projectName: string }) {
                         roles={apiSecurity.roles}
                         resourceServer={apiSecurity.resourceServer}
                       />
-                    ) : isValidationCriteriaFile ? (
-                      <ValidationView criteria={structuredLive} />
+                    ) : isAgentAfmFile ? (
+                      <AgentView
+                        spec={structuredLive}
+                        toolStatus={agentToolStatus}
+                        renderMarkdown={(md) => <MarkdownView>{md}</MarkdownView>}
+                        {...(afmText ? { onSaveBehaviour: handleSaveBehaviour } : {})}
+                      />
+                    ) : isAcceptanceCriteriaSelected ? (
+                      <AcceptanceView
+                        features={[{ path: selectedFile.path, content: structuredLive }]}
+                      />
                     ) : isDependencyDefinitionFile ? (
                       <DependencyView
                         projectName={projectName}
@@ -1482,10 +1596,20 @@ function SpecViewContent({ projectName }: { projectName: string }) {
                         roles={apiSecurity.roles}
                         resourceServer={apiSecurity.resourceServer}
                       />
-                    ) : isValidationCriteriaFile ? (
-                      <ValidationView
+                    ) : isAgentAfmFile ? (
+                      <AgentView
                         key={content.data.sha}
-                        criteria={content.data.content}
+                        spec={content.data.content}
+                        toolStatus={agentToolStatus}
+                        renderMarkdown={(md) => <MarkdownView>{md}</MarkdownView>}
+                        {...(afmText ? { onSaveBehaviour: handleSaveBehaviour } : {})}
+                      />
+                    ) : isAcceptanceCriteriaSelected ? (
+                      <AcceptanceView
+                        key={content.data.sha}
+                        features={[
+                          { path: selectedFile.path, content: content.data.content },
+                        ]}
                       />
                     ) : isDependencyDefinitionFile ? (
                       <DependencyView
@@ -1523,8 +1647,7 @@ function SpecViewContent({ projectName }: { projectName: string }) {
                       }}
                     >
                       <Typography variant="body2" color="text.secondary">
-                        Waiting for the agent to write{" "}
-                        {selectedFile.path.split("/").at(-1)}…
+                        Waiting for the agent to write {fileLabel(selectedFile.path)}…
                       </Typography>
                     </Box>
                   ) : content.isError ? (

@@ -167,3 +167,16 @@ test("resolveTaskSkills: a missing specs/design/ yields no pins and no error", a
   );
   assert.deepEqual(await resolveTaskSkills({ workspace: ws, scope: { kind: "project" } }), []);
 });
+
+// A design may name any skill, but a run's workflow is the runner's: a pinned
+// `validation-task` would ride an implementation run beside `aep`, and a pinned
+// `aep` would load twice.
+test("resolveTaskSkills: a pin on a workflow skill is dropped, and said so", async () => {
+  const ws = await tmpTree({
+    "specs/design/components/api/design.json": JSON.stringify({ skillsPinned: ["go", "validation-task", "aep"] }),
+  });
+  const lines: string[] = [];
+  const out = await resolveTaskSkills({ workspace: ws, scope: { kind: "project" }, log: (l) => lines.push(l) });
+  assert.deepEqual(out, ["go"]);
+  assert.ok(lines.some((l) => l.includes("validation-task") && l.includes("aep")), lines.join("\n"));
+});

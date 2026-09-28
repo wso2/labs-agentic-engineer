@@ -56,7 +56,7 @@ func devResyncHandler(params AppParams) http.HandlerFunc {
 	type orgResult struct {
 		OcOrgID        string `json:"ocOrgId"`
 		Written        int    `json:"written"`
-		AnthropicError string `json:"anthropicError,omitempty"`
+		ModelError     string `json:"modelError,omitempty"`
 		GitHubPATError string `json:"githubPatError,omitempty"`
 	}
 	type response struct {
@@ -64,7 +64,7 @@ func devResyncHandler(params AppParams) http.HandlerFunc {
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-		if params.DB == nil || params.CredService == nil || params.AnthropicCredService == nil {
+		if params.DB == nil || params.CredService == nil || params.AnthropicCredService == nil || params.ModelConnections == nil {
 			writeErrorEnvelope(w, http.StatusServiceUnavailable, CodeServiceUnavailable, "resync surface not wired", nil)
 			return
 		}
@@ -81,24 +81,31 @@ func devResyncHandler(params AppParams) http.HandlerFunc {
 			res := orgResult{OcOrgID: ocOrgID}
 			ouID, ouErr := lookupThunderOrgUUID(ctx, params.DB, ocOrgID)
 			if ouErr != nil {
-				res.AnthropicError = ouErr.Error()
+				res.ModelError = ouErr.Error()
 				res.GitHubPATError = ouErr.Error()
 				out.Orgs = append(out.Orgs, res)
 				continue
 			}
 			if ouID == "" {
 				msg := "no thunder_org_uuid for org — cannot derive vault path"
-				res.AnthropicError = msg
+				res.ModelError = msg
 				res.GitHubPATError = msg
 				out.Orgs = append(out.Orgs, res)
 				continue
 			}
 			orgCtx := jwtassertion.ContextWithTokenClaims(ctx, &jwtassertion.TokenClaims{OuId: ouID})
 
-			if wrote, err := params.AnthropicCredService.ResyncSecretRef(orgCtx, ocOrgID); err != nil {
-				res.AnthropicError = err.Error()
-			} else if wrote {
-				res.Written++
+			// The connection key (under its entity, model-connection) and the
+			// Claude subscription: a repair that restored only one would leave
+			// a run mounting a path that no longer resolves.
+			for _, resync := range []func(context.Context, string) (bool, error){
+				params.ModelConnections.ResyncSecretRef, params.AnthropicCredService.ResyncSecretRef,
+			} {
+				if wrote, err := resync(orgCtx, ocOrgID); err != nil {
+					res.ModelError = err.Error()
+				} else if wrote {
+					res.Written++
+				}
 			}
 			if wrote, err := params.CredService.ResyncSecretRef(orgCtx, ocOrgID); err != nil {
 				res.GitHubPATError = err.Error()
@@ -115,7 +122,7 @@ func devResyncHandler(params AppParams) http.HandlerFunc {
 }
 
 // collectResyncOrgs returns the unique set of ocOrgIDs that have either an
-// org_credentials or org_anthropic_credentials row with a secret-ref triplet
+// org_credentials, org_model_connections or org_anthropic_credentials row with a secret-ref triplet
 // populated. When `only` is non-empty the set is filtered to that single id.
 func collectResyncOrgs(ctx context.Context, db *gorm.DB, only string) ([]string, error) {
 	seen := map[string]struct{}{}
@@ -135,14 +142,15 @@ func collectResyncOrgs(ctx context.Context, db *gorm.DB, only string) ([]string,
 		return nil, err
 	}
 	add(patOrgs)
-	var anthropicOrgs []string
+	var modelOrgs []string
 	if err := db.WithContext(ctx).Raw(
-		`SELECT oc_org_id FROM org_anthropic_credentials
-		  WHERE secret_ref_name IS NOT NULL`,
-	).Scan(&anthropicOrgs).Error; err != nil {
+		`SELECT oc_org_id FROM org_model_connections WHERE secret_ref_name IS NOT NULL
+		 UNION
+		 SELECT oc_org_id FROM org_anthropic_credentials WHERE secret_ref_name IS NOT NULL`,
+	).Scan(&modelOrgs).Error; err != nil {
 		return nil, err
 	}
-	add(anthropicOrgs)
+	add(modelOrgs)
 	out := make([]string, 0, len(seen))
 	for id := range seen {
 		out = append(out, id)

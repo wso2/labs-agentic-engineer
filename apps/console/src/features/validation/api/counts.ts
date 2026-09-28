@@ -17,21 +17,20 @@
  */
 
 import { useMemo } from "react";
-import {
-  parseValidationCriteria,
-  parseValidationReport,
-  tallyCriterionStates,
-} from "@aep/ui-validation-view";
+import { isReportParseError, parseAcceptanceReport } from "@aep/ui-acceptance-view";
 import { useBuildRuns } from "../../builds/api/queries";
 import { answeredRun, isRepairing, lastMergedValidationCycle } from "../lib/runs";
-import { countsFromTally, type ValidationCounts } from "../lib/verdict";
-import { useValidationCriteria, useValidationReport } from "./queries";
+import { countsFromScenarios, type ValidationCounts } from "../lib/verdict";
+import { useValidationReport } from "./queries";
 
 // Validation evidence for surfaces OUTSIDE the Validation page (#395: the
-// Deployments rail says "8/12 passed" beside its verdict). Same join the
-// Validation page performs — the newest run's verdict, its last MERGED validation
-// cycle's commit pinning the report read, the authored oracle as the denominator —
-// packaged as one hook so the two surfaces cannot resolve the run differently.
+// Deployments rail says "8/12 passed" beside its verdict). Same resolution the
+// Validation page performs — the newest run's verdict, and its last MERGED
+// validation cycle's commit pinning the report read — packaged as one hook so the
+// two surfaces cannot resolve the run differently.
+//
+// The report is its own denominator: it carries one entry per scenario in the
+// feature files, and its checker fails the run otherwise.
 
 // The states whose counts inform: a report was (or should have been) joined.
 //
@@ -48,7 +47,7 @@ const COUNTABLE = new Set(["passed", "partial", "failed", "awaiting-fix", "runni
 
 /**
  * What the deployed version's validation is, in the two facts a surface outside the
- * Validation page needs to put it into words: the run's VERDICT and the criteria
+ * Validation page needs to put it into words: the run's VERDICT and the scenario
  * COUNTS behind it.
  *
  * The verdict is here because `deploy.validation` cannot supply it — `awaiting-fix`
@@ -58,8 +57,8 @@ const COUNTABLE = new Set(["passed", "partial", "failed", "awaiting-fix", "runni
  * then renders.
  *
  * counts is undefined while loading, when the state has no countable report, and in
- * every failure mode (no run, no report, unparseable files) — an upgrade, never a
- * blocker, so every caller has a count-free form.
+ * every failure mode (no run, no report, an unreadable report) — an upgrade, never
+ * a blocker, so every caller has a count-free form.
  *
  * `version` is the BUILD version (status.build.version) — the newest run's tag,
  * which is what `deploy.validation` describes. deploy.version names the newest
@@ -89,7 +88,6 @@ export function useValidationEvidence(
   const missingReport = rawVerdict === "unreported";
   const cycle = lastMergedValidationCycle(runList);
 
-  const criteria = useValidationCriteria(projectName, version, settled);
   const report = useValidationReport(
     projectName,
     version,
@@ -98,16 +96,13 @@ export function useValidationEvidence(
     cycle?.mergeSha,
   );
 
-  const criteriaContent = criteria.data?.content;
   const reportContent = report.data?.content;
   const counts = useMemo(() => {
-    if (!settled || !criteriaContent || !reportContent) return undefined;
-    const oracle = parseValidationCriteria(criteriaContent);
-    if ("kind" in oracle) return undefined;
-    const parsed = parseValidationReport(reportContent);
-    if ("kind" in parsed) return undefined;
-    return countsFromTally(tallyCriterionStates(oracle, parsed));
-  }, [settled, criteriaContent, reportContent]);
+    if (!settled || !reportContent) return undefined;
+    const parsed = parseAcceptanceReport(reportContent);
+    if (isReportParseError(parsed)) return undefined;
+    return countsFromScenarios(parsed.scenarios);
+  }, [settled, reportContent]);
 
   // Still out: the run story, or the two files behind a settled verdict. A
   // surface can hold a skeleton on this rather than paint a chip that changes
@@ -115,8 +110,7 @@ export function useValidationEvidence(
   const pending =
     wanted &&
     Boolean(version) &&
-    (runs.isPending ||
-      (settled && (criteria.isPending || (!missingReport && report.isPending))));
+    (runs.isPending || (settled && !missingReport && report.isPending));
 
   return {
     verdict: rawVerdict,

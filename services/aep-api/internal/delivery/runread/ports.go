@@ -67,6 +67,55 @@ type CycleReader interface {
 	ListByRun(ctx context.Context, orgID, runID string) ([]delivery.RunCycle, error)
 }
 
+// ValidationRunReader and ValidationCycleReader are the validation read model's
+// rows. Both are supersets of what the run story needs, and they are separate
+// ports rather than extra methods on RunReader/CycleReader because those two are
+// shared with the progress streams: widening them would make every stream fake
+// implement a project-wide query the streams never call, which is a port
+// describing its widest caller instead of its own need.
+//
+// Both are satisfied by the root repositories.
+type ValidationRunReader interface {
+	MilestoneNumberForTag(ctx context.Context, orgID, projectID, tag string) (number int, found bool, err error)
+	ListByMilestone(ctx context.Context, orgID, projectID string, milestoneNumber int) ([]delivery.MilestoneRun, error)
+	// ListByProject returns every run in the project, newest first — the same
+	// rows the build ledger is built from, so the two pages can never disagree
+	// about which versions exist.
+	ListByProject(ctx context.Context, orgID, projectID string) ([]delivery.MilestoneRun, error)
+}
+
+// ValidationCycleReader is the cycle half.
+type ValidationCycleReader interface {
+	ListByRun(ctx context.Context, orgID, runID string) ([]delivery.RunCycle, error)
+	// ListValidationCyclesByProject is the whole ledger's timing in one query:
+	// every validation cycle in the project, oldest first.
+	ListValidationCyclesByProject(ctx context.Context, orgID, projectID string) ([]delivery.RunCycle, error)
+}
+
+// ValidationSnapshotReader reads one attempt's evidence AT A COMMIT: the report
+// the runner committed, and the acceptance criteria it was judged against.
+// Satisfied by an app adapter over spec.FilesService.
+//
+// Both halves come from the same commit and that is the entire reason this is
+// one port with one `at` rather than two reads a caller pairs up. The report
+// lives at a fixed path every attempt overwrites, so it is addressable only by
+// its cycle's merge commit, while the criteria move on independently in the
+// branch; pairing a historical report with today's criteria reports scenarios
+// authored since as unanswered, which is a defect of the pairing and not a fact
+// about the run. A port that cannot express the mismatch cannot produce it.
+//
+// nil → the snapshot operation answers 503, the degraded-boot contract this
+// slice's other optional collaborators follow.
+type ValidationSnapshotReader interface {
+	// ReportAt returns the committed report at `at`, found=false when the
+	// attempt committed none. An empty `at` reads the branch tip.
+	ReportAt(ctx context.Context, orgID, projectID, at string) (content string, found bool, err error)
+	// CriteriaAt returns every acceptance criteria file at `at`, path and source.
+	// An absent directory is an empty slice, not an error: a version whose oracle
+	// was never authored is an ordinary state, not a read failure.
+	CriteriaAt(ctx context.Context, orgID, projectID, at string) ([]gen.AcceptanceCriteriaFile, error)
+}
+
 // ProjectBuildLister reads every build WorkflowRun in a project, in ONE call —
 // the read a cycle's builds are derived from. Project-wide rather than
 // per-component because the read side does not know which components a merge

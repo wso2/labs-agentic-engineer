@@ -24,6 +24,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/organization/getconfigstatus"
 	"github.com/wso2/aep/aep-api/internal/organization/listorgs"
 	"github.com/wso2/aep/aep-api/internal/organization/patchconfig"
+	"github.com/wso2/aep/aep-api/internal/organization/testllm"
 )
 
 // Every slice names its type Handler, so embedding them directly would be
@@ -32,6 +33,7 @@ type (
 	getconfigHandler        = getconfig.Handler
 	getconfigstatusHandler  = getconfigstatus.Handler
 	patchconfigHandler      = patchconfig.Handler
+	testllmHandler          = testllm.Handler
 	connectgithubHandler    = connectgithub.Handler
 	disconnectgithubHandler = disconnectgithub.Handler
 	listorgsHandler         = listorgs.Handler
@@ -48,6 +50,7 @@ type Handlers struct {
 	*getconfigHandler
 	*getconfigstatusHandler
 	*patchconfigHandler
+	*testllmHandler
 	*connectgithubHandler
 	*disconnectgithubHandler
 	*listorgsHandler
@@ -65,6 +68,7 @@ func New(d organization.Deps) (*Handlers, error) {
 		getconfigHandler:        getconfig.New(d.Config),
 		getconfigstatusHandler:  getconfigstatus.New(d.Config),
 		patchconfigHandler:      patchconfig.New(d.Config),
+		testllmHandler:          testllm.New(d.Config),
 		connectgithubHandler:    connectgithub.New(d.Config),
 		disconnectgithubHandler: disconnectgithub.New(d.Config),
 		listorgsHandler:         listorgs.New(d.OrgSvc),

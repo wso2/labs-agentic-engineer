@@ -31,6 +31,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
 	"github.com/wso2/aep/aep-api/internal/platform/gitfs/workspacetest"
 	"github.com/wso2/aep/aep-api/internal/platform/gittest"
+	"github.com/wso2/aep/aep-api/internal/platform/modelconn"
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	"github.com/wso2/aep/aep-api/internal/spec"
@@ -115,7 +116,9 @@ func newPlanRig(t *testing.T, seed map[string]string, specTag string) *planRig {
 		fakeRepos{repo: repoRow},
 		planVersions{specTag: specTag, scope: rigScope},
 		sourcecontrol.NewGitOpsService(nilResolver{}, fx.Engine),
-		func(context.Context, string) (string, error) { return "sk-test", nil },
+		func(context.Context, string) (spec.AgentLLM, error) {
+			return spec.AgentLLM{Key: "sk-test", Connection: planConnection}, nil
+		},
 		turn,
 		issues,
 		issues.writer(),
@@ -123,6 +126,17 @@ func newPlanRig(t *testing.T, seed map[string]string, specTag string) *planRig {
 		func(context.Context, string) (*sourcecontrol.GitRepository, error) { return skillsRow, nil },
 	)
 	return &planRig{fx: fx, skillsOrigin: skillsOrigin, turn: turn, issues: issues, svc: svc}
+}
+
+// planConnection is the org's model connection in the plan rig: not Anthropic,
+// so the plan turn is shown riding whatever connection the resolver returns.
+var planConnection = modelconn.Connection{
+	Format:     modelconn.FormatOpenAICompatible,
+	BaseURL:    "https://ollama.com/v1",
+	Host:       modelconn.OllamaHost,
+	Model:      "gpt-oss:20b",
+	AuthScheme: modelconn.AuthBearer,
+	ImageInput: modelconn.Unknown,
 }
 
 // start plans into milestone 7 and returns the dispatched turn request.
@@ -152,6 +166,13 @@ func TestPlanIntoMilestone_DispatchesWorkspaceShape(t *testing.T) {
 	// states what the turn is for and stops there.
 	if req.Turn.Kind != agentsvc.TurnKindPlan {
 		t.Errorf("turn kind = %q, want %q", req.Turn.Kind, agentsvc.TurnKindPlan)
+	}
+	// The planner runs on the org's connection and model, like every spec agent.
+	if req.Model != "gpt-oss:20b" {
+		t.Errorf("turn model = %q, want the org's model", req.Model)
+	}
+	if req.Connection == nil || *req.Connection != *agentsvc.ConnectionFor(planConnection) {
+		t.Errorf("turn connection = %+v, want the org's connection", req.Connection)
 	}
 	ws := req.Workspace
 	if ws.Ref != r.fx.Origin.HeadSHA(t) {
@@ -213,7 +234,7 @@ func TestPlanIntoMilestone_SkillsRepoGone_TypedError(t *testing.T) {
 		fakeRepos{repo: repoRow},
 		planVersions{specTag: "v1"},
 		sourcecontrol.NewGitOpsService(nilResolver{}, fx.Engine),
-		func(context.Context, string) (string, error) { return "sk-test", nil },
+		func(context.Context, string) (spec.AgentLLM, error) { return spec.AgentLLM{Key: "sk-test"}, nil },
 		turn,
 		planIssues,
 		planIssues.writer(),

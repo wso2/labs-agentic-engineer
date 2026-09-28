@@ -835,12 +835,12 @@ func TestPermissionGate_UpdateConfig(t *testing.T) {
 	llmOnly := gen.UpdateConfigRequestObject{Body: &gen.ConfigPatch{}}
 	llmOnly.Body.LLM.Sent = true
 
-	codingAgentOnly := gen.UpdateConfigRequestObject{Body: &gen.ConfigPatch{}}
-	codingAgentOnly.Body.CodingAgent.Sent = true
+	agentsOnly := gen.UpdateConfigRequestObject{Body: &gen.ConfigPatch{}}
+	agentsOnly.Body.Agents.Sent = true
 
 	both := gen.UpdateConfigRequestObject{Body: &gen.ConfigPatch{}}
 	both.Body.GitProvider.Sent = true
-	both.Body.CodingLLM.Sent = true
+	both.Body.LLM.Sent = true
 
 	idpOnly := gen.UpdateConfigRequestObject{Body: &gen.ConfigPatch{}}
 	idpOnly.Body.IDP.Sent = true
@@ -873,16 +873,19 @@ func TestPermissionGate_UpdateConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("codingAgent section requires ae:model-config", func(t *testing.T) {
+	// The runtime the org's agents run on, and the Claude subscription token
+	// that bills in the connection's place — one setting with the connection
+	// it spends, so one permission with it.
+	t.Run("agents section requires ae:model-config", func(t *testing.T) {
 		ctx := auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:github-config"})
-		_, err := permissionGate(next, "UpdateConfig")(ctx, nil, req, codingAgentOnly)
+		_, err := permissionGate(next, "UpdateConfig")(ctx, nil, req, agentsOnly)
 		var ae *apiError
 		if !errors.As(err, &ae) || ae.Status != http.StatusForbidden {
 			t.Fatalf("want 403 holding only ae:github-config, got %v", err)
 		}
 
 		ctx = auth.WithClaims(context.Background(), &auth.Claims{Scope: "ae:model-config"})
-		if _, err := permissionGate(next, "UpdateConfig")(ctx, nil, req, codingAgentOnly); err != nil {
+		if _, err := permissionGate(next, "UpdateConfig")(ctx, nil, req, agentsOnly); err != nil {
 			t.Fatalf("want pass holding ae:model-config, got %v", err)
 		}
 	})

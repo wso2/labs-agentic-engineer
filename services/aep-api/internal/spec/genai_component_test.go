@@ -50,6 +50,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/componenttest"
 	"github.com/wso2/aep/aep-api/internal/platform/gitfs/workspacetest"
 	"github.com/wso2/aep/aep-api/internal/platform/gittest"
+	"github.com/wso2/aep/aep-api/internal/platform/modelconn"
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	"github.com/wso2/aep/aep-api/internal/spec"
@@ -281,6 +282,9 @@ func (f *fakeAgents) turns(t *testing.T) int {
 type memTurnRepo struct {
 	mu   sync.Mutex
 	rows []*spec.AgentTurn
+	// contextReads counts LastContextTokens calls: a connection with no
+	// context window must never make one.
+	contextReads int
 }
 
 func (m *memTurnRepo) SumUsageByProject(context.Context, string) (map[string]contracts.StampedUsage, error) {
@@ -326,6 +330,9 @@ func (m *memTurnRepo) Finish(_ context.Context, id string, term spec.TurnTermina
 			r.Reason = term.Reason
 			r.NoChanges = term.NoChanges
 			r.Message = term.Message
+			r.Code = term.Code
+			r.ResetAt = term.ResetAt
+			r.ContextTokens = term.ContextTokens
 			if len(term.Paths) > 0 {
 				b, _ := json.Marshal(term.Paths)
 				r.Paths = string(b)
@@ -410,6 +417,19 @@ func (m *memTurnRepo) LastTerminal(_ context.Context, orgID, projectID, conversa
 	return &cp, nil
 }
 
+func (m *memTurnRepo) LastContextTokens(_ context.Context, orgID, projectID, conversationID string) (*int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.contextReads++
+	var last *int64
+	for _, r := range m.rows { // insertion order == creation order
+		if r.OrgID == orgID && r.ProjectID == projectID && r.ConversationID == conversationID && r.ContextTokens != nil {
+			last = r.ContextTokens
+		}
+	}
+	return last, nil
+}
+
 func (m *memTurnRepo) SweepStale(_ context.Context, olderThan time.Time) ([]spec.AgentTurn, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -479,7 +499,11 @@ type genaiRig struct {
 	broker       *spec.TurnBroker
 	svc          *spec.Service
 	// knobs read at request time
-	key string
+	key   string
+	model string
+	// contextWindow is the connection's stated window; nil (the default) is
+	// first-party Anthropic, where the runtime knows the model.
+	contextWindow *int
 }
 
 // rigOption tweaks the rig before the service is wired.
@@ -589,7 +613,7 @@ func newGenaiRig(t *testing.T, seed map[string]string, opts ...rigOption) *genai
 	fake := newFakeAgents(t)
 	turns := &memTurnRepo{}
 	broker := spec.NewTurnBroker()
-	rig := &genaiRig{fx: fx, skillsOrigin: skillsOrigin, fake: fake, turns: turns, broker: broker, key: "sk-ant-test"}
+	rig := &genaiRig{fx: fx, skillsOrigin: skillsOrigin, fake: fake, turns: turns, broker: broker, key: "sk-ant-test", model: "claude-haiku-4-5"}
 
 	var client agentsvc.Client = agentsvc.New(agentsvc.Config{BaseURL: fake.URL})
 	if cfg.client != nil {
@@ -610,9 +634,19 @@ func newGenaiRig(t *testing.T, seed map[string]string, opts ...rigOption) *genai
 		snapshots = cfg.snapshots
 	}
 	svc := spec.NewService(spec.ServiceDeps{
-		Repos:         repos,
-		Git:           sourcecontrol.NewGitOpsService(stubResolver{}, fx.Engine),
-		Keys:          func(context.Context, string) (string, error) { return rig.key, nil },
+		Repos: repos,
+		Git:   sourcecontrol.NewGitOpsService(stubResolver{}, fx.Engine),
+		LLM: func(context.Context, string) (spec.AgentLLM, error) {
+			return spec.AgentLLM{Key: rig.key, Connection: modelconn.Connection{
+				Format:        modelconn.FormatAnthropic,
+				BaseURL:       modelconn.AnthropicBaseURL,
+				Host:          modelconn.AnthropicHost,
+				Model:         rig.model,
+				AuthScheme:    modelconn.AuthXAPIKey,
+				ContextWindow: rig.contextWindow,
+				ImageInput:    modelconn.Unknown,
+			}}, nil
+		},
 		Client:        client,
 		Turns:         turns,
 		Broker:        broker,
@@ -797,8 +831,16 @@ func Test202Flow_PreviewOnlyAndStreamReplays(t *testing.T) {
 	if o := sent.headers.Get("X-Org-Id"); o != testOrg {
 		t.Errorf("X-Org-Id = %q", o)
 	}
-	if k := sent.headers.Get("X-Anthropic-Key"); k != "sk-ant-test" {
-		t.Errorf("X-Anthropic-Key = %q", k)
+	if k := sent.headers.Get("X-Model-Key"); k != "sk-ant-test" {
+		t.Errorf("X-Model-Key = %q", k)
+	}
+	// The org's connection and model ride the turn body, resolved for THIS turn.
+	if sent.req.Model != "claude-haiku-4-5" {
+		t.Errorf("turn model = %q, want the org's model", sent.req.Model)
+	}
+	if c := sent.req.Connection; c == nil || c.Format != modelconn.FormatAnthropic || c.BaseURL != modelconn.AnthropicBaseURL ||
+		c.Capabilities.WebSearch != modelconn.WebSearchAnthropicServerTool || !c.Capabilities.NativePDF {
+		t.Errorf("turn connection = %+v, want Anthropic's own API with its capabilities", c)
 	}
 	if sent.req.FilesChangedExternally {
 		t.Error("first turn must not carry filesChangedExternally")
@@ -918,6 +960,26 @@ func TestGenericTurn_NoUseCase(t *testing.T) {
 	}
 }
 
+// A turn's row carries the host of the connection it was admitted on, written
+// with the rest of the running row: it is the host Finish prices the turn's
+// usage against.
+func TestStartTurn_RowCarriesTheConnectionHost(t *testing.T) {
+	r := newGenaiRig(t, map[string]string{"specs/requirements/prd.md": "# Reqs\n"})
+	r.fake.parts = []string{textPart("working")}
+
+	turnID := r.startTurn(t, convUUID, "", "hello")
+	r.waitTerminal(t, turnID)
+
+	r.turns.mu.Lock()
+	defer r.turns.mu.Unlock()
+	if len(r.turns.rows) != 1 {
+		t.Fatalf("turn rows = %d, want 1", len(r.turns.rows))
+	}
+	if got := r.turns.rows[0].ModelHost; got != modelconn.AnthropicHost {
+		t.Fatalf("turn model_host = %q, want %q", got, modelconn.AnthropicHost)
+	}
+}
+
 // TestNoDesignGate pins the design gate's removal (#373): a /design turn on a
 // requirements-less repo is ACCEPTED — completeness is enforced at the v<N>
 // tag (the build gate), not at turn start.
@@ -985,6 +1047,83 @@ func TestManifestGate_MismatchSeveredEmpty(t *testing.T) {
 			t.Error("no-changes turn must not commit")
 		}
 	})
+}
+
+// TestCodedErrorFrame_StoredOnTheFailedTurn: when the agents service ends a
+// turn with a coded error frame (no manifest), the turn fails as agent-error
+// with the frame's code and sentence — on the row, on the status read, and on
+// the terminal stream event — instead of the generic stream-died. An uncoded
+// error frame keeps the stream-died verdict, and so does a code aep-api does
+// not know.
+func TestCodedErrorFrame_StoredOnTheFailedTurn(t *testing.T) {
+	t.Run("provider limit", func(t *testing.T) {
+		r := newGenaiRig(t, map[string]string{"specs/requirements/prd.md": "# Reqs\n"})
+		r.fake.parts = []string{
+			textPart("working"),
+			`{"type":"error","code":"provider_limit","error":"api.anthropic.com's usage limit is reached. Try again after 2026-09-26T14:05:00.000Z.","host":"api.anthropic.com","resetAt":"2026-09-26T14:05:00.000Z"}`,
+		}
+
+		turnID := r.startTurn(t, convUUID, "", "x")
+		st := r.waitTerminal(t, turnID)
+		want := time.Date(2026, 9, 26, 14, 5, 0, 0, time.UTC)
+		if st.Status != "failed" || st.Reason != "agent-error" || st.Code != spec.TurnErrorProviderLimit ||
+			st.Host != modelconn.AnthropicHost || st.ResetAt == nil || !st.ResetAt.Equal(want) ||
+			!strings.Contains(st.Message, "usage limit is reached") {
+			t.Fatalf("terminal = %+v, want failed agent-error provider_limit", st)
+		}
+		if row := r.turns.row(t, turnID); row.Code != spec.TurnErrorProviderLimit || row.ResetAt == nil {
+			t.Fatalf("row code/resetAt = %q/%v", row.Code, row.ResetAt)
+		}
+
+		events, done, _ := r.streamEvents(t, turnID, "", nil)
+		if !done || len(events) != 3 {
+			t.Fatalf("stream: done=%v events=%d, want the text, the coded frame and the terminal", done, len(events))
+		}
+		var term struct {
+			Type, Reason, Code, Host, ResetAt string
+		}
+		if err := json.Unmarshal([]byte(events[2].data), &term); err != nil {
+			t.Fatal(err)
+		}
+		if term.Type != "turn-failed" || term.Reason != "agent-error" || term.Code != spec.TurnErrorProviderLimit ||
+			term.Host != modelconn.AnthropicHost || term.ResetAt == "" {
+			t.Fatalf("terminal event = %s", events[2].data)
+		}
+	})
+
+	t.Run("output truncated, room turn", func(t *testing.T) {
+		r := newGenaiRig(t, map[string]string{"specs/requirements/prd.md": "# Reqs\n"})
+		r.fake.parts = []string{`{"type":"error","code":"output_truncated","error":"The model's output limit cut off addFile.","toolName":"addFile"}`}
+
+		body, _ := json.Marshal(map[string]any{"instruction": "x", "collab": true})
+		rec := r.h.AsOrg(testOrg).Post(turnsPath(convUUID), string(body))
+		var out struct {
+			TurnID string `json:"turnId"`
+		}
+		if rec.Code != http.StatusAccepted || json.Unmarshal(rec.Body.Bytes(), &out) != nil {
+			t.Fatalf("POST collab turn: code %d (%s)", rec.Code, rec.Body.String())
+		}
+		st := r.waitTerminal(t, out.TurnID)
+		if st.Status != "failed" || st.Reason != "agent-error" || st.Code != spec.TurnErrorOutputTruncated ||
+			st.Host != "" || st.ResetAt != nil {
+			t.Fatalf("terminal = %+v, want failed agent-error output_truncated", st)
+		}
+	})
+
+	for name, frame := range map[string]string{
+		"uncoded error": `{"type":"error","error":"boom"}`,
+		"unknown code":  `{"type":"error","code":"something_new","error":"boom"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newGenaiRig(t, map[string]string{"specs/requirements/prd.md": "# Reqs\n"})
+			r.fake.parts = []string{frame}
+
+			st := r.waitTerminal(t, r.startTurn(t, convUUID, "", "x"))
+			if st.Status != "failed" || st.Reason != "stream-died" || st.Code != "" {
+				t.Fatalf("terminal = %+v, want failed stream-died with no code", st)
+			}
+		})
+	}
 }
 
 func (r *genaiRig) waitTerminalOf(t *testing.T, turnID string) spec.TurnStatus {

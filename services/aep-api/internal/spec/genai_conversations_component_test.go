@@ -84,6 +84,13 @@ func (m *memConversationRepo) Rotate(ctx context.Context, org, project, useCase,
 	return m.ResolveCurrent(ctx, org, project, useCase, createdBy)
 }
 
+func (m *memConversationRepo) RotateIfCurrent(ctx context.Context, org, project, useCase, id, createdBy string) (*spec.ProjectConversation, error) {
+	if ok, _ := m.IsCurrent(ctx, org, project, useCase, id); !ok {
+		return nil, nil
+	}
+	return m.Rotate(ctx, org, project, useCase, createdBy)
+}
+
 func (m *memConversationRepo) IsCurrent(_ context.Context, org, project, useCase, id string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -31,12 +31,25 @@ import (
 // answered at all) — this is what turns that coarse allow into "only the
 // section you actually hold permission for".
 //
-// codingAgent is trimmed rather than cleared. The section is always present by
-// contract, and its runtime/model pair is enum-constrained state the console
-// renders; what it should not disclose is updatedAt/updatedBy, the audit fields
-// that exist precisely BECAUSE this endpoint's permissions are coarse (see
-// OrgCodingAgentSetting.UpdatedBy). Writing the section needs ae:model-config,
-// so a caller without it has no business reading who last changed it.
+// llm carries the whole model connection, llmCheck what a save's probe found
+// about it, and llmDisconnectedAt when the org last had one — all of them facts
+// about a connection only ae:model-config may write, so all three are cleared
+// together. Leaving llmDisconnectedAt behind would still tell a caller the org
+// once had a connection and lost it, which is the disclosure the other two are
+// cleared to prevent.
+//
+// agents is trimmed rather than cleared. The section is always present by
+// contract, and its runtime and availableRuntimes are enum-constrained state
+// the console renders; what it should not disclose is subscription — a stored
+// credential, masked but still evidence of one — and updatedAt/updatedBy, the
+// audit fields that exist precisely BECAUSE this endpoint's permissions are
+// coarse. Writing the section needs ae:model-config, so a caller without it has
+// no business reading who last changed it.
+//
+// llmFormats is left whole: it is a property of the INSTALLATION (which API
+// formats exist and which runtimes on this deployment serve each), identical
+// for every org and disclosing nothing about this one. It is also required by
+// contract, so there is no null to clear it to.
 //
 // idp is left whole: no AE permission describes identity configuration, so
 // there is nothing to redact it against. Its write path is refused outright at
@@ -50,8 +63,10 @@ func RedactConfigForPermissions(proj *orgconfig.ConfigProjection, held []authz.P
 	}
 	if !slices.Contains(held, authz.PermissionModelConfig) {
 		proj.LLM = nil
-		proj.CodingLLM = nil
-		proj.CodingAgent.UpdatedAt = nil
-		proj.CodingAgent.UpdatedBy = nil
+		proj.LLMCheck = nil
+		proj.LLMDisconnectedAt = nil
+		proj.Agents.Subscription = nil
+		proj.Agents.UpdatedAt = nil
+		proj.Agents.UpdatedBy = nil
 	}
 }

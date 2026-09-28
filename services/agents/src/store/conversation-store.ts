@@ -66,6 +66,16 @@ export interface TurnJournalEntry {
    * turns simply have no entry claiming their index.
    */
   messageIndex: number;
+  /**
+   * The fingerprint (`format@host`, `connectionFingerprint`) of the connection
+   * that wrote this turn — what `historyFor` compares to decide which stored
+   * parts a later connection can replay. Kept here rather than in the
+   * message's `providerOptions` so the transcript's bytes stay the model's
+   * own (a provider reads its namespace there as request metadata). Absent on
+   * turns journaled before it existed, which all ran on
+   * `anthropic@api.anthropic.com`.
+   */
+  connection?: string;
   createdAt: Date;
 }
 

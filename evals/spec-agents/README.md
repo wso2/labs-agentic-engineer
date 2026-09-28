@@ -52,7 +52,7 @@ make eval-ui                               # run once + local results UI
 EVAL_REPEATS=3 make eval EVAL=...          # score-spread mode (#355)
 ```
 
-Requires `ANTHROPIC_API_KEY` (env or `deployments/.env`). On-demand only —
+Requires `ANTHROPIC_API_KEY` (env). On-demand only —
 never wired into CI. Score history lives in evalite's local sqlite store;
 `evalite export` produces a static bundle.
 

@@ -75,6 +75,14 @@ vi.mock("./chatStore.js", () => ({
   notifyTurnEnd: (key: string, status: string) => notified.push({ key, status }),
 }));
 
+// providerWait.js: record the wait edges in order, so a test can see the
+// label set by a provider-wait frame and cleared by the next frame.
+const waitOps: string[] = [];
+vi.mock("./providerWait.js", () => ({
+  setProviderWait: (_key: string, host: string) => waitOps.push(`set:${host}`),
+  clearProviderWait: () => waitOps.push("clear"),
+}));
+
 import { attachAndFoldTurn } from "./runTurn";
 import { TurnStreamAttachError } from "./api/turns.js";
 import { addMessage, dropQuestionMessage, upsertQuestionMessage, upsertToolMessage } from "./chatStore.js";
@@ -444,5 +452,72 @@ describe("attachAndFoldTurn — a question call the schema rejected is not a car
       .mock.calls.map(([, m]) => m)
       .filter((m) => !m.streaming);
     expect(finals.map((m) => m.toolCallId)).toEqual(["q-good"]);
+  });
+});
+
+describe("attachAndFoldTurn — a provider wait is status until the model answers", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    queuedParts = [];
+    waitOps.length = 0;
+    mockOpenTurnStream.mockResolvedValue(new ReadableStream());
+  });
+
+  it("sets the wait on a provider-wait frame and clears it on the next frame", async () => {
+    queuedParts = [
+      { type: "start" },
+      { type: "provider-wait", host: "ollama.com" } as StreamPart,
+      { type: "start-step" },
+      { type: "text-delta", delta: "hi" },
+      { type: "turn-committed" } as StreamPart,
+    ];
+    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    const set = waitOps.indexOf("set:ollama.com");
+    expect(set).toBeGreaterThan(-1);
+    expect(waitOps.filter((op) => op.startsWith("set:"))).toHaveLength(1);
+    expect(waitOps[set + 1]).toBe("clear"); // the start-step: the model answered
+    expect(addMessage).not.toHaveBeenCalled(); // status, never a chat row
+  });
+
+  it("never sets a wait on a turn without one", async () => {
+    queuedParts = [{ type: "start-step" }, { type: "text-delta", delta: "hi" }, { type: "turn-committed" } as StreamPart];
+    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    expect(waitOps.some((op) => op.startsWith("set:"))).toBe(false);
+  });
+});
+
+describe("attachAndFoldTurn — a failure the agents service named", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    queuedParts = [];
+    mockOpenTurnStream.mockResolvedValue(new ReadableStream());
+  });
+
+  it("renders a provider limit once, from the terminal, naming the host and the reset", async () => {
+    const resetAt = "2026-09-26T14:05:00.000Z";
+    queuedParts = [
+      { type: "error", code: "provider_limit", error: `ollama.com's usage limit is reached. Try again after ${resetAt}.`, host: "ollama.com", resetAt } as StreamPart,
+      { type: "turn-failed", reason: "agent-error", code: "provider_limit", host: "ollama.com", resetAt, message: "raw" } as StreamPart,
+    ];
+    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    expect(addMessage).toHaveBeenCalledTimes(1);
+    const row = vi.mocked(addMessage).mock.calls[0]![1] as { role: string; content: string };
+    expect(row.role).toBe("error");
+    expect(row.content).toMatch(/^ollama\.com's usage limit is reached\. Try again after /);
+    expect(row.content).not.toContain(resetAt); // the reader's local time, not the wire's ISO
+  });
+
+  it("still rows an uncoded error frame", async () => {
+    queuedParts = [{ type: "error", error: "boom" }, { type: "turn-failed", message: "stream ended without a manifest" } as StreamPart];
+    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    expect(addMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("phrases the code off the status read when the stream severed before the terminal", async () => {
+    const message = "The model's output limit (8192 tokens per step) cut off addFile before it finished, so nothing was written.";
+    queuedParts = [];
+    mockGetTurn.mockResolvedValue({ status: "failed", reason: "agent-error", code: "output_truncated", message });
+    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    expect(addMessage).toHaveBeenCalledWith(KEY, { role: "error", content: message });
   });
 });

@@ -121,11 +121,12 @@ components:
       - Email
       - Login
     ValidationContextResponse:
-      description: Deployed endpoints + criteria path for a validation run.
-        Generated as igen.ValidationContextResponse (no x-go-type) — igen must
-        stay a leaf, so the edge's internal handler projects the delivery
-        domain's own struct onto this wire shape (the same decoupling as
-        RefreshResponse).
+      description: The deployed endpoints a validation run drives. Generated as
+        igen.ValidationContextResponse (no x-go-type) — igen must stay a leaf,
+        so the edge's internal handler projects the delivery domain's own struct
+        onto this wire shape (the same decoupling as RefreshResponse).
+
+        It carries no oracle path; the runner already knows where the oracle is.
       type: object
       additionalProperties: false
       properties:
@@ -133,11 +134,8 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ComponentEndpoint'
-        criteriaPath:
-          type: string
       required:
       - endpoints
-      - criteriaPath
     ComponentEndpoint:
       type: object
       additionalProperties: false

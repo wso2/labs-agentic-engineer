@@ -29,7 +29,7 @@ vi.mock("../../../api/client", () => ({
 }));
 
 // Imported AFTER the mock so the module under test picks up the stub client.
-const { useValidationReport, useValidationCriteria } = await import("./queries");
+const { useValidationReport } = await import("./queries");
 
 function wrapper(queryClient: QueryClient) {
   return function Wrapper({ children }: { children: ReactNode }) {
@@ -58,7 +58,7 @@ describe("useValidationReport", () => {
   it("pins the read to the validation cycle's merge commit", async () => {
     const { result } = renderHook(
       () =>
-        useValidationReport("proj1", "v1", true, "tests/validation/report.json", "abc123def456"),
+        useValidationReport("proj1", "v1", true, "tests/acceptance/report.json", "abc123def456"),
       { wrapper: wrapper(new QueryClient()) },
     );
 
@@ -70,7 +70,7 @@ describe("useValidationReport", () => {
   // would be a malformed request rather than a tip read.
   it("omits ref entirely when no merge commit is known", async () => {
     const { result } = renderHook(
-      () => useValidationReport("proj1", "v1", true, "tests/validation/report.json"),
+      () => useValidationReport("proj1", "v1", true, "tests/acceptance/report.json"),
       { wrapper: wrapper(new QueryClient()) },
     );
 
@@ -82,7 +82,7 @@ describe("useValidationReport", () => {
   // makes each run's report its own immutable entry.
   it("caches per merge commit, so two runs never share an entry", async () => {
     const queryClient = new QueryClient();
-    const path = "tests/validation/report.json";
+    const path = "tests/acceptance/report.json";
 
     const first = renderHook(
       () => useValidationReport("proj1", "v1", true, path, "sha-run-1"),
@@ -98,17 +98,5 @@ describe("useValidationReport", () => {
 
     expect(mockGET).toHaveBeenCalledTimes(2);
     expect(mockGET.mock.calls[1]?.[1]?.params?.query).toEqual({ ref: "sha-run-2" });
-  });
-
-  // The oracle is authored under specs/ and versioned by the spec tag, not by a
-  // run's merge commit — it must stay an unpinned read.
-  it("reads the criteria unpinned", async () => {
-    const { result } = renderHook(
-      () => useValidationCriteria("proj1", "v1", true),
-      { wrapper: wrapper(new QueryClient()) },
-    );
-
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(query()).toBeUndefined();
   });
 });

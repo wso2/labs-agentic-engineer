@@ -60,12 +60,15 @@ import { useAgentEngaged } from "../useAgentEngaged";
 import { useCurrentAuthor } from "../currentUser";
 import { buildFeed, participantsOf, type FeedBlock } from "../feed";
 import { answerableQuestionIds } from "../questionCards";
+import { providerWaitLabel, useProviderWait } from "../providerWait";
 import { MessageList } from "./MessageList";
 import { ChatInput } from "./ChatInput";
+import { useConfig } from "../../settings/api/queries";
+import { modelReads } from "../../settings/aiSettings";
 
 // Default a touch wider than the old 380 so the activity rail + narration
 // breathe; the user can drag-resize and the choice persists.
-const AGENT_CHAT_PANEL_WIDTH = 440;
+export const AGENT_CHAT_PANEL_WIDTH = 440;
 const MIN_WIDTH = 360;
 const MAX_WIDTH = 720;
 const WIDTH_STEP = 24; // keyboard resize increment
@@ -144,6 +147,9 @@ export function AgentChatPanel({
   // (ADR-0019), so dropping them on a routine 409 would cost the user a re-pick
   // of every file from disk.
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  // What the org's model reads, so the attach control refuses what the turn
+  // would refuse. Every org member can read /config.
+  const reads = modelReads(useConfig().data);
 
   const feed = useMemo(
     () => buildFeed(messages, { currentUserId: author.id, activeTurnId }),
@@ -195,6 +201,10 @@ export function AgentChatPanel({
     isSending || messages.some((m) => m.role === "user" && m.status === "in_flight");
   const showWorkingTail =
     sendInFlight && !feed.some((b) => b.kind === "turn" && b.status === "running");
+  // While the running turn waits out a short 429 its indicator says so,
+  // rather than a bare "Working…" over a silent stall.
+  const waitingOn = useProviderWait(chatKey);
+  const workingLabel = waitingOn ? providerWaitLabel(waitingOn) : undefined;
 
   // Same-file tool runs render collapsed by default; a click flips membership.
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
@@ -567,6 +577,7 @@ export function AgentChatPanel({
               onOpenSpecFile={openSpecFile}
               showSpecLink={specWorkspace}
               showWorkingTail={showWorkingTail}
+              workingLabel={workingLabel}
             />
           )}
         </Box>
@@ -583,6 +594,7 @@ export function AgentChatPanel({
         onSubmit={submit}
         files={attachedFiles}
         onFilesChange={setAttachedFiles}
+        reads={reads}
         disabled={inputDisabled}
         contextLabel={displayName ?? projectName}
         hint={hint}

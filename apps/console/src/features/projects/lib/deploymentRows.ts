@@ -54,6 +54,7 @@ export type DeploymentCard = {
   // "notDeployed" marks a component with no binding at all; otherwise the
   // binding's status kind.
   kind: StatusKind | "notDeployed";
+  componentType?: string;
   deployment?: Deployment;
 };
 
@@ -81,14 +82,24 @@ export function groupDeploymentCards(
   entryEnvironment?: string,
 ): DeploymentBoard {
   const displayNames = new Map<string, string>();
+  const componentTypes = new Map<string, string>();
+  const ctOf = (n: string): string | undefined => componentTypes.get(n);
+  for (const c of componentItems ?? []) {
+    if (c.type) componentTypes.set(c.name, c.type);
+  }
   for (const c of componentItems ?? []) {
     displayNames.set(c.name, c.displayName || c.name);
   }
   const cardOf = (d: Deployment): DeploymentCard => {
     const componentName = d.componentName ?? "";
+    // Narrow on the VALUE, not on `has()`: under exactOptionalPropertyTypes a
+    // `Map.get()` inside a `has()` guard is still `string | undefined`, which
+    // cannot be assigned to an optional property.
+    const componentType = componentTypes.get(componentName);
     return {
       componentName,
       displayName: displayNames.get(componentName) ?? componentName,
+      ...(componentType ? { componentType } : {}),
       kind: statusKind(d.status),
       deployment: d,
     };
@@ -123,6 +134,7 @@ export function groupDeploymentCards(
         cards.push({
           componentName: c.name,
           displayName: displayNames.get(c.name) ?? c.name,
+          ...(ctOf(c.name) ? { componentType: ctOf(c.name) as string } : {}),
           kind: "notDeployed",
         });
       }

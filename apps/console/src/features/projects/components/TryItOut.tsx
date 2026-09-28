@@ -33,10 +33,16 @@ import { Copy, ExternalLink, FlaskConical } from "@wso2/oxygen-ui-icons-react";
 import { StatusChip } from "../../../components/StatusChip";
 import { env } from "../../../config/env";
 import { thunderUsersConsoleHref } from "../../../config/thunderConsole";
-import { useProjectRoles, useRevealTestUserPassword } from "../../spec/api/roles";
+import {
+  resourceServerOf,
+  useProjectRoles,
+  useRevealTestUserPassword,
+  type ProjectSignIn,
+} from "../../spec/api/roles";
 import { cardChip } from "../lib/deploymentLedger";
 import type { DeploymentCard } from "../lib/deploymentRows";
 import { publishedTestUsers, type PublishedTestUser } from "../lib/publishedTestUsers";
+import { tryItAppUrl } from "../lib/tryItAppUrl";
 import { AccentPill } from "./AccentPill";
 import { PageSection } from "./PageSection";
 import { TestUserRow } from "./TestUsersDialog";
@@ -236,10 +242,18 @@ export function useTestUsers(projectName: string, enabled: boolean) {
   const loadState = live.isPending ? "pending" : live.isError ? "error" : "ready";
   const logins =
     loadState === "ready" ? publishedTestUsers(live.data?.testUsers ?? []) : [];
+  // Where a client outside the project signs in, and as which client: what the
+  // test app needs to sign a person in as one of these accounts. Absent until
+  // the roles read answers, so the agent panel offers no launch it could not
+  // honour.
+  const signIn = live.data?.signIn;
+  const resource = resourceServerOf(live.data);
   return {
+    projectName,
     logins,
     loadState: loadState as "ready" | "pending" | "error",
     thunderUrl: env.thunderUrl,
+    ...(signIn && resource ? { signIn: { ...signIn, resource } } : {}),
     revealPassword: async (username: string) => {
       const data = await reveal.mutateAsync(username);
       return data.password;
@@ -250,7 +264,14 @@ export function useTestUsers(projectName: string, enabled: boolean) {
 // ── The panels ──────────────────────────────────────────────────────────────
 
 export interface TestUsersProps {
+  projectName: string;
   logins: readonly PublishedTestUser[];
+  /**
+   * The project's sign-in as a client outside it would perform it. Present
+   * only when the project has a sign-in client and a resource server — the two
+   * facts the test app cannot learn on its own.
+   */
+  signIn?: ProjectSignIn & { resource: string };
   loadState: "ready" | "pending" | "error";
   thunderUrl: string;
   revealPassword: (username: string) => Promise<string>;
@@ -278,6 +299,7 @@ function ComponentPanel({
   const d = card.deployment;
   const isWebApp = type === "web-application";
   const isService = type === "service";
+  const isAgent = type === "ai-agent";
   const serving = card.kind === "success";
   const kind = kindLabel(type);
   return (
@@ -324,6 +346,34 @@ function ComponentPanel({
             endIcon={<ExternalLink size={13} aria-hidden />}
           >
             Visit app
+          </Button>
+        )}
+        {/* An agent is a secured service with no page of its own: the platform's
+            test app is the page, signing a person in as one of the project's
+            test users. Offered only while there is an account to sign in as and
+            a client to sign in through — without either the app could only
+            explain why it cannot. */}
+        {isAgent && serving && d?.endpointUrl && testUsers?.signIn && testUsers.logins.length > 0 && (
+          <Button
+            variant="contained"
+            size="small"
+            href={tryItAppUrl(env.tryItUrl, {
+              project: testUsers.projectName,
+              component: card.componentName,
+              issuer: testUsers.signIn.issuer,
+              clientId: testUsers.signIn.clientId,
+              resource: testUsers.signIn.resource,
+              // profile + email so the test app can show WHO is signed in — the
+              // ID token's `sub` is a UUID. Both are public claims of a test user.
+              scopes: ["openid", "profile", "email", ...new Set(testUsers.logins.flatMap((login) => login.scopes))],
+              endpoint: d.endpointUrl,
+            })}
+            target="_blank"
+            rel="noreferrer"
+            aria-label={`Try ${card.displayName}`}
+            endIcon={<ExternalLink size={13} aria-hidden />}
+          >
+            Try agent
           </Button>
         )}
         {/* Only a SERVING service is worth trying — an undeployed or failed
@@ -385,6 +435,9 @@ export function TryItOutCard({
     [cards, types],
   );
   const firstWebApp = ordered.find((c) => types.get(c.componentName) === "web-application");
+  // An agent's panel gets the accounts too — for the launch, not for a list.
+  const withAccounts = (card: DeploymentCard) =>
+    card === firstWebApp || types.get(card.componentName) === "ai-agent";
   return (
     // Section 2 of the environment page. Web apps lead, the services they
     // call follow — the thing a person opens first, first.
@@ -396,7 +449,7 @@ export function TryItOutCard({
             card={card}
             type={types.get(card.componentName)}
             talksTo={talksTo(card.componentName)}
-            testUsers={testUsers && card === firstWebApp ? testUsers : null}
+            testUsers={testUsers && withAccounts(card) ? testUsers : null}
             onTryApi={() => onTryApi(card.componentName)}
           />
         ))}

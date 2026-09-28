@@ -25,6 +25,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/contracts"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/platform/dbtest"
+	"github.com/wso2/aep/aep-api/internal/platform/modelconn"
 	"github.com/wso2/aep/aep-api/internal/platform/modelcost"
 )
 
@@ -44,7 +45,7 @@ func newLedgerFixture(t *testing.T) ledgerFixture {
 	t.Helper()
 	db := dbtest.New(t)
 	stamper := modelcost.NewStamper([]modelcost.ModelRate{
-		{ModelID: "model-a", InputPerMTok: 1, OutputPerMTok: 10},
+		{Host: modelconn.AnthropicHost, ModelID: "model-a", InputPerMTok: 1, OutputPerMTok: 10},
 	})
 	return ledgerFixture{
 		db:     db,
@@ -63,6 +64,7 @@ func (f ledgerFixture) spend(t *testing.T, run *delivery.MilestoneRun, kind stri
 	if err := f.cycles.Append(ctx, c); err != nil {
 		t.Fatalf("Append(%s): %v", kind, err)
 	}
+	dispatchedOn(t, f.cycles, c, modelconn.AnthropicHost)
 	if err := f.cycles.RecordUsage(ctx, c.ID, contracts.CapturedUsage{TokenUsage: contracts.TokenUsage{
 		InputTokens: in, OutputTokens: out, Model: model,
 	}}); err != nil {

@@ -21,6 +21,8 @@ import (
 	"errors"
 	"regexp"
 	"strings"
+
+	"gorm.io/gorm"
 )
 
 // CredentialStore is the BFF-side read/write store for per-org credential
@@ -34,6 +36,16 @@ type CredentialStore interface {
 	Get(ctx context.Context, ocOrgID, key string) ([]byte, error)
 	Put(ctx context.Context, ocOrgID, key string, value []byte) error
 	Delete(ctx context.Context, ocOrgID, key string) error
+}
+
+// TxCredentialStore is a CredentialStore that can join a caller's database
+// transaction. A write that has to land together with the rows that describe
+// the secret (the Anthropic key and its metadata row, for one) binds the store
+// to its transaction with WithDB, so a failure anywhere rolls the bytes back
+// with everything else.
+type TxCredentialStore interface {
+	CredentialStore
+	WithDB(db *gorm.DB) CredentialStore
 }
 
 // ErrOrgIDInvalid is returned when an ocOrgID doesn't match the DNS-label

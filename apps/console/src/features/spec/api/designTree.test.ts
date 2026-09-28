@@ -19,12 +19,15 @@
 import { describe, expect, it } from "vitest";
 import {
   buildDesignSection,
+  buildValidationSection,
   componentOf,
   dependencyOf,
   followSelection,
   isDependencyDefinition,
   isFlow,
+  selectionKey,
 } from "./designTree";
+import type { RailPlanEntry } from "../lib/railSections";
 import type { SpecFileEntry } from "./mapping";
 
 // Full repo-relative paths, mirroring mapping.ts's current scheme
@@ -36,7 +39,7 @@ const e = (path: string): SpecFileEntry => ({
   sha: path,
   group: path.startsWith("specs/requirements/")
     ? "requirements"
-    : path.startsWith("specs/validation/")
+    : path.startsWith("specs/validation/acceptance/")
       ? "validation"
       : "designs",
 });
@@ -198,3 +201,177 @@ describe("dependencies — one directory, one definition", () => {
     expect(isDependencyDefinition("specs/design/components/orders/design.json")).toBe(false);
   });
 });
+
+describe("buildDesignSection — a component's artifacts lead with the overview", () => {
+  // Path order is not reading order. `agent.afm.md` sorts above `design.json`
+  // on path alone, so an ai-agent listed its Agent Spec before the Design
+  // Overview while a service listed design.json first — by the accident of
+  // "d" < "o". The overview is the document that says what the component IS,
+  // so it leads for every type. Same reasoning the Requirements group already
+  // applies to the PRD.
+  it("puts Design Overview before an ai-agent's Agent Spec", () => {
+    const section = buildDesignSection([
+      { path: "specs/design/components/trip-agent/agent.afm.md", sha: "a", group: "designs" },
+      { path: "specs/design/components/trip-agent/design.json", sha: "b", group: "designs" },
+    ]);
+
+    expect(section.components[0]?.files.map((f) => f.path)).toEqual([
+      "specs/design/components/trip-agent/design.json",
+      "specs/design/components/trip-agent/agent.afm.md",
+    ]);
+  });
+
+  it("keeps Design Overview before a service's API Spec", () => {
+    const section = buildDesignSection([
+      { path: "specs/design/components/plants-api/openapi.yaml", sha: "a", group: "designs" },
+      { path: "specs/design/components/plants-api/design.json", sha: "b", group: "designs" },
+    ]);
+
+    expect(section.components[0]?.files.map((f) => f.path)).toEqual([
+      "specs/design/components/plants-api/design.json",
+      "specs/design/components/plants-api/openapi.yaml",
+    ]);
+  });
+
+  it("leaves anything else in path order behind them", () => {
+    const section = buildDesignSection([
+      { path: "specs/design/components/x/zebra.md", sha: "a", group: "designs" },
+      { path: "specs/design/components/x/agent.afm.md", sha: "b", group: "designs" },
+      { path: "specs/design/components/x/alpha.md", sha: "c", group: "designs" },
+      { path: "specs/design/components/x/design.json", sha: "d", group: "designs" },
+    ]);
+
+    expect(section.components[0]?.files.map((f) => f.path)).toEqual([
+      "specs/design/components/x/design.json",
+      "specs/design/components/x/agent.afm.md",
+      "specs/design/components/x/alpha.md",
+      "specs/design/components/x/zebra.md",
+    ]);
+  });
+});
+
+// followSelection is the single definition of "where does a written path open",
+// so the write-watcher can never land somewhere a rail click would not have
+// gone. With no per-capability row, an acceptance path has to route to the set.
+describe("followSelection — acceptance paths open the set", () => {
+  it("routes any capability to the one entry", () => {
+    expect(followSelection("specs/validation/acceptance/bought-items.feature")).toEqual({
+      kind: "acceptance",
+    });
+    expect(followSelection("specs/validation/acceptance/adding-items.feature")).toEqual({
+      kind: "acceptance",
+    });
+  });
+
+  it("does not claim a nested or differently-suffixed path", () => {
+    for (const path of [
+      "specs/validation/acceptance/nested/deep.feature",
+      "specs/validation/acceptance/notes.md",
+      "specs/design/flows/checkout.feature",
+    ]) {
+      expect(followSelection(path), path).toEqual({ kind: "file", path });
+    }
+  });
+
+  it("gives the set a stable identity of its own", () => {
+    expect(selectionKey({ kind: "acceptance" })).toBe("acceptance");
+    expect(selectionKey({ kind: "acceptance" })).not.toBe(
+      selectionKey({ kind: "file", path: "specs/validation/acceptance/bought-items.feature" }),
+    );
+  });
+});
+
+// The Validation section is not just a file list: ONE rail entry stands for
+// every specs/validation/acceptance/*.feature (ADR-0031). Which files keep an ordinary row
+// and whether that standing-in entry appears are two halves of one fact, and
+// deriving them apart is how they come to disagree — so they are derived here,
+// together, and tested here rather than through the rail.
+describe("buildValidationSection", () => {
+  const file = (path: string): SpecFileEntry => ({ path, sha: "sha", group: "validation" });
+  const ghost = (path: string): SpecFileEntry => ({ path, sha: "", group: "validation" });
+  const BOUGHT = "specs/validation/acceptance/bought-items.feature";
+  const ADDING = "specs/validation/acceptance/adding-items.feature";
+  const planned = (path: string, status: RailPlanEntry["status"]): RailPlanEntry => ({
+    path,
+    status,
+    section: "validation",
+  });
+
+  it("keeps the capabilities out of the rows and puts one entry in their place", () => {
+    const section = buildValidationSection(
+      [file(BOUGHT), file(ADDING)],
+      new Set([BOUGHT, ADDING]),
+      [],
+    );
+    expect(section.files).toEqual([]);
+    expect(section.hasAcceptance).toBe(true);
+  });
+
+  // Only the oracle's folder reaches this group (mapping's ACCEPTANCE_PREFIX),
+  // and inside it only `.feature` files are the capability set. Something else
+  // in that same folder is therefore the one thing this filter still has to
+  // spare, and it keeps its own row rather than being swallowed by the entry.
+  it("leaves a validation document that is not a capability its own row", () => {
+    const OTHER = "specs/validation/acceptance/README.md";
+    const section = buildValidationSection(
+      [file(OTHER), file(BOUGHT)],
+      new Set([OTHER, BOUGHT]),
+      [],
+    );
+    expect(section.files.map((f) => f.path)).toEqual([OTHER]);
+    expect(section.hasAcceptance).toBe(true);
+  });
+
+  // The two halves agreeing is the whole point of deriving them together: every
+  // path dropped from `files` must be covered by the entry, or files vanish from
+  // the rail with nothing to catch it.
+  it("covers everything it hides", () => {
+    const all = [file(BOUGHT), file(ADDING)];
+    const section = buildValidationSection(all, new Set(all.map((f) => f.path)), []);
+    const hidden = all.filter((f) => !section.files.includes(f));
+    expect(hidden.length).toBeGreaterThan(0);
+    expect(section.hasAcceptance).toBe(true);
+  });
+
+  it("offers no entry for a project that has none", () => {
+    const section = buildValidationSection([], new Set(), []);
+    expect(section.hasAcceptance).toBe(false);
+    expect(section.acceptanceStatusPath).toBeUndefined();
+  });
+
+  it("appears for a capability that is only planned, and not yet written", () => {
+    const section = buildValidationSection(
+      [ghost(BOUGHT)],
+      new Set(),
+      [planned(BOUGHT, "planned")],
+    );
+    expect(section.hasAcceptance).toBe(true);
+    // A ghost: the entry selects nothing yet, so the rail disables it.
+    expect(section.acceptanceStatusPath).toBe(BOUGHT);
+  });
+
+  // The case a refactor got wrong once: `allFiles` carries the ghosts, so
+  // deriving "committed" from it counts a planned path as written and the entry
+  // stops being a ghost while nothing exists at all.
+  it("is a ghost only while NOT ONE capability is written", () => {
+    const section = buildValidationSection(
+      [file(BOUGHT), ghost(ADDING)],
+      new Set([BOUGHT]),
+      [planned(ADDING, "planned")],
+    );
+    // Two written and a third planned is a real entry, so no status path.
+    expect(section.acceptanceStatusPath).toBeUndefined();
+  });
+
+  // `row` reads status from ONE path and this entry stands for many, so a write
+  // anywhere in the set pulses it.
+  it("pulses while the agent writes any capability", () => {
+    const section = buildValidationSection(
+      [file(BOUGHT), ghost(ADDING)],
+      new Set([BOUGHT]),
+      [planned(BOUGHT, "done"), planned(ADDING, "writing")],
+    );
+    expect(section.acceptanceStatusPath).toBe(ADDING);
+  });
+});
+

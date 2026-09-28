@@ -23,6 +23,7 @@ import {
   applyTextEdit,
   deleteDocFile,
   filesMap,
+  isMarkdownPath,
   listDocPaths,
   readDocFile,
   setDocFile,
@@ -102,4 +103,49 @@ test("deleteDocFile removes text entries and empties fragments", () => {
   deleteDocFile(doc, "requirements/prd.md");
   assert.equal(readDocFile(doc, "data.json"), undefined);
   assert.equal(doc.getXmlFragment("requirements/prd.md").length, 0);
+});
+
+// --- agent.afm.md is structured, not prose -----------------------------------
+
+test("agent.afm.md is not treated as prose markdown", () => {
+  assert.equal(isMarkdownPath("specs/design/components/x/agent.afm.md"), false);
+  // Prose documents are unaffected — including user-authored feature docs.
+  assert.equal(isMarkdownPath("specs/requirements/prd.md"), true);
+  assert.equal(isMarkdownPath("specs/requirements/features/booking.md"), true);
+  assert.equal(isMarkdownPath("specs/design/design.md"), true);
+  assert.equal(isMarkdownPath("specs/design/security.md"), true);
+  // Non-markdown is unchanged.
+  assert.equal(isMarkdownPath("specs/design/components/x/design.json"), false);
+});
+
+test("an agent.afm.md round-trips byte-exact through the doc", () => {
+  // The real shape that was corrupted in production: YAML front matter whose
+  // underscores, `>` and list indentation a markdown serializer would mangle
+  // into `spec\_version`, `&gt;` and de-indented keys.
+  const afm = [
+    "---",
+    'spec_version: "0.4.0"',
+    "description: >",
+    "  One sentence.",
+    "max_iterations: 12",
+    "model:",
+    "  provider: \"anthropic\"",
+    '  api_key: "${env:MODEL_API_KEY}"',
+    "interfaces:",
+    "  - type: webchat",
+    "    exposure:",
+    "      http:",
+    '        path: "/chat"',
+    "---",
+    "",
+    "# Role",
+    "",
+    "You help people.",
+    "",
+  ].join("\n");
+
+  const doc = new Y.Doc();
+  const path = "specs/design/components/lunch-agent/agent.afm.md";
+  setDocFile(doc, path, afm);
+  assert.equal(readDocFile(doc, path), afm);
 });

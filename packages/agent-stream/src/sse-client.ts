@@ -38,7 +38,7 @@ export interface StreamTurnOptions {
   /**
    * Extra request headers merged over `content-type`. The caller (BFF, eval,
    * playground) supplies the M2M `Authorization: Bearer <jwt>` and the
-   * `X-Anthropic-Key` here — this reader is transport-only and holds no creds.
+   * `X-Model-Key` here — this reader is transport-only and holds no creds.
    */
   headers?: Record<string, string>;
 }

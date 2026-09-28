@@ -1,7 +1,7 @@
 import type { components } from "../../generated/aep-api";
 import { taskUsage } from "./usage";
 import {
-  DEFAULT_VALIDATION_CRITERIA,
+  DEFAULT_ACCEPTANCE_FEATURES,
   DEFAULT_VALIDATION_REPORT,
 } from "./validation";
 
@@ -318,6 +318,15 @@ const builtComponents: ComponentList = {
       type: "service",
       status: "active",
     },
+    // An ai-agent, so the Deployments page's Try it out card has an agent panel
+    // (the one that opens in the platform's test app) to demo.
+    {
+      name: "booking-agent",
+      displayName: "Booking Agent",
+      description: "Books hotels on the customer's behalf",
+      type: "ai-agent",
+      status: "active",
+    },
   ],
 };
 
@@ -400,6 +409,17 @@ const deploymentsByScenario: Partial<
         releaseName: "demo-shop-catalog-api-d4e5f6",
         endpointUrl: "https://catalog-api.dev.acme-aep.io",
         createdAt: "2026-07-12T04:58:00Z",
+      },
+    ],
+    "booking-agent": [
+      {
+        name: "demo-shop-booking-agent-development",
+        componentName: "booking-agent",
+        environment: "development",
+        status: "Ready",
+        releaseName: "demo-shop-booking-agent-j0k1l2",
+        endpointUrl: "https://booking-agent.dev.acme-aep.io",
+        createdAt: "2026-07-12T05:02:00Z",
       },
     ],
     // Settled but intentionally undeployed — the "deployed" scenario stays
@@ -1060,7 +1080,7 @@ const settledRun: BuildRunList = {
       validation: {
         verdict: "partial",
         issue: 30,
-        reportPath: "tests/validation/report.json",
+        reportPath: "tests/acceptance/report.json",
       },
       cycles: [
         {
@@ -1706,12 +1726,11 @@ const fullFiles: MockSpecFile[] = [
     path: "specs/design/components/orders-api/design.json",
     content: ordersApiDesignJson,
   },
-  {
-    path: "specs/validation/validation-criteria.json",
-    content: DEFAULT_VALIDATION_CRITERIA,
-  },
+  // One file per capability, which is what the acceptance skill authors and what
+  // the Validations page reads back as a set.
+  ...DEFAULT_ACCEPTANCE_FEATURES,
   // Runner artifact outside specs/ — reachable via the read-file allow-list.
-  { path: "tests/validation/report.json", content: DEFAULT_VALIDATION_REPORT },
+  { path: "tests/acceptance/report.json", content: DEFAULT_VALIDATION_REPORT },
 ];
 
 export const projectSpecFiles: Record<

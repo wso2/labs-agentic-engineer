@@ -26,7 +26,8 @@
 // without editing the module every run goes through.
 
 import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
-import type { DeniedCapability } from "../port.js";
+import type { ModelConnection } from "../../lib/model_connection.js";
+import { deniedToolNames, type DeniedCapability, type WebSearchServer } from "../port.js";
 
 // Phase 0 allowed-tools: git, gh, build/test/lint via Bash; standard file
 // tools. Endpoint Spec Discovery (B2) re-introduces MCP — but only as an
@@ -134,21 +135,9 @@ const DENIED_TOOLS_BY_CAPABILITY: Record<DeniedCapability, readonly string[]> = 
   artifact_publishing: ["Artifact"],
 };
 
-/**
- * The Claude Code tool names denied by a set of capability classes.
- *
- * Order is the classes' order and then each class's own, so the list a query
- * receives is stable — a diff on it should mean a policy change and nothing
- * else.
- */
+/** The Claude Code tool names denied by a set of capability classes. */
 export function deniedTools(capabilities: readonly DeniedCapability[]): string[] {
-  const names: string[] = [];
-  for (const capability of capabilities) {
-    for (const tool of DENIED_TOOLS_BY_CAPABILITY[capability] ?? []) {
-      if (!names.includes(tool)) names.push(tool);
-    }
-  }
-  return names;
+  return deniedToolNames(DENIED_TOOLS_BY_CAPABILITY, capabilities);
 }
 
 // The server key the platform's MCP endpoint is registered under. The SDK
@@ -198,4 +187,44 @@ export function buildMcpOptions(
     },
     allowedTools: [...BASE_ALLOWED_TOOLS, ...tools.map(namespacedMcpTool)],
   };
+}
+
+/** The built-in web search: Anthropic's server tool, which only Anthropic's API runs. */
+export const BUILTIN_WEB_SEARCH = "WebSearch";
+
+/** The web-search half of the query options: what the connection's strategy makes of search. */
+export interface WebSearchQueryOptions {
+  mcpServers?: Record<string, McpServerConfig>;
+  /** Added to `allowedTools`. */
+  allowedTools: string[];
+  /** Added to `disallowedTools`. */
+  disallowedTools: string[];
+  /** Every tool whose `query` is a web search, for the DLP hook's matchers. */
+  searchTools: string[];
+}
+
+/**
+ * How a run on this connection searches, in this runtime's names.
+ *
+ * The built-in `WebSearch` is Anthropic's server-side tool: denied unless the
+ * strategy is `anthropic-server-tool`, because the CLI still offers it on
+ * another Anthropic-format host (measured on Ollama), where the host cannot run
+ * it. With the platform's `aep-web` server the run searches through that
+ * instead, as `mcp__aep-web__web_search`. A deny, not an omission from
+ * `allowedTools`: under bypassPermissions only the deny list holds (see above).
+ */
+export function webSearchOptions(connection: ModelConnection, server: WebSearchServer | undefined): WebSearchQueryOptions {
+  const builtin = connection.webSearch === "anthropic-server-tool";
+  const out: WebSearchQueryOptions = {
+    allowedTools: [],
+    disallowedTools: builtin ? [] : [BUILTIN_WEB_SEARCH],
+    searchTools: [BUILTIN_WEB_SEARCH],
+  };
+  if (server) {
+    const tool = `mcp__${server.name}__${server.tool}`;
+    out.mcpServers = { [server.name]: { type: "stdio", command: server.command, args: [...server.args] } };
+    out.allowedTools.push(tool);
+    out.searchTools.push(tool);
+  }
+  return out;
 }

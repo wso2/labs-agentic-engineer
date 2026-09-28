@@ -32,7 +32,15 @@
  * `FileConversationStore` — this loop owns only the disk reconcile.
  */
 
-import { FileBundle, applyToolCall, streamTurn, type StreamPart, type TurnRequest, type TurnSpec } from "@aep/agent-stream";
+import {
+  FileBundle,
+  applyToolCall,
+  streamTurn,
+  type StreamPart,
+  type TurnConnection,
+  type TurnRequest,
+  type TurnSpec,
+} from "@aep/agent-stream";
 import { filterTurnSnapshot } from "@aep/agents/conversation/load-workspace";
 import { sha256Hex } from "@aep/agents/shared/hash";
 import { loadRepoSkills, type RepoSkill } from "../kit/skills.js";
@@ -47,6 +55,10 @@ export interface TurnSession {
   ws: FsSpecWorkspace;
   baseUrl: string;
   headers: Record<string, string>;
+  /** The connection every turn names (`kit/model-connection.ts`); absent → Anthropic's own API. */
+  connection?: TurnConnection;
+  /** The model every turn names; absent → the service's `AGENT_MODEL`. */
+  model?: string;
   state: ProjectState;
   /** Repo-root `skills/` — read fresh EVERY turn (§8 hot-reload). */
   skillsDir: string;
@@ -105,6 +117,11 @@ export async function runSpecTurn(session: TurnSession, turn: TurnSpec, opts: Sp
     ...(opts.target ? { target: opts.target } : {}),
     ...(opts.headless ? { headless: true } : {}),
     ...(opts.mcp ? { mcp: opts.mcp } : {}),
+    ...(session.connection ? { connection: session.connection } : {}),
+    ...(session.model ? { model: session.model } : {}),
+    // aep-api's rule (spec/turn_runner.go designOrCollabTurn): a design turn
+    // may search the web; which tool follows the connection.
+    ...(turn.kind === "flow" && turn.skill === "design" ? { webSearch: true } : {}),
   };
 
   const parts: StreamPart[] = [];

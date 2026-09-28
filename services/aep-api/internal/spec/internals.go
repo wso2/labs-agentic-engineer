@@ -78,7 +78,7 @@ func validatePath(p string) error {
 // artifact outside specs/, surfaced by the console's Validation page. The write
 // path (Apply) is never widened — validatePath stays specs/-only.
 var readAllowList = map[string]bool{
-	"tests/validation/report.json": true,
+	"tests/acceptance/report.json": true,
 }
 
 // workloadReadRE is the second read escape hatch, and unlike the list above it

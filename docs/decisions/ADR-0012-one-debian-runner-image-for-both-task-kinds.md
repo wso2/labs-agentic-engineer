@@ -1,5 +1,14 @@
 # ADR-0012 — One Debian runner image serves both task kinds
 
+**Status:** Accepted; its **Playwright half is superseded** by
+[ADR-0029](ADR-0029-validation-drives-scenarios-not-compiled-tests.md). Nothing in the image runs
+`playwright test` any more and no `tests/e2e/package.json` is authored, so `AEP_PLAYWRIGHT_VERSION`
+is no longer a contract with anything, and since
+[ADR-0016](../../runners/remote-worker/design/decisions/ADR-0016-the-browser-comes-from-debian.md)
+the image holds no Playwright at all. The one-Debian-image decision itself stands on a plainer
+reason than the one written below: the browser `agent-browser` launches is now a Debian package,
+which no musl base can install.
+
 The remote-worker runner dispatches two task kinds, `implementation` and
 `validation` (`AEP_TASK_KIND`), from the same one-shot pod entry point
 (`runners/remote-worker/src/oneshot.ts`). Validation authors and executes e2e

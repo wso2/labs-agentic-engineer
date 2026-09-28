@@ -48,6 +48,7 @@ const (
 	CodePaymentRequired    = "payment_required"
 	CodeInternal           = "internal_error"
 	CodeBadGateway         = "bad_gateway"
+	CodeGatewayTimeout     = "gateway_timeout"
 	CodeServiceUnavailable = "service_unavailable"
 )
 

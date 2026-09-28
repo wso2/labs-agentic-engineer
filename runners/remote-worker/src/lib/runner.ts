@@ -30,13 +30,13 @@
 // written the same way for a second runtime. If it names a tool, a hook or an
 // SDK option, it does not belong here.
 
-import fs from "node:fs";
 import path from "node:path";
 import type { TaskLog } from "./logger.js";
 import type { DispatchRequest } from "./types.js";
 import type { WorkspaceLayout } from "./workspace.js";
 import { writeBearerFile } from "./workspace.js";
 import { emit, primeScrubber } from "./progress/emitter.js";
+import { cap, MAX_REPORT } from "./progress/adapter_common.js";
 import {
   consumeRun,
   createRunTerminator,
@@ -49,18 +49,30 @@ import {
 // and test already imports it from.
 export type { RunResult } from "./run_loop.js";
 import { createRunWatchdog } from "./progress/watchdog.js";
-import { stagedSecretValues, webSearchDenial } from "./websearch_dlp.js";
+import { stagedSecretValues, WEBSEARCH_DENIAL_MESSAGE, webSearchDenial } from "./websearch_dlp.js";
 import { allowsWriteOutsideProject } from "./workspace_guard.js";
-import { createValidationProgressTracker } from "./validation_progress.js";
-import type { ValidationProgressTracker } from "./validation_progress.js";
-import { createValidationStatusLine, ghCommentPoster } from "./validation_status_line.js";
-import type { GhInvocation, ValidationStatusLine } from "./validation_status_line.js";
 import { staticTokenSource, type AccessTokenSource } from "./auth_retry.js";
 import { webFetchDenial } from "./webfetch_guard.js";
-import { SKILLS_MIRROR_DIR, requireWorkflowBodies } from "./skills_presence.js";
-import { DENIED_CAPABILITIES, type Runtime, type RuntimePolicy, type RuntimeSession } from "../runtime/port.js";
-import { createRuntime, modelFromEnv, runtimeNameFromEnv } from "../runtime/registry.js";
-import { curlConfigHome, playwrightCliConfigPath } from "./endpoint_access.js";
+import { readModelConnection } from "./model_connection.js";
+import { mountAepWeb } from "./aep_web.js";
+import { createProviderLimits } from "./provider_limit.js";
+import {
+  CODING_WORKFLOW_SKILL,
+  SKILLS_MIRROR_DIR,
+  VALIDATION_WORKFLOW_SKILL,
+  listMirroredSkills,
+  requireWorkflowBodies,
+} from "./skills_presence.js";
+import { skillsNotice, writePromptAppendix } from "./run_context.js";
+import {
+  DENIED_CAPABILITIES,
+  runtimeNameFromEnv,
+  type Runtime,
+  type RuntimePolicy,
+  type RuntimeSession,
+} from "../runtime/port.js";
+import { createRuntime } from "../runtime/registry.js";
+import { curlConfigHome } from "./endpoint_access.js";
 
 /**
  * The mirror the BFF wrote into the project clone, as an absolute path.
@@ -143,7 +155,7 @@ export function promptWithProjectRoot(prompt: string, workspaceRoot: string, con
  * the lead does, and a developer who clones the project repo can read them too.
  */
 export function contractReferencePath(workspace: string): string {
-  return path.join(mirrorDir(workspace), "aep", "references", "component-contract.md");
+  return path.join(mirrorDir(workspace), CODING_WORKFLOW_SKILL, "references", "component-contract.md");
 }
 
 /**
@@ -197,9 +209,12 @@ export interface StartedRun {
 //     invokes the skill. A pin says the guidance IS needed for this work, so its
 //     body is appended to the system prompt instead of left to the model's
 //     discretion. Empty string when nothing is pinned.
+//
+//   pinnedSkillNames → the names behind pinnedBodies, for the run-start notice.
 export interface PerTaskSkills {
   availableSkillNames: string[];
   pinnedBodies: string;
+  pinnedSkillNames: string[];
 }
 
 // Live access-token source for MCP (and bearer-file persistence on remint).
@@ -214,30 +229,30 @@ export interface McpAuthOpts {
  * The skills a run is steered by whatever its design says — read from the mirror
  * like every other skill, but not optional and not the design's to choose.
  *
- * `aep` is the run's procedure. `aep-validation` REPLACES its run section for a
- * validation task, and a validation run cannot afford the agent declining a
- * description-triggered load of the workflow it is supposed to follow.
+ * Exactly one per task kind, never layered: `aep` for a coding run,
+ * `validation-task` for a validation run (ADR-0037).
  *
  * Everything else a component needs is a `skillsPinned` entry in its
  * `design.json`, and that is the design's call. This list is not: no design
- * decides whether a coding run follows the coding workflow.
+ * decides whether a run follows its workflow, and a run cannot afford the agent
+ * declining a description-triggered load of it.
  *
- * `playwright-cli` is deliberately absent. It carries the browser mechanics a
- * validation run reaches for, and `aep-validation` names it — a description
+ * `agent-browser` is deliberately absent. It carries the browser mechanics a
+ * validation run reaches for, and `validation-task` names it — a description
  * -triggered load is the right shape for mechanics a run may or may not need,
  * and paying for its body on every turn of every validation run is not.
  */
 export function alwaysOnSkills(taskKind: DispatchRequest["taskKind"]): string[] {
-  return taskKind === "validation" ? ["aep", "aep-validation"] : ["aep"];
+  return taskKind === "validation" ? [VALIDATION_WORKFLOW_SKILL] : [CODING_WORKFLOW_SKILL];
 }
 
 /**
  * The skills a run may LOAD on demand — the other half of the sentence above.
  *
- * The allowlist gates the Skill tool, so leaving `playwright-cli` out of the
+ * The allowlist gates the Skill tool, so leaving `agent-browser` out of the
  * always-on set is only half a decision: absent from BOTH lists it is not
  * deferred, it is unreachable. That is what shipped — a validation run passed an
- * empty allowlist, so the load `aep-validation` instructs could never succeed
+ * empty allowlist, so the load `validation-task` instructs could never succeed
  * and the agent grepped the mirror's files by hand instead.
  *
  * Named rather than "the whole mirror" as an implementation run gets: that run
@@ -249,58 +264,16 @@ export function alwaysOnSkills(taskKind: DispatchRequest["taskKind"]): string[] 
  * a cap someone has to work around.
  */
 export function onDemandSkills(taskKind: DispatchRequest["taskKind"]): string[] {
-  return taskKind === "validation" ? ["playwright-cli"] : [];
+  return taskKind === "validation" ? ["agent-browser"] : [];
 }
 
 /**
- * The status line for THIS dispatch, or undefined when the run cannot or should
- * not keep one.
- *
- * Validation-specific, and named for it: only a validation cycle is anchored to
- * an issue, so only a validation cycle has a line to keep. It answers with the
- * whole tracker rather than a hook — the report generator's OUTCOME is half the
- * mechanism, and a caller handed only the hook would report the exit-2 loop as
- * progress and back again.
- *
- * Two conditions, and each absence is a NORMAL run rather than a fault: a coding
- * run has no validation issue to speak on, and a validation dispatch that
- * carried no issue number (an older BFF, or one that could not resolve it) works
- * exactly as it did before, minus the line. Never throws for either — a status
- * line is how a run is WATCHED, and failing a two-hour validation because it
- * could not be watched would trade the work for the commentary.
- *
- * It shares the per-criterion tracker's state so both derive one run's history
- * once — see ValidationProgressTracker.state.
- *
- * `gh` is passed rather than resolved here because the answer is the WORKSPACE's,
- * not this machine's: the wrapper the run's own `gh` calls go through, and the
- * child environment that makes it authenticate. Resolving a binary off PATH
- * instead — the first attempt — posted as nobody in the mode where no token is
- * mounted, and could not be tested without a `gh` on the test machine.
+ * An implementation run's allowlist: the whole mirror (see PerTaskSkills) minus
+ * the validation workflow, which rides the same mirror because `audience`
+ * cannot say "validation only" (ADR-0037).
  */
-export function validationStatusLineFor(
-  req: DispatchRequest,
-  progress: ValidationProgressTracker | undefined,
-  gh: GhInvocation,
-  warn: (reason: string) => void,
-): ValidationStatusLine | undefined {
-  const issue = req.validationIssue ?? 0;
-  if (!progress || issue <= 0) return undefined;
-  return createValidationStatusLine(progress.state, ghCommentPoster(gh, req.repoUrl, issue), warn);
-}
-
-/**
- * `PLAYWRIGHT_MCP_CONFIG`, but only when there is a config to point at.
- *
- * Spread into the child env so the variable is absent rather than empty when the
- * preflight wrote nothing: playwright-cli reads it eagerly and its daemon dies
- * on a path that does not resolve, so an unset variable is the only safe way to
- * say "no override needed". Synchronous on purpose — this runs once, at spawn,
- * after the preflight that writes the file has already returned.
- */
-function playwrightCliConfigEnv(): Record<string, string> {
-  const file = playwrightCliConfigPath();
-  return fs.existsSync(file) ? { PLAYWRIGHT_MCP_CONFIG: file } : {};
+export async function implementationSkills(workspace: string): Promise<string[]> {
+  return (await listMirroredSkills(workspace)).filter((name) => name !== VALIDATION_WORKFLOW_SKILL);
 }
 
 /**
@@ -343,12 +316,13 @@ export async function startCodingRun(
     AEP_GIT_SERVICE_URL: req.gitServiceUrl,
     AEP_CORRELATION_ID: req.correlationId ?? "",
     // A runtime's own default is typically 120s, which is under what this
-    // platform's longest legitimate command takes: a Playwright spec is allowed
-    // 30s, so a suite severs on a handful of them. A severed call proves nothing
-    // — the command keeps running, its results are unread, and a validation run
-    // that authored a full suite can end with none of it recorded. 600s is the
-    // documented ceiling for a single shell call, so this raises the default to
-    // the maximum already allowed rather than picking a number.
+    // platform's longest legitimate command takes: driving a scenario is a
+    // sequence of `agent-browser` calls against a live page, each waiting on a
+    // real navigation. A severed call proves nothing — the command keeps
+    // running and its result is unread, so a step that did settle is recorded
+    // as one that never answered. 600s is the documented ceiling for a single
+    // shell call, so this raises the default to the maximum already allowed
+    // rather than picking a number.
     BASH_DEFAULT_TIMEOUT_MS: "600000",
     // Where curl looks for `.curlrc`. Named explicitly rather than left to the
     // inherited HOME: a validation run writes `resolve` overrides there for its
@@ -356,17 +330,10 @@ export async function startCodingRun(
     // to look for is indistinguishable from no config at all. Harmless on a
     // coding run, which writes no such file.
     CURL_HOME: curlConfigHome(),
-    // And where playwright-cli looks for its own — the browser half of the same
-    // endpoint override (endpoint_access.ts). Set from the file's EXISTENCE, not
-    // unconditionally like CURL_HOME above: curl treats a missing `.curlrc` as
-    // no config, but this variable is fatal when it points at nothing (the
-    // daemon exits on ENOENT), so a coding run and a cloud validation run — both
-    // of which write no such file — must not see it at all.
-    ...playwrightCliConfigEnv(),
   };
 
   // Where the skills are, for the one skill that has to name a file inside them:
-  // `aep-validation` runs the platform's report generator rather than a copy the
+  // `validation-task` runs the platform's report checker rather than a copy the
   // repo committed. The runner is still the only layer that knows the path.
   childEnv.AEP_SKILLS_DIR = mirrorDir(layout.workspace);
   const skills = perTaskSkills?.availableSkillNames ?? [];
@@ -383,37 +350,6 @@ export async function startCodingRun(
   // second, drift-prone channel. Both egress guards are built from it.
   const stagedSecrets = stagedSecretValues(childEnv);
 
-  // Per-criterion progress — see validation_progress.ts. Validation only: a
-  // coding run has no validation criteria to report on, and registering the
-  // matchers anyway would put a watcher on every Write, Edit and Bash call of
-  // every run to derive nothing.
-  const validationProgress =
-    req.taskKind === "validation"
-      ? createValidationProgressTracker((update) => {
-          // A criterion is a `work_item` in v2, same statuses and the same
-          // inference (ADR-0009) in a new envelope. `source` is what tells a
-          // consumer these are the platform's criteria rather than the lead's
-          // own plan entries, which share the kind.
-          emit({ kind: "work_item", source: "criterion", itemId: update.itemId, itemStatus: update.status });
-        })
-      : undefined;
-
-  // The RUN's own line on its issue — see validationStatusLineFor above.
-  const validationStatusLine = validationStatusLineFor(
-    req,
-    validationProgress,
-    // The wrapper and env the agent's own `gh` calls use — see ghCommentPoster
-    // for why the raw binary is not enough.
-    { path: layout.ghWrapper, env: childEnv },
-    (reason) => {
-      // Uncoded on purpose: the notice codes are a contract enum whose labels
-      // `@aep/progress-view` owns (RunEvent.code), and adding one is a contract
-      // change rather than a merge's to make. The reason already reads as a
-      // sentence, which is what an uncoded notice renders.
-      emit({ kind: "notice", level: "warn", detail: reason });
-    },
-  );
-
   const deadline = runDeadlineFromEnv(process.env);
   // The one way anything in this file ends a run early. It is handed to the MCP
   // policy below and to the loop further down, and the loop is what acts on it
@@ -421,13 +357,39 @@ export async function startCodingRun(
   // here instead.
   const terminator = createRunTerminator();
 
+  // The whole appendix, in the one order the `aep` skill can be read in — see
+  // systemPromptAppend. The glossary is the runtime's text, appended last, and
+  // nothing may follow it. What the lead's context was built from is said once
+  // on the feed, and the exact appendix kept beside runtime.log
+  // (lib/run_context.ts).
+  const preloadBodies = systemPromptAppend(workflowBodies, perTaskSkills?.pinnedBodies ?? "", runtime.toolGlossary());
+  emit({
+    kind: "notice",
+    level: "info",
+    detail: skillsNotice(alwaysOnSkills(req.taskKind), perTaskSkills?.pinnedSkillNames ?? [], skills),
+  });
+  writePromptAppendix(log.dir, preloadBodies);
+
+  // The organization's model and connection, stamped onto the Workload by the
+  // dispatcher.
+  const connection = readModelConnection(runtime.defaultModel);
+  // The platform's own web search, when the connection's strategy is one no
+  // runtime runs (lib/aep_web.ts). It refuses a staged secret with the same
+  // rule and the same sentence as every other search path.
+  const aepWeb = mountAepWeb({
+    connection,
+    env: childEnv,
+    deniedValues: stagedSecrets,
+    denialMessage: WEBSEARCH_DENIAL_MESSAGE,
+  });
+  if (aepWeb.reason) {
+    emit({ kind: "notice", level: "warn", detail: `[web search] off for this run: ${aepWeb.reason}` });
+  }
+
   const policy: RuntimePolicy = {
     workspace: layout.workspace,
     env: childEnv,
-    // The organization's setting, stamped onto the Workload by the dispatcher.
-    // Absent for a dispatch made before the setting existed, and for the
-    // playground — both then get exactly the run they had.
-    model: modelFromEnv(runtime.defaultModel),
+    connection,
     taskKind: req.taskKind,
     // Absent on a normal run, which is what keeps a prompt-bearing debug log out
     // of the cluster — see DispatchRequest.debug.
@@ -444,48 +406,33 @@ export async function startCodingRun(
     // The whole platform list: a one-shot pod has no interactive user, no
     // scheduler, no durable session and no peer, whatever the runtime.
     deniedCapabilities: DENIED_CAPABILITIES,
-    webSearch: { deny: webSearchDenial(stagedSecrets) },
-    webFetch: { deny: webFetchDenial(stagedSecrets) },
-    skills: {
-      dir: mirrorDir(layout.workspace),
-      allow: skills,
-      // The whole appendix, in the one order the `aep` skill can be read in —
-      // see systemPromptAppend. The glossary is the runtime's text, appended
-      // last, and nothing may follow it.
-      preloadBodies: systemPromptAppend(
-        workflowBodies,
-        perTaskSkills?.pinnedBodies ?? "",
-        runtime.toolGlossary(),
-      ),
+    webSearch: {
+      deny: webSearchDenial(stagedSecrets),
+      ...(aepWeb.mount ? { server: aepWeb.mount.server } : {}),
     },
+    webFetch: { deny: webFetchDenial(stagedSecrets) },
+    skills: { dir: mirrorDir(layout.workspace), allow: skills, preloadBodies },
     ...buildMcpPolicy(req, layout, terminator, mcpAuth),
-    ...(validationProgress || validationStatusLine
-      ? {
-          observe: {
-            // Fanned out here rather than chained inside either watcher, so
-            // neither can swallow the other's call. The rows move first: the
-            // status line awaits a GitHub round trip, and a row is cheaper to
-            // be right about than a comment.
-            toolUse: async (toolName: string, toolInput: unknown, toolUseId: string) => {
-              validationProgress?.observe(toolName, toolInput, toolUseId);
-              await validationStatusLine?.observe(toolName, toolInput, toolUseId);
-            },
-            // Both settle from the SAME `ok` the feed reports, rather than
-            // re-deriving success from the tool result a second time: the rows
-            // settle a spec run, the status line settles the report generator.
-            toolOutcome: (toolUseId: string, ok: boolean) => {
-              validationProgress?.settle(toolUseId, ok);
-              validationStatusLine?.settle(toolUseId, ok);
-            },
-          },
-        }
-      : {}),
   };
 
-  const session = await runtime.start(
-    promptWithProjectRoot(req.prompt, layout.workspace, contractReferencePath(layout.workspace)),
-    policy,
-  );
+  let session: RuntimeSession;
+  try {
+    session = await runtime.start(
+      promptWithProjectRoot(req.prompt, layout.workspace, contractReferencePath(layout.workspace)),
+      policy,
+    );
+  } catch (err) {
+    // A runtime that refuses to start says why ON THE FEED, at `error`: the
+    // reason is often a check that exists because the failure would otherwise
+    // be silent (OpenCode's start-time assertions — a guard plugin that did not
+    // load, a tool a rule hides), and the entrypoint's settle only carries a
+    // one-line error. No settle here — the caller settles its own pre-flight
+    // failures, and there is no loop yet to collide with (see run_loop.ts).
+    const msg = err instanceof Error ? err.message : String(err);
+    emit({ kind: "notice", level: "error", detail: cap(`[runtime] ${runtime.name} did not start: ${msg}`, MAX_REPORT) });
+    aepWeb.mount?.close();
+    throw err;
+  }
 
   // …and one watchdog, so a silent stretch says what it is waiting on rather
   // than looking identical to a dead run.
@@ -524,12 +471,17 @@ export async function startCodingRun(
       // working, and returning there killed the pod with their work unread.
       return await consumeRun(session.stream, {
         translate: session.translate,
+        classify: session.classify,
+        usage: session.usage,
         watchdog,
         emit,
         record: (m) => log.write(m),
         requestedSkills: skills,
         deadline,
         terminator,
+        // The host is what a provider-limit settle names; the rule itself is
+        // the same for every connection.
+        providerLimits: createProviderLimits({ host: policy.connection.host }),
       });
     } finally {
       deadline?.cancel();
@@ -538,6 +490,8 @@ export async function startCodingRun(
       process.removeListener("SIGINT", onTerminate);
       log.close();
       await session.close();
+      // After the session: its runtime may still hold the server open.
+      aepWeb.mount?.close();
     }
   })();
 

@@ -30,6 +30,9 @@ const heldPermissions = vi.hoisted(() => new Set(["ae:github-config"]));
 vi.mock("../../../auth/permissions", () => ({
   useHasAnyPermission: (permissions: string[]) =>
     permissions.some((p) => heldPermissions.has(p)),
+  // Each card gates itself on its own permission out of the same held set —
+  // this section only decides whether it is entered at all.
+  useHasPermission: (permission: string) => heldPermissions.has(permission),
 }));
 
 // The cards' own rendering (permission gating, connect/disconnect forms) is
@@ -38,15 +41,12 @@ vi.mock("../../../auth/permissions", () => ({
 vi.mock("./GitHubCredentialCard", () => ({
   GitHubCredentialCard: () => <div data-testid="github-card" />,
 }));
-vi.mock("./AnthropicCredentialCard", () => ({
-  AnthropicCredentialCard: () => <div data-testid="anthropic-card" />,
-}));
-vi.mock("./CodingAgentCard", () => ({
-  CodingAgentCard: () => <div data-testid="coding-agent-card" />,
+vi.mock("./AiAgentsCard", () => ({
+  AiAgentsCard: () => <div data-testid="ai-agents-card" />,
 }));
 
 let configResult: {
-  data?: { gitProvider: null; llm: null; codingLlm: null; codingAgent: null };
+  data?: { gitProvider: null; llm: null };
   isLoading: boolean;
   isError: boolean;
   error?: Error;
@@ -65,13 +65,12 @@ describe("CredentialsSection", () => {
     configResult = {
       isLoading: false,
       isError: false,
-      data: { gitProvider: null, llm: null, codingLlm: null, codingAgent: null },
+      data: { gitProvider: null, llm: null },
     };
     render(<CredentialsSection />);
 
     expect(screen.getByTestId("github-card")).toBeInTheDocument();
-    expect(screen.getByTestId("anthropic-card")).toBeInTheDocument();
-    expect(screen.getByTestId("coding-agent-card")).toBeInTheDocument();
+    expect(screen.getByTestId("ai-agents-card")).toBeInTheDocument();
   });
 
   it("shows a loading spinner while config loads", () => {
@@ -98,7 +97,7 @@ describe("CredentialsSection", () => {
     configResult = {
       isLoading: false,
       isError: false,
-      data: { gitProvider: null, llm: null, codingLlm: null, codingAgent: null },
+      data: { gitProvider: null, llm: null },
     };
     render(<CredentialsSection />);
 
@@ -106,7 +105,6 @@ describe("CredentialsSection", () => {
       screen.getByText("You don't have permission to view credentials."),
     ).toBeInTheDocument();
     expect(screen.queryByTestId("github-card")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("anthropic-card")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("coding-agent-card")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("ai-agents-card")).not.toBeInTheDocument();
   });
 });

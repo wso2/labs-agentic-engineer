@@ -3,7 +3,9 @@
 **Status:** Accepted · shipped 2026-08-03 · supersedes the delivery half of
 [ADR-0004](ADR-0004-library-owned-workflow-skills.md) (decisions 7–9) and
 retires [ADR-0001](ADR-0001-one-mode-composed-skill.md) entirely. ADR-0004's
-overlay mechanism stands unchanged.
+overlay mechanism stands unchanged. The always-on set is **amended** by
+[ADR-0037](../../../../docs/decisions/ADR-0037-a-validation-run-reads-one-workflow.md):
+one workflow per task kind, and the validation skill is now `validation-task`.
 
 ## Context
 

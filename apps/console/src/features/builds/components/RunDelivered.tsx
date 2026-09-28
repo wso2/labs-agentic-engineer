@@ -135,12 +135,12 @@ export function RunDelivered({
           variant="outlined"
           onClick={() =>
             void navigate({
-              to: "/projects/$projectName/validation",
+              to: "/projects/$projectName/validations",
               params: { projectName },
             })
           }
         >
-          Validation
+          Validations
         </Button>
       </Stack>
     </Box>

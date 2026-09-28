@@ -25,12 +25,7 @@
 // state announced as a verdict. Sharing the copy is what makes the two agree by
 // construction rather than by whoever edits both.
 
-import {
-  countOf,
-  CRITERION_STATE_LABEL,
-  uncoveredCount,
-  type CriterionTally,
-} from "@aep/ui-validation-view";
+import type { ReportScenario } from "@aep/ui-acceptance-view";
 
 /**
  * The oracle joined with a report, as the four numbers any of this copy needs.
@@ -41,21 +36,34 @@ import {
  * and every sentence below has a count-free form for exactly that.
  */
 export interface ValidationCounts {
-  /** Criteria the oracle authored: the denominator, and the only honest one. */
+  /** Scenarios the run answered: the denominator, and the only honest one. */
   total: number;
   passed: number;
   failed: number;
-  /** Authored but never answered by a test — manual, scenario, or never run. */
+  /** Answered by neither — blocked, or unjudgeable, or a word we do not know. */
   uncovered: number;
 }
 
-/** The counts a CriterionTally implies, for callers that already hold one. */
-export function countsFromTally(tally: CriterionTally): ValidationCounts {
+/**
+ * The counts an acceptance report implies.
+ *
+ * NO JOIN. The criteria path needed the oracle for its denominator, because a
+ * criterion could be authored and never tested; the acceptance run reports one
+ * entry per scenario in the feature files — its own checker fails the run
+ * otherwise — so the report counts itself. `uncovered` is the complement of
+ * passed and failed, which is what keeps the three summing to the total however
+ * many outcome words a future run invents.
+ */
+export function countsFromScenarios(
+  scenarios: readonly ReportScenario[],
+): ValidationCounts {
+  const passed = scenarios.filter((s) => s.outcome === "passed").length;
+  const failed = scenarios.filter((s) => s.outcome === "failed").length;
   return {
-    total: tally.total,
-    passed: countOf(tally, "pass"),
-    failed: countOf(tally, "fail"),
-    uncovered: uncoveredCount(tally),
+    total: scenarios.length,
+    passed,
+    failed,
+    uncovered: scenarios.length - passed - failed,
   };
 }
 
@@ -100,63 +108,57 @@ function numbersAreStale(state: string): boolean {
   return state === "running";
 }
 
-// "2 of 6 criteria failed." — the evidence half, which is the same sentence on both
-// surfaces.
+// "2 of 6 scenarios failed." — the evidence half, which is the same sentence on
+// both surfaces.
 //
-// The numbered form is gated on more than one criterion so nothing has to inflect a
+// The numbered form is gated on more than one scenario so nothing has to inflect a
 // verb for a count of one, and it carries no deixis ("marked below") because the
 // banner has nothing below it and the page does not always show the report.
 function failureEvidence(counts: ValidationCounts | undefined, state: string): string {
   const when = numbersAreStale(state) ? " in the last attempt" : "";
   return counts && counts.total > 1 && counts.failed > 0
-    ? `${counts.failed} of ${counts.total} criteria failed${when}.`
-    : `At least one criterion failed${when}.`;
+    ? `${counts.failed} of ${counts.total} scenarios failed${when}.`
+    : `At least one scenario failed${when}.`;
 }
 
 // What a NON-FATAL verdict reads as while a new attempt is in flight — a
 // revalidation, since nothing else re-asks a green result.
 //
 // A short stale summary rather than the settled sentence, and deliberately without
-// its call to action ("please validate them manually"): the attempt in flight may
+// its call to action ("please check them yourself"): the attempt in flight may
 // change what is left to do by hand, so advising on it now is premature.
 function staleSummary(verdict: string, counts: ValidationCounts | undefined): string {
   const counted = (counts?.total ?? 0) > 1;
   switch (verdict) {
     case "passed":
       return counted
-        ? `All ${counts?.total} criteria passed in the last attempt.`
-        : "Every criterion passed in the last attempt.";
+        ? `All ${counts?.total} scenarios passed in the last attempt.`
+        : "Every scenario passed in the last attempt.";
     case "partial":
       return counted && (counts?.uncovered ?? 0) > 0
-        ? `${counts?.uncovered} of ${counts?.total} criteria were never covered in the last attempt.`
-        : "Some criteria were never covered in the last attempt.";
+        ? `${counts?.uncovered} of ${counts?.total} scenarios weren't settled in the last attempt.`
+        : "Some scenarios weren't settled in the last attempt.";
     default:
-      return "No criteria could be automated in the last attempt.";
+      return "No scenario could be settled in the last attempt.";
   }
 }
 
 /**
- * "35 passed · 5 manual" — the outcome as a per-state tally, or "" with no report.
+ * "7 of 9 passed · 2 blocked" — the outcome as a tally, or "" with no report.
+ *
+ * The words come from the acceptance package (`tallySentence`), which reads them
+ * off the report; this only decides whether they need marking as stale.
  *
  * Lives beside the sentence rather than in the tile that renders it because it needs
  * the same staleness marker for the same reason, in the state where a repeat attempt
  * is running. It is the most standalone-readable thing on the tile, so unmarked it
  * reads as the current state of a system that has already been fixed.
  */
-export function verdictCounts(
-  tally: CriterionTally | undefined,
-  state = "",
-): string {
-  if (!tally) return "";
-  const line = tally.states
-    .map(
-      (s) =>
-        `${s.count} ${(CRITERION_STATE_LABEL[s.status] ?? s.status).toLowerCase()}`,
-    )
-    .join(" · ");
+export function verdictCounts(line: string | undefined, state = ""): string {
+  if (!line) return "";
   // Parenthetical, not the sentence's " in the last attempt": this is a list, and a
   // clause tacked onto a list of numbers reads as another entry in it.
-  return line && numbersAreStale(state) ? `${line} (last attempt)` : line;
+  return numbersAreStale(state) ? `${line} (last attempt)` : line;
 }
 
 /**
@@ -168,7 +170,7 @@ export function verdictCounts(
  * which is what "this verdict is the run's answer" looks like.
  *
  * `unreported` gets its own live forms rather than loopTail's, because the platform
- * files NOTHING for it: there is no failing criterion to turn into work, so the
+ * files NOTHING for it: there is no failing scenario to turn into work, so the
  * empty working set sends the run straight back to validate again. Promising a fix
  * would name work that does not exist.
  */
@@ -188,30 +190,33 @@ export function verdictSentence(
   }
   switch (verdict) {
     case "passed":
-      // Names coverage, not just the result: `passed` REQUIRES that every criterion
-      // was checked, which is the whole point of the vocabulary.
+      // Names coverage, not just the result: `passed` REQUIRES that every scenario
+      // was settled, which is the whole point of the vocabulary.
       return counted
-        ? `All ${counts?.total} criteria were covered by a test and passed.`
-        : "Every criterion was covered by a test and passed.";
+        ? `All ${counts?.total} scenarios were settled and passed.`
+        : "Every scenario was settled and passed.";
     case "partial": {
       const uncovered = counts?.uncovered ?? 0;
-      // Ends on what the reader can do about it. The count is the gap between what
-      // was authored and what a test actually answered, so the ask is specific
-      // rather than a vague "not a clean pass".
+      // Ends on what the reader can do about it. NOT "couldn't be automated":
+      // every scenario is driven against the deployed app, and these are the ones
+      // the app would not let the run settle — a control that was absent, or an
+      // answer that lives outside the running system. Only a person can tell a
+      // product that correctly refuses from one that is broken, which is also why
+      // no repair is filed for them.
       return counted && uncovered > 0
-        ? `Everything that ran passed, but ${uncovered} of ${counts?.total} criteria couldn't be automated — please validate ${
+        ? `Everything that ran passed, but ${uncovered} of ${counts?.total} scenarios couldn't be settled against the deployed app — please check ${
             uncovered === 1 ? "it" : "them"
-          } manually.`
-        : "Everything that ran passed, but some criteria couldn't be automated — please validate them manually.";
+          } yourself.`
+        : "Everything that ran passed, but some scenarios couldn't be settled against the deployed app — please check them yourself.";
     }
     case "failed":
       return `${failureEvidence(counts, state)} ${loopTail(state, repairing)}`;
     case "inconclusive":
       return counted
-        ? `None of the ${counts?.total} criteria could be automated — please validate them manually.`
-        : "None of the criteria could be automated — please validate them manually.";
+        ? `None of the ${counts?.total} scenarios could be settled against the deployed app — please check them yourself.`
+        : "No scenario could be settled against the deployed app — please check them yourself.";
     case "unreported":
-      // A reporting failure, not a test outcome: no criterion produced one. The
+      // A reporting failure, not a run outcome: no scenario produced one. The
       // terminal reason (`validation-unreported`) is deliberately NOT quoted — a
       // wire value is not something to hand a reader.
       switch (state) {

@@ -35,7 +35,9 @@ import (
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
+	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/organization"
+	"github.com/wso2/aep/aep-api/internal/platform/modelconn"
 	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
@@ -70,18 +72,20 @@ type AgentDeathNotifier interface {
 	AgentDied(ctx context.Context, orgID, runID, reason string) error
 }
 
+// RunFailureRecorder writes a run's failure record — the structured "why" the
+// console's card reads. The watcher uses it for the one fault it learns first,
+// a model provider limit, whose host and reset time only the runner's settle
+// carries. The milestone run repository satisfies it; it writes only a run
+// that is not yet terminal. Best-effort; nil → no record.
+type RunFailureRecorder interface {
+	RecordFailure(ctx context.Context, id string, failure delivery.RunFailure) (*delivery.MilestoneRun, error)
+}
+
 // SecretRef is one org credential's refs-only SM-API triplet.
 type SecretRef struct {
 	SecretRefName string
 	KVPath        string
 	Property      string
-
-	// EnvVar is the env var name the runner reads this secret under. Empty
-	// means the caller supplies its own fixed name (e.g. GITHUB_TOKEN); the
-	// Anthropic credential sets this from organization.SecretRefTriplet.EnvVar
-	// because exactly which of ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN
-	// applies is the organization domain's decision, not dispatch's.
-	EnvVar string
 }
 
 // ExternalResourceSecretInputs is one external resource's per-env secret bundle
@@ -129,29 +133,37 @@ type SkillMirror interface {
 	SyncProjectSkills(ctx context.Context, orgID, projectID string) error
 }
 
-// CodingKeyResolver answers which Anthropic credential this run must bill: the
-// org's coding-agent key when it configured one, its default key otherwise. The
-// choice is the organization domain's to make — dispatch only mounts what it is
-// handed — so this port deliberately exposes no way to ask "is there an
-// override?", which is what keeps the reuse rule stated in exactly one place
-// (ADR-0016). Wired from organization.AnthropicCredentialService.
+// CodingKeyResolver answers which credential a run on runtime must bill: the
+// org's Claude subscription when it has one and the runtime is Claude Code, the
+// connection's key otherwise. The choice is the organization domain's to make —
+// dispatch only mounts what it is handed — so this port deliberately exposes no
+// way to ask "is there a subscription?", which keeps the rule stated in exactly
+// one place (ADR-0036). Wired from organization.ModelConnectionService.
+//
+// KeyRef is a SECOND question, not a way around the first: which key the
+// build's agent-evaluation step bills. That step is an API call — it drives the
+// generated agent's model and an LLM judge — so it cannot run on a Claude
+// subscription token, and the connection's key is always an API key. Asking
+// for it says nothing about whether a subscription exists, so the rule above
+// stays in its one place. A NotFoundError means the org has connected no key at
+// all; see evaluationKeyRef for why that is not a dispatch failure.
 type CodingKeyResolver interface {
-	ResolveCodingSecretRef(ctx context.Context, ocOrgID string) (organization.SecretRefTriplet, error)
+	organization.CodingCredentialResolver
+	KeyRef(ctx context.Context, ocOrgID string) (modelconn.Connection, organization.SecretRefTriplet, error)
 }
 
-// CodingAgentSettings answers which runtime and model this org's next cycle
-// runs on. The organization domain owns the choice — including the fact that an
-// org which never opened the setting is on the platform's defaults — so dispatch
-// asks for the EFFECTIVE values and never for a row, which is what keeps
-// "nobody chose" from being a state dispatch has to know how to interpret.
+// CodingAgentSettings answers which runtime this org's next cycle runs on (the
+// model is part of the connection, CodingKeyResolver's answer). The
+// organization domain owns the choice — including the fact that an org which
+// never opened the setting is on the platform's default — so dispatch asks for
+// the EFFECTIVE value and never for a row, which is what keeps "nobody chose"
+// from being a state dispatch has to know how to interpret.
 //
-// The values are COPIED onto the run at launch, so a change applies from the
-// next cycle: re-reading mid-run would leave a feed whose model names disagree
-// with the tokens they were billed for. Wired from
-// organization.CodingAgentService; nil → the platform defaults, which is what
-// every dispatch made before this setting existed already carried.
+// The value is COPIED onto the run at launch, so a change applies from the
+// next cycle. Wired from organization.AgentSettingsService; nil → the platform
+// default.
 type CodingAgentSettings interface {
-	Effective(ctx context.Context, ocOrgID string) (orgconfig.CodingAgentProjection, error)
+	Effective(ctx context.Context, ocOrgID string) (orgconfig.AgentsProjection, error)
 }
 
 // ProjectRepos resolves a project's git repo row (RepoURL/RepoSlug). Wired from

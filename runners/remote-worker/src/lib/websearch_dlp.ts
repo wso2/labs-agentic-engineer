@@ -85,6 +85,18 @@ const SAFE_ENV_KEYS: ReadonlySet<string> = new Set<string>([
   "PUBLISHER_CLIENT_ID",
   "WORKSPACE_BASE_PATH",
   "GH_CONFIG_DIR",
+  // The organization's agent setting and model connection, as the dispatcher
+  // stamps them (model_env.go): enum values, the model id and the endpoint URL.
+  // Treated as secrets they would refuse any search naming the model or its
+  // host. AEP_MODEL_API_KEY is deliberately NOT here.
+  "AEP_AGENT_RUNTIME",
+  "AEP_AGENT_MODEL",
+  "AEP_MODEL_FORMAT",
+  "AEP_MODEL_BASE_URL",
+  "AEP_MODEL_AUTH_SCHEME",
+  "AEP_MODEL_CONTEXT_WINDOW",
+  "AEP_MODEL_OUTPUT_LIMIT",
+  "AEP_MODEL_WEB_SEARCH",
   // Base OS / container / Node runtime vars.
   "PATH",
   "HOME",
@@ -175,16 +187,22 @@ export function webSearchDenial(secrets: readonly string[]): (query: string) => 
 /**
  * createWebSearchDlpHook builds the PreToolUse HookCallback that gates
  * WebSearch — NOT a canUseTool callback (see the module doc comment for
- * why). Register it under `hooks.PreToolUse` with `matcher: "WebSearch"`
+ * why). Register it under `hooks.PreToolUse` with one matcher per gated tool
  * in the SDK query options.
  *
  * It takes the DECISION, not the secrets: what may be searched for is the
  * platform's rule (`webSearchDenial` above), and this is one runtime's way of
- * enforcing it before the call is dispatched.
+ * enforcing it before the call is dispatched. `tools` names every tool whose
+ * `query` is a web search: the built-in WebSearch, and the `aep-web` MCP tool
+ * where a run has it — which refuses a staged secret itself too, so the hook is
+ * the first of two gates there, not the only one.
  */
-export function createWebSearchDlpHook(deny: (query: string) => string | null): HookCallback {
+export function createWebSearchDlpHook(
+  deny: (query: string) => string | null,
+  tools: readonly string[] = ["WebSearch"],
+): HookCallback {
   return async (input) => {
-    if (!isPreToolUseInput(input) || input.tool_name !== "WebSearch") {
+    if (!isPreToolUseInput(input) || !tools.includes(input.tool_name)) {
       return {};
     }
     const toolInput = input.tool_input as { query?: unknown } | undefined;

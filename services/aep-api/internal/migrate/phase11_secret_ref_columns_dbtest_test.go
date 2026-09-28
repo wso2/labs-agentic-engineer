@@ -30,6 +30,7 @@ import (
 // dbtest.New already dropped sm_api_*; the leftover columns are restored first.
 func TestPhase11SecretRefColumns_ExpandAndBackfill(t *testing.T) {
 	db := dbtest.New(t)
+	preModelConnectionShape(t, db)
 	ctx := context.Background()
 	addLeftoverSMAPIColumns(t, db)
 
@@ -133,6 +134,7 @@ func TestPhase11SecretRefColumns_ExpandAndBackfill(t *testing.T) {
 
 func TestPhase11SecretRefColumns_EmptySecretRefNameIsBackfilled(t *testing.T) {
 	db := dbtest.New(t)
+	preModelConnectionShape(t, db)
 	ctx := context.Background()
 	addLeftoverSMAPIColumns(t, db)
 
@@ -165,6 +167,7 @@ func TestPhase11SecretRefColumns_EmptySecretRefNameIsBackfilled(t *testing.T) {
 
 func TestPhase11SecretRefColumns_DoesNotOverwritePopulatedSecretRef(t *testing.T) {
 	db := dbtest.New(t)
+	preModelConnectionShape(t, db)
 	ctx := context.Background()
 	addLeftoverSMAPIColumns(t, db)
 

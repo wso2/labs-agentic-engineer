@@ -235,3 +235,63 @@ func TestConversationRepo_RotateOnVirginProjectCreates(t *testing.T) {
 		t.Fatalf("resolve after virgin rotate = (%+v, %v), want the rotated row", now, err)
 	}
 }
+
+// The automatic rotation of a full thread: every sender that saw the same
+// full thread asks to rotate IT, and exactly one successor is minted — the
+// others find it already rotated and mint nothing.
+func TestConversationRepo_RotateIfCurrentMintsOneSuccessor(t *testing.T) {
+	t.Parallel()
+	repo := spec.NewConversationRepository(dbtest.New(t))
+	ctx := context.Background()
+
+	full, err := repo.ResolveCurrent(ctx, "o1", "p1", "general", "ada")
+	if err != nil {
+		t.Fatalf("ResolveCurrent: %v", err)
+	}
+
+	const senders = 8
+	minted := make([]*spec.ProjectConversation, senders)
+	var wg sync.WaitGroup
+	for i := 0; i < senders; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			row, err := repo.RotateIfCurrent(ctx, "o1", "p1", "general", full.ID, "user")
+			if err != nil {
+				t.Errorf("sender %d: %v", n, err)
+				return
+			}
+			minted[n] = row
+		}(i)
+	}
+	wg.Wait()
+
+	var successors []string
+	for _, row := range minted {
+		if row != nil {
+			successors = append(successors, row.ID)
+		}
+	}
+	if len(successors) != 1 {
+		t.Fatalf("%d senders minted %d successors (%v), want exactly 1", senders, len(successors), successors)
+	}
+	now, err := repo.ResolveCurrent(ctx, "o1", "p1", "general", "ada")
+	if err != nil {
+		t.Fatalf("post-rotate ResolveCurrent: %v", err)
+	}
+	if now.ID != successors[0] {
+		t.Fatalf("current = %q, want the one successor %q", now.ID, successors[0])
+	}
+
+	// A thread that is no longer current is never rotated: the current one
+	// stays put.
+	if row, err := repo.RotateIfCurrent(ctx, "o1", "p1", "general", full.ID, "user"); err != nil || row != nil {
+		t.Fatalf("RotateIfCurrent(demoted) = (%v, %v), want (nil, nil)", row, err)
+	}
+	if row, err := repo.RotateIfCurrent(ctx, "o1", "p1", "general", "abc123", "user"); err != nil || row != nil {
+		t.Fatalf("RotateIfCurrent(non-uuid) = (%v, %v), want (nil, nil) — not a cast error", row, err)
+	}
+	if again, _ := repo.ResolveCurrent(ctx, "o1", "p1", "general", "ada"); again.ID != now.ID {
+		t.Fatalf("a stale RotateIfCurrent moved current: %q -> %q", now.ID, again.ID)
+	}
+}

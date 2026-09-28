@@ -66,6 +66,7 @@ export type CassetteChunk = Cassette["chunks"][number];
 /** Headers whose values never belong in a committed fixture. */
 export const DEFAULT_SCRUB_HEADERS = [
   "authorization",
+  "x-model-key",
   "x-anthropic-key",
   "cookie",
   "set-cookie",

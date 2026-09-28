@@ -130,6 +130,30 @@ type Dependency struct {
 	// wiring. See DependencyWiring — derived at design save, overwritten on every
 	// save, never authored by an agent.
 	Wiring *DependencyWiring `json:"wiring,omitempty"`
+	// Operations is the read-time computed resolution of every
+	// `x-aep.tools.openapi[].allow` entry an ai-agent component declared
+	// against THIS dependency (i.e. Operations is populated only when this
+	// Dependency is itself the provider a consuming agent's tool entry names).
+	// Derived by spec.ComputeAgentToolStatus during design-save, exactly like
+	// Status/Reason above: never authored, never persisted. Absent (nil) for
+	// every dependency that no ai-agent component's allow-list names — which
+	// is every dependency of every non-agent component, and most dependencies
+	// of an agent component too.
+	Operations []DependencyOperationStatus `json:"operations,omitempty"`
+}
+
+// DependencyOperationStatus is one `x-aep.tools.openapi[].allow` entry's
+// read-time computed resolution against the dependency it targets — the
+// per-operation counterpart of Dependency.Status/Reason. Status is one of
+// the shared resolution states (resolved/unresolved) or the agent-tool-only
+// "unchecked" (the named component's contract is not in the tree yet); Reason
+// is empty on resolved, human-readable otherwise. Mirrors spec.AgentToolStatus,
+// minus the Component field (redundant here — this list already hangs off
+// that component's own Dependency entry).
+type DependencyOperationStatus struct {
+	Operation string `json:"operation"`
+	Status    string `json:"status"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 // DependencyWiring is the resolved consumer-side wiring for a dependency: what

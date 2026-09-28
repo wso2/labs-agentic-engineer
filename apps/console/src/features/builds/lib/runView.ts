@@ -370,6 +370,10 @@ const TERMINAL_REASONS: Record<string, string> = {
   "agent-quota-blocked":
     "This organization is already running the maximum number of agent runs allowed by its plan. " +
     "Wait for one to finish, or stop a running run, then start this one again.",
+  // The short line; whose limit and until when is the build page's card
+  // (failure.ts), which reads them off the run's failure record.
+  "model-provider-limit":
+    "The model provider's usage limit stopped the coding agent. Start the run again once it resets.",
 };
 
 /** A sentence for the run's terminal reason; the raw value when unmapped, so

@@ -83,6 +83,11 @@ type Execution struct {
 	CacheCreationTokens int64    `gorm:"not null;default:0" json:"-"`
 	ModelID             string   `gorm:"type:text;not null;default:''" json:"-"`
 	CostUsd             *float64 `gorm:"column:cost_usd" json:"-"`
+	// ModelHost is the model host the stamp is priced against. Nothing stamps
+	// it on a new row: the only executions minted today are provision rows,
+	// which run no model, so their usage (if any) stays unpriced.
+	// Nullable on purpose (see RunPhase18ModelHost).
+	ModelHost string `gorm:"type:text" json:"-"`
 
 	CreatedAt time.Time  `json:"createdAt"`
 	StartedAt *time.Time `json:"startedAt,omitempty"`

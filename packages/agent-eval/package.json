@@ -1,0 +1,30 @@
+{
+  "name": "@aep/agent-eval",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Evaluates a generated AI agent's behaviour during its build: the scenario schema (what to test an agent with) and the rubric that scores its responses.",
+  "bin": {
+    "agent-eval": "./dist/bin/agent-eval.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "dev": "echo \"@aep/agent-eval: no dev server\""
+  },
+  "dependencies": {
+    "promptfoo": "0.122.2",
+    "yaml": "^2.8.4",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "tsx": "^4.21.0",
+    "vitest": "^4.1.10"
+  }
+}

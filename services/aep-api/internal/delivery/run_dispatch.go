@@ -41,7 +41,7 @@ type MilestoneDispatch struct {
 
 	// Kind is the RunCycle kind this dispatch serves (CycleKind*). It selects
 	// the runner's skill and prompt shape: every kind but validation is the
-	// ordinary milestone loop, and validation swaps in the `aep-validation`
+	// ordinary milestone loop, and validation swaps in the `validation-task`
 	// skill anchored to IssueNumber.
 	Kind string `json:"kind"`
 
@@ -58,8 +58,17 @@ type MilestoneDispatch struct {
 	CycleID string `json:"cycleId"`
 }
 
-// MilestoneDispatcher launches ONE agent run over a milestone and returns a
-// reference to the launched Job (the cycle record's JobRef).
+// AgentLaunch is what a dispatch launched: the Job the cycle record points at,
+// and the host of the model connection that Job runs on — the connection read
+// for THIS launch, so the host recorded on the cycle is the one its usage was
+// billed by, not a second read that a save in between could have moved.
+type AgentLaunch struct {
+	JobRef    string
+	ModelHost string
+}
+
+// MilestoneDispatcher launches ONE agent run over a milestone and reports what
+// it launched (AgentLaunch: the cycle record's JobRef and model host).
 //
 // It is the root port that keeps the supervisor and the coding agent peer
 // sub-packages, exactly as BuildTerminalObserver does for the watcher: the
@@ -70,5 +79,5 @@ type MilestoneDispatch struct {
 // not wait for it. Everything after the launch reaches the supervisor as a
 // webhook-derived signal.
 type MilestoneDispatcher interface {
-	Dispatch(ctx context.Context, req MilestoneDispatch) (jobRef string, err error)
+	Dispatch(ctx context.Context, req MilestoneDispatch) (AgentLaunch, error)
 }

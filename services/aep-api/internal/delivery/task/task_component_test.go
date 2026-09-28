@@ -362,7 +362,7 @@ func TestPlan_InProgress_409(t *testing.T) {
 	git := sourcecontrol.NewGitOpsService(nilCredResolver{}, fx.Engine)
 	plan := task.NewPlanService(fixedRepos{repo: repoRow},
 		fakeVersions{tags: []string{"v1"}}, git,
-		func(context.Context, string) (string, error) { return "sk-key", nil }, bt, iss, iss.writer(), fx.Engine,
+		func(context.Context, string) (spec.AgentLLM, error) { return spec.AgentLLM{Key: "sk-key"}, nil }, bt, iss, iss.writer(), fx.Engine,
 		func(context.Context, string) (*sourcecontrol.GitRepository, error) { return skillsRow, nil })
 
 	firstErr := make(chan error, 1)

@@ -80,6 +80,12 @@ export interface RunTurnInput {
    */
   maxOutputTokens?: number;
   /**
+   * How many times the SDK retries a retryable provider error per model call
+   * (a 429 it is told to wait on, a 5xx, a dropped connection). Absent → the
+   * SDK's default (2).
+   */
+  maxRetries?: number;
+  /**
    * Provider-specific call options (e.g. Anthropic reasoning effort), built by
    * the provider-aware model seam and passed through opaquely — runTurn stays
    * provider-agnostic.
@@ -228,6 +234,7 @@ export async function runTurn(input: RunTurnInput): Promise<RunTurnResult> {
     tools: input.tools,
     stopWhen: input.stopWhen ?? [isStepCount(input.maxSteps ?? 20)],
     ...(input.maxOutputTokens ? { maxOutputTokens: input.maxOutputTokens } : {}),
+    ...(input.maxRetries !== undefined ? { maxRetries: input.maxRetries } : {}),
     ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
     // Absent when caching is off, so the request is byte-identical to one made
     // before any of this existed.

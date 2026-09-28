@@ -348,6 +348,54 @@ func TestEnvironmentClient_GetThunderBinding_AdminURLIsOptional(t *testing.T) {
 	}
 }
 
+func TestAIGatewayBindingFromAnnotations(t *testing.T) {
+	ann := map[string]string{
+		annAIGatewayEndpoint:   "http://ai-gateway.amp.localhost:8084",
+		annAIGatewayAdminURL:   "http://api.amp.localhost:8080/api/v1",
+		annAIGatewayGateway:    "gw-uuid",
+		annAIGatewaySecretPath: "secret/aep/amp/default",
+		annAIGatewayBinding:    "ai-gateway-default-default",
+	}
+	got, err := aiGatewayBindingFromAnnotations("default", "default", ann)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got.Endpoint != "http://ai-gateway.amp.localhost:8084" {
+		t.Errorf("Endpoint = %q", got.Endpoint)
+	}
+	if got.GatewayID != "gw-uuid" || got.AdminURL != "http://api.amp.localhost:8080/api/v1" {
+		t.Errorf("binding = %+v", got)
+	}
+	if got.OrgID != "default" || got.Environment != "default" {
+		t.Errorf("binding lost its coordinates: %+v", got)
+	}
+}
+
+// A half-written record must read as ABSENT, not as usable. An endpoint with no
+// gateway id cannot bind an agent to a provider, and the failure would surface
+// several calls later as a 4xx naming none of this.
+func TestAIGatewayBindingHalfWrittenIsAbsent(t *testing.T) {
+	for _, missing := range []string{annAIGatewayEndpoint, annAIGatewayAdminURL, annAIGatewayGateway} {
+		ann := map[string]string{
+			annAIGatewayEndpoint: "http://ai-gateway.amp.localhost:8084",
+			annAIGatewayAdminURL: "http://api.amp.localhost:8080/api/v1",
+			annAIGatewayGateway:  "gw-uuid",
+		}
+		delete(ann, missing)
+		if _, err := aiGatewayBindingFromAnnotations("default", "default", ann); !errors.Is(err, ErrNoAIGatewayBinding) {
+			t.Errorf("without %s: err = %v, want ErrNoAIGatewayBinding", missing, err)
+		}
+	}
+}
+
+// No annotations at all is the ordinary state of an environment nobody has
+// provisioned for Agent Manager. It is not an error condition.
+func TestAIGatewayBindingAbsentEntirely(t *testing.T) {
+	if _, err := aiGatewayBindingFromAnnotations("default", "default", nil); !errors.Is(err, ErrNoAIGatewayBinding) {
+		t.Fatalf("err = %v, want ErrNoAIGatewayBinding", err)
+	}
+}
+
 // ---- the gateway assertion --------------------------------------------------
 
 // Read off the SAME projection as the Thunder binding, for the same reason: the

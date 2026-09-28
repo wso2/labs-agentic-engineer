@@ -25,8 +25,11 @@ import { WireframePanel } from "./WireframePanel";
 import type { CollabSpec } from "../collab/useCollabSpec";
 
 // The heavy lazy canvas is irrelevant here — record what scene/model it receives.
+// `canvasThrows` stands in for the real canvas failing a render mid-stream.
+let canvasThrows = false;
 vi.mock("@aep/ui-excalidraw-view", () => ({
   ExcalidrawView: ({ scene, focusScreens }: { scene: string; focusScreens?: readonly string[] }) => (
+    canvasThrows ? (() => { throw new Error("canvas exploded"); })() :
     <div
       data-testid="excalidraw"
       data-elements={String(JSON.parse(scene).elements?.length ?? 0)}
@@ -65,6 +68,7 @@ function renderPanel(collab: CollabSpec) {
 }
 
 beforeEach(() => {
+  canvasThrows = false;
   mockDerived.mockReset();
   mockDerivedPrototype.mockReset();
   mockDerivedPrototype.mockReturnValue({ model: null, isPending: false, isError: false });
@@ -327,6 +331,33 @@ describe("WireframePanel prototype toggle", () => {
     renderPanel(makeCollab(ytext)); // agent in room
     act(() => { ytext.insert(0, 'screen Catalog\n  navbar "Shop"\n'); });
     expect(screen.queryByRole("button", { name: /prototype/i })).not.toBeInTheDocument();
+  });
+
+  it("contains a canvas render throw to the canvas, and the next flush clears it", () => {
+    // A throw inside the canvas used to unmount the whole app. Now the rail,
+    // header and chat stay; only the drawing area shows the fallback, and the
+    // next line-flush (a new scene) retries without anyone pressing anything.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      mockDerived.mockReturnValue({ scene: null, isPending: false, isError: true });
+      const doc = new Y.Doc();
+      const ytext = doc.getText(DSL_PATH);
+      renderPanel(makeCollab(ytext));
+
+      canvasThrows = true;
+      act(() => { ytext.insert(0, 'screen Catalog "Shoppers browse products"\n  navbar "Shop"\n'); });
+      expect(screen.getByRole("alert")).toHaveTextContent(/The wireframe canvas hit an error/);
+      expect(screen.queryByTestId("excalidraw")).not.toBeInTheDocument();
+      // The panel's own header is still up: the failure did not leave the canvas.
+      expect(screen.getByText("Drawing…")).toBeInTheDocument();
+
+      canvasThrows = false;
+      act(() => { ytext.insert(ytext.length, '  heading "Browse products"\n'); });
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getByTestId("excalidraw")).toBeInTheDocument();
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it("explains when the prototype model cannot be derived", () => {

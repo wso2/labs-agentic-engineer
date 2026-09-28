@@ -61,7 +61,7 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
 | `EndpointGate` | needs | after OC Ready, a component that advertises an external URL stays pending until that URL ANSWERS. ONE gate, wired via `SetEndpointGate` onto BOTH the deploy-stage read (`DeploymentState`) and the status poll (`holdUnreachable`), so the supervisor and the console cannot answer differently about one component and the first probe serves both. The URL rides `ReleaseBindingSummary.ExternalURL` — the same object, no second request. Nil skips the gate, and the composition root wires one only when the data-plane gateway fronts TLS: a plane without it has no certificate to wait for, and its `*.openchoreoapis.localhost` names resolve to loopback from this process. A component that advertises no URL passes untouched |
 | `OrgPublisher` | needs | `organization` — per-org Thunder publisher provisioning + the IDP profile a protected API's JWT validation is pinned to. Best-effort: a failure composes an unpinned trait rather than failing a version's deploy |
 | `ProjectLister` | needs | `sourcecontrol`, at the root — every project the platform tracks, for the converge sweep. The git-repository index rather than the executions table, because the run loop mints no execution rows and a sweep reading those saw nothing on that rail |
-| `Service` · `ComponentService` · `ConfigService` | offers | the edge (the 14 public ops) |
+| `Service` · `ComponentService` · `ConfigService` | offers | the edge — every op this domain serves. The authoritative list is `edge/method_origin_test.go`'s `opOwner` ledger (a reflection gate fails if an op is served by an embed the ledger does not name), so it is not restated here to go stale |
 
 ## Owns
 - The OC `Project`/`Component` aggregate roots (OC is the store) and `ReleaseBinding` write-authority; the
@@ -218,4 +218,5 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
   always designed to show. A slug deleted and recreated therefore renders TWO cards — the live project
   billed only for its own work, and the incarnation that spent the rest — because a slug is not an
   identity. Spec-turn spend carries no lifetime marker and sits whole on whichever card is current.
+
 - Platform-wide rules (tenant gate, secrets fence, feature-free domains) → [../../README.md](../../README.md).

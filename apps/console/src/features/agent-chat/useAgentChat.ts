@@ -501,7 +501,7 @@ export function useAgentChat(
       setIsSending(true);
       markSending(true);
       // The row goes up NOW, not after the dispatch answers. `startTurn`
-      // resolves the repo, the workspace ref, the org's Anthropic key, two git
+      // resolves the repo, the workspace ref, the org's model connection key, two git
       // heads and two snapshot extracts before it returns a turn id — and the
       // user watching their own message not appear for all of that cannot tell
       // a slow platform from a dropped message. It carries no turnId yet;

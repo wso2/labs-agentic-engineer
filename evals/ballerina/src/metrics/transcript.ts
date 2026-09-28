@@ -17,7 +17,7 @@
  */
 
 /**
- * The PATH the agent took, read off `claude.log`.
+ * The PATH the agent took, read off `runtime.log`.
  *
  * This is the half of the score that the CLI and the skill are tuned against.
  * The outcome half (`build.ts`) is what keeps it honest: a run can reach a green

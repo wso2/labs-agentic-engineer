@@ -81,11 +81,12 @@ type turnJob struct {
 	// author is the acting user for the journal (#463), nil when the bearer
 	// carries no human identity — an M2M token journals no author rather than
 	// a bare subject claim.
-	author       *agentsvc.JournalAuthor
-	repoRef      sourcecontrol.RepoRef
-	baseRef      string
-	skillsRef    string
-	anthropicKey string
+	author    *agentsvc.JournalAuthor
+	repoRef   sourcecontrol.RepoRef
+	baseRef   string
+	skillsRef string
+	// llm is the org's key and model, resolved when the turn was admitted.
+	llm AgentLLM
 	// Room-scoped turn (#86 phase 4): non-empty collabRoomID makes the agents
 	// service a live peer of this room (joining with collabToken, the
 	// prompting user's bearer). The doc is the write surface — the runner
@@ -136,8 +137,8 @@ func (s *Service) runTurn(ctx context.Context, job turnJob) {
 // architect of list_org_endpoints, causing invented cross-project org-service
 // names that fail exact-name resolution at build. mcpForTurn (additionally
 // gated on the MCP token minter being wired) and the dispatched
-// TurnRequest.WebSearch flag (external-dependency-discovery #252 — Anthropic's
-// web_search provider tool, which needs no BFF-minted credential) key off this
+// TurnRequest.WebSearch flag (external-dependency-discovery #252 — the
+// connection's web_search tool, which needs no BFF-minted credential) key off this
 // SAME condition. A plain chat turn with no room does not qualify.
 func designOrCollabTurn(job turnJob) bool {
 	return job.flow == "design" || job.collabRoomID != ""
@@ -315,8 +316,10 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 	if job.collabRoomID != "" {
 		collab = &agentsvc.CollabBlock{RoomID: job.collabRoomID, Token: job.collabToken}
 	}
-	body, err := s.client.Turn(ctx, job.nsConversationID, job.orgID, job.anthropicKey, agentsvc.TurnRequest{
-		Turn: job.turn,
+	body, err := s.client.Turn(ctx, job.nsConversationID, job.orgID, job.llm.Key, agentsvc.TurnRequest{
+		Turn:       job.turn,
+		Model:      job.llm.Connection.Model,
+		Connection: agentsvc.ConnectionFor(job.llm.Connection),
 		Workspace: agentsvc.WorkspaceRef{
 			ConversationID: job.nsConversationID,
 			TurnID:         job.turnID,
@@ -383,6 +386,14 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 
 	fold := agentfold.New(s.turnBaseReader(job.repoRef, job.baseRef))
 	var manifest *agentfold.Manifest
+	// agentErr is the coded error frame the agents service ended the turn
+	// with, when it could name the failure; it is still relayed like any
+	// other part, so an attached reader sees it live.
+	var agentErr *agentfold.TurnError
+	// contextTokens is the context the conversation held at the last model
+	// step's end — the turn's closing context size, which the rotation check
+	// reads on the next send (context_rotation.go).
+	var contextTokens *int64
 	var foldErr error
 	end, readErr := agentfold.ForEachDataFrame(&pulseReader{r: body, activity: activity}, func(raw []byte) error {
 		var part agentfold.StreamPart
@@ -392,6 +403,14 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 		if m, ok := agentfold.ManifestOf(part); ok {
 			manifest = &m
 			return nil // backend integrity plumbing — never forwarded (D14)
+		}
+		if te, ok := agentfold.TurnErrorOf(part); ok && knownTurnErrorCode(te.Code) {
+			agentErr = &te
+		}
+		if part.Type == agentfold.PartFinishStep {
+			if n, ok := agentfold.StepContextOf(raw); ok {
+				contextTokens = &n
+			}
 		}
 		s.broker.Append(job.turnID, raw)
 		if roomMode {
@@ -415,11 +434,7 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 		case manifest == nil:
 			// Same severed/errored semantics as the committed path — the agents
 			// service vouched for nothing.
-			msg := "stream ended without a manifest"
-			if end == agentfold.StreamEOF {
-				msg = "stream severed before the manifest"
-			}
-			return failedTerminal(turnReasonStreamDied, msg, nil)
+			return noManifestTerminal(end, agentErr)
 		}
 		// Edits live in the room's doc; git is untouched (persistence is the
 		// #86 phase-3 committer). The base sha stays the "content as of" pin.
@@ -433,7 +448,7 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 			NoChanges:   true,
 			SpecEdited:  !manifest.IsEmpty(),
 			EditedPaths: manifest.MutatedPaths(),
-		}, manifest)
+		}, manifest, contextTokens)
 	}
 
 	switch {
@@ -453,11 +468,7 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 	case manifest == nil:
 		// Severed (EOF) or completed-with-error ([DONE] after an in-band
 		// error frame) — either way agents vouched for nothing: no commit.
-		msg := "stream ended without a manifest"
-		if end == agentfold.StreamEOF {
-			msg = "stream severed before the manifest"
-		}
-		return failedTerminal(turnReasonStreamDied, msg, nil)
+		return noManifestTerminal(end, agentErr)
 	}
 
 	// D14 integrity gate: the Go fold must agree byte-for-byte with the
@@ -466,12 +477,12 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 		slog.ErrorContext(ctx, "genai: FOLD PARITY FAILURE — turn rejected, main untouched",
 			"turn", job.turnID, "error", err)
 		// The model DID run — a parity-rejected turn still burnt its tokens.
-		return withUsage(failedTerminal(turnReasonFoldParity, err.Error(), nil), manifest)
+		return withUsage(failedTerminal(turnReasonFoldParity, err.Error(), nil), manifest, contextTokens)
 	}
 	if manifest.IsEmpty() {
 		// A chat turn with no file ops: valid, completes with no commit. The
 		// terminal still carries the base sha as the "content as of" pin.
-		return withUsage(TurnTerminal{Status: turnStatusCompleted, CommitSHA: job.baseRef, NoChanges: true}, manifest)
+		return withUsage(TurnTerminal{Status: turnStatusCompleted, CommitSHA: job.baseRef, NoChanges: true}, manifest, contextTokens)
 	}
 	// Every genai turn is conversational/preview-only (#373 — the old
 	// commit-on-turn useCases are gone): file mutations stream to the client
@@ -480,13 +491,39 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 	// fold is reported like a no-op completion (base sha pinned, noChanges),
 	// so a refetch on the terminal reconciles the live preview back to the
 	// unchanged tree.
-	return withUsage(TurnTerminal{Status: turnStatusCompleted, CommitSHA: job.baseRef, NoChanges: true}, manifest)
+	return withUsage(TurnTerminal{Status: turnStatusCompleted, CommitSHA: job.baseRef, NoChanges: true}, manifest, contextTokens)
 }
 
-// withUsage stamps the manifest's token spend (#249) onto a terminal. A nil
-// manifest or a manifest without usage (pre-capture agents) leaves it unset.
-func withUsage(term TurnTerminal, m *agentfold.Manifest) TurnTerminal {
-	if m == nil || m.Usage == nil {
+// noManifestTerminal is the failed terminal of a stream that ended without a
+// manifest. When the agents service named the failure in a coded error frame
+// the turn fails with that code and its sentence (reason agent-error);
+// otherwise it fails with reason stream-died.
+func noManifestTerminal(end agentfold.StreamEnd, agentErr *agentfold.TurnError) TurnTerminal {
+	if agentErr != nil {
+		term := failedTerminal(turnReasonAgentError, agentErr.Message, nil)
+		term.Code = agentErr.Code
+		term.ResetAt = agentErr.ResetAt
+		term.Host = agentErr.Host
+		return term
+	}
+	msg := "stream ended without a manifest"
+	if end == agentfold.StreamEOF {
+		msg = "stream severed before the manifest"
+	}
+	return failedTerminal(turnReasonStreamDied, msg, nil)
+}
+
+// withUsage stamps the manifest's token spend (#249) and the turn's closing
+// context size onto a terminal. A nil manifest leaves both unset: without it
+// the agents service saved nothing into the conversation, so the context the
+// steps reached is not the history the next turn reads. A manifest without
+// usage (pre-capture agents) leaves the spend unset.
+func withUsage(term TurnTerminal, m *agentfold.Manifest, contextTokens *int64) TurnTerminal {
+	if m == nil {
+		return term
+	}
+	term.ContextTokens = contextTokens
+	if m.Usage == nil {
 		return term
 	}
 	term.Usage = &contracts.TokenUsage{
@@ -597,11 +634,17 @@ func terminalEventJSON(term TurnTerminal) []byte {
 		}{Type: "turn-committed", CommitSHA: term.CommitSHA, NoChanges: term.NoChanges}
 	} else {
 		payload = struct {
-			Type    string   `json:"type"`
-			Reason  string   `json:"reason"`
-			Message string   `json:"message,omitempty"`
-			Paths   []string `json:"paths,omitempty"`
-		}{Type: "turn-failed", Reason: term.Reason, Message: term.Message, Paths: term.Paths}
+			Type    string     `json:"type"`
+			Reason  string     `json:"reason"`
+			Message string     `json:"message,omitempty"`
+			Paths   []string   `json:"paths,omitempty"`
+			Code    string     `json:"code,omitempty"`
+			Host    string     `json:"host,omitempty"`
+			ResetAt *time.Time `json:"resetAt,omitempty"`
+		}{
+			Type: "turn-failed", Reason: term.Reason, Message: term.Message, Paths: term.Paths,
+			Code: term.Code, Host: term.Host, ResetAt: term.ResetAt,
+		}
 	}
 	b, err := json.Marshal(payload)
 	if err != nil { // unreachable: static shapes

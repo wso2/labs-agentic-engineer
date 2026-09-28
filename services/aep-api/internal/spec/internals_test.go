@@ -38,7 +38,7 @@ func TestValidateReadPath_WorkloadEscapeHatch(t *testing.T) {
 	}{
 		{"todo-webapp/workload.yaml", true},
 		{"workload.yaml", true}, // a component building from the repo root
-		{"tests/validation/report.json", true},
+		{"tests/acceptance/report.json", true},
 		{"specs/design/domain-model.md", true},
 
 		// The fence. A nested path would let the hatch walk the tree.

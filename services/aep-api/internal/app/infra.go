@@ -42,7 +42,7 @@ import (
 // assembles deterministically in milliseconds.
 type Infra struct {
 	DB              *gorm.DB
-	CredentialStore secrets.CredentialStore
+	CredentialStore secrets.TxCredentialStore
 	ColumnCipher    *secrets.ColumnCipher // same key as CredentialStore; seals column values
 	Minter          *secrets.AppTokenMinter
 	AppClientSecret string // GitHub App OAuth client_secret ("" ⇒ bind path disabled)

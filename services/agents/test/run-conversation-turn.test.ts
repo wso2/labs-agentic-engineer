@@ -30,6 +30,23 @@ import { sha256Hex } from "../src/shared/hash.js";
 import { mockModel, type MockStep } from "../src/shared/mock-model.js";
 import { testSkillSource } from "./skill-source.js";
 import { listen0 } from "../src/shared/listen.js";
+import { anthropicConnection, type ModelConnection } from "../src/shared/model.js";
+
+/** Anthropic's format on Ollama's host: the SDK reports it as `anthropic.messages`, yet it cannot run Anthropic's server tool. */
+const OLLAMA_ANTHROPIC_FORMAT: ModelConnection = {
+  ...anthropicConnection("ollama-test-key-0000000000", "gpt-oss:20b"),
+  baseURL: "https://ollama.com",
+  authScheme: "bearer",
+  capabilities: {
+    claudeCode: true,
+    claudeSubscription: false,
+    promptCache: true,
+    generatedAgents: false,
+    nativePdf: false,
+    webSearch: "ollama-api",
+    imageInput: "unknown",
+  },
+};
 
 const OPENAPI = "specs/design/components/hello-api/openapi.yaml";
 
@@ -121,6 +138,41 @@ test("a journaled turn appends one entry stamped with its user message's index",
     assert.equal(stored.messages[entry.messageIndex]?.role, "user", "messageIndex points at the turn's user message");
   }
   assert.ok(stored.turns[1]!.messageIndex > stored.turns[0]!.messageIndex);
+});
+
+// Each new turn names the connection that wrote it (history-for.ts decides
+// what a later connection may replay from that); a caller naming none runs on
+// Anthropic's own API.
+test("a journaled turn carries the fingerprint of the connection that wrote it", async () => {
+  const store = new InMemoryConversationStore();
+  const guard = new TurnGuard();
+  const turn = { files: SEED_FILES, store, guard, onEvent: () => {} };
+
+  await runConversationTurn({
+    ...turn,
+    id: "conv-fp",
+    instruction: "one",
+    model: textModel("ok"),
+    journal: { text: "one", turnId: "t-1" },
+  });
+  await runConversationTurn({
+    ...turn,
+    id: "conv-fp",
+    model: textModel("ok"),
+    instruction: "two",
+    connection: OLLAMA_ANTHROPIC_FORMAT,
+    journal: { text: "two", turnId: "t-2" },
+  });
+
+  const stored = await store.get("conv-fp");
+  assert.ok(stored);
+  assert.deepEqual(
+    stored.turns.map((t) => t.connection),
+    ["anthropic@api.anthropic.com", "anthropic@ollama.com"],
+  );
+  // The second turn's history came from another connection; it still landed
+  // in the transcript (historyFor must never make a copy the append target).
+  assert.equal(stored.messages.filter((m) => m.role === "user").length, 2);
 });
 
 // An un-journaled turn (older caller, eval) stores no entry — the read path
@@ -777,7 +829,7 @@ test("manifest: a rejected/noop op does not appear (touched = applied only)", as
   assert.deepEqual(manifest.deleted, []);
 });
 
-test("manifest: carries the turn's summed token usage and the injected model id (#249)", async () => {
+test("manifest: carries the turn's summed token usage and the connection's model id (#249)", async () => {
   const store = new InMemoryConversationStore();
   const guard = new TurnGuard();
   const { events, onEvent } = collector();
@@ -789,7 +841,7 @@ test("manifest: carries the turn's summed token usage and the injected model id 
     instruction: "rename",
     files: SEED_FILES,
     model: editModel(),
-    modelId: "claude-test-model",
+    connection: anthropicConnection("sk-ant-test", "claude-test-model"),
     store,
     guard,
     onEvent,
@@ -805,7 +857,7 @@ test("manifest: carries the turn's summed token usage and the injected model id 
   });
 });
 
-test("manifest: a chat-only turn still reports usage; no injected modelId ⇒ model is \"\"", async () => {
+test("manifest: a chat-only turn still reports usage; no connection ⇒ model is \"\"", async () => {
   const store = new InMemoryConversationStore();
   const guard = new TurnGuard();
   const { events, onEvent } = collector();
@@ -1026,7 +1078,7 @@ function toolNames(model: { doStreamCalls: Array<{ tools?: unknown }> }): string
   return tools.map((t) => t.name ?? t.id ?? "");
 }
 
-test("webSearch: true + an Anthropic model registers Anthropic's web_search provider tool", async () => {
+test("webSearch: true on Anthropic's own API registers Anthropic's web_search provider tool", async () => {
   const store = new InMemoryConversationStore();
   const guard = new TurnGuard();
   const { onEvent } = collector();
@@ -1038,17 +1090,17 @@ test("webSearch: true + an Anthropic model registers Anthropic's web_search prov
     files: SEED_FILES,
     webSearch: true,
     model,
+    connection: anthropicConnection("sk-ant-test"),
     store,
     guard,
     onEvent,
   });
 
-  const names = toolNames(model);
-  assert.ok(
-    names.some((n) => n === "web_search" || n.includes("web_search")),
-    `expected web_search in the tool set, got: ${names.join(", ")}`,
-  );
+  const tools = (model.doStreamCalls[0]?.tools ?? []) as Array<{ name?: string; type?: string }>;
+  const search = tools.find((t) => t.name === "web_search");
+  assert.equal(search?.type, "provider", `expected Anthropic's provider tool, got: ${JSON.stringify(search)}`);
   // The core file tools are still present alongside it.
+  const names = toolNames(model);
   assert.ok(names.includes("addFile") && names.includes("editFile"));
 });
 
@@ -1077,19 +1129,70 @@ test("webSearch absent ⇒ no web_search tool; tool map is byte-identical to a p
   assert.ok(!baselineNames.some((n) => n === "web_search" || n.includes("web_search")));
 });
 
-test("webSearch: true but a non-Anthropic model ⇒ no web_search tool (silent degrade)", async () => {
+test("webSearch: true on a connection whose strategy is none ⇒ no web_search tool", async () => {
   const store = new InMemoryConversationStore();
   const guard = new TurnGuard();
   const { onEvent } = collector();
-  const model = mockModel([{ kind: "text", text: "ok" }]); // default mock-provider (non-Anthropic)
+  const model = mockModel([{ kind: "text", text: "ok" }]);
+  const connection = {
+    ...OLLAMA_ANTHROPIC_FORMAT,
+    baseURL: "https://llm.example/v1",
+    capabilities: { ...OLLAMA_ANTHROPIC_FORMAT.capabilities, webSearch: "none" as const },
+  };
 
-  await runConversationTurn({ id: "ws3", instruction: "x", files: SEED_FILES, webSearch: true, model, store, guard, onEvent });
+  await runConversationTurn({ id: "ws3", instruction: "x", files: SEED_FILES, webSearch: true, model, connection, store, guard, onEvent });
 
   const names = toolNames(model);
-  assert.ok(
-    !names.some((n) => n === "web_search" || n.includes("web_search")),
-    `web_search must be absent for a non-Anthropic model, got: ${names.join(", ")}`,
+  assert.ok(!names.some((n) => n.includes("web_search")), `web_search must be absent, got: ${names.join(", ")}`);
+});
+
+// The regression the strategy exists for: an Anthropic-format model on Ollama
+// reports the `anthropic.messages` provider, and Anthropic's server tool sent
+// there fails the turn. The connection's strategy decides instead.
+test("webSearch: true on Ollama runs a platform-executed web_search over Ollama's API, even on the Anthropic format", async () => {
+  const store = new InMemoryConversationStore();
+  const guard = new TurnGuard();
+  const { events, onEvent } = collector();
+  const model = mockModel(
+    [
+      { kind: "toolCall", toolCallId: "s1", toolName: "web_search", input: { query: "Stripe PaymentIntents API" } },
+      { kind: "text", text: "Found it: https://docs.stripe.com/api/payment_intents" },
+    ],
+    { provider: "anthropic.messages" },
   );
+  const searched: Array<{ url: string; auth: string | null; body: unknown }> = [];
+  const toolFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    searched.push({ url: String(url), auth: new Headers(init?.headers).get("authorization"), body: JSON.parse(String(init?.body)) });
+    return new Response(
+      JSON.stringify({ results: [{ title: "Payment Intents", url: "https://docs.stripe.com/api/payment_intents", content: "Creates a PaymentIntent." }] }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof globalThis.fetch;
+
+  await runConversationTurn({
+    id: "ws5",
+    instruction: "x",
+    files: SEED_FILES,
+    webSearch: true,
+    model,
+    connection: OLLAMA_ANTHROPIC_FORMAT,
+    toolFetch,
+    store,
+    guard,
+    onEvent,
+  });
+
+  const tools = (model.doStreamCalls[0]?.tools ?? []) as Array<{ name?: string; type?: string }>;
+  assert.equal(tools.find((t) => t.name === "web_search")?.type, "function", "a client tool, not Anthropic's server tool");
+  assert.deepEqual(searched, [
+    {
+      url: "https://ollama.com/api/web_search",
+      auth: "Bearer ollama-test-key-0000000000",
+      body: { query: "Stripe PaymentIntents API", max_results: 5 },
+    },
+  ]);
+  const result = events.find((e) => e.type === "tool-result" && e.toolName === "web_search");
+  assert.match(JSON.stringify(result?.output), /docs\.stripe\.com\/api\/payment_intents/);
 });
 
 test("webSearch shadow-guard: an MCP-discovered tool named 'web_search' never shadows the real provider tool", async () => {

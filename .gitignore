@@ -29,6 +29,11 @@ generated/
 # Env / secrets
 .env
 .env.*
+# Also anything ENDING in .env — `.env*` misses a generated file named for what
+# it holds (`.poc-api-platform-client.env`), which is exactly the shape a script
+# writes credentials into. Caught one sitting untracked in a worktree, one
+# `git add -A` away from being committed.
+*.env
 !.env.example
 
 # Dev playground threads (services/agents/playground)
@@ -55,6 +60,9 @@ learning/
 **/.vitest-attachments/
 .scratch/
 .agents/worktrees/
+# .claude is a symlink to .agents; tools that walk the symlinked path (knip)
+# need the same rule under its name.
+.claude/worktrees/
 
 # Scheduled-task runtime lock (machine-local: pid + sessionId)
 .agents/scheduled_tasks.lock
@@ -70,9 +78,6 @@ playground/.projects/
 
 # Draft design notes (scratch, not part of the committed design record)
 docs/design/draft/
-
-# Per-developer local chart overrides (copy from values.local.dev.yaml.example)
-deployments/helm-charts/platform/values.local.dev.yaml
 
 # Local build output of the dev secret-manager stub (15MB binary; rebuild with
 # `GOWORK=off go build -o local-secret-manager-api .` in that directory).
@@ -90,6 +95,7 @@ deployments/scripts/setup-local
 # Local session artifacts — dev-tool config and working notes, not repo content
 /.agents/launch.json
 /docs/superpowers/
+/.superpowers/
 
 # aider's local repo-map cache — a tool's scratch, never source.
 .aider.tags.cache.v*/
@@ -106,3 +112,8 @@ deployments/scripts/setup-local
 
 # Ballerina eval sweeps: scratch packages, transcripts and reports (on-demand, never CI)
 evals/ballerina/.runs/
+tools/aectl/aectlv2
+
+# Python bytecode from the deployment helper scripts
+__pycache__/
+*.pyc

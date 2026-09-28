@@ -16,7 +16,7 @@
 
 // Package componentbuild serves the component build + deploy read surface for
 // the bound org — trigger/list builds, build logs, the deploy list, and the
-// component OpenAPI spec behind the console's build and Test tabs.
+// component OpenAPI spec behind the console's Builds and Deployments pages.
 //
 // Triggers: trigger-build, list-builds, get-build-logs, list-deployments, get-component-openapi.
 // Ports:    projects.ComponentService (the component read + build service).

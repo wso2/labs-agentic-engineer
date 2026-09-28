@@ -142,4 +142,17 @@ describe("screenChatAttachments", () => {
     expect(rejected[0]?.reason).toContain("files are accepted");
     expect(rejected[1]?.reason).toBe("Larger than 5 MB");
   });
+
+  it("refuses an image the org's model cannot read, before any size rule", () => {
+    const reads = { model: "glm-5.3", imageInput: "no", nativePdf: false } as const;
+    const { accepted, rejected } = screenChatAttachments([], [fileOf("shot.png", 32), fileOf("brief.pdf", 32)], reads);
+    expect(accepted.map((f) => f.name)).toEqual(["brief.pdf"]);
+    expect(rejected).toEqual([
+      { name: "shot.png", reason: "glm-5.3 does not read images. Describe it in text, or switch to a model that reads images" },
+    ]);
+  });
+
+  it("refuses nothing on the model's account without a connection", () => {
+    expect(screenChatAttachments([], [fileOf("shot.png", 32)], null).accepted).toHaveLength(1);
+  });
 });

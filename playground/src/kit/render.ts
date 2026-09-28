@@ -41,6 +41,7 @@ function inputLabel(input: unknown): string {
   if (typeof v.name === "string") return v.name;
   if (typeof v.question === "string") return v.question; // ask_question
   if (Array.isArray(v.questions)) return `${v.questions.length} question(s)`; // ask_questions
+  if (typeof v.query === "string") return v.query; // web_search
   return "";
 }
 
@@ -87,6 +88,10 @@ export function renderPart(part: StreamPart): void {
         // below rendered every question card as a red "✗ error", which is what
         // a `/start` interview shows on its very first turn.
         stdout.write(`  ${dim("…")} awaiting your answer\n`);
+      } else if (Array.isArray((r as { results?: unknown } | undefined)?.results)) {
+        // web_search answers with the results it found, not an {ok} verdict.
+        const found = (r as { results: Array<{ url?: string }> }).results;
+        stdout.write(`  ${green("✓")} ${found.length} results ${dim(found.map((f) => f.url ?? "").join(" "))}\n`);
       } else if (r?.ok) stdout.write(`  ${green("✓")} ${r.op ?? "loaded"} ${dim(r.status ?? "")}\n`);
       // A fire-and-forget tool resolves with `status: "ok"` and no `ok` flag.
       else if (r?.status === OK) stdout.write(`  ${green("✓")} ${r.op ?? OK}\n`);

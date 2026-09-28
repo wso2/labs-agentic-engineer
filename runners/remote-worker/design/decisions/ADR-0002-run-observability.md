@@ -216,8 +216,8 @@ Four further gaps, all verified rather than assumed:
 
    **A failed FAN-OUT is the exception, and it prints everything it has.** The
    one-line rule holds because the command is on the row above and the whole
-   output is in `claude.log`. A subagent has neither: its transcript is not on
-   this feed, and `claude.log` dies with the pod. Measured live, that left a
+   output is in `runtime.log`. A subagent has neither: its transcript is not on
+   this feed, and `runtime.log` dies with the pod. Measured live, that left a
    22-minute subagent arriving as a bare `ok:false` with the reason recorded
    nowhere. So a failed fan-out emits a SECOND event — an `error` log line
    attributed to the subagent, carrying the tool result's text bounded to 10
@@ -292,12 +292,12 @@ Four further gaps, all verified rather than assumed:
 15. **The developer options are opt-in, and they are files.** `debugFile`,
     `stderr` and `includePartialMessages` are on for every playground run and
     off in a pod unless `AEP_RUNNER_DEBUG=1` opts one in. The split is by sink,
-    not by taste: nothing collects a pod's files (`claude.log` has been written
+    not by taste: nothing collects a pod's files (`runtime.log` has been written
     unconditionally for as long as it has existed and only the playground has
     ever read one), so these are for someone sitting in front of a run
     directory — and the debug log holds prompt text, which is why it stays off a
     channel the console renders to a browser. Streaming frames reach neither the
-    feed nor `claude.log`; they exist so the watchdog can tell a long generation
+    feed nor `runtime.log`; they exist so the watchdog can tell a long generation
     from a wedged one, and writing one JSON line per token would turn a
     diagnostic into the hang it reports on.
 
@@ -332,7 +332,7 @@ Four further gaps, all verified rather than assumed:
 
     The progress feed is unaffected, and that is checked rather than hoped:
     `assistantToolUseBlocks` selects `type === "tool_use"` and ignores every
-    other block kind, so the new content reaches `claude.log` and stops there.
+    other block kind, so the new content reaches `runtime.log` and stops there.
     Decision 12 still holds — this is developer detail that is READ, not fed.
 
 17. **The system messages that explain a silence are read, not dropped.**
@@ -411,7 +411,7 @@ Four further gaps, all verified rather than assumed:
 12. **Developer detail is READ, never fed.** What took the time, exactly what
     failed, and the reasoning that led there are a different audience's
     questions, and answering them in the progress feed buries the two lines that
-    matter. `claude.log` already holds every message; `progress.ndjson` holds the
+    matter. `runtime.log` already holds every message; `progress.ndjson` holds the
     durations the SDK does not stamp. `play <dir> log [--slow|--thinking]` joins
     them on demand. A derived index was rejected: it would be a cache of an
     analysis, and one that can drift from the truth is worse than none.

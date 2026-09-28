@@ -18,6 +18,7 @@ package run
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -35,8 +36,13 @@ import (
 
 // stubCycles captures the row AppendCycle builds. Only Append is exercised; the
 // rest of CycleStore is present to satisfy the port and must never be called
-// here — a test that reached them would be testing the loop, not the projection.
-type stubCycles struct{ appended []delivery.RunCycle }
+// here — a test that reached them would be testing the loop, not the projection
+// — except NoteModelHost, which the dispatch activity's own tests read back.
+type stubCycles struct {
+	appended []delivery.RunCycle
+	hosts    map[string]string // cycle id → model host, from NoteModelHost
+	hostErr  error
+}
 
 func (s *stubCycles) Append(_ context.Context, cycle *delivery.RunCycle) (string, error) {
 	s.appended = append(s.appended, *cycle)
@@ -44,7 +50,19 @@ func (s *stubCycles) Append(_ context.Context, cycle *delivery.RunCycle) (string
 }
 
 func (s *stubCycles) NoteDispatch(context.Context, string, string) error { return nil }
-func (s *stubCycles) Finish(context.Context, string, string) error       { return nil }
+
+func (s *stubCycles) NoteModelHost(_ context.Context, cycleID, host string) error {
+	if s.hostErr != nil {
+		return s.hostErr
+	}
+	if s.hosts == nil {
+		s.hosts = map[string]string{}
+	}
+	s.hosts[cycleID] = host
+	return nil
+}
+
+func (s *stubCycles) Finish(context.Context, string, string) error { return nil }
 func (s *stubCycles) SetValidationVerdict(context.Context, string, string, int, string) error {
 	return nil
 }
@@ -114,4 +132,56 @@ func TestAppendCycle_UnwiredStoreFails(t *testing.T) {
 		RunID: "run-1", Kind: delivery.CycleKindValidation, ValidationIssue: 77,
 	})
 	require.ErrorIs(t, err, errNotConfigured)
+}
+
+// launchingDispatcher stands in for the coding agent: it reports a launch on
+// host, or fails with err.
+type launchingDispatcher struct {
+	host string
+	err  error
+}
+
+func (d launchingDispatcher) Dispatch(context.Context, delivery.MilestoneDispatch) (delivery.AgentLaunch, error) {
+	if d.err != nil {
+		return delivery.AgentLaunch{}, d.err
+	}
+	return delivery.AgentLaunch{JobRef: "ca-job-1", ModelHost: d.host}, nil
+}
+
+// The dispatch activity copies the launch's model host onto the cycle — the
+// host its usage is later priced on — and still returns the bare Job reference,
+// the value workflow history has always recorded for it.
+func TestDispatchAgent_RecordsTheLaunchHostOnTheCycle(t *testing.T) {
+	cycles := &stubCycles{}
+	acts := NewActivities(Deps{Cycles: cycles, Dispatcher: launchingDispatcher{host: "api.anthropic.com"}})
+
+	jobRef, err := acts.DispatchAgent(context.Background(), delivery.MilestoneDispatch{
+		OrgID: "acme", ProjectID: "shop", Kind: delivery.CycleKindCoding, CycleID: "cycle-1",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "ca-job-1", jobRef)
+	require.Equal(t, "api.anthropic.com", cycles.hosts["cycle-1"])
+}
+
+// A launch that failed records nothing: there is no Job, so no host ran it.
+func TestDispatchAgent_FailedLaunchRecordsNoHost(t *testing.T) {
+	cycles := &stubCycles{}
+	acts := NewActivities(Deps{Cycles: cycles, Dispatcher: launchingDispatcher{err: errors.New("boom")}})
+
+	_, err := acts.DispatchAgent(context.Background(), delivery.MilestoneDispatch{CycleID: "cycle-1"})
+	require.Error(t, err)
+	require.Empty(t, cycles.hosts)
+}
+
+// A host write that fails after the Job launched does NOT fail the activity:
+// retries are off for dispatch and a failure reads as agent death, so returning
+// it would launch a second agent beside the running one. The cycle is left
+// unpriced instead.
+func TestDispatchAgent_HostWriteFailureDoesNotFailTheLaunch(t *testing.T) {
+	cycles := &stubCycles{hostErr: errors.New("db down")}
+	acts := NewActivities(Deps{Cycles: cycles, Dispatcher: launchingDispatcher{host: "api.anthropic.com"}})
+
+	jobRef, err := acts.DispatchAgent(context.Background(), delivery.MilestoneDispatch{CycleID: "cycle-1"})
+	require.NoError(t, err)
+	require.Equal(t, "ca-job-1", jobRef)
 }

@@ -54,32 +54,24 @@ import { useRunProgress, type RunProgressCycle } from "../hooks/useRunProgress";
  */
 function CycleSection({
   section,
-  ordinal,
-  runNumber,
+  label,
+  showKind,
   expanded,
   onToggle,
 }: {
   section: RunProgressCycle;
-  /** The cycle's CHRONOLOGICAL position, counted from the oldest — never its
-   *  position on screen, which is reversed. */
-  ordinal: number;
-  /** Which run this cycle belongs to, for a surface that stacks several runs'
-   *  feeds. Omitted leaves the heading as the cycle alone. Explicitly `| undefined`
-   *  because `exactOptionalPropertyTypes` is on and the feed forwards its own
-   *  optional prop straight through. */
-  runNumber?: number | undefined;
+  /** The heading — ONE string for it and for the pull request's accessible name.
+   *  The link has to state which box it belongs to, and composing the label twice
+   *  is how the two drift apart. Keeping them identical is also what WCAG 2.5.3
+   *  asks for: the accessible name contains the visible label. */
+  label: string;
+  /** Whether the kind chip says anything: it tells cycles apart, so a feed that
+   *  shows one kind has nothing for it to tell. */
+  showKind: boolean;
   expanded: boolean;
   onToggle: (open: boolean) => void;
 }) {
   const { cycle, events } = section;
-  // ONE string for the heading and for the pull request's accessible name. The link
-  // has to state which box it belongs to — two runs each hold a "Cycle 1" — and
-  // composing the prefix twice is how the two drift apart. Keeping them identical is
-  // also what WCAG 2.5.3 asks for: the accessible name contains the visible label.
-  const label =
-    runNumber === undefined
-      ? `Cycle ${ordinal}`
-      : `Run ${runNumber} · Cycle ${ordinal}`;
   return (
     <Accordion
       disableGutters
@@ -100,10 +92,14 @@ function CycleSection({
           sx={{ alignItems: "center", width: "100%", pr: 1 }}
         >
           <Typography variant="subtitle2">{label}</Typography>
-          <Chip label={cycle.kind} size="small" variant="outlined" />
+          {showKind && <Chip label={cycle.kind} size="small" variant="outlined" />}
+          {/* Dispatches of THIS cycle: an agent that died was started again for
+              the same work. "Started", not "attempts" — an attempt is what the
+              validation page calls one judging of a version, and the two would
+              otherwise sit on one row meaning different things. */}
           {cycle.attempts > 1 && (
             <Typography variant="caption" color="text.secondary">
-              {cycle.attempts} attempts
+              started {cycle.attempts} times
             </Typography>
           )}
           <Typography variant="caption" color="text.secondary">
@@ -127,7 +123,7 @@ function CycleSection({
               number={cycle.prNumber}
               url={cycle.prUrl}
               name={`${label} pull request`}
-              tooltip="Open this cycle's pull request"
+              tooltip="Open its pull request"
               // The summary's whole surface toggles the section — without this,
               // opening the pull request also collapses the log being read.
               onClick={(e) => e.stopPropagation()}
@@ -143,6 +139,20 @@ function CycleSection({
 }
 
 /**
+ * A section's heading. The surface's own label wins; the default is the cycle's
+ * position, prefixed by the run where a page stacks several feeds — every feed
+ * numbers its own cycles from 1, so the run is what tells two "Cycle 1"s apart.
+ */
+function heading(
+  ordinal: number,
+  runNumber: number | undefined,
+  label: ((ordinal: number) => string) | undefined,
+): string {
+  if (label) return label(ordinal);
+  return runNumber === undefined ? `Cycle ${ordinal}` : `Run ${runNumber} · Cycle ${ordinal}`;
+}
+
+/**
  * The run's per-cycle progress feed. Mounted only where it should stream —
  * the hook opens the SSE connection on mount and closes it on unmount, so
  * keeping this behind a toggle is what keeps a settled page connection-free.
@@ -153,6 +163,7 @@ export function RunFeed({
   cycleKinds,
   expandNewest = true,
   runNumber,
+  label,
 }: {
   projectName: string;
   runId: string;
@@ -164,6 +175,12 @@ export function RunFeed({
    *  feed numbers its own cycles from 1, so without this two runs each show a
    *  "Cycle 1" in the same stack. Omitted = no run prefix, the single-feed case. */
   runNumber?: number;
+  /** How a section is headed, given the cycle's chronological position within
+   *  this feed (1 = oldest). Omitted = the feed's own `Cycle N`, prefixed by the
+   *  run when `runNumber` is set. A surface whose unit is not the cycle supplies
+   *  its own — the validation page, where a box is one attempt on the version
+   *  and "cycle" is the loop's word, not the reader's. */
+  label?: (ordinal: number) => string;
   /** Whether this feed may open its newest section. A page showing several feeds
    *  passes `false` for the historical ones, so exactly ONE box is open across the
    *  whole page rather than one per feed. */
@@ -208,7 +225,7 @@ export function RunFeed({
         // centred one looks like a mistake, not a distinction.
         <EmptyState
           compact
-          description="No cycle output yet — the run's first agent has not written a line."
+          description="No output yet — the run's first agent has not written a line."
         />
       ) : (
         shown.map((section, i) => (
@@ -219,10 +236,9 @@ export function RunFeed({
             // renumbering the boxes — cycle 1 is the run's first, wherever it is
             // drawn. Numbered within what is shown, too: a filtered feed owns one
             // phase and its section is "Cycle 1" of that phase, not of the whole run.
-            ordinal={feed.cycles.length - i}
-            // Every feed numbers its own cycles from 1, so the run is what tells two
-            // "Cycle 1"s apart when a version was validated more than once.
-            runNumber={runNumber}
+            label={heading(feed.cycles.length - i, runNumber, label)}
+            // A feed filtered to one kind would stamp the same chip on every row.
+            showKind={!cycleKinds || cycleKinds.length > 1}
             // The newest cycle is what the user came to watch, and it now LEADS the
             // stack instead of trailing it; older ones stay collapsed so a long run
             // does not open as a wall of log.

@@ -281,7 +281,7 @@ func TestLoadEmbeddedLibrary(t *testing.T) {
 		"cell-design":            "platform", "design": "platform",
 		"wireframes": "platform", "grilling": "platform",
 		"architecture": "platform", "openapi-conventions": "platform", "start": "platform",
-		"task-planning": "platform", "validation-criteria": "platform",
+		"task-planning": "platform", "acceptance-criteria": "platform",
 	}
 	for name, kind := range wantKinds {
 		sk, ok := by[name]

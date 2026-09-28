@@ -16,7 +16,7 @@
 # would not have achieved that anyway: it's only checked by the
 # USER_ONBOARDING flow's UserTypeResolver executor when a new account is
 # being auto-provisioned/invited into an app, never by the plain
-# AUTHENTICATION flow this client uses — see 92-ae-roles.yaml's header for
+# AUTHENTICATION flow this client uses — see 94-ae-roles.yaml's header for
 # how that was confirmed. Console access control is enforced by aep-api's AE
 # permission gate, not by Thunder refusing the login.)
 resource_type: application

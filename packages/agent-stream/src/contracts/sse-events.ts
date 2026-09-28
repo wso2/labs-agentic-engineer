@@ -627,6 +627,97 @@ export function isTurnAttachmentsOrAbsent(v: unknown): v is TurnAttachment[] | u
   return v === undefined || (Array.isArray(v) && v.every(isTurnAttachment));
 }
 
+/** The API formats a model connection speaks. */
+export const MODEL_FORMATS = ["anthropic", "openai-compatible"] as const;
+export type ModelFormat = (typeof MODEL_FORMATS)[number];
+
+/** How a connection's key is presented: Anthropic's own header, or `Authorization: Bearer`. */
+export const MODEL_AUTH_SCHEMES = ["x-api-key", "bearer"] as const;
+export type ModelAuthScheme = (typeof MODEL_AUTH_SCHEMES)[number];
+
+/**
+ * How a connection searches the web: Anthropic's server-side tool (only
+ * Anthropic's own API runs it), Ollama's search API, or not at all.
+ */
+export const WEB_SEARCH_STRATEGIES = ["anthropic-server-tool", "ollama-api", "none"] as const;
+export type WebSearchStrategy = (typeof WEB_SEARCH_STRATEGIES)[number];
+
+/** A fact a probe may not have established: never guessed. */
+export const TRISTATES = ["yes", "no", "unknown"] as const;
+export type Tristate = (typeof TRISTATES)[number];
+
+/**
+ * What a connection supports, computed once by aep-api (`modelconn.CapabilitiesOf`)
+ * and sent as is, so no consumer re-derives it from the host. Field names are
+ * pinned by aep-api's `agentsvc.TurnCapabilities`.
+ */
+export interface ModelCapabilities {
+  claudeCode: boolean;
+  claudeSubscription: boolean;
+  promptCache: boolean;
+  generatedAgents: boolean;
+  /** PDFs may ride as native document parts; otherwise they are sent as extracted text. */
+  nativePdf: boolean;
+  webSearch: WebSearchStrategy;
+  /** `no` refuses an image before the turn; `unknown` sends it and lets the provider answer. */
+  imageInput: Tristate;
+}
+
+/**
+ * The organization's model connection for one turn, beside the turn's `model`:
+ * which API format, which URL, how the key authenticates, the limits aep-api
+ * resolved, and what it supports. The key itself rides the `X-Model-Key`
+ * header, never the body.
+ */
+export interface TurnConnection {
+  format: ModelFormat;
+  /** The API root the SDKs take, ending in its version segment (`https://ollama.com/v1`). */
+  baseURL: string;
+  authScheme: ModelAuthScheme;
+  /** Resolved at save; absent on Anthropic's own API, where the model is known. */
+  contextWindow?: number;
+  /** Resolved at save; absent on Anthropic's own API. */
+  outputLimit?: number;
+  capabilities: ModelCapabilities;
+}
+
+function isOneOf<T extends string>(allowed: readonly T[], v: unknown): v is T {
+  return typeof v === "string" && (allowed as readonly string[]).includes(v);
+}
+
+function isPositiveIntOrAbsent(v: unknown): boolean {
+  return v === undefined || (typeof v === "number" && Number.isInteger(v) && v > 0);
+}
+
+function isModelCapabilities(v: unknown): v is ModelCapabilities {
+  if (v === null || typeof v !== "object") return false;
+  const c = v as Record<string, unknown>;
+  return (
+    typeof c.claudeCode === "boolean" &&
+    typeof c.claudeSubscription === "boolean" &&
+    typeof c.promptCache === "boolean" &&
+    typeof c.generatedAgents === "boolean" &&
+    typeof c.nativePdf === "boolean" &&
+    isOneOf(WEB_SEARCH_STRATEGIES, c.webSearch) &&
+    isOneOf(TRISTATES, c.imageInput)
+  );
+}
+
+/**
+ * Runtime guard for an untrusted `connection` value. The base URL must parse as
+ * an https URL; whether its host may be dialled is decided at the socket, on
+ * every connection, not here.
+ */
+export function isTurnConnection(v: unknown): v is TurnConnection {
+  if (v === null || typeof v !== "object") return false;
+  const c = v as Record<string, unknown>;
+  if (!isOneOf(MODEL_FORMATS, c.format) || !isOneOf(MODEL_AUTH_SCHEMES, c.authScheme)) return false;
+  if (typeof c.baseURL !== "string" || !URL.canParse(c.baseURL) || new URL(c.baseURL).protocol !== "https:") {
+    return false;
+  }
+  return isPositiveIntOrAbsent(c.contextWindow) && isPositiveIntOrAbsent(c.outputLimit) && isModelCapabilities(c.capabilities);
+}
+
 /**
  * Runtime guard for an untrusted `aim` value (#666).
  *
@@ -725,6 +816,18 @@ export interface TurnRequest {
    * calling the question tools.
    */
   headless?: boolean;
+  /**
+   * The model this turn runs on: the organization's chosen model id, resolved
+   * by the caller per turn. Absent → the service's default (`AGENT_MODEL`),
+   * which is what a local caller such as the playground relies on.
+   */
+  model?: string;
+  /**
+   * The connection `model` is served from (aep-api resolves it per turn, the
+   * key rides `X-Model-Key`). Absent → Anthropic's own API with the key as
+   * `x-api-key`.
+   */
+  connection?: TurnConnection;
   /** Where to read files + skills from the shared mount (IDs + shas only). */
   workspace: WorkspaceRef;
   filesChangedExternally?: boolean;
@@ -752,14 +855,14 @@ export interface TurnRequest {
    */
   collab?: CollabConfig;
   /**
-   * Attach Anthropic's provider-executed `web_search` tool for this turn
-   * (external-dependency-discovery #252) — lets the model verify a candidate
-   * external API/SDK actually exists before proposing a `dependencies` entry
-   * for it. The caller (BFF) sets this true under the SAME condition as `mcp`
-   * (design-generate or any collab room-scoped turn), but unlike `mcp` it
-   * needs no BFF-minted credential. Registered only when true AND the turn's
-   * model is actually Anthropic; omitted/false, or a non-Anthropic model, →
-   * the tool map is byte-identical to a turn without it.
+   * Give this turn a `web_search` tool (external-dependency-discovery #252) —
+   * lets the model verify a candidate external API/SDK actually exists before
+   * proposing a `dependencies` entry for it. The caller (BFF) sets this true
+   * under the SAME condition as `mcp` (design-generate or any collab
+   * room-scoped turn), but unlike `mcp` it needs no BFF-minted credential.
+   * Which tool it is follows the connection's `capabilities.webSearch`; with
+   * `none`, or omitted/false, the tool map is byte-identical to a turn
+   * without it.
    */
   webSearch?: boolean;
   /**
@@ -877,6 +980,7 @@ function isPlanContextOrAbsent(v: unknown): boolean {
  * derived server-side from tokens + model (console ADR-0011).
  */
 export interface TurnUsage {
+  /** Input tokens neither read from nor written to the prompt cache; those two are counted below. */
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
@@ -910,6 +1014,35 @@ export interface ManifestPart {
   usage?: TurnUsage;
 }
 
+/**
+ * A turn that failed for a reason the service can name ends with ONE coded
+ * `error` frame instead of the provider's raw error. `error` is the sentence a
+ * reader can show as is; the other fields let a consumer phrase its own.
+ *
+ * - `provider_limit`: the model provider refused on its usage limit (a 429
+ *   whose `retry-after` is past 5 minutes, or 429 retries that outlasted the
+ *   turn's budget). `resetAt` (ISO 8601) is set when the provider said when.
+ * - `output_truncated`: the connection's output limit cut a file write off
+ *   before its arguments closed, so nothing was written; `path` names the file
+ *   when the partial arguments had already named it.
+ */
+export type TurnErrorPart =
+  | { type: "error"; code: "provider_limit"; error: string; host: string; resetAt?: string }
+  | { type: "error"; code: "output_truncated"; error: string; toolName: string; path?: string };
+
+/**
+ * The turn is waiting on the model provider: it answered a model call with a
+ * 429 the provider-limit rule calls a WAIT (a short stated `retry-after`, well
+ * inside the turn's 429 budget), and the service is sleeping before it retries.
+ * One frame per such 429. It is status, not content: the next frame of any
+ * other type means the model answered and the wait is over, so no frame
+ * clears it. `host` names whose limit it is (`ollama.com`).
+ */
+export interface ProviderWaitPart {
+  type: "provider-wait";
+  host: string;
+}
+
 // --- The emitted event catalog ----------------------------------------------
 
 /**
@@ -940,6 +1073,8 @@ export const AGENT_SSE_EVENT_TYPES = [
   "tool-result",
   "tool-error",
   "error",
+  // Status only, while a model call waits out a short 429 (`ProviderWaitPart`).
+  "provider-wait",
   "finish",
   "manifest",
 ] as const;

@@ -128,3 +128,31 @@ export function attachmentTypeLabel(name: string): string {
 export function acceptedTypesSentence(): string {
   return ATTACHMENT_ACCEPT.split(",").join(", ");
 }
+
+/**
+ * What the organization's model reads, from its connection's capabilities
+ * (`GET /config`'s `llm`). The agents service fits every attachment to the
+ * same capabilities before a turn; screening here refuses at attach time what
+ * it would refuse there, and says how the rest will be read.
+ */
+export interface ModelReads {
+  model: string;
+  imageInput: "yes" | "no" | "unknown";
+  nativePdf: boolean;
+}
+
+/**
+ * Why the model cannot take this file, or undefined when it can. Only a model
+ * known not to read images refuses one; `unknown` is sent and the provider's
+ * own error names the problem.
+ */
+export function modelRefusal(name: string, reads: ModelReads | null): string | undefined {
+  if (reads?.imageInput !== "no" || !isImageAttachment(name)) return undefined;
+  return `${reads.model} does not read images. Describe it in text, or switch to a model that reads images`;
+}
+
+/** How the model reads a file when that differs from its type: a PDF off Anthropic's API is text. */
+export function readNote(name: string, reads: ModelReads | null): string | undefined {
+  if (reads === null || reads.nativePdf || extensionOf(name) !== "pdf") return undefined;
+  return "as text";
+}

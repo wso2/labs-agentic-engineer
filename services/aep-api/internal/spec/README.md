@@ -41,7 +41,7 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
 |---|---|---|
 | `Workspace` · `GitOpsService` · `RepoService` | needs | `sourcecontrol` — the gitfs engine hosting all spec + skills git content |
 | `resourceTypeCatalog` (returns `CRTType`) | needs | `dependencies` — the PE-authored CRT markers + declared outputs, projected at the root |
-| `AnthropicKeyResolver` · git-token `Resolver` | needs | `platform/secrets` — per-org keys + sealed git tokens |
+| `AgentLLMResolver` · git-token `Resolver` | needs | `organization` (wired at the root) — the org's model connection + its key (sent to the agents service as the turn body's `connection` + `X-Model-Key`) · `platform/secrets` — sealed git tokens |
 | `ArtifactService` · `ArtifactStore` · `SplitFrontmatter` | offers | `delivery` / `projects` / `dependencies` / `identity` — design reads, spec-save, status snapshots; `identity` reads `security.json` from the design bundle AT THE TAG being built, never at HEAD |
 | `HardConfigEdges` | offers | `projects` (deploy order) — which sibling addresses a component cannot start without |
 | `DescriptorWriter` | offers | `projects` — stamps `specs/.agentic-engineer.toml` into a repo at project create |
@@ -157,6 +157,16 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   non-current id with 409 `conversation_rotated` (the single-era rule — it relaxes to "belongs to
   this project" when multiple live threads land). Spec content itself is not gorm — it lives in git,
   reached through sourcecontrol's `Workspace`/gitfs engine.
+- **A conversation rotates near a smaller context window** (`context_rotation.go`). The spec agents
+  have no compaction. When the org's model connection states a `ContextWindow`, StartTurn reads the
+  conversation's last measured context (`agent_turns.context_tokens`: the final `finish-step`
+  part's whole prompt plus output, stamped only on turns that carried a manifest, since only those
+  joined the saved history) and, past 80% of the window, rotates the thread with
+  `RotateIfCurrent` (the scope lock makes concurrent senders mint one successor) and answers the
+  send with the ordinary 409 `conversation_rotated`. The message is not auto-continued on the new
+  thread, where it would lose the history it refers to. A running turn blocks it (409
+  `turn_in_progress`). A connection with no window (first-party Anthropic) skips the check before
+  any query. The summed `input_tokens` cannot stand in: it adds every step's prompt together.
 
 ## Invariants — don't break
 - **Single write-authority** over the git spec-content store and its version tags — every save/tag/discard

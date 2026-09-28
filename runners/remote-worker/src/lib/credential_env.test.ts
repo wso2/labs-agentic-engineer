@@ -109,9 +109,11 @@ test("scanCredentialEnv: collects every mounted credential at once", () => {
 
 test("CREDENTIAL_ENV_KEYS: names the credentials the dispatch mounts", () => {
   // A MIRROR pin, and only that. The dispatch's source of truth is Go —
-  // delivery/codingagent/oc_dispatcher.go (envAnthropicAPIKey, envGitHubToken)
-  // and publisher.go (envPublisherClientSecret) — so a credential added THERE
-  // breaks nothing here. What this test buys is that the two cannot drift
+  // delivery/codingagent/oc_dispatcher.go (envAnthropicAPIKey, envGitHubToken,
+  // envEvalModelAPIKey), model_env.go (envModelAPIKey, envClaudeCodeOAuthToken)
+  // and publisher.go (envPublisherClientSecret); ANTHROPIC_AUTH_TOKEN is set by
+  // the Claude Code adapter (runtime/claude/connection.ts) — so a credential
+  // added THERE breaks nothing here. What this test buys is that the two cannot drift
   // silently on this side: an edit to the list is a deliberate act with a
   // failing test in front of it. Keeping them in step is a review obligation,
   // the same way progress/schema.ts names its three mirrors.
@@ -120,6 +122,9 @@ test("CREDENTIAL_ENV_KEYS: names the credentials the dispatch mounts", () => {
     "GH_TOKEN",
     "ANTHROPIC_API_KEY",
     "CLAUDE_CODE_OAUTH_TOKEN",
+    "AEP_MODEL_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "AEP_EVAL_MODEL_API_KEY",
     "PUBLISHER_CLIENT_SECRET",
   ]);
   // PUBLISHER_CLIENT_ID is an identifier, not a secret — enrolling it would

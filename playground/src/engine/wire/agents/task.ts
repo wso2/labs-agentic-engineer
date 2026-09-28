@@ -22,7 +22,7 @@
  * Both wired-mode tasks are shaped the same: a single prompt, a hard turn cap,
  * a hook table that refuses everything outside the task's table, and a
  * transcript on disk so what the model saw and decided can be read afterwards —
- * the same reason a coding run keeps `claude.log`.
+ * the same reason a coding run keeps `runtime.log`.
  *
  * Credentials follow `code --host`: the developer's own `claude login` answers,
  * and the platform key sitting in `deployments/.env` is WITHHELD. These tasks

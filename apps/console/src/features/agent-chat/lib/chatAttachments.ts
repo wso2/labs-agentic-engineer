@@ -35,11 +35,13 @@ import {
   MAX_ATTACHMENT_FILE_BYTES,
   acceptedTypesSentence,
   isAcceptedAttachment,
+  modelRefusal,
+  type ModelReads,
   type RejectedFile,
 } from "../../../lib/attachments";
 
 export { ATTACHMENT_ACCEPT, MAX_ATTACHMENT_FILES, MAX_ATTACHMENT_FILE_BYTES };
-export type { RejectedFile };
+export type { ModelReads, RejectedFile };
 
 /**
  * The whole message's raw-byte ceiling, and the reason every other number here
@@ -70,14 +72,18 @@ function totalBytes(files: File[]): number {
  * type and size, the count cap, duplicate names, and the message's total-bytes
  * budget. One notice per refused file, reason verbatim — never a silent drop.
  *
- * Order matters. Type and per-file size come first because they are properties
- * of the file alone and the user can act on them directly ("this one is too
- * big"). The set-scoped rules come after, so a wrong-type file is never blamed
- * on the budget it also happened to exceed.
+ * Order matters. Type, what the model reads and per-file size come first
+ * because they are properties of the file alone and the user can act on them
+ * directly ("this one is too big"). The set-scoped rules come after, so a
+ * wrong-type file is never blamed on the budget it also happened to exceed.
+ *
+ * `reads` is the organization's model's capabilities; null (not loaded, or no
+ * connection) refuses nothing on the model's account.
  */
 export function screenChatAttachments(
   attached: File[],
   incoming: File[],
+  reads: ModelReads | null = null,
 ): { accepted: File[]; rejected: RejectedFile[] } {
   const accepted: File[] = [];
   const rejected: RejectedFile[] = [];
@@ -86,11 +92,14 @@ export function screenChatAttachments(
   let bytes = totalBytes(attached);
 
   for (const file of incoming) {
+    const refusal = modelRefusal(file.name, reads);
     if (!isAcceptedAttachment(file.name)) {
       rejected.push({
         name: file.name,
         reason: `Only ${acceptedTypesSentence()} files are accepted`,
       });
+    } else if (refusal !== undefined) {
+      rejected.push({ name: file.name, reason: refusal });
     } else if (file.size > MAX_ATTACHMENT_FILE_BYTES) {
       rejected.push({ name: file.name, reason: "Larger than 5 MB" });
     } else if (count >= MAX_ATTACHMENT_FILES) {

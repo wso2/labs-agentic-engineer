@@ -223,7 +223,7 @@ export function PromoteDialog({
                 {verdictSentence(verdict.label, verdict.tone)}
               </Typography>
               <LinkButton
-                to="/projects/$projectName/validation"
+                to="/projects/$projectName/validations"
                 params={{ projectName }}
                 size="small"
                 color="inherit"

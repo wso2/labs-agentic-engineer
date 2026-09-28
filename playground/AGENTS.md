@@ -61,7 +61,7 @@ and `react-webapp`'s `references/mock-mode.md` for the mock itself). In docker
 mode that is all inside the container. **In `--host` mode it is your machine**:
 the run binds a localhost port and drives a real browser under
 bypassPermissions. Nothing is installed — `agent-browser` and the browser are
-resolved off your `PATH`, the same way `playwright-cli` already is — but a run
+resolved off your `PATH`, the same way the browser CLI already is — but a run
 that dies badly can leave a `vite` process holding its port, and the next run's
 `--strictPort` will say so rather than quietly reading the old server.
 
@@ -112,13 +112,28 @@ Relative project paths resolve against where you launched `pnpm play` (pnpm's
 may live (a gitignored dot-dir, invisible to lint + license gates). Anywhere
 else inside the repo is refused.
 
-Requires `ANTHROPIC_API_KEY` (env or `deployments/.env`) for the **engineering**
-agent, which is an AI SDK model call with no other way to authenticate. The
+The **engineering** agent runs on a model connection named by the same
+`AEP_MODEL_*` variables a coding run reads (`AEP_MODEL_FORMAT`,
+`AEP_MODEL_BASE_URL`, `AEP_MODEL_AUTH_SCHEME`, `AEP_MODEL_API_KEY`, model
+`AEP_AGENT_MODEL`), sent on every turn as aep-api sends the organization's
+(`src/kit/model-connection.ts`, whose `capabilitiesOf` mirrors aep-api's
+`modelconn.CapabilitiesOf`); a design turn gets `web_search` as aep-api's does.
+With none of them set it requires `ANTHROPIC_API_KEY` (env, or
+`deployments/.env` if you keep one) and runs on Anthropic's own API. The
 **coding** agent is a Claude Code session and authenticates by mode: a docker run
 gets the key (a container reaches no credential store), while `--host` withholds
 it and lets the SDK use the developer's own credentials — the ones `claude login`
 wrote — so a local tuning loop bills your subscription, not the platform's key.
 `code --host --api-key` opts back into key auth.
+
+`AEP_MODEL_FORMAT` or `AEP_MODEL_BASE_URL` puts a **coding** run, in either mode,
+on that connection, shaped as a dispatch stamps it (`codingConnectionEnv`): the
+connection by name, `AEP_MODEL_WEB_SEARCH` derived as aep-api would when you set
+none, and `AEP_MODEL_API_KEY` as the ONE credential — no Anthropic credential
+follows the run to another host. With neither set, no
+`AEP_MODEL_*` variable reaches the run: the runner would read a bare
+`AEP_MODEL_API_KEY` as a key for Anthropic's own API. The runner image must carry
+the adapters (`FORCE=1 make build-runner`).
 
 `AEP_CODING_ANTHROPIC_KEY` bills **coding** runs to a separate credential — the
 local half of the platform's per-org coding-agent key (ADR-0016). It takes
@@ -133,12 +148,13 @@ It changes WHICH credential is used, not WHETHER one is:
 | `code` (docker) | `AEP_CODING_ANTHROPIC_KEY`, else `ANTHROPIC_API_KEY` |
 | `code --host --api-key` | `AEP_CODING_ANTHROPIC_KEY`, else `ANTHROPIC_API_KEY` |
 | `code --host` | none — your own `claude login` |
+| any, with a connection named | `AEP_MODEL_API_KEY` only; `--api-key` and `AEP_CODING_ANTHROPIC_KEY` do not apply |
 
 Docker needs no flag because a container reaches no keychain to fall back to.
-Host mode still requires `--api-key`: defining a variable is not the same act as
-asking this run to authenticate with it, and a bypassPermissions process on your
-own filesystem should not pick up a shared credential because a file elsewhere
-happened to define one.
+Without a connection, host mode still requires `--api-key`: defining a variable
+is not the same act as asking this run to authenticate with it, and a
+bypassPermissions process on your own filesystem should not pick up a shared
+credential because a file elsewhere happened to define one.
 
 An API key arrives as `ANTHROPIC_API_KEY`, an OAuth token as
 `CLAUDE_CODE_OAUTH_TOKEN` — and the run gets **exactly one of them**, same as in
@@ -184,7 +200,7 @@ is captured to `playground/.devtools/generations.json` (gitignored). Inspect
 with `npx @ai-sdk/devtools` (port 4983). Opt out per run with
 `AGENT_DEVTOOLS=false pnpm play …`. The coding agent is an Agent SDK session,
 not an AI SDK model — its full transcript is the run's
-`.aep-playground/runs/<ts>/…/claude.log` instead.
+`.aep-playground/runs/<ts>/…/runtime.log` instead.
 
 Beside it, `agent-sessions/` is the runtime's own scratch — the lead's
 transcript, a fanned-out subagent's, and the output files its backgrounded tasks
@@ -212,7 +228,7 @@ tagged `[#1]`/`[#2]` — and **on a terminal** the crew sits pinned under them:
     ☑ Build onboarding-webapp
     ▸ Walk onboarding-webapp in mock mode
     ✓ #1 Build onboarding-webapp React SPA  build clean  completed · 41m11s · 162 tools
-    ● #3 Walk onboarding-webapp in mock mode (background)  npx playwright test…  42.0s · ♥ 4.0s
+    ● #3 Walk onboarding-webapp in mock mode (background)  agent-browser open…   42.0s · ♥ 4.0s
       ⟳ npm run dev:mock                                                     running 41.5s
 ```
 
@@ -251,6 +267,31 @@ wrapped row makes the block one physical line taller than the cursor arithmetic
 believes, and the next erase would eat the transcript instead. The failure mode is
 "the block is short", never "the transcript is mangled". Closing takes the block
 down and leaves the merged end-of-run pass with no residue above it.
+
+## Choosing the coding-agent runtime
+
+The runtime is the platform's own organization setting, read from your shell and
+forwarded into the container by name exactly as a dispatch stamps it onto a pod:
+
+```
+# Claude Code (the default) — nothing to set
+pnpm play /abs/path/to/project code --yes
+
+# OpenCode, on haiku
+AEP_AGENT_RUNTIME=opencode AEP_AGENT_MODEL=claude-haiku-4-5 \
+  pnpm play /abs/path/to/project code --yes
+```
+
+Images, defaults and OpenCode's mode and credential limits are in `play --help`;
+each runtime's entry is one `RUNTIME_PROFILES` record (`src/engine/coding-run.ts`),
+and an unknown `AEP_AGENT_RUNTIME` is refused by the runner's own parser.
+
+Only `local.ts` and the skill library are mounted over the image: **the runner's
+own `src/` is the image's**, so a change to the runner (either runtime's adapter)
+is not in a playground run until `FORCE=1 make build-runner`.
+
+`play <dir> log` parses Claude Code's message shapes; for an OpenCode run read
+`progress.ndjson` and `.logs/runtime.log` directly.
 
 ## Fidelity contract
 

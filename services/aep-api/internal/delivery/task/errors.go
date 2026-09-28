@@ -52,9 +52,9 @@ var (
 	// omits the component name — a client input error, not a server fault, so
 	// the HTTP edge maps it to 400 rather than a generic 500.
 	ErrComponentNameRequired = errors.New("componentName is required")
-	// ErrNoAnthropicKey is returned pre-stream when the org has no Anthropic key.
-	// Mapped to 400.
-	ErrNoAnthropicKey = errors.New("organization has no Anthropic API key configured")
+	// ErrNoModelConnection is returned pre-stream when the org has no model
+	// connection to plan on. Mapped to 400.
+	ErrNoModelConnection = errors.New("organization has no model connection")
 	// ErrSkillsRepoUnavailable means the org's _skills repo (the plan turn's
 	// SkillsRef source) could not be resolved — its row is missing or
 	// unprovisionable, or the backing repo is gone/unreachable (live incident:

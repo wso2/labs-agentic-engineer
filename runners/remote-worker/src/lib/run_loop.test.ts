@@ -33,9 +33,11 @@ import {
   type RunDeadline,
   type RunTermination,
 } from "./run_loop.js";
-import { createClaudeAdapter } from "./progress/claude_adapter.js";
+import { createClaudeClassifier } from "../runtime/claude/classify.js";
+import { createClaudeAdapter } from "../runtime/claude/translate.js";
 import { createRunWatchdog } from "./progress/watchdog.js";
 import type { RunEventInput } from "./progress/emitter.js";
+import { createProviderLimits } from "./provider_limit.js";
 
 // Where in the stream a line was emitted. `"closed"` is the marker that matters:
 // it means the source had already ended, which is the whole settle rule.
@@ -80,6 +82,7 @@ async function replay(messages: unknown[]): Promise<{ exitCode: number; error?: 
     { messages: source(), stopTask: async () => {} },
     {
       translate: createClaudeAdapter({ taskKind: "implementation" }).translate,
+      classify: createClaudeClassifier(),
       // A real watchdog, with its emit redirected: it is never started here, so
       // it reports nothing — but it still has to survive every event the feed
       // sees, which is a pin worth keeping for free.
@@ -113,10 +116,12 @@ function rateLimit(utilization: number): unknown {
   };
 }
 
-// The filter itself is pinned in diagnostics.test.ts. What is pinned HERE is the
-// wiring, and specifically that the reader is built per RUN: a module-level
-// factory would remember the last sentence across runs, so a second pod on a
-// throttled account would stay silent about a limit it had never reported.
+// The filter itself is pinned in runtime/claude/classify.test.ts. What is
+// pinned HERE is the wiring, and specifically that the reader is per RUN — it
+// lives in the session's classifier, and `replay` builds one per run as the
+// runtime does per session: a module-level one would remember the last
+// sentence across runs, so a second pod on a throttled account would stay
+// silent about a limit it had never reported.
 test("consumeRun: an unchanged rate-limit sentence is said once per run", async () => {
   // 0.823 → 0.826 both round to 83%, so they are ONE sentence, not two.
   const stream = [rateLimit(0.82), rateLimit(0.823), rateLimit(0.826), rateLimit(0.834)];
@@ -133,7 +138,7 @@ test("consumeRun: an unchanged rate-limit sentence is said once per run", async 
   );
 
   // A fresh run says it again. This is the assertion that fails if the reader is
-  // ever hoisted out of `consumeRun`.
+  // ever hoisted out of the per-session classifier.
   const second = await replay([rateLimit(0.82)]);
   assert.equal(
     kindsOf(second.emitted, "notice").filter((e) => e.code === "rate_limit").length,
@@ -401,7 +406,7 @@ test("consumeRun: heartbeats reach the feed and never reset the watchdog's idle 
 
   await consumeRun(
     { messages: source(), stopTask: async () => {} },
-    { translate: adapter.translate, watchdog, emit: (e) => emitted.push(e) },
+    { translate: adapter.translate, classify: createClaudeClassifier(), watchdog, emit: (e) => emitted.push(e) },
   );
 
   // Bounded: at most one per agent per ten seconds, and both waits share the
@@ -460,6 +465,7 @@ test("consumeRun: a run that never ends is terminated at its deadline", async ()
     },
     {
       translate: createClaudeAdapter().translate,
+      classify: createClaudeClassifier(),
       watchdog: createRunWatchdog({ emit: () => {} }),
       emit: (event) => emitted.push(event),
       deadline,
@@ -507,6 +513,7 @@ test("consumeRun: the deadline stops only the tasks still running", async () => 
     { messages: source(), stopTask: async (taskId) => void stopped.push(taskId) },
     {
       translate: createClaudeAdapter().translate,
+      classify: createClaudeClassifier(),
       watchdog: createRunWatchdog({ emit: () => {} }),
       emit: () => {},
       deadline,
@@ -550,6 +557,7 @@ test("consumeRun: a fatal ends the run with exactly one settle, naming what ende
     { messages: source(), stopTask: async (taskId) => void stopped.push(taskId) },
     {
       translate: createClaudeAdapter().translate,
+      classify: createClaudeClassifier(),
       watchdog: createRunWatchdog({ emit: () => {} }),
       emit: (event) => emitted.push(event),
       deadline,
@@ -598,6 +606,7 @@ test("consumeRun: a fatal ends the run with no deadline configured", async () =>
     { messages: source(), stopTask: async () => {} },
     {
       translate: createClaudeAdapter().translate,
+      classify: createClaudeClassifier(),
       watchdog: createRunWatchdog({ emit: () => {} }),
       emit: (event) => emitted.push(event),
       terminator,
@@ -633,6 +642,7 @@ test("consumeRun: a fatal after the stream closed cannot re-settle the run", asy
     { messages: source(), stopTask: async () => {} },
     {
       translate: createClaudeAdapter().translate,
+      classify: createClaudeClassifier(),
       watchdog: createRunWatchdog({ emit: () => {} }),
       emit: (event) => emitted.push(event),
       terminator,
@@ -660,6 +670,7 @@ test("consumeRun: a stream that closes without any result is still a failure", a
     { messages: source(), stopTask: async () => {} },
     {
       translate: createClaudeAdapter().translate,
+      classify: createClaudeClassifier(),
       watchdog: createRunWatchdog({ emit: () => {} }),
       emit: (event) => emitted.push(event),
     },
@@ -688,6 +699,7 @@ test("consumeRun: a stream that throws fails the run and says why", async () => 
     { messages: source(), stopTask: async () => {} },
     {
       translate: createClaudeAdapter().translate,
+      classify: createClaudeClassifier(),
       watchdog: createRunWatchdog({ emit: () => {} }),
       emit: (event) => emitted.push(event),
       record: (message) => recorded.push(message),
@@ -715,6 +727,7 @@ test("consumeRun: a requested skill the session did not resolve warns", async ()
     { messages: source(), stopTask: async () => {} },
     {
       translate: createClaudeAdapter().translate,
+      classify: createClaudeClassifier(),
       watchdog: createRunWatchdog({ emit: () => {} }),
       emit: (event) => emitted.push(event),
       requestedSkills: ["aep", "ballerina"],
@@ -838,6 +851,7 @@ async function replayWithInput(
     },
     {
       translate: createClaudeAdapter({ taskKind: "implementation" }).translate,
+      classify: createClaudeClassifier(),
       watchdog: createRunWatchdog({ emit: () => {} }),
       emit: (event) => emitted.push({ at: cursor, event }),
       ...(opts.inputGraceMs !== undefined ? { inputGraceMs: opts.inputGraceMs } : {}),
@@ -888,6 +902,7 @@ test("consumeRun: a woken lead disarms the grace", async () => {
     { messages: source(), stopTask: async () => {}, endInput: () => endedAt.push(cursor) },
     {
       translate: createClaudeAdapter({ taskKind: "implementation" }).translate,
+      classify: createClaudeClassifier(),
       watchdog: createRunWatchdog({ emit: () => {} }),
       emit: () => {},
       inputGraceMs: 40,
@@ -931,6 +946,7 @@ async function replayThroughGrace(liveness: unknown): Promise<number[]> {
     { messages: source(), stopTask: async () => {}, endInput: () => endedAt.push(cursor) },
     {
       translate: createClaudeAdapter({ taskKind: "implementation" }).translate,
+      classify: createClaudeClassifier(),
       watchdog: createRunWatchdog({ emit: () => {} }),
       emit: () => {},
       inputGraceMs: 30,
@@ -966,4 +982,191 @@ test("consumeRun: on the probe 2 recording, input ends by the grace after the or
   assert.deepEqual(endedAt, [40]);
   assert.equal(settledAt, "closed");
   assert.equal(exitCode, 0);
+});
+
+// --- provider limits ---------------------------------------------------------
+//
+// The rule itself is table-tested in provider_limit.test.ts. What is pinned here
+// is the wiring: that the runtime's own retry messages reach it, that a verdict
+// ends the run through the ONE termination path (one `terminated` line, the live
+// tasks stopped, one settle), and that the settle carries the code aep-api
+// branches on. The stream is Claude Code's real `system/api_retry` shape, on a
+// fake clock the script moves between messages.
+
+/** Claude Code's retry report for a 429, as the SDK sends it. */
+function apiRetry429(attempt: number, retryDelayMs: number): unknown {
+  return {
+    type: "system",
+    subtype: "api_retry",
+    attempt,
+    max_retries: 10,
+    retry_delay_ms: retryDelayMs,
+    error_status: 429,
+    error: "rate_limit",
+  };
+}
+
+/** One model answer: a tool call. */
+function bashCall(id: string): unknown {
+  return {
+    type: "assistant",
+    parent_tool_use_id: null,
+    message: { content: [{ type: "tool_use", id, name: "Bash", input: { command: "ls" } }] },
+  };
+}
+
+type Scripted = { advance: number; message: unknown };
+
+/**
+ * Run a scripted stream on a fake clock: each step moves the clock, then yields.
+ * `endless` is a runtime still retrying, which never closes its stream on its
+ * own: past the script it goes quiet, which is exactly what the rule must not
+ * wait out. Otherwise the stream closes after the script, as a runtime that
+ * finished does.
+ */
+async function runScripted(script: Scripted[], opts: { endless?: boolean; terminatorToo?: boolean } = {}) {
+  let clock = Date.parse("2026-09-26T10:00:00.000Z");
+  const emitted: RunEventInput[] = [];
+  const recorded: unknown[] = [];
+  const stopped: string[] = [];
+  let quietForever = false;
+  async function* source(): AsyncGenerator<unknown> {
+    for (const step of script) {
+      clock += step.advance;
+      yield step.message;
+    }
+    if (!opts.endless) return;
+    quietForever = true;
+    await new Promise<void>(() => {});
+  }
+  const result = await consumeRun(
+    { messages: source(), stopTask: async (taskId) => void stopped.push(taskId) },
+    {
+      translate: createClaudeAdapter().translate,
+      classify: createClaudeClassifier(),
+      watchdog: createRunWatchdog({ emit: () => {} }),
+      emit: (event) => emitted.push(event),
+      record: (message) => recorded.push(message),
+      providerLimits: createProviderLimits({ host: "ollama.com", now: () => clock }),
+      ...(opts.terminatorToo ? { terminator: createRunTerminator() } : {}),
+    },
+  );
+  return { result, emitted, recorded, stopped, quietForever };
+}
+
+test("consumeRun: five minutes of 429 retries end the run once, and the settle carries the code", async () => {
+  // A background builder is live when the plan runs out; then the runtime
+  // retries every 30s and nothing else happens.
+  const script: Scripted[] = [{ advance: 0, message: taskStarted("task-builder") }];
+  for (let i = 0; i <= 10; i++) script.push({ advance: i === 0 ? 0 : 30_000, message: apiRetry429(i + 1, 30_000) });
+  // Anything past the trip must never be read.
+  script.push({ advance: 30_000, message: apiRetry429(99, 30_000) });
+
+  const { result, emitted, recorded, stopped, quietForever } = await runScripted(script, { endless: true, terminatorToo: true });
+
+  const terminated = emitted.filter((e) => e.kind === "notice" && e.code === "terminated");
+  assert.equal(terminated.length, 1, "the rule trips once");
+  assert.match(
+    String(terminated[0].detail),
+    /^\[provider] terminated — ollama\.com refused every model call with HTTP 429 for 5m and stated no reset, stopping 1 running task\(s\) — /,
+  );
+  assert.deepEqual(stopped, ["task-builder"], "the live builder is stopped, as on every early ending");
+
+  const settles = emitted.filter((e) => e.kind === "run_settled");
+  assert.equal(settles.length, 1, "one settle");
+  assert.equal(settles[0].outcome, "failure");
+  assert.equal(settles[0].code, "provider_limit");
+  assert.equal(settles[0].host, "ollama.com");
+  assert.equal(settles[0].resetAt, undefined, "no reset was ever stated");
+  assert.equal(settles[0].providerDetail, "429 rate_limit");
+  assert.equal(settles[0].error, "model provider limit reached on ollama.com");
+
+  // Every 429 up to the trip left one evidence line in runtime.log, and not one
+  // of them reached the feed.
+  const evidence = recorded.filter((m) => (m as { type?: string }).type === "model_provider_429");
+  assert.equal(evidence.length, 11);
+  assert.deepEqual(evidence.at(-1), {
+    type: "model_provider_429",
+    source: "runner",
+    host: "ollama.com",
+    status: 429,
+    retryDelayMs: 30_000,
+    body: "429 rate_limit",
+    verdict: "provider_limit",
+    waitedMs: 5 * 60_000,
+  });
+  assert.ok(!emitted.some((e) => JSON.stringify(e).includes("model_provider_429")));
+  assert.equal(quietForever, false, "the run ended at the trip, not after the script");
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.error, "model provider limit reached on ollama.com");
+});
+
+test("consumeRun: a long retry-after ends the run at the first 429, with the reset time", async () => {
+  const { emitted } = await runScripted([
+    { advance: 0, message: { type: "system", subtype: "init", skills: [] } },
+    { advance: 0, message: apiRetry429(1, 4 * 60 * 60_000) },
+  ], { endless: true });
+  const settles = emitted.filter((e) => e.kind === "run_settled");
+  assert.equal(settles.length, 1);
+  assert.equal(settles[0].code, "provider_limit");
+  assert.equal(settles[0].resetAt, "2026-09-26T14:00:00.000Z");
+  assert.equal(settles[0].error, "model provider limit reached on ollama.com until 2026-09-26T14:00:00.000Z");
+});
+
+test("consumeRun: a runtime that gives up on its 429s first still settles with the code", async () => {
+  // Claude Code's own ceiling: a minute of retries, then a failed result.
+  const { result, emitted } = await runScripted([
+    { advance: 0, message: apiRetry429(1, 20_000) },
+    { advance: 20_000, message: apiRetry429(2, 40_000) },
+    { advance: 40_000, message: { type: "result", subtype: "error_during_execution", errors: ["API Error: 429"] } },
+  ]);
+  const settles = emitted.filter((e) => e.kind === "run_settled");
+  assert.equal(settles.length, 1);
+  assert.equal(settles[0].outcome, "failure");
+  assert.equal(settles[0].error, "API Error: 429", "the runtime's own words stay the error");
+  assert.equal(settles[0].code, "provider_limit");
+  assert.ok(!emitted.some((e) => e.kind === "notice" && e.code === "terminated"), "the rule never tripped");
+  assert.equal(result.exitCode, 1);
+});
+
+test("consumeRun: a model that answers between 429s resets the five minutes, and a green run carries no code", async () => {
+  const script: Scripted[] = [];
+  for (let i = 0; i < 8; i++) script.push({ advance: 30_000, message: apiRetry429(i + 1, 30_000) });
+  script.push({ advance: 1_000, message: bashCall("toolu_answer") });
+  for (let i = 0; i < 8; i++) script.push({ advance: 30_000, message: apiRetry429(i + 1, 30_000) });
+  script.push({ advance: 1_000, message: { type: "result", subtype: "success" } });
+
+  const { result, emitted } = await runScripted(script);
+  assert.ok(!emitted.some((e) => e.kind === "notice" && e.code === "terminated"), "two 3.5-minute streaks are not one of seven");
+  const settles = emitted.filter((e) => e.kind === "run_settled");
+  assert.equal(settles.length, 1);
+  assert.equal(settles[0].outcome, "success");
+  assert.equal(settles[0].code, undefined);
+  assert.equal(result.exitCode, 0);
+});
+
+test("consumeRun: a lead that answers by spawning an agent resets the five minutes too", async () => {
+  // The default workflow's answer: a background wave. The translator puts no
+  // tool row on the feed for a spawn, so the `agent_started` is the answer.
+  const script: Scripted[] = [];
+  for (let i = 0; i < 8; i++) script.push({ advance: 30_000, message: apiRetry429(i + 1, 30_000) });
+  script.push({ advance: 1_000, message: taskStarted("task-wave") });
+  for (let i = 0; i < 8; i++) script.push({ advance: 30_000, message: apiRetry429(i + 1, 30_000) });
+  script.push({ advance: 1_000, message: { type: "result", subtype: "error_during_execution", errors: ["boom"] } });
+
+  const { emitted } = await runScripted(script);
+  assert.ok(!emitted.some((e) => e.kind === "notice" && e.code === "terminated"));
+  const settles = emitted.filter((e) => e.kind === "run_settled");
+  assert.equal(settles.length, 1);
+  assert.equal(settles[0].outcome, "failure");
+  assert.equal(settles[0].code, "provider_limit", "the second streak was still open when the run failed");
+
+  // Without the retries after the spawn, the failure is not the provider's.
+  const quiet = await runScripted([
+    ...script.slice(0, 9),
+    { advance: 1_000, message: { type: "result", subtype: "error_during_execution", errors: ["boom"] } },
+  ]);
+  const settle = quiet.emitted.filter((e) => e.kind === "run_settled")[0];
+  assert.equal(settle.outcome, "failure");
+  assert.equal(settle.code, undefined, "a spawn after the 429s closed the streak; the later failure is something else");
 });

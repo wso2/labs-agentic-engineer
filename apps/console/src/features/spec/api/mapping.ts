@@ -50,8 +50,24 @@ export interface SpecFileEntry {
 const GROUP_BY_FOLDER: Record<string, SpecGroup> = {
   requirements: "requirements",
   design: "designs",
-  validation: "validation",
+  // `validation` is absent on purpose — see ACCEPTANCE_PREFIX.
 };
+
+/**
+ * One acceptance-criteria document,
+ * `specs/validation/acceptance/<capability>.feature`.
+ *
+ * The single definition, because three places were carrying the same regex —
+ * the pane's read-only routing, the Validations page's oracle read, and the
+ * rail. A fourth copy is how one of them comes to disagree with the others
+ * about what an acceptance file is.
+ *
+ * Narrower than ACCEPTANCE_PREFIX: that admits the folder to the section, this
+ * picks the files the one rail entry stands for.
+ */
+export function isAcceptanceCriteriaFile(path: string): boolean {
+  return /^specs\/validation\/acceptance\/[^/]+\.feature$/.test(path);
+}
 
 // Reference documents (#383) are transient turn inputs, never committed
 // (ADR-0017), so nothing under here should ever reach the spec view. The guard
@@ -60,6 +76,12 @@ const GROUP_BY_FOLDER: Record<string, SpecGroup> = {
 // selectable, and pour a PDF's bytes into the editor pane — the exact incident
 // #427 was opened to fix.
 const REFERENCES_PREFIX = "specs/requirements/references/";
+
+// Admitted by prefix because its PARENT stays shut: `specs/validation/` also
+// holds the build's evaluation inputs, generated JSON with no viewer, which the
+// rail would offer as an editable textarea. Opening one subfolder keeps
+// whatever the phase adds there hidden until someone decides it is a document.
+const ACCEPTANCE_PREFIX = "specs/validation/acceptance/";
 
 /**
  * The spec-view group a path would belong to, or null for a path the view
@@ -72,13 +94,14 @@ const REFERENCES_PREFIX = "specs/requirements/references/";
  * beyond it (segments.length >= 3). A trailing slash means the path names a
  * DIRECTORY, not a file: it clears the length check (the empty last segment
  * counts) and would otherwise become a selectable entry with no file name.
- * Checked before the references branch below, so it holds for every group.
+ * Checked before the path branches below, so it holds for every group.
  */
 export function specGroupOf(path: string): SpecGroup | null {
   const segments = path.split("/");
   if (segments[0] !== "specs" || segments.length < 3) return null;
   if (segments[segments.length - 1] === "") return null;
   if (path.startsWith(REFERENCES_PREFIX)) return null;
+  if (path.startsWith(ACCEPTANCE_PREFIX)) return "validation";
   return GROUP_BY_FOLDER[segments[1] ?? ""] ?? null;
 }
 

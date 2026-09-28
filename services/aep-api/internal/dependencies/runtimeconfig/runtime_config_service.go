@@ -65,6 +65,15 @@ type RuntimeConfigService struct {
 	// a user action).
 	catalog resourceMarkerCatalog
 	store   *spec.ArtifactStore
+	// tryItCallbackURL is the platform tester's OAuth callback — one fixed URL,
+	// the same for every project. Registered on every sign-in resource beside
+	// whatever the project's own web apps register, so a client that is NOT a
+	// component of the project (the console's Try it, the validation agent, the
+	// tester app) has somewhere to land. Without it an agent-only project's
+	// sign-in app carries no redirect URI at all, and nothing outside a
+	// component can complete a sign-in there. Empty = not configured = the
+	// registration is exactly what it was before this field existed.
+	tryItCallbackURL string
 }
 
 // resourceMarkerCatalog is runtimeconfig's narrow consumer port over the
@@ -90,6 +99,12 @@ func NewRuntimeConfigService(componentClient openchoreo.ComponentClient, resourc
 // platform-resource dependency — never blocks, always retries.
 func (s *RuntimeConfigService) SetResourceCatalog(c resourceMarkerCatalog) {
 	s.catalog = c
+}
+
+// SetTryItCallbackURL wires the platform tester's callback (TRY_IT_CALLBACK_URL).
+// Empty leaves callback registration untouched.
+func (s *RuntimeConfigService) SetTryItCallbackURL(u string) {
+	s.tryItCallbackURL = strings.TrimSpace(u)
 }
 
 // FilesForComponent computes the literal files the named component's
@@ -132,7 +147,15 @@ func (s *RuntimeConfigService) FilesForComponent(ctx context.Context, orgID, pro
 			break
 		}
 	}
-	if match == nil || match.ComponentType != spec.ComponentTypeWebApplication {
+	if match == nil {
+		return nil, true, nil
+	}
+	if match.ComponentType != spec.ComponentTypeWebApplication {
+		// No file to compute for a backend or an agent — but its sign-in
+		// dependency still needs the platform tester's callback registered, and
+		// this deploy-time compute is the one trigger every component passes
+		// through. A web app registers it below, as part of its own patch.
+		s.registerSignInCallbacks(ctx, orgID, projectID, design, match)
 		return nil, true, nil
 	}
 
@@ -191,6 +214,17 @@ func (s *RuntimeConfigService) buildEnvValues(ctx context.Context, orgID, projec
 // resource-free SPA never touches the resource client or the catalog.
 func platformResourceDeps(c *spec.DesignComponent) []spec.Dependency {
 	if c == nil || c.ComponentType != spec.ComponentTypeWebApplication {
+		return nil
+	}
+	return platformResourceDepsOf(c)
+}
+
+// platformResourceDepsOf is the walk without the web-app gate: every
+// `kind: platform-resource` dependency ANY component declares. Sign-in callback
+// registration needs it for agents and services, which declare the same
+// dependency a web app does.
+func platformResourceDepsOf(c *spec.DesignComponent) []spec.Dependency {
+	if c == nil {
 		return nil
 	}
 	var out []spec.Dependency
@@ -286,7 +320,7 @@ func (s *RuntimeConfigService) layerPlatformResources(ctx context.Context, orgID
 			// component's URL into the single field makes each emission pass
 			// replace the last — leaving only the web app that happened to compose
 			// last registered, and every other one permanently unable to sign in.
-			callbacks := consumerCallbackSet(design, dep.Name, m.ConsumerURLPath, originOf)
+			callbacks := consumerCallbackSet(design, dep.Name, m.ConsumerURLPath, originOf, s.tryItCallbackURL)
 			if originOf(webapp.Name) == "" {
 				slog.InfoContext(ctx, "runtime_config: SPA external URL not yet resolved; consumer URL registers on the converge pass",
 					"projectID", projectID, "component", webapp.Name, "dep", dep.Name)
@@ -350,12 +384,23 @@ func (s *RuntimeConfigService) layerPlatformResources(ctx context.Context, orgID
 // the same design for the same field (projects.thunderPass). Two writers are
 // tolerable only because both are pure functions of the design and therefore
 // agree; collapsing them to one is the follow-up.
-func consumerCallbackSet(design *spec.DesignFile, depName, path string, originOf func(string) string) []string {
+func consumerCallbackSet(design *spec.DesignFile, depName, path string, originOf func(string) string, fixed ...string) []string {
 	if design == nil {
 		return nil
 	}
 	seen := map[string]bool{}
 	var out []string
+	// Platform-owned callbacks first: they do not depend on any component's
+	// origin having resolved, which is what lets a project with NO web app
+	// register one at all. Dedup and the sort below keep the set byte-stable.
+	for _, f := range fixed {
+		f = strings.TrimSpace(f)
+		if f == "" || seen[f] {
+			continue
+		}
+		seen[f] = true
+		out = append(out, f)
+	}
 	for i := range design.Components {
 		comp := &design.Components[i]
 		if comp.ComponentType != spec.ComponentTypeWebApplication {
@@ -459,4 +504,56 @@ func sortedKeys(m map[string]interface{}) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// registerSignInCallbacks patches the platform tester's callback onto every
+// sign-in resource this NON-web-app component declares. It is the half of
+// layerPlatformResources a backend or agent needs — the redirect-URI
+// registration — without the half it does not (there is no env-config.js to
+// compose). Best-effort on every path: no callback configured, no catalog, no
+// resource client, or a binding not yet resolved each mean "nothing registered
+// this pass", never a failed deploy — the next deploy or converge retries.
+//
+// The web apps' own origins are included too, exactly as layerPlatformResources
+// does: the field on the binding is ONE comma-joined set, so a patch that named
+// only the fixed callback would drop every SPA's.
+func (s *RuntimeConfigService) registerSignInCallbacks(ctx context.Context, orgID, projectID string, design *spec.DesignFile, comp *spec.DesignComponent) {
+	if s.tryItCallbackURL == "" || s.resourceClient == nil || comp == nil {
+		return
+	}
+	deps := platformResourceDepsOf(comp)
+	if len(deps) == 0 {
+		return
+	}
+	markers, err := s.catalogMarkers(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "runtime_config: CRT marker catalog unavailable; sign-in callback not registered this pass",
+			"projectID", projectID, "component", comp.Name, "error", err)
+		return
+	}
+	origins := map[string]string{}
+	originOf := func(componentName string) string {
+		if o, ok := origins[componentName]; ok {
+			return o
+		}
+		o := strings.TrimRight(s.componentExternalURL(ctx, orgID, projectID, componentName), "/")
+		origins[componentName] = o
+		return o
+	}
+	for _, dep := range deps {
+		m := markers[dep.ResourceType]
+		if m.ConsumerURLEnvConfig == "" {
+			continue
+		}
+		callbacks := consumerCallbackSet(design, dep.Name, m.ConsumerURLPath, originOf, s.tryItCallbackURL)
+		if len(callbacks) == 0 {
+			continue
+		}
+		bindingName := ocname.ExternalResourceBindingName(projectID, dep.Name, bindingEnv())
+		if perr := s.resourceClient.PatchBindingEnvironmentConfigs(ctx, orgID, bindingName,
+			map[string]string{m.ConsumerURLEnvConfig: strings.Join(callbacks, ",")}); perr != nil {
+			slog.WarnContext(ctx, "runtime_config: sign-in callback patch failed; will retry on the next deploy",
+				"projectID", projectID, "component", comp.Name, "dep", dep.Name, "binding", bindingName, "error", perr)
+		}
+	}
 }

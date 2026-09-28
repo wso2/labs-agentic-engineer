@@ -45,6 +45,7 @@ export type ProjectRoleAssignment =
 export type ProjectTestUserState =
   components["schemas"]["ProjectTestUserState"];
 export type TestUserPassword = components["schemas"]["TestUserPassword"];
+export type ProjectSignIn = components["schemas"]["ProjectSignIn"];
 
 /**
  * The panel's live state, with the nullable wire arrays normalised away.
@@ -71,6 +72,13 @@ export interface ProjectRolesLiveState {
    * role; absent only when the panel could not be scoped at all.
    */
   resourceServer?: string | undefined;
+  /**
+   * How a client outside the project's own components signs in to it: the
+   * issuer to sign in AT and the public OAuth client to sign in AS. Absent
+   * when the project declares no sign-in resource — the test app then has
+   * nowhere to send a person, and the console offers no launch.
+   */
+  signIn?: ProjectSignIn | undefined;
 }
 
 /**
@@ -121,6 +129,7 @@ export function useProjectRoles(projectName: string, enabled: boolean) {
         projectRoles: data?.projectRoles ?? [],
         testUsers: data?.testUsers ?? [],
         resourceServer: data?.resourceServer,
+        signIn: data?.signIn,
       };
     },
     // Short, not Infinity: a Build in another tab changes this, and the panel

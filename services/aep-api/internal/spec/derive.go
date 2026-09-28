@@ -68,6 +68,11 @@ func (s *designService) DerivePlatformResourceFactsAtHead(ctx context.Context, o
 	if _, err := s.persistPlatformResourceDerivation(ctx, orgID, projectID, designFile, markers); err != nil {
 		return err
 	}
+	// Agent tool resolution (derive_agent_tools.go) already ran above, inside
+	// s.store.ReadDesign → AssembleDesignFrom — it is read-time computed
+	// (never a write rejection; see that file's doc comment for why) exactly
+	// like Dependency.Status/Reason, so every design read already carries it
+	// and no second pass is needed here.
 	return nil
 }
 

@@ -24,14 +24,13 @@ import path from "node:path";
 import {
   alwaysOnSkills,
   contractReferencePath,
-  validationStatusLineFor,
+  implementationSkills,
   onDemandSkills,
   promptWithProjectRoot,
   systemPromptAppend,
 } from "./runner.js";
 import { toolGlossary } from "./tool_glossary.js";
 import { MissingWorkflowSkillError, requireWorkflowBodies } from "./skills_presence.js";
-import { createValidationProgressTracker } from "./validation_progress.js";
 import type { DispatchRequest } from "./types.js";
 
 // What is NOT here any more: the MCP option builder, the deny list, the setting
@@ -42,94 +41,30 @@ import type { DispatchRequest } from "./types.js";
 
 // --- the issue status line: three ways to have none, all of them normal ------
 
-function validationDispatch(overrides: Partial<DispatchRequest> = {}): DispatchRequest {
-  return {
-    taskId: "11111111-1111-1111-1111-111111111111",
-    orgId: "acme",
-    projectId: "widgets",
-    componentName: "aep-validation",
-    repoUrl: "https://github.com/acme/widgets.git",
-    bearer: "",
-    identity: { name: "AEP", email: "aep@example.com" },
-    gitServiceUrl: "https://git.example.com",
-    prompt: "validation task",
-    taskKind: "validation",
-    validationIssue: 7,
-    ...overrides,
-  };
-}
-
-const progressTracker = () => createValidationProgressTracker(() => {});
-
-// The workspace's own wrapper and child env, as provisionWorkspace leaves them.
-const gh = { path: "/ws/.aep/gh", env: { GH_CONFIG_DIR: "/ws/.gh-config" } };
-
-// A coding run has no validation issue to speak on, and registering the hook
-// anyway would put a GitHub round trip on the Write and Bash calls of every
-// build to derive nothing.
-test("validationStatusLineFor: a run with no per-criterion tracker keeps no line", async () => {
-  const line = validationStatusLineFor(
-    validationDispatch({ taskKind: "implementation", validationIssue: undefined }),
-    undefined,
-    gh,
-    () => assert.fail("a coding run must not warn about a status line it never wanted"),
-  );
-  assert.equal(line, undefined);
-});
-
-// A validation dispatch that carried no issue number — an older BFF, or one that
-// could not resolve it — runs exactly as it did before, minus the line. Silent
-// is the old behaviour; failing here would trade two hours of work for the
-// commentary on it.
-test("validationStatusLineFor: a validation run with no issue number keeps no line", async () => {
-  const line = validationStatusLineFor(
-    validationDispatch({ validationIssue: undefined }),
-    progressTracker(),
-    gh,
-    () => assert.fail("an absent issue number is a normal dispatch, not a fault to report"),
-  );
-  assert.equal(line, undefined);
-});
-
-// The whole point: a validation run that CAN name its issue gets the line.
-test("validationStatusLineFor: a validation run that names its issue keeps a line", () => {
-  const line = validationStatusLineFor(
-    validationDispatch(),
-    progressTracker(),
-    gh,
-    () => assert.fail("a wired run must not warn"),
-  );
-  // Both halves, because the report generator's OUTCOME is what the repair line
-  // keys on and a tracker missing `settle` would report the loop as progress.
-  assert.equal(typeof line?.observe, "function");
-  assert.equal(typeof line?.settle, "function");
-});
-
 // --- alwaysOnSkills: the run's own workflow is not the design's to choose ----
 
 // Every other skill a build reads is a `skillsPinned` entry someone put in a
-// design.json. This list is not: no design decides whether a coding run follows
-// the coding workflow, and a validation run's workflow REPLACES it rather than
-// adding to it.
-test("alwaysOnSkills: an implementation run is steered by aep, a validation run by both", () => {
+// design.json. This list is not: no design decides whether a run follows its
+// workflow, and each task kind has exactly one (ADR-0037).
+test("alwaysOnSkills: each task kind is steered by exactly one workflow", () => {
   assert.deepEqual(alwaysOnSkills("implementation"), ["aep"]);
-  assert.deepEqual(alwaysOnSkills("validation"), ["aep", "aep-validation"]);
+  assert.deepEqual(alwaysOnSkills("validation"), ["validation-task"]);
 });
 
-// playwright-cli carries the browser mechanics a validation run reaches for, and
-// `aep-validation` names it by description. Paying for its body on every turn of
+// agent-browser carries the browser mechanics a validation run reaches for, and
+// `validation-task` names it by description. Paying for its body on every turn of
 // every validation run is what NOT listing it here buys.
-test("alwaysOnSkills: playwright-cli is left to on-demand loading", () => {
-  assert.ok(!alwaysOnSkills("validation").includes("playwright-cli"));
+test("alwaysOnSkills: agent-browser is left to on-demand loading", () => {
+  assert.ok(!alwaysOnSkills("validation").includes("agent-browser"));
 });
 
 // The other half of that sentence. `skills:` is an allowlist, so a skill in
 // NEITHER list is not deferred — it is unreachable, and the Skill tool rejects
-// the load `aep-validation` instructs. Absent from always-on AND present here is
+// the load `validation-task` instructs. Absent from always-on AND present here is
 // the pair that means "loadable, but not on every turn".
-test("onDemandSkills: a validation run may load playwright-cli", () => {
-  assert.deepEqual(onDemandSkills("validation"), ["playwright-cli"]);
-  assert.ok(!alwaysOnSkills("validation").includes("playwright-cli"));
+test("onDemandSkills: a validation run may load agent-browser", () => {
+  assert.deepEqual(onDemandSkills("validation"), ["agent-browser"]);
+  assert.ok(!alwaysOnSkills("validation").includes("agent-browser"));
 });
 
 // An implementation run gets the whole mirror instead (oneshot's else branch):
@@ -137,6 +72,21 @@ test("onDemandSkills: a validation run may load playwright-cli", () => {
 // module can know. Naming anything here would be a second, competing source.
 test("onDemandSkills: an implementation run names nothing", () => {
   assert.deepEqual(onDemandSkills("implementation"), []);
+});
+
+// Both task kinds read the one project mirror, so a coding run must drop the
+// validation workflow from it and keep everything else.
+test("implementationSkills: the whole mirror but the validation workflow", async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "aep-mirror-"));
+  try {
+    for (const name of ["aep", "go", "validation-task", "agent-browser"]) {
+      fs.mkdirSync(path.join(workspace, ".claude", "skills", name), { recursive: true });
+      fs.writeFileSync(path.join(workspace, ".claude", "skills", name, "SKILL.md"), `# ${name}\n`);
+    }
+    assert.deepEqual(await implementationSkills(workspace), ["aep", "agent-browser", "go"]);
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
 });
 
 // --- requireWorkflowBodies: a run with no procedure must not start -----------
@@ -171,11 +121,12 @@ test("requireWorkflowBodies: a mirror with no aep skill is fatal", () => {
   });
 });
 
-test("requireWorkflowBodies: a validation run missing only aep-validation is still fatal", () => {
+test("requireWorkflowBodies: a validation run missing validation-task is fatal, aep or not", () => {
   withMirror({ aep: "---\nname: aep\n---\n\nThe run\n" }, (workspace) => {
     assert.throws(
-      () => requireWorkflowBodies(workspace, ["aep", "aep-validation"]),
-      (err: unknown) => err instanceof MissingWorkflowSkillError && err.missing.length === 1,
+      () => requireWorkflowBodies(workspace, alwaysOnSkills("validation")),
+      (err: unknown) =>
+        err instanceof MissingWorkflowSkillError && err.missing.length === 1 && err.missing[0] === "validation-task",
     );
   });
 });
@@ -186,14 +137,14 @@ test("requireWorkflowBodies: present skills come back fenced and labelled as loa
   withMirror(
     {
       aep: "---\nname: aep\n---\n\nCODEWORD-RUN\n",
-      "aep-validation": "---\nname: aep-validation\n---\n\nCODEWORD-VALIDATION\n",
+      "validation-task": "---\nname: validation-task\n---\n\nCODEWORD-VALIDATION\n",
     },
     (workspace) => {
-      const out = requireWorkflowBodies(workspace, ["aep", "aep-validation"]);
+      const out = requireWorkflowBodies(workspace, ["aep", "validation-task"]);
       assert.match(out, /CODEWORD-RUN/);
       assert.match(out, /CODEWORD-VALIDATION/);
       assert.match(out, /<skill name="aep">/);
-      assert.match(out, /<skill name="aep-validation">/);
+      assert.match(out, /<skill name="validation-task">/);
       // Without this the agent re-invokes the Skill tool for guidance it already
       // has and pays for the body twice.
       assert.match(out, /ALREADY in your context/);
@@ -272,16 +223,10 @@ test("systemPromptAppend: the glossary names the fan-out, wait and task-list too
   assert.match(glossary, /`run_in_background: true`/);
   assert.match(glossary, /wait tool.*`TaskOutput`/);
   assert.match(glossary, /task list.*`TaskCreate`/);
-  // The skill says "the fast model" and "the default one" and leaves the aliases
-  // to this table; a lead that guesses one spends a turn on a schema error.
-  assert.match(glossary, /`haiku` \(the fast model\)/);
-  assert.match(glossary, /`sonnet` \(the default\)/);
-  // And ONLY models the platform can price. modelcost.SumCost is all-or-nothing:
-  // one slice whose model has no rate row makes the whole cycle's cost null. So
-  // offering an alias with no seeded rate turns the skill's own "pick the model
-  // for the job" into a silent way to lose a cycle's spend. This offered `opus`
-  // when only sonnet and haiku were seeded.
-  assert.doesNotMatch(glossary, /opus/i);
+  // A run has one model and the fan-out call names none: an alias offered here
+  // is a second model the org's key may not serve or the platform cannot price
+  // (modelcost.SumCost is all-or-nothing, so one unpriced slice nulls the cycle).
+  assert.doesNotMatch(glossary, /`model:`|haiku|opus/i);
 });
 
 
@@ -305,12 +250,12 @@ const STAGED_SECRET = "staged-secret-value-123456";
 /**
  * A workspace whose mirror carries both workflow skills, and nothing else.
  *
- * Both, because `alwaysOnSkills` names `aep-validation` for a validation run and
+ * Both, because `alwaysOnSkills` names `validation-task` for a validation run and
  * a mirror missing it is fatal by design — see requireWorkflowBodies.
  */
 function mirrorWorkspace(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aep-policy-"));
-  for (const name of ["aep", "aep-validation"]) {
+  for (const name of ["aep", "validation-task"]) {
     const skill = path.join(dir, ".claude", "skills", name);
     fs.mkdirSync(skill, { recursive: true });
     fs.writeFileSync(path.join(skill, "SKILL.md"), `# ${name}\nWORKFLOW BODY\n`, "utf8");
@@ -329,7 +274,7 @@ function layoutFor(workspace: string): WorkspaceLayout {
   };
 }
 
-const silentLog: TaskLog = { write: () => {}, close: () => {}, dir: os.tmpdir() };
+const silentLog: TaskLog = { write: () => {}, close: () => {}, dir: fs.mkdtempSync(path.join(os.tmpdir(), "aep-logs-")) };
 
 /**
  * A runtime that records what it was asked to run and then ends at once.
@@ -349,6 +294,8 @@ function recordingRuntime(): { runtime: Runtime; calls: { prompt: string; policy
       return {
         stream: { messages: (async function* () {})(), stopTask: async () => {} },
         translate: () => [],
+        classify: () => ({ kind: "activity" }),
+        usage: () => undefined,
         artifacts: async () => [],
         close: async () => {},
       };
@@ -449,6 +396,43 @@ test("startCodingRun: the preloaded appendix ends with the runtime's own glossar
   assert.ok(policy.skills.preloadBodies.endsWith("GLOSSARY"));
 });
 
+test("startCodingRun: names what the lead was given on the feed, and keeps the exact appendix beside runtime.log", async () => {
+  const workspace = mirrorWorkspace();
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "aep-logs-"));
+  const { runtime, calls } = recordingRuntime();
+  const lines: string[] = [];
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string) => (lines.push(String(chunk)), true)) as typeof process.stdout.write;
+  try {
+    const started = await startCodingRun(
+      dispatch(),
+      layoutFor(workspace),
+      { ...silentLog, dir: logDir },
+      { availableSkillNames: ["aep", "ballerina", "go"], pinnedBodies: "PINNED", pinnedSkillNames: ["ballerina"] },
+      undefined,
+      runtime,
+    );
+    await started.completion;
+  } finally {
+    process.stdout.write = original;
+  }
+  try {
+    const notices = lines
+      .flatMap((l) => l.split("\n"))
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as { kind: string; detail?: string })
+      .filter((e) => e.kind === "notice" && e.detail?.startsWith("[skills]"));
+    assert.deepEqual(
+      notices.map((n) => n.detail),
+      ["[skills] workflow: aep · pinned: ballerina · 3 available: aep, ballerina, go"],
+    );
+    assert.equal(fs.readFileSync(path.join(logDir, "prompt-appendix.md"), "utf8"), calls[0].policy.skills.preloadBodies);
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+    fs.rmSync(logDir, { recursive: true, force: true });
+  }
+});
+
 // A run cannot derive its own project root, and a run that guessed built a whole
 // component in the wrong tree, green.
 test("startCodingRun: the prompt names the absolute project root and the contract path", async () => {
@@ -471,20 +455,20 @@ test("startCodingRun: the prompt names the absolute project root and the contrac
 // The organization's setting reaches the pod as an env var, and an org that
 // never opened the page must get exactly the run it had.
 test("startCodingRun: the model is the org's setting, or the runtime's default", async () => {
-  assert.equal((await policyFor(dispatch())).model, "model-from-runtime");
-  assert.equal((await policyFor(dispatch(), { AEP_AGENT_MODEL: "claude-haiku-4-5" })).model, "claude-haiku-4-5");
+  assert.equal((await policyFor(dispatch())).connection.model, "model-from-runtime");
+  assert.equal(
+    (await policyFor(dispatch(), { AEP_AGENT_MODEL: "claude-haiku-4-5" })).connection.model,
+    "claude-haiku-4-5",
+  );
   // A blank stamp is the same as no stamp — a dispatcher that sends "" for an
   // unset setting must not pin the model to nothing.
-  assert.equal((await policyFor(dispatch(), { AEP_AGENT_MODEL: "" })).model, "model-from-runtime");
+  assert.equal((await policyFor(dispatch(), { AEP_AGENT_MODEL: "" })).connection.model, "model-from-runtime");
 });
 
-// Watching the authoring tools costs a hook on every call, so it is registered
-// only where something reads it.
-test("startCodingRun: only a validation run carries the per-criterion watchers", async () => {
-  assert.equal((await policyFor(dispatch())).observe, undefined);
-  const validation = await policyFor(dispatch({ taskKind: "validation" }));
-  assert.equal(typeof validation.observe?.toolUse, "function");
-  assert.equal(typeof validation.observe?.toolOutcome, "function");
+test("startCodingRun: no connection env is Anthropic's own API", async () => {
+  const { connection } = await policyFor(dispatch());
+  assert.equal(connection.format, "anthropic");
+  assert.equal(connection.host, "api.anthropic.com");
 });
 
 // A URL with no token must omit the server rather than register it

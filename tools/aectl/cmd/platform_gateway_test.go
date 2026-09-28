@@ -20,7 +20,41 @@ import (
 	"context"
 	"fmt"
 	"testing"
+
+	"github.com/spf13/viper"
 )
+
+// TestOcPipelineSourceEnvironment verifies oc.pipeline_source_environment
+// overrides the default "default" value.
+func TestOcPipelineSourceEnvironment(t *testing.T) {
+	t.Cleanup(func() { viper.Set("oc.pipeline_source_environment", "") })
+
+	viper.Set("oc.pipeline_source_environment", "")
+	if got := ocPipelineSourceEnvironment(); got != "default" {
+		t.Errorf("unset oc.pipeline_source_environment: got %q, want %q", got, "default")
+	}
+
+	viper.Set("oc.pipeline_source_environment", "development")
+	if got := ocPipelineSourceEnvironment(); got != "development" {
+		t.Errorf("oc.pipeline_source_environment=development: got %q, want %q", got, "development")
+	}
+}
+
+// TestOcOrgNamespace verifies oc.default_org_namespace overrides the default
+// "default" value.
+func TestOcOrgNamespace(t *testing.T) {
+	t.Cleanup(func() { viper.Set("oc.default_org_namespace", "") })
+
+	viper.Set("oc.default_org_namespace", "")
+	if got := ocOrgNamespace(); got != "default" {
+		t.Errorf("unset oc.default_org_namespace: got %q, want %q", got, "default")
+	}
+
+	viper.Set("oc.default_org_namespace", "acme")
+	if got := ocOrgNamespace(); got != "acme" {
+		t.Errorf("oc.default_org_namespace=acme: got %q, want %q", got, "acme")
+	}
+}
 
 func TestRunGatewayIngressCheck(t *testing.T) {
 	tests := []struct {

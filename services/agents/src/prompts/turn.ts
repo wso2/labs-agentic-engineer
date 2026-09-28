@@ -203,7 +203,10 @@ const FLOW_SUPPORTING_SKILLS: Record<string, string[]> = {
   // turn — there is nothing to condition on when the prompt is composed, and a
   // cached read costs a tenth of a re-prefill. Org-authored design skills stay
   // lazy: this map is flow wording and cannot know a given org's catalog.
-  design: ["grilling", "cell-design", "architecture", "security-design", "openapi-conventions", "wireframes", "validation-criteria"],
+  //
+  // `acceptance-criteria` writes the Gherkin features a validation run drives
+  // (ADR-0029), authored from the PRD alone.
+  design: ["grilling", "cell-design", "architecture", "security-design", "openapi-conventions", "wireframes", "agent-building", "acceptance-criteria"],
 };
 
 /** The branch a command names, or undefined for a token that IS its skill. */
@@ -410,6 +413,39 @@ export function attachmentsNote(names: string[] | undefined): string {
     listed.map((n) => `- ${n}`).join("\n") +
     "\n\n"
   );
+}
+
+/**
+ * The reference documents left out of this turn because the model on the
+ * connection cannot read them (an image on a model without vision, a scanned
+ * PDF where PDFs are read as text), each with the reason.
+ *
+ * The reference paragraph still lists them by path, so without this the model
+ * would take a document it never received as read, or go looking for it. The
+ * note makes the gap explicit and tells it to ask rather than guess. Repeated
+ * on every turn the reference is re-listed, which is every turn it would have
+ * been sent.
+ */
+export function unreadableReferencesNote(refs: readonly { filename: string; reason: string }[] | undefined): string {
+  if (!refs || refs.length === 0) return "";
+  return (
+    `${refs.length === 1 ? "This reference document was" : "These reference documents were"} ` +
+    `left out because the model on this connection cannot read ${refs.length === 1 ? "it" : "them"}; ` +
+    `do not assume what ${refs.length === 1 ? "it says" : "they say"}, and ask the user if the work depends on ` +
+    `${refs.length === 1 ? "it" : "them"}:\n` +
+    refs.map((r) => `- ${r.filename}: ${r.reason}`).join("\n") +
+    "\n\n"
+  );
+}
+
+/**
+ * What stands in a replayed message for an image the current model cannot read
+ * (`historyFor`): an image stored while the conversation ran on a model with
+ * vision would make a model without it refuse the whole request. Names the
+ * file, so the model still knows the image existed and what it was called.
+ */
+export function imageLeftOutOfHistory(filename: string | undefined): string {
+  return `[${filename ? `The image ${filename}` : "An image"} was left out here: the model on this connection does not read images.]`;
 }
 
 export function eagerSkillsFor(turn: TurnSpec): string[] {

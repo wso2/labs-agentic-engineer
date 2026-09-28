@@ -15,22 +15,25 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# scripts/park-observability.sh — park (scale to zero) or restore the heavy
+# deployments/scripts/park-observability.sh — park (scale to zero) or restore the heavy
 # workloads of the observability plane, without uninstalling anything.
 #
-# Usage: bash scripts/park-observability.sh [down|up|status]     (default: status)
+# Usage: bash deployments/scripts/park-observability.sh [down|up|status]   (default: status)
+#        make obs-park | obs-unpark | obs-status
 #
-# Why this exists. setup.sh installs the observability plane for every cluster,
-# because Agent Manager's charts install against it (its tracing module's setup
-# Job writes OpenSearch index templates, its console reads traces and metrics
-# from it). Installed and RUNNING, that plane is the single largest consumer on
-# a laptop cluster: OpenSearch, Prometheus, Alertmanager, the RCA agent, the
-# shippers and the query adapters add up to roughly 2 GiB of requests and over
-# 3 GiB of limits on an 8 GiB Colima VM. Most local work never reads a trace or
-# a metric. So setup.sh installs everything and then parks the heavy half here
-# as its last step; `up` brings it back when a log archive, a trace view or the
-# alert→RCA pipeline is wanted. There is no setup flag for this on purpose:
-# the plane is always installed, and this script is the one switch.
+# Why this exists. `make dev-env` installs the observability plane
+# (setup-env-for-aectl.sh step 7) because Agent Manager's charts install
+# against it: its tracing module's setup Job writes OpenSearch's index
+# templates, and its console reads traces and metrics from it. Installed and
+# RUNNING, that plane is the single largest consumer on a laptop cluster:
+# OpenSearch, Prometheus, Alertmanager, the RCA agent, the shippers and the
+# query adapters add up to roughly 2 GiB of requests and over 3 GiB of limits
+# on an 8 GiB Colima VM. Most local work never reads a trace or a metric. So
+# `make dev-env` installs everything, while nothing else heavy runs, and parks
+# the heavy half here as its last step; `up` brings it back when a log archive,
+# a trace view or the alert→RCA pipeline is wanted. Unpark between builds: on
+# an 8 GiB VM the plane plus a coding Job overloads the node.
+# WITH_OBSERVABILITY=0 skips the plane altogether, and with it Agent Manager.
 #
 # What "parked" costs, stated plainly:
 #   - The AEP console's log ARCHIVE for finished cycles (observer → OpenSearch)
@@ -60,19 +63,18 @@
 #
 # Idempotent: `down` on a parked plane and `up` on a running one are no-ops.
 # A later `helm upgrade` of one of these charts (a setup re-run) resets the
-# replica counts to the chart's; setup.sh re-parks at its end for that reason.
+# replica counts to the chart's; `make dev-env` parks at its end for that reason.
 set -e
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/env.sh"
-source "$SCRIPT_DIR/utils.sh"
+CLUSTER_NAME="${CLUSTER_NAME:-openchoreo}"
+CLUSTER_CONTEXT="${CLUSTER_CONTEXT:-k3d-${CLUSTER_NAME}}"
 
 NS="openchoreo-observability-plane"
 ACTION="${1:-status}"
 PARKED_ANNOTATION="aep.io/parked-replicas"
 PARK_NODE_LABEL="aep.io/parked"
 
-# The RCA agent's Deployment is named once, in env.sh (it was renamed
-# ai-rca-agent -> sre-agent in observability-plane 1.2.0).
+# The RCA agent's Deployment (renamed ai-rca-agent -> sre-agent in
+# observability-plane 1.2.0).
 RCA_DEPLOYMENT="${RCA_DEPLOYMENT:-sre-agent}"
 
 # Order is the restore order: the operator before the StatefulSets it owns.
@@ -213,7 +215,7 @@ case "$ACTION" in
         for name in "${PARK_DEPLOYMENTS[@]}"; do park_scalable deployment "$name"; done
         for name in "${PARK_STATEFULSETS[@]}"; do park_scalable statefulset "$name"; done
         for name in "${PARK_DAEMONSETS[@]}"; do park_daemonset "$name"; done
-        echo "✅ Parked. Restore with: bash scripts/park-observability.sh up"
+        echo "✅ Parked. Restore with: make obs-unpark"
         ;;
     up)
         echo "▶️  Restoring the observability workloads in $NS"

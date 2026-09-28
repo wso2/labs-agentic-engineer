@@ -105,12 +105,11 @@ HashiCorp Vault fork. Local/OSS secret KV backend behind the
 `secretsprovider` / `secretmanagersvc` abstraction (OpenBao-direct provider).
 Cloud overlay may use a different backend via SM-API.
 
-### `effective-key`
-The internal git-service HTTP endpoint that returns the org's Anthropic key
-as plaintext JSON. Read by `agents-service` for interactive spec agents
-(can't be replaced by ESO-mounted secrets while agents-service runs outside
-OC). Stays in place for the **local read path** even after SM API is in use
-because SM API is WriteOnly.
+### `effective-key` — retired
+The git-service endpoint that returned the org's Anthropic key for the spec
+agents. aep-api now reads the model connection's key itself
+(`ConnectionReader.Effective`) and hands it to the agents service per turn in
+`X-Model-Key`.
 
 ---
 
@@ -479,15 +478,15 @@ replaced within a tick by one with fresh budgets. Cleared by a rebuild, or by a
 person removing the label.
 
 ### Acceptance oracle
-`specs/validation/validation-criteria.json` in its JUDGING role — the source of
-truth a validation run grades the deployed system against. *Oracle* names what
-the document DOES, not what it is: the console calls the document itself the
-**Validation criteria** (`apps/console/design/lexicon.md` holds that mapping),
-and one row inside it is an **acceptance criterion**, which is what its
-`AC-001-a`-style id says. Different axes, so both words are correct and neither
-is a leftover. Authored from the requirement prose alone by the
-`validation-criteria` skill, deliberately blind to the design and the code it
-will grade. A version with no acceptance oracle has nothing to validate: no
+Every `specs/validation/acceptance/<slug>.feature` in its JUDGING role — the
+source of truth a validation run grades the deployed system against. *Oracle* names what the set
+DOES, not what it is: the console calls the documents themselves the **Acceptance
+criteria** (`apps/console/design/lexicon.md` holds that mapping), and one
+`Scenario:` inside them is an **acceptance criterion**. Different axes, so both
+words are correct and neither is a leftover. Authored from the requirement prose
+alone by the `acceptance-criteria` skill, deliberately blind to the design and the
+code it will grade — one file per capability, and the scenario text IS the test
+(ADR-0029). A version with no acceptance oracle has nothing to validate: no
 validation task is filed, nothing will ever judge it, and the verdict settles
 `skipped` rather than staying silent.
 
@@ -556,6 +555,36 @@ and `v<N+1>` is planned fresh from the new spec. Moving is not arming — an
 unadopted bug arrives still ledger-only. It is also half of what keeps the
 reconcile sweep sound: a superseded milestone holds nothing workable, because its
 plan is closed and its bugs have left.
+
+## Model connection
+
+### Model connection
+The one endpoint every agent of an organization calls: an API **format**
+(`anthropic` Messages or `openai-compatible`), a **base URL**, a **key** and a
+**model**. One row per org in `org_model_connections` (absent = not connected),
+the key in `org_secrets` `model/key`; the `/config` section `llm`. Anthropic's
+own API is one connection among others, not a special case. What a connection
+supports (Claude Code, the Claude subscription, web search, native PDFs, image
+input, generated agents) is its **capabilities**, computed only by
+`modelconn.CapabilitiesOf` in aep-api from format and host
+([ADR-0038](decisions/ADR-0038-an-organization-has-one-model-connection.md)).
+
+### Connection fingerprint
+`format@host`, recorded on each spec-agent turn's journal entry. The history
+filter (`historyFor`) replays turns with the current fingerprint byte for byte
+and strips reasoning and provider-executed tool calls from the others. A turn
+with no fingerprint counts as `anthropic@api.anthropic.com`. The model is left
+out on purpose: Anthropic's API accepts one Claude model's signed thinking
+replayed to another, so a model change on the same host keeps the history.
+
+### Provider limit
+A model provider's 429 that means "the plan is spent", not "wait a moment": a
+`retry-after` past 5 minutes, or 5 minutes of 429s in all. One rule decides in
+the agents service and the runner. A spec turn ends with a `provider_limit`
+frame; a coding run settles **blocked** with reason `model-provider-limit` and
+the reset time when the provider gave one, spending no re-dispatch budget.
+Shorter 429s are **waits**, retried and reported ("waiting on the model
+provider").
 
 ## aep-api platform concepts
 

@@ -1,6 +1,8 @@
 # Build output
 aep
 aepclt
+aectl
+aectl-skaffold
 dist/
 
 # Config

@@ -569,7 +569,7 @@ func textToProgressEvents(text string) ([]contracts.ProgressEvent, bool) {
 	}
 	// A line past the buffer cap stops Scan() early and would drop the whole
 	// REST of the page with no signal — the feed would just go quiet mid-run.
-	// Name it in the stream instead. (Sibling: usageFromLog.)
+	// Name it in the stream instead. (Sibling: terminalFromLog.)
 	scanFailed := scanner.Err() != nil
 	if scanFailed {
 		slog.Warn("codingagent.textToProgressEvents: log scan stopped early — rest of page dropped", "error", scanner.Err())
@@ -616,7 +616,7 @@ func headDroppedEvent(dropped int) contracts.ProgressEvent {
 // complete envelopes both still reach the feed, including a final line the pod
 // wrote without a trailing newline — the runner's terminal `result` among them,
 // which is how the feed reports the run's outcome. (Token usage is NOT at stake
-// here: usageFromLog parses the raw captured body, not this function's output.)
+// here: terminalFromLog parses the raw captured body, not this function's output.)
 //
 // Without this, parseProgressLine falls back to wrapping the raw bytes as a
 // `log` event and the console renders `{"schemaVersion":1,"ts":"2026-` verbatim.

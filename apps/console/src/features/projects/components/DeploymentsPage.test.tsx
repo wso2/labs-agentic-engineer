@@ -31,16 +31,24 @@ vi.mock("@tanstack/react-router", () => ({
     function MockLink({
       to,
       params,
+      search,
       ...rest
     }: {
       to: string;
       params?: Record<string, unknown>;
+      search?: Record<string, unknown>;
     } & Record<string, unknown>) {
       let href = to;
       for (const [key, value] of Object.entries(params ?? {})) {
         href = href.replace(`$${key}`, String(value));
       }
-      return <Component component="a" href={href} {...rest} />;
+      // `search` is modelled, not dropped: a deep link that loses its query
+      // reaches the right PAGE with the wrong agent, and a mock that silently
+      // discarded it would let that ship green.
+      const query = new URLSearchParams(
+        Object.entries(search ?? {}).map(([k, v]) => [k, String(v)]),
+      ).toString();
+      return <Component component="a" href={query ? `${href}?${query}` : href} {...rest} />;
     },
   Link: ({ children }: { children?: React.ReactNode }) => <a>{children}</a>,
   useNavigate: () => navigate,
@@ -103,16 +111,6 @@ let mockDeploy: DeployStage = {
 
 // The component/binding join. One serving binding by default; the on-hold
 // case empties it, because a parked run has deployed nothing.
-const DEFAULT_DEPLOYMENTS = [
-  {
-    componentName: "storefront",
-    environment: "development",
-    status: "Ready",
-    endpointUrl: "https://storefront.dev.example.com",
-  },
-];
-let mockDeployments = DEFAULT_DEPLOYMENTS;
-
 // The design's dependency read (the promote dialog's connection list, and
 // the Configure button's own gate) — overridden per test; defaults to one
 // required external connection, reset in beforeEach so a test that mutates
@@ -162,6 +160,23 @@ let mockBuildVersion = "v1";
 // it needs no QueryClientProvider; mutate is captured for the save assertion.
 const mockMutate = vi.fn();
 
+// Overridable per test (the chat-link test adds an ai-agent component +
+// deployment); defaults match the single-web-app fixture every other test
+// in this file was written against, reset in beforeEach.
+const DEFAULT_COMPONENTS = [
+  { name: "storefront", displayName: "Storefront", type: "web-application" },
+];
+const DEFAULT_DEPLOYMENTS = [
+  {
+    componentName: "storefront",
+    environment: "development",
+    status: "Ready",
+    endpointUrl: "https://storefront.dev.example.com",
+  },
+];
+let mockComponents = DEFAULT_COMPONENTS;
+let mockDeployments = DEFAULT_DEPLOYMENTS;
+
 vi.mock("../api/queries", () => ({
   // The platform's pipeline, in promotion order — what `useEnvironments`
   // serves. Two environments here because that is the pipeline these tests
@@ -186,7 +201,7 @@ vi.mock("../api/queries", () => ({
     reset: vi.fn(),
   }),
   useProjectComponents: () => ({
-    data: { items: [{ name: "storefront", displayName: "Storefront", type: "web-application" }] },
+    data: { items: mockComponents },
     isPending: false,
     isError: false,
     error: null,
@@ -274,7 +289,7 @@ vi.mock("../../settings/api/queries", () => ({
   }),
 }));
 
-// The criteria/report join (#395 decision 3) — counts undefined by default (the
+// The report's own counts (#395 decision 3) — undefined by default (the
 // fallback path); individual tests set them to assert the "n/m passed" upgrade. The
 // VERDICT rides with them because `deploy.validation` folds `failed` and `unreported`
 // into one `awaiting-fix`, and the banner's sentence differs for each.
@@ -324,12 +339,13 @@ beforeEach(() => {
   mockRepairing = false;
   mockMutate.mockClear();
   mockDependencies = DEFAULT_DEPENDENCIES;
+  mockComponents = DEFAULT_COMPONENTS;
+  mockDeployments = DEFAULT_DEPLOYMENTS;
   mockDependenciesPending = false;
   mockExternalCatalog = [];
   mockExternalCatalogPending = false;
   mockExternalCatalogError = false;
   mockBuilds = [];
-  mockDeployments = DEFAULT_DEPLOYMENTS;
   mockRuns = [];
   mockRunsByTag = {};
   mockRunsError = false;
@@ -367,7 +383,7 @@ describe("DeploymentsPage — validation", () => {
 
     expect(
       screen.getByText(
-        "2 of 6 criteria failed. The implementation is being fixed. Validation will run again.",
+        "2 of 6 scenarios failed. The implementation is being fixed. Validation will run again.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/verdict: awaiting fix/)).not.toBeInTheDocument();
@@ -378,7 +394,7 @@ describe("DeploymentsPage — validation", () => {
   });
 
   // A SETTLED failure. The banner wrote its own sentence for these and led with the
-  // count that PASSED ("Validation failed — 4 of 6 criteria passed on this
+  // count that PASSED ("Validation failed — 4 of 6 scenarios passed on this
   // deployment"), while the tile on the Validation page led with the failures — one
   // outcome, two voices and two headline numbers, depending which surface you were on.
   it("leads a settled failure with the failures, in the tile's own words", () => {
@@ -394,10 +410,10 @@ describe("DeploymentsPage — validation", () => {
 
     expect(
       screen.getByText(
-        "2 of 6 criteria failed. The run stopped here, so the milestone stays open for the fix.",
+        "2 of 6 scenarios failed. The run stopped here, so the milestone stays open for the fix.",
       ),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/criteria passed on this deployment/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/scenarios passed on this deployment/)).not.toBeInTheDocument();
   });
 
   // Re-running validation on an already-PASSED version. The verdict lives on an
@@ -416,7 +432,7 @@ describe("DeploymentsPage — validation", () => {
     render(<DeploymentsPage projectName="acme" />);
 
     expect(
-      screen.getByText("All 6 criteria passed in the last attempt. Validation is running again."),
+      screen.getByText("All 6 scenarios passed in the last attempt. Validation is running again."),
     ).toBeInTheDocument();
     expect(screen.queryByText(/validation agent is running/)).not.toBeInTheDocument();
     // Nothing was fixed — that clause belongs to a repair, not a re-ask.
@@ -478,7 +494,7 @@ describe("DeploymentsPage — validation", () => {
     // "Awaiting fix" with no subject in a card about deployments, and carried less
     // than the row it duplicated.
     const link = screen.getByRole("link", { name: /View validations/ });
-    expect(link).toHaveAttribute("href", "/projects/acme/validation");
+    expect(link).toHaveAttribute("href", "/projects/acme/validations");
     expect(link).not.toHaveAttribute("target");
   });
 
@@ -542,7 +558,7 @@ describe("DeploymentsPage — environment board", () => {
     expect(within(production).queryByTestId("version-block")).not.toBeInTheDocument();
   });
 
-  it("upgrades the validation banner with criteria counts", () => {
+  it("upgrades the validation banner with scenario counts", () => {
     mockDeploy = {
       version: "v1",
       status: "deployed",
@@ -556,7 +572,7 @@ describe("DeploymentsPage — environment board", () => {
     // The tile's own sentence, word for word — the banner used to write its own,
     // which is how a settled FAILURE came to lead with the count that passed.
     expect(
-      screen.getByText("All 12 criteria were covered by a test and passed."),
+      screen.getByText("All 12 scenarios were settled and passed."),
     ).toBeInTheDocument();
   });
 

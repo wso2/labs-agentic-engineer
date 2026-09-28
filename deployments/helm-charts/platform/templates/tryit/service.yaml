@@ -1,0 +1,19 @@
+{{- if (default dict .Values.tryIt).enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: aep-tryit
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: aep-tryit
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: wso2-aep
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.tryIt.port }}
+      targetPort: http
+      name: http
+  selector:
+    app: aep-tryit
+{{- end }}

@@ -20,7 +20,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRunWatchdog } from "./watchdog.js";
 import type { RunEventInput } from "./emitter.js";
-import type { ApiRetryInfo } from "./diagnostics.js";
+import type { ApiRetryInfo } from "../../runtime/port.js";
 
 const OVERLOADED: ApiRetryInfo = {
   attempt: 3,
@@ -122,7 +122,7 @@ test("watchdog: with several calls open it reports the OLDEST — the one actual
 });
 
 test("watchdog: a Bash call rewritten to git_commit is still tracked as in flight", () => {
-  // bashEvents changes the KIND; forgetting these would leave a git push that
+  // shellEvents changes the KIND; forgetting these would leave a git push that
   // hangs on auth looking like an idle model.
   const h = harness();
   h.watchdog.observe([{ kind: "git_push", branch: "main", summary: "git push origin main", toolUseId: "g1" }]);

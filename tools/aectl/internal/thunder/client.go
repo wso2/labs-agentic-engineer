@@ -18,10 +18,20 @@
 // aectl platform install. It registers OAuth applications directly via HTTP
 // rather than through the thunder-app-operator CRD.
 //
-// Wire format: camelCase JSON keys throughout, matching Thunder 0.34.0's
-// admin REST API as validated against the live cluster. The operator at
-// deployments/single-cluster/resource-types/thunder-app/operator/internal/thunder/client.go
-// is the authoritative reference for payload shapes.
+// Wire format: camelCase JSON keys throughout, matching ThunderID 1.0.0's
+// admin REST API (oci://ghcr.io/thunder-id/helm-charts/thunderid). Notable
+// shapes:
+//   - applications require a top-level `type` field (see appType)
+//   - access-token claims nest under userConfig (interactive/public apps) or
+//     clientConfig (client_credentials/confidential apps) — see
+//     tokenClaimConfig
+//   - the built-in "System" resource server's `identifier` is an absolute
+//     URI derived from the deployment's public URL ("<publicUrl>/mcp"), not
+//     the literal string "system" (that string is the HANDLE of the one
+//     resource nested inside it) — see findSystemResourceServerID
+//   - a role's assignments are their own sub-resource
+//     (GET/POST .../roles/{id}/assignments[/add]); GET/PUT /roles/{id} does
+//     not read or write them — see ensureAppInRole
 package thunder
 
 import (
@@ -85,6 +95,13 @@ type AdminClient struct {
 	token     string
 	defaultOU string
 	http      *http.Client
+	// systemResourceIdentifier is the identifier ThunderID assigned to its
+	// built-in "System" resource server on this deployment — the same value
+	// sent as the OAuth `resource` indicator when this client authenticated
+	// (see SystemResourceIdentifier). Set once at New() time so
+	// findSystemResourceServerID matches against the exact value the token
+	// exchange itself relied on; the two can never drift apart.
+	systemResourceIdentifier string
 }
 
 // SystemResourceIdentifier derives the identifier of ThunderID's own "System"
@@ -148,7 +165,7 @@ func New(ctx context.Context, baseURL, adminClientID, adminClientSecret, systemR
 		return nil, fmt.Errorf("could not parse access token from Thunder response: %s", body)
 	}
 
-	c := &AdminClient{baseURL: baseURL, token: tok.AccessToken, http: hc}
+	c := &AdminClient{baseURL: baseURL, token: tok.AccessToken, http: hc, systemResourceIdentifier: systemResource}
 
 	// Resolve and cache the default OU ID once at construction.
 	ouID, err := c.fetchDefaultOU(ctx)
@@ -177,10 +194,8 @@ func (c *AdminClient) EnsureApplication(ctx context.Context, app DesiredApp) err
 // AssignAdminRole grants clientID the Thunder "system" permission via a
 // dedicated "aep-system" role. It is fully idempotent: if the role exists and
 // clientID is already assigned it returns immediately; if the role exists but
-// the assignment is missing it adds it via PUT; if the role is absent it
-// creates it with the assignment inline (the only reliable path on Thunder
-// 0.34 — POST /roles/{id}/assignments/add 500s for app targets and
-// POST /role-assignments returns 404).
+// the assignment is missing it adds it via POST .../assignments/add; if the
+// role is absent it creates it with the assignment inline.
 func (c *AdminClient) AssignAdminRole(ctx context.Context, clientID string) error {
 	// Resolve the app's internal ID first — needed on both the create and
 	// update paths.
@@ -352,8 +367,9 @@ func (c *AdminClient) updateApp(ctx context.Context, internalID string, app Desi
 		cfg["redirectUris"] = wireRedirectURIs(app.RedirectURIs)
 		cfg["scopeClaims"] = scopeClaimConfig()
 	}
-	cfg["token"] = tokenClaimConfig()
+	cfg["token"] = tokenClaimConfig(app.ClientType)
 	full["allowedUserTypes"] = []string{"Person"}
+	full["type"] = appType(app.ClientType)
 
 	data, err := json.Marshal(full)
 	if err != nil {
@@ -372,6 +388,7 @@ func (c *AdminClient) updateApp(ctx context.Context, internalID string, app Desi
 func (c *AdminClient) buildCreatePayload(app DesiredApp) map[string]any {
 	base := map[string]any{
 		"name":             app.ClientID,
+		"type":             appType(app.ClientType),
 		"ouId":             c.defaultOU,
 		"allowedUserTypes": []string{"Person"},
 	}
@@ -387,7 +404,7 @@ func (c *AdminClient) buildCreatePayload(app DesiredApp) map[string]any {
 					"tokenEndpointAuthMethod": "client_secret_post",
 					"pkceRequired":            false,
 					"publicClient":            false,
-					"token":                   tokenClaimConfig(),
+					"token":                   tokenClaimConfig(app.ClientType),
 				},
 			},
 		}
@@ -403,13 +420,28 @@ func (c *AdminClient) buildCreatePayload(app DesiredApp) map[string]any {
 					"tokenEndpointAuthMethod": "none",
 					"pkceRequired":            true,
 					"publicClient":            true,
-					"token":                   tokenClaimConfig(),
+					"token":                   tokenClaimConfig(app.ClientType),
 					"scopeClaims":             scopeClaimConfig(),
 				},
 			},
 		}
 	}
 	return base
+}
+
+// appType maps aectl's ClientType ("confidential"/"public") to the
+// application `type` ThunderID 1.0.0 requires at creation — one of browser,
+// fullstack, mobile, m2m, mcp, or custom; anything else, including an absent
+// field, fails with 400 APP-1042 "Application type is required". "m2m"
+// matches this repo's own client_credentials-only documents (e.g.
+// deployments/single-cluster/thunder-resources/80-aep-api-client.yaml);
+// "browser" matches its public PKCE console client
+// (87-aep-console-app.yaml).
+func appType(clientType string) string {
+	if clientType == "confidential" {
+		return "m2m"
+	}
+	return "browser"
 }
 
 // findRoleByName returns the internal ID of the role with the given name, or
@@ -439,51 +471,65 @@ func (c *AdminClient) findRoleByName(ctx context.Context, name string) (string, 
 	return "", nil
 }
 
-// ensureAppInRole fetches the role at roleID and, if appID is not already in
-// its assignments, adds it via PUT /roles/{id}.
+// ensureAppInRole adds appID to roleID's assignments if it is not already
+// there.
+//
+// Assignments are their own sub-resource: GET /roles/{id} does not include
+// them, and PUT /roles/{id} does not write them, so membership is read via
+// GET /roles/{id}/assignments and added via POST /roles/{id}/assignments/add
+// with a body of {"assignments": [...]} (a bare {"id","type"} object returns
+// 400 ROL-1001 "Invalid request format"). The add is additive and
+// idempotent — adding an already-present assignment, or the same one twice,
+// is a 204 no-op that leaves every other assignment untouched.
 func (c *AdminClient) ensureAppInRole(ctx context.Context, roleID, appID string) error {
-	body, status, err := c.doRequest(ctx, http.MethodGet, "/roles/"+roleID, nil)
+	body, status, err := c.doRequest(ctx, http.MethodGet, "/roles/"+roleID+"/assignments", nil)
 	if err != nil {
-		return fmt.Errorf("get role %q: %w", roleID, err)
+		return fmt.Errorf("get role %q assignments: %w", roleID, err)
 	}
 	if status != http.StatusOK {
-		return fmt.Errorf("get role %q returned %d: %s", roleID, status, apiErrSummary(body))
+		return fmt.Errorf("get role %q assignments returned %d: %s", roleID, status, apiErrSummary(body))
 	}
-	var full map[string]any
-	if err := json.Unmarshal(body, &full); err != nil {
-		return fmt.Errorf("parse role %q: %w", roleID, err)
+	var parsed struct {
+		Assignments []map[string]any `json:"assignments"`
 	}
-
-	// Check whether the app is already in the assignments list.
-	for _, item := range toSlice(full["assignments"]) {
-		m, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return fmt.Errorf("parse role %q assignments: %w", roleID, err)
+	}
+	for _, m := range parsed.Assignments {
 		if m["id"] == appID {
 			return nil
 		}
 	}
 
-	// App not assigned — append it and PUT the role back.
-	existing := toSlice(full["assignments"])
-	full["assignments"] = append(existing, map[string]any{"id": appID, "type": "app"})
-	data, err := json.Marshal(full)
+	data, err := json.Marshal(map[string]any{
+		"assignments": []map[string]any{{"id": appID, "type": "app"}},
+	})
 	if err != nil {
-		return fmt.Errorf("marshal updated role %q: %w", roleID, err)
+		return fmt.Errorf("marshal assignment for role %q: %w", roleID, err)
 	}
-	respBody, status, err := c.doRequest(ctx, http.MethodPut, "/roles/"+roleID, data)
+	respBody, status, err := c.doRequest(ctx, http.MethodPost, "/roles/"+roleID+"/assignments/add", data)
 	if err != nil {
-		return fmt.Errorf("update role %q: %w", roleID, err)
+		return fmt.Errorf("add assignment to role %q: %w", roleID, err)
 	}
 	if status != http.StatusOK && status != http.StatusNoContent {
-		return fmt.Errorf("update role %q returned %d: %s", roleID, status, apiErrSummary(respBody))
+		return fmt.Errorf("add assignment to role %q returned %d: %s", roleID, status, apiErrSummary(respBody))
 	}
 	return nil
 }
 
-// findSystemResourceServerID returns the internal ID of the resource server
-// whose identifier is "system".
+// findSystemResourceServerID returns the internal ID of ThunderID's built-in
+// "System" resource server — the one that owns the `system` scope.
+//
+// Matches on identifier, not the literal string "system": ThunderID 1.0.0
+// requires resource-server identifiers to be absolute URIs (RFC 8707) and
+// assigns its built-in System resource server one derived from the
+// deployment's public URL, "<publicUrl>/mcp" (SystemResourceIdentifier).
+// "system" is only the HANDLE of the one resource nested inside it, a
+// different field entirely.
+//
+// Falls back to name=="System" when systemResourceIdentifier is empty — the
+// same "no resource indicator" case New() already treats as a valid,
+// deliberate input (a Thunder with no default resource server).
 func (c *AdminClient) findSystemResourceServerID(ctx context.Context) (string, error) {
 	body, status, err := c.doRequest(ctx, http.MethodGet, "/resource-servers", nil)
 	if err != nil {
@@ -501,7 +547,14 @@ func (c *AdminClient) findSystemResourceServerID(ctx context.Context) (string, e
 		if !ok {
 			continue
 		}
-		if m["identifier"] == "system" {
+		if c.systemResourceIdentifier != "" {
+			if m["identifier"] == c.systemResourceIdentifier {
+				id, _ := m["id"].(string)
+				return id, nil
+			}
+			continue
+		}
+		if m["name"] == "System" {
 			id, _ := m["id"].(string)
 			return id, nil
 		}
@@ -570,10 +623,37 @@ func wireRedirectURIs(desired []string) []any {
 	return out
 }
 
-func tokenClaimConfig() map[string]any {
+// tokenClaimConfig returns ThunderID 1.0.0's token issuance/claims config for
+// an app of the given clientType ("confidential" or "public").
+//
+// Access-token claims nest under userConfig (claims for a token issued to a
+// logged-in user — authorization_code) or clientConfig (claims for a token
+// issued to the client itself — client_credentials); a flat
+// {validityPeriod, userAttributes} directly under accessToken is not a field
+// ThunderID 1.0.0 reads.
+//
+// idToken keeps the flat {validityPeriod, userAttributes} shape, and is
+// omitted for confidential/m2m apps: they authenticate via client_credentials
+// and never receive an ID token.
+func tokenClaimConfig(clientType string) map[string]any {
+	if clientType == "confidential" {
+		return map[string]any{
+			"accessToken": map[string]any{
+				"clientConfig": map[string]any{
+					"validityPeriod": tokenValiditySeconds,
+					"attributes":     identityUserAttributes,
+				},
+			},
+		}
+	}
 	return map[string]any{
-		"accessToken": map[string]any{"validityPeriod": tokenValiditySeconds, "userAttributes": identityUserAttributes},
-		"idToken":     map[string]any{"validityPeriod": tokenValiditySeconds, "userAttributes": identityUserAttributes},
+		"accessToken": map[string]any{
+			"userConfig": map[string]any{
+				"validityPeriod": tokenValiditySeconds,
+				"attributes":     identityUserAttributes,
+			},
+		},
+		"idToken": map[string]any{"validityPeriod": tokenValiditySeconds, "userAttributes": identityUserAttributes},
 	}
 }
 

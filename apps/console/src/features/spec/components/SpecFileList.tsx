@@ -36,6 +36,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  ClipboardCheck,
   Database,
   FileText,
   RefreshCw,
@@ -60,6 +61,7 @@ import { ProblemsDialog } from "./ProblemsDialog";
 import type { DependencyState } from "../lib/dependencyStates";
 import {
   buildDesignSection,
+  buildValidationSection,
   selectionKey,
   DESIGN_CELL_PATH,
   DOMAIN_MODEL_PATH,
@@ -147,7 +149,7 @@ export function SpecFileList({
   const allFiles = [...files, ...ghosts].sort((a, b) => a.path.localeCompare(b.path));
 
   const requirements = allFiles.filter((f) => f.group === "requirements");
-  const validation = allFiles.filter((f) => f.group === "validation");
+  const validation = buildValidationSection(allFiles, committed, plan ?? []);
   const design = buildDesignSection(allFiles);
 
   // Per-component expand/collapse — default expanded, remembered by name so
@@ -416,11 +418,16 @@ export function SpecFileList({
     );
   };
 
-  const flatGroup = (section: RailSection, groupFiles: SpecFileEntry[]) => (
+  const flatGroup = (
+    section: RailSection,
+    groupFiles: SpecFileEntry[],
+    lead?: React.ReactNode,
+  ) => (
     <Box sx={{ mb: 1 }}>
       {sectionHeader(section)}
-      {groupFiles.length > 0 ? (
+      {groupFiles.length > 0 || lead !== undefined ? (
         <List dense disablePadding>
+          {lead}
           {groupFiles.map((f) =>
             row(fileSel(f.path), fileLabel(f.path), <FileText size={16} />),
           )}
@@ -574,7 +581,24 @@ export function SpecFileList({
         )}
       </Box>
 
-      {flatGroup(sectionOf("validation"), validation)}
+      {/* ONE entry for every specs/validation/acceptance/*.feature, because the pane reads
+          them as one document set — which is what lets a reader search across
+          capabilities instead of picking the right file first (ADR-0031). Which
+          files keep an ordinary row and whether this entry appears are decided
+          together in buildValidationSection, so they cannot disagree. */}
+      {flatGroup(
+        sectionOf("validation"),
+        validation.files,
+        validation.hasAcceptance
+          ? row(
+              { kind: "acceptance" },
+              "Acceptance criteria",
+              <ClipboardCheck size={16} />,
+              false,
+              validation.acceptanceStatusPath,
+            )
+          : undefined,
+      )}
 
       <ProblemsDialog
         open={problemsFor !== null}

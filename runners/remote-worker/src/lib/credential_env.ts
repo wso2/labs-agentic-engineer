@@ -38,8 +38,8 @@ import { MIN_LITERAL_LEN } from "./progress/scrubber.js";
 // name belong here, and a per-dependency secret (whose name is derived from the
 // user's own dependency, hence unnameable here) stays covered by the DLP sweep.
 //
-// BOTH members of each pair are listed, because exactly one is typically set: a
-// run bills either ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (ADR-0016), and
+// EVERY member of each group is listed, because exactly one is typically set: a
+// run bills ANTHROPIC_API_KEY, AEP_MODEL_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (ADR-0036), and
 // git resolves either GITHUB_TOKEN or GH_TOKEN. Priming only whichever happens
 // to be set would leave the other unredacted. PUBLISHER_CLIENT_ID is absent on
 // purpose — it is an identifier, not a secret, and websearch_dlp.ts treats it as
@@ -56,6 +56,22 @@ export const CREDENTIAL_ENV_KEYS = [
   "GH_TOKEN",
   "ANTHROPIC_API_KEY",
   "CLAUDE_CODE_OAUTH_TOKEN",
+  // The connection key on any host other than Anthropic's own API
+  // (`envModelAPIKey` in model_env.go), and the name the Claude Code adapter
+  // presents a Bearer key under (`runtime/claude/connection.ts`). The adapter
+  // sets the second in the SESSION's env, not this process's, but a key the
+  // scrubber cannot see under one name it cannot see under another either — so
+  // both are listed, and the value is enrolled whichever carries it.
+  "AEP_MODEL_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  // Another model credential on the same pod: the org's connection key, on any
+  // format, mounted for the agent-evaluation step a build runs before opening an
+  // ai-agent's PR (`envEvalModelAPIKey` in oc_dispatcher.go). The connection it
+  // is for rides beside it as plain AEP_EVAL_MODEL_* values, which are not
+  // secrets. The agent invokes that step through its Bash tool, whose output is
+  // streamed into the progress feed — so this is the one most likely to
+  // actually leak.
+  "AEP_EVAL_MODEL_API_KEY",
   "PUBLISHER_CLIENT_SECRET",
 ] as const;
 

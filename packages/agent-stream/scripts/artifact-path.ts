@@ -39,6 +39,7 @@ export const DEPENDENCY_DESIGN_SCHEMA_ARTIFACT = join(schemasDir, "dependency-de
 export const SECURITY_DESIGN_SCHEMA_ARTIFACT = join(schemasDir, "security-design.schema.json");
 export const PLAN_TASK_SCHEMA_ARTIFACT = join(schemasDir, "plan-task.schema.json");
 export const UPDATE_TASK_SCHEMA_ARTIFACT = join(schemasDir, "update-task.schema.json");
+export const AGENT_AFM_SCHEMA_ARTIFACT = join(schemasDir, "agent-afm.schema.json");
 
 export const SECURITY_DESIGN_MESSAGES_ARTIFACT = join(
   here,

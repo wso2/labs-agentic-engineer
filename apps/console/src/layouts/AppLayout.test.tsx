@@ -86,6 +86,7 @@ vi.mock("./NotificationBell", () => ({
 // has to be present or absent.
 vi.mock("../features/agent-chat/components/AgentChatPanel", () => ({
   AgentChatPanel: () => <div data-testid="agent-chat-panel" />,
+  AGENT_CHAT_PANEL_WIDTH: 440,
 }));
 vi.mock("../features/agent-chat/useHasPendingSeed", () => ({
   useHasPendingSeed: () => false,
@@ -236,6 +237,18 @@ describe("AppLayout — org sidebar", () => {
     expect(sidebarItem("Projects")).not.toHaveClass("Mui-selected");
   });
 
+  // The highlight is keyed on the URL's section segment matching the item's
+  // id, so the two have to move together — this is what would catch one of
+  // them renamed alone.
+  it("selects Validations on /projects/<name>/validations", () => {
+    mockPathname = `/projects/${PROJECT}/validations`;
+    mockParams = { projectName: PROJECT };
+    render();
+
+    expect(sidebarItem("Validations")).toHaveClass("Mui-selected");
+    expect(sidebarItem("Overview")).not.toHaveClass("Mui-selected");
+  });
+
   it("does not show Resources or Endpoints inside a project", () => {
     mockPathname = `/projects/${PROJECT}`;
     mockParams = { projectName: PROJECT };
@@ -247,7 +260,7 @@ describe("AppLayout — org sidebar", () => {
   });
 });
 
-// Spec/Builds/Deployments/Validation gate on the SAME permission each of
+// Spec/Builds/Deployments/Validations gate on the SAME permission each of
 // those pages' own PermissionRestrictedPage checks — disabling the item here
 // is what keeps a caller who lacks it from ever reaching that page's denial
 // screen in the first place, mirroring the org sidebar's Resources/Endpoints
@@ -281,7 +294,7 @@ describe("AppLayout — project sidebar", () => {
     expect(sidebarItem("Spec").closest("a")).toBeNull();
   });
 
-  it.each(["Builds", "Deployments", "Validation"])(
+  it.each(["Builds", "Deployments", "Validations"])(
     "makes %s navigable when the caller holds ae:build-view",
     (label) => {
       render();
@@ -293,7 +306,7 @@ describe("AppLayout — project sidebar", () => {
   // gates mutations (BuildProject, CancelRun, …), never page entry — a
   // build-only holder (no separate view grant) is still non-navigable, same
   // rule as Spec above.
-  it.each(["Builds", "Deployments", "Validation"])(
+  it.each(["Builds", "Deployments", "Validations"])(
     "does NOT make %s navigable on ae:build alone (not ae:build-view)",
     (label) => {
       heldPermissions.delete("ae:build-view");
@@ -303,7 +316,7 @@ describe("AppLayout — project sidebar", () => {
     },
   );
 
-  it.each(["Builds", "Deployments", "Validation"])(
+  it.each(["Builds", "Deployments", "Validations"])(
     "makes %s non-navigable holding NEITHER build permission, with an explanatory tooltip",
     async (label) => {
       heldPermissions.delete("ae:build-view");

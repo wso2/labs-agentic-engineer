@@ -1,6 +1,11 @@
 # ADR-0010 — A validation report is an accumulation, not one all-or-nothing run
 
-**Status:** Accepted
+**Status:** Superseded by
+[ADR-0029](../../../../docs/decisions/ADR-0029-validation-drives-scenarios-not-compiled-tests.md).
+The report is `tests/acceptance/report.json`, keyed by scenario rather than by criterion id, and no
+suite runs — so the accumulation this settled has no all-or-nothing run left to guard against. Kept
+because the failure it was written about is the reason the new report records a command and its exit
+code for every `Then`.
 
 ## Context
 

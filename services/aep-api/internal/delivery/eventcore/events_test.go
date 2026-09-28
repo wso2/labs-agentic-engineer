@@ -818,6 +818,83 @@ func TestRevalidate_RefusesWithoutAnOracle(t *testing.T) {
 	}
 }
 
+// TestRevalidate_RefusesAVersionThatIsNotDeployed.
+//
+// A revalidation drives whatever is SERVING: the runner's endpoints resolve from
+// the cluster at request time and its criteria come from the branch tip, neither
+// pinned to the milestone the run is filed under. Asking an older version
+// therefore judges code that version never shipped, records the verdict on its
+// row — where the newest run owns the version's answer — and, with the default
+// attempt budget, files its repair issues into that milestone too.
+//
+// The refusal is the platform's rather than the console's on purpose: a verdict
+// nobody can trust, filed where nobody is looking, must not be one API call away.
+func TestRevalidate_RefusesAVersionThatIsNotDeployed(t *testing.T) {
+	// v4 shipped after v3, so v3 is no longer what is running.
+	h := newHarness(t,
+		aRun("run-new", 9, delivery.RunStateSucceeded),
+		aRun("run-old", 5, delivery.RunStateSucceeded))
+
+	_, err := h.events.Revalidate(context.Background(), testOrg, testProject,
+		MilestoneRef{Number: 5, Title: "v3"}, 1, 0)
+	if !errors.Is(err, delivery.ErrVersionNotDeployed) {
+		t.Fatalf("an older version must refuse the revalidation, got %v", err)
+	}
+	if len(h.sup.started) != 0 {
+		t.Fatal("a refused revalidation must start nothing")
+	}
+}
+
+// The deployed version itself still revalidates — the guard is a comparison, not
+// a blanket refusal, and this is the case it must not catch.
+func TestRevalidate_AllowsTheDeployedVersionWhileOlderOnesExist(t *testing.T) {
+	h := newHarness(t,
+		aRun("run-new", 9, delivery.RunStateSucceeded),
+		aRun("run-old", 5, delivery.RunStateSucceeded))
+
+	if _, err := h.events.Revalidate(context.Background(), testOrg, testProject,
+		MilestoneRef{Number: 9, Title: "v9"}, 1, 0); err != nil {
+		t.Fatalf("the deployed version must still revalidate: %v", err)
+	}
+	if len(h.sup.started) != 1 {
+		t.Fatalf("the revalidation must start, got %+v", h.sup.started)
+	}
+}
+
+// A project that has never finished delivering a version has nothing serving to
+// judge. It reads as the adoption refusal because it is the same absence — no
+// deployed milestone — and the message already tells the caller to build.
+func TestRevalidate_RefusesWhenNothingHasEverDeployed(t *testing.T) {
+	h := newHarness(t, aRun("run-1", 5, delivery.RunStateFailed))
+
+	_, err := h.events.Revalidate(context.Background(), testOrg, testProject,
+		MilestoneRef{Number: 5, Title: "v3"}, 1, 0)
+	if !errors.Is(err, ErrNoDeployedMilestone) {
+		t.Fatalf("nothing deployed must refuse the revalidation, got %v", err)
+	}
+	if len(h.sup.started) != 0 {
+		t.Fatal("a refused revalidation must start nothing")
+	}
+}
+
+// A RUNNING newer version does not unseat the live one: `deployed` is the newest
+// SUCCEEDED dev run, so v3 stays validatable while v9 is still building. Reading
+// the newest run of any state here would strand the only version anybody can
+// actually judge for the whole of every build.
+func TestRevalidate_ABuildingVersionDoesNotUnseatTheDeployedOne(t *testing.T) {
+	h := newHarness(t,
+		aRun("run-new", 9, delivery.RunStateRunning),
+		aRun("run-old", 5, delivery.RunStateSucceeded))
+
+	if _, err := h.events.Revalidate(context.Background(), testOrg, testProject,
+		MilestoneRef{Number: 5, Title: "v3"}, 1, 0); err != nil {
+		t.Fatalf("the deployed version must revalidate while a newer one builds: %v", err)
+	}
+	if len(h.sup.started) != 1 {
+		t.Fatalf("the revalidation must start, got %+v", h.sup.started)
+	}
+}
+
 // ---- the inertness gate ---------------------------------------------------
 
 // TestNoRunRow_EveryHandlerIsInert is the safety property that lets this

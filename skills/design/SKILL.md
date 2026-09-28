@@ -134,7 +134,7 @@ turn — apply them directly, and load one only if you find you do not have it.
    the design has sign-in or roles.
 6. **Per-component artifacts** — every `service` gets `openapi.yaml`
    (`openapi-conventions`); every `web-application` gets `wireframes.dsl`
-   (`wireframes`).
+   (`wireframes`); every `ai-agent` gets `agent.afm.md` (`agent-building`).
 7. **Grants pass** (`security-design`) — re-read `specs/design/security.json`
    now that the screens and the operations exist. Step 5 wrote each role's
    `grants` against a design it could only intend; the operations the screens
@@ -144,9 +144,12 @@ turn — apply them directly, and load one only if you find you do not have it.
    the step only when step 5 wrote no security.json at all. No gate refuses a
    role that is one handle short — the build's mock walk is what catches it, as
    a hidden screen — so this pass is where it is cheap.
-8. **Validation criteria** (`validation-criteria`) — mint
-   `specs/validation/validation-criteria.json` LAST. A design without its
-   acceptance oracle is unfinished — never skip this.
+8. **The acceptance oracle** — mint it LAST. A design without one is
+   unfinished — never skip this.
+   - `acceptance-criteria` → `specs/validation/acceptance/<slug>.feature`, one per
+     capability.
+
+   Authored from the PRD alone, so it is independent of everything above.
 
 Order binds only where a step reads an earlier one's result: the cell before
 enrichment (the platform scaffolds each design.json from it),
@@ -172,7 +175,7 @@ architecture.
 
 ## Where this stops
 
-`/design` ends at the design and its validation criteria — no task planning,
+`/design` ends at the design and its acceptance criteria — no task planning,
 no application code. Close with three parts and nothing more: one line per
 component (name, type, one-clause role); a **"Needs your input"** block
 listing only the dependencies still unresolved, each as a link to its

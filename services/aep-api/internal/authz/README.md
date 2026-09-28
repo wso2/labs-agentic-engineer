@@ -11,7 +11,7 @@ things built on top of it that point in **opposite directions**:
 - **Inbound, consumed elsewhere.** `internal/edge/permission_gate.go` imports
   this package's `Permission` constants to enforce AE permissions on
   aep-api's *own* HTTP handlers. That gate is not part of this domain — see
-  [ADR-0027](../../../../docs/decisions/ADR-0027-ae-permissions-ride-the-oauth-scope-claim.md)
+  [ADR-0039](../../../../docs/decisions/ADR-0039-ae-permissions-ride-the-oauth-scope-claim.md)
   — but this package is the single place both directions get their
   vocabulary from.
 
@@ -64,28 +64,35 @@ placeholder entries there are marked as such rather than extended casually.
 
 **Two roles exist:** `ae-admin` (every permission) and `ae-developer` (a
 working subset — see `rolePermissionsCatalog` for the exact list and the
-reasoning behind each inclusion/exclusion). Thunder declares the matching
-resource server, actions, groups, and roles in every topology —
-`tools/aectl/internal/thunder` and
-`deployments/single-cluster/thunder-resources/92-ae-roles.yaml` for a cluster,
-`deployments/dev-thunder-setup/bootstrap/61-ae-roles.yaml` for local dev — and
-each of those must stay in step with `rolePermissionsCatalog`.
+reasoning behind each inclusion/exclusion). Thunder's matching resource server,
+actions, groups and roles are declared in
+`deployments/single-cluster/thunder-resources/94-ae-roles.yaml`, which must stay
+in step with `rolePermissionsCatalog`.
 
-What does not exist is a *user*-provisioning path: no `identity.EnsureService`-style
-flow enrolls a signing-in org member into either group at runtime (contrast
+Two things do not exist yet, and both are the same workstream rather than a gap
+in this domain's own code.
+
+The first is a path that *loads* that declaration. It is a ThunderID bootstrap
+document, and the Docker Compose flow that imported the directory it lives in
+was removed with the rest of local dev's Compose chain; neither
+`aectl platform install` (which provisions Thunder's OAuth clients over the
+admin API) nor `deployments/scripts/setup-env-for-aectl.sh` (which writes the
+IdP's bootstrap documents inline) declares the `ae` resource server today.
+
+The second is a *user*-provisioning path: no `identity.EnsureService`-style flow
+enrolls a signing-in org member into either group at runtime (contrast
 [`identity`](../identity/README.md), whose project-scoped roles ARE provisioned
-end-to-end). Local dev is seeded instead — `dev-thunder-setup` makes one fixed
-account (`aeadmin`) a member of `ae-admin` at bootstrap, so the permission gate
-has something real to test against. Who ends up in `ae-admin` or `ae-developer`
-for a real org is a separate workstream, not a gap in this domain's own code.
+end-to-end). The bundle seeds one fixed account (`aeadmin`) into `ae-admin` at
+bootstrap, so the gate has something real to test against once the bundle is
+loaded; who ends up in either group for a real org is undecided.
 
 **This domain does not enforce anything on aep-api's own requests.** It only
 grants OC-side permissions. The inbound question — "may this caller invoke
 this aep-api operation" — is answered entirely in `internal/edge`, which
 imports `Permission` from here but is a different package with a different
-job. See [ADR-0027](../../../../docs/decisions/ADR-0027-ae-permissions-ride-the-oauth-scope-claim.md)
+job. See [ADR-0039](../../../../docs/decisions/ADR-0039-ae-permissions-ride-the-oauth-scope-claim.md)
 for why the two are split this way.
 
 ## See also
 
-- [`ADR-0027`](../../../../docs/decisions/ADR-0027-ae-permissions-ride-the-oauth-scope-claim.md) — why AE permissions ride the OAuth scope claim, and how the inbound gate in `internal/edge` uses this package's vocabulary.
+- [`ADR-0039`](../../../../docs/decisions/ADR-0039-ae-permissions-ride-the-oauth-scope-claim.md) — why AE permissions ride the OAuth scope claim, and how the inbound gate in `internal/edge` uses this package's vocabulary.

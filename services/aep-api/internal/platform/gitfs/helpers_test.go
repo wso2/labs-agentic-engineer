@@ -33,7 +33,7 @@ import (
 // seedFiles is the default origin content used across tests.
 func seedFiles() map[string]string {
 	return map[string]string{
-		"README.md":                          "hello\n",
+		"README.md":                 "hello\n",
 		"specs/requirements/prd.md": "req v1\n",
 	}
 }

@@ -61,7 +61,8 @@ type AgentTurn struct {
 
 	// CommitSHA is the landed commit for a completed turn ("" for a
 	// no-changes completion). Reason is the failure class for a failed turn:
-	// stream-died | fold-parity | base-moved | dispatch-failed | internal.
+	// stream-died | fold-parity | base-moved | dispatch-failed | internal |
+	// agent-error.
 	// Paths is a JSON array of the conflicting paths for base-moved.
 	// Message carries a human-readable failure detail.
 	CommitSHA string `gorm:"type:text" json:"commitSha,omitempty"`
@@ -69,6 +70,14 @@ type AgentTurn struct {
 	Paths     string `gorm:"type:text" json:"-"`
 	NoChanges bool   `json:"noChanges,omitempty"`
 	Message   string `gorm:"type:text" json:"message,omitempty"`
+
+	// Code names the failure when the agents service could (reason
+	// agent-error): provider_limit (the model provider's usage limit) or
+	// output_truncated (the output limit cut a file write off). ResetAt is
+	// when the provider said a provider_limit resets, nil when it did not say.
+	// Both nullable, added by AutoMigrate; empty/nil on every other turn.
+	Code    string     `gorm:"type:text" json:"-"`
+	ResetAt *time.Time `json:"-"`
 
 	// SpecTag is the D19 lineage stamp for design turns: the latest approved
 	// requirements tag (vN) at gate time. BaseRef covers the baseSha half.
@@ -102,6 +111,24 @@ type AgentTurn struct {
 	CacheCreationTokens int64    `gorm:"not null;default:0" json:"-"`
 	ModelID             string   `gorm:"type:text;not null;default:''" json:"-"`
 	CostUsd             *float64 `gorm:"column:cost_usd" json:"-"`
+	// ModelHost is the host of the model connection the turn was admitted on,
+	// written by TryStart with the rest of the running row, and the host
+	// Finish prices the turn's usage against: rates are keyed by (host, model).
+	// Nullable on purpose: a row that predates the column reads NULL until
+	// migrate's phase18 backfills it to api.anthropic.com, and NULL-only is what
+	// keeps that backfill one-shot (see RunPhase18ModelHost).
+	ModelHost string `gorm:"type:text" json:"-"`
+
+	// ContextTokens is how much context the conversation held when the turn
+	// ended: the last model step's whole prompt plus its output, read off the
+	// stream's final finish-step part (agentfold.StepContextOf). It is the
+	// measure the rotation check reads (context_rotation.go), which the
+	// summed usage above cannot be: that adds every step's prompt together.
+	// Written only when the agents service vouched for the turn with a
+	// manifest, because only then did it save the turn into the
+	// conversation's history. Nullable, added by AutoMigrate: NULL on every
+	// other turn and on rows that predate it.
+	ContextTokens *int64 `json:"-"`
 
 	// HeartbeatAt is bumped by the running replica (~15s); the sweep fails
 	// rows whose heartbeat went stale (~60s) and releases the D18 guard.

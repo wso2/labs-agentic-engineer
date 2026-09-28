@@ -194,6 +194,24 @@ func TestParseRunEventTakesNativeV2(t *testing.T) {
 	}
 }
 
+// TestLiftCarriesAProviderLimitSettleWhole pins the fields a provider-limit
+// settle adds (runners/remote-worker/src/lib/provider_limit.ts). A native v2
+// line passes through the contract type, so they ride it once the contract has
+// them; a field the type lacked would be dropped here in silence and the
+// console's feed would lose whose limit stopped the run.
+func TestLiftCarriesAProviderLimitSettleWhole(t *testing.T) {
+	t.Parallel()
+
+	got := one(t, `{"v":2,"seq":9,"ts":"2026-09-26T10:05:00Z","agentId":"lead","kind":"run_settled","outcome":"failure",`+
+		`"error":"model provider limit reached on ollama.com","code":"provider_limit","host":"ollama.com",`+
+		`"resetAt":"2026-09-26T14:00:00Z","providerDetail":"429 rate_limit"}`)
+	if got.Kind != gen.RunEventKindRunSettled || got.Code != gen.RunEventCodeProviderLimit ||
+		got.Host != "ollama.com" || got.ProviderDetail != "429 rate_limit" ||
+		got.ResetAt == nil || got.ResetAt.UTC().Format("15:04") != "14:00" {
+		t.Errorf("provider-limit settle = %+v, want every field carried", got)
+	}
+}
+
 // TestLiftAnnouncesEachAgentOnceAsInferred is the heart of the lift: v1 stamped
 // lines with an emitterId and never said an agent had STARTED, so the reader has
 // to deduce the agent from the first line that mentions it — and say that it

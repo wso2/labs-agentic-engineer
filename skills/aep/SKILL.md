@@ -29,10 +29,6 @@ open, are the record of this cycle — not the working tree.
 **A `git` or `gh` command that fails to authenticate is a platform fault, not an
 obstacle to work around.** Say so in one line and stop the run. 
 
-> **Validation runs**: if your prompt says this is a **validation task** and
-> points at a single validation issue, the `aep-validation` skill's workflow
-> REPLACES **The run** below — load it. Everything else here still applies.
-
 ## This skill, and the stack skills
 
 This is the **umbrella** skill. **The run** below is the loop over the issue set
@@ -355,9 +351,8 @@ not have.
 **A subagent may fan out itself** when its own work meets the two tests above; it
 inherits every rule in this section.
 
-**Pick the model for the job.** A walk or a small fix runs well on the fast model,
-a build on the default one. Name the model on the fan-out call — the glossary
-lists the aliases this session accepts.
+**Every subagent runs the session's one configured model**, so the fan-out call
+names no model.
 
 **Keep your plan in the task list.** One entry per issue you work, moved to
 in_progress when you or a subagent starts it, and to completed when its work is

@@ -36,8 +36,8 @@ func configWithNoTemporal() config.TemporalConfig { return config.TemporalConfig
 // to be non-nil.
 type fakeDispatcher struct{}
 
-func (fakeDispatcher) Dispatch(context.Context, delivery.MilestoneDispatch) (string, error) {
-	return "job-1", nil
+func (fakeDispatcher) Dispatch(context.Context, delivery.MilestoneDispatch) (delivery.AgentLaunch, error) {
+	return delivery.AgentLaunch{JobRef: "job-1"}, nil
 }
 
 // countingRuns records whether the start path reached the run store at all.

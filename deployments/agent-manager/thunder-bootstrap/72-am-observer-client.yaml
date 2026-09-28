@@ -1,0 +1,23 @@
+# No "scopes" key on purpose: this client's authority comes from its OpenChoreo
+# ClusterAuthzRoleBinding (amp-observer-reader-binding), not from AMP scopes.
+# Scope-less client_credentials tokens fall back to the client ID as audience.
+resource_type: application
+id: am-observer-client
+type: m2m # client_credentials only, no interactive login
+name: "AM Observer Client"
+description: "Dedicated client for agent-manager-observer to read observability data from the OpenChoreo observer"
+ouId: "01900000-0000-7000-8000-000000000001"
+inboundAuthConfig:
+  - type: oauth2
+    config:
+      clientId: "am-observer-client"
+      clientSecret: "am-observer-client-secret"
+      grantTypes: ["client_credentials"]
+      tokenEndpointAuthMethod: "client_secret_basic"
+      pkceRequired: false
+      publicClient: false
+      token:
+        accessToken:
+          clientConfig:
+            validityPeriod: 3600
+            attributes: ["ouId", "ouHandle"]

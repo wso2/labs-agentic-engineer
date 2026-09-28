@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/organization"
+	"github.com/wso2/aep/aep-api/internal/platform/modelconn"
 	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 
@@ -214,25 +215,25 @@ type agentLaunch struct {
 }
 
 // launchAgent resolves the run's credentials and launches the runner Job,
-// returning the launched run name. It writes no platform state: everything it
-// touches is either a read or the cluster.
-func (e *CodingExecutor) launchAgent(ctx context.Context, in agentLaunch) (string, error) {
+// returning the launched run name and the model host it runs on. It writes no
+// platform state: everything it touches is either a read or the cluster.
+func (e *CodingExecutor) launchAgent(ctx context.Context, in agentLaunch) (delivery.AgentLaunch, error) {
 	repo := in.repo
 	if repo == nil {
 		resolved, err := e.repos.GetRepo(ctx, in.orgID, in.projectID)
 		if err != nil || resolved == nil {
-			return "", fmt.Errorf("resolve project repo: %w", err)
+			return delivery.AgentLaunch{}, fmt.Errorf("resolve project repo: %w", err)
 		}
 		repo = resolved
 	}
 	name, email, login, err := e.identities.IdentityFor(ctx, in.orgID)
 	if err != nil {
-		return "", fmt.Errorf("resolve git identity: %w", err)
+		return delivery.AgentLaunch{}, fmt.Errorf("resolve git identity: %w", err)
 	}
 	// OpenChoreo Component dispatch: the only agent path. One Component per run
 	// cycle in the milestone's own project.
 	if e.ocJobs == nil {
-		return "", fmt.Errorf("no coding-agent dispatch path configured: set AGENT_RUNNER_IMAGE")
+		return delivery.AgentLaunch{}, fmt.Errorf("no coding-agent dispatch path configured: set AGENT_RUNNER_IMAGE")
 	}
 	return e.dispatchViaOC(ctx, in, repo, name, email, login)
 }
@@ -248,12 +249,26 @@ func (e *CodingExecutor) launchAgent(ctx context.Context, in agentLaunch) (strin
 // Credentials reach the pod through the ComponentType's ExternalSecret /
 // Workload secretEnv (refs only). Publisher client_credentials are the Job's
 // only platform credential (local and cloud).
+//
+// The launch reports the host of the connection whose credential it mounted:
+// the supervisor copies it onto the cycle, so the host a cycle's usage is priced
+// on is the one this Job was launched against.
 func (e *CodingExecutor) dispatchViaOC(ctx context.Context, in agentLaunch, repo *sourcecontrol.GitRepository,
-	name, email, login string) (string, error) {
-	anthropicSR, githubSR, err := e.resolveRunnerSecretRefs(ctx, in.orgID)
+	name, email, login string) (delivery.AgentLaunch, error) {
+	// The organization's agent setting, copied onto THIS run. Copied, not
+	// referenced: a change applies from the next cycle, and a run that re-read
+	// the setting halfway through would produce a feed whose model names
+	// disagree with the tokens they were billed for. Read first because the
+	// runtime decides which credential the run may mount.
+	agent, err := e.codingAgentEnv(ctx, in.orgID)
 	if err != nil {
-		return "", err
+		return delivery.AgentLaunch{}, err
 	}
+	creds, err := e.resolveRunnerSecretRefs(ctx, in.orgID, agent.Runtime)
+	if err != nil {
+		return delivery.AgentLaunch{}, err
+	}
+	githubSR := creds.github
 	disp := in.shape
 	platform := strings.TrimRight(e.platformURL, "/")
 	env := map[string]string{
@@ -272,6 +287,9 @@ func (e *CodingExecutor) dispatchViaOC(ctx context.Context, in agentLaunch, repo
 		"AEP_CORRELATION_ID":  in.correlationID,
 		"AEP_TASK_KIND":       taskKindOrDefault(disp.taskKind),
 		"WORKSPACE_BASE_PATH": codingAgentWorkspacePath,
+		// Unconditional, and deliberately not tied to whether a key was resolved
+		// below — see envEvalKeyManaged.
+		envEvalKeyManaged: "1",
 		// The run's OWN deadline, so it can end itself rather than be ended.
 		// The same number this dispatch puts on the Job's activeDeadlineSeconds
 		// below: when that one passes, the pod is killed mid-sentence and
@@ -283,33 +301,41 @@ func (e *CodingExecutor) dispatchViaOC(ctx context.Context, in agentLaunch, repo
 		// and duplicating it here would let the two drift apart silently.
 		"AEP_RUN_DEADLINE_SECONDS": strconv.FormatInt(disp.deadline, 10),
 	}
-	// The organization's coding-agent setting, copied onto THIS run. Copied, not
-	// referenced: a change applies from the next cycle, and a run that re-read
-	// the setting halfway through would produce a feed whose model names
-	// disagree with the tokens they were billed for.
-	runtimeName, model, err := e.codingAgentEnv(ctx, in.orgID)
-	if err != nil {
-		return "", err
+	env[envAgentRuntime] = string(agent.Runtime)
+	// The model connection the credential is for, and its model, copied onto
+	// the run for the same reason: a run in flight keeps the endpoint and the
+	// model its usage is billed against.
+	env[envAgentModel] = creds.model.Conn.Model
+	connEnv, modelKeyVar := modelEnv(creds.model)
+	for k, v := range connEnv {
+		env[k] = v
 	}
-	env[envAgentRuntime] = runtimeName
-	env[envAgentModel] = model
 	// Only a validation cycle is issue-anchored, so only it can name an issue.
 	// Absent rather than "0" for every other kind: the runner reads presence, and
 	// a stamped zero would be a number it has to know is not one.
 	if disp.validationIssue > 0 {
 		env[envValidationIssue] = strconv.Itoa(disp.validationIssue)
 	}
+	modelRef := creds.model.Ref
 	secretEnv := []SecretEnvRef{
-		{Key: anthropicEnvVarOrDefault(anthropicSR.EnvVar), SecretName: anthropicSR.SecretRefName, SecretKey: anthropicSR.Property},
+		{Key: modelKeyVar, SecretName: modelRef.Name, SecretKey: modelRef.Property},
 		{Key: envGitHubToken, SecretName: githubSR.SecretRefName, SecretKey: githubSR.Property},
+	}
+	// The evaluation key and the connection it is for travel together or not
+	// at all — see envEvalModelFormat.
+	if evalConn, evalSR, ok := e.evaluationKeyRef(ctx, in.orgID); ok {
+		secretEnv = append(secretEnv, evalSR)
+		for k, v := range evalModelEnv(evalConn) {
+			env[k] = v
+		}
 	}
 	pub, tokenURL, err := e.publisherSecretEnv(ctx, in.orgID)
 	if err != nil {
-		return "", err
+		return delivery.AgentLaunch{}, err
 	}
 	env[envPublisherTokenURL] = tokenURL
 	secretEnv = append(secretEnv, pub...)
-	return e.ocJobs.Dispatch(ctx, OCDispatchInputs{
+	jobRef, err := e.ocJobs.Dispatch(ctx, OCDispatchInputs{
 		OrgID:                 in.orgID,
 		ProjectID:             in.projectID,
 		CycleID:               in.correlationID,
@@ -318,10 +344,15 @@ func (e *CodingExecutor) dispatchViaOC(ctx context.Context, in agentLaunch, repo
 		MilestoneTitle:        disp.milestoneTitle,
 		Kind:                  disp.taskKind,
 		RunName:               codingAgentRunNameFor(in.projectID, in.correlationID),
+		Runtime:               agent.Runtime,
 		ActiveDeadlineSeconds: int(disp.deadline),
 		Env:                   env,
 		SecretEnv:             secretEnv,
 	})
+	if err != nil {
+		return delivery.AgentLaunch{}, err
+	}
+	return delivery.AgentLaunch{JobRef: jobRef, ModelHost: creds.model.Conn.Host}, nil
 }
 
 // stageBuildSecret pre-stages the org's build git credential and returns the
@@ -379,35 +410,34 @@ func (e *CodingExecutor) RetryAuthFailedBuild(ctx context.Context, row *delivery
 	return run.Name, nil
 }
 
+// runnerCredentials is what every coding run mounts: the model credential,
+// with the connection it is for and its kind, and the org's GitHub credential.
+type runnerCredentials struct {
+	model  organization.CodingCredential
+	github SecretRef
+}
+
 // resolveRunnerSecretRefs resolves the two credentials every coding run mounts.
 //
-// The Anthropic side asks the organization domain WHICH key this org's coding
-// runs bill — its coding-agent key when it configured one, its default key
-// otherwise — and mounts whatever comes back under the variable name that came
-// back WITH it, since a Claude Code OAuth token has to arrive as
-// CLAUDE_CODE_OAUTH_TOKEN rather than ANTHROPIC_API_KEY. The runner therefore
-// needs no notion of the split at all; it reads whichever of the two is
-// present, exactly as Claude Code always has. The resolver fails
-// closed on a configured-but-unusable coding key, so a run never silently bills
-// the default key an org deliberately scoped away from its coding agent.
-func (e *CodingExecutor) resolveRunnerSecretRefs(ctx context.Context, orgID string) (SecretRef, SecretRef, error) {
-	triplet, err := e.anthropicKey.ResolveCodingSecretRef(ctx, orgID)
+// The model side asks the organization domain WHICH credential a run on
+// runtime bills — its Claude subscription when it has one and the runtime is
+// Claude Code, the connection's key otherwise — and which connection it is
+// for. The domain answers in its own terms (a kind, never a variable name);
+// modelEnv maps that to the runner's env contract. The resolver fails closed
+// on a configured-but-unusable subscription, so a run never silently bills API
+// credits an org chose to replace with its plan.
+func (e *CodingExecutor) resolveRunnerSecretRefs(ctx context.Context, orgID string, runtime orgconfig.AgentRuntime) (runnerCredentials, error) {
+	cred, err := e.anthropicKey.ResolveCodingCredential(ctx, orgID, runtime)
 	if err != nil {
-		return SecretRef{}, SecretRef{}, fmt.Errorf("coding dispatch: %w", err)
-	}
-	anthropicSR := SecretRef{
-		SecretRefName: triplet.Name,
-		KVPath:        triplet.KVPath,
-		Property:      triplet.Property,
-		EnvVar:        triplet.EnvVar,
+		return runnerCredentials{}, fmt.Errorf("coding dispatch: %w", err)
 	}
 
 	githubRow, err := e.githubCreds.GetByOrg(ctx, orgID)
 	if err != nil {
-		return SecretRef{}, SecretRef{}, fmt.Errorf("coding dispatch: github credentials for org %q: %w", orgID, err)
+		return runnerCredentials{}, fmt.Errorf("coding dispatch: github credentials for org %q: %w", orgID, err)
 	}
 	if githubRow == nil {
-		return SecretRef{}, SecretRef{}, fmt.Errorf("coding dispatch: github secret reference missing for org %q: org_credentials row not found", orgID)
+		return runnerCredentials{}, fmt.Errorf("coding dispatch: github secret reference missing for org %q: org_credentials row not found", orgID)
 	}
 	githubSR := SecretRef{
 		SecretRefName: derefStr(githubRow.SecretRefName),
@@ -415,39 +445,64 @@ func (e *CodingExecutor) resolveRunnerSecretRefs(ctx context.Context, orgID stri
 		Property:      derefStr(githubRow.SecretRefProperty),
 	}
 	if err := validateSecretRefTriplet("github", orgID, githubSR); err != nil {
-		return SecretRef{}, SecretRef{}, fmt.Errorf("coding dispatch: %w", err)
+		return runnerCredentials{}, fmt.Errorf("coding dispatch: %w", err)
 	}
-	return anthropicSR, githubSR, nil
+	return runnerCredentials{model: cred, github: githubSR}, nil
 }
 
-// codingAgentEnv resolves the runtime and model this run is launched with.
+// evaluationKeyRef resolves the org's connection key as the build's
+// agent-evaluation credential, with the connection it is for, reporting whether
+// there is one to mount.
+//
+// A build that generates an ai-agent evaluates it before opening its PR, and
+// that step needs a model twice over — once for the agent it boots, once for the
+// judge that grades it. Both are API calls, so the credential has to be an API
+// key; the connection's key always is (ADR-0036), while the coding credential
+// may be a Claude subscription token that authenticates neither. Any format
+// will do: the harness reaches the connection the way the deployed agent will.
+//
+// An unresolvable key is NOT a dispatch failure, which is the one thing that
+// makes this different from every other credential here. Evaluation reports; it
+// never fails a build. An org with no usable key still gets its work done and
+// its PR opened — the evaluation step simply reports that it could not run —
+// so a missing key must not cost the org a delivery. It is logged rather than
+// swallowed silently, because "the harness never became ready" is otherwise a
+// puzzling thing to read in a build report.
+func (e *CodingExecutor) evaluationKeyRef(ctx context.Context, orgID string) (modelconn.Connection, SecretEnvRef, bool) {
+	conn, triplet, err := e.anthropicKey.KeyRef(ctx, orgID)
+	if err != nil {
+		slog.InfoContext(ctx, "coding dispatch: no model connection key — the build will run without agent evaluation",
+			"org", orgID, "error", err)
+		return modelconn.Connection{}, SecretEnvRef{}, false
+	}
+	// A half-mirrored row resolves to a triplet ESO cannot follow. Mounting it
+	// would put the variable on the pod pointing at nothing, and the harness
+	// would report the agent as misbehaving rather than as unconfigured.
+	if triplet.Name == "" || triplet.Property == "" {
+		slog.WarnContext(ctx, "coding dispatch: the connection key's secret reference is incomplete — the build will run without agent evaluation",
+			"org", orgID)
+		return modelconn.Connection{}, SecretEnvRef{}, false
+	}
+	return conn, SecretEnvRef{Key: envEvalModelAPIKey, SecretName: triplet.Name, SecretKey: triplet.Property}, true
+}
+
+// codingAgentEnv resolves the runtime this run is launched with (the model
+// comes with the connection, from resolveRunnerSecretRefs).
 //
 // A missing resolver, or an org that never chose, both mean the platform
-// defaults — which is what every dispatch carried before the setting existed, so
-// nothing changes for an org that never opens the page. A resolver that ERRORS
+// defaults. A resolver that ERRORS
 // is different and fails the dispatch: the org did choose something, we cannot
 // read what, and launching on the defaults would bill it for a model it moved
 // off without ever saying so.
-func (e *CodingExecutor) codingAgentEnv(ctx context.Context, orgID string) (string, string, error) {
+func (e *CodingExecutor) codingAgentEnv(ctx context.Context, orgID string) (orgconfig.AgentsProjection, error) {
 	if e.codingAgent == nil {
-		return orgconfig.DefaultAgentRuntime, orgconfig.DefaultCodingAgentModel, nil
+		return orgconfig.DefaultAgents(), nil
 	}
 	proj, err := e.codingAgent.Effective(ctx, orgID)
 	if err != nil {
-		return "", "", fmt.Errorf("coding dispatch: coding-agent setting for org %q: %w", orgID, err)
+		return orgconfig.AgentsProjection{}, fmt.Errorf("coding dispatch: coding-agent setting for org %q: %w", orgID, err)
 	}
-	return proj.Runtime, proj.Model, nil
-}
-
-// anthropicEnvVarOrDefault names the Job's Anthropic SecretEnv entry from
-// organization.SecretRefTriplet.EnvVar (ANTHROPIC_API_KEY or
-// CLAUDE_CODE_OAUTH_TOKEN — ADR-0016), falling back to the runner's default
-// only if a resolver ever returns the zero value.
-func anthropicEnvVarOrDefault(envVar string) string {
-	if envVar == "" {
-		return envAnthropicAPIKey
-	}
-	return envVar
+	return proj, nil
 }
 
 func validateSecretRefTriplet(credential, orgID string, ref SecretRef) error {
@@ -508,7 +563,7 @@ func buildPrompt(milestoneNumber int, milestoneTitle string) string {
 const validationComponentSentinel = "aep-validation"
 
 // validationTaskKind is the runner's AEP_TASK_KIND for a validation cycle: it
-// is what makes the runner preload the `aep-validation` skill instead of `aep`.
+// is what makes the runner preload the `validation-task` skill instead of `aep`.
 const validationTaskKind = "validation"
 
 // envValidationIssue names the validation issue to the pod. A validation run
@@ -518,8 +573,9 @@ const validationTaskKind = "validation"
 // agent only as prose inside AEP_PROMPT.
 const envValidationIssue = "AEP_VALIDATION_ISSUE"
 
-// validationDeadlineSeconds bounds a validation run (2h): browser boot + live
-// exploration + authoring/healing e2e specs is longer than a coding run.
+// validationDeadlineSeconds bounds a validation run (2h): a browser boots once
+// and every scenario in specs/validation/acceptance/ is then driven through it
+// in sequence, which is longer than a coding run.
 const validationDeadlineSeconds int64 = 7200
 
 // codingDeadlineSeconds bounds an ordinary coding run (3h). A coding cycle no
@@ -566,24 +622,14 @@ type dispatchShape struct {
 	validationIssue int
 }
 
-// buildValidationPrompt is the validation-runner directive: it points at the
-// validation issue and defers the workflow to the aep-validation skill (the
-// runner preloads it because AEP_TASK_KIND=validation).
+// buildValidationPrompt is the validation-runner directive, mirroring
+// buildPrompt: it names the issue, and the preloaded `validation-task` skill is
+// the procedure.
 //
 // It names NO milestone, and that is load-bearing: a validation cycle is
 // issue-anchored — one issue, one run — where a coding prompt's milestone
-// reference is an instruction to discover a whole working set. The skill still
-// needs the milestone for its branch identity (the platform keys a merged pull
-// request back to its run by an `aep/m<milestone#>-…` branch); it reads it off
-// the issue, which is filed under that milestone at mint time.
-//
-// The reference is `Validates #N` and NOT a GitHub closing keyword. The platform
-// owns the validation task's lifecycle — it reopens the task for the next attempt
-// and must close it even on an ending where no pull request merged at all — and a
-// closing keyword would put two owners on one issue. The reference still has to
-// be there: the auto-merge policy requires a pull request to name an armed issue
-// in the milestone, so a body referencing nothing is read as somebody else's work
-// and never merges. See eventcore/resolves.go.
-func buildValidationPrompt(issueURL string, issueNumber int) string {
-	return fmt.Sprintf("This is a validation task. Work on this GitHub validation issue: %s\n\nFollow the `aep-validation` skill's workflow: read the validation context, author and run the e2e tests against the deployed system, commit the tests and report, and open a PR whose body includes `Validates #%d` so the platform links it back. Use `Validates`, never a closing keyword such as `Closes` or `Fixes`: the platform closes this task itself.", issueURL, issueNumber)
+// reference is an instruction to discover a whole working set. The skill reads
+// the milestone off the issue for its branch identity.
+func buildValidationPrompt(issueURL string) string {
+	return fmt.Sprintf("This is a validation task. Work on this GitHub validation issue: %s\n\nFollow the `validation-task` skill loaded in your session — it defines the run, the report and the PR contract.", issueURL)
 }

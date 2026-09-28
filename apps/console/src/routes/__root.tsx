@@ -20,16 +20,32 @@ import { createRootRoute } from "@tanstack/react-router";
 import { AppLayout } from "../layouts/AppLayout";
 import { AuthGuard } from "../auth/AuthGuard";
 import { OnboardingGate } from "../features/onboarding/components/OnboardingGate";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 
 // Everything renders behind the auth gate (issue #91): routes only ever
 // see a signed-in session. Behind it, the onboarding gate (issue #102,
 // ADR-0009) holds every route until the org's config is complete.
+//
+// The app-level boundary is the last one the console owns. The shell's page
+// outlet and the chat panel have their own (AppLayout), so what reaches this
+// one is a throw in the gates or the shell itself, where nothing survives
+// anyway. It replaces the router's bare "Show Error" page with the same
+// retry-then-explain fallback the sections use; once the automatic attempts
+// are spent it says so and offers a reload, the one thing that fixes a
+// stale bundle after a deploy.
 export const Route = createRootRoute({
   component: () => (
-    <AuthGuard>
-      <OnboardingGate>
-        <AppLayout />
-      </OnboardingGate>
-    </AuthGuard>
+    <ErrorBoundary
+      label="The console"
+      exhaustedMessage="Unable to recover. Please contact your administrator."
+      offerReload
+      fallbackSx={{ minHeight: "100vh", display: "flex", flexDirection: "column", justifyContent: "center" }}
+    >
+      <AuthGuard>
+        <OnboardingGate>
+          <AppLayout />
+        </OnboardingGate>
+      </AuthGuard>
+    </ErrorBoundary>
   ),
 });

@@ -18,4 +18,4 @@ drift.
 - `lunch-coordinator-design/` — design output of the `design-lunch-coordinator`
   run (2026-08-02, pass band 93), frozen as produced: `lunch-api` +
   `lunch-webapp` components with design.json / openapi.yaml / wireframes,
-  design.cell, and validation-criteria.json.
+  design.cell, and the Gherkin acceptance criteria under specs/validation/acceptance/.

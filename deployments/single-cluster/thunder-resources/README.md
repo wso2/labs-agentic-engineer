@@ -21,14 +21,13 @@ because a redeclaration replaces it silently; and any client here that asks for
 the `system` scope must send the System resource server as its OAuth `resource`
 indicator, or the scope is dropped and every admin call afterwards 403s.
 
-**`92-ae-roles.yaml` sorts after the composed singletons on purpose.** It
+**`94-ae-roles.yaml` sorts after the composed singletons on purpose.** It
 declares the `ae` resource server, its permission actions, the
 `ae-admin`/`ae-developer` groups + roles, and a seeded `aeadmin` admin
-account — mirroring `services/aep-api/internal/authz/role_permissions_catalog.go`
-and `../../dev-thunder-setup/bootstrap/61-ae-roles.yaml` (same ids in both).
+account — mirroring `services/aep-api/internal/authz/role_permissions_catalog.go`.
 80-88 were already taken by existing AEP documents, and the ordering guard
 below only constrains `server_config` singletons, not this file's resource
-types, so 92 was the simplest slot. `aeadmin` is a plain `Person`-type user —
+types, so any slot after them does. `aeadmin` is a plain `Person`-type user —
 this bundle does not gate console login by user type. An earlier version
 tried that (a custom `AEUser` type + `allowedUserTypes` on
 `87-aep-console-app.yaml`), on the assumption it would keep the platform

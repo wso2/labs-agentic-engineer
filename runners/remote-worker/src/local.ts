@@ -58,15 +58,15 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { startCodingRun } from "./lib/runner.js";
+import { implementationSkills, startCodingRun } from "./lib/runner.js";
 import { openTaskLog } from "./lib/logger.js";
 import type { DispatchRequest } from "./lib/types.js";
 import type { WorkspaceLayout } from "./lib/workspace.js";
-import { emit } from "./lib/progress/emitter.js";
+import { emit, primeScrubber } from "./lib/progress/emitter.js";
 import { PROVISIONING, WORKSPACE_READY } from "./lib/progress/lifecycle.js";
 import { installLogRedaction } from "./lib/progress/console_scrub.js";
 import { resolveTaskSkills } from "./lib/skills_resolver.js";
-import { listMirroredSkills, readSkillBodies, resolveSkillPresence } from "./lib/skills_presence.js";
+import { readSkillBodies, resolveSkillPresence } from "./lib/skills_presence.js";
 import { mirrorLocalSkillLibrary } from "./lib/local_skill_mirror.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -146,6 +146,15 @@ async function main(): Promise<number> {
     return 2;
   }
 
+  // BOTH credential variables: a run authenticates with exactly one of them
+  // (an org may bill its coding agent to a Claude Code OAuth token instead of
+  // an API key), and priming only the one that happens to be unset would leave
+  // the other unredacted in the progress feed. Unset entries are skipped.
+  primeScrubber([
+    process.env.ANTHROPIC_API_KEY,
+    process.env.CLAUDE_CODE_OAUTH_TOKEN,
+    process.env.AEP_EVAL_MODEL_API_KEY,
+  ]);
   emit(PROVISIONING);
 
   let layout: WorkspaceLayout;
@@ -181,6 +190,7 @@ async function main(): Promise<number> {
   // place, not two.
   let availableSkillNames: string[] = [];
   let pinnedBodies = "";
+  let pinnedSkillNames: string[] = [];
   try {
     const pinned = await resolveTaskSkills({
       workspace: run.projectDir,
@@ -194,13 +204,11 @@ async function main(): Promise<number> {
     if (dangling.length > 0) {
       console.warn(`[local] ⚠️  pinned skill(s) missing from .claude/skills/ — proceeding without them: ${dangling.join(", ")}`);
     }
-    // The whole mirror is allowed (the SDK rejects anything unlisted); the
-    // pinned subset additionally rides in on the system prompt.
-    availableSkillNames = await listMirroredSkills(run.projectDir);
+    // The SDK rejects anything unlisted; the pinned subset additionally rides in
+    // on the system prompt.
+    availableSkillNames = await implementationSkills(run.projectDir);
     pinnedBodies = await readSkillBodies(run.projectDir, present);
-    console.log(
-      `[local] ${availableSkillNames.length} skill(s) available, ${present.length} pinned into context`,
-    );
+    pinnedSkillNames = present;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[local] ⚠️  SKILLS UNAVAILABLE — proceeding without per-task skills: ${msg}`);
@@ -236,7 +244,7 @@ async function main(): Promise<number> {
   const log = openTaskLog(run.runDir);
   let completion: Promise<{ exitCode: number }>;
   try {
-    ({ completion } = await startCodingRun(req, layout, log, { availableSkillNames, pinnedBodies }));
+    ({ completion } = await startCodingRun(req, layout, log, { availableSkillNames, pinnedBodies, pinnedSkillNames }));
   } catch (err) {
     // The mirror carries no workflow skill, so there is no procedure to run —
     // see requireWorkflowBodies. In the playground that means the library or the

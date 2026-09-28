@@ -32,8 +32,10 @@ const LinkButton = createLink(Button);
  * words, under the page header and above the summary card.
  *
  * Draws only when there is something to explain: a failed run, or a run still
- * moving with a recorded fault (a fault being retried, amber). A cancelled run
- * draws nothing — a person stopping an increment is not a fault. Every sentence
+ * moving with a recorded fault (a fault being retried, amber), or a run blocked
+ * on its model provider's usage limit (amber, naming whose limit and when it
+ * resets). A cancelled run draws nothing — a person stopping an increment is
+ * not a fault. Every sentence
  * comes from `failureCopy`, the one place a failure is put into words, so this
  * card, the ledger chip and the overview's track cannot disagree.
  *
@@ -59,7 +61,9 @@ export function RunFailureCard({
   return (
     <Box
       role="status"
-      aria-label={tone === "error" ? "Build failure" : "Build retrying"}
+      aria-label={
+        run.state === "blocked" ? "Build blocked" : tone === "error" ? "Build failure" : "Build retrying"
+      }
       sx={(theme) => {
         const main = theme.palette[tone].main;
         return {

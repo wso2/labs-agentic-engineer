@@ -26,7 +26,9 @@ import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    include: ["src/**/*.test.{ts,tsx}"],
+    // `test/` holds the few node-side tests that cannot live under src/ — see the
+    // header of test/validation-fixtures.contract.test.ts for why.
+    include: ["src/**/*.test.{ts,tsx}", "test/**/*.test.{ts,tsx}"],
     // Real-browser tests (`*.browser.test.tsx`) run under vitest.browser.config.ts
     // in headless Chromium — they can't run in this node/jsdom project.
     exclude: [...configDefaults.exclude, "**/*.browser.test.{ts,tsx}"],

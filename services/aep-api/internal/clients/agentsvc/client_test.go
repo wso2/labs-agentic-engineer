@@ -27,6 +27,8 @@ import (
 	"testing"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/wso2/aep/aep-api/internal/platform/modelconn"
 )
 
 // recordingServer captures the last request and replays a fixed response.
@@ -93,8 +95,11 @@ func TestTurn_SendsExactRequestAndHeaders(t *testing.T) {
 	if ac := srv.headers.Get("Accept"); ac != "text/event-stream" {
 		t.Errorf("Accept = %q", ac)
 	}
-	if k := srv.headers.Get("X-Anthropic-Key"); k != "sk-ant-123" {
-		t.Errorf("X-Anthropic-Key = %q", k)
+	if k := srv.headers.Get("X-Model-Key"); k != "sk-ant-123" {
+		t.Errorf("X-Model-Key = %q", k)
+	}
+	if k := srv.headers.Get("X-Anthropic-Key"); k != "" {
+		t.Errorf("X-Anthropic-Key = %q, want absent", k)
 	}
 	if o := srv.headers.Get("X-Org-Id"); o != "org-o" {
 		t.Errorf("X-Org-Id = %q", o)
@@ -223,5 +228,38 @@ func TestGetConversation(t *testing.T) {
 	var ue *UpstreamError
 	if !errors.As(err, &ue) || ue.StatusCode != http.StatusNotFound {
 		t.Fatalf("want *UpstreamError 404, got %v", err)
+	}
+}
+
+// The connection rides the turn body in the shape @aep/agent-stream's
+// TurnConnection pins, its capabilities computed by modelconn.CapabilitiesOf.
+func TestConnectionFor_WireShape(t *testing.T) {
+	window, limit := 131072, 32000
+	cases := []struct {
+		name string
+		conn modelconn.Connection
+		want string
+	}{
+		{
+			name: "anthropic@api.anthropic.com",
+			conn: modelconn.Connection{Format: modelconn.FormatAnthropic, BaseURL: modelconn.AnthropicBaseURL, Host: modelconn.AnthropicHost, Model: "claude-sonnet-5", AuthScheme: modelconn.AuthXAPIKey, ImageInput: modelconn.Unknown},
+			want: `{"format":"anthropic","baseURL":"https://api.anthropic.com/v1","authScheme":"x-api-key","capabilities":{"claudeCode":true,"claudeSubscription":true,"promptCache":true,"generatedAgents":true,"nativePdf":true,"webSearch":"anthropic-server-tool","imageInput":"yes"}}`,
+		},
+		{
+			name: "openai-compatible@ollama.com",
+			conn: modelconn.Connection{Format: modelconn.FormatOpenAICompatible, BaseURL: "https://ollama.com/v1", Host: modelconn.OllamaHost, Model: "gpt-oss:20b", AuthScheme: modelconn.AuthBearer, ContextWindow: &window, OutputLimit: &limit, ImageInput: modelconn.No},
+			want: `{"format":"openai-compatible","baseURL":"https://ollama.com/v1","authScheme":"bearer","contextWindow":131072,"outputLimit":32000,"capabilities":{"claudeCode":false,"claudeSubscription":false,"promptCache":false,"generatedAgents":true,"nativePdf":false,"webSearch":"ollama-api","imageInput":"no"}}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := json.Marshal(ConnectionFor(tc.conn))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tc.want {
+				t.Errorf("ConnectionFor(%s)\n got %s\nwant %s", tc.name, got, tc.want)
+			}
+		})
 	}
 }

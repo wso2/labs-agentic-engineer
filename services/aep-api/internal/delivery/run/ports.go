@@ -118,6 +118,7 @@ type RunStore interface {
 type CycleStore interface {
 	Append(ctx context.Context, cycle *delivery.RunCycle) (cycleID string, err error)
 	NoteDispatch(ctx context.Context, cycleID, jobRef string) error
+	NoteModelHost(ctx context.Context, cycleID, host string) error
 	Finish(ctx context.Context, cycleID, mergeSHA string) error
 	// SetValidationVerdict records one validation ATTEMPT's outcome on its own cycle
 	// row — the verdict, the issue it was dispatched at, and the DIGEST of the
@@ -229,13 +230,15 @@ type ValidationCoordinator interface {
 	Verdict(ctx context.Context, orgID, projectID, at string) (verdict, digest string, err error)
 
 	// MintRepairIssues turns a `failed` attempt's report into ordinary work: one
-	// issue per failed criterion, filed into the milestone, which the next cycle
-	// picks out of the working set like any other. Returns the issue numbers.
+	// issue per failed scenario, filed into the milestone, which the next cycle
+	// picks out of the working set like any other. Returns the issue numbers —
+	// including the ones it resolved onto rather than filed.
 	//
-	// It reads the report at the same pinned commit the verdict came from. cycleID
-	// is the attempt's identity and becomes the issues' dedupe key, so a retry
-	// within one attempt files nothing new while the next attempt files fresh work.
-	MintRepairIssues(ctx context.Context, orgID, projectID string, milestoneNumber int, at, cycleID string) ([]int, error)
+	// It reads the report at the same pinned commit the verdict came from. The
+	// dedupe key is the SCENARIO, so one defect keeps one issue however many
+	// attempts meet it; an attempt that finds a scenario still failing leaves its
+	// evidence on that issue as a comment.
+	MintRepairIssues(ctx context.Context, orgID, projectID string, milestoneNumber int, at string) ([]int, error)
 
 	// CloseValidationIssue closes the version's validation task, leaving a comment
 	// that names the verdict (or its absence).
@@ -247,7 +250,11 @@ type ValidationCoordinator interface {
 	// where no verdict was reached at all — an agent that died through its whole
 	// re-dispatch budget — which is the loop's only termination guarantee: the
 	// sweep starts a validation run because the task is OPEN.
-	CloseValidationIssue(ctx context.Context, orgID, projectID string, issue int, verdict string) error
+	//
+	// repairs are the issue numbers this attempt filed, named in the comment. That
+	// is the only edge between a repair issue and the run that found it, and it
+	// points this way on purpose — see validation.closeComment.
+	CloseValidationIssue(ctx context.Context, orgID, projectID string, issue int, verdict string, repairs []int) error
 }
 
 // Dispatcher launches one agent run over the milestone. It is the locally
@@ -255,7 +262,7 @@ type ValidationCoordinator interface {
 // the coding agent satisfies — the supervisor names a capability, not a
 // package.
 type Dispatcher interface {
-	Dispatch(ctx context.Context, req delivery.MilestoneDispatch) (jobRef string, err error)
+	Dispatch(ctx context.Context, req delivery.MilestoneDispatch) (delivery.AgentLaunch, error)
 }
 
 // Deployer promotes a cycle's built components into the environment and reports

@@ -145,6 +145,21 @@ describe("TurnBlock", () => {
     expect(screen.queryByTestId("turn-committed")).not.toBeInTheDocument();
   });
 
+  it("says what a running turn is waiting on when it is waiting on the model provider", () => {
+    render(
+      <OxygenUIThemeProvider theme={OxygenTheme}>
+        <TurnBlock
+          turn={turn({ status: "running", items: [narration("thinking")] })}
+          expandedGroups={new Set()}
+          onToggleGroup={vi.fn()}
+          onOpenSpec={vi.fn()}
+          workingLabel="Waiting on the model provider (ollama.com)…"
+        />
+      </OxygenUIThemeProvider>,
+    );
+    expect(screen.getByTestId("working")).toHaveTextContent("Waiting on the model provider (ollama.com)…");
+  });
+
   it("keeps the chat-error testid for an error message inside the turn", () => {
     renderTurn(turn({ status: "failed", items: [narration("oops"), errorItem("boom")] }));
     expect(screen.getByTestId("chat-error")).toHaveTextContent("boom");

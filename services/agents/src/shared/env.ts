@@ -77,18 +77,3 @@ export function boolEnv(value: string | undefined, fallback: boolean): boolean {
   if (["0", "false", "no", "off"].includes(v)) return false;
   return fallback;
 }
-
-/**
- * Return `ANTHROPIC_API_KEY`. Prefer the ambient env; otherwise load the
- * nearest `.env`. Throws when unset (the composition root surfaces this).
- */
-export function loadAnthropicKey(): string {
-  if (!process.env.ANTHROPIC_API_KEY) loadDotenv();
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) {
-    throw new Error(
-      "ANTHROPIC_API_KEY is not set. Export it, or add it to deployments/.env (run deployments/scripts/setup-aep.sh, or see .env.example).",
-    );
-  }
-  return key;
-}

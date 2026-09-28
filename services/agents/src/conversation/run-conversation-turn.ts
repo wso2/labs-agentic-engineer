@@ -42,22 +42,30 @@ import {
 import { DocFileBundle } from "../collab/doc-bundle.js";
 import { StreamingDocWriter } from "../collab/streaming-add.js";
 import type { RoomPeer } from "../collab/room-peer.js";
-import { runTurn } from "../agents/main/run-turn.js";
+import { runTurn, type ProviderOptions } from "../agents/main/run-turn.js";
 import { buildFileToolSet, buildRegisterDraftTools } from "../agents/main/tools/files.js";
 import { tapWrites, type WriteLedger } from "../agents/main/tools/write-ledger.js";
+import { buildWebSearchTools } from "../agents/main/tools/web-search.js";
 import { buildTaskPlanTools } from "../agents/main/tools/task-plan.js";
 import { TaskPlan } from "../agents/main/task-plan-accumulator.js";
 import { buildInstructions, buildTaskPlanInstructions, buildPrompt, buildEagerSkillsBlock } from "../agents/main/prompt.js";
 import type { SkillSource } from "../agents/main/skill-source.js";
+import type { UnreadableReference } from "./attachments.js";
+import { historyFor } from "./history-for.js";
 import { buildManifestPart, toTurnUsage } from "./manifest.js";
-import { attachmentsNote } from "../prompts/turn.js";
+import { OutputTruncatedError, TruncationWatch } from "./truncation.js";
+import { attachmentsNote, unreadableReferencesNote } from "../prompts/turn.js";
 import { config } from "../shared/config.js";
+import { guardedFetch } from "../shared/guarded-fetch.js";
 import {
-  isAnthropicModel,
+  anthropicConnection,
+  connectionFingerprint,
+  maxOutputTokensFor,
   modelCacheBreakpoint,
   modelProviderOptions,
-  webSearchTool,
+  type ModelConnection,
 } from "../shared/model.js";
+import { MODEL_MAX_RETRIES } from "../shared/provider-limit.js";
 import { loadMcpTools } from "../shared/mcp-client.js";
 import { turnTelemetry } from "../shared/telemetry.js";
 import type { Conversation, ConversationStore, TurnJournalEntry } from "../store/conversation-store.js";
@@ -159,6 +167,13 @@ export interface RunConversationTurnInput {
    */
   referenceAttachments?: FilePart[];
   /**
+   * Reference documents the caller left out of `referenceAttachments` because
+   * the connection's model cannot read them (`fitReferences`). Named in the
+   * prompt so the model neither assumes their content nor goes looking for
+   * them. Absent/empty → no note.
+   */
+  unreadableReferences?: readonly UnreadableReference[];
+  /**
    * Native file parts for the files the user attached to THIS message (#428).
    *
    * Separate from `referenceAttachments` — NOT merely for wording, but because
@@ -205,14 +220,18 @@ export interface RunConversationTurnInput {
    */
   registerDraft?: boolean;
   /**
-   * Attach Anthropic's provider-executed `web_search` tool for this turn
-   * (external-dependency-discovery #252). The caller (BFF) sets this true
-   * under the same condition as `mcp`. Registered ONLY when true AND the
-   * turn's `model` is actually Anthropic (`isAnthropicModel`) — Anthropic-only,
-   * injecting it against another provider would error. Omitted/false, or a
-   * non-Anthropic model, → the tool map is byte-identical to a turn without it.
+   * Give this turn a `web_search` tool (external-dependency-discovery #252).
+   * The caller (BFF) sets this true under the same condition as `mcp`. Which
+   * tool follows the connection's `capabilities.webSearch`
+   * (`tools/web-search.ts`); with `none`, or omitted/false, the tool map is
+   * byte-identical to a turn without it.
    */
   webSearch?: boolean;
+  /**
+   * The fetch a platform-executed tool calls the connection's host through
+   * (the Ollama web search). Defaults to `guardedFetch`; tests pass a stub.
+   */
+  toolFetch?: typeof globalThis.fetch;
   /**
    * Where the person reading this turn's prose is sitting (#580). Present → the
    * surface's narration skill is inlined into the SYSTEM prompt as standing
@@ -221,22 +240,24 @@ export interface RunConversationTurnInput {
    * byte-identical to today.
    */
   surface?: Surface;
-  /** Injected at the composition root (createModel is called ONCE there, not per turn). */
+  /** The turn's model, built by the caller from `connection` (`createModel`). */
   model: LanguageModel;
   /**
-   * The resolved model id `model` was built with (`resolveModelId`, threaded
-   * from the composition root alongside the model — #249). Attributes the
-   * turn's token usage on the terminal manifest; absent (mock-model tests,
-   * evals) → the manifest usage carries `model: ""`.
+   * The connection `model` was built on. It decides the provider options, the
+   * output ceiling, the cache marker and which `web_search` tool the turn gets;
+   * its model id attributes the turn's token usage on the terminal manifest
+   * (#249); and its fingerprint is stamped on this turn's journal entry.
+   * Absent (mock-model tests, evals) → Anthropic's own API on the service
+   * default model, and the manifest usage carries `model: ""`.
    */
-  modelId?: string;
+  connection?: ModelConnection;
   /**
    * The turn's journal entry (#463): the raw client-sent instruction + acting
    * user, appended to `conv.turns` alongside the transcript in the same save —
    * the display source the get-conversation read serves for user rows. Absent
    * (older callers, evals) → no entry; the read falls back to the raw message.
    */
-  journal?: Omit<TurnJournalEntry, "messageIndex" | "createdAt">;
+  journal?: Omit<TurnJournalEntry, "messageIndex" | "connection" | "createdAt">;
   store: ConversationStore;
   guard: TurnGuard;
   onEvent: (p: StreamPart) => void;
@@ -249,6 +270,7 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
   // addFile body into the doc AS IT STREAMS. Hoisted so the finally can drain +
   // roll back a severed/rejected preview on EVERY exit path (before peer.leave).
   let docWriter: StreamingDocWriter | undefined;
+  const conn = input.connection ?? anthropicConnection("");
   try {
     // 1. load or lazily create
     const conv = (await input.store.get(input.id)) ?? freshConversation(input.id);
@@ -306,18 +328,10 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
       }
     }
 
-    // 3b'. Web search (external-dependency-discovery #252): Anthropic's
-    //      provider-executed `web_search` tool, gated on the caller-supplied
-    //      `webSearch` flag (the BFF sets it true under the same design-
-    //      generate/collab condition as `mcp`) AND the turn's model actually
-    //      being Anthropic (`isAnthropicModel`) — the tool is Anthropic-only,
-    //      so injecting it against another provider would error; a mismatch
-    //      degrades silently to no tool. Absent flag, or a non-Anthropic
-    //      model, leaves `tools` untouched (byte-identical to today). Spread
-    //      LAST — same shadow-guard as the MCP merge above — so a discovered
-    //      MCP tool can never shadow it either.
-    if (input.webSearch && isAnthropicModel(input.model)) {
-      tools = { ...tools, web_search: webSearchTool() };
+    // 3b'. Web search (#252), spread LAST: the same shadow-guard as the MCP
+    //      merge above, so a discovered MCP tool can never shadow it.
+    if (input.webSearch) {
+      tools = { ...tools, ...buildWebSearchTools(conn, input.toolFetch ?? guardedFetch) };
     }
 
     // 3c. Live doc streaming: a room-scoped `files` turn has a bundle + peer to
@@ -336,12 +350,14 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     //     writer keeps observing the SDK's own frames, so its optimistic preview
     //     is still finalized (or rolled back) by the authoritative execute().
     const forward = writes ? tapWrites(writes, input.onEvent) : input.onEvent;
-    const onEvent = docWriter
-      ? (p: StreamPart) => {
-          docWriter!.observe(p);
-          forward(p);
-        }
-      : forward;
+    // 3e. A write the output limit cuts off (truncation.ts) is watched on the
+    //     SDK's own frames, like the doc writer.
+    const truncation = new TruncationWatch();
+    const onEvent = (p: StreamPart) => {
+      truncation.observe(p);
+      docWriter?.observe(p);
+      forward(p);
+    };
 
     // 4. one generic turn. The instructions append the skill catalog at the END
     //    of the system prompt; buildPrompt inlines CURRENT STATE; prepend a one-line
@@ -352,7 +368,7 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     // spending a whole model call on loadSkill. Unknown names skip silently
     // (the snapshot is the authority on what exists).
     const eagerBlock = buildEagerSkillsBlock(skills, input.eagerSkills, input.surface);
-    const cacheBreakpoint = modelCacheBreakpoint();
+    const cacheBreakpoint = modelCacheBreakpoint(conn);
     // Stamps this turn's steps with the conversation they belong to, so two
     // projects generating at once are attributable in the trace UI.
     const telemetry = turnTelemetry(conv.id);
@@ -380,22 +396,38 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     // which is the one the model reads as current.
     const freshAttachments = [...freshReferences, ...(input.chatAttachments ?? [])];
     const startLen = conv.messages.length;
+    const fingerprint = connectionFingerprint(conn);
+    // What this connection can replay of the stored turns (history-for.ts):
+    // conv.messages itself while every turn came from this connection, else a
+    // cleaned copy. runTurn appends this turn to the array it is handed, so a
+    // copy's appended tail is carried onto conv.messages below.
+    const history = historyFor(conv.messages, conv.turns ?? [], {
+      fingerprint,
+      imageInput: conn.capabilities.imageInput,
+    });
+    const historyLen = history.length;
+    const maxOutputTokens = maxOutputTokensFor(conn);
     const res = await runTurn({
       model: input.model,
       instructions,
       prompt:
         note +
         attachmentsNote((input.chatAttachments ?? []).flatMap((p) => (p.filename ? [p.filename] : []))) +
+        unreadableReferencesNote(input.unreadableReferences) +
         eagerBlock +
         buildPrompt(input.files, input.instruction),
-      messages: conv.messages, // appended in place by runTurn
+      messages: history,
       ...(freshAttachments.length ? { fileParts: freshAttachments } : {}),
       tools,
       // End the turn at an ACCEPTED HITL question call (the question tools live
       // on the `files` set only, so this never fires on a task-plan turn).
       stopWhen: [isStepCount(config.maxSteps), hasValidQuestionCall()],
-      maxOutputTokens: config.maxOutputTokens,
-      providerOptions: modelProviderOptions(),
+      maxOutputTokens,
+      // Short provider waits (a 429 with a brief retry-after, a 5xx) ride out
+      // about a minute; a provider limit stops the turn at once
+      // (shared/provider-limit.ts).
+      maxRetries: MODEL_MAX_RETRIES,
+      ...providerOptionsFor(conn),
       // History is append-only (see the module doc above), so the prefix this
       // marks is byte-identical on the next step and the next turn — which is
       // exactly what makes it cacheable. Omitted entirely when caching is off,
@@ -406,13 +438,15 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
       ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
     });
 
+    if (history !== conv.messages) conv.messages.push(...history.slice(historyLen));
+
     // 5. set status: awaiting-human when the turn ended on a HITL question call.
     conv.status = endedAwaitingHuman(conv.messages.slice(startLen)) ? "awaiting-human" : "done";
 
     // 6. per-turn spend (#249): project the whole-turn usage onto the pinned
     //    wire shape; it rides the terminal manifest below so the aep-api fold
     //    captures it alongside the file shas.
-    const usage = toTurnUsage(res.usage, input.modelId ?? "");
+    const usage = toTurnUsage(res.usage, input.connection?.model ?? "");
     if (config.logLevel === "debug") {
       process.stderr.write(
         `[turn ${conv.id}] finishReason=${res.finishReason} tokens in/out=` +
@@ -425,11 +459,27 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     //    stamped with the INDEX of the user message this turn appended
     //    (startLen — runTurn appends the prompt first): the display read pairs
     //    entry↔message by that stated fact, so an un-journaled turn anywhere
-    //    in the history can never shift another turn's pairing.
+    //    in the history can never shift another turn's pairing. The entry
+    //    also names the connection that wrote the turn, which decides what a
+    //    later connection may replay of it (history-for.ts).
     if (input.journal) {
-      conv.turns = [...(conv.turns ?? []), { ...input.journal, messageIndex: startLen, createdAt: new Date() }];
+      conv.turns = [
+        ...(conv.turns ?? []),
+        {
+          ...input.journal,
+          messageIndex: startLen,
+          connection: fingerprint,
+          createdAt: new Date(),
+        },
+      ];
     }
     await input.store.save(conv);
+
+    // 7b. A write the output limit cut off fails the turn — after the save, so
+    //     the transcript keeps what the model did, and before the manifest, so
+    //     the fold never commits a draft missing that file.
+    const cutOff = res.finishReason === "length" ? truncation.cutOffCall() : undefined;
+    if (cutOff) throw new OutputTruncatedError(cutOff, maxOutputTokens);
 
     // 8. terminal manifest (D14) — emitted LAST, only on full success (any
     //    throw above skips it, so a severed/failed stream carries no manifest
@@ -449,4 +499,10 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     }
     input.guard.release(input.id);
   }
+}
+
+/** The turn's provider options as a spreadable field; none for a model that takes none. */
+function providerOptionsFor(conn: ModelConnection): { providerOptions?: ProviderOptions } {
+  const providerOptions = modelProviderOptions(conn);
+  return providerOptions ? { providerOptions } : {};
 }

@@ -33,13 +33,23 @@ import { sha256Hex } from "../shared/hash.js";
  * `inputTokenDetails`, absent counts collapse to 0 so every field is a
  * required number, and `model` is the resolved id the turn ran on (threaded
  * from the composition root — the SDK usage object does not carry it).
+ *
+ * `inputTokens` on the wire is the UNCACHED input, as the coding runner sends
+ * it (Anthropic's `input_tokens`); aep-api prices cache reads and writes from
+ * their own fields. The SDK's `inputTokens` is the total including both, so
+ * sending it would bill every cached token twice.
  */
 export function toTurnUsage(usage: LanguageModelUsage, model: string): TurnUsage {
+  const cacheReadTokens = usage.inputTokenDetails?.cacheReadTokens ?? 0;
+  const cacheCreationTokens = usage.inputTokenDetails?.cacheWriteTokens ?? 0;
+  const uncached =
+    usage.inputTokenDetails?.noCacheTokens ??
+    Math.max(0, (usage.inputTokens ?? 0) - cacheReadTokens - cacheCreationTokens);
   return {
-    inputTokens: usage.inputTokens ?? 0,
+    inputTokens: uncached,
     outputTokens: usage.outputTokens ?? 0,
-    cacheReadTokens: usage.inputTokenDetails?.cacheReadTokens ?? 0,
-    cacheCreationTokens: usage.inputTokenDetails?.cacheWriteTokens ?? 0,
+    cacheReadTokens,
+    cacheCreationTokens,
     model,
   };
 }

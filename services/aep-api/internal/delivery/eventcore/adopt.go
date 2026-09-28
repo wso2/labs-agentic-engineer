@@ -222,6 +222,26 @@ func (e *Events) Revalidate(ctx context.Context, orgID, projectID string, milest
 	if live != nil {
 		return "", delivery.ErrRunAlreadyLive
 	}
+	// The version asked for must be the one SERVING. Everything a revalidation
+	// touches is resolved at request time and none of it is pinned to this
+	// milestone: the runner's endpoints come from the cluster's current release
+	// bindings, and its criteria from the branch tip. Judging an older version
+	// therefore drives the deployed system, writes the verdict onto the older
+	// version's row, and — with the default attempt budget — mints its repair
+	// issues into that milestone too.
+	//
+	// The same read AdoptIssue uses to place a bare issue, asked for the opposite
+	// reason: adoption wants the deployed milestone, and this refuses any other.
+	deployed, derr := e.p.Runs.DeployedMilestoneRun(ctx, orgID, projectID)
+	if derr != nil {
+		return "", derr
+	}
+	if deployed == nil {
+		return "", ErrNoDeployedMilestone
+	}
+	if deployed.MilestoneNumber != milestone.Number {
+		return "", delivery.ErrVersionNotDeployed
+	}
 	counts, err := e.p.Issues.MilestoneIssueCounts(ctx, orgID, projectID, milestone.Number)
 	if err != nil {
 		return "", err

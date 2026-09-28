@@ -31,6 +31,7 @@ import {
   securityDesignJsonSchema,
   planTaskJsonSchema,
   updateTaskJsonSchema,
+  agentAfmJsonSchema,
 } from "../src/json-schema.js";
 import {
   COMPONENT_DESIGN_SCHEMA_ARTIFACT,
@@ -38,6 +39,7 @@ import {
   SECURITY_DESIGN_SCHEMA_ARTIFACT,
   PLAN_TASK_SCHEMA_ARTIFACT,
   UPDATE_TASK_SCHEMA_ARTIFACT,
+  AGENT_AFM_SCHEMA_ARTIFACT,
   SECURITY_DESIGN_MESSAGES_ARTIFACT,
   OPENAPI_SECURITY_MESSAGES_ARTIFACT,
 } from "../scripts/artifact-path.js";
@@ -52,6 +54,7 @@ const artifacts: [string, string, () => Record<string, unknown>][] = [
   ["security-design.schema.json", SECURITY_DESIGN_SCHEMA_ARTIFACT, securityDesignJsonSchema],
   ["plan-task.schema.json", PLAN_TASK_SCHEMA_ARTIFACT, planTaskJsonSchema],
   ["update-task.schema.json", UPDATE_TASK_SCHEMA_ARTIFACT, updateTaskJsonSchema],
+  ["agent-afm.schema.json", AGENT_AFM_SCHEMA_ARTIFACT, agentAfmJsonSchema],
   // The security-gate message catalog is vendored by the BFF, which formats the
   // same templates so both gates say the same sentence about the same document.
   [

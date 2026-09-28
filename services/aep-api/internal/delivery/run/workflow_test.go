@@ -1872,6 +1872,8 @@ func TestValidationRun_Passes(t *testing.T) {
 	require.Len(t, h.taskCloses, 1, "the platform closes the task it adopted")
 	require.Equal(t, 77, h.taskCloses[0].Issue)
 	require.Equal(t, delivery.ValidationVerdictPassed, h.taskCloses[0].Verdict)
+	require.Empty(t, h.taskCloses[0].Repairs,
+		"an attempt that filed no repair work must not claim any in its close")
 	// The GREEN ENDING is where the version's milestone closes — zero open
 	// working-set issues and a terminal verdict on the newest validation run. A
 	// succeeded validation run is a green ending by construction: every fatal
@@ -1928,13 +1930,13 @@ func TestDevRun_CodingCycleCarriesNoValidationIssue(t *testing.T) {
 	}
 }
 
-// TestValidationRun_FailedFilesOneIssuePerCriterion is the repair hand-off. The
-// failure becomes ORDINARY WORK in the milestone — one issue per failed criterion
+// TestValidationRun_FailedFilesOneIssuePerScenario is the repair hand-off. The
+// failure becomes ORDINARY WORK in the milestone — one issue per failed scenario
 // — and the run then settles on the verdict it reached.
 //
-// One per criterion and never one omnibus issue: the no-progress rule compares
+// One per scenario and never one omnibus issue: the no-progress rule compares
 // working-set SIZES, so repairing two of three failures has to read as progress.
-func TestValidationRun_FailedFilesOneIssuePerCriterion(t *testing.T) {
+func TestValidationRun_FailedFilesOneIssuePerScenario(t *testing.T) {
 	h := newHarness(t)
 	h.validationIs(77, delivery.ValidationVerdictFailed)
 	h.repairMintsAre([]int{testRepairIssue, testRepairIssue + 1})
@@ -1952,9 +1954,11 @@ func TestValidationRun_FailedFilesOneIssuePerCriterion(t *testing.T) {
 	require.Len(t, h.repairMints, 1, "the mint is asked once")
 	require.Equal(t, testMergeSHA, h.repairMints[0].At,
 		"repair issues come from the report at the attempt's OWN merge commit")
-	require.Equal(t, testCycleID, h.repairMints[0].CycleID,
-		"THIS attempt's cycle id is the issues' dedupe key, so the next attempt files fresh work")
 	require.Len(t, h.taskCloses, 1, "the task closes even on a failing verdict")
+	require.Equal(t, []int{testRepairIssue, testRepairIssue + 1}, h.taskCloses[0].Repairs,
+		"the task's close names the repair work — the only edge from a repair issue "+
+			"back to the run that found it, and it points this way so a coding agent "+
+			"is never sent to read a brief written for the validation agent")
 }
 
 // TestValidationRun_UnreportedRedispatchesInsideTheWorkflow covers the one
@@ -2411,6 +2415,40 @@ func TestPublisherCredentialsMissing_SettlesBlockedWithoutSpendingTheBudget(t *t
 	require.Equal(t, 1, h.dispatchCount(),
 		"a missing publisher SecretReference must not be re-attempted — Job create cannot stamp it")
 	require.Equal(t, 0, h.closed, "a blocked increment keeps its milestone open")
+}
+
+// TestProviderLimit_SettlesBlockedWithoutSpendingTheBudget is the quota block's
+// twin, met after launch: the runner stopped because its model provider's usage
+// limit refused every call, the pod-truth watcher closed the cycle under
+// delivery.CycleReasonModelProviderLimit, and the run settles BLOCKED on that
+// record — not failed under redispatch-budget, which is what the same closed
+// cycle reads as for any other reason. Re-dispatching would only meet the same
+// refusal until the plan resets, so the budget is not touched and a person
+// starts the run again.
+func TestProviderLimit_SettlesBlockedWithoutSpendingTheBudget(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(workable(1, 1))
+	h.factsAre(CycleFacts{CycleID: testCycleID, Ended: true, AgentReason: delivery.CycleReasonModelProviderLimit})
+	h.signal(delivery.SigRunAgentDied, 5*time.Minute)
+
+	h.run(delivery.RunKindDev, 0)
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateBlocked, delivery.RunReasonModelProviderLimit)
+	require.Equal(t, 1, h.dispatchCount(),
+		"a provider limit must not be re-dispatched — the answer cannot change before the plan resets")
+	require.Equal(t, 0, h.closed, "a blocked increment keeps its milestone open")
+	require.Equal(t, []FinishCycleInput{{CycleID: testCycleID}}, h.finishes,
+		"the cycle closes with no merge SHA, like any dispatch that landed nothing")
+}
+
+// The validation workflow maps an unlanded agent stage through its own switch,
+// so the same record has to settle a revalidation run blocked too, rather than
+// falling through to its default (redispatch-budget).
+func TestProviderLimit_BlocksAValidationRunToo(t *testing.T) {
+	state, reason := stateForUnlandedValidation(cycleProviderLimit)
+	require.Equal(t, delivery.RunStateBlocked, state)
+	require.Equal(t, delivery.RunReasonModelProviderLimit, reason)
 }
 
 // TestBuildRetriggerBudget_RedWithNothingToFix is the exit for a build that

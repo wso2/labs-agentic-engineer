@@ -188,6 +188,7 @@ function rowToConversation(row: Record<string, unknown>): Conversation {
       ...(attachments.length > 0 ? { attachments } : {}),
       ...(anchor ? { anchor } : {}),
       messageIndex: Number(t.messageIndex ?? -1),
+      ...(typeof t.connection === "string" && t.connection !== "" ? { connection: t.connection } : {}),
       createdAt: asDate(t.createdAt),
     };
   });

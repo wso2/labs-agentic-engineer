@@ -21,7 +21,7 @@
  * with a MOCK model (no tokens) and drives it over `fetch` against an ephemeral
  * port. Every turn is the workspace shape (§12/D9): files + skills are read from
  * a per-test fixture mount. Exercises the always-on M2M gate (shared-secret
- * path) and the per-turn `X-Anthropic-Key`. This is the deterministic
+ * path) and the per-turn `X-Model-Key`. This is the deterministic
  * end-to-end gate (the real-model eval is the report, Phase 8).
  */
 
@@ -38,13 +38,18 @@ import { InMemoryConversationStore } from "../src/store/memory-store.js";
 import { SEED_FILES } from "./seed-files.js";
 import { sha256Hex } from "../src/shared/hash.js";
 import { mockModel } from "../src/shared/mock-model.js";
+import type { ModelConnection } from "../src/shared/model.js";
+import type { TurnModelContext } from "../src/server.js";
+import { minimalPdf } from "./pdf-fixture.js";
+import { unreadableReferencesNote } from "../src/prompts/turn.js";
+import { config } from "../src/shared/config.js";
 
 const OPENAPI = "specs/design/components/hello-api/openapi.yaml";
 const WORKLOAD_YAML = "specs/design/components/hello-api/workload.yaml";
 const REQUIREMENTS = "specs/requirements/prd.md";
 const AUD = "agents-service";
 const SECRET = "test-secret";
-const KEY = "sk-ant-test"; // the mock buildModel ignores it; presence is what the route checks
+const KEY = "sk-ant-test-key-0000000000"; // the mock buildModel ignores it; presence is what the route checks
 
 async function boot(model: LanguageModel, workspaceMountRoot?: string) {
   const store = new InMemoryConversationStore();
@@ -111,13 +116,13 @@ async function mintToken(opts: { audience?: string; secret?: string; expired?: b
   return jwt.sign(new TextEncoder().encode(opts.secret ?? SECRET));
 }
 
-/** A turn POST carrying the M2M token and (unless omitted) the Anthropic key. */
+/** A turn POST carrying the M2M token and (unless omitted) the model key as X-Model-Key. */
 function turnPost(body: unknown, opts: { token: string; key?: string | null; org?: string }) {
   const headers: Record<string, string> = {
     "content-type": "application/json",
     Authorization: `Bearer ${opts.token}`,
   };
-  if (opts.key !== null) headers["X-Anthropic-Key"] = opts.key ?? KEY;
+  if (opts.key !== null) headers["X-Model-Key"] = opts.key ?? KEY;
   if (opts.org !== undefined) headers["X-Org-Id"] = opts.org;
   return { method: "POST", headers, body: JSON.stringify(body) };
 }
@@ -211,18 +216,18 @@ test("401 when the M2M token is missing, malformed, wrong-secret, or wrong-aud",
     const body = JSON.stringify(wsBody());
     const post = (headers: Record<string, string>) => fetch(url, { method: "POST", headers: { "content-type": "application/json", ...headers }, body });
 
-    const noAuth = await post({ "X-Anthropic-Key": KEY });
+    const noAuth = await post({ "X-Model-Key": KEY });
     assert.equal(noAuth.status, 401);
     assert.match(noAuth.headers.get("www-authenticate") ?? "", /Bearer realm="agents-service"/);
 
-    const malformed = await post({ Authorization: "NotBearer xyz", "X-Anthropic-Key": KEY });
+    const malformed = await post({ Authorization: "NotBearer xyz", "X-Model-Key": KEY });
     assert.equal(malformed.status, 401);
 
     const wrongSecret = await mintToken({ secret: "not-the-secret" });
-    assert.equal((await post({ Authorization: `Bearer ${wrongSecret}`, "X-Anthropic-Key": KEY })).status, 401);
+    assert.equal((await post({ Authorization: `Bearer ${wrongSecret}`, "X-Model-Key": KEY })).status, 401);
 
     const wrongAud = await mintToken({ audience: "some-other-service" });
-    assert.equal((await post({ Authorization: `Bearer ${wrongAud}`, "X-Anthropic-Key": KEY })).status, 401);
+    assert.equal((await post({ Authorization: `Bearer ${wrongAud}`, "X-Model-Key": KEY })).status, 401);
 
     // GET is gated too.
     assert.equal((await fetch(`${baseUrl}/conversations/c`)).status, 401);
@@ -231,15 +236,49 @@ test("401 when the M2M token is missing, malformed, wrong-secret, or wrong-aud",
   }
 });
 
-test("400 when X-Anthropic-Key is missing (authenticated but no key)", async () => {
+test("400 when X-Model-Key is missing (authenticated but no key)", async () => {
   const { baseUrl, close } = await boot(mockModel([{ kind: "text", text: "ok" }]));
   try {
     const token = await mintToken();
     const res = await fetch(`${baseUrl}/conversations/${WS_CONV}/turns`, turnPost(wsBody(), { token, key: null, org: WS_ORG }));
     assert.equal(res.status, 400);
-    assert.match(((await res.json()) as { error: string }).error, /X-Anthropic-Key/);
+    assert.match(((await res.json()) as { error: string }).error, /X-Model-Key/);
+
+    // `X-Anthropic-Key` is not read.
+    const legacy = turnPost(wsBody(), { token, key: null, org: WS_ORG });
+    const legacyRes = await fetch(`${baseUrl}/conversations/${WS_CONV}/turns`, {
+      ...legacy,
+      headers: { ...legacy.headers, "X-Anthropic-Key": KEY },
+    });
+    assert.equal(legacyRes.status, 400);
   } finally {
     await close();
+  }
+});
+
+// A caller that names no connection (the playground, evals) runs on
+// Anthropic's own API with the header's key.
+test("a turn naming no connection runs on Anthropic's own API", async () => {
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" });
+  const run = await bootRecordingModels(root);
+  try {
+    const token = await mintToken();
+    const res = await fetch(
+      `${run.baseUrl}/conversations/${WS_CONV}/turns`,
+      turnPost(wsBody({ model: "claude-sonnet-5" }), { token, org: WS_ORG }),
+    );
+    assert.equal(res.status, 200);
+    assert.match(await res.text(), /"type":"manifest"/);
+    assert.equal(run.connections.length, 1);
+    const conn = run.connections[0]!;
+    assert.equal(conn.apiKey, KEY);
+    assert.equal(conn.format, "anthropic");
+    assert.equal(conn.baseURL, "https://api.anthropic.com/v1");
+    assert.equal(conn.authScheme, "x-api-key");
+    assert.equal(conn.model, "claude-sonnet-5");
+  } finally {
+    await run.close();
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -296,7 +335,7 @@ test("400 on an unparseable JSON body (the body-parser catch-all)", async () => 
     const token = await mintToken();
     const res = await fetch(`${baseUrl}/conversations/${WS_CONV}/turns`, {
       method: "POST",
-      headers: { "content-type": "application/json", Authorization: `Bearer ${token}`, "X-Anthropic-Key": KEY },
+      headers: { "content-type": "application/json", Authorization: `Bearer ${token}`, "X-Model-Key": KEY },
       body: "{not json",
     });
     assert.equal(res.status, 400);
@@ -730,6 +769,313 @@ test("a console turn carries the narration policy; the same turn without a surfa
   } finally {
     await consoleRun.close();
     await localRun.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// --- The turn's model (body `model`, else AGENT_MODEL) --------------------------
+
+/** Boot with a buildModel that records the connection (and model id) each turn built. */
+async function bootRecordingModels(workspaceMountRoot: string) {
+  const requested: string[] = [];
+  const connections: ModelConnection[] = [];
+  const contexts: TurnModelContext[] = [];
+  const app = createApp({
+    store: new InMemoryConversationStore(),
+    buildModel: (conn, ctx) => {
+      requested.push(conn.model);
+      connections.push(conn);
+      contexts.push(ctx);
+      return mockModel([{ kind: "text", text: "ok" }]);
+    },
+    auth: { audience: AUD, secret: SECRET },
+    workspaceMountRoot,
+  });
+  const { baseUrl, close } = await listen0(app.listen(0));
+  return { requested, connections, contexts, baseUrl, close };
+}
+
+/** The `model` the terminal manifest attributed the turn's usage to. */
+function manifestModel(sse: string): string | undefined {
+  const frame = sse
+    .split("\n")
+    .filter((l) => l.startsWith("data: {") && l.includes('"type":"manifest"'))
+    .pop();
+  return frame ? (JSON.parse(frame.slice("data: ".length)) as { usage?: { model?: string } }).usage?.model : undefined;
+}
+
+test("each turn builds the model it names; a turn naming none runs on AGENT_MODEL", async () => {
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" });
+  const run = await bootRecordingModels(root);
+  try {
+    const token = await mintToken();
+    const post = (body: unknown, turnId: string) =>
+      fetch(`${run.baseUrl}/conversations/${WS_CONV}/turns`, turnPost(wsBody({ ...(body as object), workspace: { turnId } }), { token, org: WS_ORG }));
+
+    const haiku = await post({ model: "claude-haiku-4-5" }, "t-1");
+    assert.equal(haiku.status, 200);
+    assert.equal(manifestModel(await haiku.text()), "claude-haiku-4-5");
+
+    const sonnet = await post({ model: "claude-sonnet-5" }, "t-2");
+    assert.equal(sonnet.status, 200);
+    assert.equal(manifestModel(await sonnet.text()), "claude-sonnet-5");
+
+    const unnamed = await post({}, "t-3");
+    assert.equal(unnamed.status, 200);
+    assert.equal(manifestModel(await unnamed.text()), config.model);
+
+    assert.deepEqual(run.requested, ["claude-haiku-4-5", "claude-sonnet-5", config.model]);
+  } finally {
+    await run.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("400 on a model that is not a model id's shape; no model is built", async () => {
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" });
+  const run = await bootRecordingModels(root);
+  try {
+    const token = await mintToken();
+    for (const model of ["", "   ", 42, null, { id: "claude-sonnet-5" }, "two words", "x".repeat(201), "tab\there"]) {
+      const res = await fetch(`${run.baseUrl}/conversations/${WS_CONV}/turns`, turnPost(wsBody({ model }), { token, org: WS_ORG }));
+      assert.equal(res.status, 400, `model=${JSON.stringify(model)}`);
+      assert.match(((await res.json()) as { error: string }).error, /model must be a model id/);
+    }
+    assert.deepEqual(run.requested, []);
+  } finally {
+    await run.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Whether a host serves a model is the host's answer: the service checks the
+// id's shape and nothing else, so any connection's model ids run.
+test("any model id's shape runs: there is no list of offered models", async () => {
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" });
+  const run = await bootRecordingModels(root);
+  try {
+    const token = await mintToken();
+    const ids = ["claude-opus-5", "gpt-oss:20b", "deepseek-v4-pro:0813", "vendor/model:tag"];
+    for (const [i, model] of ids.entries()) {
+      const res = await fetch(
+        `${run.baseUrl}/conversations/${WS_CONV}/turns`,
+        turnPost(wsBody({ model, workspace: { turnId: `t-${i}` } }), { token, org: WS_ORG }),
+      );
+      assert.equal(res.status, 200, `model=${model}`);
+      await res.text();
+    }
+    assert.deepEqual(run.requested, ids);
+  } finally {
+    await run.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/** The turn body's connection for gpt-oss:20b on Ollama, as aep-api sends it. */
+const OLLAMA_CONNECTION = {
+  format: "openai-compatible",
+  baseURL: "https://ollama.com/v1",
+  authScheme: "bearer",
+  contextWindow: 131072,
+  outputLimit: 32000,
+  capabilities: {
+    claudeCode: false,
+    claudeSubscription: false,
+    promptCache: false,
+    generatedAgents: false,
+    nativePdf: false,
+    webSearch: "ollama-api",
+    imageInput: "no",
+  },
+};
+
+test("the body's connection builds the turn's model, with the header's key and the org named for its log lines", async () => {
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" });
+  const run = await bootRecordingModels(root);
+  try {
+    const token = await mintToken();
+    const res = await fetch(
+      `${run.baseUrl}/conversations/${WS_CONV}/turns`,
+      turnPost(wsBody({ model: "gpt-oss:20b", connection: OLLAMA_CONNECTION }), { token, org: WS_ORG }),
+    );
+    assert.equal(res.status, 200);
+    assert.match(await res.text(), /"model":"gpt-oss:20b"/);
+    assert.deepEqual(run.connections[0], { ...OLLAMA_CONNECTION, apiKey: KEY, model: "gpt-oss:20b" });
+    assert.equal(run.contexts[0]!.orgId, WS_ORG);
+    assert.equal(typeof run.contexts[0]!.onProviderWait, "function", "a provider wait reaches the turn's stream");
+  } finally {
+    await run.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Attachments follow the model, checked before the turn starts (attachments.ts).
+test("on a connection that reads PDFs only as text, a PDF reference reaches the model as its text", async () => {
+  const refPath = "specs/requirements/references/brief.pdf";
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n", [refPath]: minimalPdf("Checkout brief for shoppers") });
+  const { baseUrl, close, store } = await boot(mockModel([{ kind: "text", text: "ok" }]), root);
+  try {
+    const token = await mintToken();
+    const res = await fetch(
+      `${baseUrl}/conversations/${WS_CONV}/turns`,
+      turnPost(wsBody({ turn: { kind: "start", idea: "an app", references: [refPath] }, connection: OLLAMA_CONNECTION }), { token, org: WS_ORG }),
+    );
+    assert.equal(res.status, 200);
+    await res.text();
+    const firstUser = (await store.get(WS_CONV))!.messages.find((m) => m.role === "user")!;
+    const part = (firstUser.content as unknown as Array<Record<string, unknown>>).find((p) => p.type === "file")!;
+    assert.equal(part.mediaType, "text/plain");
+    assert.equal(part.filename, refPath);
+    assert.match(Buffer.from(part.data as string, "base64").toString("utf8"), /Checkout brief for shoppers/);
+  } finally {
+    await close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// A reference is re-read on every turn of the project, so one the model cannot
+// read is left out and named in the prompt; the turn runs.
+test("an image reference on a model that reads no images is left out and named in the prompt; the turn runs", async () => {
+  const refPath = "specs/requirements/references/flow.png";
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n", [refPath]: Buffer.from("iVBORw0KGgo=", "base64") });
+  const { baseUrl, close, store } = await boot(mockModel([{ kind: "text", text: "ok" }]), root);
+  try {
+    const token = await mintToken();
+    const res = await fetch(
+      `${baseUrl}/conversations/${WS_CONV}/turns`,
+      turnPost(wsBody({ turn: { kind: "start", idea: "an app", references: [refPath] }, connection: OLLAMA_CONNECTION }), { token, org: WS_ORG }),
+    );
+    assert.equal(res.status, 200);
+    assert.match(await res.text(), /"type":"manifest"/);
+    const firstUser = (await store.get(WS_CONV))!.messages.find((m) => m.role === "user")!;
+    assert.equal(typeof firstUser.content, "string", "no image part reaches the model");
+    assert.ok(
+      (firstUser.content as string).includes(
+        unreadableReferencesNote([{ filename: refPath, reason: "the model on this connection does not read images" }]),
+      ),
+      "the prompt names the file and why it was left out",
+    );
+  } finally {
+    await close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an image reference on a model that reads images reaches it as an image part", async () => {
+  const refPath = "specs/requirements/references/flow.png";
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n", [refPath]: Buffer.from("iVBORw0KGgo=", "base64") });
+  const { baseUrl, close, store } = await boot(mockModel([{ kind: "text", text: "ok" }]), root);
+  try {
+    const token = await mintToken();
+    const vision = { ...OLLAMA_CONNECTION, capabilities: { ...OLLAMA_CONNECTION.capabilities, imageInput: "yes" } };
+    const res = await fetch(
+      `${baseUrl}/conversations/${WS_CONV}/turns`,
+      turnPost(wsBody({ turn: { kind: "start", idea: "an app", references: [refPath] }, connection: vision }), { token, org: WS_ORG }),
+    );
+    assert.equal(res.status, 200);
+    await res.text();
+    const firstUser = (await store.get(WS_CONV))!.messages.find((m) => m.role === "user")!;
+    const parts = firstUser.content as unknown as Array<Record<string, unknown>>;
+    const image = parts.find((p) => p.type === "file");
+    assert.equal(image?.mediaType, "image/png");
+    assert.equal(image?.filename, refPath);
+    const text = parts.flatMap((p) => (p.type === "text" ? [p.text as string] : [])).join("");
+    assert.doesNotMatch(text, /left out/, "nothing was left out, so no note");
+  } finally {
+    await close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a scanned PDF and an image the model cannot read are 400s naming the file; no model is built", async () => {
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" });
+  const run = await bootRecordingModels(root);
+  try {
+    const token = await mintToken();
+    const cases = [
+      { name: "scan.pdf", mediaType: "application/pdf", data: minimalPdf().toString("base64"), error: /^scan\.pdf: the PDF has no extractable text/ },
+      { name: "mockup.png", mediaType: "image/png", data: "iVBORw0KGgo=", error: /^mockup\.png: the model on this connection does not read images$/ },
+    ];
+    for (const { error, ...attachment } of cases) {
+      const res = await fetch(
+        `${run.baseUrl}/conversations/${WS_CONV}/turns`,
+        turnPost(wsBody({ connection: OLLAMA_CONNECTION, attachments: [attachment] }), { token, org: WS_ORG }),
+      );
+      assert.equal(res.status, 400, attachment.name);
+      assert.match(((await res.json()) as { error: string }).error, error);
+    }
+    assert.deepEqual(run.requested, []);
+
+    // The same image is sent where the model reads images.
+    const vision = { ...OLLAMA_CONNECTION, capabilities: { ...OLLAMA_CONNECTION.capabilities, imageInput: "yes" } };
+    const res = await fetch(
+      `${run.baseUrl}/conversations/${WS_CONV}/turns`,
+      turnPost(wsBody({ connection: vision, attachments: [{ name: "mockup.png", mediaType: "image/png", data: "iVBORw0KGgo=" }] }), { token, org: WS_ORG }),
+    );
+    assert.equal(res.status, 200);
+    await res.text();
+  } finally {
+    await run.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("400 on a malformed connection; no model is built", async () => {
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" });
+  const run = await bootRecordingModels(root);
+  try {
+    const token = await mintToken();
+    const bad = [
+      null,
+      "openai-compatible",
+      { ...OLLAMA_CONNECTION, format: "gemini" },
+      { ...OLLAMA_CONNECTION, baseURL: "http://ollama.com/v1" },
+      { ...OLLAMA_CONNECTION, baseURL: "not a url" },
+      { ...OLLAMA_CONNECTION, authScheme: "basic" },
+      { ...OLLAMA_CONNECTION, contextWindow: 0 },
+      { ...OLLAMA_CONNECTION, outputLimit: "32000" },
+      { ...OLLAMA_CONNECTION, capabilities: undefined },
+      { ...OLLAMA_CONNECTION, capabilities: { ...OLLAMA_CONNECTION.capabilities, webSearch: "bing" } },
+      { ...OLLAMA_CONNECTION, capabilities: { ...OLLAMA_CONNECTION.capabilities, imageInput: true } },
+    ];
+    for (const connection of bad) {
+      const res = await fetch(`${run.baseUrl}/conversations/${WS_CONV}/turns`, turnPost(wsBody({ connection }), { token, org: WS_ORG }));
+      assert.equal(res.status, 400, `connection=${JSON.stringify(connection)}`);
+      assert.match(((await res.json()) as { error: string }).error, /^connection must be/);
+    }
+    assert.deepEqual(run.requested, []);
+  } finally {
+    await run.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("reasoning effort rides a Sonnet 5 turn and is left off a Haiku 4.5 turn", async () => {
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" });
+  const models: ReturnType<typeof mockModel>[] = [];
+  const app = createApp({
+    store: new InMemoryConversationStore(),
+    buildModel: () => {
+      const m = mockModel([{ kind: "text", text: "ok" }]);
+      models.push(m);
+      return m;
+    },
+    auth: { audience: AUD, secret: SECRET },
+    workspaceMountRoot: root,
+  });
+  const { baseUrl, close } = await listen0(app.listen(0));
+  try {
+    const token = await mintToken();
+    const post = (model: string, turnId: string) =>
+      fetch(`${baseUrl}/conversations/${WS_CONV}/turns`, turnPost(wsBody({ model, workspace: { turnId } }), { token, org: WS_ORG }));
+    await (await post("claude-sonnet-5", "t-1")).text();
+    await (await post("claude-haiku-4-5", "t-2")).text();
+    const effortOf = (m: ReturnType<typeof mockModel>) =>
+      (m.doStreamCalls[0]!.providerOptions as { anthropic?: { effort?: string } } | undefined)?.anthropic?.effort;
+    assert.equal(effortOf(models[0]!), config.reasoningEffort);
+    assert.equal(effortOf(models[1]!), undefined);
+  } finally {
+    await close();
     rmSync(root, { recursive: true, force: true });
   }
 });

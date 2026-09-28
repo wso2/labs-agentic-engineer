@@ -17,7 +17,7 @@ phase (`internal/delivery/codingagent/cycle_outcome.go`, a pure function).
 | absent, `Pending`, `Unknown` | pending — a node that stopped reporting is not a verdict |
 | `Running` | running |
 | `Succeeded` | the process ended; whether the WORK landed is the pull request's answer, delivered by webhook |
-| `Failed` | the cycle is closed failed, with `DeadlineExceeded` reported as `timed_out` |
+| `Failed` | the cycle is closed failed, with `DeadlineExceeded` reported as `timed_out` — unless the runner's settle says its model provider stopped it (below) |
 
 Two rules bound the watcher's willingness to conclude anything: a **startup
 grace** (10 minutes without a Running pod closes the cycle with a reason built
@@ -245,11 +245,23 @@ legacy execution path.
 | `CycleProgress` | `contracts.ProgressEvent` (v1) | the pod, then the archive | the VERSION build-progress stream, and the legacy execution path |
 
 The one thing taken out of a terminal pod's log by the WATCHER is the runner's
-token-usage line, stamped onto the cycle row — from v2's `run_settled` or v1's
-`result`, whichever the image wrote, and always the LAST one because the runtime
-reports usage cumulatively across a session. That is accounting, not logging,
-which is why the usage rides on the reader's own `runnerLine` and never on a
-shape that reaches a console.
+terminal line, in one pass (`terminalFromLog`). Its token usage is stamped onto
+the cycle row — from v2's `run_settled` or v1's `result`, whichever the image
+wrote, and always the LAST one because the runtime reports usage cumulatively
+across a session. That is accounting, not logging, which is why the usage rides
+on the reader's own `runnerLine` and never on a shape that reaches a console.
+
+The same line says whether the run ended on its **model provider's limit**: the
+runner stops a run whose provider has answered 429 for longer than a wait and
+settles it with `code: provider_limit`, `host` and, when the provider stated
+one, `resetAt` (`runners/remote-worker/src/lib/provider_limit.ts`). A failed pod
+with that settle is not agent death. The watcher writes the run's failure record
+(`model-provider-limit`, with the host and reset time the console's sentence
+names) FIRST — the record only lands on a non-terminal run — and then closes the
+cycle under `model_provider_limit`, which the supervisor settles BLOCKED on
+without spending the re-dispatch budget (`delivery/provider_limit.go`). It also
+logs one `model_provider_429 {source: runner}` line carrying the provider's own
+words (`providerDetail`), which the platform neither stores nor shows.
 
 ## The feed is v2, whatever produced it
 

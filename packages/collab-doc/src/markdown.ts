@@ -46,8 +46,28 @@ export function markdownToNode(markdown: string): ProseMirrorNode {
   return schema.nodeFromJSON(manager.parse(markdown));
 }
 
+/**
+ * `.md` files that are NOT editable prose. A file listed here is shared as
+ * plain text (byte-exact, like design.json and openapi.yaml) rather than as a
+ * Y.XmlFragment.
+ *
+ * The test is not the extension — it is whether a markdown round-trip
+ * (parse → ProseMirror → serialize) is lossless. It is, for prose. It is NOT
+ * for a document whose `.md` wraps structured content: `agent.afm.md` carries
+ * YAML front matter, and the round-trip escapes `_` as `\_`, turns `>` into
+ * `&gt;`, and reflows `- type: webchat` into a bullet list — de-indenting
+ * everything nested under it. The result is front matter that no longer
+ * parses as YAML at all, committed to the project's repo.
+ *
+ * That is not hypothetical: it shipped, and the corruption reached a real
+ * project's `specs/`. Add any future structured `.md` here.
+ */
+const NON_PROSE_MARKDOWN: ReadonlySet<string> = new Set(["agent.afm.md"]);
+
+/** Whether a path is editable PROSE — rich-text in the console, XmlFragment here. */
 export function isMarkdownPath(path: string): boolean {
-  return path.endsWith(".md");
+  if (!path.endsWith(".md")) return false;
+  return !NON_PROSE_MARKDOWN.has(path.slice(path.lastIndexOf("/") + 1));
 }
 
 /**

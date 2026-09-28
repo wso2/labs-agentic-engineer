@@ -17,6 +17,7 @@
  */
 
 import type { components } from "../../../generated/aep-api";
+import { resetStamp } from "../../../lib/resetStamp";
 
 type MilestoneRunView = components["schemas"]["MilestoneRunView"];
 type RunFailure = components["schemas"]["RunFailure"];
@@ -40,7 +41,7 @@ type RunFailure = components["schemas"]["RunFailure"];
 /** Where the reader goes next. `to` is a TanStack route; `search` its params. */
 export interface FailureNext {
   label: string;
-  to: "/projects/$projectName/spec" | "/projects/$projectName/deployments" | "/projects/$projectName/validation";
+  to: "/projects/$projectName/spec" | "/projects/$projectName/deployments" | "/projects/$projectName/validations";
   search?: { file: string };
 }
 
@@ -76,6 +77,7 @@ const SHORT_LABELS: Record<string, string> = {
   "dependency-provision-failed": "Dependency provisioning failed",
   "plan-turn-failed": "Planning failed",
   "repository-unavailable": "Repository unavailable",
+  "model-provider-limit": "Model provider limit reached",
   // Terminal reasons, for a run with no record.
   "plan-failed": "Planning failed",
   "redispatch-budget": "Coding agent stopped",
@@ -92,18 +94,30 @@ const SHORT_LABELS: Record<string, string> = {
   "publisher-credentials-missing": "Publisher credentials missing",
 };
 
+/** The code a provider limit is recorded under, and the reason it settles with. */
+const PROVIDER_LIMIT = "model-provider-limit";
+
 /**
  * The card's copy for a run, or `undefined` when there is nothing to explain:
  * a run that met no fault and did not fail, or a cancelled run — a person
  * stopping an increment is not a fault with a cause to report.
+ *
+ * `now` decides whether a reset time needs its date; tests pin it.
  */
-export function failureCopy(run: MilestoneRunView): FailureCopy | undefined {
+export function failureCopy(run: MilestoneRunView, now: Date = new Date()): FailureCopy | undefined {
   const failed = run.state === "failed";
   const f = run.failure;
   if (run.state === "cancelled") return undefined;
+  // A model provider's limit is the one blocked run with a card: only its
+  // record says whose limit and until when, which the reason's sentence cannot.
+  // Amber, because it is not the platform's fault and waiting fixes it.
+  if (f?.code === PROVIDER_LIMIT || run.terminalReason === PROVIDER_LIMIT) {
+    return { ...providerLimitCopy(f, now), tone: "warning", details: detailsOf(run) };
+  }
   if (!failed && !f) return undefined;
-  // A run still moving with a record is a fault being RETRIED; a blocked run's
-  // card is the existing message's job. Only failed and retrying render here.
+  // A run still moving with a record is a fault being RETRIED; every other
+  // blocked run's card is the existing message's job. Only failed and retrying
+  // render here.
   if (!failed && run.state !== "planning" && run.state !== "running") return undefined;
 
   const details = detailsOf(run);
@@ -176,6 +190,26 @@ function codeCopy(f: RunFailure, retrying: boolean): Omit<FailureCopy, "tone" | 
   }
 }
 
+/**
+ * The provider-limit sentence, with and without a reset time. It names the
+ * host, because "the usage limit" is ambiguous on a platform that bills two
+ * ways, and it says WHEN to start again only if the provider said so — a
+ * guessed time is a promise nobody made. A record lost to a failed write
+ * still gets the sentence, without the host.
+ */
+function providerLimitCopy(f: RunFailure | undefined, now: Date): Omit<FailureCopy, "tone" | "details"> {
+  const host = f?.host;
+  const resume = f?.resetAt
+    ? `Start the run again after it resets (${resetStamp(f.resetAt, now)}).`
+    : "Start the run again once it resets — the provider did not say when.";
+  return {
+    title: host ? `${host}'s usage limit was reached` : "The model provider's usage limit was reached",
+    body:
+      `The coding agent stopped when ${host ?? "its model provider"} refused further requests, ` +
+      `and nothing from that build session was merged. ${resume}`,
+  };
+}
+
 /** A run that failed before the record existed, or in a phase no producer records yet. */
 // How many times the agent was actually launched. Not always the whole budget:
 // a cycle the pod-truth watcher has CLOSED cannot be re-dispatched, so a death
@@ -232,7 +266,7 @@ function reasonCopy(run: MilestoneRunView): Omit<FailureCopy, "tone" | "details"
       return {
         title: reason === "validation-failed" ? "Validation failed" : "Validation reported nothing",
         body: "The version deployed and its validation criteria were not met. The Validation page carries the report.",
-        next: { label: "View validations", to: "/projects/$projectName/validation" },
+        next: { label: "View validations", to: "/projects/$projectName/validations" },
       };
     default:
       return {

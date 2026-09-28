@@ -28,6 +28,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/organization"
+	"github.com/wso2/aep/aep-api/internal/platform/modelconn"
 	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
@@ -56,17 +57,78 @@ func (f fakeOrgRepo) SetThunderOrgUUID(context.Context, string, uuid.UUID) error
 }
 
 // fakeCodingKey stands in for the organization domain's answer to "which
-// Anthropic credential does this org's coding run bill". WHICH key that is —
-// the coding override or the default — is decided and tested in the
-// organization package (TestResolveCodingSecretRef_*); dispatch's job is only
-// to mount whatever it is handed, and to abort when nothing can be handed to it.
+// Anthropic credential does a run on this runtime bill". WHICH credential that
+// is — the subscription or the API key — is decided and tested in the
+// organization package (TestResolveCodingCredential_*); dispatch's job is to ask
+// with the runtime the run will use, mount whatever it is handed, and abort
+// when nothing can be handed to it. asked records the runtime it was asked
+// with.
 type fakeCodingKey struct {
-	ref organization.SecretRefTriplet
-	err error
+	ref   organization.SecretRefTriplet
+	kind  organization.CodingCredentialKind
+	err   error
+	asked *orgconfig.AgentRuntime
+	// conn is the connection both answers are for; the zero value means
+	// Anthropic's own API (firstPartyConnection).
+	conn *modelconn.Connection
+
+	// The connection key (KeyRef) is a separate answer to a separate question: which
+	// credential the build's EVALUATION step bills. It is not always the same
+	// row as the coding one, which is exactly what the evaluation tests below
+	// exercise.
+	defaultRef organization.SecretRefTriplet
+	defaultErr error
 }
 
-func (f fakeCodingKey) ResolveCodingSecretRef(context.Context, string) (organization.SecretRefTriplet, error) {
-	return f.ref, f.err
+func (f fakeCodingKey) ResolveCodingCredential(_ context.Context, _ string, runtime orgconfig.AgentRuntime) (organization.CodingCredential, error) {
+	if f.asked != nil {
+		*f.asked = runtime
+	}
+	kind := f.kind
+	if kind == "" {
+		kind = organization.CodingCredentialConnectionKey
+	}
+	return organization.CodingCredential{Conn: f.connection(), Ref: f.ref, Kind: kind}, f.err
+}
+
+func (f fakeCodingKey) KeyRef(context.Context, string) (modelconn.Connection, organization.SecretRefTriplet, error) {
+	return f.connection(), f.defaultRef, f.defaultErr
+}
+
+func (f fakeCodingKey) connection() modelconn.Connection {
+	if f.conn != nil {
+		return *f.conn
+	}
+	return firstPartyConnection()
+}
+
+// firstPartyConnection is a connection on Anthropic's own API: the key as
+// x-api-key, no limits stated.
+func firstPartyConnection() modelconn.Connection {
+	return modelconn.Connection{
+		Format:     modelconn.FormatAnthropic,
+		BaseURL:    modelconn.AnthropicBaseURL,
+		Host:       modelconn.AnthropicHost,
+		Model:      modelconn.DefaultAnthropicModel,
+		AuthScheme: modelconn.AuthXAPIKey,
+		ImageInput: modelconn.Yes,
+	}
+}
+
+// ollamaConnection is a connection on another host: Ollama Cloud's
+// OpenAI-compatible endpoint, the key as a Bearer token, limits resolved.
+func ollamaConnection() modelconn.Connection {
+	window, output := 131072, 32768
+	return modelconn.Connection{
+		Format:        modelconn.FormatOpenAICompatible,
+		BaseURL:       "https://ollama.com/v1",
+		Host:          modelconn.OllamaHost,
+		Model:         "gpt-oss:20b",
+		AuthScheme:    modelconn.AuthBearer,
+		ContextWindow: &window,
+		OutputLimit:   &output,
+		ImageInput:    modelconn.No,
+	}
 }
 
 type fakeGitHubCreds struct {
@@ -92,16 +154,19 @@ func (f fakeGitHubCreds) Tx(context.Context, func(organization.OrgCredentialTx) 
 }
 
 func fullSecretRefs() (fakeCodingKey, *organization.OrgCredential) {
-	return fakeCodingKey{ref: organization.SecretRefTriplet{
-			Name:     "acme-anthropic-secrets",
-			KVPath:   "user-app-secrets/wc-acme/acme-anthropic-secrets",
-			Property: "api-key",
-			EnvVar:   "ANTHROPIC_API_KEY",
-		}}, &organization.OrgCredential{
-			SecretRefName:     strPtr("acme-github-pat-secrets"),
-			SecretRefKVPath:   strPtr("user-app-secrets/wc-acme/acme-github-pat-secrets"),
-			SecretRefProperty: strPtr("token"),
-		}
+	// No subscription — the org bills its API key — is the common case, so both
+	// answers name the same row here. Tests that care about the difference set
+	// defaultRef themselves.
+	defaultRef := organization.SecretRefTriplet{
+		Name:     "acme-anthropic-secrets",
+		KVPath:   "user-app-secrets/wc-acme/acme-anthropic-secrets",
+		Property: "api-key",
+	}
+	return fakeCodingKey{ref: defaultRef, defaultRef: defaultRef}, &organization.OrgCredential{
+		SecretRefName:     strPtr("acme-github-pat-secrets"),
+		SecretRefKVPath:   strPtr("user-app-secrets/wc-acme/acme-github-pat-secrets"),
+		SecretRefProperty: strPtr("token"),
+	}
 }
 
 func newCodingDispatchExecutor(anthropic fakeCodingKey, github *organization.OrgCredential) *CodingExecutor {
@@ -144,10 +209,11 @@ func TestDispatch_OCPathDispatchesThroughOpenChoreo(t *testing.T) {
 	rec := &chainRecorder{}
 	e := newOCDispatchExecutor(rec)
 
-	runName, err := e.Dispatch(context.Background(), codingMilestoneDispatch())
+	launch, err := e.Dispatch(context.Background(), codingMilestoneDispatch())
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
+	runName := launch.JobRef
 	if !strings.HasPrefix(runName, "ca-") {
 		t.Errorf("run name = %q, want the ca- prefix (the watcher discriminator)", runName)
 	}
@@ -156,6 +222,11 @@ func TestDispatch_OCPathDispatchesThroughOpenChoreo(t *testing.T) {
 	}
 	if rec.create.Name != runName {
 		t.Errorf("component name %q != returned run name %q", rec.create.Name, runName)
+	}
+	// The launch reports the host of the connection whose credential it
+	// mounted; the supervisor copies it onto the cycle to price its usage.
+	if launch.ModelHost != modelconn.AnthropicHost {
+		t.Errorf("launch model host = %q, want %q (the resolved connection's host)", launch.ModelHost, modelconn.AnthropicHost)
 	}
 }
 
@@ -174,12 +245,11 @@ func anthropicSecretEnv(t *testing.T, in openchoreo.WorkloadInput, secretRefName
 }
 
 // TestDispatch_AnthropicAPIKey_MountsAsAnthropicAPIKeyEnvVar pins ADR-0016's
-// rule for the OC path: a Console API key credential rides the Job as
-// ANTHROPIC_API_KEY, named by the resolver's EnvVar rather than hardcoded here.
+// rule for the OC path: a connection key on Anthropic's own API rides the Job
+// as ANTHROPIC_API_KEY.
 func TestDispatch_AnthropicAPIKey_MountsAsAnthropicAPIKeyEnvVar(t *testing.T) {
 	rec := &chainRecorder{}
 	anthropic, github := fullSecretRefs()
-	anthropic.ref.EnvVar = "ANTHROPIC_API_KEY"
 	e := newCodingDispatchExecutor(anthropic, github)
 	e.WithPublisherCredentials(fakePublisher{name: "acme-publisher-secrets"}, "http://thunder.example/oauth2/token")
 	e.WithOCDispatch(NewOCDispatcher(rec.client()).WithImage("ghcr.io/wso2/aep/remote-worker:latest"))
@@ -201,7 +271,7 @@ func TestDispatch_AnthropicAPIKey_MountsAsAnthropicAPIKeyEnvVar(t *testing.T) {
 func TestDispatch_AnthropicOAuthToken_MountsAsClaudeCodeOAuthTokenEnvVar(t *testing.T) {
 	rec := &chainRecorder{}
 	anthropic, github := fullSecretRefs()
-	anthropic.ref.EnvVar = "CLAUDE_CODE_OAUTH_TOKEN"
+	anthropic.kind = organization.CodingCredentialClaudeSubscription
 	e := newCodingDispatchExecutor(anthropic, github)
 	e.WithPublisherCredentials(fakePublisher{name: "acme-publisher-secrets"}, "http://thunder.example/oauth2/token")
 	e.WithOCDispatch(NewOCDispatcher(rec.client()).WithImage("ghcr.io/wso2/aep/remote-worker:latest"))
@@ -532,6 +602,188 @@ func TestDispatch_HTTPPlatformURL_MountsPublisher(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// The evaluation credential (build-time agent evaluation)
+// ---------------------------------------------------------------------------
+
+// hasEnvKey reports whether the dispatched Workload carries an env entry under
+// key, without asserting anything about its value — secret entries are refs, and
+// a test must never handle key material.
+func hasEnvKey(in openchoreo.WorkloadInput, key string) bool {
+	for _, ev := range in.Env {
+		if ev.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+// evalEnvVars is every variable the evaluation credential puts on the pod: the
+// key and the connection it is for, which travel together or not at all.
+var evalEnvVars = []string{envEvalModelAPIKey, envEvalModelFormat, envEvalModelBaseURL, envEvalModelName, envEvalModelAuthScheme}
+
+// assertNoEvalEnv fails if any evaluation variable is on the pod.
+func assertNoEvalEnv(t *testing.T, in openchoreo.WorkloadInput) {
+	t.Helper()
+	for _, name := range evalEnvVars {
+		if hasEnvKey(in, name) {
+			t.Errorf("%s set with no evaluation key to mount: %+v", name, in.Env)
+		}
+	}
+}
+
+// assertEvalConnEnv checks the connection the evaluation key is for rides
+// beside it as plain values.
+func assertEvalConnEnv(t *testing.T, in openchoreo.WorkloadInput, want map[string]string) {
+	t.Helper()
+	for name, v := range want {
+		ev := secretEnvByKey(t, in, name)
+		if ev.ValueFrom != nil || ev.Value != v {
+			t.Errorf("%s = %+v, want the plain value %q", name, ev, v)
+		}
+	}
+}
+
+// TestDispatch_MountsTheOrgDefaultKeyForEvaluation: a build that evaluates the
+// agent it just generated needs a model credential twice over — for the agent
+// under test and for the judge grading it. The org's DEFAULT key is the one that
+// is correct on both counts: it is always an API key (a coding OAuth token
+// authenticates no API call the judge makes), and the spend belongs to the org
+// whose agent is being graded.
+func TestDispatch_MountsTheOrgDefaultKeyForEvaluation(t *testing.T) {
+	rec := &chainRecorder{}
+	anthropic, github := fullSecretRefs()
+	// A DIFFERENT SecretReference from the coding credential, so the assertion
+	// below can only pass if the default key — not the coding one — was mounted.
+	anthropic.defaultRef = organization.SecretRefTriplet{
+		Name:     "acme-anthropic-default-secrets",
+		KVPath:   "user-app-secrets/wc-acme/acme-anthropic-default-secrets",
+		Property: "api-key",
+	}
+	e := newCodingDispatchExecutor(anthropic, github)
+	e.WithPublisherCredentials(fakePublisher{name: "acme-publisher-secrets"}, "http://thunder.example/oauth2/token")
+	e.WithOCDispatch(NewOCDispatcher(rec.client()).WithImage("ghcr.io/wso2/aep/remote-worker:latest"))
+
+	if _, err := e.Dispatch(context.Background(), codingMilestoneDispatch()); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	ev := secretEnvByKey(t, rec.load, envEvalModelAPIKey)
+	if ev.ValueFrom == nil || ev.ValueFrom.SecretKeyRef == nil {
+		t.Fatalf("%s must be a SecretReference, not an inline value: %+v", envEvalModelAPIKey, ev)
+	}
+	if ev.ValueFrom.SecretKeyRef.Name != anthropic.defaultRef.Name {
+		t.Errorf("%s resolves from %q, want the org's DEFAULT key %q",
+			envEvalModelAPIKey, ev.ValueFrom.SecretKeyRef.Name, anthropic.defaultRef.Name)
+	}
+	if ev.ValueFrom.SecretKeyRef.Key != anthropic.defaultRef.Property {
+		t.Errorf("%s property = %q, want %q", envEvalModelAPIKey,
+			ev.ValueFrom.SecretKeyRef.Key, anthropic.defaultRef.Property)
+	}
+	assertEvalConnEnv(t, rec.load, map[string]string{
+		envEvalModelFormat:     "anthropic",
+		envEvalModelBaseURL:    "https://api.anthropic.com/v1",
+		envEvalModelName:       "claude-sonnet-5",
+		envEvalModelAuthScheme: "x-api-key",
+	})
+}
+
+// TestDispatch_EvaluationKeyRidesItsOwnVariable: the evaluation credential must
+// never be mounted as ANTHROPIC_API_KEY when the org bills its coding agent to a
+// Claude Code OAuth token. Claude Code ranks ANTHROPIC_API_KEY above
+// CLAUDE_CODE_OAUTH_TOKEN (ADR-0016), so doing so would silently move the whole
+// coding session onto the credential the org moved away from.
+func TestDispatch_EvaluationKeyRidesItsOwnVariable(t *testing.T) {
+	rec := &chainRecorder{}
+	anthropic, github := fullSecretRefs()
+	anthropic.kind = organization.CodingCredentialClaudeSubscription
+	e := newCodingDispatchExecutor(anthropic, github)
+	e.WithPublisherCredentials(fakePublisher{name: "acme-publisher-secrets"}, "http://thunder.example/oauth2/token")
+	e.WithOCDispatch(NewOCDispatcher(rec.client()).WithImage("ghcr.io/wso2/aep/remote-worker:latest"))
+
+	if _, err := e.Dispatch(context.Background(), codingMilestoneDispatch()); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if !hasEnvKey(rec.load, envEvalModelAPIKey) {
+		t.Fatalf("an org billing its coding agent to an OAuth token still needs %s for evaluation", envEvalModelAPIKey)
+	}
+	if hasEnvKey(rec.load, "ANTHROPIC_API_KEY") {
+		t.Error("the evaluation key must not be mounted as ANTHROPIC_API_KEY beside an OAuth token")
+	}
+}
+
+// TestDispatch_NoDefaultKeyConnected_StillDispatches: evaluation reports, it
+// never fails a build. An org with no connected key dispatches WITHOUT the
+// evaluation variables — absent, not present-and-empty, so the harness sees "no
+// key" rather than "a key that does not authenticate".
+func TestDispatch_NoDefaultKeyConnected_StillDispatches(t *testing.T) {
+	rec := &chainRecorder{}
+	anthropic, github := fullSecretRefs()
+	anthropic.defaultErr = &organization.NotFoundError{What: "org_anthropic_credentials.acme.default"}
+	e := newCodingDispatchExecutor(anthropic, github)
+	e.WithPublisherCredentials(fakePublisher{name: "acme-publisher-secrets"}, "http://thunder.example/oauth2/token")
+	e.WithOCDispatch(NewOCDispatcher(rec.client()).WithImage("ghcr.io/wso2/aep/remote-worker:latest"))
+
+	if _, err := e.Dispatch(context.Background(), codingMilestoneDispatch()); err != nil {
+		t.Fatalf("a build must not fail because evaluation cannot run: %v", err)
+	}
+	assertNoEvalEnv(t, rec.load)
+}
+
+// TestDispatch_IncompleteKeyRef_IsNotMounted: a half-mirrored row can
+// resolve to a triplet ESO cannot follow. Mounting it would put the variable on
+// the pod pointing at nothing, and the harness would then report the agent as
+// misbehaving rather than as unconfigured — a worse outcome than no evaluation.
+func TestDispatch_IncompleteKeyRef_IsNotMounted(t *testing.T) {
+	rec := &chainRecorder{}
+	anthropic, github := fullSecretRefs()
+	anthropic.defaultRef = organization.SecretRefTriplet{Name: "acme-anthropic-secrets"}
+	e := newCodingDispatchExecutor(anthropic, github)
+	e.WithPublisherCredentials(fakePublisher{name: "acme-publisher-secrets"}, "http://thunder.example/oauth2/token")
+	e.WithOCDispatch(NewOCDispatcher(rec.client()).WithImage("ghcr.io/wso2/aep/remote-worker:latest"))
+
+	if _, err := e.Dispatch(context.Background(), codingMilestoneDispatch()); err != nil {
+		t.Fatalf("a build must not fail because evaluation cannot run: %v", err)
+	}
+	assertNoEvalEnv(t, rec.load)
+}
+
+// TestDispatch_DeclaresThePlatformOwnsTheEvaluationKey: the pod's
+// ANTHROPIC_API_KEY, when present, is the CODING credential — an org may bill
+// coding to a key it did not choose for anything else. So the harness must not
+// treat it as an evaluation credential just because no evaluation key was
+// mounted. Every dispatch therefore says so out loud, and says it even when
+// there IS no evaluation key to mount: that is the case the declaration exists
+// for, and a marker that appeared only alongside the key would be useless.
+func TestDispatch_DeclaresThePlatformOwnsTheEvaluationKey(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		defaultErr error
+	}{
+		{name: "with a default key connected"},
+		{name: "with none connected", defaultErr: &organization.NotFoundError{What: "org_anthropic_credentials.acme.default"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &chainRecorder{}
+			anthropic, github := fullSecretRefs()
+			anthropic.defaultErr = tc.defaultErr
+			e := newCodingDispatchExecutor(anthropic, github)
+			e.WithPublisherCredentials(fakePublisher{name: "acme-publisher-secrets"}, "http://thunder.example/oauth2/token")
+			e.WithOCDispatch(NewOCDispatcher(rec.client()).WithImage("ghcr.io/wso2/aep/remote-worker:latest"))
+
+			if _, err := e.Dispatch(context.Background(), codingMilestoneDispatch()); err != nil {
+				t.Fatalf("Dispatch: %v", err)
+			}
+			ev := secretEnvByKey(t, rec.load, envEvalKeyManaged)
+			if ev.Value != "1" {
+				t.Errorf("%s = %q, want \"1\"", envEvalKeyManaged, ev.Value)
+			}
+			if ev.ValueFrom != nil {
+				t.Errorf("%s is a plain declaration, not a credential: %+v", envEvalKeyManaged, ev)
+			}
+		})
+	}
+}
+
 // TestDispatch_CodingCycleCarriesTheThreeHourDeadline: a coding cycle names its
 // own activeDeadlineSeconds rather than falling through to the ComponentType's
 // 1h default — the cycle's browser verification wave does not fit in an hour,
@@ -577,13 +829,13 @@ func TestDeadlinesFitTheComponentTypeSchema(t *testing.T) {
 
 // --- the org's coding-agent setting, and the run's own deadline -------------
 
-// fakeCodingAgentSettings stands in for organization.CodingAgentService.
+// fakeCodingAgentSettings stands in for organization.AgentSettingsService.
 type fakeCodingAgentSettings struct {
-	proj orgconfig.CodingAgentProjection
+	proj orgconfig.AgentsProjection
 	err  error
 }
 
-func (f fakeCodingAgentSettings) Effective(context.Context, string) (orgconfig.CodingAgentProjection, error) {
+func (f fakeCodingAgentSettings) Effective(context.Context, string) (orgconfig.AgentsProjection, error) {
 	return f.proj, f.err
 }
 
@@ -596,11 +848,21 @@ func TestDispatch_NoCodingAgentSettingStampsThePlatformDefaults(t *testing.T) {
 	if _, err := e.Dispatch(context.Background(), codingMilestoneDispatch()); err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
-	if got := secretEnvByKey(t, rec.load, "AEP_AGENT_RUNTIME").Value; got != orgconfig.DefaultAgentRuntime {
+	if got := secretEnvByKey(t, rec.load, "AEP_AGENT_RUNTIME").Value; got != string(orgconfig.DefaultAgentRuntime) {
 		t.Errorf("AEP_AGENT_RUNTIME = %q, want %q", got, orgconfig.DefaultAgentRuntime)
 	}
-	if got := secretEnvByKey(t, rec.load, "AEP_AGENT_MODEL").Value; got != orgconfig.DefaultCodingAgentModel {
-		t.Errorf("AEP_AGENT_MODEL = %q, want %q", got, orgconfig.DefaultCodingAgentModel)
+	if got := secretEnvByKey(t, rec.load, "AEP_AGENT_MODEL").Value; got != modelconn.DefaultAnthropicModel {
+		t.Errorf("AEP_AGENT_MODEL = %q, want %q", got, modelconn.DefaultAnthropicModel)
+	}
+	// A Claude Code run on the Claude Code image, and the cluster can see so.
+	if rec.load.Image != "ghcr.io/wso2/aep/remote-worker:latest" {
+		t.Errorf("image = %q, want the Claude Code runner image", rec.load.Image)
+	}
+	if got := rec.create.Labels["aep.wso2.com/runtime"]; got != "claude-code" {
+		t.Errorf("component runtime label = %q, want claude-code", got)
+	}
+	if got := rec.create.Parameters["runtime"]; got != "claude-code" {
+		t.Errorf("runtime parameter = %v, want claude-code", got)
 	}
 	// Two plain values, never a secret — a secretKeyRef here would need a
 	// SecretReference nobody creates and the dispatch would fail to render.
@@ -609,24 +871,118 @@ func TestDispatch_NoCodingAgentSettingStampsThePlatformDefaults(t *testing.T) {
 	}
 }
 
-// The setting is COPIED onto the run, which is what makes "applies from the next
-// cycle" true: a run already in flight keeps the model it was launched with, so
-// its usage lines and the tokens they were billed for name the same model.
+// The setting and the connection's model are COPIED onto the run, which is
+// what makes "applies from the next cycle" true: a run already in flight keeps
+// the model it was launched with, so its usage lines and the tokens they were
+// billed for name the same model.
 func TestDispatch_TheOrgsCodingAgentSettingIsCopiedOntoTheRun(t *testing.T) {
 	rec := &chainRecorder{}
-	e := newOCDispatchExecutor(rec)
+	anthropic, github := fullSecretRefs()
+	conn := firstPartyConnection()
+	conn.Model = "claude-haiku-4-5"
+	anthropic.conn = &conn
+	e := newCodingDispatchExecutor(anthropic, github)
+	e.WithPublisherCredentials(fakePublisher{name: "acme-publisher-secrets"}, "http://thunder.example/oauth2/token")
+	e.WithOCDispatch(NewOCDispatcher(rec.client()).WithImage("ghcr.io/wso2/aep/remote-worker:latest"))
 	e.WithCodingAgentSettings(fakeCodingAgentSettings{
-		proj: orgconfig.CodingAgentProjection{Runtime: "claude-code", Model: "claude-haiku-4-5"},
+		proj: orgconfig.AgentsProjection{Runtime: "claude-code"},
 	})
 
 	if _, err := e.Dispatch(context.Background(), codingMilestoneDispatch()); err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
 	if got := secretEnvByKey(t, rec.load, "AEP_AGENT_MODEL").Value; got != "claude-haiku-4-5" {
-		t.Errorf("AEP_AGENT_MODEL = %q, want the org's chosen model", got)
+		t.Errorf("AEP_AGENT_MODEL = %q, want the connection's model", got)
 	}
 	if got := secretEnvByKey(t, rec.load, "AEP_AGENT_RUNTIME").Value; got != "claude-code" {
 		t.Errorf("AEP_AGENT_RUNTIME = %q", got)
+	}
+}
+
+// --- OpenCode: its own image, its own label, and an API key or nothing -------
+
+const openCodeRunnerImage = "aep-runner-opencode:dev"
+
+func newOpenCodeDispatchExecutor(rec *chainRecorder, anthropic fakeCodingKey, github *organization.OrgCredential, opencodeImage string) *CodingExecutor {
+	e := newCodingDispatchExecutor(anthropic, github)
+	e.WithPublisherCredentials(fakePublisher{name: "acme-publisher-secrets"}, "http://thunder.example/oauth2/token")
+	e.WithOCDispatch(NewOCDispatcher(rec.client()).
+		WithImage("ghcr.io/wso2/aep/remote-worker:latest").
+		WithOpenCodeImage(opencodeImage))
+	e.WithCodingAgentSettings(fakeCodingAgentSettings{proj: orgconfig.AgentsProjection{
+		Runtime: "opencode",
+	}})
+	return e
+}
+
+// An OpenCode org's cycle runs on the OpenCode image and says so everywhere the
+// cluster looks: the Component and Workload label, and the ComponentType
+// parameter that renders the label onto the Job and its pod.
+func TestDispatch_AnOpenCodeRunGetsItsImageAndLabel(t *testing.T) {
+	rec := &chainRecorder{}
+	anthropic, github := fullSecretRefs()
+	e := newOpenCodeDispatchExecutor(rec, anthropic, github, openCodeRunnerImage)
+
+	if _, err := e.Dispatch(context.Background(), codingMilestoneDispatch()); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if rec.load.Image != openCodeRunnerImage {
+		t.Errorf("image = %q, want the OpenCode runner image", rec.load.Image)
+	}
+	if got := rec.create.Labels["aep.wso2.com/runtime"]; got != "opencode" {
+		t.Errorf("component runtime label = %q, want opencode", got)
+	}
+	if got := rec.load.Labels["aep.wso2.com/runtime"]; got != "opencode" {
+		t.Errorf("workload runtime label = %q, want opencode", got)
+	}
+	if got := rec.create.Parameters["runtime"]; got != "opencode" {
+		t.Errorf("runtime parameter = %v, want opencode", got)
+	}
+	if got := secretEnvByKey(t, rec.load, "AEP_AGENT_RUNTIME").Value; got != "opencode" {
+		t.Errorf("AEP_AGENT_RUNTIME = %q, want opencode", got)
+	}
+	if ev := anthropicSecretEnv(t, rec.load, anthropic.ref.Name); ev.Key != "ANTHROPIC_API_KEY" {
+		t.Errorf("anthropic env key = %q, want ANTHROPIC_API_KEY", ev.Key)
+	}
+}
+
+// The credential is chosen FOR the runtime: dispatch asks the resolver with the
+// runtime this run will use, which is what keeps a subscription (Claude Code
+// only) off an OpenCode run.
+func TestDispatch_AsksForTheCredentialOfTheRunsRuntime(t *testing.T) {
+	for _, runtime := range []orgconfig.AgentRuntime{orgconfig.AgentRuntimeClaudeCode, orgconfig.AgentRuntimeOpenCode} {
+		rec := &chainRecorder{}
+		anthropic, github := fullSecretRefs()
+		var asked orgconfig.AgentRuntime
+		anthropic.asked = &asked
+		e := newOpenCodeDispatchExecutor(rec, anthropic, github, openCodeRunnerImage)
+		e.WithCodingAgentSettings(fakeCodingAgentSettings{proj: orgconfig.AgentsProjection{
+			Runtime: runtime,
+		}})
+
+		if _, err := e.Dispatch(context.Background(), codingMilestoneDispatch()); err != nil {
+			t.Fatalf("%s dispatch: %v", runtime, err)
+		}
+		if asked != runtime {
+			t.Errorf("resolver asked for runtime %q, want %q", asked, runtime)
+		}
+	}
+}
+
+// A platform with no OpenCode image cannot run an OpenCode cycle, and must not
+// run it on the Claude Code image (no OpenCode binary in it). The failure names
+// the setting that is missing.
+func TestDispatch_AnOpenCodeRunWithNoOpenCodeImageFailsNamingTheSetting(t *testing.T) {
+	rec := &chainRecorder{}
+	anthropic, github := fullSecretRefs()
+	e := newOpenCodeDispatchExecutor(rec, anthropic, github, "")
+
+	_, err := e.Dispatch(context.Background(), codingMilestoneDispatch())
+	if err == nil || !strings.Contains(err.Error(), "AGENT_RUNNER_IMAGE_OPENCODE") {
+		t.Fatalf("dispatch err = %v, want it to name AGENT_RUNNER_IMAGE_OPENCODE", err)
+	}
+	if len(rec.calls) != 0 {
+		t.Errorf("the OC chain was walked anyway: %v", rec.calls)
 	}
 }
 

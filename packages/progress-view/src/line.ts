@@ -48,6 +48,19 @@ export interface FormattedLine {
   report?: string | undefined;
 }
 
+/**
+ * Whether a tool is the shell, whose row prints the command after a `$` prompt
+ * and drops the tool name (the prompt already says "shell").
+ *
+ * Case-insensitive because the runtimes spell it differently: Claude Code calls
+ * it `Bash`, OpenCode `bash`. Tool names are deliberately NOT normalised on the
+ * wire (the contract keeps the runtime's own name, so a reader can tell which
+ * tool actually ran), so the match tolerates both spellings here instead.
+ */
+export function isShellTool(tool: string): boolean {
+  return /^bash$/i.test(tool);
+}
+
 // Below this, a call is fast enough that its duration is noise on every line.
 // Above it, the number is the point: it is what tells a slow build apart from a
 // wedged one.

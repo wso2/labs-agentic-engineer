@@ -88,6 +88,10 @@ type AgentUsageLedgerEntry struct {
 	CacheReadTokens     int64    `gorm:"not null;default:0"`
 	CacheCreationTokens int64    `gorm:"not null;default:0"`
 	CostUsd             *float64 `gorm:"column:cost_usd"`
+	// ModelHost is copied from the source row with the rest of the capture, so
+	// the ledger names the host its CostUsd was priced on.
+	// Nullable on purpose (see RunPhase18ModelHost).
+	ModelHost string `gorm:"type:text"`
 
 	CapturedAt time.Time `gorm:"not null;default:now()"`
 

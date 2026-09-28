@@ -53,7 +53,7 @@ Never substitute a design system the organization defaults do not name.
 **Pin the design system; do not consult it.** A design system is built against,
 not designed with — it is the coding run's to load, and its theming is a settled
 organization decision that no design-time question reopens. Never ask the user
-about colors, themes, or look and feel. **Pin the auth skills the same way,
+about colors, themes, or look and feel. An ai-agent → `["agent-building"]`. **Pin the auth skills the same way,
 never leave them to a description:** `"thunder-authentication"` on **both**
 sides of sign-in — every component that declares the `thunder-app` dependency,
 the SPA *and* each protected backend it calls — and `"api-management"` on every
@@ -101,10 +101,54 @@ Do NOT split by:
   owning service starts, not a component of its own. Only a genuinely different
   runtime or scaling profile (above) justifies splitting one off.
 
-When nothing above forces a split, a small system naturally lands at one
-service + one web-application — that is an outcome of the rule, not a target. Name
-components in kebab-case after their responsibility (`expense-api`,
-`expense-webapp`, `report-worker`).
+**Never invent a user-facing surface the requirements did not ask for.** A
+system whose requirements describe a browser app lands at one service + one
+web-application; a system whose only surface is an agent lands at one service +
+one ai-agent and NO web-application. An agent is a complete surface on its own —
+the console's Test tab talks to a deployed agent directly — so "there must be
+something for the user to open" is not a reason to add a SPA. Adding an
+unrequested web-application is the same failure as splitting by domain concept:
+a shape imposed on the requirements instead of read from them. Name components
+in kebab-case after their responsibility (`expense-api`, `expense-webapp`,
+`report-worker`, `packing-agent`).
+
+**An AI agent is `"ai-agent"`.** Reach for it when the requirements call for a
+conversational or autonomous surface — a user talking to the system in their own
+words rather than filling in a form. Its behaviour is authored as
+`agent.afm.md` (the `agent-building` skill), it is implemented in TypeScript, and
+it pins `["agent-building"]`. It is a normal deployable that calls other
+components over HTTP: give it a `component` dependency for every API it uses.
+**An agent a signed-in user reaches is a protected backend** — whether the
+caller is a sibling web-application or the console's Test tab, set
+`"exposure": "internet"` (a browser cannot reach an intranet address, so an
+intranet agent has nothing that can talk to it) AND give it the project's
+shared `thunder-app`
+dependency, under the same dependency NAME the SPA and the sibling APIs use,
+exactly as you would for a service. It is the same sign-in and the same OAuth
+app, not a second one. Do this even when the agent stores nothing and every API
+behind it already authorises: a service you can call without a token costs CPU,
+an agent you can call without a token costs money on the organisation's model
+key, so an unauthenticated agent endpoint is a billing hole rather than a
+tolerable one.
+**Declare no dependency for model access** — every `ai-agent` gets it from its
+component type, on the organisation's own key, so there is nothing to choose.
+**An `ai-agent` with server memory needs a Postgres for its conversation
+store.** Give it a `platform-resource` dependency with `resourceType:
+"postgres-cnpg"` — the PVC-backed type, so a conversation survives a pod
+restart; the older ephemeral `postgres` type is not installed and referencing
+it fails provisioning. Dedicated is the default — `{ "kind":
+"platform-resource", "name": "memory-db", "resourceType": "postgres-cnpg" }`,
+injected as `MEMORY_DB_HOST` / `MEMORY_DB_PORT` / `MEMORY_DB_DBNAME` /
+`MEMORY_DB_USER` / `MEMORY_DB_PASSWORD` (`postgres-cnpg` has no `url` output;
+the generic platform-resource wiring injects each of its five outputs as
+`<DEP_NAME>_<OUTPUT>`, uppercased). When the project already carries a
+Postgres and the user prefers one instance, declare the SAME dependency name
+the sibling service uses — same-name resolution to one shared instance is the
+`thunder-app` sharing rule, and it applies here too. Either way the agent owns
+its `conversations` table exclusively: no other component touches it, and the
+agent touches nothing else in a shared instance. Business data is still not
+the agent's to hold — anything beyond its own conversation belongs behind a
+service that owns it.
 
 **Component `type` is a fixed vocabulary — use the EXACT string.** A backend is
 `"service"`; a browser app is `"web-application"` (OpenChoreo's own term). Write
@@ -131,7 +175,7 @@ violations:
   "language": "Ballerina",            // implementation language — "Ballerina" for a service unless the requirements say otherwise; "TypeScript" for a web-application
   "buildpack": "docker",              // always "docker"
   "appPath": "expense-api",           // repo-relative source dir — the component name
-  "entrypoint": "deployment/service", // deploy entry — PAIRS with `type`: "deployment/service" for a service, "deployment/web-application" for a web-application
+  "entrypoint": "deployment/service", // deploy entry — PAIRS with `type`: "deployment/service" for a service, "deployment/web-application" for a web-application, "deployment/ai-agent" for an ai-agent
   "exposure": "internet",             // "internet" (public) | "intranet" (internal only)
   "dependencies": [ /* see below — every dependency edge touching this component appears here */ ],
   "description": "One paragraph: single responsibility, port/entrypoint expectations, and what it explicitly does NOT do.",

@@ -50,9 +50,19 @@ func (h *PortForwardHandle) Stop() {
 	<-h.exited
 }
 
-// PortForward starts kubectl port-forward to svc/thunder-service in the given
-// namespace on an ephemeral local port. Caller must call Stop() when done.
+// PortForward starts kubectl port-forward to svc/thunder-service (the
+// platform IdP's fixed service name) in the given namespace on an ephemeral
+// local port. Caller must call Stop() when done.
 func PortForward(ctx context.Context, namespace, kubeconfig string) (*PortForwardHandle, error) {
+	return PortForwardService(ctx, namespace, "thunder-service", kubeconfig)
+}
+
+// PortForwardService starts kubectl port-forward to svc/<service> in the
+// given namespace on an ephemeral local port. Unlike PortForward, the service
+// name is a parameter — an environment (T2) Thunder's release name (and so
+// its Service name) varies per (org, environment), unlike the platform IdP's
+// fixed "thunder-service". Caller must call Stop() when done.
+func PortForwardService(ctx context.Context, namespace, service, kubeconfig string) (*PortForwardHandle, error) {
 	port, err := pickFreePort()
 	if err != nil {
 		return nil, fmt.Errorf("pick local port for Thunder port-forward: %w", err)
@@ -61,7 +71,7 @@ func PortForward(ctx context.Context, namespace, kubeconfig string) (*PortForwar
 	args := []string{
 		"port-forward",
 		"-n", namespace,
-		"svc/thunder-service",
+		"svc/" + service,
 		port + ":" + remotePort,
 	}
 	if kubeconfig != "" {

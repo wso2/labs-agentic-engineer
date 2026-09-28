@@ -86,7 +86,7 @@ export function SettingsLayout() {
     <PageContent>
       <PageHeader
         title="Settings"
-        subtitle="Org-level GitHub and Anthropic credentials, the skills catalogue, and per-project agent usage"
+        subtitle="Org-level GitHub and model credentials, the skills catalogue, and per-project agent usage"
       />
 
       <Box
