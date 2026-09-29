@@ -15,9 +15,9 @@ gitpat submit is the one moment the control plane holds the gitpat. The procedur
 7. `aep-api` registers that address on GitHub once, with the in-memory gitpat and the org HMAC.
 8. `aep-api` drops the gitpat. It never reads it again.
 
-If the wait in step 5 ends with no address, `aep-api` registers no hook. There is no placeholder URL and no second URL: the control-plane webhook URL is not a stand-in. Because `aep-api` cannot read the gitpat after step 8, it cannot patch the hook later.
+If the wait in step 6 ends with no address, `aep-api` registers no hook. There is no placeholder URL and no second URL: the control-plane webhook URL is not a stand-in. Because `aep-api` cannot read the gitpat after step 8, it cannot patch the hook later.
 
-On a local install, smee is inside the wait in step 5: the hook is created only after the in-cluster smee client forwards to a ready `ae-studio-tools` ([11-local-vs-cloud.md](11-local-vs-cloud.md)).
+On a local install, smee is inside the wait in step 6: the hook is created only after the in-cluster smee client forwards to a ready `ae-studio-tools` ([11-local-vs-cloud.md](11-local-vs-cloud.md)).
 
 ```mermaid
 sequenceDiagram
