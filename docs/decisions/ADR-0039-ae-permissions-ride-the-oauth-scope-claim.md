@@ -93,8 +93,19 @@ not exist yet.
 ## Consequences
 
 - `authz.Permission` is the single typed source of truth for the 14 AE permission keys, shared by the
-  role catalog, the AE→OC action catalog, and the gate. The console mirrors the list by hand until
-  the backend exposes it as a generated contract type.
+  role catalog, the AE→OC action catalog, and the gate. Two copies of the vocabulary exist outside
+  Go and cannot import it — the console's `ALL_PERMISSIONS` (TypeScript, built by a Node-only image
+  stage) and the chart's `console.thunder.scopes` (deployment configuration) — so each is reconciled
+  by a test that reads the other side's file and names it in the failure:
+  `TestConsoleUnionMatchesCatalog` and `TestChartConsoleScopesCoverCatalog`, alongside
+  `TestChartAuthzRolesMatchCatalog` for the chart's AuthzRoles. Codegen was tried and removed: a Go
+  binary emitting TypeScript bought one fewer hand-edit and cost a generated-and-committed artifact,
+  a `go:generate` writing across modules, and a build that broke in the image but not on a laptop.
+- The console's scope filter is deliberately by `ae:` PREFIX, not by membership of its own list. As
+  an allowlist it withheld a grant the token really carried whenever the list was stale, closing
+  every gate on that key for everyone while the BFF went on allowing the call. By prefix, a stale
+  list costs the TYPE only: nobody can write a gate on a key the union lacks, which is a compile
+  error rather than a silence.
 - Two roles ship. `ae-admin` holds every permission. **`ae-developer` is the role that does the
   work on a project** — it states what is wanted, designs it, builds it, and watches what the build
   did — so it holds each of those as a write/view pair (requirement, design, build), plus the two

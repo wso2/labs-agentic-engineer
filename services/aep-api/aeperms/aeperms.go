@@ -39,6 +39,13 @@
 // neither is something an installer needs to know.
 package aeperms
 
+// The console is the third consumer of this vocabulary, and the one that
+// cannot import it — it is TypeScript, and its image is built by a Node-only
+// stage with no Go in it. So it keeps its own copy of the keys, and
+// TestConsoleUnionMatchesCatalog (internal/authz) reconciles the two, the same
+// way the chart's roles and scopes are reconciled: by a test that reads the
+// other side's file, since neither can import the other.
+//
 // Permission is an AE-level permission key, e.g. "ae:build". The same string
 // is the Thunder action's qualified name, the scope entry on a caller's JWT,
 // and the unit aep-api's gate resolves — one spelling at every hop, which is

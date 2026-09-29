@@ -115,11 +115,15 @@ console:
   thunderPublicURL: "http://thunder.openchoreo.localhost:8080"
   thunder:
     clientId: "aep-console-client"
-    # Every ae:* permission the platform recognizes (services/aep-api/internal/
-    # authz/role_permissions_catalog.go's AllPermissions) — Thunder narrows
-    # the grant to whatever the caller's actual role holds, so this must list
-    # all of them or no caller, however privileged, can ever be granted the
-    # omitted one.
+    # Every ae:* permission the platform recognizes (services/aep-api/aeperms'
+    # AllPermissions) — Thunder narrows the grant to whatever the caller's
+    # actual role holds, so this must list all of them or no caller, however
+    # privileged, can ever be granted the omitted one.
+    #
+    # This is the one copy of the vocabulary that is configuration rather than
+    # code, so codegen cannot keep it honest. TestChartConsoleScopesCoverCatalog
+    # (services/aep-api/internal/authz) compares it against the catalog in both
+    # directions instead.
     scopes: "openid profile email ae:build ae:build-view ae:design ae:design-view ae:github-config ae:model-config ae:requirement-update ae:requirement-view ae:skill-config ae:skill-view ae:usage-view ae:observability-view ae:resource-view ae:resource-config"
     # RFC 8707 resource indicator for the `ae` resource server — required for
     # any ae:* entry in scopes above to actually land on the token instead of
