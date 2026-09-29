@@ -266,6 +266,7 @@ dev-env:
 	@if [ "$${WITH_OBSERVABILITY:-1}" = "1" ] && [ "$${WITH_SRE:-1}" != "1" ]; then \
 		bash deployments/scripts/park-observability.sh down; \
 	fi
+	@AEP_AE_ADMIN_PASSWORD=admin bash deployments/scripts/print-consoles.sh
 
 # The observability plane's heavy half (OpenSearch, Prometheus, collectors,
 # adapters): `make dev-env` installs it running and parks it last, unless the
