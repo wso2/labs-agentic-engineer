@@ -35,7 +35,7 @@ under the License.
 | Malicious org member | A Developer who tries to act above their role, or a member of another org. | Their own org, only with their own role's permissions. Another org: nothing, because the API and each design studio container take the org from the login token. |
 | Compromised agent | A design or coding agent whose model follows injected instructions from a spec, repository file, issue or web page. | What its container and its tools allow (TB-5, TB-7). |
 | Compromised org Admin | An attacker using an Admin's account, or an Admin acting in bad faith. | Holds `ae-admin`, so it can change the GitHub token, AI keys and skills, and create or delete projects, in its own org only. It cannot reach other orgs (PW-1) or read saved secrets back (TB-9). **Planned:** record who changes secrets (H-6). |
-| Attacker with code running in a design studio pod | Someone who finds a bug in a design studio container and runs code there. | What that container holds, and the tokens it receives: users' login tokens (AE-01-4, H-10), and on the design agent and studio tools the API's AE-only machine token (AE-03-2, H-11). |
+| Attacker with code running in a design studio pod | Someone who finds a bug in a design studio container and runs code there. | What that container holds, and the tokens it receives: users' login tokens (AE-01-4, H-10), and on studio tools only, the API's AE-only machine token (AE-03-2, H-11). |
 | Malicious or compromised WSO2 operator | A WSO2 Cloud operator who misuses standing or break-glass access. | Clusters, databases and the secret store. **Inherited:** WSO2 Cloud operations controls cover this access (see Out of scope). |
 
 **Systems Agentic Engineer runs**
@@ -49,12 +49,12 @@ under the License.
 | [Coding agent](01-introduction-and-architecture.md#c-coding-agent) | Only the org's AI keys. |
 | [Coding tools](01-introduction-and-architecture.md#c-coding-tools) | GitHub token and machine login, for this run's repository only. |
 | Machine login (publisher client): one per org, used only from the dataplane to the API | Internal API routes only. No user permissions. No design studio container accepts it. |
-| AE-only control-plane client (`APP_FACTORY_BFF_TO_AE_STUDIO`, a working name): one for all orgs, held only by the API | Calls to the design studio when no user is on the request, and the studio tools routes tied to the API's records (repository create, skills copy, merge). Its token carries no org; the org is sent in the `X-Impersonate-Org` header. It is not on platform-api's impersonation list (the clients platform-api lets act for any org), so platform-api refuses it. |
+| AE-only control-plane client (`APP_FACTORY_BFF_TO_AE_STUDIO`, a working name): one for all orgs, held only by the API | Calls to the internal routes of studio tools only: the design turns the API starts, and the git and GitHub work tied to the API's records (commit and push, issues, pull requests and merge, repository create, skills copy). Only studio tools accepts it, so it never reaches an AI container. Its token carries no org; the org is sent in the `X-Impersonate-Org` header. It is not on platform-api's impersonation list (the clients platform-api lets act for any org), so platform-api refuses it. |
 | Room-join identity (`ae-studio-<org>`): one per org, a Platform IdP Agent entity (a non-human identity) in the org's organization unit, its place in the Platform IdP (O-14) | Only the design agent's Room join on live editing. Its token carries the org. It opens any Room of its org while it lives. |
 
 ## Entitlement matrix
 
-Permissions come from the user's role. The API checks them on every call and refuses anything not listed. The design studio containers read `ae:design` and `ae:design-view` from the login token; until WSO2 Cloud issues the `ae:*` permissions (H-7), they check only that the user is a member of the org.
+Permissions come from the user's role. The API checks them on every call and refuses anything not listed. The design studio containers use the same user rule as the API, so the two cannot differ. Until WSO2 Cloud issues the `ae:*` permissions (H-7), that rule is the org in the login token, and a token without an org is refused. With H-7, the API and the design studio both check `ae:design` and `ae:design-view` in the token, together.
 
 | Permission | Lets you | `ae-admin` | `ae-developer` |
 | :---- | :---- | :----: | :----: |
@@ -82,7 +82,7 @@ These are the resources Agentic Engineer controls, besides the systems above.
 | Asset | Description (usage, purpose, authentication, authorizations, and security) |
 | :---- | :---- |
 | Console | Web app served over HTTPS by its own web server, which passes API calls to the API. Sign-in at the Platform IdP (identity provider). See AE-01. |
-| AE-only control-plane client secret | Lets the API call any org's design studio, with the org in a header. Kept only in the API; it never reaches a dataplane pod. [C-High]. See AE-03. |
+| AE-only control-plane client secret | Lets the API call the internal routes of any org's studio tools, with the org in a header. Kept only in the API; it never reaches a dataplane pod. [C-High]. See AE-03. |
 | Org secrets | GitHub token, AI keys, webhook HMAC, machine login secret, Room-join client secret. Only in the secret store, delivered to the containers that need them. [C-High]. See AE-02. |
 | Postgres | Org records, projects, runs, webhook events and the usage ledger. No org secret values. **Planned:** test-user passwords move to the secret store (H-2). |
 | Temporal | Engine that runs background workflows for runs, builds and deploys. |

@@ -36,9 +36,9 @@ The model describes the design in the Agentic Engineer architecture spec: organi
 | <a id="c-api"></a>Agentic Engineer API (`aep-api`) | Control plane | Checks every call, keeps records, writes secrets, and drives the org dataplane. Tells the console where the design studio is. It signs no tokens. |
 | <a id="c-temporal"></a>Temporal | Control plane | Runs long background workflows for the API. |
 | <a id="c-design-studio"></a>Design studio | Org dataplane, project `ae-system` | The org's pod where people and the design agent write the spec. The browser calls it directly. Each part checks every token it gets. It has three parts: |
-| ↳ <a id="c-design-agent"></a>Design agent | Design studio | The AI that writes and updates the spec. Runs design turns and streams them to the browser. Holds only the Default AI key. |
+| ↳ <a id="c-design-agent"></a>Design agent | Design studio | The AI that writes and updates the spec. Runs design turns and streams them to the browser. Turns the API starts reach it only through studio tools, inside the pod. Holds only the Default AI key. |
 | ↳ <a id="c-live-editing"></a>Live editing | Design studio | Hosts Rooms, the live sessions where people and the agent edit together. |
-| ↳ <a id="c-studio-tools"></a>Studio tools | Design studio | Does git and GitHub work, serves git-only reads to the browser, checks webhooks, and sends design-turn usage to the API. Runs no AI. Holds the GitHub token. |
+| ↳ <a id="c-studio-tools"></a>Studio tools | Design studio | Does git and GitHub work, serves git-only reads to the browser, takes the API's calls and starts the API's design turns, checks webhooks, and sends design-turn usage to the API. Runs no AI. Holds the GitHub token. |
 | <a id="c-coding-agent-pod"></a>Coding agent pod | Org dataplane, the app's project | Started for one run to build or test the app. It has two parts: |
 | ↳ <a id="c-coding-agent"></a>Coding agent | Coding agent pod | The AI that writes or tests code. Holds only the org's AI keys. |
 | ↳ <a id="c-coding-tools"></a>Coding tools | Coding agent pod | Does git, GitHub and platform actions for that run. Runs no AI. |
