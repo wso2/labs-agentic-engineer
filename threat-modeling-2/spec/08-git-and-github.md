@@ -38,7 +38,7 @@ The webhook path is flows 5 and 6 in the picture in [03-components.md](03-compon
 
 ### Where GitHub posts (flow 5)
 
-`ae-studio-tools` listens on a webhook path of its public address. The gateway checks no JWT and no API key; it only ends TLS. `ae-studio-tools` checks `X-Hub-Signature-256` with the org HMAC.
+`ae-studio-tools` listens on a webhook path of its public address. The gateway does TLS and CORS, no token check. `ae-studio-tools` checks `X-Hub-Signature-256` with the org HMAC.
 
 This route is different from the Room WebSocket and from the routes that check a Platform IdP token (flows 2, 3 and 14). The webhook route takes no token. The same receiver serves both installs:
 

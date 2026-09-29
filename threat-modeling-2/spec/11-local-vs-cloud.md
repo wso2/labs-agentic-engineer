@@ -11,7 +11,7 @@ There is one architecture. A local install runs the same components, the same co
 | DP → CP | Public `aep-api` gateway. | ClusterIP, same publisher client token. |
 | Token issuer and JWKS | The Platform IdP (`iss=platform-idp`), public JWKS `https://platform-idp-<env>.gateway.<base>/oauth2/jwks`. | The local install's Platform IdP issues the tokens. The three `ae-studio` containers check `iss` and the JWKS URL of that IdP, set when the Resource is rendered. Same checks, same `aud` allow-lists, same org and role rule. |
 | Clients | `aep-publisher-<org>` and `ae-studio-<org>` created by `aep-api`; `APP_FACTORY_BFF_TO_AE_STUDIO` (working name) provisioned by WSO2 Cloud (O-15). | The same three clients, on the local Platform IdP. How the AE-only client and its secret reach `aep-api` locally is set by the install. |
-| Roles | The same user rule as `aep-api`: the org claim when the token has no `ae:*` scopes; `ae:design` / `ae:design-view` when `aep-api` checks the `ae:*` scopes and WSO2 Cloud issues them (O-12). | The same user rule as `aep-api`. |
+| Roles | The same user rule as `aep-api`: the org claim when the token has no `ae:*` scopes; `ae:design` / `ae:design-view` when `aep-api` checks the `ae:*` scopes and WSO2 Cloud issues them (H-7, the roles WSO2 Cloud issues at sign-in; O-12 is only the audience). | The same user rule as `aep-api`. |
 | Project and environment | `ae-system` / `development`. Counts toward the org's `projects` quota and is visible (accepted for now). | `ae-system` / `development`. |
 
 ## smee

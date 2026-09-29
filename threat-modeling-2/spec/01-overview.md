@@ -57,7 +57,7 @@ Source: [C3-today-vs-intended.excalidraw](diagrams/C3-today-vs-intended.excalidr
 | 2 | `aep-api` uses the gitpat for all git work. | Only `ae-studio-tools` and `ae-coding-tools`, in the dataplane, use it. |
 | 3 | The Anthropic key is taken out of the database and sent with every chat turn. | The key is given to the agent from vault. `aep-api` never reads it. |
 | 4 | The coding agent (an AI with a shell) can read all its secrets. | The gitpat and the publisher client move to a separate tools container. The AI keeps only the Anthropic key. |
-| 5 | The AI agent gets a copy of the user's full login token. | The user JWT reaches the process memory of the three `ae-studio` containers only. It is never put into a prompt, and the model has no tool that can read it. `aep-api` passes it on only to the `/v1/*` routes of `ae-studio-tools`. The design agent joins a Room with an `ae-studio-<org>` token that only `ae-studio-tools` can fetch. The token is valid for this org only. |
+| 5 | The AI agent gets a copy of the user's full login token. | In the dataplane, the user JWT reaches only the process memory of the three `ae-studio` containers. It is never put into a prompt, and the model has no tool that can read it. `aep-api` passes it on only to the `/v1/*` routes of `ae-studio-tools`. The design agent joins a Room with an `ae-studio-<org>` token that only `ae-studio-tools` can fetch. The token is valid for this org only. |
 | 6 | One webhook secret for all orgs. | One secret per org, checked in that org's dataplane. |
 | 7 | All orgs share the same services. | Each org's work runs in its own dataplane. |
 
