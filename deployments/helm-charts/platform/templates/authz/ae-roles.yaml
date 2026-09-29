@@ -67,11 +67,18 @@ spec:
     - secretreference:view
     - workload:view
 {{- else }}
+    - clusterresourcetype:view
     - component:create
     - component:view
+    - deploymentpipeline:view
+    - project:create
+    - project:delete
     - project:view
+    - projectreleasebinding:create
     - releasebinding:view
+    - resource:view
     - resourcereleasebinding:view
+    - resourcetype:view
     - workload:view
 {{- end }}
 ---

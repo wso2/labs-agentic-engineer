@@ -95,18 +95,17 @@ not exist yet.
 - `authz.Permission` is the single typed source of truth for the 14 AE permission keys, shared by the
   role catalog, the AE→OC action catalog, and the gate. The console mirrors the list by hand until
   the backend exposes it as a generated contract type.
-- Two roles ship: `ae-admin` holds every permission; `ae-developer` holds requirement-view,
-  design-**view**, the build pair, and observability-view — alerts and RCA reports are how a
-  developer learns their own deployed code is failing, so withholding them left the role able to
-  ship a thing but not to see it break. Org spend (`ae:usage-view`) stays admin-facing: it is a
-  billing concern, not a working one.
-- **`ae-developer` gets the one deliberate write/view asymmetry.** It reads the design and cannot
-  change it: the design is what a build is judged against, and a role that can run builds is not
-  thereby a role that can move the target. This is enforced past the UI — `ApplyFiles` gates on
-  `ae:design`, `validate-collab-access` answers `canWrite: false`, and the collab server drops that
-  socket's Yjs updates, so another client does not get the write either. It also costs the role the
-  AI chat panel, whose turn operations gate on `ae:design` because a turn's instruction carries
-  `/<skill>` flow commands the server expands — sending one is editing the design by a longer route.
+- Two roles ship. `ae-admin` holds every permission. **`ae-developer` is the role that does the
+  work on a project** — it states what is wanted, designs it, builds it, and watches what the build
+  did — so it holds each of those as a write/view pair (requirement, design, build), plus the two
+  reads that make the work legible: observability-view, because alerts and RCA reports are how a
+  developer learns their own deployed code is failing, and resource-view, because a design that
+  declares a dependency is unreadable without the catalogue it names.
+- **The line is the project, not the organization.** What `ae-developer` lacks is everything that
+  configures the org rather than a project: both credential permissions, skills, org spend, and
+  resource-**config**. That last one is the role's only view without its write, and deliberately so
+  — registering a resource for the whole org is an admin act that happens to be reachable from a
+  project page.
 - **An agent is an ordinary principal.** The SRE agent reaches aep-api through aep-mcp-server with a
   long-lived shared secret rather than a Thunder JWT, and `SREHandoffVerifier` used to mint claims
   with no scope at all — which made its three operations un-gateable, and so carved out of the gate

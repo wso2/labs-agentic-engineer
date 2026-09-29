@@ -150,30 +150,31 @@ const (
 // deploy a thing but not to see it fail, and put the notification bell and the
 // Alerts page behind a permission the people acting on them did not have.
 //
-// It omits ae:usage-view — org spend is a billing concern rather than a working
-// one, and nothing a developer does depends on reading it.
+// ae-developer is the role that does the WORK on a project: it states what is
+// wanted, designs it, builds it, and watches what the build did. So it holds
+// each of those as a write/view pair — requirement, design, build — plus the
+// two reads that make the work legible: observability-view, because alerts and
+// RCA reports are how a developer learns their own deployed code is failing,
+// and resource-view, because a design that declares a dependency is unreadable
+// without the catalogue it names.
 //
-// It omits ae:design too, holding only the ae:design-view beside it. So this is
-// the one place the role does NOT get a write/view pair, and the asymmetry is
-// deliberate: the design is what the build is judged against, and a role that
-// can run builds is not thereby a role that can change what they are measured
-// by. Two consequences follow, both intended rather than tolerated:
-//
-//   - The spec is READ-ONLY for this role. Not just in the UI — ApplyFiles is
-//     gated on ae:design, and validate-collab-access answers canWrite:false, so
-//     the collab server marks the socket read-only and Yjs updates from it are
-//     dropped. A client that does not run our code cannot edit it either.
-//   - The AI chat panel is unavailable. Its turn operations gate on ae:design,
-//     because a turn's instruction carries `/<skill>` flow commands the server
-//     expands — sending one IS editing the design, by a longer route.
+// What it does not hold is everything that configures the ORGANIZATION rather
+// than a project: the two credential permissions, skills, org spend, and
+// resource-CONFIG. It reads the resource catalogue and cannot change it — the
+// one place the role deliberately gets a view without its write, because
+// registering a resource for the whole org is an admin act performed from a
+// project page.
 var rolePermissions = map[string][]Permission{
 	RoleAdmin: AllPermissions,
 	RoleDeveloper: {
-		PermissionRequirementView,
-		PermissionDesignView,
 		PermissionBuild,
 		PermissionBuildView,
+		PermissionDesign,
+		PermissionDesignView,
+		PermissionRequirementUpdate,
+		PermissionRequirementView,
 		PermissionObservabilityView,
+		PermissionResourceView,
 	},
 }
 

@@ -110,12 +110,12 @@ func TestRolePermissions_AeAdminHasAllPermissions(t *testing.T) {
 	}
 }
 
-// ae:observability-view is in the set because a developer has to be able to
-// see their own deployed code failing — alerts and RCA reports are how that
-// arrives. Two are deliberately NOT: ae:usage-view, because org spend is a
-// billing concern, and ae:design, because a role that runs builds is not
-// thereby a role that can change what those builds are judged against. The set
-// is asserted exactly so each of those stays a decision rather than a drift.
+// The role does the work on a project — state, design, build, watch — so it
+// holds each as a write/view pair, plus the two reads that make the work
+// legible. What is absent is what configures the ORGANIZATION: the credential
+// pair, skills, org spend, and resource-CONFIG (it reads the catalogue and
+// cannot change it). Asserted as an exact set so each absence stays a decision
+// rather than a drift.
 func TestRolePermissions_AeDeveloperHoldsItsWorkingSet(t *testing.T) {
 	got := RolePermissions("ae-developer")
 	sort.Strings(got)
@@ -123,9 +123,12 @@ func TestRolePermissions_AeDeveloperHoldsItsWorkingSet(t *testing.T) {
 	want := []string{
 		string(PermissionBuild),
 		string(PermissionBuildView),
+		string(PermissionDesign),
 		string(PermissionDesignView),
+		string(PermissionRequirementUpdate),
 		string(PermissionRequirementView),
 		string(PermissionObservabilityView),
+		string(PermissionResourceView),
 	}
 	sort.Strings(want)
 
