@@ -114,8 +114,9 @@ The Thunder identity provider for one organization and one environment. It is a
 different issuer from the Platform IdP, with its own keys: there is one per
 organization and environment, where the Platform IdP is one for the whole
 platform. Agentic Engineer does not use it.
-_Avoid_: dataplane IdP (it does not run in the dataplane), tenant IdP, Platform
-IdP (a different issuer).
+In WSO2 Cloud the per-org Thunder runs on the org dataplane cluster.
+_Avoid_: dataplane IdP (say Environment Thunder), tenant IdP, Platform IdP (a
+different issuer).
 
 **`ae-studio-<org>`**:
 The per-organization identity the design agent uses to join a Room. A Thunder
