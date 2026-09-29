@@ -36,7 +36,7 @@ under the License.
 | Is Static (SAST) or IaC scanning conducted and are findings addressed? | No | — |
 | Is Software Composition Analysis (SCA) conducted (e.g., FOSSA, JFrog XRay, Trivy)? | No | — |
 | Is Dynamic (DAST) or API scanning conducted on non-production setups? | No | — |
-| Are audit logs generated in a standardized format, available to authorized users, with a defined retention period? | Partial | The API records who clicked Build, and spec commits list who was in the Room. More is planned (H-6). No retention period is set. |
+| Are audit logs generated in a standardized format, available to authorized users, with a defined retention period? | Partial | Spec commits list who was in the Room. Recording who changes secrets, creates or deletes projects and starts builds is planned (H-6). No retention period is set. |
 | Do audit logs for critical configuration changes include before/after values? | No | A change to the GitHub token or an AI key logs only which section changed. The values are secrets, so they are never logged. |
 | Has a Business Impact Analysis (BIA) been conducted (MTTD, uptime, RPO, RTO)? | No | — |
 | Are data in transit and at rest encrypted? | Yes | TLS on every call across the internet. Encryption at rest is WSO2 Cloud's. |
