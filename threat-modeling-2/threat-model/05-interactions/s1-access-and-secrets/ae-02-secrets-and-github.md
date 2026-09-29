@@ -30,7 +30,7 @@ Agentic Engineer needs these secrets to function: the **GitHub token** to create
 
 | Initiator | Intermediate | Target |
 | :---- | :---- | :---- |
-| Org Admin's browser | Agentic Engineer API | Secret store; studio tools and design agent; GitHub; Anthropic; OpenChoreo |
+| Org Admin's browser | Agentic Engineer API | Secret store; studio tools and design agent; GitHub; Anthropic; OpenChoreo; Platform IdP |
 
 **Data Flow Diagram**
 
@@ -41,8 +41,8 @@ Agentic Engineer needs these secrets to function: the **GitHub token** to create
 1. The Admin sends the GitHub token or an AI key to the API (see AE-01 for sign-in).
 2. The API checks the value in memory: the GitHub token with GitHub, an AI key with Anthropic.
 3. The API writes the value to the secret store. For a GitHub token it also writes a new webhook secret (HMAC, the key used to sign and check webhooks) for this org. The store returns names only.
-4. For a GitHub token, the API asks OpenChoreo to create the org's design studio, passing secret names only (see AE-03). How the studio starts before the org sets an AI key is still to decide (O-5).
-5. The secret sync delivers the GitHub token and webhook secret to the studio tools container, and the Default AI key to the design agent. How a changed secret reaches a running pod is still to decide (O-4).
+4. For a GitHub token, the API first creates the org's Room-join identity (`ae-studio-<org>`, the sign-in the design agent uses to join a Room, see AE-05) at the [Platform IdP](../../01-introduction-and-architecture.md#c-platform-idp) and writes its secret to the secret store. Then it asks OpenChoreo to create the org's design studio, passing secret names only (see AE-03). How the studio starts before the org sets an AI key is still to decide (O-5).
+5. The secret sync delivers the GitHub token, the webhook secret and the Room-join secret to the studio tools container, and the Default AI key to the design agent. How a changed secret reaches a running pod is still to decide (O-4).
 6. The API waits until the studio tools' webhook address is reachable, registers it on GitHub once, and forgets the token.
 
 **Payload**
@@ -50,7 +50,8 @@ Agentic Engineer needs these secrets to function: the **GitHub token** to create
 - GitHub token (personal access token) of the org's GitHub account.
 - Default AI key (an Anthropic API key) and Coding agent token (the org's Claude subscription token). Without a Coding agent token, coding runs use the Default AI key.
 - Webhook secret (HMAC), created by the API, one per org.
-- Machine login secret, one per org. How it is created and rotated without the control plane reading it is still to decide (O-6).
+- Room-join secret (`ae-studio-<org>`), created by the API, one per org.
+- Machine login secret (the publisher client, the org's non-human sign-in to the API), one per org. How it is created and rotated without the control plane reading it is still to decide (O-6).
 - Secret names (secret references) returned by the store.
 - Webhook address of the studio tools container.
 
@@ -74,7 +75,7 @@ Agentic Engineer needs these secrets to function: the **GitHub token** to create
 | AE-02-3 | Repudiation | An Admin denies changing the GitHub token or an AI key. | No | **Implemented:** each change writes a log line naming the section, never the value. **Planned:** record who made each change (H-6). |
 | AE-02-4 | Information disclosure | A saved GitHub token or AI key leaks back out of the control plane, for example in a response, a log or a database backup. | No | **By design:** values live only in the write-only secret store. The API cannot read them back, and the database holds no org secret values. **Implemented:** responses show only a short prefix and the last four characters, which the API records when the secret is saved, and logs never carry the value. **Planned:** test-user passwords move to the secret store (H-2). |
 | AE-02-5 | Denial of service | A malicious actor floods the secret store or the secret sync. | No | **Inherited:** the secret store and its sync are WSO2 Cloud's. |
-| AE-02-6 | Elevation of privilege | A compromised AI agent reads the GitHub token or the webhook secret. | No | **By design:** only the studio tools and coding tools containers hold the GitHub token, and only studio tools holds the webhook secret. The design agent holds only the Default AI key, and the coding agent only the org's AI keys (TB-5, TB-7). |
+| AE-02-6 | Elevation of privilege | A compromised AI agent reads the GitHub token or the webhook secret. | No | **By design:** only the studio tools and coding tools containers hold the GitHub token, and only studio tools holds the webhook secret and the Room-join secret. The design agent holds only the Default AI key, and the coding agent only the org's AI keys (TB-5, TB-7). |
 
 **Product improvements flagged**
 

@@ -18,4 +18,4 @@ under the License.
 
 # Session 2: Design
 
-How a design agent turn uses its tools, and how people and the agent edit the spec together in a Room and save it to the repository.
+How a design agent turn uses its tools, and how people and the agent edit the spec together in a Room and save it to the repository. In both, the browser calls the design studio directly, and each container checks the login token itself.

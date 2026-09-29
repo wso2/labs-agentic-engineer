@@ -20,7 +20,7 @@ under the License.
 
 This is the threat model for Agentic Engineer on WSO2 Cloud. Agentic Engineer lets an organization take an idea to a running app: people and an AI design agent write a spec together (the project's requirements and design, kept in its GitHub repository), coding agents build from the spec, and the platform deploys the app. It follows the WSO2 threat modeling method (What are we building? What can go wrong? What are we doing about it? Did we do a good enough job?).
 
-The model describes the design in the Agentic Engineer architecture spec: organization secrets live only in a write-only secret store, and the [design studio](#c-design-studio) and the [coding agents](#c-coding-agent-pod) run in the organization's own dataplane (its own cluster, apart from WSO2 Cloud's shared control plane). Threats are assessed per interaction, from sign-in to deploy, in three review sessions.
+The model describes the design in the Agentic Engineer architecture spec: organization secrets live only in a write-only secret store, and the [design studio](#c-design-studio) and the [coding agents](#c-coding-agent-pod) run in the organization's own dataplane (its own cluster, apart from WSO2 Cloud's shared control plane). Every token comes from WSO2 Cloud sign-in (the Platform IdP, identity provider). The browser calls the design studio directly, and each part of the studio checks the caller's token itself. Threats are assessed per interaction, from sign-in to deploy, in three review sessions.
 
 **D1: Agentic Engineer on WSO2 Cloud**
 
@@ -33,12 +33,12 @@ The model describes the design in the Agentic Engineer architecture spec: organi
 | Component | Runs in | What it does |
 | :---- | :---- | :---- |
 | <a id="c-console"></a>Console | Control plane | The web app people use in the browser. |
-| <a id="c-api"></a>Agentic Engineer API (`aep-api`) | Control plane | Checks every call, keeps records, writes secrets, and drives the org dataplane. |
+| <a id="c-api"></a>Agentic Engineer API (`aep-api`) | Control plane | Checks every call, keeps records, writes secrets, and drives the org dataplane. Tells the console where the design studio is. It signs no tokens. |
 | <a id="c-temporal"></a>Temporal | Control plane | Runs long background workflows for the API. |
-| <a id="c-design-studio"></a>Design studio | Org dataplane, project `ae-system` | The org's pod where people and the design agent write the spec. It has three parts: |
-| ↳ <a id="c-design-agent"></a>Design agent | Design studio | The AI that writes and updates the spec. Holds only the Default AI key. |
+| <a id="c-design-studio"></a>Design studio | Org dataplane, project `ae-system` | The org's pod where people and the design agent write the spec. The browser calls it directly. Each part checks every token it gets. It has three parts: |
+| ↳ <a id="c-design-agent"></a>Design agent | Design studio | The AI that writes and updates the spec. Runs design turns and streams them to the browser. Holds only the Default AI key. |
 | ↳ <a id="c-live-editing"></a>Live editing | Design studio | Hosts Rooms, the live sessions where people and the agent edit together. |
-| ↳ <a id="c-studio-tools"></a>Studio tools | Design studio | Does git and GitHub work and checks webhooks. Runs no AI. Holds the GitHub token. |
+| ↳ <a id="c-studio-tools"></a>Studio tools | Design studio | Does git and GitHub work, serves git-only reads to the browser, checks webhooks, and sends design-turn usage to the API. Runs no AI. Holds the GitHub token. |
 | <a id="c-coding-agent-pod"></a>Coding agent pod | Org dataplane, the app's project | Started for one run to build or test the app. It has two parts: |
 | ↳ <a id="c-coding-agent"></a>Coding agent | Coding agent pod | The AI that writes or tests code. Holds only the org's AI keys. |
 | ↳ <a id="c-coding-tools"></a>Coding tools | Coding agent pod | Does git, GitHub and platform actions for that run. Runs no AI. |
@@ -47,9 +47,8 @@ The model describes the design in the Agentic Engineer architecture spec: organi
 
 | Component | What it does |
 | :---- | :---- |
-| <a id="c-platform-idp"></a>Platform IdP | WSO2 Cloud sign-in (identity provider, IdP) for people and machine logins. |
-| <a id="c-environment-thunder"></a>Environment Thunder | Sign-in service for one org and environment. |
+| <a id="c-platform-idp"></a>Platform IdP | WSO2 Cloud sign-in (identity provider, IdP) for people and machine logins. The only issuer of the tokens Agentic Engineer uses. Its public keys (JWKS, a public list of signing keys) let each container check a token. |
 | <a id="c-openchoreo"></a>OpenChoreo | Runs, builds and deploys workloads. |
 | <a id="c-secret-store"></a>Secret store and secret sync | Write-only vault, and the job that copies a secret into a container. |
-| <a id="c-gateways"></a>Gateways | The public API gateway and the org dataplane gateway. |
+| <a id="c-gateways"></a>Gateways | The public API gateway, and the org dataplane gateway. The org gateway ends TLS and applies cross-site rules (CORS). It checks no identity. |
 | <a id="c-postgres"></a>Postgres | The API's database. |

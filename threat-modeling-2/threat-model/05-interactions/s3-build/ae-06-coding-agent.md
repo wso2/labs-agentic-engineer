@@ -36,7 +36,7 @@ The [coding agent](../../01-introduction-and-architecture.md#c-coding-agent) is 
 
 **Steps**
 
-1. Clicking Build (see AE-01) starts a coding run. A finished deploy (see AE-08) starts a validation run. The image build after a merge is AE-08. The [API](../../01-introduction-and-architecture.md#c-api) asks [OpenChoreo](../../01-introduction-and-architecture.md#c-openchoreo) to start a pod for this run, with secret names only. The [secret sync](../../01-introduction-and-architecture.md#c-secret-store) puts the org's AI keys into the agent, and the GitHub token and the machine login into coding tools.
+1. Clicking Build (see AE-01) starts a coding run. A finished deploy (see AE-08) starts a validation run. The image build after a merge is AE-08. The [API](../../01-introduction-and-architecture.md#c-api) asks [OpenChoreo](../../01-introduction-and-architecture.md#c-openchoreo) to start a pod for this run, with secret names only. The [secret sync](../../01-introduction-and-architecture.md#c-secret-store) puts the org's AI keys into the agent, and the GitHub token and the machine login (publisher client, the org's non-human sign-in to the API) into coding tools.
 2. The agent writes and tests code in its own workspace, and calls the AI model at Anthropic with the Coding agent token, or with the Default AI key when the org has no Coding agent token.
 3. For git, GitHub and platform tools, the agent calls coding tools on a local port inside the pod.
 4. Coding tools clones the repository, reads the issues, pushes the run's branch and opens the pull request. It refuses any other repository.

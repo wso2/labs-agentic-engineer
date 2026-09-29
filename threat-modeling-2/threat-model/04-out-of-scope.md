@@ -33,7 +33,7 @@ These are Agentic Engineer parts, but they are not modelled here.
 These are not Agentic Engineer. We cover only the calls Agentic Engineer makes into them.
 
 - **WSO2 Cloud infrastructure:** clusters, networks, gateways, databases and operations, including operator access (standing and break-glass).
-- **Platform IdP (identity provider) and Environment Thunder:** how they sign people in and issue tokens. A stolen sign-in session is out of scope.
+- **Platform IdP (identity provider):** how it signs people in and issues tokens. A stolen sign-in session is out of scope. Environment Thunder, the per-org sign-in service, is not used by Agentic Engineer.
 - **OpenChoreo:** how it runs workloads, builds images and deploys apps. We cover what Agentic Engineer asks it to do.
 - **The secret store and its sync:** how they store and deliver values. We cover what Agentic Engineer writes and which container reads it.
 - **Kubernetes and the container runtime.**

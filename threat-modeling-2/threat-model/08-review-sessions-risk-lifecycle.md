@@ -56,10 +56,12 @@ No row in AE-01 to AE-08 or PW-1 to PW-4 is Materializable **Yes** or **Partiall
 | H-3 | Dependency secrets do not land in the coding agent's container; coding tools holds them (open decision O-11). | AE-06 | |
 | H-4 | Guardrails on the AI agents' internet calls. | AE-04, AE-06 | |
 | H-6 | Changes to the GitHub token or an AI key, and creating or deleting a project, record who did it. | AE-02, AE-03 | |
-| H-7 | WSO2 Cloud sign-in issues the `ae-admin` and `ae-developer` roles and their `ae:*` permissions, and the console asks for them. | AE-01 | |
+| H-7 | WSO2 Cloud sign-in issues the `ae-admin` and `ae-developer` roles and their `ae:*` permissions, and the console asks for them. | AE-01, AE-04, AE-05 | |
 | H-8 | The console calls the API through the public gateway, not only through its own web server. | AE-01 | |
 | H-9 | Project repositories are private. | AE-03, AE-06, AE-07, AE-08 | |
-| GAP-2 | Tokens from the control plane to the dataplane, and Room tokens, come from the org's Environment Thunder. | AE-03, AE-04, AE-05 | |
+| H-10 | Tokens sent to the design studio carry an Agentic Engineer-only audience (who the token is for), through an Agentic Engineer resource server at WSO2 Cloud sign-in (RFC 8707, a standard way to ask for a token meant for one service), so a login token leaked from the dataplane does not work on other console APIs. | AE-01 | |
+| H-11 | The API's calls to the design studio use machine tokens that carry their org (org-bound machine tokens, thunderid#4037), so a leaked copy reaches only one org. | AE-03, AE-04 | |
+| GAP-2 | Retired. The design studio checks WSO2 Cloud sign-in tokens itself, so no token waits on a WSO2 Cloud token exchange. | — | — |
 | GAP-3 | Both agent pods run in gVisor. | AE-04, AE-06 | |
 
 # Document lifecycle

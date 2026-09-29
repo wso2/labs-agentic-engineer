@@ -22,16 +22,17 @@ under the License.
 
 Threat Model
 
-**Version: 1.0**  
+**Version: 1.1**  
 **Date:** `[date]`  
 **Email:** `[team email]`
 
 This product was previously called App Factory / AEP.
 
-> **Baseline.** Written against `main` `4b6142d4`, PR #778 (roles and permissions) treated as merged (reviewed at `ee2ba084`), and the architecture spec at `3dd05e5f`. WSO2 Cloud settings are taken from the Cloud overlay `fc6bd9f` and wso2cloud-deployment `ac9fb79da`.
+> **Baseline.** Written against `main` `5a6d6dcd` (2026-09-29), PR #778 (roles and permissions) treated as merged (reviewed at `ee2ba084`), and the architecture spec at `9f7e7a03`. WSO2 Cloud settings are taken from the Cloud overlay `app-factory-wso2-enterprise` `fc6bd9f` and `wso2cloud-deployement-main` `5167ecab3`.
 
 # Revision History
 
 | Version | Release Date | Contributors / Authors | Summary of Changes |
 | ----- | ----- | ----- | ----- |
 | 1.0 | `[date]` | `[contributors]` | Initial version |
+| 1.1 | `[date]` | `[contributors]` | The design studio checks WSO2 Cloud sign-in (Platform IdP) tokens itself, and the browser calls it directly. Removed: tokens signed by the API, Room tokens and Environment Thunder. Added: the AE-only control-plane client, the per-org Room-join identity, the design-turn usage batch, and improvements H-10 and H-11. |

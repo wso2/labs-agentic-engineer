@@ -37,16 +37,16 @@ GitHub tells Agentic Engineer when a pull request or an issue changes, with a we
 **Steps**
 
 1. GitHub posts an event through the org gateway. Studio tools checks its signature with the org's webhook secret.
-2. Studio tools sends the checked event to the [API](../../01-introduction-and-architecture.md#c-api) as the org's machine login.
+2. Studio tools sends the checked event to the [API](../../01-introduction-and-architecture.md#c-api) as the org's machine login (publisher client, the org's non-human sign-in).
 3. The API drops repeats, stores the event and updates the run in [Temporal](../../01-introduction-and-architecture.md#c-temporal).
-4. When a ready pull request resolves one of the run's open issues, the API asks studio tools to merge it (see AE-03 for the signed token).
+4. When a ready pull request resolves one of the run's open issues, the API asks studio tools through the org gateway to merge it, with the AE-only machine token and the org header (see AE-03).
 5. Studio tools merges it with the GitHub token. The changed parts of the app are then built (see AE-08).
 
 **Payload**
 
 - Webhook: the event type, a delivery id, the signature and the body (titles, text, branch names).
 - To the API: the same, without the signature.
-- Merge request: the repository and the pull request number.
+- Merge request: the repository and the pull request number, with the AE-only machine token (the API's Platform IdP token for design studio work) and the `X-Impersonate-Org` header.
 
 **Security Considerations**
 
@@ -55,7 +55,7 @@ GitHub tells Agentic Engineer when a pull request or an issue changes, with a we
 | Data Confidentiality | High confidential [C-High] | Issue and pull request text is customer data. |
 | Communication Medium | Network interaction [M-NT] | |
 | Transport Security | TLS Encryption | The org gateway ends TLS. |
-| Authentication | Webhook signature; machine login | Each org has its own webhook secret. |
+| Authentication | Webhook signature; machine login; AE-only machine token | Each org has its own webhook secret. The merge request carries the AE-only machine token (see AE-03). |
 | Accessibility | Publicly Accessible | The webhook address is on the org gateway. Unsigned calls are refused. |
 | Access Control and Authorization | Org from the token | The API acts only on this org's repositories. |
 

@@ -27,7 +27,7 @@ under the License.
 | Are all inputs and outputs validated? (Syntactic and Semantic Validation) | Yes | Inputs have size limits, the org comes from the login token, and webhooks are checked by signature. |
 | Are rate limits in place where necessary? | Partial | WSO2 Cloud's edge has a per-IP rate limit (WAF, a web application firewall). Per-API gateway rate limits are not set for Agentic Engineer. Agentic Engineer limits turns, runs and builds itself (PW-3). |
 | Are permissions, roles, and entitlements defined on least privilege and business needs? | Yes | Two roles and 14 permissions (see Actors). Secrets and skills are Admin only. |
-| Are authentication and authorization validated at both UI and API, front and back end? | Yes | The API checks the login token and the permission on every call. Dataplane containers check their own tokens. |
+| Are authentication and authorization validated at both UI and API, front and back end? | Yes | The API checks the login token and the permission on every call. Each design studio container checks every token itself against the WSO2 Cloud sign-in public keys, then the org and the role (until H-7, org membership). |
 | Are proper isolations in place between components (least-privilege, blast-radius reduction)? | Yes | Each org has its own dataplane pods, and the AI is kept apart from the secrets (TB-5, TB-7). |
 | Have default credentials been changed / default superuser accounts disabled? | Yes | WSO2 Cloud settings turn off every development path. |
 | Has implementation followed best-practice guidelines (OWASP/Kubernetes/vendor)? | Yes | By design: agent pods run non-root, with a read-only file system and no Kubernetes token (TB-4, TB-6). Inherited: control-plane pods run non-root with no Kubernetes token. |
@@ -36,7 +36,7 @@ under the License.
 | Is Static (SAST) or IaC scanning conducted and are findings addressed? | No | — |
 | Is Software Composition Analysis (SCA) conducted (e.g., FOSSA, JFrog XRay, Trivy)? | No | — |
 | Is Dynamic (DAST) or API scanning conducted on non-production setups? | No | — |
-| Are audit logs generated in a standardized format, available to authorized users, with a defined retention period? | Partial | The API records who clicked Build and who edited the spec. More is planned (H-6). No retention period is set. |
+| Are audit logs generated in a standardized format, available to authorized users, with a defined retention period? | Partial | The API records who clicked Build, and spec commits list who was in the Room. More is planned (H-6). No retention period is set. |
 | Do audit logs for critical configuration changes include before/after values? | No | A change to the GitHub token or an AI key logs only which section changed. The values are secrets, so they are never logged. |
 | Has a Business Impact Analysis (BIA) been conducted (MTTD, uptime, RPO, RTO)? | No | — |
 | Are data in transit and at rest encrypted? | Yes | TLS on every call across the internet. Encryption at rest is WSO2 Cloud's. |
@@ -63,7 +63,7 @@ Agentic Engineer processes the name and email on the login token, and test-user 
 | Is personal data stored securely? | Partial | Rows are limited to the user's org. Planned: test-user passwords are kept in the secret store (H-2). |
 | Are privacy policies updated to reflect new personal data processing? | — | — |
 | Is access to personal data granted on a need-to-know basis? | Yes | People see only their own org. Test-user passwords need `ae:build`. |
-| Are data retention requirements considered? | Partial | Conversations are deleted after 7 days. The design does not yet name which part runs this delete. Activity records have no set limit. |
+| Are data retention requirements considered? | Partial | Conversations are deleted after 7 days. The design does not yet name how the design studio runs this delete. |
 | Is there a timely process for disposing of personal data on request, while meeting retention requirements? | — | — |
 | Have relevant records been added to the [WSO2 Data Inventory](https://docs.google.com/spreadsheets/d/1kGVhgvaAi1XYtflf5I_r6bcZQqdimRmm2VXf221FbKY/edit?gid=986734575#gid=986734575) / [Cloud Data Storages](https://docs.google.com/spreadsheets/d/1TFajRmy3YLuYkZxNyJOkSuE9orjFcuHLmLWxvT1HWnY/edit?gid=224115104#gid=224115104) register? | — | — |
 
