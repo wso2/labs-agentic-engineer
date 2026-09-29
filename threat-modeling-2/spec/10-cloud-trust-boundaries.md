@@ -31,7 +31,7 @@ flowchart TB
     SM["TB-9 write-only store:<br/>SM API -> Secret API -> vault"]
   end
   subgraph ODP["org dataplane cluster (TB-3: no private CP -> DP HTTP, every hop carries a Platform IdP token)"]
-    KGW["org kgateway, TLS only<br/>TB-2"]
+    KGW["org kgateway, TLS and CORS, no token check<br/>TB-2"]
     subgraph P1["TB-4 pod ae-studio"]
       AS[ae-design-agent]:::llm
       CS[ae-collab]
@@ -49,17 +49,18 @@ flowchart TB
   B -- "13 turn start + SSE, user JWT" --> KGW --> AS
   B -- "14 git-only REST, user JWT" --> KGW --> GHD
   GH -- "5 HMAC" --> KGW --> GHD
-  API -- "2 user JWT or AE-only M2M + X-Impersonate-Org" --> KGW --> AS
-  API -- "3 AE-only M2M + X-Impersonate-Org, or user JWT on git-only routes" --> KGW
+  API -- "2 server-started turn, AE-only M2M + X-Impersonate-Org" --> KGW --> GHD
+  API -- "3 /internal/v1: AE-only M2M + X-Impersonate-Org; /v1: user JWT" --> KGW
   GHD -- "6 publisher client CC" --> GW1
   CAT -- "7a publisher client CC" --> GW1
   GHD -- "12 MCP tool calls, publisher client CC" --> GW1
   GHD -- "15 usage batch, publisher client CC" --> GW1
   AS -- "MCP socket" --> GHD
+  GHD -- "turn socket" --> AS
   P1 -. "public JWKS over egress" .-> INH
   API -- "10 write value" --> SM
   SM -. "11 ESO read" .-> ESO
-  AS -- "Room join, ae-studio-&lt;org&gt; token" --> CS
+  AS -- "Room join on localhost, ae-studio-&lt;org&gt; token" --> CS
   AS -. "TB-5 brain vs hands" .- GHD
   MAIN -. "TB-7 brain vs hands (127.0.0.1)" .- CAT
   classDef llm fill:#ddd6fe,stroke:#6d28d9
@@ -73,10 +74,10 @@ flowchart TB
 | Boundary | What crosses (flows) | Control in place (as designed) | Gap to intended |
 |---|---|---|---|
 | **TB-1** Internet → `aep-api` | 1 user REST (including the `ae-studio` status and URL lookup); 6 webhook events; 7a run platform calls; 12 design agent MCP tool calls; 15 usage batches | Flow 1: the console web server passes calls on, and `aep-api` checks the user JWT itself (signature, `iss`, `aud`, `exp`). Flows 6, 7a, 12, 15: gateway `jwt-auth` `iss=platform-idp`. Then `aep-api` authorizes user and org; for 6: repository looked up only in the token's org, redact, dedup on delivery id; for 12: `/internal/v1/mcp` accepts only the publisher client token, org from `ouHandle`; for 15: `aud` prefix and `ouHandle`, ledger keyed on the turn id | none |
-| **TB-2** Internet → org kgateway | 2, 3 calls from `aep-api`; 4 Room WebSocket, 13 turn start and SSE and 14 git-only REST from the browser; 5 GitHub webhook | TLS and CORS only at the gateway (no identity check). Each container checks its own tokens: signature against the public Platform IdP JWKS, `iss=platform-idp`, `exp`, `aud` allow-list, then the org and role rule. `ae-studio-tools` accepts a user JWT only on the git-only routes. `X-Hub-Signature-256` check on flow 5 | O-12 (user JWTs carry the console `aud`); O-13 (AE-only M2M carries no org) |
-| **TB-3** cloud-cp ↔ org dataplane | 2, 3 CP → DP; 6, 7a, 12, 15 DP → CP; 11 ESO read of vault; the public JWKS fetch (no authentication) | No private CP → DP HTTP; every hop goes through a public gateway and carries a Platform IdP token; the JWKS is public | O-13 (org-bound machine tokens); O-15 (provisioning of the AE-only client) |
+| **TB-2** Internet → org kgateway | 2, 3 calls from `aep-api`; 4 Room WebSocket, 13 turn start and SSE and 14 git-only REST from the browser; 5 GitHub webhook | TLS and CORS, no token check, at the gateway. Each container checks its own tokens: signature against the public Platform IdP JWKS, `iss=platform-idp`, `exp`, `aud` allow-list, then the org and role rule. `ae-design-agent` accepts only the user JWT. `ae-studio-tools` accepts a user JWT only on `/v1/*` and the AE-only M2M token only on `/internal/v1/*`. The public Room listener of `ae-collab` accepts only the user JWT. `X-Hub-Signature-256` check on flow 5 | O-12 (user JWTs carry the console `aud`); O-16 (platform-api checks no `aud`); O-13 (AE-only M2M carries no org) |
+| **TB-3** cloud-cp ↔ org dataplane | 2, 3 CP → DP (to `ae-studio-tools` only); 6, 7a, 12, 15 DP → CP; 11 ESO read of vault; the public JWKS fetch (no authentication) | No private CP → DP HTTP; every hop goes through a public gateway and carries a Platform IdP token; the JWKS is public | O-13 (org-bound machine tokens); O-15 (provisioning of the AE-only client) |
 | **TB-4** `ae-studio` pod edge | in: 2, 3, 4, 5, 13, 14 and env secrets; out: 6, 8, 9, 12, 15 and the JWKS fetch | Non-root, read-only root filesystem, drop all capabilities, no privilege escalation, seccomp `RuntimeDefault`, no ServiceAccount token, no shared process namespace; only flows 2, 3, 4, 5, 13 and 14 are endpoints; ingress only through the org kgateway; the agent's Room join carries the `ae-studio-<org>` token | GAP-3 gVisor RuntimeClass missing |
-| **TB-5** brain vs hands, in `ae-studio` | Files API on a Unix socket (`ae-collab` → `ae-studio-tools`); MCP tools on a second Unix socket (`ae-design-agent` → `ae-studio-tools`); emptyDir snapshots to `ae-design-agent`; agent Room join to `ae-collab` | The model container has the Default key only (no gitpat, HMAC or publisher client), no URL fetch, jailed file tools; it cannot see the Files API socket; the MCP socket serves only an allow-list of eleven read-only tools, the Room-join token request, the usage hand-off and the project-known lookup, and `ae-collab` cannot see it; its `ae-studio-<org>` token is checked for org only and opens any Room of the org while it lives | none (accepted: no prompt-injection filter; the token scope; unsent usage records lost if the pod dies) |
+| **TB-5** brain vs hands, in `ae-studio` | Files API on a Unix socket (`ae-collab` → `ae-studio-tools`); MCP tools on a second Unix socket (`ae-design-agent` → `ae-studio-tools`); the turn socket in the same emptyDir (`ae-studio-tools` → `ae-design-agent`, server-started turns); emptyDir snapshots to `ae-design-agent`; agent Room join to the `localhost` listener of `ae-collab` | The model container has the Default key only (no gitpat, HMAC or publisher client), no URL fetch, jailed file tools; it cannot see the Files API socket; the MCP socket serves only an allow-list of eleven read-only tools, the Room-join token request, the usage hand-off and the project-known lookup, and `ae-collab` cannot see it or the turn socket; the AE-only M2M token never reaches the model container; its `ae-studio-<org>` token is accepted only on the `localhost` listener, checked for org only, and opens any Room of the org while it lives | none (accepted: no prompt-injection filter; the token scope; unsent usage records lost if the pod dies) |
 | **TB-6** coding agent Job pod edge | in: env secrets; out: 7a, 7b, 8 | Same pod controls as TB-4 | GAP-3 gVisor RuntimeClass missing |
 | **TB-7** `ae-coding-agent` vs `ae-coding-tools` | `ae-coding-agent` calls `ae-coding-tools` on `127.0.0.1` (not an endpoint) | `ae-coding-agent` has no gitpat and no publisher client; tools act only for this run's repository and platform calls | none (accepted: no prompt-injection filter) |
 | **TB-8** dataplane egress | 6, 7a, 7b, 8, 9, 12, 15 out to the internet; the JWKS fetch and the `client_credentials` calls to the Platform IdP | DNS and public 80/443 only; deny private ranges, link-local, metadata and the Kubernetes API | none |
@@ -85,9 +86,10 @@ flowchart TB
 ## Notes for the threat model
 
 - The model covers WSO2 Cloud only. smee and the local install are not in it.
-- It models the intended production shape and treats GAP-3 as a control not yet in place. O-12 and O-13 are WSO2 Cloud asks that narrow two accepted residual risks.
+- It models the intended production shape and treats GAP-3 as a control not yet in place. O-12, O-13 and O-16 are WSO2 Cloud asks that narrow accepted residual risks.
 - The browser reaches `ae-studio` directly (flows 4, 13, 14) with the user JWT. Each container checks it. The org kgateway does not.
-- The Room join inside `ae-studio` (`ae-design-agent` → `ae-collab`) uses the `ae-studio-<org>` token, sent in the Hocuspocus auth message and checked for org only. A leaked token opens any Room of the org while it lives (accepted risk in [12-gaps-and-open-items.md](12-gaps-and-open-items.md)).
+- `aep-api` reaches `ae-studio` only through `ae-studio-tools` (flows 2 and 3). A server-started turn goes on from `ae-studio-tools` to `ae-design-agent` over the in-pod turn socket, so the AE-only M2M token never reaches a model container.
+- The Room join inside `ae-studio` (`ae-design-agent` → `ae-collab`) uses the `ae-studio-<org>` token, sent in the Hocuspocus auth message to the `localhost` listener and checked for org only. The public Room listener refuses it. A leaked token opens any Room of the org while it lives, from inside the pod only (accepted risk in [12-gaps-and-open-items.md](12-gaps-and-open-items.md)).
 - The design agent's platform MCP calls go `ae-design-agent` → MCP socket → `ae-studio-tools` → flow 12 → `aep-api` as the publisher client. They are not bound to a user or a turn (accepted risk in [12-gaps-and-open-items.md](12-gaps-and-open-items.md)).
 - A user-started flow 10 write carries the user's Platform IdP JWT. The authentication of flow 11, and of flow 10 writes with no user, is not stated in this spec (open item O-3).
 - The dataplane containers fetch the Platform IdP JWKS over egress. It is public and needs no authentication. It crosses TB-3.

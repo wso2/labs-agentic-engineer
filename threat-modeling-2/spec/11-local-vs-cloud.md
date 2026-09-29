@@ -6,12 +6,12 @@ There is one architecture. A local install runs the same components, the same co
 |---|---|---|
 | Secret write | SM API writes vault and creates the SecretReference. | `aep-api` writes OpenBao directly and creates the SecretReference itself. |
 | SecretReference namespace | The org control-plane namespace (`wc-…`). | `default`. |
-| Dataplane ingress | Public org kgateway, TLS and CORS only. | ClusterIP, or a local kgateway. The console reaches `ae-studio` on the URLs `aep-api` reads from the Resource, the same as in WSO2 Cloud. |
+| Dataplane ingress | Public org kgateway, TLS and CORS, no token check. | ClusterIP, or a local kgateway. The console reaches `ae-studio` on the URLs `aep-api` reads from the Resource, the same as in WSO2 Cloud. |
 | GitHub webhook in | GitHub → org kgateway → `ae-studio-tools` webhook path. | smee.io → in-cluster smee client → the same `ae-studio-tools` path. |
 | DP → CP | Public `aep-api` gateway. | ClusterIP, same publisher client token. |
 | Token issuer and JWKS | The Platform IdP (`iss=platform-idp`), public JWKS `https://platform-idp-<env>.gateway.<base>/oauth2/jwks`. | The local install's Platform IdP issues the tokens. The three `ae-studio` containers check `iss` and the JWKS URL of that IdP, set when the Resource is rendered. Same checks, same `aud` allow-lists, same org and role rule. |
 | Clients | `aep-publisher-<org>` and `ae-studio-<org>` created by `aep-api`; `APP_FACTORY_BFF_TO_AE_STUDIO` (working name) provisioned by WSO2 Cloud (O-15). | The same three clients, on the local Platform IdP. How the AE-only client and its secret reach `aep-api` locally is set by the install. |
-| Roles | `ae:design` / `ae:design-view` once WSO2 Cloud issues them (O-12); until then org membership. | Org membership. |
+| Roles | The same user rule as `aep-api`: the org claim when the token has no `ae:*` scopes; `ae:design` / `ae:design-view` when `aep-api` checks the `ae:*` scopes and WSO2 Cloud issues them (O-12). | The same user rule as `aep-api`. |
 | Project and environment | `ae-system` / `development`. Counts toward the org's `projects` quota and is visible (accepted for now). | `ae-system` / `development`. |
 
 ## smee

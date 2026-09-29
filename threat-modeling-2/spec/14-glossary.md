@@ -126,10 +126,11 @@ _Avoid_: agent Room token (retired), publisher client (a different identity: a
 coding run holds that one and must not join Rooms).
 
 **AE-only control-plane client** (`APP_FACTORY_BFF_TO_AE_STUDIO`, working name):
-The Platform IdP client `aep-api` uses to call `ae-studio` with no user on the
-request, and for every operation on `ae-studio-tools` that needs `aep-api` state.
-It sends the org in the `X-Impersonate-Org` header. It is not in platform-api's
-impersonation policy, and its secret never leaves `aep-api`.
+The Platform IdP client `aep-api` uses for every call to the `/internal/v1/*`
+routes of `ae-studio-tools`: server-started turns and the low-level git and GitHub
+operations. It sends the org in the `X-Impersonate-Org` header. Only
+`ae-studio-tools` accepts it, so it never reaches a model container. It is not in
+platform-api's impersonation policy, and its secret never leaves `aep-api`.
 _Avoid_: `APP_FACTORY_BFF_TO_PLATFORM_API` (the shared client for platform-api only,
 never sent to the dataplane).
 
@@ -149,20 +150,21 @@ Words used only in this spec. The `ae-*` names are implementation names, so they
 | **Ensure** | `aep-api` creates or heals Project `ae-system`, its `development` ProjectReleaseBinding and Resource `ae-studio`. |
 | **`ae-system`** | The OpenChoreo Project that holds Resource `ae-studio`, environment `development`. |
 | **`ae-studio`** | The OpenChoreo ResourceType and Resource for the dataplane authoring runtime: one pod, three containers. Not a Room. |
-| **`ae-design-agent`** | Container (and image) in `ae-studio` that runs the design agent model. Mounts the Default key only. Holds the one-active-turn lock and the conversation thread. |
-| **`ae-collab`** | Container (and image) in `ae-studio` that serves Room WebSockets. Mounts no secrets. |
-| **`ae-studio-tools`** | Container (and image) in `ae-studio` that runs no model: git, GitHub, git-only REST for the browser, webhook receive and HMAC check, the MCP server for `ae-design-agent`, the Room-join token, usage batches, publisher client calls. |
+| **`ae-design-agent`** | Container (and image) in `ae-studio` that runs the design agent model. Mounts the Default key only. Accepts only the user JWT (flow 13) and turns started by `ae-studio-tools` on the turn socket. Holds the one-active-turn lock and the conversation thread. |
+| **`ae-collab`** | Container (and image) in `ae-studio` that serves Room WebSockets: a public Room listener for the user JWT, and a `localhost` listener for the `ae-studio-<org>` token. Mounts no secrets. |
+| **`ae-studio-tools`** | Container (and image) in `ae-studio` that runs no model: git, GitHub, `/v1/*` git-only reads for the browser, `/internal/v1/*` for `aep-api` (server-started turns, git and GitHub operations), webhook receive and HMAC check, the MCP server for `ae-design-agent`, the Room-join token, usage batches, publisher client calls. |
 | **`ae-coding-agent`** | Container (and image) in the coding agent Job that runs the coding agent model. Mounts only the org's AI keys (the Coding agent token or the Default key). |
 | **`ae-coding-tools`** | Container (and image) in the coding agent Job that runs no model: git and GitHub for this run's repository, platform calls for this run. |
 | **`*-agent` / `*-tools`** | Naming rule: a `*-agent` container runs a model and holds only the org's AI keys; a `*-tools` container holds the gitpat, the org HMAC (studio only), the publisher client and the `ae-studio-<org>` client (studio only). |
 | **User JWT** | The Platform IdP token of the signed-in user (`aud=APP_FACTORY_CONSOLE`). The browser sends it to `aep-api` and to the three `ae-studio` containers. |
-| **AE-only M2M token** | The machine-to-machine token of the AE-only control-plane client, sent with `X-Impersonate-Org`. `aep-api` mints no token. |
+| **AE-only M2M token** | The machine-to-machine token of the AE-only control-plane client, sent with `X-Impersonate-Org` to `ae-studio-tools` `/internal/v1/*` only. `aep-api` mints no token. |
 | **JWKS** | The public keys an issuer publishes so receivers can check its tokens. The Platform IdP publishes one, and `ae-studio` checks every token against it. |
 | **Token exchange** | RFC 8693: trade one token for another at an identity provider. Not used by AE. |
-| **org kgateway** | The public gateway of the org dataplane. TLS only; it does not check identity. |
+| **org kgateway** | The public gateway of the org dataplane. TLS and CORS, no token check. |
 | **ESO** | External Secrets Operator. Reads vault through a ClusterSecretStore and writes Kubernetes Secrets in the dataplane. |
 | **vault** | The secret store behind the SM API (OpenBao on a local install). |
-| **emptyDir** | A pod-local scratch volume. The only writable mounts in the agent pods. One emptyDir holds the Files API Unix socket and is mounted only into `ae-collab` and `ae-studio-tools`. Another holds the MCP Unix socket and is mounted only into `ae-design-agent` and `ae-studio-tools`. |
+| **emptyDir** | A pod-local scratch volume. The only writable mounts in the agent pods. One emptyDir holds the Files API Unix socket and is mounted only into `ae-collab` and `ae-studio-tools`. Another holds the MCP Unix socket and the turn socket and is mounted only into `ae-design-agent` and `ae-studio-tools`. |
+| **Turn socket** | A Unix socket that `ae-design-agent` serves, next to the MCP socket. `ae-studio-tools` uses it to start a server-started turn (flow 2) and get the result. No token. |
 | **smee** | A public relay that forwards GitHub webhooks to a local cluster. Local install only. |
 | **brain vs hands** | The split between a model container (brain) and its tools container (hands). |
 | **TB-n** | Trust boundary n in WSO2 Cloud, TB-1 to TB-9 ([10-cloud-trust-boundaries.md](10-cloud-trust-boundaries.md)). |

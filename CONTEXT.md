@@ -558,9 +558,10 @@ _Avoid_: agent Room token (retired), publisher client (a different identity: a
 coding run holds that one and must not join Rooms).
 
 **AE-only control-plane client** (`APP_FACTORY_BFF_TO_AE_STUDIO`, working name):
-The Platform IdP client `aep-api` uses to call `ae-studio` with no user on the
-request, and for every operation on `ae-studio-tools` that needs `aep-api` state.
-It sends the org in the `X-Impersonate-Org` header. It is not in platform-api's
-impersonation policy, and its secret never leaves `aep-api`.
+The Platform IdP client `aep-api` uses for every call to the `/internal/v1/*`
+routes of `ae-studio-tools`: server-started turns and the low-level git and GitHub
+operations. It sends the org in the `X-Impersonate-Org` header. Only
+`ae-studio-tools` accepts it, so it never reaches a model container. It is not in
+platform-api's impersonation policy, and its secret never leaves `aep-api`.
 _Avoid_: `APP_FACTORY_BFF_TO_PLATFORM_API` (the shared client for platform-api only,
 never sent to the dataplane).

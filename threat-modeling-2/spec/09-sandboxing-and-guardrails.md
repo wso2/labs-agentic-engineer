@@ -8,7 +8,7 @@ What stops a misbehaving `ae-design-agent` or coding agent from freely using sec
 
 ### Required
 
-- `ae-design-agent` mounts the **Default key only**. It does not mount the gitpat, the org HMAC, the publisher client or the `ae-studio-<org>` client secret. For a Room join, the `ae-studio-<org>` token that `ae-studio-tools` hands over sits in memory for that connection.
+- `ae-design-agent` mounts the **Default key only**, and it never receives the AE-only M2M token. It does not mount the gitpat, the org HMAC, the publisher client or the `ae-studio-<org>` client secret. For a Room join, the `ae-studio-<org>` token that `ae-studio-tools` hands over sits in memory for that connection.
 - Each container of the pod checks every request it serves against the Platform IdP JWKS, with the org and role rule ([07-identity-and-tokens.md](07-identity-and-tokens.md)). The org kgateway checks no identity.
 - File tools stay inside the snapshot. Paths with `..`, and symlinks that leave the snapshot, are refused.
 - `ae-design-agent` has **no URL-fetch tool**. Fetching an external spec stays on `aep-api`.
@@ -25,10 +25,11 @@ What stops a misbehaving `ae-design-agent` or coding agent from freely using sec
 - **Egress** allows DNS and public ports 80 and 443. It denies private addresses, link-local, metadata addresses and the Kubernetes API. `ae-design-agent` shares this egress with `ae-studio-tools`.
 - **In-pod channels.** All containers in a pod share one network, so a `localhost` port cannot keep `ae-design-agent` out.
   - The Files API of `ae-studio-tools` listens on a Unix socket in an emptyDir mounted only into `ae-collab` and `ae-studio-tools`. No token. `ae-design-agent` cannot reach it. It carries `files/bundle`, `files/apply`, seed, flush and the project-known lookup. A save writes only files under `specs/`, at most 5 MiB a file, as today.
-  - The platform MCP tools of `ae-studio-tools` listen on a second Unix socket in its own emptyDir, mounted only into `ae-design-agent` and `ae-studio-tools`. No token. `ae-collab` cannot reach it. It serves four things and refuses any other method or tool name: a fixed allow-list of eleven read-only tools, the Room-join token request, the hand-off of finished-turn usage records, and the project-known lookup ([07-identity-and-tokens.md](07-identity-and-tokens.md)). Its Room-join request returns a token only for a Room join, never the client secret.
-  - `ae-design-agent` joins a Room on `ae-collab` with the `ae-studio-<org>` token, sent in the Hocuspocus auth message on connect, never in a URL ([07-identity-and-tokens.md](07-identity-and-tokens.md)). `ae-collab` checks it for org only.
+  - The platform MCP tools of `ae-studio-tools` listen on a second Unix socket in its own emptyDir, mounted only into `ae-design-agent` and `ae-studio-tools`. No token. `ae-collab` cannot reach it. It serves four things and refuses any other method or tool name: a fixed allow-list of eleven read-only tools, the Room-join token request, the hand-off of finished-turn usage records, and the project-known lookup ([07-identity-and-tokens.md](07-identity-and-tokens.md)). Its Room-join request returns a token, never the client secret.
+  - The turn socket is a third Unix socket, served by `ae-design-agent`, in the same emptyDir as the MCP socket, so only `ae-design-agent` and `ae-studio-tools` can reach it. No token. `ae-studio-tools` uses it to start a server-started turn and get its result (flow 2). `ae-collab` cannot reach it, and the model has no tool that calls it.
+  - `ae-design-agent` joins a Room on the `localhost` listener of `ae-collab` with the `ae-studio-<org>` token, sent in the Hocuspocus auth message on connect, never in a URL ([07-identity-and-tokens.md](07-identity-and-tokens.md)). `ae-collab` checks it for org only. Its public Room listener refuses this token.
   - The API of `ae-studio-tools` never returns gitpat or HMAC bytes.
-- **Listeners.** Only the listeners for flows 2, 3, 4, 5, 13 and 14 are Resource endpoints. An ingress NetworkPolicy lets other pods in only through the org kgateway.
+- **Listeners.** Only the listeners for flows 2, 3, 4, 5, 13 and 14 are Resource endpoints. `ae-design-agent` serves flow 13 only; flows 2, 3, 5 and 14 end on `ae-studio-tools`. An ingress NetworkPolicy lets other pods in only through the org kgateway.
 
 ### Intended
 

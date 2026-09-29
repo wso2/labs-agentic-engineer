@@ -28,7 +28,7 @@ flowchart LR
   end
 
   subgraph DP[Org dataplane]
-    KGW[Org kgateway<br/>TLS + CORS, no identity check]
+    KGW[Org kgateway<br/>TLS and CORS, no token check]
     subgraph POD[Resource ae-studio: one pod]
       AS[ae-design-agent<br/>LLM, Default key]:::llm
       CS[ae-collab<br/>no secrets]
@@ -45,18 +45,19 @@ flowchart LR
   B -- "13 turn start + turn SSE<br/>user JWT" --> KGW --> AS
   B -- "4 Room WebSocket<br/>user JWT" --> KGW --> CS
   B -- "14 git-only REST<br/>user JWT" --> KGW --> GHD
-  API -- "2 server-started turns<br/>user JWT or AE-only M2M + X-Impersonate-Org" --> KGW --> AS
-  API -- "3 aep-api-coupled ops: AE-only M2M + X-Impersonate-Org<br/>git-only reads: forwarded user JWT" --> KGW --> GHD
+  API -- "2 server-started turn, /internal/v1<br/>AE-only M2M + X-Impersonate-Org" --> KGW --> GHD
+  API -- "3 /internal/v1 git and GitHub ops: AE-only M2M + X-Impersonate-Org<br/>/v1 git-only reads: forwarded user JWT" --> KGW --> GHD
   GH -- "5 webhook POST, X-Hub-Signature-256" --> KGW --> GHD
   GHD -- "6 delivery id + event + body<br/>publisher client" --> GW1
   CAT -- "7a publisher client" --> GW1
   CAT -- "7b gitpat, this run's repo only" --> GH
   AS -- "8" --> AN
-  AS -- "Room join, ae-studio-&lt;org&gt; token" --> CS
+  AS -- "Room join on localhost, ae-studio-&lt;org&gt; token" --> CS
   MAIN -- "8" --> AN
   GHD -- "9 gitpat" --> GH
   CS -- "Files API + project lookup (Unix socket)" --> GHD
   AS -- "MCP tools, Room-join token, usage records, project lookup (Unix socket)" --> GHD
+  GHD -- "server-started turn (turn socket)" --> AS
   GHD -- "12 MCP tool calls<br/>publisher client" --> GW1
   GHD -- "15 usage batch<br/>publisher client" --> GW1
   GHD -. "emptyDir snapshot" .-> AS
@@ -92,7 +93,7 @@ Each image has the same name as its container.
 | Component | Job | Holds | Exposes |
 |---|---|---|---|
 | console | The browser app. On load it asks `aep-api` for the `ae-studio` status and URLs, then calls `ae-studio` directly. | Nothing secret. | Browser UI. Its web server passes API calls to `aep-api` inside the control plane (flow 1). |
-| `aep-api` (BFF, the console's backend) | Authorizes users. Keeps rows in Postgres, including the usage ledger. Writes secrets through the SM API. Ensures the dataplane Resource. Reads its status and URLs. Creates the per-org clients `aep-publisher-<org>` and `ae-studio-<org>`. Calls `ae-studio` over flows 2 and 3 ([07-identity-and-tokens.md](07-identity-and-tokens.md) says which token goes where). Runs the Temporal worker in the same process. It mints no token and publishes no JWKS. It copies no turn stream. It keeps no turn lock and no conversation thread. | The `APP_FACTORY_BFF_TO_AE_STUDIO` client secret (working name). A gitpat or org HMAC only in memory, only during gitpat submit. | The console web server's API path (flow 1); the public `aep-api` gateway (`jwt-auth`, `iss=platform-idp`) for flows 6, 7a, 12 and 15. |
+| `aep-api` (BFF, the console's backend) | Authorizes users. Keeps rows in Postgres, including the usage ledger. Writes secrets through the SM API. Ensures the dataplane Resource. Reads its status and URLs. Creates the per-org clients `aep-publisher-<org>` and `ae-studio-<org>`. Calls `ae-studio-tools` over flows 2 and 3 ([07-identity-and-tokens.md](07-identity-and-tokens.md) says which token goes where). It never calls `ae-design-agent`. Temporal gets the result of a server-started turn back on flow 2 and does the GitHub writes that follow through `ae-studio-tools` `/internal/v1/*` (flow 3). Runs the Temporal worker in the same process. It mints no token and publishes no JWKS. It copies no turn stream. It keeps no turn lock and no conversation thread. | The `APP_FACTORY_BFF_TO_AE_STUDIO` client secret (working name). A gitpat or org HMAC only in memory, only during gitpat submit. | The console web server's API path (flow 1); the public `aep-api` gateway (`jwt-auth`, `iss=platform-idp`) for flows 6, 7a, 12 and 15. |
 | Postgres | Rows: repositories, webhook deliveries, the usage ledger. | **No organization secret values.** | Only to `aep-api`. |
 | SM API | Writes secret values into vault through the OpenChoreo Secret API, and creates a SecretReference with names only. | Nothing it gives back. | Write-only. GET returns keys and `secretReferenceName` only. |
 | Platform IdP | The shared Thunder issuer (`iss=platform-idp`) and the only issuer AE uses. Issues user JWTs, publisher client tokens, `ae-studio-<org>` tokens and the AE-only M2M token. | Inherited platform. | Inherited platform. Its JWKS is public. |
@@ -108,24 +109,26 @@ Each container checks its own tokens against the public Platform IdP JWKS, with 
 
 | Container | Job | Mounts | Exposes |
 |---|---|---|---|
-| `ae-design-agent` | Runs the design agent model. Starts turns and streams them to the browser. Asks `ae-studio-tools` on the MCP socket whether a project is known. Holds the one-active-turn lock, the conversation thread and its rotation. Reads snapshots from the shared emptyDir. Runs server-started turns for `aep-api`. Buffers the usage record of each finished turn for `ae-studio-tools`. Calls platform MCP tools on `ae-studio-tools` over a Unix socket. No URL-fetch tool; web search runs at Anthropic as a model tool; its file tools stay inside the snapshot. | **Default key only.** For a Room join, the `ae-studio-<org>` token from `ae-studio-tools` sits in memory. | Turn route behind the org kgateway: turn start and turn SSE for the browser (flow 13), server-started turns from `aep-api` (flow 2). |
-| `ae-collab` | The Yjs Room WebSocket server. Talks the Files API to `ae-studio-tools` over a Unix socket (`files/bundle`, `files/apply`, seed, flush, and the project-known lookup for a Room join). It does not speak git. | **No secrets.** | Room WebSocket behind the org kgateway, for the browser with the user JWT (flow 4). The same server on `localhost` for `ae-design-agent` with the `ae-studio-<org>` token. Both send the token in the Hocuspocus auth message on connect, never in the URL or a cookie. |
-| `ae-studio-tools` | Runs no model. Clone, fetch, commit, push. GitHub REST (issues, PRs, milestones, merge, repo create). The skills mirror into a project repo. Git-only REST for the browser. The MCP server for `ae-design-agent`: remote-git tools with the gitpat, other tools passed to `aep-api` (flow 12). Gets the `ae-studio-<org>` token and hands it to `ae-design-agent` for a Room join. Sends usage batches to `aep-api` (flow 15). Webhook receive and HMAC check. Writes snapshots to the shared emptyDir. Calls `aep-api` as the publisher client. | gitpat, org HMAC, publisher client (`client_id`, `client_secret`), `ae-studio-<org>` client (`client_id`, `client_secret`). | Routes behind the org kgateway, split by token. Git-only REST (flow 14, and flow 3 when `aep-api` forwards a user request): user JWT only. `aep-api`-coupled operations such as repo create and the skills mirror (flow 3): AE-only M2M only; a user JWT is refused. Webhook route (flow 5). Files API on a Unix socket that only `ae-collab` can reach. MCP tools on a second Unix socket that only `ae-design-agent` can reach. It never returns a secret value. |
+| `ae-design-agent` | Runs the design agent model. Starts turns and streams them to the browser. Asks `ae-studio-tools` on the MCP socket whether a project is known. Holds the one-active-turn lock, the conversation thread and its rotation. Reads snapshots from the shared emptyDir. Serves the turn socket: runs the server-started turns that `ae-studio-tools` starts for `aep-api`, and returns each result on that socket. Buffers the usage record of each finished turn for `ae-studio-tools`. Calls platform MCP tools on `ae-studio-tools` over a Unix socket. No URL-fetch tool; web search runs at Anthropic as a model tool; its file tools stay inside the snapshot. | **Default key only.** For a Room join, the `ae-studio-<org>` token from `ae-studio-tools` sits in memory. | Turn route behind the org kgateway, for the browser only: turn start and turn SSE (flow 13). It accepts only the user JWT. The turn socket in the pod, for `ae-studio-tools` only. |
+| `ae-collab` | The Yjs Room WebSocket server. Talks the Files API to `ae-studio-tools` over a Unix socket (`files/bundle`, `files/apply`, seed, flush, and the project-known lookup for a Room join). It does not speak git. | **No secrets.** | Room WebSocket behind the org kgateway, for the browser with the user JWT only (flow 4). It refuses the `ae-studio-<org>` token. A second listener, bound to `localhost` and not an endpoint, for `ae-design-agent`: it accepts only the `ae-studio-<org>` token of this pod's org. Both listeners take the token in the Hocuspocus auth message on connect, never in the URL or a cookie. |
+| `ae-studio-tools` | Runs no model. Clone, fetch, commit, push. GitHub REST (issues, PRs, milestones, merge, repo create). The skills mirror into a project repo. Git-only REST for the browser. Starts server-started turns on `ae-design-agent` over the turn socket and returns the result to `aep-api` (flow 2). The MCP server for `ae-design-agent`: remote-git tools with the gitpat, other tools passed to `aep-api` (flow 12). Gets the `ae-studio-<org>` token and hands it to `ae-design-agent` for a Room join. Sends usage batches to `aep-api` (flow 15). Webhook receive and HMAC check. Writes snapshots to the shared emptyDir. Calls `aep-api` as the publisher client. | gitpat, org HMAC, publisher client (`client_id`, `client_secret`), `ae-studio-<org>` client (`client_id`, `client_secret`). | Routes behind the org kgateway, split by prefix, with one middleware per prefix. `/v1/*`: git-only reads (flow 14, and flow 3 when `aep-api` forwards a user request); user JWT only. `/internal/v1/*`: the low-level git and GitHub operations (commit and push, issues, comments, labels, milestones, pull requests and merge, repo create, the skills mirror, reads for Temporal) and the server-started turn (flows 2 and 3); AE-only M2M only, with the client id pinned and `X-Impersonate-Org` = this pod's org; a user JWT is refused. `/internal/v1` has its own OpenAPI group. Webhook route (flow 5). Files API on a Unix socket that only `ae-collab` can reach. MCP tools on a second Unix socket that only `ae-design-agent` can reach. It never returns a secret value. |
 
 All containers in a pod share one network: any container can reach any `localhost` port. So a `localhost` port cannot keep `ae-design-agent` out. Inside the pod:
 
 - `ae-collab` → `ae-studio-tools`: the Files API and the project-known lookup on a Unix socket, in an emptyDir mounted only into those two containers. No token.
 - `ae-design-agent` → `ae-studio-tools`: the eleven platform MCP tools, the Room-join token request, the usage-record hand-off and the project-known lookup on a second Unix socket, in its own emptyDir mounted only into those two containers. No token.
-- `ae-design-agent` → `ae-collab`: the Room WebSocket with the `ae-studio-<org>` token in the Hocuspocus auth message ([07-identity-and-tokens.md](07-identity-and-tokens.md)).
+- `ae-studio-tools` → `ae-design-agent`: the server-started turn on the turn socket, served by `ae-design-agent`. The socket sits in the same emptyDir as the MCP socket, mounted only into those two containers. No token. `ae-collab` cannot reach it.
+- `ae-design-agent` → `ae-collab`: the Room WebSocket on the `localhost` listener, with the `ae-studio-<org>` token in the Hocuspocus auth message ([07-identity-and-tokens.md](07-identity-and-tokens.md)).
 - `ae-studio-tools` → `ae-design-agent`: snapshots in a shared named emptyDir. No call.
 
-Listeners for flows 2, 3, 4, 5, 13 and 14 are the only Resource endpoints. No internal API is an endpoint.
+Listeners for flows 2, 3, 4, 5, 13 and 14 are the only Resource endpoints: `ae-design-agent` serves flow 13, `ae-collab` flow 4, and `ae-studio-tools` flows 2, 3, 5 and 14. No internal API is an endpoint.
 
 ### Routes of Resource `ae-studio`
 
 The ResourceType renders the routes on the org kgateway and publishes their public URLs as outputs, which `aep-api` reads for the console.
 
 - **CORS.** Each browser-facing route has a Gateway API `CORS` filter: the exact console origin, `Authorization` and `Content-Type` allowed, no credentials. The gateway answers preflight, so preflight needs no token and never reaches a container.
+- **Turn SSE.** The console reads the turn SSE with a fetch-based SSE client that sends the user JWT as a bearer header. It never uses the native `EventSource`, which cannot send a header and would need the token in the URL.
 - **Timeouts.** The turn SSE route and the Room WebSocket route have raised request and stream-idle timeouts, so the gateway does not cut a long stream.
 
 ### Coding agent Job
@@ -141,7 +144,7 @@ A separate, one-shot pod per run cycle. OpenChoreo renders it from a `coding-age
 
 | Part | Job |
 |---|---|
-| Org kgateway | Public gateway of the org dataplane. TLS, and CORS on the `ae-studio` routes. It does not check identity; each container checks its own token. |
+| Org kgateway | Public gateway of the org dataplane. TLS and CORS, no token check: it ends TLS and applies CORS on the `ae-studio` routes. Each container checks its own token. |
 | ESO + ClusterSecretStore | ESO (External Secrets Operator) reads vault and writes a Kubernetes Secret into the release namespace. Containers get values as environment variables. |
 
 ## Outside

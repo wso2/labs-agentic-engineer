@@ -27,6 +27,7 @@ sequenceDiagram
   participant GH as GitHub
   participant SM as SM API
   participant V as vault
+  participant IDP as Platform IdP
   participant OC as OpenChoreo CP
   participant ST as ae-studio-tools
   U->>API: paste gitpat (flow 1)
@@ -34,6 +35,8 @@ sequenceDiagram
   API->>SM: write gitpat + org HMAC (flow 10)
   SM->>V: write via OpenChoreo Secret API
   SM-->>API: keys + secretReferenceName only
+  API->>IDP: create ae-studio-&lt;org&gt; Agent entity in the org OU (if missing)
+  IDP-->>API: client id + client secret (in memory)
   API->>SM: write ae-studio-&lt;org&gt; client secret (flow 10)
   API->>OC: Ensure ae-system, ProjectReleaseBinding, Resource ae-studio (refs only)
   OC-->>ST: render pod; ESO mounts gitpat, HMAC, publisher client, ae-studio-&lt;org&gt; client (flow 11)
@@ -106,7 +109,7 @@ sequenceDiagram
 
 ## The AE-only client
 
-`APP_FACTORY_BFF_TO_AE_STUDIO` (working name) is not created by `aep-api` at runtime. WSO2 Cloud provisions it once: the Platform IdP application in the admin OU, its secret in the SRE vault, and its delivery to `aep-api` in the WSO2 Cloud deployment (O-15 in [12-gaps-and-open-items.md](12-gaps-and-open-items.md)). It is not in platform-api's impersonation policy. Local differences are in [11-local-vs-cloud.md](11-local-vs-cloud.md). `aep-api` uses it for Temporal work, kickoff, the marketplace chat, and the `aep-api`-coupled calls to `ae-studio-tools` ([07-identity-and-tokens.md](07-identity-and-tokens.md)).
+`APP_FACTORY_BFF_TO_AE_STUDIO` (working name) is not created by `aep-api` at runtime. WSO2 Cloud provisions it once: the Platform IdP application in the admin OU, its secret in the SRE vault, and its delivery to `aep-api` in the WSO2 Cloud deployment (O-15 in [12-gaps-and-open-items.md](12-gaps-and-open-items.md)). It is not in platform-api's impersonation policy. Local differences are in [11-local-vs-cloud.md](11-local-vs-cloud.md). `aep-api` uses it for every call to `ae-studio-tools` `/internal/v1/*`: the server-started turn (flow 2: Temporal work, kickoff, the marketplace chat) and the low-level git and GitHub operations (flow 3) ([07-identity-and-tokens.md](07-identity-and-tokens.md)). Only `ae-studio-tools` accepts it.
 
 ## Coding Job start
 
