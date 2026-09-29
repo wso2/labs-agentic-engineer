@@ -40,3 +40,36 @@ already allowed, which reads as a platform bug rather than a stale list.
 `TestChartAuthzRolesMatchCatalog` (`internal/authz`) parses that directory and
 fails when they disagree. Edit the Go catalog, run that test, and it tells you
 exactly what to write here.
+
+## Upgrading a cluster that provisioned these at runtime
+
+A cluster installed before the roles moved into the chart already has
+`ae-admin` / `ae-developer` `AuthzRole`s and bindings created by `aep-api`, with
+no Helm ownership metadata on them. Helm refuses to take over an object it did
+not create, so the next upgrade fails:
+
+```
+AuthzRole "ae-admin" in namespace "default" exists and cannot be imported into
+the current release: invalid ownership metadata; label validation error: missing
+key "app.kubernetes.io/managed-by": must be set to "Helm"
+```
+
+That is every existing cluster, and `make dev-update` hits it too — it upgrades
+with `--reuse-values`. A fresh install is unaffected.
+
+Adopt them, which is additive and changes no permission:
+
+```bash
+NS=default   # the org namespace, not the platform release namespace
+for kind in authzrole authzrolebinding; do
+  for role in ae-admin ae-developer; do
+    kubectl -n "$NS" label   "$kind" "$role" app.kubernetes.io/managed-by=Helm --overwrite
+    kubectl -n "$NS" annotate "$kind" "$role" \
+      meta.helm.sh/release-name=aep-platform \
+      meta.helm.sh/release-namespace=wso2-aep --overwrite
+  done
+done
+```
+
+Deleting the four objects instead also works — the upgrade recreates them — but
+the org is unauthorized in OpenChoreo for the window in between.

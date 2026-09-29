@@ -1,5 +1,22 @@
-{{- if .Values.aeAuthz.enabled }}
-{{- $ns := .Values.aeAuthz.orgNamespace | default .Values.localOrgProvisioning.orgNamespace }}
+{{- /*
+  The two blocks are read defensively, never as .Values.aeAuthz.enabled,
+  because `helm upgrade --reuse-values` replays the values the PREVIOUS release
+  was installed with — and a release predating this block has no aeAuthz key, so
+  a direct lookup is a nil dereference that fails the whole upgrade. That is
+  every existing cluster: `make dev-update` passes --reuse-values.
+
+  Absent means ENABLED, matching values.yaml, because an upgrade that silently
+  skipped these would leave the AE permission model in Thunder with nothing on
+  the OpenChoreo side to honour it. `hasKey` rather than `| default true`: a
+  boolean explicitly set to false is empty to sprig's `default`, which would
+  flip it back to true and make the toggle unusable.
+*/}}
+{{- $ae := .Values.aeAuthz | default dict }}
+{{- $enabled := true }}
+{{- if hasKey $ae "enabled" }}{{- $enabled = $ae.enabled }}{{- end }}
+{{- if $enabled }}
+{{- $lop := .Values.localOrgProvisioning | default dict }}
+{{- $ns := $ae.orgNamespace | default ($lop.orgNamespace | default "default") }}
 # The AE roles OpenChoreo authorizes a signed-in person's calls against.
 #
 # Namespaced to the ORG, not to the platform release: OpenChoreo resolves an
