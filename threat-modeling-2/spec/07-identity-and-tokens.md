@@ -14,8 +14,8 @@ This is the only issuer. `aep-api` mints no token and publishes no JWKS. Environ
 
 | Token | Client | Subject / org | `aud` | TTL | Carried on | Checked by |
 |---|---|---|---|---|---|---|
-| User JWT | The console client `APP_FACTORY_CONSOLE` | `sub` = the user; org in `ouId` (org UUID) and `ouHandle` | `APP_FACTORY_CONSOLE` | What the Platform IdP issues (1 hour on WSO2 Cloud) | flows 1, 4, 13, 14 from the browser; flows 2, 3 when `aep-api` forwards a user request | `aep-api` on flow 1. The receiving `ae-studio` container on flows 2, 3, 4, 13, 14. |
-| AE-only control-plane M2M (machine-to-machine) | `APP_FACTORY_BFF_TO_AE_STUDIO` (working name). A new client in the admin OU (organization unit), `client_credentials` grant. | `sub` = the client. No org claim: the org is in the `X-Impersonate-Org` header. | Its own client id | What the Platform IdP issues | flows 2, 3 when no user is on the request | `ae-design-agent` (flow 2), `ae-studio-tools` (flow 3). |
+| User JWT | The console client `APP_FACTORY_CONSOLE` | `sub` = the user; org in `ouId` (org UUID) and `ouHandle` | `APP_FACTORY_CONSOLE` | What the Platform IdP issues (1 hour on WSO2 Cloud) | flows 1, 4, 13, 14 from the browser; flow 2, and flow 3 for the git-only routes, when `aep-api` forwards a user request | `aep-api` on flow 1. The receiving `ae-studio` container on flows 2, 3, 4, 13, 14. |
+| AE-only control-plane M2M (machine-to-machine) | `APP_FACTORY_BFF_TO_AE_STUDIO` (working name). A new client in the admin OU (organization unit), `client_credentials` grant. | `sub` = the client. No org claim: the org is in the `X-Impersonate-Org` header. | Its own client id | What the Platform IdP issues | flow 2 when no user is on the request; flow 3 for every `aep-api`-coupled operation | `ae-design-agent` (flow 2), `ae-studio-tools` (flow 3). |
 | `ae-studio-<org>` | A per-org Thunder **Agent entity** in the org OU, `client_credentials` grant, OU claims on | `sub` = the Agent entity; org in `ouId` and `ouHandle` | Its own client id | What the Platform IdP issues | `ae-design-agent` → `ae-collab` on `localhost` (Room join) | `ae-collab` only. |
 | Publisher client token | The org's publisher client `aep-publisher-<org>`, `client_credentials` grant | `sub` = the client; org in `ouHandle` | `aep-publisher-<org>` | What the Platform IdP issues | flows 6, 7a, 12, 15 (dataplane → control plane only) | Public `aep-api` gateway `jwt-auth`; `aep-api` checks the `aud` prefix and `ouHandle`. |
 
@@ -34,8 +34,8 @@ The org kgateway (the public gateway of the org dataplane) checks no identity. E
 | Container | Accepts | Refuses |
 |---|---|---|
 | `ae-design-agent` | User JWT (flows 13, 2). AE-only M2M (flow 2). | `ae-studio-<org>`, publisher client, any other `aud`. |
-| `ae-studio-tools` | User JWT (flows 14, 3). AE-only M2M (flow 3). | `ae-studio-<org>`, publisher client, any other `aud`. The webhook path (flow 5) takes no token; it checks the org HMAC ([08-git-and-github.md](08-git-and-github.md)). |
-| `ae-collab` | User JWT (flow 4). `ae-studio-<org>` of this pod's org (the agent's Room join). | AE-only M2M, publisher client, any other `aud`. |
+| `ae-studio-tools` | User JWT on the git-only routes only (spec file reads, issue-backed task lists, repo reads): flow 14, and flow 3 when `aep-api` forwards a user request to that same set. AE-only M2M on the `aep-api`-coupled routes only (flow 3): repo create, the skills mirror, and the other git and GitHub work that `aep-api` or Temporal drives. | A user JWT on an `aep-api`-coupled route. `ae-studio-<org>`, publisher client, any other `aud`. The webhook path (flow 5) takes no token; it checks the org HMAC ([08-git-and-github.md](08-git-and-github.md)). |
+| `ae-collab` | User JWT (flow 4). `ae-studio-<org>` of this pod's org (the agent's Room join). Both arrive in the Hocuspocus auth message on connect, never in the URL or a cookie. | AE-only M2M, publisher client, any other `aud`. |
 
 Each container has its own small check: TypeScript in the two Node containers (`ae-design-agent`, `ae-collab`) and Go in `ae-studio-tools`. There is no shared checker and no forwarding of checked claims between containers.
 
@@ -47,17 +47,22 @@ Every decision is made in the pod. No container calls `aep-api` for a join or a 
    - User JWT and `ae-studio-<org>`: `ouId` **and** `ouHandle` must both equal the pod's org.
    - AE-only M2M: `X-Impersonate-Org` must equal the pod's org UUID, the client id must be the pinned `APP_FACTORY_BFF_TO_AE_STUDIO`, and the grant must be `client_credentials`. The pod compares the header to its own fixed value. It does no lookup.
 2. **Role (user JWT only).** The role claim in the token: `ae:design` to edit and run turns, `ae:design-view` to watch. Until WSO2 Cloud issues the `ae:*` roles, the rule is membership of the org (step 1). A role change takes effect with the user's next token.
-3. **Project.** The project must be one of this org's repositories that `ae-studio-tools` knows. `ae-collab` and `ae-design-agent` do not take a project or Room from a string they parse.
+3. **Project.** The project must be one of this org's repositories that `ae-studio-tools` knows. `ae-collab` asks `ae-studio-tools` on the Files API socket. `ae-design-agent` asks on the MCP socket. Neither takes a project or Room from a string it parses.
 
 The `ae-studio-<org>` token and the AE-only M2M token are checked for org only, with no role step. `aep-api` has already authorized the user, or is running its own background work, before it sends the AE-only M2M token.
 
 ## AE-only control-plane client
 
-`aep-api` uses `APP_FACTORY_BFF_TO_AE_STUDIO` (working name) when it calls `ae-studio` with no user on the request: Temporal activities, project kickoff, the marketplace chat, and other calls that do not start from a user. It gets the token with `client_credentials` at the Platform IdP and sends it with `X-Impersonate-Org` set to the target org.
+`aep-api` uses `APP_FACTORY_BFF_TO_AE_STUDIO` (working name) for two kinds of call:
+
+- calls to `ae-studio` with no user on the request: Temporal activities, project kickoff, the marketplace chat;
+- every `aep-api`-coupled operation on `ae-studio-tools` (flow 3), such as repo create and the skills mirror, even when a user started it.
+
+It gets the token with `client_credentials` at the Platform IdP and sends it with `X-Impersonate-Org` set to the target org.
 
 - The client is **not** in platform-api's impersonation policy. A copy taken from a dataplane pod is refused at platform-api.
 - Its secret stays in `aep-api`. It never reaches a dataplane pod.
-- When a user is on the request, `aep-api` forwards the user JWT instead.
+- For a user's turn (flow 2) or a user's request to the git-only routes (flow 3), `aep-api` forwards the user JWT instead.
 - WSO2 Cloud provisions the client and its secret (O-15).
 
 A leaked AE-only M2M token reaches every org's `ae-studio` while it lives, because the org is only a header. Org-bound machine tokens are planned ([below](#planned)).
@@ -80,7 +85,12 @@ No `ae-studio` container accepts the publisher client token.
 `ae-design-agent` joins a Room on `ae-collab` with an `ae-studio-<org>` token.
 
 - **The identity.** `aep-api` creates `ae-studio-<org>` at runtime, as it creates `aep-publisher-<org>`. It is a Thunder Agent entity in the org OU, so its token carries `ouId` and `ouHandle`, and Agent entities are listed apart from applications. If WSO2 Cloud cannot use Agent entities, it is an application in the org OU with an `ae-` name prefix (O-14). `aep-api` writes its secret through the SM API (flow 10). ESO mounts it **only** on `ae-studio-tools`.
-- **Getting the token.** When `ae-design-agent` joins a Room, it asks `ae-studio-tools` on the MCP socket. `ae-studio-tools` gets an `ae-studio-<org>` token with `client_credentials` at the Platform IdP and returns it. It returns a token only for a Room join. `ae-design-agent` keeps the token in memory for that connection. A reconnect asks again. The model container never holds the client secret.
+- **Getting the token.**
+  - When `ae-design-agent` joins a Room, it asks `ae-studio-tools` on the MCP socket.
+  - `ae-studio-tools` gets an `ae-studio-<org>` token with `client_credentials` at the Platform IdP and returns it. It returns a token only for a Room join.
+  - `ae-design-agent` keeps the token in memory for that connection. A reconnect asks again.
+  - The model container never holds the client secret.
+- **Sending it.** `ae-design-agent` sends the token in the Hocuspocus auth message on connect to `localhost`, as the browser does. Never in the URL.
 - **The check.** `ae-collab` checks the signature, `iss`, `exp`, `aud` = the `ae-studio-<org>` client of this pod's org, and `ouId` and `ouHandle` = this pod's org. It checks org only. It has no other rule for an agent peer.
 - **Scope.** The token opens any Room of the org while it lives. This is an accepted risk ([12-gaps-and-open-items.md](12-gaps-and-open-items.md)).
 - **Credit.** Commits credit the user named in the turn: from the user JWT on flow 13, or from `aep-api` on flow 2.
@@ -95,7 +105,11 @@ A token is needed even on `localhost`: any container in the pod reaches any `loc
 The design agent uses the same pattern as the coding agent: the model container asks its tools container, and the tools container calls `aep-api` as the publisher client. `ae-design-agent` holds no token for `aep-api`.
 
 - **Channel.** `ae-design-agent` calls `ae-studio-tools` on a Unix socket in its own emptyDir (a pod-local scratch volume), mounted only into those two containers. No token. It is not the Files API socket: `ae-collab` cannot see the MCP socket, and `ae-design-agent` cannot see the Files API socket.
-- **What `ae-studio-tools` serves.** One MCP server with a fixed allow-list of eleven read-only tools. Besides the tools, the socket answers only the Room-join token request and the hand-off of finished-turn usage records (both above). Any other JSON-RPC method or tool name is refused.
+- **What `ae-studio-tools` serves.** The socket carries four things, and refuses any other JSON-RPC method or tool name:
+  - one MCP server with a fixed allow-list of eleven read-only tools (below);
+  - the Room-join token request;
+  - the hand-off of finished-turn usage records;
+  - the project-known lookup (is this project one of the org's repositories).
   - `get_remote_git_file_contents` and `search_remote_git_code` run on `ae-studio-tools` with the gitpat (flow 9). The repo owner must be the org's GitHub owner.
   - The other nine go to `aep-api` `/internal/v1/mcp` over flow 12, one tool call per request, with the publisher client token.
 - **Org.** Fixed by the publisher client. `aep-api` takes it from `ouHandle`, never from the agent's input.
@@ -113,6 +127,8 @@ Calls are not bound to a user or a turn. `ae-design-agent` can call a tool betwe
 - `aep-publisher-<org>` is never accepted by `ae-collab`, or by any other `ae-studio` container.
 - The `ae-studio-<org>` token is never accepted by `ae-design-agent`, `ae-studio-tools` or `aep-api`.
 - No `ae-studio` container calls `aep-api` to authorize a Room join or a turn.
+- `ae-studio-tools` never accepts a user JWT on an `aep-api`-coupled route.
+- No token is sent in a URL or a cookie.
 - `ae-design-agent` never reaches the Files API of `ae-studio-tools`.
 - `aep-api` mints no token. `/internal/v1/mcp` accepts only the publisher client token.
 - `ae-design-agent` never holds a token for `aep-api`.
@@ -140,6 +156,7 @@ Two Platform IdP features close the two gaps this design accepts. Each is a WSO2
 - **A child OU or a shared OU for AE's apps.** The token then carries that OU's `ouId` and `ouHandle`, not the org's, which breaks the org rule. Thunder's application list ignores OU anyway, so it groups nothing.
 - **Waiting for an AE audience before the dataplane checks user JWTs.** The console audience with the org rule works now. The AE-only audience is planned.
 - **Asking `aep-api` per Room join or turn (`collab/validate`).** A control-plane call on every join. The token and the pod's own repository list answer it.
+- **One user-JWT surface for all `ae-studio-tools` routes.** A browser could call repo create or the skills mirror directly and skip `aep-api`.
 - **Org dataplane API keys as the hop's identity.** An API key does not bind the org and the caller.
 - **`aep-api` proxies the Room WebSocket.** Yjs across two public gateways.
 - **No token for the agent's Room join, because it is on `localhost`.** Any container in the pod reaches any `localhost` port, and `ae-collab` serves every Room of the org.
