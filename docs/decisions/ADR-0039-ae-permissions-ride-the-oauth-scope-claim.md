@@ -8,9 +8,9 @@
 organization, and nothing after it asked what that member was allowed to do. Any authenticated
 member of an org could call any operation the contract exposed.
 
-The AE→OC RBAC bridge (`internal/authz`) does not close this. It is outbound-only: it maps AE roles
-to OpenChoreo actions and provisions `AuthzRole`/`AuthzRoleBinding` CRs so **OpenChoreo** can
-authorize calls the platform makes on a user's behalf. It says nothing about `aep-api`'s own
+The AE→OC permission mapping (`internal/authz`) does not close this. It points outward: it maps AE
+roles to the OpenChoreo actions the platform's `AuthzRole`s grant, so **OpenChoreo** can authorize
+calls the platform makes on a user's behalf. It says nothing about `aep-api`'s own
 handlers. Meanwhile the console already shipped permission-gated UI built against a hardcoded
 stand-in permission set — gating that a caller could bypass by calling the API directly, because
 nothing on the server side agreed with it.

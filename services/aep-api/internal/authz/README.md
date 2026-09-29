@@ -1,105 +1,79 @@
-# authz — the AE↔OC permission vocabulary and the AE→OC RBAC bridge
+# authz — the AE↔OC permission mapping
 
-> **L2 · a domain.** Part of the [aep-api architecture](../../README.md).
+> **L2 · a domain, and a small one: it serves no HTTP.** Part of the
+> [aep-api architecture](../../README.md).
 
-Owns the `Permission` vocabulary (`ae:build`, `ae:model-config`, …) and two
-things built on top of it that point in **opposite directions**:
+Holds the mapping from an AE permission to the OpenChoreo actions it implies,
+and re-exports the AE permission vocabulary that
+[`aeperms`](../../aeperms) defines.
 
-- **Outbound, to OpenChoreo.** The AE→OC RBAC bridge translates AE roles to
-  OC actions and provisions OC `AuthzRole`/`AuthzRoleBinding` CRs, so
-  **OpenChoreo** can authorize calls the platform makes on a user's behalf.
-- **Inbound, consumed elsewhere.** `internal/edge/permission_gate.go` imports
-  this package's `Permission` constants to enforce AE permissions on
-  aep-api's *own* HTTP handlers. That gate is not part of this domain — see
-  [ADR-0039](../../../../docs/decisions/ADR-0039-ae-permissions-ride-the-oauth-scope-claim.md)
-  — but this package is the single place both directions get their
-  vocabulary from.
+Both are consumed by things outside this service:
+
+- **`OcActionCatalog` → the platform Helm chart.** OpenChoreo authorizes calls
+  against its own `AuthzRole` / `AuthzRoleBinding` CRs. Those CRs are
+  *installed*, by `templates/authz/ae-roles.yaml`, and this catalog is where
+  their `spec.actions` comes from.
+- **`Permission` → `internal/edge/permission_gate.go`**, which enforces AE
+  permissions on aep-api's own handlers. That gate is not part of this domain;
+  see [ADR-0039](../../../../docs/decisions/ADR-0039-ae-permissions-ride-the-oauth-scope-claim.md).
 
 ```mermaid
 flowchart LR
-  API(["/api/v1/authz/…"]) --> HTTP
   EDGE[[edge · permission_gate.go]] -->|imports Permission| CAT
+  CHART[[platform chart · templates/authz]] -.mirrors.-> OCCAT
   AECTL[[aectl · thunder/ae.go]] -->|provisions into Thunder| PERMS
   subgraph authz
-    HTTP["ensurerole — the domain's one HTTP slice"]
-    SVC["AuthZService — EnsureAuthzRole · ModifyRolePermissions"]
-    BRIDGE["AuthZBridge — AE permission -> OC action, deduped"]
     CAT["role_permissions_catalog.go — the aeperms alias layer"]
     OCCAT["oc_permissions_catalog.go — Permission -> []OC action"]
-    HTTP --> SVC
-    SVC --> BRIDGE
+    BRIDGE["AuthZBridge — resolves a role's permissions to its OC actions"]
+    CAT --> BRIDGE
     BRIDGE --> OCCAT
-    SVC -.reads.-> CAT
   end
   CAT -.re-exports.-> PERMS[["aeperms (public) — Permission · Actions · role -> []Permission"]]
-  SVC -->|CreateAuthzRole · UpdateAuthzRole · CreateAuthzRoleBinding| OC[[OpenChoreo · AuthzRole CRs]]
 ```
 
 ## Owns
 
 | | |
 |---|---|
-| `role_permissions_catalog.go` | The alias layer over [`aeperms`](../../aeperms), so the rest of aep-api goes on saying `authz.Permission` / `authz.PermissionBuild`. The vocabulary itself — the keys, their Thunder actions, and the two roles' permission sets — is defined there, public, because aectl provisions the same list into Thunder. |
 | `oc_permissions_catalog.go` | `OcActionCatalog`, mapping an AE `Permission` to the OC actions it resolves to. Several permissions — `ae:design-view`, `ae:design`, `ae:skill-view`, `ae:usage-view`, `ae:observability-view` — carry no entry at all: either they gate a surface that never reaches OC (git-backed reads, agent/turn orchestration, or console-only UI gating), or (per the `PermissionSkillConfig`/`PermissionBuild` placeholder noted in the catalog's own comments, #743) a real per-permission OC action design is still pending. |
-| `authz_bridge.go` | `AuthZBridge` — implements `PermissionResolver`; dedupes AE→OC translation across a permission set. |
-| `authz_service.go` | `AuthZService` — `EnsureAuthzRole` (idempotent create-if-missing OC role + binding, entitled on the `groups` JWT claim) and `ModifyRolePermissions` (updates OC role actions per AE role, with rollback on partial failure). The latter carries **no route**: rewriting an org's authorization model is an operator action whose surface has not been designed, so the logic is retained as unwired infrastructure rather than left reachable. |
-| `ports.go` | `PermissionResolver`, `OCAuthZClient` (the OC CRUD narrowing), the sentinel errors, and the domain-shaped `CreatedAuthzRole`/`CreatedAuthzRoleBinding`/`EntitlementClaim` types. |
-| `ensurerole/` | The `GET /authz/ensure` slice — the console's onboarding hard gate, and the domain's only route. |
-| `httpapi/` | The aggregator the edge embeds; declares no methods of its own. |
-
-## Ports
-
-| Port | Satisfied by | Mapped at |
-|---|---|---|
-| `OCAuthZClient` | `clients/openchoreo.AuthZClient` | `app/app.go` |
+| `authz_bridge.go` | `AuthZBridge` — resolves a set of AE permissions to the deduplicated OC actions they imply. This is the definition of a role's `spec.actions`. |
+| `role_permissions_catalog.go` | The alias layer over [`aeperms`](../../aeperms), so the rest of aep-api goes on saying `authz.Permission` / `authz.PermissionBuild`. The vocabulary itself — the keys, their Thunder actions, and the two roles' permission sets — is defined there, public, because aectl provisions the same list into Thunder. |
 
 ## Invariants
 
-**`EnsureAuthzRole` is the console's onboarding hard gate**, and it runs
-first. The onboarding flow calls `GET /authz/ensure` as a blocking step before
-anything else touches OpenChoreo
-(`apps/console/src/features/onboarding/components/RepositorySetupStep.tsx`) —
-the skills sync that follows creates a component OC authorizes against the very
-role this establishes. A misconfigured `OcActionCatalog` mapping therefore
-blocks every user rather than just an admin surface, which is why the two
-placeholder entries there are marked as such rather than extended casually.
+**The roles are installed, not provisioned at runtime.** `templates/authz/ae-roles.yaml`
+creates the org's `ae-admin` / `ae-developer` `AuthzRole`s and their bindings
+with the platform. They used to be created on demand by `GET /authz/ensure`,
+which the console called as onboarding's first step — an authorization boundary
+that only existed once somebody had signed in and reached a wizard, and whose
+failure surfaced as an opaque 403 several systems away. Nothing in this package
+writes to OpenChoreo any more; there is no OC client here and no HTTP slice.
 
-**Two roles exist:** `ae-admin` (every permission) and `ae-developer` (a
-working subset — see [`aeperms`](../../aeperms) for the exact list and the
-reasoning behind each inclusion/exclusion).
+**The chart's action lists and `OcActionCatalog` must agree exactly**, and YAML
+cannot import Go. `TestChartAuthzRolesMatchCatalog` parses the template and
+fails on any difference in either direction — a missing action is a 403 from
+OpenChoreo on a call the AE gate already allowed, and an extra one is a grant
+nobody decided to make. Change the catalog, run that test, and it prints the
+list the YAML should carry.
 
-**The vocabulary itself lives in [`aeperms`](../../aeperms), not here**, and
-that package is public rather than internal because a second module needs it:
-`aectl platform install` provisions the `ae` resource server, one Thunder action
-per permission, both groups and both roles over Thunder's admin API
-(`tools/aectl/internal/thunder/ae.go`). The two halves must agree exactly — an
-action aectl never creates is a permission no role can hold and no token can
-carry, so the gate would refuse a caller who did everything right, in
-production, with nothing in the logs but a 403. Sharing the definition in Go is
-what makes that a compile-time fact. This package keeps what is aep-api's alone:
-the OC actions each permission implies (`oc_permissions_catalog.go`).
+**Two roles exist:** `ae-admin` (every permission) and `ae-developer` (a working
+subset — see [`aeperms`](../../aeperms) for the exact list and the reasoning
+behind each inclusion and exclusion).
 
-Provisioning is an installer's job rather than a ThunderID bootstrap document's
-because a bootstrap folder is read once, at install, by a pre-install hook Job
-— so a document can only seed an IdP that AEP itself installs, while the
-platform IdP is shared infrastructure (ADR-0027/ADR-0028) that AEP may find
-already running.
+**One org per install.** The chart names a single `orgNamespace`, which matches
+today's one-install-per-org model. A multi-org deployment needs these CRs
+created per org as it is created — the way platform-api's `ProvisionOrgUnit`
+creates the namespaced ComponentTypes — because a chart cannot know about an org
+that does not exist at install time. No runtime path enrols a real org member
+into either Thunder group either; the installer seeds one account.
 
-What still does not exist is a *user*-provisioning path: no
-`identity.EnsureService`-style flow enrolls a signing-in org member into either
-group at runtime (contrast [`identity`](../identity/README.md), whose
-project-scoped roles ARE provisioned end-to-end). The installer seeds one
-account (`aeadmin`, its password supplied at install) into `ae-admin`, so the
-gate has a real holder to answer; who else ends up in either group for a real
-org is still decided by hand in Thunder.
-
-**This domain does not enforce anything on aep-api's own requests.** It only
-grants OC-side permissions. The inbound question — "may this caller invoke
-this aep-api operation" — is answered entirely in `internal/edge`, which
-imports `Permission` from here but is a different package with a different
-job. See [ADR-0039](../../../../docs/decisions/ADR-0039-ae-permissions-ride-the-oauth-scope-claim.md)
-for why the two are split this way.
+**This domain enforces nothing on aep-api's own requests.** The inbound
+question — "may this caller invoke this operation" — is answered entirely in
+`internal/edge`, which imports `Permission` from here but is a different package
+with a different job.
 
 ## See also
 
 - [`ADR-0039`](../../../../docs/decisions/ADR-0039-ae-permissions-ride-the-oauth-scope-claim.md) — why AE permissions ride the OAuth scope claim, and how the inbound gate in `internal/edge` uses this package's vocabulary.
+- [`deployments/helm-charts/design/authz.md`](../../../../deployments/helm-charts/design/authz.md) — the installed objects, and why they are installed.

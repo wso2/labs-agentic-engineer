@@ -26,6 +26,12 @@ type AuthZBridge struct {
 }
 
 // NewAuthZBridge constructs an AuthZBridge from the given AE→OC mapping.
+//
+//deadcode:keep the AuthzRoles this resolves are installed by the platform
+//chart (templates/authz/ae-roles.yaml), not created at runtime, so nothing on
+//the request path calls it. It stays because it DEFINES the list the chart
+//must carry — TestChartAuthzRolesMatchCatalog resolves it and fails when the
+//YAML disagrees, which is the only thing keeping the two in step.
 func NewAuthZBridge(permissionMap map[string][]string) *AuthZBridge {
 	// Defensive copy: the caller retains their map reference and could mutate
 	// it after construction. The bridge's mapping must not change after init.
@@ -38,7 +44,10 @@ func NewAuthZBridge(permissionMap map[string][]string) *AuthZBridge {
 	return &AuthZBridge{permissionMap: m}
 }
 
-// ResolveOcPermissions implements PermissionResolver.
+// ResolveOcPermissions returns the deduplicated set of OC actions that satisfy
+// the given AE permissions — a role's `spec.actions` in the chart.
+//
+//deadcode:keep see NewAuthZBridge.
 func (b *AuthZBridge) ResolveOcPermissions(aePermissions []string) []string {
 	ocSet := make(map[string]struct{})
 	for _, ae := range aePermissions {

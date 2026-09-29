@@ -25,45 +25,30 @@ import {
   Stepper,
   Typography,
 } from "@wso2/oxygen-ui";
-import { useState } from "react";
 import type { components } from "../../../generated/aep-api";
 import { useSession } from "../../../auth/SessionContext";
-import { WorkspaceAuthzStep } from "./WorkspaceAuthzStep";
 import { GitHubStep } from "./GitHubStep";
 import { AiAgentsStep } from "./AiAgentsStep";
-import { RepositorySetupStep } from "./RepositorySetupStep";
+import { SkillsBootstrapStep } from "./SkillsBootstrapStep";
 
 type ConfigStatus = components["schemas"]["ConfigStatus"];
 
-const STEPS = [
-  "Configure workspace",
-  "Connect GitHub",
-  "Connect a model",
-  "Set up repository",
-];
+const STEPS = ["Connect GitHub", "Connect a model", "Set up skills"];
 
-// The active step (among GitHub/Anthropic/repository setup) derives from
-// server state, not local navigation: each successful PATCH /config
-// invalidates GET /config/status (see queries.ts) and the wizard advances. A
-// partially-configured org therefore resumes at its first incomplete step
-// (issue #102 decisions comment). Exported for direct unit testing
-// (OnboardingWizard.test.tsx) without rendering.
+// The active step derives from server state, not local navigation: each
+// successful PATCH /config invalidates GET /config/status (see queries.ts) and
+// the wizard advances. A partially-configured org therefore resumes at its
+// first incomplete step (issue #102 decisions comment). Exported for direct
+// unit testing (OnboardingWizard.test.tsx) without rendering.
 //
-// This is deliberately blind to the workspace-authz gate ahead of it — that
-// gate has no server-side status (ensure is idempotent, so it isn't tracked
-// as persisted state) and is handled by the caller's local `authzReady`.
+// There is no workspace-authz step ahead of these. The org's OpenChoreo
+// AuthzRoles and bindings are installed by the platform Helm chart
+// (templates/authz/), so they exist before anyone signs in — onboarding has
+// nothing to provision and no gate to wait on.
 export function activeStep(status: ConfigStatus): number {
   if (!status.gitProviderConnected) return 0;
   if (!status.llmConnected) return 1;
   return 2;
-}
-
-// Combines the workspace-authz gate with `activeStep` into the Stepper's
-// actual index. `authzReady` is local component state, not server status (see
-// activeStep's comment) — passed in here so the combination is testable
-// without rendering. Exported for direct unit testing.
-export function wizardStep(status: ConfigStatus, authzReady: boolean): number {
-  return authzReady ? activeStep(status) + 1 : 0;
 }
 
 export function OnboardingWizard({
@@ -74,12 +59,7 @@ export function OnboardingWizard({
   onComplete: () => void;
 }) {
   const { user, signOut } = useSession();
-  // The org's OpenChoreo AuthzRole must exist before GitHub/Anthropic Connect
-  // can mirror secrets into OC — see WorkspaceAuthzStep. That gate runs first
-  // and unconditionally on every mount (cheap once satisfied), ahead of the
-  // server-derived step.
-  const [authzReady, setAuthzReady] = useState(false);
-  const step = wizardStep(status, authzReady);
+  const step = activeStep(status);
 
   return (
     <Box
@@ -112,10 +92,9 @@ export function OnboardingWizard({
           ))}
         </Stepper>
 
-        {step === 0 && <WorkspaceAuthzStep onDone={() => setAuthzReady(true)} />}
-        {step === 1 && <GitHubStep />}
-        {step === 2 && <AiAgentsStep />}
-        {step === 3 && <RepositorySetupStep onComplete={onComplete} />}
+        {step === 0 && <GitHubStep />}
+        {step === 1 && <AiAgentsStep />}
+        {step === 2 && <SkillsBootstrapStep onComplete={onComplete} />}
       </Paper>
 
       <Typography variant="body2" color="text.secondary">

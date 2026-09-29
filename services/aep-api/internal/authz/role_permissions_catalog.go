@@ -59,6 +59,9 @@ var AllPermissions = aeperms.AllPermissions
 // strings, or nil if the role is unknown. Strings rather than Permissions
 // because the only caller feeds PermissionResolver.ResolveOcPermissions, which
 // keys the OC action catalog by the raw key.
+//deadcode:keep read by TestChartAuthzRolesMatchCatalog to derive what the
+//chart's AuthzRoles must grant; no runtime caller since the chart installs
+//them.
 func RolePermissions(role string) []string {
 	perms := aeperms.RolePermissions(role)
 	if perms == nil {
@@ -72,4 +75,6 @@ func RolePermissions(role string) []string {
 }
 
 // Roles returns the AE role names.
+//
+//deadcode:keep see RolePermissions above.
 func Roles() []string { return aeperms.Roles() }

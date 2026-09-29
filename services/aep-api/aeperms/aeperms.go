@@ -179,11 +179,17 @@ var RoleDescriptions = map[string]string{
 
 // Roles returns the role names in a stable order — admin first, since it is
 // the one an installer seeds an account into.
+//
+//deadcode:keep aectl's caller is in another module, so aep-api's own main
+//cannot reach it — the installer provisions these roles into Thunder.
 func Roles() []string { return []string{RoleAdmin, RoleDeveloper} }
 
 // RolePermissions returns the permissions the given role holds, or nil if the
 // role is unknown. The result is a defensive copy: the catalog is unexported,
 // so nothing outside this function can mutate it.
+//
+//deadcode:keep same as Roles above — aectl reads it to build each Thunder
+//role's permission set at install.
 func RolePermissions(role string) []Permission {
 	perms, ok := rolePermissions[role]
 	if !ok {

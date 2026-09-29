@@ -1,0 +1,79 @@
+{{- if .Values.aeAuthz.enabled }}
+{{- $ns := .Values.aeAuthz.orgNamespace | default .Values.localOrgProvisioning.orgNamespace }}
+# The AE roles OpenChoreo authorizes a signed-in person's calls against.
+#
+# Namespaced to the ORG, not to the platform release: OpenChoreo resolves an
+# AuthzRole in the namespace of the resource being acted on, so a role in
+# wso2-aep would never be consulted.
+#
+# The binding entitles on the `groups` claim, matching the Thunder group of the
+# same name. That shared spelling is the whole hinge between the two systems —
+# Thunder puts a person in `ae-admin`, their token carries `groups: [ae-admin]`,
+# and this binding is what turns that into OpenChoreo permissions. Rename one
+# side and a correctly entitled caller silently loses every OC action.
+#
+# `spec.actions` is derived from internal/authz's OcActionCatalog and must stay
+# in step with it; TestChartAuthzRolesMatchCatalog fails when it does not. See
+# deployments/helm-charts/design/authz.md.
+{{- range $role := list "ae-admin" "ae-developer" }}
+---
+apiVersion: openchoreo.dev/v1alpha1
+kind: AuthzRole
+metadata:
+  name: {{ $role }}
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/managed-by: {{ $.Release.Service }}
+    app.kubernetes.io/part-of: wso2-aep
+spec:
+  actions:
+{{- if eq $role "ae-admin" }}
+    - clusterresourcetype:view
+    - component:create
+    - component:view
+    - deploymentpipeline:view
+    - environment:view
+    - project:create
+    - project:delete
+    - project:view
+    - projectreleasebinding:create
+    - releasebinding:view
+    - resource:view
+    - resourcereleasebinding:view
+    - resourcetype:create
+    - resourcetype:delete
+    - resourcetype:update
+    - resourcetype:view
+    - secretreference:create
+    - secretreference:delete
+    - secretreference:update
+    - secretreference:view
+    - workload:view
+{{- else }}
+    - component:create
+    - component:view
+    - project:view
+    - releasebinding:view
+    - resourcereleasebinding:view
+    - workload:view
+{{- end }}
+---
+apiVersion: openchoreo.dev/v1alpha1
+kind: AuthzRoleBinding
+metadata:
+  name: {{ $role }}
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/managed-by: {{ $.Release.Service }}
+    app.kubernetes.io/part-of: wso2-aep
+spec:
+  effect: allow
+  entitlement:
+    claim: groups
+    value: {{ $role | quote }}
+  roleMappings:
+    - roleRef:
+        kind: AuthzRole
+        name: {{ $role }}
+{{- end }}
+{{- end }}

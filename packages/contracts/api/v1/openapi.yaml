@@ -5,30 +5,6 @@ info:
 servers:
 - url: /api/v1
 paths:
-  /authz/ensure:
-    get:
-      description: Check whether an OC AuthzRole is applied for the requesting
-        organization's namespace. The organization is resolved from the caller's
-        JWT — no path parameter required.
-      operationId: ensure-authz-role
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StatusMsg'
-          description: OK
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Error
-      security:
-      - userJWT: []
-      summary: Ensure an AuthzRole exists for the organization's namespace
-      tags:
-      - Identity
   /collab/validate:
     get:
       operationId: validate-collab-access

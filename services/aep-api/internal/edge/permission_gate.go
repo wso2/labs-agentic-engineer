@@ -238,14 +238,11 @@ var operationPermissions = map[string][]authz.Permission{
 // group says which. Nothing lands here by default: an operation absent from
 // both maps fails TestPermissionGateCoverage.
 var permissionGateCarveOuts = map[string]struct{}{
-	// Runs before the caller's permissions can be known or provisioned.
-	// ListOrganizations precedes org selection; GetConfigStatus answers the
-	// onboarding gate's two booleans, carrying none of GetConfig's identity or
-	// key detail; EnsureAuthzRole provisions the org's OC role, which cannot
-	// require a grant that provisioning is what establishes.
+	// Runs before the caller's permissions can be known. ListOrganizations
+	// precedes org selection; GetConfigStatus answers the onboarding gate's two
+	// booleans, carrying none of GetConfig's identity or key detail.
 	"ListOrganizations": {},
 	"GetConfigStatus":   {},
-	"EnsureAuthzRole":   {},
 
 	// Gated by field-aware logic in permissionGate rather than a flat row —
 	// its permissions depend on which sections the patch touches. This entry

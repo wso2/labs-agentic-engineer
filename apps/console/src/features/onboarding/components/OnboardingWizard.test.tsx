@@ -45,9 +45,6 @@ vi.mock("../../settings/api/queries", () => ({
   useTestConnection: () => ({ mutate: vi.fn(), reset: vi.fn(), isPending: false, isError: false, error: null }),
   useConnectGitHubPat: () => ({ mutate: vi.fn(), isPending: false, isError: false }),
   useSyncSkills: () => ({ mutate: vi.fn(), isPending: false, isError: false }),
-  // The workspace-authz gate ahead of every other step: succeeding
-  // immediately is what lets these tests assert on the steps behind it.
-  useEnsureAuthzRole: () => ({ mutate: vi.fn(), isSuccess: true, isPending: false, isError: false, error: null }),
 }));
 
 vi.mock("../../../auth/SessionContext", () => ({
@@ -59,7 +56,7 @@ vi.mock("../../../auth/SessionContext", () => ({
   }),
 }));
 
-const { OnboardingWizard, activeStep, wizardStep } = await import("./OnboardingWizard");
+const { OnboardingWizard, activeStep } = await import("./OnboardingWizard");
 
 // --- step derivation --------------------------------------------------------
 
@@ -72,7 +69,7 @@ describe("activeStep", () => {
     expect(activeStep({ gitProviderConnected: true, llmConnected: false })).toBe(1);
   });
 
-  it("resumes at repository setup once both are connected", () => {
+  it("resumes at skills setup once both are connected", () => {
     expect(activeStep({ gitProviderConnected: true, llmConnected: true })).toBe(2);
   });
 
@@ -80,26 +77,6 @@ describe("activeStep", () => {
   // the steps run in a fixed order (issue #102), not the caller's choice.
   it("still resumes at GitHub when only the model connection is made", () => {
     expect(activeStep({ gitProviderConnected: false, llmConnected: true })).toBe(0);
-  });
-});
-
-describe("wizardStep", () => {
-  // Workspace authz is a hard gate ahead of everything else — GitHub/model
-  // Connect mirror secrets into OpenChoreo, which 403s if the org's AuthzRole
-  // doesn't exist yet. Regardless of server-reported config status, an
-  // unconfirmed authz gate always wins and pins the wizard to step 0.
-  it("stays on the workspace-authz step regardless of config status until it's ready", () => {
-    expect(wizardStep({ gitProviderConnected: false, llmConnected: false }, false)).toBe(0);
-    expect(wizardStep({ gitProviderConnected: true, llmConnected: true }, false)).toBe(0);
-  });
-
-  // Once authz is ready, the rest of the wizard resumes exactly where
-  // activeStep says, shifted by one slot for the workspace-authz step ahead
-  // of it.
-  it("resumes at activeStep + 1 once authz is ready", () => {
-    expect(wizardStep({ gitProviderConnected: false, llmConnected: false }, true)).toBe(1);
-    expect(wizardStep({ gitProviderConnected: true, llmConnected: false }, true)).toBe(2);
-    expect(wizardStep({ gitProviderConnected: true, llmConnected: true }, true)).toBe(3);
   });
 });
 
@@ -237,7 +214,7 @@ describe("OnboardingWizard's Connect a model step", () => {
     });
   });
 
-  it("moves to repository setup once the connection is saved", () => {
+  it("moves to skills setup once the connection is saved", () => {
     renderWizard(
       config({
         llm: {

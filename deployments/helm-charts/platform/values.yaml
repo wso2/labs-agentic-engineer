@@ -220,6 +220,27 @@ webhook:
 # per-org types. In cloud, ProvisionOrgUnit creates them per org; locally nothing
 # does. This provisions the api-configuration ClusterTrait + the namespaced
 # service/web-application ComponentTypes in the org's control-plane namespace.
+# The org's OpenChoreo AuthzRoles and bindings (templates/authz/ae-roles.yaml)
+# — what OpenChoreo authorizes a signed-in person's calls against, paired with
+# the Thunder groups of the same name that aectl provisions.
+#
+# ON by default, unlike localOrgProvisioning below, because nothing else
+# creates them. They used to be provisioned at runtime by the console's first
+# onboarding step; that is gone, so an install with this off has an AE
+# permission model in Thunder and nothing on the OpenChoreo side to honour it —
+# every call 403s from OC after passing the AE gate.
+#
+# Namespaced per ORG, and this chart names ONE (orgNamespace, defaulting to
+# localOrgProvisioning's). That matches today's one-install-per-org model. A
+# genuinely multi-org deployment needs these created per org as it is created,
+# the way platform-api's ProvisionOrgUnit creates the namespaced ComponentTypes
+# — the chart cannot know about an org that does not exist yet at install.
+aeAuthz:
+  enabled: true
+  # Empty inherits localOrgProvisioning.orgNamespace, so a local install
+  # configures the org namespace in one place.
+  orgNamespace: ""
+
 localOrgProvisioning:
   # LOCAL DEV ONLY (single-org). PROD: false — platform-api ProvisionOrgUnit
   # creates these per-org, so the chart must not.
