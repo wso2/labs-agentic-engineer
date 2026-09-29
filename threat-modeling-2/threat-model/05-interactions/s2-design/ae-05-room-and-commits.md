@@ -37,7 +37,7 @@ A Room is a live editing session where people and the design agent write a proje
 **Steps**
 
 1. The user opens a project's spec (see AE-01 for sign-in). The browser opens the Room over a WebSocket (a live two-way connection) through the org gateway. It sends the login token in the first message of the connection (the Hocuspocus auth message; Hocuspocus is the Room server), never in the address or a cookie.
-2. Live editing checks the token itself: the Platform IdP signature, issuer, audience, expiry, that the org is its own, and the role, with the same user rule as the API (until H-7, the org in the token; with H-7, `ae:design` to edit and `ae:design-view` to watch). It asks studio tools, on the file-save socket, whether the project is one of the org's repositories.
+2. Live editing checks the token itself: the Platform IdP signature, issuer, audience, expiry, that the org is its own, and the role, with the same permission rule as the API (`ae:design` to edit and `ae:design-view` to watch). It asks studio tools, on the file-save socket, whether the project is one of the org's repositories.
 3. During a design turn (see AE-04), the [design agent](../../01-introduction-and-architecture.md#c-design-agent) asks studio tools for a Room-join token on its tool socket. Studio tools gets an `ae-studio-<org>` token from the [Platform IdP](../../01-introduction-and-architecture.md#c-platform-idp) with the org's Room-join secret, and hands over only the token. The agent joins the same Room inside the pod with it, in the same first message, on a live editing address that only listens inside the pod. The public Room address refuses this token. Live editing checks it for the org only. The agent's edits appear highlighted for everyone in the Room.
 4. Live editing saves the Room's files to studio tools over a file-save socket that only these two containers can see. It saves when a turn ends, when the last person leaves, and before a build.
 5. Studio tools commits the files under `specs/` to the main branch and pushes them to GitHub with the GitHub token. The people in the Room are listed as co-authors of the commit, and agent edits credit the user named in the turn.
@@ -59,7 +59,7 @@ A Room is a live editing session where people and the design agent write a proje
 | Transport Security | TLS Encryption | Secure WebSocket from the browser. The org gateway ends TLS. HTTPS to the Platform IdP and GitHub. |
 | Authentication | Platform IdP tokens | Live editing checks the login token (people) and the Room-join token (the agent) itself, against the Platform IdP's public keys (JWKS). |
 | Accessibility | Publicly Accessible | The Room address is on the org gateway on the internet, but a valid token of this org is needed to join. |
-| Access Control and Authorization | Org and role from the token, then a project check | The same user rule as the API: until H-7, the org in the token; with H-7, watching needs `ae:design-view` and editing `ae:design`. The project must be one studio tools knows. The Room-join token is checked for the org only, so it opens any Room of the org. |
+| Access Control and Authorization | Org and role from the token, then a project check | The same permission rule as the API: watching needs `ae:design-view` and editing `ae:design`. The project must be one studio tools knows. The Room-join token is checked for the org only, so it opens any Room of the org. |
 
 **Threat Assessment**
 

@@ -58,7 +58,7 @@ This product was previously called App Factory / AEP.
 | Version | Release Date | Contributors / Authors | Summary of Changes |
 | ----- | ----- | ----- | ----- |
 | 1.0 | `[date]` | `[contributors]` | Initial version |
-| 1.1 | `[date]` | `[contributors]` | The design studio checks WSO2 Cloud sign-in (Platform IdP) tokens itself, and the browser calls it directly. Removed: tokens signed by the API, Room tokens and Environment Thunder. Added: the AE-only control-plane client, the per-org Room-join identity, the design-turn usage batch, and improvements H-10 and H-11. The AE-only machine token goes only to studio tools, which starts the API's design turns inside the pod, so it never reaches an AI container. Studio tools splits its routes into person-token reads and machine-token internal routes. Live editing accepts the Room-join token only inside the pod. The design studio uses the same user rule as the API. H-10 notes that platform-api checks no audience. |
+| 1.1 | `[date]` | `[contributors]` | The design studio checks WSO2 Cloud sign-in (Platform IdP) tokens itself, and the browser calls it directly. Removed: tokens signed by the API, Room tokens and Environment Thunder. Added: the AE-only control-plane client, the per-org Room-join identity, the design-turn usage batch, and improvements H-10 and H-11. The AE-only machine token goes only to studio tools, which starts the API's design turns inside the pod, so it never reaches an AI container. Studio tools splits its routes into person-token reads and machine-token internal routes. Live editing accepts the Room-join token only inside the pod. The design studio applies the same permission rule as the API. H-10 notes that platform-api checks no audience. |
 
 # Introduction
 
@@ -184,7 +184,7 @@ Agentic Engineer's own boundary ends where it calls the WSO2 Cloud platform (TB-
 
 ## Entitlement matrix
 
-Permissions come from the user's role. The API checks them on every call and refuses anything not listed. The design studio containers use the same user rule as the API, so the two cannot differ. Until WSO2 Cloud issues the `ae:*` permissions (H-7), that rule is the org in the login token, and a token without an org is refused. With H-7, the API and the design studio both check `ae:design` and `ae:design-view` in the token, together.
+Permissions come from the user's role. The API checks them on every call and refuses anything not listed. The design studio containers apply the same rule as the API (`ae:design` to edit and run turns, `ae:design-view` to watch), so the two cannot differ. A token without the permission is refused by both.
 
 | Permission | Lets you | `ae-admin` | `ae-developer` |
 | :---- | :---- | :----: | :----: |
@@ -303,7 +303,7 @@ A person signs in to the Agentic Engineer console at the WSO2 Cloud sign-in page
 | Transport Security | TLS Encryption | HTTPS from the browser. The hop from the web server to the API is plain HTTP inside the cluster. |
 | Authentication | OAuth 2.0 / OIDC login token (JWT) | Signed by the Platform IdP. The API and each design studio container check signature, issuer, audience and expiry on every call. |
 | Accessibility | Publicly Accessible | The console, the API and the design studio routes are on the internet. Only signed-in org members get past the checks. |
-| Access Control and Authorization | Org from the token, then a permission check | The org is never taken from the address or body. Each API action needs a permission from the user's role (see the entitlement matrix). In the design studio, the token's org must be the pod's org, and the role comes from the token. |
+| Access Control and Authorization | Org from the token, then a permission check | The org is never taken from the address or body. Each API action needs a permission from the user's role (see the entitlement matrix). In the design studio, the token's org must be the pod's org, and it applies the same permission rule as the API. |
 
 **Threat Assessment**
 
@@ -314,7 +314,7 @@ A person signs in to the Agentic Engineer console at the WSO2 Cloud sign-in page
 | AE-01-3 | Repudiation | A user denies starting a build or deploy. | No | **By design:** the builds and deploys that follow a Build click belong to that run. **Planned:** record who starts a build (H-6). |
 | AE-01-4 | Information disclosure | A login token leaks from a design studio container, and someone replays it on the other console APIs or at platform-api (the WSO2 Cloud platform API). | No | **By design:** containers keep tokens in memory only, never in a file or a ConfigMap (a Kubernetes settings object), never in a prompt, and the model has no tool that reads them. The pod is locked down (TB-4). The token lives 1 hour. It carries the console's audience, so a leaked copy works on every console API until it expires. platform-api checks neither the audience nor the issuer, so the copy also works there. **Planned:** tokens sent to the design studio carry an Agentic Engineer-only audience (H-10). That alone does not protect platform-api; WSO2 Cloud is asked to make platform-api check the audience (O-16). |
 | AE-01-5 | Denial of service | A malicious actor floods the API or the design studio, or sends very large requests. | No | **Inherited:** flood protection is WSO2 Cloud's, at both gateways. **Implemented:** the API refuses requests over 80 MiB. |
-| AE-01-6 | Elevation of privilege | A Developer reads or changes what only Admins may, such as usage and cost, the GitHub token or AI keys, or deletes a project. | No | **Implemented:** the permission check denies by default. These actions need permissions only Admins hold. Secret values are never returned; the console shows only a short prefix and the last four characters, which the API records when the secret is saved. **By design:** the design studio offers no Admin-only action. It uses the same user rule as the API, so the two cannot differ: until WSO2 Cloud issues the `ae:*` permissions (H-7), the org in the token, and a token without an org is refused. |
+| AE-01-6 | Elevation of privilege | A Developer reads or changes what only Admins may, such as usage and cost, the GitHub token or AI keys, or deletes a project. | No | **Implemented:** the permission check denies by default. These actions need permissions only Admins hold. Secret values are never returned; the console shows only a short prefix and the last four characters, which the API records when the secret is saved. **By design:** the design studio offers no Admin-only action. It applies the same permission rule as the API, so the two cannot differ. Until WSO2 Cloud sign-in issues the `ae:*` permissions (H-7), Cloud users without them are denied by both. |
 
 **Product improvements flagged**
 
@@ -497,7 +497,7 @@ The [design agent](#components) is the AI that helps people write a project's sp
 | Transport Security | TLS Encryption | The org gateway ends TLS. HTTPS to Anthropic, GitHub, the API and web sites. |
 | Authentication | Platform IdP tokens; machine login | The design agent checks the login token against the Platform IdP's public keys (JWKS). Turns the API starts come from studio tools on the turn socket, with no token. Studio tools signs in to the API as the org's machine login. |
 | Accessibility | Publicly Accessible | The org gateway is on the internet, but every call needs a valid token, and cross-site calls (CORS) are allowed only from the console. The agent's socket is reachable only inside the pod. |
-| Access Control and Authorization | Org and role in the pod, then a fixed tool list | Starting a turn follows the same user rule as the API: until H-7, the org in the token; with H-7, `ae:design`. The agent can call only the 11 read-only tools. The org comes from the machine login, never from the agent. |
+| Access Control and Authorization | Org and role in the pod, then a fixed tool list | Starting a turn follows the same permission rule as the API: it needs `ae:design`. The agent can call only the 11 read-only tools. The org comes from the machine login, never from the agent. |
 
 **Threat Assessment**
 
@@ -531,7 +531,7 @@ A Room is a live editing session where people and the design agent write a proje
 **Steps**
 
 1. The user opens a project's spec (see AE-01 for sign-in). The browser opens the Room over a WebSocket (a live two-way connection) through the org gateway. It sends the login token in the first message of the connection (the Hocuspocus auth message; Hocuspocus is the Room server), never in the address or a cookie.
-2. Live editing checks the token itself: the Platform IdP signature, issuer, audience, expiry, that the org is its own, and the role, with the same user rule as the API (until H-7, the org in the token; with H-7, `ae:design` to edit and `ae:design-view` to watch). It asks studio tools, on the file-save socket, whether the project is one of the org's repositories.
+2. Live editing checks the token itself: the Platform IdP signature, issuer, audience, expiry, that the org is its own, and the role, with the same permission rule as the API (`ae:design` to edit and `ae:design-view` to watch). It asks studio tools, on the file-save socket, whether the project is one of the org's repositories.
 3. During a design turn (see AE-04), the [design agent](#components) asks studio tools for a Room-join token on its tool socket. Studio tools gets an `ae-studio-<org>` token from the [Platform IdP](#components) with the org's Room-join secret, and hands over only the token. The agent joins the same Room inside the pod with it, in the same first message, on a live editing address that only listens inside the pod. The public Room address refuses this token. Live editing checks it for the org only. The agent's edits appear highlighted for everyone in the Room.
 4. Live editing saves the Room's files to studio tools over a file-save socket that only these two containers can see. It saves when a turn ends, when the last person leaves, and before a build.
 5. Studio tools commits the files under `specs/` to the main branch and pushes them to GitHub with the GitHub token. The people in the Room are listed as co-authors of the commit, and agent edits credit the user named in the turn.
@@ -553,7 +553,7 @@ A Room is a live editing session where people and the design agent write a proje
 | Transport Security | TLS Encryption | Secure WebSocket from the browser. The org gateway ends TLS. HTTPS to the Platform IdP and GitHub. |
 | Authentication | Platform IdP tokens | Live editing checks the login token (people) and the Room-join token (the agent) itself, against the Platform IdP's public keys (JWKS). |
 | Accessibility | Publicly Accessible | The Room address is on the org gateway on the internet, but a valid token of this org is needed to join. |
-| Access Control and Authorization | Org and role from the token, then a project check | The same user rule as the API: until H-7, the org in the token; with H-7, watching needs `ae:design-view` and editing `ae:design`. The project must be one studio tools knows. The Room-join token is checked for the org only, so it opens any Room of the org. |
+| Access Control and Authorization | Org and role from the token, then a project check | The same permission rule as the API: watching needs `ae:design-view` and editing `ae:design`. The project must be one studio tools knows. The Room-join token is checked for the org only, so it opens any Room of the org. |
 
 **Threat Assessment**
 
@@ -781,7 +781,7 @@ Changes the team plans to make. Chapters mark them **Planned**. GAP-n items are 
 | **H-3** | Dependency secrets (for example the app's database password) do not land in the coding agent's container. [Coding tools](#components) holds them, as it holds the GitHub token. Open decision O-11. | AE-06 |
 | **H-4** | Guardrails on the internet calls the AI agents make or ask for, such as web search, web fetch and an OpenAPI address the agent asks for: allowed sites only, and requests checked for secrets. | AE-04, AE-06 |
 | **H-6** | Changes to the GitHub token or an AI key, creating or deleting a project, and starting a build, record who did it. | AE-01, AE-02, AE-03, AE-06, AE-08 |
-| **H-7** | WSO2 Cloud sign-in issues the `ae-admin` and `ae-developer` roles and their `ae:*` permissions, and the console asks for them. The API and the design studio then both check the permission in the token, together. Until then, both use the org in the token only. | AE-01, AE-04, AE-05 |
+| **H-7** | WSO2 Cloud sign-in issues the `ae-admin` and `ae-developer` roles and their `ae:*` permissions, and the console asks for them. Until WSO2 Cloud sign-in issues them, Cloud users without these permissions are denied by both the API and the design studio. | AE-01, AE-04, AE-05 |
 | **H-8** | The console calls the API through the public gateway, not only through its own web server. | AE-01 |
 | **H-9** | Project repositories are private. | AE-03, AE-06, AE-07, AE-08 |
 | **H-10** | Tokens sent to the design studio carry an Agentic Engineer-only audience (who the token is for). The Platform IdP gets an Agentic Engineer resource server (RFC 8707 resource indicators, a standard way to ask for a token meant for one service), the console asks for it, and the design studio stops accepting the console's audience. Then a login token leaked from the dataplane no longer works on other console APIs. This alone does not protect platform-api, which checks neither the audience nor the issuer: a leaked token still works there until platform-api checks the audience (O-16). Needs WSO2 Cloud (architecture spec O-12). | AE-01, AE-04, AE-05 |
@@ -815,7 +815,7 @@ Risks that run across all chapters.
 | Are all inputs and outputs validated? (Syntactic and Semantic Validation) | Yes | Inputs have size limits, the org comes from the login token, and webhooks are checked by signature. |
 | Are rate limits in place where necessary? | Partial | WSO2 Cloud's edge has a per-IP rate limit (WAF, a web application firewall). Per-API gateway rate limits are not set for Agentic Engineer. Agentic Engineer limits turns, runs and builds itself (PW-3). |
 | Are permissions, roles, and entitlements defined on least privilege and business needs? | Yes | Two roles and 14 permissions (see Actors). Secrets and skills are Admin only. |
-| Are authentication and authorization validated at both UI and API, front and back end? | Yes | The API checks the login token and the permission on every call. Each design studio container checks every token itself against the WSO2 Cloud sign-in public keys, then the org and the role, with the same user rule as the API (until H-7, the org in the token). |
+| Are authentication and authorization validated at both UI and API, front and back end? | Yes | The API checks the login token and the permission on every call. Each design studio container checks every token itself against the WSO2 Cloud sign-in public keys, then the org and the role, with the same permission rule as the API. |
 | Are proper isolations in place between components (least-privilege, blast-radius reduction)? | Yes | Each org has its own dataplane pods, and the AI is kept apart from the secrets (TB-5, TB-7). |
 | Have default credentials been changed / default superuser accounts disabled? | Yes | WSO2 Cloud settings turn off every development path. |
 | Has implementation followed best-practice guidelines (OWASP/Kubernetes/vendor)? | Yes | By design: agent pods run non-root, with a read-only file system and no Kubernetes token (TB-4, TB-6). Inherited: control-plane pods run non-root with no Kubernetes token. |
@@ -906,7 +906,7 @@ No row in AE-01 to AE-08 or PW-1 to PW-4 is Materializable **Yes** or **Partiall
 | H-3 | Dependency secrets do not land in the coding agent's container; coding tools holds them (open decision O-11). | AE-06 | |
 | H-4 | Guardrails on the AI agents' internet calls. | AE-04, AE-06 | |
 | H-6 | Changes to the GitHub token or an AI key, creating or deleting a project, and starting a build, record who did it. | AE-01, AE-02, AE-03, AE-06, AE-08 | |
-| H-7 | WSO2 Cloud sign-in issues the `ae-admin` and `ae-developer` roles and their `ae:*` permissions, and the console asks for them. The API and the design studio then check them together. | AE-01, AE-04, AE-05 | |
+| H-7 | WSO2 Cloud sign-in issues the `ae-admin` and `ae-developer` roles and their `ae:*` permissions, and the console asks for them. Until it does, Cloud users without these permissions are denied by both the API and the design studio. | AE-01, AE-04, AE-05 | |
 | H-8 | The console calls the API through the public gateway, not only through its own web server. | AE-01 | |
 | H-9 | Project repositories are private. | AE-03, AE-06, AE-07, AE-08 | |
 | H-10 | Tokens sent to the design studio carry an Agentic Engineer-only audience (who the token is for), through an Agentic Engineer resource server at WSO2 Cloud sign-in (RFC 8707, a standard way to ask for a token meant for one service), so a login token leaked from the dataplane does not work on other console APIs. It does not protect platform-api, which checks neither the audience nor the issuer; that needs O-16. Needs WSO2 Cloud (architecture spec O-12). | AE-01, AE-04, AE-05 | |

@@ -56,7 +56,7 @@ No row in AE-01 to AE-08 or PW-1 to PW-4 is Materializable **Yes** or **Partiall
 | H-3 | Dependency secrets do not land in the coding agent's container; coding tools holds them (open decision O-11). | AE-06 | |
 | H-4 | Guardrails on the AI agents' internet calls. | AE-04, AE-06 | |
 | H-6 | Changes to the GitHub token or an AI key, creating or deleting a project, and starting a build, record who did it. | AE-01, AE-02, AE-03, AE-06, AE-08 | |
-| H-7 | WSO2 Cloud sign-in issues the `ae-admin` and `ae-developer` roles and their `ae:*` permissions, and the console asks for them. The API and the design studio then check them together. | AE-01, AE-04, AE-05 | |
+| H-7 | WSO2 Cloud sign-in issues the `ae-admin` and `ae-developer` roles and their `ae:*` permissions, and the console asks for them. Until it does, Cloud users without these permissions are denied by both the API and the design studio. | AE-01, AE-04, AE-05 | |
 | H-8 | The console calls the API through the public gateway, not only through its own web server. | AE-01 | |
 | H-9 | Project repositories are private. | AE-03, AE-06, AE-07, AE-08 | |
 | H-10 | Tokens sent to the design studio carry an Agentic Engineer-only audience (who the token is for), through an Agentic Engineer resource server at WSO2 Cloud sign-in (RFC 8707, a standard way to ask for a token meant for one service), so a login token leaked from the dataplane does not work on other console APIs. It does not protect platform-api, which checks neither the audience nor the issuer; that needs O-16. Needs WSO2 Cloud (architecture spec O-12). | AE-01, AE-04, AE-05 | |

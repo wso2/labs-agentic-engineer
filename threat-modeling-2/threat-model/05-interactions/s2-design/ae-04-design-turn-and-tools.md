@@ -61,7 +61,7 @@ The [design agent](../../01-introduction-and-architecture.md#c-design-agent) is 
 | Transport Security | TLS Encryption | The org gateway ends TLS. HTTPS to Anthropic, GitHub, the API and web sites. |
 | Authentication | Platform IdP tokens; machine login | The design agent checks the login token against the Platform IdP's public keys (JWKS). Turns the API starts come from studio tools on the turn socket, with no token. Studio tools signs in to the API as the org's machine login. |
 | Accessibility | Publicly Accessible | The org gateway is on the internet, but every call needs a valid token, and cross-site calls (CORS) are allowed only from the console. The agent's socket is reachable only inside the pod. |
-| Access Control and Authorization | Org and role in the pod, then a fixed tool list | Starting a turn follows the same user rule as the API: until H-7, the org in the token; with H-7, `ae:design`. The agent can call only the 11 read-only tools. The org comes from the machine login, never from the agent. |
+| Access Control and Authorization | Org and role in the pod, then a fixed tool list | Starting a turn follows the same permission rule as the API: it needs `ae:design`. The agent can call only the 11 read-only tools. The org comes from the machine login, never from the agent. |
 
 **Threat Assessment**
 

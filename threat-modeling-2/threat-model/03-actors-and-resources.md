@@ -54,7 +54,7 @@ under the License.
 
 ## Entitlement matrix
 
-Permissions come from the user's role. The API checks them on every call and refuses anything not listed. The design studio containers use the same user rule as the API, so the two cannot differ. Until WSO2 Cloud issues the `ae:*` permissions (H-7), that rule is the org in the login token, and a token without an org is refused. With H-7, the API and the design studio both check `ae:design` and `ae:design-view` in the token, together.
+Permissions come from the user's role. The API checks them on every call and refuses anything not listed. The design studio containers apply the same rule as the API (`ae:design` to edit and run turns, `ae:design-view` to watch), so the two cannot differ. A token without the permission is refused by both.
 
 | Permission | Lets you | `ae-admin` | `ae-developer` |
 | :---- | :---- | :----: | :----: |
