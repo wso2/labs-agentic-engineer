@@ -545,6 +545,22 @@ _Avoid_: vault (the store behind it), secret store, secrets service.
 The Thunder identity provider for one organization and one environment. It is a
 different issuer from the Platform IdP, with its own keys: there is one per
 organization and environment, where the Platform IdP is one for the whole
-platform.
+platform. Agentic Engineer does not use it.
 _Avoid_: dataplane IdP (it does not run in the dataplane), tenant IdP, Platform
 IdP (a different issuer).
+
+**`ae-studio-<org>`**:
+The per-organization identity the design agent uses to join a Room. A Thunder
+Agent entity in the org's organization unit on the Platform IdP, created by
+`aep-api` with the Resource. Its secret is mounted only on `ae-studio-tools`, which
+hands the design agent a token for a Room join.
+_Avoid_: agent Room token (retired), publisher client (a different identity: a
+coding run holds that one and must not join Rooms).
+
+**AE-only control-plane client** (`APP_FACTORY_BFF_TO_AE_STUDIO`, working name):
+The Platform IdP client `aep-api` uses to call `ae-studio` with no user on the
+request, and for every operation on `ae-studio-tools` that needs `aep-api` state.
+It sends the org in the `X-Impersonate-Org` header. It is not in platform-api's
+impersonation policy, and its secret never leaves `aep-api`.
+_Avoid_: `APP_FACTORY_BFF_TO_PLATFORM_API` (the shared client for platform-api only,
+never sent to the dataplane).

@@ -21,7 +21,7 @@ Source: [S1-big-picture.excalidraw](diagrams/S1-big-picture.excalidraw). The det
 | **SM API** | The platform's write-only door to vault. It gives back names and keys, never a value. |
 | **SecretReference** | An OpenChoreo object that names a vault path for a secret. It holds names, never values. |
 | **Publisher client** | The organization's Thunder OAuth application (`aep-publisher-<org>` on the Platform IdP). The dataplane uses it to call `aep-api`. It is used only from the dataplane to the control plane. |
-| **Environment Thunder** | The Thunder identity provider for one organization and one environment. It is a different issuer from the Platform IdP. |
+| **Platform IdP** | The shared Thunder identity provider (`iss=platform-idp`). It is the only issuer AE uses. Every token in this spec comes from it, and `ae-studio` checks each token against its public JWKS. Environment Thunder, the per-organization Thunder, is not used by AE. |
 | **CP / DP** | Control plane (where `aep-api` runs) / the organization's dataplane (where the work runs). |
 | **gitpat** | The GitHub personal access token an organization gives AE. It is the only GitHub connect path. A GitHub App may come later. |
 
@@ -34,8 +34,8 @@ In scope:
 - Where every organization secret is written, stored and read.
 - The dataplane authoring runtime: Resource `ae-studio` and its three containers.
 - The coding agent Job and how it is sandboxed.
-- How the control plane and the dataplane authenticate to each other, in both directions.
-- How the browser reaches live collaboration, and how GitHub reaches the webhook receiver.
+- How the control plane and the dataplane authenticate to each other, in both directions. Every token comes from the Platform IdP.
+- How the browser reaches `ae-studio` directly (design turns, live collaboration, git-only REST), and how GitHub reaches the webhook receiver.
 - WSO2 Cloud trust boundaries, with today's missing controls tagged as gaps.
 
 Out of scope:
@@ -57,7 +57,7 @@ Source: [C3-today-vs-intended.excalidraw](diagrams/C3-today-vs-intended.excalidr
 | 2 | `aep-api` uses the gitpat for all git work. | Only `ae-studio-tools` and `ae-coding-tools`, in the dataplane, use it. |
 | 3 | The Anthropic key is taken out of the database and sent with every chat turn. | The key is given to the agent from vault. `aep-api` never reads it. |
 | 4 | The coding agent (an AI with a shell) can read all its secrets. | The gitpat and the publisher client move to a separate tools container. The AI keeps only the Anthropic key. |
-| 5 | The AI agent gets a copy of the user's full login token. | The agent never gets the user's login token. For a Room turn it gets a token for this one Room that ends with the turn (30 minutes at most). |
+| 5 | The AI agent gets a copy of the user's full login token. | No copy of the login token goes to another service or to the model. The design agent joins a Room with an `ae-studio-<org>` token that only `ae-studio-tools` can fetch. The token is valid for this org only. |
 | 6 | One webhook secret for all orgs. | One secret per org, checked in that org's dataplane. |
 | 7 | All orgs share the same services. | Each org's work runs in its own dataplane. |
 

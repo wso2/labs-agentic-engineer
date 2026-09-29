@@ -9,7 +9,7 @@ There is one architecture for a local install and for WSO2 Cloud. Where the two 
 
 ## Status
 
-**Locked on 2026-09-24.** This is the spec the WSO2 Cloud threat model is written from. A change after the lock needs a new decision; do not edit this spec in place. The open items O-3 to O-11 in [12-gaps-and-open-items.md](12-gaps-and-open-items.md) are named, not decided. The threat model tags those that bear on a threat.
+**Locked on 2026-09-24.** This is the spec the WSO2 Cloud threat model is written from. A change after the lock needs a new decision; do not edit this spec in place. The open items O-3 to O-8 and O-11 to O-15 in [12-gaps-and-open-items.md](12-gaps-and-open-items.md) are named, not decided. The threat model tags those that bear on a threat.
 
 ### Changes after the lock
 
@@ -19,6 +19,7 @@ Each change below came from a new decision and is applied across the chapters it
 |---|---|---|
 | 2026-09-24 | O-2 closed: `ae-design-agent` calls platform MCP tools through `ae-studio-tools` on its own Unix socket; `ae-studio-tools` serves remote-git and passes the rest to `aep-api` as the publisher client (new flow 12). `/internal/v1/mcp` accepts only the publisher client token. `ae-studio` pods do not share a process namespace. Pictures 01 and 02 are redrawn: they draw flow 12 on the flow-6 line, labelled `6·12` (same hop, same credential), and add the MCP socket arrow. The repository `CONTEXT.md` entries for Publisher client and Coding agent are updated to match. | `03`, `04`, `07`, `08`, `09`, `10`, `12`, `13`, `14`, `diagrams/01`, `diagrams/02`, `CONTEXT.md` |
 | 2026-09-26 | Lock review fixes. The webhook gap is retired; GAP-2 and GAP-3 keep their numbers (the webhook move is an AE change in `13`). On WSO2 Cloud, flow 1 goes through the console's own web server and `aep-api` checks the user JWT itself. `aep-api` finds a Room by looking up the project, and finds a flow 6 event's repository only in the publisher token's org. Agent edits are shown in the Room for review, not held back. The coding agent's own credential is now called the "Coding agent token" (a Claude subscription token, ADR-0036). O-3 is narrowed (user-started flow 10 writes carry the user's JWT). New O-11: dependency secrets and test-user passwords during a coding run. Smaller rows: the skills mirror runs on `ae-studio-tools`, the Room token names the user, design agent web search, the `specs/` and 5 MiB save rules on `ae-studio-tools`, flows 1 to 12 in the glossary, and a note that no owner is named for the 7-day conversation delete. | `00`, `02`, `03`, `04`, `05`, `06`, `07`, `08`, `09`, `10`, `12`, `13`, `14`, `diagrams/01`, `diagrams/02`, `CONTEXT.md` |
+| 2026-09-29 | `ae-studio` checks Platform IdP tokens itself. The Platform IdP is the only issuer: `aep-api` mints no token and publishes no JWKS, and Environment Thunder is not used by AE. The console gets the `ae-studio` URLs and status from `aep-api`, then calls `ae-design-agent` (new flow 13) and `ae-studio-tools` (new flow 14) directly, and `ae-collab` (flow 4) as before. Flows 2 and 3 carry the forwarded user JWT or a new AE-only machine token (`APP_FACTORY_BFF_TO_AE_STUDIO`, working name). The design agent joins a Room with an `ae-studio-<org>` token that `ae-studio-tools` fetches. Design turns, the one-active-turn lock and the conversation thread live in the pod. Design-turn usage goes to `aep-api` in batches (new flow 15). The activity feed, `collab/validate`, the turn SSE copy on `aep-api` and the Room tokens are removed. GAP-2, O-9 and O-10 are retired. New open items O-12 to O-15 (WSO2 Cloud asks). The Mermaid versions of pictures 01 and 02 show this design. The PNG and Excalidraw pictures still show flows 1 to 12 and must be redrawn to match. | `00`, `01`, `03`, `04`, `05`, `06`, `07`, `08`, `09`, `10`, `11`, `12`, `13`, `14`, `CONTEXT.md` |
 
 This spec does not cover the console UI. It is not an implementation plan.
 
@@ -29,7 +30,7 @@ This spec does not cover the console UI. It is not an implementation plan.
 | [01-overview.md](01-overview.md) | Goal, scope, the words you need first, problem → fix |
 | [02-today-and-problems.md](02-today-and-problems.md) | How AE works today and its seven problems |
 | [03-components.md](03-components.md) | Every runtime: its job, what it mounts, what it exposes |
-| [04-flows.md](04-flows.md) | Flows 1–12 and the calls inside each pod |
+| [04-flows.md](04-flows.md) | Flows 1–15 and the calls inside each pod |
 | [05-lifecycle.md](05-lifecycle.md) | gitpat submit, key writes, Ensure, upgrade, coding Job start |
 | [06-secrets.md](06-secrets.md) | Write-only SM API, the ESO read path, which secret lands where |
 | [07-identity-and-tokens.md](07-identity-and-tokens.md) | Every token: issuer, audience, lifetime, who checks it |
@@ -37,7 +38,7 @@ This spec does not cover the console UI. It is not an implementation plan.
 | [09-sandboxing-and-guardrails.md](09-sandboxing-and-guardrails.md) | Pod controls, egress, tool rules for both agent pods |
 | [10-cloud-trust-boundaries.md](10-cloud-trust-boundaries.md) | TB-1 to TB-9 in WSO2 Cloud |
 | [11-local-vs-cloud.md](11-local-vs-cloud.md) | What differs in a local install |
-| [12-gaps-and-open-items.md](12-gaps-and-open-items.md) | GAP-2 and GAP-3, accepted risks, open items |
+| [12-gaps-and-open-items.md](12-gaps-and-open-items.md) | GAP-3, accepted risks, open items |
 | [13-change-inventory.md](13-change-inventory.md) | Per component: what is added, changed, removed |
 | [14-glossary.md](14-glossary.md) | Every term this spec uses |
 | [diagrams/](diagrams/) | PNG and Excalidraw source for every picture |
@@ -57,6 +58,6 @@ Everyone: `01`, then `14` as needed.
 
 - It states the end state only. It does not tell the story of how each choice was made.
 - Decision chapters (`03`, `06`, `07`, `08`, `09`) end with a short "Not chosen, and why" list.
-- Flow numbers 1–12 and boundary numbers TB-1 to TB-9 are the same in every file and every picture that shows them. Pictures 01 and 02 draw flows 6 and 12 as one line labelled `6·12`.
+- Flow numbers 1–15 and boundary numbers TB-1 to TB-9 are the same in every file and every picture that shows them. Pictures 01 and 02 draw flows 6 and 12 as one line labelled `6·12`.
 - Where a picture and its Mermaid version differ, the picture (Excalidraw) wins.
 - Where a glossary word in `14-glossary.md` differs from the repository's `CONTEXT.md`, `CONTEXT.md` wins.

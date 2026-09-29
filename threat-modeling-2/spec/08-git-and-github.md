@@ -6,11 +6,12 @@ After gitpat submit, the control plane can never read the gitpat. Every operatio
 
 | Operation | Where | Reached by |
 |---|---|---|
-| clone, fetch, commit, push (spec files, Files API apply) | `ae-studio-tools` | flow 3 from `aep-api` / Temporal; Unix socket from `ae-collab` |
-| GitHub REST: issues, pull requests, milestones, merge | `ae-studio-tools` | flow 3 |
+| clone, fetch, commit, push (spec files, Files API apply) | `ae-studio-tools` | flow 3 from `aep-api` / Temporal, with the AE-only M2M token; Unix socket from `ae-collab` |
+| GitHub REST: issues, pull requests, milestones, merge | `ae-studio-tools` | flow 3, with the AE-only M2M token |
+| git-only reads for the browser: spec file reads, issue-backed task lists, repo reads | `ae-studio-tools` | flow 14 from the browser, and flow 3 when `aep-api` forwards a user request. Both carry the user JWT. |
 | MCP remote-git (file contents, code search) | `ae-studio-tools` for `ae-design-agent`; `ae-coding-tools` for a coding run | MCP Unix socket from `ae-design-agent`, then flow 9; `127.0.0.1` from `ae-coding-agent`, then flow 7b |
-| repo create | GitHub call on `ae-studio-tools`; the Postgres row on `aep-api` | flow 3 |
-| skills mirror: copy the org's skills into a project repo, reading the org-skills repo | `ae-studio-tools` (`aep-api` has no gitpat) | flow 3 |
+| repo create | GitHub call on `ae-studio-tools`; the Postgres row on `aep-api` | flow 3, AE-only M2M token only |
+| skills mirror: copy the org's skills into a project repo, reading the org-skills repo | `ae-studio-tools` (`aep-api` has no gitpat) | flow 3, AE-only M2M token only |
 | webhook **register** | `aep-api`, during gitpat submit, with the in-memory gitpat. The hook URL is the public address of `ae-studio-tools`. | [05-lifecycle.md](05-lifecycle.md) |
 | webhook **verify** | `ae-studio-tools`, with the org HMAC from vault | flow 5 |
 | gitpat check at submit | `aep-api`, with the gitpat from the request body, in memory | flow 1 |
@@ -26,7 +27,7 @@ The webhook path is flows 5 and 6 in the picture in [03-components.md](03-compon
 
 `ae-studio-tools` listens on a webhook path of its public address. The gateway checks no JWT and no API key; it only ends TLS. `ae-studio-tools` checks `X-Hub-Signature-256` with the org HMAC.
 
-This route is different from the Room WebSocket and from the control-plane service route (`aud` = `ae-studio-tools`). The same receiver serves both installs:
+This route is different from the Room WebSocket and from the routes that check a Platform IdP token (flows 3 and 14). The webhook route takes no token. The same receiver serves both installs:
 
 | Install | What GitHub calls |
 |---|---|
@@ -49,10 +50,11 @@ It never sends the signature or the HMAC secret.
 
 gitpat submit waits until `ae-studio-tools` can accept the POST, then registers that address **once**. If the wait ends with no address, no hook is registered. There is no second URL, and the control-plane webhook URL is not a stand-in. The full procedure is in [05-lifecycle.md](05-lifecycle.md).
 
-Today's hook ends on the control-plane webhook RestApi. That RestApi is removed once the org kgateway route is live. It is an AE change, listed in [13-change-inventory.md](13-change-inventory.md).
+The control-plane webhook RestApi is removed once the org kgateway route is live. It is an AE change, listed in [13-change-inventory.md](13-change-inventory.md).
 
 ## Not chosen, and why
 
+- **A browser call to repo create or the skills mirror on `ae-studio-tools`.** The browser could skip `aep-api`. Those routes accept only the AE-only M2M token ([07-identity-and-tokens.md](07-identity-and-tokens.md)).
 - **Git writes stay on `aep-api`.** Needs a control-plane read of the gitpat, a GitHub App, or a Secret API read of the value.
 - **HMAC checked on `aep-api`, by a platform HMAC or a Secret API read.** Either one secret for all orgs, or a control-plane read path to a value.
 - **Local ingress as the only front door.** A local cluster is often not reachable from GitHub; smee keeps one receiver for both installs.

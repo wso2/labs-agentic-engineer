@@ -8,7 +8,7 @@ Source: [S3-secrets-one-way.excalidraw](diagrams/S3-secrets-one-way.excalidraw).
 
 ## Rules
 
-- **Vault is the only store** of organization secret values. Postgres holds no organization secret values: no gitpat, no Anthropic key, no org HMAC, no publisher client secret.
+- **Vault is the only store** of organization secret values. Postgres holds no organization secret values: no gitpat, no Anthropic key, no org HMAC, no publisher client secret, no `ae-studio-<org>` client secret.
 - **The SM API is write-only to `aep-api`.** A write returns keys and `secretReferenceName` only. GET returns the same. Reading a value back (`GetSecretWithValue`) is not supported. There is no path for a value to return to the control plane.
 - **`aep-api` holds a value only while it writes it.** The gitpat and the org HMAC exist in `aep-api` memory only during gitpat submit ([05-lifecycle.md](05-lifecycle.md)). A key exists in `aep-api` memory only during its write request.
 - **Every value reaches its container the same way:** SecretReference → ExternalSecret → Kubernetes Secret → container env.
@@ -75,17 +75,20 @@ sequenceDiagram
 | gitpat | | ✓ | | | ✓ |
 | org HMAC | | ✓ | | | |
 | publisher client (`client_id` / `client_secret`) | | ✓ | | | ✓ |
+| `ae-studio-<org>` client (`client_id` / `client_secret`) | | ✓ | | | |
 
 - (✓): `ae-coding-agent` gets the Default key only when the org has no Coding agent token.
 - Dependency secrets and test-user passwords for a coding run are not in this table. Where they live is open item O-11 ([12-gaps-and-open-items.md](12-gaps-and-open-items.md)).
 - `ae-collab` mounts no secrets.
+- The `ae-studio-<org>` client secret is written by `aep-api` through the SM API (flow 10) and mounted only on `ae-studio-tools`. `ae-studio-tools` gets a token with it and hands only the token to `ae-design-agent` for a Room join ([07-identity-and-tokens.md](07-identity-and-tokens.md)). The model container never holds the client secret.
+- The `APP_FACTORY_BFF_TO_AE_STUDIO` secret (working name) is a platform secret of `aep-api`. It is not in this table because no dataplane container mounts it.
 - `ae-design-agent`, `ae-studio-tools` and `ae-collab` run in Resource `ae-studio` (one pod). `ae-coding-agent` and `ae-coding-tools` run in the coding agent Job (a separate pod).
 
 The **org HMAC** is one secret per organization. It replaces today's single platform webhook secret. Only `ae-studio-tools` checks it ([08-git-and-github.md](08-git-and-github.md)).
 
 ## What is not a secret here
 
-Tokens that `aep-api` mints (the CP → DP service token, the Room token and the agent Room token) are short-lived and are not stored anywhere: not in Postgres, not in vault. The key that signs them is a platform secret of `aep-api`, not an organization secret. See [07-identity-and-tokens.md](07-identity-and-tokens.md).
+Tokens are short-lived and are not stored anywhere: not in Postgres, not in vault. Every container keeps the tokens it gets in memory only. `aep-api` mints no token, so it holds no signing key. Every token comes from the Platform IdP ([07-identity-and-tokens.md](07-identity-and-tokens.md)).
 
 ## Not chosen, and why
 
@@ -94,3 +97,5 @@ Tokens that `aep-api` mints (the CP → DP service token, the Room token and the
 - **Check the org HMAC on `aep-api` through a Secret API read.** It gives the control plane a read path to a value.
 - **Postgres as the source of truth with a vault copy.** That is today's design and problem 1.
 - **An AI gateway that holds the Default key.** Out of scope. The model containers keep the Anthropic key they need.
+- **The `ae-studio-<org>` client secret on `ae-design-agent`.** A client secret on a model container. `ae-studio-tools` holds it and serves only tokens.
+- **A per-org client for `aep-api` → `ae-studio`.** The control plane cannot read a per-org secret from the write-only SM API. `aep-api` uses one AE-only client with the `X-Impersonate-Org` header instead.

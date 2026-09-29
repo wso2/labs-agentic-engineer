@@ -113,10 +113,25 @@ _Avoid_: vault (the store behind it), secret store, secrets service.
 The Thunder identity provider for one organization and one environment. It is a
 different issuer from the Platform IdP, with its own keys: there is one per
 organization and environment, where the Platform IdP is one for the whole
-platform.
+platform. Agentic Engineer does not use it.
 _Avoid_: dataplane IdP (it does not run in the dataplane), tenant IdP, Platform
 IdP (a different issuer).
 
+**`ae-studio-<org>`**:
+The per-organization identity the design agent uses to join a Room. A Thunder
+Agent entity in the org's organization unit on the Platform IdP, created by
+`aep-api` with the Resource. Its secret is mounted only on `ae-studio-tools`, which
+hands the design agent a token for a Room join.
+_Avoid_: agent Room token (retired), publisher client (a different identity: a
+coding run holds that one and must not join Rooms).
+
+**AE-only control-plane client** (`APP_FACTORY_BFF_TO_AE_STUDIO`, working name):
+The Platform IdP client `aep-api` uses to call `ae-studio` with no user on the
+request, and for every operation on `ae-studio-tools` that needs `aep-api` state.
+It sends the org in the `X-Impersonate-Org` header. It is not in platform-api's
+impersonation policy, and its secret never leaves `aep-api`.
+_Avoid_: `APP_FACTORY_BFF_TO_PLATFORM_API` (the shared client for platform-api only,
+never sent to the dataplane).
 
 ## Spec terms
 
@@ -127,24 +142,23 @@ Words used only in this spec. The `ae-*` names are implementation names, so they
 | **AE** | Agentic Engineer, the product. |
 | **CP** | Control plane: where `aep-api`, Postgres, the SM API, the Platform IdP and the OpenChoreo control plane run. In WSO2 Cloud, cloud-cp. |
 | **DP** | The organization's dataplane: where Resource `ae-studio` and the coding agent Job run. |
-| **`aep-api`** | The Go backend (BFF). Authorizes users, keeps rows, writes secrets through the SM API, Ensures the runtime, mints short tokens, runs the Temporal worker in the same process. |
+| **`aep-api`** | The Go backend (BFF). Authorizes users, keeps rows, writes secrets through the SM API, Ensures the runtime, creates the per-org clients, tells the console where `ae-studio` is, runs the Temporal worker in the same process. It mints no token. |
 | **gitpat** | The GitHub personal access token an organization gives AE. The only GitHub connect path in this spec. |
 | **gitpat submit** | The procedure that runs when a person pastes the gitpat (also called Connect). The only time the control plane holds the gitpat. |
 | **org HMAC** | The per-organization secret GitHub uses to sign webhooks (`X-Hub-Signature-256`). Checked only by `ae-studio-tools`. |
 | **Ensure** | `aep-api` creates or heals Project `ae-system`, its `development` ProjectReleaseBinding and Resource `ae-studio`. |
 | **`ae-system`** | The OpenChoreo Project that holds Resource `ae-studio`, environment `development`. |
 | **`ae-studio`** | The OpenChoreo ResourceType and Resource for the dataplane authoring runtime: one pod, three containers. Not a Room. |
-| **`ae-design-agent`** | Container (and image) in `ae-studio` that runs the design agent model. Mounts the Default key only. |
+| **`ae-design-agent`** | Container (and image) in `ae-studio` that runs the design agent model. Mounts the Default key only. Holds the one-active-turn lock and the conversation thread. |
 | **`ae-collab`** | Container (and image) in `ae-studio` that serves Room WebSockets. Mounts no secrets. |
-| **`ae-studio-tools`** | Container (and image) in `ae-studio` that runs no model: git, GitHub, webhook receive and HMAC check, the MCP server for `ae-design-agent`, publisher client calls. |
+| **`ae-studio-tools`** | Container (and image) in `ae-studio` that runs no model: git, GitHub, git-only REST for the browser, webhook receive and HMAC check, the MCP server for `ae-design-agent`, the Room-join token, usage batches, publisher client calls. |
 | **`ae-coding-agent`** | Container (and image) in the coding agent Job that runs the coding agent model. Mounts only the org's AI keys (the Coding agent token or the Default key). |
 | **`ae-coding-tools`** | Container (and image) in the coding agent Job that runs no model: git and GitHub for this run's repository, platform calls for this run. |
-| **`*-agent` / `*-tools`** | Naming rule: a `*-agent` container runs a model and holds only the org's AI keys; a `*-tools` container holds the gitpat, the org HMAC (studio only) and the publisher client. |
-| **CP → DP service token** | Short RS256 JWT minted by `aep-api` per call, `aud` org + the receiving container, TTL 5 minutes. |
-| **Room token** | Short RS256 JWT minted by `aep-api` for the browser, `sub` the user, `aud` org + `ae-collab` + Room, TTL 5 minutes. |
-| **Agent Room token** | RS256 JWT minted by `aep-api` for one Room-mode turn and sent in the turn body. `aud` org + `ae-collab` + Room, `sub` the user, `act` `ae-design-agent`, valid until the turn deadline. `ae-collab` checks it like the Room token. |
-| **JWKS** | The public keys an issuer publishes so receivers can check its tokens. |
-| **Token exchange** | RFC 8693: trade one token for another at an identity provider. Intended at Environment Thunder. |
+| **`*-agent` / `*-tools`** | Naming rule: a `*-agent` container runs a model and holds only the org's AI keys; a `*-tools` container holds the gitpat, the org HMAC (studio only), the publisher client and the `ae-studio-<org>` client (studio only). |
+| **User JWT** | The Platform IdP token of the signed-in user (`aud=APP_FACTORY_CONSOLE`). The browser sends it to `aep-api` and to the three `ae-studio` containers. |
+| **AE-only M2M token** | The machine-to-machine token of the AE-only control-plane client, sent with `X-Impersonate-Org`. `aep-api` mints no token. |
+| **JWKS** | The public keys an issuer publishes so receivers can check its tokens. The Platform IdP publishes one, and `ae-studio` checks every token against it. |
+| **Token exchange** | RFC 8693: trade one token for another at an identity provider. Not used by AE. |
 | **org kgateway** | The public gateway of the org dataplane. TLS only; it does not check identity. |
 | **ESO** | External Secrets Operator. Reads vault through a ClusterSecretStore and writes Kubernetes Secrets in the dataplane. |
 | **vault** | The secret store behind the SM API (OpenBao on a local install). |
@@ -152,6 +166,6 @@ Words used only in this spec. The `ae-*` names are implementation names, so they
 | **smee** | A public relay that forwards GitHub webhooks to a local cluster. Local install only. |
 | **brain vs hands** | The split between a model container (brain) and its tools container (hands). |
 | **TB-n** | Trust boundary n in WSO2 Cloud, TB-1 to TB-9 ([10-cloud-trust-boundaries.md](10-cloud-trust-boundaries.md)). |
-| **GAP-n** | A control designed but not yet in place in WSO2 Cloud, GAP-2 and GAP-3 ([12-gaps-and-open-items.md](12-gaps-and-open-items.md)). |
+| **GAP-n** | A control designed but not yet in place in WSO2 Cloud, GAP-3 ([12-gaps-and-open-items.md](12-gaps-and-open-items.md)). |
 | **O-n** | An open item this spec does not decide ([12-gaps-and-open-items.md](12-gaps-and-open-items.md)). |
-| **Flow n** | Network flow n, 1 to 12 ([04-flows.md](04-flows.md)). |
+| **Flow n** | Network flow n, 1 to 15 ([04-flows.md](04-flows.md)). |
