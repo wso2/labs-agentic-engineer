@@ -82,10 +82,15 @@ vi.mock("@tanstack/react-router", () => ({
 // The merged multi-user panel stamps outgoing messages with the signed-in
 // author (via useCurrentAuthor -> useSession), which throws outside an
 // AuthGuard — this test renders the panel bare, so stub the session.
+// `permissions` is read too: the panel withholds GET /config without a
+// credential permission (see its `canReadConfig`). Empty here — these tests are
+// about the seed/turn wiring, and an empty set exercises the withheld path,
+// which is the one a design-only role actually takes.
 vi.mock("../../../auth/SessionContext", () => ({
   useSession: () => ({
     user: { name: "Test User", email: "test@example.com" },
     orgHandle: "acme",
+    permissions: new Set<string>(),
     signOut: vi.fn(),
   }),
 }));

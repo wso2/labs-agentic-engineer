@@ -112,9 +112,10 @@ func TestRolePermissions_AeAdminHasAllPermissions(t *testing.T) {
 
 // ae:observability-view is in the set because a developer has to be able to
 // see their own deployed code failing — alerts and RCA reports are how that
-// arrives. ae:usage-view is NOT: org spend is a billing concern, and nothing
-// the role does depends on reading it. Asserted as an exact set so both halves
-// of that line are load-bearing.
+// arrives. Two are deliberately NOT: ae:usage-view, because org spend is a
+// billing concern, and ae:design, because a role that runs builds is not
+// thereby a role that can change what those builds are judged against. The set
+// is asserted exactly so each of those stays a decision rather than a drift.
 func TestRolePermissions_AeDeveloperHoldsItsWorkingSet(t *testing.T) {
 	got := RolePermissions("ae-developer")
 	sort.Strings(got)
@@ -122,7 +123,6 @@ func TestRolePermissions_AeDeveloperHoldsItsWorkingSet(t *testing.T) {
 	want := []string{
 		string(PermissionBuild),
 		string(PermissionBuildView),
-		string(PermissionDesign),
 		string(PermissionDesignView),
 		string(PermissionRequirementView),
 		string(PermissionObservabilityView),

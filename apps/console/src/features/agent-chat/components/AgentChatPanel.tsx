@@ -63,6 +63,7 @@ import { answerableQuestionIds } from "../questionCards";
 import { providerWaitLabel, useProviderWait } from "../providerWait";
 import { MessageList } from "./MessageList";
 import { ChatInput } from "./ChatInput";
+import { useHasAnyPermission } from "../../../auth/permissions";
 import { useConfig } from "../../settings/api/queries";
 import { modelReads } from "../../settings/aiSettings";
 
@@ -148,8 +149,18 @@ export function AgentChatPanel({
   // of every file from disk.
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   // What the org's model reads, so the attach control refuses what the turn
-  // would refuse. Every org member can read /config.
-  const reads = modelReads(useConfig().data);
+  // would refuse.
+  //
+  // Withheld without a credential permission: GET /config is gated on
+  // ae:github-config OR ae:model-config, and this panel rides the design
+  // workspace, which ae:design-view alone admits — so a designer who cannot
+  // read the org's credentials opens a page that would otherwise retry a 403
+  // for as long as it stays open. `modelReads` answers null for a config it
+  // never got, and the attach control already treats null as "unknown" rather
+  // than as a refusal, so the only thing lost is the pre-emptive check; the
+  // turn itself still refuses what the model cannot read.
+  const canReadConfig = useHasAnyPermission(["ae:github-config", "ae:model-config"]);
+  const reads = modelReads(useConfig(canReadConfig).data);
 
   const feed = useMemo(
     () => buildFeed(messages, { currentUserId: author.id, activeTurnId }),

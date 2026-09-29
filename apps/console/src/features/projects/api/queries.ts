@@ -26,6 +26,7 @@ import {
 } from "@tanstack/react-query";
 import type { components } from "../../../generated/aep-api";
 import { client } from "../../../api/client";
+import { useHasPermission } from "../../../auth/permissions";
 import { useConfig } from "../../settings/api/queries";
 import { firstEndpointUrl } from "../lib/deploymentUrl";
 import { deploymentsAreMoving } from "../lib/deploymentRows";
@@ -185,8 +186,14 @@ export function useProjectComponents(projectName: string) {
 // Deployed-workload dependencies for the project Overview (deduped rows).
 // Null body is a valid empty list — unresolved design declarations are
 // omitted by the BFF, so we must not treat null as a load failure.
-export function useWorkloadDependencies(projectName: string) {
+// `enabled` withholds the request for a caller without ae:resource-view, which
+// is what the BFF gates list-workload-dependencies on. Firing it anyway is not
+// a harmless 403: this hook sits on the project overview, which a role holding
+// no resource permission can legitimately open, so the refusal repeats for as
+// long as the page is.
+export function useWorkloadDependencies(projectName: string, enabled = true) {
   return useQuery({
+    enabled,
     queryKey: projectKeys.workloadDependencies(projectName),
     queryFn: async () => {
       const { data, error } = await client.GET(
@@ -547,8 +554,13 @@ export function useUploadReferences() {
   });
 }
 
+// The org's GitHub login, for the repo name the create form previews. Read
+// off /config, so it needs that endpoint's permission: withheld without
+// ae:github-config, since the whole projection is redacted to the caller
+// anyway (RedactConfigForPermissions nils gitProvider) — the request would
+// buy a 403 and then read the same null out of it.
 export function useGithubOrg() {
-  const { data } = useConfig();
+  const { data } = useConfig(useHasPermission("ae:github-config"));
   return {
     data: data?.gitProvider?.githubLogin ?? data?.gitProvider?.identityLogin ?? null,
   };

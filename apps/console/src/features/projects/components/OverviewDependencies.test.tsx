@@ -154,13 +154,18 @@ vi.mock("../../settings/api/queries", () => ({
 // external-resources catalog read (ae:resource-view/ae:resource-config) —
 // every test here holds it, so that read resolves exactly as it did before
 // being permission-gated.
+// ae:resource-view also gates the panel's OWN read now, so it is togglable —
+// every test but the dedicated one below holds it, and the reads resolve
+// exactly as they did before being gated.
+const hasResourceAccess = vi.hoisted(() => ({ current: true }));
 vi.mock("../../../auth/permissions", () => ({
-  useHasPermission: () => true,
-  useHasAnyPermission: () => true,
+  useHasPermission: () => hasResourceAccess.current,
+  useHasAnyPermission: () => hasResourceAccess.current,
 }));
 
 function resetState() {
   refetch.mockReset();
+  hasResourceAccess.current = true;
   openApiCalls.length = 0;
   depsState = {
     data: [],
@@ -197,6 +202,43 @@ describe("OverviewDependencies", () => {
       screen.getByText(/unresolved design declarations stay off this list/i),
     ).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  // A role that can open a project but holds no resource permission — the
+  // BFF gates list-workload-dependencies on ae:resource-view. The read is
+  // withheld rather than fired, so this must not render as a Skeleton (a
+  // disabled query reads as pending forever) nor as "Failed to load", which
+  // reads as a platform fault and offers a Retry that cannot succeed.
+  it("explains a missing resource permission instead of failing the read", () => {
+    resetState();
+    hasResourceAccess.current = false;
+
+    render(<OverviewDependencies projectName={CURRENT_PROJECT} />);
+
+    expect(screen.getByText("No permission to view dependencies")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Failed to load/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Loading dependencies")).not.toBeInTheDocument();
+  });
+
+  // A cached refusal from before the read was withheld must still read as a
+  // permission problem, not as a failed load.
+  it("prefers the permission explanation over a stale error", () => {
+    resetState();
+    hasResourceAccess.current = false;
+    depsState = {
+      data: [],
+      isPending: false,
+      isError: true,
+      error: new Error("missing required permission"),
+      refetch,
+    };
+
+    render(<OverviewDependencies projectName={CURRENT_PROJECT} />);
+
+    expect(screen.getByText("No permission to view dependencies")).toBeInTheDocument();
+    expect(screen.queryByText(/missing required permission/)).not.toBeInTheDocument();
   });
 
   it("opens the resource drawer with the catalog type name on a resource click", () => {

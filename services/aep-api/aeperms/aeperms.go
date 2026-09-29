@@ -150,20 +150,26 @@ const (
 // deploy a thing but not to see it fail, and put the notification bell and the
 // Alerts page behind a permission the people acting on them did not have.
 //
-// It still omits ae:usage-view — org spend is a billing concern rather than a
-// working one, and nothing a developer does depends on reading it.
+// It omits ae:usage-view — org spend is a billing concern rather than a working
+// one, and nothing a developer does depends on reading it.
 //
-// It DOES hold ae:design paired with the ae:design-view beside it — the same
-// full write/view pair as ae:build/ae:build-view, since ae-developer is the
-// role that actually authors specs; that pairing is also what keeps the role
-// able to use the AI chat panel, which gates on ae:design rather than a chat
-// permission of its own (the panel is a facet of the design workspace, not a
-// separate feature).
+// It omits ae:design too, holding only the ae:design-view beside it. So this is
+// the one place the role does NOT get a write/view pair, and the asymmetry is
+// deliberate: the design is what the build is judged against, and a role that
+// can run builds is not thereby a role that can change what they are measured
+// by. Two consequences follow, both intended rather than tolerated:
+//
+//   - The spec is READ-ONLY for this role. Not just in the UI — ApplyFiles is
+//     gated on ae:design, and validate-collab-access answers canWrite:false, so
+//     the collab server marks the socket read-only and Yjs updates from it are
+//     dropped. A client that does not run our code cannot edit it either.
+//   - The AI chat panel is unavailable. Its turn operations gate on ae:design,
+//     because a turn's instruction carries `/<skill>` flow commands the server
+//     expands — sending one IS editing the design, by a longer route.
 var rolePermissions = map[string][]Permission{
 	RoleAdmin: AllPermissions,
 	RoleDeveloper: {
 		PermissionRequirementView,
-		PermissionDesign,
 		PermissionDesignView,
 		PermissionBuild,
 		PermissionBuildView,
