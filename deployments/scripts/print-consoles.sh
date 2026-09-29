@@ -122,8 +122,13 @@ if [ -n "$NOT_READY" ]; then
     echo "  ⚠️  Pods not running in wso2-aep"
     echo "$NOT_READY"
     echo ""
-    echo "    ImagePullBackOff on aep-tryit is expected on a fresh install: no"
-    echo "    registry publishes that image yet. \`make dev-update\` builds it."
+    # Every one of these is a real fault. `make dev-env` builds and imports all
+    # six service images before installing and pins the release to them
+    # (dev-images, --image-tag=dev-local), so an ImagePullBackOff here is a
+    # missing local build rather than an unpublished release — which is why
+    # rebuilding is the first thing to try rather than waiting for a registry.
+    echo "    kubectl -n wso2-aep describe pod <name>    says why"
+    echo "    make dev-images                            rebuilds and re-imports all six"
 fi
 
 echo ""

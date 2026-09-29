@@ -48,7 +48,7 @@ LICENSE_HEADER := .github/license-header.txt
 LICENSE_MATCH = grep -E '\.(go|ts|tsx|sh)$$|(^|/)Dockerfile$$' | \
 	grep -vE '\.gen\.(go|ts)$$|_mock\.go$$|/mocks/|/node_modules/|/dist/|/generated/|(^|/)\.(agents|claude)/'
 
-.PHONY: install gen build dev test lint eval-ui typecheck license license-check tools clean eval cover build-runner workflow-skill deadcode-ts deadcode-ts-check manifests-check dev-env dev-update dev-runner obs-park obs-unpark obs-status bal-library-tool
+.PHONY: install gen build dev test lint eval-ui typecheck license license-check tools clean eval cover build-runner workflow-skill deadcode-ts deadcode-ts-check manifests-check dev-env dev-images dev-update dev-runner obs-park obs-unpark obs-status bal-library-tool
 
 install:
 	$(PNPM) install
@@ -242,13 +242,30 @@ workflow-skill:
 #                                    "admin" HERE, and only here: aectl itself
 #                                    defaults to nothing, so a real install
 #                                    picks its own or seeds no account at all.
+#
+# The install runs on images built from THIS checkout (dev-images below, then
+# `--image-tag=dev-local`), never the released ones the chart defaults to.
+# A local chart with released images is a cluster running two different
+# versions of the platform: the Deployment templates come from your branch
+# while the containers come from whatever main last published, and the two
+# disagree the moment a branch changes the contract between them. Templates
+# pass env vars an older image's entrypoint drops on the floor, and the
+# failure surfaces somewhere else entirely — the ae:* resource-indicator
+# work (ADR-0039) showed up as a wrong-audience 401 in an aep-api log, three
+# systems away from the stale console image that caused it.
+#
+# This is why the build sits between cluster bring-up and `platform install`
+# rather than after it: skaffold needs the k3d cluster to import into, and
+# the install needs the images to already be there, so the pods come up on
+# them first time instead of pulling `:latest` and being swapped afterwards.
 dev-env:
 	cd tools/aectl && go build -o aectl-skaffold .
 	WITH_SKAFFOLD_CLIENT=1 bash deployments/scripts/setup-env-for-aectl.sh
+	$(MAKE) dev-images
 	./tools/aectl/aectl-skaffold platform config import --config skaffold/defaults.yaml
 	ANTHROPIC_API_KEY=none AEP_THUNDER_ADMIN_CLIENT_SECRET=ae-install-client-secret \
 	AEP_AE_ADMIN_PASSWORD=admin \
-		./tools/aectl/aectl-skaffold platform install --addons=all --platform-version=latest --platform-chart=deployments/helm-charts/platform
+		./tools/aectl/aectl-skaffold platform install --addons=all --platform-version=latest --platform-chart=deployments/helm-charts/platform --image-tag=dev-local
 	@if [ "$${WITH_AGENT_MANAGER:-1}" != "1" ]; then \
 		echo "⏭️  Skipping Agent Manager (WITH_AGENT_MANAGER=0)"; \
 	elif [ "$${WITH_OBSERVABILITY:-1}" != "1" ]; then \
@@ -268,6 +285,30 @@ dev-env:
 	fi
 	@AEP_AE_ADMIN_PASSWORD=admin bash deployments/scripts/print-consoles.sh
 
+# Builds the six platform service images from this checkout and loads them
+# into the k3d cluster, tagged dev-local (skaffold.yaml — build-only). Shared
+# by `dev-env`, which installs onto them, and `dev-update`, which re-points an
+# already-installed release at them; the list of images lives here once so the
+# two cannot drift apart.
+#
+# Needs the cluster to exist: skaffold is given its kube-context, and the
+# import targets it by name.
+dev-images:
+	skaffold build --kube-context k3d-openchoreo -f skaffold.yaml
+	# skaffold's own build cache lives in the HOST docker daemon, not the k3d
+	# cluster's containerd — a cache hit ("Found Locally") skips its internal
+	# k3d-import too, so a recreated/fresh cluster silently never receives an
+	# image skaffold thinks is already cached. Import explicitly every run,
+	# cache hit or not; re-importing an image the cluster already has is cheap.
+	k3d image import \
+		ghcr.io/wso2/aep/aep-api:dev-local \
+		ghcr.io/wso2/aep/agents:dev-local \
+		ghcr.io/wso2/aep/collab:dev-local \
+		ghcr.io/wso2/aep/aep-mcp-server:dev-local \
+		ghcr.io/wso2/aep/console:dev-local \
+		ghcr.io/wso2/aep/tryit:dev-local \
+		--cluster openchoreo
+
 # The observability plane's heavy half (OpenSearch, Prometheus, collectors,
 # adapters): `make dev-env` installs it running and parks it last, unless the
 # SRE agent runs (the default), which needs OpenSearch, Fluent Bit and the logs
@@ -280,10 +321,9 @@ obs-unpark:
 obs-status:
 	bash deployments/scripts/park-observability.sh status
 
-# Edit source, then run this: builds only the images whose dependencies
-# changed and loads them into k3d (skaffold.yaml — build-only, tagged
-# dev-local), then re-points the aep-platform release at them directly via
-# `helm upgrade --reuse-values` — a plain CLI flag skaffold's own v4beta11
+# Edit source, then run this: rebuilds only the images whose dependencies
+# changed (dev-images above), then re-points the aep-platform release at them
+# directly via `helm upgrade --reuse-values` — a plain CLI flag skaffold's own v4beta11
 # HelmRelease schema has no field for (see skaffold.yaml's header), and
 # load-bearing: without it this would reset every value `aectl platform
 # install` set (Thunder/OpenBao/webhook URLs, etc.) back to chart defaults.
@@ -302,20 +342,7 @@ obs-status:
 # Named dev-update, not dev: `make dev` is the uniform verb (turbo run dev,
 # host-side TS dev servers per package) and already means something else.
 dev-update:
-	skaffold build --kube-context k3d-openchoreo -f skaffold.yaml
-	# skaffold's own build cache lives in the HOST docker daemon, not the k3d
-	# cluster's containerd — a cache hit ("Found Locally") skips its internal
-	# k3d-import too, so a recreated/fresh cluster silently never receives an
-	# image skaffold thinks is already cached. Import explicitly every run,
-	# cache hit or not; re-importing an image the cluster already has is cheap.
-	k3d image import \
-		ghcr.io/wso2/aep/aep-api:dev-local \
-		ghcr.io/wso2/aep/agents:dev-local \
-		ghcr.io/wso2/aep/collab:dev-local \
-		ghcr.io/wso2/aep/aep-mcp-server:dev-local \
-		ghcr.io/wso2/aep/console:dev-local \
-		ghcr.io/wso2/aep/tryit:dev-local \
-		--cluster openchoreo
+	$(MAKE) dev-images
 	helm upgrade aep-platform deployments/helm-charts/platform -n wso2-aep --reuse-values \
 		--set aepApi.image.repository=ghcr.io/wso2/aep/aep-api --set aepApi.image.tag=dev-local \
 		--set aepAgents.image.repository=ghcr.io/wso2/aep/agents --set aepAgents.image.tag=dev-local \

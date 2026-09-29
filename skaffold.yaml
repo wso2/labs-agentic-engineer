@@ -30,13 +30,15 @@
 # so the Makefile's `helm upgrade --set ...image.tag=` can hardcode the same
 # value without parsing skaffold's build output.
 #
-# Runs AFTER `make dev-env` (deployments/scripts/setup-env-for-aectl.sh +
-# `aectl platform config import` + `aectl platform install`), which is what
-# actually installs the aep-platform release.
+# Both local-dev entry points build through here, via `make dev-images`:
+# `make dev-env` runs it between cluster bring-up and `aectl platform install`
+# so the platform installs straight onto these images (`--image-tag=dev-local`)
+# rather than the chart's released ones, and `make dev-update` runs it again to
+# re-point the already-installed release at a rebuild.
 #
 # Usage:
-#   make dev-env       # one-time: cluster + platform install, via aectl
-#   make dev-update    # this file — edit source, then run to redeploy the change
+#   make dev-env       # one-time: cluster + local images + platform install
+#   make dev-update    # edit source, then run to rebuild and redeploy the change
 
 apiVersion: skaffold/v4beta11
 kind: Config

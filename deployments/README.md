@@ -15,7 +15,9 @@ Cluster bring-up (`scripts/setup-env-for-aectl.sh`) installs a plain upstream
 OpenChoreo + ThunderID cluster, then hands off to the `aectl` CLI.
 
 ```bash
-# 1. One-shot bring-up — cluster + platform, via aectl (idempotent)
+# 1. One-shot bring-up — cluster + platform, via aectl (idempotent).
+#    Builds this checkout's service images and installs onto them, so the
+#    cluster never runs released images against local chart templates.
 make dev-env
 # Console: http://console.ae.localhost:8080
 # aep-api: http://console.ae.localhost:8080/aep-api-service/ (the console proxies it)
@@ -40,9 +42,27 @@ skips the plane and the SRE agent; `WITH_SRE=0` skips only the agent;
 flow's own copy of the binary), installs a bare OpenChoreo + ThunderID cluster
 with `WITH_SKAFFOLD_CLIENT=1` (bootstraps `aectl`'s own Thunder admin client,
 `ae-install-client` — see that script's step 3c for why it can't register
-itself), then runs `aectl-skaffold platform config import` (against
+itself), builds this checkout's six service images into the cluster
+(`make dev-images`), then runs `aectl-skaffold platform config import` (against
 `skaffold/defaults.yaml`) and `aectl-skaffold platform install --addons=all
---platform-version=latest --platform-chart deployments/helm-charts/platform`.
+--platform-version=latest --platform-chart deployments/helm-charts/platform
+--image-tag=dev-local`.
+
+**Local dev runs on locally built images, end to end.** `--image-tag=dev-local`
+re-points every service at the images `dev-images` just built and imported, so
+the pods come up on your branch's code the first time rather than pulling the
+released `:latest` and being swapped afterwards. That flag is local-dev only:
+it defaults to empty, and a real `aectl platform install` leaves the chart's
+released tags exactly as they are.
+
+The reason it is not optional: the chart is installed from your working tree,
+so without it a cluster runs your branch's Deployment templates against
+`main`'s containers. That is fine until a branch changes the contract between
+the two — a template setting an env var only the new image's entrypoint knows
+to read, say — and then the break surfaces far from its cause. ADR-0039's
+`ae:*` resource indicator did exactly this: the console template set
+`VITE_THUNDER_RESOURCE`, the released console image had no code that read it,
+and the symptom was a wrong-audience 401 in `aep-api`'s log.
 
 The observability plane is installed running, because Agent Manager's charts
 install against it, and `make dev-env` parks its heavy half (OpenSearch,

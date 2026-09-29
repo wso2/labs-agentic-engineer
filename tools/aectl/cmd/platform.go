@@ -79,7 +79,42 @@ var (
 	initOpenBaoDirect       bool
 	initReuseSecrets        bool
 	initAddons              string
+	initImageTag            string
 )
+
+// platformServiceChartKeys are the values.yaml keys of the services whose
+// image the platform chart pins — the ones --image-tag re-points. They are
+// chart value keys, not Deployment names (aepAgents is Deployment
+// aep-agents, collab is collab-server), so they follow values.yaml rather
+// than the cluster.
+var platformServiceChartKeys = []string{
+	"aepApi",
+	"aepAgents",
+	"collab",
+	"aepMcpServer",
+	"console",
+	"tryIt",
+}
+
+// imageTagOverrides returns the helm --set pairs that re-point every platform
+// service at tag, or nil for the empty tag.
+//
+// Only the tag moves: the repositories stay whatever the chart says, so the
+// images have to already exist in the cluster under those same names. That is
+// the one case this serves — `make dev-env` builds them with skaffold (whose
+// tagPolicy is the same fixed string) and k3d-imports them before the install
+// runs. An empty tag, the default and what every released install uses, leaves
+// values.yaml's own tags alone.
+func imageTagOverrides(tag string) []string {
+	if tag == "" {
+		return nil
+	}
+	args := make([]string, 0, len(platformServiceChartKeys)*2)
+	for _, key := range platformServiceChartKeys {
+		args = append(args, "--set", fmt.Sprintf("%s.image.tag=%s", key, tag))
+	}
+	return args
+}
 
 var initCmd = &cobra.Command{
 	Use:   "install",
@@ -125,6 +160,7 @@ func init() {
 	_ = viper.BindPFlag("openbao.addr", initCmd.Flags().Lookup("openbao-addr"))
 	initCmd.Flags().BoolVar(&initReuseSecrets, "reuse-secrets", false, "Skip secret prompts and reuse secrets already seeded in OpenBao (for reinstall or upgrade)")
 	initCmd.Flags().StringVar(&initAddons, "addons", "", `Comma-separated addon IDs to install without prompting (e.g. "thunder-app,postgres-cnpg"). Use "none" to skip addons, "all" to install everything. Omit for interactive selection.`)
+	initCmd.Flags().StringVar(&initImageTag, "image-tag", "", "Tag to use for every platform service image instead of the chart's released default. Repositories are unchanged, so the images must already be loaded into the cluster under those names (local dev — see 'make dev-env')")
 	registerThunderFlags(initCmd)
 }
 
@@ -281,6 +317,7 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 			chartLabel = "aep-platform@" + initPlatformVersion
 		}
 	}
+	helmArgs = append(helmArgs, imageTagOverrides(initImageTag)...)
 	if mode := viper.GetString("platform.workspaces.access_mode"); mode != "" {
 		helmArgs = append(helmArgs, "--set", "workspaces.accessMode="+mode)
 	}
