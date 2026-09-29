@@ -57,6 +57,7 @@ import { AccentPill } from "./AccentPill";
 import { ComponentsGroup, ConnectionsGroup } from "./EnvironmentGroups";
 import { FlowStep } from "./FlowStep";
 import { VerdictBanner } from "./VerdictBanner";
+import { DENIED } from "../../../auth/denialCopy";
 
 type DeployStage = components["schemas"]["DeployStage"];
 
@@ -624,7 +625,7 @@ export function EnvironmentFlowCard({
         <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", flexWrap: "wrap", rowGap: 1 }}>
           {/* A disabled control swallows its title, so the reason lives beside
               it as a caption whenever there is one to give. */}
-          <Tooltip title={!hasBuild ? "You don't have permission to promote this project." : ""}>
+          <Tooltip title={!hasBuild ? DENIED.promoteProject : ""}>
             <span>
               <Button
                 variant="contained"

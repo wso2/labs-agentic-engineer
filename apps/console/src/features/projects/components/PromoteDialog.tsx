@@ -41,6 +41,7 @@ import {
   type ConnectionRow,
   type ConnectionValues,
 } from "../lib/promotion";
+import { DENIED } from "../../../auth/denialCopy";
 
 const LinkButton = createLink(Button);
 
@@ -276,7 +277,7 @@ export function PromoteDialog({
         <Tooltip
           title={
             !hasBuild
-              ? "You don't have permission to promote this project."
+              ? DENIED.promoteProject
               : !ready
                 ? "Enabled when all required values are set"
                 : ""

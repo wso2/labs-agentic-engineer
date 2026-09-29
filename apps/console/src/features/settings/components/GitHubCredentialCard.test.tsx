@@ -18,20 +18,17 @@
 
 // @vitest-environment jsdom
 
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
+import {
+  allPermissionsExcept,
+  renderWithPermissions,
+} from "../../../auth/testing";
 import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 import { GitHubCredentialCard } from "./GitHubCredentialCard";
 
 type GitProviderProjection = components["schemas"]["GitProviderProjection"];
-
-// Every existing test in this file assumes the card is otherwise operable —
-// only the dedicated "no permission" tests below flip this to false.
-const gitHubConfigPermission = vi.hoisted(() => ({ current: true }));
-vi.mock("../../../auth/permissions", () => ({
-  useHasPermission: () => gitHubConfigPermission.current,
-}));
 
 vi.mock("../../../components/NoPermissionIllustration", () => ({
   NoPermissionIllustration: () => <svg data-testid="no-permission-illustration" />,
@@ -55,17 +52,20 @@ const connectedProvider: GitProviderProjection = {
   selectedRepos: [],
 };
 
-function renderCard(gitProvider: GitProviderProjection | null) {
-  render(
+// Every existing test in this file assumes the card is otherwise operable, so
+// permissions default to the full set — only the dedicated "no permission"
+// tests below withhold ae:github-config.
+function renderCard(
+  gitProvider: GitProviderProjection | null,
+  permissions?: Iterable<string>,
+) {
+  renderWithPermissions(
     <OxygenUIThemeProvider theme={OxygenTheme}>
       <GitHubCredentialCard gitProvider={gitProvider} />
     </OxygenUIThemeProvider>,
+    permissions,
   );
 }
-
-beforeEach(() => {
-  gitHubConfigPermission.current = true;
-});
 
 describe("GitHubCredentialCard — permission gate", () => {
   it("renders an operable form when the user holds ae:github-config", () => {
@@ -82,8 +82,7 @@ describe("GitHubCredentialCard — permission gate", () => {
   // not — is shown at all, not merely disabled: the form, the org/identity
   // info, and the connect/disconnect actions are all absent.
   it("shows no GitHub info at all without ae:github-config, connected", () => {
-    gitHubConfigPermission.current = false;
-    renderCard(connectedProvider);
+    renderCard(connectedProvider, allPermissionsExcept("ae:github-config"));
 
     expect(screen.queryByLabelText(/personal access token/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/GitHub organization name/)).not.toBeInTheDocument();
@@ -94,16 +93,14 @@ describe("GitHubCredentialCard — permission gate", () => {
   });
 
   it("shows no GitHub info at all without ae:github-config, not connected", () => {
-    gitHubConfigPermission.current = false;
-    renderCard(null);
+    renderCard(null, allPermissionsExcept("ae:github-config"));
 
     expect(screen.queryByLabelText("Personal access token")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Connect" })).not.toBeInTheDocument();
   });
 
   it("shows the no-permission illustration and message instead", () => {
-    gitHubConfigPermission.current = false;
-    renderCard(connectedProvider);
+    renderCard(connectedProvider, allPermissionsExcept("ae:github-config"));
 
     expect(screen.getByTestId("no-permission-illustration")).toBeInTheDocument();
     expect(
@@ -112,8 +109,7 @@ describe("GitHubCredentialCard — permission gate", () => {
   });
 
   it("still shows the GitHub header even when denied", () => {
-    gitHubConfigPermission.current = false;
-    renderCard(connectedProvider);
+    renderCard(connectedProvider, allPermissionsExcept("ae:github-config"));
     expect(screen.getByText("GitHub")).toBeInTheDocument();
     // The status chip reveals whether GitHub is connected — itself
     // information a denied caller should not see.

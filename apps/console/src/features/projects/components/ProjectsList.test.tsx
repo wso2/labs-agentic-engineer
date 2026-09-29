@@ -18,7 +18,8 @@
 
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
+import { renderWithPermissions } from "../../../auth/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 import { ProjectsList } from "./ProjectsList";
@@ -33,14 +34,7 @@ vi.mock("@tanstack/react-router", () => ({
 // Every test but the dedicated permission-denial ones below holds both
 // permissions, so the page and Create project read as fully reachable by
 // default — mirrors SkillsSection.test.tsx's per-suite permission toggle.
-const heldPermissions = vi.hoisted(
-  () => new Set(["ae:requirement-view", "ae:requirement-update"]),
-);
-vi.mock("../../../auth/permissions", () => ({
-  useHasPermission: (permission: string) => heldPermissions.has(permission),
-  useHasAnyPermission: (permissions: string[]) =>
-    permissions.some((p) => heldPermissions.has(p)),
-}));
+const heldPermissions = new Set(["ae:requirement-view", "ae:requirement-update"]);
 
 let listItems: Project[] = [];
 vi.mock("../api/queries", () => ({
@@ -86,7 +80,7 @@ const noAccessText = "You don't have permission to view projects.";
 describe("ProjectsList — permission gate", () => {
   it("shows an enabled Create project link when the user holds ae:requirement-update, with projects", () => {
     listItems = [project({})];
-    render(<ProjectsList />);
+    renderWithPermissions(<ProjectsList />, heldPermissions);
 
     expect(screen.getByRole("link", { name: "Create project" })).toBeInTheDocument();
   });
@@ -94,7 +88,7 @@ describe("ProjectsList — permission gate", () => {
   it("shows Create project DISABLED (not hidden) when holding only ae:requirement-view", () => {
     heldPermissions.delete("ae:requirement-update");
     listItems = [project({})];
-    render(<ProjectsList />);
+    renderWithPermissions(<ProjectsList />, heldPermissions);
 
     expect(screen.queryByRole("link", { name: "Create project" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create project" })).toBeDisabled();
@@ -103,7 +97,7 @@ describe("ProjectsList — permission gate", () => {
   it("shows the disabled Create project's tooltip on hover", async () => {
     heldPermissions.delete("ae:requirement-update");
     listItems = [project({})];
-    render(<ProjectsList />);
+    renderWithPermissions(<ProjectsList />, heldPermissions);
 
     const button = screen.getByRole("button", { name: "Create project" });
     fireEvent.mouseOver(button.closest("span") ?? button);
@@ -111,14 +105,14 @@ describe("ProjectsList — permission gate", () => {
   });
 
   it("shows Create project enabled in the true-empty state when the user holds the permission", () => {
-    render(<ProjectsList />);
+    renderWithPermissions(<ProjectsList />, heldPermissions);
 
     expect(screen.getByRole("link", { name: "Create project" })).toBeInTheDocument();
   });
 
   it("shows Create project DISABLED in the true-empty state, holding only ae:requirement-view", () => {
     heldPermissions.delete("ae:requirement-update");
-    render(<ProjectsList />);
+    renderWithPermissions(<ProjectsList />, heldPermissions);
 
     expect(screen.queryByRole("link", { name: "Create project" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create project" })).toBeDisabled();
@@ -127,7 +121,7 @@ describe("ProjectsList — permission gate", () => {
   it("shows the no-access illustration and hides everything else holding neither permission", () => {
     heldPermissions.clear();
     listItems = [project({})];
-    render(<ProjectsList />);
+    renderWithPermissions(<ProjectsList />, heldPermissions);
 
     expect(screen.getByText(noAccessText)).toBeInTheDocument();
     expect(screen.queryByText("Todo app")).not.toBeInTheDocument();
@@ -144,7 +138,7 @@ describe("ProjectsList — permission gate", () => {
     heldPermissions.clear();
     heldPermissions.add("ae:requirement-update");
     listItems = [project({})];
-    render(<ProjectsList />);
+    renderWithPermissions(<ProjectsList />, heldPermissions);
 
     expect(screen.getByText(noAccessText)).toBeInTheDocument();
     expect(screen.queryByText("Todo app")).not.toBeInTheDocument();
@@ -155,7 +149,7 @@ describe("ProjectsList — permission gate", () => {
   it("keeps a project card open (canOpen) for a requirement-view-only holder", () => {
     heldPermissions.delete("ae:requirement-update");
     listItems = [project({})];
-    render(<ProjectsList />);
+    renderWithPermissions(<ProjectsList />, heldPermissions);
 
     expect(screen.getByText("Todo app").closest("button")).not.toBeDisabled();
   });

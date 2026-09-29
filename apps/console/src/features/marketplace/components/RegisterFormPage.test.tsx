@@ -19,7 +19,12 @@
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import {
+  ALL_PERMISSIONS,
+  allPermissionsExcept,
+  renderWithPermissions,
+} from "../../../auth/testing";
 import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
@@ -90,20 +95,9 @@ vi.mock("../api/queries", () => ({
   useExternalResources: () => resourcesState,
 }));
 
-vi.mock("../../../auth/SessionContext", () => ({
-  useSession: () => ({
-    user: { name: "Test", email: "t@example.com" },
-    orgHandle: "acme",
-    signOut: vi.fn(),
-  }),
-}));
-
-// Every test but the dedicated "no permission" one below holds
-// ae:resource-config, so the form reads as reachable by default.
-const hasResourceConfig = vi.hoisted(() => ({ current: true }));
-vi.mock("../../../auth/permissions", () => ({
-  useHasPermission: () => hasResourceConfig.current,
-}));
+// Every test but the dedicated "no permission" one below holds every
+// permission, so the form reads as reachable by default.
+let held: Iterable<string> = ALL_PERMISSIONS;
 
 vi.mock("../../agent-chat/components/AgentChatPanel", () => ({
   AgentChatPanel: ({ onClose }: { onClose: () => void }) => (
@@ -200,7 +194,10 @@ function renderPage(ui: ReactElement) {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+  return renderWithPermissions(
+    <QueryClientProvider client={qc}>{ui}</QueryClientProvider>,
+    held,
+  );
 }
 
 function registerChatKey() {
@@ -320,7 +317,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockRotate.mockResolvedValue("fresh-conversation-id");
   resetState();
-  hasResourceConfig.current = true;
+  held = ALL_PERMISSIONS;
   consumePendingSeed(registerChatKey());
   clearRegisterDraft(registerChatKey());
   replaceMessages(registerChatKey(), []);
@@ -819,7 +816,7 @@ describe("RegisterFormPage edit mode", () => {
   });
 
   it("shows an insufficient-permissions message and renders no form without ae:resource-config", () => {
-    hasResourceConfig.current = false;
+    held = allPermissionsExcept("ae:resource-config");
     renderPage(<RegisterFormPage prompt="" />);
 
     expect(

@@ -18,7 +18,13 @@
 
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { fireEvent, screen } from "@testing-library/react";
+import {
+  ALL_PERMISSIONS,
+  allPermissionsExcept,
+  renderWithPermissions,
+} from "../../../auth/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 
@@ -70,14 +76,13 @@ vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({ invalidateQueries }),
 }));
 
-// RunStory's Cancel run button reads ae:build through useHasPermission — a
-// single toggle, defaulting to held, so every existing test here (written
-// before the button carried a permission check) keeps seeing it enabled; the
-// dedicated "no permission" tests flip this.
-const hasBuild = vi.hoisted(() => ({ current: true }));
-vi.mock("../../../auth/permissions", () => ({
-  useHasPermission: () => hasBuild.current,
-}));
+// RunStory's Cancel run button reads ae:build. Permissions default to the
+// full set, so every existing test here (written before the button carried a
+// permission check) keeps seeing it enabled; the dedicated "no permission"
+// test withholds just that key. `render` is shadowed below so every case
+// mounts under a real session without restating the wrapper.
+let held: Iterable<string> = ALL_PERMISSIONS;
+const render = (ui: ReactElement) => renderWithPermissions(ui, held);
 
 // The issue plane the run card reads to tell its holds apart. `undefined` is
 // the list not having arrived yet, which is a different thing from an empty
@@ -219,7 +224,7 @@ afterEach(() => {
   cancelState.error = null;
   cancelMutate.mockClear();
   invalidateQueries.mockClear();
-  hasBuild.current = true;
+  held = ALL_PERMISSIONS;
 });
 
 function renderPage(tag?: string, onTagChange = vi.fn()) {
@@ -333,7 +338,7 @@ describe("BuildsPage — one version's story", () => {
   // short, so the button stays visible (not hidden) but disabled and
   // explained, the same convention every other locked control here follows.
   it("disables cancel, with an explanatory tooltip, without ae:build", async () => {
-    hasBuild.current = false;
+    held = allPermissionsExcept("ae:build");
     mockBuilds = [build("v2", "in_progress")];
     mockRuns = [run({ state: "waiting" })];
     mockIssues = withOpenWork();

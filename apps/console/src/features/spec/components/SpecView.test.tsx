@@ -21,11 +21,12 @@
 import {
   act,
   fireEvent,
-  render,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { renderWithPermissions } from "../../../auth/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import type { components } from "../../../generated/aep-api";
@@ -125,18 +126,13 @@ vi.mock("./CellDiagramPanel", () => ({
 
 // Every existing test in this file assumes the design view, design-generation,
 // AND build are otherwise reachable — only the dedicated "no permission" tests
-// flip this.
-const sessionPermissions = vi.hoisted(() => ({
+// narrow this. `render` is shadowed below so each case keeps its existing
+// shape while mounting under a real session.
+const sessionPermissions = {
   current: new Set(["ae:design-view", "ae:design", "ae:build"]),
-}));
-vi.mock("../../../auth/SessionContext", () => ({
-  useSession: () => ({
-    user: { name: "Test User", email: "test@example.com" },
-    orgHandle: "acme",
-    permissions: sessionPermissions.current,
-    signOut: vi.fn(),
-  }),
-}));
+};
+const render = (ui: ReactElement) =>
+  renderWithPermissions(ui, sessionPermissions.current);
 
 // --- Turn-end flush (#252 Task 5): its own behavior is covered by
 // useTurnEndFlush.test.tsx — here it's a stub so this file (which mocks every

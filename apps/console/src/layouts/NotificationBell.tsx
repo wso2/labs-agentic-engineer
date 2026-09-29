@@ -36,8 +36,7 @@ import { useAlertsUnread } from "../features/alerts/hooks/useAlertsUnread";
 import { classificationLabel } from "../features/alerts/classification";
 import { attentionDescription, attentionLabel } from "../features/issues/attention";
 import { useAttentionUnread } from "../features/issues/hooks/useAttentionUnread";
-
-const NO_PERMISSION_TOOLTIP = "You don't have permission to view alerts.";
+import { DENIED } from "../auth/denialCopy";
 
 // Top-nav notification bell (#154) — global, read-only, client-tracked
 // unread state (no server read-state; see the issue's grilling decisions).
@@ -57,7 +56,7 @@ export function NotificationButton() {
   const unreadCount = alertsUnread.unreadCount + attentionUnread.unreadCount;
 
   return (
-    <Tooltip title={hasObservabilityAccess ? "Alerts" : NO_PERMISSION_TOOLTIP}>
+    <Tooltip title={hasObservabilityAccess ? "Alerts" : DENIED.viewAlerts}>
       <span>
         <IconButton
           onClick={() => {
@@ -122,7 +121,7 @@ export function AlertsNotificationPanel() {
             <NoPermissionIllustration size={64} />
           </Box>
           <Typography variant="body2" color="text.secondary">
-            {NO_PERMISSION_TOOLTIP}
+            {DENIED.viewAlerts}
           </Typography>
         </Box>
       ) : isPending ? (

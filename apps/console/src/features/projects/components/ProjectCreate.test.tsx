@@ -18,7 +18,9 @@
 
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { fireEvent, screen } from "@testing-library/react";
+import { renderWithPermissions } from "../../../auth/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const navigate = vi.fn();
@@ -51,20 +53,13 @@ const uploadReferences = {
   error: null as Error | null,
 };
 // The create page reads the org handle to address the chat's seed slot when
-// the user abandons their documents; useSession throws outside an AuthGuard.
-// Every existing test in this file assumes the page is otherwise reachable —
-// only the dedicated "no permission" test below flips this to an empty set.
-const sessionPermissions = vi.hoisted(() => ({
-  current: new Set(["ae:requirement-update"]),
-}));
-vi.mock("../../../auth/SessionContext", () => ({
-  useSession: () => ({
-    user: { name: "Test User", email: "test@example.com" },
-    orgHandle: "acme",
-    permissions: sessionPermissions.current,
-    signOut: vi.fn(),
-  }),
-}));
+// the user abandons their documents, and gates the form on
+// ae:requirement-update. Every existing test in this file assumes the page is
+// reachable — only the dedicated "no permission" test empties the set.
+// `render` is shadowed below so each case keeps its existing shape.
+const sessionPermissions = { current: new Set(["ae:requirement-update"]) };
+const render = (ui: ReactElement) =>
+  renderWithPermissions(ui, sessionPermissions.current);
 
 vi.mock("../api/queries", () => ({
   useCreateProject: () => createProject,

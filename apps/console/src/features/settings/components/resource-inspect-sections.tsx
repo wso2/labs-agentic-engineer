@@ -41,6 +41,7 @@ import { createLink } from "@tanstack/react-router";
 import { useHasPermission } from "../../../auth/permissions";
 import type { components } from "../../../generated/aep-api";
 import { useDeleteExternalResource } from "../api/queries";
+import { DENIED } from "../../../auth/denialCopy";
 
 const ProjectLink = createLink(Link);
 
@@ -242,7 +243,7 @@ export function DeleteResourceSection({
           // do with this particular resource's own state, so it takes
           // precedence over the in-use explanation below.
           !hasResourceConfig
-            ? "You don't have permission to configure resources."
+            ? DENIED.configureResources
             : ""
         }
       >

@@ -19,7 +19,13 @@
 // @vitest-environment jsdom
 
 import type { ElementType } from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { fireEvent, screen, within } from "@testing-library/react";
+import {
+  ALL_PERMISSIONS,
+  allPermissionsExcept,
+  renderWithPermissions,
+} from "../../../auth/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 
@@ -58,12 +64,10 @@ const navigate = vi.fn();
 
 // Every existing test in this file assumes the page and every promote/
 // configure action within it are otherwise reachable — only a dedicated "no
-// permission" test flips this.
-const hasBuild = vi.hoisted(() => ({ current: true }));
-vi.mock("../../../auth/permissions", () => ({
-  useHasAnyPermission: () => hasBuild.current,
-  useHasPermission: () => hasBuild.current,
-}));
+// permission" test withholds the build permissions. `render` is shadowed so
+// each case keeps its existing shape.
+let held: Iterable<string> = ALL_PERMISSIONS;
+const render = (ui: ReactElement) => renderWithPermissions(ui, held);
 
 // The version ledger, for the Milestone cell — the Builds surfaces' own read.
 let mockBuilds: components["schemas"]["BuildSummary"][] = [];
@@ -360,7 +364,7 @@ beforeEach(() => {
   mockValidationPending = false;
   evidenceArgs.mockClear();
   navigate.mockClear();
-  hasBuild.current = true;
+  held = ALL_PERMISSIONS;
 });
 
 describe("DeploymentsPage — validation", () => {
@@ -1424,7 +1428,7 @@ describe("DeploymentsPage — the version block", () => {
 
 describe("DeploymentsPage — permission gate", () => {
   it("blocks the whole page for a user lacking ae:build-view", () => {
-    hasBuild.current = false;
+    held = allPermissionsExcept("ae:build", "ae:build-view");
     render(<DeploymentsPage projectName="acme" />);
 
     expect(

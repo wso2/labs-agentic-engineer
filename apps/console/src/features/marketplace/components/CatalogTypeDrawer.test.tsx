@@ -18,7 +18,13 @@
 
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { fireEvent, screen, within } from "@testing-library/react";
+import {
+  ALL_PERMISSIONS,
+  allPermissionsExcept,
+  renderWithPermissions,
+} from "../../../auth/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ElementType } from "react";
 import type { components } from "../../../generated/aep-api";
@@ -45,16 +51,13 @@ vi.mock("@tanstack/react-router", () => ({
     },
 }));
 
-// Every test but the dedicated "no permission" ones below holds
-// ae:resource-config, so Edit/Delete read as operable by default — mirrors
-// SkillsSection.test.tsx's per-suite permission toggle. Intercepts both this
-// file's own "../../../auth/permissions" import AND
-// resource-inspect-sections.tsx's (DeleteResourceSection) — vi.mock keys off
-// the resolved module, not the literal specifier, so one mock covers both.
-const hasResourceConfig = vi.hoisted(() => ({ current: true }));
-vi.mock("../../../auth/permissions", () => ({
-  useHasPermission: () => hasResourceConfig.current,
-}));
+// Every test but the dedicated "no permission" one below holds every
+// permission, so Edit/Delete read as operable by default. The session covers
+// this file's own gate AND resource-inspect-sections.tsx's
+// (DeleteResourceSection) in one go, since both read the same context.
+// `render` is shadowed so each case keeps its existing shape.
+let held: Iterable<string> = ALL_PERMISSIONS;
+const render = (ui: ReactElement) => renderWithPermissions(ui, held);
 
 type ExternalResourceDTO = components["schemas"]["ExternalResourceDTO"];
 type PlatformResourceTypeDTO = components["schemas"]["PlatformResourceTypeDTO"];
@@ -137,7 +140,7 @@ describe("CatalogTypeDrawer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetDeleteState();
-    hasResourceConfig.current = true;
+    held = ALL_PERMISSIONS;
   });
 
   it("platform: no Delete resource and no Edit", () => {
@@ -360,7 +363,7 @@ describe("CatalogTypeDrawer", () => {
   });
 
   it("disables Edit and Delete without ae:resource-config", () => {
-    hasResourceConfig.current = false;
+    held = allPermissionsExcept("ae:resource-config");
     render(
       <CatalogTypeDrawer
         kind="external"

@@ -18,7 +18,8 @@
 
 // @vitest-environment jsdom
 
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
+import { renderWithPermissions } from "../../../auth/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 
@@ -29,15 +30,6 @@ type ProjectDependencyReadiness =
 const invalidateQueries = vi.fn();
 vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({ invalidateQueries }),
-}));
-
-// Every existing test in this file assumes Configure is otherwise reachable —
-// no dedicated "no permission" test exists here since a permission-denied
-// state is covered directly on ConnectionValuesDialog/ConnectionsCard's own
-// callers. Covers both this file's Configure button and the real
-// ConnectionValuesDialog it mounts (same permission, same mocked module).
-vi.mock("../../../auth/permissions", () => ({
-  useHasPermission: () => true,
 }));
 
 let mockDesign: ComponentDependencies[] = [];
@@ -126,8 +118,13 @@ afterEach(() => {
   saveMutate.mockClear();
 });
 
+// Every test here assumes Configure is reachable, so the session holds every
+// permission — a permission-denied state is covered directly on
+// ConnectionValuesDialog/ConnectionsCard's own callers. Holding the full set
+// covers both this file's Configure button and the real
+// ConnectionValuesDialog it mounts.
 function renderSection() {
-  render(<ExternalResources projectName="acme" />);
+  renderWithPermissions(<ExternalResources projectName="acme" />);
 }
 
 describe("ExternalResources", () => {

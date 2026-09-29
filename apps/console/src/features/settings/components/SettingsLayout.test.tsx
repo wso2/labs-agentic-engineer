@@ -19,7 +19,8 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render as rtlRender, screen } from "@testing-library/react";
+import { cleanup, fireEvent, screen } from "@testing-library/react";
+import { renderWithPermissions } from "../../../auth/testing";
 import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 
 vi.mock("@tanstack/react-router", () => ({
@@ -49,20 +50,16 @@ const ALL_SETTINGS_PERMISSIONS = [
   "ae:skill-config",
   "ae:usage-view",
 ];
-const heldPermissions = vi.hoisted(() => new Set<string>());
-vi.mock("../../../auth/permissions", () => ({
-  useHasPermission: (permission: string) => heldPermissions.has(permission),
-  useHasAnyPermission: (permissions: string[]) =>
-    permissions.some((p) => heldPermissions.has(p)),
-}));
+const heldPermissions = new Set<string>();
 
 import { SettingsLayout } from "./SettingsLayout";
 
 const render = () =>
-  rtlRender(
+  renderWithPermissions(
     <OxygenUIThemeProvider theme={OxygenTheme}>
       <SettingsLayout />
     </OxygenUIThemeProvider>,
+    heldPermissions,
   );
 
 beforeEach(() => {

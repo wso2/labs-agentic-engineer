@@ -20,7 +20,8 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ComponentProps } from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
+import { renderWithPermissions } from "../../../auth/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AskQuestionInput } from "@aep/agent-stream";
 import { START_COMMAND } from "@aep/contracts/commands";
@@ -81,19 +82,13 @@ vi.mock("@tanstack/react-router", () => ({
 
 // The merged multi-user panel stamps outgoing messages with the signed-in
 // author (via useCurrentAuthor -> useSession), which throws outside an
-// AuthGuard — this test renders the panel bare, so stub the session.
-// `permissions` is read too: the panel withholds GET /config without a
-// credential permission (see its `canReadConfig`). Empty here — these tests are
-// about the seed/turn wiring, and an empty set exercises the withheld path,
-// which is the one a design-only role actually takes.
-vi.mock("../../../auth/SessionContext", () => ({
-  useSession: () => ({
-    user: { name: "Test User", email: "test@example.com" },
-    orgHandle: "acme",
-    permissions: new Set<string>(),
-    signOut: vi.fn(),
-  }),
-}));
+// AuthGuard — renderPanel below supplies a real session instead.
+//
+// It holds NO permissions: the panel withholds GET /config without a
+// credential permission (see its `canReadConfig`), and these tests are about
+// the seed/turn wiring, so the withheld path — the one a design-only role
+// actually takes — is the right one to exercise.
+const NO_PERMISSIONS: string[] = [];
 
 // The panel's stick-to-bottom scroll behavior is browser-only (drives a
 // ResizeObserver, absent in jsdom) and orthogonal to the pendingSeed wiring
@@ -131,7 +126,10 @@ function withProviders(node: React.ReactElement) {
 }
 
 function renderPanel(overrides: Partial<PanelProps> = {}) {
-  return render(withProviders(<AgentChatPanel {...panelProps(overrides)} />));
+  return renderWithPermissions(
+    withProviders(<AgentChatPanel {...panelProps(overrides)} />),
+    NO_PERMISSIONS,
+  );
 }
 
 describe("AgentChatPanel — pendingSeed + turn-end wiring (#252 Task 5)", () => {

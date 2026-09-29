@@ -68,6 +68,7 @@ import {
   SECURITY_JSON_PATH,
   type SpecSelection,
 } from "../api/designTree";
+import { DENIED } from "../../../auth/denialCopy";
 
 function fileSel(path: string): SpecSelection {
   return { kind: "file", path };
@@ -457,7 +458,7 @@ export function SpecFileList({
             <Tooltip
               title={
                 !canRegenerateDesign
-                  ? "You don't have permission to generate the design."
+                  ? DENIED.generateDesign
                   : regenerateDisabled
                     ? "An agent is still working — re-generate is available once it finishes"
                     : "Re-generate design from the current requirements"

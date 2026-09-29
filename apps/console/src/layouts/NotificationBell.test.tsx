@@ -18,7 +18,8 @@
 
 // @vitest-environment jsdom
 
-import { render, screen, fireEvent } from "@testing-library/react";
+import { screen, fireEvent } from "@testing-library/react";
+import { allPermissionsExcept, renderWithPermissions } from "../auth/testing";
 import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -36,13 +37,6 @@ vi.mock("@wso2/oxygen-ui", async (importOriginal) => {
     useAppShell: () => ({ actions: { toggleNotificationPanel } }),
   };
 });
-
-// Every test but the dedicated "no permission" ones below holds
-// ae:observability-view, so the bell reads as reachable by default.
-const hasObservabilityAccess = vi.hoisted(() => ({ current: true }));
-vi.mock("../auth/permissions", () => ({
-  useHasPermission: () => hasObservabilityAccess.current,
-}));
 
 let recentAlertsResult: { data?: unknown[]; isPending?: boolean; isError?: boolean; error?: Error; refetch?: () => void } = { data: [] };
 vi.mock("../features/alerts/api/queries", () => ({
@@ -65,11 +59,15 @@ vi.mock("../features/issues/hooks/useAttentionUnread", () => ({
 
 import { NotificationButton } from "./NotificationBell";
 
-const render_ = (ui: React.ReactElement) =>
-  render(<OxygenUIThemeProvider theme={OxygenTheme}>{ui}</OxygenUIThemeProvider>);
+// Every test but the dedicated "no permission" ones below holds every
+// permission, so the bell reads as reachable by default.
+const render_ = (ui: React.ReactElement, permissions?: Iterable<string>) =>
+  renderWithPermissions(
+    <OxygenUIThemeProvider theme={OxygenTheme}>{ui}</OxygenUIThemeProvider>,
+    permissions,
+  );
 
 afterEach(() => {
-  hasObservabilityAccess.current = true;
   recentAlertsResult = { data: [] };
   toggleNotificationPanel.mockClear();
 });
@@ -85,8 +83,7 @@ describe("NotificationButton", () => {
   });
 
   it("is disabled with an explanatory tooltip without ae:observability-view", async () => {
-    hasObservabilityAccess.current = false;
-    render_(<NotificationButton />);
+    render_(<NotificationButton />, allPermissionsExcept("ae:observability-view"));
 
     const bell = screen.getByRole("button", { name: "Alerts" });
     expect(bell).toBeDisabled();

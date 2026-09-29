@@ -19,7 +19,8 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, screen } from "@testing-library/react";
+import { renderWithPermissions } from "../../../auth/testing";
 import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 import type { components } from "../../../generated/aep-api";
 
@@ -47,14 +48,13 @@ vi.mock("../../settings/api/queries", () => ({
   useSyncSkills: () => ({ mutate: vi.fn(), isPending: false, isError: false }),
 }));
 
-vi.mock("../../../auth/SessionContext", () => ({
-  useSession: () => ({
-    user: { name: "Dev", email: "dev@acme.example" },
-    orgHandle: "acme",
-    signOut: vi.fn(),
-    permissions: new Set(["ae:model-config", "ae:github-config", "ae:skill-config"]),
-  }),
-}));
+// The three permissions the wizard's steps are gated on — an org admin
+// mid-onboarding holds exactly these.
+const ONBOARDING_PERMISSIONS = [
+  "ae:model-config",
+  "ae:github-config",
+  "ae:skill-config",
+];
 
 const { OnboardingWizard, activeStep } = await import("./OnboardingWizard");
 
@@ -131,10 +131,11 @@ function statusOf(c: ConfigProjection): ConfigStatus {
 
 function renderWizard(c: ConfigProjection) {
   configData = c;
-  render(
+  renderWithPermissions(
     <OxygenUIThemeProvider theme={OxygenTheme}>
       <OnboardingWizard status={statusOf(c)} onComplete={vi.fn()} />
     </OxygenUIThemeProvider>,
+    ONBOARDING_PERMISSIONS,
   );
 }
 

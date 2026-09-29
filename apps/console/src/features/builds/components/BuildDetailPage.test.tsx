@@ -18,7 +18,12 @@
 
 // @vitest-environment jsdom
 
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
+import {
+  ALL_PERMISSIONS,
+  allPermissionsExcept,
+  renderWithPermissions,
+} from "../../../auth/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 
@@ -31,12 +36,8 @@ type CycleBuild = components["schemas"]["CycleBuild"];
 
 // Every existing test in this file assumes the page is otherwise reachable —
 // only a dedicated "no permission" test flips this. BuildActions' own
-// Cancel/Retry gate reads the same flag through useHasPermission.
-const canViewBuilds = vi.hoisted(() => ({ current: true }));
-vi.mock("../../../auth/permissions", () => ({
-  useHasAnyPermission: () => canViewBuilds.current,
-  useHasPermission: () => canViewBuilds.current,
-}));
+// Cancel/Retry gate on ae:build; page entry gates on ae:build-view.
+let held: Iterable<string> = ALL_PERMISSIONS;
 
 const navigate = vi.fn();
 // Router stubbed to plain anchors — no RouterProvider needed.
@@ -257,7 +258,10 @@ const greenBuild = (component: string): CycleBuild =>
   componentBuild({ component, buildName: `${component}-build-1`, status: "WorkflowSucceeded", completed: true });
 
 const renderPage = () =>
-  render(<BuildDetailPage projectName="demo-shop" tag="v2" />);
+  renderWithPermissions(
+    <BuildDetailPage projectName="demo-shop" tag="v2" />,
+    held,
+  );
 
 const deploymentsLink = () => screen.queryByText("Go to Deployments");
 
@@ -287,7 +291,7 @@ afterEach(() => {
   mockDesignDeps = [];
   mockReadiness = undefined;
   cycleBuildsCalls.length = 0;
-  canViewBuilds.current = true;
+  held = ALL_PERMISSIONS;
   vi.clearAllMocks();
   vi.useRealTimers();
 });
@@ -1023,7 +1027,7 @@ describe("BuildDetailPage — the task list's order and its links", () => {
 
 describe("BuildDetailPage — permission gate", () => {
   it("blocks the whole page for a user lacking ae:build/ae:build-view", () => {
-    canViewBuilds.current = false;
+    held = allPermissionsExcept("ae:build", "ae:build-view");
     mockBuilds = [build()];
     renderPage();
 

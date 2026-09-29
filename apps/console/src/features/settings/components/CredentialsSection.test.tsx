@@ -18,7 +18,8 @@
 
 // @vitest-environment jsdom
 
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
+import { renderWithPermissions } from "../../../auth/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CredentialsSection } from "./CredentialsSection";
 
@@ -26,14 +27,7 @@ import { CredentialsSection } from "./CredentialsSection";
 // of the two credentials permissions, so the section reads as reachable —
 // mirrors SkillsSection.test.tsx's per-suite permission toggle. CredentialsSection
 // itself only cares whether EITHER is held (each card gates its own half).
-const heldPermissions = vi.hoisted(() => new Set(["ae:github-config"]));
-vi.mock("../../../auth/permissions", () => ({
-  useHasAnyPermission: (permissions: string[]) =>
-    permissions.some((p) => heldPermissions.has(p)),
-  // Each card gates itself on its own permission out of the same held set —
-  // this section only decides whether it is entered at all.
-  useHasPermission: (permission: string) => heldPermissions.has(permission),
-}));
+const heldPermissions = new Set(["ae:github-config"]);
 
 // The cards' own rendering (permission gating, connect/disconnect forms) is
 // covered by their own test files — stubbed here so this file only tests
@@ -67,7 +61,7 @@ describe("CredentialsSection", () => {
       isError: false,
       data: { gitProvider: null, llm: null },
     };
-    render(<CredentialsSection />);
+    renderWithPermissions(<CredentialsSection />, heldPermissions);
 
     expect(screen.getByTestId("github-card")).toBeInTheDocument();
     expect(screen.getByTestId("ai-agents-card")).toBeInTheDocument();
@@ -75,7 +69,7 @@ describe("CredentialsSection", () => {
 
   it("shows a loading spinner while config loads", () => {
     configResult = { isLoading: true, isError: false };
-    render(<CredentialsSection />);
+    renderWithPermissions(<CredentialsSection />, heldPermissions);
 
     expect(screen.getByRole("progressbar")).toBeInTheDocument();
     expect(screen.queryByTestId("github-card")).not.toBeInTheDocument();
@@ -87,7 +81,7 @@ describe("CredentialsSection", () => {
       isError: true,
       error: new Error("config unavailable"),
     };
-    render(<CredentialsSection />);
+    renderWithPermissions(<CredentialsSection />, heldPermissions);
 
     expect(screen.getByText("config unavailable")).toBeInTheDocument();
   });
@@ -99,7 +93,7 @@ describe("CredentialsSection", () => {
       isError: false,
       data: { gitProvider: null, llm: null },
     };
-    render(<CredentialsSection />);
+    renderWithPermissions(<CredentialsSection />, heldPermissions);
 
     expect(
       screen.getByText("You don't have permission to view credentials."),

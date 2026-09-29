@@ -19,6 +19,7 @@
 import { Button, Chip, CircularProgress, Tooltip } from "@wso2/oxygen-ui";
 import { RefreshCw } from "@wso2/oxygen-ui-icons-react";
 import { useHasPermission } from "../../../auth/permissions";
+import { DENIED } from "../../../auth/denialCopy";
 
 // Sync is all-or-nothing: the BE's POST /skills/sync takes no body and
 // reconciles every embedded skill in one commit (`Reconcile`). So this is a
@@ -45,7 +46,7 @@ export function SyncUpdatesControl({
       />
       <Tooltip
         title={
-          hasSkillConfig ? "" : "You don't have permission to configure skills."
+          hasSkillConfig ? "" : DENIED.configureSkills
         }
       >
         <span>

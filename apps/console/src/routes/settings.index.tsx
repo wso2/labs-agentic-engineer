@@ -17,47 +17,39 @@
  */
 
 import { Navigate, createFileRoute } from "@tanstack/react-router";
-import { useHasAnyPermission, useHasPermission } from "../auth/permissions";
+import { usePermissions, type Permissions } from "../auth/permissions";
+import {
+  SECTIONS,
+  type SettingsSectionPath,
+} from "../features/settings/components/SettingsLayout";
 import { SettingsBlockedPage } from "../features/settings/components/SettingsBlockedPage";
 
 export const Route = createFileRoute("/settings/")({
   component: SettingsIndexPage,
 });
 
-export type SettingsLandingPath =
-  | "/settings/credentials"
-  | "/settings/skills"
-  | "/settings/usage";
-
 // Bare /settings has no content of its own — land on the first section this
-// caller actually has something to do on, in the same priority as the
-// sidebar's tab order (SettingsLayout's SECTIONS). Skills is reachable on
-// EITHER of its two permissions since it gates its own content rather than
-// needing a decision here (see SkillsSection); Credentials needs either
-// half (GitHub or Anthropic) since each card gates independently. `null`
-// means none of the three has anything to show at all.
+// caller actually has something to do on.
 //
-// A pure function (not a hook) so this priority order is unit-testable
-// without rendering — see settings.index.test.tsx.
-export function resolveSettingsLandingPath(perms: {
-  credentials: boolean;
-  skills: boolean;
-  usage: boolean;
-}): SettingsLandingPath | null {
-  if (perms.credentials) return "/settings/credentials";
-  if (perms.skills) return "/settings/skills";
-  if (perms.usage) return "/settings/usage";
-  return null;
+// Both the priority order and each section's gate are read off SettingsLayout's
+// SECTIONS rather than restated here. They were stated twice before, and the
+// duplicate had to say in a comment that it matched: a landing rule that
+// disagreed with the sidebar would send a caller to a tab the sidebar had
+// disabled, which is a redirect loop's worth of confusion for a one-line edit
+// nobody made in both places.
+//
+// `null` means no section has anything to show at all.
+//
+// A pure function (not a hook) so the order is unit-testable without
+// rendering — see settings.index.test.tsx.
+export function resolveSettingsLandingPath(
+  can: Permissions,
+): SettingsSectionPath | null {
+  return SECTIONS.find((section) => section.allowed(can))?.path ?? null;
 }
 
 export function SettingsIndexPage() {
-  const credentials = useHasAnyPermission(["ae:github-config", "ae:model-config"]);
-  // Exact-match ae:skill-view, NOT OR'd with ae:skill-config — matches
-  // SettingsLayout's identical hasSkillsAccess gate.
-  const skills = useHasPermission("ae:skill-view");
-  const usage = useHasPermission("ae:usage-view");
-
-  const target = resolveSettingsLandingPath({ credentials, skills, usage });
+  const target = resolveSettingsLandingPath(usePermissions());
   if (target) return <Navigate to={target} replace />;
   return <SettingsBlockedPage />;
 }

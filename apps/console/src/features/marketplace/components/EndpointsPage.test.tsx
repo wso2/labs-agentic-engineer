@@ -18,7 +18,12 @@
 
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
+import {
+  ALL_PERMISSIONS,
+  allPermissionsExcept,
+  renderWithPermissions,
+} from "../../../auth/testing";
 import { describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 import { EndpointsPage } from "./EndpointsPage";
@@ -32,10 +37,10 @@ vi.mock("@tanstack/react-router", () => ({
 
 // Every test but the dedicated "no permission" one below holds
 // ae:requirement-view, so the page reads as reachable by default.
-const hasRequirementView = vi.hoisted(() => ({ current: true }));
-vi.mock("../../../auth/permissions", () => ({
-  useHasPermission: () => hasRequirementView.current,
-}));
+// Every test but the dedicated "no permission" one below holds every
+// permission, so the page reads as reachable.
+let held: Iterable<string> = ALL_PERMISSIONS;
+const renderPage = () => renderWithPermissions(<EndpointsPage />, held);
 
 let queryState: {
   data?: OrgEndpointDTO[];
@@ -57,7 +62,7 @@ function resetState() {
     refetch: vi.fn(),
   };
   navigate.mockClear();
-  hasRequirementView.current = true;
+  held = ALL_PERMISSIONS;
 }
 
 describe("EndpointsPage", () => {
@@ -65,7 +70,7 @@ describe("EndpointsPage", () => {
     resetState();
     queryState = { isPending: true, isError: false, refetch: vi.fn() };
 
-    render(<EndpointsPage />);
+    renderPage();
 
     expect(screen.getByLabelText("Loading endpoints")).toBeInTheDocument();
   });
@@ -74,7 +79,7 @@ describe("EndpointsPage", () => {
     resetState();
     queryState = { data: [], isPending: false, isError: false, refetch: vi.fn() };
 
-    render(<EndpointsPage />);
+    renderPage();
 
     expect(screen.getByText("No Marketplace Endpoints yet")).toBeInTheDocument();
     expect(
@@ -97,7 +102,7 @@ describe("EndpointsPage", () => {
       refetch,
     };
 
-    render(<EndpointsPage />);
+    renderPage();
 
     fireEvent.click(screen.getByRole("button", { name: /retry/i }));
     expect(refetch).toHaveBeenCalled();
@@ -127,7 +132,7 @@ describe("EndpointsPage", () => {
       ],
     };
 
-    render(<EndpointsPage />);
+    renderPage();
 
     fireEvent.click(screen.getByText("invoice-api"));
     expect(navigate).toHaveBeenCalledWith({
@@ -138,7 +143,7 @@ describe("EndpointsPage", () => {
 
   it("shows an insufficient-permissions message and renders no endpoint content without ae:requirement-view", () => {
     resetState();
-    hasRequirementView.current = false;
+    held = allPermissionsExcept("ae:requirement-view");
     // A direct-URL visit must never flash real data even if a prior fetch
     // cached it — the mocked query result deliberately carries data here.
     queryState = {
@@ -156,7 +161,7 @@ describe("EndpointsPage", () => {
       ],
     };
 
-    render(<EndpointsPage />);
+    renderPage();
 
     expect(
       screen.getByText("You don't have permission to view endpoints."),

@@ -38,6 +38,7 @@ import { StatusChip } from "../../../components/StatusChip";
 import { useSkill } from "../api/queries";
 import { kindChipTone, kindLabel, normalizeKind } from "../skillKind";
 import { splitFrontmatter } from "../skillMd";
+import { DENIED } from "../../../auth/denialCopy";
 
 // Inspection of any skill, of any kind — the only way to see what an org/
 // platform skill actually instructs an agent to do. It also hosts the mutating
@@ -101,7 +102,7 @@ export function SkillViewerDialog({
                   title={
                     hasSkillConfig
                       ? "Edit"
-                      : "You don't have permission to configure skills."
+                      : DENIED.configureSkills
                   }
                 >
                   <span>
@@ -121,7 +122,7 @@ export function SkillViewerDialog({
                   title={
                     hasSkillConfig
                       ? "Delete"
-                      : "You don't have permission to configure skills."
+                      : DENIED.configureSkills
                   }
                 >
                   <span>

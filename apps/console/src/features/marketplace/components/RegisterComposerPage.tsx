@@ -34,6 +34,7 @@ import { EmptyState } from "../../../components/EmptyState";
 import { NoPermissionIllustration } from "../../../components/NoPermissionIllustration";
 import { PageHeader } from "../../../components/PageHeader";
 import { PromptComposer } from "../../projects/components/PromptComposer";
+import { DENIED } from "../../../auth/denialCopy";
 
 const EXAMPLES = [
   {
@@ -70,7 +71,7 @@ export function RegisterComposerPage() {
         <EmptyState
           icon={<NoPermissionIllustration size={120} />}
           title="No resources access"
-          description="You don't have permission to register or edit resources."
+          description={DENIED.registerOrEditResources}
         />
       </PageContent>
     );

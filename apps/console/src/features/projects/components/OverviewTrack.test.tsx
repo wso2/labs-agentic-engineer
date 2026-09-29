@@ -19,7 +19,8 @@
 // @vitest-environment jsdom
 
 import type { ElementType } from "react";
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
+import { TEST_ORG, renderWithPermissions } from "../../../auth/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 
@@ -43,18 +44,11 @@ vi.mock("@tanstack/react-router", () => ({
     },
 }));
 
-// A per-test permission set, read by useHasAnyPermission (permissions.ts),
-// which itself reads useSession().permissions — mocking it here, rather than
-// the permissions module, keeps one mock doing the whole job. Defaults to
-// holding both design-view and build-view so every pre-existing test below
-// (written before the track's legs could lock) keeps seeing unlocked legs;
-// the "locked legs" tests further down override it per case.
-const permissions = vi.hoisted(
-  () => ({ current: new Set(["ae:design-view", "ae:build-view"]) }),
-);
-vi.mock("../../../auth/SessionContext", () => ({
-  useSession: () => ({ orgHandle: "default", permissions: permissions.current }),
-}));
+// A per-test permission set, fed to the real session by `draw` below.
+// Defaults to holding both design-view and build-view so every pre-existing
+// test (written before the track's legs could lock) keeps seeing unlocked
+// legs; the "locked legs" tests further down override it per case.
+const permissions = { current: new Set(["ae:design-view", "ae:build-view"]) };
 
 // The track reads the LOCAL chat log for the one state no server field can
 // produce: a turn that ended on a question. The log's fetch is not what this
@@ -100,7 +94,10 @@ function status(over: {
 }
 
 const draw = (s: ProjectStatus) =>
-  render(<OverviewTrack projectName="demo-shop" status={s} />);
+  renderWithPermissions(
+    <OverviewTrack projectName="demo-shop" status={s} />,
+    permissions.current,
+  );
 
 /** A leg by its stage name, whatever line it happens to be carrying. */
 const legFor = (name: string): HTMLElement =>
@@ -291,13 +288,13 @@ describe("OverviewTrack", () => {
     it("rehydrates the real project when the caller holds ae:design-view", () => {
       permissions.current = new Set(["ae:design-view", "ae:build-view"]);
       draw(status({}));
-      expect(useConversationLogSpy).toHaveBeenCalledWith("default", "demo-shop");
+      expect(useConversationLogSpy).toHaveBeenCalledWith(TEST_ORG, "demo-shop");
     });
 
     it("withholds the rehydrate without ae:design-view, even holding ae:design", () => {
       permissions.current = new Set(["ae:design", "ae:build-view"]);
       draw(status({}));
-      expect(useConversationLogSpy).toHaveBeenCalledWith("default", undefined);
+      expect(useConversationLogSpy).toHaveBeenCalledWith(TEST_ORG, undefined);
     });
   });
 });

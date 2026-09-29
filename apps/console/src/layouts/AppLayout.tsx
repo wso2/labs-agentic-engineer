@@ -65,6 +65,7 @@ import { AGENT_CHAT_PANEL_WIDTH, AgentChatPanel } from "../features/agent-chat/c
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { useHasPendingSeed } from "../features/agent-chat/useHasPendingSeed";
 import { useChatOpenRequest } from "../features/agent-chat/useChatOpenRequest";
+import { DENIED } from "../auth/denialCopy";
 
 // Footer links (grilled 2026-07-12): the repo is the only real destination
 // today — /tree/HEAD/docs follows the default branch.
@@ -356,7 +357,7 @@ export function AppLayout() {
                     <Sidebar.ItemLabel>Spec</Sidebar.ItemLabel>
                   </Sidebar.Item>
                 ) : (
-                  <Tooltip title="You don't have permission to view the spec.">
+                  <Tooltip title={DENIED.viewTheSpec}>
                     <span>
                       <Sidebar.Item id="spec" sx={{ opacity: 0.5, pointerEvents: "none" }}>
                         <Sidebar.ItemIcon>
@@ -383,7 +384,7 @@ export function AppLayout() {
                     <Sidebar.ItemLabel>Builds</Sidebar.ItemLabel>
                   </Sidebar.Item>
                 ) : (
-                  <Tooltip title="You don't have permission to view builds.">
+                  <Tooltip title={DENIED.viewBuilds}>
                     <span>
                       <Sidebar.Item id="builds" sx={{ opacity: 0.5, pointerEvents: "none" }}>
                         <Sidebar.ItemIcon>
@@ -410,7 +411,7 @@ export function AppLayout() {
                     <Sidebar.ItemLabel>Deployments</Sidebar.ItemLabel>
                   </Sidebar.Item>
                 ) : (
-                  <Tooltip title="You don't have permission to view deployments.">
+                  <Tooltip title={DENIED.viewDeployments}>
                     <span>
                       <Sidebar.Item id="deployments" sx={{ opacity: 0.5, pointerEvents: "none" }}>
                         <Sidebar.ItemIcon>
@@ -437,7 +438,7 @@ export function AppLayout() {
                     <Sidebar.ItemLabel>Validations</Sidebar.ItemLabel>
                   </Sidebar.Item>
                 ) : (
-                  <Tooltip title="You don't have permission to view validations.">
+                  <Tooltip title={DENIED.viewValidations}>
                     <span>
                       <Sidebar.Item id="validations" sx={{ opacity: 0.5, pointerEvents: "none" }}>
                         <Sidebar.ItemIcon>
@@ -464,7 +465,7 @@ export function AppLayout() {
                     <Sidebar.ItemLabel>Issues</Sidebar.ItemLabel>
                   </Sidebar.Item>
                 ) : (
-                  <Tooltip title="You don't have permission to view issues.">
+                  <Tooltip title={DENIED.viewIssues}>
                     <span>
                       <Sidebar.Item id="issues" sx={{ opacity: 0.5, pointerEvents: "none" }}>
                         <Sidebar.ItemIcon>
@@ -492,7 +493,7 @@ export function AppLayout() {
                     <Sidebar.ItemLabel>Resources</Sidebar.ItemLabel>
                   </Sidebar.Item>
                 ) : (
-                  <Tooltip title="You don't have permission to view resources.">
+                  <Tooltip title={DENIED.viewResources}>
                     <span>
                       <Sidebar.Item id="resources" sx={{ opacity: 0.5, pointerEvents: "none" }}>
                         <Sidebar.ItemIcon>
@@ -511,7 +512,7 @@ export function AppLayout() {
                     <Sidebar.ItemLabel>Endpoints</Sidebar.ItemLabel>
                   </Sidebar.Item>
                 ) : (
-                  <Tooltip title="You don't have permission to view endpoints.">
+                  <Tooltip title={DENIED.viewEndpoints}>
                     <span>
                       <Sidebar.Item id="endpoints" sx={{ opacity: 0.5, pointerEvents: "none" }}>
                         <Sidebar.ItemIcon>
@@ -535,7 +536,7 @@ export function AppLayout() {
                   // `link` already makes it non-navigating; pointerEvents:none
                   // + reduced opacity finishes the job (blocks hover/click,
                   // matches the Tab-disabled treatment in SettingsLayout).
-                  <Tooltip title="You don't have permission to view alerts.">
+                  <Tooltip title={DENIED.viewAlerts}>
                     <span>
                       <Sidebar.Item id="alerts" sx={{ opacity: 0.5, pointerEvents: "none" }}>
                         <Sidebar.ItemIcon>

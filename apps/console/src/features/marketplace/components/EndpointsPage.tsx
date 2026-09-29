@@ -32,6 +32,7 @@ import { EmptyState } from "../../../components/EmptyState";
 import { NoPermissionIllustration } from "../../../components/NoPermissionIllustration";
 import { PageHeader } from "../../../components/PageHeader";
 import { useOrgEndpoints } from "../api/queries";
+import { DENIED } from "../../../auth/denialCopy";
 
 export function EndpointsPage() {
   const navigate = useNavigate();
@@ -55,7 +56,7 @@ export function EndpointsPage() {
         <EmptyState
           icon={<NoPermissionIllustration size={120} />}
           title="No endpoints access"
-          description="You don't have permission to view endpoints."
+          description={DENIED.viewEndpoints}
         />
       ) : isPending ? (
         <Box sx={{ display: "flex", justifyContent: "center", p: 6 }}>

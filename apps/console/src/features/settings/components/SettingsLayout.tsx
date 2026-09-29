@@ -30,7 +30,8 @@ import {
 } from "@wso2/oxygen-ui";
 import { Coins, KeyRound, Sparkles } from "@wso2/oxygen-ui-icons-react";
 import { PageHeader } from "../../../components/PageHeader";
-import { useHasAnyPermission, useHasPermission } from "../../../auth/permissions";
+import { usePermissions, type Permissions } from "../../../auth/permissions";
+import { DENIED } from "../../../auth/denialCopy";
 
 // Each section is its own route (issue #143): deep-linkable and back/forward
 // correct, matching the legacy console's settings/<section> URLs. Every
@@ -38,11 +39,44 @@ import { useHasAnyPermission, useHasPermission } from "../../../auth/permissions
 // permissions, so every one of them gets its tab disabled in that case —
 // SkillsSection's own internal ae:skill-view/-config check is a second,
 // belt-and-suspenders gate for direct URL access, not a substitute for this.
-const SECTIONS = [
-  { path: "/settings/credentials", label: "Credentials", Icon: KeyRound },
-  { path: "/settings/skills", label: "Skills", Icon: Sparkles },
-  { path: "/settings/usage", label: "Usage", Icon: Coins },
+//
+// Each section carries its own gate as a predicate over the caller's
+// permissions rather than a resolved boolean, which is what lets the check
+// live in the row it decides instead of being hoisted above the map. The
+// order is also the landing priority for bare /settings — settings.index
+// walks this list rather than repeating either the gates or the order.
+export const SECTIONS = [
+  {
+    path: "/settings/credentials",
+    label: "Credentials",
+    Icon: KeyRound,
+    // Either permission makes Credentials worth landing on:
+    // GitHubCredentialCard and AnthropicCredentialCard each gate their own
+    // half independently, because the BFF redacts each card separately.
+    allowed: (can: Permissions) =>
+      can.hasAny(["ae:github-config", "ae:model-config"]),
+    deniedTooltip: DENIED.viewCredentials,
+  },
+  {
+    // Exact-match ae:skill-view, NOT OR'd with ae:skill-config — entry to a
+    // section is gated on the view permission exactly.
+    path: "/settings/skills",
+    label: "Skills",
+    Icon: Sparkles,
+    allowed: (can: Permissions) => can.has("ae:skill-view"),
+    deniedTooltip: DENIED.viewSkills,
+  },
+  {
+    path: "/settings/usage",
+    label: "Usage",
+    Icon: Coins,
+    allowed: (can: Permissions) => can.has("ae:usage-view"),
+    deniedTooltip: DENIED.viewUsage,
+  },
 ] as const;
+
+/** A settings section's route, e.g. "/settings/skills". */
+export type SettingsSectionPath = (typeof SECTIONS)[number]["path"];
 
 // v1 note (issue #96): no role gate here — any authenticated org member who
 // reaches /settings gets full access. Architect/SRE is the intended owner,
@@ -52,32 +86,7 @@ export function SettingsLayout() {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
   const { pathname } = useLocation();
-  // Either permission makes Credentials worth landing on (GitHubCredentialCard/
-  // AnthropicCredentialCard each gate their own half independently) — hooks
-  // can't be called from the map below, so every gated section's check lives
-  // here and feeds the sectionAccess lookup instead.
-  const hasCredentialsAccess = useHasAnyPermission([
-    "ae:github-config",
-    "ae:model-config",
-  ]);
-  const hasSkillsAccess = useHasPermission("ae:skill-view");
-  const hasUsageAccess = useHasPermission("ae:usage-view");
-  const sectionAccess: Partial<
-    Record<(typeof SECTIONS)[number]["path"], { allowed: boolean; deniedTooltip: string }>
-  > = {
-    "/settings/credentials": {
-      allowed: hasCredentialsAccess,
-      deniedTooltip: "You don't have permission to view credentials.",
-    },
-    "/settings/skills": {
-      allowed: hasSkillsAccess,
-      deniedTooltip: "You don't have permission to view skills.",
-    },
-    "/settings/usage": {
-      allowed: hasUsageAccess,
-      deniedTooltip: "You don't have permission to view usage.",
-    },
-  };
+  const can = usePermissions();
 
   const active =
     SECTIONS.find((s) => pathname.startsWith(s.path))?.path ?? SECTIONS[0].path;
@@ -112,9 +121,8 @@ export function SettingsLayout() {
               variant={isMobile ? "fullWidth" : "standard"}
               value={active}
             >
-              {SECTIONS.map(({ path, label, Icon }) => {
-                const gate = sectionAccess[path];
-                const denied = gate !== undefined && !gate.allowed;
+              {SECTIONS.map(({ path, label, Icon, allowed, deniedTooltip }) => {
+                const denied = !allowed(can);
                 const tab = (
                   <Tab
                     key={path}
@@ -131,7 +139,7 @@ export function SettingsLayout() {
                 // it wraps the Tab rather than replacing it — MUI's disabled
                 // Tab already blocks the click/navigation via pointer-events.
                 return denied ? (
-                  <Tooltip key={path} title={gate.deniedTooltip}>
+                  <Tooltip key={path} title={deniedTooltip}>
                     <span>{tab}</span>
                   </Tooltip>
                 ) : (

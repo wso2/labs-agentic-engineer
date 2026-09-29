@@ -18,7 +18,8 @@
 
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
+import { ALL_PERMISSIONS, renderWithPermissions } from "../../../auth/testing";
 import { describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 import { SkillsSection } from "./SkillsSection";
@@ -30,15 +31,13 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 // ae:skill-view and ae:skill-config are independent grants (a real user can
-// hold either, both, or neither) — the mock must distinguish them by the
-// permission key requested, not return one shared flag for every call.
+// hold either, both, or neither), and the session below distinguishes them
+// as production does: by which key is present.
 // Every existing test in this file assumes both are held; only the dedicated
-// permission tests below flip one or the other off.
-const skillPermissions = vi.hoisted(() => ({ view: true, config: true }));
-vi.mock("../../../auth/permissions", () => ({
-  useHasPermission: (permission: string) =>
-    permission === "ae:skill-config" ? skillPermissions.config : skillPermissions.view,
-}));
+// permission tests below withhold one or the other.
+const held = new Set<string>(ALL_PERMISSIONS);
+const renderSection = () =>
+  renderWithPermissions(<SkillsSection />, held);
 
 type SkillSummary = components["schemas"]["SkillSummary"];
 type GitProviderProjection = components["schemas"]["GitProviderProjection"];
@@ -159,8 +158,8 @@ function resetMocks() {
     skills: [],
     repoUrl: "https://github.com/acme-dev/org-skills",
   };
-  skillPermissions.view = true;
-  skillPermissions.config = true;
+  held.clear();
+  ALL_PERMISSIONS.forEach((p) => held.add(p));
 }
 
 describe("SkillsSection — availability toggle", () => {
@@ -173,7 +172,7 @@ describe("SkillsSection — availability toggle", () => {
       ],
     };
 
-    render(<SkillsSection />);
+    renderSection();
 
     const goSwitch = screen.getByRole("switch", { name: "Disable go" });
     const pythonSwitch = screen.getByRole("switch", {
@@ -187,7 +186,7 @@ describe("SkillsSection — availability toggle", () => {
     resetMocks();
     skillsData = { skills: [skill({ name: "go", enabled: true })] };
 
-    render(<SkillsSection />);
+    renderSection();
 
     fireEvent.click(screen.getByRole("switch", { name: "Disable go" }));
 
@@ -211,7 +210,7 @@ describe("SkillsSection — availability toggle", () => {
       ],
     };
 
-    render(<SkillsSection />);
+    renderSection();
 
     // `disabled` IS the mechanism — a real user cannot reach the change handler
     // through it. Asserted rather than clicked: jsdom's fireEvent dispatches
@@ -244,7 +243,7 @@ describe("SkillsSection — availability toggle", () => {
       ],
     };
 
-    render(<SkillsSection />);
+    renderSection();
 
     const enabledName = screen.getByText("go");
     const disabledName = screen.getByText("python-service");
@@ -265,7 +264,7 @@ describe("SkillsSection — availability toggle", () => {
   // access" — the page itself must still render).
   it("disables every toggle when the user lacks ae:skill-config", () => {
     resetMocks();
-    skillPermissions.config = false;
+    held.delete("ae:skill-config");
     skillsData = {
       skills: [
         skill({ name: "go", enabled: true }),
@@ -273,7 +272,7 @@ describe("SkillsSection — availability toggle", () => {
       ],
     };
 
-    render(<SkillsSection />);
+    renderSection();
 
     expect(screen.getByRole("switch", { name: "Disable go" })).toBeDisabled();
     expect(screen.getByRole("switch", { name: "Disable aep" })).toBeDisabled();
@@ -283,10 +282,10 @@ describe("SkillsSection — availability toggle", () => {
   // only other ways to change something on this page — view stays open.
   it("disables Import and the viewer's Edit/Delete when the user lacks ae:skill-config", () => {
     resetMocks();
-    skillPermissions.config = false;
+    held.delete("ae:skill-config");
     skillsData = { skills: [skill({ name: "go" })] };
 
-    render(<SkillsSection />);
+    renderSection();
 
     expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
 
@@ -299,10 +298,10 @@ describe("SkillsSection — availability toggle", () => {
 describe("SkillsSection — view/config permission gate", () => {
   it("renders the page for a view-only user (ae:skill-view, no ae:skill-config)", () => {
     resetMocks();
-    skillPermissions.config = false;
+    held.delete("ae:skill-config");
     skillsData = { skills: [skill({ name: "go" })] };
 
-    render(<SkillsSection />);
+    renderSection();
 
     expect(screen.getByText("go")).toBeInTheDocument();
     expect(
@@ -316,10 +315,10 @@ describe("SkillsSection — view/config permission gate", () => {
   // be blocked from the page the same as anyone else lacking ae:skill-view.
   it("blocks the whole page for a config-only user (ae:skill-config, no ae:skill-view)", () => {
     resetMocks();
-    skillPermissions.view = false;
+    held.delete("ae:skill-view");
     skillsData = { skills: [skill({ name: "go" })] };
 
-    render(<SkillsSection />);
+    renderSection();
 
     expect(
       screen.getByText("You don't have permission to view skills."),
@@ -330,11 +329,11 @@ describe("SkillsSection — view/config permission gate", () => {
 
   it("shows an insufficient-permissions message and renders no skill content with neither permission", () => {
     resetMocks();
-    skillPermissions.view = false;
-    skillPermissions.config = false;
+    held.delete("ae:skill-view");
+    held.delete("ae:skill-config");
     skillsData = { skills: [skill({ name: "go" })] };
 
-    render(<SkillsSection />);
+    renderSection();
 
     expect(
       screen.getByText("You don't have permission to view skills."),

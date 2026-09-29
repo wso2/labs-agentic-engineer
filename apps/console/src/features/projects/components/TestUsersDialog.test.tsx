@@ -17,24 +17,15 @@
  */
 
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import {
+  allPermissionsExcept,
+  renderWithPermissions,
+} from "../../../auth/testing";
 import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { PublishedTestUser } from "../lib/publishedTestUsers";
 import { MASK, TestUsersDialog, UNKNOWN_SCOPES } from "./TestUsersDialog";
-
-// Reveal/Copy read ae:build through useHasPermission — a single toggle,
-// defaulting to held so every existing test below (written before either
-// control carried a permission check) keeps seeing them enabled; the
-// dedicated "no permission" test flips this.
-const hasBuild = vi.hoisted(() => ({ current: true }));
-vi.mock("../../../auth/permissions", () => ({
-  useHasPermission: () => hasBuild.current,
-}));
-
-afterEach(() => {
-  hasBuild.current = true;
-});
 
 const MOCK_PASSWORD = "mocknotreal";
 
@@ -51,16 +42,21 @@ const TWO: PublishedTestUser[] = [
   },
 ];
 
+// Reveal/Copy read ae:build. Permissions default to the full set so every
+// test below (most written before either control carried a permission check)
+// keeps seeing them enabled; the dedicated "no permission" test withholds
+// just that key.
 function renderDialog(
   over: {
     logins?: readonly PublishedTestUser[];
     revealPassword?: (username: string) => Promise<string>;
     onClose?: () => void;
+    permissions?: Iterable<string>;
   } = {},
 ) {
   const revealPassword = over.revealPassword ?? vi.fn(async () => MOCK_PASSWORD);
   const onClose = over.onClose ?? vi.fn();
-  render(
+  renderWithPermissions(
     <OxygenUIThemeProvider theme={OxygenTheme}>
       <TestUsersDialog
         open
@@ -69,6 +65,7 @@ function renderDialog(
         revealPassword={revealPassword}
       />
     </OxygenUIThemeProvider>,
+    over.permissions,
   );
   return { revealPassword, onClose };
 }
@@ -303,8 +300,9 @@ describe("TestUsersDialog", () => {
   // — deliberately stronger than the page's own ae:build/ae:build-view view
   // gate, since this discloses a live credential.
   it("disables Reveal and Copy, with an explanatory tooltip, without ae:build", async () => {
-    hasBuild.current = false;
-    const { revealPassword } = renderDialog();
+    const { revealPassword } = renderDialog({
+      permissions: allPermissionsExcept("ae:build"),
+    });
 
     const reveal = screen.getByRole("button", {
       name: "Reveal the password for test-viewer",

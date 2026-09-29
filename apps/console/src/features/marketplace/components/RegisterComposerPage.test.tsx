@@ -18,7 +18,12 @@
 
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
+import {
+  ALL_PERMISSIONS,
+  allPermissionsExcept,
+  renderWithPermissions,
+} from "../../../auth/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const navigate = vi.fn();
@@ -31,10 +36,8 @@ vi.mock("@tanstack/react-router", () => ({
 
 // Every test but the dedicated "no permission" one below holds
 // ae:resource-config, so the composer reads as reachable by default.
-const hasResourceConfig = vi.hoisted(() => ({ current: true }));
-vi.mock("../../../auth/permissions", () => ({
-  useHasPermission: () => hasResourceConfig.current,
-}));
+let held: Iterable<string> = ALL_PERMISSIONS;
+const renderPage = () => renderWithPermissions(<RegisterComposerPage />, held);
 
 import { RegisterComposerPage } from "./RegisterComposerPage";
 
@@ -43,12 +46,12 @@ const STRIPE_PROMPT =
 
 beforeEach(() => {
   vi.clearAllMocks();
-  hasResourceConfig.current = true;
+  held = ALL_PERMISSIONS;
 });
 
 describe("RegisterComposerPage", () => {
   it("navigates to the form with the typed prompt when Start is clicked", () => {
-    render(<RegisterComposerPage />);
+    renderPage();
 
     fireEvent.change(screen.getByRole("textbox"), {
       target: { value: "Register Acme as an invoicing API." },
@@ -62,7 +65,7 @@ describe("RegisterComposerPage", () => {
   });
 
   it("navigates to the form with the example prompt when an example is clicked", () => {
-    render(<RegisterComposerPage />);
+    renderPage();
 
     fireEvent.click(screen.getByText("Stripe"));
 
@@ -73,8 +76,8 @@ describe("RegisterComposerPage", () => {
   });
 
   it("shows an insufficient-permissions message and renders no composer without ae:resource-config", () => {
-    hasResourceConfig.current = false;
-    render(<RegisterComposerPage />);
+    held = allPermissionsExcept("ae:resource-config");
+    renderPage();
 
     expect(
       screen.getByText("You don't have permission to register or edit resources."),

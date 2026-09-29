@@ -53,6 +53,7 @@ import type { components } from "../../../generated/aep-api";
 import { useProjectsList } from "../api/queries";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { DeleteProjectDialog } from "./DeleteProjectDialog";
+import { DENIED } from "../../../auth/denialCopy";
 
 type Project = components["schemas"]["Project"];
 
@@ -174,7 +175,7 @@ function useGridColumns(): number {
 const GRID_ROWS_PER_PAGE = 3;
 
 const NO_CREATE_PERMISSION_TOOLTIP =
-  "You don't have permission to create a new project.";
+  DENIED.createProject;
 
 // Shown wherever "Create project" appears (the page header action and the
 // true-empty state's centered action): visible either way, per ae:requirement-update

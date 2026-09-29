@@ -56,6 +56,7 @@ import { RunDelivered } from "./RunDelivered";
 import { RunGlanceStrip } from "./RunGlanceStrip";
 import { RunHoldNotice } from "./RunHoldNotice";
 import { RunNowPanel } from "./RunNowPanel";
+import { DENIED } from "../../../auth/denialCopy";
 
 type MilestoneRunView = components["schemas"]["MilestoneRunView"];
 type TaskView = components["schemas"]["TaskView"];
@@ -254,7 +255,7 @@ export function RunStory({
             // competed with the stage strip for the eye and read as the page's
             // primary action.
             <Tooltip
-              title={!hasBuild ? "You don't have permission to cancel this run." : ""}
+              title={!hasBuild ? DENIED.cancelRun : ""}
             >
               {/* span so the tooltip works while the button is disabled */}
               <span>

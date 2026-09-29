@@ -18,7 +18,12 @@
 
 // @vitest-environment jsdom
 
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
+import {
+  ALL_PERMISSIONS,
+  allPermissionsExcept,
+  renderWithPermissions,
+} from "../../../auth/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AlertDetail } from "./AlertDetail";
 
@@ -31,10 +36,11 @@ vi.mock("@tanstack/react-router", () => ({
 
 // Every test but the dedicated "no permission" one below holds
 // ae:observability-view, so the page reads as reachable by default.
-const hasObservabilityAccess = vi.hoisted(() => ({ current: true }));
-vi.mock("../../../auth/permissions", () => ({
-  useHasPermission: () => hasObservabilityAccess.current,
-}));
+// Every test but the dedicated "no permission" one below holds every
+// permission, so the page reads as reachable.
+let held: Iterable<string> = ALL_PERMISSIONS;
+const renderDetail = () =>
+  renderWithPermissions(<AlertDetail alertId="r1" />, held);
 
 let reportResult: {
   data?: {
@@ -55,13 +61,13 @@ vi.mock("../api/queries", () => ({
 }));
 
 afterEach(() => {
-  hasObservabilityAccess.current = true;
+  held = ALL_PERMISSIONS;
 });
 
 describe("AlertDetail", () => {
   it("shows a loading spinner while the report loads", () => {
     reportResult = { isPending: true, isError: false };
-    render(<AlertDetail alertId="r1" />);
+    renderDetail();
     expect(screen.getByRole("progressbar")).toBeInTheDocument();
   });
 
@@ -71,7 +77,7 @@ describe("AlertDetail", () => {
       isError: true,
       error: new Error("report not found"),
     };
-    render(<AlertDetail alertId="r1" />);
+    renderDetail();
     expect(
       screen.getByText(/Failed to load this alert: report not found/),
     ).toBeInTheDocument();
@@ -88,19 +94,19 @@ describe("AlertDetail", () => {
         diagnosis: "Elevated 5xx on /checkout",
       },
     };
-    render(<AlertDetail alertId="r1" />);
+    renderDetail();
     expect(screen.getByText("Alert Received")).toBeInTheDocument();
     expect(screen.getByText("Issue Created")).toBeInTheDocument();
   });
 
   it("shows an insufficient-permissions message and renders no report content without ae:observability-view", () => {
-    hasObservabilityAccess.current = false;
+    held = allPermissionsExcept("ae:observability-view");
     reportResult = {
       isPending: false,
       isError: false,
       data: { title: "Payments 5xx spike", diagnosis: "Elevated 5xx" },
     };
-    render(<AlertDetail alertId="r1" />);
+    renderDetail();
 
     expect(
       screen.getByText("You don't have permission to view alerts."),

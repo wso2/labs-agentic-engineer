@@ -27,6 +27,7 @@ import { useAgentEngaged } from "../../agent-chat/useAgentEngaged";
 import { useConversationLog } from "../../agent-chat/useConversationLog";
 import { WorkingPulse } from "../../agent-chat/components/WorkingIndicator";
 import { trackView, type LegState, type TrackLeg } from "../lib/track";
+import { DENIED } from "../../../auth/denialCopy";
 
 type ProjectStatus = components["schemas"]["ProjectStatus"];
 
@@ -386,18 +387,16 @@ function Leg({
  * anyway; the leg lock exists so that dead end is never reached in the
  * first place.
  */
-const SPEC_LOCK_REASON = "You don't have permission to view the spec.";
-const BUILD_LOCK_REASON = "You don't have permission to view builds.";
-const DEPLOY_LOCK_REASON = "You don't have permission to view deployments.";
 
 function legLock(
   name: string,
   hasSpecAccess: boolean,
   hasBuildAccess: boolean,
 ): { locked: boolean; reason: string } {
-  if (name === "Spec") return { locked: !hasSpecAccess, reason: SPEC_LOCK_REASON };
-  if (name === "Build") return { locked: !hasBuildAccess, reason: BUILD_LOCK_REASON };
-  if (name === "Deploy") return { locked: !hasBuildAccess, reason: DEPLOY_LOCK_REASON };
+  if (name === "Spec") return { locked: !hasSpecAccess, reason: DENIED.viewTheSpec };
+  if (name === "Build") return { locked: !hasBuildAccess, reason: DENIED.viewBuilds };
+  if (name === "Deploy")
+    return { locked: !hasBuildAccess, reason: DENIED.viewDeployments };
   return { locked: false, reason: "" };
 }
 

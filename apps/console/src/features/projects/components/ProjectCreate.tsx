@@ -52,6 +52,7 @@ import {
 import { isValidProjectName, suggestProjectName } from "../lib/projectName";
 import { referenceTypeLabel } from "../lib/referenceFiles";
 import { PromptComposer } from "./PromptComposer";
+import { DENIED } from "../../../auth/denialCopy";
 
 // Issue #71 decision: clicking an example acts as prompt + Start in one
 // click — it jumps straight to the name/repo confirmation step.
@@ -272,7 +273,7 @@ export function ProjectCreate() {
           }}
         >
           <Alert severity="warning" sx={{ mb: 3 }}>
-            You don't have permission to create a new project.
+            {DENIED.createProject}
           </Alert>
           <Button component={Link} to="/projects">
             Back to projects

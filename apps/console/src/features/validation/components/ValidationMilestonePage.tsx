@@ -56,6 +56,7 @@ import { validationIsLive } from "../lib/lifecycle";
 import { countsFromScenarios } from "../lib/verdict";
 import { ReportCard, type Attempt } from "./ReportCard";
 import { ValidationSummaryCard } from "./ValidationSummaryCard";
+import { DENIED } from "../../../auth/denialCopy";
 
 type ValidationDetail = components["schemas"]["ValidationDetail"];
 type MilestoneRunView = components["schemas"]["MilestoneRunView"];
@@ -475,7 +476,7 @@ function ValidationActions({
         {hasBuild ? (
           cancelItem
         ) : (
-          <Tooltip title="You don't have permission to cancel this run.">
+          <Tooltip title={DENIED.cancelRun}>
             <span>{cancelItem}</span>
           </Tooltip>
         )}

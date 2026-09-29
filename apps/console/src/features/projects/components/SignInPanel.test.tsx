@@ -17,21 +17,14 @@
  */
 
 // @vitest-environment jsdom
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
+import { renderWithPermissions } from "../../../auth/testing";
 import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { PublishedTestUser } from "../lib/publishedTestUsers";
 import { SignInPanel } from "./SignInPanel";
 import { MASK } from "./TestUsersDialog";
-
-// TestUsersDialog's Reveal/Copy controls read ae:build through
-// useHasPermission — held by default so this file's existing tests (written
-// before either control carried a permission check) keep seeing them
-// enabled.
-vi.mock("../../../auth/permissions", () => ({
-  useHasPermission: () => true,
-}));
 
 const THUNDER_URL = "http://localhost:8097";
 const THUNDER_CONSOLE_USERS = "http://localhost:8097/console/users";
@@ -59,7 +52,10 @@ function renderPanel(
       />
     </OxygenUIThemeProvider>
   );
-  render(ui);
+  // TestUsersDialog's Reveal/Copy controls read ae:build, held here by
+  // default so this file's existing tests (written before either control
+  // carried a permission check) keep seeing them enabled.
+  renderWithPermissions(ui);
   return { revealPassword: revealPassword as ReturnType<typeof vi.fn<(username: string) => Promise<string>>> };
 }
 

@@ -43,6 +43,7 @@ import {
 } from "../../settings/components/resource-inspect-sections";
 import { isRegisteredExternal } from "../kind";
 import { encodePromoteTarget } from "../lib/promoteTarget";
+import { DENIED } from "../../../auth/denialCopy";
 
 type PlatformResourceTypeDTO = components["schemas"]["PlatformResourceTypeDTO"];
 type ExternalResourceDTO = components["schemas"]["ExternalResourceDTO"];
@@ -295,7 +296,7 @@ export function CatalogTypeDrawer(props: CatalogTypeDrawerProps) {
               title={
                 hasResourceConfig
                   ? "Edit"
-                  : "You don't have permission to configure resources."
+                  : DENIED.configureResources
               }
             >
               <span>

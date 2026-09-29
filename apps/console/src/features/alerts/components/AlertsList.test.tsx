@@ -18,7 +18,12 @@
 
 // @vitest-environment jsdom
 
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
+import {
+  ALL_PERMISSIONS,
+  allPermissionsExcept,
+  renderWithPermissions,
+} from "../../../auth/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AlertsList } from "./AlertsList";
 
@@ -28,10 +33,10 @@ vi.mock("@tanstack/react-router", () => ({
 
 // Every test but the dedicated "no permission" one below holds
 // ae:observability-view, so the page reads as reachable by default.
-const hasObservabilityAccess = vi.hoisted(() => ({ current: true }));
-vi.mock("../../../auth/permissions", () => ({
-  useHasPermission: () => hasObservabilityAccess.current,
-}));
+// Every test but the dedicated "no permission" one below holds every
+// permission, so the page reads as reachable.
+let held: Iterable<string> = ALL_PERMISSIONS;
+const renderList = () => renderWithPermissions(<AlertsList />, held);
 
 let alertsResult: {
   data?: { pages: { items?: unknown[]; nextCursor?: string | null }[] };
@@ -46,13 +51,13 @@ vi.mock("../api/queries", () => ({
 }));
 
 afterEach(() => {
-  hasObservabilityAccess.current = true;
+  held = ALL_PERMISSIONS;
 });
 
 describe("AlertsList", () => {
   it("shows a loading spinner while the first page loads", () => {
     alertsResult = { isPending: true, isError: false };
-    render(<AlertsList />);
+    renderList();
     expect(screen.getByRole("progressbar")).toBeInTheDocument();
   });
 
@@ -62,7 +67,7 @@ describe("AlertsList", () => {
       isError: true,
       error: new Error("rca service unavailable"),
     };
-    render(<AlertsList />);
+    renderList();
     expect(
       screen.getByText(/Failed to load alerts: rca service unavailable/),
     ).toBeInTheDocument();
@@ -74,7 +79,7 @@ describe("AlertsList", () => {
       isError: false,
       data: { pages: [{ items: [] }] },
     };
-    render(<AlertsList />);
+    renderList();
     expect(screen.getByText("No alerts yet")).toBeInTheDocument();
   });
 
@@ -99,12 +104,12 @@ describe("AlertsList", () => {
         ],
       },
     };
-    render(<AlertsList />);
+    renderList();
     expect(screen.getByText("Payments 5xx spike")).toBeInTheDocument();
   });
 
   it("shows an insufficient-permissions message and renders no alert content without ae:observability-view", () => {
-    hasObservabilityAccess.current = false;
+    held = allPermissionsExcept("ae:observability-view");
     // A direct-URL visit must never flash real data even if a prior fetch
     // cached it — the mocked result deliberately carries data here.
     alertsResult = {
@@ -126,7 +131,7 @@ describe("AlertsList", () => {
         ],
       },
     };
-    render(<AlertsList />);
+    renderList();
 
     expect(
       screen.getByText("You don't have permission to view alerts."),

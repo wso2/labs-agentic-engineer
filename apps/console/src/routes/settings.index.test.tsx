@@ -18,7 +18,9 @@
 
 // @vitest-environment jsdom
 
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
+import { renderWithPermissions } from "../auth/testing";
+import { permissionsOf } from "../auth/permissions";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // Navigate normally needs a live router context (it calls useNavigate() in an
@@ -34,38 +36,53 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
   };
 });
 
-const heldPermissions = vi.hoisted(() => new Set<string>());
-vi.mock("../auth/permissions", () => ({
-  useHasPermission: (permission: string) => heldPermissions.has(permission),
-  useHasAnyPermission: (permissions: string[]) =>
-    permissions.some((p) => heldPermissions.has(p)),
-}));
+const heldPermissions = new Set<string>();
 
 import { SettingsIndexPage, resolveSettingsLandingPath } from "./settings.index";
+
+// Real permission keys through the real predicates, so each case names the
+// grant a caller would actually hold rather than a pre-resolved boolean per
+// section. Which key admits which section is now part of what this covers —
+// it used to be stated only inside the component, untested.
+const holding = (...permissions: string[]) => permissionsOf(new Set(permissions));
 
 describe("resolveSettingsLandingPath — priority order", () => {
   it("lands on Credentials first when it's reachable at all", () => {
     expect(
-      resolveSettingsLandingPath({ credentials: true, skills: true, usage: true }),
+      resolveSettingsLandingPath(
+        holding("ae:github-config", "ae:skill-view", "ae:usage-view"),
+      ),
     ).toBe("/settings/credentials");
   });
 
   it("falls through to Skills when Credentials has nothing to show", () => {
     expect(
-      resolveSettingsLandingPath({ credentials: false, skills: true, usage: true }),
+      resolveSettingsLandingPath(holding("ae:skill-view", "ae:usage-view")),
     ).toBe("/settings/skills");
   });
 
   it("falls through to Usage when neither Credentials nor Skills has anything", () => {
-    expect(
-      resolveSettingsLandingPath({ credentials: false, skills: false, usage: true }),
-    ).toBe("/settings/usage");
+    expect(resolveSettingsLandingPath(holding("ae:usage-view"))).toBe(
+      "/settings/usage",
+    );
   });
 
   it("returns null when none of the three has anything to show", () => {
-    expect(
-      resolveSettingsLandingPath({ credentials: false, skills: false, usage: false }),
-    ).toBeNull();
+    expect(resolveSettingsLandingPath(holding())).toBeNull();
+  });
+
+  // Credentials is the one section admitted by EITHER of two permissions,
+  // because the BFF redacts each of its cards separately.
+  it("lands on Credentials on the model half alone", () => {
+    expect(resolveSettingsLandingPath(holding("ae:model-config"))).toBe(
+      "/settings/credentials",
+    );
+  });
+
+  // Skills is exact-match on ae:skill-view, NOT OR'd with ae:skill-config:
+  // holding only the write half does not admit you to the section.
+  it("does not land on Skills for ae:skill-config alone", () => {
+    expect(resolveSettingsLandingPath(holding("ae:skill-config"))).toBeNull();
   });
 });
 
@@ -74,7 +91,7 @@ describe("SettingsIndexPage", () => {
 
   it("navigates to Credentials when the caller holds ae:github-config", () => {
     heldPermissions.add("ae:github-config");
-    render(<SettingsIndexPage />);
+    renderWithPermissions(<SettingsIndexPage />, heldPermissions);
     expect(screen.getByTestId("navigate")).toHaveAttribute(
       "data-to",
       "/settings/credentials",
@@ -83,7 +100,7 @@ describe("SettingsIndexPage", () => {
 
   it("navigates to Skills when only ae:skill-view is held", () => {
     heldPermissions.add("ae:skill-view");
-    render(<SettingsIndexPage />);
+    renderWithPermissions(<SettingsIndexPage />, heldPermissions);
     expect(screen.getByTestId("navigate")).toHaveAttribute("data-to", "/settings/skills");
   });
 
@@ -92,7 +109,7 @@ describe("SettingsIndexPage", () => {
   // blocked page, same rule as SettingsLayout's tab gating.
   it("does NOT navigate to Skills when only ae:skill-config is held", () => {
     heldPermissions.add("ae:skill-config");
-    render(<SettingsIndexPage />);
+    renderWithPermissions(<SettingsIndexPage />, heldPermissions);
     expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
     expect(
       screen.getByText(
@@ -103,12 +120,12 @@ describe("SettingsIndexPage", () => {
 
   it("navigates to Usage when only ae:usage-view is held", () => {
     heldPermissions.add("ae:usage-view");
-    render(<SettingsIndexPage />);
+    renderWithPermissions(<SettingsIndexPage />, heldPermissions);
     expect(screen.getByTestId("navigate")).toHaveAttribute("data-to", "/settings/usage");
   });
 
   it("shows the blocked page with no permissions at all — no Navigate, no settings content", () => {
-    render(<SettingsIndexPage />);
+    renderWithPermissions(<SettingsIndexPage />, heldPermissions);
     expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
     expect(
       screen.getByText(

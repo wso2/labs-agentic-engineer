@@ -19,7 +19,8 @@
 // @vitest-environment jsdom
 
 import type { ElementType } from "react";
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
+import { renderWithPermissions } from "../../../auth/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { OverviewArchitecture } from "./OverviewArchitecture";
 
@@ -30,13 +31,9 @@ vi.mock("@tanstack/react-router", () => ({
     },
 }));
 
-// Same mocking seam OverviewTrack.test.tsx uses: useHasAnyPermission reads
-// useSession().permissions (permissions.ts), so stubbing the session is
-// enough to drive the whole permission surface from one place.
-const permissions = vi.hoisted(() => ({ current: new Set(["ae:design-view"]) }));
-vi.mock("../../../auth/SessionContext", () => ({
-  useSession: () => ({ orgHandle: "default", permissions: permissions.current }),
-}));
+// Same seam OverviewTrack.test.tsx uses: a per-test permission set handed to
+// a real session, which drives the whole permission surface from one place.
+const permissions = { current: new Set(["ae:design-view"]) };
 
 const mockUseSpecFiles = vi.fn();
 const mockUseSpecFileContent = vi.fn();
@@ -65,7 +62,10 @@ beforeEach(() => {
 describe("OverviewArchitecture without ae:design-view", () => {
   it("explains the permission gap instead of a generic load failure", () => {
     permissions.current = new Set(["ae:requirement-view"]);
-    render(<OverviewArchitecture projectName="proj1" />);
+    renderWithPermissions(
+      <OverviewArchitecture projectName="proj1" />,
+      permissions.current,
+    );
 
     expect(
       screen.getByText("No permission to view the architecture"),
@@ -77,7 +77,10 @@ describe("OverviewArchitecture without ae:design-view", () => {
 
   it("withholds the project name from useSpecFiles so it never fires", () => {
     permissions.current = new Set(["ae:requirement-view"]);
-    render(<OverviewArchitecture projectName="proj1" />);
+    renderWithPermissions(
+      <OverviewArchitecture projectName="proj1" />,
+      permissions.current,
+    );
 
     expect(mockUseSpecFiles).toHaveBeenCalledWith(undefined);
   });
@@ -90,7 +93,10 @@ describe("OverviewArchitecture without ae:design-view", () => {
   // holding only ae:design lands right back in a 403 the panel can't explain.
   it("does NOT accept ae:design alone", () => {
     permissions.current = new Set(["ae:design"]);
-    render(<OverviewArchitecture projectName="proj1" />);
+    renderWithPermissions(
+      <OverviewArchitecture projectName="proj1" />,
+      permissions.current,
+    );
 
     expect(
       screen.getByText("No permission to view the architecture"),
@@ -101,19 +107,28 @@ describe("OverviewArchitecture without ae:design-view", () => {
 
 describe("OverviewArchitecture with ae:design-view", () => {
   it("passes the real project name through to useSpecFiles", () => {
-    render(<OverviewArchitecture projectName="proj1" />);
+    renderWithPermissions(
+      <OverviewArchitecture projectName="proj1" />,
+      permissions.current,
+    );
     expect(mockUseSpecFiles).toHaveBeenCalledWith("proj1");
   });
 
   it("still surfaces a genuine fetch failure as 'Failed to load the architecture'", () => {
     mockUseSpecFiles.mockReturnValue({ data: undefined, isPending: false, isError: true });
-    render(<OverviewArchitecture projectName="proj1" />);
+    renderWithPermissions(
+      <OverviewArchitecture projectName="proj1" />,
+      permissions.current,
+    );
     expect(screen.getByText("Failed to load the architecture.")).toBeInTheDocument();
   });
 
   it("shows the empty state when no design.cell exists yet", () => {
     mockUseSpecFiles.mockReturnValue(EMPTY);
-    render(<OverviewArchitecture projectName="proj1" />);
+    renderWithPermissions(
+      <OverviewArchitecture projectName="proj1" />,
+      permissions.current,
+    );
     expect(screen.getByText("No architecture yet")).toBeInTheDocument();
   });
 });

@@ -31,6 +31,7 @@ import { useHasPermission } from "../../../auth/permissions";
 import type { components } from "../../../generated/aep-api";
 import { useProjectUsageList } from "../api/queries";
 import { UsageFigure } from "./UsageFigure";
+import { DENIED } from "../../../auth/denialCopy";
 
 type ProjectUsageCard = components["schemas"]["ProjectUsageCard"];
 
@@ -49,7 +50,7 @@ export function UsageSection() {
   if (!hasUsageView) {
     return (
       <Alert severity="warning">
-        You don't have permission to view usage.
+        {DENIED.viewUsage}
       </Alert>
     );
   }

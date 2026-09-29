@@ -18,7 +18,13 @@
 
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { fireEvent, screen } from "@testing-library/react";
+import {
+  ALL_PERMISSIONS,
+  allPermissionsExcept,
+  renderWithPermissions,
+} from "../../../auth/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 
@@ -26,10 +32,8 @@ type ValidationSummary = components["schemas"]["ValidationSummary"];
 
 // Every existing test in this file assumes the page is otherwise reachable —
 // only the dedicated "no permission" test below flips this.
-const canViewValidations = vi.hoisted(() => ({ current: true }));
-vi.mock("../../../auth/permissions", () => ({
-  useHasPermission: () => canViewValidations.current,
-}));
+let held: Iterable<string> = ALL_PERMISSIONS;
+const render = (ui: ReactElement) => renderWithPermissions(ui, held);
 
 const navigate = vi.fn();
 vi.mock("@tanstack/react-router", () => ({
@@ -80,7 +84,7 @@ beforeEach(() => {
   mockRows = [];
   mockState = { isPending: false, isError: false };
   navigate.mockClear();
-  canViewValidations.current = true;
+  held = ALL_PERMISSIONS;
 });
 
 describe("ValidationLedger", () => {
@@ -176,7 +180,7 @@ describe("ValidationLedger", () => {
   // Exact-match ae:build-view, the same permission list-validations is gated
   // on. A full replacement, not an overlay: none of the ledger renders.
   it("blocks the whole page for a caller lacking ae:build-view", () => {
-    canViewValidations.current = false;
+    held = allPermissionsExcept("ae:build-view");
     mockRows = [row({ tag: "v1" })];
     render(<ValidationLedger projectName="p" />);
 
@@ -188,7 +192,7 @@ describe("ValidationLedger", () => {
   });
 
   it("navigates to the project overview from the restricted page", () => {
-    canViewValidations.current = false;
+    held = allPermissionsExcept("ae:build-view");
     render(<ValidationLedger projectName="p" />);
 
     fireEvent.click(screen.getByRole("button", { name: "Back to project overview" }));

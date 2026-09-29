@@ -42,6 +42,7 @@ import type { components } from "../../../generated/aep-api";
 import { useExternalResources, usePlatformResourceTypes } from "../../settings/api/queries";
 import { isRegisteredExternal } from "../kind";
 import { CatalogTypeDrawer } from "./CatalogTypeDrawer";
+import { DENIED } from "../../../auth/denialCopy";
 
 type PlatformResourceTypeDTO = components["schemas"]["PlatformResourceTypeDTO"];
 type ExternalResourceDTO = components["schemas"]["ExternalResourceDTO"];
@@ -155,7 +156,7 @@ export function ResourcesCatalog() {
       <EmptyState
         icon={<NoPermissionIllustration size={120} />}
         title="No resources access"
-        description="You don't have permission to view resources."
+        description={DENIED.viewResources}
       />
     );
   } else if (platform.isLoading || external.isLoading) {

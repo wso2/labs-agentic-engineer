@@ -21,6 +21,7 @@ import { useHasAnyPermission } from "../../../auth/permissions";
 import { useConfig } from "../api/queries";
 import { AiAgentsCard } from "./AiAgentsCard";
 import { GitHubCredentialCard } from "./GitHubCredentialCard";
+import { DENIED } from "../../../auth/denialCopy";
 
 export function CredentialsSection() {
   // GET /config itself now requires holding one of the two (see
@@ -37,7 +38,7 @@ export function CredentialsSection() {
   if (!hasCredentialsAccess) {
     return (
       <Alert severity="warning">
-        You don't have permission to view credentials.
+        {DENIED.viewCredentials}
       </Alert>
     );
   }

@@ -24,7 +24,8 @@
 // next moment on.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render as rtlRender, screen, act } from "@testing-library/react";
+import { cleanup, fireEvent, screen, act } from "@testing-library/react";
+import { renderWithPermissions } from "../auth/testing";
 import { chatKeyFor, requestChatOpen } from "../features/agent-chat/chatStore";
 import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 
@@ -48,25 +49,14 @@ vi.mock("@tanstack/react-router", () => ({
 // Every test but the dedicated permission-denial ones below holds every
 // sidebar-relevant permission, plus ae:design (the agent chat toggle/panel),
 // so every item reads as reachable by default.
-const heldPermissions = vi.hoisted(
-  () =>
-    new Set([
-      "ae:observability-view",
-      "ae:requirement-view",
-      "ae:resource-view",
-      "ae:design",
-      "ae:design-view",
-      "ae:build-view",
-    ]),
-);
-vi.mock("../auth/SessionContext", () => ({
-  useSession: () => ({
-    user: { name: "Test User", email: "test@example.com" },
-    orgHandle: "acme",
-    permissions: heldPermissions,
-    signOut: vi.fn(),
-  }),
-}));
+const heldPermissions = new Set([
+  "ae:observability-view",
+  "ae:requirement-view",
+  "ae:resource-view",
+  "ae:design",
+  "ae:design-view",
+  "ae:build-view",
+]);
 
 // The switchers, the status badge and the bell each open their own queries;
 // none of them is what this file is about.
@@ -97,10 +87,11 @@ import { AppLayout } from "./AppLayout";
 // AppShell reads breakpoints off the theme, so the shell needs a provider —
 // nothing here is about theming, it is simply the minimum that renders.
 const render = () =>
-  rtlRender(
+  renderWithPermissions(
     <OxygenUIThemeProvider theme={OxygenTheme}>
       <AppLayout />
     </OxygenUIThemeProvider>,
+    heldPermissions,
   );
 
 beforeEach(() => {

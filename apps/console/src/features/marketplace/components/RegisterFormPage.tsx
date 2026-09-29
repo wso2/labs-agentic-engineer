@@ -91,6 +91,7 @@ import {
   rowFromContract,
   type ContractRow,
 } from "./ContractFields";
+import { DENIED } from "../../../auth/denialCopy";
 
 type ConfigKeyDTO = components["schemas"]["ConfigKeyDTO"];
 type EnvValueCellDTO = components["schemas"]["EnvValueCellDTO"];
@@ -180,7 +181,7 @@ export function RegisterFormPage(props: {
         <EmptyState
           icon={<NoPermissionIllustration size={120} />}
           title="No resources access"
-          description="You don't have permission to register or edit resources."
+          description={DENIED.registerOrEditResources}
         />
       </PageContent>
     );

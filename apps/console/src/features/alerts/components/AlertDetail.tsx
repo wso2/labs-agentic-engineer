@@ -45,6 +45,7 @@ import { NoPermissionIllustration } from "../../../components/NoPermissionIllust
 import { PageHeader } from "../../../components/PageHeader";
 import { StatusChip } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
+import { DENIED } from "../../../auth/denialCopy";
 
 type RcaAgentReport = components["schemas"]["RcaAgentReport"];
 type Stage = "received" | "issue-created" | "coding-handover" | "verify-fix";
@@ -229,7 +230,7 @@ export function AlertDetail({ alertId }: { alertId: string }) {
         <EmptyState
           icon={<NoPermissionIllustration size={120} />}
           title="No alerts access"
-          description="You don't have permission to view alerts."
+          description={DENIED.viewAlerts}
         />
       ) : isPending ? (
         <Box sx={{ display: "flex", justifyContent: "center", p: 6 }}>

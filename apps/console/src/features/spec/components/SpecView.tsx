@@ -120,6 +120,7 @@ import {
   isDependencyDefinition,
 } from "../api/designTree";
 import { useSession } from "../../../auth/SessionContext";
+import { DENIED } from "../../../auth/denialCopy";
 
 type PreflightItem = components["schemas"]["PreflightItem"];
 type BuildPreflight = components["schemas"]["BuildPreflight"];
@@ -1265,7 +1266,7 @@ function SpecViewContent({ projectName }: { projectName: string }) {
               <Tooltip
                 title={
                   !hasDesign
-                    ? "You don't have permission to generate the design."
+                    ? DENIED.generateDesign
                     : agentBusy
                       ? "An agent is still working — Generate design is available once it finishes"
                       : awaitingAnswers

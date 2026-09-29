@@ -35,6 +35,7 @@ import { PageHeader } from "../../../components/PageHeader";
 import { StatusChip } from "../../../components/StatusChip";
 import { useAlertsInfinite } from "../api/queries";
 import { classificationLabel, classificationTone } from "../classification";
+import { DENIED } from "../../../auth/denialCopy";
 
 export function AlertsList() {
   const navigate = useNavigate();
@@ -68,7 +69,7 @@ export function AlertsList() {
         <EmptyState
           icon={<NoPermissionIllustration size={120} />}
           title="No alerts access"
-          description="You don't have permission to view alerts."
+          description={DENIED.viewAlerts}
         />
       ) : isPending ? (
         <Box sx={{ display: "flex", justifyContent: "center", p: 6 }}>

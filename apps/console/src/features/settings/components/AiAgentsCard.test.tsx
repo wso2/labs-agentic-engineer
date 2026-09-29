@@ -19,7 +19,11 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, within } from "@testing-library/react";
+import {
+  allPermissionsExcept,
+  renderWithPermissions,
+} from "../../../auth/testing";
 import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 import type { components } from "../../../generated/aep-api";
 import { ApiRequestError } from "../../../api/errors";
@@ -49,10 +53,6 @@ vi.mock("../api/queries", () => ({
 
 // Every existing test in this file assumes the caller may configure the model
 // — only the dedicated permission tests below flip this.
-const hasModelConfig = vi.hoisted(() => ({ current: true }));
-vi.mock("../../../auth/permissions", () => ({
-  useHasPermission: () => hasModelConfig.current,
-}));
 
 const { AiAgentsCard } = await import("./AiAgentsCard");
 
@@ -138,11 +138,15 @@ function config(over: Partial<ConfigProjection> = {}): ConfigProjection {
 const onOllama = () =>
   config({ llm: ollama, agents: { ...defaultAgents, runtime: "opencode" } });
 
-function renderCard(c: ConfigProjection = config()) {
-  render(
+function renderCard(
+  c: ConfigProjection = config(),
+  permissions?: Iterable<string>,
+) {
+  renderWithPermissions(
     <OxygenUIThemeProvider theme={OxygenTheme}>
       <AiAgentsCard config={c} />
     </OxygenUIThemeProvider>,
+    permissions,
   );
 }
 
@@ -164,7 +168,6 @@ beforeEach(() => {
   testMutate.mockReset();
   Object.assign(saveState, { isPending: false, isError: false, error: null });
   Object.assign(testState, { isPending: false, isError: false, error: null });
-  hasModelConfig.current = true;
 });
 afterEach(cleanup);
 
@@ -418,8 +421,7 @@ describe("a refused save", () => {
 // refuse. It says so instead of rendering a form that cannot work.
 describe("AiAgentsCard without ae:model-config", () => {
   it("replaces the card's body with a no-permission state", () => {
-    hasModelConfig.current = false;
-    renderCard();
+    renderCard(config(), allPermissionsExcept("ae:model-config"));
 
     expect(
       screen.getByText("You don't have permission to view AI agent settings."),
@@ -432,8 +434,7 @@ describe("AiAgentsCard without ae:model-config", () => {
   // Whether the org has a connection at all is part of what the permission
   // admits you to, so the header's ready/not-connected chip goes with the body.
   it("keeps the card's title but drops its status chip", () => {
-    hasModelConfig.current = false;
-    renderCard();
+    renderCard(config(), allPermissionsExcept("ae:model-config"));
 
     expect(screen.getByRole("heading", { name: "AI agents" })).toBeInTheDocument();
     expect(screen.queryByText("ready")).not.toBeInTheDocument();

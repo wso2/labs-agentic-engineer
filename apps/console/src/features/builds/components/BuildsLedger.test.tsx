@@ -18,18 +18,15 @@
 
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
+import {
+  allPermissionsExcept,
+  renderWithPermissions,
+} from "../../../auth/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 
 type BuildSummary = components["schemas"]["BuildSummary"];
-
-// Every existing test in this file assumes the page is otherwise reachable —
-// only a dedicated "no permission" test flips this.
-const canViewBuilds = vi.hoisted(() => ({ current: true }));
-vi.mock("../../../auth/permissions", () => ({
-  useHasPermission: () => canViewBuilds.current,
-}));
 
 const navigate = vi.fn();
 vi.mock("@tanstack/react-router", () => ({
@@ -85,7 +82,11 @@ const build = (over: Partial<BuildSummary> = {}): BuildSummary => ({
   ...over,
 });
 
-const renderLedger = () => render(<BuildsLedger projectName="demo-shop" />);
+// Every existing test in this file assumes the page is otherwise reachable, so
+// permissions default to the full set — only a dedicated "no permission" test
+// withholds ae:build-view.
+const renderLedger = (permissions?: Iterable<string>) =>
+  renderWithPermissions(<BuildsLedger projectName="demo-shop" />, permissions);
 
 beforeEach(() => {
   mockBuilds = [];
@@ -93,7 +94,6 @@ beforeEach(() => {
   mockState = { isPending: false, isError: false };
   navigate.mockClear();
   refetch.mockClear();
-  canViewBuilds.current = true;
 });
 
 describe("BuildsLedger", () => {
@@ -320,8 +320,7 @@ describe("BuildsLedger", () => {
   });
 
   it("blocks the whole page for a user lacking ae:build-view", () => {
-    canViewBuilds.current = false;
-    renderLedger();
+    renderLedger(allPermissionsExcept("ae:build-view"));
 
     expect(
       screen.getByText("You don't have access to this project's builds"),

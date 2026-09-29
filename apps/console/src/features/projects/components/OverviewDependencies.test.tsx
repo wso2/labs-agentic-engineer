@@ -18,7 +18,12 @@
 
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
+import {
+  ALL_PERMISSIONS,
+  allPermissionsExcept,
+  renderWithPermissions,
+} from "../../../auth/testing";
 import { describe, expect, it, vi } from "vitest";
 import type { ElementType } from "react";
 import type { components } from "../../../generated/aep-api";
@@ -157,15 +162,11 @@ vi.mock("../../settings/api/queries", () => ({
 // ae:resource-view also gates the panel's OWN read now, so it is togglable —
 // every test but the dedicated one below holds it, and the reads resolve
 // exactly as they did before being gated.
-const hasResourceAccess = vi.hoisted(() => ({ current: true }));
-vi.mock("../../../auth/permissions", () => ({
-  useHasPermission: () => hasResourceAccess.current,
-  useHasAnyPermission: () => hasResourceAccess.current,
-}));
+let held: Iterable<string> = ALL_PERMISSIONS;
 
 function resetState() {
   refetch.mockReset();
-  hasResourceAccess.current = true;
+  held = ALL_PERMISSIONS;
   openApiCalls.length = 0;
   depsState = {
     data: [],
@@ -190,7 +191,10 @@ describe("OverviewDependencies", () => {
   it("shows the empty state and does not treat it as an error", () => {
     resetState();
 
-    render(<OverviewDependencies projectName={CURRENT_PROJECT} />);
+    renderWithPermissions(
+      <OverviewDependencies projectName={CURRENT_PROJECT} />,
+      held,
+    );
 
     expect(screen.getByText("No deployed dependencies")).toBeInTheDocument();
     expect(
@@ -211,9 +215,12 @@ describe("OverviewDependencies", () => {
   // reads as a platform fault and offers a Retry that cannot succeed.
   it("explains a missing resource permission instead of failing the read", () => {
     resetState();
-    hasResourceAccess.current = false;
+    held = allPermissionsExcept("ae:resource-view", "ae:resource-config");
 
-    render(<OverviewDependencies projectName={CURRENT_PROJECT} />);
+    renderWithPermissions(
+      <OverviewDependencies projectName={CURRENT_PROJECT} />,
+      held,
+    );
 
     expect(screen.getByText("No permission to view dependencies")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -226,7 +233,7 @@ describe("OverviewDependencies", () => {
   // permission problem, not as a failed load.
   it("prefers the permission explanation over a stale error", () => {
     resetState();
-    hasResourceAccess.current = false;
+    held = allPermissionsExcept("ae:resource-view", "ae:resource-config");
     depsState = {
       data: [],
       isPending: false,
@@ -235,7 +242,10 @@ describe("OverviewDependencies", () => {
       refetch,
     };
 
-    render(<OverviewDependencies projectName={CURRENT_PROJECT} />);
+    renderWithPermissions(
+      <OverviewDependencies projectName={CURRENT_PROJECT} />,
+      held,
+    );
 
     expect(screen.getByText("No permission to view dependencies")).toBeInTheDocument();
     expect(screen.queryByText(/missing required permission/)).not.toBeInTheDocument();
@@ -250,7 +260,10 @@ describe("OverviewDependencies", () => {
       refetch,
     };
 
-    render(<OverviewDependencies projectName={CURRENT_PROJECT} />);
+    renderWithPermissions(
+      <OverviewDependencies projectName={CURRENT_PROJECT} />,
+      held,
+    );
 
     expect(screen.queryByLabelText("Close")).not.toBeInTheDocument();
 
@@ -270,7 +283,10 @@ describe("OverviewDependencies", () => {
       refetch,
     };
 
-    render(<OverviewDependencies projectName={CURRENT_PROJECT} />);
+    renderWithPermissions(
+      <OverviewDependencies projectName={CURRENT_PROJECT} />,
+      held,
+    );
 
     expect(screen.queryByLabelText("Close")).not.toBeInTheDocument();
 
@@ -290,7 +306,10 @@ describe("OverviewDependencies", () => {
       refetch,
     };
 
-    render(<OverviewDependencies projectName={CURRENT_PROJECT} />);
+    renderWithPermissions(
+      <OverviewDependencies projectName={CURRENT_PROJECT} />,
+      held,
+    );
 
     const row = screen.getByRole("button", { name: /postgres-cnpg/ });
     expect(row.tagName).toBe("BUTTON");
@@ -310,7 +329,10 @@ describe("OverviewDependencies", () => {
       refetch,
     };
 
-    render(<OverviewDependencies projectName={CURRENT_PROJECT} />);
+    renderWithPermissions(
+      <OverviewDependencies projectName={CURRENT_PROJECT} />,
+      held,
+    );
 
     fireEvent.click(screen.getByRole("button", { name: /gym-api/ }));
 
@@ -337,7 +359,10 @@ describe("OverviewDependencies", () => {
       refetch,
     };
 
-    render(<OverviewDependencies projectName={CURRENT_PROJECT} />);
+    renderWithPermissions(
+      <OverviewDependencies projectName={CURRENT_PROJECT} />,
+      held,
+    );
 
     expect(screen.getByLabelText("Loading dependencies")).toBeInTheDocument();
     expect(screen.queryByText("No deployed dependencies")).not.toBeInTheDocument();
@@ -353,7 +378,10 @@ describe("OverviewDependencies", () => {
       refetch,
     };
 
-    render(<OverviewDependencies projectName={CURRENT_PROJECT} />);
+    renderWithPermissions(
+      <OverviewDependencies projectName={CURRENT_PROJECT} />,
+      held,
+    );
 
     expect(screen.getByRole("alert")).toHaveTextContent("upstream unavailable");
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
@@ -376,7 +404,10 @@ describe("OverviewDependencies", () => {
       refetch,
     };
 
-    render(<OverviewDependencies projectName={CURRENT_PROJECT} />);
+    renderWithPermissions(
+      <OverviewDependencies projectName={CURRENT_PROJECT} />,
+      held,
+    );
 
     fireEvent.click(screen.getByRole("button", { name: /mystery-db/ }));
 

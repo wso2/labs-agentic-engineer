@@ -18,7 +18,9 @@
 
 // @vitest-environment jsdom
 
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { act, fireEvent, screen } from "@testing-library/react";
+import { ALL_PERMISSIONS, renderWithPermissions } from "../../../auth/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 
@@ -28,10 +30,11 @@ type RunCycleView = components["schemas"]["RunCycleView"];
 
 // Every existing test in this file assumes the page is reachable and its
 // actions permitted — only the dedicated permission tests below flip these.
-const perms = vi.hoisted(() => ({ view: true, build: true }));
-vi.mock("../../../auth/permissions", () => ({
-  useHasPermission: (p: string) => (p === "ae:build" ? perms.build : perms.view),
-}));
+// Page entry reads ae:build-view; starting/cancelling a run reads ae:build.
+// The session below distinguishes them as production does, by which key is
+// present. `render` is shadowed so each case keeps its existing shape.
+const held = new Set<string>(ALL_PERMISSIONS);
+const render = (ui: ReactElement) => renderWithPermissions(ui, held);
 
 const navigate = vi.fn();
 vi.mock("@tanstack/react-router", () => ({
@@ -158,8 +161,8 @@ beforeEach(() => {
   cancelMutate.mockClear();
   runFeed.mockClear();
   navigate.mockClear();
-  perms.view = true;
-  perms.build = true;
+  held.clear();
+  ALL_PERMISSIONS.forEach((p) => held.add(p));
 });
 
 describe("ValidationMilestonePage", () => {
@@ -548,7 +551,7 @@ describe("ValidationMilestonePage", () => {
     // (revalidate-build, cancel-run). Entering the page on ae:build-view is
     // not licence to act on it.
     it("refuses both mutations without ae:build", () => {
-      perms.build = false;
+      held.delete("ae:build");
       mockDetail = detail({ state: "running", live: true });
       render(<ValidationMilestonePage projectName="p" tag="v1" />);
       open();
@@ -563,7 +566,7 @@ describe("ValidationMilestonePage", () => {
     // outranks "a run is already working this version" in the tooltip — the
     // deployed-version advice would send the reader to fix the wrong thing.
     it("names the permission as the reason, ahead of the lifecycle ones", async () => {
-      perms.build = false;
+      held.delete("ae:build");
       mockDetail = detail({ state: "running", live: true });
       render(<ValidationMilestonePage projectName="p" tag="v1" />);
       open();
@@ -577,7 +580,7 @@ describe("ValidationMilestonePage", () => {
 
   describe("the page's own gate", () => {
     it("blocks the whole page for a caller lacking ae:build-view", () => {
-      perms.view = false;
+      held.delete("ae:build-view");
       render(<ValidationMilestonePage projectName="p" tag="v1" />);
 
       expect(
@@ -590,7 +593,7 @@ describe("ValidationMilestonePage", () => {
     });
 
     it("navigates to the project overview from the restricted page", () => {
-      perms.view = false;
+      held.delete("ae:build-view");
       render(<ValidationMilestonePage projectName="p" tag="v1" />);
 
       fireEvent.click(screen.getByRole("button", { name: "Back to project overview" }));

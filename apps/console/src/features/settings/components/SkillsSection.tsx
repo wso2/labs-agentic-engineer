@@ -60,6 +60,7 @@ import { EditSkillDialog } from "./EditSkillDialog";
 import { ImportSkillDialog } from "./ImportSkillDialog";
 import { SkillViewerDialog } from "./SkillViewerDialog";
 import { SyncUpdatesControl } from "./SyncUpdatesControl";
+import { DENIED } from "../../../auth/denialCopy";
 
 const PAGE_SIZE = 10;
 
@@ -124,7 +125,7 @@ export function SkillsSection() {
   if (!canViewSkills) {
     return (
       <Alert severity="warning">
-        You don't have permission to view skills.
+        {DENIED.viewSkills}
       </Alert>
     );
   }
@@ -259,7 +260,7 @@ export function SkillsSection() {
           />
           <Tooltip
             title={
-              hasSkillConfig ? "" : "You don't have permission to configure skills."
+              hasSkillConfig ? "" : DENIED.configureSkills
             }
           >
             <span>
@@ -419,7 +420,7 @@ export function SkillsSection() {
                             // skill's own state, so it takes precedence over
                             // `required`/`enabled` explanations below.
                             !hasSkillConfig
-                              ? "You don't have permission to configure skills."
+                              ? DENIED.configureSkills
                               : // `required` is the server's call, not a name match
                                 // here: the coding runner reads this skill on every
                                 // run and refuses to start without it, so the PATCH
