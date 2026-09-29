@@ -100,6 +100,8 @@ import {
 export interface TurnModelContext {
   /** The organization the turn runs for (`X-Org-Id`), named on its provider log lines. */
   orgId?: string;
+  /** Stable ID shared by all turns in this conversation. */
+  conversationId: string;
   /**
    * Told when a model call waits out a short 429, so the turn's stream can say
    * it is waiting on the model provider (a `provider-wait` frame).
@@ -502,6 +504,7 @@ export function createApp(deps: CreateAppDeps): Express {
       // is running, by which point it is.
       model = deps.buildModel(conn, {
         ...(orgId ? { orgId } : {}),
+        conversationId: id,
         onProviderWait: (host) => {
           const wait: ProviderWaitPart = { type: "provider-wait", host };
           send(wait);

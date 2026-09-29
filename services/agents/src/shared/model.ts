@@ -162,6 +162,19 @@ interface CreateModelOptions {
   now?: () => number;
   /** Told when a model call waits out a short 429 (`ProviderLimitWatch.onWait`). */
   onProviderWait?: (host: string) => void;
+  /** Stable conversation ID for providers that route requests by session. */
+  conversationId?: string;
+}
+
+/** OpenCode Go requires a session header on every model request in a conversation. */
+function openCodeGoHeaders(conn: ModelConnection, conversationId: string | undefined): Record<string, string> | undefined {
+  if (conn.format !== "openai-compatible") return undefined;
+  const url = new URL(conn.baseURL);
+  if (url.protocol !== "https:" || url.hostname !== "opencode.ai" || url.pathname.replace(/\/+$/, "") !== "/zen/go/v1") {
+    return undefined;
+  }
+  if (!conversationId) throw new Error("OpenCode Go requires a conversation ID for x-opencode-session");
+  return { "x-opencode-session": conversationId, "User-Agent": "aep-agents/1.0" };
 }
 
 /**
@@ -188,11 +201,13 @@ export function createModel(conn: ModelConnection, options: CreateModelOptions =
   if (conn.format === "openai-compatible") {
     // `includeUsage` asks for the usage chunk a stream otherwise omits, which
     // is what the turn's cost capture reads.
+    const headers = openCodeGoHeaders(conn, options.conversationId);
     return createOpenAICompatible({
       name: OPENAI_COMPATIBLE_PROVIDER,
       baseURL: conn.baseURL,
       apiKey: conn.apiKey,
       includeUsage: true,
+      ...(headers ? { headers } : {}),
       fetch,
     })(conn.model);
   }

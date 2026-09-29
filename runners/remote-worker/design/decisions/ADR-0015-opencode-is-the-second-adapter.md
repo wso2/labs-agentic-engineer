@@ -207,6 +207,10 @@ above change:
   `AEP_MODEL_API_KEY`; the adapter moves either into `AEP_MODEL_API_KEY` and
   removes `ANTHROPIC_API_KEY` from the server's environment. A Claude
   subscription token is still refused at start.
+- **OpenCode Go model calls carry their OpenCode session ID.** For the
+  OpenAI-compatible `https://opencode.ai/zen/go/v1` endpoint, the guard's
+  `chat.headers` hook sends `x-opencode-session` and an AEP user agent on each
+  request, including subagent calls.
 
 Web search follows the connection's strategy (`AEP_MODEL_WEB_SEARCH`): with
 `ollama-api` both adapters mount the `aep-web` MCP server from

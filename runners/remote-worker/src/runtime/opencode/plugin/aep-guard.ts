@@ -54,6 +54,7 @@ import { obj, str } from "../../fields.js";
 import { PRIMARY_AGENT } from "../tools.js";
 import { createSessionContext, type SessionContext } from "./context.js";
 import { createGuardDecision, type GuardDecision } from "./guard.js";
+import { addGoSessionHeaders, type ChatHeadersInput, type ChatHeadersOutput } from "./go_session_headers.js";
 import { GUARD_ENV } from "./protocol.js";
 import { createStartupProbe } from "./startup_probe.js";
 
@@ -86,12 +87,12 @@ interface SystemTransformOutput {
 interface ChatParamsInput {
   sessionID: string;
 }
-
 interface GuardHooks {
   "tool.execute.before": (input: ToolExecuteInput, output: ToolExecuteOutput) => Promise<void>;
   "chat.message": (input: ChatMessageInput, output: ChatMessageOutput) => Promise<void>;
   "experimental.chat.system.transform": (input: SystemTransformInput, output: SystemTransformOutput) => Promise<void>;
   "chat.params": (input: ChatParamsInput) => Promise<void>;
+  "chat.headers": (input: ChatHeadersInput, output: ChatHeadersOutput) => Promise<void>;
 }
 
 function required(name: string): string {
@@ -147,6 +148,9 @@ export const AepGuard = async (): Promise<GuardHooks> => {
     },
     "chat.params": async (input) => {
       probe.refuseModelCall(input.sessionID);
+    },
+    "chat.headers": async (input, output) => {
+      addGoSessionHeaders(input, output, process.env.AEP_MODEL_FORMAT, process.env.AEP_MODEL_BASE_URL);
     },
   };
 };
