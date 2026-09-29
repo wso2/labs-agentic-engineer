@@ -31,7 +31,48 @@ package auth
 // configured, or every presented bearer is rejected and the caller falls
 // through to normal Thunder JWT verification (see edge.mountSurfaces).
 
-import "crypto/subtle"
+import (
+	"crypto/subtle"
+	"strings"
+
+	"github.com/wso2/aep/aep-api/internal/authz"
+)
+
+// sreHandoffPermissions is what this identity is authorized to do, and the
+// whole of it. The three operations aep-mcp-server exposes are list-issues,
+// create-issue and promote-task-from-issue; the first is a read of a project's
+// issues, and the other two each START A RUN — creating an issue IS the
+// dispatch when aep-api's classification says it should be (see
+// services/aep-mcp-server/src/aepClient.ts), and promoting turns an issue into
+// a coding task and dispatches it. So: the build pair, nothing else.
+//
+// This exists because the permission gate decides from the scope claim alone,
+// and these synthetic claims used to carry none. That left the three
+// operations un-gateable, and so carved out of the gate entirely — a hole in
+// front of it rather than a decision inside it. Naming the permissions here
+// makes the agent an ordinary principal the gate can reason about: it holds
+// what it needs, it is refused everything else by the same deny-by-default
+// rule as a person, and adding a tool to the MCP server that needs more than
+// this fails at the gate rather than silently inheriting a bypass.
+//
+// Deliberately NOT ae:observability-view, though the agent is the SRE agent:
+// permissions describe what an operation does, not who tends to call it, and
+// nothing here reads an alert or an RCA report.
+var sreHandoffPermissions = []authz.Permission{
+	authz.PermissionBuildView,
+	authz.PermissionBuild,
+}
+
+// sreHandoffScope is sreHandoffPermissions in the space-delimited form
+// Claims.Scope carries, built once rather than written out as a literal so the
+// two cannot drift.
+var sreHandoffScope = func() string {
+	parts := make([]string, len(sreHandoffPermissions))
+	for i, p := range sreHandoffPermissions {
+		parts[i] = string(p)
+	}
+	return strings.Join(parts, " ")
+}()
 
 // SREHandoffVerifier verifies aep-mcp-server's forwarded SRE-handoff bearer
 // and resolves the one org it is scoped to. One verifier instance is scoped
@@ -54,9 +95,11 @@ func NewSREHandoffVerifier(secret, org string) *SREHandoffVerifier {
 
 // Verify checks bearer (the raw `Authorization` header value, e.g.
 // "Bearer <token>") against the configured secret in constant time and
-// returns synthetic Claims carrying the bound org on success. The returned
-// Claims flow through auth.WithClaims exactly like a verified Thunder JWT's
-// projection, so tenantGate binds the org with no changes of its own.
+// returns synthetic Claims carrying the bound org and this identity's
+// permissions on success. The returned Claims flow through auth.WithClaims
+// exactly like a verified Thunder JWT's projection, so tenantGate binds the
+// org and the permission gate reads the scope, both with no changes of their
+// own — see sreHandoffPermissions for what the scope is and why.
 func (v *SREHandoffVerifier) Verify(bearer string) (*Claims, bool) {
 	if v == nil {
 		return nil, false
@@ -69,5 +112,10 @@ func (v *SREHandoffVerifier) Verify(bearer string) (*Claims, bool) {
 	if subtle.ConstantTimeCompare([]byte(token), []byte(v.secret)) != 1 {
 		return nil, false
 	}
-	return &Claims{Subject: "sre-handoff", ClientID: "aep-mcp-server", OuHandle: v.org}, true
+	return &Claims{
+		Subject:  "sre-handoff",
+		ClientID: "aep-mcp-server",
+		OuHandle: v.org,
+		Scope:    sreHandoffScope,
+	}, true
 }

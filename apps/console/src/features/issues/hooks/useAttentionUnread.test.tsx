@@ -130,7 +130,15 @@ const escalatedIssue: IssueInfo = {
 };
 
 function session(email: string, orgHandle: string | null): Session {
-  return { user: { name: email, email }, orgHandle, signOut: () => {} };
+  // ae:build-view is what list-issues is gated on, and this hook's per-project
+  // issue reads are that operation — a session without it would be testing a
+  // caller the server refuses.
+  return {
+    user: { name: email, email },
+    orgHandle,
+    permissions: new Set(["ae:build-view" as const]),
+    signOut: () => {},
+  };
 }
 
 function renderAttention(email: string, reports: RcaAgentReport[] = [report(3)], orgHandle: string | null = "acme") {

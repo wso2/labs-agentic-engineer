@@ -19,7 +19,9 @@
 // @vitest-environment jsdom
 
 import type { ElementType, ReactNode } from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { fireEvent, screen, within } from "@testing-library/react";
+import { renderWithPermissions } from "../../../auth/testing";
 import { describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 
@@ -63,6 +65,11 @@ vi.mock("@tanstack/react-router", () => ({
     );
   },
 }));
+
+// Every test in this file assumes the promote action is reachable, so the
+// session holds every permission. `render` is shadowed so each case keeps its
+// existing shape.
+const render = (ui: ReactElement) => renderWithPermissions(ui);
 
 import { environmentRows } from "../lib/deploymentLedger";
 import { promoteStep } from "../lib/deploymentFlow";

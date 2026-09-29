@@ -319,13 +319,18 @@ func TestGormImportAllowlist(t *testing.T) {
 // TestInternalOnlyLayout asserts no Go source lives outside the sanctioned
 // top-level roots: internal/ (everything), cmd/ (mains), app/ (public
 // composition seam — Run(Options)), ocauth/ (public OC auth contracts for
-// overlay modules), and secretsprovider/ (public secrets-delivery port for
-// overlay modules). The flat models/ and repositories/ shared kernels are both
-// DISSOLVED — every entity lives in its owning <domain>/entity_*.go and each
-// repository in <domain>/repository_*.go.
+// overlay modules), secretsprovider/ (public secrets-delivery port for
+// overlay modules), and aeperms/ (the AE permission vocabulary, public because
+// aectl provisions into Thunder the very actions and roles this service's gate
+// then enforces — see that package's doc comment for why the two sharing one
+// definition is a correctness requirement, not a convenience). The flat
+// models/ and repositories/ shared kernels are both DISSOLVED — every entity
+// lives in its owning <domain>/entity_*.go and each repository in
+// <domain>/repository_*.go.
 func TestInternalOnlyLayout(t *testing.T) {
 	allowedRoots := map[string]bool{
 		"internal": true, "cmd": true, "app": true, "ocauth": true, "secretsprovider": true,
+		"aeperms": true,
 	}
 	root := ".." + string(filepath.Separator) + ".." // module root from internal/arch
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {

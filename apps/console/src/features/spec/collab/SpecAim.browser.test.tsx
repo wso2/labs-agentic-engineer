@@ -75,6 +75,7 @@ async function mountEditor(busyReason = "") {
           provider={fakeProvider(doc)}
           self={{ name: "Tester", color: "#64b5f6" }}
           agentStreaming={false}
+          editable
           aim={{ path: PATH, send, busyReason }}
         />
       </div>

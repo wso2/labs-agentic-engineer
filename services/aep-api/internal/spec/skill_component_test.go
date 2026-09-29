@@ -52,7 +52,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/wso2/aep/aep-api/internal/edge"
-	"github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/platform/componenttest"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
@@ -133,11 +132,6 @@ func readGolden(t *testing.T, name string) []byte {
 	}
 	return raw
 }
-
-// claimsHeader mirrors componenttest's private auth header (internal/platform/
-// componenttest/auth.go). The harness has no multipart request builder, so the
-// import test hand-builds its request and must stamp this header itself.
-const claimsHeader = "X-Componenttest-Claims"
 
 // --- read surface ------------------------------------------------------------
 
@@ -775,12 +769,13 @@ func postSkillTarball(t *testing.T, h *componenttest.Harness, org, filename stri
 
 	req := httptest.NewRequest(http.MethodPost, base+"/import", &buf)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
-	claims := auth.Claims{OuHandle: org, OuId: org + "-ouid", Subject: "componenttest-user"}
-	raw, err := json.Marshal(claims)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set(claimsHeader, string(raw))
+	// The harness has no multipart request builder, so this hand-builds the
+	// request — but reuses componenttest's own claims header (same key,
+	// same full-permission-scope claims AsOrg stamps) rather than
+	// re-deriving it, so this import path never drifts from what every
+	// other request in this file is authenticated as.
+	key, value := componenttest.ClaimsHeader(t, org)
+	req.Header.Set(key, value)
 
 	rec := httptest.NewRecorder()
 	h.Handler.ServeHTTP(rec, req)

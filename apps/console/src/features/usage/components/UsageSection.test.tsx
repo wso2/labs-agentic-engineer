@@ -18,14 +18,25 @@
 
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import type { ReactElement } from "react";
+import { fireEvent, screen } from "@testing-library/react";
+import {
+  ALL_PERMISSIONS,
+  allPermissionsExcept,
+  renderWithPermissions,
+} from "../../../auth/testing";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 import { UsageSection } from "./UsageSection";
 
 type ProjectUsageList = components["schemas"]["ProjectUsageList"];
 type Usage = components["schemas"]["Usage"];
 type PhaseUsage = components["schemas"]["PhaseUsage"];
+
+// Every test but the dedicated "no permission" one below assumes ae:usage-view
+// is held — mirrors SkillsSection.test.tsx's per-suite permission toggle.
+let held: Iterable<string> = ALL_PERMISSIONS;
+const render = (ui: ReactElement) => renderWithPermissions(ui, held);
 
 // --- Usage query: replaced wholesale so the test needs neither a
 // QueryClientProvider nor MSW — only the rendering under test is real. ----
@@ -38,6 +49,10 @@ let mockResult: {
 vi.mock("../api/queries", () => ({
   useProjectUsageList: () => mockResult,
 }));
+
+afterEach(() => {
+  held = ALL_PERMISSIONS;
+});
 
 function usage(costUsd: number | null): Usage {
   return {
@@ -272,5 +287,31 @@ describe("UsageSection", () => {
     expect(
       screen.getByText(/Failed to load usage: usage roll-up unavailable/),
     ).toBeTruthy();
+  });
+
+  it("shows an insufficient-permissions message and renders no usage content without ae:usage-view", () => {
+    held = allPermissionsExcept("ae:usage-view");
+    // A direct-URL visit must never flash real data even if a prior fetch
+    // cached it — the mocked query result deliberately carries data here.
+    mockResult = {
+      isPending: false,
+      isError: false,
+      data: {
+        projects: [
+          {
+            projectName: "storefront-webapp",
+            displayName: "Storefront Webapp",
+            deleted: false,
+            usage: usage(12.34),
+            phases: phasesOf(usage(12.34)),
+          },
+        ],
+      },
+    };
+    render(<UsageSection />);
+    expect(
+      screen.getByText("You don't have permission to view usage."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Storefront Webapp")).not.toBeInTheDocument();
   });
 });

@@ -18,7 +18,11 @@
 
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
+import {
+  allPermissionsExcept,
+  renderWithPermissions,
+} from "../../../auth/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 
@@ -78,7 +82,11 @@ const build = (over: Partial<BuildSummary> = {}): BuildSummary => ({
   ...over,
 });
 
-const renderLedger = () => render(<BuildsLedger projectName="demo-shop" />);
+// Every existing test in this file assumes the page is otherwise reachable, so
+// permissions default to the full set — only a dedicated "no permission" test
+// withholds ae:build-view.
+const renderLedger = (permissions?: Iterable<string>) =>
+  renderWithPermissions(<BuildsLedger projectName="demo-shop" />, permissions);
 
 beforeEach(() => {
   mockBuilds = [];
@@ -309,5 +317,14 @@ describe("BuildsLedger", () => {
     mockState = { isPending: true, isError: false };
     renderLedger();
     expect(screen.getByText("Back to Overview")).toBeTruthy();
+  });
+
+  it("blocks the whole page for a user lacking ae:build-view", () => {
+    renderLedger(allPermissionsExcept("ae:build-view"));
+
+    expect(
+      screen.getByText("You don't have access to this project's builds"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Back to Overview")).not.toBeInTheDocument();
   });
 });

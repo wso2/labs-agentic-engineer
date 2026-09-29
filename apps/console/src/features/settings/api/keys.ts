@@ -18,6 +18,7 @@
 
 export const configKeys = {
   all: ["config"] as const,
+  status: ["config", "status"] as const,
 };
 
 export const skillsKeys = {

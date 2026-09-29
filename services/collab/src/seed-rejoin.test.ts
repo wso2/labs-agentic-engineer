@@ -83,6 +83,7 @@ function fakeBff(applied: { paths: string[] }[]): BffClient {
       name: "Jo",
       email: "jo@example.com",
       projectName: "shop",
+      canWrite: true,
     }),
     fetchSpecFiles: async () => [{ path: PRD_PATH, content: PRD, sha: "s1" }],
     applyFiles: async (_t, _p, batch) => {

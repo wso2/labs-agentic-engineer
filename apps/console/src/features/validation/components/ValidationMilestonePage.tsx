@@ -31,7 +31,8 @@ import {
   type Theme,
 } from "@wso2/oxygen-ui";
 import { Copy, Ellipsis, GitHub, Play, RotateCw, X } from "@wso2/oxygen-ui-icons-react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useHasPermission } from "../../../auth/permissions";
 import {
   isReportParseError,
   parseAcceptanceReport,
@@ -41,6 +42,7 @@ import {
 import { EmptyState } from "../../../components/EmptyState";
 import { LogSection } from "../../../components/LogSection";
 import { PageHeader } from "../../../components/PageHeader";
+import { PermissionRestrictedPage } from "../../../components/PermissionRestrictedPage";
 import { SectionCaption } from "../../../components/SectionCaption";
 import type { components } from "../../../generated/aep-api";
 import { useCancelRun } from "../../builds/api/queries";
@@ -54,6 +56,7 @@ import { validationIsLive } from "../lib/lifecycle";
 import { countsFromScenarios } from "../lib/verdict";
 import { ReportCard, type Attempt } from "./ReportCard";
 import { ValidationSummaryCard } from "./ValidationSummaryCard";
+import { DENIED } from "../../../auth/denialCopy";
 
 type ValidationDetail = components["schemas"]["ValidationDetail"];
 type MilestoneRunView = components["schemas"]["MilestoneRunView"];
@@ -107,6 +110,12 @@ export function ValidationMilestonePage({
   projectName: string;
   tag: string;
 }) {
+  // Exact-match ae:build-view, matching get-validation's own gate
+  // (permission_gate.go) and the ledger this page is reached from. The write
+  // actions in the header carry ae:build separately — see ValidationActions.
+  const canViewValidations = useHasPermission("ae:build-view");
+  const navigate = useNavigate();
+
   const detail = useValidation(projectName, tag);
   const data = detail.data;
 
@@ -178,6 +187,21 @@ export function ValidationMilestonePage({
       )}
     </>
   );
+
+  // Every hook above must run first — React's rule against conditional hooks
+  // — so the gate sits here, after all of them, rather than before any.
+  if (!canViewValidations) {
+    return (
+      <PermissionRestrictedPage
+        title="You don't have access to this version's validation"
+        description="Validation results, reports and logs are restricted for your role. Ask a project admin to grant access."
+        backLabel="Back to project overview"
+        onBack={() =>
+          void navigate({ to: "/projects/$projectName", params: { projectName } })
+        }
+      />
+    );
+  }
 
   if (detail.isPending) {
     return (
@@ -373,6 +397,12 @@ function ValidationActions({
   onError: (message: string) => void;
 }) {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  // Exact-match ae:build, matching revalidate-build's and cancel-run's own
+  // gates. Both items here start or stop a run, which is the write permission
+  // — the page itself is entered on ae:build-view, and entry is not licence to
+  // act. Same rule, and the same disabled-with-a-reason treatment, as the
+  // Builds page's identical menu.
+  const hasBuild = useHasPermission("ae:build");
   const start = useStartValidation(projectName, tag);
   const cancel = useCancelRun(projectName, tag);
   const close = () => setAnchor(null);
@@ -389,7 +419,7 @@ function ValidationActions({
   // the VERDICT would be a rule the API does not have: re-asking a passed
   // version is exactly what this endpoint is for.
   const notDeployed = !detail.deployed;
-  const blocked = detail.live || notDeployed || start.isPending;
+  const blocked = !hasBuild || detail.live || notDeployed || start.isPending;
   // "Revalidate" only once something has actually answered — the platform's
   // own word for the trigger, and wrong on a version nothing has judged yet,
   // which is a state this page reaches routinely. The icon says the same
@@ -405,6 +435,23 @@ function ValidationActions({
   );
   // ADR-0016 decision 7: cancel follows the LIFECYCLE, not run liveness.
   const cancellable = validationIsLive(detail.state);
+  const cancelItem = (
+    <MenuItem
+      disabled={!hasBuild || !cancellable || !runId || cancel.isPending}
+      onClick={() => {
+        if (!hasBuild || !cancellable || cancel.isPending) return;
+        if (runId) {
+          cancel.mutate(runId, {
+            onError: (e) => onError(e instanceof Error ? e.message : String(e)),
+          });
+        }
+        close();
+      }}
+    >
+      <X size={15} style={{ marginRight: 10 }} />
+      Cancel run
+    </MenuItem>
+  );
 
   return (
     <>
@@ -419,21 +466,20 @@ function ValidationActions({
         {/* Cancel, then (re)start, then the links — the builds menu's order,
             so a reader who learned one menu finds the same item in the same
             place on the other. */}
-        <MenuItem
-          disabled={!cancellable || !runId || cancel.isPending}
-          onClick={() => {
-            if (!cancellable || cancel.isPending) return;
-            if (runId) {
-              cancel.mutate(runId, {
-                onError: (e) => onError(e instanceof Error ? e.message : String(e)),
-              });
-            }
-            close();
-          }}
-        >
-          <X size={15} style={{ marginRight: 10 }} />
-          Cancel run
-        </MenuItem>
+        {/* Wrapped ONLY while the permission is missing, for the same reason
+            the start item below is: a permanent tooltip span is a child
+            MenuList walks straight past, which would take Cancel off the
+            keyboard for the permitted caller who can actually use it. The
+            other refusals (settled version, no run, in flight) disable the
+            item in place and need no explanation — the state on screen is
+            already the reason. */}
+        {hasBuild ? (
+          cancelItem
+        ) : (
+          <Tooltip title={DENIED.cancelRun}>
+            <span>{cancelItem}</span>
+          </Tooltip>
+        )}
 
         {/* Wrapped ONLY while refused. MenuList walks its own children to move
             focus, so a permanent tooltip span between it and the item takes the
@@ -441,7 +487,7 @@ function ValidationActions({
             focusable anyway, and the span is what lets it still explain
             itself — a disabled MenuItem swallows the hover the tooltip needs. */}
         {blocked ? (
-          <Tooltip title={triggerRefusal(detail)}>
+          <Tooltip title={triggerRefusal(detail, hasBuild)}>
             <span>
               <MenuItem disabled>{startFace}</MenuItem>
             </span>
@@ -494,7 +540,11 @@ function ValidationActions({
  * refusals the console can state before the call — the rest come back as the
  * server's own sentences in the page's error slot.
  */
-function triggerRefusal(detail: ValidationDetail): string {
+function triggerRefusal(detail: ValidationDetail, hasBuild: boolean): string {
+  // First, because it is the one refusal no change to the version can lift:
+  // telling a reader who cannot start runs at all that this one is not the
+  // deployed version sends them to fix the wrong thing.
+  if (!hasBuild) return "You don't have permission to start a validation run.";
   if (detail.live) return "A run is already working this version.";
   if (!detail.deployed) {
     return "Only the deployed version can be validated — this one is not what is running.";

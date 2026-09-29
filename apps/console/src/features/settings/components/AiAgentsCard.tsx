@@ -31,6 +31,9 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { Bot } from "@wso2/oxygen-ui-icons-react";
+import { useHasPermission } from "../../../auth/permissions";
+import { EmptyState } from "../../../components/EmptyState";
+import { NoPermissionIllustration } from "../../../components/NoPermissionIllustration";
 import type { components } from "../../../generated/aep-api";
 import {
   SUBSCRIPTION_TOKEN_PREFIX,
@@ -95,6 +98,13 @@ export function AiAgentsCard({
   config: ConfigProjection;
   onboarding?: boolean;
 }) {
+  // The Credentials panel admits either credential permission (see
+  // CredentialsSection), so this card can be mounted by a caller holding only
+  // ae:github-config — whose `config` arrives with llm null and agents trimmed
+  // (RedactConfigForPermissions), and every Save from whom PATCH /config would
+  // refuse. Rendering a connection form against that is a dead end; say so
+  // instead. Every hook below may assume the permission is held.
+  const hasModelConfig = useHasPermission("ae:model-config");
   const ai = useAiSettings(config);
   const { saved, draft } = ai;
   const busy = ai.saving;
@@ -234,6 +244,29 @@ export function AiAgentsCard({
 
   // The wizard supplies its own frame and explanation around the card.
   if (onboarding) return body;
+
+  // The chip is deliberately absent here: whether the org has a connection is
+  // itself part of what ae:model-config admits you to.
+  if (!hasModelConfig) {
+    return (
+      <Card variant="outlined">
+        <CardContent sx={{ p: 3 }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mb: 2 }}>
+            <Bot size={22} />
+            <Typography variant="h6" component="h2">
+              {CARD_TITLE}
+            </Typography>
+          </Box>
+          <Divider sx={{ mb: 3 }} />
+          <EmptyState
+            icon={<NoPermissionIllustration size={72} />}
+            description="You don't have permission to view AI agent settings."
+            compact
+          />
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card variant="outlined">

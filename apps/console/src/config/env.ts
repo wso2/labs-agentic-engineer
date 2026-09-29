@@ -23,6 +23,7 @@ interface RuntimeEnv {
   VITE_THUNDER_URL?: string;
   VITE_THUNDER_CLIENT_ID?: string;
   VITE_THUNDER_SCOPES?: string;
+  VITE_THUNDER_RESOURCE?: string;
   /** The platform's test app; the console opens a component there in a new tab. */
   VITE_TRY_IT_URL?: string;
   /** WSO2 Cloud billing-user-api base; empty/absent disables first-login activation. */
@@ -63,6 +64,16 @@ export const env = {
   thunderUrl: getEnv("VITE_THUNDER_URL") || "http://localhost:8097",
   thunderClientId: getEnv("VITE_THUNDER_CLIENT_ID") || "aep-console-client",
   thunderScopes: getEnv("VITE_THUNDER_SCOPES") || "openid profile email",
+  // OAuth `resource` indicator (RFC 8707) for the `ae` resource server. An
+  // ae:* scope requested without it resolves against the platform's default
+  // resource server instead (whichever one that is — Agent Manager's on a
+  // converged cluster) and silently drops the ae:* scope while overwriting
+  // the token's aud, which then fails aep-api's own audience check. Empty by
+  // default: unset in a topology whose IdP has no `ae` resource server,
+  // oidc-client-ts's `resource` is simply omitted from the request. The Helm
+  // chart sets it (console.thunder.resource, defaulting to
+  // "<thunderPublicURL>/ae"), so a chart install always sends one.
+  thunderResource: getEnv("VITE_THUNDER_RESOURCE") || "",
   // The platform's test app (apps/tryit); same origin as aep-api's TRY_IT_CALLBACK_URL.
   tryItUrl: getEnv("VITE_TRY_IT_URL") || "http://tryit.aep.localhost:8095",
   // Empty outside WSO2 Cloud — presence of this URL is the gate for the

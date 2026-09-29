@@ -33,12 +33,15 @@ import {
   Divider,
   Link,
   Stack,
+  Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
 import { ChevronDown, Lock } from "@wso2/oxygen-ui-icons-react";
 import { createLink } from "@tanstack/react-router";
+import { useHasPermission } from "../../../auth/permissions";
 import type { components } from "../../../generated/aep-api";
 import { useDeleteExternalResource } from "../api/queries";
+import { DENIED } from "../../../auth/denialCopy";
 
 const ProjectLink = createLink(Link);
 
@@ -216,6 +219,7 @@ export function DeleteResourceSection({
   onClose: () => void;
 }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const hasResourceConfig = useHasPermission("ae:resource-config");
   const deleteResource = useDeleteExternalResource();
   const busy = deleteResource.isPending;
   const inUse = consumers.length > 0;
@@ -233,14 +237,27 @@ export function DeleteResourceSection({
   return (
     <>
       <Divider sx={{ my: 2 }} />
-      <Button
-        color="error"
-        variant="outlined"
-        disabled={inUse}
-        onClick={() => setConfirmOpen(true)}
+      <Tooltip
+        title={
+          // Permission comes first: it's the one reason that has nothing to
+          // do with this particular resource's own state, so it takes
+          // precedence over the in-use explanation below.
+          !hasResourceConfig
+            ? DENIED.configureResources
+            : ""
+        }
       >
-        Delete resource
-      </Button>
+        <span>
+          <Button
+            color="error"
+            variant="outlined"
+            disabled={inUse || !hasResourceConfig}
+            onClick={() => setConfirmOpen(true)}
+          >
+            Delete resource
+          </Button>
+        </span>
+      </Tooltip>
       {inUse && (
         <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
           Used by {consumers.length} component(s) — remove those dependencies first

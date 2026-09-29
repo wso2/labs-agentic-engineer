@@ -19,6 +19,7 @@
 import { ComplexSelect } from "@wso2/oxygen-ui";
 import { Building, FolderOpen } from "@wso2/oxygen-ui-icons-react";
 import { useParams, useRouter, useRouterState } from "@tanstack/react-router";
+import { useHasPermission } from "../auth/permissions";
 import { useSession } from "../auth/SessionContext";
 import { useOrganizations } from "../features/organizations/api/queries";
 import { useProjectsList } from "../features/projects/api/queries";
@@ -100,6 +101,7 @@ export function ProjectSwitcher() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const router = useRouter();
   const { data } = useProjectsList("", 50);
+  const canSwitch = useHasPermission("ae:requirement-view");
 
   const currentName = params.projectName;
   if (!currentName) return null;
@@ -108,7 +110,7 @@ export function ProjectSwitcher() {
   const known = projects.some((p) => p.name === currentName);
 
   const switchTo = (nextName: string) => {
-    if (!nextName || nextName === currentName) return;
+    if (!canSwitch || !nextName || nextName === currentName) return;
     // Same sub-page, different project — the param is a single path segment,
     // so a prefix swap is exact.
     const next = pathname.replace(
@@ -142,6 +144,7 @@ export function ProjectSwitcher() {
         <ComplexSelect.MenuItem
           key={project.name}
           value={project.name}
+          disabled={!canSwitch}
           onClick={() => switchTo(project.name)}
         >
           <ComplexSelect.MenuItem.Icon>
@@ -150,9 +153,11 @@ export function ProjectSwitcher() {
           <ComplexSelect.MenuItem.Text
             primary={project.displayName || project.name}
             secondary={
-              project.displayName && project.displayName !== project.name
-                ? project.name
-                : undefined
+              !canSwitch
+                ? "You don't have permission to open projects"
+                : project.displayName && project.displayName !== project.name
+                  ? project.name
+                  : undefined
             }
           />
         </ComplexSelect.MenuItem>

@@ -57,13 +57,36 @@ const placeholderRedirectURI = "https://pending.invalid/callback"
 // contain client secrets), only the byte length is reported.
 func apiErrSummary(body []byte) string {
 	var apiErr struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
+		Code        string `json:"code"`
+		Message     string `json:"message"`
+		Description string `json:"description"`
+		Error       string `json:"error"`
 	}
-	if json.Unmarshal(body, &apiErr) == nil && (apiErr.Code != "" || apiErr.Message != "") {
-		return fmt.Sprintf("code=%s message=%s", apiErr.Code, apiErr.Message)
+	if json.Unmarshal(body, &apiErr) == nil {
+		switch {
+		case apiErr.Code != "" || apiErr.Message != "":
+			s := fmt.Sprintf("code=%s message=%s", apiErr.Code, apiErr.Message)
+			if apiErr.Description != "" {
+				s += " description=" + apiErr.Description
+			}
+			return s
+		case apiErr.Error != "":
+			return fmt.Sprintf("error=%s %s", apiErr.Error, apiErr.Description)
+		}
 	}
-	return fmt.Sprintf("(%d bytes)", len(body))
+	// Anything else, verbatim rather than counted. A byte count names no
+	// cause: "returned 400: (275 bytes)" is a failure a reader can do nothing
+	// with, and the body almost always says exactly which field Thunder
+	// refused. Truncated only so a stray HTML error page cannot flood a
+	// terminal.
+	return truncate(strings.TrimSpace(string(body)), 400)
+}
+
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "… (truncated)"
 }
 
 // tokenValiditySeconds is the access/id token lifetime pinned to 24h,
@@ -667,12 +690,24 @@ func scopeClaimConfig() map[string]any {
 }
 
 // toSlice normalises Thunder's inconsistent list response formats.
+// toSlice normalises Thunder's inconsistent list response formats.
+//
+// Thunder wraps a list under a key named after the collection, and a key
+// missing from this set does not fail — it reads as an EMPTY list, which a
+// caller then takes as "the object does not exist" and tries to create. That
+// is a silent idempotency break: the second run of an installer re-creates
+// what the first one made and meets a 409. Every collection this package
+// lists must therefore appear below.
 func toSlice(v any) []any {
 	if arr, ok := v.([]any); ok {
 		return arr
 	}
 	if m, ok := v.(map[string]any); ok {
-		for _, key := range []string{"roles", "applications", "resourceServers", "flows", "data", "list", "items"} {
+		for _, key := range []string{
+			"roles", "applications", "resourceServers", "flows",
+			"resources", "actions", "users", "groups",
+			"data", "list", "items",
+		} {
 			if arr, ok := m[key].([]any); ok {
 				return arr
 			}

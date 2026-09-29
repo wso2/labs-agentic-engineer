@@ -31,29 +31,35 @@ import { GitHubStep } from "./GitHubStep";
 import { AiAgentsStep } from "./AiAgentsStep";
 import { SkillsBootstrapStep } from "./SkillsBootstrapStep";
 
-type ConfigProjection = components["schemas"]["ConfigProjection"];
+type ConfigStatus = components["schemas"]["ConfigStatus"];
 
 const STEPS = ["Connect GitHub", "Connect a model", "Set up skills"];
 
 // The active step derives from server state, not local navigation: each
-// successful PATCH /config updates the query cache and the wizard advances.
-// A partially-configured org therefore resumes at its first incomplete step
-// (issue #102 decisions comment).
-function activeStep(config: ConfigProjection): number {
-  if (config.gitProvider === null) return 0;
-  if (config.llm === null) return 1;
+// successful PATCH /config invalidates GET /config/status (see queries.ts) and
+// the wizard advances. A partially-configured org therefore resumes at its
+// first incomplete step (issue #102 decisions comment). Exported for direct
+// unit testing (OnboardingWizard.test.tsx) without rendering.
+//
+// There is no workspace-authz step ahead of these. The org's OpenChoreo
+// AuthzRoles and bindings are installed by the platform Helm chart
+// (templates/authz/), so they exist before anyone signs in — onboarding has
+// nothing to provision and no gate to wait on.
+export function activeStep(status: ConfigStatus): number {
+  if (!status.gitProviderConnected) return 0;
+  if (!status.llmConnected) return 1;
   return 2;
 }
 
 export function OnboardingWizard({
-  config,
+  status,
   onComplete,
 }: {
-  config: ConfigProjection;
+  status: ConfigStatus;
   onComplete: () => void;
 }) {
   const { user, signOut } = useSession();
-  const step = activeStep(config);
+  const step = activeStep(status);
 
   return (
     <Box
@@ -87,7 +93,7 @@ export function OnboardingWizard({
         </Stepper>
 
         {step === 0 && <GitHubStep />}
-        {step === 1 && <AiAgentsStep config={config} />}
+        {step === 1 && <AiAgentsStep />}
         {step === 2 && <SkillsBootstrapStep onComplete={onComplete} />}
       </Paper>
 

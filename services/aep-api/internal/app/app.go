@@ -213,7 +213,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// Kubernetes client — status from the pod, live logs from the pod, and
 	// (through the observer below) history for as long as the component lives.
 	runtimeClient := openchoreo.NewRuntimeClient(ocConfig)
-
 	// Observability client (optional — build logs disabled when URL not set)
 	var observClient observability.Client
 	if cfg.Observability.BaseURL != "" {

@@ -18,7 +18,9 @@
 
 // @vitest-environment jsdom
 
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { act, fireEvent, screen } from "@testing-library/react";
+import { ALL_PERMISSIONS, renderWithPermissions } from "../../../auth/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 
@@ -26,8 +28,18 @@ type ValidationDetail = components["schemas"]["ValidationDetail"];
 type MilestoneRunView = components["schemas"]["MilestoneRunView"];
 type RunCycleView = components["schemas"]["RunCycleView"];
 
+// Every existing test in this file assumes the page is reachable and its
+// actions permitted — only the dedicated permission tests below flip these.
+// Page entry reads ae:build-view; starting/cancelling a run reads ae:build.
+// The session below distinguishes them as production does, by which key is
+// present. `render` is shadowed so each case keeps its existing shape.
+const held = new Set<string>(ALL_PERMISSIONS);
+const render = (ui: ReactElement) => renderWithPermissions(ui, held);
+
+const navigate = vi.fn();
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children?: React.ReactNode }) => <a>{children}</a>,
+  useNavigate: () => navigate,
 }));
 
 // The log feed opens an SSE connection on mount; this page only decides
@@ -148,6 +160,9 @@ beforeEach(() => {
   startMutate.mockClear();
   cancelMutate.mockClear();
   runFeed.mockClear();
+  navigate.mockClear();
+  held.clear();
+  ALL_PERMISSIONS.forEach((p) => held.add(p));
 });
 
 describe("ValidationMilestonePage", () => {
@@ -530,6 +545,63 @@ describe("ValidationMilestonePage", () => {
         onError(new Error("this version still has open work"));
       });
       expect(screen.getByText("this version still has open work")).toBeInTheDocument();
+    });
+
+    // Both items mutate, and both are gated on ae:build at the BFF
+    // (revalidate-build, cancel-run). Entering the page on ae:build-view is
+    // not licence to act on it.
+    it("refuses both mutations without ae:build", () => {
+      held.delete("ae:build");
+      mockDetail = detail({ state: "running", live: true });
+      render(<ValidationMilestonePage projectName="p" tag="v1" />);
+      open();
+
+      fireEvent.click(screen.getByText("Cancel run"));
+      expect(cancelMutate).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByText("Revalidate"));
+      expect(startMutate).not.toHaveBeenCalled();
+    });
+
+    // The permission is the refusal no change to the version can lift, so it
+    // outranks "a run is already working this version" in the tooltip — the
+    // deployed-version advice would send the reader to fix the wrong thing.
+    it("names the permission as the reason, ahead of the lifecycle ones", async () => {
+      held.delete("ae:build");
+      mockDetail = detail({ state: "running", live: true });
+      render(<ValidationMilestonePage projectName="p" tag="v1" />);
+      open();
+
+      fireEvent.mouseOver(screen.getByText("Revalidate"));
+      expect(
+        await screen.findByText("You don't have permission to start a validation run."),
+      ).toBeInTheDocument();
+    });
+  });
+
+  describe("the page's own gate", () => {
+    it("blocks the whole page for a caller lacking ae:build-view", () => {
+      held.delete("ae:build-view");
+      render(<ValidationMilestonePage projectName="p" tag="v1" />);
+
+      expect(
+        screen.getByText("You don't have access to this version's validation"),
+      ).toBeInTheDocument();
+      // A full replacement, not an overlay: not the report, not the log, not
+      // the actions menu.
+      expect(screen.queryByLabelText("Validation actions")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("run-feed")).not.toBeInTheDocument();
+    });
+
+    it("navigates to the project overview from the restricted page", () => {
+      held.delete("ae:build-view");
+      render(<ValidationMilestonePage projectName="p" tag="v1" />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Back to project overview" }));
+
+      expect(navigate).toHaveBeenCalledWith({
+        to: "/projects/$projectName",
+        params: { projectName: "p" },
+      });
     });
   });
 });

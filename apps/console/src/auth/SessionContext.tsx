@@ -25,6 +25,8 @@ export interface Session {
   user: { name: string; email: string; role?: string };
   /** Active org, resolved with the BFF's precedence (ouHandle > ouName > ouId). */
   orgHandle: string | null;
+  /** AE permission keys this user holds (see `../auth/permissions`). */
+  permissions: Set<string>;
   signOut: () => void;
 }
 

@@ -81,7 +81,11 @@ const bottomGap = (s: HTMLElement) =>
 
 // Mount the editor in a fixed-height flex column so its `flexGrow:1` scroll
 // region gets a real, bounded height and can actually overflow.
-async function mountEditor(doc: Y.Doc, agentStreaming: boolean) {
+async function mountEditor(
+  doc: Y.Doc,
+  agentStreaming: boolean,
+  editable = true,
+) {
   const fragment = doc.getXmlFragment(PATH);
   const view = render(
     <OxygenUIThemeProvider theme={OxygenTheme}>
@@ -91,17 +95,18 @@ async function mountEditor(doc: Y.Doc, agentStreaming: boolean) {
           provider={fakeProvider(doc)}
           self={{ name: "Tester", color: "#64b5f6" }}
           agentStreaming={agentStreaming}
+          editable={editable}
         />
       </div>
     </OxygenUIThemeProvider>,
   );
-  // The Tiptap editable mounts asynchronously (useEditor).
-  const editable = await waitFor(() => {
+  // The Tiptap editor mounts asynchronously (useEditor).
+  const proseMirrorEl = await waitFor(() => {
     const el = view.container.querySelector<HTMLElement>(".ProseMirror");
     if (!el) throw new Error("editor not mounted yet");
     return el;
   });
-  return { view, scrollEl: scrollParentOf(editable) };
+  return { view, scrollEl: scrollParentOf(proseMirrorEl) };
 }
 
 // Emulate the agent streaming `n` sections in, one reconcile per step, giving
@@ -291,6 +296,101 @@ describe("undo keeps the reader's place", () => {
     // The reader stays where they were — nowhere near the bottom.
     expect(Math.abs(scrollEl.scrollTop - before)).toBeLessThan(120);
     void editor;
+    doc.destroy();
+  });
+});
+
+// A caller with ae:design-view but not ae:design must not be able to mutate
+// the shared doc through this editor: `editable: false` on Tiptap only blocks
+// DOM-originated input, not a programmatic `view.dispatch` — so this proves
+// BOTH halves hold, the one ProseMirror gives for free and the one SpecMdEditor
+// has to enforce itself by hiding every dispatch-capable control.
+describe("SpecMdEditor is truly read-only without ae:design", () => {
+  it("rejects typed input", async () => {
+    const doc = new Y.Doc();
+    setDocFileAsAgent(doc, PATH, "# Product Requirements\n\nOriginal text.\n", "test-agent", AGENT_META);
+    const { view } = await mountEditor(doc, false, false);
+
+    const paragraph = Array.from(view.container.querySelectorAll("p")).find((p) =>
+      p.textContent?.includes("Original text."),
+    )!;
+    const range = document.createRange();
+    range.setStart(paragraph.firstChild!, 0);
+    range.collapse(true);
+    (view.container.querySelector(".ProseMirror") as HTMLElement).focus();
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    await userEvent.keyboard("XX");
+
+    // Give a wrongly-accepted keystroke a beat to land before asserting absence.
+    await new Promise((r) => setTimeout(r, 200));
+    expect(paragraph.textContent).not.toContain("XX");
+    expect(paragraph.textContent).toContain("Original text.");
+
+    doc.destroy();
+  });
+
+  it("hides the toolbar, the bubble menu, and the accept/reject review bar", async () => {
+    const doc = new Y.Doc();
+    setDocFileAsAgent(
+      doc,
+      PATH,
+      "# Product Requirements\n\nSome agent-suggested text.\n",
+      "test-agent",
+      AGENT_META,
+    );
+    const { view } = await mountEditor(doc, false, false);
+
+    // The toolbar's Bold button (present whenever SpecMdToolbar renders).
+    expect(
+      view.container.querySelector('[aria-label="Bold"], button[title*="Bold" i]'),
+    ).toBeNull();
+    // No dispatch-capable control anywhere in the mounted tree.
+    expect(view.container.querySelector("button")).toBeNull();
+
+    doc.destroy();
+  });
+
+  // The domain-model diagram is a ```mermaid code block (MermaidCodeBlock.tsx)
+  // rendered by a Tiptap NodeView, which has its OWN render logic outside
+  // SpecMdToolbar/BubbleMenu — reported separately because SpecMdEditor's
+  // `editable` prop alone does not reach it; the node view has to read
+  // `editor.isEditable` itself.
+  it("hides the mermaid block's Edit control (the domain-model diagram)", async () => {
+    const doc = new Y.Doc();
+    setDocFileAsAgent(
+      doc,
+      PATH,
+      [
+        "# Design",
+        "",
+        "```mermaid",
+        "erDiagram",
+        "    USER ||--o{ ORDER : places",
+        "```",
+        "",
+      ].join("\n"),
+      "test-agent",
+      AGENT_META,
+    );
+    const { view } = await mountEditor(doc, false, false);
+
+    // `[data-testid="mermaid-preview"]` is always in the DOM (toggled by
+    // `display`, not mounted/unmounted) — wait for the parsed SVG itself, or
+    // this passes vacuously before mermaid has rendered anything (verified:
+    // it did, against the pre-fix code, before this wait was added).
+    await waitFor(() => {
+      expect(
+        view.container.querySelector('[data-testid="mermaid-preview"] svg'),
+      ).not.toBeNull();
+    });
+    expect(
+      Array.from(view.container.querySelectorAll("button")).some(
+        (b) => b.textContent?.trim() === "Edit",
+      ),
+    ).toBe(false);
+
     doc.destroy();
   });
 });

@@ -17,7 +17,11 @@
  */
 
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import {
+  allPermissionsExcept,
+  renderWithPermissions,
+} from "../../../auth/testing";
 import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 import { describe, expect, it, vi } from "vitest";
 import type { PublishedTestUser } from "../lib/publishedTestUsers";
@@ -38,16 +42,21 @@ const TWO: PublishedTestUser[] = [
   },
 ];
 
+// Reveal/Copy read ae:build. Permissions default to the full set so every
+// test below (most written before either control carried a permission check)
+// keeps seeing them enabled; the dedicated "no permission" test withholds
+// just that key.
 function renderDialog(
   over: {
     logins?: readonly PublishedTestUser[];
     revealPassword?: (username: string) => Promise<string>;
     onClose?: () => void;
+    permissions?: Iterable<string>;
   } = {},
 ) {
   const revealPassword = over.revealPassword ?? vi.fn(async () => MOCK_PASSWORD);
   const onClose = over.onClose ?? vi.fn();
-  render(
+  renderWithPermissions(
     <OxygenUIThemeProvider theme={OxygenTheme}>
       <TestUsersDialog
         open
@@ -56,6 +65,7 @@ function renderDialog(
         revealPassword={revealPassword}
       />
     </OxygenUIThemeProvider>,
+    over.permissions,
   );
   return { revealPassword, onClose };
 }
@@ -284,5 +294,35 @@ describe("TestUsersDialog", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(onClose).toHaveBeenCalled();
+  });
+
+  // Exact-match ae:build, matching the BFF's own RevealTestUserPassword gate
+  // — deliberately stronger than the page's own ae:build/ae:build-view view
+  // gate, since this discloses a live credential.
+  it("disables Reveal and Copy, with an explanatory tooltip, without ae:build", async () => {
+    const { revealPassword } = renderDialog({
+      permissions: allPermissionsExcept("ae:build"),
+    });
+
+    const reveal = screen.getByRole("button", {
+      name: "Reveal the password for test-viewer",
+    });
+    const copy = screen.getByRole("button", {
+      name: "Copy the password for test-viewer",
+    });
+    expect(reveal).toBeDisabled();
+    expect(copy).toBeDisabled();
+
+    fireEvent.mouseOver(reveal.closest("span") ?? reveal);
+    expect(
+      await screen.findByText("You don't have permission to reveal this password."),
+    ).toBeInTheDocument();
+
+    fireEvent.mouseOver(copy.closest("span") ?? copy);
+    expect(
+      await screen.findByText("You don't have permission to copy this password."),
+    ).toBeInTheDocument();
+
+    expect(revealPassword).not.toHaveBeenCalled();
   });
 });

@@ -24,10 +24,12 @@ import {
   CircularProgress,
   Snackbar,
   Stack,
+  Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
 import { Building2, CircleCheck } from "@wso2/oxygen-ui-icons-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useHasPermission } from "../../../auth/permissions";
 import { LogSection } from "../../../components/LogSection";
 import { StatusChip } from "../../../components/StatusChip";
 import { projectKeys } from "../../projects/api/keys";
@@ -88,6 +90,7 @@ const SECTION_PADDING = { px: 2.25, py: 2 } as const;
  * value supplied here releases whichever run is parked on it.
  */
 export function ExternalResources({ projectName }: { projectName: string }) {
+  const hasBuild = useHasPermission("ae:build");
   const design = useDesignDependencies(projectName);
   const readiness = useProjectDependencyReadiness(projectName, DEV_ENVIRONMENT);
   const rows = externalResourceRows(design.data, readiness.data);
@@ -286,27 +289,38 @@ export function ExternalResources({ projectName }: { projectName: string }) {
                   </Typography>
                 </Stack>
                 {!orgHeld && (
-                <Button
-                  size="small"
-                  // The outstanding row is the only thing on this page a person
-                  // can act on, so it gets the page's one filled button; a row
-                  // that is already done offers a quieter way back in.
-                  variant={done ? "outlined" : "contained"}
-                  color={done ? "inherit" : "primary"}
-                  // The row's name is in its own label; the button's accessible
-                  // name must carry it too, or every row reads the same. It must
-                  // also CONTAIN the visible text (WCAG 2.5.3 Label in Name) —
-                  // "Configure stripe" under a button reading "Configure now"
-                  // leaves a voice-control user saying a name that does not
-                  // match what they can see.
-                  aria-label={`${
-                    done ? "Edit configuration for" : "Configure now:"
-                  } ${row.name}`}
-                  onClick={() => setTarget(row)}
-                  sx={{ flexShrink: 0 }}
-                >
-                  {done ? "Edit configuration" : "Configure now"}
-                </Button>
+                  <Tooltip
+                    title={
+                      hasBuild
+                        ? ""
+                        : "You don't have permission to configure build resources."
+                    }
+                  >
+                    <span>
+                      <Button
+                        size="small"
+                        // The outstanding row is the only thing on this page a person
+                        // can act on, so it gets the page's one filled button; a row
+                        // that is already done offers a quieter way back in.
+                        variant={done ? "outlined" : "contained"}
+                        color={done ? "inherit" : "primary"}
+                        // The row's name is in its own label; the button's accessible
+                        // name must carry it too, or every row reads the same. It must
+                        // also CONTAIN the visible text (WCAG 2.5.3 Label in Name) —
+                        // "Configure stripe" under a button reading "Configure now"
+                        // leaves a voice-control user saying a name that does not
+                        // match what they can see.
+                        aria-label={`${
+                          done ? "Edit configuration for" : "Configure now:"
+                        } ${row.name}`}
+                        onClick={() => setTarget(row)}
+                        disabled={!hasBuild}
+                        sx={{ flexShrink: 0 }}
+                      >
+                        {done ? "Edit configuration" : "Configure now"}
+                      </Button>
+                    </span>
+                  </Tooltip>
                 )}
               </Stack>
             );

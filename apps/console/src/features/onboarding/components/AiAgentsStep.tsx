@@ -16,19 +16,57 @@
  * under the License.
  */
 
-import { Alert, AlertTitle, Box, Typography } from "@wso2/oxygen-ui";
-import type { components } from "../../../generated/aep-api";
+import { Alert, AlertTitle, Box, CircularProgress, Typography } from "@wso2/oxygen-ui";
+import { useConfig } from "../../settings/api/queries";
 import { AiAgentsCard } from "../../settings/components/AiAgentsCard";
+import { useHasPermission } from "../../../auth/permissions";
 import { connectionWasDisconnected } from "../keyDisconnected";
-
-type ConfigProjection = components["schemas"]["ConfigProjection"];
 
 /**
  * The wizard's "Connect a model" step: the settings card itself, unframed,
  * with an intro. Continue saves the connection (the save probes it), and the
  * wizard advances once `llm` is non-null.
+ *
+ * The full projection is read HERE, not handed down from the wizard: the
+ * wizard runs on GET /config/status, which needs no AE permission, precisely
+ * so the gate works before a first admin's grants are provisioned. This step
+ * is the one part of it that genuinely needs ae:model-config — it writes the
+ * `llm` section — so it is also the right place for GET /config's own gate to
+ * bite, and for a caller without the permission to be told why rather than
+ * shown a card whose every Save would 403.
  */
-export function AiAgentsStep({ config }: { config: ConfigProjection }) {
+export function AiAgentsStep() {
+  const canConfigureModel = useHasPermission("ae:model-config");
+  const { data: config, isPending, isError, error } = useConfig(canConfigureModel);
+
+  if (!canConfigureModel) {
+    return (
+      <Alert severity="info">
+        <AlertTitle>You don&apos;t have access to the model connection</AlertTitle>
+        Connecting the model your agents run on needs the model-configuration
+        permission. Ask an organization admin to finish this step, or to grant it
+        to you.
+      </Alert>
+    );
+  }
+
+  if (isPending) {
+    return (
+      <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
+        <CircularProgress size={28} />
+      </Box>
+    );
+  }
+
+  if (isError) {
+    return (
+      <Alert severity="error">
+        <AlertTitle>Couldn&apos;t load your model settings</AlertTitle>
+        {error.message}
+      </Alert>
+    );
+  }
+
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
       {connectionWasDisconnected(config) ? (

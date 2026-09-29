@@ -62,7 +62,7 @@ func (c *projectClient) ListProjects(ctx context.Context, orgName string, limit 
 		return nil, fmt.Errorf("failed to list projects: %w", err)
 	}
 	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
-		return nil, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		return nil, handleErrorResponse(ctx, http.MethodGet, nsBase(orgName)+"/projects", resp.StatusCode(), ErrorResponses{
 			JSON400: resp.JSON400,
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
@@ -89,7 +89,7 @@ func (c *projectClient) GetProject(ctx context.Context, orgName, projectName str
 		return nil, fmt.Errorf("failed to get project: %w", err)
 	}
 	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
-		return nil, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		return nil, handleErrorResponse(ctx, http.MethodGet, nsBase(orgName)+"/projects/"+projectName, resp.StatusCode(), ErrorResponses{
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
 			JSON404: resp.JSON404,
@@ -114,7 +114,7 @@ func (c *projectClient) CreateProject(ctx context.Context, orgName string, body 
 	}
 	// OC's POST returns 201 on success; tolerate 200 in case a future build flips to it.
 	if (resp.StatusCode() != http.StatusCreated && resp.StatusCode() != http.StatusOK) || resp.JSON201 == nil {
-		return nil, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		return nil, handleErrorResponse(ctx, http.MethodPost, nsBase(orgName)+"/projects", resp.StatusCode(), ErrorResponses{
 			JSON400: resp.JSON400,
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
@@ -132,7 +132,7 @@ func (c *projectClient) DeleteProject(ctx context.Context, orgName, projectName 
 		return fmt.Errorf("failed to delete project: %w", err)
 	}
 	if resp.StatusCode() != http.StatusNoContent && resp.StatusCode() != http.StatusOK {
-		return handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		return handleErrorResponse(ctx, http.MethodDelete, nsBase(orgName)+"/projects/"+projectName, resp.StatusCode(), ErrorResponses{
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
 			JSON404: resp.JSON404,

@@ -169,6 +169,13 @@ function trailers(state: RoomState): string {
  * room has no committer state (dev mode never registers any), or when no
  * participant token is available. Doc-wins on conflict: refresh the baseline
  * shas from HEAD and re-apply.
+ *
+ * The commit is authenticated as a participant who may write. A read-only
+ * connection can still TRIGGER a flush — its own arrival drives onStoreDocument
+ * like anyone else's — but its token is skipped in favour of the room's last
+ * writer, because ApplyFiles gates on ae:design and would reject it. Falling
+ * back rather than refusing matters: otherwise one viewer in the room stalls
+ * every author's commits for as long as they are connected.
  */
 export async function flushRoom(
   deps: FlushDeps,
@@ -179,9 +186,9 @@ export async function flushRoom(
 ): Promise<void> {
   const state = roomState(documentName);
   if (!state) return;
-  let token = context?.token ?? state.lastToken;
+  let token = (context?.canWrite ? context.token : null) ?? state.lastToken;
   if (!token) {
-    deps.log?.(`committer: no token for ${documentName} — skipping flush`);
+    deps.log?.(`committer: no writer token for ${documentName} — skipping flush`);
     return;
   }
 

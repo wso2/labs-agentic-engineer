@@ -19,10 +19,16 @@
 // @vitest-environment jsdom
 
 import type { ElementType } from "react";
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, screen } from "@testing-library/react";
+import {
+  allPermissionsExcept,
+  renderWithPermissions,
+} from "../../../auth/testing";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const navigate = vi.fn();
 vi.mock("@tanstack/react-router", () => ({
+  useNavigate: () => navigate,
   Link: ({
     to,
     params,
@@ -56,13 +62,46 @@ vi.mock("../../issues/components/IssuesList", () => ({
 
 import { IssuesPage } from "./IssuesPage";
 
+beforeEach(() => {
+  navigate.mockClear();
+});
+
+// Every test but the dedicated permission ones below holds every permission,
+// so the page reads as reachable.
+const renderPage = (permissions?: Iterable<string>) =>
+  renderWithPermissions(<IssuesPage projectName="shop" />, permissions);
+
 describe("IssuesPage", () => {
   it("uses the project header and renders the issue list", () => {
-    render(<IssuesPage projectName="shop" />);
+    renderPage();
 
     expect(screen.getByRole("heading", { name: "Issues" })).toBeInTheDocument();
     expect(screen.getByText("Shop")).toBeInTheDocument();
     expect(screen.getByText("Issues list for shop")).toBeInTheDocument();
     expect(screen.queryByText("Issues is on its way")).not.toBeInTheDocument();
+  });
+
+  // Exact-match ae:build-view, the same permission list-issues is gated on.
+  // A full replacement, not an overlay: the list never renders, so the read
+  // behind it is never fired at a server that would refuse it.
+  it("blocks the whole page for a caller lacking ae:build-view", () => {
+    renderPage(allPermissionsExcept("ae:build-view"));
+
+    expect(
+      screen.getByText("You don't have access to this project's issues"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Issues list for shop")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Issues" })).not.toBeInTheDocument();
+  });
+
+  it("navigates to the project overview from the restricted page", () => {
+    renderPage(allPermissionsExcept("ae:build-view"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Back to project overview" }));
+
+    expect(navigate).toHaveBeenCalledWith({
+      to: "/projects/$projectName",
+      params: { projectName: "shop" },
+    });
   });
 });

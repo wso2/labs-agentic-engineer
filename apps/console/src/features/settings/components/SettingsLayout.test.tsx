@@ -18,8 +18,9 @@
 
 // @vitest-environment jsdom
 
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render as rtlRender, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, screen } from "@testing-library/react";
+import { renderWithPermissions } from "../../../auth/testing";
 import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 
 vi.mock("@tanstack/react-router", () => ({
@@ -39,15 +40,32 @@ vi.mock("@tanstack/react-router", () => ({
   useLocation: () => ({ pathname: "/settings/credentials" }),
 }));
 
+// Every test but the dedicated "no permission" ones below holds every
+// settings-relevant permission, so Credentials/Skills/Usage all read as
+// reachable by default — only the specific denial tests narrow this set.
+const ALL_SETTINGS_PERMISSIONS = [
+  "ae:github-config",
+  "ae:model-config",
+  "ae:skill-view",
+  "ae:skill-config",
+  "ae:usage-view",
+];
+const heldPermissions = new Set<string>();
+
 import { SettingsLayout } from "./SettingsLayout";
 
 const render = () =>
-  rtlRender(
+  renderWithPermissions(
     <OxygenUIThemeProvider theme={OxygenTheme}>
       <SettingsLayout />
     </OxygenUIThemeProvider>,
+    heldPermissions,
   );
 
+beforeEach(() => {
+  heldPermissions.clear();
+  ALL_SETTINGS_PERMISSIONS.forEach((p) => heldPermissions.add(p));
+});
 afterEach(cleanup);
 
 describe("SettingsLayout", () => {
@@ -58,5 +76,101 @@ describe("SettingsLayout", () => {
     expect(screen.getByRole("tab", { name: "Skills" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Usage" })).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Resources" })).not.toBeInTheDocument();
+  });
+
+  it("enables the Usage tab when the caller holds ae:usage-view", () => {
+    render();
+    expect(screen.getByRole("tab", { name: "Usage" })).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  });
+
+  it("disables the Usage tab without ae:usage-view, with an explanatory tooltip", async () => {
+    heldPermissions.delete("ae:usage-view");
+    render();
+
+    const usageTab = screen.getByRole("tab", { name: "Usage" });
+    expect(usageTab).toHaveAttribute("aria-disabled", "true");
+
+    fireEvent.mouseOver(usageTab.closest("span") ?? usageTab);
+    expect(
+      await screen.findByText("You don't have permission to view usage."),
+    ).toBeInTheDocument();
+  });
+
+  it("enables the Credentials tab when the caller holds either ae:github-config or ae:model-config", () => {
+    render();
+    expect(screen.getByRole("tab", { name: "Credentials" })).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  });
+
+  it("keeps Credentials enabled holding only ae:model-config (not ae:github-config)", () => {
+    heldPermissions.delete("ae:github-config");
+    render();
+    expect(screen.getByRole("tab", { name: "Credentials" })).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  });
+
+  it("disables the Credentials tab holding NEITHER ae:github-config nor ae:model-config, with an explanatory tooltip", async () => {
+    heldPermissions.delete("ae:github-config");
+    heldPermissions.delete("ae:model-config");
+    render();
+
+    const credentialsTab = screen.getByRole("tab", { name: "Credentials" });
+    expect(credentialsTab).toHaveAttribute("aria-disabled", "true");
+
+    fireEvent.mouseOver(credentialsTab.closest("span") ?? credentialsTab);
+    expect(
+      await screen.findByText("You don't have permission to view credentials."),
+    ).toBeInTheDocument();
+  });
+
+  it("enables the Skills tab when the caller holds ae:skill-view", () => {
+    render();
+    expect(screen.getByRole("tab", { name: "Skills" })).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  });
+
+  it("keeps Skills enabled holding only ae:skill-view (not ae:skill-config)", () => {
+    heldPermissions.delete("ae:skill-config");
+    render();
+    expect(screen.getByRole("tab", { name: "Skills" })).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  });
+
+  it("disables the Skills tab holding only ae:skill-config (not ae:skill-view), with an explanatory tooltip", async () => {
+    heldPermissions.delete("ae:skill-view");
+    render();
+
+    const skillsTab = screen.getByRole("tab", { name: "Skills" });
+    expect(skillsTab).toHaveAttribute("aria-disabled", "true");
+
+    fireEvent.mouseOver(skillsTab.closest("span") ?? skillsTab);
+    expect(
+      await screen.findByText("You don't have permission to view skills."),
+    ).toBeInTheDocument();
+  });
+
+  it("disables the Skills tab holding NEITHER ae:skill-view nor ae:skill-config, with an explanatory tooltip", async () => {
+    heldPermissions.delete("ae:skill-view");
+    heldPermissions.delete("ae:skill-config");
+    render();
+
+    const skillsTab = screen.getByRole("tab", { name: "Skills" });
+    expect(skillsTab).toHaveAttribute("aria-disabled", "true");
+
+    fireEvent.mouseOver(skillsTab.closest("span") ?? skillsTab);
+    expect(
+      await screen.findByText("You don't have permission to view skills."),
+    ).toBeInTheDocument();
   });
 });

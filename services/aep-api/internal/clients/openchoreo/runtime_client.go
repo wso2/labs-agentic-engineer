@@ -77,7 +77,7 @@ func (c *runtimeClient) ReleaseBindingName(ctx context.Context, orgName, project
 		return "", fmt.Errorf("openchoreo: list release bindings for %s: %w", componentName, err)
 	}
 	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
-		return "", handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		return "", handleErrorResponse(ctx, http.MethodGet, nsBase(orgName)+"/releasebindings", resp.StatusCode(), ErrorResponses{
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
 			JSON500: resp.JSON500,
@@ -99,7 +99,7 @@ func (c *runtimeClient) PodSnapshot(ctx context.Context, orgName, releaseBinding
 		return RuntimePod{}, fmt.Errorf("openchoreo: resource tree for %s: %w", releaseBindingName, err)
 	}
 	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
-		return RuntimePod{}, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		return RuntimePod{}, handleErrorResponse(ctx, http.MethodGet, nsBase(orgName)+"/releasebindings/"+releaseBindingName+"/resourcetree", resp.StatusCode(), ErrorResponses{
 			JSON400: resp.JSON400,
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
@@ -141,7 +141,7 @@ func (c *runtimeClient) PodLogs(ctx context.Context, orgName, releaseBindingName
 		return nil, fmt.Errorf("openchoreo: pod logs for %s: %w", podName, err)
 	}
 	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
-		return nil, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		return nil, handleErrorResponse(ctx, http.MethodGet, nsBase(orgName)+"/releasebindings/"+releaseBindingName+"/resourcelogs", resp.StatusCode(), ErrorResponses{
 			JSON400: resp.JSON400,
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
@@ -170,7 +170,7 @@ func (c *runtimeClient) PodEvents(ctx context.Context, orgName, releaseBindingNa
 		return nil, fmt.Errorf("openchoreo: pod events for %s: %w", podName, err)
 	}
 	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
-		return nil, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		return nil, handleErrorResponse(ctx, http.MethodGet, nsBase(orgName)+"/releasebindings/"+releaseBindingName+"/resourceevents", resp.StatusCode(), ErrorResponses{
 			JSON400: resp.JSON400,
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,

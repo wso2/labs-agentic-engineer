@@ -98,6 +98,46 @@ func TestTurnConflictOf_PinnedBodies(t *testing.T) {
 	}
 }
 
+// TestGenerateDesignConflictOf_PinnedBodies is TestTurnConflictOf_PinnedBodies's
+// twin for GenerateDesign's own generated response type — same two StartTurn
+// conflict rejections, same pinned wire shape, distinct Go type.
+func TestGenerateDesignConflictOf_PinnedBodies(t *testing.T) {
+	resp, ok := generateDesignConflictOf(fmt.Errorf("start turn: %w", &spec.TurnInProgressError{ActiveTurnID: "t1"}))
+	if !ok {
+		t.Fatal("turn-in-progress not recognized")
+	}
+	rec := httptest.NewRecorder()
+	if err := resp.VisitGenerateDesignResponse(rec); err != nil {
+		t.Fatalf("visit: %v", err)
+	}
+	if rec.Code != 409 {
+		t.Errorf("turn-in-progress status = %d, want 409", rec.Code)
+	}
+	var inProgress map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &inProgress); err != nil {
+		t.Fatalf("turn-in-progress body not JSON: %v", err)
+	}
+	if !reflect.DeepEqual(inProgress, map[string]string{"code": "turn_in_progress", "activeTurnId": "t1"}) {
+		t.Errorf("turn-in-progress body = %s", rec.Body.String())
+	}
+
+	resp, ok = generateDesignConflictOf(spec.ErrConversationRotated)
+	if !ok {
+		t.Fatal("conversation-rotated not recognized")
+	}
+	rec = httptest.NewRecorder()
+	if err := resp.VisitGenerateDesignResponse(rec); err != nil {
+		t.Fatalf("visit: %v", err)
+	}
+	if rec.Code != 409 {
+		t.Errorf("conversation-rotated status = %d, want 409", rec.Code)
+	}
+
+	if _, ok := generateDesignConflictOf(spec.ErrTurnNotFound); ok {
+		t.Error("non-conflict error must stay on the envelope path")
+	}
+}
+
 // captureGenAILogs redirects slog to a buffer for the test's duration.
 func captureGenAILogs(t *testing.T) *bytes.Buffer {
 	t.Helper()

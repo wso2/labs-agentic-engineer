@@ -100,7 +100,12 @@ function flakyBff(up: Upstream, applied: ApplyWrite[]): BffClient {
   return {
     validateAccess: async () => {
       if (up.oracleDown) throw new Error("oracle unavailable (503)");
-      return { name: "Jo", email: "jo@example.com", projectName: "shop" };
+      return {
+        name: "Jo",
+        email: "jo@example.com",
+        projectName: "shop",
+        canWrite: true,
+      };
     },
     fetchSpecFiles: async () => {
       if (up.readDown) throw new Error("Failed to read spec files for shop (500)");

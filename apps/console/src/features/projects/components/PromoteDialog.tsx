@@ -27,10 +27,12 @@ import {
   IconButton,
   Stack,
   TextField,
+  Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
 import { ArrowUpRight, X } from "@wso2/oxygen-ui-icons-react";
 import { createLink } from "@tanstack/react-router";
+import { useHasPermission } from "../../../auth/permissions";
 import { StatusChip } from "../../../components/StatusChip";
 import { validationView, type StageTone } from "../lib/pipeline";
 import {
@@ -39,6 +41,7 @@ import {
   type ConnectionRow,
   type ConnectionValues,
 } from "../lib/promotion";
+import { DENIED } from "../../../auth/denialCopy";
 
 const LinkButton = createLink(Button);
 
@@ -178,6 +181,7 @@ export function PromoteDialog({
   /** Called when Promote is pressed with every required value set. */
   onPromote: () => void;
 }) {
+  const hasBuild = useHasPermission("ae:build");
   const verdict = validationView(validation);
   const needing = rows.filter((row) => !row.provisioned).length;
   const ready = allConnectionsSet(rows, values);
@@ -270,15 +274,26 @@ export function PromoteDialog({
         <Button onClick={onClose} variant="outlined" color="inherit">
           Cancel
         </Button>
-        {/* A disabled control swallows its title, so the tooltip that explains
-            WHY it is disabled lives on a wrapper the pointer still reaches. */}
-        <span
-          {...(!ready && { title: "Enabled when all required values are set" })}
+        <Tooltip
+          title={
+            !hasBuild
+              ? DENIED.promoteProject
+              : !ready
+                ? "Enabled when all required values are set"
+                : ""
+          }
         >
-          <Button variant="contained" disabled={!ready} onClick={onPromote}>
-            Promote
-          </Button>
-        </span>
+          {/* span so the tooltip works while the button is disabled */}
+          <span>
+            <Button
+              variant="contained"
+              disabled={!ready || !hasBuild}
+              onClick={onPromote}
+            >
+              Promote
+            </Button>
+          </span>
+        </Tooltip>
       </DialogActions>
     </Dialog>
   );

@@ -27,7 +27,10 @@ type RegisterExternalResourceRequest =
 type PromoteExternalResourceRequest =
   components["schemas"]["PromoteExternalResourceRequest"];
 
-export function useOrgEndpoints() {
+// `enabled` withholds the request for a caller without ae:requirement-view
+// (the BFF gates this endpoint on that permission) rather than let it fire
+// and land on the generic isError branch.
+export function useOrgEndpoints(enabled = true) {
   return useQuery({
     queryKey: marketplaceKeys.endpoints,
     queryFn: async () => {
@@ -38,6 +41,7 @@ export function useOrgEndpoints() {
       return data ?? [];
     },
     staleTime: 30_000,
+    enabled,
   });
 }
 

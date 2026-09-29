@@ -33,11 +33,22 @@ var rootCmd = &cobra.Command{
 	Use:   "aectl",
 	Short: "AEP CLI — deployment and operations tooling for the AEP platform",
 	Long:  `aectl manages the lifecycle of an AEP platform installation on a Kubernetes cluster.`,
+	// Cobra prints a returned error itself, and Execute below prints it too —
+	// which is one error message too many. Execute keeps the job, because it
+	// is what also sets the exit code, so the two cannot drift.
+	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ui.Banner()
 		return cmd.Help()
 	},
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		// Past this line, nothing that fails is a usage problem: flags parsed
+		// and args validated before PersistentPreRunE runs, so a bad flag or a
+		// missing argument still gets the full usage block, while a cluster
+		// that would not connect or an install that died halfway does not
+		// answer with forty lines of flag documentation. Set before the work
+		// below so that work's own failures are covered.
+		cmd.SilenceUsage = true
 		if cmd.Parent() == nil {
 			// Bare `aectl` just shows help — skip cluster initialisation.
 			return nil
@@ -59,9 +70,13 @@ var rootCmd = &cobra.Command{
 	},
 }
 
+// Execute runs the CLI and is the single place a failure is reported, in the
+// same red-cross shape every other failure in a run already uses (ui.Fail) so
+// the last line of a broken install does not look like it came from a
+// different program than the twenty lines above it.
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		ui.Fail(err.Error())
 		os.Exit(1)
 	}
 }

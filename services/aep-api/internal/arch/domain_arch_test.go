@@ -63,6 +63,7 @@ var targetDomains = map[string]bool{
 var nonDomainPkgs = map[string]bool{
 	"platform":  true, // the kernel
 	"edge":      true, // the surface composer (was internal/api)
+	"authz":     true, // AE permission catalog + AE→OC bridge, used by edge's gate
 	"gen":       true, // generated wire types — public surface
 	"igen":      true, // generated wire types — S2S surface
 	"migrate":   true, // the ordered migration list

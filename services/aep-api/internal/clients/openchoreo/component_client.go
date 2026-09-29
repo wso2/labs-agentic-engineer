@@ -429,7 +429,7 @@ func (c *componentClient) ListComponents(ctx context.Context, orgName, projectNa
 		return nil, fmt.Errorf("failed to list components: %w", err)
 	}
 	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
-		return nil, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		return nil, handleErrorResponse(ctx, http.MethodGet, nsBase(orgName)+"/components", resp.StatusCode(), ErrorResponses{
 			JSON400: resp.JSON400,
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
@@ -505,7 +505,7 @@ func (c *componentClient) ListInternalComponents(ctx context.Context, orgName, p
 			return nil, fmt.Errorf("failed to list internal components: %w", err)
 		}
 		if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
-			return nil, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+			return nil, handleErrorResponse(ctx, http.MethodGet, nsBase(orgName)+"/components", resp.StatusCode(), ErrorResponses{
 				JSON400: resp.JSON400,
 				JSON401: resp.JSON401,
 				JSON403: resp.JSON403,
@@ -551,7 +551,7 @@ func (c *componentClient) GetComponent(ctx context.Context, orgName, projectName
 		return nil, fmt.Errorf("failed to get component: %w", err)
 	}
 	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
-		return nil, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		return nil, handleErrorResponse(ctx, http.MethodGet, nsBase(orgName)+"/components/"+k8sName, resp.StatusCode(), ErrorResponses{
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
 			JSON404: resp.JSON404,
@@ -603,7 +603,7 @@ func (c *componentClient) CreateComponent(ctx context.Context, orgName, projectN
 		return existing, nil
 	}
 
-	return nil, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+	return nil, handleErrorResponse(ctx, http.MethodPost, nsBase(orgName)+"/components", resp.StatusCode(), ErrorResponses{
 		JSON400: resp.JSON400,
 		JSON401: resp.JSON401,
 		JSON403: resp.JSON403,
@@ -649,7 +649,7 @@ func (c *componentClient) DeleteComponent(ctx context.Context, orgName, projectN
 		// Idempotent — caller's intent is satisfied.
 		return nil
 	}
-	return handleErrorResponse(resp.StatusCode(), ErrorResponses{
+	return handleErrorResponse(ctx, http.MethodDelete, nsBase(orgName)+"/components/"+scopedComp, resp.StatusCode(), ErrorResponses{
 		JSON401: resp.JSON401,
 		JSON403: resp.JSON403,
 		JSON404: resp.JSON404,
@@ -670,7 +670,7 @@ func (c *componentClient) ApplyComponentSpec(ctx context.Context, orgName, proje
 			return fmt.Errorf("failed to get component for spec update: %w", err)
 		}
 		if getResp.StatusCode() != http.StatusOK || getResp.JSON200 == nil {
-			return handleErrorResponse(getResp.StatusCode(), ErrorResponses{
+			return handleErrorResponse(ctx, http.MethodGet, nsBase(orgName)+"/components/"+scopedComp, getResp.StatusCode(), ErrorResponses{
 				JSON401: getResp.JSON401,
 				JSON403: getResp.JSON403,
 				JSON404: getResp.JSON404,
@@ -695,7 +695,7 @@ func (c *componentClient) ApplyComponentSpec(ctx context.Context, orgName, proje
 			return fmt.Errorf("failed to update component spec: %w", err)
 		}
 		if updResp.StatusCode() != http.StatusOK && updResp.StatusCode() != http.StatusCreated {
-			return handleErrorResponse(updResp.StatusCode(), ErrorResponses{
+			return handleErrorResponse(ctx, http.MethodPut, nsBase(orgName)+"/components/"+scopedComp, updResp.StatusCode(), ErrorResponses{
 				JSON400: updResp.JSON400,
 				JSON401: updResp.JSON401,
 				JSON403: updResp.JSON403,
@@ -723,7 +723,7 @@ func (c *componentClient) UpdateComponentTraitEnvironmentConfigs(ctx context.Con
 		return fmt.Errorf("failed to list release bindings for trait env config update: %w", err)
 	}
 	if listResp.StatusCode() != http.StatusOK || listResp.JSON200 == nil {
-		return handleErrorResponse(listResp.StatusCode(), ErrorResponses{
+		return handleErrorResponse(ctx, http.MethodGet, nsBase(orgName)+"/releasebindings", listResp.StatusCode(), ErrorResponses{
 			JSON401: listResp.JSON401,
 			JSON403: listResp.JSON403,
 			JSON500: listResp.JSON500,
@@ -764,7 +764,7 @@ func (c *componentClient) putTraitEnvironmentConfigs(ctx context.Context, orgNam
 		return fmt.Errorf("failed to get release binding %s for trait env config update: %w", bindingName, err)
 	}
 	if getResp.StatusCode() != http.StatusOK || getResp.JSON200 == nil {
-		return handleErrorResponse(getResp.StatusCode(), ErrorResponses{
+		return handleErrorResponse(ctx, http.MethodGet, nsBase(orgName)+"/releasebindings/"+bindingName, getResp.StatusCode(), ErrorResponses{
 			JSON401: getResp.JSON401,
 			JSON403: getResp.JSON403,
 			JSON404: getResp.JSON404,
@@ -794,7 +794,7 @@ func (c *componentClient) putTraitEnvironmentConfigs(ctx context.Context, orgNam
 		return fmt.Errorf("failed to update release binding %s trait env config: %w", bindingName, uerr)
 	}
 	if updResp.StatusCode() != http.StatusOK && updResp.StatusCode() != http.StatusCreated {
-		return handleErrorResponse(updResp.StatusCode(), ErrorResponses{
+		return handleErrorResponse(ctx, http.MethodPut, nsBase(orgName)+"/releasebindings/"+bindingName, updResp.StatusCode(), ErrorResponses{
 			JSON400: updResp.JSON400,
 			JSON401: updResp.JSON401,
 			JSON403: updResp.JSON403,
@@ -1017,7 +1017,7 @@ func (c *componentClient) ListDeployments(ctx context.Context, orgName, projectN
 		return nil, fmt.Errorf("failed to list release bindings: %w", err)
 	}
 	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
-		return nil, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		return nil, handleErrorResponse(ctx, http.MethodGet, nsBase(orgName)+"/releasebindings", resp.StatusCode(), ErrorResponses{
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
 			JSON500: resp.JSON500,
@@ -1058,7 +1058,7 @@ func (c *componentClient) ListProjectReleaseBindings(ctx context.Context, orgNam
 			return nil, fmt.Errorf("failed to list release bindings: %w", err)
 		}
 		if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
-			return nil, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+			return nil, handleErrorResponse(ctx, http.MethodGet, nsBase(orgName)+"/releasebindings", resp.StatusCode(), ErrorResponses{
 				JSON401: resp.JSON401,
 				JSON403: resp.JSON403,
 				JSON500: resp.JSON500,
@@ -1163,7 +1163,7 @@ func (c *componentClient) triggerBuildInner(ctx context.Context, orgName, projec
 		return nil, fmt.Errorf("failed to get component for build trigger: %w", err)
 	}
 	if compResp.StatusCode() != http.StatusOK || compResp.JSON200 == nil {
-		return nil, handleErrorResponse(compResp.StatusCode(), ErrorResponses{
+		return nil, handleErrorResponse(ctx, http.MethodGet, nsBase(orgName)+"/components/"+scopedComp, compResp.StatusCode(), ErrorResponses{
 			JSON401: compResp.JSON401,
 			JSON403: compResp.JSON403,
 			JSON404: compResp.JSON404,
@@ -1301,7 +1301,7 @@ func (c *componentClient) createWorkflowRun(ctx context.Context, orgName string,
 		return nil, fmt.Errorf("failed to %s: %w", opName, err)
 	}
 	if resp.StatusCode() != http.StatusCreated && resp.StatusCode() != http.StatusOK {
-		return nil, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		return nil, handleErrorResponse(ctx, http.MethodPost, nsBase(orgName)+"/workflowruns", resp.StatusCode(), ErrorResponses{
 			JSON400: resp.JSON400,
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
@@ -1351,7 +1351,7 @@ func (c *componentClient) ListBuildRuns(ctx context.Context, orgName, projectNam
 			return nil, fmt.Errorf("failed to list workflow runs: %w", err)
 		}
 		if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
-			return nil, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+			return nil, handleErrorResponse(ctx, http.MethodGet, nsBase(orgName)+"/workflowruns", resp.StatusCode(), ErrorResponses{
 				JSON400: resp.JSON400,
 				JSON401: resp.JSON401,
 				JSON403: resp.JSON403,
@@ -1438,7 +1438,7 @@ func (c *componentClient) listWorkflowRunsBySelector(ctx context.Context, orgNam
 		return nil, fmt.Errorf("failed to list workflow runs: %w", err)
 	}
 	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
-		return nil, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		return nil, handleErrorResponse(ctx, http.MethodGet, nsBase(orgName)+"/workflowruns", resp.StatusCode(), ErrorResponses{
 			JSON400: resp.JSON400,
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
@@ -1459,7 +1459,7 @@ func (c *componentClient) GetWorkflowRun(ctx context.Context, orgName, runName s
 		return nil, fmt.Errorf("failed to get workflow run: %w", err)
 	}
 	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
-		return nil, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		return nil, handleErrorResponse(ctx, http.MethodGet, nsBase(orgName)+"/workflowruns/"+runName, resp.StatusCode(), ErrorResponses{
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
 			JSON404: resp.JSON404,

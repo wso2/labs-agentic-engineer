@@ -18,7 +18,13 @@
 
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { fireEvent, screen, within } from "@testing-library/react";
+import {
+  ALL_PERMISSIONS,
+  allPermissionsExcept,
+  renderWithPermissions,
+} from "../../../auth/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ElementType } from "react";
 import type { components } from "../../../generated/aep-api";
@@ -44,6 +50,14 @@ vi.mock("@tanstack/react-router", () => ({
       return <Component component="a" href={href} {...rest} />;
     },
 }));
+
+// Every test but the dedicated "no permission" one below holds every
+// permission, so Edit/Delete read as operable by default. The session covers
+// this file's own gate AND resource-inspect-sections.tsx's
+// (DeleteResourceSection) in one go, since both read the same context.
+// `render` is shadowed so each case keeps its existing shape.
+let held: Iterable<string> = ALL_PERMISSIONS;
+const render = (ui: ReactElement) => renderWithPermissions(ui, held);
 
 type ExternalResourceDTO = components["schemas"]["ExternalResourceDTO"];
 type PlatformResourceTypeDTO = components["schemas"]["PlatformResourceTypeDTO"];
@@ -126,6 +140,7 @@ describe("CatalogTypeDrawer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetDeleteState();
+    held = ALL_PERMISSIONS;
   });
 
   it("platform: no Delete resource and no Edit", () => {
@@ -345,5 +360,20 @@ describe("CatalogTypeDrawer", () => {
     const options = mutate.mock.calls[0]?.[1] as { onSuccess?: () => void };
     options.onSuccess?.();
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables Edit and Delete without ae:resource-config", () => {
+    held = allPermissionsExcept("ae:resource-config");
+    render(
+      <CatalogTypeDrawer
+        kind="external"
+        resource={registeredExternal()}
+        open
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /edit/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Delete resource" })).toBeDisabled();
   });
 });

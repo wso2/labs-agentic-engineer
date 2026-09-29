@@ -133,6 +133,25 @@ func (h *Handler) CreateTurn(ctx context.Context, request gen.CreateTurnRequestO
 	return gen.CreateTurn202JSONResponse(gen.TurnOutputBody{TurnID: turnID}), nil
 }
 
+// GenerateDesign starts the fixed `/design` flow turn — the BFF operation
+// behind the console's "Generate design" button and its Overview-track
+// counterpart (AppLayout's `?generate=design` signal), kept distinct from
+// CreateTurn purely so it can carry its own AE permission (ae:design alone —
+// see permission_gate.go) rather than authorizing design generation on
+// whatever permission happens to satisfy the generic chat surface. No request
+// body to parse: spec.Service.StartDesignTurn supplies the instruction.
+func (h *Handler) GenerateDesign(ctx context.Context, request gen.GenerateDesignRequestObject) (gen.GenerateDesignResponseObject, error) {
+	org := tenant.BoundOrgFromContext(ctx)
+	turnID, err := h.genai.StartDesignTurn(ctx, org, request.ProjectName, request.ConversationID)
+	if err != nil {
+		if conflict, ok := generateDesignConflictOf(err); ok {
+			return conflict, nil
+		}
+		return nil, mapGenAITurnError(ctx, err)
+	}
+	return gen.GenerateDesign202JSONResponse(gen.TurnOutputBody{TurnID: turnID}), nil
+}
+
 func (h *Handler) GetTurn(ctx context.Context, request gen.GetTurnRequestObject) (gen.GetTurnResponseObject, error) {
 	org := tenant.BoundOrgFromContext(ctx)
 	st, err := h.genai.TurnStatus(ctx, org, request.ProjectName, request.TurnID)
@@ -247,6 +266,26 @@ func turnConflictOf(err error) (gen.CreateTurnResponseObject, bool) {
 		// #430 single-era rule: the addressed thread is no longer current —
 		// the console re-resolves via list-conversations and retries.
 		return gen.CreateTurn409JSONResponse(gen.TurnConflict{
+			Code: gen.ConversationRotated,
+		}), true
+	}
+	return nil, false
+}
+
+// generateDesignConflictOf mirrors turnConflictOf exactly — same two
+// StartTurn conflict rejections, same pinned bodies — but typed to
+// GenerateDesign's own generated response type, distinct from CreateTurn's
+// even though structurally identical, since the strict-server codegen names
+// one response type per operation.
+func generateDesignConflictOf(err error) (gen.GenerateDesignResponseObject, bool) {
+	var inProgress *spec.TurnInProgressError
+	if errors.As(err, &inProgress) {
+		return gen.GenerateDesign409JSONResponse(gen.TurnConflict{
+			Code: gen.TurnInProgress, ActiveTurnID: inProgress.ActiveTurnID,
+		}), true
+	}
+	if errors.Is(err, spec.ErrConversationRotated) {
+		return gen.GenerateDesign409JSONResponse(gen.TurnConflict{
 			Code: gen.ConversationRotated,
 		}), true
 	}

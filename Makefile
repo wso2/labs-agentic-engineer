@@ -118,9 +118,16 @@ eval-ui:
 eval-bal:
 	$(PNPM) --filter @aep/ballerina-evals eval $(if $(ARGS),-- $(ARGS),)
 
+# GOTOOLCHAIN is forced when RUNNING golangci-lint, not just when installing it
+# (`tools`, below). The binary embeds the go/types version it was built with,
+# but resolves the standard library through whichever `go` is on PATH — so a
+# contributor whose Go is newer than the project's directive gets the linter
+# type-checking a stdlib it cannot parse, and every package fails with spurious
+# `(typecheck)` errors (or, under concurrency, a goroutine dump). CI never sees
+# it because setup-go installs only the pinned version.
 lint:
 	$(TURBO) run lint
-	@rc=0; for d in $(GO_MODULE_DIRS); do echo ">> golangci-lint $$d"; ( cd "$$d" && $(GOLANGCI) run ./... ) || rc=1; done; exit $$rc
+	@rc=0; for d in $(GO_MODULE_DIRS); do echo ">> golangci-lint $$d"; ( cd "$$d" && GOTOOLCHAIN=$(GO_TOOLCHAIN) $(GOLANGCI) run ./... ) || rc=1; done; exit $$rc
 
 typecheck: gen
 	$(TURBO) run typecheck
@@ -217,7 +224,7 @@ workflow-skill:
 # An SRE-only profile that saves the most memory:
 #   WITH_AGENT_MANAGER=0 make dev-env
 #
-# `platform install` otherwise prompts interactively for two secrets — set as
+# `platform install` otherwise prompts interactively for three secrets — set as
 # env vars here so it doesn't:
 #   ANTHROPIC_API_KEY               platform.go treats an EMPTY value the same
 #                                    as unset (still prompts, then refuses) —
@@ -228,6 +235,13 @@ workflow-skill:
 #                                    client WITH_SKAFFOLD_CLIENT=1 bootstraps
 #                                    above (skaffold/defaults.yaml's
 #                                    thunder.admin_client_id)
+#   AEP_AE_ADMIN_PASSWORD           the console login for the seeded `aeadmin`
+#                                    account, which aectl creates and puts in
+#                                    the ae-admin group so the permission gate
+#                                    has a real holder to answer. Fixed to
+#                                    "admin" HERE, and only here: aectl itself
+#                                    defaults to nothing, so a real install
+#                                    picks its own or seeds no account at all.
 #
 # The install runs on images built from THIS checkout (dev-images below, then
 # `--image-tag=dev-local`), never the released ones the chart defaults to.
@@ -250,6 +264,7 @@ dev-env:
 	$(MAKE) dev-images
 	./tools/aectl/aectl-skaffold platform config import --config skaffold/defaults.yaml
 	ANTHROPIC_API_KEY=none AEP_THUNDER_ADMIN_CLIENT_SECRET=ae-install-client-secret \
+	AEP_AE_ADMIN_PASSWORD=admin \
 		./tools/aectl/aectl-skaffold platform install --addons=all --platform-version=latest --platform-chart=deployments/helm-charts/platform --image-tag=dev-local
 	@if [ "$${WITH_AGENT_MANAGER:-1}" != "1" ]; then \
 		echo "⏭️  Skipping Agent Manager (WITH_AGENT_MANAGER=0)"; \
@@ -268,6 +283,7 @@ dev-env:
 	@if [ "$${WITH_OBSERVABILITY:-1}" = "1" ] && [ "$${WITH_SRE:-1}" != "1" ]; then \
 		bash deployments/scripts/park-observability.sh down; \
 	fi
+	@AEP_AE_ADMIN_PASSWORD=admin bash deployments/scripts/print-consoles.sh
 
 # Builds the six platform service images from this checkout and loads them
 # into the k3d cluster, tagged dev-local (skaffold.yaml — build-only). Shared

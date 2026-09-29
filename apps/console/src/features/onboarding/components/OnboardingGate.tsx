@@ -23,15 +23,18 @@ import {
   CircularProgress,
   Typography,
 } from "@wso2/oxygen-ui";
-import { useConfig } from "../../settings/api/queries";
+import { useConfigStatus } from "../../settings/api/queries";
 import { OnboardingWizard } from "./OnboardingWizard";
 
 // First-run hard gate (issue #102, ADR-0009): an org whose config is missing
 // gitProvider or llm is non-functional, so every route yields to the
-// onboarding wizard until both are connected. Keyed purely on GET /config —
-// the org itself always exists (default org, platform guarantee).
+// onboarding wizard until both are connected. Keyed on GET /config/status —
+// the permission-free sibling of GET /config, since this gate must work
+// before the caller's AE permissions are necessarily provisioned (the org's
+// very first admin may not hold ae:github-config/ae:model-config yet). The
+// org itself always exists (default org, platform guarantee).
 export function OnboardingGate({ children }: PropsWithChildren) {
-  const config = useConfig();
+  const status = useConfigStatus();
   // Once the wizard has been shown this session, keep it mounted past the
   // moment config becomes complete — the skills-bootstrap step runs after
   // the last credential lands, and only the wizard's own completion
@@ -39,7 +42,7 @@ export function OnboardingGate({ children }: PropsWithChildren) {
   const wizardShown = useRef(false);
   const [completed, setCompleted] = useState(false);
 
-  if (config.isPending) {
+  if (status.isPending) {
     return (
       <FullScreen>
         <CircularProgress size={32} />
@@ -50,28 +53,27 @@ export function OnboardingGate({ children }: PropsWithChildren) {
     );
   }
 
-  if (config.isError) {
+  if (status.isError) {
     return (
       <FullScreen>
         <Typography variant="h6">Couldn't load your organization</Typography>
         <Typography variant="body2" color="text.secondary">
-          {config.error.message}
+          {status.error.message}
         </Typography>
-        <Button variant="contained" onClick={() => void config.refetch()}>
+        <Button variant="contained" onClick={() => void status.refetch()}>
           Try again
         </Button>
       </FullScreen>
     );
   }
 
-  const incomplete =
-    config.data.gitProvider === null || config.data.llm === null;
+  const incomplete = !status.data.gitProviderConnected || !status.data.llmConnected;
   if (incomplete) wizardShown.current = true;
 
   if (wizardShown.current && !completed) {
     return (
       <OnboardingWizard
-        config={config.data}
+        status={status.data}
         onComplete={() => setCompleted(true)}
       />
     );

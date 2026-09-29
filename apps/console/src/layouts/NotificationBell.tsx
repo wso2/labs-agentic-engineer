@@ -29,48 +29,71 @@ import {
 } from "@wso2/oxygen-ui";
 import { Bell } from "@wso2/oxygen-ui-icons-react";
 import { useNavigate } from "@tanstack/react-router";
+import { useHasPermission } from "../auth/permissions";
+import { NoPermissionIllustration } from "../components/NoPermissionIllustration";
 import { useRecentAlerts } from "../features/alerts/api/queries";
 import { useAlertsUnread } from "../features/alerts/hooks/useAlertsUnread";
 import { classificationLabel } from "../features/alerts/classification";
 import { attentionDescription, attentionLabel } from "../features/issues/attention";
 import { useAttentionUnread } from "../features/issues/hooks/useAttentionUnread";
+import { DENIED } from "../auth/denialCopy";
 
 // Top-nav notification bell (#154) — global, read-only, client-tracked
 // unread state (no server read-state; see the issue's grilling decisions).
 // Must be a child of AppShell to reach useAppShell()'s panel toggle.
 export function NotificationButton() {
   const { actions } = useAppShell();
-  const { data: reports = [] } = useRecentAlerts();
+  const hasObservabilityAccess = useHasPermission("ae:observability-view");
+  const { data: reports = [] } = useRecentAlerts(undefined, hasObservabilityAccess);
+  // Both counts start from the SAME list-rca-agent-reports read, so both are
+  // already covered by the permission that read is gated on — an SRE incident
+  // needing attention arrives as a report like any other. useAttentionUnread
+  // then reads each report's project issues, and needs no `enabled` of its
+  // own: it derives the projects to read FROM `reports`, so a caller the line
+  // above withheld has an empty list and it issues no query at all.
   const alertsUnread = useAlertsUnread(reports);
   const attentionUnread = useAttentionUnread(reports);
   const unreadCount = alertsUnread.unreadCount + attentionUnread.unreadCount;
 
   return (
-    <Tooltip title="Alerts">
-      <IconButton
-        onClick={() => {
-          actions.toggleNotificationPanel();
-          alertsUnread.markAllSeen();
-          attentionUnread.markAllSeen();
-        }}
-        size="small"
-        sx={{ color: "text.secondary" }}
-        aria-label="Alerts"
-      >
-        <Badge badgeContent={unreadCount} color="error" max={99} invisible={unreadCount === 0}>
-          <Bell size={20} />
-        </Badge>
-      </IconButton>
+    <Tooltip title={hasObservabilityAccess ? "Alerts" : DENIED.viewAlerts}>
+      <span>
+        <IconButton
+          onClick={() => {
+            actions.toggleNotificationPanel();
+            alertsUnread.markAllSeen();
+            attentionUnread.markAllSeen();
+          }}
+          size="small"
+          sx={{ color: "text.secondary" }}
+          aria-label="Alerts"
+          disabled={!hasObservabilityAccess}
+        >
+          <Badge badgeContent={unreadCount} color="error" max={99} invisible={unreadCount === 0}>
+            <Bell size={20} />
+          </Badge>
+        </IconButton>
+      </span>
     </Tooltip>
   );
 }
 
 // Panel body — no per-item read state (the badge clears as a whole on open,
-// per #154's decision), so this only needs the report list itself.
+// per #154's decision), so this only needs the report list itself. Reachable
+// only via the bell button above, which is itself disabled without the
+// permission — this still self-gates rather than trusting that, since the
+// panel is its own mounted component (AppLayout renders it unconditionally).
 export function AlertsNotificationPanel() {
   const navigate = useNavigate();
   const { actions } = useAppShell();
-  const { data: reports = [], isPending, isError, error, refetch } = useRecentAlerts();
+  const hasObservabilityAccess = useHasPermission("ae:observability-view");
+  const {
+    data: reports = [],
+    isPending,
+    isError,
+    error,
+    refetch,
+  } = useRecentAlerts(undefined, hasObservabilityAccess);
   const attention = useAttentionUnread(reports);
 
   const openAlert = (alertId: string) => {
@@ -92,7 +115,16 @@ export function AlertsNotificationPanel() {
         <NotificationPanel.HeaderTitle>Alerts</NotificationPanel.HeaderTitle>
         <NotificationPanel.HeaderClose />
       </NotificationPanel.Header>
-      {isPending ? (
+      {!hasObservabilityAccess ? (
+        <Box sx={{ px: 3, py: 4, textAlign: "center" }}>
+          <Box sx={{ display: "flex", justifyContent: "center", mb: 1 }}>
+            <NoPermissionIllustration size={64} />
+          </Box>
+          <Typography variant="body2" color="text.secondary">
+            {DENIED.viewAlerts}
+          </Typography>
+        </Box>
+      ) : isPending ? (
         <NotificationPanel.EmptyState />
       ) : isError && reports.length === 0 ? (
         // Initial load failed with no last-known data to fall back on —

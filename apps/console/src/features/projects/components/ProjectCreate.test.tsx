@@ -18,12 +18,15 @@
 
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { fireEvent, screen } from "@testing-library/react";
+import { renderWithPermissions } from "../../../auth/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const navigate = vi.fn();
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigate,
+  Link: ({ to, ...rest }: { to: string }) => <a href={to} {...rest} />,
 }));
 
 // The mutation doubles below are plain objects the component reads flags
@@ -50,14 +53,13 @@ const uploadReferences = {
   error: null as Error | null,
 };
 // The create page reads the org handle to address the chat's seed slot when
-// the user abandons their documents; useSession throws outside an AuthGuard.
-vi.mock("../../../auth/SessionContext", () => ({
-  useSession: () => ({
-    user: { name: "Test User", email: "test@example.com" },
-    orgHandle: "acme",
-    signOut: vi.fn(),
-  }),
-}));
+// the user abandons their documents, and gates the form on
+// ae:requirement-update. Every existing test in this file assumes the page is
+// reachable — only the dedicated "no permission" test empties the set.
+// `render` is shadowed below so each case keeps its existing shape.
+const sessionPermissions = { current: new Set(["ae:requirement-update"]) };
+const render = (ui: ReactElement) =>
+  renderWithPermissions(ui, sessionPermissions.current);
 
 vi.mock("../api/queries", () => ({
   useCreateProject: () => createProject,
@@ -95,6 +97,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   uploadReferences.isError = false;
   uploadReferences.error = null;
+  sessionPermissions.current = new Set(["ae:requirement-update"]);
 });
 
 describe("ProjectCreate reference documents (#383)", () => {
@@ -347,5 +350,20 @@ describe("ProjectCreate copy (#561)", () => {
     );
     reachNameStep();
     expect(screen.getByRole("alert")).toHaveTextContent("boom");
+  });
+});
+
+describe("ProjectCreate — permission gate", () => {
+  it("blocks the whole page for a user lacking ae:requirement-update", () => {
+    sessionPermissions.current = new Set();
+    render(<ProjectCreate />);
+
+    expect(
+      screen.getByText("You don't have permission to create a new project."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Back to projects" }),
+    ).toBeInTheDocument();
   });
 });

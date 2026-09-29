@@ -19,7 +19,13 @@
 // @vitest-environment jsdom
 
 import type { ElementType } from "react";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import {
+  ALL_PERMISSIONS,
+  allPermissionsExcept,
+  renderWithPermissions,
+} from "../../../auth/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 
@@ -46,7 +52,16 @@ vi.mock("@tanstack/react-router", () => ({
       return <Component component="a" href={href} {...rest} />;
     },
   Link: ({ children }: { children?: React.ReactNode }) => <a>{children}</a>,
+  useNavigate: () => navigate,
 }));
+
+const navigate = vi.fn();
+
+// Every existing test in this file assumes the page is otherwise reachable —
+// only a dedicated "no permission" test withholds the key. `render` is
+// shadowed so each case keeps its existing shape.
+let held: Iterable<string> = ALL_PERMISSIONS;
+const render = (ui: ReactElement) => renderWithPermissions(ui, held);
 
 let mockDeploy: DeployStage = {
   version: "v1",
@@ -318,6 +333,7 @@ beforeEach(() => {
   mockDependenciesPending = false;
   mockSaveValues.mockClear();
   openApiDialog.mockClear();
+  held = ALL_PERMISSIONS;
 });
 
 describe("DeploymentEnvironmentPage", () => {
@@ -812,5 +828,16 @@ describe("DeploymentEnvironmentPage — the environments read", () => {
     expect(screen.getByLabelText("Loading deployments")).toBeInTheDocument();
     expect(screen.queryByText(/Nothing deployed here yet/)).not.toBeInTheDocument();
     expect(screen.queryByText("No environment called production")).not.toBeInTheDocument();
+  });
+});
+
+describe("DeploymentEnvironmentPage — permission gate", () => {
+  it("blocks the whole page for a user lacking ae:build-view", () => {
+    held = allPermissionsExcept("ae:build-view");
+    render(<DeploymentEnvironmentPage projectName="expense" environment="development" />);
+
+    expect(
+      screen.getByText("You don't have access to this project's deployments"),
+    ).toBeInTheDocument();
   });
 });

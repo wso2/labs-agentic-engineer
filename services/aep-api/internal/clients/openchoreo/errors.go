@@ -18,6 +18,7 @@ package openchoreo
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -64,7 +65,11 @@ type ErrorResponses struct {
 // sentinel-wrapped error: callers errors.Is(err, ErrNotFound) and the human
 // message stays accessible via err.Error(). The OC error body's `.Error`
 // string is the human description; `.Details` is logged via logErrorDetails.
-func handleErrorResponse(statusCode int, errs ErrorResponses) error {
+// method/path identify the OC call that failed (e.g. "POST",
+// "/orgs/{org}/projects") — every call site knows its own endpoint
+// statically, so this is a literal, not something recovered from the
+// request at runtime.
+func handleErrorResponse(ctx context.Context, method, path string, statusCode int, errs ErrorResponses) error {
 	switch {
 	case errs.JSON400 != nil:
 		logErrorDetails(errs.JSON400)
@@ -74,6 +79,7 @@ func handleErrorResponse(statusCode int, errs ErrorResponses) error {
 		return fmt.Errorf("%w: %s", ErrUnauthorized, errs.JSON401.Error)
 	case errs.JSON403 != nil:
 		logErrorDetails(errs.JSON403)
+		logOcForbidden(ctx, method, path, errs.JSON403.Error)
 		return fmt.Errorf("%w: %s", ErrForbidden, errs.JSON403.Error)
 	case errs.JSON404 != nil:
 		logErrorDetails(errs.JSON404)
@@ -89,9 +95,26 @@ func handleErrorResponse(statusCode int, errs ErrorResponses) error {
 	// schema mismatch, etc.). Synthesize an error from the bare status so
 	// callers can still branch on the sentinel for the obvious codes.
 	if sentinel := sentinelForStatus(statusCode); sentinel != nil {
+		if errors.Is(sentinel, ErrForbidden) {
+			logOcForbidden(ctx, method, path, "")
+		}
 		return fmt.Errorf("%w: status %d", sentinel, statusCode)
 	}
 	return fmt.Errorf("openchoreo: unexpected status %d", statusCode)
+}
+
+// logOcForbidden logs an OC-side permission rejection: the request reached
+// OpenChoreo (so the caller already cleared the BFF's AE-permission gate —
+// see edge.logMissingPermission for that separate, earlier denial point) but
+// OpenChoreo's own RBAC (AuthzRole/AuthzRoleBinding) rejected it. Reading
+// this apart from the AE-gate denial log tells you whether a 403 originated
+// at the BFF's permission gate or at OC's own authorization check. Takes ctx
+// (for correlation_id via ContextHandler) and method/path (for
+// attributability across handleErrorResponse's ~45 call sites) — mirrors
+// resource_client.go's inline version of this same log.
+func logOcForbidden(ctx context.Context, method, path, ocMessage string) {
+	slog.WarnContext(ctx, "openchoreo: OC rejected the call — caller held the required AE permission but OpenChoreo's own authorization denied the request",
+		"method", method, "path", path, "ocError", ocMessage)
 }
 
 // humanErrorMessage extracts a human sentence from an OC / platform error body.

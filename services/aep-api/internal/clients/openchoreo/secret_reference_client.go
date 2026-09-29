@@ -50,7 +50,7 @@ func (c *secretReferenceClient) GetSecretReference(ctx context.Context, cpNS, na
 		return nil, fmt.Errorf("get secret reference: %w", err)
 	}
 	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
-		return nil, mapSecretReferenceError(resp.StatusCode(), ErrorResponses{
+		return nil, mapSecretReferenceError(ctx, http.MethodGet, nsBase(cpNS)+"/secretreferences/"+name, resp.StatusCode(), ErrorResponses{
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
 			JSON404: resp.JSON404,
@@ -67,7 +67,7 @@ func (c *secretReferenceClient) CreateSecretReference(ctx context.Context, cpNS 
 		return nil, fmt.Errorf("create secret reference: %w", err)
 	}
 	if resp.StatusCode() != http.StatusCreated || resp.JSON201 == nil {
-		return nil, mapSecretReferenceError(resp.StatusCode(), ErrorResponses{
+		return nil, mapSecretReferenceError(ctx, http.MethodPost, nsBase(cpNS)+"/secretreferences", resp.StatusCode(), ErrorResponses{
 			JSON400: resp.JSON400,
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
@@ -85,7 +85,7 @@ func (c *secretReferenceClient) UpdateSecretReference(ctx context.Context, cpNS,
 		return nil, fmt.Errorf("update secret reference: %w", err)
 	}
 	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
-		return nil, mapSecretReferenceError(resp.StatusCode(), ErrorResponses{
+		return nil, mapSecretReferenceError(ctx, http.MethodPut, nsBase(cpNS)+"/secretreferences/"+name, resp.StatusCode(), ErrorResponses{
 			JSON400: resp.JSON400,
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
@@ -105,7 +105,7 @@ func (c *secretReferenceClient) DeleteSecretReference(ctx context.Context, cpNS,
 	case http.StatusOK, http.StatusNoContent:
 		return nil
 	}
-	return mapSecretReferenceError(resp.StatusCode(), ErrorResponses{
+	return mapSecretReferenceError(ctx, http.MethodDelete, nsBase(cpNS)+"/secretreferences/"+name, resp.StatusCode(), ErrorResponses{
 		JSON401: resp.JSON401,
 		JSON403: resp.JSON403,
 		JSON404: resp.JSON404,
@@ -167,8 +167,8 @@ func secretReferenceToModel(sr *gen.SecretReference) *secretmanagersvc.SecretRef
 // mapSecretReferenceError remaps openchoreo package sentinels onto
 // secretmanagersvc.ErrNotFound / ErrConflict so the high-level client can
 // branch with errors.Is against its own package errors.
-func mapSecretReferenceError(statusCode int, errs ErrorResponses) error {
-	err := handleErrorResponse(statusCode, errs)
+func mapSecretReferenceError(ctx context.Context, method, path string, statusCode int, errs ErrorResponses) error {
+	err := handleErrorResponse(ctx, method, path, statusCode, errs)
 	switch {
 	case errors.Is(err, ErrNotFound):
 		return secretmanagersvc.ErrNotFound

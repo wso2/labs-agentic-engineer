@@ -18,7 +18,12 @@
 
 // @vitest-environment jsdom
 
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
+import {
+  ALL_PERMISSIONS,
+  allPermissionsExcept,
+  renderWithPermissions,
+} from "../../../auth/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 
@@ -29,9 +34,16 @@ type TaskView = components["schemas"]["TaskView"];
 type DeployStage = components["schemas"]["DeployStage"];
 type CycleBuild = components["schemas"]["CycleBuild"];
 
+// Every existing test in this file assumes the page is otherwise reachable —
+// only a dedicated "no permission" test flips this. BuildActions' own
+// Cancel/Retry gate on ae:build; page entry gates on ae:build-view.
+let held: Iterable<string> = ALL_PERMISSIONS;
+
+const navigate = vi.fn();
 // Router stubbed to plain anchors — no RouterProvider needed.
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children?: React.ReactNode }) => <a>{children}</a>,
+  useNavigate: () => navigate,
   createLink:
     (Component: React.ElementType) =>
     ({
@@ -246,7 +258,10 @@ const greenBuild = (component: string): CycleBuild =>
   componentBuild({ component, buildName: `${component}-build-1`, status: "WorkflowSucceeded", completed: true });
 
 const renderPage = () =>
-  render(<BuildDetailPage projectName="demo-shop" tag="v2" />);
+  renderWithPermissions(
+    <BuildDetailPage projectName="demo-shop" tag="v2" />,
+    held,
+  );
 
 const deploymentsLink = () => screen.queryByText("Go to Deployments");
 
@@ -276,6 +291,7 @@ afterEach(() => {
   mockDesignDeps = [];
   mockReadiness = undefined;
   cycleBuildsCalls.length = 0;
+  held = ALL_PERMISSIONS;
   vi.clearAllMocks();
   vi.useRealTimers();
 });
@@ -1006,6 +1022,19 @@ describe("BuildDetailPage — the task list's order and its links", () => {
       "href",
       "https://github.com/acme-dev/demo-shop/issues/1",
     );
+  });
+});
+
+describe("BuildDetailPage — permission gate", () => {
+  it("blocks the whole page for a user lacking ae:build/ae:build-view", () => {
+    held = allPermissionsExcept("ae:build", "ae:build-view");
+    mockBuilds = [build()];
+    renderPage();
+
+    expect(
+      screen.getByText("You don't have access to this project's builds"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Build actions" })).not.toBeInTheDocument();
   });
 });
 

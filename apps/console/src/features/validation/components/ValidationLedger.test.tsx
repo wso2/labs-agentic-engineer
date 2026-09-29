@@ -18,11 +18,22 @@
 
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { fireEvent, screen } from "@testing-library/react";
+import {
+  ALL_PERMISSIONS,
+  allPermissionsExcept,
+  renderWithPermissions,
+} from "../../../auth/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 
 type ValidationSummary = components["schemas"]["ValidationSummary"];
+
+// Every existing test in this file assumes the page is otherwise reachable —
+// only the dedicated "no permission" test below flips this.
+let held: Iterable<string> = ALL_PERMISSIONS;
+const render = (ui: ReactElement) => renderWithPermissions(ui, held);
 
 const navigate = vi.fn();
 vi.mock("@tanstack/react-router", () => ({
@@ -73,6 +84,7 @@ beforeEach(() => {
   mockRows = [];
   mockState = { isPending: false, isError: false };
   navigate.mockClear();
+  held = ALL_PERMISSIONS;
 });
 
 describe("ValidationLedger", () => {
@@ -163,5 +175,31 @@ describe("ValidationLedger", () => {
     render(<ValidationLedger projectName="p" />);
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(refetch).toHaveBeenCalled();
+  });
+
+  // Exact-match ae:build-view, the same permission list-validations is gated
+  // on. A full replacement, not an overlay: none of the ledger renders.
+  it("blocks the whole page for a caller lacking ae:build-view", () => {
+    held = allPermissionsExcept("ae:build-view");
+    mockRows = [row({ tag: "v1" })];
+    render(<ValidationLedger projectName="p" />);
+
+    expect(
+      screen.getByText("You don't have access to this project's validations"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("v1")).not.toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
+
+  it("navigates to the project overview from the restricted page", () => {
+    held = allPermissionsExcept("ae:build-view");
+    render(<ValidationLedger projectName="p" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Back to project overview" }));
+
+    expect(navigate).toHaveBeenCalledWith({
+      to: "/projects/$projectName",
+      params: { projectName: "p" },
+    });
   });
 });

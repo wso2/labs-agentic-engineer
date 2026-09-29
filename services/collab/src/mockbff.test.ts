@@ -61,7 +61,12 @@ test("validate: 403 for the deny token (rejection test hook)", async () => {
 test("validate: identity decoded from a JWT payload + project from the room", async () => {
   const bff = createBffClient(base);
   const id = await bff.validateAccess(jwt, "spec-acme-demo-shop");
-  assert.deepEqual(id, { name: "Jo", email: "jo@x.io", projectName: "demo-shop" });
+  assert.deepEqual(id, {
+    name: "Jo",
+    email: "jo@x.io",
+    projectName: "demo-shop",
+    canWrite: true,
+  });
 });
 
 test("validate: opaque tokens get the fixed mock identity", async () => {
@@ -71,6 +76,7 @@ test("validate: opaque tokens get the fixed mock identity", async () => {
     name: "Mock User",
     email: "mock@localhost",
     projectName: "shop",
+    canWrite: true,
   });
 });
 

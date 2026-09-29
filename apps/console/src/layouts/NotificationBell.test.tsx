@@ -1,0 +1,105 @@
+/**
+ * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+ *
+ * WSO2 LLC. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+// @vitest-environment jsdom
+
+import { screen, fireEvent } from "@testing-library/react";
+import { allPermissionsExcept, renderWithPermissions } from "../auth/testing";
+import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@tanstack/react-router", () => ({
+  useNavigate: () => vi.fn(),
+}));
+
+// Only useAppShell needs a stub (it throws outside an <AppShell> provider);
+// every other export passes through untouched — mirrors SpecView.test.tsx.
+const toggleNotificationPanel = vi.fn();
+vi.mock("@wso2/oxygen-ui", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@wso2/oxygen-ui")>();
+  return {
+    ...actual,
+    useAppShell: () => ({ actions: { toggleNotificationPanel } }),
+  };
+});
+
+let recentAlertsResult: { data?: unknown[]; isPending?: boolean; isError?: boolean; error?: Error; refetch?: () => void } = { data: [] };
+vi.mock("../features/alerts/api/queries", () => ({
+  useRecentAlerts: () => recentAlertsResult,
+}));
+
+// The SRE-attention half of the badge. It reads a session and fires its own
+// per-project issue queries, neither of which this file is about — it tests
+// whether the bell is reachable at all. Its own permission story is the one
+// above it: the projects it reads come from `reports`, so withholding those
+// withholds these.
+const attentionUnreadCount = vi.hoisted(() => ({ current: 0 }));
+vi.mock("../features/issues/hooks/useAttentionUnread", () => ({
+  useAttentionUnread: () => ({
+    unreadCount: attentionUnreadCount.current,
+    items: [],
+    markAllSeen: vi.fn(),
+  }),
+}));
+
+import { NotificationButton } from "./NotificationBell";
+
+// Every test but the dedicated "no permission" ones below holds every
+// permission, so the bell reads as reachable by default.
+const render_ = (ui: React.ReactElement, permissions?: Iterable<string>) =>
+  renderWithPermissions(
+    <OxygenUIThemeProvider theme={OxygenTheme}>{ui}</OxygenUIThemeProvider>,
+    permissions,
+  );
+
+afterEach(() => {
+  recentAlertsResult = { data: [] };
+  toggleNotificationPanel.mockClear();
+});
+
+describe("NotificationButton", () => {
+  it("is enabled and opens the panel when the caller holds ae:observability-view", () => {
+    render_(<NotificationButton />);
+    const bell = screen.getByRole("button", { name: "Alerts" });
+    expect(bell).not.toBeDisabled();
+
+    fireEvent.click(bell);
+    expect(toggleNotificationPanel).toHaveBeenCalledOnce();
+  });
+
+  it("is disabled with an explanatory tooltip without ae:observability-view", async () => {
+    render_(<NotificationButton />, allPermissionsExcept("ae:observability-view"));
+
+    const bell = screen.getByRole("button", { name: "Alerts" });
+    expect(bell).toBeDisabled();
+
+    fireEvent.mouseOver(bell.closest("span") ?? bell);
+    expect(
+      await screen.findByText("You don't have permission to view alerts."),
+    ).toBeInTheDocument();
+  });
+});
+
+// AlertsNotificationPanel shares NotificationButton's exact permission check
+// and useRecentAlerts(undefined, hasObservabilityAccess) call, but its body
+// renders through Oxygen UI's NotificationPanel, which reads its own
+// open/closed state off the SAME useAppShell() hook internally — stubbing
+// the hook down to only `actions` (as above) makes the library's own
+// component render nothing, so it needs a real <AppShell> tree to test
+// meaningfully rather than this hook-level stub. Not covered here for that
+// reason; NotificationButton's tests already pin the shared permission logic.

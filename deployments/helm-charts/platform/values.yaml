@@ -115,7 +115,23 @@ console:
   thunderPublicURL: "http://thunder.openchoreo.localhost:8080"
   thunder:
     clientId: "aep-console-client"
-    scopes: "openid profile email"
+    # Every ae:* permission the platform recognizes (services/aep-api/aeperms'
+    # AllPermissions) — Thunder narrows the grant to whatever the caller's
+    # actual role holds, so this must list all of them or no caller, however
+    # privileged, can ever be granted the omitted one.
+    #
+    # This is the one copy of the vocabulary that is configuration rather than
+    # code, so codegen cannot keep it honest. TestChartConsoleScopesCoverCatalog
+    # (services/aep-api/internal/authz) compares it against the catalog in both
+    # directions instead.
+    scopes: "openid profile email ae:build ae:build-view ae:design ae:design-view ae:github-config ae:model-config ae:requirement-update ae:requirement-view ae:skill-config ae:skill-view ae:usage-view ae:observability-view ae:resource-view ae:resource-config"
+    # RFC 8707 resource indicator for the `ae` resource server — required for
+    # any ae:* entry in scopes above to actually land on the token instead of
+    # being silently dropped (and the token's aud silently redirected to the
+    # platform's default resource server instead). Empty here defaults to
+    # "<thunderPublicURL>/ae" in the console Deployment template, mirroring
+    # thunder.systemResourceIdentifier's own default pattern below.
+    resource: ""
 
 # Try it — the platform's test app (apps/tryit), the page an agent does not have
 # of its own. The console links to it from "Try agent"; without it that button
@@ -208,6 +224,27 @@ webhook:
 # per-org types. In cloud, ProvisionOrgUnit creates them per org; locally nothing
 # does. This provisions the api-configuration ClusterTrait + the namespaced
 # service/web-application ComponentTypes in the org's control-plane namespace.
+# The org's OpenChoreo AuthzRoles and bindings (templates/authz/ae-roles.yaml)
+# — what OpenChoreo authorizes a signed-in person's calls against, paired with
+# the Thunder groups of the same name that aectl provisions.
+#
+# ON by default, unlike localOrgProvisioning below, because nothing else
+# creates them. They used to be provisioned at runtime by the console's first
+# onboarding step; that is gone, so an install with this off has an AE
+# permission model in Thunder and nothing on the OpenChoreo side to honour it —
+# every call 403s from OC after passing the AE gate.
+#
+# Namespaced per ORG, and this chart names ONE (orgNamespace, defaulting to
+# localOrgProvisioning's). That matches today's one-install-per-org model. A
+# genuinely multi-org deployment needs these created per org as it is created,
+# the way platform-api's ProvisionOrgUnit creates the namespaced ComponentTypes
+# — the chart cannot know about an org that does not exist yet at install.
+aeAuthz:
+  enabled: true
+  # Empty inherits localOrgProvisioning.orgNamespace, so a local install
+  # configures the org namespace in one place.
+  orgNamespace: ""
+
 localOrgProvisioning:
   # LOCAL DEV ONLY (single-org). PROD: false — platform-api ProvisionOrgUnit
   # creates these per-org, so the chart must not.

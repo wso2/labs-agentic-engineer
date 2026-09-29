@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -452,6 +453,10 @@ func (c *resourceClient) do(ctx context.Context, method, path string, body, out 
 		return resp.StatusCode, nil
 	}
 	if sentinel := sentinelForStatus(resp.StatusCode); sentinel != nil {
+		if errors.Is(sentinel, ErrForbidden) {
+			slog.WarnContext(ctx, "openchoreo(resource): OC rejected the call — caller held the required AE permission but OpenChoreo's own authorization denied the request",
+				"method", method, "path", path, "ocError", string(raw))
+		}
 		return resp.StatusCode, fmt.Errorf("%w: %s %s: %s", sentinel, method, path, string(raw))
 	}
 	return resp.StatusCode, fmt.Errorf("openchoreo(resource): %s %s → %d: %s", method, path, resp.StatusCode, string(raw))

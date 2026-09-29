@@ -50,18 +50,27 @@ function toError(error: unknown, fallback: string): Error {
  * poll (SpecView unions this with the live doc list). Out-of-room commits
  * won't reflect until reload — the parked external-merge concern (#86).
  */
-export function useSpecFiles(projectName: string, enabled = true) {
+/**
+ * `projectName` is optional so a caller withholding it on a permission gate
+ * (the console's own `hasAccess ? projectName : undefined` idiom, e.g.
+ * useConversationLog/OverviewTrack's conversationProject) does not fire a
+ * doomed request — instead of leaving the query stuck `isPending` forever,
+ * and instead of surfacing a generic "failed to load" for what is really a
+ * permission gap the caller already knows about.
+ *
+ * `enabled` is a second, independent reason to withhold the request: readers
+ * mounted long before they are looked at — a dialog that is closed, a panel
+ * behind an unselected tab. The key is shared, so a caller that does want the
+ * list still serves everyone else from the same cached answer.
+ */
+export function useSpecFiles(projectName: string | undefined, enabled = true) {
   return useQuery({
-    queryKey: specKeys.files(projectName),
-    // `enabled` exists for readers that are mounted long before they are
-    // looked at — a dialog that is closed, a panel behind an unselected tab.
-    // The key is shared, so a caller that does want the list still serves
-    // everyone else from the same cached answer.
-    enabled,
+    queryKey: specKeys.files(projectName ?? ""),
+    enabled: Boolean(projectName) && enabled,
     queryFn: async () => {
       const { data, error } = await client.GET(
         "/projects/{projectName}/files",
-        { params: { path: { projectName } } },
+        { params: { path: { projectName: projectName! } } },
       );
       if (error) throw toError(error, "Failed to load the spec files");
       return toSpecEntries(data ?? []);

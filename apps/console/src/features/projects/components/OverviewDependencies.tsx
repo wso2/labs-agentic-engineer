@@ -19,6 +19,7 @@
 import { useMemo, useState } from "react";
 import { Alert, Box, Button, Card, Chip, Skeleton } from "@wso2/oxygen-ui";
 import { Plug } from "@wso2/oxygen-ui-icons-react";
+import { useHasPermission } from "../../../auth/permissions";
 import { OverviewRow } from "./OverviewRow";
 import { SectionTitle } from "../../../components/SectionTitle";
 import { EmptyState } from "../../../components/EmptyState";
@@ -81,9 +82,10 @@ function rowChipLabel(row: WorkloadDependencyDTO): string {
  * read as targets.
  */
 export function OverviewDependencies({ projectName }: { projectName: string }) {
-  const deps = useWorkloadDependencies(projectName);
-  const platform = usePlatformResourceTypes();
-  const external = useExternalResources();
+  const hasResourceAccess = useHasPermission("ae:resource-view");
+  const deps = useWorkloadDependencies(projectName, hasResourceAccess);
+  const platform = usePlatformResourceTypes(hasResourceAccess);
+  const external = useExternalResources(hasResourceAccess);
   const [selection, setSelection] = useState<ResourceSelection>({
     kind: null,
     resource: null,
@@ -125,7 +127,21 @@ export function OverviewDependencies({ projectName }: { projectName: string }) {
   return (
     <Box sx={{ mt: 3 }}>
       <SectionTitle>Dependencies</SectionTitle>
-      {deps.isError ? (
+      {/* Checked before isPending: the reads above are DISABLED without the
+          permission, not merely slow, so a query that never fires reads as
+          pending forever and this panel would spin on a Skeleton instead of
+          saying why. Before isError too, for the session that still holds a
+          cached refusal from before the read was withheld — a permission
+          problem should never surface as "Failed to load", which reads as a
+          platform fault and offers a Retry that cannot succeed. */}
+      {!hasResourceAccess ? (
+        <EmptyState
+          compact
+          bordered
+          title="No permission to view dependencies"
+          description="Ask a project admin to grant resource access."
+        />
+      ) : deps.isError ? (
         <Alert
           severity="error"
           action={<Button onClick={() => void deps.refetch()}>Retry</Button>}

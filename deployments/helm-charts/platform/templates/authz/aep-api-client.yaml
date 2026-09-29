@@ -4,7 +4,8 @@
 # token's `sub` is the app's internal Thunder ID (an opaque UUID), not the
 # OAuth client_id; `client_id` carries the literal
 # {{ .Values.aepApi.serviceAuth.clientId }} string aep-api's outbound service
-# calls (coding-dispatch component pre-flight, etc.) present. Without this
+# calls (coding-dispatch component pre-flight, ensure-authz-role onboarding
+# bootstrap, etc.) present. Without this
 # binding OC returns 403 "You do not have permission". Mirrors the legacy
 # setup-aep.sh `aep-api-client-binding`. The ClusterAuthzRole `admin` is
 # provided by the OpenChoreo control-plane install (the base platform).

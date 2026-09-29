@@ -23,45 +23,11 @@
 package organization_test
 
 import (
-	"context"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/wso2/aep/aep-api/internal/clients/thundersvc"
-	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/contracttest"
 )
-
-// fakeThunder is the component tier's Thunder admin stub — only Regenerate is
-// exercised by the client-secret rotation route; the rest panic if reached.
-type fakeThunder struct {
-	// The directory half of thundersvc.Client (groups + users) is the identity
-	// domain's, not this surface's. Embedding satisfies the interface without a
-	// wall of stubs; an accidental call panics on the nil rather than passing.
-	thundersvc.Client
-
-	regenSecret string
-	regenCalls  []string
-}
-
-var _ thundersvc.Client = (*fakeThunder)(nil)
-
-func (f *fakeThunder) RegenerateClientSecret(_ context.Context, org string) (string, error) {
-	f.regenCalls = append(f.regenCalls, org)
-	return f.regenSecret, nil
-}
-func (f *fakeThunder) EnsurePublisherApp(context.Context, string, string) (string, string, bool, error) {
-	panic("fakeThunder: EnsurePublisherApp unexpected")
-}
-func (f *fakeThunder) DeletePublisherApp(context.Context, string) (bool, error) {
-	panic("fakeThunder: DeletePublisherApp unexpected")
-}
-func (f *fakeThunder) OUExists(context.Context, string) (bool, error) {
-	panic("fakeThunder: OUExists unexpected")
-}
 
 // --- connect-sessions (App-mode OAuth start) --------------------------------
 
@@ -127,88 +93,6 @@ func TestConfigComponent_Disconnect_NeverConnected(t *testing.T) {
 	}
 	if m := decodeCfg(t, resp.Body.Bytes()); m["status"] != "not_connected" {
 		t.Fatalf("never-connected body drifted: %v", m)
-	}
-}
-
-// --- IDP client-secret rotation ---------------------------------------------
-
-func TestConfigComponent_RotateClientSecret_Happy(t *testing.T) {
-	t.Parallel()
-	th := &fakeThunder{regenSecret: "rotated-secret-123"}
-	c := newConfigHarnessOpts(t, th, "")
-	// Seed a profile that already has a publisher client, so Regenerate has
-	// something to rotate.
-	now := time.Now().UTC()
-	if err := c.db.Create(&organization.OrganizationIDPProfile{
-		OrgID: "acme", Kind: "platform", Issuer: platformIss, JWKSURL: platformJWKS,
-		PublisherClientID: "pub-x", PublisherClientSecret: "old", CreatedAt: now, UpdatedAt: now,
-	}).Error; err != nil {
-		t.Fatalf("seed profile: %v", err)
-	}
-	resp := c.h.AsOrg("acme").Post(configPath+"/idp/client-secret", "")
-	if resp.Code != 200 {
-		t.Fatalf("rotate: want 200, got %d body=%s", resp.Code, resp.Body.String())
-	}
-	if m := decodeCfg(t, resp.Body.Bytes()); m["clientSecret"] != "rotated-secret-123" {
-		t.Fatalf("rotate body drifted: %v", m)
-	}
-	if len(th.regenCalls) != 1 || th.regenCalls[0] != "acme" {
-		t.Fatalf("rotate must call Thunder once for the token org: %v", th.regenCalls)
-	}
-}
-
-func TestConfigComponent_RotateClientSecret_503WhenThunderUnset(t *testing.T) {
-	t.Parallel()
-	c := newConfigHarness(t) // nil Thunder
-	resp := c.h.AsOrg("acme").Post(configPath+"/idp/client-secret", "")
-	if resp.Code != 503 {
-		t.Fatalf("rotate (no thunder): want 503, got %d body=%s", resp.Code, resp.Body.String())
-	}
-}
-
-// --- discovery --------------------------------------------------------------
-
-func TestConfigComponent_Discovery_Happy(t *testing.T) {
-	t.Parallel()
-	c := newConfigHarness(t)
-	var issuerURL string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/.well-known/openid-configuration" {
-			http.NotFound(w, r)
-			return
-		}
-		_, _ = w.Write([]byte(`{"issuer":"` + issuerURL + `","jwks_uri":"` + issuerURL + `/oauth2/jwks"}`))
-	}))
-	t.Cleanup(srv.Close)
-	issuerURL = srv.URL
-
-	resp := c.h.AsOrg("acme").Get(configPath + "/idp/discovery?issuer=" + issuerURL)
-	if resp.Code != 200 {
-		t.Fatalf("discovery: want 200, got %d body=%s", resp.Code, resp.Body.String())
-	}
-	m := decodeCfg(t, resp.Body.Bytes())
-	if m["issuer"] != issuerURL || m["jwksUrl"] != issuerURL+"/oauth2/jwks" {
-		t.Fatalf("discovery body drifted: %v", m)
-	}
-}
-
-func TestConfigComponent_Discovery_MissingIssuer400(t *testing.T) {
-	t.Parallel()
-	c := newConfigHarness(t)
-	resp := c.h.AsOrg("acme").Get(configPath + "/idp/discovery")
-	if resp.Code != 400 {
-		t.Fatalf("discovery (no issuer): want 400, got %d body=%s", resp.Code, resp.Body.String())
-	}
-}
-
-func TestConfigComponent_Discovery_Upstream502(t *testing.T) {
-	t.Parallel()
-	c := newConfigHarness(t)
-	srv := httptest.NewServer(http.NotFoundHandler())
-	t.Cleanup(srv.Close)
-	resp := c.h.AsOrg("acme").Get(configPath + "/idp/discovery?issuer=" + srv.URL)
-	if resp.Code != 502 {
-		t.Fatalf("discovery (upstream 404): want 502, got %d body=%s", resp.Code, resp.Body.String())
 	}
 }
 

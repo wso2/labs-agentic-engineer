@@ -31,8 +31,10 @@ import {
 } from "@wso2/oxygen-ui";
 import { CircleCheck } from "@wso2/oxygen-ui-icons-react";
 import { Link, createLink, useNavigate } from "@tanstack/react-router";
+import { useHasPermission } from "../../../auth/permissions";
 import { EmptyState } from "../../../components/EmptyState";
 import { PageHeader } from "../../../components/PageHeader";
+import { PermissionRestrictedPage } from "../../../components/PermissionRestrictedPage";
 import { StatusChip } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
 import { useTicker } from "../../builds/hooks/useTicker";
@@ -114,6 +116,12 @@ const COLUMNS = [
 ];
 
 export function ValidationLedger({ projectName }: { projectName: string }) {
+  // Exact-match ae:build-view, matching list-validations' own gate
+  // (permission_gate.go) and the Validations sidebar leg that reaches here.
+  // NOT OR'd with ae:build: a write permission authorizes mutations, never
+  // page entry on its own.
+  const canViewValidations = useHasPermission("ae:build-view");
+
   const validations = useValidations(projectName);
   const navigate = useNavigate();
   const [filter, setFilter] = useState<StateFilter>("all");
@@ -140,6 +148,22 @@ export function ValidationLedger({ projectName }: { projectName: string }) {
       {...(actions ? { actions } : {})}
     />
   );
+
+  // Every hook above must run first — React's rule against conditional hooks
+  // — so the gate sits here, after all of them, rather than before any (the
+  // same placement BuildsLedger and DeploymentsPage use for their own).
+  if (!canViewValidations) {
+    return (
+      <PermissionRestrictedPage
+        title="You don't have access to this project's validations"
+        description="Validation results, reports and logs are restricted for your role. Ask a project admin to grant access."
+        backLabel="Back to project overview"
+        onBack={() =>
+          void navigate({ to: "/projects/$projectName", params: { projectName } })
+        }
+      />
+    );
+  }
 
   if (validations.isPending) {
     return (

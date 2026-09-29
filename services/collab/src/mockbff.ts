@@ -113,6 +113,9 @@ export function createMockBff(options: MockBffOptions = {}): http.Server {
       return json(res, 200, {
         ...identityFromToken(token),
         projectName: room.slice(prefix.length),
+        // The mock has no permission model; local dev edits its spec rooms.
+        // Use the real BFF to exercise a read-only participant.
+        canWrite: true,
       });
     }
 

@@ -17,12 +17,31 @@
  */
 
 import { Alert, Box, CircularProgress } from "@wso2/oxygen-ui";
+import { useHasAnyPermission } from "../../../auth/permissions";
 import { useConfig } from "../api/queries";
 import { AiAgentsCard } from "./AiAgentsCard";
 import { GitHubCredentialCard } from "./GitHubCredentialCard";
+import { DENIED } from "../../../auth/denialCopy";
 
 export function CredentialsSection() {
-  const { data, isLoading, isError, error } = useConfig();
+  // GET /config itself now requires holding one of the two (see
+  // permission_gate.go) and redacts whichever section the caller lacks —
+  // withheld entirely, rather than fired and left to land on the generic
+  // isError branch, for a direct-URL visitor holding neither (the Settings
+  // tab is already disabled for them; see SettingsLayout).
+  const hasCredentialsAccess = useHasAnyPermission([
+    "ae:github-config",
+    "ae:model-config",
+  ]);
+  const { data, isLoading, isError, error } = useConfig(hasCredentialsAccess);
+
+  if (!hasCredentialsAccess) {
+    return (
+      <Alert severity="warning">
+        {DENIED.viewCredentials}
+      </Alert>
+    );
+  }
 
   if (isLoading) {
     return (

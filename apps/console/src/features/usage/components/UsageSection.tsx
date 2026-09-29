@@ -27,9 +27,11 @@ import {
   Stack,
   Typography,
 } from "@wso2/oxygen-ui";
+import { useHasPermission } from "../../../auth/permissions";
 import type { components } from "../../../generated/aep-api";
 import { useProjectUsageList } from "../api/queries";
 import { UsageFigure } from "./UsageFigure";
+import { DENIED } from "../../../auth/denialCopy";
 
 type ProjectUsageCard = components["schemas"]["ProjectUsageCard"];
 
@@ -38,7 +40,20 @@ type ProjectUsageCard = components["schemas"]["ProjectUsageCard"];
 // used across the console — USD primary, hover for the token breakdown.
 // Cards for deleted projects stay (their spend was real) but render greyed.
 export function UsageSection() {
-  const usageList = useProjectUsageList();
+  const hasUsageView = useHasPermission("ae:usage-view");
+  const usageList = useProjectUsageList(hasUsageView);
+
+  // Checked before the query's own loading/error states: without
+  // ae:usage-view there is nothing here to load — the request itself never
+  // fires (useProjectUsageList(hasUsageView)) — and a direct-URL visit must
+  // never flash real usage content before this check runs.
+  if (!hasUsageView) {
+    return (
+      <Alert severity="warning">
+        {DENIED.viewUsage}
+      </Alert>
+    );
+  }
 
   if (usageList.isPending) {
     return (

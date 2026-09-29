@@ -18,7 +18,8 @@
 
 // @vitest-environment jsdom
 
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
+import { renderWithPermissions } from "../../../auth/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 
@@ -117,8 +118,13 @@ afterEach(() => {
   saveMutate.mockClear();
 });
 
+// Every test here assumes Configure is reachable, so the session holds every
+// permission — a permission-denied state is covered directly on
+// ConnectionValuesDialog/ConnectionsCard's own callers. Holding the full set
+// covers both this file's Configure button and the real
+// ConnectionValuesDialog it mounts.
 function renderSection() {
-  render(<ExternalResources projectName="acme" />);
+  renderWithPermissions(<ExternalResources projectName="acme" />);
 }
 
 describe("ExternalResources", () => {

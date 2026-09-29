@@ -53,6 +53,14 @@ export interface CollabContext {
   /** Resolved by the oracle from the room ID (only the BFF can split
    *  `spec-<org>-<project>` — it knows the caller's org). Null in dev mode. */
   projectName: string | null;
+  /**
+   * Whether this connection may change the document (the oracle's `canWrite`).
+   * Two things follow from it, and the room is only safe with both: the socket
+   * is marked read-only so Hocuspocus drops the connection's Yjs updates, and
+   * the token is kept out of the committer's reach so a viewer's credentials
+   * never authenticate a flush.
+   */
+  canWrite: boolean;
 }
 
 export interface CollabDeps {
@@ -205,7 +213,10 @@ async function validated(
 
 export function buildAuthenticateHook(config: CollabConfig, deps: CollabDeps) {
   return async (
-    data: Pick<onAuthenticatePayload, "token" | "documentName">,
+    data: Pick<
+      onAuthenticatePayload,
+      "token" | "documentName" | "connectionConfig"
+    >,
   ): Promise<CollabContext> => {
     const { token, documentName } = data;
     if (!isSpecRoom(documentName)) {
@@ -217,6 +228,7 @@ export function buildAuthenticateHook(config: CollabConfig, deps: CollabDeps) {
         user: { name: "Dev User", email: "dev@localhost", kind: "dev" },
         token: null,
         projectName: null,
+        canWrite: true,
       };
     }
 
@@ -225,21 +237,44 @@ export function buildAuthenticateHook(config: CollabConfig, deps: CollabDeps) {
     // The oracle does both halves: JWT verification (Thunder JWKS) and the
     // room's project-ownership/tenancy check. This service verifies nothing
     // itself (#86: identity stays the BFF's problem). It also resolves the
-    // room into a project name for the seed read.
+    // room into a project name for the seed read, and reports whether this
+    // joiner may write.
     const identity = await validated(deps.bff, token, documentName);
+
+    // Hocuspocus enforces this for us once set: a read-only connection's
+    // sync-step-2 and update messages are answered with a negative sync status
+    // and dropped, so a viewer cannot reach the document at all. Hiding the
+    // console's editing controls is the same rule stated twice, and only this
+    // half survives a client that does not run our code.
+    if (data.connectionConfig) {
+      data.connectionConfig.readOnly = !identity.canWrite;
+    }
+
+    const state = ensureRoomState(documentName, identity.projectName);
     // Committer bookkeeping (#133): the session's participants become the
     // commit's Co-authored-by trailers; the latest token backs the forced
     // unload flush (no connection context exists by then).
-    const state = ensureRoomState(documentName, identity.projectName);
-    state.lastToken = token;
-    addParticipant(documentName, {
-      name: identity.name,
-      email: identity.email,
-    });
+    //
+    // Only a writer's token is recorded. A viewer's would 403 at ApplyFiles —
+    // which gates on ae:design — and, being the LATEST, would do so for the
+    // whole room: every subsequent flush would fail and the actual authors'
+    // work would sit uncommitted until someone with write access reconnected.
+    if (identity.canWrite) {
+      state.lastToken = token;
+    }
+    // Participants are the commit's co-authors. Someone who cannot write did
+    // not co-author anything, so they stay off the trailer list.
+    if (identity.canWrite) {
+      addParticipant(documentName, {
+        name: identity.name,
+        email: identity.email,
+      });
+    }
     return {
       user: { name: identity.name, email: identity.email, kind: "user" },
       token,
       projectName: identity.projectName,
+      canWrite: identity.canWrite,
     };
   };
 }
@@ -445,10 +480,17 @@ export function buildStatelessHook(config: CollabConfig, deps: CollabDeps) {
       const value = msg.value;
       const ctx = data.connection.context as CollabContext | undefined;
       if (ctx) ctx.token = value;
-      const state = roomState(data.documentName);
-      if (state) state.lastToken = value;
-      if (typeof msg.id === "string") {
-        pendingTokenPlease.get(msg.id)?.resolve(value);
+      // A viewer's refreshed token must not become the room's commit
+      // credential, and must not answer a token-please the committer issued
+      // to recover from a 401 — both would replace a usable token with one
+      // ApplyFiles rejects. Their own context still tracks it, since the
+      // oracle re-reads permissions from whatever token a later call presents.
+      if (ctx?.canWrite !== false) {
+        const state = roomState(data.documentName);
+        if (state) state.lastToken = value;
+        if (typeof msg.id === "string") {
+          pendingTokenPlease.get(msg.id)?.resolve(value);
+        }
       }
       deps.log?.(`token refreshed for ${data.documentName}`);
       return;

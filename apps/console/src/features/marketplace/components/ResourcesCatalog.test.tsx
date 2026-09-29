@@ -18,7 +18,8 @@
 
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { renderWithPermissions } from "../../../auth/testing";
 import { describe, expect, it, vi } from "vitest";
 import type { ElementType } from "react";
 import type { components } from "../../../generated/aep-api";
@@ -41,6 +42,11 @@ vi.mock("@tanstack/react-router", () => ({
       return <Component component="a" href={href} {...rest} />;
     },
 }));
+
+// Every test but the dedicated permission ones below holds both resource
+// permissions, so the page and its Register action read as fully reachable
+// by default — mirrors SkillsSection.test.tsx's per-suite permission toggle.
+const heldPermissions = new Set(["ae:resource-view", "ae:resource-config"]);
 
 type PlatformResourceTypeDTO = components["schemas"]["PlatformResourceTypeDTO"];
 type ExternalResourceDTO = components["schemas"]["ExternalResourceDTO"];
@@ -91,6 +97,9 @@ function resetState() {
     isError: false,
     refetch: externalRefetch,
   };
+  heldPermissions.clear();
+  heldPermissions.add("ae:resource-view");
+  heldPermissions.add("ae:resource-config");
 }
 
 function platformType(
@@ -124,7 +133,7 @@ describe("ResourcesCatalog", () => {
     resetState();
     platformState = { ...platformState, isLoading: true };
 
-    render(<ResourcesCatalog />);
+    renderWithPermissions(<ResourcesCatalog />, heldPermissions);
 
     expect(screen.getByLabelText("Loading resources")).toBeInTheDocument();
   });
@@ -137,7 +146,7 @@ describe("ResourcesCatalog", () => {
       error: new Error("boom"),
     };
 
-    render(<ResourcesCatalog />);
+    renderWithPermissions(<ResourcesCatalog />, heldPermissions);
 
     expect(screen.getByRole("alert")).toHaveTextContent("boom");
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
@@ -148,7 +157,7 @@ describe("ResourcesCatalog", () => {
   it("shows a catalog-empty state when both lists are empty", () => {
     resetState();
 
-    render(<ResourcesCatalog />);
+    renderWithPermissions(<ResourcesCatalog />, heldPermissions);
 
     expect(screen.getByText("No resources")).toBeInTheDocument();
     expect(screen.getByText(/the catalog is empty/i)).toBeInTheDocument();
@@ -181,7 +190,7 @@ describe("ResourcesCatalog", () => {
       ],
     };
 
-    render(<ResourcesCatalog />);
+    renderWithPermissions(<ResourcesCatalog />, heldPermissions);
 
     expect(screen.getByText("postgres-cnpg")).toBeInTheDocument();
     expect(screen.getByText("stripe")).toBeInTheDocument();
@@ -218,7 +227,7 @@ describe("ResourcesCatalog", () => {
       data: [externalResource({ provider: "Stripe" })],
     };
 
-    render(<ResourcesCatalog />);
+    renderWithPermissions(<ResourcesCatalog />, heldPermissions);
 
     const stripeCard = screen.getByText("stripe").closest(".MuiCard-root");
     expect(within(stripeCard as HTMLElement).getByText("Stripe")).toBeInTheDocument();
@@ -245,7 +254,7 @@ describe("ResourcesCatalog", () => {
       ],
     };
 
-    render(<ResourcesCatalog />);
+    renderWithPermissions(<ResourcesCatalog />, heldPermissions);
 
     const held = screen.getByRole("region", { name: "Held by projects" });
     expect(within(held).getByText("fx-rates")).toBeInTheDocument();
@@ -261,7 +270,7 @@ describe("ResourcesCatalog", () => {
       data: [externalResource({ scope: "org" })],
     };
 
-    render(<ResourcesCatalog />);
+    renderWithPermissions(<ResourcesCatalog />, heldPermissions);
 
     expect(screen.queryByRole("region", { name: "Held by projects" })).not.toBeInTheDocument();
   });
@@ -277,7 +286,7 @@ describe("ResourcesCatalog", () => {
       data: [platformType({ description: long })],
     };
 
-    render(<ResourcesCatalog />);
+    renderWithPermissions(<ResourcesCatalog />, heldPermissions);
 
     const desc = screen.getByText(long);
     expect(desc).toHaveAttribute("title", long);
@@ -294,7 +303,7 @@ describe("ResourcesCatalog", () => {
       data: [externalResource()],
     };
 
-    render(<ResourcesCatalog />);
+    renderWithPermissions(<ResourcesCatalog />, heldPermissions);
 
     expect(screen.queryByLabelText("Close")).not.toBeInTheDocument();
 
@@ -307,5 +316,34 @@ describe("ResourcesCatalog", () => {
     await waitFor(() =>
       expect(screen.queryByLabelText("Close")).not.toBeInTheDocument(),
     );
+  });
+
+  it("shows an insufficient-permissions message and renders no catalog content holding neither resource permission", () => {
+    resetState();
+    heldPermissions.clear();
+    platformState = { ...platformState, data: [platformType()] };
+    externalState = { ...externalState, data: [externalResource()] };
+
+    renderWithPermissions(<ResourcesCatalog />, heldPermissions);
+
+    expect(
+      screen.getByText("You don't have permission to view resources."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("postgres-cnpg")).not.toBeInTheDocument();
+    expect(screen.queryByText("stripe")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Register" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Register" })).not.toBeInTheDocument();
+  });
+
+  it("renders the catalog for a view-only caller, with Register disabled", () => {
+    resetState();
+    heldPermissions.delete("ae:resource-config");
+    platformState = { ...platformState, data: [platformType()] };
+
+    renderWithPermissions(<ResourcesCatalog />, heldPermissions);
+
+    expect(screen.getByText("postgres-cnpg")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Register" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Register" })).toBeDisabled();
   });
 });

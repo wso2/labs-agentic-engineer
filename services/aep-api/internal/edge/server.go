@@ -85,6 +85,7 @@ var _ gen.StrictServerInterface = (*apiServer)(nil)
 //
 //	strict impl (apiServer)               promotion-only composite: one embed per domain
 //	→ tenant gate                          deny-by-default, tenant_gate.go
+//	→ permission gate                      deny-by-default, permission_gate.go
 //	→ strict wrapper                       generated; envelope error writers
 //	→ generated std ServeMux router        one pattern per contract operation
 //	→ read-file catch-all                  nested {path} segments (see below)
@@ -105,7 +106,14 @@ func newAPIV1Handler(deps Deps) http.Handler {
 			identityHandlers:      identityOrEmpty(deps.Identity),
 			designSvc:             deps.DesignSvc,
 		},
-		[]gen.StrictMiddlewareFunc{tenantGate},
+		// gen.NewStrictHandlerWithOptions composes this list innermost-first
+		// (each entry wraps the one before it), so the LAST entry is the
+		// OUTERMOST gate — the one that actually runs first per request.
+		// tenantGate must run before permissionGate: a claimless request
+		// needs tenantGate's own 401 (and its bound-org context), not a
+		// permission denial for holding no permissions. Listing permissionGate
+		// first, tenantGate last achieves that execution order.
+		[]gen.StrictMiddlewareFunc{permissionGate, tenantGate},
 		gen.StrictHTTPServerOptions{
 			RequestErrorHandlerFunc:  writeRequestError,
 			ResponseErrorHandlerFunc: writeResponseError,

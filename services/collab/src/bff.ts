@@ -28,6 +28,13 @@ export interface CollabIdentity {
    * `spec-<org>-<project>` (it knows the caller's org).
    */
   projectName: string;
+  /**
+   * Whether this participant may change the document. Admission to a room only
+   * requires the view permission, so a joiner can be legitimately present and
+   * still have no right to edit: their socket is marked read-only and their
+   * token never authenticates a commit.
+   */
+  canWrite: boolean;
 }
 
 /**
@@ -151,6 +158,9 @@ export function createBffClient(
         name: body.name,
         email: body.email,
         projectName: body.projectName,
+        // Absent (an older BFF) reads as read-only, never as write: a missing
+        // answer about permission must not grant one.
+        canWrite: body.canWrite === true,
       };
     },
 

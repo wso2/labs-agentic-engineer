@@ -19,14 +19,23 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, screen } from "@testing-library/react";
+import { renderWithPermissions } from "../../../auth/testing";
 import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 import type { components } from "../../../generated/aep-api";
+
 type ConfigProjection = components["schemas"]["ConfigProjection"];
+type ConfigStatus = components["schemas"]["ConfigStatus"];
 
 const mutate = vi.fn();
 
+// The wizard's own step derivation runs on GET /config/status; the model step
+// reads GET /config for itself (see AiAgentsStep). Both are mocked here so the
+// render tests below drive the real components without a query client.
+let configData: ConfigProjection;
+
 vi.mock("../../settings/api/queries", () => ({
+  useConfig: () => ({ data: configData, isPending: false, isError: false, error: null }),
   useSaveAiSettings: () => ({
     mutate,
     reset: vi.fn(),
@@ -39,15 +48,39 @@ vi.mock("../../settings/api/queries", () => ({
   useSyncSkills: () => ({ mutate: vi.fn(), isPending: false, isError: false }),
 }));
 
-vi.mock("../../../auth/SessionContext", () => ({
-  useSession: () => ({
-    user: { name: "Dev", email: "dev@acme.example" },
-    orgHandle: "acme",
-    signOut: vi.fn(),
-  }),
-}));
+// The three permissions the wizard's steps are gated on — an org admin
+// mid-onboarding holds exactly these.
+const ONBOARDING_PERMISSIONS = [
+  "ae:model-config",
+  "ae:github-config",
+  "ae:skill-config",
+];
 
-const { OnboardingWizard } = await import("./OnboardingWizard");
+const { OnboardingWizard, activeStep } = await import("./OnboardingWizard");
+
+// --- step derivation --------------------------------------------------------
+
+describe("activeStep", () => {
+  it("resumes at GitHub when nothing is connected", () => {
+    expect(activeStep({ gitProviderConnected: false, llmConnected: false })).toBe(0);
+  });
+
+  it("resumes at the model connection once GitHub is connected", () => {
+    expect(activeStep({ gitProviderConnected: true, llmConnected: false })).toBe(1);
+  });
+
+  it("resumes at skills setup once both are connected", () => {
+    expect(activeStep({ gitProviderConnected: true, llmConnected: true })).toBe(2);
+  });
+
+  // GitHub is checked first regardless of which one is actually missing —
+  // the steps run in a fixed order (issue #102), not the caller's choice.
+  it("still resumes at GitHub when only the model connection is made", () => {
+    expect(activeStep({ gitProviderConnected: false, llmConnected: true })).toBe(0);
+  });
+});
+
+// --- the Connect a model step ----------------------------------------------
 
 const github: ConfigProjection["gitProvider"] = {
   kind: "github",
@@ -58,7 +91,7 @@ const github: ConfigProjection["gitProvider"] = {
 };
 
 // An org whose GitHub step is done and which has no model connection: the
-// coding agent is what GET /config returns when nobody has chosen.
+// agents section is what GET /config returns when nobody has chosen.
 function config(over: Partial<ConfigProjection> = {}) {
   return {
     gitProvider: github,
@@ -90,11 +123,19 @@ function config(over: Partial<ConfigProjection> = {}) {
   } satisfies ConfigProjection;
 }
 
+// The wizard advances on GET /config/status, so a render test states the
+// status its step expects alongside the projection the step then reads.
+function statusOf(c: ConfigProjection): ConfigStatus {
+  return { gitProviderConnected: c.gitProvider !== null, llmConnected: c.llm !== null };
+}
+
 function renderWizard(c: ConfigProjection) {
-  render(
+  configData = c;
+  renderWithPermissions(
     <OxygenUIThemeProvider theme={OxygenTheme}>
-      <OnboardingWizard config={c} onComplete={vi.fn()} />
+      <OnboardingWizard status={statusOf(c)} onComplete={vi.fn()} />
     </OxygenUIThemeProvider>,
+    ONBOARDING_PERMISSIONS,
   );
 }
 
@@ -112,7 +153,7 @@ describe("OnboardingWizard's Connect a model step", () => {
     expect(screen.queryByLabelText("Base URL")).not.toBeInTheDocument();
   });
 
-  it("resumes at step 2 for an org with GitHub and no connection", () => {
+  it("resumes at the model step for an org with GitHub and no connection", () => {
     renderWizard(config());
     expect(screen.getByText("Connect a model")).toBeInTheDocument();
     expect(screen.queryByText("Set up AI agents")).not.toBeInTheDocument();
@@ -174,7 +215,7 @@ describe("OnboardingWizard's Connect a model step", () => {
     });
   });
 
-  it("moves to skills once the connection is saved", () => {
+  it("moves to skills setup once the connection is saved", () => {
     renderWizard(
       config({
         llm: {

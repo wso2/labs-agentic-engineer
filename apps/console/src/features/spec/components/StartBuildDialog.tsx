@@ -151,6 +151,7 @@ export function StartBuildDialog({
   takenVersions,
   reusedExternals = [],
   submitting = false,
+  disabled = false,
   onClose,
   onBuild,
 }: {
@@ -170,6 +171,8 @@ export function StartBuildDialog({
    */
   reusedExternals?: string[];
   submitting?: boolean;
+  /** True when the caller lacks ae:build — the primary action stands down. */
+  disabled?: boolean;
   onClose: () => void;
   /** The name to cut. Empty on a rebuild, which cuts nothing. */
   onBuild: (version: string) => void;
@@ -279,7 +282,7 @@ export function StartBuildDialog({
         <Button
           variant="contained"
           loading={submitting}
-          disabled={error !== null || submitting}
+          disabled={error !== null || submitting || disabled}
           // An untouched field sends NO name, so the platform's suggestion
           // stays a suggestion: if another build claims it first, the next one
           // is offered rather than refused. A name the user actually typed is

@@ -122,7 +122,7 @@ func (c *gitSecretClient) CreateGitSecret(ctx context.Context, orgNS string, req
 		return nil, fmt.Errorf("create git secret: %w", err)
 	}
 	if resp.StatusCode() != http.StatusCreated || resp.JSON201 == nil {
-		return nil, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		return nil, handleErrorResponse(ctx, http.MethodPost, nsBase(orgNS)+"/gitsecrets", resp.StatusCode(), ErrorResponses{
 			JSON400: resp.JSON400,
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
@@ -139,7 +139,7 @@ func (c *gitSecretClient) ListGitSecrets(ctx context.Context, orgNS string) ([]*
 		return nil, fmt.Errorf("list git secrets: %w", err)
 	}
 	if resp.StatusCode() != http.StatusOK {
-		return nil, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+		return nil, handleErrorResponse(ctx, http.MethodGet, nsBase(orgNS)+"/gitsecrets", resp.StatusCode(), ErrorResponses{
 			JSON401: resp.JSON401,
 			JSON403: resp.JSON403,
 			JSON500: resp.JSON500,
@@ -164,7 +164,7 @@ func (c *gitSecretClient) DeleteGitSecret(ctx context.Context, orgNS, name strin
 	case http.StatusOK, http.StatusNoContent:
 		return nil
 	}
-	return handleErrorResponse(resp.StatusCode(), ErrorResponses{
+	return handleErrorResponse(ctx, http.MethodDelete, nsBase(orgNS)+"/gitsecrets/"+name, resp.StatusCode(), ErrorResponses{
 		JSON401: resp.JSON401,
 		JSON403: resp.JSON403,
 		JSON404: resp.JSON404,

@@ -16,11 +16,40 @@
  * under the License.
  */
 
-import { createFileRoute, redirect } from "@tanstack/react-router";
+import { Navigate, createFileRoute } from "@tanstack/react-router";
+import { usePermissions, type Permissions } from "../auth/permissions";
+import {
+  SECTIONS,
+  type SettingsSectionPath,
+} from "../features/settings/components/SettingsLayout";
+import { SettingsBlockedPage } from "../features/settings/components/SettingsBlockedPage";
 
-// Bare /settings has no content of its own — land on the first section.
 export const Route = createFileRoute("/settings/")({
-  beforeLoad: () => {
-    throw redirect({ to: "/settings/credentials" });
-  },
+  component: SettingsIndexPage,
 });
+
+// Bare /settings has no content of its own — land on the first section this
+// caller actually has something to do on.
+//
+// Both the priority order and each section's gate are read off SettingsLayout's
+// SECTIONS rather than restated here. They were stated twice before, and the
+// duplicate had to say in a comment that it matched: a landing rule that
+// disagreed with the sidebar would send a caller to a tab the sidebar had
+// disabled, which is a redirect loop's worth of confusion for a one-line edit
+// nobody made in both places.
+//
+// `null` means no section has anything to show at all.
+//
+// A pure function (not a hook) so the order is unit-testable without
+// rendering — see settings.index.test.tsx.
+export function resolveSettingsLandingPath(
+  can: Permissions,
+): SettingsSectionPath | null {
+  return SECTIONS.find((section) => section.allowed(can))?.path ?? null;
+}
+
+export function SettingsIndexPage() {
+  const target = resolveSettingsLandingPath(usePermissions());
+  if (target) return <Navigate to={target} replace />;
+  return <SettingsBlockedPage />;
+}
