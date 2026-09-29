@@ -95,8 +95,11 @@ not exist yet.
 - `authz.Permission` is the single typed source of truth for the 14 AE permission keys, shared by the
   role catalog, the AE→OC action catalog, and the gate. The console mirrors the list by hand until
   the backend exposes it as a generated contract type.
-- Two roles ship: `ae-admin` holds every permission; `ae-developer` holds the requirement-view,
-  design and build pair. Org spend and incident reports stay admin-facing.
+- Two roles ship: `ae-admin` holds every permission; `ae-developer` holds requirement-view, the
+  design and build pairs, and observability-view — alerts and RCA reports are how a developer
+  learns their own deployed code is failing, so withholding them left the role able to ship a
+  thing but not to see it break. Org spend (`ae:usage-view`) stays admin-facing: it is a billing
+  concern, not a working one.
 - **An agent is an ordinary principal.** The SRE agent reaches aep-api through aep-mcp-server with a
   long-lived shared secret rather than a Thunder JWT, and `SREHandoffVerifier` used to mint claims
   with no scope at all — which made its three operations un-gateable, and so carved out of the gate

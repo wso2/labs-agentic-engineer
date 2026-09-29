@@ -41,15 +41,65 @@ import (
 	"github.com/wso2/aep/aep-api/aeperms"
 )
 
+const (
+	// resourceServerType is the metadata-only `type` this platform's resource
+	// servers carry. It changes no behaviour — the audience restriction comes
+	// from the identifier being an absolute URI — but Thunder fixes it at
+	// creation, so it is set rather than left to the CUSTOM default.
+	resourceServerType = "API"
+	// permissionDelimiter separates the levels of a derived permission. It is
+	// what makes Thunder spell a permission "ae:build" rather than anything
+	// else, and it too is immutable after creation. Both values match
+	// aep-api's thundersvc client, which creates per-project resource servers
+	// the same way.
+	permissionDelimiter = ":"
+)
+
 // AEAdminAccount is the account to seed into ae-admin, or the zero value to
 // seed none. Username is fixed by the caller; Password is supplied at install
 // (prompted, or from the environment) and never defaulted here — a credential
 // this package chose would be the same on every install that ever ran it.
+// The fields are exactly Thunder's `Person` user-type schema — username,
+// email, given_name, family_name, password — and the schema is CLOSED: an
+// attribute it does not define fails the whole create with USR-1019
+// ("user attributes do not conform to the required schema"), naming no field.
+// given_name and family_name are carried because the platform's identity-claim
+// contract puts both in the token, so they are what the console shows as the
+// signed-in user rather than decoration.
 type AEAdminAccount struct {
-	Username string
-	Password string
-	Email    string
-	Name     string
+	Username   string
+	Password   string
+	Email      string
+	GivenName  string
+	FamilyName string
+}
+
+const (
+	// AEAdminUsername is the seeded console admin's login. Fixed and not a
+	// secret — a predictable login is the point; only the password varies per
+	// install.
+	AEAdminUsername = "aeadmin"
+	// aeAdminEmail exists because the Person schema requires an address; it is
+	// never written to. It must still be WELL-FORMED, with a dotted domain:
+	// Thunder validates the format, and a bare host like "aeadmin@localhost"
+	// is refused as USR-1019 — the same error an unknown attribute gives,
+	// naming no field, so it reads as though the attribute set were wrong
+	// rather than one value in it.
+	aeAdminEmail = "aeadmin@aep.local"
+)
+
+// DefaultAEAdmin is the account an install seeds into ae-admin, given the
+// password supplied at install time. Everything but that password is fixed
+// here, beside the schema rules that constrain it, so a caller cannot compose
+// an account this API will refuse.
+func DefaultAEAdmin(password string) AEAdminAccount {
+	return AEAdminAccount{
+		Username:   AEAdminUsername,
+		Password:   password,
+		Email:      aeAdminEmail,
+		GivenName:  "AE",
+		FamilyName: "Admin",
+	}
 }
 
 // EnsureAEPermissions provisions the whole AE authorization model into
@@ -123,10 +173,19 @@ func (c *AdminClient) ensureAEResourceServer(ctx context.Context, identifier str
 		return id, nil
 	}
 
+	// `delimiter` is load-bearing, not cosmetic: it is what makes Thunder
+	// compose a permission as "<resource handle>:<action handle>" — i.e. the
+	// ":" in every ae:* key the gate checks. `type` changes no behaviour (the
+	// audience restriction comes from the identifier being an absolute URI)
+	// but is immutable after creation, so it is set here rather than left to
+	// Thunder's CUSTOM default. Both mirror aep-api's own CreateResourceServer,
+	// which provisions per-project resource servers the same way.
 	payload, _ := json.Marshal(map[string]any{
 		"name":        aeperms.ResourceServerName,
 		"identifier":  identifier,
 		"description": "Permissions for aep-api's console-facing endpoints.",
+		"type":        resourceServerType,
+		"delimiter":   permissionDelimiter,
 		"ouId":        c.defaultOU,
 	})
 	body, status, err := c.doRequest(ctx, http.MethodPost, "/resource-servers", payload)
@@ -299,22 +358,25 @@ func (c *AdminClient) ensureAEUser(ctx context.Context, account AEAdminAccount) 
 		return id, nil
 	}
 
-	// password appears in BOTH attributes and credentials, deliberately:
-	// Thunder's schema validation checks `attributes` for required credential
-	// fields at create time and rejects the request without it, while
-	// `credentials.password` is the one that stores a usable hashed login.
+	// Everything about the account, password included, goes in `attributes`.
+	// There is no sibling `credentials` object and no top-level password on
+	// this API — those belong to the bootstrap-document schema, which is a
+	// different thing that happens to describe the same objects, and sending
+	// them here is a 400. Mirrors aep-api's own CreateUser, which has been
+	// creating accounts this way for project test users.
+	//
+	// The attribute set is the Person schema's exactly; see AEAdminAccount for
+	// why one extra key fails the whole request.
 	payload, _ := json.Marshal(map[string]any{
-		"type":     "Person",
-		"ouId":     c.defaultOU,
-		"password": account.Password,
+		"type": "Person",
+		"ouId": c.defaultOU,
 		"attributes": map[string]any{
-			"username": account.Username,
-			"password": account.Password,
-			"sub":      account.Username,
-			"email":    account.Email,
-			"name":     account.Name,
+			"username":    account.Username,
+			"password":    account.Password,
+			"email":       account.Email,
+			"given_name":  account.GivenName,
+			"family_name": account.FamilyName,
 		},
-		"credentials": map[string]any{"password": account.Password},
 	})
 	body, status, err := c.doRequest(ctx, http.MethodPost, "/users", payload)
 	if err != nil {

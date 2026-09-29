@@ -125,9 +125,7 @@ func runEnsureAE(t *testing.T, s *aeStub, account AEAdminAccount) {
 	}
 }
 
-func seededAdmin() AEAdminAccount {
-	return AEAdminAccount{Username: "aeadmin", Password: "pw", Email: "a@b.c", Name: "AE Admin"}
-}
+func seededAdmin() AEAdminAccount { return DefaultAEAdmin("pw") }
 
 // Every permission aep-api's gate can require must exist as an action here, or
 // it is a permission no role can hold and no token can carry — the silent
@@ -313,18 +311,105 @@ func TestEnsureAEPermissions_LeavesAnExistingAccountsPasswordAlone(t *testing.T)
 	defer srv.Close()
 	c := newTestClient(t, srv)
 	if err := c.EnsureAEPermissions(context.Background(), "https://idp.example/ae",
-		AEAdminAccount{Username: "aeadmin", Password: "a-different-password"}); err != nil {
+		DefaultAEAdmin("a-different-password")); err != nil {
 		t.Fatalf("EnsureAEPermissions: %v", err)
 	}
 
 	if len(s.users) != 1 {
 		t.Fatalf("users = %d, want 1", len(s.users))
 	}
-	if got := s.users[0]["credentials"].(map[string]any)["password"]; got != "pw" {
+	if got := s.users[0]["attributes"].(map[string]any)["password"]; got != "pw" {
 		t.Errorf("the stored password changed to %v — a re-install must not reset it", got)
 	}
 	if len(s.posts) != before {
 		t.Errorf("a re-run wrote %d new objects, want none", len(s.posts)-before)
+	}
+}
+
+// The payloads below are the SHAPE Thunder's admin API accepts, and a stub
+// that echoes whatever it is sent cannot discover that on its own — the first
+// version of this code was modelled on the bootstrap-document schema, which
+// describes the same objects with different field names, and every write 400'd
+// or silently mis-created against a real Thunder while the tests stayed green.
+// These assertions pin the shape against aep-api's thundersvc client, which
+// creates the same kinds of object and is exercised against a live Thunder.
+func TestEnsureAEPermissions_SendsTheAdminAPIsPayloadShapes(t *testing.T) {
+	s := &aeStub{}
+	runEnsureAE(t, s, seededAdmin())
+
+	// `delimiter` is what makes Thunder spell a permission "ae:build"; without
+	// it the actions compose under Thunder's own default and no ae:* key the
+	// gate checks would ever exist. `type` is immutable after creation.
+	rs := s.resourceServers[0]
+	if rs["delimiter"] != ":" {
+		t.Errorf("resource server delimiter = %v, want \":\" — the ae:* keys are composed from it", rs["delimiter"])
+	}
+	if rs["type"] != "API" {
+		t.Errorf("resource server type = %v, want API", rs["type"])
+	}
+
+	// The account's password belongs in `attributes`. A sibling `credentials`
+	// object and a top-level `password` are bootstrap-document fields; this
+	// API rejects the request outright when they appear.
+	u := s.users[0]
+	attrs, ok := u["attributes"].(map[string]any)
+	if !ok {
+		t.Fatalf("the user payload carries no attributes: %v", u)
+	}
+	if _, present := u["credentials"]; present {
+		t.Error("the user payload carries a `credentials` object — that is the bootstrap-document schema, and this API 400s on it")
+	}
+	if _, present := u["password"]; present {
+		t.Error("the user payload carries a top-level `password` — belongs in attributes")
+	}
+
+	// Thunder's Person schema is CLOSED: one attribute it does not define
+	// fails the entire create with USR-1019, and the error names no field. So
+	// the set is asserted exactly — an omission and an addition are both
+	// caught, because in this API they cost the same.
+	wantAttrs := map[string]string{
+		"username": AEAdminUsername, "password": "pw", "email": DefaultAEAdmin("pw").Email,
+		"given_name": "AE", "family_name": "Admin",
+	}
+	for k, want := range wantAttrs {
+		if attrs[k] != want {
+			t.Errorf("attributes[%q] = %v, want %q", k, attrs[k], want)
+		}
+	}
+	for k := range attrs {
+		if _, allowed := wantAttrs[k]; !allowed {
+			t.Errorf("attributes carries %q, which the Person schema does not define — the whole create 400s on it", k)
+		}
+	}
+}
+
+// Thunder validates the email's FORMAT, not just its presence: a bare host
+// like "aeadmin@localhost" is refused with USR-1019 schema_validation_failed —
+// the same error an unknown attribute gives, naming no field, which is what
+// made it read as a wrong attribute SET rather than one bad value in it. The
+// address is never written to, so nothing but this check keeps it well-formed.
+func TestAEAdminEmailIsAWellFormedAddress(t *testing.T) {
+	addr := DefaultAEAdmin("pw").Email
+	at := strings.IndexByte(addr, '@')
+	if at <= 0 || at == len(addr)-1 {
+		t.Fatalf("the seeded admin's email %q has no local part and domain", addr)
+	}
+	if domain := addr[at+1:]; !strings.Contains(domain, ".") {
+		t.Errorf("the seeded admin's email domain %q has no dot — Thunder refuses it as USR-1019", domain)
+	}
+}
+
+// Thunder wraps every list under a key named for the collection, and toSlice
+// returning nil for an unknown key reads as "empty" — which a caller takes as
+// "absent" and re-creates, meeting a 409 on the second install. Each collection
+// this file lists must therefore be unwrapped, so they are asserted together.
+func TestToSlice_UnwrapsEveryCollectionAEProvisioningLists(t *testing.T) {
+	for _, key := range []string{"resourceServers", "resources", "actions", "users", "groups", "roles"} {
+		wrapped := map[string]any{"totalResults": 1, key: []any{map[string]any{"id": "x"}}}
+		got := toSlice(wrapped)
+		if len(got) != 1 {
+			t.Errorf("toSlice does not unwrap %q — a list under it reads as empty, and the object gets re-created", key)
+		}
 	}
 }
 

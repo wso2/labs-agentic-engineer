@@ -110,7 +110,12 @@ func TestRolePermissions_AeAdminHasAllPermissions(t *testing.T) {
 	}
 }
 
-func TestRolePermissions_AeDeveloperHasExactlyFivePermissions(t *testing.T) {
+// ae:observability-view is in the set because a developer has to be able to
+// see their own deployed code failing — alerts and RCA reports are how that
+// arrives. ae:usage-view is NOT: org spend is a billing concern, and nothing
+// the role does depends on reading it. Asserted as an exact set so both halves
+// of that line are load-bearing.
+func TestRolePermissions_AeDeveloperHoldsItsWorkingSet(t *testing.T) {
 	got := RolePermissions("ae-developer")
 	sort.Strings(got)
 
@@ -120,6 +125,7 @@ func TestRolePermissions_AeDeveloperHasExactlyFivePermissions(t *testing.T) {
 		string(PermissionDesign),
 		string(PermissionDesignView),
 		string(PermissionRequirementView),
+		string(PermissionObservabilityView),
 	}
 	sort.Strings(want)
 

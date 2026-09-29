@@ -144,17 +144,31 @@ const (
 
 // rolePermissions maps a role to the permissions it holds.
 //
-// ae-developer omits ae:usage-view and ae:observability-view — those read org
-// spend and incident/alert reports, which reads as an admin-facing concern
-// absent a decision to extend it. It DOES hold ae:design paired with the
-// ae:design-view beside it — the same full write/view pair as
-// ae:build/ae:build-view, since ae-developer is the role that actually authors
-// specs; that pairing is also what keeps the role able to use the AI chat
-// panel, which gates on ae:design rather than a chat permission of its own
-// (the panel is a facet of the design workspace, not a separate feature).
+// ae-developer holds ae:observability-view: alerts and RCA reports are how a
+// developer finds out their own deployed code is misbehaving, and an SRE
+// incident arrives as one. Withholding it left the role able to build and
+// deploy a thing but not to see it fail, and put the notification bell and the
+// Alerts page behind a permission the people acting on them did not have.
+//
+// It still omits ae:usage-view — org spend is a billing concern rather than a
+// working one, and nothing a developer does depends on reading it.
+//
+// It DOES hold ae:design paired with the ae:design-view beside it — the same
+// full write/view pair as ae:build/ae:build-view, since ae-developer is the
+// role that actually authors specs; that pairing is also what keeps the role
+// able to use the AI chat panel, which gates on ae:design rather than a chat
+// permission of its own (the panel is a facet of the design workspace, not a
+// separate feature).
 var rolePermissions = map[string][]Permission{
-	RoleAdmin:     AllPermissions,
-	RoleDeveloper: {PermissionRequirementView, PermissionDesign, PermissionDesignView, PermissionBuild, PermissionBuildView},
+	RoleAdmin: AllPermissions,
+	RoleDeveloper: {
+		PermissionRequirementView,
+		PermissionDesign,
+		PermissionDesignView,
+		PermissionBuild,
+		PermissionBuildView,
+		PermissionObservabilityView,
+	},
 }
 
 // RoleDescriptions is what each role is called in Thunder's own console.

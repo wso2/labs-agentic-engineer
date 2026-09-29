@@ -74,13 +74,6 @@ var aepThunderClients = []thunderClientDef{
 const (
 	thunderSecretsName  = "aep-thunder-secrets"
 	thunderSystemClient = "aep-system-client"
-
-	// The seeded AE admin. A fixed username and email — neither is a secret,
-	// and a predictable login is the point — with the password supplied per
-	// install (prompted, or from AEP_AE_ADMIN_PASSWORD) so no credential this
-	// binary knows is the same on two clusters.
-	aeAdminUsername = "aeadmin"
-	aeAdminEmail    = "aeadmin@localhost"
 )
 
 // doThunderSetup registers all AEP OAuth clients in Thunder, then provisions
@@ -202,12 +195,7 @@ func doThunderSetup(
 	sp.Start()
 	account := thunder.AEAdminAccount{}
 	if aeAdminPassword != "" {
-		account = thunder.AEAdminAccount{
-			Username: aeAdminUsername,
-			Password: aeAdminPassword,
-			Email:    aeAdminEmail,
-			Name:     "AE Admin",
-		}
+		account = thunder.DefaultAEAdmin(aeAdminPassword)
 	}
 	aeResource := aeperms.ResourceServerIdentifier(viper.GetString("thunder.public_url"))
 	if err := client.EnsureAEPermissions(ctx, aeResource, account); err != nil {
