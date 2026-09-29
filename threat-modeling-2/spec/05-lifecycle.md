@@ -9,7 +9,7 @@ gitpat submit is the one moment the control plane holds the gitpat. The procedur
 1. The person pastes the gitpat in the console. The request reaches `aep-api` over flow 1.
 2. `aep-api` checks the gitpat against GitHub, in memory.
 3. `aep-api` writes the gitpat and the org HMAC through the SM API (flow 10). SM API writes vault and creates a SecretReference with names only.
-4. `aep-api` creates the `ae-studio-<org>` client (a Thunder Agent entity in the org OU) at the Platform IdP, if it does not exist. It writes the client secret through the SM API (flow 10), as it does for the publisher client.
+4. Before the Ensure step, `aep-api` creates the `ae-studio-<org>` client (a Thunder Agent entity in the org OU) at the Platform IdP, if it does not exist. It writes the client secret through the SM API (flow 10), as it does for the publisher client.
 5. `aep-api` creates or heals Project `ae-system`, its `development` ProjectReleaseBinding and Resource `ae-studio` (the Ensure step below).
 6. `aep-api` waits until `ae-studio-tools` can accept a POST on its public webhook address.
 7. `aep-api` registers that address on GitHub once, with the in-memory gitpat and the org HMAC.
@@ -64,7 +64,7 @@ How a changed value reaches a container that is already running is not yet speci
 | ProjectReleaseBinding | the `development` environment of `ae-system` |
 | Resource (of ResourceType `ae-studio`) | `ae-studio` |
 
-The `ae-studio-<org>` client is created with the Resource, in the same gitpat submit run. Its secret is a SecretReference on the Resource, mounted only on `ae-studio-tools` ([06-secrets.md](06-secrets.md)).
+The `ae-studio-<org>` client is created before the Ensure step, in the same gitpat submit run. Its secret is a SecretReference on the Resource, mounted only on `ae-studio-tools` ([06-secrets.md](06-secrets.md)).
 
 The Resource carries secret **references** only: the environment variable name, the SecretReference name and the key. OpenChoreo's ReleaseBinding collects the SecretReferences and renders an ExternalSecret into the dataplane release namespace.
 
