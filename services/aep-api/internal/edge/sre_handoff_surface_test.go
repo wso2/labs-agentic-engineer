@@ -17,6 +17,7 @@
 package edge
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -24,6 +25,17 @@ import (
 	"github.com/wso2/aep/aep-api/internal/config"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
 )
+
+// fakeTokenGetter is a TokenGetter test double standing in for
+// sreagent.Tokens.
+type fakeTokenGetter struct {
+	token string
+	ok    bool
+}
+
+func (f fakeTokenGetter) Get(_ context.Context, _ string) (string, bool, error) {
+	return f.token, f.ok, nil
+}
 
 // Component test for the real mounted mux (NewHandler → mountSurfaces) proving
 // the SRE-handoff bearer reproduces this session's actual failure — 401 on
@@ -52,7 +64,7 @@ func TestSREHandoff_ComponentEndToEnd(t *testing.T) {
 	t.Run("configured verifier: matching handoff bearer clears auth", func(t *testing.T) {
 		handler := NewHandler(AppParams{
 			Config:         config.Config{},
-			SREHandoffAuth: auth.NewSREHandoffVerifier("s3cr3t", "acme"),
+			SREHandoffAuth: auth.NewSREHandoffVerifier("acme", fakeTokenGetter{token: "s3cr3t", ok: true}),
 		})
 		w := post(t, handler, "/api/v1/projects/hello/issues", "Bearer s3cr3t")
 		// No body and no issue service are wired in this test, so CreateIssue's
@@ -66,7 +78,7 @@ func TestSREHandoff_ComponentEndToEnd(t *testing.T) {
 	t.Run("configured verifier: wrong bearer on the handoff route still 401s", func(t *testing.T) {
 		handler := NewHandler(AppParams{
 			Config:         config.Config{},
-			SREHandoffAuth: auth.NewSREHandoffVerifier("s3cr3t", "acme"),
+			SREHandoffAuth: auth.NewSREHandoffVerifier("acme", fakeTokenGetter{token: "s3cr3t", ok: true}),
 		})
 		w := post(t, handler, "/api/v1/projects/hello/issues", "Bearer wrong")
 		if w.Code != http.StatusUnauthorized {
@@ -77,7 +89,7 @@ func TestSREHandoff_ComponentEndToEnd(t *testing.T) {
 	t.Run("configured verifier: other operations are unaffected — no bearer still 401s", func(t *testing.T) {
 		handler := NewHandler(AppParams{
 			Config:         config.Config{},
-			SREHandoffAuth: auth.NewSREHandoffVerifier("s3cr3t", "acme"),
+			SREHandoffAuth: auth.NewSREHandoffVerifier("acme", fakeTokenGetter{token: "s3cr3t", ok: true}),
 		})
 		w := post(t, handler, "/api/v1/projects", "")
 		if w.Code != http.StatusUnauthorized {

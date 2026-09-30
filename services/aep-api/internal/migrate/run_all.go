@@ -252,6 +252,10 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		// govern stage can tell when a connection switch moved its base path.
 		// A new table with no backfill; depends on nothing above it.
 		ctxStep("phase21_ai_agent_model_endpoints", RunPhase21AIAgentModelEndpoints),
+		// The org's SRE model connection: the OpenAI-compatible endpoint the
+		// OpenChoreo SRE agent calls when set. A new table with no backfill;
+		// depends on nothing above it.
+		ctxStep("phase22_org_sre_model_connections", RunPhase22OrgSreModelConnections),
 	}
 }
 

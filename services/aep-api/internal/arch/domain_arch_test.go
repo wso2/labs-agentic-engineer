@@ -72,6 +72,10 @@ var nonDomainPkgs = map[string]bool{
 	"config":    true,
 	"contracts": true,
 	"seed":      true,
+	// The SRE agent reconciler: converges the observability plane's Secret,
+	// restart annotation and replicas from organization's SRE connection. It
+	// owns no entities of its own; it reads one domain and writes a cluster.
+	"sreagent": true,
 }
 
 // plannedPkgs are classified names that do not exist YET. They are listed

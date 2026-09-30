@@ -110,6 +110,28 @@ func TestSplitVersion(t *testing.T) {
 	}
 }
 
+// TestVersionAtLeast_MinOCVersion pins the actual minOCVersion constant AEP
+// installs require, so a regression in either the constant or versionAtLeast
+// itself is caught directly (TestVersionAtLeast below only exercises the
+// comparison logic against an arbitrary "1.1.1" floor).
+func TestVersionAtLeast_MinOCVersion(t *testing.T) {
+	got, err := versionAtLeast("1.2.5", minOCVersion)
+	if err != nil {
+		t.Fatalf("versionAtLeast(%q, %q) error = %v", "1.2.5", minOCVersion, err)
+	}
+	if got {
+		t.Errorf("versionAtLeast(%q, %q) = true, want false", "1.2.5", minOCVersion)
+	}
+
+	got, err = versionAtLeast("1.3.0", minOCVersion)
+	if err != nil {
+		t.Fatalf("versionAtLeast(%q, %q) error = %v", "1.3.0", minOCVersion, err)
+	}
+	if !got {
+		t.Errorf("versionAtLeast(%q, %q) = false, want true", "1.3.0", minOCVersion)
+	}
+}
+
 func TestVersionAtLeast(t *testing.T) {
 	const min = "1.1.1"
 	tests := []struct {

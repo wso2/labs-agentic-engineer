@@ -68,7 +68,7 @@ func sreHandoffOrJWT(verifier *auth.SREHandoffVerifier, jwtMW func(http.Handler)
 		jwtNext := jwtMW(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if verifier != nil && isSREHandoffRoute(r) {
-				if claims, ok := verifier.Verify(r.Header.Get("Authorization")); ok {
+				if claims, ok := verifier.Verify(r.Context(), r.Header.Get("Authorization")); ok {
 					ctx := auth.WithClaims(r.Context(), claims)
 					ctx = sourcecontrol.WithIncidentContext(ctx, sreHandoffIncidentID)
 					next.ServeHTTP(w, r.WithContext(ctx))

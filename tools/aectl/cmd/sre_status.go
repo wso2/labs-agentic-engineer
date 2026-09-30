@@ -93,7 +93,7 @@ func runSreStatus(cmd *cobra.Command, args []string) error {
 
 	// ESO secrets section
 	ui.Section("ESO Secrets")
-	esoSecrets := []string{"opensearch-admin-credentials", "rca-agent-secret", "rca-agent-anthropic-secret", "observer-secret"}
+	esoSecrets := []string{"opensearch-admin-credentials", "rca-agent-secret", "observer-secret"}
 	for _, name := range esoSecrets {
 		_, err := client.CoreV1().Secrets(sreStatusObsNamespace).Get(ctx, name, metav1.GetOptions{})
 		switch {

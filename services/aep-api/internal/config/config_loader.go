@@ -62,13 +62,18 @@ func Load() (Config, error) {
 		PlatformResourcesEnabled: r.readOptionalBool("PLATFORM_RESOURCES_ENABLED", true),
 		AutoMergeCodingPRs:       r.readOptionalBool("AUTO_MERGE_CODING_PRS", false),
 		TenantGateMode:           r.readOptionalString("TENANT_GATE_MODE", "enforce"),
-		SREHandoffToken:          r.readOptionalString("SRE_HANDOFF_TOKEN", ""),
-		SREHandoffOrg:            r.readOptionalString("SRE_HANDOFF_ORG", ""),
-		OAuthStateSigningKey:     r.readOptionalString("OAUTH_STATE_SIGNING_KEY", ""),
-		BFFPublicURL:             r.readOptionalString("BFF_PUBLIC_URL", "http://localhost:8090"),
-		TryItCallbackURL:         r.readOptionalString("TRY_IT_CALLBACK_URL", ""),
-		BuildAuthRetryBudget:     r.readOptionalInt("BUILD_AUTH_RETRY_BUDGET", 3),
-		SkillsDir:                r.readOptionalString("SKILLS_DIR", "/app/skills"),
+		SREAgent: SREAgentConfig{
+			Org:        r.readOptionalString("SRE_AGENT_ORG", ""),
+			Namespace:  r.readOptionalString("SRE_AGENT_NAMESPACE", ""),
+			Deployment: r.readOptionalString("SRE_AGENT_DEPLOYMENT", ""),
+			Secret:     r.readOptionalString("SRE_AGENT_SECRET", ""),
+			Seed:       r.sreAgentSeed(),
+		},
+		OAuthStateSigningKey: r.readOptionalString("OAUTH_STATE_SIGNING_KEY", ""),
+		BFFPublicURL:         r.readOptionalString("BFF_PUBLIC_URL", "http://localhost:8090"),
+		TryItCallbackURL:     r.readOptionalString("TRY_IT_CALLBACK_URL", ""),
+		BuildAuthRetryBudget: r.readOptionalInt("BUILD_AUTH_RETRY_BUDGET", 3),
+		SkillsDir:            r.readOptionalString("SKILLS_DIR", "/app/skills"),
 		ThunderAdmin: ThunderAdminConfig{
 			BaseURL:      r.readOptionalString("THUNDER_ADMIN_URL", ""),
 			ClientID:     r.readOptionalString("THUNDER_SYSTEM_CLIENT_ID", "aep-system-client"),
@@ -312,6 +317,23 @@ func (r *configReader) kubeAPI() KubeAPIConfig {
 		}
 	}
 	return cfg
+}
+
+// sreAgentSeed reads the install-time seed (SRE_AGENT_SEED_API_KEY /
+// SRE_AGENT_SEED_MODEL / SRE_AGENT_SEED_BASE_URL). The base URL defaults to
+// the OpenAI endpoint, but only once the seed is otherwise present — an
+// absent seed must stay absent (Present() == false), not gain a base URL
+// from the default alone.
+func (r *configReader) sreAgentSeed() SREAgentSeed {
+	seed := SREAgentSeed{
+		APIKey:  r.readOptionalString("SRE_AGENT_SEED_API_KEY", ""),
+		Model:   r.readOptionalString("SRE_AGENT_SEED_MODEL", ""),
+		BaseURL: r.readOptionalString("SRE_AGENT_SEED_BASE_URL", ""),
+	}
+	if seed.Present() && seed.BaseURL == "" {
+		seed.BaseURL = "https://api.openai.com/v1"
+	}
+	return seed
 }
 
 func (r *configReader) readRequiredString(key string) string {

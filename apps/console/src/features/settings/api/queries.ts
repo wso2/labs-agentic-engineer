@@ -21,10 +21,12 @@ import type { components } from "../../../generated/aep-api";
 import { client } from "../../../api/client";
 import { configKeys, resourceKeys, skillsKeys } from "./keys";
 import { ApiRequestError, apiErrorMessage } from "../../../api/errors";
+import { sreAgentPollInterval } from "../sreAgent";
 
 type ConfigProjection = components["schemas"]["ConfigProjection"];
 type ConfigPatch = components["schemas"]["ConfigPatch"];
 type LLMPatch = components["schemas"]["LLMPatch"];
+type SreLlmPatch = NonNullable<ConfigPatch["sreLlm"]>;
 type CreateSkillInput = components["schemas"]["CreateSkillInput"];
 type UpdateSkillInput = components["schemas"]["UpdateSkillInput"];
 
@@ -46,6 +48,10 @@ export function useConfig() {
       return data;
     },
     staleTime: 30_000,
+    // Re-polls GET /config while the SRE agent's rollout is "applying", so the
+    // model row's status chip does not get stuck on a stale read (see
+    // sreAgentPollInterval). Stops as soon as the status settles.
+    refetchInterval: (query) => sreAgentPollInterval(query.state.data),
   });
 }
 
@@ -77,6 +83,43 @@ export function useTestConnection() {
       const { data, error } = await client.POST("/config/llm/test", { body });
       if (error) throw new ApiRequestError(error, "Failed to test the connection");
       return data;
+    },
+  });
+}
+
+// The SRE agent model row's Save: a field-by-field patch of the org's SRE
+// model connection, separate from `useSaveAiSettings` since it rides its own
+// PATCH and never touches `llm` or `agents`.
+export function useSaveSreModel() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (patch: SreLlmPatch) => {
+      const { data, error } = await client.PATCH("/config", { body: { sreLlm: patch } });
+      if (error) {
+        throw new ApiRequestError(error, "Failed to save the SRE agent's model");
+      }
+      return data;
+    },
+    onSuccess: (data: ConfigProjection) => {
+      queryClient.setQueryData(configKeys.all, data);
+    },
+  });
+}
+
+// Removing the override: the SRE agent falls back to the org connection when
+// it has the `sreAgent` capability, else it is left unavailable.
+export function useClearSreModel() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const { data, error } = await client.PATCH("/config", { body: { sreLlm: null } });
+      if (error) {
+        throw new ApiRequestError(error, "Failed to remove the SRE agent's model");
+      }
+      return data;
+    },
+    onSuccess: (data: ConfigProjection) => {
+      queryClient.setQueryData(configKeys.all, data);
     },
   });
 }

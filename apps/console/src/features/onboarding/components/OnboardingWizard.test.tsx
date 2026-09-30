@@ -86,6 +86,8 @@ function config(over: Partial<ConfigProjection> = {}) {
       hasClientSecret: false,
       publisherClientId: "aep-console",
     },
+    sreLlm: null,
+    sreAgent: null,
     ...over,
   } satisfies ConfigProjection;
 }
@@ -192,6 +194,7 @@ describe("OnboardingWizard's Connect a model step", () => {
             imageInput: "yes",
             nativePdf: true,
             generatedAgents: true,
+            sreAgent: false,
           },
         },
       }),

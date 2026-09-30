@@ -61,7 +61,7 @@ func TestSreHandoffOrJWT(t *testing.T) {
 			h.ServeHTTP(w, r)
 		})
 	}
-	verifier := auth.NewSREHandoffVerifier("s3cr3t", "acme")
+	verifier := auth.NewSREHandoffVerifier("acme", fakeTokenGetter{token: "s3cr3t", ok: true})
 
 	reset := func() { nextCalled, jwtCalled, orgSeen = false, false, "" }
 

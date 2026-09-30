@@ -85,33 +85,6 @@ func TestFindSREAgentDeploymentMissingNamesRCAEnabled(t *testing.T) {
 	}
 }
 
-func secretReference(data ...interface{}) *unstructured.Unstructured {
-	return &unstructured.Unstructured{Object: map[string]interface{}{
-		"metadata": map[string]interface{}{"name": orgModelKeySecretRefs[0], "namespace": "default"},
-		"spec":     map[string]interface{}{"data": data},
-	}}
-}
-
-func TestOrgAnthropicKVRefReadsAPIKeyEntry(t *testing.T) {
-	ref, err := orgAnthropicKVRef(secretReference(
-		map[string]interface{}{"secretKey": "other", "remoteRef": map[string]interface{}{"key": "x"}},
-		map[string]interface{}{"secretKey": "api-key", "remoteRef": map[string]interface{}{
-			"key": "user-app-secrets/wc-01900000-18da14df/anthropic-secrets", "property": "api-key"}},
-	))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ref.Key != "user-app-secrets/wc-01900000-18da14df/anthropic-secrets" || ref.Property != "api-key" {
-		t.Fatalf("got %+v", ref)
-	}
-}
-
-func TestOrgAnthropicKVRefRejectsMissingEntry(t *testing.T) {
-	if _, err := orgAnthropicKVRef(secretReference()); err == nil {
-		t.Fatal("want error for a SecretReference without an api-key entry")
-	}
-}
-
 func externalSecret(refreshTime, ready string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]interface{}{
 		"status": map[string]interface{}{

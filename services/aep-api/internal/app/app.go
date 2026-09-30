@@ -78,6 +78,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol/webhook"
 	"github.com/wso2/aep/aep-api/internal/spec"
 	spechttpapi "github.com/wso2/aep/aep-api/internal/spec/httpapi"
+	"github.com/wso2/aep/aep-api/internal/sreagent"
 	"github.com/wso2/aep/aep-api/ocauth"
 )
 
@@ -164,6 +165,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// The AI agents card's unit of work: one transaction over the Anthropic
 	// credential rows, the agent-settings row and the secret bytes.
 	agentsCardRepo := organization.NewAgentsCardRepository(db, credStore)
+	orgSreModelConnRepo := organization.NewOrgSreModelConnectionRepository(db)
 	idpRepo := organization.NewIDPRepository(db, in.ColumnCipher)
 	codingAgentLogRepo := delivery.NewCodingAgentLogRepository(db)
 	activityRepo := projects.NewActivityEventRepository(db)
@@ -321,6 +323,23 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// it launches.
 	agentSettings := organization.NewAgentSettingsService(orgAgentSettingsRepo, orgRepo, anthropicCredService, modelConnections, agentsCardRepo,
 		runnableAgentRuntimes(cfg))
+
+	// The org's SRE model connection: the OpenAI-compatible endpoint the
+	// OpenChoreo SRE agent calls instead of the org's model connection. It
+	// saves under the card's lock, and falls back to modelConnections.
+	sreModelConnections := organization.NewSreModelConnectionService(orgSreModelConnRepo, credStore, agentsCardRepo, modelConnections)
+	// The org's SRE-handoff token (org_secrets key "sre/handoff-token"):
+	// minted and held by the reconciler below, and looked up fresh on every
+	// request by auth.SREHandoffVerifier — ONE instance shared by both so
+	// there is exactly one place that mints and one that reads.
+	sreTokens := sreagent.NewTokens(credStore)
+	// Pushes that connection to the stock SRE agent on the observability plane
+	// (its Secret, restart hash and replicas) after every save that can change
+	// it and on a periodic pass. nil without a push target.
+	sreAgent, err := newSREAgentReconciler(cfg, sreTokens, sreModelConnections, modelConnections)
+	if err != nil {
+		return nil, err
+	}
 
 	// Task JWT manager — RS256. The public key is published on
 	// /auth/external/jwks.json. Used to mint BFF MCP tokens
@@ -915,6 +934,17 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		validationEndpointResolver{store: artifactStore, comp: componentService},
 	)
 
+	// The SRE-handoff shortcut (internal/edge/sre_handoff_gate.go) is only
+	// meaningful when an SRE agent push target is configured — its org is
+	// cfg.SREAgent.Org, and sreTokens (shared with the reconciler above) is
+	// where the minted token for that org lives. Unconfigured leaves it nil,
+	// same secure default as an unset org/tokens inside NewSREHandoffVerifier
+	// itself.
+	var sreHandoffAuth *authn.SREHandoffVerifier
+	if cfg.SREAgent.Enabled() {
+		sreHandoffAuth = authn.NewSREHandoffVerifier(cfg.SREAgent.Org, sreTokens)
+	}
+
 	// Controllers
 	params := edge.AppParams{
 		Config: cfg,
@@ -931,7 +961,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		ConfigRepo:          configRepo,
 		ThunderJWKS:         thunderJWKS,
 		OrganizationService: organizationService,
-		SREHandoffAuth:      authn.NewSREHandoffVerifier(cfg.SREHandoffToken, cfg.SREHandoffOrg),
+		SREHandoffAuth:      sreHandoffAuth,
 
 		DB:                   db,
 		CredService:          credService,
@@ -951,7 +981,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		organization.PlatformIDPConfig{Issuer: cfg.PlatformIDP.Issuer, JWKSURL: cfg.PlatformIDP.JWKSURL},
 		cfg.BFFPublicURL,
 		cfg.GitHubAppClientID,
-	).WithAgentSettings(agentSettings)
+	).WithAgentSettings(agentSettings).WithSreModel(sreModelConnections)
+	if sreAgent != nil {
+		orgConfigSvc.WithSREAgentStatus(sreAgent)
+	}
 
 	// Strict-handler feature dependencies — everything the contract-first
 	// /api/v1 edge serves (internal/api/handlers_*.go).
@@ -1561,6 +1594,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		// the SM-API mirror at boot; the periodic passes retire the old copies
 		// once none of the org's cycles is open.
 		organization.NewModelKeyRename(organization.NewModelKeyRenameRepository(db, credStore), orgRepo, secretRefWriter, runCycleRepo),
+	}
+	if sreAgent != nil {
+		watchers = append(watchers, sreAgent)
 	}
 	// Disk-lifecycle reaper: global passes self-elect via non-blocking flock.
 	// Omitted when Fake() leaves Workspace nil (no disk at assemble time).

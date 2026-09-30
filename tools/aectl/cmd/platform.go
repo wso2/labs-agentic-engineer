@@ -53,7 +53,7 @@ platform on a Kubernetes cluster.`,
 }
 
 const (
-	minOCVersion = "1.1.1"
+	minOCVersion = "1.3.0"
 
 	ocOpenBaoNamespace = "openbao"
 	ocOpenBaoRelease   = "openbao"
@@ -192,13 +192,8 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 	}
 
 	ocNamespace := viper.GetString("oc.system_namespace")
-	if !initSkipOCVersionCheck {
-		if err := checkOCVersion(ctx, k8sClient, ocNamespace, minOCVersion); err != nil {
-			return err
-		}
-		ui.Success(fmt.Sprintf("OpenChoreo ≥ %s", minOCVersion))
-	} else {
-		ui.Warn("OpenChoreo version check skipped")
+	if err := enforceOCVersion(ctx, k8sClient, ocNamespace, initSkipOCVersionCheck); err != nil {
+		return err
 	}
 
 	if err := checkBuildRegistry(ctx, k8sClient, initBuildPlaneNamespace, initRegistryService); err != nil {
@@ -936,6 +931,22 @@ func deleteOrphanedResources(ctx context.Context) error {
 			return fmt.Errorf("delete %s/%s: %w: %s", r.kind, r.name, err, out)
 		}
 	}
+	return nil
+}
+
+// enforceOCVersion is the OpenChoreo minimum-version gate shared by
+// `aectl init` and `aectl sre install`: checks the cluster against
+// minOCVersion unless skip is set, printing the same success/skip messaging
+// either way.
+func enforceOCVersion(ctx context.Context, client *kubernetes.Clientset, namespace string, skip bool) error {
+	if skip {
+		ui.Warn("OpenChoreo version check skipped")
+		return nil
+	}
+	if err := checkOCVersion(ctx, client, namespace, minOCVersion); err != nil {
+		return err
+	}
+	ui.Success(fmt.Sprintf("OpenChoreo ≥ %s", minOCVersion))
 	return nil
 }
 

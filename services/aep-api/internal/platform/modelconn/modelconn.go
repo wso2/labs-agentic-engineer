@@ -104,6 +104,9 @@ type Capabilities struct {
 	NativePDF       bool
 	WebSearch       WebSearch
 	ImageInput      Tristate
+	// SREAgent: the OpenChoreo SRE agent can call this connection. The stock
+	// agent ships langchain-openai only and sends the key as a Bearer token.
+	SREAgent bool
 }
 
 // CapabilitiesOf is the ONE statement of what a connection supports. A new
@@ -119,6 +122,7 @@ func CapabilitiesOf(c Connection) Capabilities {
 		NativePDF:          firstParty,
 		WebSearch:          WebSearchNone,
 		ImageInput:         c.ImageInput,
+		SREAgent:           c.Format == FormatOpenAICompatible && c.AuthScheme == AuthBearer,
 	}
 	switch {
 	case firstParty:

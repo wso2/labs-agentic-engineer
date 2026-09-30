@@ -23,6 +23,8 @@ type SubscriptionProjection = components["schemas"]["SubscriptionProjection"];
 type GitProviderProjection = components["schemas"]["GitProviderProjection"];
 type LLMProjection = components["schemas"]["LLMProjection"];
 type LLMFormatOption = components["schemas"]["LLMFormatOption"];
+type SreLlmProjection = components["schemas"]["SreLlmProjection"];
+type SreAgentProjection = components["schemas"]["SreAgentProjection"];
 type AgentRuntime = components["schemas"]["AgentRuntime"];
 type SkillDetailBody = components["schemas"]["SkillDetailBody"];
 type SkillUpdate = components["schemas"]["SkillUpdate"];
@@ -175,6 +177,7 @@ export const llmConnectedFixture: LLMProjection = {
     imageInput: "yes",
     nativePdf: true,
     generatedAgents: true,
+    sreAgent: false,
   },
 };
 
@@ -193,8 +196,47 @@ export const llmOllamaFixture: LLMProjection = {
     imageInput: "no",
     nativePdf: false,
     generatedAgents: true,
+    sreAgent: false,
   },
 };
+
+// An OpenAI-compatible, Bearer-authenticated org connection — the one shape
+// `LLMCapabilities.sreAgent` is true for, so the SRE agent model row can
+// inherit it (the "organization" source).
+export const openaiOrgFixture: LLMProjection = {
+  kind: "openai-compatible",
+  baseURL: "https://api.openai.com/v1",
+  model: "gpt-5.4",
+  keyPreview: "sk-o…f00d",
+  connectedAt: "2026-09-20T08:00:00Z",
+  updatedAt: "2026-09-20T08:00:00Z",
+  updatedBy: "dev@acme.example",
+  priced: false,
+  capabilities: {
+    claudeSubscription: false,
+    webSearch: "none",
+    imageInput: "unknown",
+    nativePdf: false,
+    generatedAgents: true,
+    sreAgent: true,
+  },
+};
+
+// The org's own SRE model connection (an override of the org connection).
+export const sreLlmFixture: SreLlmProjection = {
+  baseURL: "https://api.openai.com/v1",
+  host: "api.openai.com",
+  model: "gpt-5.4-mini",
+  keyPreview: "sk-p…abcd",
+  connectedAt: "2026-09-20T08:00:00Z",
+  updatedAt: "2026-09-20T08:00:00Z",
+  updatedBy: "dev@acme.example",
+};
+
+/** An `SreAgentProjection`, defaulted to "no model, not running"; override what a test needs. */
+export function sreAgentProjectionFixture(over: Partial<SreAgentProjection> = {}): SreAgentProjection {
+  return { enabled: true, source: "none", host: "", model: "", status: "unconfigured", ...over };
+}
 
 // When the "disconnected" scenario's connection was removed.
 export const llmDisconnectedAtFixture = "2026-09-20T08:00:00Z";

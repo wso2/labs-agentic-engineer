@@ -181,3 +181,25 @@ format, and the console card no longer names it.
 - **Build evaluation** mounts the connection key as `AEP_EVAL_MODEL_API_KEY`,
   with `AEP_EVAL_MODEL_FORMAT`, `AEP_EVAL_MODEL_BASE_URL`, `AEP_EVAL_MODEL_NAME`
   and `AEP_EVAL_MODEL_AUTH_SCHEME` beside it: all five or none.
+
+## Amendment 2026-09-29 — the SRE agent may use its own connection
+
+The OpenChoreo SRE (RCA) agent is one Deployment per plane, not dispatched
+per-org, so "the" connection above does not quite fit it: an org's default
+connection may be Anthropic-format, which the stock agent (OpenAI-compatible
+only) cannot call. An org may now save a second, optional connection just for
+it — the **SRE model connection** (`/config` section `sreLlm`,
+`org_sre_model_connections`) — OpenAI-compatible and Bearer only, under the
+same probe-before-save and host-change-needs-a-key rules as the org's main
+connection.
+
+Resolving what the agent runs on checks, in order: the SRE model connection,
+if saved; else the org's own model connection, if it carries the `SREAgent`
+capability (any `openai-compatible` connection); else unconfigured, and the
+agent is scaled to zero. This is not a second peer connection in the sense
+§1 rejects — every other agent still reads exactly one connection — it is a
+narrow, single-purpose override for the one workload this platform runs
+outside the per-org dispatch model. See
+[`services/aep-api/design/sre-model-connection.md`](../../services/aep-api/design/sre-model-connection.md)
+for delivery (aep-api pushes the resolved connection into the agent's
+Secret; the agent never reads AE's database).

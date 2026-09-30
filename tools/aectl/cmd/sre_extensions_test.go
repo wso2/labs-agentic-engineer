@@ -24,15 +24,13 @@ import (
 	"strings"
 	"testing"
 
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
-// testMCPURL is the in-cluster MCP endpoint aectl builds for a "wso2-aep"
-// AEP namespace.
-const testMCPURL = "http://aep-mcp-server.wso2-aep.svc.cluster.local:3400/mcp"
+// testMCPURL is the MCP endpoint aectl builds for its default --mcp-hostname
+// and --mcp-port.
+const testMCPURL = "https://aep-mcp.openchoreo.localhost:8443/mcp"
 
 func TestLoadSREExtensionAssetsFromRepo(t *testing.T) {
 	assets, err := loadSreExtensionAssets("")
@@ -142,6 +140,8 @@ func TestApplyExtensionsConfigMapIsIdempotent(t *testing.T) {
 
 // The loader validates the MCP URL before env expansion, so the ConfigMap must
 // carry the concrete URL, not the ${AEP_MCP_URL} placeholder from the repo.
+// The Authorization header stays a ${AEP_MCP_TOKEN} reference the agent
+// expands from its own env, so the token never lands in the ConfigMap.
 func TestApplyExtensionsConfigMapRendersMCPURL(t *testing.T) {
 	ctx := context.Background()
 	client := fake.NewSimpleClientset()
@@ -160,7 +160,8 @@ func TestApplyExtensionsConfigMapRendersMCPURL(t *testing.T) {
 	}
 	var rendered struct {
 		MCPServers map[string]struct {
-			URL string `json:"url"`
+			URL     string            `json:"url"`
+			Headers map[string]string `json:"headers"`
 		} `json:"mcpServers"`
 	}
 	if err := json.Unmarshal([]byte(cm.Data["mcp.json"]), &rendered); err != nil {
@@ -169,89 +170,10 @@ func TestApplyExtensionsConfigMapRendersMCPURL(t *testing.T) {
 	if got := rendered.MCPServers["ae"].URL; got != testMCPURL {
 		t.Fatalf("mcp.json ae url = %q, want %q", got, testMCPURL)
 	}
+	if got, want := rendered.MCPServers["ae"].Headers["Authorization"], "Bearer ${AEP_MCP_TOKEN}"; got != want {
+		t.Fatalf("mcp.json ae Authorization header = %q, want %q", got, want)
+	}
 	if strings.Contains(cm.Data["mcp.json"], sreMCPURLPlaceholder) {
 		t.Fatalf("mcp.json still carries the placeholder: %s", cm.Data["mcp.json"])
-	}
-}
-
-func TestMountSREAgentRuntimePatchesExtensionAndCredentialFile(t *testing.T) {
-	ctx := context.Background()
-
-	deploy := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: "ai-rca-agent", Namespace: "obs"},
-		Spec: appsv1.DeploymentSpec{
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					// An install from an earlier aectl carries an unused
-					// AEP_MCP_TOKEN secret ref; the patch must remove it.
-					Containers: []corev1.Container{{
-						Name: "ai-rca-agent",
-						Env: []corev1.EnvVar{{
-							Name: "AEP_MCP_TOKEN",
-							ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
-								LocalObjectReference: corev1.LocalObjectReference{Name: "aep-mcp-token"},
-								Key:                  "AEP_MCP_TOKEN",
-							}},
-						}},
-					}},
-				},
-			},
-		},
-	}
-	client := fake.NewSimpleClientset(deploy)
-
-	if err := mountSREAgentRuntime(ctx, client, "obs", "ai-rca-agent", testMCPURL); err != nil {
-		t.Fatalf("mount runtime: %v", err)
-	}
-
-	got, err := client.AppsV1().Deployments("obs").Get(ctx, "ai-rca-agent", metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("get deployment: %v", err)
-	}
-	volumes := got.Spec.Template.Spec.Volumes
-	if len(volumes) != 2 {
-		t.Fatalf("volumes len = %d, want 2", len(volumes))
-	}
-	if volumes[0].Name != "sre-agent-extensions" || volumes[0].ConfigMap == nil {
-		t.Fatalf("missing extension configmap volume: %#v", volumes[0])
-	}
-	items := volumes[0].ConfigMap.Items
-	wantPaths := []string{
-		"remediation/mcp.json",
-		"remediation/CONTEXT.md",
-		"remediation/skills/coding-agent-handoff/SKILL.md",
-	}
-	for i, want := range wantPaths {
-		if got := items[i].Path; got != want {
-			t.Fatalf("item[%d].Path = %q, want %q", i, got, want)
-		}
-	}
-	if volumes[1].Name != "anthropic-key" || volumes[1].Secret == nil || volumes[1].Secret.SecretName != "rca-agent-anthropic-secret" {
-		t.Fatalf("missing anthropic secret volume: %#v", volumes[1])
-	}
-	if o := volumes[1].Secret.Optional; o == nil || *o {
-		t.Fatalf("anthropic secret volume must be required, got optional=%v", o)
-	}
-
-	c := got.Spec.Template.Spec.Containers[0]
-	assertEnv := func(name, value string) {
-		t.Helper()
-		for _, env := range c.Env {
-			if env.Name == name && env.Value == value {
-				return
-			}
-		}
-		t.Fatalf("missing env %s=%s in %#v", name, value, c.Env)
-	}
-	assertEnv("EXTENSIONS_DIR", "/etc/openchoreo/sre-agent")
-	assertEnv("RCA_LLM_API_KEY_FILE", "/etc/rca-agent/anthropic/RCA_LLM_API_KEY")
-	assertEnv("AEP_MCP_URL", testMCPURL)
-	for _, env := range c.Env {
-		if env.Name == "AEP_MCP_TOKEN" {
-			t.Fatalf("SRE pod must not carry the MCP credential; found %#v", env)
-		}
-	}
-	if len(c.VolumeMounts) != 2 {
-		t.Fatalf("volumeMounts len = %d, want 2", len(c.VolumeMounts))
 	}
 }

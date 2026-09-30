@@ -22,16 +22,18 @@ package cmd
 // aep/* paths `aectl platform install` seeds.
 
 // The SRE agent's own ExternalSecret, sourced from secret/data/aep/*. Applied
-// whether or not aectl installs the plane itself.
-// The chart requires RCA_LLM_API_KEY in this Secret, but the agent reads its
-// key from RCA_LLM_API_KEY_FILE (the Console key, sreAnthropicSecretTmpl) when
-// that is set, so the platform value here is only the chart's placeholder.
+// whether or not aectl installs the plane itself. Carries only the OAuth
+// client secret the chart's rca.secretName requires; the agent's LLM key,
+// model and handoff token come from the AE-owned sre-agent-aep Secret
+// aep-api's reconciler writes (wired via rca.extraEnvs, not this template).
 const sreAgentSecretsTmpl = `
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: rca-agent-secret
   namespace: {{.ObsNamespace}}
+  annotations:
+    force-sync: "{{.ForceSync}}"
 spec:
   refreshInterval: 1h
   secretStoreRef:
@@ -40,36 +42,8 @@ spec:
   target:
     name: rca-agent-secret
   data:
-    - secretKey: RCA_LLM_API_KEY
-      remoteRef: { key: aep/anthropic-api-key, property: value }
     - secretKey: OAUTH_CLIENT_SECRET
       remoteRef: { key: aep/thunder-clients/openchoreo-rca-agent, property: value }
-`
-
-// The SRE agent's Anthropic key: the org's model connection key as saved in the
-// AE Console, read from the KV path aep-api published in the org's
-// model-connection-secrets SecretReference (sre_plane.go). Through the org secret store (OpenChoreo's
-// "default" ClusterSecretStore, which every workload reading that path uses),
-// not the aep/* store above. The short refresh picks up a key re-saved
-// in the Console without a re-run.
-const sreAnthropicSecretTmpl = `
-apiVersion: external-secrets.io/v1
-kind: ExternalSecret
-metadata:
-  name: rca-agent-anthropic-secret
-  namespace: {{.ObsNamespace}}
-  labels:
-    aep.wso2.com/source: ae-org-anthropic
-spec:
-  refreshInterval: 1m
-  secretStoreRef:
-    name: {{.OrgSecretStore}}
-    kind: ClusterSecretStore
-  target:
-    name: rca-agent-anthropic-secret
-  data:
-    - secretKey: RCA_LLM_API_KEY
-      remoteRef: { key: "{{.AnthropicRef.Key}}", property: "{{.AnthropicRef.Property}}" }
 `
 
 // The observer's Thunder client secret, for a plane aectl did not install.
@@ -85,6 +59,8 @@ kind: ExternalSecret
 metadata:
   name: observer-secret
   namespace: {{.ObsNamespace}}
+  annotations:
+    force-sync: "{{.ForceSync}}"
 spec:
   refreshInterval: 1h
   secretStoreRef:
@@ -105,6 +81,8 @@ kind: ExternalSecret
 metadata:
   name: opensearch-admin-credentials
   namespace: {{.ObsNamespace}}
+  annotations:
+    force-sync: "{{.ForceSync}}"
 spec:
   refreshInterval: 1h
   secretStoreRef:
@@ -123,6 +101,8 @@ kind: ExternalSecret
 metadata:
   name: observer-secret
   namespace: {{.ObsNamespace}}
+  annotations:
+    force-sync: "{{.ForceSync}}"
 spec:
   refreshInterval: 1h
   secretStoreRef:
@@ -137,6 +117,37 @@ spec:
       remoteRef: { key: aep/opensearch-password, property: value }
     - secretKey: UID_RESOLVER_OAUTH_CLIENT_SECRET
       remoteRef: { key: aep/thunder-clients/oc-observer-reader, property: value }
+`
+
+// rcaExtraEnvsYAML is the RCA/SRE agent's rca.extraEnvs block, shared between
+// sreObsPlaneValuesTmpl (fresh plane install) and sreAgentValuesTmpl (adopting
+// an existing plane). The chart replaces the whole extraEnvs list rather than
+// merging it, so this owns every entry the stock image needs: EXTENSIONS_DIR
+// (the AE handoff extension mount point), AEP_MCP_URL (aep-mcp-server's MCP
+// endpoint, reached over https through the control-plane gateway),
+// SSL_CERT_FILE (the CA bundle Task 16's initContainer builds in-pod, so that
+// https call verifies), and the four values aep-api's reconciler pushes into
+// the AE-owned sre-agent-aep Secret (RCA_LLM_API_KEY, RCA_MODEL_NAME,
+// RCA_LLM_BASE_URL, AEP_MCP_TOKEN — this command never carries them itself).
+const rcaExtraEnvsYAML = `  extraEnvs:
+    - name: EXTENSIONS_DIR
+      value: /opt/aep/sre-agent-extensions
+    - name: AEP_MCP_URL
+      value: {{.AEMCPURL}}
+    - name: SSL_CERT_FILE
+      value: /opt/aep/ca/ca-bundle.crt
+    - name: RCA_LLM_API_KEY
+      valueFrom:
+        secretKeyRef: {name: sre-agent-aep, key: RCA_LLM_API_KEY}
+    - name: RCA_MODEL_NAME
+      valueFrom:
+        secretKeyRef: {name: sre-agent-aep, key: RCA_MODEL_NAME}
+    - name: RCA_LLM_BASE_URL
+      valueFrom:
+        secretKeyRef: {name: sre-agent-aep, key: RCA_LLM_BASE_URL}
+    - name: AEP_MCP_TOKEN
+      valueFrom:
+        secretKeyRef: {name: sre-agent-aep, key: AEP_MCP_TOKEN}
 `
 
 // openchoreo-observability-plane values. Observer + RCA agent; the chart's own
@@ -184,8 +195,6 @@ rca:
     repository: {{.RcaImageRepo}}
     tag: {{.RcaImageTag}}
     pullPolicy: {{.RcaPullPolicy}}
-  llm:
-    modelName: {{.RcaModel}}
   secretName: rca-agent-secret
   oauth:
     clientId: openchoreo-rca-agent
@@ -200,6 +209,7 @@ rca:
   http:
     hostnames:
       - {{.RcaHost}}
+` + rcaExtraEnvsYAML + `
 gateway:
   enabled: false
 `
@@ -207,8 +217,7 @@ gateway:
 // SRE agent overlay for a plane aectl did not install, applied with
 // --reuse-values at that release's own chart version: the rca block and the
 // observer's service-account claim the agent's queries need, so the plane's
-// installer keeps owning everything else. The image override is
-// the SRE build with the Anthropic structured-output fix and the AE handoff.
+// installer keeps owning everything else.
 const sreAgentValuesTmpl = `
 observer:
   security:
@@ -239,8 +248,6 @@ rca:
     repository: {{.RcaImageRepo}}
     tag: {{.RcaImageTag}}
     pullPolicy: {{.RcaPullPolicy}}
-  llm:
-    modelName: {{.RcaModel}}
   secretName: rca-agent-secret
   oauth:
     clientId: openchoreo-rca-agent
@@ -251,6 +258,48 @@ rca:
     limits:
       cpu: "1"
       memory: 2Gi
+` + rcaExtraEnvsYAML
+
+// sreAgentAEOwnedSecretTmpl is the AE-owned Secret aep-api's reconciler pushes
+// the SRE agent's LLM key/model/base URL and its AEP handoff token into
+// (rca.extraEnvs above reads it via secretKeyRef). Applied only when the
+// Secret does not already exist (see ensureSREAgentSecret): a re-run of
+// `aectl sre install` must never overwrite values aep-api already pushed, so
+// every key here is a placeholder empty string.
+const sreAgentAEOwnedSecretTmpl = `
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sre-agent-aep
+  namespace: {{.ObsNamespace}}
+type: Opaque
+stringData:
+  RCA_LLM_API_KEY: ""
+  RCA_MODEL_NAME: ""
+  RCA_LLM_BASE_URL: ""
+  AEP_MCP_TOKEN: ""
+`
+
+// sreAgentPushRoleTmpl grants aep-api's ServiceAccount just enough to push
+// into the AE-owned sre-agent-aep Secret and to bounce the RCA/SRE agent
+// Deployment afterwards (patch its aep.wso2.com/sre-llm-hash annotation, scale
+// it back up) — never blanket namespace access.
+const sreAgentPushRoleTmpl = `
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: aep-api-sre-push, namespace: {{.ObsNamespace}}}
+rules:
+  - {apiGroups: [""], resources: [secrets], resourceNames: ["sre-agent-aep"], verbs: [get, update, patch]}
+  - {apiGroups: [apps], resources: [deployments], resourceNames: ["{{.RcaName}}"], verbs: [get, patch]}
+  - {apiGroups: [apps], resources: [deployments/scale], resourceNames: ["{{.RcaName}}"], verbs: [get, patch]}
+  - {apiGroups: [""], resources: [pods], verbs: [list]}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: aep-api-sre-push, namespace: {{.ObsNamespace}}}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: aep-api-sre-push}
+subjects:
+  - {kind: ServiceAccount, name: aep-api, namespace: {{.AEPNamespace}}}
 `
 
 // observability-logs-opensearch values. OpenSearch + Fluent Bit + logs-adapter.

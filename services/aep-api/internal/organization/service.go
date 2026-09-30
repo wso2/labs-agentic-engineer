@@ -48,7 +48,7 @@ var ErrGitHubAppNotConfigured = errors.New("orgconfig: github app oauth client n
 // is produced by PATCH probe/persist failures; the HTTP layer maps Status +
 // Section into a problem response.
 type SectionError struct {
-	Section string // "llm" | "agents" | "gitProvider" | "idp"
+	Section string // "llm" | "agents" | "gitProvider" | "idp" | "sreLlm" (the SRE model connection)
 	Status  int    // 422 (validation) | 409 (conflict) | 502 (upstream)
 	Code    string // the stable reason slug, when the refusal has one (e.g. agents_subscription_requires_claude_code)
 	Message string
@@ -89,6 +89,8 @@ type Service struct {
 	bearerSvc     *BearerService
 	idpSvc        IDPService
 	agentSettings *AgentSettingsService
+	sreModelSvc   *SreModelConnectionService
+	sreStatus     SREAgentStatusReader
 	llmTests      *llmTestLimiter
 	platformIDP   PlatformIDPConfig
 
@@ -133,6 +135,35 @@ func NewService(
 // is a loud failure, not a silent no-op.
 func (s *Service) WithAgentSettings(svc *AgentSettingsService) *Service {
 	s.agentSettings = svc
+	return s
+}
+
+// WithSreModel attaches the org's SRE model connection (the sreLlm section).
+// A setter for the same reason WithAgentSettings is one: an unwired service
+// still projects a truthful sreLlm=nil ("none"), so a harness exercising only
+// the other sections doesn't have to wire it.
+func (s *Service) WithSreModel(svc *SreModelConnectionService) *Service {
+	s.sreModelSvc = svc
+	return s
+}
+
+// SREAgentStatusReader reports how the OpenChoreo SRE agent's rollout stands
+// for org: status is one of unconfigured|applying|running|failed, reason says
+// why when there is something to add. ok=false means the agent does not serve
+// org (one observability plane serves one org), so there is nothing to show.
+type SREAgentStatusReader interface {
+	Status(ctx context.Context, org string) (status, reason string, ok bool, err error)
+}
+
+// sreStatusUnavailable is the reason GET /config shows when the status reader
+// fails: the settings stay loadable while the cluster API is down.
+const sreStatusUnavailable = "SRE agent status unavailable: cannot read the observability plane"
+
+// WithSREAgentStatus attaches the SRE agent's status, which turns on GET
+// /config's sreAgent section. Without it the server does not push the SRE
+// agent's configuration, and sreAgent is null.
+func (s *Service) WithSREAgentStatus(r SREAgentStatusReader) *Service {
+	s.sreStatus = r
 	return s
 }
 
@@ -192,8 +223,48 @@ func (s *Service) Get(ctx context.Context, org string) (*orgconfig.ConfigProject
 		}
 	}
 
+	if s.sreModelSvc != nil {
+		proj, err := s.sreModelSvc.Projection(ctx, org)
+		if err != nil {
+			return nil, fmt.Errorf("orgconfig get sreLlm: %w", err)
+		}
+		out.SreLLM = proj
+		if s.sreStatus != nil {
+			if out.SreAgent, err = s.sreAgentProjection(ctx, org); err != nil {
+				return nil, fmt.Errorf("orgconfig get sreAgent: %w", err)
+			}
+		}
+	}
+
 	out.IDP = s.idpProjection(ctx, org)
 	return out, nil
+}
+
+// sreAgentProjection is the SRE agent as the org's settings leave it: the
+// connection it runs on and how its rollout stands. nil when the agent does
+// not serve org. A status read that fails shows as failed rather than failing
+// the whole GET.
+func (s *Service) sreAgentProjection(ctx context.Context, org string) (*orgconfig.SreAgentProjection, error) {
+	status, reason, ok, err := s.sreStatus.Status(ctx, org)
+	switch {
+	case err != nil:
+		slog.WarnContext(ctx, "orgconfig.sre_agent_status_unavailable", "org", org, "err", err)
+		status, reason = "failed", sreStatusUnavailable
+	case !ok:
+		return nil, nil
+	}
+	eff, err := s.sreModelSvc.EffectiveSRE(ctx, org)
+	if err != nil {
+		return nil, err
+	}
+	return &orgconfig.SreAgentProjection{
+		Enabled: true,
+		Source:  string(eff.Source),
+		Model:   eff.Conn.Model,
+		Host:    eff.Conn.Host,
+		Status:  status,
+		Reason:  reason,
+	}, nil
 }
 
 // idpProjection returns the org's persisted IDP profile, or the platform
@@ -262,9 +333,19 @@ func (s *Service) Patch(ctx context.Context, org, actor string, p orgconfig.Conf
 			return nil, sectionErrorFrom("gitProvider", err)
 		}
 	}
+	if p.SreLLM.Sent && s.sreModelSvc == nil {
+		return nil, fmt.Errorf("orgconfig patch sreLlm: service not configured")
+	}
+	var sreLLM sreDraft
+	if p.SreLLM.Sent && !p.SreLLM.Null {
+		var err error
+		if sreLLM, err = s.sreModelSvc.Check(ctx, org, p.SreLLM.Value); err != nil {
+			return nil, sectionErrorFrom("sreLlm", err)
+		}
+	}
 
 	// 3. Persist phase — probes already passed, so these are writes over
-	//    freshly-validated inputs. Ordered card → gitProvider → idp.
+	//    freshly-validated inputs. Ordered card → gitProvider → sreLlm → idp.
 	sections := []string{}
 	if card {
 		if err := s.agentSettings.apply(ctx, org, actor, p, probed); err != nil {
@@ -286,6 +367,16 @@ func (s *Service) Patch(ctx context.Context, org, actor string, p orgconfig.Conf
 			return nil, sectionErrorFrom("gitProvider", err)
 		}
 		sections = append(sections, "gitProvider")
+	}
+	if p.SreLLM.Sent {
+		if p.SreLLM.Null {
+			if err := s.sreModelSvc.Clear(ctx, org, actor); err != nil {
+				return nil, sectionErrorFrom("sreLlm", err)
+			}
+		} else if err := s.sreModelSvc.Persist(ctx, org, actor, sreLLM); err != nil {
+			return nil, sectionErrorFrom("sreLlm", err)
+		}
+		sections = append(sections, "sreLlm")
 	}
 	if p.IDP.Sent && !p.IDP.Null {
 		if s.idpSvc == nil {

@@ -42,6 +42,7 @@ import {
 import { useAiSettings } from "../hooks/useAiSettings";
 import { MaskedCredential, SecretField } from "./CredentialField";
 import { ModelConnectionRow } from "./ModelConnectionRow";
+import { SreAgentModelRow } from "./SreAgentModelRow";
 
 type ConfigProjection = components["schemas"]["ConfigProjection"];
 type AgentRuntime = components["schemas"]["AgentRuntime"];
@@ -108,6 +109,8 @@ export function AiAgentsCard({
         ai={ai}
         onboarding={onboarding}
       />
+
+      {!onboarding && <SreAgentModelRow config={config} />}
 
       <Box sx={{ borderTop: onboarding ? 0 : 1, borderColor: "divider", pt: onboarding ? 0 : 3 }}>
         <Typography

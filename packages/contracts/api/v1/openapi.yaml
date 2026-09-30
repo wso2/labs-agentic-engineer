@@ -4590,6 +4590,38 @@ components:
             the key on Anthropic's API), `anthropic_key_invalid` (a key on
             Anthropic's API without the `sk-ant-` shape).
           nullable: true
+        sreLlm:
+          additionalProperties: false
+          description: >-
+            The organization's SRE model connection: the OpenAI-compatible
+            endpoint, over a Bearer key of its own, that the OpenChoreo SRE
+            agent calls instead of the organization's model connection.
+            Patched field by field: an absent field keeps what is stored. The
+            first save needs `baseURL`, `apiKey` and `model`; a changed host
+            needs a new `apiKey` in the same patch. Probed before anything in
+            the patch is written. `null` removes it, and the SRE agent falls
+            back to the organization's model connection when that has the
+            `sreAgent` capability.
+
+
+            Refusal codes, each on `body.sreLlm` (400 unless noted), with the
+            meanings they have on `llm`: `llm_field_required`,
+            `llm_base_url_invalid`, `llm_host_refused`,
+            `llm_key_required_for_new_host`, `llm_key_too_short`,
+            `llm_key_rejected`, `llm_unexpected_status`, `llm_unreachable`,
+            `llm_upstream_error` (502), and `conflict` (409: the connection
+            changed while the save was being tested).
+          properties:
+            apiKey:
+              description: Write-only; probed, never echoed.
+              type: string
+            baseURL:
+              description: An https URL; the endpoint's `/models` and `/chat/completions` live under it.
+              type: string
+            model:
+              type: string
+          type: object
+          nullable: true
       type: object
     ConfigProjection:
       x-go-type: orgconfig.ConfigProjection
@@ -4634,12 +4666,26 @@ components:
           items:
             $ref: '#/components/schemas/LLMFormatOption'
           type: array
+        sreAgent:
+          allOf:
+          - $ref: '#/components/schemas/SreAgentProjection'
+          description: >-
+            The OpenChoreo SRE agent as the organization's settings leave it;
+            null when this server does not push the SRE agent's configuration.
+          nullable: true
+        sreLlm:
+          allOf:
+          - $ref: '#/components/schemas/SreLlmProjection'
+          description: The organization's SRE model connection; null while it has none.
+          nullable: true
       required:
       - llm
       - llmFormats
       - agents
       - gitProvider
       - idp
+      - sreLlm
+      - sreAgent
       type: object
     ConfigValue:
       additionalProperties: false
@@ -5941,6 +5987,12 @@ components:
         nativePdf:
           description: PDFs go to the model natively; otherwise they are sent as extracted text.
           type: boolean
+        sreAgent:
+          description: >-
+            The OpenChoreo SRE agent can call this connection. True for the
+            openai-compatible format authenticated with a Bearer token, which
+            is what the stock agent's langchain-openai client sends.
+          type: boolean
         webSearch:
           description: >-
             How agents search the web on this connection: Anthropic's server
@@ -5956,6 +6008,7 @@ components:
       - imageInput
       - nativePdf
       - generatedAgents
+      - sreAgent
       type: object
     LLMCheck:
       x-go-type: orgconfig.LLMCheck
@@ -6141,6 +6194,91 @@ components:
       - updatedBy
       - priced
       - capabilities
+      type: object
+    SreAgentProjection:
+      x-go-type: orgconfig.SreAgentProjection
+      x-go-type-import:
+        path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
+      additionalProperties: false
+      description: >-
+        Which connection the OpenChoreo SRE agent runs on, and how its rollout
+        stands.
+      properties:
+        enabled:
+          description: This server pushes the SRE agent's configuration.
+          type: boolean
+        host:
+          description: The host of the connection it runs on; empty when `source` is `none`.
+          type: string
+        model:
+          description: The model it runs on; empty when `source` is `none`.
+          type: string
+        reason:
+          description: Why the status is what it is, when there is something to add.
+          type: string
+        source:
+          description: >-
+            `override`: the SRE model connection (`sreLlm`). `organization`:
+            the organization's model connection, which has the `sreAgent`
+            capability. `none`: neither, so the SRE agent has no model.
+          enum:
+          - override
+          - organization
+          - none
+          type: string
+        status:
+          enum:
+          - unconfigured
+          - applying
+          - running
+          - failed
+          type: string
+      required:
+      - enabled
+      - source
+      - model
+      - host
+      - status
+      type: object
+    SreLlmProjection:
+      x-go-type: orgconfig.SreLlmProjection
+      x-go-type-import:
+        path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
+      additionalProperties: false
+      description: >-
+        The organization's SRE model connection: OpenAI-compatible, Bearer. A
+        stored connection is usable by construction: a save is refused unless
+        the probe passes.
+      properties:
+        baseURL:
+          type: string
+        connectedAt:
+          description: When a key was first connected on this connection's host.
+          format: date-time
+          type: string
+        host:
+          type: string
+        keyPreview:
+          description: >-
+            The key's last 4 characters, prefixed by its first 4 and an ellipsis
+            only when the key is at least 24 long.
+          type: string
+        model:
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+        updatedBy:
+          description: Who last saved the connection.
+          type: string
+      required:
+      - baseURL
+      - host
+      - model
+      - keyPreview
+      - connectedAt
+      - updatedAt
+      - updatedBy
       type: object
     Lineage:
       additionalProperties: false

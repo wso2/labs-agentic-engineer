@@ -308,6 +308,9 @@ func (s *AgentSettingsService) apply(ctx context.Context, ocOrgID, actor string,
 		before:       before,
 		after:        after,
 	})
+	if eff.deleteConn || eff.writeConn != nil {
+		s.conns.changed(ocOrgID)
+	}
 	return nil
 }
 

@@ -27,6 +27,11 @@ import (
 	"github.com/wso2/aep/aectl/internal/ui"
 )
 
+// defaultPlatformRelease is the Helm release name `platform update` and
+// `sre install`'s internal sreAgent.* wiring both target unless told
+// otherwise. A single constant, not two copies of the string literal.
+const defaultPlatformRelease = "aep-platform"
+
 var (
 	updateNamespace       string
 	updatePlatformRelease string
@@ -73,7 +78,7 @@ func init() {
 
 	f := updateCmd.Flags()
 	f.StringVar(&updateNamespace, "namespace", "wso2-aep", "Namespace where the platform chart is installed")
-	f.StringVar(&updatePlatformRelease, "platform-release", "aep-platform", "Helm release name")
+	f.StringVar(&updatePlatformRelease, "platform-release", defaultPlatformRelease, "Helm release name")
 	f.StringVar(&updatePlatformVersion, "version", "", "Chart version to upgrade to (default: reuse current version)")
 	f.StringVar(&updatePlatformChart, "platform-chart", "", "Local path to a platform chart (overrides --version)")
 	f.BoolVar(&updateResetValues, "reset-values", false, "Reset all values to chart defaults before applying overrides (default: reuse previous values)")
@@ -93,71 +98,114 @@ type serviceImageOverride struct {
 	image    string // "repo:tag" from the flag
 }
 
+// platformUpdateConfig is everything a platform-chart `helm upgrade` needs.
+// runUpdate (this file's cobra RunE) builds one from its own flags; other
+// callers in the same process — namely `aectl sre install`, which must flip
+// sreAgent.* on the same release — build their own and call platformUpdate
+// directly, so the two callers never share or fight over mutable package
+// state (updateNamespace/updateHelmSets/... stay this command's own).
+type platformUpdateConfig struct {
+	Namespace      string
+	Release        string
+	ChartPath      string // local chart path; takes precedence over ChartVersion
+	ChartVersion   string // OCI version; ignored when ChartPath is set
+	ResetValues    bool
+	PullPolicy     string
+	HelmSets       []string
+	ImageOverrides []serviceImageOverride
+}
+
 func runUpdate(cmd *cobra.Command, args []string) error {
-	ctx := context.Background()
+	return platformUpdate(context.Background(), platformUpdateConfig{
+		Namespace:    updateNamespace,
+		Release:      updatePlatformRelease,
+		ChartPath:    updatePlatformChart,
+		ChartVersion: updatePlatformVersion,
+		ResetValues:  updateResetValues,
+		PullPolicy:   updatePullPolicy,
+		HelmSets:     updateHelmSets,
+		ImageOverrides: []serviceImageOverride{
+			{"aepApi", updateAepApiImage},
+			{"aepAgents", updateAgentsImage},
+			{"collab", updateCollabImage},
+			{"aepMcpServer", updateMcpServerImage},
+			{"console", updateConsoleImage},
+		},
+	})
+}
 
-	if _, err := exec.LookPath("helm"); err != nil {
-		return fmt.Errorf("helm is required but was not found in PATH")
-	}
-
-	overrides := []serviceImageOverride{
-		{"aepApi", updateAepApiImage},
-		{"aepAgents", updateAgentsImage},
-		{"collab", updateCollabImage},
-		{"aepMcpServer", updateMcpServerImage},
-		{"console", updateConsoleImage},
-	}
-
-	// Build helm upgrade arguments.
+// helmUpgradeArgs builds the `helm upgrade` argument list for cfg. Split out
+// from platformUpdate so the call shape — chart source resolution,
+// --reuse-values vs --reset-values, image overrides, arbitrary --set — is
+// unit-testable without shelling out to helm.
+func helmUpgradeArgs(cfg platformUpdateConfig) ([]string, error) {
 	helmArgs := []string{
-		"upgrade", updatePlatformRelease,
-		"-n", updateNamespace,
+		"upgrade", cfg.Release,
+		"-n", cfg.Namespace,
 	}
 
 	// Chart source: local path > GHCR with version > GHCR without version.
-	if updatePlatformChart != "" {
-		helmArgs = append(helmArgs, updatePlatformChart)
+	if cfg.ChartPath != "" {
+		helmArgs = append(helmArgs, cfg.ChartPath)
 	} else {
 		// OCI artifact is named after the chart's `name:` (aep-platform).
 		helmArgs = append(helmArgs, "oci://ghcr.io/wso2/aep/charts/aep-platform")
-		if updatePlatformVersion != "" {
-			helmArgs = append(helmArgs, "--version", updatePlatformVersion)
+		if cfg.ChartVersion != "" {
+			helmArgs = append(helmArgs, "--version", cfg.ChartVersion)
 		}
 	}
 
 	// Value strategy.
-	if updateResetValues {
+	if cfg.ResetValues {
 		helmArgs = append(helmArgs, "--reset-values")
 	} else {
 		helmArgs = append(helmArgs, "--reuse-values")
 	}
 
 	// Per-service image overrides.
-	for _, o := range overrides {
+	for _, o := range cfg.ImageOverrides {
 		if o.image == "" {
 			continue
 		}
 		repo, tag, err := splitImage(o.image)
 		if err != nil {
-			return fmt.Errorf("--%s-image: %w", strings.ToLower(o.chartKey), err)
+			return nil, fmt.Errorf("--%s-image: %w", strings.ToLower(o.chartKey), err)
 		}
 		helmArgs = append(helmArgs,
 			"--set", fmt.Sprintf("%s.image.repository=%s", o.chartKey, repo),
 			"--set", fmt.Sprintf("%s.image.tag=%s", o.chartKey, tag),
 		)
-		if updatePullPolicy != "" {
+		if cfg.PullPolicy != "" {
 			helmArgs = append(helmArgs,
-				"--set", fmt.Sprintf("%s.image.pullPolicy=%s", o.chartKey, updatePullPolicy),
+				"--set", fmt.Sprintf("%s.image.pullPolicy=%s", o.chartKey, cfg.PullPolicy),
 			)
 		}
 	}
 
 	// Arbitrary --set overrides.
-	for _, s := range updateHelmSets {
+	for _, s := range cfg.HelmSets {
 		helmArgs = append(helmArgs, "--set", s)
 	}
+	return helmArgs, nil
+}
 
-	ui.Step(fmt.Sprintf("Upgrading platform chart %q", updatePlatformRelease))
+// platformUpdate runs `helm upgrade` on the AEP platform release per cfg. It
+// carries no default of its own beyond what cfg's zero values mean (no chart
+// pin => the unversioned OCI chart, --reuse-values unless ResetValues) —
+// callers that need a pinned chart source (e.g. `sre install`, which must
+// never silently drift the platform release) are responsible for setting
+// cfg.ChartPath/ChartVersion themselves.
+func platformUpdate(ctx context.Context, cfg platformUpdateConfig) error {
+	if _, err := exec.LookPath("helm"); err != nil {
+		return fmt.Errorf("helm is required but was not found in PATH")
+	}
+
+	helmArgs, err := helmUpgradeArgs(cfg)
+	if err != nil {
+		return err
+	}
+
+	ui.Step(fmt.Sprintf("Upgrading platform chart %q", cfg.Release))
 	var out bytes.Buffer
 	c := exec.CommandContext(ctx, "helm", helmArgs...)
 	c.Stdout = &out

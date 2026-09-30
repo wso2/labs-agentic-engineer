@@ -83,16 +83,14 @@ type Config struct {
 	// line, and pass through. Read from TENANT_GATE_MODE; unset ⇒ enforce.
 	TenantGateMode string
 
-	// SREHandoffToken and SREHandoffOrg configure the long-lived credential
-	// aep-mcp-server forwards on behalf of the OpenChoreo SRE agent for
-	// CreateIssue/ListIssues only (internal/edge/sre_handoff_gate.go). Both
-	// must be set together — either empty leaves the shortcut disabled
-	// (secure default) and those two operations require a normal Thunder
-	// JWT like every other /api/ operation. Read from SRE_HANDOFF_TOKEN /
-	// SRE_HANDOFF_ORG. Never a ConfigMap value — Secret only, same posture
-	// as every other credential in this file.
-	SREHandoffToken string
-	SREHandoffOrg   string
+	// SREAgent names the one owning org's observability-plane Secret/Deployment
+	// that aep-api pushes the SRE agent's LLM settings to (the sreagent
+	// reconciler), and doubles as the SRE-handoff shortcut's org
+	// (internal/edge/sre_handoff_gate.go): aep-mcp-server's forwarded bearer
+	// for CreateIssue/ListIssues is checked against the token minted for this
+	// org (org_secrets, not a static env secret). Read from SRE_AGENT_ORG /
+	// SRE_AGENT_NAMESPACE / SRE_AGENT_DEPLOYMENT / SRE_AGENT_SECRET.
+	SREAgent SREAgentConfig
 
 	// OAuthStateSigningKey is the HS256 key used to sign the connect-state
 	// JWT that rides the GitHub App OAuth `state` query param (CSRF
@@ -493,3 +491,41 @@ type TemporalConfig struct {
 
 // Enabled reports whether the Temporal integration is configured.
 func (t TemporalConfig) Enabled() bool { return t.HostPort != "" }
+
+// SREAgentConfig names the observability-plane Secret/Deployment of the ONE
+// org that owns the SRE agent — the push target aep-api's sreagent
+// reconciler writes the agent's LLM settings to. `aectl sre install --org`
+// (Task 15) sets these through the platform Helm chart's sreAgent values.
+type SREAgentConfig struct {
+	Org        string
+	Namespace  string
+	Deployment string
+	Secret     string
+
+	// Seed is the install-time SRE model connection `aectl sre install`
+	// writes without a user token (Task A2's `sre-model-seed` Secret, read
+	// from SRE_AGENT_SEED_API_KEY / SRE_AGENT_SEED_MODEL /
+	// SRE_AGENT_SEED_BASE_URL). organization.SreModelConnectionService.ApplySeed
+	// applies it at most once per distinct value.
+	Seed SREAgentSeed
+}
+
+// Enabled reports whether a push target is fully configured. All four
+// fields must be set together — a partial target is not addressable.
+func (c SREAgentConfig) Enabled() bool {
+	return c.Org != "" && c.Namespace != "" && c.Deployment != "" && c.Secret != ""
+}
+
+// SREAgentSeed is the install-time SRE model connection candidate. The key is
+// never logged.
+type SREAgentSeed struct {
+	APIKey  string
+	Model   string
+	BaseURL string
+}
+
+// Present reports whether the seed carries enough to attempt (a key and a
+// model; BaseURL defaults when both are set — see the loader).
+func (s SREAgentSeed) Present() bool {
+	return s.APIKey != "" && s.Model != ""
+}

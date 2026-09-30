@@ -108,12 +108,8 @@ func draftConnection(stored *OrgModelConnection, w orgconfig.LLMPatch) (connecti
 	// on the same origin keeps it: Ollama serves both formats on one host with
 	// one key.
 	if stored != nil && d.Key == "" {
-		if from, to := keyOrigin(stored.BaseURL), keyOrigin(d.BaseURL); from != to {
-			return connectionDraft{}, false, &ValidationError{
-				Code: "llm_key_required_for_new_host",
-				Message: fmt.Sprintf("the connection moves from %s to %s; send the key for %s in the same save "+
-					"(a stored key is never sent to another host)", from, to, to),
-			}
+		if err := requireKeyForNewOrigin(stored.BaseURL, d.BaseURL); err != nil {
+			return connectionDraft{}, false, err
 		}
 	}
 	if d.Key != "" {
@@ -150,6 +146,21 @@ func normalizeBaseURL(format modelconn.Format, raw string) (string, string, erro
 		path = "/v1"
 	}
 	return "https://" + authorityOf(u) + path, host, nil
+}
+
+// requireKeyForNewOrigin refuses a save that would send a stored key to
+// another origin (ADR-0038 §5): moving from storedURL to baseURL needs the key
+// for the new origin in the same save. Called only for a save that sent none.
+func requireKeyForNewOrigin(storedURL, baseURL string) error {
+	from, to := keyOrigin(storedURL), keyOrigin(baseURL)
+	if from == to {
+		return nil
+	}
+	return &ValidationError{
+		Code: "llm_key_required_for_new_host",
+		Message: fmt.Sprintf("the connection moves from %s to %s; send the key for %s in the same save "+
+			"(a stored key is never sent to another host)", from, to, to),
+	}
 }
 
 // keyOrigin is where a stored base URL sends its key: host and port, the

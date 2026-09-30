@@ -23,41 +23,62 @@ package auth
 // the generic OC extensions loader (agents/sre-agent/src/extensions/config.py)
 // resolves an MCP server's `headers` from `${VAR}` ONCE at process start and
 // never refreshes them, so a short-lived Thunder OAuth token would expire mid
-// pod-lifetime. This is a dedicated, long-lived, narrowly-scoped shared
-// secret instead — the S2S analogue of PublisherTokenVerifier/RunnerAuthorizer,
-// not a widening of the Thunder JWT verifier.
+// pod-lifetime. This is a dedicated, long-lived, narrowly-scoped credential
+// instead — the S2S analogue of PublisherTokenVerifier/RunnerAuthorizer, not a
+// widening of the Thunder JWT verifier.
 //
-// Disabled by default (secure default): both Secret and Org must be
-// configured, or every presented bearer is rejected and the caller falls
-// through to normal Thunder JWT verification (see edge.mountSurfaces).
+// The credential itself is the per-org token aep-api's sreagent reconciler
+// mints and stores in org_secrets (sreagent.Tokens, key "sre/handoff-token"),
+// looked up fresh on every request through TokenGetter — never a static
+// secret read once from the environment. Disabled by default (secure
+// default): both org and a TokenGetter must be configured, or every presented
+// bearer is rejected and the caller falls through to normal Thunder JWT
+// verification (see edge.mountSurfaces).
 
-import "crypto/subtle"
+import (
+	"context"
+	"crypto/subtle"
+	"log/slog"
+)
 
-// SREHandoffVerifier verifies aep-mcp-server's forwarded SRE-handoff bearer
-// and resolves the one org it is scoped to. One verifier instance is scoped
-// to exactly one org, matching today's one-install-per-org deployment model
-// (aectl sre install, docker-compose) — see the type's doc comment.
-type SREHandoffVerifier struct {
-	secret string
-	org    string
+// TokenGetter resolves the current handoff token minted for an org. It is
+// satisfied by sreagent.Tokens without this package importing sreagent —
+// auth stays a leaf package; sreagent depends the other way (it already
+// consumes secrets.CredentialStore).
+type TokenGetter interface {
+	// Get returns the org's minted handoff token; ok=false when none has
+	// been minted yet.
+	Get(ctx context.Context, org string) (token string, ok bool, err error)
 }
 
-// NewSREHandoffVerifier builds a verifier bound to org. Returns nil when
-// secret or org is empty, so an unconfigured deployment leaves the SRE
-// handoff shortcut entirely absent rather than failing open.
-func NewSREHandoffVerifier(secret, org string) *SREHandoffVerifier {
-	if secret == "" || org == "" {
+// SREHandoffVerifier verifies aep-mcp-server's forwarded SRE-handoff bearer
+// against the token minted for the one org it is scoped to, matching today's
+// one-install-per-org deployment model (aectl sre install, docker-compose) —
+// see the type's doc comment.
+type SREHandoffVerifier struct {
+	org    string
+	tokens TokenGetter
+}
+
+// NewSREHandoffVerifier builds a verifier bound to org, resolving the current
+// token from tokens on every Verify call. Returns nil when org is empty or
+// tokens is nil, so an unconfigured deployment leaves the SRE handoff
+// shortcut entirely absent rather than failing open.
+func NewSREHandoffVerifier(org string, tokens TokenGetter) *SREHandoffVerifier {
+	if org == "" || tokens == nil {
 		return nil
 	}
-	return &SREHandoffVerifier{secret: secret, org: org}
+	return &SREHandoffVerifier{org: org, tokens: tokens}
 }
 
 // Verify checks bearer (the raw `Authorization` header value, e.g.
-// "Bearer <token>") against the configured secret in constant time and
-// returns synthetic Claims carrying the bound org on success. The returned
-// Claims flow through auth.WithClaims exactly like a verified Thunder JWT's
-// projection, so tenantGate binds the org with no changes of its own.
-func (v *SREHandoffVerifier) Verify(bearer string) (*Claims, bool) {
+// "Bearer <token>") against the token minted for the configured org, in
+// constant time, and returns synthetic Claims carrying that org on success.
+// The returned Claims flow through auth.WithClaims exactly like a verified
+// Thunder JWT's projection, so tenantGate binds the org with no changes of
+// its own. Rejects when the prefix is missing, when no token has been minted
+// for the org yet, on a token-store error, and on a mismatch.
+func (v *SREHandoffVerifier) Verify(ctx context.Context, bearer string) (*Claims, bool) {
 	if v == nil {
 		return nil, false
 	}
@@ -66,7 +87,16 @@ func (v *SREHandoffVerifier) Verify(bearer string) (*Claims, bool) {
 		return nil, false
 	}
 	token := bearer[len(prefix):]
-	if subtle.ConstantTimeCompare([]byte(token), []byte(v.secret)) != 1 {
+
+	minted, ok, err := v.tokens.Get(ctx, v.org)
+	if err != nil {
+		slog.WarnContext(ctx, "sre handoff: token lookup failed")
+		return nil, false
+	}
+	if !ok {
+		return nil, false
+	}
+	if subtle.ConstantTimeCompare([]byte(token), []byte(minted)) != 1 {
 		return nil, false
 	}
 	return &Claims{Subject: "sre-handoff", ClientID: "aep-mcp-server", OuHandle: v.org}, true

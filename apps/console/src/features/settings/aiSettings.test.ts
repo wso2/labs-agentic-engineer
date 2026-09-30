@@ -59,6 +59,7 @@ const anthropicCaps: LLMCapabilities = {
   imageInput: "yes",
   nativePdf: true,
   generatedAgents: true,
+  sreAgent: false,
 };
 
 const ollamaCaps: LLMCapabilities = {
@@ -67,6 +68,7 @@ const ollamaCaps: LLMCapabilities = {
   imageInput: "no",
   nativePdf: false,
   generatedAgents: true,
+  sreAgent: false,
 };
 
 const anthropic: LLMProjection = {

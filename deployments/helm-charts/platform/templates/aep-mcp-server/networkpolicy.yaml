@@ -1,12 +1,9 @@
-{{- if .Values.sreHandoff.enabled }}
-# With sreHandoff enabled, aep-mcp-server applies the shared handoff bearer
-# (AEP_MCP_DEFAULT_BEARER) to any request that arrives without its own
-# Authorization header. Limit ingress to the SRE agent's pods (callerPodLabels)
-# in its namespace (callerNamespace) so only the trusted handoff caller can use
-# that fallback. See docs/developer-guide/sre-handoff-security.md.
-{{- if not .Values.sreHandoff.callerPodLabels }}
-{{- fail "sreHandoff.callerPodLabels is required when sreHandoff.enabled (the SRE agent pod's labels)" }}
-{{- end }}
+{{- if .Values.sreAgent.enabled }}
+# With sreAgent enabled, the SRE agent reaches aep-mcp-server only through the
+# OpenChoreo control-plane gateway (httproute.yaml), so only that gateway's
+# proxy pods are admitted. Every request still needs a bearer that aep-api
+# accepts (for the SRE agent, the handoff token minted for sreAgent.org);
+# this policy narrows who can present one.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -26,10 +23,10 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ required "sreHandoff.callerNamespace is required when sreHandoff.enabled" .Values.sreHandoff.callerNamespace | quote }}
+              kubernetes.io/metadata.name: openchoreo-control-plane
           podSelector:
             matchLabels:
-              {{- toYaml .Values.sreHandoff.callerPodLabels | nindent 14 }}
+              gateway.networking.k8s.io/gateway-name: gateway-default
       ports:
         - protocol: TCP
           port: http
