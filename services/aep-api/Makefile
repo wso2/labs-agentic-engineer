@@ -1,4 +1,4 @@
-.PHONY: build test test-db cover check-no-legacy-creds gen-api gen-api-check gen-oc-client gen-oc-client-check gen-mocks deadcode deadcode-check
+.PHONY: build test test-db cover check-no-legacy-creds gen-api gen-api-check rt-copy-check gen-oc-client gen-oc-client-check gen-mocks deadcode deadcode-check
 
 build:
 	go build ./...
@@ -74,9 +74,26 @@ gen-api:
 	@gofmt -w internal/gen/models_gen.go internal/gen/server_gen.go internal/igen/igen_gen.go
 	@echo "API types + strict server (with embedded spec) regenerated"
 
+# The ae-studio ResourceType is go:embed'd from a committed copy of
+# components/.../ae-studio/resourcetype.yaml (go:embed cannot cross the module
+# boundary, and the Dockerfile build never runs go generate). Re-copy the source
+# and fail if the committed copy changed. Not wired into `build`: root `make
+# build` runs go generate first, so a build-time check could never fire.
+RT_GEN_PKG := ./internal/organization/aestudio/
+RT_COPY    := internal/organization/aestudio/resourcetype.yaml
+rt-copy-check:
+	@go generate $(RT_GEN_PKG)
+	@if ! git diff --exit-code --quiet -- $(RT_COPY); then \
+		git diff --stat -- $(RT_COPY) | cat; \
+		echo ""; \
+		echo "Embedded ResourceType differs from components/dataplane/ae-system-project/ae-studio/resourcetype.yaml."; \
+		echo "Run 'go generate $(RT_GEN_PKG)' in services/aep-api and commit the copy."; \
+		exit 1; \
+	fi
+
 # CI freshness gate: regenerate, then fail if anything tracked drifted — a
 # contract edit without `make gen-api`, or a hand-edit of generated output.
-gen-api-check: gen-api
+gen-api-check: gen-api rt-copy-check
 	@if ! git diff --exit-code --quiet -- internal/gen/ internal/igen/; then \
 		git diff --stat -- internal/gen/ internal/igen/ | cat; \
 		echo ""; \

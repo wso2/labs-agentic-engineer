@@ -1,0 +1,444 @@
+# Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+#
+# WSO2 LLC. licenses this file to you under the Apache License,
+# Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# The ae-studio ResourceType (ticket 08). Installed per org by aep-api (organization/aestudio), which embeds a byte copy made by go generate. parameters change per AE release or org (a new ResourceRelease, aep-api re-pins); environmentConfigs are install facts (an RRB PUT, no release).
+
+apiVersion: openchoreo.dev/v1alpha1
+kind: ResourceType
+metadata:
+  name: ae-studio
+spec:
+  retainPolicy: Delete
+  parameters:
+    openAPIV3Schema:
+      type: object
+      required: [images, org, agentClientId, secrets]
+      properties:
+        images:
+          type: object
+          required: [designAgent, collab, studioTools]
+          properties:
+            designAgent: { type: string }
+            collab: { type: string }
+            studioTools: { type: string }
+        org:
+          type: object
+          required: [id, handle]
+          properties:
+            id: { type: string }
+            handle: { type: string }
+        agentClientId: { type: string }
+        modelConnection:
+          # 07 §4, R18: the non-secret connection fields as one JSON string (AE_MODEL_CONNECTION); an edit re-pins.
+          type: string
+          default: ""
+        githubOwner: { type: string, default: "" }   # remote-git owner guard, repo-create guard
+        secrets:
+          type: object
+          required: [designAgent, studioTools]
+          properties:
+            designAgent: &secretSet
+              type: object
+              required: [rev, data]
+              properties:
+                rev: { type: string }
+                data:
+                  type: array
+                  items:
+                    type: object
+                    required: [env, key, property]
+                    properties:
+                      env: { type: string }
+                      key: { type: string }
+                      property: { type: string }
+            studioTools: *secretSet
+  environmentConfigs:
+    openAPIV3Schema:
+      type: object
+      required: [gatewayHost, consoleOrigins, idp, aepApiBaseUrl, aeOnlyClientId]
+      properties:
+        gatewayHost: { type: string }
+        publicScheme: { type: string, default: https }
+        publicPortSuffix: { type: string, default: "" }
+        listenerName: { type: string, default: https }
+        consoleOrigins: { type: array, items: { type: string } }
+        idp:
+          type: object
+          required: [issuer, jwksUrl, tokenUrl]
+          properties:
+            issuer: { type: string }
+            jwksUrl: { type: string }
+            tokenUrl: { type: string }
+            userAudiences: { type: array, items: { type: string }, default: [APP_FACTORY_CONSOLE] }
+        aepApiBaseUrl: { type: string }
+        aeOnlyClientId: { type: string }
+        runtimeClassName: { type: string, default: "" }
+        cilium: { type: boolean, default: false }
+        storage:
+          # 20 §2: one budget per pod, all three from the same install facts.
+          type: object
+          default: {}
+          properties:
+            sizeLimit: { type: string, default: 3Gi }
+            ephemeralRequest: { type: string, default: 1Gi }
+            budgetBytes: { type: string, default: "2147483648" }   # a STRING: the binding must send it quoted (P-10)
+        pullSecret:
+          type: object
+          default: { remoteKey: "" }
+          properties:
+            remoteKey: { type: string, default: "" }
+            property: { type: string, default: "" }
+        extraEgress:
+          type: array
+          default: []
+          items: { type: object, x-kubernetes-preserve-unknown-fields: true }
+  resources:
+    - id: es-tools
+      template:
+        apiVersion: external-secrets.io/v1
+        kind: ExternalSecret
+        metadata:
+          name: ${metadata.name}-tools
+          namespace: ${metadata.namespace}
+          labels: ${metadata.labels}
+        spec:
+          refreshInterval: 15s
+          secretStoreRef: { kind: ClusterSecretStore, name: "${dataplane.secretStore}" }
+          target:
+            name: ${metadata.name}-tools
+            creationPolicy: Owner
+            template:
+              mergePolicy: Merge
+              data: { AE_SECRET_REV: "${parameters.secrets.studioTools.rev}" }
+          data: '${parameters.secrets.studioTools.data.map(s, {"secretKey": s.env, "remoteRef": {"key": s.key, "property": s.property}})}'
+    - id: es-agent
+      includeWhen: ${size(parameters.secrets.designAgent.data) > 0}
+      template:
+        apiVersion: external-secrets.io/v1
+        kind: ExternalSecret
+        metadata:
+          name: ${metadata.name}-agent
+          namespace: ${metadata.namespace}
+          labels: ${metadata.labels}
+        spec:
+          refreshInterval: 15s
+          secretStoreRef: { kind: ClusterSecretStore, name: "${dataplane.secretStore}" }
+          target:
+            name: ${metadata.name}-agent
+            creationPolicy: Owner
+            template:
+              mergePolicy: Merge
+              data: { AE_SECRET_REV: "${parameters.secrets.designAgent.rev}" }
+          data: '${parameters.secrets.designAgent.data.map(s, {"secretKey": s.env, "remoteRef": {"key": s.key, "property": s.property}})}'
+    - id: es-pull
+      includeWhen: ${environmentConfigs.pullSecret.remoteKey != ""}
+      template:
+        apiVersion: external-secrets.io/v1
+        kind: ExternalSecret
+        metadata:
+          name: ${metadata.name}-pull
+          namespace: ${metadata.namespace}
+          labels: ${metadata.labels}
+        spec:
+          refreshInterval: 1h
+          secretStoreRef: { kind: ClusterSecretStore, name: "${dataplane.secretStore}" }
+          target:
+            name: ${metadata.name}-pull
+            template: { type: kubernetes.io/dockerconfigjson }
+          data:
+            - secretKey: .dockerconfigjson
+              remoteRef: { key: "${environmentConfigs.pullSecret.remoteKey}", property: "${environmentConfigs.pullSecret.property}" }
+
+    - id: deployment
+      readyWhen: ${has(applied.deployment.status.readyReplicas) && applied.deployment.status.readyReplicas == 1 && has(applied.deployment.status.updatedReplicas) && applied.deployment.status.updatedReplicas == 1}
+      template:
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: ${metadata.name}
+          namespace: ${metadata.namespace}
+          labels: ${metadata.labels}
+        spec:
+          replicas: 1
+          strategy: { type: Recreate }
+          selector: { matchLabels: "${metadata.labels}" }
+          template:
+            metadata:
+              labels: ${metadata.labels}
+              annotations:
+                dev.gvisor.spec.mount.files-sock.share: pod
+                dev.gvisor.spec.mount.mcp-sock.share: pod
+            spec:
+              runtimeClassName: '${environmentConfigs.runtimeClassName != "" ? environmentConfigs.runtimeClassName : oc_omit()}'
+              automountServiceAccountToken: false
+              enableServiceLinks: false
+              shareProcessNamespace: false
+              terminationGracePeriodSeconds: 30                                 # 07: shutdown drain
+              imagePullSecrets: '${environmentConfigs.pullSecret.remoteKey != "" ? [{"name": metadata.name + "-pull"}] : oc_omit()}'
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 10001
+                runAsGroup: 10001
+                fsGroup: 10001
+                seccompProfile: { type: RuntimeDefault }
+              # Socket dirs are mounted now; each socket joins its containers' /readyz in the phase that serves it.
+              volumes:
+                - { name: files-sock, emptyDir: { medium: Memory, sizeLimit: 1Mi } }
+                - { name: mcp-sock,   emptyDir: { medium: Memory, sizeLimit: 1Mi } }
+                - name: studio-data                                             # 20: one disk emptyDir, a cache of GitHub
+                  emptyDir: { sizeLimit: "${environmentConfigs.storage.sizeLimit}" }
+                - { name: tmp-agent,  emptyDir: { sizeLimit: 256Mi } }
+                - { name: tmp-collab, emptyDir: { sizeLimit: 64Mi } }
+                - { name: tmp-tools,  emptyDir: { sizeLimit: 256Mi } }
+              containers:
+                - name: ae-design-agent
+                  image: ${parameters.images.designAgent}
+                  command: [node, --import, tsx, src/main.ts]   # PID 1 is node: SIGTERM reaches the app within the grace period; WORKDIR is the package dir
+                  ports: [ { name: design, containerPort: 8080 } ]
+                  env:
+                    - { name: AE_ORG_ID, value: "${parameters.org.id}" }
+                    - { name: AE_ORG_HANDLE, value: "${parameters.org.handle}" }
+                    - { name: AE_IDP_ISSUER, value: "${environmentConfigs.idp.issuer}" }
+                    - { name: AE_IDP_JWKS_URL, value: "${environmentConfigs.idp.jwksUrl}" }
+                    - { name: AE_USER_AUDIENCES, value: '${environmentConfigs.idp.userAudiences.join(",")}' }
+                    - { name: AE_MCP_SOCKET, value: /run/ae/mcp/mcp.sock }
+                    - { name: AE_TURN_SOCKET, value: /run/ae/mcp/turn.sock }
+                    - { name: AE_COLLAB_LOCAL_URL, value: "ws://127.0.0.1:8091" }
+                    - { name: AE_SNAPSHOTS_DIR, value: /snapshots }
+                    - { name: AE_MODEL_CONNECTION, value: "${parameters.modelConnection}" }
+                    - { name: AE_EXPECTED_SECRET_REV, value: "${size(parameters.secrets.designAgent.data) > 0 ? parameters.secrets.designAgent.rev : \"\"}" }
+                    - { name: HOME, value: /tmp }
+                    - { name: AE_LISTEN_PORT, value: "8080" }
+                    - { name: AE_HEALTH_PORT, value: "9080" }
+                  envFrom: '${size(parameters.secrets.designAgent.data) > 0 ? [{"secretRef": {"name": metadata.name + "-agent"}}] : oc_omit()}'
+                  startupProbe: { httpGet: { path: /readyz, port: 9080 }, periodSeconds: 5, failureThreshold: 40 }
+                  readinessProbe: { httpGet: { path: /readyz, port: 9080 }, periodSeconds: 10 }
+                  resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { memory: 1Gi } }
+                  securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+                  volumeMounts:
+                    - { name: mcp-sock, mountPath: /run/ae/mcp }
+                    - { name: studio-data, mountPath: /snapshots, subPath: snapshots, readOnly: true }   # 20
+                    - { name: tmp-agent, mountPath: /tmp }
+                - name: ae-collab
+                  image: ${parameters.images.collab}
+                  command: [node, --import, tsx, src/main.ts]   # PID 1 is node: SIGTERM reaches the app within the grace period; WORKDIR is the package dir
+                  ports: [ { name: collab, containerPort: 8081 } ]
+                  env:
+                    - { name: AE_ORG_ID, value: "${parameters.org.id}" }
+                    - { name: AE_ORG_HANDLE, value: "${parameters.org.handle}" }
+                    - { name: AE_IDP_ISSUER, value: "${environmentConfigs.idp.issuer}" }
+                    - { name: AE_IDP_JWKS_URL, value: "${environmentConfigs.idp.jwksUrl}" }
+                    - { name: AE_USER_AUDIENCES, value: '${environmentConfigs.idp.userAudiences.join(",")}' }
+                    - { name: AE_AGENT_CLIENT_ID, value: "${parameters.agentClientId}" }
+                    - { name: AE_ALLOWED_ORIGINS, value: '${environmentConfigs.consoleOrigins.join(",")}' }   # 10
+                    - { name: AE_FILES_SOCKET, value: /run/ae/files/files.sock }
+                    - { name: HOME, value: /tmp }
+                    - { name: AE_LISTEN_PORT, value: "8081" }
+                    - { name: AE_HEALTH_PORT, value: "9081" }
+                  startupProbe: { httpGet: { path: /readyz, port: 9081 }, periodSeconds: 5, failureThreshold: 40 }
+                  readinessProbe: { httpGet: { path: /readyz, port: 9081 }, periodSeconds: 10 }
+                  resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { memory: 512Mi } }
+                  securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+                  volumeMounts:
+                    - { name: files-sock, mountPath: /run/ae/files }
+                    - { name: tmp-collab, mountPath: /tmp }
+                - name: ae-studio-tools
+                  image: ${parameters.images.studioTools}
+                  ports: [ { name: tools, containerPort: 8082 } ]
+                  env:
+                    - { name: AE_ORG_ID, value: "${parameters.org.id}" }
+                    - { name: AE_ORG_HANDLE, value: "${parameters.org.handle}" }
+                    - { name: AE_IDP_ISSUER, value: "${environmentConfigs.idp.issuer}" }
+                    - { name: AE_IDP_JWKS_URL, value: "${environmentConfigs.idp.jwksUrl}" }
+                    - { name: AE_IDP_TOKEN_URL, value: "${environmentConfigs.idp.tokenUrl}" }
+                    - { name: AE_USER_AUDIENCES, value: '${environmentConfigs.idp.userAudiences.join(",")}' }
+                    - { name: AE_M2M_CLIENT_ID, value: "${environmentConfigs.aeOnlyClientId}" }
+                    - { name: AEP_API_BASE_URL, value: "${environmentConfigs.aepApiBaseUrl}" }
+                    - { name: AE_FILES_SOCKET, value: /run/ae/files/files.sock }
+                    - { name: AE_MCP_SOCKET, value: /run/ae/mcp/mcp.sock }
+                    - { name: AE_TURN_SOCKET, value: /run/ae/mcp/turn.sock }
+                    - { name: AE_STUDIO_DATA_DIR, value: /studio-data }
+                    - { name: AE_STORAGE_BUDGET_BYTES, value: "${environmentConfigs.storage.budgetBytes}" }   # 20
+                    - { name: AE_EXPECTED_SECRET_REV, value: "${parameters.secrets.studioTools.rev}" }
+                    - { name: HOME, value: /tmp }
+                    - { name: AE_LISTEN_PORT, value: "8082" }
+                    - { name: AE_HEALTH_PORT, value: "9082" }
+                    - { name: AE_GITHUB_OWNER, value: "${parameters.githubOwner}" }
+                  envFrom:
+                    - secretRef: { name: "${metadata.name}-tools" }
+                  startupProbe: { httpGet: { path: /readyz, port: 9082 }, periodSeconds: 2, failureThreshold: 30 }
+                  readinessProbe: { httpGet: { path: /readyz, port: 9082 }, periodSeconds: 10 }
+                  resources:
+                    requests: { cpu: 100m, memory: 256Mi, ephemeral-storage: "${environmentConfigs.storage.ephemeralRequest}" }   # 20
+                    limits: { memory: 1Gi }
+                  securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+                  volumeMounts:
+                    - { name: files-sock, mountPath: /run/ae/files }
+                    - { name: mcp-sock, mountPath: /run/ae/mcp }
+                    - { name: studio-data, mountPath: /studio-data }            # 20: git root, rw
+                    - { name: tmp-tools, mountPath: /tmp }
+    - id: service
+      template:
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: ${metadata.name}
+          namespace: ${metadata.namespace}
+          labels: ${metadata.labels}
+        spec:
+          selector: ${metadata.labels}
+          ports:
+            - { name: design, port: 8080, targetPort: design }
+            - { name: collab, port: 8081, targetPort: collab }
+            - { name: tools,  port: 8082, targetPort: tools }
+
+    - id: route-design
+      template:
+        apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          name: ${metadata.name}-design
+          namespace: ${metadata.namespace}
+          labels: ${metadata.labels}
+        spec:
+          parentRefs: [ { name: "${gateway.ingress.external.name}", namespace: "${gateway.ingress.external.namespace}", sectionName: "${environmentConfigs.listenerName}" } ]
+          hostnames: [ "${oc_dns_label(metadata.resourceNamespace, 'ae-design-agent')}.${environmentConfigs.gatewayHost}" ]
+          rules:
+            - matches: [ { path: { type: PathPrefix, value: /v1 } } ]
+              filters:
+                - type: CORS
+                  cors:
+                    allowOrigins: '${environmentConfigs.consoleOrigins}'          # 10
+                    allowMethods: [GET, POST, DELETE, OPTIONS]
+                    allowHeaders: [Authorization, Content-Type]                 # 07: Last-Event-ID dropped
+                    maxAge: 600
+              timeouts: { request: "0s" }
+              backendRefs: [ { name: "${metadata.name}", port: 8080 } ]
+    - id: route-collab
+      template:
+        apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          name: ${metadata.name}-collab
+          namespace: ${metadata.namespace}
+          labels: ${metadata.labels}
+        spec:
+          parentRefs: [ { name: "${gateway.ingress.external.name}", namespace: "${gateway.ingress.external.namespace}", sectionName: "${environmentConfigs.listenerName}" } ]
+          hostnames: [ "${oc_dns_label(metadata.resourceNamespace, 'ae-collab')}.${environmentConfigs.gatewayHost}" ]
+          rules:
+            - matches: [ { path: { type: PathPrefix, value: /v1/rooms } } ]
+              timeouts: { request: "0s" }
+              backendRefs: [ { name: "${metadata.name}", port: 8081 } ]
+    - id: route-tools
+      template:
+        apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          name: ${metadata.name}-tools
+          namespace: ${metadata.namespace}
+          labels: ${metadata.labels}
+        spec:
+          parentRefs: [ { name: "${gateway.ingress.external.name}", namespace: "${gateway.ingress.external.namespace}", sectionName: "${environmentConfigs.listenerName}" } ]
+          hostnames: [ "${oc_dns_label(metadata.resourceNamespace, 'ae-studio-tools')}.${environmentConfigs.gatewayHost}" ]
+          rules:
+            - matches: [ { path: { type: PathPrefix, value: /v1 } } ]
+              filters:
+                - type: CORS
+                  cors:
+                    allowOrigins: '${environmentConfigs.consoleOrigins}'
+                    allowMethods: [GET, OPTIONS]
+                    allowHeaders: [Authorization, Content-Type]
+                    maxAge: 600
+              timeouts: { request: 60s }
+              backendRefs: [ { name: "${metadata.name}", port: 8082 } ]
+            - matches: [ { path: { type: PathPrefix, value: /internal/v1 } } ]
+              timeouts: { request: 120s }
+              backendRefs: [ { name: "${metadata.name}", port: 8082 } ]
+            - matches: [ { path: { type: Exact, value: /webhooks/github }, method: POST } ]
+              timeouts: { request: 10s }
+              backendRefs: [ { name: "${metadata.name}", port: 8082 } ]
+    - id: route-tools-turns
+      template:
+        apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          name: ${metadata.name}-tools-turns
+          namespace: ${metadata.namespace}
+          labels: ${metadata.labels}
+        spec:
+          parentRefs: [ { name: "${gateway.ingress.external.name}", namespace: "${gateway.ingress.external.namespace}", sectionName: "${environmentConfigs.listenerName}" } ]
+          hostnames: [ "${oc_dns_label(metadata.resourceNamespace, 'ae-studio-tools')}.${environmentConfigs.gatewayHost}" ]
+          rules:
+            - matches: [ { path: { type: RegularExpression, value: '^/internal/v1/repos/[^/]+/[^/]+/turns$' }, method: POST } ]
+              timeouts: { request: 35m }
+              backendRefs: [ { name: "${metadata.name}", port: 8082 } ]
+    - id: streams-idle
+      template:
+        apiVersion: gateway.kgateway.dev/v1alpha1
+        kind: TrafficPolicy
+        metadata:
+          name: ${metadata.name}-streams
+          namespace: ${metadata.namespace}
+          labels: ${metadata.labels}
+        spec:
+          targetRefs:
+            - { group: gateway.networking.k8s.io, kind: HTTPRoute, name: "${metadata.name}-design" }
+            - { group: gateway.networking.k8s.io, kind: HTTPRoute, name: "${metadata.name}-collab" }
+            - { group: gateway.networking.k8s.io, kind: HTTPRoute, name: "${metadata.name}-tools-turns" }
+          timeouts: { streamIdle: 300s }
+
+    - id: netpol
+      template:
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        metadata:
+          name: ${metadata.name}
+          namespace: ${metadata.namespace}
+          labels: ${metadata.labels}
+        spec:
+          podSelector: { matchLabels: "${metadata.labels}" }
+          policyTypes: [Ingress, Egress]
+          ingress:
+            - from: [ { namespaceSelector: {}, podSelector: { matchLabels: { openchoreo.dev/system-component: gateway } } } ]
+              ports: [ { port: 8080 }, { port: 8081 }, { port: 8082 } ]
+          egress: '${dyn([
+              {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}}, "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
+               "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
+              {"to": [{"ipBlock": {"cidr": "0.0.0.0/0", "except": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "100.64.0.0/10", "127.0.0.0/8"]}}],
+               "ports": [{"protocol": "TCP", "port": 80}, {"protocol": "TCP", "port": 443}]}
+            ]) + dyn(environmentConfigs.extraEgress)}'
+    - id: cnp-apiserver
+      includeWhen: ${environmentConfigs.cilium}
+      template:
+        apiVersion: cilium.io/v2
+        kind: CiliumNetworkPolicy
+        metadata:
+          name: ${metadata.name}-deny-apiserver
+          namespace: ${metadata.namespace}
+          labels: ${metadata.labels}
+        spec:
+          endpointSelector: { matchLabels: "${metadata.labels}" }
+          egressDeny: [ { toEntities: [kube-apiserver, host, remote-node] } ]
+
+  outputs:
+    - name: designUrl
+      value: ${environmentConfigs.publicScheme}://${oc_dns_label(metadata.resourceNamespace, 'ae-design-agent')}.${environmentConfigs.gatewayHost}${environmentConfigs.publicPortSuffix}
+    - name: collabUrl
+      value: '${environmentConfigs.publicScheme == "https" ? "wss" : "ws"}://${oc_dns_label(metadata.resourceNamespace, "ae-collab")}.${environmentConfigs.gatewayHost}${environmentConfigs.publicPortSuffix}'
+    - name: toolsUrl
+      value: ${environmentConfigs.publicScheme}://${oc_dns_label(metadata.resourceNamespace, 'ae-studio-tools')}.${environmentConfigs.gatewayHost}${environmentConfigs.publicPortSuffix}
+    - name: webhookUrl
+      value: ${environmentConfigs.publicScheme}://${oc_dns_label(metadata.resourceNamespace, 'ae-studio-tools')}.${environmentConfigs.gatewayHost}${environmentConfigs.publicPortSuffix}/webhooks/github
