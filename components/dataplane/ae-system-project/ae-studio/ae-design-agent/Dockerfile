@@ -55,16 +55,17 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm install --frozen-lockfile --store-dir=/pnpm/store --filter @aep/ae-design-agent...
 
 # @aep/ae-design-agent runs from TypeScript source via tsx (no build of its own), but it
-# imports @aep/agent-stream, @aep/collab-doc and @aep/web-search as packages
-# whose `exports` resolve to ./dist — all MUST be compiled before the service
-# can start.
+# imports @aep/agent-stream, @aep/collab-doc, @aep/web-search and
+# @aep/platform-idp-auth (the pod-mode /v1 gate) as packages whose `exports`
+# resolve to ./dist — all MUST be compiled before the service can start, in
+# either mode: main.ts imports the pod listeners unconditionally.
 # @aep/excalidraw-dsl builds FIRST: @aep/agent-stream imports it (the layout
 # write-gate), so its dist must exist for agent-stream's tsc to resolve it.
 # Without this step the container crashes at boot with "Cannot find module
 # .../@aep/agent-stream/dist" (or the collab-doc analog). These depend only on
 # packages/, so an agents-source edit doesn't rerun them.
 RUN pnpm --filter @aep/excalidraw-dsl build && pnpm --filter @aep/agent-stream build && pnpm --filter @aep/collab-doc build \
-    && pnpm --filter @aep/web-search build
+    && pnpm --filter @aep/web-search build && pnpm --filter @aep/platform-idp-auth build
 
 # Service source LAST: an agents-only change invalidates only this COPY (install
 # + the workspace-dep builds above stay cached). @aep/ae-design-agent runs via tsx, so

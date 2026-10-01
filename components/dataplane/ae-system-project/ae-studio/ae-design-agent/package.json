@@ -29,6 +29,7 @@
     "@ai-sdk/openai-compatible": "^3.0.55",
     "@aep/agent-stream": "workspace:*",
     "@aep/collab-doc": "workspace:*",
+    "@aep/platform-idp-auth": "workspace:*",
     "@aep/web-search": "workspace:*",
     "@hocuspocus/provider": "^4.3.0",
     "ai": "^7.0.2",

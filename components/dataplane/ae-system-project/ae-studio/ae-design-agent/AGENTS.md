@@ -65,6 +65,18 @@ off the stream. The plan tool contract (inputs, results, error codes, the
 ## Run
 
 - `pnpm --filter @aep/ae-design-agent dev` — SSE server, watch/reload. `start` — run once.
+- **Two modes**, chosen by env in `src/modes.ts` (`selectModes`); boot fails
+  with neither, and a partial pod env fails naming every missing key.
+  **Pod mode** (`AE_ORG_ID` set, the AE Studio pod; `src/pod/`): the public
+  port (`AE_LISTEN_PORT`, 8080) serves `/v1` behind the user gate
+  (`@aep/platform-idp-auth`: a Platform IdP user token of `AE_IDP_ISSUER`
+  with an `AE_USER_AUDIENCES` aud, and `ouId`/`ouHandle` equal to
+  `AE_ORG_ID`/`AE_ORG_HANDLE`). M2M → 401, another org → 403, both before
+  route matching; no `/v1` operations yet, so an admitted request is a 404
+  problem. The health port (`AE_HEALTH_PORT`, 9080, not routed) serves
+  `/healthz` and `/readyz`. It refuses to start when `AE_SECRET_REV` ≠
+  `AE_EXPECTED_SECRET_REV`. **Legacy mode** (`AGENT_JWT_*`, the chart
+  Deployment): the SSE server below. SIGTERM closes both.
 - Endpoints: `GET /healthz` (open) · `POST /conversations/:id/turns` (SSE) ·
   `GET /conversations/:id` — the last two behind the M2M gate.
 - **No boot-time key or model**: the model is built per turn from the

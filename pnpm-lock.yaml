@@ -295,6 +295,9 @@ importers:
       '@aep/collab-doc':
         specifier: workspace:*
         version: link:../../../../../packages/collab-doc
+      '@aep/platform-idp-auth':
+        specifier: workspace:*
+        version: link:../../../../../packages/platform-idp-auth
       '@aep/web-search':
         specifier: workspace:*
         version: link:../../../../../packages/web-search
