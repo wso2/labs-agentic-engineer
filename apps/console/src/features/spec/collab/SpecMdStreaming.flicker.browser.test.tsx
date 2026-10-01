@@ -18,7 +18,7 @@
 
 // Reproduction loop for the "flicker while requirements stream" bug (real
 // Chromium — needs real layout + a live DOM). It drives the EXACT live write
-// cadence: components/dataplane/ae-system-project/ae-studio/ae-design-agent' StreamingDocWriter.flushLines writes
+// cadence: the design agent's StreamingDocWriter.flushLines writes
 // `content.slice(0, lastNewline+1)` on every line boundary, each write going
 // through @aep/collab-doc (full markdown reparse + y-prosemirror
 // `updateYFragment`). We replicate that flush sequence against the real

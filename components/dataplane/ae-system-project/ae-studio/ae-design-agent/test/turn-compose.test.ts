@@ -36,6 +36,7 @@ const SKILLS_DIR = path.resolve(fileURLToPath(import.meta.url), "../../../../../
 // A wrong ../ count after a move would make every compose test read an empty
 // catalogue and pass; fail loudly instead.
 assert.ok(fs.existsSync(SKILLS_DIR), `skills dir not found at ${SKILLS_DIR}`);
+
 test("chat rides verbatim, with the spec-paths rule appended", () => {
   const out = composeInstruction({ kind: "chat", text: "add a returns policy" });
   assert.ok(out.startsWith("add a returns policy"), "the user's words lead");

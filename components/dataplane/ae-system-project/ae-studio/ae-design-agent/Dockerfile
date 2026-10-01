@@ -50,7 +50,7 @@ COPY components/dataplane/ae-system-project/ae-studio/ae-design-agent/package.js
 # Install @aep/ae-design-agent + its workspace deps. This also installs the workspace ROOT
 # project's devDependencies (pnpm always installs the root's deps) — so `typescript`
 # is present to compile @aep/agent-stream in the next step. (@types/node and tsx
-# ride in via @aep/ae-design-agent' own dependencies.)
+# ride in via @aep/ae-design-agent's own dependencies.)
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm install --frozen-lockfile --store-dir=/pnpm/store --filter @aep/ae-design-agent...
 
