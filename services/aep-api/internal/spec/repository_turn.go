@@ -108,16 +108,6 @@ type TurnTerminal struct {
 	// ContextTokens is the conversation's context size at the turn's end
 	// (AgentTurn.ContextTokens); nil when the turn left no measure.
 	ContextTokens *int64
-	// SpecEdited is true when the turn authored real spec changes: a committed
-	// turn whose fold produced a net change, or a room-scoped turn whose agent
-	// edited the collab doc. It is independent of NoChanges: a room turn is always NoChanges
-	// (git is untouched until the committer flushes the doc) yet still SpecEdited.
-	SpecEdited bool
-	// EditedPaths lists the collab-doc paths a room turn's manifest touched —
-	// the paths whose later committer flush must be attributed to the agent,
-	// not the flushing user (issue #239). In-process only (never persisted);
-	// empty for a committed turn.
-	EditedPaths []string
 }
 
 // TurnRepository is the agent_turns row store (design D17/D18): the durable

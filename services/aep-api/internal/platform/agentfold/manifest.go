@@ -63,21 +63,6 @@ func (m Manifest) IsEmpty() bool {
 	return len(m.Files) == 0 && len(m.Deleted) == 0
 }
 
-// MutatedPaths returns every path the turn touched — written and deleted —
-// sorted, so callers get a deterministic list.
-func (m Manifest) MutatedPaths() []string {
-	if m.IsEmpty() {
-		return nil
-	}
-	paths := make([]string, 0, len(m.Files)+len(m.Deleted))
-	for p := range m.Files {
-		paths = append(paths, p)
-	}
-	paths = append(paths, m.Deleted...)
-	sort.Strings(paths)
-	return paths
-}
-
 // FoldParityError carries the exact paths on which the Go fold and the
 // agents-side FileBundle disagree. Any instance means the turn fails loudly
 // and main stays untouched (D14).

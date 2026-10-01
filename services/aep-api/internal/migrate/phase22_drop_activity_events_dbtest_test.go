@@ -33,7 +33,9 @@ func TestPhase22DropActivityEvents(t *testing.T) {
 		}
 	}
 	var n int64
-	db.Raw(`SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='activity_events'`).Scan(&n)
+	if err := db.Raw(`SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='activity_events'`).Scan(&n).Error; err != nil {
+		t.Fatalf("probe table: %v", err)
+	}
 	if n != 0 {
 		t.Fatalf("activity_events still exists")
 	}

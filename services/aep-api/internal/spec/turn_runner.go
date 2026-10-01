@@ -437,16 +437,11 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 		}
 		// Edits live in the room's doc; git is untouched (persistence is the
 		// #86 phase-3 committer). The base sha stays the "content as of" pin.
-		// SpecEdited reflects the agent's doc edits (non-empty manifest) so the
-		// feed can attribute this agent work — the committer's later flush lands
-		// under the user's token and cannot (issue #239). withUsage folds the
-		// manifest's token usage onto the same terminal (#249).
+		// withUsage folds the manifest's token usage onto the same terminal (#249).
 		return withUsage(TurnTerminal{
-			Status:      turnStatusCompleted,
-			CommitSHA:   job.baseRef,
-			NoChanges:   true,
-			SpecEdited:  !manifest.IsEmpty(),
-			EditedPaths: manifest.MutatedPaths(),
+			Status:    turnStatusCompleted,
+			CommitSHA: job.baseRef,
+			NoChanges: true,
 		}, manifest, contextTokens)
 	}
 
