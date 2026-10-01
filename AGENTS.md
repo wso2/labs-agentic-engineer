@@ -37,4 +37,4 @@ Implementation plans can go to `docs/design/draft` but they should not be commit
 ## More
 
 `docs/architecture.md` (overview), `docs/decisions/` (ADRs), `docs/glossary.md`
-(domain terms), `docs/developer-guide/` (setup/dev flow).
+(domain terms), `docs/developer-guide/` (setup/dev flow), `components/AGENTS.md` (the deployment-mirroring tree).
