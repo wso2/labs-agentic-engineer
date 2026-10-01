@@ -4,10 +4,11 @@
   // The TS counterpart of services/aep-api/scripts/deadcode.sh. Run via
   // `--production` so *.test.ts never count as consumers (the Go "no -test").
   //
-  // Scope: only these three workspaces (@aep/ae-design-agent, @aep/ae-collab,
-  // @aep/playground), plus @aep/web-search (web search for the
-  // agents service and the runner's `aep-web` MCP server); every other
-  // pnpm workspace is ignored. knip AUTO-DETECTS entries (agents via its package.json `exports`
+  // Scope: @aep/ae-design-agent, @aep/ae-collab and @aep/playground, plus two
+  // shared packages: @aep/web-search (web search for the agents service and
+  // the runner's `aep-web` MCP server) and @aep/platform-idp-auth (the
+  // Platform IdP token check of the AE Studio pod's TS containers); every
+  // other pnpm workspace is ignored. knip AUTO-DETECTS entries (agents via its package.json `exports`
   // map, the playground via its `play: tsx src/cli.ts` script) — do NOT add a
   // per-workspace `entry`/`project` override, it silently breaks detection.
   "ignoreWorkspaces": [
@@ -15,6 +16,7 @@
     "evals/*",
     "packages/*",
     "!packages/web-search",
+    "!packages/platform-idp-auth",
     "packages/ui/*",
     "runners/*",
     "services/aep-api",

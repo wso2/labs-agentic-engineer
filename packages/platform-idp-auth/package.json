@@ -1,0 +1,32 @@
+{
+  "name": "@aep/platform-idp-auth",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The Platform IdP token check the AE Studio pod's TypeScript containers share: verify(token, kinds) over the IdP's JWKS (exact iss, exp, aud per token kind) and userRule, the org-only check of a user token against the pod's org.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "test": "tsx --test \"test/**/*.test.ts\"",
+    "dev": "echo \"@aep/platform-idp-auth: no dev server\""
+  },
+  "dependencies": {
+    "jose": "^5.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "tsx": "^4.21.0"
+  }
+}
