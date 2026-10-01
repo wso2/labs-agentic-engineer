@@ -100,11 +100,20 @@ jobs:
       - name: Test
         run: make test
 
-      - name: Contract codegen freshness (aep-api)
-        run: make -C services/aep-api gen-api-check
-
-      - name: Dead-code gate (aep-api)
-        run: make -C services/aep-api deadcode-check
+      # Every workspace Go module that defines the target runs it; a module
+      # without one (no Makefile, or no such rule) is skipped, so a new module
+      # opts in by adding the target. `make -n` only probes for the rule.
+      - name: Contract codegen freshness + dead-code gate (every Go module)
+        run: |
+          rc=0
+          for d in $(go list -m -f '{{.Dir}}' | grep -F "$PWD"); do
+            for t in gen-api-check deadcode-check; do
+              if make -C "$d" -n "$t" >/dev/null 2>&1; then
+                echo ">> make -C $d $t"; make -C "$d" "$t" || rc=1
+              fi
+            done
+          done
+          exit $rc
 
       - name: Dead-code gate (TS — agents + playground)
         run: make deadcode-ts-check
