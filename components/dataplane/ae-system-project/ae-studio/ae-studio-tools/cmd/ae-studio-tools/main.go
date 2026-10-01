@@ -35,6 +35,7 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/config"
 	"github.com/wso2/aep/ae-studio-tools/internal/edge"
 	"github.com/wso2/aep/ae-studio-tools/internal/github"
+	"github.com/wso2/aep/ae-studio-tools/internal/webhook"
 )
 
 func main() {
@@ -62,8 +63,7 @@ func run() error {
 			Cfg:      cfg,
 			Verifier: auth.NewVerifier(cfg.IDPIssuer, auth.NewJWKSCache(cfg.IDPJWKSURL)),
 			GitHub:   github.NewClient(cfg.GitHubPAT),
-			// Placeholder until the webhook handler lands (Task 1.4).
-			Webhook: http.NotFoundHandler(),
+			Webhook:  edge.WebhookHandler(cfg.WebhookSecret, webhook.Unwired()),
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

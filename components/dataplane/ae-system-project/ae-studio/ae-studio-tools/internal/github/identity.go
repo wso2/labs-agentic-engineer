@@ -14,7 +14,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-
 // Package github is ae-studio-tools' GitHub REST client, authenticated with
 // the org's gitpat.
 package github
@@ -129,7 +128,9 @@ func statusErr(resp *http.Response, now time.Time) error {
 			wait := defaultRetryAfter
 			if reset, err := strconv.ParseInt(resp.Header.Get("X-RateLimit-Reset"), 10, 64); err == nil {
 				if d := time.Unix(reset, 0).Sub(now); d > 0 {
-					wait = d.Round(time.Second)
+					// Retry-After is whole seconds; under half a second
+					// would round to 0, which means "retry now".
+					wait = max(d.Round(time.Second), time.Second)
 				}
 			}
 			return &ErrRateLimited{RetryAfter: wait}

@@ -14,7 +14,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-
 package edge
 
 import (
@@ -25,7 +24,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
-	"log/slog"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -38,17 +36,25 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/auth"
 	"github.com/wso2/aep/ae-studio-tools/internal/config"
 	"github.com/wso2/aep/ae-studio-tools/internal/github"
+	"github.com/wso2/aep/ae-studio-tools/internal/webhook"
 )
 
 const (
 	testIssuer   = "http://idp"
 	testClientID = "ae-studio-internal-client"
+	// testWebhookSecret is a fixture, not a real secret.
+	testWebhookSecret = "test-webhook-secret"
 )
 
 // fakeGitHub is the github.Identity the harness serves: e2e-bot/42, or err.
-type fakeGitHub struct{ err error }
+// calls counts the requests that reached the handler.
+type fakeGitHub struct {
+	err   error
+	calls *int
+}
 
 func (f fakeGitHub) Whoami(context.Context) (string, int64, error) {
+	*f.calls++
 	if f.err != nil {
 		return "", 0, f.err
 	}
@@ -56,10 +62,11 @@ func (f fakeGitHub) Whoami(context.Context) (string, int64, error) {
 }
 
 type harness struct {
-	t       *testing.T
-	key     *rsa.PrivateKey
-	handler http.Handler
-	logBuf  *bytes.Buffer
+	t           *testing.T
+	key         *rsa.PrivateKey
+	handler     http.Handler
+	logBuf      *bytes.Buffer
+	githubCalls int
 }
 
 type harnessOpt func(*fakeGitHub)
@@ -88,7 +95,8 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 	}))
 	t.Cleanup(idp.Close)
 
-	gh := fakeGitHub{}
+	h := &harness{t: t, key: key}
+	gh := fakeGitHub{calls: &h.githubCalls}
 	for _, o := range opts {
 		o(&gh)
 	}
@@ -98,17 +106,14 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 		UserAudiences: []string{"aep-console-client"},
 		M2MClientID:   testClientID,
 	}
-	logBuf := &bytes.Buffer{}
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(logBuf, nil)))
-	t.Cleanup(func() { slog.SetDefault(prev) })
-
-	return &harness{t: t, key: key, logBuf: logBuf, handler: Routes(Deps{
+	h.logBuf = captureLogs(t)
+	h.handler = Routes(Deps{
 		Cfg:      cfg,
 		Verifier: auth.NewVerifier(cfg.IDPIssuer, auth.NewJWKSCache(cfg.IDPJWKSURL)),
 		GitHub:   gh,
-		Webhook:  http.NotFoundHandler(), // Task 1.4 replaces it
-	})}
+		Webhook:  WebhookHandler(testWebhookSecret, webhook.Unwired()),
+	})
+	return h
 }
 
 func (h *harness) sign(claims jwt.MapClaims) string {
@@ -184,6 +189,24 @@ func TestRoutes_UnknownV1PathGatedFirst(t *testing.T) {
 		{"POST", "/internal/v1/github/identity", h.m2m(), "ou-1", 404},
 		{"GET", "/admin", "", "", 404},
 		{"GET", "/webhooks/github", "", "", 404},
+		{"POST", "/webhooks/github", "", "", 401}, // HMAC gate, no signature
+		{"POST", "/webhooks/github/", "", "", 404},
+		// A method the contract does not declare is 404, even HEAD on a GET op.
+		{"HEAD", "/internal/v1/github/identity", h.m2m(), "ou-1", 404},
+		// Group roots without the trailing slash: gated, then 404 (no redirect).
+		{"GET", "/v1", "", "", 401},
+		{"GET", "/v1", h.user("default", "ou-1"), "", 404},
+		{"GET", "/internal/v1", "", "", 401},
+		{"GET", "/internal/v1", h.m2m(), "ou-1", 404},
+		// Dot segments are never cleaned and redirected: gated by the group
+		// the raw path names, then 404.
+		{"GET", "/internal/v1/../v1/x", "", "", 401},
+		{"GET", "/internal/v1/./github/identity", h.m2m(), "ou-1", 404},
+		{"GET", "/internal/v1//github/identity", h.m2m(), "ou-1", 404},
+		{"GET", "/v1/../internal/v1/github/identity", "", "", 401},
+		{"GET", "/v1/./x", h.user("default", "ou-1"), "", 404},
+		{"GET", "/x/../internal/v1/github/identity", h.m2m(), "ou-1", 404},
+		{"POST", "/webhooks/./github", "", "", 404},
 		{"GET", "/healthz", "", "", 404}, // health is on the health port only
 		{"GET", "/readyz", "", "", 404},
 	}
@@ -195,6 +218,9 @@ func TestRoutes_UnknownV1PathGatedFirst(t *testing.T) {
 		if c.want >= 400 && rec.Header().Get("Content-Type") != "application/problem+json" {
 			t.Errorf("%s %s content-type %q", c.method, c.path, rec.Header().Get("Content-Type"))
 		}
+	}
+	if h.githubCalls != 1 {
+		t.Fatalf("the identity handler ran %d times, want 1 (only the one 200 row)", h.githubCalls)
 	}
 	var body struct {
 		Login string

@@ -14,11 +14,12 @@
 // specific language governing permissions and limitations
 // under the License.
 
-
 package edge
 
 import (
 	"net/http"
+	"path"
+	"strings"
 
 	"github.com/wso2/aep/ae-studio-tools/internal/auth"
 	"github.com/wso2/aep/ae-studio-tools/internal/config"
@@ -32,7 +33,7 @@ type Deps struct {
 	Cfg      config.Config
 	Verifier *auth.Verifier
 	GitHub   github.Identity
-	// Webhook serves POST /webhooks/github (Task 1.4); it must not be nil.
+	// Webhook serves POST /webhooks/github (WebhookHandler); it must not be nil.
 	Webhook http.Handler
 }
 
@@ -40,22 +41,76 @@ type Deps struct {
 // route group, each listener → gate → handler. Every gate runs before route
 // matching inside its group, so an unknown path is 401/403 before it is 404.
 // The health probes are on the health listener only. A path not listed here
-// is 404. Sockets are separate listeners added in later phases.
+// is 404; nothing redirects. Sockets are separate listeners added in later
+// phases.
 func Routes(d Deps) http.Handler {
-	userGate := auth.UserGate(d.Verifier, d.Cfg.UserAudiences, d.Cfg.OrgID, d.Cfg.OrgHandle)
-	m2mGate := auth.M2MGate(d.Verifier, d.Cfg.M2MClientID, d.Cfg.OrgID)
-
-	mux := http.NewServeMux()
 	// /v1: browser, Platform IdP user JWT of the pod's org (operations land
 	// with the git engine).
-	mux.Handle("/v1/", userGate(v1Handler()))
+	v1 := auth.UserGate(d.Verifier, d.Cfg.UserAudiences, d.Cfg.OrgID, d.Cfg.OrgHandle)
+	m2mGate := auth.M2MGate(d.Verifier, d.Cfg.M2MClientID, d.Cfg.OrgID)
 	// /internal/v1: aep-api, AE-only M2M + X-Impersonate-Org. Body cap →
 	// gate → validator → generated server; every request is access-logged.
-	mux.Handle("/internal/v1/", accessLog(capBody(internalBodyBytes, m2mGate(internalHandler(d.GitHub)))))
-	// /webhooks/github: GitHub, HMAC signature (Task 1.4).
+	internal := func(next http.Handler) http.Handler {
+		return accessLog(capBody(internalBodyBytes, m2mGate(next)))
+	}
+	nf := http.HandlerFunc(notFound)
+
+	mux := http.NewServeMux()
+	mux.Handle("/v1/", v1(v1Handler()))
+	mux.Handle("/internal/v1/", internal(internalHandler(d.GitHub)))
+	// The bare group roots are exact entries so the mux does not redirect
+	// them to the subtree; each is gated, then 404.
+	mux.Handle("/v1", v1(nf))
+	mux.Handle("/internal/v1", internal(nf))
+	// /webhooks/github: GitHub, HMAC signature.
 	mux.Handle("POST /webhooks/github", d.Webhook)
-	mux.Handle("/", http.HandlerFunc(notFound))
-	return mux
+	mux.Handle("/", nf)
+	return uncleanPathNotFound(mux, []pathGroup{
+		{prefix: internalV1 + "/", notFound: internal(nf)},
+		{prefix: "/v1/", notFound: v1(nf)},
+	})
+}
+
+// pathGroup is a route group's raw path prefix and its gated 404.
+type pathGroup struct {
+	prefix   string
+	notFound http.Handler
+}
+
+// uncleanPathNotFound answers a path with dot segments, a double slash or the
+// like 404 instead of letting ServeMux redirect it to its cleaned form ahead
+// of every gate. A path whose raw prefix names a group is gated by that group
+// first, so an unauthenticated caller still sees 401/403. Clean paths go to
+// next.
+func uncleanPathNotFound(next http.Handler, groups []pathGroup) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.EscapedPath()
+		if r.Method == http.MethodConnect || isCleanPath(p) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		for _, g := range groups {
+			if strings.HasPrefix(p, g.prefix) {
+				g.notFound.ServeHTTP(w, r)
+				return
+			}
+		}
+		notFound(w, r)
+	})
+}
+
+// isCleanPath reports whether ServeMux would serve p as is: the same rule as
+// its cleanPath (path.Clean, keeping one trailing slash). ServeMux does not
+// clean CONNECT paths, so the caller lets those through.
+func isCleanPath(p string) bool {
+	if p == "" || p[0] != '/' {
+		return false
+	}
+	c := path.Clean(p)
+	if strings.HasSuffix(p, "/") && c != "/" {
+		c += "/"
+	}
+	return c == p
 }
 
 func notFound(w http.ResponseWriter, _ *http.Request) {

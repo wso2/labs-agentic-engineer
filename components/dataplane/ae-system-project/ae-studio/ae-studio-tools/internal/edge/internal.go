@@ -14,7 +14,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-
 package edge
 
 import (
@@ -54,7 +53,8 @@ type internalServer struct {
 var _ gen.StrictServerInterface = internalServer{}
 
 // internalHandler is the gated part of the group: validator → mux holding the
-// generated routes. A path or method the contract does not declare is 404.
+// generated routes. A path or method the contract does not declare is 404 at
+// the validator; the mux's catch-all keeps any miss behind it a problem body.
 func internalHandler(gh github.Identity) http.Handler {
 	strict := gen.NewStrictHandlerWithOptions(internalServer{gh: gh}, nil, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  writeRequestError,
@@ -85,14 +85,16 @@ func mustInternalRouter() routers.Router {
 }
 
 // requestValidator validates every request that matches a contract operation
-// before it reaches the generated handler; a route miss falls through to next,
-// whose catch-all answers 404. Security is not checked here: the gate in front
-// already did.
+// before it reaches the generated handler. The contract is the route table: a
+// route miss (an unknown path, or a method the operation does not declare,
+// such as HEAD on a GET op that ServeMux would otherwise serve) is 404 here and
+// never reaches next. Security is not checked here: the gate in front already
+// did.
 func requestValidator(router routers.Router, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		route, pathParams, err := router.FindRoute(r)
 		if err != nil {
-			next.ServeHTTP(w, r)
+			notFound(w, r)
 			return
 		}
 		input := &openapi3filter.RequestValidationInput{

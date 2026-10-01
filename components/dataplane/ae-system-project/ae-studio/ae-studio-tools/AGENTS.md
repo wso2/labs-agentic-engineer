@@ -26,8 +26,9 @@ toolchain, run Go make targets with `env -u GOROOT`.
 | `internal/config` | `Load(getenv)` reads the pod env; `CheckSecretRev(getenv)` refuses to start when `AE_SECRET_REV` ≠ `AE_EXPECTED_SECRET_REV` |
 | `internal/auth` | JWT verifier over the IdP JWKS; `UserGate` (`/v1`) and `M2MGate` (`/internal/v1`) |
 | `internal/problem` | the `application/problem+json` error body (leaf, so gates and edge share it) |
-| `internal/edge` | HTTP surfaces. `routes.go` is the public listener's mount table (gate before route matching in every group); `internal.go` the `/internal/v1` group (body cap → M2M gate → kin-openapi validator → generated server); `accesslog.go` logs `internal.access {method, path, status, ms}`; `NewHealth` serves `/healthz` and `/readyz` on the health port only |
+| `internal/edge` | HTTP surfaces. `routes.go` is the public listener's mount table (gate before route matching in every group); `internal.go` the `/internal/v1` group (body cap → M2M gate → kin-openapi validator → generated server); `webhook.go` is `POST /webhooks/github` (25 MiB cap → HMAC → forward; events `webhook.rejected`, `webhook.forward_failed`, `webhook.forwarded`, value-free); `accesslog.go` logs `internal.access {method, path, status, ms}`; a path ServeMux would redirect (a bare group root, dot segments, `//`) is 404 behind its group's gate instead; `NewHealth` serves `/healthz` and `/readyz` on the health port only |
 | `internal/gen` | generated: models, strict server and embedded spec for `/internal/v1` (do not edit) |
+| `internal/webhook` | `Valid`: constant-time `X-Hub-Signature-256` check against the current secret only; `Forwarder` hands a verified delivery to aep-api (`Unwired` answers `ErrUpstreamUnavailable` until phase 4) |
 | `internal/github` | GitHub REST client over the gitpat; `Whoami` = `GET /user`, rate limits map to `ErrRateLimited` |
 
 The `/v1` contract (`packages/contracts/api/ae-studio-tools/v1`) has no

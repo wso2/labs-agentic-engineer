@@ -14,7 +14,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-
 package github
 
 import (
@@ -125,5 +124,18 @@ func TestWhoami_ErrorsNeverCarryThePAT(t *testing.T) {
 	_, _, err := newClient("http://127.0.0.1:1", testPAT).Whoami(context.Background())
 	if err == nil || strings.Contains(err.Error(), testPAT) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestStatusErr_ResetUnderHalfASecondWaitsAtLeastOneSecond(t *testing.T) {
+	reset := time.Now().Add(time.Hour).Truncate(time.Second)
+	now := reset.Add(-300 * time.Millisecond) // rounds to 0 s
+	resp := &http.Response{StatusCode: http.StatusForbidden, Header: http.Header{
+		"X-Ratelimit-Remaining": {"0"},
+		"X-Ratelimit-Reset":     {strconv.FormatInt(reset.Unix(), 10)},
+	}}
+	var rl *ErrRateLimited
+	if err := statusErr(resp, now); !errors.As(err, &rl) || rl.RetryAfter < time.Second {
+		t.Fatalf("err = %v, want ErrRateLimited with RetryAfter >= 1s", err)
 	}
 }
