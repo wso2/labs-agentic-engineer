@@ -31,7 +31,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { parseTaskContextFile } from "@aep/agent-stream";
-import { mockModel, type MockStep } from "@aep/agents/shared/mock-model";
+import { mockModel, type MockStep } from "@aep/ae-design-agent/shared/mock-model";
 import { tasksCommand } from "../src/commands.js";
 import { renderTaskContextFile, taskKey, titleSlug, FsIssueStore } from "../src/ports/issue-store.js";
 

@@ -24,7 +24,7 @@ let loaded = false;
 
 /**
  * Load the nearest env file (walking up from this file to the filesystem
- * root), once. Mirrors services/agents/src/shared/env.ts so both TS
+ * root), once. Mirrors components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/shared/env.ts so both TS
  * services pick up deployments/.env identically in local dev.
  */
 export function loadDotenv(): void {

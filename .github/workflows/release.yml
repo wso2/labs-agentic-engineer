@@ -82,7 +82,7 @@ jobs:
             context: services/aep-api
             buildContexts: skills=skills
           - name: agents
-            dockerfile: services/agents/Dockerfile
+            dockerfile: components/dataplane/ae-system-project/ae-studio/ae-design-agent/Dockerfile
             context: .
           - name: collab
             dockerfile: services/collab/Dockerfile

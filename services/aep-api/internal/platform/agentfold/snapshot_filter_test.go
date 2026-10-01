@@ -23,7 +23,7 @@ import "testing"
 // drops a .txt or .csv one, which then sits in the snapshot with nothing
 // putting it in front of the model. The folder decides.
 //
-// This mirrors the identical test in services/agents — the two filters are one
+// This mirrors the identical test in components/dataplane/ae-system-project/ae-studio/ae-design-agent — the two filters are one
 // rule implemented twice, and a change to either that isn't made to the other
 // silently changes what a turn can read.
 func TestKeepInTurnSnapshot_TextReferences(t *testing.T) {

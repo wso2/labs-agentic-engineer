@@ -18,7 +18,7 @@
 # and Files-API seeding (#86 / #114). Built from the REPO ROOT context
 # (docker-compose sets `context: ..`) because @aep/collab depends on the
 # workspace package @aep/collab-doc (the shared doc model, #86 phase 4).
-# Runs from TypeScript source via tsx, like @aep/agents.
+# Runs from TypeScript source via tsx, like @aep/ae-design-agent.
 FROM node:22-bookworm-slim
 
 # Corepack fetches the pnpm release named by the root package.json's

@@ -23,8 +23,8 @@
  * turn is a flow", and parsing it yields FACTS — which token, which trailing
  * text, which idea — that a caller puts on a `TurnSpec`. The wording those
  * facts become lives in the agents service
- * (`services/agents/src/prompts/turn.ts`), the only thing here that talks to a
- * model. See `services/agents/design/ADR-0003`.
+ * (`components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/prompts/turn.ts`), the only thing here that talks to a
+ * model. See `components/dataplane/ae-system-project/ae-studio/ae-design-agent/design/ADR-0003`.
  *
  * Who parses, and why it is not one place:
  *

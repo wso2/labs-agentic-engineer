@@ -38,7 +38,7 @@ arguments are complete at `tool-input-end`.
 **A file write is applied and reported at its own `tool-input-end`, and its
 `tool-result` rides that call's own `tool-call`.**
 
-`services/agents/src/agents/main/tools/write-ledger.ts` owns this. The turn's
+`components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/agents/main/tools/write-ledger.ts` owns this. The turn's
 `WriteLedger` is created with the `files` tool set (`buildFileToolSet`), so the
 tools and the ledger cannot be wired apart, and `tapWrites` projects it over the
 turn's `onEvent` in `runConversationTurn`.
@@ -77,7 +77,7 @@ still lands as an error rather than a tick.
   holding an op the transcript has no result for. Safe by construction: such a
   turn emits no manifest, and D14 refuses to commit a turn without one.
 - The wire's frame ORDER is now this service's contract, not the SDK's. Both
-  halves are pinned in `services/agents/test/frame-order.test.ts` — the raw SDK
+  halves are pinned in `components/dataplane/ae-system-project/ae-studio/ae-design-agent/test/frame-order.test.ts` — the raw SDK
   behaviour and what we emit over it — because the second only makes sense while
   the first is still true. If an SDK upgrade starts flushing results per call,
   the ledger's suppression is what keeps one result per call.

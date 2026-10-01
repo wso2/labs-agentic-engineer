@@ -1,6 +1,6 @@
 # ADR-0001: Anchored search/replace for agent file edits
 
-- **Status:** Accepted · **Date:** 2026-06-26 · **Scope:** `@aep/agents` main agent
+- **Status:** Accepted · **Date:** 2026-06-26 · **Scope:** `@aep/ae-design-agent` main agent
 
 ## Context
 

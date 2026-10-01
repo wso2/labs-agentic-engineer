@@ -159,7 +159,7 @@ func Verify(f *Fold, m Manifest) error {
 	return nil
 }
 
-// sha256Hex matches services/agents src/shared/hash.ts sha256Hex: sha256 over
+// sha256Hex matches components/dataplane/ae-system-project/ae-studio/ae-design-agent src/shared/hash.ts sha256Hex: sha256 over
 // the UTF-8 bytes, lowercase hex.
 func sha256Hex(content string) string {
 	sum := sha256.Sum256([]byte(content))

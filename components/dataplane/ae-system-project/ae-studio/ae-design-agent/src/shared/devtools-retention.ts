@@ -130,7 +130,7 @@ export function pruneDevtoolsFile(
     fs.writeFileSync(file, JSON.stringify(db, null, 2));
     const mb = (n: number): string => `${(n / 1024 / 1024).toFixed(1)}MB`;
     return (
-      `@aep/agents: devtools retention (${retentionDays}d) removed ${removedRuns} run(s) ` +
+      `@aep/ae-design-agent: devtools retention (${retentionDays}d) removed ${removedRuns} run(s) ` +
       `and ${removedSteps} step(s), ${mb(bytesBefore)} → ${mb(fs.statSync(file).size)}\n`
     );
   } catch {

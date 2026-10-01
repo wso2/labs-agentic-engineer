@@ -98,7 +98,7 @@ export type OpResult = OpOk | OpErr;
 // --- Per-tool input shapes (the `tool-call.input` value) --------------------
 //
 // These are the WIRE source of truth. The Zod `inputSchema`s in
-// `@aep/agents` `tool.ts` carry a compile-time assert that `z.infer<schema>`
+// `@aep/ae-design-agent` `tool.ts` carry a compile-time assert that `z.infer<schema>`
 // stays equal to these — divergence fails that package's typecheck.
 
 export interface AddFileInput {
@@ -422,7 +422,7 @@ export function isCollabConfig(v: unknown): v is CollabConfig {
  * A reviewable projection of one `tool-result` part: the op intent plus its
  * result. A browser folds these into a live diff; the eval reconstructs files
  * via `applyToolCall` instead. Pure field projection — see `toChange` in
- * `@aep/agents` `change.ts`.
+ * `@aep/ae-design-agent` `change.ts`.
  */
 export interface Change {
   toolCallId: string;
@@ -1063,13 +1063,13 @@ export const AGENT_SSE_EVENT_TYPES = [
   "tool-call",
   // The call's VERDICT, and it rides that call's own `tool-call` — a file write
   // is applied and reported at its own `tool-input-end`
-  // (`services/agents/src/agents/main/tools/write-ledger.ts`), not at the tail
+  // (`components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/agents/main/tools/write-ledger.ts`), not at the tail
   // of the step. That matters because the SDK underneath does the opposite: it
   // queues a step's calls and executes them all after the whole assistant
   // message has streamed, which for a step batching five `addFile`s would leave
   // file 1's verdict waiting on file 5's body. Exactly ONE result per call
   // reaches the wire. The ordering is pinned by
-  // `services/agents/test/frame-order.test.ts` (it needs the real SDK loop).
+  // `components/dataplane/ae-system-project/ae-studio/ae-design-agent/test/frame-order.test.ts` (it needs the real SDK loop).
   "tool-result",
   "tool-error",
   "error",

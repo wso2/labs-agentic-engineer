@@ -94,7 +94,7 @@ test("host mode withholds the key, so the SDK falls back to the developer's own 
 
 // These two are about the org with NO coding credential configured, so they
 // clear it explicitly: `deployments/.env` may define one on a developer's
-// machine, and `@aep/agents` merges that file into process.env at module scope.
+// machine, and `@aep/ae-design-agent` merges that file into process.env at module scope.
 test("host mode --api-key opts back into key auth", () => {
   withCodingKeyInEnv(undefined, () => {
     withKeyInEnv("sk-ant-explicit", () => {
@@ -195,7 +195,7 @@ test("an OAuth coding token displaces ANTHROPIC_API_KEY in docker mode too", () 
   });
 });
 
-// deployments/.env is the PLATFORM's file and `@aep/agents` merges it into
+// deployments/.env is the PLATFORM's file and `@aep/ae-design-agent` merges it into
 // process.env at module scope, so a CLAUDE_CODE_OAUTH_TOKEN sitting there would
 // otherwise authenticate every host run — silently billing a shared credential
 // on the one path whose whole purpose is to bill the developer's own login.

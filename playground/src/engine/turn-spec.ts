@@ -23,13 +23,13 @@
  * directly, with no aep-api in between), which means it decides the FACTS of a
  * turn: which flow, which idea, which existing Tasks are context. It composes
  * no prompt text at all — the agents service does that
- * (`services/agents/src/prompts/turn.ts`), which is what makes a playground run
+ * (`components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/prompts/turn.ts`), which is what makes a playground run
  * and a production turn the same turn.
  *
  * This module used to be `engine/compose.ts`, a mirror of the Go composer built
  * from generated strings so the two could not drift. There is nothing left to
  * mirror: the wording exists once, in the service that sends it to the model.
- * See `services/agents/design/ADR-0003`.
+ * See `components/dataplane/ae-system-project/ae-studio/ae-design-agent/design/ADR-0003`.
  */
 
 import type { PlanContextFile, TurnSpec } from "@aep/agent-stream";

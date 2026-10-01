@@ -24,7 +24,7 @@
   // the shipped `src/` tree), which knip recognises as test-scope and strips
   // under --production — so test-only code is excluded with no carve-out here.
   // Root stray files are out of scope. mock-model is a published test seam
-  // (`@aep/agents` package.json exports); only *.test.ts / playground tests
+  // (`@aep/ae-design-agent` package.json exports); only *.test.ts / playground tests
   // import it, which --production strips — retain deliberately. `skills/` is the
   // authored skill library: prose plus payload the AGENT consumes at run time
   // (templates it copies into a project, a report generator it invokes through
@@ -34,7 +34,7 @@
   "ignore": [
     "deployments/**",
     "scripts/**",
-    "services/agents/src/shared/mock-model.ts",
+    "components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/shared/mock-model.ts",
     "skills/**"
   ],
   // An export used within its own file is not dead — this codebase deliberately

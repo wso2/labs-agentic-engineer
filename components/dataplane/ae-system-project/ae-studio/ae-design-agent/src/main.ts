@@ -22,8 +22,8 @@
  * mount the SSE app, listen. The model is built per turn from the request's
  * key and connection, so there is NO boot-time key or model here.
  *
- *   pnpm --filter @aep/agents dev     # watch + reload
- *   pnpm --filter @aep/agents start   # run once
+ *   pnpm --filter @aep/ae-design-agent dev     # watch + reload
+ *   pnpm --filter @aep/ae-design-agent start   # run once
  */
 
 import pg from "pg";
@@ -54,7 +54,7 @@ function buildAuthConfig(): AgentsAuthConfig {
 
 async function buildStore(): Promise<ConversationStore> {
   if (!config.database.url) {
-    process.stdout.write("@aep/agents: no Postgres URL — using the in-memory conversation store\n");
+    process.stdout.write("@aep/ae-design-agent: no Postgres URL — using the in-memory conversation store\n");
     return new InMemoryConversationStore();
   }
   const pool = new pg.Pool({ connectionString: config.database.url });
@@ -72,7 +72,7 @@ async function buildStore(): Promise<ConversationStore> {
   }, config.database.conversationsSweepMs);
   timer.unref();
 
-  process.stdout.write("@aep/agents: using the Postgres conversation store\n");
+  process.stdout.write("@aep/ae-design-agent: using the Postgres conversation store\n");
   return store;
 }
 
@@ -106,13 +106,13 @@ async function main(): Promise<void> {
   });
 
   app.listen(port, () => {
-    process.stdout.write(`@aep/agents SSE server listening on :${port}\n`);
+    process.stdout.write(`@aep/ae-design-agent SSE server listening on :${port}\n`);
   });
 }
 
 main().catch((err: unknown) => {
   process.stderr.write(
-    `@aep/agents failed to start: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`,
+    `@aep/ae-design-agent failed to start: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`,
   );
   process.exitCode = 1;
 });

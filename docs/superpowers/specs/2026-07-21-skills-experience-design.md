@@ -13,7 +13,7 @@ Proactive design review — no observed failures. Priorities when trade-offs con
 
 Secondary: token efficiency, operational simplicity.
 
-**Fixed constraints:** design agent = Vercel AI SDK turn loop (`services/agents`); coding agent = Claude Code Agent SDK (`runners/remote-worker`). Local development parity is a requirement.
+**Fixed constraints:** design agent = Vercel AI SDK turn loop (`components/dataplane/ae-system-project/ae-studio/ae-design-agent`); coding agent = Claude Code Agent SDK (`runners/remote-worker`). Local development parity is a requirement.
 
 **Non-goals:** authoring UX redesign; agents beyond the current design/task/coding agents.
 

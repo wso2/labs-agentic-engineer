@@ -24,7 +24,7 @@ import (
 
 const (
 	// defaultAudience is the aud claim the agents service verifies
-	// (AGENT_JWT_AUDIENCE). Keep in sync with services/agents config.
+	// (AGENT_JWT_AUDIENCE). Keep in sync with components/dataplane/ae-system-project/ae-studio/ae-design-agent config.
 	defaultAudience = "agents-service"
 	// tokenTTL bounds replay: the token only needs to be valid when the request
 	// reaches the service; once the stream is accepted expiry is irrelevant.

@@ -389,7 +389,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	skillMutationSvc := spec.NewSkillMutationService(skillSvc)
 	skillImportSvc := spec.NewSkillImportService(skillSvc)
 
-	// File-mutation agents service (services/agents) — the requirements/design/
+	// File-mutation agents service (components/dataplane/ae-system-project/ae-studio/ae-design-agent) — the requirements/design/
 	// chat generation and task-planning flows. Plain HS256 M2M bearer; the
 	// org's model connection is resolved per turn: the key is forwarded as
 	// X-Model-Key, the connection and model in the turn body.

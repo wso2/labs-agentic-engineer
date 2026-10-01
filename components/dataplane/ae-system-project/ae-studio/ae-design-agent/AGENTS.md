@@ -1,4 +1,4 @@
-# AGENTS.md — services/agents (`@aep/agents`)
+# AGENTS.md — components/dataplane/ae-system-project/ae-studio/ae-design-agent (`@aep/ae-design-agent`)
 
 TS interactive spec agents (Vercel AI SDK). Seeded with ONE agent: the **main
 file-mutation agent** (prompt-driven add/edit/remove over a spec bundle), exposed
@@ -64,7 +64,7 @@ off the stream. The plan tool contract (inputs, results, error codes, the
 
 ## Run
 
-- `pnpm --filter @aep/agents dev` — SSE server, watch/reload. `start` — run once.
+- `pnpm --filter @aep/ae-design-agent dev` — SSE server, watch/reload. `start` — run once.
 - Endpoints: `GET /healthz` (open) · `POST /conversations/:id/turns` (SSE) ·
   `GET /conversations/:id` — the last two behind the M2M gate.
 - **No boot-time key or model**: the model is built per turn from the

@@ -39,7 +39,7 @@ import { loadRepoSkills } from "./kit/skills.js";
 import { parseStartCommand, parseFlowCommand } from "@aep/contracts/commands";
 import { chatSpec, flowSpec, startSpec } from "./engine/turn-spec.js";
 import { readReferences } from "./state/references.js";
-import { loadDotenv } from "@aep/agents/shared/env";
+import { loadDotenv } from "@aep/ae-design-agent/shared/env";
 import {
   chatTurn,
   codeCommand,

@@ -18,7 +18,7 @@
 
 // Reproduction loop for the "flicker while requirements stream" bug (real
 // Chromium — needs real layout + a live DOM). It drives the EXACT live write
-// cadence: services/agents' StreamingDocWriter.flushLines writes
+// cadence: components/dataplane/ae-system-project/ae-studio/ae-design-agent' StreamingDocWriter.flushLines writes
 // `content.slice(0, lastNewline+1)` on every line boundary, each write going
 // through @aep/collab-doc (full markdown reparse + y-prosemirror
 // `updateYFragment`). We replicate that flush sequence against the real
@@ -225,7 +225,7 @@ afterEach(() => cleanup());
 
 describe("SpecMdEditor streaming flicker", () => {
   // Characterization of the DOM-level cause of the streaming flicker. This is
-  // NOT the fix gate — the fix lives in services/agents, which now writes
+  // NOT the fix gate — the fix lives in components/dataplane/ae-system-project/ae-studio/ae-design-agent, which now writes
   // streamed new files UNMARKED (addFile is accept-by-default; see
   // doc-bundle.test.ts / streaming-add.test.ts). This test pins WHY that matters:
   // routing streamed content through the MARKED write re-renders the highlighted

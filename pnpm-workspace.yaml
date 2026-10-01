@@ -7,4 +7,5 @@ packages:
   - "packages/*"
   - "packages/ui/*"
   - "services/*"
+  - "components/dataplane/ae-system-project/ae-studio/*"
   - "runners/*"

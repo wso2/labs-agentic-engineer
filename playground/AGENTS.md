@@ -89,7 +89,7 @@ requirements from. Being dot-prefixed it is stripped from every turn snapshot,
 so the agent can never read it: the idea reaches a turn ONLY as a FACT on the
 turn spec (`engine/turn-spec.ts`'s `startSpec`), exactly as aep-api attaches it
 in production. The wording it becomes is the agents service's
-(`services/agents/src/prompts/turn.ts`).
+(`components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/prompts/turn.ts`).
 
 `code` mirrors prod's milestone cycle (ADR-0011): the CLI never picks an issue
 or an order — the `aep` skill discovers its own working set from

@@ -82,7 +82,7 @@ build:
     - image: ghcr.io/wso2/aep/agents
       context: .
       docker:
-        dockerfile: services/agents/Dockerfile
+        dockerfile: components/dataplane/ae-system-project/ae-studio/ae-design-agent/Dockerfile
 
     - image: ghcr.io/wso2/aep/collab
       context: .

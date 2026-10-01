@@ -14,8 +14,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# NEW file-mutation agents service (services/agents). Built from the REPO ROOT
-# context (docker-compose sets `context: ..`) because @aep/agents imports the
+# NEW file-mutation agents service (components/dataplane/ae-system-project/ae-studio/ae-design-agent). Built from the REPO ROOT
+# context (docker-compose sets `context: ..`) because @aep/ae-design-agent imports the
 # workspace package @aep/agent-stream — pnpm must see the whole workspace to
 # resolve it. @aep/agent-stream in turn depends on @aep/excalidraw-dsl (the
 # wireframes layout write-gate), so that package must be installed AND built
@@ -43,18 +43,18 @@ WORKDIR /repo
 # pnpm store is a BuildKit cache mount (needs BuildKit; CI's buildx sets it
 # automatically; local builds pass DOCKER_BUILDKIT=1).
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
-# The workspace packages @aep/agents depends on, plus the agents manifest only.
+# The workspace packages @aep/ae-design-agent depends on, plus the agents manifest only.
 COPY packages ./packages
-COPY services/agents/package.json ./services/agents/
+COPY components/dataplane/ae-system-project/ae-studio/ae-design-agent/package.json ./components/dataplane/ae-system-project/ae-studio/ae-design-agent/
 
-# Install @aep/agents + its workspace deps. This also installs the workspace ROOT
+# Install @aep/ae-design-agent + its workspace deps. This also installs the workspace ROOT
 # project's devDependencies (pnpm always installs the root's deps) — so `typescript`
 # is present to compile @aep/agent-stream in the next step. (@types/node and tsx
-# ride in via @aep/agents' own dependencies.)
+# ride in via @aep/ae-design-agent' own dependencies.)
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
-    pnpm install --frozen-lockfile --store-dir=/pnpm/store --filter @aep/agents...
+    pnpm install --frozen-lockfile --store-dir=/pnpm/store --filter @aep/ae-design-agent...
 
-# @aep/agents runs from TypeScript source via tsx (no build of its own), but it
+# @aep/ae-design-agent runs from TypeScript source via tsx (no build of its own), but it
 # imports @aep/agent-stream, @aep/collab-doc and @aep/web-search as packages
 # whose `exports` resolve to ./dist — all MUST be compiled before the service
 # can start.
@@ -67,16 +67,16 @@ RUN pnpm --filter @aep/excalidraw-dsl build && pnpm --filter @aep/agent-stream b
     && pnpm --filter @aep/web-search build
 
 # Service source LAST: an agents-only change invalidates only this COPY (install
-# + the workspace-dep builds above stay cached). @aep/agents runs via tsx, so
+# + the workspace-dep builds above stay cached). @aep/ae-design-agent runs via tsx, so
 # there is no build step of its own.
-COPY services/agents ./services/agents
+COPY components/dataplane/ae-system-project/ae-studio/ae-design-agent ./components/dataplane/ae-system-project/ae-studio/ae-design-agent
 
 # Readable by the unprivileged runtime user, so corepack resolves pnpm from
 # this cache instead of the network. Without it the ENV above changes only
 # where the build writes, not what UID 1000 can read.
 RUN chmod -R a+rX "$COREPACK_HOME"
 
-WORKDIR /repo/services/agents
+WORKDIR /repo/components/dataplane/ae-system-project/ae-studio/ae-design-agent
 
 USER 1000
 EXPOSE 4000

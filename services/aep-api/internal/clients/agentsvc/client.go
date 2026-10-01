@@ -15,7 +15,7 @@
 // under the License.
 
 // Package agentsvc is the BFF client for the file-mutation agents service
-// (services/agents) — the sole agents backend for all generation and task
+// (components/dataplane/ae-system-project/ae-studio/ae-design-agent) — the sole agents backend for all generation and task
 // planning flows.
 //
 // Contract:
@@ -72,9 +72,9 @@ type WorkspaceRef struct {
 }
 
 // TurnSpec states what a turn is FOR. The BFF sends facts; the agents service
-// composes the instruction text from them (services/agents/src/prompts/turn.ts).
+// composes the instruction text from them (components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/prompts/turn.ts).
 // No prompt wording lives on this side of the wire — see that file, and
-// services/agents/design/ADR-0003, for why.
+// components/dataplane/ae-system-project/ae-studio/ae-design-agent/design/ADR-0003, for why.
 //
 // Go has no discriminated unions, so this is one flat struct with a Kind tag
 // and per-kind fields; the TS side (@aep/agent-stream `TurnSpec`) is a proper

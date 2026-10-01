@@ -85,7 +85,7 @@ test("a phase name must match exactly — /code-all and /tasky are not phases", 
 
 // A command names a FLOW; it never becomes prompt text here. What "Load the
 // spec skill and follow it." reads like is the agents service's business
-// (services/agents/test/turn-compose.test.ts).
+// (components/dataplane/ae-system-project/ae-studio/ae-design-agent/test/turn-compose.test.ts).
 test("skill commands become flow turns", () => {
   assert.deepEqual(classifyChatInput("/spec an app"), {
     kind: "turn",

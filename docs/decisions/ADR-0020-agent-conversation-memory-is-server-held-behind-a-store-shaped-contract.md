@@ -118,7 +118,7 @@ access already is (ADR-0016).
   build and those concerns need to live in code the platform owns, once,
   outside any single agent's trust domain. Org is the isolation line because it
   is already the platform's trust boundary (keys, Thunder OUs); the design
-  agent's own store (`services/agents/src/store/`) is the proven prototype —
+  agent's own store (`components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/store/`) is the proven prototype —
   the same JSONB aggregate, load-append-save and org fence — and the end state
   is that store, extracted and given an end-user fence. The shapes rejected on
   the way are under *Alternatives considered*.

@@ -1130,7 +1130,7 @@ at runtime when the platform sets no `AMP_OTEL_ENDPOINT`; see "Tracing".
 **Do not "check the latest" and choose for yourself.** The AI SDK's major
 versions are not compatible, and a run that resolves its own version lands one
 behind and writes code against the wrong API. `pg` is pinned for the same
-reason. These majors are what the platform runs (`services/agents`).
+reason. These majors are what the platform runs (`components/dataplane/ae-system-project/ae-studio/ae-design-agent`).
 
 Both provider packages are required, not a choice: **the model provider is
 chosen at runtime from `MODEL_API_FORMAT`**, never at build time — not from the

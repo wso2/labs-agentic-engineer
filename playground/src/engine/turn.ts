@@ -41,8 +41,8 @@ import {
   type TurnRequest,
   type TurnSpec,
 } from "@aep/agent-stream";
-import { filterTurnSnapshot } from "@aep/agents/conversation/load-workspace";
-import { sha256Hex } from "@aep/agents/shared/hash";
+import { filterTurnSnapshot } from "@aep/ae-design-agent/conversation/load-workspace";
+import { sha256Hex } from "@aep/ae-design-agent/shared/hash";
 import { loadRepoSkills, type RepoSkill } from "../kit/skills.js";
 import { reconcileFile, type FileChange } from "../kit/project-fs.js";
 import { compileDslDerived, projectCellDiagram, CELL_DIAGRAM_PATH, type DerivedNote } from "../kit/derived.js";

@@ -22,7 +22,7 @@
 // none of which jsdom provides.
 //
 // The agent's collab writes are emulated faithfully: the real generation path
-// is `services/agents` joining the room and calling `setDocFileAsAgent(doc,
+// is `components/dataplane/ae-system-project/ae-studio/ae-design-agent` joining the room and calling `setDocFileAsAgent(doc,
 // path, markdown, …)` (room-peer.ts). We call the very same @aep/collab-doc
 // helper against a shared Y.Doc whose XmlFragment backs the editor, so the
 // editor grows exactly as it does in production — no server, no cluster.

@@ -38,12 +38,12 @@ import { describe, it } from "node:test";
 // fence, so it is the file this gate has to watch.
 const SKILL = readFileSync(
   fileURLToPath(
-    new URL("../../../skills/agent-building/references/building.md", import.meta.url),
+    new URL("../../../../../../skills/agent-building/references/building.md", import.meta.url),
   ),
   "utf8",
 );
 const BODY = readFileSync(
-  fileURLToPath(new URL("../../../skills/agent-building/SKILL.md", import.meta.url)),
+  fileURLToPath(new URL("../../../../../../skills/agent-building/SKILL.md", import.meta.url)),
   "utf8",
 );
 
@@ -94,7 +94,7 @@ describe("agent-building SKILL.md — prescribed store invariants", () => {
 // line went.
 const DESIGNING = readFileSync(
   fileURLToPath(
-    new URL("../../../skills/agent-building/references/designing.md", import.meta.url),
+    new URL("../../../../../../skills/agent-building/references/designing.md", import.meta.url),
   ),
   "utf8",
 );

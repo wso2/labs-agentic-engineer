@@ -18,6 +18,6 @@
   text lives in this package** — a command parses into FACTS (which token, which
   idea) that a caller puts on a `TurnSpec`. The sentences those facts become —
   including which skill a token loads, and which branch of it — belong to
-  `services/agents/src/prompts/` (see that service's ADR-0003). A `strings.json`
+  `components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/prompts/` (see that service's ADR-0003). A `strings.json`
   → Go/TS codegen pipeline used to live here; it is gone, and so is this
   package's `gen` script.

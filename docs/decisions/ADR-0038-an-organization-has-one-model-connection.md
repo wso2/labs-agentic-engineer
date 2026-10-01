@@ -103,7 +103,7 @@ a key and a model. Every agent uses it.**
    records the connection that wrote it (`format@host`). Turns from the current
    connection replay byte for byte, so the prompt cache holds; turns another
    connection wrote lose their reasoning and provider-executed tool calls
-   (`services/agents/src/conversation/history-for.ts`). The model is not part
+   (`components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/conversation/history-for.ts`). The model is not part
    of the fingerprint: Anthropic's API accepts one Claude model's signed
    thinking replayed to another (checked `claude-haiku-4-5` ↔
    `claude-sonnet-5`, both ways), so a model change keeps the history as it

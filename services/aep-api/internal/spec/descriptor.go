@@ -21,7 +21,7 @@
 //
 // The descriptor is deliberately invisible to the agent. Every dot-led path
 // segment is skipped by the turn-snapshot walk (agentfold.InTurnSnapshot, and
-// its TS mirror in services/agents load-workspace.ts), and `.toml` is not an
+// its TS mirror in components/dataplane/ae-system-project/ae-studio/ae-design-agent load-workspace.ts), and `.toml` is not an
 // admitted extension in KeepInTurnSnapshot either — so the model can never
 // read this file even by asking. The idea reaches a turn ONLY through the
 // server-side steering append (ideaSteer, wired in genai_service). That is why

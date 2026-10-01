@@ -45,7 +45,7 @@ function inputLabel(input: unknown): string {
   return "";
 }
 
-/** The status the HITL question tools resolve with (services/agents tools/files.ts). */
+/** The status the HITL question tools resolve with (components/dataplane/ae-system-project/ae-studio/ae-design-agent tools/files.ts). */
 const AWAITING_USER_RESPONSE = "awaiting_user_response";
 
 /**

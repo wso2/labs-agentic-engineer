@@ -1,6 +1,6 @@
 # ADR-0002: Skills via progressive disclosure (`loadSkill`), pushed in the turn payload
 
-- **Status:** Accepted · **Date:** 2026-06-27 · **Scope:** `@aep/agents` main agent
+- **Status:** Accepted · **Date:** 2026-06-27 · **Scope:** `@aep/ae-design-agent` main agent
 
 ## Context
 

@@ -18,9 +18,9 @@
 //
 // Clients send commands VERBATIM, and the server turns one into a TurnSpec: a
 // statement of what the turn is for. It does not compose the instruction text —
-// the agents service does that (services/agents/src/prompts/turn.ts), so the
+// the agents service does that (components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/prompts/turn.ts), so the
 // wording exists once, in the service that talks to the model. See
-// services/agents/design/ADR-0003.
+// components/dataplane/ae-system-project/ae-studio/ae-design-agent/design/ADR-0003.
 //
 // Recognising the command HERE is still load-bearing:
 //

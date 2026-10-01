@@ -528,7 +528,7 @@ interface Invocation {
  *
  * `--api-key` opts back into key auth, and it is a FLAG rather than the
  * repo's usual "an exported env var beats `.env`" rule because that rule cannot
- * be evaluated here: `@aep/agents` calls `loadDotenv()` at module scope, so
+ * be evaluated here: `@aep/ae-design-agent` calls `loadDotenv()` at module scope, so
  * `deployments/.env` is already merged into `process.env` before this package's
  * own entrypoint runs, and a shell-exported key is by then indistinguishable
  * from a file-supplied one. An explicit flag says what an unreadable heuristic
@@ -609,7 +609,7 @@ export interface CodingCredential {
  *
  * `AEP_CODING_ANTHROPIC_KEY` is the ONLY source, deliberately — a bare
  * `CLAUDE_CODE_OAUTH_TOKEN` is NOT adopted even though Claude Code would read
- * one. `@aep/agents` calls `loadDotenv()` at module scope, so anything in
+ * one. `@aep/ae-design-agent` calls `loadDotenv()` at module scope, so anything in
  * `deployments/.env` is already in `process.env` before this package runs, and
  * that file is the PLATFORM's generated env rather than a developer's personal
  * one. Honouring a token found there would let a shared file silently redirect

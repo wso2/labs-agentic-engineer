@@ -35,7 +35,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { mockModel } from "@aep/agents/shared/mock-model";
+import { mockModel } from "@aep/ae-design-agent/shared/mock-model";
 import { openSession } from "../src/engine/session.js";
 import { runSpecTurn } from "../src/engine/turn.js";
 import { chatSpec } from "../src/engine/turn-spec.js";

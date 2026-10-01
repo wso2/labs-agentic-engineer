@@ -92,16 +92,16 @@ manifests-check:
 	@bash $(ROOT)/deployments/scripts/check-trait-copies.sh
 
 # Local coverage summary — coverage is not gated in CI. Go: the aep-api module's fast-lane
-# cover target (-short, no Docker). TS: @aep/agents via node:test's
+# cover target (-short, no Docker). TS: @aep/ae-design-agent via node:test's
 # --experimental-test-coverage. Report-only — the TS side never fails the verb,
 # and spends no tokens. Extend module-by-module as other packages grow tests.
 cover:
 	@echo ">> Go coverage — services/aep-api (fast lane, -short)"
 	@$(MAKE) -C services/aep-api cover || true
 	@echo ""
-	@echo ">> TS coverage — @aep/agents (node:test --experimental-test-coverage)"
-	@$(PNPM) --filter @aep/agents exec node --experimental-test-coverage --import tsx --test "test/**/*.test.ts" 2>/dev/null \
-		| grep -E '^# (tests|pass|fail|all files)' || echo "  (TS coverage unavailable — run 'pnpm --filter @aep/agents test' to debug)"
+	@echo ">> TS coverage — @aep/ae-design-agent (node:test --experimental-test-coverage)"
+	@$(PNPM) --filter @aep/ae-design-agent exec node --experimental-test-coverage --import tsx --test "test/**/*.test.ts" 2>/dev/null \
+		| grep -E '^# (tests|pass|fail|all files)' || echo "  (TS coverage unavailable — run 'pnpm --filter @aep/ae-design-agent test' to debug)"
 
 # Spec-agent evals (evals/spec-agents). On-demand only — never wired into CI.
 #   make eval                 run every eval (real model calls, costs money)

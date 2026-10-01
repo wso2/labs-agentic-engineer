@@ -133,7 +133,7 @@ test("a pending question card renders as awaiting, not as an error", () => {
 
 // The playground plays the server's role: it carries the captured idea as a
 // FACT on the turn. What that becomes in the prompt is the agents service's
-// business (services/agents/test/turn-compose.test.ts covers the wording).
+// business (components/dataplane/ae-system-project/ae-studio/ae-design-agent/test/turn-compose.test.ts covers the wording).
 test("startSpec carries the idea, or nothing when there is none", () => {
   assert.deepEqual(startSpec("an expense tracker"), { kind: "start", idea: "an expense tracker" });
   assert.deepEqual(startSpec("  an expense tracker  "), { kind: "start", idea: "an expense tracker" });

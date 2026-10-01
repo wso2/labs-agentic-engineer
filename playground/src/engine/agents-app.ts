@@ -26,10 +26,10 @@
  */
 
 import type { LanguageModel } from "ai";
-import { createApp } from "@aep/agents/server";
-import { createModel } from "@aep/agents/shared/model";
-import { listen0 } from "@aep/agents/shared/listen";
-import type { ConversationStore } from "@aep/agents/store/conversation-store";
+import { createApp } from "@aep/ae-design-agent/server";
+import { createModel } from "@aep/ae-design-agent/shared/model";
+import { listen0 } from "@aep/ae-design-agent/shared/listen";
+import type { ConversationStore } from "@aep/ae-design-agent/store/conversation-store";
 import { EVAL_AUTH, evalTurnHeaders } from "../kit/auth.js";
 import { PLAY_ORG } from "../ports/spec-workspace.js";
 

@@ -12,7 +12,7 @@ Every word this service sends to a model is written here or in
 
 Edit the string. There is no generator, no JSON source, and no second copy to
 regenerate — `make gen` has nothing to do with prompts. Run
-`pnpm --filter @aep/agents test`; `test/turn-compose.test.ts` and
+`pnpm --filter @aep/ae-design-agent test`; `test/turn-compose.test.ts` and
 `test/prompt.test.ts` pin the structure, not the wording, so ordinary rewording
 does not break them.
 

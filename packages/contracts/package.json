@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Hand-authored cross-service contracts, and the source of truth they are generated FROM: the aep-api public and internal OpenAPI specs (api/v1, api/internal/v1) plus the shared `/<skill>` command grammar (commands/). Edit the spec, then run `make gen-api` in services/aep-api and `make gen` at the root to regenerate the server interface and the TS clients — never the other way round. Prompt WORDING is not here: it lives in services/agents/src/prompts/, beside the model it is sent to.",
+  "description": "Hand-authored cross-service contracts, and the source of truth they are generated FROM: the aep-api public and internal OpenAPI specs (api/v1, api/internal/v1) plus the shared `/<skill>` command grammar (commands/). Edit the spec, then run `make gen-api` in services/aep-api and `make gen` at the root to regenerate the server interface and the TS clients — never the other way round. Prompt WORDING is not here: it lives in components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/prompts/, beside the model it is sent to.",
   "exports": {
     "./commands": "./commands/index.ts"
   },

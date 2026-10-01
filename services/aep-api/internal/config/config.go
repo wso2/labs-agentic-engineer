@@ -367,7 +367,7 @@ type ServiceAuthConfig struct {
 }
 
 // AgentsSvcConfig holds connection + M2M settings for the file-mutation agents
-// service (services/agents) — the requirements/design/chat generation flows AND
+// service (components/dataplane/ae-system-project/ae-studio/ae-design-agent) — the requirements/design/chat generation flows AND
 // the tasks-github-native plan turns (toolset:"task-plan"). The legacy AI-SDK
 // agents service and its config are gone. The BFF mints a per-call HS256 M2M
 // bearer from JWTSecret with aud=JWTAudience (the service's AGENT_JWT_SECRET /

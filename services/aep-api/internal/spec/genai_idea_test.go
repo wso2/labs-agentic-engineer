@@ -39,7 +39,7 @@ func descriptorTOML(t *testing.T, idea string) string {
 
 // startTurnSpec seeds a project and returns the TURN SPEC dispatched for `msg`
 // — what the BFF decided the turn is for. It carries no prompt text: the
-// agents service composes that (services/agents/src/prompts/turn.ts), so these
+// agents service composes that (components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/prompts/turn.ts), so these
 // tests assert the facts, which is all this side owns.
 //
 // `/start` turns carry NO useCase — that field is part of the conversation

@@ -27,7 +27,7 @@ import (
 // The AUTHORED per-component design file lives at
 // `specs/design/components/<name>/design.json`. It replaces the component-level
 // design.md. The wire-contract source of truth is sachiniSam's TS
-// `ComponentDesign` (services/agents/src/contracts/component-design.ts); the
+// `ComponentDesign` (components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/contracts/component-design.ts); the
 // on-disk structs below mirror that contract, extended with the unified
 // `dependencies[]` (Dependency) in place of her `connections[]` and the
 // platform-owned blocks aep-api carries (exposesAPI /

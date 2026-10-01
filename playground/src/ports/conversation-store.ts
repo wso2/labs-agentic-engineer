@@ -32,7 +32,7 @@
 
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Conversation, ConversationStore } from "@aep/agents/store/conversation-store";
+import type { Conversation, ConversationStore } from "@aep/ae-design-agent/store/conversation-store";
 
 interface StoredConversation {
   id: string;

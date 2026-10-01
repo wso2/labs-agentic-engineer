@@ -122,7 +122,7 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   server classifies it into an `agentsvc.TurnSpec`: what the turn is FOR, never its wording. `/start`
   additionally carries the descriptor's idea, which only the server can read. The agents service composes
   the instruction and derives the flow's eager skills from the spec, so a console CTA, a typed command and
-  a playground run produce identical turns (services/agents/design/ADR-0003). This domain holds NO prompt
+  a playground run produce identical turns (components/dataplane/ae-system-project/ae-studio/ae-design-agent/design/ADR-0003). This domain holds NO prompt
   text; the flow token is kept here because it also gates web search and MCP minting for design turns.
 - **The kickoff** (`kickoff.go`) — the project's opening `/start`, fired server-side at creation so the
   journey starts itself instead of waiting on a Generate-spec click. Room-scoped like every console turn,

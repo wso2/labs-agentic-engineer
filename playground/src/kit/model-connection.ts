@@ -32,8 +32,8 @@
  */
 
 import type { ModelCapabilities, TurnConnection } from "@aep/agent-stream";
-import { loadDotenv } from "@aep/agents/shared/env";
-import { config } from "@aep/agents/shared/config";
+import { loadDotenv } from "@aep/ae-design-agent/shared/env";
+import { config } from "@aep/ae-design-agent/shared/config";
 import { readModelConnection, type ModelConnection as RunnerConnection } from "remote-worker/src/lib/model_connection.js";
 
 /** What every turn of a local session is sent with. */

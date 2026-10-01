@@ -3,7 +3,7 @@
 Glossary of domain terms for the Agentic Engineer Platform. Implementation-free:
 this file defines what terms *mean*, not how anything works.
 
-## Agents service (`services/agents`)
+## Agents service (`components/dataplane/ae-system-project/ae-studio/ae-design-agent`)
 
 **Skill**:
 A unit of procedural guidance — a `SKILL.md` (frontmatter `name` + `description`,

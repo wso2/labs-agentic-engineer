@@ -1,5 +1,5 @@
 {
-  "name": "@aep/agents",
+  "name": "@aep/ae-design-agent",
   "version": "0.0.0",
   "private": true,
   "type": "module",
