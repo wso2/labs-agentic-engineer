@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 
 	"github.com/getkin/kin-openapi/routers"
 
@@ -132,7 +133,9 @@ var internalBodyCaps = map[string]int64{}
 // internalRouteMatch is the embedded-spec operation a request matched, found
 // once by capInternalBody and read from the context by internalGate and
 // internalValidator. A route miss (unknown path, wrong method, or a raw MCP
-// route the embedded spec lacks) stores nothing.
+// route the embedded spec lacks) stores nothing. pathParams are kin's values,
+// still URL-escaped (kin matches the escaped path); the handlers are served
+// the ServeMux's decoded PathValue, so the gate unescapes before fencing.
 type internalRouteMatch struct {
 	route      *routers.Route
 	pathParams map[string]string
@@ -159,7 +162,7 @@ func internalRouteFrom(ctx context.Context) (internalRouteMatch, bool) {
 func capInternalBody(router routers.Router, caps map[string]int64, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		limit := internalDefaultBodyBytes
-		if route, pathParams, err := router.FindRoute(r); err == nil && route.Operation != nil {
+		if route, pathParams, err := findInternalRoute(router, r); err == nil && route.Operation != nil {
 			if c, ok := caps[route.Operation.OperationID]; ok {
 				limit = c
 			}
@@ -177,8 +180,52 @@ func capInternalBody(router routers.Router, caps map[string]int64, next http.Han
 	})
 }
 
-// internalGate is /internal/v1's deny-by-default gate table, one entry per
-// route group (path prefix under /internal/v1). It runs after the body cap and
+// findInternalRoute matches r against the embedded spec. A HEAD the spec does
+// not declare matches the path's GET operation: the inner ServeMux serves HEAD
+// through a GET pattern, so the gate must authenticate (and the validator
+// validate) it as that GET, exactly as /api/v1 does, rather than let it reach
+// the strict backstop unauthenticated.
+func findInternalRoute(router routers.Router, r *http.Request) (*routers.Route, map[string]string, error) {
+	route, pathParams, err := router.FindRoute(r)
+	if err == nil || r.Method != http.MethodHead {
+		return route, pathParams, err
+	}
+	get := r.WithContext(r.Context())
+	get.Method = http.MethodGet
+	return router.FindRoute(get)
+}
+
+// internalCredential is the credential a route group's operations require.
+type internalCredential int
+
+const (
+	// runnerCredential: a coding runner's publisher-cc bearer, fenced to the
+	// cycle the path names (INT-6).
+	runnerCredential internalCredential = iota + 1
+	// sreHandoffCredential: aep-mcp-server's static SRE handoff bearer.
+	sreHandoffCredential
+)
+
+// internalOpGate is one operation's gate entry.
+type internalOpGate struct {
+	credential internalCredential
+	// cycleParam names the path parameter carrying the cycle id a runner op
+	// is fenced to.
+	cycleParam string
+}
+
+// internalOpGates is the gate table, keyed by embedded-spec operation id.
+// TestInternalGate_CoversEverySpecOperation pins it to the spec both ways.
+var internalOpGates = map[string]internalOpGate{
+	"runner-refresh-credentials": {credential: runnerCredential, cycleParam: "executionId"},
+	"runner-validation-context":  {credential: runnerCredential, cycleParam: "cycleId"},
+	"sre-list-issues":            {credential: sreHandoffCredential},
+	"sre-create-issue":           {credential: sreHandoffCredential},
+	"sre-create-rca-report":      {credential: sreHandoffCredential},
+}
+
+// internalGate is /internal/v1's deny-by-default gate (internalOpGates), one
+// credential per route group (path prefix under /internal/v1). It runs after the body cap and
 // before the validator, so an unauthenticated caller gets 401 and never a
 // schema-detail 400 or a body parse:
 //
@@ -192,9 +239,10 @@ func capInternalBody(router routers.Router, caps map[string]int64, next http.Han
 // must present the credential of its route group, and the verified org is bound
 // into the context. A credential opens its own group only: a publisher token
 // never clears sre/, the SRE bearer never clears a runner op. There are
-// deliberately NO carve-outs: an operation whose id the gate does not know is
+// deliberately NO carve-outs: an operation absent from internalOpGates is
 // denied outright, so adding an internal op means teaching this gate its
-// credential first. requireInternalGate denies any generated op that reaches
+// credential first. The cycle fence checks the decoded path value, the one
+// the handler is served. requireInternalGate denies any generated op that reaches
 // the strict wrapper without this gate's verdict.
 //
 // The refresh operation still spells its parameter `executionId` on the wire; the
@@ -220,13 +268,9 @@ func internalGate(deps InternalDeps, next http.Handler) http.Handler {
 // incident context) bound.
 func authenticateInternal(ctx context.Context, deps InternalDeps, authHeader string, m internalRouteMatch) (context.Context, error) {
 	op := m.route.Operation.OperationID
-	var cycleID string
-	switch op {
-	case "runner-refresh-credentials":
-		cycleID = m.pathParams["executionId"]
-	case "runner-validation-context":
-		cycleID = m.pathParams["cycleId"]
-	case "sre-list-issues", "sre-create-issue", "sre-create-rca-report":
+	gate, ok := internalOpGates[op]
+	switch {
+	case ok && gate.credential == sreHandoffCredential:
 		claims, ok := deps.SREHandoff.Verify(authHeader) // nil verifier: false, fails closed
 		if !ok {
 			return nil, errUnauthorized("SRE handoff bearer required")
@@ -234,17 +278,22 @@ func authenticateInternal(ctx context.Context, deps InternalDeps, authHeader str
 		ctx = auth.WithClaims(ctx, claims)
 		ctx = sourcecontrol.WithIncidentContext(ctx, sreHandoffIncidentID)
 		return tenant.WithBoundOrg(ctx, claims.OuHandle), nil
+	case ok && gate.credential == runnerCredential:
+		if deps.RunnerAuth == nil {
+			return nil, errServiceUnavailable("runner auth not configured")
+		}
+		cycleID, err := url.PathUnescape(m.pathParams[gate.cycleParam])
+		if err != nil {
+			return nil, errUnauthorized("malformed cycle id in path")
+		}
+		caller, err := deps.RunnerAuth.Authorize(ctx, authHeader, cycleID)
+		if err != nil {
+			return nil, mapRunnerAuthError(err)
+		}
+		return tenant.WithBoundOrg(ctx, string(caller.Org)), nil
 	default:
 		return nil, errUnauthorized("unauthenticated internal operation: " + op)
 	}
-	if deps.RunnerAuth == nil {
-		return nil, errServiceUnavailable("runner auth not configured")
-	}
-	caller, err := deps.RunnerAuth.Authorize(ctx, authHeader, cycleID)
-	if err != nil {
-		return nil, mapRunnerAuthError(err)
-	}
-	return tenant.WithBoundOrg(ctx, string(caller.Org)), nil
 }
 
 // internalGateKey marks a request internalGate authenticated.

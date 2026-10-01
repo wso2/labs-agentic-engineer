@@ -82,6 +82,9 @@ type internalStack struct {
 	mint    func(org string) string
 	refresh *fakeCredsRefresh
 	context *fakeValidationContext
+	// fenced records every cycle id the runner authorizer looked up, which
+	// is the id internalGate fenced the request on.
+	fenced *[]string
 }
 
 func newInternalTestStack(t *testing.T) (http.Handler, func(org string) string, *fakeCredsRefresh) {
@@ -128,7 +131,9 @@ func newInternalStack(t *testing.T) internalStack {
 		}
 		return signed
 	}
+	fenced := &[]string{}
 	lookup := func(_ context.Context, cycleID string) (string, error) {
+		*fenced = append(*fenced, cycleID)
 		if strings.HasPrefix(cycleID, "other-org-") {
 			return "org-other", nil
 		}
@@ -138,6 +143,7 @@ func newInternalStack(t *testing.T) internalStack {
 		mint:    mint,
 		refresh: &fakeCredsRefresh{},
 		context: &fakeValidationContext{},
+		fenced:  fenced,
 	}
 	stack.deps = InternalDeps{
 		CredsRefresh:      stack.refresh,
