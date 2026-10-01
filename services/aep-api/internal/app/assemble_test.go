@@ -148,7 +148,7 @@ func TestAssemble_Degradations(t *testing.T) {
 		// path (AGENT_RUNNER_IMAGE unset and no secrets provider).
 		for _, want := range []string{
 			"m2m-service-auth", "build-logs", "secrets-delivery",
-			"mcp-discovery", "idp-mutations", "connect-oauth-state",
+			"mcp-discovery", "idp-mutations",
 			"coding-dispatch-oc", "run-temporal",
 		} {
 			if !hasCapability(degs, want) {

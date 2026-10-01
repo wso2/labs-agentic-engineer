@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// COMPONENT tier: the /config action routes (connect-sessions, disconnect,
+// COMPONENT tier: the /config action routes (disconnect,
 // client-secret rotation, discovery) plus the migration assertions (H1 — the
 // legacy /org/* routes are retired, not aliased). The action routes are path
 // relocations over the reused orgcreds/idp services; these rows re-point the
@@ -63,36 +63,6 @@ func (f *fakeThunder) OUExists(context.Context, string) (bool, error) {
 	panic("fakeThunder: OUExists unexpected")
 }
 
-// --- connect-sessions (App-mode OAuth start) --------------------------------
-
-func TestConfigComponent_ConnectSessions_503WhenAppUnset(t *testing.T) {
-	t.Parallel()
-	c := newConfigHarness(t) // appClientID empty
-	resp := c.h.AsOrg("acme").Post(configPath+"/git-provider/connect-sessions", `{}`)
-	if resp.Code != 503 {
-		t.Fatalf("connect-sessions (no app): want 503, got %d body=%s", resp.Code, resp.Body.String())
-	}
-}
-
-func TestConfigComponent_ConnectSessions_ReturnsAuthorizeURL(t *testing.T) {
-	t.Parallel()
-	c := newConfigHarnessOpts(t, nil, "gh-client-xyz")
-	resp := c.h.AsOrg("acme").Post(configPath+"/git-provider/connect-sessions", `{}`)
-	if resp.Code != 200 {
-		t.Fatalf("connect-sessions: want 200, got %d body=%s", resp.Code, resp.Body.String())
-	}
-	m := decodeCfg(t, resp.Body.Bytes())
-	authorizeURL, _ := m["authorizeUrl"].(string)
-	if !strings.Contains(authorizeURL, "gh-client-xyz") {
-		t.Fatalf("authorizeUrl must carry the app client id: %q", authorizeURL)
-	}
-	// The redirect_uri still points at the UNCHANGED callback path (the callback
-	// keeps its /org/... path — state-JWT authed on the outer mux).
-	if !strings.Contains(authorizeURL, "org%2Fcredentials%2Fgithub%2Fconnect%2Fcallback") {
-		t.Fatalf("authorizeUrl redirect_uri must point at the callback path: %q", authorizeURL)
-	}
-}
-
 // --- disconnect -------------------------------------------------------------
 
 func TestConfigComponent_Disconnect_ConnectedThenGone(t *testing.T) {
@@ -135,7 +105,7 @@ func TestConfigComponent_Disconnect_NeverConnected(t *testing.T) {
 func TestConfigComponent_RotateClientSecret_Happy(t *testing.T) {
 	t.Parallel()
 	th := &fakeThunder{regenSecret: "rotated-secret-123"}
-	c := newConfigHarnessOpts(t, th, "")
+	c := newConfigHarnessWithThunder(t, th)
 	// Seed a profile that already has a publisher client, so Regenerate has
 	// something to rotate.
 	now := time.Now().UTC()

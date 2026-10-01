@@ -15,7 +15,7 @@
 // under the License.
 
 // credential_lifecycle.go — read/teardown of the credential row:
-// Status projection, the Disconnect cascade entry, and App uninstall.
+// Status projection and the Disconnect cascade entry.
 
 package organization
 
@@ -99,35 +99,5 @@ func (s *CredentialService) Disconnect(ctx context.Context, ocOrgID string) erro
 	}
 
 	slog.InfoContext(ctx, "credentials.disconnected", "ocOrgId", ocOrgID, "kind", row.Kind)
-	return nil
-}
-
-// UninstallAppInstallation calls GitHub's DELETE /app/installations/{id} for
-// the org's bound install. Looks up the row by ocOrgID, confirms App-mode,
-// and asks GitHub to remove the install. Best-effort: caller (disconnect
-// cascade Phase E) treats failures as non-fatal — the platform row is gone
-// regardless, and an admin can clean up via github.com if needed.
-//
-// No-op for PAT mode (no installation_id). Returns ErrAppBindNotConfigured
-// if the App minter isn't loaded — this should never happen in production
-// once the platform is configured but is checked defensively.
-func (s *CredentialService) UninstallAppInstallation(ctx context.Context, ocOrgID string) error {
-	if s.minter == nil || s.minter.AppID() == 0 || s.githubClient == nil {
-		return ErrAppBindNotConfigured
-	}
-	row, err := s.repo.GetByOrg(ctx, ocOrgID)
-	if err != nil {
-		return fmt.Errorf("uninstall: lookup: %w", err)
-	}
-	if row == nil {
-		return nil
-	}
-	if row.Kind != "app-installation" || row.InstallationID == nil {
-		return nil
-	}
-	if err := s.githubClient.DeleteInstallation(ctx, s.minter, *row.InstallationID); err != nil {
-		return fmt.Errorf("uninstall: github delete: %w", err)
-	}
-	slog.InfoContext(ctx, "credentials.uninstalled", "ocOrgId", ocOrgID, "installationId", *row.InstallationID)
 	return nil
 }

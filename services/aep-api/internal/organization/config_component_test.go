@@ -176,30 +176,29 @@ type configHarness struct {
 
 // newConfigHarness assembles the real orgconfig.Service over one shared dbtest
 // Postgres with real Anthropic/GitHub/IDP services and faked external probes.
-// Thunder is nil and the GitHub App client id empty (the state-changing action
-// routes that need them are covered separately via newConfigHarnessOpts).
+// Thunder is nil (the state-changing action routes that need it are covered
+// separately via newConfigHarnessWithThunder).
 func newConfigHarness(t *testing.T) *configHarness {
-	return newConfigHarnessOpts(t, nil, "")
+	return newConfigHarnessWithThunder(t, nil)
 }
 
-// newConfigHarnessOpts is newConfigHarness with the two knobs the action-route
-// tests need: a fake Thunder admin client (for IDP client-secret rotation) and
-// a GitHub App client id (for the connect-sessions authorize URL).
-func newConfigHarnessOpts(t *testing.T, thunder thundersvc.Client, appClientID string) *configHarness {
+// newConfigHarnessWithThunder is newConfigHarness with the knob the action-route
+// tests need: a fake Thunder admin client (for IDP client-secret rotation).
+func newConfigHarnessWithThunder(t *testing.T, thunder thundersvc.Client) *configHarness {
 	t.Helper()
-	return newConfigHarnessOn(t, thunder, appClientID, orgconfig.AgentRuntimes)
+	return newConfigHarnessOn(t, thunder, orgconfig.AgentRuntimes)
 }
 
 // newConfigHarnessRuntimes is newConfigHarness on an installation that runs
 // only runtimes — one deployed without a runtime's runner image.
 func newConfigHarnessRuntimes(t *testing.T, runtimes []orgconfig.AgentRuntime) *configHarness {
 	t.Helper()
-	return newConfigHarnessOn(t, nil, "", runtimes)
+	return newConfigHarnessOn(t, nil, runtimes)
 }
 
-func newConfigHarnessOn(t *testing.T, thunder thundersvc.Client, appClientID string, runtimes []orgconfig.AgentRuntime) *configHarness {
+func newConfigHarnessOn(t *testing.T, thunder thundersvc.Client, runtimes []orgconfig.AgentRuntime) *configHarness {
 	t.Helper()
-	return newConfigHarnessProbing(t, thunder, appClientID, runtimes, false)
+	return newConfigHarnessProbing(t, thunder, runtimes, false)
 }
 
 // newConfigHarnessGuarded is newConfigHarness with the production probe
@@ -207,10 +206,10 @@ func newConfigHarnessOn(t *testing.T, thunder thundersvc.Client, appClientID str
 // endpoint to reach.
 func newConfigHarnessGuarded(t *testing.T) *configHarness {
 	t.Helper()
-	return newConfigHarnessProbing(t, nil, "", orgconfig.AgentRuntimes, true)
+	return newConfigHarnessProbing(t, nil, orgconfig.AgentRuntimes, true)
 }
 
-func newConfigHarnessProbing(t *testing.T, thunder thundersvc.Client, appClientID string, runtimes []orgconfig.AgentRuntime, guarded bool) *configHarness {
+func newConfigHarnessProbing(t *testing.T, thunder thundersvc.Client, runtimes []orgconfig.AgentRuntime, guarded bool) *configHarness {
 	t.Helper()
 	db := dbtest.New(t) // self-skips under -short
 	gh := newCfgFakeGH(t)
@@ -234,13 +233,11 @@ func newConfigHarnessProbing(t *testing.T, thunder thundersvc.Client, appClientI
 	}
 	credSvc := organization.NewCredentialService(organization.NewOrgCredentialRepository(db, nil), store, minter, configEnvSec, "", "", nil).WithGitHubAPIBase(gh.URL)
 	disconnectSvc := organization.NewOrgDisconnectService(credSvc, nil)
-	bearerSvc := organization.NewBearerService("state-key", time.Minute)
 	idpSvc := organization.NewIDPService(organization.NewIDPRepository(db, nil), organization.NewOrganizationRepository(db), thunder, organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS})
 
 	svc := organization.NewService(
-		credSvc, disconnectSvc, bearerSvc, idpSvc,
+		credSvc, disconnectSvc, idpSvc,
 		organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS},
-		"http://localhost:8090", appClientID,
 	).WithAgentSettings(organization.NewAgentSettingsService(organization.NewOrgAgentSettingsRepository(db),
 		organization.NewOrganizationRepository(db), anthropicSvc, conns, organization.NewAgentsCardRepository(db, store), runtimes))
 

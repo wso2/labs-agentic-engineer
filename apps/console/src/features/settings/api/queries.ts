@@ -111,10 +111,8 @@ export function useConnectGitHubPat() {
 export function useDisconnectGitProvider() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (uninstall: boolean) => {
-      const { error } = await client.POST("/config/git-provider/disconnect", {
-        params: { query: { uninstall } },
-      });
+    mutationFn: async () => {
+      const { error } = await client.POST("/config/git-provider/disconnect");
       if (error) {
         throw new Error(errorMessage(error, "Failed to disconnect GitHub"));
       }

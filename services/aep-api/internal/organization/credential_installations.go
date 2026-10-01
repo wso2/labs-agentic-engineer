@@ -32,7 +32,6 @@ import (
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
-	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // ----------------------------------------------------------------------------
@@ -202,91 +201,6 @@ func (s *CredentialService) fetchInstallation(ctx context.Context, installationI
 // connect flow.
 func (s *CredentialService) ListInstallationRepos(ctx context.Context, installationID int64) ([]string, error) {
 	return s.listInstallationRepos(ctx, installationID)
-}
-
-// ----------------------------------------------------------------------------
-// Connect resolution — user-scoped install discovery
-// ----------------------------------------------------------------------------
-
-// ErrAppBindNotConfigured is returned when the App or OAuth client secret
-// is not configured — the operator hasn't completed the App setup.
-var ErrAppBindNotConfigured = errors.New("app bind path not configured (missing app key or oauth client secret)")
-
-// ResolveUserInstallations exchanges an OAuth code for a user-token,
-// fetches the installations the user has admin access to via
-// GET /user/installations, and intersects with our App's installations.
-// Only installations that are either unbound or bound to the requesting
-// org are returned — installs bound to *other* AEP orgs are silently
-// filtered to avoid leaking cross-tenant install metadata to OC admins
-// who happen to share GitHub admin access.
-//
-// The user-token is used only inside this call and discarded — it never
-// crosses any process boundary, never lands in storage, never logged.
-//
-// There is no "list every install of our App" surface — discovery is
-// always proven to the requesting user via OAuth.
-func (s *CredentialService) ResolveUserInstallations(ctx context.Context, ocOrgID, oauthCode, redirectURI string) ([]sourcecontrol.AppInstallationSummary, error) {
-	if s.minter == nil || s.minter.AppID() == 0 || s.githubClient == nil {
-		return nil, ErrAppBindNotConfigured
-	}
-	if s.appClientID == "" || s.appClientSecret == "" {
-		return nil, ErrAppBindNotConfigured
-	}
-	if ocOrgID == "" {
-		return nil, &ValidationError{Code: "oc_org_id_missing", Message: "ocOrgID is required"}
-	}
-	if oauthCode == "" {
-		return nil, &ValidationError{Code: "oauth_code_missing", Message: "oauthCode is required"}
-	}
-
-	userToken, err := s.githubClient.ExchangeOAuthCode(ctx, s.appClientID, s.appClientSecret, oauthCode, redirectURI)
-	if err != nil {
-		return nil, &ValidationError{Code: "oauth_exchange_failed", Message: err.Error()}
-	}
-	if userToken == "" {
-		return []sourcecontrol.AppInstallationSummary{}, nil
-	}
-
-	userInstalls, err := s.githubClient.GetUserInstallations(ctx, userToken)
-	if err != nil {
-		return nil, fmt.Errorf("get user installations: %w", err)
-	}
-	userInstallSet := make(map[int64]struct{}, len(userInstalls))
-	for _, id := range userInstalls {
-		userInstallSet[id] = struct{}{}
-	}
-
-	all, err := s.githubClient.ListAppInstallations(ctx, s.minter)
-	if err != nil {
-		return nil, fmt.Errorf("list app installations: %w", err)
-	}
-
-	// Pull installations bound to OTHER orgs — we filter those out so we
-	// don't leak "install X is owned by some other AEP tenant" to this
-	// user. Installs bound to ocOrgID itself (re-connect / re-confirm)
-	// are kept.
-	bound, err := s.repo.ListBoundInstallations(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("scan bound installs: %w", err)
-	}
-	boundElsewhere := make(map[int64]struct{}, len(bound))
-	for _, b := range bound {
-		if b.OcOrgID != ocOrgID {
-			boundElsewhere[b.InstallationID] = struct{}{}
-		}
-	}
-
-	candidates := make([]sourcecontrol.AppInstallationSummary, 0, len(all))
-	for _, inst := range all {
-		if _, ok := userInstallSet[inst.InstallationID]; !ok {
-			continue
-		}
-		if _, ok := boundElsewhere[inst.InstallationID]; ok {
-			continue
-		}
-		candidates = append(candidates, inst)
-	}
-	return candidates, nil
 }
 
 func (s *CredentialService) listInstallationRepos(ctx context.Context, installationID int64) ([]string, error) {

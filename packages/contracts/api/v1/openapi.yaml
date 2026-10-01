@@ -131,50 +131,9 @@ paths:
       summary: Test a model connection without saving it
       tags:
       - Org Config
-  /config/git-provider/connect-sessions:
-    post:
-      operationId: start-git-provider-connect
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/StartConnectInputBody'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StartConnectOutputBody'
-          description: OK
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Error
-      security:
-      - userJWT: []
-      summary: Start App-mode git-provider connect (OAuth-driven)
-      tags:
-      - Org Config
   /config/git-provider/disconnect:
     post:
       operationId: disconnect-git-provider
-      parameters:
-      - description: 'App-mode only: when false, leave the install on GitHub for later re-adoption (defaults
-          true)'
-        explode: false
-        in: query
-        name: uninstall
-        schema:
-          # Keep an explicit pointer under the global prefer-skip-optional-pointer:
-          # the handler must distinguish 'absent' from the zero value (uninstall).
-          x-go-type-skip-optional-pointer: false
-          default: true
-          description: 'App-mode only: when false, leave the install on GitHub for later re-adoption (defaults
-            true)'
-          type: boolean
       responses:
         '200':
           content:
@@ -8253,22 +8212,6 @@ components:
       - dirty
       - design
       - agent
-      type: object
-    StartConnectInputBody:
-      additionalProperties: false
-      properties:
-        installationId:
-          description: Optional installation to pin (set when the user picks a candidate from the 2+ picker)
-          format: int64
-          type: integer
-      type: object
-    StartConnectOutputBody:
-      additionalProperties: false
-      properties:
-        authorizeUrl:
-          type: string
-      required:
-      - authorizeUrl
       type: object
     StatusMsg:
       additionalProperties: false

@@ -34,6 +34,10 @@ type removedRoute struct {
 var removedRoutes = []removedRoute{
 	{http.MethodGet, "/api/v1/projects/p/activity", http.StatusNotFound},
 	{http.MethodGet, "/api/v1/projects/p/activity/stream", http.StatusNotFound},
+	// Regression row: the callback never mounted in this harness, so it passes
+	// before and after; its removal is proven by AppParams losing the controller.
+	{http.MethodGet, "/api/v1/org/credentials/github/connect/callback", http.StatusNotFound},
+	{http.MethodPost, "/api/v1/config/git-provider/connect-sessions", http.StatusNotFound},
 }
 
 func TestRemovedRoutes(t *testing.T) {

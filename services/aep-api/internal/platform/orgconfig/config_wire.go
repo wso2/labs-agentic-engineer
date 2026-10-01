@@ -291,9 +291,7 @@ type LLMPatch struct {
 }
 
 // GitProviderWrite is the gitProvider section's write shape. Mode is pat-only:
-// App-mode is driven by the connect-sessions action route (OAuth), so it is
-// schema-rejected here (the enum has no "app" value), pointing the client at
-// the right flow.
+// the schema has no "app" value, so anything else is rejected here.
 type GitProviderWrite struct {
 	Kind        string `json:"kind" enum:"github" required:"true"`
 	Mode        string `json:"mode" enum:"pat" required:"true"`

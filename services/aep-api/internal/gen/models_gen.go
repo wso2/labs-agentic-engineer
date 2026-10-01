@@ -3162,17 +3162,6 @@ type SpecStage struct {
 	Version string `json:"version"`
 }
 
-// StartConnectInputBody defines model for StartConnectInputBody.
-type StartConnectInputBody struct {
-	// InstallationID Optional installation to pin (set when the user picks a candidate from the 2+ picker)
-	InstallationID int64 `json:"installationId,omitempty"`
-}
-
-// StartConnectOutputBody defines model for StartConnectOutputBody.
-type StartConnectOutputBody struct {
-	AuthorizeURL string `json:"authorizeUrl"`
-}
-
 // StatusMsg defines model for StatusMsg.
 type StatusMsg struct {
 	Status string `json:"status"`
@@ -3688,12 +3677,6 @@ type ValidateCollabAccessParams struct {
 	Authorization string `json:"Authorization,omitempty"`
 }
 
-// DisconnectGitProviderParams defines parameters for DisconnectGitProvider.
-type DisconnectGitProviderParams struct {
-	// Uninstall App-mode only: when false, leave the install on GitHub for later re-adoption (defaults true)
-	Uninstall *bool `form:"uninstall,omitempty" json:"uninstall,omitempty"`
-}
-
 // DiscoverIdpParams defines parameters for DiscoverIdp.
 type DiscoverIdpParams struct {
 	// Issuer OIDC issuer URL to fetch the discovery document for
@@ -3820,9 +3803,6 @@ type SetSkillEnabledJSONBody struct {
 
 // UpdateConfigJSONRequestBody defines body for UpdateConfig for application/json ContentType.
 type UpdateConfigJSONRequestBody = ConfigPatch
-
-// StartGitProviderConnectJSONRequestBody defines body for StartGitProviderConnect for application/json ContentType.
-type StartGitProviderConnectJSONRequestBody = StartConnectInputBody
 
 // TestLlmConnectionJSONRequestBody defines body for TestLlmConnection for application/json ContentType.
 type TestLlmConnectionJSONRequestBody = LLMPatch

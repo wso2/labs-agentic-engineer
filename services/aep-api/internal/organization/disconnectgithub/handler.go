@@ -33,13 +33,7 @@ func New(config *organization.Service) *Handler { return &Handler{config: config
 
 func (h *Handler) DisconnectGitProvider(ctx context.Context, request gen.DisconnectGitProviderRequestObject) (gen.DisconnectGitProviderResponseObject, error) {
 	org := tenant.BoundOrgFromContext(ctx)
-	// App-mode only: when false, leave the install on GitHub for later
-	// re-adoption. Defaults true (contract default, previously a Huma default).
-	uninstall := true
-	if request.Params.Uninstall != nil {
-		uninstall = *request.Params.Uninstall
-	}
-	connected, err := h.config.DisconnectGitProvider(ctx, org, uninstall)
+	connected, err := h.config.DisconnectGitProvider(ctx, org)
 	if err != nil {
 		return nil, apierr.Internal("disconnect failed")
 	}

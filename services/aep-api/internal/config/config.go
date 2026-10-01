@@ -94,16 +94,6 @@ type Config struct {
 	SREHandoffToken string
 	SREHandoffOrg   string
 
-	// OAuthStateSigningKey is the HS256 key used to sign the connect-state
-	// JWT that rides the GitHub App OAuth `state` query param (CSRF
-	// protection on the connect callback). Task JWTs use RS256 via
-	// TaskTokenSigningKey; this key has no other use.
-	OAuthStateSigningKey string
-
-	// BFFPublicURL is the user-visible BFF base — used as the basis for
-	// the App-mode redirect after callback (302 → console settings page).
-	BFFPublicURL string
-
 	// TryItCallbackURL is the platform tester's OAuth callback, registered as a
 	// redirect URI on every project's sign-in resource so a client that is not
 	// one of the project's own components — the platform's test app — can

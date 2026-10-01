@@ -18,7 +18,6 @@ package httpapi
 
 import (
 	"github.com/wso2/aep/aep-api/internal/organization"
-	"github.com/wso2/aep/aep-api/internal/organization/connectgithub"
 	"github.com/wso2/aep/aep-api/internal/organization/disconnectgithub"
 	"github.com/wso2/aep/aep-api/internal/organization/discoveridp"
 	"github.com/wso2/aep/aep-api/internal/organization/getconfig"
@@ -34,7 +33,6 @@ type (
 	getconfigHandler        = getconfig.Handler
 	patchconfigHandler      = patchconfig.Handler
 	testllmHandler          = testllm.Handler
-	connectgithubHandler    = connectgithub.Handler
 	disconnectgithubHandler = disconnectgithub.Handler
 	rotateidpHandler        = rotateidp.Handler
 	discoveridpHandler      = discoveridp.Handler
@@ -47,7 +45,6 @@ type Handlers struct {
 	*getconfigHandler
 	*patchconfigHandler
 	*testllmHandler
-	*connectgithubHandler
 	*disconnectgithubHandler
 	*rotateidpHandler
 	*discoveridpHandler
@@ -66,7 +63,6 @@ func New(d organization.Deps) (*Handlers, error) {
 		getconfigHandler:        getconfig.New(d.Config),
 		patchconfigHandler:      patchconfig.New(d.Config),
 		testllmHandler:          testllm.New(d.Config),
-		connectgithubHandler:    connectgithub.New(d.Config),
 		disconnectgithubHandler: disconnectgithub.New(d.Config),
 		rotateidpHandler:        rotateidp.New(d.Config),
 		discoveridpHandler:      discoveridp.New(d.Config),

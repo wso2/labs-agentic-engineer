@@ -128,11 +128,9 @@ func (h *installationHandler) handleDeleted(ctx context.Context, _ string, _ str
 		}
 		return err
 	}
-	// uninstallApp=false: the install is already gone on GitHub (that's
-	// why we got this webhook); calling DELETE again would 404 harmlessly
-	// but adds noise. The disconnect cascade just needs the platform-side
-	// row torn down.
-	if err := h.disconnect.Disconnect(ctx, ocOrgID, "installation.deleted", false); err != nil {
+	// The install is already gone on GitHub (that's why we got this webhook);
+	// the disconnect cascade just needs the platform-side row torn down.
+	if err := h.disconnect.Disconnect(ctx, ocOrgID, "installation.deleted"); err != nil {
 		if errors.Is(err, organization.ErrOrgNotFound) {
 			return nil
 		}

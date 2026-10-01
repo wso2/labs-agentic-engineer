@@ -47,8 +47,8 @@ import (
 //	               /mcp/playground-token  NONE — flag-gated only                   dependencies/playground_token.go
 //	               (POST, local dev)      (PLAYGROUND_TOKEN_ENABLED, off by         (mounted only when the flag is true —
 //	                                      default; docker-compose sets it)          404 by absence otherwise)
-//	external       /api/v1/webhooks,    per-route bespoke: GitHub HMAC /           webhook_routes.go · org_github_routes.go
-//	               .../github/connect    signed connect-state (org from payload)    (no generated spec; paths kept — Q4)
+//	external       /api/v1/webhooks     per-route bespoke: GitHub HMAC             webhook_routes.go
+//	                                                                                (no generated spec; paths kept — Q4)
 //	dev/test       /_dev/v1             none — registration-gated to dev tier      dev.go · RegisterAllDev
 //	               (gated mount)        + on no HTTPRoute (loopback only)           (no spec)
 //
@@ -120,16 +120,13 @@ func mountSurfaces(params AppParams) *http.ServeMux {
 	// bodies live in dev.go.
 	RegisterAllDev(mux, params)
 
-	// ── external-inbound (webhook + connect-callback) ────────────────────────
-	// Callers are outside the platform (GitHub, a mid-OAuth browser); each route
-	// keeps its own bespoke auth (HMAC / signed connect-state) and derives org
-	// from the verified payload — not a session or service token. Both sit
-	// outside the /api/ user-JWT wrapper via their more-specific patterns.
+	// ── external-inbound (webhook) ───────────────────────────────────────────
+	// The caller is outside the platform (GitHub); the route keeps its own
+	// bespoke auth (HMAC) and derives org from the verified payload — not a
+	// session or service token. It sits outside the /api/ user-JWT wrapper via
+	// its more-specific pattern.
 	if params.WebhookController != nil {
 		registerWebhookRoutes(mux, params.WebhookController)
-	}
-	if params.OrgGitHubController != nil {
-		registerConnectCallbackRoute(mux, params.OrgGitHubController)
 	}
 
 	// ── internal S2S surface ─────────────────────────────────────────────────

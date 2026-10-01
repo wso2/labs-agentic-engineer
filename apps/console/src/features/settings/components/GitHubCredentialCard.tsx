@@ -23,7 +23,6 @@ import {
   Button,
   Card,
   CardContent,
-  Checkbox,
   Chip,
   Dialog,
   DialogActions,
@@ -31,7 +30,6 @@ import {
   DialogContentText,
   DialogTitle,
   Divider,
-  FormControlLabel,
   IconButton,
   InputAdornment,
   TextField,
@@ -55,7 +53,6 @@ export function GitHubCredentialCard({
   const [githubLogin, setGithubLogin] = useState(gitProvider?.githubLogin ?? "");
   const [showPat, setShowPat] = useState(false);
   const [disconnectOpen, setDisconnectOpen] = useState(false);
-  const [uninstall, setUninstall] = useState(true);
 
   const connect = useConnectGitHubPat();
   const disconnect = useDisconnectGitProvider();
@@ -72,7 +69,7 @@ export function GitHubCredentialCard({
   };
 
   const confirmDisconnect = () => {
-    disconnect.mutate(uninstall, {
+    disconnect.mutate(undefined, {
       onSuccess: () => setDisconnectOpen(false),
     });
   };
@@ -215,19 +212,10 @@ export function GitHubCredentialCard({
       >
         <DialogTitle>Disconnect GitHub?</DialogTitle>
         <DialogContent>
-          <DialogContentText sx={{ mb: 2 }}>
+          <DialogContentText>
             Projects relying on this org's GitHub connection will lose spec and
             code access until it's reconnected.
           </DialogContentText>
-          <FormControlLabel
-            control={
-              <Checkbox
-                checked={uninstall}
-                onChange={(e) => setUninstall(e.target.checked)}
-              />
-            }
-            label="Uninstall the GitHub App (leave unchecked to keep it installed for later re-adoption)"
-          />
           {disconnect.isError && (
             <Alert severity="error" sx={{ mt: 2 }}>
               {disconnect.error.message}

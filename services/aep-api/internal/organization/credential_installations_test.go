@@ -15,8 +15,7 @@
 // under the License.
 
 // UNIT + DBTEST tiers for the App-installation path (fetchInstallation,
-// ListInstallationRepos/listInstallationRepos, fetchAppBotIdentity,
-// ResolveUserInstallations).
+// ListInstallationRepos/listInstallationRepos, fetchAppBotIdentity).
 //
 // fetchInstallation and fetchAppBotIdentity sign their own App JWT
 // (secrets.AppTokenMinter.SignAppJWT) and hit s.githubAPI directly via
@@ -42,10 +41,6 @@
 //     multi-page repository-listing merge logic inside listInstallationRepos
 //     itself (the part downstream of a successful mint) is NOT reachable from
 //     this package for the same reason and is left uncovered here.
-//
-// ResolveUserInstallations talks to GitHub exclusively through the
-// sourcecontrol.AppInstallOps port, so it is faked at that edge like any other
-// out-of-process dependency — no HTTP or minter trickery needed.
 package organization
 
 import (
@@ -63,7 +58,6 @@ import (
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
-	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // sortedKeys returns the sorted JSON keys of a decoded object. Package-scoped
@@ -333,164 +327,3 @@ func TestFetchAppBotIdentity(t *testing.T) {
 		}
 	})
 }
-
-// --- ResolveUserInstallations --------------------------------------------------
-
-// fakeAppInstallOps hand-fakes sourcecontrol.AppInstallOps. ResolveUserInstallations
-// only calls ExchangeOAuthCode, GetUserInstallations, and ListAppInstallations;
-// the other two methods are not on its path, so a call to one is a test bug —
-// they panic.
-type fakeAppInstallOps struct {
-	exchangeFn     func(ctx context.Context, clientID, clientSecret, code, redirectURI string) (string, error)
-	userInstallsFn func(ctx context.Context, userToken string) ([]int64, error)
-	listAppFn      func(ctx context.Context, minter *secrets.AppTokenMinter) ([]sourcecontrol.AppInstallationSummary, error)
-}
-
-var _ sourcecontrol.AppInstallOps = (*fakeAppInstallOps)(nil)
-
-func (f *fakeAppInstallOps) GetUser(context.Context, secrets.Credential) (*sourcecontrol.GitHubUser, error) {
-	panic("fakeAppInstallOps: GetUser is not on the ResolveUserInstallations path")
-}
-
-func (f *fakeAppInstallOps) GetAppInstallation(context.Context, *secrets.AppTokenMinter, int64) (*sourcecontrol.AppInstallationInfo, error) {
-	panic("fakeAppInstallOps: GetAppInstallation is not on the ResolveUserInstallations path")
-}
-
-func (f *fakeAppInstallOps) ListAppInstallations(ctx context.Context, minter *secrets.AppTokenMinter) ([]sourcecontrol.AppInstallationSummary, error) {
-	if f.listAppFn != nil {
-		return f.listAppFn(ctx, minter)
-	}
-	return nil, nil
-}
-
-func (f *fakeAppInstallOps) ExchangeOAuthCode(ctx context.Context, clientID, clientSecret, code, redirectURI string) (string, error) {
-	if f.exchangeFn != nil {
-		return f.exchangeFn(ctx, clientID, clientSecret, code, redirectURI)
-	}
-	return "user-token", nil
-}
-
-func (f *fakeAppInstallOps) GetUserInstallations(ctx context.Context, userToken string) ([]int64, error) {
-	if f.userInstallsFn != nil {
-		return f.userInstallsFn(ctx, userToken)
-	}
-	return nil, nil
-}
-
-func (f *fakeAppInstallOps) DeleteInstallation(context.Context, *secrets.AppTokenMinter, int64) error {
-	panic("fakeAppInstallOps: DeleteInstallation is not on the ResolveUserInstallations path")
-}
-
-func TestResolveUserInstallations_NotConfigured(t *testing.T) {
-	t.Parallel()
-
-	t.Run("nil githubClient → ErrAppBindNotConfigured", func(t *testing.T) {
-		t.Parallel()
-		svc := NewCredentialService(nil, nil, newConfiguredMinter(t, 1), "", "client-id", "client-secret", nil)
-		_, err := svc.ResolveUserInstallations(context.Background(), "acme", "code", "https://cb")
-		if !errors.Is(err, ErrAppBindNotConfigured) {
-			t.Fatalf("err = %v; want ErrAppBindNotConfigured", err)
-		}
-	})
-
-	t.Run("unconfigured minter (AppID==0) → ErrAppBindNotConfigured", func(t *testing.T) {
-		t.Parallel()
-		svc := NewCredentialService(nil, nil, newUnconfiguredMinter(t), "", "client-id", "client-secret", &fakeAppInstallOps{})
-		_, err := svc.ResolveUserInstallations(context.Background(), "acme", "code", "https://cb")
-		if !errors.Is(err, ErrAppBindNotConfigured) {
-			t.Fatalf("err = %v; want ErrAppBindNotConfigured", err)
-		}
-	})
-
-	t.Run("empty appClientID/appClientSecret → ErrAppBindNotConfigured", func(t *testing.T) {
-		t.Parallel()
-		svc := NewCredentialService(nil, nil, newConfiguredMinter(t, 1), "", "", "", &fakeAppInstallOps{})
-		_, err := svc.ResolveUserInstallations(context.Background(), "acme", "code", "https://cb")
-		if !errors.Is(err, ErrAppBindNotConfigured) {
-			t.Fatalf("err = %v; want ErrAppBindNotConfigured", err)
-		}
-	})
-}
-
-func TestResolveUserInstallations_ValidationAndUpstreamErrors(t *testing.T) {
-	t.Parallel()
-	minter := newConfiguredMinter(t, 1)
-
-	t.Run("empty ocOrgID", func(t *testing.T) {
-		t.Parallel()
-		svc := NewCredentialService(nil, nil, minter, "", "cid", "csecret", &fakeAppInstallOps{})
-		_, err := svc.ResolveUserInstallations(context.Background(), "", "code", "https://cb")
-		assertValidationCode(t, err, "oc_org_id_missing")
-	})
-
-	t.Run("empty oauthCode", func(t *testing.T) {
-		t.Parallel()
-		svc := NewCredentialService(nil, nil, minter, "", "cid", "csecret", &fakeAppInstallOps{})
-		_, err := svc.ResolveUserInstallations(context.Background(), "acme", "", "https://cb")
-		assertValidationCode(t, err, "oauth_code_missing")
-	})
-
-	t.Run("ExchangeOAuthCode error → oauth_exchange_failed", func(t *testing.T) {
-		t.Parallel()
-		gh := &fakeAppInstallOps{exchangeFn: func(context.Context, string, string, string, string) (string, error) {
-			return "", errors.New("bad code")
-		}}
-		svc := NewCredentialService(nil, nil, minter, "", "cid", "csecret", gh)
-		_, err := svc.ResolveUserInstallations(context.Background(), "acme", "code", "https://cb")
-		assertValidationCode(t, err, "oauth_exchange_failed")
-	})
-
-	t.Run("empty userToken from exchange → empty slice, nil error, no further calls", func(t *testing.T) {
-		t.Parallel()
-		gh := &fakeAppInstallOps{
-			exchangeFn: func(context.Context, string, string, string, string) (string, error) { return "", nil },
-			userInstallsFn: func(context.Context, string) ([]int64, error) {
-				t.Fatalf("GetUserInstallations must not be called when the exchange yields no token")
-				return nil, nil
-			},
-		}
-		svc := NewCredentialService(nil, nil, minter, "", "cid", "csecret", gh)
-		got, err := svc.ResolveUserInstallations(context.Background(), "acme", "code", "https://cb")
-		if err != nil {
-			t.Fatalf("err = %v; want nil", err)
-		}
-		if got == nil || len(got) != 0 {
-			t.Fatalf("got = %#v; want an empty, non-nil slice", got)
-		}
-	})
-
-	t.Run("GetUserInstallations error propagates", func(t *testing.T) {
-		t.Parallel()
-		gh := &fakeAppInstallOps{userInstallsFn: func(context.Context, string) ([]int64, error) {
-			return nil, errors.New("github: 500")
-		}}
-		svc := NewCredentialService(nil, nil, minter, "", "cid", "csecret", gh)
-		_, err := svc.ResolveUserInstallations(context.Background(), "acme", "code", "https://cb")
-		if err == nil || !strings.Contains(err.Error(), "get user installations") {
-			t.Fatalf("err = %v; want wrapped get-user-installations error", err)
-		}
-	})
-
-	t.Run("ListAppInstallations error propagates", func(t *testing.T) {
-		t.Parallel()
-		gh := &fakeAppInstallOps{
-			userInstallsFn: func(context.Context, string) ([]int64, error) { return []int64{1}, nil },
-			listAppFn: func(context.Context, *secrets.AppTokenMinter) ([]sourcecontrol.AppInstallationSummary, error) {
-				return nil, errors.New("github: 503")
-			},
-		}
-		svc := NewCredentialService(nil, nil, minter, "", "cid", "csecret", gh)
-		_, err := svc.ResolveUserInstallations(context.Background(), "acme", "code", "https://cb")
-		if err == nil || !strings.Contains(err.Error(), "list app installations") {
-			t.Fatalf("err = %v; want wrapped list-app-installations error", err)
-		}
-	})
-}
-
-// TestResolveUserInstallations_FiltersByUserAccessAndOrgBinding_DB (the
-// cross-tenant org-binding filter, which needs a real DB) lives in the
-// black-box credential_installations_dbtest_test.go (package
-// organization_test) — this file stays package organization (it drives
-// fetchInstallation/fetchAppBotIdentity, unexported methods with no test seam
-// reachable from outside the package) and must not import dbtest, which would
-// reintroduce the organization→dbtest→migrate→organization cycle.

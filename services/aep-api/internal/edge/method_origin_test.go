@@ -145,7 +145,6 @@ var opOwner = map[string]string{
 	"RotateTestUserPassword":        embedIdentity,
 	"RotateIdpClientSecret":         embedOrganization,
 	"SetSkillEnabled":               embedSpec,
-	"StartGitProviderConnect":       embedOrganization,
 	"StreamBuildProgress":           embedDelivery,
 	"StreamRunProgress":             embedDelivery,
 	"StreamTaskLog":                 embedDelivery,

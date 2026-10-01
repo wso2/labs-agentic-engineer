@@ -10,10 +10,9 @@ consolidated `/config` resource.
 ```mermaid
 flowchart LR
   API(["/api/v1"]) --> SL
-  CB(["/connect/callback"]) -.-> CORE
   S2S(["/internal/v1"]) -.-> CORE
   subgraph organization
-    SL["slices — getconfig · patchconfig · testllm · connect/disconnect · rotate/discover idp · listorgs"]
+    SL["slices — getconfig · patchconfig · testllm · disconnect · rotate/discover idp · listorgs"]
     CORE["config orchestrator + credential / anthropic / model-connection / idp / org services"]
     SL --> CORE
     CORE --> DB[("organizations · org_credentials · org_model_connections · org_anthropic_credentials · org_agent_settings · organization_idp_profiles")]
@@ -29,7 +28,7 @@ flowchart LR
 |---|---|---|
 | `getconfig` `patchconfig` | read / atomic multi-section write of the org config | `GET`+`PATCH .../config` |
 | `testllm` | probe a model connection without saving it (rationed: 10 per org per minute) | `POST .../config/llm/test` |
-| `connectgithub` `disconnectgithub` | start GitHub App connect / disconnect cascade | `POST .../config:connect-git-provider` etc. |
+| `disconnectgithub` | disconnect cascade for the org's git provider | `POST .../config/git-provider/disconnect` |
 | `rotateidp` `discoveridp` | rotate the publisher client secret / OIDC discovery | `POST .../config:rotate-idp-secret` etc. |
 | `listorgs` | enumerate orgs (tenant-gate carve-out — no org ctx) | `GET /organizations` |
 

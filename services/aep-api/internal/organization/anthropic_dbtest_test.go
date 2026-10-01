@@ -86,7 +86,7 @@ func newCardDB(t *testing.T, apiStatus int) *cardDB {
 	conns := organization.NewModelConnectionService(connRepo, repo, store, sonnetRates()).WithProbeClient(endpoint.client())
 	settings := organization.NewAgentSettingsService(organization.NewOrgAgentSettingsRepository(db),
 		organization.NewOrganizationRepository(db), svc, conns, organization.NewAgentsCardRepository(db, store), orgconfig.AgentRuntimes)
-	config := organization.NewService(nil, nil, nil, nil, organization.PlatformIDPConfig{}, "", "").
+	config := organization.NewService(nil, nil, nil, organization.PlatformIDPConfig{}).
 		WithAgentSettings(settings)
 	return &cardDB{db: db, svc: svc, conns: conns, config: config, store: store, repo: repo, connRepo: connRepo, endpoint: endpoint}
 }

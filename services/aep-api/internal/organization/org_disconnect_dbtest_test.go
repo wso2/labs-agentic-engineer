@@ -69,7 +69,7 @@ func TestOrgDisconnect_SeversCredential_LeavesExecutions_DB(t *testing.T) {
 	// issueSvc is nil: the disconnect cascade no longer touches issues (the task
 	// abandon cascade that used it is gone).
 	svc := organization.NewOrgDisconnectService(credSvc, nil)
-	if err := svc.Disconnect(ctx, "acme", "manual.disconnect", false); err != nil {
+	if err := svc.Disconnect(ctx, "acme", "manual.disconnect"); err != nil {
 		t.Fatalf("disconnect: %v", err)
 	}
 
@@ -97,7 +97,7 @@ func TestOrgDisconnect_UnknownOrg_ReturnsNotFound_DB(t *testing.T) {
 
 	// Phase A existence check: no credential row → organization.ErrOrgNotFound (the controller
 	// maps it to an idempotent 200).
-	if err := svc.Disconnect(ctx, "ghost", "manual.disconnect", false); !errors.Is(err, organization.ErrOrgNotFound) {
+	if err := svc.Disconnect(ctx, "ghost", "manual.disconnect"); !errors.Is(err, organization.ErrOrgNotFound) {
 		t.Fatalf("disconnect unknown org: err = %v, want organization.ErrOrgNotFound", err)
 	}
 }
@@ -114,11 +114,11 @@ func TestOrgDisconnect_AlreadyDisconnected_NoOp_DB(t *testing.T) {
 	}
 	svc := organization.NewOrgDisconnectService(credSvc, nil)
 
-	if err := svc.Disconnect(ctx, "acme", "manual.disconnect", false); err != nil {
+	if err := svc.Disconnect(ctx, "acme", "manual.disconnect"); err != nil {
 		t.Fatalf("first disconnect: %v", err)
 	}
 	// A second disconnect on an already-finalized row is a clean no-op.
-	if err := svc.Disconnect(ctx, "acme", "manual.disconnect", false); err != nil {
+	if err := svc.Disconnect(ctx, "acme", "manual.disconnect"); err != nil {
 		t.Fatalf("second disconnect must be idempotent, got %v", err)
 	}
 	if row := getRow(t, db, "acme"); row.Status != "disconnected" {

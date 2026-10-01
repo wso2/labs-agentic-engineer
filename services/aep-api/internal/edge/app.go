@@ -52,11 +52,10 @@ type AppParams struct {
 	// contract, packages/contracts/api/v1). main.go fills it.
 	Deps Deps
 
-	// Controllers still wired as raw handlers: OrgGitHubController (App-mode
-	// connect callback), WebhookController (GitHub webhook HMAC). The runner
-	// callbacks are the internal contract-first surface (InternalDeps).
-	OrgGitHubController organization.OrgGitHubController
-	WebhookController   webhook.WebhookController
+	// Controllers still wired as raw handlers: WebhookController (GitHub
+	// webhook HMAC). The runner callbacks are the internal contract-first
+	// surface (InternalDeps).
+	WebhookController webhook.WebhookController
 
 	// InternalDeps carries the services + authorizer for the internal S2S
 	// surface (path-scoped runner credentials refresh), served contract-first

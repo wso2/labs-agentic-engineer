@@ -27,7 +27,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/clients/oidc"
@@ -37,11 +36,6 @@ import (
 // ErrLLMTestRateLimited refuses a Test connection call over the per-org limit.
 // Mapped to 429 llm_test_rate_limited at the HTTP edge.
 var ErrLLMTestRateLimited = errors.New("orgconfig: too many connection tests")
-
-// ErrGitHubAppNotConfigured is returned by StartGitHubConnect when the GitHub
-// App OAuth client isn't wired on this deployment (the App-mode connect path is
-// unavailable). Mapped to 503 at the HTTP edge.
-var ErrGitHubAppNotConfigured = errors.New("orgconfig: github app oauth client not configured")
 
 // SectionError is a per-section failure carrying the RFC-9457 location pointer
 // (body.<section>) the console uses to highlight the offending form section. It
@@ -82,44 +76,31 @@ func sectionErrorFrom(section string, err error) error {
 
 // Service is the /config orchestrator. It holds the reused services + the
 // platform IDP defaults (used to synthesize a not-yet-persisted idp section on
-// GET) + the GitHub App connect parameters.
+// GET).
 type Service struct {
 	credentialSvc *CredentialService
 	disconnectSvc *OrgDisconnectService
-	bearerSvc     *BearerService
 	idpSvc        IDPService
 	agentSettings *AgentSettingsService
 	llmTests      *llmTestLimiter
 	platformIDP   PlatformIDPConfig
-
-	publicURL   string
-	appClientID string
 }
 
-// NewService wires the orchestrator. The defaulting for publicURL mirrors the
-// legacy NewOrgGitHubController so the connect-session redirect_uri is
-// identical. Any dependency may be nil in narrow test harnesses that exercise
-// only a subset of sections; each handler nil-guards what it needs.
+// NewService wires the orchestrator. Any dependency may be nil in narrow test
+// harnesses that exercise only a subset of sections; each handler nil-guards
+// what it needs.
 func NewService(
 	credentialSvc *CredentialService,
 	disconnectSvc *OrgDisconnectService,
-	bearerSvc *BearerService,
 	idpSvc IDPService,
 	platformIDP PlatformIDPConfig,
-	publicURL, appClientID string,
 ) *Service {
-	if publicURL == "" {
-		publicURL = "http://localhost:8090"
-	}
 	return &Service{
 		credentialSvc: credentialSvc,
 		disconnectSvc: disconnectSvc,
-		bearerSvc:     bearerSvc,
 		idpSvc:        idpSvc,
 		llmTests:      newLLMTestLimiter(time.Now),
 		platformIDP:   platformIDP,
-		publicURL:     publicURL,
-		appClientID:   appClientID,
 	}
 }
 
@@ -332,28 +313,10 @@ func (s *Service) TestLLM(ctx context.Context, org string, w orgconfig.LLMPatch)
 
 // --- Action routes ----------------------------------------------------------
 
-// StartGitHubConnect mints a connect-state JWT and returns the GitHub App OAuth
-// authorize URL. Mirrors the legacy start-github-connect handler exactly (same
-// state issuance, same redirect_uri built from the unchanged callback path).
-func (s *Service) StartGitHubConnect(ctx context.Context, org, actor string, installationID int64) (string, error) {
-	if s.appClientID == "" {
-		return "", ErrGitHubAppNotConfigured
-	}
-	state, err := s.bearerSvc.IssueConnectState(org, actor, installationID, 15*time.Minute)
-	if err != nil {
-		return "", fmt.Errorf("orgconfig start connect: %w", err)
-	}
-	redirectURI := s.publicURL + ConnectCallbackPath
-	authorizeURL := "https://github.com/login/oauth/authorize?client_id=" + url.QueryEscape(s.appClientID) +
-		"&redirect_uri=" + url.QueryEscape(redirectURI) +
-		"&state=" + url.QueryEscape(state)
-	return authorizeURL, nil
-}
-
 // DisconnectGitProvider runs the disconnect cascade. It returns whether a
 // connection existed (false → the caller reports an idempotent not_connected).
-func (s *Service) DisconnectGitProvider(ctx context.Context, org string, uninstall bool) (bool, error) {
-	if err := s.disconnectSvc.Disconnect(ctx, org, "manual.disconnect", uninstall); err != nil {
+func (s *Service) DisconnectGitProvider(ctx context.Context, org string) (bool, error) {
+	if err := s.disconnectSvc.Disconnect(ctx, org, "manual.disconnect"); err != nil {
 		if errors.Is(err, ErrOrgNotFound) {
 			return false, nil
 		}

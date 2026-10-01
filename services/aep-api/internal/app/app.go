@@ -714,14 +714,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// first-protected-deploy provisions the org publisher app lazily.
 	deploymentService.SetIDPService(idpService)
 
-	// Connect-state JWT issuer (App-mode OAuth CSRF state). This HS256 signing
-	// key only ever leaves the BFF as a JWT signature inside the GitHub OAuth
-	// `state` query param. (Task JWTs use RS256 via taskTokens below.)
-	bearerSvc := organization.NewBearerService(cfg.OAuthStateSigningKey, 24*time.Hour)
-	if cfg.OAuthStateSigningKey == "" {
-		slog.Warn("OAUTH_STATE_SIGNING_KEY not set — connect-state JWTs will fail to mint")
-	}
-
 	// taskTokens (the RS256 Task-JWT manager) is constructed earlier, before
 	// the agents client — that client uses it to mint per-call outbound
 	// identity tokens, so it must exist by then.
@@ -902,14 +894,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// credential and the issues become inert to the router (no valid webhook).
 	disconnectSvc := organization.NewOrgDisconnectService(credService, issueService).
 		WithWorkspaceTrash(trashWorkspaceOrg)
-	orgGitHubCtrl := organization.NewOrgGitHubController(
-		credService,
-		disconnectSvc,
-		bearerSvc,
-		cfg.GitHubAppSlug,
-		cfg.BFFPublicURL,
-		cfg.GitHubAppClientID,
-	)
 
 	// Internal S2S runner authorizer — keyed to the CYCLE: the id in the runner
 	// bearer is the run cycle the pod was dispatched for, and the publisher-cc
@@ -938,7 +922,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 			ValidationContext: validationContextSvc,
 		},
 		WebhookController:   webhookCtrl,
-		OrgGitHubController: orgGitHubCtrl,
 		ConfigRepo:          configRepo,
 		ThunderJWKS:         thunderJWKS,
 		OrganizationService: organizationService,
@@ -957,11 +940,8 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	orgConfigSvc := organization.NewService(
 		credService,
 		disconnectSvc,
-		bearerSvc,
 		idpService,
 		organization.PlatformIDPConfig{Issuer: cfg.PlatformIDP.Issuer, JWKSURL: cfg.PlatformIDP.JWKSURL},
-		cfg.BFFPublicURL,
-		cfg.GitHubAppClientID,
 	).WithAgentSettings(agentSettings)
 
 	// Strict-handler feature dependencies — everything the contract-first
@@ -1709,9 +1689,6 @@ func computeDegradations(cfg config.Config, secretsDelivery bool) []Degradation 
 	}
 	if cfg.ThunderAdmin.ClientID == "" || cfg.ThunderAdmin.ClientSecret == "" || thunderBase == "" {
 		off("idp-mutations", "THUNDER_ADMIN_URL / THUNDER_SYSTEM_CLIENT_ID / THUNDER_SYSTEM_CLIENT_SECRET not set — per-org publisher IDP mutations 503")
-	}
-	if cfg.OAuthStateSigningKey == "" {
-		off("connect-oauth-state", "OAUTH_STATE_SIGNING_KEY not set — GitHub App connect-state JWTs will fail to mint")
 	}
 	// Working dispatch is the OpenChoreo component path: the BFF creates the run
 	// cycle's Component through platform-api-service and OC renders the Job. It

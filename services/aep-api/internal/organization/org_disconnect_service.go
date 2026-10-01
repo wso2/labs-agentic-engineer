@@ -80,14 +80,7 @@ func (s *OrgDisconnectService) WithWorkspaceTrash(fn func(ctx context.Context, o
 // cascaded task's Cause column so audit can distinguish manual disconnect
 // from validator/webhook-driven cascades. Empty cause defaults to
 // "org.disconnected".
-//
-// uninstallApp triggers Phase E (GitHub-side App uninstall via
-// DELETE /app/installations/{id}) for App-mode connections. Set true for
-// manual disconnects so the install on github.com is removed alongside
-// the platform row — no orphans left behind. PAT-mode rows ignore the
-// flag; webhook-driven cascades (installation.deleted) typically pass
-// false to avoid a feedback loop.
-func (s *OrgDisconnectService) Disconnect(ctx context.Context, ocOrgID, cause string, uninstallApp bool) error {
+func (s *OrgDisconnectService) Disconnect(ctx context.Context, ocOrgID, cause string) error {
 	if cause == "" {
 		cause = "org.disconnected"
 	}
@@ -118,15 +111,6 @@ func (s *OrgDisconnectService) Disconnect(ctx context.Context, ocOrgID, cause st
 		return fmt.Errorf("disconnect Phase D: %w", err)
 	}
 
-	// Phase E — best-effort GitHub-side uninstall. App-mode only; PAT and
-	// failure are silent (the platform row is gone regardless, and an
-	// admin can clean up via github.com if needed).
-	if uninstallApp && proj.Kind == "app-installation" {
-		if err := s.credSvc.UninstallAppInstallation(ctx, ocOrgID); err != nil {
-			slog.WarnContext(ctx, "disconnect Phase E: uninstall failed", "ocOrgId", ocOrgID, "error", err)
-		}
-	}
-
 	// Phase F — best-effort disk cleanup: rename the org's whole workspace
 	// subtree (all projects incl. _skills) into trash. The hook logs its own
 	// failures and never fails the cascade; a missed trash here just leaves
@@ -137,6 +121,6 @@ func (s *OrgDisconnectService) Disconnect(ctx context.Context, ocOrgID, cause st
 		s.workspaceTrash(ctx, ocOrgID)
 	}
 
-	slog.InfoContext(ctx, "disconnect: cascade complete", "ocOrgId", ocOrgID, "uninstallApp", uninstallApp)
+	slog.InfoContext(ctx, "disconnect: cascade complete", "ocOrgId", ocOrgID)
 	return nil
 }
