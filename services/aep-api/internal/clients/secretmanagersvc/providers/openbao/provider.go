@@ -41,6 +41,7 @@ var (
 	_ secretsprovider.Provider               = (*Provider)(nil)
 	_ secretsprovider.SecretReferenceManager = (*Provider)(nil)
 	_ secretsprovider.SecretsClient          = (*Client)(nil)
+	_ secretsprovider.SecretPathResolver     = (*Client)(nil)
 )
 
 // Provider implements secretsprovider.Provider for direct OpenBao KV writes.

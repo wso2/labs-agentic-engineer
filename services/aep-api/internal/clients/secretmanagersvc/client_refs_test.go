@@ -37,10 +37,11 @@ import (
 // fakeKV is an in-memory KV-v2 server behind the real OpenBao provider, so the
 // vault path under test is the one production computes.
 type fakeKV struct {
-	mu     sync.Mutex
-	data   map[string]map[string]string // key: path under the mount
-	writes int
-	srv    *httptest.Server
+	mu         sync.Mutex
+	data       map[string]map[string]string // key: path under the mount
+	writes     int
+	failWrites bool
+	srv        *httptest.Server
 }
 
 const fakeKVDataPrefix = "/v1/secret/data/"
@@ -54,6 +55,11 @@ func newFakeKV(t *testing.T) *fakeKV {
 		defer kv.mu.Unlock()
 		switch {
 		case (r.Method == http.MethodPut || r.Method == http.MethodPost) && strings.HasPrefix(r.URL.Path, fakeKVDataPrefix):
+			if kv.failWrites {
+				// 403, not 5xx: the vault client retries 5xx with backoff.
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
 			var body struct {
 				Data map[string]string `json:"data"`
 			}
@@ -275,9 +281,65 @@ func TestCreateSecretRef_ConflictIsAnErrorNeverAnUpdate(t *testing.T) {
 	if oc.updates != 0 {
 		t.Fatal("a conflict must never fall back to an update")
 	}
+	if kv.writes != 0 {
+		t.Fatalf("a conflict must write nothing to the vault, got %d writes", kv.writes)
+	}
 }
 
-func TestCreateSecretRef_ReferenceFailureRemovesTheNewValue(t *testing.T) {
+// fixedNames makes the client mint the given names in order (then the last
+// one forever), so a test can force a name clash.
+func fixedNames(t *testing.T, c SecretManagementClient, names ...string) {
+	t.Helper()
+	i := 0
+	c.(*secretManagementClient).mintName = func(string, string) (string, error) {
+		n := names[min(i, len(names)-1)]
+		i++
+		return n, nil
+	}
+}
+
+func TestCreateSecretRef_ClashNeverTouchesTheExistingValue(t *testing.T) {
+	ctx := context.Background()
+	kv, oc := newFakeKV(t), newFakeOC()
+	c := newRefsClient(t, kv.provider(t), oc)
+	loc := githubPatLocation()
+
+	existing, err := c.CreateSecretRef(ctx, loc, map[string]string{"token": "old"})
+	if err != nil {
+		t.Fatalf("CreateSecretRef: %v", err)
+	}
+	path := oc.created[existing].KVPath
+	writes := kv.writes
+
+	fixedNames(t, c, existing)
+	if _, err := c.CreateSecretRef(ctx, loc, map[string]string{"token": "new"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("err = %v, want ErrConflict after the re-mint also clashes", err)
+	}
+	if kv.writes != writes || kv.at(path)["token"] != "old" {
+		t.Fatal("a name clash must leave the existing reference's vault value untouched")
+	}
+}
+
+func TestCreateSecretRef_ClashIsRetriedOnceWithANewName(t *testing.T) {
+	ctx := context.Background()
+	kv, oc := newFakeKV(t), newFakeOC()
+	c := newRefsClient(t, kv.provider(t), oc)
+	loc := githubPatLocation()
+
+	existing, _ := c.CreateSecretRef(ctx, loc, map[string]string{"token": "old"})
+	path := oc.created[existing].KVPath
+	fixedNames(t, c, existing, "default-github-pat-0a1b2c3d")
+
+	got, err := c.CreateSecretRef(ctx, loc, map[string]string{"token": "new"})
+	if err != nil || got != "default-github-pat-0a1b2c3d" {
+		t.Fatalf("got %q err %v, want the re-minted name", got, err)
+	}
+	if kv.at(path)["token"] != "old" || kv.at(oc.created[got].KVPath)["token"] != "new" {
+		t.Fatal("the re-minted reference must get its own vault entry")
+	}
+}
+
+func TestCreateSecretRef_ReferenceFailureWritesNothing(t *testing.T) {
 	kv, oc := newFakeKV(t), newFakeOC()
 	oc.createErr = errors.New("oc unavailable")
 	c := newRefsClient(t, kv.provider(t), oc)
@@ -285,8 +347,24 @@ func TestCreateSecretRef_ReferenceFailureRemovesTheNewValue(t *testing.T) {
 	if _, err := c.CreateSecretRef(context.Background(), githubPatLocation(), map[string]string{"token": "v"}); err == nil {
 		t.Fatal("want an error when the reference cannot be created")
 	}
-	if kv.writes != 1 || len(kv.data) != 0 {
-		t.Fatalf("the value written for the failed reference must be removed (writes=%d left=%d)", kv.writes, len(kv.data))
+	if kv.writes != 0 {
+		t.Fatalf("no value may be written without its reference, got %d writes", kv.writes)
+	}
+}
+
+func TestCreateSecretRef_VaultFailureRemovesTheNewReference(t *testing.T) {
+	ctx := context.Background()
+	kv, oc := newFakeKV(t), newFakeOC()
+	c := newRefsClient(t, kv.provider(t), oc)
+	loc := githubPatLocation()
+	existing, _ := c.CreateSecretRef(ctx, loc, map[string]string{"token": "old"})
+
+	kv.failWrites = true
+	if _, err := c.CreateSecretRef(ctx, loc, map[string]string{"token": "new"}); err == nil {
+		t.Fatal("want an error when the vault write fails")
+	}
+	if len(oc.created) != 1 || !oc.exists(existing) {
+		t.Fatalf("the new reference must be deleted and the existing one kept, refs=%d", len(oc.created))
 	}
 }
 
@@ -300,8 +378,8 @@ func TestCreateSecretRef_LongNamesFitADNSLabel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSecretRef: %v", err)
 	}
-	if len(name) > 63 || !regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?-[0-9a-f]{8}$`).MatchString(name) {
-		t.Fatalf("name %q (len %d) is not a DNS label ending in 8 hex", name, len(name))
+	if len(name) > 63 || !regexp.MustCompile(`^a+-github-pat-[0-9a-f]{8}$`).MatchString(name) {
+		t.Fatalf("name %q (len %d): want a DNS label keeping the entity, cpNS trimmed", name, len(name))
 	}
 }
 

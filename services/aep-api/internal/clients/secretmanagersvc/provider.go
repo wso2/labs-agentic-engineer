@@ -36,5 +36,8 @@ type Provider = secretsprovider.Provider
 // SecretReferenceManager signals that a provider manages SecretReference CRDs internally.
 type SecretReferenceManager = secretsprovider.SecretReferenceManager
 
+// SecretPathResolver resolves the path a SecretsClient stores a location under, without writing.
+type SecretPathResolver = secretsprovider.SecretPathResolver
+
 // SecretsClient performs secret operations on a backend.
 type SecretsClient = secretsprovider.SecretsClient

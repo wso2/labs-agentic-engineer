@@ -170,3 +170,30 @@ func TestClient_PushSecret_ErrorOmitsSecretValues(t *testing.T) {
 		t.Errorf("error leaked secret value: %v", err)
 	}
 }
+
+func TestClient_SecretPath_IsWherePushSecretWrites(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{}}`))
+	}))
+	t.Cleanup(srv.Close)
+	p, err := openbao.NewProvider(&secretsprovider.OpenBaoConfig{Server: srv.URL, Path: "secret", Auth: &secretsprovider.OpenBaoAuth{Token: "tok"}})
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+	client, _ := p.NewClient(nil)
+	loc := secretsprovider.SecretLocation{OrgName: "ou-1", EntityName: "github-pat", RefName: "default-github-pat-0a1b2c3d"}
+
+	resolved, err := client.(secretsprovider.SecretPathResolver).SecretPath(loc)
+	if err != nil {
+		t.Fatalf("SecretPath: %v", err)
+	}
+	value, _ := json.Marshal(map[string]string{"token": "v"})
+	stored, err := client.PushSecret(context.Background(), loc, value, nil)
+	if err != nil {
+		t.Fatalf("PushSecret: %v", err)
+	}
+	if resolved != stored || resolved != "user-app-secrets/"+tenant.OrgBaseNamespace("ou-1")+"/default-github-pat-0a1b2c3d" {
+		t.Fatalf("SecretPath %q, PushSecret %q", resolved, stored)
+	}
+}

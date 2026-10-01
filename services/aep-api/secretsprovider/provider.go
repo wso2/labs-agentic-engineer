@@ -52,6 +52,18 @@ type SecretReferenceManager interface {
 	ManagesSecretReferences() bool
 }
 
+// SecretPathResolver is an optional interface a SecretsClient implements when
+// the path PushSecret stores a location under is a pure function of the
+// location. It lets the high-level client author the SecretReference that
+// points at a value before writing the value (the reference reserves a fresh
+// name, so a name clash never overwrites another reference's value).
+// SecretPath must return exactly the path PushSecret returns for the same
+// location. Required of every client whose provider does not manage
+// SecretReferences.
+type SecretPathResolver interface {
+	SecretPath(location SecretLocation) (string, error)
+}
+
 // SecretsClient performs secret operations on a backend.
 // This interface follows the external-secrets SecretsClient pattern.
 // Each provider interprets the SecretLocation according to its storage model:
