@@ -24,9 +24,9 @@ One per process, chosen by env in `src/modes.ts` (`selectModes`); boot fails
 with none (`ae-collab: no config`) and a partial pod env fails naming every
 missing key.
 
-- **Pod mode** (`AE_ORG_ID` set, the AE Studio pod; `src/pod/`). Wins
-  outright: the legacy keys below start nothing in a pod, so dev mode can
-  never run there. The public port (`AE_LISTEN_PORT`, 8081) gates `/v1`
+- **Pod mode** (`AE_ORG_ID` set, the AE Studio pod; `src/pod/`). Any
+  legacy key below (`COLLAB_DEV`, `COLLAB_MOCK_BFF`, `AEP_API_BASE`) in a pod
+  env fails the boot, naming the keys, so dev mode can never run there. The public port (`AE_LISTEN_PORT`, 8081) gates `/v1`
   (any casing) with `@aep/platform-idp-auth`: a Platform IdP user token of
   `AE_IDP_ISSUER` with an `AE_USER_AUDIENCES` aud and `ouId`/`ouHandle` equal
   to `AE_ORG_ID`/`AE_ORG_HANDLE`. M2M → 401, another org → 403, both before
@@ -45,9 +45,11 @@ missing key.
     the same fixtures, and the service runs its **real** auth and seed paths
     against it. Token `deny` exercises the rejection path; a JWT-shaped
     token's `name`/`email` claims become the identity.
-  - **Dev mode** (`COLLAB_DEV=1`, explicit only; `pnpm dev` sets it): oracle
-    bypassed, rooms seed from `fixtures.ts`. The auth/seed code paths are NOT
-    exercised. Missing config never implies it.
+  - **Dev mode** (`COLLAB_DEV=1` with no BFF, real or mock; `pnpm dev` sets
+    the flag): oracle bypassed, rooms seed from `fixtures.ts`. The auth/seed
+    code paths are NOT exercised. Missing config never implies it, and a
+    configured BFF outranks the flag (`COLLAB_MOCK_BFF=1 pnpm dev` runs the
+    real paths).
 
 Never enable dev mode or the mock BFF in a cluster.
 
@@ -108,7 +110,7 @@ the moment several tabs are reconnecting together.
 |---|---|---|
 | `COLLAB_PORT` | `8091` | ws listen port |
 | `AEP_API_BASE` | unset | BFF base incl. prefix, e.g. `http://localhost:9090/api/v1` |
-| `COLLAB_DEV` | off | dev mode (explicit only; never implied) |
+| `COLLAB_DEV` | off | dev mode when no BFF (real or mock) is set; never implied |
 | `COLLAB_MOCK_BFF` | off | run the embedded mock BFF; overrides `AEP_API_BASE` |
 | `COLLAB_MOCK_BFF_PORT` | `8092` | mock BFF listen port |
 | `COLLAB_COMMIT_DEBOUNCE_MS` | `60000` | quiet period before a flush commits |
@@ -117,7 +119,8 @@ the moment several tabs are reconnecting together.
 Pod mode (all required once `AE_ORG_ID` is set, except the ports):
 `AE_ORG_ID`, `AE_ORG_HANDLE`, `AE_IDP_ISSUER`, `AE_IDP_JWKS_URL`,
 `AE_USER_AUDIENCES` (comma list), `AE_AGENT_CLIENT_ID`, `AE_ALLOWED_ORIGINS`
-(comma list of bare origins), `AE_LISTEN_PORT` (8081), `AE_HEALTH_PORT` (9081).
+(comma list of bare origins), `AE_LISTEN_PORT` (8081), `AE_HEALTH_PORT` (9081);
+ports 1-65535.
 
 Commands: uniform verbs via the root `Makefile`; locally
 `pnpm --filter @aep/ae-collab dev|test|lint|typecheck`.

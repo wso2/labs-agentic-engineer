@@ -20,7 +20,8 @@ export interface CollabConfig {
   port: number;
   /** BFF origin incl. API prefix, e.g. http://localhost:9090/api/v1. */
   aepApiBase: string | null;
-  /** Skip the BFF oracle and seed rooms from fixtures. Only with COLLAB_DEV; never in cluster. */
+  /** Skip the BFF oracle and seed rooms from fixtures. Only with COLLAB_DEV and no
+   *  BFF (real or mock); never in cluster. */
   devMode: boolean;
   /** Run the embedded mock BFF and point the real code paths at it
    *  (stand-in for #81 / #86 phase 2). Never in cluster. */
@@ -42,8 +43,10 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>> = p
   const realBase = env.AEP_API_BASE?.trim().replace(/\/$/, "");
   const aepApiBase = mockBff ? `http://127.0.0.1:${mockBffPort}/api/v1` : realBase || null;
   // Dev mode is explicit only: missing config never implies it (a cluster
-  // that lost AEP_API_BASE must not serve fixtures). `pnpm dev` sets it.
-  const devMode = flag(env.COLLAB_DEV);
+  // that lost AEP_API_BASE must not serve fixtures). A configured BFF, real
+  // or mock, outranks the flag, so `pnpm dev` (which sets COLLAB_DEV) still
+  // runs the real oracle and seed paths when one is given.
+  const devMode = flag(env.COLLAB_DEV) && aepApiBase === null && !mockBff;
   return {
     port: Number(env.COLLAB_PORT ?? 8091),
     aepApiBase,

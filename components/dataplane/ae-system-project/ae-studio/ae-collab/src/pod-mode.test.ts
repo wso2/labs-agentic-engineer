@@ -40,6 +40,8 @@ const USER_AUDIENCE = "aep-console-client";
  */
 interface TestKeys {
   jwksUrl: string;
+  /** Any claims over the IdP's key; `iss` and `exp` default to the IdP's. */
+  sign(claims: Record<string, unknown>): string;
   user(ouHandle: string, ouId: string): string;
   m2m(client: "publisher" | "ae-internal"): string;
   close(): Promise<void>;
@@ -65,6 +67,7 @@ async function testKeys(): Promise<TestKeys> {
   const cc = { grant_type: "client_credentials" };
   return {
     jwksUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/oauth2/jwks`,
+    sign: (claims) => signJwt(privateKey, claims),
     user: (ouHandle, ouId) => signJwt(privateKey, { aud: USER_AUDIENCE, sub: `user-${ouHandle}`, ouId, ouHandle }),
     m2m: (client) =>
       client === "publisher"
@@ -93,9 +96,19 @@ function podEnv(over: Record<string, string> = {}): Record<string, string> {
   };
 }
 
+/** A port free right now: bound on 0, read, released. The pod config refuses 0. */
+async function freePort(): Promise<string> {
+  const probe = createServer();
+  await new Promise<void>((resolve) => probe.listen(0, resolve));
+  const { port } = probe.address() as AddressInfo;
+  await closeServer(probe);
+  return String(port);
+}
+
 /** A pod config on free ports, verifying against the test keys. */
-function podCfg(keys: TestKeys, over: Record<string, string> = {}): PodConfig {
-  const cfg = loadPodConfig(podEnv({ AE_IDP_JWKS_URL: keys.jwksUrl, AE_LISTEN_PORT: "0", AE_HEALTH_PORT: "0", ...over }));
+async function podCfg(keys: TestKeys, over: Record<string, string> = {}): Promise<PodConfig> {
+  const ports = { AE_LISTEN_PORT: await freePort(), AE_HEALTH_PORT: await freePort() };
+  const cfg = loadPodConfig(podEnv({ AE_IDP_JWKS_URL: keys.jwksUrl, ...ports, ...over }));
   assert.ok(cfg);
   return cfg;
 }
@@ -128,7 +141,7 @@ function wsUpgrade(url: string, opts: { origin?: string } = {}): Promise<{ statu
 test("pod: HTTP under /v1 is gated; upgrades are refused for now; origin checked", async () => {
   const keys = await testKeys();
   const lines: PodLogLine[] = [];
-  const pod = await startPodListeners(podCfg(keys), { log: (l) => lines.push(l) });
+  const pod = await startPodListeners(await podCfg(keys), { log: (l) => lines.push(l) });
   try {
     const v1 = (p: string, token?: string) =>
       fetch(`${pod.publicUrl}${p}`, { headers: token ? { authorization: `Bearer ${token}` } : {} });
@@ -146,9 +159,26 @@ test("pod: HTTP under /v1 is gated; upgrades are refused for now; origin checked
     // Same OU id, another handle: both claims must match.
     assert.equal((await v1("/v1/rooms", keys.user("other", "ou-1"))).status, 403);
 
-    // M2M never passes /v1, even the pod's own agent client.
+    // M2M never passes /v1, even the pod's own agent client, nor a client
+    // token that names the console user audience with the pod's org.
     assert.equal((await v1("/v1/rooms", keys.m2m("publisher"))).status, 401);
     assert.equal((await v1("/v1/rooms", keys.m2m("ae-internal"))).status, 401);
+    const clientOnUserAudience = keys.sign({
+      grant_type: "client_credentials",
+      aud: USER_AUDIENCE,
+      client_id: USER_AUDIENCE,
+      sub: USER_AUDIENCE,
+      ouId: "ou-1",
+      ouHandle: "default",
+    });
+    assert.equal((await v1("/v1/rooms", clientOnUserAudience)).status, 401);
+
+    // The pod's issuer, exactly: a user token of the pod's org signed by the
+    // same key under another issuer is refused.
+    const foreignIssuer = keys.sign({ iss: "http://other-idp.test", aud: USER_AUDIENCE, sub: "u", ouId: "ou-1", ouHandle: "default" });
+    const foreign401 = await v1("/v1/rooms", foreignIssuer);
+    assert.equal(foreign401.status, 401);
+    assert.equal(foreign401.headers.get("www-authenticate"), 'Bearer error="invalid_token"');
 
     // The gate sits before route matching: unknown /v1 paths, /v1 itself and
     // any casing of the prefix are 401 before they are 404.
@@ -200,7 +230,7 @@ test("pod: HTTP under /v1 is gated; upgrades are refused for now; origin checked
 
 test("pod: close ends open connections and stops both listeners", async () => {
   const keys = await testKeys();
-  const pod = await startPodListeners(podCfg(keys), { log: () => {} });
+  const pod = await startPodListeners(await podCfg(keys), { log: () => {} });
   // A keep-alive connection left open must not hold close() up.
   await fetch(`${pod.publicUrl}/v1/rooms`, { headers: { connection: "keep-alive" } });
   await pod.close();
@@ -217,7 +247,7 @@ test("pod: a busy public port fails the start and frees the health port", async 
   const lines: PodLogLine[] = [];
   try {
     await assert.rejects(
-      startPodListeners(podCfg(keys, { AE_LISTEN_PORT: port }), { log: (l) => lines.push(l) }),
+      startPodListeners(await podCfg(keys, { AE_LISTEN_PORT: port }), { log: (l) => lines.push(l) }),
       /EADDRINUSE/,
     );
     assert.deepEqual(lines.map((l) => l.msg), ["pod_health_listening"]);
@@ -272,18 +302,30 @@ test("pod config: AE_ORG_ID without the rest fails, naming every missing key and
   );
   assert.throws(() => loadPodConfig(podEnv({ AE_LISTEN_PORT: "http" })), /invalid AE_LISTEN_PORT/);
   assert.throws(() => loadPodConfig(podEnv({ AE_HEALTH_PORT: "70000" })), /invalid AE_HEALTH_PORT/);
+  // 0 means "any free port": never a pod's port.
+  assert.throws(
+    () => loadPodConfig(podEnv({ AE_LISTEN_PORT: "0", AE_HEALTH_PORT: "0" })),
+    /invalid AE_LISTEN_PORT, invalid AE_HEALTH_PORT/,
+  );
 });
 
 test("modes: no legacy server without legacy config", () => {
   assert.deepEqual(selectModes(podEnv()), { pod: loadPodConfig(podEnv()), legacy: null });
 });
 
-test("modes: no dev mode in pod mode", () => {
-  // The pod wins: legacy flags in a pod env start nothing of the legacy server.
-  for (const legacy of [{ COLLAB_DEV: "1" }, { COLLAB_MOCK_BFF: "1" }, { AEP_API_BASE: "http://aep-api/api/v1" }]) {
-    const modes = selectModes({ ...podEnv(), ...legacy });
-    assert.equal(modes.legacy, null);
-    assert.equal(modes.pod?.orgId, "ou-1");
+test("modes: no dev mode in pod mode: a legacy key in a pod env fails the boot", () => {
+  for (const [legacy, keys] of [
+    [{ COLLAB_DEV: "1" }, "COLLAB_DEV"],
+    [{ COLLAB_DEV: "0" }, "COLLAB_DEV"],
+    [{ COLLAB_MOCK_BFF: "1" }, "COLLAB_MOCK_BFF"],
+    [{ AEP_API_BASE: "http://aep-api/api/v1" }, "AEP_API_BASE"],
+    [{ COLLAB_DEV: "1", COLLAB_MOCK_BFF: "1", AEP_API_BASE: "" }, "COLLAB_DEV, COLLAB_MOCK_BFF, AEP_API_BASE"],
+  ] as const) {
+    // The message names the keys, never their values.
+    assert.throws(
+      () => selectModes({ ...podEnv(), ...legacy }),
+      (err: Error) => err.message === `ae-collab pod env: legacy keys set: ${keys}`,
+    );
   }
 });
 
@@ -294,6 +336,16 @@ test("modes: the legacy server needs a BFF, the mock BFF or COLLAB_DEV", () => {
   assert.equal(real.legacy?.devMode, false);
   assert.equal(selectModes({ COLLAB_MOCK_BFF: "1" }).legacy?.mockBff, true);
   assert.equal(selectModes({ COLLAB_DEV: "1" }).legacy?.devMode, true);
+});
+
+test("modes: a configured BFF outranks COLLAB_DEV (pnpm dev runs the real auth path)", () => {
+  const mock = selectModes({ COLLAB_DEV: "1", COLLAB_MOCK_BFF: "1" }).legacy;
+  assert.equal(mock?.devMode, false);
+  assert.equal(mock?.mockBff, true);
+  assert.equal(mock?.aepApiBase, "http://127.0.0.1:8092/api/v1");
+  const real = selectModes({ COLLAB_DEV: "1", AEP_API_BASE: "http://localhost:9090/api/v1" }).legacy;
+  assert.equal(real?.devMode, false);
+  assert.equal(real?.aepApiBase, "http://localhost:9090/api/v1");
 });
 
 test("modes: boot fails with no config, and with a partial pod config", () => {

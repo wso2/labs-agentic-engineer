@@ -60,6 +60,7 @@ spec:
             - name: COLLAB_PORT
               value: {{ .Values.collab.port | quote }}
             # aep-api origin incl. /api/v1 — the room-access oracle + spec seeder.
-            # A non-null value keeps the server out of dev/fixture mode.
+            # Without it (or COLLAB_MOCK_BFF / COLLAB_DEV) the server refuses to start;
+            # dev/fixture mode is never implied by missing config.
             - name: AEP_API_BASE
               value: "http://aep-api:{{ .Values.aepApi.port }}/api/v1"

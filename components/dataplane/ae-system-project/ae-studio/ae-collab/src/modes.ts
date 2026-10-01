@@ -20,9 +20,10 @@
  * Which server this process runs: the AE Studio pod's listeners or the legacy
  * collab server of the chart Deployment, never both. The pod renders `AE_*`
  * and none of the legacy keys; the chart renders `AEP_API_BASE` and no
- * `AE_ORG_ID`. Pod config wins outright, so a legacy flag in a pod env
- * (`COLLAB_DEV`, `COLLAB_MOCK_BFF`, `AEP_API_BASE`) starts nothing: dev mode
- * can never run in the pod. The legacy server starts only with a source for
+ * `AE_ORG_ID`. A pod env that also carries a legacy key (`COLLAB_DEV`,
+ * `COLLAB_MOCK_BFF`, `AEP_API_BASE`) fails the boot: dev mode, the mock BFF
+ * or the old oracle can never run in the pod, and a mixed env is a wiring
+ * fault worth a restart loop, not a guess. The legacy server starts only with a source for
  * its oracle and seeds, a BFF (real or mock) or explicit dev mode; with none
  * the process refuses to boot rather than serve fixtures.
  */
@@ -30,12 +31,21 @@
 import { loadConfig, type CollabConfig } from "./env.js";
 import { loadPodConfig, type PodConfig } from "./pod/config.js";
 
+/** Keys that configure only the legacy server; any of them in a pod env is an error. */
+const LEGACY_KEYS = ["COLLAB_DEV", "COLLAB_MOCK_BFF", "AEP_API_BASE"] as const;
+
 type Modes = { pod: PodConfig; legacy: null } | { pod: null; legacy: CollabConfig };
 
-/** Throws when neither mode is configured, or when the pod env is partial. */
+/** Throws when neither mode is configured, when the pod env is partial, or when it carries a legacy key. */
 export function selectModes(env: Readonly<Record<string, string | undefined>>): Modes {
   const pod = loadPodConfig(env);
-  if (pod) return { pod, legacy: null };
+  if (pod) {
+    const legacyKeys = LEGACY_KEYS.filter((key) => env[key] !== undefined);
+    if (legacyKeys.length > 0) {
+      throw new Error(`ae-collab pod env: legacy keys set: ${legacyKeys.join(", ")}`);
+    }
+    return { pod, legacy: null };
+  }
   const legacy = loadConfig(env);
   if (legacy.aepApiBase === null && !legacy.devMode) {
     throw new Error(

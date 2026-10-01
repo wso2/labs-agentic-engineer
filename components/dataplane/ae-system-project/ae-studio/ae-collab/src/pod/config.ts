@@ -64,7 +64,8 @@ function isOrigin(value: string): boolean {
  * Reads the pod env. `null` when `AE_ORG_ID` is unset: not a pod. Once it is
  * set every other key is required, and one error names each missing or
  * invalid key (never a value), so a misconfigured pod says everything wrong
- * with it in one restart. A port of 0 binds a free port (tests).
+ * with it in one restart. Ports are 1-65535: 0 (any free port) is never a
+ * pod's port, since its probes and Service name fixed ones.
  */
 export function loadPodConfig(env: Env): PodConfig | null {
   const orgId = env.AE_ORG_ID?.trim();
@@ -84,7 +85,7 @@ export function loadPodConfig(env: Env): PodConfig | null {
     const raw = env[key]?.trim();
     if (!raw) return fallback;
     const n = Number(raw);
-    if (!/^\d+$/.test(raw) || n > 65535) problems.push(`invalid ${key}`);
+    if (!/^\d+$/.test(raw) || n < 1 || n > 65535) problems.push(`invalid ${key}`);
     return n;
   };
   const orgHandle = required("AE_ORG_HANDLE");
