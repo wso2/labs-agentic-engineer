@@ -14,7 +14,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-
 // Package problem writes ae-studio-tools' error body, application/problem+json
 // {type, title, status, detail, code}. It is a leaf so that both the auth gates
 // and the edge routes can answer with it without an import cycle.

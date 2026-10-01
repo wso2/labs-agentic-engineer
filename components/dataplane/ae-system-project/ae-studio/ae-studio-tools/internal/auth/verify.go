@@ -14,7 +14,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-
 // Package auth is ae-studio-tools' own JWT check (04 §9): exact iss, aud per
 // token kind, and the org rule. It produces the two gates of 04 §1: UserGate
 // for /v1/* (Platform IdP user JWT of the pod's org) and M2MGate for
@@ -70,8 +69,13 @@ type Verifier struct {
 }
 
 // NewVerifier returns a verifier that accepts only RS256 tokens issued by
-// exactly issuer, signed by a key in jwks, and carrying an exp claim.
+// exactly issuer, signed by a key in jwks, and carrying an exp claim. An
+// empty issuer would switch jwt's issuer check off, so it panics, as does a
+// nil jwks: both are wiring errors, never runtime input.
 func NewVerifier(issuer string, jwks *JWKSCache) *Verifier {
+	if issuer == "" || jwks == nil {
+		panic("auth.NewVerifier: issuer and jwks are required")
+	}
 	return &Verifier{
 		jwks: jwks,
 		parser: jwt.NewParser(
@@ -113,8 +117,13 @@ type claimsCtxKey struct{}
 // UserGate admits a Platform IdP user JWT for one of audiences whose org claim
 // is the pod's org (ouId and ouHandle both match). Any client_credentials token
 // is refused with 401, whatever its audience. A user of another org gets 403.
-// The verified *Claims ride on the request context.
+// The verified *Claims ride on the request context. It panics on a nil
+// verifier, no audience, an empty audience entry or an empty org: each would
+// widen the gate.
 func UserGate(v *Verifier, audiences []string, orgID, orgHandle string) func(http.Handler) http.Handler {
+	if v == nil || len(audiences) == 0 || slices.Contains(audiences, "") || orgID == "" || orgHandle == "" {
+		panic("auth.UserGate: verifier, audiences, orgID and orgHandle are required")
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c, ok := verifyRequest(v, r, audiences)
@@ -134,8 +143,12 @@ func UserGate(v *Verifier, audiences []string, orgID, orgHandle string) func(htt
 // M2MGate admits only the pinned AE-only client: a client_credentials token
 // whose aud and client_id are clientID and which carries no org claim (11 §3).
 // Anything else is 401. The X-Impersonate-Org header must then name the pod's
-// org, else 403.
+// org, else 403. It panics on a nil verifier or an empty clientID or orgID:
+// each would widen the gate.
 func M2MGate(v *Verifier, clientID, orgID string) func(http.Handler) http.Handler {
+	if v == nil || clientID == "" || orgID == "" {
+		panic("auth.M2MGate: verifier, clientID and orgID are required")
+	}
 	audiences := []string{clientID}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

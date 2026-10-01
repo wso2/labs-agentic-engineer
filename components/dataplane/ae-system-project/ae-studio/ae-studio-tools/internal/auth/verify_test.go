@@ -19,6 +19,7 @@ package auth
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"math/big"
@@ -99,6 +100,14 @@ func TestGate_Table(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Algorithm confusion: HS256 keyed with the RSA public key bytes.
+	hs256, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{"iss": "http://idp", "aud": "aep-console-client",
+		"ouId": "ou-1", "ouHandle": "default", "exp": time.Now().Add(time.Hour).Unix()}).SignedString(x509.MarshalPKCS1PublicKey(&kp.key.PublicKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	futureNbf := kp.sign(t, jwt.MapClaims{"iss": "http://idp", "aud": "aep-console-client", "ouId": "ou-1", "ouHandle": "default",
+		"nbf": time.Now().Add(time.Hour).Unix(), "exp": time.Now().Add(2 * time.Hour).Unix()})
 
 	userGate := UserGate(v, []string{"aep-console-client"}, "ou-1", "default")
 	m2mGate := M2MGate(v, "ae-studio-internal-client", "ou-1")
@@ -122,6 +131,8 @@ func TestGate_Table(t *testing.T) {
 		{"client_credentials with user aud on v1", userGate, m2mUserAud, "", 401},
 		{"no exp on v1", userGate, noExp, "", 401},
 		{"alg none on v1", userGate, unsigned, "", 401},
+		{"HS256 keyed with RSA public key on v1", userGate, hs256, "", 401},
+		{"future nbf on v1", userGate, futureNbf, "", 401},
 		{"m2m ok", m2mGate, m2m, "ou-1", 204},
 		{"m2m no impersonation", m2mGate, m2m, "", 403},
 		{"m2m foreign impersonation", m2mGate, m2m, "ou-2", 403},
@@ -151,6 +162,36 @@ func TestGate_Table(t *testing.T) {
 			if c.want == http.StatusUnauthorized && rec.Header().Get("WWW-Authenticate") != `Bearer realm="ae-studio-tools"` {
 				t.Fatalf("WWW-Authenticate %q", rec.Header().Get("WWW-Authenticate"))
 			}
+		})
+	}
+}
+
+func TestConstructors_PanicOnEmptySecurityParams(t *testing.T) {
+	jwks := NewJWKSCache("http://idp/jwks")
+	v := NewVerifier("http://idp", jwks)
+	cases := []struct {
+		name string
+		fn   func()
+	}{
+		{"verifier empty issuer", func() { NewVerifier("", jwks) }},
+		{"verifier nil jwks", func() { NewVerifier("http://idp", nil) }},
+		{"user gate nil verifier", func() { UserGate(nil, []string{"a"}, "ou-1", "default") }},
+		{"user gate no audiences", func() { UserGate(v, nil, "ou-1", "default") }},
+		{"user gate empty audience entry", func() { UserGate(v, []string{""}, "ou-1", "default") }},
+		{"user gate empty org id", func() { UserGate(v, []string{"a"}, "", "default") }},
+		{"user gate empty org handle", func() { UserGate(v, []string{"a"}, "ou-1", "") }},
+		{"m2m gate nil verifier", func() { M2MGate(nil, "c", "ou-1") }},
+		{"m2m gate empty client id", func() { M2MGate(v, "", "ou-1") }},
+		{"m2m gate empty org id", func() { M2MGate(v, "c", "") }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatal("no panic")
+				}
+			}()
+			c.fn()
 		})
 	}
 }
