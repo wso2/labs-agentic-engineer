@@ -71,15 +71,14 @@ func TestRouteTable(t *testing.T) {
 	for _, p := range []string{
 		"GET /healthz", "GET /readyz", "GET /auth/external/jwks.json",
 		"POST /api/v1/webhooks/github", "/api/",
-		"/internal/v1/executions/", "/internal/v1/validation/",
-		"POST /internal/v1/mcp", "POST /internal/v1/mcp/playground-token",
+		"/internal/v1/",
 		"POST /_dev/v1/secret-ref-resync",
 	} {
 		if _, ok := got[p]; !ok {
 			t.Errorf("mount table lacks %q", p)
 		}
 	}
-	if len(got) != 10 {
-		t.Errorf("mount table has %d rows, want 10", len(got))
+	if len(got) != 7 {
+		t.Errorf("mount table has %d rows, want 7", len(got))
 	}
 }

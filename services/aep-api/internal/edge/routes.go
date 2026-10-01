@@ -42,8 +42,8 @@ type route struct {
 //
 // Credential verify/mint lives in internal/platform/auth.
 func routes(p AppParams) []route {
-	internal := newInternalV1Handler(p.InternalDeps)
-	mcp, playground := mcpRoutes(p)
+	internalDeps := p.InternalDeps
+	internalDeps.MCP, internalDeps.PlaygroundToken = mcpRoutes(p)
 	return []route{
 		{"GET /healthz", "kubelet", "none", healthz()},
 		{"GET /readyz", "kubelet", "none", readyz(p.WorkspaceReady)},
@@ -54,13 +54,9 @@ func routes(p AppParams) []route {
 		// authenticates the delivery by HMAC.
 		{"POST /api/v1/webhooks/github", "GitHub (smee locally)", "HMAC in the controller", webhookReceiver(p.WebhookController)},
 		{"/api/", "console", "user JWT, orgensure, tenant gate", publicChain(p)},
-		// Two prefixes, one handler: the inner mux registers the contract's full
-		// paths, so a prefix not mounted here 404s before any gate is reached.
-		{internalV1 + "/executions/", "coding runner", "publisher token, cycle fence", internal},
-		{internalV1 + "/validation/", "coding runner", "publisher token, cycle fence", internal},
-		{"POST " + internalV1 + "/mcp", "coding runner, design agent", "minted MCP token or publisher token", mcp},
-		// Local playground only; goes with token minting (phase 5).
-		{"POST " + internalV1 + "/mcp/playground-token", "local playground", "PLAYGROUND_TOKEN_ENABLED", playground},
+		// One mount: the inner mux registers full paths (raw MCP routes and the
+		// generated ops), so a path it does not name 404s.
+		{internalV1 + "/", "coding runner, design agent (MCP)", "internal gate table (internal.go)", newInternalV1Handler(internalDeps)},
 		{"POST /_dev/v1/secret-ref-resync", "local tooling", "dev tier + LOCAL_OPENBAO_REPAIR, on no HTTPRoute", devResyncRoute(p)},
 	}
 }

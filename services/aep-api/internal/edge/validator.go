@@ -29,42 +29,49 @@ import (
 	legacyrouter "github.com/getkin/kin-openapi/routers/legacy"
 
 	"github.com/wso2/aep/aep-api/internal/gen"
+	"github.com/wso2/aep/aep-api/internal/igen"
 )
 
-// contractRouter memoizes the parsed contract + kin router: both are
-// read-only after construction (kin's schema-pattern cache is its own
-// package-level sync.Map), and every handler construction — production once,
-// but one per componenttest harness — would otherwise re-parse the spec and
-// rebuild the route tree.
-var contractRouter = sync.OnceValue(func() routers.Router {
-	// GetSpec decodes the contract that oapi-codegen baked into the binary
-	// (embedded-spec) — the same committed contract the handlers generate from.
-	// It panics on failure: a decode error is a build defect, not a runtime
-	// condition.
-	doc, err := gen.GetSpec()
+// mustRouter decodes a contract that oapi-codegen baked into the binary
+// (embedded-spec), the same committed contract the handlers generate from, and
+// builds its kin router. It panics on failure: a decode error is a build
+// defect, not a runtime condition.
+func mustRouter(load func() (*openapi3.T, error), name string) routers.Router {
+	doc, err := load()
 	if err != nil {
-		panic(fmt.Sprintf("embedded contract failed to load: %v", err))
+		panic(fmt.Sprintf("embedded %s contract failed to load: %v", name, err))
 	}
 	router, err := legacyrouter.NewRouter(doc)
 	if err != nil {
-		panic(fmt.Sprintf("contract router: %v", err))
+		panic(fmt.Sprintf("%s contract router: %v", name, err))
 	}
 	return router
-})
+}
 
-// requestValidator validates every routable request against the committed
-// contract BEFORE it reaches the generated handler chain: schema-invalid
-// input never reaches a handler and is answered with the flat envelope
-// (400 validation_failed + field details). Design notes:
+// publicRouter and internalRouter memoize the parsed contract + kin router per
+// spec: both are read-only after construction (kin's schema-pattern cache is
+// its own package-level sync.Map), and every handler construction (production
+// once, but one per componenttest harness) would otherwise re-parse the spec
+// and rebuild the route tree.
+var (
+	publicRouter   = sync.OnceValue(func() routers.Router { return mustRouter(gen.GetSpec, "public") })
+	internalRouter = sync.OnceValue(func() routers.Router { return mustRouter(igen.GetSpec, "internal") })
+)
+
+// requestValidator validates every request router matches against its
+// committed contract (public or internal) BEFORE it reaches the generated
+// handler chain: schema-invalid input never reaches a handler and is answered
+// with the flat envelope (400 validation_failed + field details). Design notes:
 //
-//   - Route-miss falls through to the router untouched — the generated mux
-//     owns 404s, and the read-file catch-all (nested {path} segments, which
-//     the single-segment contract template cannot match) stays servable.
+//   - Route-miss falls through to the router untouched: the generated mux
+//     owns 404s, the read-file catch-all (nested {path} segments, which the
+//     single-segment contract template cannot match) stays servable, and so
+//     do the internal raw routes the embedded spec lacks (call-mcp-tool is
+//     excluded from generation; capInternalBody still caps its body).
 //   - Security requirements are NOT checked here (AuthenticationFunc is a
-//     no-op): authN is the outer JWKS middleware's job and authZ (tenant
-//     gate) runs deny-by-default inside the strict chain.
-func requestValidator(next http.Handler) http.Handler {
-	router := contractRouter()
+//     no-op): authN/authZ belong to the route group (public: the JWKS
+//     middleware and tenant gate; internal: internalGate or the MCP verifier).
+func requestValidator(router routers.Router, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		route, pathParams, err := router.FindRoute(r)
 		if err != nil {
@@ -94,6 +101,12 @@ func requestValidator(next http.Handler) http.Handler {
 	})
 }
 
+// writeBodyTooLarge answers 413 with the envelope every body cap shares.
+func writeBodyTooLarge(w http.ResponseWriter) {
+	writeErrorEnvelope(w, http.StatusRequestEntityTooLarge, "request_too_large",
+		"request body exceeds the size limit", nil)
+}
+
 // hasMultipartBody reports whether the matched operation declares a
 // multipart/form-data request body.
 func hasMultipartBody(route *routers.Route) bool {
@@ -109,8 +122,7 @@ func hasMultipartBody(route *routers.Route) bool {
 func writeValidationError(w http.ResponseWriter, err error) {
 	var maxErr *http.MaxBytesError
 	if errors.As(err, &maxErr) {
-		writeErrorEnvelope(w, http.StatusRequestEntityTooLarge, "request_too_large",
-			"request body exceeds the size limit", nil)
+		writeBodyTooLarge(w)
 		return
 	}
 	var reqErr *openapi3filter.RequestError

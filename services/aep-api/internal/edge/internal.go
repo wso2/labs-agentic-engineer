@@ -21,6 +21,8 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/getkin/kin-openapi/routers"
+
 	"github.com/wso2/aep/aep-api/internal/delivery/validation"
 	"github.com/wso2/aep/aep-api/internal/dependencies/mcpdiscovery"
 	"github.com/wso2/aep/aep-api/internal/igen"
@@ -31,11 +33,13 @@ import (
 
 // The internal service-to-service route group (/internal/v1), served CONTRACT-FIRST
 // from packages/contracts/api/internal/v1 (generated strict server in
-// internal/igen). It is NOT wrapped by the user-JWT middleware: every
-// operation passes runnerAuthGate, which verifies the caller's publisher-cc
-// bearer against the execution named in the path (the INT-6
-// fence) and binds the verified org into the context. The spec is non-public —
-// never gateway-advertised.
+// internal/igen), mounted once at /internal/v1/. It is NOT wrapped by the
+// user-JWT middleware. Every request is body-capped (capInternalBody) and
+// validated against the embedded internal spec (requestValidator); every
+// generated operation then passes internalGate, which verifies the caller's
+// publisher-cc bearer against the cycle named in the path (the INT-6 fence)
+// and binds the verified org into the context. The raw MCP routes carry their
+// own verifier. The spec is non-public, never gateway-advertised.
 //
 // RUNNER LOCKSTEP: the credentials-refresh response body is projected from the
 // organization domain's RefreshResponse onto igen.RefreshResponse (toIgenRefresh)
@@ -54,6 +58,12 @@ type InternalDeps struct {
 	// it is published on the roles gate ticket, which is where the validation
 	// agent reads it (ADR-0022).
 	ValidationContext validation.ContextProvider
+	// MCP serves POST /internal/v1/mcp (call-mcp-tool) and PlaygroundToken
+	// POST /internal/v1/mcp/playground-token. Each is already wrapped in its
+	// own verifier; nil leaves the route unmounted. The playground mint is
+	// local-dev only and goes with token minting (phase 5).
+	MCP             http.Handler
+	PlaygroundToken http.Handler
 }
 
 // internalServer implements igen.StrictServerInterface.
@@ -63,36 +73,90 @@ type internalServer struct {
 
 var _ igen.StrictServerInterface = (*internalServer)(nil)
 
-// newInternalV1Handler assembles the internal edge: runner-auth gate → strict
-// wrapper (envelope error writers) → generated router.
+// newInternalV1Handler assembles the internal edge, outermost first:
+//
+//	body cap (capInternalBody)        1 MiB default, per-op overrides
+//	→ request validator               kin-openapi against the embedded internal spec
+//	→ inner mux                       raw MCP routes + generated router
+//	→ internalGate → strict wrapper   generated ops only (envelope error writers)
+//
+// The inner mux registers full paths, so a path no row names 404s.
 func newInternalV1Handler(deps InternalDeps) http.Handler {
 	strict := igen.NewStrictHandlerWithOptions(
 		&internalServer{deps: deps},
-		[]igen.StrictMiddlewareFunc{runnerAuthGate(deps.RunnerAuth)},
+		[]igen.StrictMiddlewareFunc{internalGate(deps.RunnerAuth)},
 		igen.StrictHTTPServerOptions{
 			RequestErrorHandlerFunc:  writeRequestError,
 			ResponseErrorHandlerFunc: writeResponseError,
 		},
 	)
 	mux := http.NewServeMux()
+	if deps.MCP != nil {
+		mux.Handle("POST "+internalV1+"/mcp", deps.MCP)
+	}
+	if deps.PlaygroundToken != nil {
+		mux.Handle("POST "+internalV1+"/mcp/playground-token", deps.PlaygroundToken)
+	}
 	igen.HandlerWithOptions(strict, igen.StdHTTPServerOptions{
 		BaseURL:          internalV1,
 		BaseRouter:       mux,
 		ErrorHandlerFunc: writeRequestError,
 	})
-	return mux
+	return capInternalBody(internalRouter(), internalBodyCaps, requestValidator(internalRouter(), mux))
 }
 
-// runnerAuthGate is the internal route group's deny-by-default gate: every
-// operation must present a bearer the authorizer accepts for the CYCLE id named
-// in the request, and the verified org is bound into the context. There are
-// deliberately NO carve-outs here. An operation whose request shape the gate does
-// not know is denied outright — adding an internal op means teaching this gate
-// where its cycle id lives first.
+// internalDefaultBodyBytes caps every /internal/v1 request body (03 §4);
+// internalBodyCaps lists the operations allowed more. Phase 4 adds
+// ingest-webhook-event at 25 MiB (GitHub's payload maximum).
+const internalDefaultBodyBytes int64 = 1 << 20
+
+var internalBodyCaps = map[string]int64{}
+
+// capInternalBody bounds every internal request body before anything reads it.
+// The limit is the matched operation's entry in caps, else
+// internalDefaultBodyBytes. A declared Content-Length over the limit is
+// answered 413 here, before next runs: call-mcp-tool is absent from the
+// embedded spec (excluded from generation), so the validator never reads an
+// MCP body, and an over-limit one would otherwise reach mcpdiscovery truncated
+// and come back as a JSON-RPC parse error. MCP bodies are therefore capped but
+// not schema-validated. A body of unknown length (chunked) is bounded by
+// http.MaxBytesReader instead: whoever reads past the limit gets a
+// *http.MaxBytesError (the validator maps it to the same 413).
+func capInternalBody(router routers.Router, caps map[string]int64, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		limit := internalDefaultBodyBytes
+		if route, _, err := router.FindRoute(r); err == nil && route.Operation != nil {
+			if c, ok := caps[route.Operation.OperationID]; ok {
+				limit = c
+			}
+		}
+		if r.ContentLength > limit {
+			writeBodyTooLarge(w)
+			return
+		}
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// internalGate is /internal/v1's deny-by-default gate table, one entry per
+// route group (path prefix under /internal/v1):
+//
+//	executions/, validation/   coding runner   publisher token, cycle fence (cycle id in the path)
+//	mcp                        runner, agent   its own verifier (raw route, not this middleware)
+//	anything else              -               denied (401)
+//
+// Every generated operation must present a bearer the authorizer accepts for
+// the CYCLE id named in the request, and the verified org is bound into the
+// context. There are deliberately NO carve-outs: an operation whose request
+// shape the gate does not know is denied outright, so adding an internal op
+// means teaching this gate where its cycle id lives first.
 //
 // The refresh operation still spells its parameter `executionId` on the wire; the
 // value is the dispatched cycle id, the same naming debt AEP_TASK_ID carries.
-func runnerAuthGate(authorizer *auth.RunnerAuthorizer) igen.StrictMiddlewareFunc {
+func internalGate(authorizer *auth.RunnerAuthorizer) igen.StrictMiddlewareFunc {
 	return func(f igen.StrictHandlerFunc, operationID string) igen.StrictHandlerFunc {
 		return func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error) {
 			if authorizer == nil {
@@ -201,6 +265,7 @@ func toIgenValidationContext(r validation.ValidationContextResponse) igen.Valida
 // aud aep-api-mcp, or a Thunder publisher token); the acting org comes from a
 // verified claim, never the request. Without a token manager nothing could
 // verify a caller, so both return nil and the paths 404 instead of 503-ing.
+// routes() hands both to newInternalV1Handler via InternalDeps.
 // The playground mint is local-dev only, mounted solely under
 // PlaygroundTokenEnabled.
 func mcpRoutes(p AppParams) (mcp, playground http.Handler) {

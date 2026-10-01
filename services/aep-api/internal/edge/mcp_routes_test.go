@@ -353,3 +353,74 @@ func TestMCPRoutes_PublisherCCFullRoundTrip(t *testing.T) {
 		t.Fatalf("port org = %q, want org-round-trip", reader.lastOrg)
 	}
 }
+
+// newMCPSpecToolServer mounts the MCP route group with the spec-tool ports
+// wired to fakes, so a validate_openapi_spec call reaches a real result. The
+// fake validator records how many bytes of document reached it.
+func newMCPSpecToolServer(t *testing.T) (*httptest.Server, string, *int) {
+	t.Helper()
+	priv := mustGenerateRSAKey(t)
+	mgr, err := auth.NewTaskTokenManager(auth.TaskTokenConfig{
+		PrivateKey: string(encodePKCS1(t, priv)),
+		Issuer:     "aep-bff",
+		Audience:   "git-service",
+		TTL:        time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("NewTaskTokenManager: %v", err)
+	}
+	seen := new(int)
+	srv := httptest.NewServer(NewHandler(AppParams{
+		Deps:                 Deps{TaskTokens: mgr},
+		MCPExternalResources: newMCPTestReader(), // the surface's core catalog; nil answers 503
+		MCPSpecValidator: func(raw []byte) (int, error) {
+			*seen = len(raw)
+			return 1, nil
+		},
+		MCPSpecNormalizer: func(content string) (string, error) { return "normalized", nil },
+	}))
+	t.Cleanup(srv.Close)
+	tok, err := mgr.IssueMCPToken("org-spec")
+	if err != nil {
+		t.Fatalf("IssueMCPToken: %v", err)
+	}
+	return srv, tok, seen
+}
+
+// validateSpecCall is a validate_openapi_spec tools/call whose whole JSON-RPC
+// body is exactly size bytes (the inline document is padding).
+func validateSpecCall(size int) string {
+	const head = `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"validate_openapi_spec","arguments":{"content":"`
+	const tail = `"}}}`
+	return head + strings.Repeat("a", size-len(head)-len(tail)) + tail
+}
+
+// The design agent sends a whole OpenAPI document inline; one of 900 KiB
+// passes the internal body cap and reaches the tool (Review Focus 1).
+func TestMCPRoutes_LargeInlineSpecUnderCap(t *testing.T) {
+	srv, tok, seen := newMCPSpecToolServer(t)
+	result := rpcResult(t, postMCP(t, srv, tok, validateSpecCall(900<<10)))
+	content, _ := result["content"].([]any)
+	if len(content) == 0 {
+		t.Fatalf("tools/call returned no content: %+v", result)
+	}
+	if text, _ := content[0].(map[string]any)["text"].(string); !strings.Contains(text, `"valid":true`) {
+		t.Errorf("tool payload = %q, want valid=true", text)
+	}
+	if *seen < 899<<10 {
+		t.Errorf("validator saw %d bytes, want the whole inline document", *seen)
+	}
+}
+
+// One byte over 1 MiB is refused at the edge with 413 (03 §4, C2), never a
+// JSON-RPC parse error from a truncated body.
+func TestMCPRoutes_InlineSpecOverCap413(t *testing.T) {
+	srv, tok, seen := newMCPSpecToolServer(t)
+	resp := postMCP(t, srv, tok, validateSpecCall(1<<20+1))
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", resp.StatusCode)
+	}
+	if *seen != 0 {
+		t.Errorf("validator saw %d bytes, want the call refused before the tool", *seen)
+	}
+}

@@ -2,11 +2,16 @@ openapi: 3.0.3
 info:
   title: AEP Internal S2S API
   description: |-
-    The BFF's internal service-to-service surface: runner-pod callbacks.
-    Non-public — never gateway-advertised. Callers authenticate with a
-    BFF-signed per-task RS256 JWT (runner pods) or a Thunder per-org publisher
-    client-credentials token; the acting org is always derived from the
-    verified credential, never from request input.
+    aep-api's internal service-to-service surface. Its audience is machines,
+    never the console: non-public, never gateway-advertised. Every operation's
+    tags name its caller (Runner, AE Studio, SRE), so the spec reads as who
+    calls what. Callers authenticate with a Thunder per-org publisher
+    client-credentials token or a BFF-signed per-task RS256 JWT; the acting
+    org is always derived from the verified credential, never from request
+    input.
+
+    Requests are validated against this spec and body-capped per operation
+    (1 MiB by default) before any handler runs.
 
     RUNNER LOCKSTEP: the credentials-refresh exchange is consumed by the
     coding runner — its request/response bytes must not change without a
@@ -20,7 +25,7 @@ paths:
       operationId: runner-refresh-credentials
       summary: Refresh an execution's git credentials (runner callback)
       tags:
-      - Internal
+      - Runner
       security:
       - taskJWT: []
       - publisherCC: []
@@ -49,7 +54,7 @@ paths:
       operationId: runner-validation-context
       summary: Fetch a validation run's deployed endpoints (runner callback)
       tags:
-      - Internal
+      - Runner
       security:
       - taskJWT: []
       - publisherCC: []
@@ -75,6 +80,40 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: Error
+  /mcp:
+    post:
+      operationId: call-mcp-tool
+      summary: MCP JSON-RPC (tools/list, tools/call)
+      description: |-
+        One opaque JSON-RPC 2.0 operation; mcpdiscovery serves it. Declared so
+        this spec lists every internal route. Excluded from code generation
+        (internal/igen/oapi-codegen.yaml exclude-operation-ids): the handler is a
+        raw JSON-RPC handler, not a strict-server method.
+      tags:
+      - Runner
+      - AE Studio
+      security:
+      - publisherCC: []
+      - taskJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: JSON-RPC response
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 components:
   schemas:
     RefreshResponse:

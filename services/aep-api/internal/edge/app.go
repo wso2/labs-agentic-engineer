@@ -58,8 +58,9 @@ type AppParams struct {
 	WebhookController webhook.WebhookController
 
 	// InternalDeps carries the services + authorizer for the internal S2S
-	// route group (path-scoped runner credentials refresh), served contract-first
-	// from packages/contracts/api/internal/v1 behind runnerAuthGate.
+	// route group (runner callbacks), served contract-first from
+	// packages/contracts/api/internal/v1 behind internalGate. Its MCP and
+	// PlaygroundToken handlers are filled by routes() from the MCP fields below.
 	InternalDeps InternalDeps
 
 	// WorkspaceReady, when non-nil, backs GET /readyz (R8b root-health).

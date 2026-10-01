@@ -130,7 +130,7 @@ func newAPIV1Handler(deps Deps) http.Handler {
 	siw := &gen.ServerInterfaceWrapper{Handler: strict, ErrorHandlerFunc: writeRequestError}
 	mux.HandleFunc("GET "+httpkit.APIV1+"/projects/{projectName}/files/{path...}", siw.ReadFile)
 
-	return capRequestBody(requestValidator(mux))
+	return capRequestBody(requestValidator(publicRouter(), mux))
 }
 
 // sourceControlOrEmpty keeps the harness contract Deps documents: a component

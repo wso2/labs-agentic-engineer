@@ -16,7 +16,7 @@
 
 // Component-tier coverage for the contract-first internal S2S route group: the
 // runner credentials-refresh exchange through the REAL handler graph
-// (mountRoutes → runnerAuthGate → strict handler), with a Thunder
+// (mountRoutes → internalGate → strict handler), with a Thunder
 // publisher-cc token. Pins the RUNNER-LOCKSTEP wire shape: exact top-level
 // body keys and the capitalized Identity keys — the runner must work unchanged
 // against this route group.
