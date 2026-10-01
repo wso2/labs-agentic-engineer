@@ -18,6 +18,7 @@ package config
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -165,6 +166,12 @@ type Config struct {
 	// on first access. Loaded from PLATFORM_IDP_ISSUER /
 	// PLATFORM_IDP_JWKS_URL.
 	PlatformIDP PlatformIDPDefaults
+
+	// AEStudio configures the per-org AE Studio data-plane Resource. Every
+	// field is optional at boot (AE_STUDIO_*); Missing() names what Ensure
+	// needs and lacks, so an unconfigured install fails Ensure loudly instead
+	// of failing boot.
+	AEStudio AEStudioConfig
 
 	Observability ObservabilityConfig
 	AgentsSvc     AgentsSvcConfig
@@ -343,6 +350,69 @@ type KubeAPIConfig struct {
 type PlatformIDPDefaults struct {
 	Issuer  string
 	JWKSURL string
+}
+
+// AEStudioConfig is the deployment-supplied input of the AE Studio Resource.
+// One AE_STUDIO_* env per field; only ExtraEgress is JSON.
+type AEStudioConfig struct {
+	Images struct{ DesignAgent, Collab, StudioTools string }
+
+	GatewayHost      string
+	PublicScheme     string
+	PublicPortSuffix string
+	ListenerName     string
+	ConsoleOrigins   []string
+
+	IDP struct {
+		Issuer, JWKSURL, TokenURL string
+		UserAudiences             []string
+	}
+
+	AEPAPIBaseURL string
+	// InternalClientID is aep-api's own AE-only client. The secret is not
+	// needed by Ensure (used from phase 2), so Missing() ignores it and boot
+	// never requires it.
+	InternalClientID     string
+	InternalClientSecret string
+
+	RuntimeClassName string
+	Cilium           bool
+	ExtraEgress      json.RawMessage // default "[]"
+
+	Storage struct {
+		SizeLimit, EphemeralRequest string
+		BudgetBytes                 int64
+	}
+	PullSecret struct{ Key, Property string }
+}
+
+// Missing returns the env names Ensure needs and lacks, in a stable order.
+//
+//deadcode:keep consumed by the AE Studio converger (Task 1.15); unwired until then
+func (c AEStudioConfig) Missing() []string {
+	var missing []string
+	for _, f := range []struct{ env, val string }{
+		{"AE_STUDIO_IMAGE_DESIGN_AGENT", c.Images.DesignAgent},
+		{"AE_STUDIO_IMAGE_COLLAB", c.Images.Collab},
+		{"AE_STUDIO_IMAGE_STUDIO_TOOLS", c.Images.StudioTools},
+		{"AE_STUDIO_GATEWAY_HOST", c.GatewayHost},
+		{"AE_STUDIO_IDP_ISSUER", c.IDP.Issuer},
+		{"AE_STUDIO_IDP_JWKS_URL", c.IDP.JWKSURL},
+		{"AE_STUDIO_IDP_TOKEN_URL", c.IDP.TokenURL},
+		{"AE_STUDIO_AEP_API_BASE_URL", c.AEPAPIBaseURL},
+		{"AE_STUDIO_INTERNAL_CLIENT_ID", c.InternalClientID},
+	} {
+		if f.val == "" {
+			missing = append(missing, f.env)
+		}
+	}
+	if len(c.ConsoleOrigins) == 0 {
+		missing = append(missing, "AE_STUDIO_CONSOLE_ORIGINS")
+	}
+	if len(c.IDP.UserAudiences) == 0 {
+		missing = append(missing, "AE_STUDIO_IDP_USER_AUDIENCES")
+	}
+	return missing
 }
 
 // ServiceAuthConfig holds OAuth2 client_credentials settings for

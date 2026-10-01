@@ -18,6 +18,7 @@ package config
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/url"
@@ -84,6 +85,7 @@ func Load() (Config, error) {
 			// name; this default must agree with it.
 			JWKSURL: r.readOptionalString("PLATFORM_IDP_JWKS_URL", "http://platform-idp-service.platform-idp.svc.cluster.local:8090/oauth2/jwks"),
 		},
+		AEStudio:               r.aeStudio(),
 		TaskTokenSigningKey:    r.taskSigningKey(),
 		TaskTokenIssuer:        r.readOptionalString("BFF_TASK_TOKEN_ISSUER", "aep-bff"),
 		TaskTokenAudience:      r.readOptionalString("BFF_TASK_TOKEN_AUDIENCE", "git-service"),
@@ -308,6 +310,55 @@ func (r *configReader) kubeAPI() KubeAPIConfig {
 		}
 	}
 	return cfg
+}
+
+// aeStudio reads the optional AE_STUDIO_* set. Nothing here is required: an
+// absent value is reported by AEStudioConfig.Missing at Ensure time. A
+// malformed AE_STUDIO_EXTRA_EGRESS is a deployment typo and fails boot (the
+// error names the key, never the value).
+func (r *configReader) aeStudio() AEStudioConfig {
+	var c AEStudioConfig
+	c.Images.DesignAgent = r.readOptionalString("AE_STUDIO_IMAGE_DESIGN_AGENT", "")
+	c.Images.Collab = r.readOptionalString("AE_STUDIO_IMAGE_COLLAB", "")
+	c.Images.StudioTools = r.readOptionalString("AE_STUDIO_IMAGE_STUDIO_TOOLS", "")
+	c.GatewayHost = r.readOptionalString("AE_STUDIO_GATEWAY_HOST", "")
+	c.PublicScheme = r.readOptionalString("AE_STUDIO_PUBLIC_SCHEME", "https")
+	c.PublicPortSuffix = r.readOptionalString("AE_STUDIO_PUBLIC_PORT_SUFFIX", "")
+	c.ListenerName = r.readOptionalString("AE_STUDIO_LISTENER_NAME", "https")
+	c.ConsoleOrigins = splitCSV(os.Getenv("AE_STUDIO_CONSOLE_ORIGINS"))
+	c.IDP.Issuer = r.readOptionalString("AE_STUDIO_IDP_ISSUER", "")
+	c.IDP.JWKSURL = r.readOptionalString("AE_STUDIO_IDP_JWKS_URL", "")
+	c.IDP.TokenURL = r.readOptionalString("AE_STUDIO_IDP_TOKEN_URL", "")
+	c.IDP.UserAudiences = splitCSV(os.Getenv("AE_STUDIO_IDP_USER_AUDIENCES"))
+	c.AEPAPIBaseURL = r.readOptionalString("AE_STUDIO_AEP_API_BASE_URL", "")
+	c.InternalClientID = r.readOptionalString("AE_STUDIO_INTERNAL_CLIENT_ID", "")
+	c.InternalClientSecret = r.readOptionalString("AE_STUDIO_INTERNAL_CLIENT_SECRET", "")
+	c.RuntimeClassName = r.readOptionalString("AE_STUDIO_RUNTIME_CLASS_NAME", "")
+	c.Cilium = r.readOptionalBool("AE_STUDIO_CILIUM", false)
+	c.Storage.SizeLimit = r.readOptionalString("AE_STUDIO_STORAGE_SIZE_LIMIT", "3Gi")
+	c.Storage.EphemeralRequest = r.readOptionalString("AE_STUDIO_STORAGE_EPHEMERAL_REQUEST", "1Gi")
+	c.Storage.BudgetBytes = r.readOptionalInt64("AE_STUDIO_STORAGE_BUDGET_BYTES", 2147483648)
+	c.PullSecret.Key = r.readOptionalString("AE_STUDIO_PULL_SECRET_KEY", "")
+	c.PullSecret.Property = r.readOptionalString("AE_STUDIO_PULL_SECRET_PROPERTY", "")
+
+	egress := r.readOptionalString("AE_STUDIO_EXTRA_EGRESS", "[]")
+	if !json.Valid([]byte(egress)) {
+		r.errors = append(r.errors, fmt.Errorf("AE_STUDIO_EXTRA_EGRESS must be valid JSON"))
+		egress = "[]"
+	}
+	c.ExtraEgress = json.RawMessage(egress)
+	return c
+}
+
+// splitCSV splits a comma list, trimming blanks and dropping empty items.
+func splitCSV(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func (r *configReader) readRequiredString(key string) string {
