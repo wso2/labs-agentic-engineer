@@ -165,6 +165,15 @@ func secretReferenceToModel(sr *gen.SecretReference) *secretmanagersvc.SecretRef
 	if sr.Metadata.Namespace != nil {
 		out.Namespace = *sr.Metadata.Namespace
 	}
+	if sr.Spec != nil {
+		for _, d := range sr.Spec.Data {
+			entry := secretmanagersvc.SecretReferenceData{SecretKey: d.SecretKey, RemoteKey: d.RemoteRef.Key}
+			if d.RemoteRef.Property != nil {
+				entry.Property = *d.RemoteRef.Property
+			}
+			out.Data = append(out.Data, entry)
+		}
+	}
 	return out
 }
 

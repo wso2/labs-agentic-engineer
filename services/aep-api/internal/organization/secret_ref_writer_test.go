@@ -92,6 +92,14 @@ func (f *fakeSMClient) DeleteSecret(_ context.Context, loc secretmanagersvc.Secr
 	return f.deleteErr
 }
 
+func (f *fakeSMClient) CreateSecretRef(context.Context, secretmanagersvc.SecretLocation, map[string]string) (string, error) {
+	panic("fakeSMClient: CreateSecretRef is not on SecretRefWriter's path")
+}
+
+func (f *fakeSMClient) DeleteSecretRef(context.Context, secretmanagersvc.SecretLocation, string) error {
+	panic("fakeSMClient: DeleteSecretRef is not on SecretRefWriter's path")
+}
+
 func (f *fakeSMClient) PatchSecret(context.Context, secretmanagersvc.SecretLocation, map[string]string, []string) (string, error) {
 	panic("fakeSMClient: PatchSecret is not on SecretRefWriter's path")
 }

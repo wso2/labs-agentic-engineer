@@ -203,3 +203,73 @@ func TestSecretReferenceClient_Get_OK(t *testing.T) {
 		t.Fatalf("unexpected result: %+v", got)
 	}
 }
+
+func TestSecretReferenceClient_Get_MapsSpecData(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"metadata": map[string]any{"name": "x", "namespace": "ns"},
+			"spec": map[string]any{
+				"template": map[string]any{"type": "Opaque"},
+				"data": []any{map[string]any{
+					"secretKey": "token",
+					"remoteRef": map[string]any{"key": "user-app-secrets/ns/x", "property": "token"},
+				}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	got, err := newTestSecretReferenceClient(t, srv).GetSecretReference(context.Background(), "ns", "x")
+	if err != nil {
+		t.Fatalf("GetSecretReference: %v", err)
+	}
+	want := secretmanagersvc.SecretReferenceData{SecretKey: "token", RemoteKey: "user-app-secrets/ns/x", Property: "token"}
+	if len(got.Data) != 1 || got.Data[0] != want {
+		t.Fatalf("Data = %+v, want [%+v]", got.Data, want)
+	}
+}
+
+func TestSecretReferenceClient_Create_OneEntryPerKeyPropertyIsTheKey(t *testing.T) {
+	var gotBody struct {
+		Spec struct {
+			Data []struct {
+				SecretKey string `json:"secretKey"`
+				RemoteRef struct {
+					Key      string `json:"key"`
+					Property string `json:"property"`
+				} `json:"remoteRef"`
+			} `json:"data"`
+		} `json:"spec"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"metadata": map[string]any{"name": "default-github-pat-0a1b2c3d", "namespace": "default"}})
+	}))
+	defer srv.Close()
+
+	const path = "user-app-secrets/wc-org/default-github-pat-0a1b2c3d"
+	_, err := newTestSecretReferenceClient(t, srv).CreateSecretReference(context.Background(), "default", secretmanagersvc.CreateSecretReferenceRequest{
+		Namespace:  "default",
+		Name:       "default-github-pat-0a1b2c3d",
+		KVPath:     path,
+		SecretKeys: []string{"password", "token"},
+	})
+	if err != nil {
+		t.Fatalf("CreateSecretReference: %v", err)
+	}
+	if len(gotBody.Spec.Data) != 2 {
+		t.Fatalf("want 2 spec.data entries, got %d", len(gotBody.Spec.Data))
+	}
+	for i, key := range []string{"password", "token"} {
+		e := gotBody.Spec.Data[i]
+		if e.SecretKey != key || e.RemoteRef.Key != path || e.RemoteRef.Property != key {
+			t.Fatalf("entry %d = %+v, want secretKey=property=%q key=%q", i, e, key, path)
+		}
+	}
+}

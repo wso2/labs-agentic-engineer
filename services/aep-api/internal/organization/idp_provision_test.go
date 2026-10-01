@@ -203,6 +203,14 @@ func (f *provFakeSM) DeleteSecret(context.Context, secretmanagersvc.SecretLocati
 	panic("provFakeSM: DeleteSecret is not part of the provision feature")
 }
 
+func (f *provFakeSM) CreateSecretRef(context.Context, secretmanagersvc.SecretLocation, map[string]string) (string, error) {
+	panic("provFakeSM: CreateSecretRef is not part of the provision feature")
+}
+
+func (f *provFakeSM) DeleteSecretRef(context.Context, secretmanagersvc.SecretLocation, string) error {
+	panic("provFakeSM: DeleteSecretRef is not part of the provision feature")
+}
+
 func (f *provFakeSM) PatchSecret(context.Context, secretmanagersvc.SecretLocation, map[string]string, []string) (string, error) {
 	panic("provFakeSM: PatchSecret is not part of the provision feature")
 }

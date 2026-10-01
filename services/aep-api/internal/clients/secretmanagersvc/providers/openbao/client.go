@@ -33,6 +33,8 @@ type Client struct {
 
 // vaultPath builds user-app-secrets/{OrgBaseNamespace(orgUUID)}/{SecretRefName}.
 // location.OrgName is the org UUID (vault path only; CR namespace is ControlPlaneNamespace).
+// SecretRefName is location.RefName when set, so a new reference gets its own
+// vault entry and a delete by stored name removes exactly that entry.
 func vaultPath(location secretsprovider.SecretLocation) string {
 	ns := tenant.OrgBaseNamespace(location.OrgName)
 	name := location.SecretRefName()
