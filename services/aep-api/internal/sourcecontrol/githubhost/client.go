@@ -976,9 +976,7 @@ func (c *Client) ExchangeOAuthCode(ctx context.Context, clientID, clientSecret, 
 // permission" semantics — for orgs that means org admin; for user
 // accounts, the user's own account).
 //
-// Used by BindAppInstallation to verify the user is actually an admin
-// of the installation they're trying to bind, closing the cross-tenant
-// race on the bind path.
+// No remaining caller: the discover-then-bind connect flow was removed.
 func (c *Client) GetUserInstallations(ctx context.Context, userToken string) ([]int64, error) {
 	if userToken == "" {
 		return nil, fmt.Errorf("user token required")

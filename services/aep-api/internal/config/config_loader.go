@@ -151,8 +151,6 @@ func Load() (Config, error) {
 		OpenBaoAddr:                 r.readOptionalString("OPENBAO_ADDR", ""),
 		OpenBaoToken:                r.readOptionalString("OPENBAO_TOKEN", ""),
 		GitHubAppID:                 r.readOptionalString("GITHUB_APP_ID", ""),
-		GitHubAppClientID:           r.readOptionalString("GITHUB_CLIENT_ID", ""),
-		GitHubAppClientSecret:       r.readOptionalString("GITHUB_CLIENT_SECRET", ""),
 		GitHubAppSlug:               r.readOptionalString("GITHUB_APP_SLUG", "aep-platform"),
 		GitHubAppPrivateKeyPath:     r.readOptionalString("GITHUB_APP_PRIVATE_KEY_PATH", ""),
 		CredentialValidatorInterval: r.readOptionalDuration("CREDENTIAL_VALIDATOR_INTERVAL", 24*time.Hour),

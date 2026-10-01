@@ -199,8 +199,9 @@ type WebhookOps interface {
 // AppInstallOps is the GitHub-App installation lifecycle + credential-account
 // probe surface (GetUser, GetAppInstallation, ListAppInstallations,
 // DeleteInstallation, ExchangeOAuthCode, GetUserInstallations). Consumed by
-// feature/orgcreds — the validator's PAT/App liveness probes and the
-// discover-then-bind connect + disconnect cascade.
+// the validator's PAT/App liveness probes (GetUser, GetAppInstallation). The
+// other four methods lost their callers with the App connect flow and go with
+// githubhost (phase 4).
 //
 // Unlike the four ports above, this surface is GitHub-specific by nature; it is
 // its own future seam if a second provider becomes real. It is grouped here so
@@ -218,26 +219,21 @@ type AppInstallOps interface {
 	GetAppInstallation(ctx context.Context, minter *secrets.AppTokenMinter, installationID int64) (*AppInstallationInfo, error)
 	// ListAppInstallations calls GET /app/installations using the App JWT.
 	// Returns the full list of installations our App has across GitHub.
-	// Used by the discover-then-bind path to surface installations the
-	// platform has no row for yet.
+	// No remaining caller (the discover-then-bind flow is gone).
 	ListAppInstallations(ctx context.Context, minter *secrets.AppTokenMinter) ([]AppInstallationSummary, error)
 	// ExchangeOAuthCode exchanges a GitHub OAuth code for a user-to-server
-	// access token via POST github.com/login/oauth/access_token. Used by
-	// the discover-then-bind path to obtain a user token whose
-	// /user/installations response proves the user actually administers
-	// the installation they're trying to bind.
+	// access token via POST github.com/login/oauth/access_token. No
+	// remaining caller (the discover-then-bind flow is gone).
 	ExchangeOAuthCode(ctx context.Context, clientID, clientSecret, code, redirectURI string) (userToken string, err error)
 	// GetUserInstallations calls GET /user/installations with a user-token.
 	// Returns the list of installation IDs the authenticated user has
 	// admin access to (per GitHub's "explicit permission" semantics).
-	// Used by BindAppInstallation to verify the user is actually an admin
-	// of the installation they're binding.
+	// No remaining caller (the discover-then-bind flow is gone).
 	GetUserInstallations(ctx context.Context, userToken string) ([]int64, error)
 	// DeleteInstallation uninstalls the App from a GitHub account by calling
 	// DELETE /app/installations/{id} with the App JWT. 204 means uninstalled,
-	// 404 is treated as success (already gone). Used by the disconnect cascade
-	// to make platform disconnect symmetric with the GitHub side — without
-	// this, disconnects leave orphan installs visible to discover.
+	// 404 is treated as success (already gone). No remaining caller (disconnect
+	// no longer uninstalls the App).
 	DeleteInstallation(ctx context.Context, minter *secrets.AppTokenMinter, installationID int64) error
 }
 

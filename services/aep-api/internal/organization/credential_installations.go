@@ -16,8 +16,7 @@
 
 // credential_installations.go — App-installation lifecycle: webhook
 // routing lookups (installation id / repo full name), suspend/unsuspend,
-// selected-repo merge, installation + repo fetches, and the OAuth
-// discover-then-bind path.
+// selected-repo merge, and installation + repo fetches.
 
 package organization
 

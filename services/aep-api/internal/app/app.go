@@ -144,7 +144,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	db := in.DB
 	credStore := in.CredentialStore
 	minter := in.Minter
-	appClientSecret := in.AppClientSecret
 	workspaceEngine := in.Workspace
 
 	// Skills are repo-backed now (one private org-skills repo per org —
@@ -307,7 +306,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	deliveryIssues := delivery.NewIssueWriter(issueService)
 	webhookRegService := sourcecontrol.NewWebhookService(repoRepo, gitHost, repoService, issueService, cfg.WebhookDeliveryURL, cfg.WebhookHMACSecret)
 	credRefreshService := organization.NewCredentialsRefreshService(credResolver)
-	credService := organization.NewCredentialService(orgCredRepo, credStore, minter, cfg.WebhookHMACSecret, cfg.GitHubAppClientID, appClientSecret, gitHost)
+	credService := organization.NewCredentialService(orgCredRepo, credStore, minter, cfg.WebhookHMACSecret)
 	buildCredService := organization.NewBuildCredentialsService(repoRepo, credResolver, gitSecretClient)
 	credService.WithBuildSecretCleaner(buildCredService)
 	anthropicCredService := organization.NewAnthropicCredentialService(orgAnthropicRepo, credStore)

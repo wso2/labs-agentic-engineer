@@ -20,7 +20,7 @@
 // This file holds CredentialService's core: the type, constructor, With*
 // wiring, shared error/request/projection shapes, and row/crypto helpers.
 // The behavior lives in sibling files, one per concern: credential_connect.go
-// (connect/replace), credential_lifecycle.go (status/disconnect/uninstall),
+// (connect/replace), credential_lifecycle.go (status/disconnect),
 // credential_identity.go (identity view + validator support),
 // credential_webhook_secrets.go (HMAC secret rotation),
 // credential_installations.go (App-installation lifecycle + webhook routing),
@@ -38,7 +38,6 @@ import (
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
-	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // CredentialService is the orchestration layer behind /internal/credentials/orgs/...
@@ -86,19 +85,6 @@ type CredentialService struct {
 	// AppendWebhookSecret route. Empty in tests.
 	envWebhookSecret string
 
-	// App OAuth client_id/secret used by the discover-then-bind path
-	// (BindAppInstallation). Empty values disable that path; the discover
-	// endpoint surfaces 503 in that mode.
-	appClientID     string
-	appClientSecret string
-
-	// githubClient is the git-host App/credential port. CredentialService
-	// uses it for the discover-then-bind path (ListAppInstallations,
-	// ExchangeOAuthCode, GetUserInstallations) and the uninstall cascade
-	// (DeleteInstallation); the rest of CredentialService still uses raw
-	// httpClient. Optional — nil disables the bind path.
-	githubClient sourcecontrol.AppInstallOps
-
 	httpClient *http.Client
 }
 
@@ -106,26 +92,17 @@ type CredentialService struct {
 // non-nil. githubAPI may be empty (defaults to api.github.com).
 // envWebhookSecret is the GITHUB_WEBHOOK_SECRET — used as the seed value
 // for fresh PAT rows and cross-mode reseeds.
-// appClientID / appClientSecret enable the OAuth bind path; empty values
-// disable it gracefully.
-// githubClient is used by the discover-then-bind path (ListAppInstallations,
-// ExchangeOAuthCode, GetUserInstallations); nil disables the bind path.
 func NewCredentialService(
 	repo OrgCredentialRepository,
 	store secrets.CredentialStore,
 	minter *secrets.AppTokenMinter,
 	envWebhookSecret string,
-	appClientID, appClientSecret string,
-	githubClient sourcecontrol.AppInstallOps,
 ) *CredentialService {
 	return &CredentialService{
 		repo:             repo,
 		store:            store,
 		minter:           minter,
 		envWebhookSecret: envWebhookSecret,
-		appClientID:      appClientID,
-		appClientSecret:  appClientSecret,
-		githubClient:     githubClient,
 		githubAPI:        "https://api.github.com",
 		httpClient:       &http.Client{Timeout: 30 * time.Second},
 	}

@@ -75,7 +75,7 @@ func newCredSvcDB(t testing.TB, db *gorm.DB, gh *stubGitHub) (*organization.Cred
 	if err != nil {
 		t.Fatalf("NewAppTokenMinter: %v", err)
 	}
-	svc := organization.NewCredentialService(organization.NewOrgCredentialRepository(db, nil), store, minter, envWebhookSecret, "", "", nil).WithGitHubAPIBase(gh.URL)
+	svc := organization.NewCredentialService(organization.NewOrgCredentialRepository(db, nil), store, minter, envWebhookSecret).WithGitHubAPIBase(gh.URL)
 	return svc, store
 }
 

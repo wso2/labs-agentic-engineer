@@ -23,10 +23,6 @@ aepApi:
       memory: "512Mi"
   serviceAuth:
     clientId: "aep-api-client"
-  # The user-facing base aep-api builds links on (BFF_PUBLIC_URL): the GitHub
-  # App connect redirect and the Settings page it returns to. That is the
-  # console's origin, which reverse-proxies the API (/aep-api-service/).
-  publicURL: "http://console.ae.localhost:8080"
   # Kubernetes API used to LIST ThunderApplication CRs after OpenChoreo Ready.
   # Empty baseURL uses the in-cluster apiserver (single-cluster). On a split
   # control-plane / data-plane install the CRD lives on the dataplane; set

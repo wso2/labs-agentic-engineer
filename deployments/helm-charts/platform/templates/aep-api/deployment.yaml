@@ -108,8 +108,6 @@ spec:
               value: {{ .Values.taskSigning.issuer | quote }}
             - name: BFF_TASK_TOKEN_AUDIENCE
               value: {{ .Values.taskSigning.audience | quote }}
-            - name: BFF_PUBLIC_URL
-              value: {{ .Values.aepApi.publicURL | quote }}
             {{- if (default dict .Values.tryIt).enabled }}
             # Registered as a redirect URI on every project's sign-in client at
             # deploy time, so the test app can complete an OAuth round-trip
@@ -235,11 +233,6 @@ spec:
                 secretKeyRef:
                   name: aep-thunder-secrets
                   key: THUNDER_SYSTEM_CLIENT_SECRET
-            - name: OAUTH_STATE_SIGNING_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: aep-oauth-secrets
-                  key: OAUTH_STATE_SIGNING_KEY
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:

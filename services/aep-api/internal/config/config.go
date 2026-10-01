@@ -232,8 +232,6 @@ type Config struct {
 	OpenBaoToken string
 
 	GitHubAppID             string
-	GitHubAppClientID       string // App's OAuth client_id; used to build the OAuth authorize URL
-	GitHubAppClientSecret   string
 	GitHubAppSlug           string // App's URL slug, used in the install URL
 	GitHubAppPrivateKeyPath string
 

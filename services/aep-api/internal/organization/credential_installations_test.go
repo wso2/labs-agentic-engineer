@@ -122,7 +122,7 @@ func newUnconfiguredMinter(t testing.TB) *secrets.AppTokenMinter {
 // wiring under test.
 func installSvc(t testing.TB, minter *secrets.AppTokenMinter, ghBase string) *CredentialService {
 	t.Helper()
-	return NewCredentialService(nil, nil, minter, "", "", "", nil).WithGitHubAPIBase(ghBase)
+	return NewCredentialService(nil, nil, minter, "").WithGitHubAPIBase(ghBase)
 }
 
 // --- fetchInstallation: pre-mint branches (no network trickery needed) ------

@@ -301,25 +301,6 @@ func (m *AppTokenMinter) LoadAppWebhookSecrets(ctx context.Context) ([][]byte, e
 	return [][]byte{raw}, nil
 }
 
-// LoadAppClientSecret reads the App's OAuth client_secret from the
-// credential store's platform namespace (§6.4). Consumed by
-// CredentialService.BindAppInstallation to exchange OAuth codes for user
-// tokens during the bind path.
-//
-// Returns "" + nil error if no row exists yet (deployment didn't seed it).
-// Callers gate the bind path on a non-empty value. With Postgres
-// CredentialStore this always returns "".
-func (m *AppTokenMinter) LoadAppClientSecret(ctx context.Context) (string, error) {
-	if m.store == nil {
-		return "", nil
-	}
-	raw, err := readPlatformValue(ctx, m.store, "github/app/client_secret")
-	if err != nil {
-		return "", err
-	}
-	return string(raw), nil
-}
-
 // LoadAppBotIdentity is invoked once at startup, after the private key has
 // been parsed, to fetch GET /app and cache the bot identity on the minter.
 // Best-effort — failure leaves botIdentity empty and the connect path

@@ -33,8 +33,8 @@ flowchart LR
 | `listorgs` | enumerate orgs (tenant-gate carve-out — no org ctx) | `GET /organizations` |
 
 *Flat in the domain root, outside the slices: the credential / anthropic / agent-settings /
-model-connection / idp services, the model key rename watcher (`ModelKeyRename`), the raw
-connect-callback controller, and the S2S credentials-refresh.*
+model-connection / idp services, the model key rename watcher (`ModelKeyRename`), and the
+S2S credentials-refresh.*
 
 ## Ports
 | Port | Dir | Peer · contract |

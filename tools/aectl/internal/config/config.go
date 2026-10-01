@@ -51,7 +51,6 @@ var ConfigMapKeys = []string{
 	"thunder.public_url",
 	"console.public_url",
 	"tryit.public_url",
-	"aep_api.public_url",
 	"oc.api_url",
 	"oc.observability_api_url",
 	"oc.system_namespace",
@@ -100,9 +99,6 @@ var keyRegistry = map[string]configKeyMeta{
 	// redirect URI.
 	"console.public_url": {required: false, kind: kindURL},
 	"tryit.public_url":   {required: false, kind: kindURL},
-	// Empty falls back to console.public_url, whose origin proxies the API.
-	// Set it only where the two are genuinely different origins.
-	"aep_api.public_url": {required: false, kind: kindURL},
 	"oc.api_url":         {required: true, kind: kindURL},
 	// In-cluster URL of the OpenChoreo Observer. Empty leaves the chart's own
 	// default (see values.yaml's observer.baseURL) — build-log reading and

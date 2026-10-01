@@ -25,13 +25,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
-// BoundInstallation is the (installation_id, oc_org_id) projection the
-// discover-then-bind path reads to filter out installs bound to OTHER orgs.
-type BoundInstallation struct {
-	InstallationID int64
-	OcOrgID        string
-}
-
 // OrgCredentialRepository persists the per-org GitHub credential record
 // (`org_credentials`, one row per OC org). Every accessor is keyed by the
 // org handle (`oc_org_id`) or the bound `installation_id` — never a
@@ -55,9 +48,6 @@ type OrgCredentialRepository interface {
 	UpdateColumns(ctx context.Context, ocOrgID string, updates map[string]any) error
 	// ListActiveRows returns every row in 'active' or 'suspended' status.
 	ListActiveRows(ctx context.Context) ([]OrgCredential, error)
-	// ListBoundInstallations returns the (installation_id, oc_org_id) pairs
-	// for rows that carry an installation_id and are active/suspended.
-	ListBoundInstallations(ctx context.Context) ([]BoundInstallation, error)
 	// OrgIDByRepoURL resolves the org_id that owns the given GitHub repo
 	// full name ("owner/repo") by matching git_repositories.repo_url against
 	// the canonical clone URL (with and without a .git suffix), anchored on
@@ -169,18 +159,6 @@ func (r *orgCredentialRepository) ListActiveRows(ctx context.Context) ([]OrgCred
 		}
 	}
 	return rows, nil
-}
-
-func (r *orgCredentialRepository) ListBoundInstallations(ctx context.Context) ([]BoundInstallation, error) {
-	var bound []BoundInstallation
-	if err := r.db.WithContext(ctx).
-		Model(&OrgCredential{}).
-		Where("installation_id IS NOT NULL AND status IN ?", []string{"active", "suspended"}).
-		Select("installation_id, oc_org_id").
-		Find(&bound).Error; err != nil {
-		return nil, err
-	}
-	return bound, nil
 }
 
 func (r *orgCredentialRepository) OrgIDByRepoURL(ctx context.Context, fullName string) (string, error) {

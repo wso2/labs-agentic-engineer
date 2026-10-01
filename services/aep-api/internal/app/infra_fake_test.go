@@ -40,7 +40,6 @@ func Fake() Infra {
 		CredentialStore: credStore,
 		ColumnCipher:    columnCipher,
 		Minter:          minter,
-		AppClientSecret: "",
 		Workspace:       nil,
 	}
 }

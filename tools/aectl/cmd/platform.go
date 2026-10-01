@@ -102,8 +102,8 @@ const (
 	defaultTryItURL   = "http://tryit.ae.localhost:8080"
 )
 
-// consolePublicURL, tryItPublicURL and aepAPIPublicURL are the platform's
-// browser-facing origins, resolved the way every other setting here is:
+// consolePublicURL and tryItPublicURL are the platform's browser-facing
+// origins, resolved the way every other setting here is:
 // config file, overridden by the flag bound to it, with the local default
 // underneath. Reading them through viper rather than a flag variable is what
 // makes the config file reachable at all — a bound flag's own default is the
@@ -121,16 +121,6 @@ func tryItPublicURL() string {
 		return u
 	}
 	return defaultTryItURL
-}
-
-// aepAPIPublicURL falls back to the console's origin, which proxies the API.
-// The key exists for the deployment where the two are genuinely separate
-// origins; on every other one, setting the console URL is enough.
-func aepAPIPublicURL() string {
-	if u := viper.GetString("aep_api.public_url"); u != "" {
-		return u
-	}
-	return consolePublicURL()
 }
 
 // tryItOverrides returns the helm --set pairs for the Try-it app's two
@@ -209,8 +199,6 @@ func init() {
 	initCmd.Flags().StringVar(&initPlatformNamespace, "namespace", "wso2-aep", "Kubernetes namespace")
 	initCmd.Flags().String("console-url", defaultConsoleURL, "Public URL of the AEP console (overrides config)")
 	_ = viper.BindPFlag("console.public_url", initCmd.Flags().Lookup("console-url"))
-	initCmd.Flags().String("api-url", "", "Public base aep-api builds user-facing links on (GitHub App redirect, Settings page) (overrides config); empty defaults to the console URL, whose origin proxies the API")
-	_ = viper.BindPFlag("aep_api.public_url", initCmd.Flags().Lookup("api-url"))
 	initCmd.Flags().String("tryit-url", defaultTryItURL, "Public URL of the Try-it app (overrides config). It is served on its OWN hostname, not a path under the console's, so re-domaining an install means moving both")
 	_ = viper.BindPFlag("tryit.public_url", initCmd.Flags().Lookup("tryit-url"))
 	initCmd.Flags().StringVar(&initBuildPlaneNamespace, "build-plane-namespace", "openchoreo-workflow-plane", "Namespace of the OpenChoreo build/workflow plane (must already exist, incl. its image registry)")
@@ -366,7 +354,6 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		"-n", initPlatformNamespace,
 		"--create-namespace",
 		"--set", "console.publicURL=" + consoleURL,
-		"--set", "aepApi.publicURL=" + aepAPIPublicURL(),
 		"--set", "console.thunderPublicURL=" + viper.GetString("thunder.public_url"),
 		"--set", "thunder.adminURL=" + thunderURL,
 		"--set", "thunder.jwksURL=" + thunderURL + "/oauth2/jwks",
@@ -824,7 +811,6 @@ func verifyOpenBaoSecrets(ctx context.Context) error {
 		"aep/openbao-token",
 		"aep/postgres-password",
 		"aep/task-signing-key",
-		"aep/oauth-state-key",
 		"aep/agents-jwt-secret",
 		"aep/webhook-secret",
 		"aep/opensearch-username",
@@ -899,11 +885,6 @@ func provisionOpenBao(ctx context.Context, anthropicKey, thunderAdminClientID, t
 		sp.Fail("Secret generation failed")
 		return fmt.Errorf("generate signing key: %w", err)
 	}
-	oauthStateKey, err := bootstrap.GeneratePassword(32)
-	if err != nil {
-		sp.Fail("Secret generation failed")
-		return fmt.Errorf("generate oauth state key: %w", err)
-	}
 	agentsJWTSecret, err := bootstrap.GeneratePassword(32)
 	if err != nil {
 		sp.Fail("Secret generation failed")
@@ -954,7 +935,6 @@ func provisionOpenBao(ctx context.Context, anthropicKey, thunderAdminClientID, t
 		{"aep/openbao-token", openBaoToken},
 		{"aep/postgres-password", postgresPassword},
 		{"aep/task-signing-key", signingKey},
-		{"aep/oauth-state-key", oauthStateKey},
 		{"aep/agents-jwt-secret", agentsJWTSecret},
 		{"aep/webhook-secret", webhookSecret},
 		{"aep/opensearch-username", "admin"},

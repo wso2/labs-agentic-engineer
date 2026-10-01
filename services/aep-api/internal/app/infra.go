@@ -45,7 +45,6 @@ type Infra struct {
 	CredentialStore secrets.TxCredentialStore
 	ColumnCipher    *secrets.ColumnCipher // same key as CredentialStore; seals column values
 	Minter          *secrets.AppTokenMinter
-	AppClientSecret string // GitHub App OAuth client_secret ("" ⇒ bind path disabled)
 	Workspace       *gitfs.Engine
 	// RateStamper prices captured agent usage at write time (#291), loaded once
 	// from model_rates after migration. Assemble threads it into the turn +
@@ -147,16 +146,6 @@ func Resolve(ctx context.Context, cfg config.Config) (Infra, error) {
 		}
 		cancelID()
 	}
-	var appClientSecret string
-	if minter.AppID() != 0 {
-		csCtx, cancelCS := context.WithTimeout(ctx, 10*time.Second)
-		if cs, err := minter.LoadAppClientSecret(csCtx); err != nil {
-			slog.Warn("app oauth client_secret load failed; bind path disabled", "error", err)
-		} else {
-			appClientSecret = cs
-		}
-		cancelCS()
-	}
 
 	// Workspace engine — the disk-backed git plumbing over the shared /workspaces
 	// mount. Fail fast on an unusable root: the volume is mounted in compose/k8s,
@@ -179,7 +168,6 @@ func Resolve(ctx context.Context, cfg config.Config) (Infra, error) {
 		CredentialStore: credStore,
 		ColumnCipher:    columnCipher,
 		Minter:          minter,
-		AppClientSecret: appClientSecret,
 		Workspace:       workspaceEngine,
 		RateStamper:     rateStamper,
 	}, nil
