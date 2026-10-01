@@ -62,14 +62,12 @@ func (s *internalServer) SreListIssues(ctx context.Context, request igen.SreList
 }
 
 // sreAttentionReason keeps a domain value outside the contract's closed enum
-// off the wire; the empty value omits the field.
+// off the wire (sourcecontrol owns the set); the empty value omits the field.
 func sreAttentionReason(value string) igen.IssueInfoAttentionReason {
-	switch value {
-	case string(igen.UnverifiedFix), string(igen.NoChangeVerdict), string(igen.Escalated):
-		return igen.IssueInfoAttentionReason(value)
-	default:
+	if !sourcecontrol.IsContractAttentionReason(value) {
 		return ""
 	}
+	return igen.IssueInfoAttentionReason(value)
 }
 
 func (s *internalServer) SreCreateIssue(ctx context.Context, request igen.SreCreateIssueRequestObject) (igen.SreCreateIssueResponseObject, error) {

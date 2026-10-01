@@ -24,6 +24,10 @@ import (
 	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
+
+	"github.com/wso2/aep/aep-api/internal/gen"
+	"github.com/wso2/aep/aep-api/internal/igen"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // TestInternalContract asserts the committed internal contract describes
@@ -112,6 +116,20 @@ func TestInternalSpec_SharedSchemasMatchPublic(t *testing.T) {
 		}
 		if string(pubJSON) != string(inJSON) {
 			t.Errorf("%s drifted between the public and internal specs:\npublic   %s\ninternal %s", name, pubJSON, inJSON)
+		}
+	}
+}
+
+// sourcecontrol owns the attentionReason closed set both IssueInfo projections
+// filter through; it must be exactly the contracts' enum.
+func TestAttentionReasonSetMatchesContracts(t *testing.T) {
+	for _, v := range []string{"unverified_fix", "no_change_verdict", "escalated", "bogus", ""} {
+		inSet := sourcecontrol.IsContractAttentionReason(v)
+		if pub := gen.IssueInfoAttentionReason(v).Valid(); pub != inSet {
+			t.Errorf("%q: sourcecontrol set %v, public enum %v", v, inSet, pub)
+		}
+		if in := igen.IssueInfoAttentionReason(v).Valid(); in != inSet {
+			t.Errorf("%q: sourcecontrol set %v, internal enum %v", v, inSet, in)
 		}
 	}
 }

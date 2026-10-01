@@ -91,7 +91,8 @@ Tracked follow-ups:
   `sreHandoff.enabled`: while aep-mcp-server applies the shared handoff bearer
   (`AEP_MCP_DEFAULT_BEARER`), it admits only pods matching
   `sreHandoff.callerPodLabels` in `sreHandoff.callerNamespace`. With
-  handoff off, `aep-mcp-server:3400` is guarded only by aep-api JWT validation.
+  handoff off, aep-api answers `401` to every `/internal/v1/sre/…` op, so
+  `aep-mcp-server:3400` is inert (it cannot list or file issues).
 - **OpenSearch** is dev-sized (256M heap, no HA); no global LLM cost cap.
 - Per-org Anthropic key rotation is AE-owned; the SRE pod consumes only the
   mounted `RCA_LLM_API_KEY_FILE`, refreshed through the secret projection path.

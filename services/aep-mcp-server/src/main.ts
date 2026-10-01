@@ -20,11 +20,13 @@
  * The composition root: a stateless Streamable HTTP MCP server. Each POST
  * /mcp request gets its OWN McpServer + transport pair, built with the
  * caller's bearer token captured from the Authorization header — see
- * server.ts. AEP_MCP_DEFAULT_BEARER is an opt-in fallback for callers that
- * cannot send headers to a plaintext URL (the OC SRE extension loader refuses
- * that combination). Unset by default: every caller must then bring its own
- * Authorization header. When set, any caller that reaches this port acts with
- * that bearer, so deployments set it only where the port is limited to the
+ * server.ts. aep-api's /internal/v1/sre/… ops accept only the SRE handoff
+ * bearer (SRE_HANDOFF_TOKEN), never a forwarded user or service JWT.
+ * AEP_MCP_DEFAULT_BEARER supplies that bearer for callers that cannot send
+ * headers to a plaintext URL (the OC SRE extension loader refuses that
+ * combination). Unset by default: a caller must then bring the handoff bearer
+ * in its own Authorization header. When set, any caller that reaches this port
+ * acts with that bearer, so deployments set it only where the port is limited to the
  * trusted handoff caller (the Helm chart pairs it with a NetworkPolicy; see
  * docs/developer-guide/sre-handoff-security.md). Stateless mode (sessionIdGenerator:
  * undefined) is required here: a shared/session-scoped server would let one

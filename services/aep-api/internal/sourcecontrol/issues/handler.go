@@ -101,12 +101,10 @@ func (h *Handler) ListIssues(ctx context.Context, request gen.ListIssuesRequestO
 // issueAttentionReason prevents a domain value outside the public contract's
 // closed enum from reaching the console wire. The empty value omits the field.
 func issueAttentionReason(value string) gen.IssueInfoAttentionReason {
-	switch value {
-	case string(gen.UnverifiedFix), string(gen.NoChangeVerdict), string(gen.Escalated):
-		return gen.IssueInfoAttentionReason(value)
-	default:
+	if !sourcecontrol.IsContractAttentionReason(value) {
 		return ""
 	}
+	return gen.IssueInfoAttentionReason(value)
 }
 
 // CreateError maps an IssueService.CreateIssue failure onto the error envelope.

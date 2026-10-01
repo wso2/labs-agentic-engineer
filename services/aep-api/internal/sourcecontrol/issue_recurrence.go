@@ -52,19 +52,40 @@ func IsUnverifiedFix(issue IssueInfo) bool {
 		issue.StateReason == "reopened" && !slices.Contains(issue.Labels, "aep")
 }
 
+// The attention reasons the issue contracts' closed IssueInfo.attentionReason
+// enum names (public and internal specs alike). AttentionReasonFor returns
+// only these or "".
+const (
+	AttentionUnverifiedFix   = "unverified_fix"
+	AttentionNoChangeVerdict = "no_change_verdict"
+	AttentionEscalated       = "escalated"
+)
+
+// IsContractAttentionReason reports whether value is in the contracts' closed
+// attentionReason enum. Every wire projection of IssueInfo filters through it,
+// so a value outside the enum never reaches a caller.
+func IsContractAttentionReason(value string) bool {
+	switch value {
+	case AttentionUnverifiedFix, AttentionNoChangeVerdict, AttentionEscalated:
+		return true
+	default:
+		return false
+	}
+}
+
 // AttentionReasonFor projects GitHub evidence into the public attention enum.
 // The original attempt plus three recurrences escalates; it does not prevent
 // another attempt. A terminal verdict takes precedence, and completed fixes
 // no longer require attention.
 func AttentionReasonFor(issue IssueInfo) string {
 	if IsNoChangeVerdict(issue) {
-		return "no_change_verdict"
+		return AttentionNoChangeVerdict
 	}
 	if HasIncidentLabel(issue.Labels) && issue.State == "open" && recurrenceCount(issue.Body) >= 3 {
-		return "escalated"
+		return AttentionEscalated
 	}
 	if IsUnverifiedFix(issue) {
-		return "unverified_fix"
+		return AttentionUnverifiedFix
 	}
 	return ""
 }

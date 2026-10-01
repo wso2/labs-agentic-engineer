@@ -28,8 +28,9 @@ package auth
 // not a widening of the Thunder JWT verifier.
 //
 // Disabled by default (secure default): both Secret and Org must be
-// configured, or every presented bearer is rejected and the caller falls
-// through to normal Thunder JWT verification (see edge.mountRoutes).
+// configured, or every presented bearer is rejected and every
+// /internal/v1/sre/… op answers 401 (the internal gate in edge/internal.go).
+// No other route accepts this credential.
 
 import "crypto/subtle"
 
@@ -54,9 +55,9 @@ func NewSREHandoffVerifier(secret, org string) *SREHandoffVerifier {
 
 // Verify checks bearer (the raw `Authorization` header value, e.g.
 // "Bearer <token>") against the configured secret in constant time and
-// returns synthetic Claims carrying the bound org on success. The returned
-// Claims flow through auth.WithClaims exactly like a verified Thunder JWT's
-// projection, so tenantGate binds the org with no changes of its own.
+// returns synthetic Claims carrying the bound org on success. The edge's sre/
+// gate stamps them with auth.WithClaims and binds their org as the request's
+// tenant.
 func (v *SREHandoffVerifier) Verify(bearer string) (*Claims, bool) {
 	if v == nil {
 		return nil, false
