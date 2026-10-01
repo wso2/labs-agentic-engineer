@@ -172,8 +172,7 @@ func (a *Activities) recordNoWriteTarget(ctx context.Context, runID string, err 
 
 // recordPlanningFault writes the record (or clears a stale one) on the run
 // row. Best-effort: the fault the activity is about to return is the fact that
-// matters, and a bookkeeping write must not mask or replace it — the same
-// stance the activity feed takes.
+// matters, and a bookkeeping write must not mask or replace it.
 //
 // A nil failure on the first attempt is the ordinary success and writes
 // nothing; a nil failure on a LATER attempt means an earlier one recorded a

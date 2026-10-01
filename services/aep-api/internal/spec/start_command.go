@@ -107,9 +107,8 @@ func (s *Service) turnSpecFor(ctx context.Context, ref sourcecontrol.RepoRef, at
 	}, token
 }
 
-// startTurnSummary is what a turn's DISPLAY record says — the transcript line
-// and the activity feed's subject. It is the instruction verbatim for every
-// turn but one.
+// startTurnSummary is what a turn's DISPLAY record says — the transcript line.
+// It is the instruction verbatim for every turn but one.
 //
 // The exception is `/start` fired without an inline idea, which is now the
 // ordinary case: the platform fires the kickoff itself at project creation

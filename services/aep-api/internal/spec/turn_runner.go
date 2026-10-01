@@ -27,7 +27,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/wso2/aep/aep-api/internal/platform/text"
 	"io"
 	"log/slog"
 	"runtime/debug"
@@ -550,7 +549,6 @@ func (s *Service) finishTurn(ctx context.Context, job turnJob, term TurnTerminal
 		return
 	}
 	s.broker.Terminal(job.turnID, terminalEventJSON(term))
-	s.recordTurnActivity(ctx, job, term)
 	// Notify any waiting devflow workflow of the terminal outcome (best-effort).
 	// The hook does I/O (a DB lookup + a Temporal signal), so it runs detached
 	// with its own bounded context — a slow hook must never delay or fail the
@@ -562,22 +560,6 @@ func (s *Service) finishTurn(ctx context.Context, job turnJob, term TurnTerminal
 			hook(hookCtx, job.orgID, job.projectID, job.turnID, useCaseGeneral, term.Status)
 		}()
 	}
-}
-
-// recordTurnActivity appends the spec_updated feed line for a turn that authored
-// real spec changes (issue #239). Best-effort and observational: a nil recorder,
-// a failed turn, or a turn that edited nothing records nothing. A genai turn is
-// the agent working, so the actor is the agent (the console renders "Spec agent
-// updated the spec") regardless of the git commit author — the committer flush
-// of a room turn lands under the user's token, which is exactly why the user
-// cannot be the feed actor here. The turn id keys dedup so a re-finish is a
-// no-op. SpecEdited (not NoChanges) is the gate: a room turn is always NoChanges
-// yet still authored the doc edits the feed must attribute.
-func (s *Service) recordTurnActivity(ctx context.Context, job turnJob, term TurnTerminal) {
-	if s.recorder == nil || term.Status != turnStatusCompleted || !term.SpecEdited {
-		return
-	}
-	s.recorder.RecordSpecUpdated(ctx, job.orgID, job.projectID, job.turnID, firstLine(job.summary, 96), term.EditedPaths)
 }
 
 // turnBaseReader adapts Workspace.ReadFile at the turn's base ref into the
@@ -599,21 +581,6 @@ func (s *Service) turnBaseReader(ref sourcecontrol.RepoRef, baseRef string) agen
 		}
 		return content, true, nil
 	}
-}
-
-func firstLine(s string, max int) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		s = s[:i]
-	}
-	s = strings.TrimSpace(s)
-	if cut := text.Truncate(s, max); cut != s {
-		// Re-trim: the cut can land just after a space.
-		s = strings.TrimSpace(strings.TrimSuffix(cut, "…")) + "…"
-	}
-	if s == "" {
-		s = "agent turn"
-	}
-	return s
 }
 
 // failedTerminal builds a failed TurnTerminal.

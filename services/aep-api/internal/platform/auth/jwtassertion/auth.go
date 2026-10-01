@@ -47,12 +47,10 @@ type TokenClaims struct {
 }
 
 type tokenClaimsCtxKey struct{}
-type jwtTokenCtxKey struct{}
 type scopesCtxKey struct{}
 
 var (
 	claimsKey tokenClaimsCtxKey
-	tokenKey  jwtTokenCtxKey
 	scopesKey scopesCtxKey
 )
 
@@ -104,7 +102,6 @@ func Authenticator(cfg Config) Middleware {
 
 			ctx := r.Context()
 			ctx = context.WithValue(ctx, claimsKey, claims)
-			ctx = context.WithValue(ctx, tokenKey, tokenString)
 			ctx = context.WithValue(ctx, scopesKey, claims.Scope)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
@@ -126,12 +123,6 @@ func GetTokenClaims(ctx context.Context) *TokenClaims {
 // Authenticator context contract without a full JWKS round-trip.
 func ContextWithTokenClaims(ctx context.Context, claims *TokenClaims) context.Context {
 	return context.WithValue(ctx, claimsKey, claims)
-}
-
-// GetJWTFromContext returns the raw bearer token, or "" if absent.
-func GetJWTFromContext(ctx context.Context) string {
-	tok, _ := ctx.Value(tokenKey).(string)
-	return tok
 }
 
 // buildBearerChallenge formats a WWW-Authenticate header value per RFC 6750

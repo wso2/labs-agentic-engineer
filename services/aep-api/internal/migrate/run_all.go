@@ -69,7 +69,6 @@ func BaseModels() []any {
 		&delivery.Execution{},
 		&spec.AgentTurn{},
 		&modelcost.ModelRate{},
-		&projects.ActivityEvent{},
 		&delivery.MilestoneRun{},
 		&delivery.RunCycle{},
 		&delivery.AgentUsageLedgerEntry{},
@@ -252,6 +251,10 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		// govern stage can tell when a connection switch moved its base path.
 		// A new table with no backfill; depends on nothing above it.
 		ctxStep("phase21_ai_agent_model_endpoints", RunPhase21AIAgentModelEndpoints),
+		// The activity feed is gone (no reader since the console never had one,
+		// threat-modeling-2 REQ-2). AutoMigrate never drops a table, so this is
+		// the explicit drop. Idempotent.
+		dbStep("phase22_drop_activity_events", RunPhase22DropActivityEvents),
 	}
 }
 

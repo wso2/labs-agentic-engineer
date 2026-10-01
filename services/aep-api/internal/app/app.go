@@ -172,13 +172,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	agentsCardRepo := organization.NewAgentsCardRepository(db, credStore)
 	idpRepo := organization.NewIDPRepository(db, in.ColumnCipher)
 	codingAgentLogRepo := delivery.NewCodingAgentLogRepository(db)
-	activityRepo := projects.NewActivityEventRepository(db)
-	activityHub := projects.NewActivityHub()
-	activitySvc := projects.NewActivityService(activityRepo, activityHub)
-	// Shared by the turn + files recorders: a room-scoped turn marks the project
-	// agent-authored; the committer's later files/apply flush claims the mark and
-	// suppresses its user line (issue #239 — see specAuthorship).
-	specAuthored := &specAuthorship{}
 
 	// Temporal runtime for the milestone run supervisor. Constructed always, but
 	// connects lazily in the worker watcher's retry loop (never on the build
@@ -438,7 +431,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		// #430: the project-scoped thread store — resolve/rotate the current
 		// conversation, and the conversation_rotated admission fence on turns.
 		Conversations: spec.NewConversationRepository(db),
-		Recorder:      turnActivityRecorder{svc: activitySvc, authorship: specAuthored},
 	}
 	// MCP discovery on design-generation turns (dependency-management Phase 5):
 	// the BFF mints a short-lived aud:aep-api-mcp token per turn so the agents
@@ -1062,15 +1054,14 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// tag reads, the org skills library, and the collab oracle/descriptor. Its
 	// slice handlers embed straight into the edge's composite.
 	specHandlers, err := spechttpapi.New(spec.Deps{
-		GenAI:         genaiSvc,
-		Files:         filesSvc,
-		FilesActivity: filesActivityRecorder{svc: activitySvc, authorship: specAuthored},
-		Artifacts:     artifactSvcGit,
-		Skills:        skillSvc,
-		SkillMut:      skillMutationSvc,
-		SkillImport:   skillImportSvc,
-		CollabRepo:    repoService,
-		Design:        designService,
+		GenAI:       genaiSvc,
+		Files:       filesSvc,
+		Artifacts:   artifactSvcGit,
+		Skills:      skillSvc,
+		SkillMut:    skillMutationSvc,
+		SkillImport: skillImportSvc,
+		CollabRepo:  repoService,
+		Design:      designService,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("assemble spec domain: %w", err)
@@ -1118,7 +1109,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		ComponentSvc: componentService,
 		ConfigSvc:    configService,
 		UsageSvc:     usageService,
-		ActivitySvc:  activitySvc,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("assemble projects domain: %w", err)
@@ -1284,14 +1274,13 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		WithRecordings(agentProgressReader)
 
 	deliveryDeps := deliveryhttpapi.Deps{
-		BuildSvc:      buildSvc,
-		PreflightSvc:  preflightSvc,
-		BuildActivity: buildActivityRecorder{svc: activitySvc},
-		TaskReads:     taskReads,
-		TaskCommands:  taskCommands,
-		TaskStream:    taskStreamSvc,
-		RunReads:      runReads,
-		RunProgress:   runProgress,
+		BuildSvc:     buildSvc,
+		PreflightSvc: preflightSvc,
+		TaskReads:    taskReads,
+		TaskCommands: taskCommands,
+		TaskStream:   taskStreamSvc,
+		RunReads:     runReads,
+		RunProgress:  runProgress,
 		// Cancel signals the supervisor AND deletes the cycle's agent
 		// Component, which is what actually stops the pod and frees the org's
 		// billing concurrency slot. Revalidate is the event plane's.
@@ -1636,10 +1625,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// worker connects when it comes up.
 	if cfg.Temporal.Enabled() {
 		runActs := run.NewActivities(run.Deps{
-			Runs: runRuns{runs: milestoneRunRepo},
-			// A failed settle becomes one feed line (run_failed), read off the
-			// row the settle just wrote.
-			Failed:     runFailedActivityRecorder{svc: activitySvc, runs: milestoneRunRepo},
+			Runs:       runRuns{runs: milestoneRunRepo},
 			Cycles:     runCycles{cycles: runCycleRepo},
 			Milestones: issueService,
 			PRs:        issueService,

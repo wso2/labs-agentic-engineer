@@ -128,23 +128,6 @@ type ApplyResult struct {
 	CommitSHA string     `json:"commitSha"`
 	Files     []FileMeta `json:"files"`
 	Warnings  []Warning  `json:"warnings,omitempty"`
-	// Changed is server-internal (not on the wire): false means the batch was
-	// byte-identical to the base tree, so no commit was made — the activity
-	// feed skips no-ops.
-	Changed bool `json:"-"`
-}
-
-// SpecUpdatedRecorder appends the spec_updated activity line (issue #239) when
-// an apply lands a real commit — the collab session flush and the spec editor's
-// save both come through here, so this is what puts ordinary spec work on the
-// project feed. Best-effort and optional (nil = no feed): recording never fails
-// the request. Satisfied by an app-root adapter that resolves the signed-in
-// user's identity from ctx and appends via the projects activity service (spec
-// must not import projects).
-type SpecUpdatedRecorder interface {
-	// paths are the files the commit touched (writes + deletes) — they let the
-	// implementation tell an agent-authored collab flush from a manual edit.
-	RecordSpecUpdated(ctx context.Context, orgID, projectName, commitSHA string, paths []string)
 }
 
 // Conflict is one failed baseSha precondition (the 409 body carries a list).
@@ -573,7 +556,7 @@ func (s *service) Apply(ctx context.Context, orgID, projectID string, req ApplyR
 	// res.Changed == false means the batch was byte-identical to the base tree
 	// (every precondition passed) — no commit was made and CommitSHA is the
 	// unchanged tip, which already carries exactly the requested state.
-	result := &ApplyResult{CommitSHA: res.CommitSHA, Files: files, Warnings: warnings, Changed: res.Changed}
+	result := &ApplyResult{CommitSHA: res.CommitSHA, Files: files, Warnings: warnings}
 	slog.InfoContext(ctx, "files apply committed",
 		"project", projectID, "repo", ref.OrgID+"/"+ref.ProjectID+"/"+ref.RepoSlug,
 		"commit", result.CommitSHA, "changed", res.Changed,

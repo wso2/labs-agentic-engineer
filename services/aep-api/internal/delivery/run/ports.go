@@ -313,15 +313,6 @@ type Gates interface {
 	ProvisionForBuild(ctx context.Context, orgID, projectID, tag string, milestoneNumber int, inputs []delivery.ProvisionInput) error
 }
 
-// RunFailedRecorder is told when a run settles FAILED, so a surface a reader
-// is not looking at (the project's activity feed) can carry the fact. It is
-// handed the run id and nothing else: the recorder reads the row — tag,
-// failure code, component — itself, so the workflow carries no copy of facts
-// the row already holds. Best-effort by contract: it never returns an error.
-type RunFailedRecorder interface {
-	RecordRunFailed(ctx context.Context, orgID, runID string)
-}
-
 // Planner runs the version's planning turn, minting one prose issue per planned
 // Task into the milestone. Satisfied by `*task.PlanService` at the composition
 // root; declaring it here rather than importing keeps `task ⊥ run` intact, which

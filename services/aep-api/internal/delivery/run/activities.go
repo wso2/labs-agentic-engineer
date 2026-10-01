@@ -53,7 +53,6 @@ type Activities struct {
 	gates      Gates
 	planner    Planner
 	deployGate DeployGate
-	failed     RunFailedRecorder
 }
 
 // Deps carries the activity adapters. runs/cycles/milestones are required; the
@@ -75,8 +74,6 @@ type Deps struct {
 	Gates        Gates
 	Planner      Planner
 	DeployGate   DeployGate
-	// Failed is told of a failed settle (optional; nil records nothing).
-	Failed RunFailedRecorder
 }
 
 // NewActivities wires the activity adapters.
@@ -98,7 +95,6 @@ func NewActivities(d Deps) *Activities {
 		gates:      d.Gates,
 		planner:    d.Planner,
 		deployGate: d.DeployGate,
-		failed:     d.Failed,
 	}
 }
 
@@ -132,9 +128,6 @@ type SettleRunInput struct {
 	RunID  string `json:"runId"`
 	State  string `json:"state"`
 	Reason string `json:"reason,omitempty"`
-	// OrgID scopes the failed-settle notification's read of the row. Empty on
-	// an input from before it existed, which records no activity line.
-	OrgID string `json:"orgId,omitempty"`
 }
 
 // SettleRun writes the run's outcome. Guarded in the repository on the run not
@@ -145,11 +138,6 @@ func (a *Activities) SettleRun(ctx context.Context, in SettleRunInput) error {
 	}
 	if err := a.runs.Settle(ctx, in.RunID, in.State, in.Reason); err != nil {
 		return err
-	}
-	// The feed line for a reader who is not on the build page. After the
-	// settle, so the row it reads already says failed and why.
-	if in.State == delivery.RunStateFailed && a.failed != nil && in.OrgID != "" {
-		a.failed.RecordRunFailed(ctx, in.OrgID, in.RunID)
 	}
 	return nil
 }

@@ -303,7 +303,7 @@ func newRecordingRig(t *testing.T, seed map[string]string) (*componenttest.Harne
 	gitOps := sourcecontrol.NewGitOpsService(filesStubResolver{}, ws)
 	svc := spec.NewFilesService(filesStubRepoResolver{rec: rec}, gitOps)
 	h := componenttest.New(t, componenttest.Options{Deps: edge.Deps{
-		Spec: mustSpecHandlers(t, spec.Deps{Files: svc, FilesActivity: &captureSpecUpdated{}}),
+		Spec: mustSpecHandlers(t, spec.Deps{Files: svc}),
 	}})
 	return h, ws
 }

@@ -41,7 +41,6 @@ import (
 type Handler struct {
 	svc       *Service
 	preflight *PreflightService
-	activity  SpecPublishedRecorder
 	publisher PublisherProvisioner
 }
 
@@ -55,19 +54,9 @@ type PublisherProvisioner interface {
 	ProvisionPublisherForBuild(ctx context.Context, orgID string) error
 }
 
-// SpecPublishedRecorder appends the spec_published activity line (issue #239)
-// when a build start succeeds: the user published spec v<tag> and kicked off
-// the build. Best-effort and optional (nil = no feed): recording never fails
-// the request. Satisfied by an app-root adapter that resolves the signed-in
-// user's identity from ctx and appends via the projects activity service
-// (build must not import projects — projects already imports delivery).
-type SpecPublishedRecorder interface {
-	RecordSpecPublished(ctx context.Context, orgID, projectName, tag string)
-}
-
 // NewHandler returns the slice's handler.
-func NewHandler(svc *Service, preflight *PreflightService, activity SpecPublishedRecorder) *Handler {
-	return &Handler{svc: svc, preflight: preflight, activity: activity}
+func NewHandler(svc *Service, preflight *PreflightService) *Handler {
+	return &Handler{svc: svc, preflight: preflight}
 }
 
 // WithPublisherProvisioner wires the publisher provisioner. Optional: nil
@@ -97,9 +86,6 @@ func (h *Handler) BuildProject(ctx context.Context, request gen.BuildProjectRequ
 	}
 	if len(failures) > 0 {
 		return gen.BuildProject200JSONResponse(gen.BuildResponse{Failures: toInputFailures(failures)}), nil
-	}
-	if h.activity != nil && tag != "" {
-		h.activity.RecordSpecPublished(ctx, org, request.ProjectName, tag)
 	}
 	return gen.BuildProject200JSONResponse(gen.BuildResponse{Tag: tag}), nil
 }

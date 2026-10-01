@@ -30,12 +30,9 @@ import (
 type Deps struct {
 	BuildSvc     *build.Service
 	PreflightSvc *build.PreflightService
-	// BuildActivity records the spec_published feed line on build start
-	// (issue #239); nil disables recording.
-	BuildActivity build.SpecPublishedRecorder
-	TaskReads     *task.Reads
-	TaskCommands  *task.Commands
-	TaskStream    *execution.TaskStreamService
+	TaskReads    *task.Reads
+	TaskCommands *task.Commands
+	TaskStream   *execution.TaskStreamService
 
 	// The milestone run read surface: a version's runs + cycles, the per-run
 	// progress stream, and cancel.
@@ -74,7 +71,7 @@ type Handlers struct {
 // handlers are fail-LOUD on a wired-but-nil service and 503 on an entirely
 // unwired one (each slice's nil guard), matching the pre-migration edge.
 func New(d Deps) (*Handlers, error) {
-	bh := build.NewHandler(d.BuildSvc, d.PreflightSvc, d.BuildActivity)
+	bh := build.NewHandler(d.BuildSvc, d.PreflightSvc)
 	if d.PublisherProvisioner != nil {
 		bh = bh.WithPublisherProvisioner(d.PublisherProvisioner)
 	}

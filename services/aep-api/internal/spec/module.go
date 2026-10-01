@@ -34,9 +34,6 @@ type Deps struct {
 	GenAI *Service
 	// Files is the spec-workspace read+apply service (list / read / apply).
 	Files FilesService
-	// FilesActivity records the spec_updated feed line when an apply commits
-	// (issue #239). Optional — nil simply records nothing.
-	FilesActivity SpecUpdatedRecorder
 	// Artifacts is the spec-version tag reader (list-project-tags).
 	Artifacts ArtifactService
 	// Skills is the org-scoped skills catalogue reader (list / get / updates / sync).

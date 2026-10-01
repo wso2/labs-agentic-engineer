@@ -92,29 +92,9 @@ func (filesStubResolver) Resolve(context.Context, string) (secrets.Credential, e
 // ---- harness ----
 
 type filesRig struct {
-	h        *componenttest.Harness
-	remote   *gittest.Remote
-	engine   *gitfs.Engine
-	activity *captureSpecUpdated
-}
-
-// captureSpecUpdated records spec.SpecUpdatedRecorder calls so an apply's
-// activity line (issue #239) can be asserted without a database.
-type captureSpecUpdated struct {
-	mu      sync.Mutex
-	commits []string
-}
-
-func (c *captureSpecUpdated) RecordSpecUpdated(_ context.Context, _, _, commitSHA string, _ []string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.commits = append(c.commits, commitSHA)
-}
-
-func (c *captureSpecUpdated) all() []string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return append([]string(nil), c.commits...)
+	h      *componenttest.Harness
+	remote *gittest.Remote
+	engine *gitfs.Engine
 }
 
 func newFilesRig(t *testing.T, seed map[string]string) *filesRig {
@@ -134,11 +114,10 @@ func newFilesRig(t *testing.T, seed map[string]string) *filesRig {
 	engine := workspacetest.NewEngine(t)
 	gitOps := sourcecontrol.NewGitOpsService(filesStubResolver{}, engine)
 	svc := spec.NewFilesService(filesStubRepoResolver{rec: rec}, gitOps)
-	act := &captureSpecUpdated{}
 	h := componenttest.New(t, componenttest.Options{Deps: edge.Deps{
-		Spec: mustSpecHandlers(t, spec.Deps{Files: svc, FilesActivity: act}),
+		Spec: mustSpecHandlers(t, spec.Deps{Files: svc}),
 	}})
-	return &filesRig{h: h, remote: remote, engine: engine, activity: act}
+	return &filesRig{h: h, remote: remote, engine: engine}
 }
 
 // mirrorRevParse resolves rev inside the ENGINE's bare mirror (not the origin)
@@ -312,45 +291,6 @@ func TestApply_MultiWriteAndDelete_SingleCommit(t *testing.T) {
 	// todo.md gone: reading it now 404s.
 	if miss := r.get(apiBase + "/specs/requirements/todo.md"); miss.Code != http.StatusNotFound {
 		t.Errorf("todo.md still present: code %d", miss.Code)
-	}
-}
-
-// An apply that lands a real commit records the spec_updated activity line
-// (issue #239), keyed by the commit sha; a byte-identical re-apply makes no
-// commit and records nothing.
-func TestApply_RecordsSpecUpdatedActivity(t *testing.T) {
-	r := newFilesRig(t, map[string]string{"specs/requirements/prd.md": "old"})
-	sha := r.readSHA(t, "specs/requirements/prd.md")
-
-	rec := r.apply(mustJSON(t, spec.ApplyRequest{
-		Writes:  []spec.WriteOp{{Path: "specs/requirements/prd.md", Content: "new", BaseSHA: sha}},
-		Message: "from test",
-	}))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("apply code %d: %s", rec.Code, rec.Body.String())
-	}
-	var res spec.ApplyResult
-	_ = json.Unmarshal(rec.Body.Bytes(), &res)
-
-	recorded := r.activity.all()
-	if len(recorded) != 1 {
-		t.Fatalf("recorded commits = %v, want exactly one", recorded)
-	}
-	if recorded[0] != res.CommitSHA {
-		t.Errorf("recorded commit = %q, want %q", recorded[0], res.CommitSHA)
-	}
-
-	// Byte-identical re-apply: preconditions pass, nothing changes, no line.
-	sha2 := r.readSHA(t, "specs/requirements/prd.md")
-	rec2 := r.apply(mustJSON(t, spec.ApplyRequest{
-		Writes:  []spec.WriteOp{{Path: "specs/requirements/prd.md", Content: "new", BaseSHA: sha2}},
-		Message: "noop",
-	}))
-	if rec2.Code != http.StatusOK {
-		t.Fatalf("no-op apply code %d: %s", rec2.Code, rec2.Body.String())
-	}
-	if recorded := r.activity.all(); len(recorded) != 1 {
-		t.Fatalf("no-op apply recorded a line: %v", recorded)
 	}
 }
 
