@@ -303,8 +303,8 @@ dev-images:
 	# cache hit or not; re-importing an image the cluster already has is cheap.
 	k3d image import \
 		ghcr.io/wso2/aep/aep-api:dev-local \
-		ghcr.io/wso2/aep/agents:dev-local \
-		ghcr.io/wso2/aep/collab:dev-local \
+		ghcr.io/wso2/aep/ae-design-agent:dev-local \
+		ghcr.io/wso2/aep/ae-collab:dev-local \
 		ghcr.io/wso2/aep/aep-mcp-server:dev-local \
 		ghcr.io/wso2/aep/console:dev-local \
 		ghcr.io/wso2/aep/tryit:dev-local \
@@ -346,8 +346,8 @@ dev-update:
 	$(MAKE) dev-images
 	helm upgrade aep-platform deployments/helm-charts/platform -n wso2-aep --reuse-values \
 		--set aepApi.image.repository=ghcr.io/wso2/aep/aep-api --set aepApi.image.tag=dev-local \
-		--set aepAgents.image.repository=ghcr.io/wso2/aep/agents --set aepAgents.image.tag=dev-local \
-		--set collab.image.repository=ghcr.io/wso2/aep/collab --set collab.image.tag=dev-local \
+		--set aepAgents.image.repository=ghcr.io/wso2/aep/ae-design-agent --set aepAgents.image.tag=dev-local \
+		--set collab.image.repository=ghcr.io/wso2/aep/ae-collab --set collab.image.tag=dev-local \
 		--set aepMcpServer.image.repository=ghcr.io/wso2/aep/aep-mcp-server --set aepMcpServer.image.tag=dev-local \
 		--set console.image.repository=ghcr.io/wso2/aep/console --set console.image.tag=dev-local \
 		--set tryIt.image.repository=ghcr.io/wso2/aep/tryit --set tryIt.image.tag=dev-local

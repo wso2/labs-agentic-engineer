@@ -39,7 +39,7 @@ aepApi:
 aepAgents:
   replicas: 1
   image:
-    repository: ghcr.io/wso2/aep/agents
+    repository: ghcr.io/wso2/aep/ae-design-agent
     tag: latest
     pullPolicy: IfNotPresent
   port: 9090
@@ -64,7 +64,7 @@ collab:
   # mandatory: in-memory rooms Map; 2nd replica silently overwrites commits (doc-wins)
   replicas: 1
   image:
-    repository: ghcr.io/wso2/aep/collab
+    repository: ghcr.io/wso2/aep/ae-collab
     tag: latest
     pullPolicy: IfNotPresent
   port: 3400
