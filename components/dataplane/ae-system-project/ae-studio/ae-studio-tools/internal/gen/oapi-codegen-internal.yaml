@@ -1,0 +1,21 @@
+# Strict server + types + embedded spec for the /internal/v1 surface, generated
+# from packages/contracts/api/ae-studio-tools/internal/v1. Run via `make gen-api`.
+#
+# embedded-spec: the edge's request validator loads the contract from GetSpec()
+# (internal/edge/internal.go), the same way services/aep-api's edge does.
+#
+# compatibility.preserve-original-operation-id-casing-in-embedded-spec: keeps the
+# contract's kebab-case operation ids in the embedded copy (aep-api convention).
+package: gen
+generate:
+  std-http-server: true
+  strict-server: true
+  models: true
+  embedded-spec: true
+compatibility:
+  preserve-original-operation-id-casing-in-embedded-spec: true
+output: internal/gen/internal_gen.go
+output-options:
+  skip-prune: true
+  prefer-skip-optional-pointer: true
+  name-normalizer: ToCamelCaseWithInitialisms

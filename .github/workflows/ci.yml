@@ -100,18 +100,34 @@ jobs:
       - name: Test
         run: make test
 
-      # Every workspace Go module that defines the target runs it; a module
-      # without one (no Makefile, or no such rule) is skipped, so a new module
-      # opts in by adding the target. `make -n` only probes for the rule.
+      # Every workspace Go module whose Makefile defines the rule runs it; a
+      # module without one is skipped, so a new module opts in by adding the
+      # target. The rule is probed by grepping the Makefile (`make -n` also
+      # passes for an implicit rule or a file of that name). A failing
+      # `go list -m` fails the step instead of looping over nothing, and the
+      # gates listed in `required` must have run, so the loop cannot go green
+      # without checking them.
       - name: Contract codegen freshness + dead-code gate (every Go module)
         run: |
+          set -euo pipefail
+          required="services/aep-api:gen-api-check services/aep-api:deadcode-check
+            components/dataplane/ae-system-project/ae-studio/ae-studio-tools:gen-api-check
+            components/dataplane/ae-system-project/ae-studio/ae-studio-tools:deadcode-check"
+          mods="$(go list -m -f '{{.Dir}}')"
           rc=0
-          for d in $(go list -m -f '{{.Dir}}' | grep -F "$PWD"); do
+          ran=" "
+          for d in $mods; do
+            case "$d" in "$PWD"/*) ;; *) continue ;; esac
+            [ -f "$d/Makefile" ] || continue
             for t in gen-api-check deadcode-check; do
-              if make -C "$d" -n "$t" >/dev/null 2>&1; then
+              if grep -qE "^$t:" "$d/Makefile"; then
                 echo ">> make -C $d $t"; make -C "$d" "$t" || rc=1
+                ran="$ran${d#"$PWD"/}:$t "
               fi
             done
+          done
+          for g in $required; do
+            case "$ran" in *" $g "*) ;; *) echo "FAIL: required gate $g did not run"; rc=1 ;; esac
           done
           exit $rc
 

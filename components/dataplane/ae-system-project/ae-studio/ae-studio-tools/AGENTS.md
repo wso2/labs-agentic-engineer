@@ -10,19 +10,29 @@ cover it.
 |---|---|
 | `make build` | `go build ./...` |
 | `make test` | `go test -short ./...` |
+| `make gen-api` | regenerate `internal/gen` from `packages/contracts/api/ae-studio-tools/internal/v1/openapi.yaml` |
+| `make gen-api-check` | codegen freshness gate (CI) |
 | `make deadcode-check` | dead-code gate (CI); `make deadcode` reports without failing |
 
-CI runs `deadcode-check` (and `gen-api-check` once the module has one) through
-the root loop over every Go module. On a shell whose `GOROOT` does not match the
+CI runs `gen-api-check` and `deadcode-check` through the root loop over every
+Go module, and fails if either of this module's gates did not run. On a shell whose `GOROOT` does not match the
 toolchain, run Go make targets with `env -u GOROOT`.
 
 ## Packages
 
 | Package | Purpose |
 |---|---|
-| `cmd/ae-studio-tools` | wiring: secret-rev check, config, health listener, shutdown |
+| `cmd/ae-studio-tools` | wiring: secret-rev check, config, public + health listeners (ready once both are bound), shutdown |
 | `internal/config` | `Load(getenv)` reads the pod env; `CheckSecretRev(getenv)` refuses to start when `AE_SECRET_REV` ≠ `AE_EXPECTED_SECRET_REV` |
-| `internal/edge` | HTTP surfaces; `NewHealth` serves `/healthz` and `/readyz` on the health port |
+| `internal/auth` | JWT verifier over the IdP JWKS; `UserGate` (`/v1`) and `M2MGate` (`/internal/v1`) |
+| `internal/problem` | the `application/problem+json` error body (leaf, so gates and edge share it) |
+| `internal/edge` | HTTP surfaces. `routes.go` is the public listener's mount table (gate before route matching in every group); `internal.go` the `/internal/v1` group (body cap → M2M gate → kin-openapi validator → generated server); `accesslog.go` logs `internal.access {method, path, status, ms}`; `NewHealth` serves `/healthz` and `/readyz` on the health port only |
+| `internal/gen` | generated: models, strict server and embedded spec for `/internal/v1` (do not edit) |
+| `internal/github` | GitHub REST client over the gitpat; `Whoami` = `GET /user`, rate limits map to `ErrRateLimited` |
+
+The `/v1` contract (`packages/contracts/api/ae-studio-tools/v1`) has no
+operations yet, so nothing is generated from it; `/v1` answers 404 behind the
+user gate.
 
 ## Env
 

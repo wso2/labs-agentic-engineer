@@ -1,0 +1,105 @@
+openapi: 3.0.3
+info:
+  title: ae-studio-tools internal API
+  description: |-
+    Machine API of an org's AE Studio. Caller: aep-api only, with the AE-only
+    M2M token (client_credentials, aud and client_id = the pinned client, no
+    org claim) and X-Impersonate-Org naming the pod's org.
+
+    Every request body is capped at 1 MiB, then the caller is authenticated,
+    then the request is validated against this spec, before any handler runs.
+    Errors are RFC 9457 problems (application/problem+json).
+  version: 1.0.0
+servers:
+- url: /internal/v1
+tags:
+- name: GitHub
+  description: The org's GitHub identity, as the gitpat sees it.
+security:
+- aeOnly: []
+paths:
+  /github/identity:
+    get:
+      operationId: get-github-identity
+      summary: The GitHub user the org's gitpat belongs to
+      tags:
+      - GitHub
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      responses:
+        '200':
+          description: The gitpat's user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GitHubIdentity'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/Problem'
+components:
+  securitySchemes:
+    aeOnly:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    ImpersonateOrg:
+      name: X-Impersonate-Org
+      in: header
+      required: true
+      description: The org the call acts for; must be the pod's org id.
+      schema:
+        type: string
+  responses:
+    Problem:
+      description: RFC 9457 problem
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    RateLimited:
+      description: GitHub rate-limited the gitpat; retry after the given delay.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema:
+            type: integer
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    GitHubIdentity:
+      type: object
+      required:
+      - login
+      - id
+      properties:
+        login:
+          type: string
+        id:
+          type: integer
+          format: int64
+    Problem:
+      type: object
+      required:
+      - type
+      - title
+      - status
+      - code
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        code:
+          type: string

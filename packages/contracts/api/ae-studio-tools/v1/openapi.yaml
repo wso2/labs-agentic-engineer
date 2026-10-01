@@ -1,0 +1,61 @@
+openapi: 3.0.3
+info:
+  title: ae-studio-tools browser API
+  description: |-
+    Browser API of an org's AE Studio (git-only reads). Operations land with
+    the git engine. Callers present a Platform IdP user JWT of the pod's org;
+    an M2M token is refused with 401 and a user of another org with 403, and
+    both checks run before route matching, so an unknown path is 401/403
+    before it is 404. Errors are RFC 9457 problems (application/problem+json).
+
+    No server is generated from this spec until it has an operation.
+  version: 1.0.0
+servers:
+- url: /v1
+security:
+- userJwt: []
+paths: {}
+components:
+  securitySchemes:
+    userJwt:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    Unauthorized:
+      description: Missing or invalid user JWT, or an M2M token
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Forbidden:
+      description: A user of another org
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: No such operation or resource
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    Problem:
+      type: object
+      required:
+      - type
+      - title
+      - status
+      - code
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        code:
+          type: string
