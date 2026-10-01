@@ -17,15 +17,30 @@
 package webhook
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
+)
+
+const (
+	// maxDeliveryAttempts bounds how many times one delivery is dispatched
+	// before the sweep stops claiming it. Chosen with retryMaxDelay so the
+	// budget spans a few hours: long enough to ride out a dependency outage,
+	// short enough that a permanently poisoned event stops burning work.
+	maxDeliveryAttempts = 8
+	// retryBaseDelay is the wait after the first failure; each later attempt
+	// doubles it up to retryMaxDelay.
+	retryBaseDelay = 30 * time.Second
+	retryMaxDelay  = 30 * time.Minute
 )
 
 // isLookupNotFound reports whether err is a 404 surfaced by the routing
@@ -53,9 +68,12 @@ func isLookupNotFound(err error) bool {
 //  3. Resolve ocOrgID via git-service (60s in-process cache).
 //  4. HMAC-validate against that org's secrets.
 //  5. Dedup INSERT into webhook_deliveries.
-//  6. Dispatch the handler.
-//  7. Mark processed → ack 200 on success; ack 5xx on handler failure
-//     (GitHub redelivers up to ~9 hours).
+//  6. Ack 200 and dispatch the handler off the request.
+//
+// Steps 1-5 are the only ones that can refuse a delivery, so they are the only
+// ones the status code reports on. Everything after the ack is durable work
+// tracked on the delivery row and retried by RetrySweeper — see the comment at
+// the spawn in Receive for why the handler cannot run under the request.
 type WebhookController interface {
 	Receive(w http.ResponseWriter, r *http.Request)
 }
@@ -66,6 +84,10 @@ type webhookController struct {
 	router     *Router
 	lookup     OcOrgIDLookup // served by CredentialService
 	cache      *RoutingCache // 60s in-process cache
+	// spawn runs the post-ack dispatch. Production launches a goroutine;
+	// tests replace it with an inline runner so an assertion right after
+	// Receive observes a finished dispatch instead of racing one.
+	spawn func(func())
 }
 
 // NewWebhookController wires the receiver. lookup + cache are required;
@@ -77,6 +99,7 @@ func NewWebhookController(verifier *Verifier, deliveries *sourcecontrol.Delivery
 		router:     router,
 		lookup:     lookup,
 		cache:      cache,
+		spawn:      func(f func()) { go f() },
 	}
 }
 
@@ -141,8 +164,9 @@ func (c *webhookController) Receive(w http.ResponseWriter, r *http.Request) {
 	}
 
 	action := actionFromPayload(body)
+	stored := redactPublishedCredentials(body)
 	res, err := c.deliveries.Persist(ctx, deliveryID, ocOrgID, event, action,
-		redactPublishedCredentials(body))
+		stored, !bytes.Equal(stored, body))
 	if err != nil {
 		slog.ErrorContext(ctx, "webhook: persist failed",
 			"deliveryId", deliveryID, "event", event, "error", err, "result", "persist_failed")
@@ -157,23 +181,72 @@ func (c *webhookController) Receive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Dispatch synchronously. Errors drive the ack: 5xx → GitHub retries;
-	// the dedup row is preserved so retries re-enter the handler.
+	// Ack BEFORE dispatching, and dispatch on a context the response does not
+	// own.
+	//
+	// GitHub gives a delivery 10 seconds and then abandons it. Dispatching
+	// under r.Context() meant any event whose work ran longer was not merely
+	// reported late — the request context was cancelled at the deadline and
+	// took the work with it, SIGKILLing in-flight git subprocesses mid-fetch.
+	// A merge that fans out over several components exceeds 10s routinely, so
+	// the handler could never finish and the 5xx-drives-retry contract had
+	// nothing to retry INTO: every attempt died at the same ceiling.
+	//
+	// The ack no longer carries the handler's verdict, so GitHub's redelivery
+	// is no longer the recovery path. RetrySweeper owns that now, driven by
+	// next_attempt_at below. A failed dispatch is durable state, not a status
+	// code.
+	c.spawn(func() {
+		// WithoutCancel keeps the request's values (trace/correlation ids) and
+		// drops only its cancellation.
+		dispatchCtx := context.WithoutCancel(ctx)
+		c.finish(dispatchCtx, deliveryID, ocOrgID, event, action, body, 0)
+	})
+
+	slog.InfoContext(ctx, "webhook: accepted",
+		"deliveryId", deliveryID, "event", event, "action", action, "ocOrgId", ocOrgID, "result", "accepted")
+	w.WriteHeader(http.StatusOK)
+}
+
+// finish runs one dispatch attempt and records its outcome. Shared by the
+// receiver's own pass and by RetrySweeper so both agree on what an attempt
+// costs and when the next one is due; priorAttempts is how many have already
+// failed (0 from the receiver).
+func (c *webhookController) finish(ctx context.Context, deliveryID, ocOrgID, event, action string, body []byte, priorAttempts int) {
 	if err := c.router.Dispatch(ctx, event, body); err != nil {
-		_ = c.deliveries.MarkFailed(ctx, deliveryID, err.Error())
+		attempts := priorAttempts + 1
+		next := c.retrySchedule(attempts)
+		if markErr := c.deliveries.MarkFailed(ctx, deliveryID, err.Error(), attempts, next); markErr != nil {
+			slog.ErrorContext(ctx, "webhook: recording the failure failed — the delivery is now unrecoverable",
+				"deliveryId", deliveryID, "event", event, "error", markErr)
+		}
 		slog.ErrorContext(ctx, "webhook: handler failed",
-			"deliveryId", deliveryID, "event", event, "error", err, "result", "handler_failed")
-		http.Error(w, "handler", http.StatusInternalServerError)
+			"deliveryId", deliveryID, "event", event, "action", action, "ocOrgId", ocOrgID,
+			"attempts", attempts, "retryAt", next, "error", err, "result", "handler_failed")
 		return
 	}
-
 	if err := c.deliveries.MarkProcessed(ctx, deliveryID); err != nil {
 		slog.WarnContext(ctx, "webhook: mark processed failed",
 			"deliveryId", deliveryID, "error", err)
 	}
-	slog.InfoContext(ctx, "webhook: accepted",
-		"deliveryId", deliveryID, "event", event, "action", action, "ocOrgId", ocOrgID, "result", "accepted")
-	w.WriteHeader(http.StatusOK)
+	slog.InfoContext(ctx, "webhook: processed",
+		"deliveryId", deliveryID, "event", event, "action", action, "ocOrgId", ocOrgID,
+		"attempts", priorAttempts+1, "result", "processed")
+}
+
+// retrySchedule returns when attempt N+1 may run, or nil once the budget is
+// spent. Exhausted rows keep processed_at null so they stay visible as
+// unfinished work and a GitHub redelivery can still drive them.
+func (c *webhookController) retrySchedule(attempts int) *time.Time {
+	if attempts >= maxDeliveryAttempts {
+		return nil
+	}
+	backoff := retryBaseDelay << (attempts - 1)
+	if backoff > retryMaxDelay {
+		backoff = retryMaxDelay
+	}
+	next := time.Now().UTC().Add(backoff)
+	return &next
 }
 
 func actionFromPayload(body []byte) string {

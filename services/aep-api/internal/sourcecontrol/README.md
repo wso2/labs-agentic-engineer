@@ -117,6 +117,20 @@ and installation lifecycle.*
   `MachineCommentMarker` precisely because the writer is not the only party that has to know it — and
   matches on the part of it that survives JSON escaping, since Go's encoder turns `<` into `\u003c` and
   a scan for the literal marker finds nothing. A body it cannot rewrite is dropped, not stored.
+- **The webhook ack reports acceptance, never the handler's verdict.** `Receive` answers GitHub as soon
+  as the delivery is routed, verified and deduped, then runs the handler on `context.WithoutCancel`.
+  It cannot run the handler under the request: GitHub abandons a delivery after 10s, and dispatching
+  under `r.Context()` meant the deadline *cancelled the work* rather than reporting it — in-flight git
+  subprocesses were SIGKILLed mid-fetch. A merge fanning out over several components exceeds 10s
+  routinely, so every attempt died at the same ceiling and the old "5xx drives GitHub's redelivery"
+  contract had nothing to retry into. Recovery is therefore ours: a failed dispatch sets `attempts` and
+  `next_attempt_at` on the delivery row, and `webhook.RetrySweeper` re-drives it with exponential
+  backoff until `maxDeliveryAttempts`. Exhausted rows keep `processed_at` null, so they still read as
+  unfinished work and a manual GitHub redelivery still re-runs them. **A redacted payload is never
+  replayed** — the row the sweep would read is the body `redact.go` rewrote, not what GitHub sent, so
+  `PayloadRedacted` excludes it from `ClaimRetryable` and only a real redelivery can recover it. This is
+  distinct from the event plane's reconcile sweep, which heals milestones from observed state; this one
+  replays the event, covering deliveries whose effects never began.
 - **`ListMilestoneIssueComments` is ONE call for a whole milestone's threads.** It is the version
   ledger's comment read and it rides a 5s console poll, so neither REST shape works — per-issue costs a
   call per issue and repo-wide answers the whole repository out of the budget the run loop needs; the

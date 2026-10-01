@@ -1569,6 +1569,15 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		// the SM-API mirror at boot; the periodic passes retire the old copies
 		// once none of the org's cycles is open.
 		organization.NewModelKeyRename(organization.NewModelKeyRenameRepository(db, credStore), orgRepo, secretRefWriter, runCycleRepo),
+		// Re-drives webhook deliveries whose dispatch never finished. The
+		// receiver acks GitHub before running the handler — it has to, or a
+		// merge that fans out over several components is cancelled at GitHub's
+		// 10s delivery deadline — which also means GitHub's redelivery can no
+		// longer recover a failure. This owns that recovery. Distinct from
+		// eventPlaneSweep above: that heals milestones from observed state,
+		// this replays the event, so it covers deliveries whose effects never
+		// started.
+		webhook.NewRetrySweeper(webhookCtrl, 0, 0),
 	}
 	// Disk-lifecycle reaper: global passes self-elect via non-blocking flock.
 	// Omitted when Fake() leaves Workspace nil (no disk at assemble time).

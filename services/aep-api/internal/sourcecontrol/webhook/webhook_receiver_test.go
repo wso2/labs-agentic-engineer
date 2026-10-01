@@ -115,6 +115,11 @@ func newReceiverHarness(t *testing.T) *receiverHarness {
 		lookup,
 		NewRoutingCache(0),
 	)
+	// Dispatch runs after the ack in production, on a goroutine. Run it inline
+	// here so an assertion straight after post() observes a finished dispatch
+	// rather than racing one — the ordering under test is "ack does not wait
+	// for the handler", not "the handler runs on another thread".
+	ctrl.(*webhookController).spawn = func(f func()) { f() }
 	return &receiverHarness{db: db, ctrl: ctrl, handler: handler}
 }
 
@@ -275,21 +280,31 @@ func TestReceiver_DuplicateDelivery_DedupedSecondAck200NoRedispatch(t *testing.T
 	}
 }
 
-func TestReceiver_HandlerFailure_500ThenRedeliveryReruns(t *testing.T) {
+func TestReceiver_HandlerFailure_StillAcks200AndSchedulesRetry(t *testing.T) {
 	t.Parallel()
 	h := newReceiverHarness(t)
 	sig := sign(receiverSecret, pushBody)
 
-	// First attempt: the handler fails → 500 (GitHub will redeliver), the row
-	// stays unprocessed with the error recorded for audit.
+	// The ack reports only whether the delivery was ACCEPTED, so a failing
+	// handler still gets 200. The handler's verdict lives on the row: the
+	// error is recorded, processed_at stays null, and next_attempt_at is set
+	// so RetrySweeper claims it. Acking the failure as 5xx instead is what the
+	// old contract did, and it is not available any more — GitHub cancels the
+	// request at 10s, which killed the work mid-flight rather than reporting it.
 	h.handler.err = fmt.Errorf("downstream boom")
 	rec := h.post(t, "delivery-retry", "push", sig, pushBody)
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("handler failure must ack 5xx so GitHub redelivers, got %d", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("an accepted delivery acks 200 even when the handler fails, got %d", rec.Code)
 	}
 	row := h.loadDelivery(t, "delivery-retry")
 	if row.ProcessedAt != nil || row.ProcessError == "" {
 		t.Fatalf("failed delivery must stay unprocessed with the error recorded, got %+v", row)
+	}
+	if row.Attempts != 1 {
+		t.Fatalf("the receiver's own pass counts as attempt 1, got %d", row.Attempts)
+	}
+	if row.NextAttemptAt == nil {
+		t.Fatal("a failed delivery must be scheduled for retry, got no next_attempt_at")
 	}
 
 	// Redelivery (same delivery id, handler healthy again): Persist reports

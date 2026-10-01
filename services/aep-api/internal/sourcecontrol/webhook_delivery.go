@@ -32,6 +32,23 @@ type WebhookDelivery struct {
 	ReceivedAt   time.Time  `gorm:"index;not null" json:"receivedAt"`
 	ProcessedAt  *time.Time `json:"processedAt,omitempty"`
 	ProcessError string     `gorm:"type:text" json:"processError,omitempty"`
+
+	// Attempts counts dispatches that have finished and failed. The receiver's
+	// own first pass is attempt 1, so a row the sweeper has never touched
+	// arrives here already at 1.
+	Attempts int `gorm:"not null;default:0" json:"attempts"`
+	// NextAttemptAt is when the retry sweep may claim this row. Null means the
+	// row is not claimable: either it is still in flight on the receiver, or it
+	// has exhausted its attempts. Indexed with ProcessedAt because the sweep's
+	// only query filters on exactly those two columns.
+	NextAttemptAt *time.Time `gorm:"index" json:"nextAttemptAt,omitempty"`
+	// PayloadRedacted marks a row whose stored body is NOT what GitHub sent —
+	// redactPublishedCredentials rewrote a comment/issue body that carried
+	// published test-user credentials. The sweep refuses to replay these,
+	// because re-dispatching a mutated body is not a retry of the original
+	// event. They remain visible for audit and recoverable by GitHub
+	// redelivery, which carries the true body.
+	PayloadRedacted bool `gorm:"not null;default:false" json:"payloadRedacted,omitempty"`
 }
 
 // WebhookPayload holds the raw event body. Split from WebhookDelivery so

@@ -64,7 +64,7 @@ func TestDeliveryStore_Persist_FirstDeliveryIsCreated(t *testing.T) {
 	ctx := context.Background()
 	store := sourcecontrol.NewDeliveryStore(db)
 
-	res, err := store.Persist(ctx, "delivery-1", "org-acme", "push", "", []byte(`{"ref":"refs/heads/main"}`))
+	res, err := store.Persist(ctx, "delivery-1", "org-acme", "push", "", []byte(`{"ref":"refs/heads/main"}`), false)
 	if err != nil {
 		t.Fatalf("Persist: %v", err)
 	}
@@ -104,13 +104,13 @@ func TestDeliveryStore_Persist_DuplicateBeforeProcessingReRuns(t *testing.T) {
 	ctx := context.Background()
 	store := sourcecontrol.NewDeliveryStore(db)
 
-	if _, err := store.Persist(ctx, "dup-1", "org-acme", "push", "", []byte(`{}`)); err != nil {
+	if _, err := store.Persist(ctx, "dup-1", "org-acme", "push", "", []byte(`{}`), false); err != nil {
 		t.Fatalf("first Persist: %v", err)
 	}
 	// Same delivery_id, processed_at still NULL (handler hasn't finished): the PK
 	// unique-violation is caught and reported as neither Created nor
 	// AlreadyProcessed → the receiver RE-RUNS the (idempotent) handler.
-	res, err := store.Persist(ctx, "dup-1", "org-acme", "push", "", []byte(`{}`))
+	res, err := store.Persist(ctx, "dup-1", "org-acme", "push", "", []byte(`{}`), false)
 	if err != nil {
 		t.Fatalf("duplicate Persist must not error, got %v", err)
 	}
@@ -125,7 +125,7 @@ func TestDeliveryStore_Persist_DuplicateAfterProcessingIsDeduped(t *testing.T) {
 	ctx := context.Background()
 	store := sourcecontrol.NewDeliveryStore(db)
 
-	if _, err := store.Persist(ctx, "done-1", "org-acme", "pull_request", "closed", []byte(`{}`)); err != nil {
+	if _, err := store.Persist(ctx, "done-1", "org-acme", "pull_request", "closed", []byte(`{}`), false); err != nil {
 		t.Fatalf("first Persist: %v", err)
 	}
 	if err := store.MarkProcessed(ctx, "done-1"); err != nil {
@@ -134,7 +134,7 @@ func TestDeliveryStore_Persist_DuplicateAfterProcessingIsDeduped(t *testing.T) {
 	// Replay of finished work: the existing row has processed_at set → dedup.
 	// This is the assertion that catches a broken PK-dedup (a mutation that lets
 	// the second INSERT succeed would re-run the handler → double-process).
-	res, err := store.Persist(ctx, "done-1", "org-acme", "pull_request", "closed", []byte(`{}`))
+	res, err := store.Persist(ctx, "done-1", "org-acme", "pull_request", "closed", []byte(`{}`), false)
 	if err != nil {
 		t.Fatalf("replay Persist: %v", err)
 	}
@@ -149,10 +149,10 @@ func TestDeliveryStore_MarkProcessed_ClearsErrorAndStampsTime(t *testing.T) {
 	ctx := context.Background()
 	store := sourcecontrol.NewDeliveryStore(db)
 
-	if _, err := store.Persist(ctx, "mp-1", "org-acme", "push", "", []byte(`{}`)); err != nil {
+	if _, err := store.Persist(ctx, "mp-1", "org-acme", "push", "", []byte(`{}`), false); err != nil {
 		t.Fatalf("Persist: %v", err)
 	}
-	if err := store.MarkFailed(ctx, "mp-1", "boom"); err != nil {
+	if err := store.MarkFailed(ctx, "mp-1", "boom", 1, nil); err != nil {
 		t.Fatalf("MarkFailed: %v", err)
 	}
 	if err := store.MarkProcessed(ctx, "mp-1"); err != nil {
@@ -177,10 +177,10 @@ func TestDeliveryStore_MarkFailed_RecordsErrorLeavesUnprocessed(t *testing.T) {
 	ctx := context.Background()
 	store := sourcecontrol.NewDeliveryStore(db)
 
-	if _, err := store.Persist(ctx, "mf-1", "org-acme", "push", "", []byte(`{}`)); err != nil {
+	if _, err := store.Persist(ctx, "mf-1", "org-acme", "push", "", []byte(`{}`), false); err != nil {
 		t.Fatalf("Persist: %v", err)
 	}
-	if err := store.MarkFailed(ctx, "mf-1", "image push denied"); err != nil {
+	if err := store.MarkFailed(ctx, "mf-1", "image push denied", 1, nil); err != nil {
 		t.Fatalf("MarkFailed: %v", err)
 	}
 
@@ -204,7 +204,7 @@ func TestDeliveryStore_Persist_EmptyDeliveryIDRejected(t *testing.T) {
 	ctx := context.Background()
 	store := sourcecontrol.NewDeliveryStore(db)
 
-	if _, err := store.Persist(ctx, "", "org-acme", "push", "", []byte(`{}`)); err == nil {
+	if _, err := store.Persist(ctx, "", "org-acme", "push", "", []byte(`{}`), false); err == nil {
 		t.Fatal("an empty delivery id must be rejected (it is the dedup PK)")
 	}
 }
