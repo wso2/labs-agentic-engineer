@@ -58,19 +58,14 @@ var (
 	internalRouter = sync.OnceValue(func() routers.Router { return mustRouter(igen.GetSpec, "internal") })
 )
 
-// requestValidator validates every request router matches against its
-// committed contract (public or internal) BEFORE it reaches the generated
-// handler chain: schema-invalid input never reaches a handler and is answered
-// with the flat envelope (400 validation_failed + field details). Design notes:
-//
-//   - Route-miss falls through to the router untouched: the generated mux
-//     owns 404s, the read-file catch-all (nested {path} segments, which the
-//     single-segment contract template cannot match) stays servable, and so
-//     do the internal raw routes the embedded spec lacks (call-mcp-tool is
-//     excluded from generation; capInternalBody still caps its body).
-//   - Security requirements are NOT checked here (AuthenticationFunc is a
-//     no-op): authN/authZ belong to the route group (public: the JWKS
-//     middleware and tenant gate; internal: internalGate or the MCP verifier).
+// requestValidator validates every request router matches against the public
+// contract BEFORE it reaches the generated handler chain: schema-invalid input
+// never reaches a handler and is answered with the flat envelope (400
+// validation_failed + field details). A route miss falls through to next
+// untouched: the generated mux owns 404s, and the read-file catch-all (nested
+// {path} segments, which the single-segment contract template cannot match)
+// stays servable. The internal edge validates through validateRequest with the
+// route capInternalBody already found (internalValidator).
 func requestValidator(router routers.Router, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		route, pathParams, err := router.FindRoute(r)
@@ -78,27 +73,38 @@ func requestValidator(router routers.Router, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		input := &openapi3filter.RequestValidationInput{
-			Request:    r,
-			PathParams: pathParams,
-			Route:      route,
-			Options: &openapi3filter.Options{
-				AuthenticationFunc: openapi3filter.NoopAuthenticationFunc,
-				// Multipart bodies (skill import): kin would io.ReadAll the
-				// whole upload and schema-decode every part — including the
-				// binary tarball — only to check the file field is present,
-				// which the handler's own 400 already enforces. The strict
-				// wrapper re-parses the multipart anyway; skip the redundant
-				// 2-3x in-memory copies.
-				ExcludeRequestBody: hasMultipartBody(route),
-			},
+		if validateRequest(w, r, route, pathParams) {
+			next.ServeHTTP(w, r)
 		}
-		if err := openapi3filter.ValidateRequest(r.Context(), input); err != nil {
-			writeValidationError(w, err)
-			return
-		}
-		next.ServeHTTP(w, r)
 	})
+}
+
+// validateRequest checks r against its matched contract operation and reports
+// whether it passed; on failure it has already written the 400 (or 413) envelope.
+// Security requirements are NOT checked here (AuthenticationFunc is a no-op):
+// authN/authZ belong to the route group (public: the JWKS middleware and tenant
+// gate, which run before the validator; internal: internalGate, also before it).
+func validateRequest(w http.ResponseWriter, r *http.Request, route *routers.Route, pathParams map[string]string) bool {
+	input := &openapi3filter.RequestValidationInput{
+		Request:    r,
+		PathParams: pathParams,
+		Route:      route,
+		Options: &openapi3filter.Options{
+			AuthenticationFunc: openapi3filter.NoopAuthenticationFunc,
+			// Multipart bodies (skill import): kin would io.ReadAll the
+			// whole upload and schema-decode every part — including the
+			// binary tarball — only to check the file field is present,
+			// which the handler's own 400 already enforces. The strict
+			// wrapper re-parses the multipart anyway; skip the redundant
+			// 2-3x in-memory copies.
+			ExcludeRequestBody: hasMultipartBody(route),
+		},
+	}
+	if err := openapi3filter.ValidateRequest(r.Context(), input); err != nil {
+		writeValidationError(w, err)
+		return false
+	}
+	return true
 }
 
 // writeBodyTooLarge answers 413 with the envelope every body cap shares.

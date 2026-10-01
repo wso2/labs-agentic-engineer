@@ -36,13 +36,16 @@ import (
 // The internal service-to-service route group (/internal/v1), served CONTRACT-FIRST
 // from packages/contracts/api/internal/v1 (generated strict server in
 // internal/igen), mounted once at /internal/v1/. It is NOT wrapped by the
-// user-JWT middleware. Every request is body-capped (capInternalBody) and
-// validated against the embedded internal spec (requestValidator); every
-// generated operation then passes internalGate, which verifies the caller's
-// credential for the op's route group (a runner's publisher-cc bearer against
-// the cycle named in the path, the INT-6 fence; the SRE handoff bearer for
-// sre/) and binds the verified org into the context. The raw MCP routes carry their
-// own verifier. The spec is non-public, never gateway-advertised.
+// user-JWT middleware. Authenticate, then parse: every request is body-capped
+// (capInternalBody, which finds its route once); every generated operation then
+// passes internalGate, which verifies the caller's credential for the op's
+// route group (a runner's publisher-cc bearer against the cycle named in the
+// path, the INT-6 fence; the SRE handoff bearer for sre/) and binds the verified
+// org into the context; only an authenticated request is validated against the
+// embedded internal spec (internalValidator). The raw MCP routes carry their
+// own verifier. The spec is non-public, never gateway-advertised, but the path
+// is reachable through the console's /aep-api-service/ route, so nothing on it
+// parses a body for an anonymous caller.
 //
 // RUNNER LOCKSTEP: the credentials-refresh response body is projected from the
 // organization domain's RefreshResponse onto igen.RefreshResponse (toIgenRefresh)
@@ -87,16 +90,18 @@ var _ igen.StrictServerInterface = (*internalServer)(nil)
 
 // newInternalV1Handler assembles the internal edge, outermost first:
 //
-//	body cap (capInternalBody)        1 MiB default, per-op overrides
-//	→ request validator               kin-openapi against the embedded internal spec
-//	→ inner mux                       raw MCP routes + generated router
-//	→ internalGate → strict wrapper   generated ops only (envelope error writers)
+//	body cap (capInternalBody)    finds the route once; 1 MiB default, per-op overrides
+//	→ internalGate                authenticates the matched op's caller, binds the org
+//	→ internalValidator           kin-openapi against the embedded internal spec
+//	→ inner mux                   raw MCP routes + generated router
+//	→ requireInternalGate         backstop: a generated op the gate did not clear is 401
+//	→ strict wrapper              envelope error writers
 //
 // The inner mux registers full paths, so a path no row names 404s.
 func newInternalV1Handler(deps InternalDeps) http.Handler {
 	strict := igen.NewStrictHandlerWithOptions(
 		&internalServer{deps: deps},
-		[]igen.StrictMiddlewareFunc{internalGate(deps)},
+		[]igen.StrictMiddlewareFunc{requireInternalGate},
 		igen.StrictHTTPServerOptions{
 			RequestErrorHandlerFunc:  writeRequestError,
 			ResponseErrorHandlerFunc: writeResponseError,
@@ -114,7 +119,7 @@ func newInternalV1Handler(deps InternalDeps) http.Handler {
 		BaseRouter:       mux,
 		ErrorHandlerFunc: writeRequestError,
 	})
-	return capInternalBody(internalRouter(), internalBodyCaps, requestValidator(internalRouter(), mux))
+	return capInternalBody(internalRouter(), internalBodyCaps, internalGate(deps, internalValidator(mux)))
 }
 
 // internalDefaultBodyBytes caps every /internal/v1 request body (03 §4);
@@ -124,9 +129,26 @@ const internalDefaultBodyBytes int64 = 1 << 20
 
 var internalBodyCaps = map[string]int64{}
 
+// internalRouteMatch is the embedded-spec operation a request matched, found
+// once by capInternalBody and read from the context by internalGate and
+// internalValidator. A route miss (unknown path, wrong method, or a raw MCP
+// route the embedded spec lacks) stores nothing.
+type internalRouteMatch struct {
+	route      *routers.Route
+	pathParams map[string]string
+}
+
+type internalRouteKey struct{}
+
+func internalRouteFrom(ctx context.Context) (internalRouteMatch, bool) {
+	m, ok := ctx.Value(internalRouteKey{}).(internalRouteMatch)
+	return m, ok
+}
+
 // capInternalBody bounds every internal request body before anything reads it.
-// The limit is the matched operation's entry in caps, else
-// internalDefaultBodyBytes. A declared Content-Length over the limit is
+// It is the one route lookup per request: a matched operation is stored in the
+// context for the gate and the validator. The limit is the matched operation's
+// entry in caps, else internalDefaultBodyBytes. A declared Content-Length over the limit is
 // answered 413 here, before next runs: call-mcp-tool is absent from the
 // embedded spec (excluded from generation), so the validator never reads an
 // MCP body, and an over-limit one would otherwise reach mcpdiscovery truncated
@@ -137,10 +159,12 @@ var internalBodyCaps = map[string]int64{}
 func capInternalBody(router routers.Router, caps map[string]int64, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		limit := internalDefaultBodyBytes
-		if route, _, err := router.FindRoute(r); err == nil && route.Operation != nil {
+		if route, pathParams, err := router.FindRoute(r); err == nil && route.Operation != nil {
 			if c, ok := caps[route.Operation.OperationID]; ok {
 				limit = c
 			}
+			r = r.WithContext(context.WithValue(r.Context(), internalRouteKey{},
+				internalRouteMatch{route: route, pathParams: pathParams}))
 		}
 		if r.ContentLength > limit {
 			writeBodyTooLarge(w)
@@ -154,52 +178,102 @@ func capInternalBody(router routers.Router, caps map[string]int64, next http.Han
 }
 
 // internalGate is /internal/v1's deny-by-default gate table, one entry per
-// route group (path prefix under /internal/v1):
+// route group (path prefix under /internal/v1). It runs after the body cap and
+// before the validator, so an unauthenticated caller gets 401 and never a
+// schema-detail 400 or a body parse:
 //
 //	executions/, validation/   coding runner   publisher token, cycle fence (cycle id in the path)
 //	sre/                       SRE handoff     SRE handoff bearer, binds its one org + the incident context
-//	mcp                        runner, agent   its own verifier (raw route, not this middleware)
-//	anything else              -               denied (401)
+//	mcp, mcp/playground-token  runner, agent   route miss here: passed through to their own verifier
+//	any other embedded op      -               denied (401)
 //
-// Each generated operation must present the credential of its route group, and
-// the verified org is bound into the context. A credential opens its own group
-// only: a publisher token never clears sre/, the SRE bearer never clears a
-// runner op. There are deliberately NO carve-outs: an operation whose request
-// shape the gate does not know is denied outright, so adding an internal op
-// means teaching this gate its credential first.
+// A route miss passes through untouched: the inner mux answers 404 or 405, or
+// serves a raw MCP route that verifies its own caller. Each generated operation
+// must present the credential of its route group, and the verified org is bound
+// into the context. A credential opens its own group only: a publisher token
+// never clears sre/, the SRE bearer never clears a runner op. There are
+// deliberately NO carve-outs: an operation whose id the gate does not know is
+// denied outright, so adding an internal op means teaching this gate its
+// credential first. requireInternalGate denies any generated op that reaches
+// the strict wrapper without this gate's verdict.
 //
 // The refresh operation still spells its parameter `executionId` on the wire; the
 // value is the dispatched cycle id, the same naming debt AEP_TASK_ID carries.
-func internalGate(deps InternalDeps) igen.StrictMiddlewareFunc {
-	return func(f igen.StrictHandlerFunc, operationID string) igen.StrictHandlerFunc {
-		return func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error) {
-			var cycleID string
-			switch req := request.(type) {
-			case igen.RunnerRefreshCredentialsRequestObject:
-				cycleID = req.ExecutionID
-			case igen.RunnerValidationContextRequestObject:
-				cycleID = req.CycleID
-			case igen.SreListIssuesRequestObject, igen.SreCreateIssueRequestObject, igen.SreCreateRcaReportRequestObject:
-				claims, ok := deps.SREHandoff.Verify(r.Header.Get("Authorization")) // nil verifier: false, fails closed
-				if !ok {
-					return nil, errUnauthorized("SRE handoff bearer required")
-				}
-				ctx = auth.WithClaims(ctx, claims)
-				ctx = sourcecontrol.WithIncidentContext(ctx, sreHandoffIncidentID)
-				return f(tenant.WithBoundOrg(ctx, claims.OuHandle), w, r, request)
-			default:
-				return nil, errUnauthorized("unauthenticated internal operation: " + operationID)
-			}
-			if deps.RunnerAuth == nil {
-				return nil, errServiceUnavailable("runner auth not configured")
-			}
-			caller, err := deps.RunnerAuth.Authorize(ctx, r.Header.Get("Authorization"), cycleID)
-			if err != nil {
-				return nil, mapRunnerAuthError(err)
-			}
-			return f(tenant.WithBoundOrg(ctx, string(caller.Org)), w, r, request)
+func internalGate(deps InternalDeps, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		m, ok := internalRouteFrom(r.Context())
+		if !ok {
+			next.ServeHTTP(w, r)
+			return
 		}
+		ctx, err := authenticateInternal(r.Context(), deps, r.Header.Get("Authorization"), m)
+		if err != nil {
+			writeResponseError(w, r, err)
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, internalGateKey{}, true)))
+	})
+}
+
+// authenticateInternal verifies authHeader for the matched operation's route
+// group and returns ctx with the verified org (and, for sre/, the claims and
+// incident context) bound.
+func authenticateInternal(ctx context.Context, deps InternalDeps, authHeader string, m internalRouteMatch) (context.Context, error) {
+	op := m.route.Operation.OperationID
+	var cycleID string
+	switch op {
+	case "runner-refresh-credentials":
+		cycleID = m.pathParams["executionId"]
+	case "runner-validation-context":
+		cycleID = m.pathParams["cycleId"]
+	case "sre-list-issues", "sre-create-issue", "sre-create-rca-report":
+		claims, ok := deps.SREHandoff.Verify(authHeader) // nil verifier: false, fails closed
+		if !ok {
+			return nil, errUnauthorized("SRE handoff bearer required")
+		}
+		ctx = auth.WithClaims(ctx, claims)
+		ctx = sourcecontrol.WithIncidentContext(ctx, sreHandoffIncidentID)
+		return tenant.WithBoundOrg(ctx, claims.OuHandle), nil
+	default:
+		return nil, errUnauthorized("unauthenticated internal operation: " + op)
 	}
+	if deps.RunnerAuth == nil {
+		return nil, errServiceUnavailable("runner auth not configured")
+	}
+	caller, err := deps.RunnerAuth.Authorize(ctx, authHeader, cycleID)
+	if err != nil {
+		return nil, mapRunnerAuthError(err)
+	}
+	return tenant.WithBoundOrg(ctx, string(caller.Org)), nil
+}
+
+// internalGateKey marks a request internalGate authenticated.
+type internalGateKey struct{}
+
+// requireInternalGate is the strict-wrapper backstop: a generated operation
+// runs only if internalGate cleared its request. The gate keys on kin's route
+// match; a path the generated router serves but kin's router misses would skip
+// the gate, and is denied here instead of served unauthenticated.
+func requireInternalGate(f igen.StrictHandlerFunc, operationID string) igen.StrictHandlerFunc {
+	return func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error) {
+		if cleared, _ := ctx.Value(internalGateKey{}).(bool); !cleared {
+			return nil, errUnauthorized("unauthenticated internal operation: " + operationID)
+		}
+		return f(ctx, w, r, request)
+	}
+}
+
+// internalValidator validates an authenticated request against the embedded
+// internal spec, using the route capInternalBody found. A route miss falls
+// through: the raw MCP routes are absent from the embedded spec (call-mcp-tool
+// is excluded from generation), so their bodies are capped, not validated.
+func internalValidator(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		m, ok := internalRouteFrom(r.Context())
+		if !ok || validateRequest(w, r, m.route, m.pathParams) {
+			next.ServeHTTP(w, r)
+		}
+	})
 }
 
 // sreHandoffIncidentID is the opaque incident identity the sre/ gate binds onto

@@ -23,6 +23,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/wso2/aep/aep-api/internal/ops"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
@@ -74,6 +76,11 @@ func TestInternalGate_SRE(t *testing.T) {
 	off := build(nil, stack.deps.RunnerAuth)
 	noRunner := build(verifier, nil)
 	body := `{"title":"t","body":"b"}`
+	invalid := `{"title":1}`
+	userJWT, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{"sub": "u", "ouHandle": "acme"}).SignedString([]byte("user-key"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	report := `{"project":"p","title":"t","summary":"s","diagnosis":"d","classification":"none"}`
 	cases := []struct {
 		name         string
@@ -87,6 +94,11 @@ func TestInternalGate_SRE(t *testing.T) {
 		{"sre bearer posts report", on, "POST", "/internal/v1/sre/rca-reports", "Bearer s3cr3t", report, 201},
 		{"no bearer", on, "GET", "/internal/v1/sre/projects/p/issues", "", "", 401},
 		{"wrong bearer", on, "GET", "/internal/v1/sre/projects/p/issues", "Bearer nope", "", 401},
+		{"user JWT on sre", on, "GET", "/internal/v1/sre/projects/p/issues", "Bearer " + userJWT, "", 401},
+		{"user JWT posts report", on, "POST", "/internal/v1/sre/rca-reports", "Bearer " + userJWT, report, 401},
+		{"no bearer, schema-invalid body", on, "POST", "/internal/v1/sre/projects/p/issues", "", invalid, 401},
+		{"wrong bearer, schema-invalid body", on, "POST", "/internal/v1/sre/projects/p/issues", "Bearer nope", invalid, 401},
+		{"sre bearer, schema-invalid body", on, "POST", "/internal/v1/sre/projects/p/issues", "Bearer s3cr3t", invalid, 400},
 		{"publisher token on sre", on, "GET", "/internal/v1/sre/projects/p/issues", "Bearer " + stack.mint("acme"), "", 401},
 		{"publisher token posts report", on, "POST", "/internal/v1/sre/rca-reports", "Bearer " + stack.mint("acme"), report, 401},
 		{"no verifier configured", off, "GET", "/internal/v1/sre/projects/p/issues", "Bearer s3cr3t", "", 401},

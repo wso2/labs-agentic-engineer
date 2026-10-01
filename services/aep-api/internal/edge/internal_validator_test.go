@@ -18,6 +18,7 @@ package edge
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -26,6 +27,8 @@ import (
 	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
+
+	"github.com/wso2/aep/aep-api/internal/platform/auth"
 )
 
 // Every internal op names its caller in its tags (03 §4). Read from the YAML,
@@ -129,5 +132,69 @@ func TestInternalBodyCap_PerOp(t *testing.T) {
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/internal/v1/executions/c/credentials/refresh", strings.NewReader(strings.Repeat("x", 1<<20+1))))
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d, want 200 under a 2 MiB per-op cap", w.Code)
+	}
+}
+
+// Authenticate, then parse (I-1): an unauthenticated request to a generated
+// op is answered 401 by internalGate before the validator (next) runs, so an
+// anonymous caller never gets schema detail or forces a body parse.
+func TestInternalGate_RunsBeforeValidator(t *testing.T) {
+	s := newInternalStack(t)
+	deps := s.deps
+	deps.SREHandoff = auth.NewSREHandoffVerifier("s3cr3t", "acme")
+	for _, tc := range []struct{ name, method, path, bearer, body string }{
+		{"sre op, no bearer", http.MethodPost, "/internal/v1/sre/projects/p/issues", "", `{"title":1}`},
+		{"sre op, publisher token", http.MethodPost, "/internal/v1/sre/rca-reports", "Bearer " + s.mint("acme"), `{}`},
+		{"runner op, no bearer", http.MethodPost, "/internal/v1/executions/c/credentials/refresh", "", `{}`},
+		{"runner op, sre bearer", http.MethodGet, "/internal/v1/validation/c/context", "Bearer s3cr3t", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			validated := false
+			next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { validated = true })
+			h := capInternalBody(internalRouter(), map[string]int64{}, internalGate(deps, next))
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			if tc.bearer != "" {
+				req.Header.Set("Authorization", tc.bearer)
+			}
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+			if w.Code != http.StatusUnauthorized || validated {
+				t.Fatalf("status %d, validator ran %v; want 401 and not run", w.Code, validated)
+			}
+		})
+	}
+}
+
+// The gate passes a route miss through untouched (the inner mux owns 404,
+// 405 and the raw MCP routes with their own verifier).
+func TestInternalGate_RouteMissPassesThrough(t *testing.T) {
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodPost, "/internal/v1/mcp"},
+		{http.MethodPost, "/internal/v1/mcp/playground-token"},
+		{http.MethodGet, "/internal/v1/nope"},
+		{http.MethodDelete, "/internal/v1/sre/rca-reports"},
+	} {
+		called := false
+		next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })
+		h := capInternalBody(internalRouter(), map[string]int64{}, internalGate(InternalDeps{}, next))
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(tc.method, tc.path, nil))
+		if !called {
+			t.Errorf("%s %s: gate did not pass the route miss through", tc.method, tc.path)
+		}
+	}
+}
+
+// The strict backstop denies a generated op whose request the HTTP gate did
+// not authenticate (a path the generated router serves but kin's router misses).
+func TestRequireInternalGate_DeniesUngated(t *testing.T) {
+	called := false
+	f := func(context.Context, http.ResponseWriter, *http.Request, any) (any, error) {
+		called = true
+		return nil, nil
+	}
+	h := requireInternalGate(f, "SreListIssues")
+	if _, err := h(context.Background(), httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil), nil); err == nil || called {
+		t.Fatalf("err %v, handler called %v; want an error and not called", err, called)
 	}
 }
