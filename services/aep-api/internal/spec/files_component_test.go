@@ -596,7 +596,7 @@ func TestFiles_CrossOrg_404(t *testing.T) {
 }
 
 // A unicode path survives the whole chain — URL escaping, the ServeMux
-// {path...} catch-all (server.go) + wrapper PathValue decoding, ls-tree -z
+// {path...} catch-all (edge/public.go) + wrapper PathValue decoding, ls-tree -z
 // (unquoted NUL plumbing), cat-file — byte-identically.
 func TestReadAtHead_UnicodePath(t *testing.T) {
 	const path = "specs/requirements/仕様-résumé ノート.md"

@@ -252,7 +252,7 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		// A new table with no backfill; depends on nothing above it.
 		ctxStep("phase21_ai_agent_model_endpoints", RunPhase21AIAgentModelEndpoints),
 		// The activity feed is gone (no reader: the console's feed was deleted,
-		// ADR-0022). AutoMigrate never drops a table, so this is
+		// apps/console ADR-0022). AutoMigrate never drops a table, so this is
 		// the explicit drop. Idempotent.
 		dbStep("phase22_drop_activity_events", RunPhase22DropActivityEvents),
 	}

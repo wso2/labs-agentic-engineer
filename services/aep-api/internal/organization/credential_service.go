@@ -42,9 +42,11 @@ import (
 
 // CredentialService is the orchestration layer behind /internal/credentials/orgs/...
 //
-// It owns: validation of new PATs against GitHub, App-mode connect via
-// installation lookup, status projection, disconnect Phase D, webhook-secret
-// rotation, lookup helpers used by the BFF's webhook routing.
+// It owns: validation of new PATs against GitHub, PAT connect (Connect's
+// app-installation branch has no caller since the App connect flow was
+// removed; it goes with AppInstallOps in phase 4), status projection,
+// disconnect Phase D, webhook-secret rotation, lookup helpers used by the
+// BFF's webhook routing.
 //
 // The Resolver (used at runtime by every git operation) doesn't change at
 // connect time — it just reads whatever this service has persisted.

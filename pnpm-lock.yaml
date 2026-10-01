@@ -259,6 +259,110 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@25.9.4)(@vitest/browser-playwright@4.1.10)(jsdom@26.1.0)(msw@2.14.6(@types/node@25.9.4)(typescript@5.9.3))(vite@7.3.6(@types/node@25.9.4)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.0))
 
+  components/dataplane/ae-system-project/ae-studio/ae-collab:
+    dependencies:
+      '@aep/collab-doc':
+        specifier: workspace:*
+        version: link:../../../../../packages/collab-doc
+      '@hocuspocus/server':
+        specifier: ^4.3.0
+        version: 4.3.0(y-protocols@1.0.7(yjs@13.6.31))(yjs@13.6.31)
+      yjs:
+        specifier: ^13.6.31
+        version: 13.6.31
+    devDependencies:
+      '@hocuspocus/provider':
+        specifier: ^4.3.0
+        version: 4.3.0(y-protocols@1.0.7(yjs@13.6.31))(yjs@13.6.31)
+      '@types/node':
+        specifier: ^25.6.0
+        version: 25.9.4
+      '@types/ws':
+        specifier: ^8.18.0
+        version: 8.18.1
+      tsx:
+        specifier: ^4.21.0
+        version: 4.22.4
+      ws:
+        specifier: ^8.18.0
+        version: 8.21.0
+
+  components/dataplane/ae-system-project/ae-studio/ae-design-agent:
+    dependencies:
+      '@aep/agent-stream':
+        specifier: workspace:*
+        version: link:../../../../../packages/agent-stream
+      '@aep/collab-doc':
+        specifier: workspace:*
+        version: link:../../../../../packages/collab-doc
+      '@aep/web-search':
+        specifier: workspace:*
+        version: link:../../../../../packages/web-search
+      '@ai-sdk/anthropic':
+        specifier: ^4.0.0
+        version: 4.0.12(zod@4.4.3)
+      '@ai-sdk/devtools':
+        specifier: ^1.0.4
+        version: 1.0.4
+      '@ai-sdk/openai-compatible':
+        specifier: ^3.0.55
+        version: 3.0.57(zod@4.4.3)
+      '@hocuspocus/provider':
+        specifier: ^4.3.0
+        version: 4.3.0(y-protocols@1.0.7(yjs@13.6.31))(yjs@13.6.31)
+      ai:
+        specifier: ^7.0.2
+        version: 7.0.22(zod@4.4.3)
+      express:
+        specifier: ^5.0.0
+        version: 5.2.1
+      jose:
+        specifier: ^5.9.0
+        version: 5.10.0
+      pg:
+        specifier: ^8.13.0
+        version: 8.22.0
+      undici:
+        specifier: ^7.29.1
+        version: 7.29.1
+      unpdf:
+        specifier: ^1.8.1
+        version: 1.8.1(@napi-rs/canvas@1.0.9)
+      ws:
+        specifier: ^8.18.0
+        version: 8.21.0
+      yaml:
+        specifier: ^2.8.4
+        version: 2.9.0
+      yjs:
+        specifier: ^13.6.31
+        version: 13.6.31
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
+    devDependencies:
+      '@aep/sse-cassette':
+        specifier: workspace:*
+        version: link:../../../../../packages/sse-cassette
+      '@hocuspocus/server':
+        specifier: ^4.3.0
+        version: 4.3.0(y-protocols@1.0.7(yjs@13.6.31))(yjs@13.6.31)
+      '@types/express':
+        specifier: ^5.0.0
+        version: 5.0.6
+      '@types/node':
+        specifier: ^25.6.0
+        version: 25.9.4
+      '@types/pg':
+        specifier: ^8.11.0
+        version: 8.20.0
+      '@types/ws':
+        specifier: ^8.18.0
+        version: 8.18.1
+      tsx:
+        specifier: ^4.21.0
+        version: 4.22.4
+
   evals/ballerina:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
@@ -725,12 +829,12 @@ importers:
 
   playground:
     dependencies:
-      '@aep/agent-stream':
-        specifier: workspace:*
-        version: link:../packages/agent-stream
       '@aep/ae-design-agent':
         specifier: workspace:*
         version: link:../components/dataplane/ae-system-project/ae-studio/ae-design-agent
+      '@aep/agent-stream':
+        specifier: workspace:*
+        version: link:../packages/agent-stream
       '@aep/contracts':
         specifier: workspace:*
         version: link:../packages/contracts
@@ -821,110 +925,6 @@ importers:
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
-
-  components/dataplane/ae-system-project/ae-studio/ae-design-agent:
-    dependencies:
-      '@aep/agent-stream':
-        specifier: workspace:*
-        version: link:../../../../../packages/agent-stream
-      '@aep/collab-doc':
-        specifier: workspace:*
-        version: link:../../../../../packages/collab-doc
-      '@aep/web-search':
-        specifier: workspace:*
-        version: link:../../../../../packages/web-search
-      '@ai-sdk/anthropic':
-        specifier: ^4.0.0
-        version: 4.0.12(zod@4.4.3)
-      '@ai-sdk/devtools':
-        specifier: ^1.0.4
-        version: 1.0.4
-      '@ai-sdk/openai-compatible':
-        specifier: ^3.0.55
-        version: 3.0.57(zod@4.4.3)
-      '@hocuspocus/provider':
-        specifier: ^4.3.0
-        version: 4.3.0(y-protocols@1.0.7(yjs@13.6.31))(yjs@13.6.31)
-      ai:
-        specifier: ^7.0.2
-        version: 7.0.22(zod@4.4.3)
-      express:
-        specifier: ^5.0.0
-        version: 5.2.1
-      jose:
-        specifier: ^5.9.0
-        version: 5.10.0
-      pg:
-        specifier: ^8.13.0
-        version: 8.22.0
-      undici:
-        specifier: ^7.29.1
-        version: 7.29.1
-      unpdf:
-        specifier: ^1.8.1
-        version: 1.8.1(@napi-rs/canvas@1.0.9)
-      ws:
-        specifier: ^8.18.0
-        version: 8.21.0
-      yaml:
-        specifier: ^2.8.4
-        version: 2.9.0
-      yjs:
-        specifier: ^13.6.31
-        version: 13.6.31
-      zod:
-        specifier: ^4.3.6
-        version: 4.4.3
-    devDependencies:
-      '@aep/sse-cassette':
-        specifier: workspace:*
-        version: link:../../../../../packages/sse-cassette
-      '@hocuspocus/server':
-        specifier: ^4.3.0
-        version: 4.3.0(y-protocols@1.0.7(yjs@13.6.31))(yjs@13.6.31)
-      '@types/express':
-        specifier: ^5.0.0
-        version: 5.0.6
-      '@types/node':
-        specifier: ^25.6.0
-        version: 25.9.4
-      '@types/pg':
-        specifier: ^8.11.0
-        version: 8.20.0
-      '@types/ws':
-        specifier: ^8.18.0
-        version: 8.18.1
-      tsx:
-        specifier: ^4.21.0
-        version: 4.22.4
-
-  components/dataplane/ae-system-project/ae-studio/ae-collab:
-    dependencies:
-      '@aep/collab-doc':
-        specifier: workspace:*
-        version: link:../../../../../packages/collab-doc
-      '@hocuspocus/server':
-        specifier: ^4.3.0
-        version: 4.3.0(y-protocols@1.0.7(yjs@13.6.31))(yjs@13.6.31)
-      yjs:
-        specifier: ^13.6.31
-        version: 13.6.31
-    devDependencies:
-      '@hocuspocus/provider':
-        specifier: ^4.3.0
-        version: 4.3.0(y-protocols@1.0.7(yjs@13.6.31))(yjs@13.6.31)
-      '@types/node':
-        specifier: ^25.6.0
-        version: 25.9.4
-      '@types/ws':
-        specifier: ^8.18.0
-        version: 8.18.1
-      tsx:
-        specifier: ^4.21.0
-        version: 4.22.4
-      ws:
-        specifier: ^8.18.0
-        version: 8.21.0
 
 packages:
 

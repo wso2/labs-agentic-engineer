@@ -232,7 +232,7 @@ type Config struct {
 	OpenBaoToken string
 
 	GitHubAppID             string
-	GitHubAppSlug           string // App's URL slug, used in the install URL
+	GitHubAppSlug           string // App's URL slug; names the platform bot sender (githubBotLogin)
 	GitHubAppPrivateKeyPath string
 
 	// CredentialValidatorInterval is the periodic credential-validator

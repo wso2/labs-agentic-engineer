@@ -1,3 +1,9 @@
+> **Superseded in part (2026-10).** The activity feed and its `activity_events`
+> table were removed, so no `run_failed` activity event is emitted any more
+> (the console's feed went first, console
+> [ADR-0022](../../apps/console/design/decisions/ADR-0022-the-overview-is-a-track-of-links.md)).
+> The failure record, the codes and the console's sentences stand.
+
 # ADR-0029 — A failed run carries its failure record; the console owns the words
 
 **Status:** Accepted · **Exposed by:** `RunFailure`, `BuildSummary.failureCode`,

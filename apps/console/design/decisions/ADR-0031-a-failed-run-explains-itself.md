@@ -1,3 +1,9 @@
+> **Superseded in part (2026-10).** The activity feed and its `activity_events`
+> table were removed, so no `run_failed` activity event is emitted any more
+> (the feed panel went first,
+> [ADR-0022](ADR-0022-the-overview-is-a-track-of-links.md)). The failure
+> record, the codes and the console's sentences stand.
+
 # ADR-0031: A failed run explains itself — one record, one sentence source
 
 - **Status:** Accepted

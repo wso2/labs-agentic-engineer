@@ -33,7 +33,7 @@ import (
 // is the atomic apply. Every operation is org-scoped — the tenant gate bound
 // the token org before these run. read-file's {path} spans multiple segments:
 // the generated single-segment pattern serves plain paths and the ServeMux
-// catch-all registered in server.go routes nested ones — both land here with
+// catch-all registered in edge/public.go routes nested ones — both land here with
 // PathValue-decoded (unescaped) bytes, so unicode/escaped paths survive the
 // chain byte-identically.
 type Handler struct {
