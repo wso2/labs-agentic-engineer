@@ -32,8 +32,8 @@ import (
 // slice that reached for the ORM would have escaped the seam that lets it be
 // tested without a database.
 
-// ErrInvalidReport wraps a create request that fails validation; the
-// createreport slice maps it to a 400.
+// ErrInvalidReport wraps a report NewReport rejects; the sre-create-rca-report
+// op (internal/edge/internal_sre.go) maps it to a 400.
 //
 // There is deliberately NO ErrReportNotFound: Get reports absence as (nil, nil),
 // and the getreport slice turns that into the 404. The pre-P1 code carried such

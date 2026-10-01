@@ -228,22 +228,27 @@ on the issue routes, so it rejected the request as a malformed Thunder JWT.
 That gap is closed: `aep-api` now verifies the forwarded bearer with the scoped
 SRE handoff verifier described in
 [sre-handoff-security.md](sre-handoff-security.md). It accepts the bearer only
-on `GET`/`POST /api/v1/projects/{projectName}/issues`, binds the configured org
-and the server-owned incident context, and leaves every other route on Thunder
-JWT verification.
+on the internal SRE ops, `GET`/`POST /internal/v1/sre/projects/{projectName}/issues`
+and `POST /internal/v1/sre/rca-reports`, binds the configured org and the
+server-owned incident context there, and `/api/v1` accepts user JWTs only (the
+SRE bearer gets `401` there).
+
+`POST /api/v1/rca-agent/reports` moved to `POST /internal/v1/sre/rca-reports`
+(SRE handoff bearer); the old path now answers `405` to `POST`, so the handoff
+image owner must switch to the new path.
 
 If the same symptom appears now, check in this order:
 
-1. `aep-api` logs `JWT validation failed: token is malformed` for the issue
-   route. The handoff verifier is disabled or the bearer does not match, so the
-   request fell through to Thunder JWT verification. Confirm `aep-api` has both
+1. The issue call returns `401` with `SRE handoff bearer required`. The handoff
+   verifier is disabled or the bearer does not match. (A `401` from Thunder JWT
+   verification instead means the caller still targets `/api/v1`; it must call
+   `/internal/v1/sre/…`.) Confirm `aep-api` has both
    `SRE_HANDOFF_TOKEN` and `SRE_HANDOFF_ORG` set (the verifier is off when
    either is empty; on Kubernetes, `sreHandoff.enabled` is `false` by default),
    and that `SRE_HANDOFF_TOKEN` holds the same value as `aep-mcp-server`'s
    `AEP_MCP_TOKEN`. Compare the values without printing them.
 2. The create returns `400` with `trusted incident identity and component are
-   required`. The request authenticated as a normal user JWT instead of the
-   handoff bearer, or the SRE agent sent no component name.
+   required`. The SRE agent sent no component name.
 3. The create returns `409`. The component's incident identity matches only
    closed issues whose closure reason cannot recur (for example `duplicate`).
    AE files nothing until a human reopens the matching issue or closes it as

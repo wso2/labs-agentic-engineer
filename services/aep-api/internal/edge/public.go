@@ -233,11 +233,6 @@ func publicChain(p AppParams) http.Handler {
 			ResourceMetadataURL: p.Config.JWTResourceMetadataURL,
 		})
 	}
-	// sreHandoffOrJWT sits outside jwt: on exactly CreateIssue/ListIssues with a
-	// bearer that verifies against p.SREHandoffAuth, it binds that verifier's
-	// org and skips Thunder JWT verification for that request (see
-	// sre_handoff_gate.go). Every other request is unaffected.
-	jwt = sreHandoffOrJWT(p.SREHandoffAuth, jwt)
 	ensureOrg := auth.EnsureOrgMiddleware(p.OrganizationService)
 	// The gate mode rides the request context, not a package global, so
 	// concurrently built handlers (prod and parallel component-test harnesses)

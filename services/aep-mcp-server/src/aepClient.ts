@@ -17,10 +17,10 @@
  */
 
 /**
- * Thin wrapper over aep-api's `/api/v1/projects/{projectName}/issues`
- * endpoints. Every call forwards the caller's bearer as-is — this server holds
- * no credentials of its own; aep-api's org-scoped JWT verification is the only
- * auth boundary. See AE-HANDOFF-DESIGN.md (openchoreo/agents/sre-agent) §4/§9.
+ * Thin wrapper over aep-api's `/internal/v1/sre/projects/{projectName}/issues`
+ * (SRE handoff bearer). Every call forwards the caller's bearer as-is — this
+ * server holds no credentials of its own; aep-api's SRE handoff verifier, which
+ * binds the one org it is configured for, is the only auth boundary. See AE-HANDOFF-DESIGN.md (openchoreo/agents/sre-agent) §4/§9.
  *
  * There is no separate dispatch call: creating an issue IS the dispatch, when
  * aep-api's own classification says it should be. aep-api files the issue into
@@ -93,7 +93,7 @@ async function request<T>(
   if (body !== undefined) {
     init.body = JSON.stringify(body);
   }
-  const res = await fetch(`${opts.baseUrl}/api/v1${path}`, init);
+  const res = await fetch(`${opts.baseUrl}/internal/v1/sre${path}`, init);
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");

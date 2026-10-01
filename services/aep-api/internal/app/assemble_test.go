@@ -25,6 +25,9 @@ package app
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
@@ -92,6 +95,41 @@ func TestAssemble_MinimalConfigBuildsTheGraph(t *testing.T) {
 			t.Fatalf("watcher %d is nil", i)
 		}
 	}
+}
+
+// The edge's SRE gate and the auto-RCA switch read the one verifier Assemble
+// builds from SRE_HANDOFF_TOKEN/SRE_HANDOFF_ORG (Review Focus 3). Through the
+// assembled handler: configured, the bearer clears the sre/ gate and reaches
+// the handler; unconfigured, the same bearer is refused. The report carries an
+// unknown classification so the handler answers 400 from ops.NewReport before
+// it would touch Fake()'s nil database.
+func TestAssemble_SREHandoffVerifierShared(t *testing.T) {
+	status := func(t *testing.T, cfg config.Config) int {
+		t.Helper()
+		app, err := Assemble(cfg, Fake(), Seam{})
+		if err != nil {
+			t.Fatalf("Assemble = %v", err)
+		}
+		report := `{"project":"p","title":"t","summary":"s","diagnosis":"d","classification":"vibes"}`
+		req := httptest.NewRequest(http.MethodPost, "/internal/v1/sre/rca-reports", strings.NewReader(report))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer s3cr3t")
+		w := httptest.NewRecorder()
+		app.Handler.ServeHTTP(w, req)
+		return w.Code
+	}
+	t.Run("configured", func(t *testing.T) {
+		cfg := baseCfg()
+		cfg.SREHandoffToken, cfg.SREHandoffOrg = "s3cr3t", "acme"
+		if got := status(t, cfg); got != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400 from the handler (the bearer past the sre/ gate)", got)
+		}
+	})
+	t.Run("unconfigured", func(t *testing.T) {
+		if got := status(t, baseCfg()); got != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401", got)
+		}
+	})
 }
 
 // TestAssemble_WatcherRegistration pins the one remaining conditional watcher:

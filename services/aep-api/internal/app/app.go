@@ -138,8 +138,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	if err := openchoreo.ValidateResourceLabels(seam.ResourceLabels); err != nil {
 		return nil, fmt.Errorf("openchoreo resource labels: %w", err)
 	}
-	// The SRE handoff credential, when configured, is both the edge's verifier
-	// and the signal that the SRE loop is wired (auto-RCA below).
+	// The SRE handoff credential, when configured, is both the edge's sre/ gate
+	// verifier (InternalDeps.SREHandoff) and the signal that the SRE loop is
+	// wired (auto-RCA below). Build it here only: a second instance would let
+	// the gate and auto-RCA disagree.
 	sreHandoff := authn.NewSREHandoffVerifier(cfg.SREHandoffToken, cfg.SREHandoffOrg)
 	db := in.DB
 	credStore := in.CredentialStore
@@ -902,6 +904,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	publisherVerifier := authn.NewPublisherTokenVerifier(thunderJWKS, cfg.PlatformIDP.Issuer, "aep-publisher-")
 	runnerAuth := authn.NewRunnerAuthorizer(publisherVerifier, cycleOrgLookup(db))
 
+	// One RCA-report store: the SRE handoff writes through it (sre/ ops) and
+	// the ops domain reads through it (console Alerts).
+	rcaReports := ops.NewRepository(db)
+
 	// Validation-context runner callback: resolves the run's deployed endpoint
 	// URLs so they never enter the public issue.
 	validationContextSvc := validation.NewContextService(
@@ -919,12 +925,15 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 			CredsRefresh:      credRefreshService,
 			RunnerAuth:        runnerAuth,
 			ValidationContext: validationContextSvc,
+			// The one verifier built above; auto-RCA reads the same instance.
+			SREHandoff: sreHandoff,
+			Issues:     issueService,
+			RcaReports: rcaReports,
 		},
 		WebhookController:   webhookCtrl,
 		ConfigRepo:          configRepo,
 		ThunderJWKS:         thunderJWKS,
 		OrganizationService: organizationService,
-		SREHandoffAuth:      sreHandoff,
 
 		DB:                   db,
 		CredService:          credService,
@@ -1095,7 +1104,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	params.Deps.Projects = projectsHandlers
 
 	opsHandlers, err := opshttpapi.New(ops.Deps{
-		Reports: ops.NewRepository(db),
+		Reports: rcaReports,
 		Execs:   execution.NewOpsExecutionReader(executionRepo),
 	})
 	if err != nil {

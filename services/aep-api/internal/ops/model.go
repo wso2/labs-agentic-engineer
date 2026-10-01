@@ -34,7 +34,8 @@ package ops
 import "time"
 
 // RcaAgentReport is an RCA report from the OpenChoreo SRE/RCA-agent handoff
-// (console issues #154, #155). Written once via create-rca-agent-report and read
+// (console issues #154, #155). Written once via sre-create-rca-report (the
+// internal SRE handoff op, built by NewReport) and read
 // back by the console's notification bell and Alerts list/stepper.
 //
 // This is the DOMAIN entity, not the wire type. gen.RcaAgentReport is generated

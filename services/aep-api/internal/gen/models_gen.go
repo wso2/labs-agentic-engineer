@@ -1746,26 +1746,6 @@ type CreateProjectRequest struct {
 	RepoName string `json:"repoName,omitempty"`
 }
 
-// CreateRcaAgentReportRequest Write-side request for a new RCA-agent alert report (issue
-type CreateRcaAgentReportRequest struct {
-	// Classification code-level, config-level, mixed, or none — set by the handoff agent
-	Classification string     `json:"classification"`
-	Component      string     `json:"component,omitempty"`
-	Deployed       bool       `json:"deployed,omitempty"`
-	DeployedAt     *time.Time `json:"deployedAt,omitempty"`
-
-	// Diagnosis Full RCA diagnosis + remediation content (markdown)
-	Diagnosis    string `json:"diagnosis"`
-	Dispatched   bool   `json:"dispatched,omitempty"`
-	IssueExcerpt string `json:"issueExcerpt,omitempty"`
-	IssueNumber  *int64 `json:"issueNumber,omitempty"`
-	IssueTitle   string `json:"issueTitle,omitempty"`
-	IssueURL     string `json:"issueUrl,omitempty"`
-	Project      string `json:"project"`
-	Summary      string `json:"summary"`
-	Title        string `json:"title"`
-}
-
 // CreateSkillInput defines model for CreateSkillInput.
 type CreateSkillInput struct {
 	Name       string            `json:"name"`
@@ -3857,9 +3837,6 @@ type PutProjectReferencesMultipartRequestBody PutProjectReferencesMultipartBody
 
 // PromoteTaskFromIssueJSONRequestBody defines body for PromoteTaskFromIssue for application/json ContentType.
 type PromoteTaskFromIssueJSONRequestBody = PromoteFromIssueRequest
-
-// CreateRcaAgentReportJSONRequestBody defines body for CreateRcaAgentReport for application/json ContentType.
-type CreateRcaAgentReportJSONRequestBody = CreateRcaAgentReportRequest
 
 // CreateSkillJSONRequestBody defines body for CreateSkill for application/json ContentType.
 type CreateSkillJSONRequestBody = CreateSkillInput

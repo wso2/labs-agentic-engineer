@@ -18,6 +18,7 @@ package edge
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
@@ -80,5 +81,12 @@ func TestRouteTable(t *testing.T) {
 	}
 	if len(got) != 7 {
 		t.Errorf("mount table has %d rows, want 7", len(got))
+	}
+	// The SRE handoff is an internal caller (03 §1): /api/ admits user JWTs only.
+	if c := got["/internal/v1/"].caller; !strings.Contains(c, "aep-mcp-server (SRE handoff)") {
+		t.Errorf("/internal/v1/ caller %q does not name the SRE handoff", c)
+	}
+	if c := got["/api/"].caller; strings.Contains(c, "SRE") || strings.Contains(c, "aep-mcp-server") {
+		t.Errorf("/api/ caller %q still names the SRE handoff", c)
 	}
 }

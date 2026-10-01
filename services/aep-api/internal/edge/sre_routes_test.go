@@ -25,63 +25,24 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
 )
 
-// Component test for the real mounted mux (NewHandler → mountRoutes) proving
-// the SRE-handoff bearer reproduces this session's actual failure — 401 on
-// aep-mcp-server's placeholder bearer — and that a configured handoff secret
-// fixes exactly that call without weakening auth anywhere else.
-func TestSREHandoff_ComponentEndToEnd(t *testing.T) {
-	post := func(t *testing.T, handler http.Handler, path, bearer string) *httptest.ResponseRecorder {
-		t.Helper()
-		req := httptest.NewRequest(http.MethodPost, path, nil)
-		if bearer != "" {
-			req.Header.Set("Authorization", bearer)
-		}
-		w := httptest.NewRecorder()
-		handler.ServeHTTP(w, req)
-		return w
+// /api/v1 takes user JWTs only (03 §1): the SRE handoff bearer that once
+// cleared list-issues/create-issue there is refused on the real JWT path, even
+// with the verifier configured. Its ops now live under /internal/v1/sre
+// (internal_sre_test.go).
+func TestSREHandoff_RefusedOnPublicAPI(t *testing.T) {
+	handler := NewHandler(AppParams{
+		Config:       config.Config{},
+		InternalDeps: InternalDeps{SREHandoff: auth.NewSREHandoffVerifier("s3cr3t", "acme")},
+	})
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		t.Run(method, func(t *testing.T) {
+			req := httptest.NewRequest(method, "/api/v1/projects/hello/issues", nil)
+			req.Header.Set("Authorization", "Bearer s3cr3t")
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+			if w.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want 401 (the SRE bearer is not a user JWT)", w.Code)
+			}
+		})
 	}
-
-	t.Run("unconfigured verifier: today's bug reproduced — placeholder bearer 401s", func(t *testing.T) {
-		handler := NewHandler(AppParams{Config: config.Config{}})
-		w := post(t, handler, "/api/v1/projects/hello/issues", "Bearer local-aep-mcp-token")
-		if w.Code != http.StatusUnauthorized {
-			t.Fatalf("status = %d, want 401 (no SREHandoffAuth configured, and this bearer is not a JWT)", w.Code)
-		}
-	})
-
-	t.Run("configured verifier: matching handoff bearer clears auth", func(t *testing.T) {
-		handler := NewHandler(AppParams{
-			Config:         config.Config{},
-			SREHandoffAuth: auth.NewSREHandoffVerifier("s3cr3t", "acme"),
-		})
-		w := post(t, handler, "/api/v1/projects/hello/issues", "Bearer s3cr3t")
-		// No body and no issue service are wired in this test, so CreateIssue's
-		// own validation/503 logic takes over — anything other than 401 proves
-		// the request got PAST auth and reached the handler.
-		if w.Code == http.StatusUnauthorized {
-			t.Fatalf("status = %d, want past-auth (e.g. 400/503 from the handler itself), got 401", w.Code)
-		}
-	})
-
-	t.Run("configured verifier: wrong bearer on the handoff route still 401s", func(t *testing.T) {
-		handler := NewHandler(AppParams{
-			Config:         config.Config{},
-			SREHandoffAuth: auth.NewSREHandoffVerifier("s3cr3t", "acme"),
-		})
-		w := post(t, handler, "/api/v1/projects/hello/issues", "Bearer wrong")
-		if w.Code != http.StatusUnauthorized {
-			t.Fatalf("status = %d, want 401 (wrong secret must still require a real JWT)", w.Code)
-		}
-	})
-
-	t.Run("configured verifier: other operations are unaffected — no bearer still 401s", func(t *testing.T) {
-		handler := NewHandler(AppParams{
-			Config:         config.Config{},
-			SREHandoffAuth: auth.NewSREHandoffVerifier("s3cr3t", "acme"),
-		})
-		w := post(t, handler, "/api/v1/projects", "")
-		if w.Code != http.StatusUnauthorized {
-			t.Fatalf("status = %d, want 401 (handoff secret must not widen auth beyond CreateIssue/ListIssues)", w.Code)
-		}
-	})
 }

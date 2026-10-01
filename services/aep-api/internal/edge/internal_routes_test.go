@@ -76,6 +76,9 @@ func (f *fakeValidationContext) ValidationContext(_ context.Context, cycleID, or
 
 type internalStack struct {
 	handler http.Handler
+	// deps is what handler was built from, so a test can extend the runner
+	// wiring (e.g. with the SRE handoff deps) and build its own handler.
+	deps    InternalDeps
 	mint    func(org string) string
 	refresh *fakeCredsRefresh
 	context *fakeValidationContext
@@ -136,13 +139,12 @@ func newInternalStack(t *testing.T) internalStack {
 		refresh: &fakeCredsRefresh{},
 		context: &fakeValidationContext{},
 	}
-	stack.handler = NewHandler(AppParams{
-		InternalDeps: InternalDeps{
-			CredsRefresh:      stack.refresh,
-			RunnerAuth:        auth.NewRunnerAuthorizer(verifier, lookup),
-			ValidationContext: stack.context,
-		},
-	})
+	stack.deps = InternalDeps{
+		CredsRefresh:      stack.refresh,
+		RunnerAuth:        auth.NewRunnerAuthorizer(verifier, lookup),
+		ValidationContext: stack.context,
+	}
+	stack.handler = NewHandler(AppParams{InternalDeps: stack.deps})
 	return stack
 }
 

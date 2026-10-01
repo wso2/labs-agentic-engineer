@@ -2927,32 +2927,6 @@ paths:
       summary: List RCA-agent alert reports across the caller's org, newest first
       tags:
       - RcaAgentReports
-    post:
-      operationId: create-rca-agent-report
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateRcaAgentReportRequest'
-        required: true
-      responses:
-        '201':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RcaAgentReport'
-          description: Created
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Error
-      security:
-      - userJWT: []
-      summary: Record a new RCA-agent alert report (internal/service-authenticated writer; issue
-      tags:
-      - RcaAgentReports
   /rca-agent/reports/{reportId}:
     get:
       operationId: get-rca-agent-report
@@ -4508,51 +4482,6 @@ components:
           type: string
       required:
       - name
-      type: object
-    CreateRcaAgentReportRequest:
-      additionalProperties: false
-      description: Write-side request for a new RCA-agent alert report (issue
-      properties:
-        classification:
-          description: code-level, config-level, mixed, or none — set by the handoff agent
-          type: string
-        component:
-          type: string
-        deployed:
-          type: boolean
-        deployedAt:
-          type: string
-          format: date-time
-          nullable: true
-          x-go-type: '*time.Time'
-        diagnosis:
-          description: Full RCA diagnosis + remediation content (markdown)
-          type: string
-        dispatched:
-          type: boolean
-        issueExcerpt:
-          type: string
-        issueNumber:
-          format: int64
-          type: integer
-          nullable: true
-          x-go-type: '*int64'
-        issueTitle:
-          type: string
-        issueUrl:
-          type: string
-        project:
-          type: string
-        summary:
-          type: string
-        title:
-          type: string
-      required:
-      - project
-      - title
-      - summary
-      - classification
-      - diagnosis
       type: object
     CreateSkillInput:
       additionalProperties: false

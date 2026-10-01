@@ -76,7 +76,6 @@ var opOwner = map[string]string{
 	"CollectExternalResourceValues": embedDependencies,
 	"CreateIssue":                   embedSourceControl,
 	"CreateProject":                 embedProjects,
-	"CreateRcaAgentReport":          embedOps,
 	"CreateSkill":                   embedSpec,
 	"CreateTurn":                    embedSpec,
 	"DeleteExternalResource":        embedDependencies,

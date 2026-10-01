@@ -20,9 +20,10 @@ deduplication, recurrence, adoption, dispatch, and human-attention state.
   process start and never refreshes them, so a short-lived Thunder token
   would expire mid pod-lifetime. `aep-api` verifies it with a narrow,
   disabled-by-default checker (`auth.SREHandoffVerifier`) scoped to exactly
-  `create_issue`/`search_related_issues` and bound to one configured org
-  (`SRE_HANDOFF_ORG`) — it never widens what the normal Thunder JWT verifier
-  accepts, and any other route still requires a real JWT.
+  the internal SRE ops (`/internal/v1/sre/…`: list/create issues, record an
+  RCA report) and bound to one configured org (`SRE_HANDOFF_ORG`). `/api/v1`
+  accepts user JWTs only and answers `401` to this bearer; no runner op
+  accepts it either.
 - The SRE agent never holds this bearer. Its `remediation/mcp.json` has no
   `headers` entry because the extension loader will not send credentials to
   a plaintext URL. `aep-mcp-server` applies it instead, as the fallback

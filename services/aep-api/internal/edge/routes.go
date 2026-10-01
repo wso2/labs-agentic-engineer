@@ -56,7 +56,7 @@ func routes(p AppParams) []route {
 		{"/api/", "console", "user JWT, orgensure, tenant gate", publicChain(p)},
 		// One mount: the inner mux registers full paths (raw MCP routes and the
 		// generated ops), so a path it does not name 404s.
-		{internalV1 + "/", "coding runner, design agent (MCP)", "internal gate table (internal.go)", newInternalV1Handler(internalDeps)},
+		{internalV1 + "/", "coding runner, design agent (MCP), aep-mcp-server (SRE handoff)", "internal gate table (internal.go)", newInternalV1Handler(internalDeps)},
 		{"POST /_dev/v1/secret-ref-resync", "local tooling", "dev tier + LOCAL_OPENBAO_REPAIR, on no HTTPRoute", devResyncRoute(p)},
 	}
 }

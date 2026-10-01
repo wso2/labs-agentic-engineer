@@ -57,8 +57,8 @@ type AppParams struct {
 	// route group (InternalDeps).
 	WebhookController webhook.WebhookController
 
-	// InternalDeps carries the services + authorizer for the internal S2S
-	// route group (runner callbacks), served contract-first from
+	// InternalDeps carries the services + authorizers for the internal S2S
+	// route group (runner callbacks, SRE handoff), served contract-first from
 	// packages/contracts/api/internal/v1 behind internalGate. Its MCP and
 	// PlaygroundToken handlers are filled by routes() from the MCP fields below.
 	InternalDeps InternalDeps
@@ -86,13 +86,6 @@ type AppParams struct {
 	// (and may be nil). It only substitutes the verifier — orgensure and the
 	// deny-by-default tenant gate chain are untouched.
 	InboundAuth func(http.Handler) http.Handler
-
-	// SREHandoffAuth verifies aep-mcp-server's forwarded SRE-handoff bearer
-	// for exactly CreateIssue/ListIssues (sre_handoff_gate.go), binding the
-	// one org it is configured for. nil (the default) leaves the shortcut
-	// absent — those two operations then require a normal Thunder JWT like
-	// every other /api/ operation. See auth.SREHandoffVerifier.
-	SREHandoffAuth *auth.SREHandoffVerifier
 
 	// Runner-facing and agents-facing route groups. Callers use the gitrepo +
 	// artifacts packages in-process. CredService + AnthropicCredService +

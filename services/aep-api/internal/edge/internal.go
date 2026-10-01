@@ -26,9 +26,11 @@ import (
 	"github.com/wso2/aep/aep-api/internal/delivery/validation"
 	"github.com/wso2/aep/aep-api/internal/dependencies/mcpdiscovery"
 	"github.com/wso2/aep/aep-api/internal/igen"
+	"github.com/wso2/aep/aep-api/internal/ops"
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // The internal service-to-service route group (/internal/v1), served CONTRACT-FIRST
@@ -37,8 +39,9 @@ import (
 // user-JWT middleware. Every request is body-capped (capInternalBody) and
 // validated against the embedded internal spec (requestValidator); every
 // generated operation then passes internalGate, which verifies the caller's
-// publisher-cc bearer against the cycle named in the path (the INT-6 fence)
-// and binds the verified org into the context. The raw MCP routes carry their
+// credential for the op's route group (a runner's publisher-cc bearer against
+// the cycle named in the path, the INT-6 fence; the SRE handoff bearer for
+// sre/) and binds the verified org into the context. The raw MCP routes carry their
 // own verifier. The spec is non-public, never gateway-advertised.
 //
 // RUNNER LOCKSTEP: the credentials-refresh response body is projected from the
@@ -51,8 +54,17 @@ import (
 type InternalDeps struct {
 	CredsRefresh organization.CredentialsRefreshService
 	// RunnerAuth verifies runner publisher-cc bearers against the
-	// path execution id. nil fails closed: every internal op answers 503.
+	// path execution id. nil fails closed: every runner op answers 503.
 	RunnerAuth *auth.RunnerAuthorizer
+	// SREHandoff verifies aep-mcp-server's static SRE handoff bearer for the
+	// sre/ ops. It is the same instance that switches auto-RCA on
+	// (internal/app). nil fails closed: every sre/ op answers 401.
+	SREHandoff *auth.SREHandoffVerifier
+	// Issues backs sre-list-issues and sre-create-issue (the same issue
+	// service as the console's ops); RcaReports backs sre-create-rca-report.
+	// A nil one answers 503 for its ops.
+	Issues     sourcecontrol.IssueService
+	RcaReports ops.Repository
 	// ValidationContext backs the validation-context runner callback; a nil
 	// provider answers 503 for that op. A test user's login is NOT served here —
 	// it is published on the roles gate ticket, which is where the validation
@@ -84,7 +96,7 @@ var _ igen.StrictServerInterface = (*internalServer)(nil)
 func newInternalV1Handler(deps InternalDeps) http.Handler {
 	strict := igen.NewStrictHandlerWithOptions(
 		&internalServer{deps: deps},
-		[]igen.StrictMiddlewareFunc{internalGate(deps.RunnerAuth)},
+		[]igen.StrictMiddlewareFunc{internalGate(deps)},
 		igen.StrictHTTPServerOptions{
 			RequestErrorHandlerFunc:  writeRequestError,
 			ResponseErrorHandlerFunc: writeResponseError,
@@ -145,33 +157,43 @@ func capInternalBody(router routers.Router, caps map[string]int64, next http.Han
 // route group (path prefix under /internal/v1):
 //
 //	executions/, validation/   coding runner   publisher token, cycle fence (cycle id in the path)
+//	sre/                       SRE handoff     SRE handoff bearer, binds its one org + the incident context
 //	mcp                        runner, agent   its own verifier (raw route, not this middleware)
 //	anything else              -               denied (401)
 //
-// Every generated operation must present a bearer the authorizer accepts for
-// the CYCLE id named in the request, and the verified org is bound into the
-// context. There are deliberately NO carve-outs: an operation whose request
+// Each generated operation must present the credential of its route group, and
+// the verified org is bound into the context. A credential opens its own group
+// only: a publisher token never clears sre/, the SRE bearer never clears a
+// runner op. There are deliberately NO carve-outs: an operation whose request
 // shape the gate does not know is denied outright, so adding an internal op
-// means teaching this gate where its cycle id lives first.
+// means teaching this gate its credential first.
 //
 // The refresh operation still spells its parameter `executionId` on the wire; the
 // value is the dispatched cycle id, the same naming debt AEP_TASK_ID carries.
-func internalGate(authorizer *auth.RunnerAuthorizer) igen.StrictMiddlewareFunc {
+func internalGate(deps InternalDeps) igen.StrictMiddlewareFunc {
 	return func(f igen.StrictHandlerFunc, operationID string) igen.StrictHandlerFunc {
 		return func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error) {
-			if authorizer == nil {
-				return nil, errServiceUnavailable("runner auth not configured")
-			}
 			var cycleID string
 			switch req := request.(type) {
 			case igen.RunnerRefreshCredentialsRequestObject:
 				cycleID = req.ExecutionID
 			case igen.RunnerValidationContextRequestObject:
 				cycleID = req.CycleID
+			case igen.SreListIssuesRequestObject, igen.SreCreateIssueRequestObject, igen.SreCreateRcaReportRequestObject:
+				claims, ok := deps.SREHandoff.Verify(r.Header.Get("Authorization")) // nil verifier: false, fails closed
+				if !ok {
+					return nil, errUnauthorized("SRE handoff bearer required")
+				}
+				ctx = auth.WithClaims(ctx, claims)
+				ctx = sourcecontrol.WithIncidentContext(ctx, sreHandoffIncidentID)
+				return f(tenant.WithBoundOrg(ctx, claims.OuHandle), w, r, request)
 			default:
 				return nil, errUnauthorized("unauthenticated internal operation: " + operationID)
 			}
-			caller, err := authorizer.Authorize(ctx, r.Header.Get("Authorization"), cycleID)
+			if deps.RunnerAuth == nil {
+				return nil, errServiceUnavailable("runner auth not configured")
+			}
+			caller, err := deps.RunnerAuth.Authorize(ctx, r.Header.Get("Authorization"), cycleID)
 			if err != nil {
 				return nil, mapRunnerAuthError(err)
 			}
@@ -179,6 +201,18 @@ func internalGate(authorizer *auth.RunnerAuthorizer) igen.StrictMiddlewareFunc {
 		}
 	}
 }
+
+// sreHandoffIncidentID is the opaque incident identity the sre/ gate binds onto
+// every request it authenticates (sourcecontrol.WithIncidentContext). It is
+// intentionally a constant, not a per-alert value: CreateIssue only uses it
+// (alongside org/project/componentName) to compute the dedupe hash, and the
+// SRE-handoff design deliberately dedupes by component alone, not by a
+// per-alert signature (docs/design/draft/2026-09-17-sre-agent-extensions-handoff.md
+// §3) — there is no per-request signal this transport could bind that would
+// mean anything finer. Without SOME incident context bound here,
+// CreateIssue's own anti-spoofing guard (ErrIncidentContextRequired) rejects
+// every SRE-filed componentName/actionStatuses outright, trusted bearer or not.
+const sreHandoffIncidentID = "sre-handoff"
 
 // mapRunnerAuthError translates the authorizer's neutral auth.HTTPError onto
 // the envelope; anything unrecognized fails closed as a 401.

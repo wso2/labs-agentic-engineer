@@ -8,9 +8,10 @@ Alerts bell and stepper show the *current* state rather than the write-time snap
 ```mermaid
 flowchart LR
   API(["/api/v1"]) --> SL
+  INT(["/internal/v1/sre"]) -->|NewReport| CORE
   subgraph ops
-    SL["slices — createreport · getreport · listreports"]
-    CORE["report core<br/>model · wire projection"]
+    SL["slices — getreport · listreports"]
+    CORE["report core<br/>model · NewReport · wire projection"]
     SL --> CORE
     CORE --> DB[("rca_agent_reports")]
   end
@@ -20,9 +21,13 @@ flowchart LR
 ## Slices
 | Slice | Use-case | Entry |
 |---|---|---|
-| `createreport` | record a handoff report | `POST /rca-agent/reports` |
 | `getreport` | read one, reconciled against live executions | `GET /rca-agent/reports/{reportId}` |
 | `listreports` | keyset page, newest first | `GET /rca-agent/reports` |
+
+The write side is not a slice: the SRE handoff records a report through
+`POST /internal/v1/sre/rca-reports` (`sre-create-rca-report`, served in
+`internal/edge/internal_sre.go`), which validates with `NewReport` (`new_report.go`)
+and persists through `Repository`.
 
 ## Ports
 | Port | Dir | Peer · contract |

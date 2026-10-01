@@ -84,11 +84,11 @@ type Config struct {
 	TenantGateMode string
 
 	// SREHandoffToken and SREHandoffOrg configure the long-lived credential
-	// aep-mcp-server forwards on behalf of the OpenChoreo SRE agent for
-	// CreateIssue/ListIssues only (internal/edge/sre_handoff_gate.go). Both
-	// must be set together — either empty leaves the shortcut disabled
-	// (secure default) and those two operations require a normal Thunder
-	// JWT like every other /api/ operation. Read from SRE_HANDOFF_TOKEN /
+	// aep-mcp-server forwards on behalf of the OpenChoreo SRE agent for the
+	// /internal/v1/sre/… ops only (internal/edge/internal.go's sre/ gate).
+	// Both must be set together — either empty leaves the verifier disabled
+	// (secure default) and every sre/ op answers 401. /api/v1 never accepts
+	// this credential. Read from SRE_HANDOFF_TOKEN /
 	// SRE_HANDOFF_ORG. Never a ConfigMap value — Secret only, same posture
 	// as every other credential in this file.
 	SREHandoffToken string

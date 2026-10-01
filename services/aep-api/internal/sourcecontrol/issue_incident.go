@@ -38,8 +38,8 @@ func reservedIncidentLabel(label string) bool {
 // WithIncidentContext binds an incident identity established by the trusted
 // transport. Callers must not populate this from an issue body or dedupe key.
 // The identity is opaque; component normalization belongs to CreateIssue. The
-// one production caller is internal/edge/sre_handoff_gate.go, which binds it
-// on every request the SRE-handoff credential authenticates.
+// one production caller is internal/edge/internal.go's sre/ gate, which binds
+// it on every request the SRE-handoff credential authenticates.
 func WithIncidentContext(ctx context.Context, incidentID string) context.Context {
 	return context.WithValue(ctx, incidentContextKey{}, incidentID)
 }

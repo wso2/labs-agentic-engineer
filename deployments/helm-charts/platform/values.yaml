@@ -297,8 +297,8 @@ postgres:
 # workflow state is durable across Temporal pod restarts. enabled=false turns
 # the whole feature off (no server deployed, no TEMPORAL_* env on aep-api, and
 # /devflows answers 503).
-# SRE-agent issue-handoff shortcut (auth.SREHandoffVerifier,
-# internal/edge/sre_handoff_gate.go). Off by default — most installs don't run
+# SRE-agent handoff credential (auth.SREHandoffVerifier, the /internal/v1/sre/…
+# gate in internal/edge/internal.go). Off by default — most installs don't run
 # the OpenChoreo SRE agent. Enabling requires a random value at the
 # aep/aep-mcp-token OpenBao path (seed it with
 # `aectl platform secret import --path aep/aep-mcp-token`, or locally
