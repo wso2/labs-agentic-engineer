@@ -25,5 +25,5 @@ test("problem builds an application/problem+json body", () => {
     status: 401,
     body: { type: "about:blank", title: "Unauthorized", status: 401, detail: "a valid bearer token is required", code: "unauthenticated" },
   });
-  assert.deepEqual(problem(403, "org_mismatch").body, { type: "about:blank", title: "Forbidden", status: 403, code: "org_mismatch" });
+  assert.deepEqual(problem(403, "org_mismatch").body, { type: "about:blank", title: "Forbidden", status: 403, detail: "", code: "org_mismatch" });
 });

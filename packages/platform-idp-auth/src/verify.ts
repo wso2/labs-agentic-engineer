@@ -33,7 +33,7 @@ export interface TokenKind {
 
 /**
  * The claims of a verified Platform IdP access token that the pod reads.
- * `sub` is optional: a client_credentials token need not carry one.
+ * `sub` is optional here: a client_credentials token need not carry one.
  */
 export interface PlatformClaims {
   sub?: string;
@@ -48,10 +48,12 @@ export interface PlatformClaims {
   exp: number;
 }
 
-export interface VerifiedToken {
-  kind: TokenKind["name"];
-  claims: PlatformClaims;
-}
+/** The claims of a verified user token: a user always has a subject. */
+export type UserClaims = PlatformClaims & { sub: string };
+
+export type VerifiedToken =
+  | { kind: "user"; claims: UserClaims }
+  | { kind: "ae-studio"; claims: PlatformClaims };
 
 /**
  * The token is missing, malformed, not signed by the IdP, expired, from
@@ -81,7 +83,10 @@ const OPTIONAL_STRING_CLAIMS = [
 
 /**
  * Returns `verify(token, kinds)` for tokens issued by exactly `issuer`. The
- * key set is fetched from `jwksUrl` (cached, refetched on an unknown kid);
+ * token must name its key (`kid`). A `user` token needs a non-empty `sub` and
+ * is never a client_credentials token; an `ae-studio` token is a
+ * client_credentials token whose `client_id` is one of that kind's audiences.
+ * The key set is fetched from `jwksUrl` (cached, refetched on an unknown kid);
  * `jwks` replaces it in tests. An empty issuer or JWKS URL throws: each is a
  * wiring error that would weaken the check.
  */
@@ -102,8 +107,9 @@ export function createVerifier(opts: {
   return async function verify(token: string, kinds: TokenKind[]): Promise<VerifiedToken> {
     assertKinds(kinds);
     let payload: JWTPayload;
+    let kid: unknown;
     try {
-      ({ payload } = await jwtVerify(token, keys, {
+      ({ payload, protectedHeader: { kid } } = await jwtVerify(token, keys, {
         issuer: opts.issuer,
         algorithms: ALGORITHMS,
         requiredClaims: ["exp"],
@@ -112,13 +118,21 @@ export function createVerifier(opts: {
     } catch {
       throw new UnauthenticatedError("invalid token");
     }
+    if (typeof kid !== "string" || kid === "") throw new UnauthenticatedError("token names no key");
     const aud = Array.isArray(payload.aud) ? payload.aud : payload.aud ? [payload.aud] : [];
     const kind = kinds.find((k) => aud.some((a) => k.audiences.includes(a)));
     if (!kind) throw new UnauthenticatedError("token kind not accepted here");
-    if (kind.name === "user" && payload.grant_type === CLIENT_CREDENTIALS) {
-      throw new UnauthenticatedError("client token on a user route");
+    const claims = toPlatformClaims(payload);
+    if (kind.name === "user") {
+      if (claims.grant_type === CLIENT_CREDENTIALS) throw new UnauthenticatedError("client token on a user route");
+      const { sub } = claims;
+      if (!sub) throw new UnauthenticatedError("user token without a subject");
+      return { kind: "user", claims: { ...claims, sub } };
     }
-    return { kind: kind.name, claims: toPlatformClaims(payload) };
+    if (claims.grant_type !== CLIENT_CREDENTIALS || !claims.client_id || !kind.audiences.includes(claims.client_id)) {
+      throw new UnauthenticatedError("not this kind's client");
+    }
+    return { kind: "ae-studio", claims };
   };
 }
 

@@ -82,6 +82,36 @@ test("client_credentials never passes as a user", async () => {
   await assert.rejects(verify(t, [AGENT, USER]), UnauthenticatedError);
 });
 
+test("user token with no sub is rejected", async () => {
+  const { verify, sign } = await setup();
+  const none = await sign({ aud: "aep-console-client", ouId: "ou-1", ouHandle: "default" });
+  await assert.rejects(verify(none, [USER]), UnauthenticatedError);
+  const empty = await sign({ aud: "aep-console-client", sub: "", ouId: "ou-1", ouHandle: "default" });
+  await assert.rejects(verify(empty, [USER]), UnauthenticatedError);
+});
+
+test("the ae-studio kind is only its own client_credentials client", async () => {
+  const { verify, sign } = await setup();
+  const notCC = await sign({ aud: "ae-studio-default", client_id: "ae-studio-default", sub: "u1", ouId: "ou-1", ouHandle: "default" });
+  await assert.rejects(verify(notCC, [AGENT]), UnauthenticatedError);
+  const otherClient = await sign({ aud: "ae-studio-default", client_id: "someone-else", grant_type: "client_credentials" });
+  await assert.rejects(verify(otherClient, [AGENT]), UnauthenticatedError);
+  const noClient = await sign({ aud: "ae-studio-default", grant_type: "client_credentials" });
+  await assert.rejects(verify(noClient, [AGENT]), UnauthenticatedError);
+});
+
+test("a token without kid is refused", async () => {
+  const rs = await generateKeyPair("RS256");
+  const jwks = createLocalJWKSet({ keys: [{ ...(await exportJWK(rs.publicKey)), alg: "RS256" }] });
+  const verify = createVerifier({ issuer: ISS, jwksUrl: "http://unused", jwks });
+  const t = await new SignJWT({ aud: "aep-console-client", sub: "u1" })
+    .setProtectedHeader({ alg: "RS256" })
+    .setIssuer(ISS)
+    .setExpirationTime("1h")
+    .sign(rs.privateKey);
+  await assert.rejects(verify(t, [USER]), UnauthenticatedError);
+});
+
 test("the ae-studio kind needs its own audience", async () => {
   const { verify, sign } = await setup();
   const t = await sign({ aud: "ae-studio-default", client_id: "ae-studio-default", grant_type: "client_credentials", ouId: "ou-1", ouHandle: "default" });

@@ -116,7 +116,8 @@ type claimsCtxKey struct{}
 
 // UserGate admits a Platform IdP user JWT for one of audiences whose org claim
 // is the pod's org (ouId and ouHandle both match). Any client_credentials token
-// is refused with 401, whatever its audience. A user of another org gets 403.
+// is refused with 401, whatever its audience, as is a token with no sub. A
+// user of another org gets 403.
 // The verified *Claims ride on the request context. It panics on a nil
 // verifier, no audience, an empty audience entry or an empty org: each would
 // widen the gate.
@@ -127,7 +128,7 @@ func UserGate(v *Verifier, audiences []string, orgID, orgHandle string) func(htt
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c, ok := verifyRequest(v, r, audiences)
-			if !ok || c.GrantType == grantClientCredentials {
+			if !ok || c.GrantType == grantClientCredentials || c.Sub == "" {
 				writeUnauthenticated(w)
 				return
 			}

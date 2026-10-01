@@ -106,6 +106,8 @@ func TestGate_Table(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	noSub := kp.sign(t, jwt.MapClaims{"iss": "http://idp", "aud": "aep-console-client", "ouId": "ou-1", "ouHandle": "default",
+		"exp": time.Now().Add(time.Hour).Unix()})
 	futureNbf := kp.sign(t, jwt.MapClaims{"iss": "http://idp", "aud": "aep-console-client", "ouId": "ou-1", "ouHandle": "default",
 		"nbf": time.Now().Add(time.Hour).Unix(), "exp": time.Now().Add(2 * time.Hour).Unix()})
 
@@ -133,6 +135,7 @@ func TestGate_Table(t *testing.T) {
 		{"alg none on v1", userGate, unsigned, "", 401},
 		{"HS256 keyed with RSA public key on v1", userGate, hs256, "", 401},
 		{"future nbf on v1", userGate, futureNbf, "", 401},
+		{"user without sub on v1", userGate, noSub, "", 401},
 		{"m2m ok", m2mGate, m2m, "ou-1", 204},
 		{"m2m no impersonation", m2mGate, m2m, "", 403},
 		{"m2m foreign impersonation", m2mGate, m2m, "ou-2", 403},

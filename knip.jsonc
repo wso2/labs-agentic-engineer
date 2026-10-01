@@ -1,6 +1,7 @@
 {
   "$schema": "https://unpkg.com/knip@5/schema.json",
-  // Dead-code report for the agents runtime + the playground that consumes it.
+  // Dead-code report for the AE Studio TS containers, the playground and two
+  // shared packages (scope below).
   // The TS counterpart of services/aep-api/scripts/deadcode.sh. Run via
   // `--production` so *.test.ts never count as consumers (the Go "no -test").
   //

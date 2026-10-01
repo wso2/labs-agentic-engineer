@@ -23,13 +23,14 @@ export interface ProblemBody {
   type: "about:blank";
   title: string;
   status: number;
-  detail?: string;
+  detail: string;
   code: string;
 }
 
-/** The status and problem body of an error response; same shape as ae-studio-tools'. */
-export function problem(status: number, code: string, detail?: string): { status: number; body: ProblemBody } {
-  const body: ProblemBody = { type: "about:blank", title: STATUS_CODES[status] ?? "Error", status, code };
-  if (detail !== undefined) body.detail = detail;
-  return { status, body };
+/**
+ * The status and problem body of an error response; same shape as
+ * ae-studio-tools' problem.Write (`detail` is always present, "" by default).
+ */
+export function problem(status: number, code: string, detail = ""): { status: number; body: ProblemBody } {
+  return { status, body: { type: "about:blank", title: STATUS_CODES[status] ?? "Error", status, detail, code } };
 }

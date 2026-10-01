@@ -21,6 +21,7 @@ export {
   UnauthenticatedError,
   type PlatformClaims,
   type TokenKind,
+  type UserClaims,
   type VerifiedToken,
 } from "./verify.js";
 export { userRule } from "./user-rule.js";

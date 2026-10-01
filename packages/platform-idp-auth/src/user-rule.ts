@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import type { PlatformClaims } from "./verify.js";
+import type { UserClaims } from "./verify.js";
 
 /**
  * The org-only user rule (07 §8): a user token is admitted to the pod when
@@ -25,7 +25,7 @@ import type { PlatformClaims } from "./verify.js";
  * pod org throws: it is a wiring error that could match a token with empty
  * org claims.
  */
-export function userRule(claims: PlatformClaims, pod: { orgId: string; orgHandle: string }): boolean {
+export function userRule(claims: UserClaims, pod: { orgId: string; orgHandle: string }): boolean {
   if (!pod.orgId) throw new Error("userRule: pod orgId is required");
   if (!pod.orgHandle) throw new Error("userRule: pod orgHandle is required");
   return claims.ouId === pod.orgId && claims.ouHandle === pod.orgHandle;
