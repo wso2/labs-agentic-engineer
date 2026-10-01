@@ -51,10 +51,22 @@ type reportScenario struct {
 	// unjudgeable.
 	Outcome string       `json:"outcome"`
 	Steps   []reportStep `json:"steps"`
+	// Reproduced says whether the outcome held when the scenario was driven a
+	// second time: yes | no | unattempted. `no` is the one that redirects a
+	// repair — a failure that passes on a second pass is a race rather than a
+	// logic defect, and nothing else in the report separates them.
+	Reproduced string `json:"reproduced"`
+	// Note is one sentence on what the run saw that no other field holds. It
+	// exists because three real reports put that class of observation in keys
+	// nobody reads (`blockedAt`, `reason`) or smuggled it into a command string.
+	// Observation only: the agent does not read the implementation, so a causal
+	// claim from it is a guess about internals it has not seen.
+	Note string `json:"note"`
 	// Evidence is what the agent read AT THE MOMENT the scenario failed, while
-	// the page was still open. Required on a `failed` scenario and absent
-	// everywhere else — the report checker holds the agent to that, because after
-	// the run the page is gone and nothing can be recovered.
+	// the page was still open. Required on every non-passed outcome and FORBIDDEN
+	// on a pass — the report checker holds the agent to that, because after the
+	// run the page is gone and nothing can be recovered, while capture on a pass
+	// is read by nobody.
 	Evidence reportEvidence `json:"evidence"`
 }
 
@@ -70,10 +82,16 @@ type reportScenario struct {
 // the capture genuinely could not happen (the page had already navigated away),
 // so the gap is stated rather than filled with something plausible.
 type reportEvidence struct {
-	Network     []networkRequest `json:"network"`
-	Console     []string         `json:"console"`
-	Snapshot    string           `json:"snapshot"`
-	NotCaptured string           `json:"notCaptured"`
+	Network []networkRequest `json:"network"`
+	Console []string         `json:"console"`
+	// SnapshotFile is where the assembler wrote the page tree, relative to the
+	// repo root. The report NAMES it rather than carrying it; see SnapshotDirPath.
+	SnapshotFile string `json:"snapshotFile"`
+	// Snapshot carried the tree inline before the assembler split it out. Still
+	// read so a report merged under the older schema renders rather than losing
+	// its evidence pointer.
+	Snapshot    string `json:"snapshot"`
+	NotCaptured string `json:"notCaptured"`
 }
 
 // networkRequest is one request the page made around the deciding step.
@@ -194,6 +212,13 @@ type FailedScenario struct {
 	Steps []FailedStep
 	// Deciding indexes the step that settled the scenario, or -1.
 	Deciding int
+	// Reproduced is yes | no | unattempted — whether the failure held on a second
+	// pass. It changes the issue's opening claim rather than appearing beside it,
+	// because a reader should know whether it is chasing a race before it spends
+	// attention on the trace.
+	Reproduced string
+	// Note is the run's one sentence on what the other fields do not hold.
+	Note string
 	// Evidence is what the run saw when it failed.
 	Evidence FailedEvidence
 }
@@ -209,8 +234,12 @@ type FailedStep struct {
 
 // FailedEvidence is the failure-time capture, as the report recorded it.
 type FailedEvidence struct {
-	Network  []NetworkRequest
-	Console  []string
+	Network []NetworkRequest
+	Console []string
+	// SnapshotFile is the repo-relative path the page tree was written to, which
+	// the issue body points a reader at. Empty when the run captured none.
+	SnapshotFile string
+	// Snapshot is the inline tree an older report carried instead.
 	Snapshot string
 	// NotCaptured is why there is no capture, when the run said so explicitly.
 	// It is rendered rather than hidden: a stated gap is information, and the
@@ -334,10 +363,13 @@ func (r Report) Failed() []FailedScenario {
 			FeatureFile: s.FeatureFile,
 			Line:        s.Line,
 			Deciding:    s.deciding(),
+			Reproduced:  s.Reproduced,
+			Note:        s.Note,
 			Evidence: FailedEvidence{
-				Console:     s.Evidence.Console,
-				Snapshot:    s.Evidence.Snapshot,
-				NotCaptured: s.Evidence.NotCaptured,
+				Console:      s.Evidence.Console,
+				SnapshotFile: s.Evidence.SnapshotFile,
+				Snapshot:     s.Evidence.Snapshot,
+				NotCaptured:  s.Evidence.NotCaptured,
 			},
 		}
 		for _, st := range s.Steps {
@@ -346,9 +378,19 @@ func (r Report) Failed() []FailedScenario {
 				Command: st.Command, Exit: st.Exit, Observed: st.Observed,
 			})
 		}
-		for _, r := range s.Evidence.Network {
-			f.Evidence.Network = append(f.Evidence.Network,
-				NetworkRequest{Method: r.Method, URL: r.URL, Status: r.Status})
+		// Allocated before the loop, so an EMPTY list survives the copy as empty
+		// rather than arriving nil. The distinction is the whole point of the
+		// field: `"network": []` says nothing left the page — a wiring defect —
+		// and `append` into a nil slice over zero elements erases that into "the
+		// run captured nothing", which renders as no evidence section at all. The
+		// one case where "no request left the page" is the ONLY thing the issue
+		// had to say was the one case it went unsaid.
+		if s.Evidence.Network != nil {
+			f.Evidence.Network = make([]NetworkRequest, 0, len(s.Evidence.Network))
+			for _, r := range s.Evidence.Network {
+				f.Evidence.Network = append(f.Evidence.Network,
+					NetworkRequest{Method: r.Method, URL: r.URL, Status: r.Status})
+			}
 		}
 		out = append(out, f)
 	}
@@ -368,6 +410,19 @@ const (
 	outcomeFailed      = "failed"
 	outcomeBlocked     = "blocked"
 	outcomeUnjudgeable = "unjudgeable"
+)
+
+// Whether the outcome held when the scenario was driven a second time. Shared
+// with the report checker, which holds the agent to the same three words.
+//
+// `unattempted` has no constant because nothing branches on it: it is every value
+// that is neither of these two, including a report written before the field
+// existed, and all of them render the same — nothing. The only reader of a repair
+// issue cannot drive the scenario itself, so "we did not check" is a disclaimer it
+// can do nothing with.
+const (
+	reproducedYes = "yes"
+	reproducedNo  = "no"
 )
 
 // Verdict derives a run's validation verdict from the committed report,

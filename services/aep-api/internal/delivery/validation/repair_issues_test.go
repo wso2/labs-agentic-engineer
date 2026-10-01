@@ -399,6 +399,137 @@ func TestRepairIssueBody_SaysWhenNoRequestLeftThePage(t *testing.T) {
 	}
 }
 
+// …and it must be said when it is the ONLY thing the capture has to say.
+//
+// The test above cannot catch this: its fixture still carries a console line, so
+// the section renders for that reason and the empty list rides along. With nothing
+// beside it, `"network":[]` used to arrive as a nil slice — `append` over zero
+// elements never allocates — and the whole evidence section was skipped. The one
+// case where "no request left the page" was the entire finding was the one case it
+// went unsaid.
+func TestRepairIssueBody_SaysNoRequestLeftWhenItIsTheOnlyEvidence(t *testing.T) {
+	report := strings.Replace(evidenceReport,
+		`"network":[{"method":"POST","url":"/api/items","status":201}],
+     "console":["TypeError: items.map is not a function"],
+     "snapshot":"- listitem \"Milk\"\n- listitem \" milk \""`,
+		`"network":[],"console":[]`, 1)
+
+	iss := &fakeIssues{}
+	svc := newSvc(iss, fakeCriteria{found: false})
+	if _, err := svc.MintRepairIssues(context.Background(), "org", "proj", thisMilestone,
+		Judgement{Report: ParseReport([]byte(report))}); err != nil {
+		t.Fatalf("MintRepairIssues: %v", err)
+	}
+	if !strings.Contains(iss.created[0].Body, "no request left the page") {
+		t.Errorf("a wiring defect reported nothing about the page at all:\n%s", iss.created[0].Body)
+	}
+}
+
+// The second pass changes what the issue CLAIMS, so it belongs in the sentence
+// that makes the claim rather than in a line below the trace. An agent that learns
+// the failure is intermittent only after reading the trace and the network lines
+// has already started chasing a logic defect.
+func TestRepairIssueBody_TheSecondPassChangesTheClaim(t *testing.T) {
+	for _, tc := range []struct {
+		reproduced string
+		want       string
+		absent     string
+	}{
+		{"yes", "failed again when it was driven a second time", "intermittent"},
+		{"no", "so the failure is intermittent", "failed again when it was driven"},
+		// Nothing: the only reader of this body cannot drive the scenario itself,
+		// so "we did not check" is a disclaimer it can neither act on nor resolve.
+		{"unattempted", "", "driven a second time"},
+	} {
+		t.Run(tc.reproduced, func(t *testing.T) {
+			report := strings.Replace(evidenceReport, `"outcome":"failed",`,
+				`"outcome":"failed","reproduced":"`+tc.reproduced+`",`, 1)
+
+			iss := &fakeIssues{}
+			svc := newSvc(iss, fakeCriteria{found: false})
+			if _, err := svc.MintRepairIssues(context.Background(), "org", "proj", thisMilestone,
+				Judgement{Report: ParseReport([]byte(report))}); err != nil {
+				t.Fatalf("MintRepairIssues: %v", err)
+			}
+			body := iss.created[0].Body
+			if tc.want != "" && !strings.Contains(body, tc.want) {
+				t.Errorf("body does not claim %q:\n%s", tc.want, body)
+			}
+			if strings.Contains(body, tc.absent) {
+				t.Errorf("body claims %q, which this run did not establish:\n%s", tc.absent, body)
+			}
+		})
+	}
+}
+
+// The note is where the run says what nothing asked it for. "Nothing further" is a
+// decision, not content, so it does not become a line in the issue.
+func TestRepairIssueBody_CarriesTheRunsNote(t *testing.T) {
+	for _, tc := range []struct{ note, want string }{
+		{"the duplicate survived a page refresh", "Also observed: the duplicate survived a page refresh"},
+		{"nothing further", ""},
+		{"", ""},
+	} {
+		report := strings.Replace(evidenceReport, `"outcome":"failed",`,
+			`"outcome":"failed","note":"`+tc.note+`",`, 1)
+
+		iss := &fakeIssues{}
+		svc := newSvc(iss, fakeCriteria{found: false})
+		if _, err := svc.MintRepairIssues(context.Background(), "org", "proj", thisMilestone,
+			Judgement{Report: ParseReport([]byte(report))}); err != nil {
+			t.Fatalf("MintRepairIssues: %v", err)
+		}
+		body := iss.created[0].Body
+		if tc.want == "" {
+			if strings.Contains(body, "Also observed") {
+				t.Errorf("note %q produced a hollow line:\n%s", tc.note, body)
+			}
+			continue
+		}
+		if !strings.Contains(body, tc.want) {
+			t.Errorf("note %q did not reach the issue:\n%s", tc.note, body)
+		}
+	}
+}
+
+// The recurrence comment exists BECAUSE the body is the stale half, so a field
+// that reaches the body and not the comment is the wrong way round: the first
+// attempt's second-pass result would stand forever while later ones are dropped.
+// Nothing would surface it either — a comment that fails to post is logged and
+// swallowed.
+func TestRecurrenceComment_CarriesTheSecondPassAndTheNote(t *testing.T) {
+	report := strings.Replace(evidenceReport, `"outcome":"failed",`,
+		`"outcome":"failed","reproduced":"no","note":"only after the list held three items",`, 1)
+
+	iss := &fakeIssues{}
+	svc := newSvc(iss, fakeCriteria{found: false})
+	if _, err := svc.MintRepairIssues(context.Background(), "org", "proj", thisMilestone,
+		Judgement{Report: ParseReport([]byte(report))}); err != nil {
+		t.Fatalf("first attempt: %v", err)
+	}
+	keys := dedupeKeys(iss)
+
+	// The defect survived the repair, so its issue is still open when the next
+	// attempt meets it and the mint resolves onto it instead of filing again.
+	iss.created = nil
+	iss.openByDedupe = map[string]int{keys[0]: 77}
+	if _, err := svc.MintRepairIssues(context.Background(), "org", "proj", thisMilestone,
+		Judgement{Report: ParseReport([]byte(report))}); err != nil {
+		t.Fatalf("second attempt: %v", err)
+	}
+	if len(iss.comments) != 1 {
+		t.Fatalf("posted %d comments; the recurrence is the only one", len(iss.comments))
+	}
+	for _, want := range []string{
+		"so the failure is intermittent",                      // this attempt's second pass
+		"Also observed: only after the list held three items", // and its note
+	} {
+		if !strings.Contains(iss.comments[0].body, want) {
+			t.Errorf("recurrence comment is missing %q:\n%s", want, iss.comments[0].body)
+		}
+	}
+}
+
 // A run that could not capture says so in its own words. Stating the gap is the
 // whole point of the escape: the alternative to an honest "not captured" is an
 // agent inventing a plausible request to satisfy the checker.

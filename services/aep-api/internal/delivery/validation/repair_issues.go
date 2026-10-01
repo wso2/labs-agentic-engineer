@@ -129,14 +129,16 @@ func (s *Service) MintRepairIssues(ctx context.Context, orgID, projectID string,
 // agent the failure is the right place to say so.
 func repairIssueBody(j Judgement, f Failure) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "The scenario **%s** failed when the deployed system was validated. "+
-		"This is a defect in the implementation, not in the specification.\n\n", scenarioName(f.FailedScenario))
+	fmt.Fprintf(&b, "The scenario **%s** failed when the deployed system was validated%s. "+
+		"This is a defect in the implementation, not in the specification.\n\n",
+		scenarioName(f.FailedScenario), reproducedClause(f.FailedScenario))
 	writeStanding(&b, j, f)
 	if f.Rule != "" {
 		fmt.Fprintf(&b, "The rule it illustrates:\n\n> %s\n\n", f.Rule)
 	}
 	writeTrace(&b, f.FailedScenario)
 	writeEvidence(&b, f.FailedScenario)
+	writeNote(&b, f.FailedScenario)
 	// Trimmed rather than carefully spaced: which sections wrote anything varies
 	// per failure, and every arrangement has to end in exactly one blank line.
 	return strings.TrimRight(b.String(), "\n") +
@@ -169,8 +171,10 @@ func recurrenceComment(j Judgement, f Failure) string {
 			"open rather than a second one being filed beside it. The body above describes the "+
 			"attempt that filed it; this is what the latest run saw.\n\n", scenarioName(f.FailedScenario))
 	}
+	writeReproduced(&b, f.FailedScenario)
 	writeTrace(&b, f.FailedScenario)
 	writeEvidence(&b, f.FailedScenario)
+	writeNote(&b, f.FailedScenario)
 	return strings.TrimRight(b.String(), "\n") + "\n"
 }
 
@@ -223,6 +227,66 @@ func shortSHA(sha string) string {
 		return sha[:7]
 	}
 	return sha
+}
+
+// reproducedClause folds the second pass into the sentence that makes the claim,
+// rather than giving it a line of its own below the trace.
+//
+// It belongs there because it changes what the claim MEANS. A failure that passed
+// on a second pass is a race, and an agent that learns this after reading the
+// trace and the network lines has already begun chasing a logic defect. The three
+// values are not three notes; they are three different assertions about the same
+// scenario.
+//
+// `unattempted` adds nothing, deliberately: the only reader of this body cannot
+// drive the scenario itself, so "whether it is intermittent is unknown" is a
+// disclaimer it can neither act on nor resolve. The field is still required, and
+// still in the report, where a run that stops attempting second passes shows up.
+func reproducedClause(f FailedScenario) string {
+	switch f.Reproduced {
+	case reproducedYes:
+		return ", and failed again when it was driven a second time"
+	case reproducedNo:
+		return ", but passed when it was driven a second time, so the failure is intermittent"
+	default:
+		return ""
+	}
+}
+
+// writeReproduced is the same fact as a standalone sentence, for the recurrence
+// comment — whose lede already says "failed again", and where a second "again"
+// folded into it would read as one claim instead of two.
+//
+// It is written for BOTH of that comment's ledes, the baseline one included. A
+// field that reaches only the branch it was designed against is the divergence
+// writeNote exists to avoid, one level down.
+func writeReproduced(b *strings.Builder, f FailedScenario) {
+	switch f.Reproduced {
+	case reproducedYes:
+		b.WriteString("It failed again when it was driven a second time.\n\n")
+	case reproducedNo:
+		b.WriteString("It passed when it was driven a second time, so the failure is intermittent.\n\n")
+	}
+}
+
+// writeNote renders the run's own sentence about what the structured fields do
+// not hold — called from the body AND the recurrence comment, because the two
+// share no rendering except what is deliberately put here.
+//
+// That sharing is the point. A field rendered in the body alone would appear on
+// the first filing and vanish from every later attempt's comment, which inverts
+// the comment's reason for existing: it is there BECAUSE the body is the stale
+// half. And a comment that fails to post is logged and swallowed, so the
+// divergence would never surface to anyone.
+//
+// Omitted when the run had nothing to add, the same way the rule and the evidence
+// sections are, so the body does not grow a hollow line on the common case.
+func writeNote(b *strings.Builder, f FailedScenario) {
+	note := strings.TrimSpace(f.Note)
+	if note == "" || strings.EqualFold(note, "nothing further") {
+		return
+	}
+	fmt.Fprintf(b, "\nAlso observed: %s\n", note)
 }
 
 // writeTrace renders the scenario AS EXECUTED — every step, its command, and
@@ -284,7 +348,7 @@ func writeEvidence(b *strings.Builder, f FailedScenario) {
 		fmt.Fprintf(b, "The run could not capture what the page was doing: %s\n", e.NotCaptured)
 		return
 	}
-	if e.Network == nil && len(e.Console) == 0 && e.Snapshot == "" {
+	if e.Network == nil && len(e.Console) == 0 && e.SnapshotFile == "" && e.Snapshot == "" {
 		return
 	}
 	b.WriteString("What the page was doing when it failed:\n\n")
@@ -297,7 +361,20 @@ func writeEvidence(b *strings.Builder, f FailedScenario) {
 	for _, msg := range e.Console {
 		fmt.Fprintf(b, "- console: `%s`\n", msg)
 	}
-	if e.Snapshot != "" {
+	// A path, and a reason to decide against following it.
+	//
+	// The lines above are the cheap half and usually settle the question: a request
+	// that came back 2xx with the page unchanged is a rendering defect, and no
+	// request at all is a wiring one. The tree is for when they do not — so the
+	// body says when it is worth opening rather than only where it lives, and an
+	// agent that needs nothing from it pays nothing.
+	switch {
+	case e.SnapshotFile != "":
+		fmt.Fprintf(b, "\nThe page as the run saw it is in `%s`. The lines above usually settle "+
+			"whether this is a rendering or a wiring defect; read the page when they do not.\n",
+			e.SnapshotFile)
+	case e.Snapshot != "":
+		// An older report carried the tree inline instead of beside the report.
 		b.WriteString("\nThe page as the run saw it is in `tests/acceptance/report.json`, " +
 			"under this scenario's `evidence.snapshot`.\n")
 	}

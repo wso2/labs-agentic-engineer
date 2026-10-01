@@ -58,106 +58,18 @@
 // ESM. The repo-root `lint-acceptance-criteria.mjs` keeps the real parser; it
 // is a developer gate that runs where the workspace is installed.
 
-import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import {
+  FEATURE_DIR,
+  REPORT_PATH,
+  SCHEMA_VERSION,
+  checkScenario,
+  readFeatureScenarios,
+  scenarioKey,
+} from "./report-rules.mjs";
 
-const OUTCOMES = new Set(["passed", "failed", "blocked", "unjudgeable"]);
 
-const SCHEMA_VERSION = 2;
-
-/**
- * Commands that PRINT a value rather than answering with their exit code. For
- * these, exit 0 means "the command ran" and the agent did the judging, so the
- * value it read has to be in the report.
- */
-const VALUE_COMMAND = /\bget\s+(count|value|url|text)\b/;
-
-/**
- * Each step's keyword with `And` / `But` / `*` resolved to the one it inherits.
- *
- * Gherkin says a continuation IS the keyword above it, and a scenario's deciding
- * assertion is routinely the continuation — `Then the row appears` / `And it shows
- * today's date`. Matching the raw keyword makes that `And` invisible to every rule
- * below: it is not counted as an assertion, it cannot back a `passed`, it cannot
- * name a `failed`, and it is never asked for `observed`. The Go reader resolves
- * these the same way (`report.go`, `effectiveKeywords`); the two must agree or a
- * report passes here and is read differently there.
- */
-function effectiveKeywords(steps) {
-  let current = "";
-  return steps.map((st) => {
-    const k = (st.keyword ?? "").trim();
-    if (k !== "And" && k !== "But" && k !== "*" && k !== "") current = k;
-    return current;
-  });
-}
-
-/** Why this step's exit code is not the verdict, or "" when it is. */
-function needsObserved(step) {
-  if (typeof step.exit === "number" && step.exit !== 0) return "the command exited nonzero";
-  if (VALUE_COMMAND.test(step.command ?? "")) return "the command prints a value rather than answering with its exit code";
-  return "";
-}
-
-/**
- * Every scenario one feature file declares, as {rule, scenario, line}.
- *
- * A line scanner, not a parser — see the dependency note above. It is enough
- * because this checker needs identity and location, never the step AST, and
- * because the shape it reads is the one `acceptance-criteria` authors:
- * `Feature` → `Rule` → `Scenario`. Three things it must not be fooled by, and
- * each is handled: a `#` comment, a docstring whose body happens to start a
- * line with `Scenario:`, and `Example:` — which is the Gherkin grammar's
- * synonym for `Scenario:`, not a different construct.
- *
- * `Scenario Outline:` is deliberately counted as ONE scenario. The real parser
- * did the same: nothing here expands an Examples table, and a report that
- * answers the outline once is answering what the file declares once.
- */
-function scanFeature(text) {
-  let feature = "";
-  let rule = "";
-  let ruleStories = [];
-  let featureStories = [];
-  let tags = [];
-  let fence = ""; // the docstring delimiter we are inside, or "" outside one
-  const scenarios = [];
-
-  text.split("\n").forEach((raw, i) => {
-    const line = raw.trim();
-
-    // Docstrings open and close with the same delimiter. Everything between is
-    // data the scenario quotes, not Gherkin.
-    if (fence) {
-      if (line.startsWith(fence)) fence = "";
-      return;
-    }
-    if (line.startsWith('"""') || line.startsWith("```")) {
-      fence = line.startsWith('"""') ? '"""' : "```";
-      return;
-    }
-    if (line.startsWith("#")) return;
-
-    const take = (kw) => line.slice(kw.length).trim();
-    const stories = () => [...featureStories, ...ruleStories];
-    if (line.startsWith("@")) {
-      tags.push(...[...line.matchAll(/@story-(\S+)/g)].map((m) => m[1]));
-      return;
-    }
-    if (line.startsWith("Feature:")) {
-      feature = take("Feature:");
-      featureStories = tags;
-    } else if (line.startsWith("Rule:")) {
-      rule = take("Rule:");
-      ruleStories = tags;
-    } else if (line.startsWith("Scenario Outline:")) scenarios.push({ rule, stories: stories(), name: take("Scenario Outline:"), line: i + 1 });
-    else if (line.startsWith("Scenario:")) scenarios.push({ rule, stories: stories(), name: take("Scenario:"), line: i + 1 });
-    else if (line.startsWith("Example:")) scenarios.push({ rule, stories: stories(), name: take("Example:"), line: i + 1 });
-    if (line !== "") tags = [];
-  });
-
-  return { feature, scenarios };
-}
 
 /** `--name a,b` from argv, or null when absent. */
 function listArg(argv, name) {
@@ -181,8 +93,8 @@ function inScope(feature, scenario) {
   return scenario.stories.length === 0 || scenario.stories.some((id) => !heldBack.has(id));
 }
 
-const featureDir = join(projectDir, "specs/validation/acceptance");
-const reportPath = join(projectDir, "tests/acceptance/report.json");
+const featureDir = join(projectDir, FEATURE_DIR);
+const reportPath = join(projectDir, REPORT_PATH);
 for (const [label, p] of [["acceptance dir", featureDir], ["report", reportPath]]) {
   if (!existsSync(p)) {
     console.error(`error: ${label} not found at ${p}`);
@@ -198,15 +110,7 @@ try {
   process.exit(2);
 }
 
-/** Every scenario the feature files define, as "feature ▸ rule ▸ scenario". */
-const expected = new Map();
-for (const file of readdirSync(featureDir).filter((f) => f.endsWith(".feature")).sort()) {
-  const { feature, scenarios } = scanFeature(readFileSync(join(featureDir, file), "utf8"));
-  if (!feature) continue;
-  for (const s of scenarios) {
-    if (inScope(feature, s)) expected.set(`${feature} ▸ ${s.rule} ▸ ${s.name}`, `${file}:${s.line}`);
-  }
-}
+const expected = readFeatureScenarios(featureDir, inScope);
 
 const errors = [];
 const entries = Array.isArray(report.scenarios) ? report.scenarios : null;
@@ -220,100 +124,27 @@ const seen = new Map();
 const tally = { passed: 0, failed: 0, blocked: 0, unjudgeable: 0 };
 
 for (const [i, s] of (entries ?? []).entries()) {
-  const key = `${s.feature} ▸ ${s.rule ?? ""} ▸ ${s.scenario}`;
+  const key = scenarioKey(s.feature, s.rule, s.scenario);
   const at = `scenarios[${i}] "${s.scenario}"`;
 
   if (!expected.has(key)) errors.push(`${at}: no such scenario in the feature files (${key})`);
   if (seen.has(key)) errors.push(`${at}: reported twice`);
   seen.set(key, true);
 
-  if (!OUTCOMES.has(s.outcome)) {
-    errors.push(`${at}: outcome ${JSON.stringify(s.outcome)} is not one of ${[...OUTCOMES].join(", ")}`);
-    continue;
+  if (tally[s.outcome] !== undefined) tally[s.outcome] += 1;
+  for (const e of checkScenario(s, expected)) errors.push(`${at}: ${e}`);
+
+  // The report names the snapshot rather than carrying it, so the name has to
+  // resolve. A path to a file that was never written reads exactly like evidence
+  // until somebody follows it, which is the one moment it cannot be recovered.
+  const file = s.evidence?.snapshotFile;
+  if (typeof file === "string" && file.trim() !== "" && !existsSync(join(projectDir, file))) {
+    errors.push(`${at}: \`evidence.snapshotFile\` points at ${file}, which does not exist`);
   }
-  tally[s.outcome] += 1;
-
-  const steps = s.steps ?? [];
-  const keywords = effectiveKeywords(steps);
-  const thens = steps.filter((_, i) => keywords[i] === "Then");
-  const settled = thens.filter((st) => st.command && typeof st.exit === "number");
-
-  // Where the scenario is written, so a reader and a repair issue can reach it.
-  const where = expected.get(key);
-  if (where) {
-    const [file, line] = where.split(":");
-    if (!s.featureFile) errors.push(`${at}: no featureFile — a repair issue cannot point at the scenario`);
-    else if (!s.featureFile.endsWith(file)) errors.push(`${at}: featureFile is ${s.featureFile}, but the scenario is in ${file}`);
-    if (s.line !== undefined && String(s.line) !== line)
-      errors.push(`${at}: line ${s.line}, but the scenario is at line ${line}`);
-  }
-
-  // A pass has to be backed by something that could have said no.
-  if (s.outcome === "passed") {
-    if (thens.length === 0) errors.push(`${at}: passed with no Then step recorded`);
-    else if (settled.length !== thens.length)
-      errors.push(`${at}: passed but ${thens.length - settled.length} of ${thens.length} Then steps carry no command+exit`);
-    else if (settled.some((st) => st.exit !== 0))
-      errors.push(`${at}: passed but a Then step exited nonzero`);
-  }
-
-  // A failure has to name what said no. An exit code usually does; a command
-  // that prints a value cannot, so there the observed value is the evidence.
-  if (s.outcome === "failed" && !settled.some((st) => st.exit !== 0) && !thens.some((st) => st.observed)) {
-    errors.push(`${at}: failed but no Then records a nonzero exit or an observed value — what failed?`);
-  }
-
-  // A failure has to say what the SYSTEM was doing, not only which assertion
-  // lost. `POST /items → 201` with the list unchanged is a rendering defect; no
-  // request at all is a wiring defect — different files, and the trace alone
-  // cannot tell them apart.
-  //
-  // Checked HARD because the evidence is only obtainable while the page is still
-  // open. An `observed` can be re-read from a re-run; a network trace from a run
-  // that has ended cannot be re-read by anybody. `notCaptured` is the escape, and
-  // it exists so the honest answer is available — an agent cornered by a gate it
-  // cannot satisfy invents something plausible instead.
-  if (s.outcome === "failed") {
-    const ev = s.evidence;
-    const stated = typeof ev?.notCaptured === "string" && ev.notCaptured.trim() !== "";
-    if (!ev || typeof ev !== "object" || Array.isArray(ev)) {
-      errors.push(
-        `${at}: failed with no \`evidence\` — re-drive the scenario and record what the network ` +
-          `and console showed when it failed. If that cannot be captured, say why: ` +
-          `"evidence": { "notCaptured": "<reason>" }`,
-      );
-    } else if (!stated && !(Array.isArray(ev.network) && Array.isArray(ev.console))) {
-      errors.push(
-        `${at}: \`evidence\` needs \`network\` and \`console\` arrays — an EMPTY array is an ` +
-          `answer ("nothing left the page"), an absent one is a hole. Re-drive the scenario, or ` +
-          `state the gap with a non-empty \`notCaptured\`.`,
-      );
-    }
-  }
-
-  // A block has to say what stopped it, or an app that correctly refuses reads
-  // the same as one that is broken.
-  if (s.outcome === "blocked" && !steps.some((st) => st.observed)) {
-    errors.push(`${at}: blocked but no step records what was observed — why could it not run?`);
-  }
-
-  // Wherever the exit code is not the verdict, record what the agent read.
-  // EVERY step, not only the assertions. A `When` settled by a value-returning
-  // command is where the run records what the system did — the 401 rule reads it,
-  // and `deciding()` falls back to it when no `Then` observed anything — so a
-  // `When` that exits nonzero or prints a value and says nothing is the same hole
-  // as a silent `Then`.
-  steps.forEach((st, i) => {
-    if (!st.command) return; // a step with no command is covered by the `blocked` rule
-    const why = needsObserved(st);
-    if (why && !st.observed) {
-      errors.push(`${at}: a ${keywords[i] || st.keyword || "step"} carries no \`observed\` and ${why}`);
-    }
-  });
 }
 
 for (const [key, where] of expected) {
-  if (!seen.has(key)) errors.push(`${where}: "${key.split(" ▸ ").pop()}" has no entry in the report`);
+  if (!seen.has(key)) errors.push(`${where}: "${key.split(" \u25b8 ").pop()}" has no entry in the report`);
 }
 
 console.log(`acceptance report — ${report.scenarios?.length ?? 0} of ${expected.size} scenarios`);
