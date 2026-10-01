@@ -1,0 +1,88 @@
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package edge
+
+import (
+	"net/http"
+
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol/webhook"
+)
+
+// route is one row of aep-api's mount table: a ServeMux pattern, who calls
+// it, and the gate that admits that caller. A nil handler leaves the row
+// unmounted (feature unconfigured or dev tier off), which answers 404.
+type route struct {
+	pattern string
+	caller  string
+	gate    string
+	handler http.Handler
+}
+
+// routes is the whole request boundary of aep-api: one row per route group.
+// Where each group lives:
+//
+//	/healthz /readyz /auth/external/jwks.json   health.go
+//	/api/                                       public.go (gate: tenant_gate.go)
+//	/internal/v1/...                            internal.go
+//	/_dev/v1                                    dev.go
+//
+// Credential verify/mint lives in internal/platform/auth.
+func routes(p AppParams) []route {
+	internal := newInternalV1Handler(p.InternalDeps)
+	mcp, playground := mcpRoutes(p)
+	return []route{
+		{"GET /healthz", "kubelet", "none", healthz()},
+		{"GET /readyz", "kubelet", "none", readyz(p.WorkspaceReady)},
+		// Goes with task-token minting (phase 5).
+		{"GET /auth/external/jwks.json", "verifiers of BFF-minted tokens", "none", taskTokenJWKS(p.Deps.TaskTokens)},
+		// Removed in phase 4, when webhooks reach ae-studio-tools. Outside the
+		// /api/ user-JWT chain via its more specific pattern; the controller
+		// authenticates the delivery by HMAC.
+		{"POST /api/v1/webhooks/github", "GitHub (smee locally)", "HMAC in the controller", webhookReceiver(p.WebhookController)},
+		{"/api/", "console", "user JWT, orgensure, tenant gate", publicChain(p)},
+		// Two prefixes, one handler: the inner mux registers the contract's full
+		// paths, so a prefix not mounted here 404s before any gate is reached.
+		{internalV1 + "/executions/", "coding runner", "publisher token, cycle fence", internal},
+		{internalV1 + "/validation/", "coding runner", "publisher token, cycle fence", internal},
+		{"POST " + internalV1 + "/mcp", "coding runner, design agent", "minted MCP token or publisher token", mcp},
+		// Local playground only; goes with token minting (phase 5).
+		{"POST " + internalV1 + "/mcp/playground-token", "local playground", "PLAYGROUND_TOKEN_ENABLED", playground},
+		{"POST /_dev/v1/secret-ref-resync", "local tooling", "dev tier + LOCAL_OPENBAO_REPAIR, on no HTTPRoute", devResyncRoute(p)},
+	}
+}
+
+// mountRoutes mounts every row that has a handler on one mux.
+func mountRoutes(p AppParams) *http.ServeMux {
+	mux := http.NewServeMux()
+	for _, r := range routes(p) {
+		if r.handler != nil {
+			mux.Handle(r.pattern, r.handler)
+		}
+	}
+	return mux
+}
+
+// webhookReceiver is the inbound GitHub delivery receiver, or nil when no
+// controller is wired. One path serves both topologies: in cloud the
+// gateway's webhook endpoint forwards to it verbatim, locally smee-client
+// relays to it.
+func webhookReceiver(c webhook.WebhookController) http.Handler {
+	if c == nil {
+		return nil
+	}
+	return http.HandlerFunc(c.Receive)
+}

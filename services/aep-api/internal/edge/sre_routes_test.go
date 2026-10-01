@@ -25,7 +25,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
 )
 
-// Component test for the real mounted mux (NewHandler → mountSurfaces) proving
+// Component test for the real mounted mux (NewHandler → mountRoutes) proving
 // the SRE-handoff bearer reproduces this session's actual failure — 401 on
 // aep-mcp-server's placeholder bearer — and that a configured handoff secret
 // fixes exactly that call without weakening auth anywhere else.

@@ -29,7 +29,7 @@ package auth
 //
 // Disabled by default (secure default): both Secret and Org must be
 // configured, or every presented bearer is rejected and the caller falls
-// through to normal Thunder JWT verification (see edge.mountSurfaces).
+// through to normal Thunder JWT verification (see edge.mountRoutes).
 
 import "crypto/subtle"
 

@@ -51,7 +51,7 @@ type playgroundTokenResponse struct {
 // @aep/playground CLI locally against a real aep-api.
 //
 // LOCAL DEV ONLY. The route this handler backs is mounted ONLY when
-// PLAYGROUND_TOKEN_ENABLED=true (surfaces.go), a flag only
+// PLAYGROUND_TOKEN_ENABLED=true (routes.go), a flag only
 // deployments/docker-compose.yml sets — everywhere else the route is simply
 // ABSENT (404 by omission, never present-but-403). There is deliberately NO
 // caller authentication here: the flag itself, off by default, is the whole

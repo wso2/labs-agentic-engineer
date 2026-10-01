@@ -9,8 +9,8 @@ platform:
 # The platform's browser-facing origins. Each is routed by Host header on the
 # same gateway port, so they are separate hostnames rather than paths, and
 # re-domaining an install means moving all of them together. Leave them as
-# they are for local k3d; `--console-url`, `--tryit-url` and `--api-url`
-# override one run.
+# they are for local k3d; `--console-url` and `--tryit-url` override
+# one run.
 console:
   # What users open, and the origin the console's OAuth redirect URIs are
   # registered against during install.
@@ -24,13 +24,6 @@ tryit:
   # so moving the console without moving this one gives you a link that opens
   # and a sign-in that is then refused as an unregistered redirect.
   public_url: "http://tryit.ae.localhost:8080"
-
-aep_api:
-  # Public base aep-api builds user-facing links on (GitHub App redirect, the
-  # Settings page). Empty falls back to console.public_url, whose origin
-  # proxies the API — set this only where the two are genuinely separate
-  # origins.
-  public_url: ""
 
 oc:
   # In-cluster URL of the OpenChoreo platform API.

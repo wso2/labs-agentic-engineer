@@ -26,23 +26,19 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 )
 
-// RegisterAllDev mounts the dev/test surface (/_dev/v1/*) — local-only tooling
+// devResyncRoute is the dev/test route group (/_dev/v1/*): local-only tooling
 // that is deliberately NOT authenticated and NOT in any OpenAPI spec. Its
-// safety is structural, not a token: (1) this registration gate mounts nothing
+// safety is structural, not a token: (1) it returns nil, so nothing mounts,
 // unless TestMode && DeploymentTier=="dev" (TEST_MODE defaults false, so the
-// surface is ABSENT in every real env — fail-safe, not fail-open), and (2)
-// /_dev is on no HTTPRoute, reachable only on the local/loopback interface the
-// dev scripts use. Separating it here keeps the gate explicit and the handler
-// bodies out of NewHandler.
-func RegisterAllDev(mux *http.ServeMux, p AppParams) {
-	if !(p.Config.TestMode && p.Config.DeploymentTier == "dev") {
-		return // registration gate — the surface does not exist in real envs
+// group is ABSENT in every real env: fail-safe, not fail-open), (2) secret
+// repair keeps an extra explicit opt-in (LOCAL_OPENBAO_REPAIR), and (3) /_dev
+// is on no HTTPRoute, reachable only on the loopback interface the dev scripts
+// use.
+func devResyncRoute(p AppParams) http.Handler {
+	if !(p.Config.TestMode && p.Config.DeploymentTier == "dev" && p.Config.LocalOpenBaoRepairEnabled) {
+		return nil
 	}
-	// Secret repair — re-pushes through the in-process SecretRefWriter; keeps an
-	// extra explicit opt-in (LOCAL_OPENBAO_REPAIR) on top of the dev gate.
-	if p.Config.LocalOpenBaoRepairEnabled {
-		mux.HandleFunc("POST /_dev/v1/secret-ref-resync", devResyncHandler(p))
-	}
+	return devResyncHandler(p)
 }
 
 // devResyncHandler walks per-org credential rows and re-pushes secrets through
@@ -65,7 +61,7 @@ func devResyncHandler(params AppParams) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		if params.DB == nil || params.CredService == nil || params.AnthropicCredService == nil || params.ModelConnections == nil {
-			writeErrorEnvelope(w, http.StatusServiceUnavailable, CodeServiceUnavailable, "resync surface not wired", nil)
+			writeErrorEnvelope(w, http.StatusServiceUnavailable, CodeServiceUnavailable, "resync route not wired", nil)
 			return
 		}
 

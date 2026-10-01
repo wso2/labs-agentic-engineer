@@ -57,7 +57,7 @@ func TestInternalContract(t *testing.T) {
 
 	// The runner skills-pull S2S endpoint is retired — the runner clones
 	// `org-skills` and resolves applied skills locally. Its route/op must not
-	// reappear in the internal surface.
+	// reappear in the internal route group.
 	for _, gone := range []string{
 		"runner-skills",
 		"/internal/v1/executions/{executionId}/skills",
@@ -67,8 +67,8 @@ func TestInternalContract(t *testing.T) {
 		}
 	}
 
-	// The internal surface must NOT leak the public user-JWT scheme — each
-	// surface declares only its own auth.
+	// The internal route group must NOT leak the public user-JWT scheme — each
+	// route group declares only its own auth.
 	if strings.Contains(yaml, "userJWT") {
 		t.Error("internal spec must not declare userJWT")
 	}

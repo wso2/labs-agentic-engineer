@@ -17,6 +17,7 @@
 package edge
 
 import (
+	"log/slog"
 	"net/http"
 
 	deliveryhttpapi "github.com/wso2/aep/aep-api/internal/delivery/httpapi"
@@ -25,7 +26,9 @@ import (
 	identityhttpapi "github.com/wso2/aep/aep-api/internal/identity/httpapi"
 	opshttpapi "github.com/wso2/aep/aep-api/internal/ops/httpapi"
 	orghttpapi "github.com/wso2/aep/aep-api/internal/organization/httpapi"
+	"github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/platform/httpkit"
+	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 	projectshttpapi "github.com/wso2/aep/aep-api/internal/projects/httpapi"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	schttpapi "github.com/wso2/aep/aep-api/internal/sourcecontrol/httpapi"
@@ -91,7 +94,7 @@ var _ gen.StrictServerInterface = (*apiServer)(nil)
 //	→ request validator                    kin-openapi against the contract
 //
 // The caller mounts the result under the outer jwt → orgensure → gate-mode
-// middleware (mountSurfaces), exactly where the Huma mux used to sit.
+// middleware (mountRoutes), exactly where the Huma mux used to sit.
 func newAPIV1Handler(deps Deps) http.Handler {
 	strict := gen.NewStrictHandlerWithOptions(
 		&apiServer{
@@ -205,4 +208,44 @@ func capRequestBody(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// publicChain is the /api/ route group: the contract-first strict handler
+// under user-JWT verification, JIT org onboarding and the gate-mode stamp.
+// Every operation passes the deny-by-default tenant gate (tenant_gate.go), with
+// the org derived solely from the verified token. Requests are validated
+// against the committed contract before any handler runs (validator.go).
+func publicChain(p AppParams) http.Handler {
+	gateMode := tenant.ParseGateMode(p.Config.TenantGateMode)
+	slog.Info("tenant gate active", "mode", string(gateMode))
+	apiV1 := newAPIV1Handler(p.Deps)
+
+	// The inbound verifier is injectable (p.InboundAuth) so a component test can
+	// swap the JWKS-backed verifier for a claims-injector and run the real gate
+	// in ENFORCE with no Thunder. Production leaves it nil and gets the real
+	// RS256/JWKS middleware; only that seam differs.
+	jwt := p.InboundAuth
+	if jwt == nil {
+		jwt = auth.JWTMiddleware(auth.JWTConfig{
+			JWKS:                p.ThunderJWKS,
+			AllowedIssuers:      SplitAndTrim(p.Config.JWTAllowedIssuer),
+			AllowedAudiences:    SplitAndTrim(p.Config.JWTAllowedAudience),
+			ResourceMetadataURL: p.Config.JWTResourceMetadataURL,
+		})
+	}
+	// sreHandoffOrJWT sits outside jwt: on exactly CreateIssue/ListIssues with a
+	// bearer that verifies against p.SREHandoffAuth, it binds that verifier's
+	// org and skips Thunder JWT verification for that request (see
+	// sre_handoff_gate.go). Every other request is unaffected.
+	jwt = sreHandoffOrJWT(p.SREHandoffAuth, jwt)
+	ensureOrg := auth.EnsureOrgMiddleware(p.OrganizationService)
+	// The gate mode rides the request context, not a package global, so
+	// concurrently built handlers (prod and parallel component-test harnesses)
+	// cannot race on it.
+	stampGateMode := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(tenant.WithGateMode(r.Context(), gateMode)))
+		})
+	}
+	return jwt(ensureOrg(stampGateMode(apiV1)))
 }

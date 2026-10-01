@@ -22,13 +22,14 @@ import (
 	"net/http"
 
 	"github.com/wso2/aep/aep-api/internal/delivery/validation"
+	"github.com/wso2/aep/aep-api/internal/dependencies/mcpdiscovery"
 	"github.com/wso2/aep/aep-api/internal/igen"
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 )
 
-// The internal service-to-service surface (/internal/v1), served CONTRACT-FIRST
+// The internal service-to-service route group (/internal/v1), served CONTRACT-FIRST
 // from packages/contracts/api/internal/v1 (generated strict server in
 // internal/igen). It is NOT wrapped by the user-JWT middleware: every
 // operation passes runnerAuthGate, which verifies the caller's publisher-cc
@@ -82,7 +83,7 @@ func newInternalV1Handler(deps InternalDeps) http.Handler {
 	return mux
 }
 
-// runnerAuthGate is the internal surface's deny-by-default gate: every
+// runnerAuthGate is the internal route group's deny-by-default gate: every
 // operation must present a bearer the authorizer accepts for the CYCLE id named
 // in the request, and the verified org is bound into the context. There are
 // deliberately NO carve-outs here. An operation whose request shape the gate does
@@ -191,4 +192,28 @@ func toIgenValidationContext(r validation.ValidationContextResponse) igen.Valida
 		}
 	}
 	return igen.ValidationContextResponse{Endpoints: eps}
+}
+
+// mcpRoutes returns the internal MCP discovery handler (POST /internal/v1/mcp,
+// raw JSON-RPC) and the local playground-token mint. The MCP server answers the
+// design agent's queries for the org's external resources, endpoints and
+// platform resource types, gated by auth.AgentsScopedVerifier (BFF-signed token
+// aud aep-api-mcp, or a Thunder publisher token); the acting org comes from a
+// verified claim, never the request. Without a token manager nothing could
+// verify a caller, so both return nil and the paths 404 instead of 503-ing.
+// The playground mint is local-dev only, mounted solely under
+// PlaygroundTokenEnabled.
+func mcpRoutes(p AppParams) (mcp, playground http.Handler) {
+	if p.Deps.TaskTokens == nil {
+		return nil, nil
+	}
+	verifier := auth.NewAgentsScopedVerifier(p.Deps.TaskTokens, p.Deps.PublisherTokens)
+	mcp = verifier.Middleware(mcpdiscovery.NewMCPHandler(
+		p.MCPExternalResources, p.MCPOrgEndpoints, p.MCPResourceTypes,
+		p.MCPGroupCatalog, p.MCPRemoteGit,
+		p.MCPSpecValidator, p.MCPSpecNormalizer, p.MCPSpecFetcher, p.MCPSpecSlicer))
+	if p.Config.PlaygroundTokenEnabled {
+		playground = mcpdiscovery.NewPlaygroundTokenHandler(p.Deps.TaskTokens)
+	}
+	return mcp, playground
 }

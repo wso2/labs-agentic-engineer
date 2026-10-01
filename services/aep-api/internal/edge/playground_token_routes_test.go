@@ -30,7 +30,7 @@ import (
 
 // Component test for the playground-token mint route (POST
 // /internal/v1/mcp/playground-token): the real mounted mux (NewHandler →
-// mountSurfaces) over a real TaskTokenManager. Proves the route is entirely
+// mountRoutes) over a real TaskTokenManager. Proves the route is entirely
 // ABSENT (404 by omission) unless Config.PlaygroundTokenEnabled is set; when
 // enabled, the minted token actually verifies via the real
 // AgentsScopedVerifier — the same middleware guarding /internal/v1/mcp — with

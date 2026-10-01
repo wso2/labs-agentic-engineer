@@ -39,8 +39,8 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 )
 
-// Component test for the mounted MCP discovery surface: the real outer mux
-// (NewHandler → mountSurfaces), the real AgentsScopedVerifier over a real
+// Component test for the mounted MCP discovery route group: the real outer mux
+// (NewHandler → mountRoutes), the real AgentsScopedVerifier over a real
 // TaskTokenManager, and the real MCP handler over a fake external-resource
 // port. Proves the full caller flow: mint a token with the concrete signer
 // (IssueMCPToken) → initialize → tools/list → tools/call, plus the two edge
@@ -69,7 +69,7 @@ func newMCPTestReader(rts ...openchoreo.ResourceType) *mcpTestReader {
 	return f
 }
 
-// newMCPTestServer builds the full handler with the MCP surface wired and
+// newMCPTestServer builds the full handler with the MCP route group wired and
 // returns the server, the token manager (the concrete signer), and the fake
 // reader.
 func newMCPTestServer(t *testing.T) (*httptest.Server, *auth.TaskTokenManager, *mcpTestReader) {
@@ -140,9 +140,9 @@ func rpcResult(t *testing.T, resp *http.Response) map[string]any {
 	return envelope.Result
 }
 
-// TestMCPSurface_FullRoundTrip drives the complete caller flow through the
+// TestMCPRoutes_FullRoundTrip drives the complete caller flow through the
 // mounted mux with a token minted by the concrete signer.
-func TestMCPSurface_FullRoundTrip(t *testing.T) {
+func TestMCPRoutes_FullRoundTrip(t *testing.T) {
 	srv, mgr, reader := newMCPTestServer(t)
 
 	tok, err := mgr.IssueMCPToken("org-round-trip")
@@ -196,9 +196,9 @@ func TestMCPSurface_FullRoundTrip(t *testing.T) {
 	}
 }
 
-// TestMCPSurface_NoToken401 proves the mount is behind the verifier: an
+// TestMCPRoutes_NoToken401 proves the mount is behind the verifier: an
 // unauthenticated POST never reaches the JSON-RPC handler.
-func TestMCPSurface_NoToken401(t *testing.T) {
+func TestMCPRoutes_NoToken401(t *testing.T) {
 	srv, _, _ := newMCPTestServer(t)
 	resp := postMCP(t, srv, "", `{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
 	if resp.StatusCode != http.StatusUnauthorized {
@@ -206,9 +206,9 @@ func TestMCPSurface_NoToken401(t *testing.T) {
 	}
 }
 
-// TestMCPSurface_WrongAudience401 proves a validly-signed BFF token for another
+// TestMCPRoutes_WrongAudience401 proves a validly-signed BFF token for another
 // service cannot be replayed against the MCP mount.
-func TestMCPSurface_WrongAudience401(t *testing.T) {
+func TestMCPRoutes_WrongAudience401(t *testing.T) {
 	srv, mgr, _ := newMCPTestServer(t)
 	tok, err := mgr.IssueServiceToken("agents-service", "org-x", 5*time.Minute)
 	if err != nil {
@@ -220,9 +220,9 @@ func TestMCPSurface_WrongAudience401(t *testing.T) {
 	}
 }
 
-// TestMCPSurface_OrgFromClaimNotRequest plants a different org in every
+// TestMCPRoutes_OrgFromClaimNotRequest plants a different org in every
 // request-controlled slot; the port must still be scoped by the claim org.
-func TestMCPSurface_OrgFromClaimNotRequest(t *testing.T) {
+func TestMCPRoutes_OrgFromClaimNotRequest(t *testing.T) {
 	srv, mgr, reader := newMCPTestServer(t)
 	tok, err := mgr.IssueMCPToken("claim-org")
 	if err != nil {
@@ -251,9 +251,9 @@ func TestMCPSurface_OrgFromClaimNotRequest(t *testing.T) {
 	}
 }
 
-// TestMCPSurface_NoTokenManager404 proves the conditional mount: without a
+// TestMCPRoutes_NoTokenManager404 proves the conditional mount: without a
 // token manager nothing can verify a caller, so the path is not mounted at all.
-func TestMCPSurface_NoTokenManager404(t *testing.T) {
+func TestMCPRoutes_NoTokenManager404(t *testing.T) {
 	handler := NewHandler(AppParams{Config: config.Config{}})
 	srv := httptest.NewServer(handler)
 	defer srv.Close()
@@ -265,7 +265,7 @@ func TestMCPSurface_NoTokenManager404(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404 (surface unmounted without a token manager)", resp.StatusCode)
+		t.Fatalf("status = %d, want 404 (route unmounted without a token manager)", resp.StatusCode)
 	}
 }
 
@@ -310,7 +310,7 @@ func newMCPPublisherPair(t *testing.T) (*auth.PublisherTokenVerifier, func(org, 
 	return v, mint
 }
 
-func TestMCPSurface_PublisherCCFullRoundTrip(t *testing.T) {
+func TestMCPRoutes_PublisherCCFullRoundTrip(t *testing.T) {
 	priv := mustGenerateRSAKey(t)
 	mgr, err := auth.NewTaskTokenManager(auth.TaskTokenConfig{
 		PrivateKey: string(encodePKCS1(t, priv)),

@@ -52,7 +52,7 @@ var tenantGateCarveOuts = map[string]struct{}{
 // success it binds the org into the context; handlers read it via
 // tenant.BoundOrgFromContext and pass it to services as an explicit argument.
 //
-// Gate mode rides the request context (stamped by mountSurfaces): ENFORCE
+// Gate mode rides the request context (stamped by mountRoutes): ENFORCE
 // denies claimless requests with 401; LOG passes them through with a canary
 // warning and no bound org.
 func tenantGate(f gen.StrictHandlerFunc, operationID string) gen.StrictHandlerFunc {

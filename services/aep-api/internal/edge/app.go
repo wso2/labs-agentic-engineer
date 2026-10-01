@@ -34,7 +34,7 @@ import (
 )
 
 // internalV1 is the path root for the BFF's internal / server-to-server
-// surface: runner-pod callbacks and dev-only helpers. It is deliberately
+// route group: runner-pod callbacks and dev-only helpers. It is deliberately
 // distinct from the client-facing /api/v1 edge namespace (user-JWT,
 // gateway-advertised, served contract-first from packages/contracts/api/v1)
 // so each prefix tells the truth about its audience and auth regime, with the
@@ -54,11 +54,11 @@ type AppParams struct {
 
 	// Controllers still wired as raw handlers: WebhookController (GitHub
 	// webhook HMAC). The runner callbacks are the internal contract-first
-	// surface (InternalDeps).
+	// route group (InternalDeps).
 	WebhookController webhook.WebhookController
 
 	// InternalDeps carries the services + authorizer for the internal S2S
-	// surface (path-scoped runner credentials refresh), served contract-first
+	// route group (path-scoped runner credentials refresh), served contract-first
 	// from packages/contracts/api/internal/v1 behind runnerAuthGate.
 	InternalDeps InternalDeps
 
@@ -79,7 +79,7 @@ type AppParams struct {
 
 	// InboundAuth, when non-nil, REPLACES the JWKS-backed jwt.Middleware on the
 	// public /api/ edge.
-	// Production leaves it nil → mountSurfaces builds the real RS256/JWKS verifier
+	// Production leaves it nil → publicChain builds the real RS256/JWKS verifier
 	// from ThunderJWKS. A component test sets it to a claims-injector so the real
 	// tenant gate runs in ENFORCE with no Thunder/JWKS; ThunderJWKS is then unused
 	// (and may be nil). It only substitutes the verifier — orgensure and the
@@ -93,7 +93,7 @@ type AppParams struct {
 	// every other /api/ operation. See auth.SREHandoffVerifier.
 	SREHandoffAuth *auth.SREHandoffVerifier
 
-	// Runner-facing and agents-facing surfaces. Callers use the gitrepo +
+	// Runner-facing and agents-facing route groups. Callers use the gitrepo +
 	// artifacts packages in-process. CredService + AnthropicCredService +
 	// ModelConnections + DB also back the local-dev in-process secret resync
 	// helper (devResyncHandler).
@@ -105,8 +105,8 @@ type AppParams struct {
 	// MCP discovery ports (dependencies feature). The composition root wires
 	// them concretely (external-resource repository / org endpoint catalog /
 	// platform resource-type catalog); the mounted handler nil-guards each —
-	// a nil MCPExternalResources 503s the surface, a nil lister degrades its
-	// one tool to an empty result. The mount itself (surfaces.go) needs
+	// a nil MCPExternalResources 503s the route group, a nil lister degrades its
+	// one tool to an empty result. The mount itself (routes.go) needs
 	// Deps.TaskTokens and optionally Deps.PublisherTokens (Thunder CC fallback).
 	MCPExternalResources mcpdiscovery.ExternalResourceReader
 	MCPOrgEndpoints      mcpdiscovery.OrgEndpointLister
@@ -132,10 +132,9 @@ type AppParams struct {
 // The console's nginx proxy strips the /aep-api-service prefix before
 // forwarding, so routes are registered at root level.
 func NewHandler(params AppParams) http.Handler {
-	// Every HTTP surface (public / internal S2S / external / dev + discovery) is
-	// wired in mountSurfaces — the whole request boundary on one screen. See
-	// surfaces.go.
-	mux := mountSurfaces(params)
+	// Every route group (public / internal / webhook / dev + health) is a row in
+	// the mount table, routes.go: the whole request boundary on one screen.
+	mux := mountRoutes(params)
 
 	// Global middleware stack (outermost applied last). AddCorrelationID resolves
 	// the correlation ID into the context; the global obs.ContextHandler then

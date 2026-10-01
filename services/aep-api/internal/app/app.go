@@ -912,8 +912,8 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// Controllers
 	params := edge.AppParams{
 		Config: cfg,
-		// Runner callbacks are the internal contract-first surface (InternalDeps);
-		// only the connect-callback + webhook controllers remain raw handlers.
+		// Runner callbacks are the internal contract-first route group (InternalDeps);
+		// only the webhook controller remains a raw handler.
 		// Every other feature is served by the strict handlers via params.Deps.
 		InternalDeps: edge.InternalDeps{
 			CredsRefresh:      credRefreshService,
@@ -962,7 +962,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	}
 
 	// Dependency-management MCP discovery readers (agnostic subset — Phase 4 of
-	// the dependency-management migration). The MCP surface (surfaces.go) is
+	// the dependency-management migration). The MCP route group (routes.go) is
 	// mounted behind the AgentsScopedVerifier; wire real backends for its four
 	// read-only tools: the org external-resource catalog (org-namespaced OC
 	// ResourceTypes, Task 3 — no longer the external_resources table) and the

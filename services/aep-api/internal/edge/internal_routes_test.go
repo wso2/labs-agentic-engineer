@@ -14,12 +14,12 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Component-tier coverage for the contract-first internal S2S surface: the
+// Component-tier coverage for the contract-first internal S2S route group: the
 // runner credentials-refresh exchange through the REAL handler graph
-// (mountSurfaces → runnerAuthGate → strict handler), with a Thunder
+// (mountRoutes → runnerAuthGate → strict handler), with a Thunder
 // publisher-cc token. Pins the RUNNER-LOCKSTEP wire shape: exact top-level
 // body keys and the capitalized Identity keys — the runner must work unchanged
-// against this surface.
+// against this route group.
 
 package edge
 
@@ -61,7 +61,7 @@ func (f *fakeCredsRefresh) Refresh(_ context.Context, executionID, orgHandle str
 	}, nil
 }
 
-// fakeValidationContext records the cycle id and org the surface hands it, which
+// fakeValidationContext records the cycle id and org the route group hands it, which
 // is what proves the path parameter reaches the service intact.
 type fakeValidationContext struct {
 	gotCycle, gotOrg string
@@ -146,7 +146,7 @@ func newInternalStack(t *testing.T) internalStack {
 	return stack
 }
 
-func TestInternalSurface_RunnerRefresh_Lockstep(t *testing.T) {
+func TestInternalRoutes_RunnerRefresh_Lockstep(t *testing.T) {
 	t.Parallel()
 	h, mint, svc := newInternalTestStack(t)
 
@@ -184,7 +184,7 @@ func TestInternalSurface_RunnerRefresh_Lockstep(t *testing.T) {
 // that prefix — the inner mux registers the contract's full paths, and a prefix
 // missing from the outer mux 404s before any handler or auth gate runs. That is a
 // silent break the contract test cannot see, so it is asserted through real HTTP.
-func TestInternalSurface_ValidationCallbackIsRoutedAndCycleKeyed(t *testing.T) {
+func TestInternalRoutes_ValidationCallbackIsRoutedAndCycleKeyed(t *testing.T) {
 	t.Parallel()
 	s := newInternalStack(t)
 	const cycle = "9d90f001-67bb-4c51-a5f3-7fd808c06c36"
@@ -226,7 +226,7 @@ func TestInternalSurface_ValidationCallbackIsRoutedAndCycleKeyed(t *testing.T) {
 	})
 }
 
-func TestInternalSurface_AuthPosture(t *testing.T) {
+func TestInternalRoutes_AuthPosture(t *testing.T) {
 	t.Parallel()
 	h, mint, _ := newInternalTestStack(t)
 

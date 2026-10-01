@@ -57,3 +57,29 @@ func TestRemovedRoutes(t *testing.T) {
 		})
 	}
 }
+
+// TestRouteTable pins the mount table: every caller of aep-api and the gate
+// that admits it, in one place (03 §5). Rows a later phase deletes say so.
+func TestRouteTable(t *testing.T) {
+	got := map[string]route{}
+	for _, r := range routes(AppParams{}) {
+		if r.caller == "" || r.gate == "" {
+			t.Errorf("row %q has no caller or gate", r.pattern)
+		}
+		got[r.pattern] = r
+	}
+	for _, p := range []string{
+		"GET /healthz", "GET /readyz", "GET /auth/external/jwks.json",
+		"POST /api/v1/webhooks/github", "/api/",
+		"/internal/v1/executions/", "/internal/v1/validation/",
+		"POST /internal/v1/mcp", "POST /internal/v1/mcp/playground-token",
+		"POST /_dev/v1/secret-ref-resync",
+	} {
+		if _, ok := got[p]; !ok {
+			t.Errorf("mount table lacks %q", p)
+		}
+	}
+	if len(got) != 10 {
+		t.Errorf("mount table has %d rows, want 10", len(got))
+	}
+}

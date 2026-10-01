@@ -16,7 +16,7 @@
 
 // Package componenttest is the in-process component-tier harness. It
 // assembles the REAL BFF /api handler via edge.NewHandlerForTest — the same
-// mountSurfaces assembly
+// mountRoutes assembly
 // production uses — with exactly one seam swapped: the JWKS verifier is
 // replaced by fakeInboundAuth, so the real tenant gate runs in ENFORCE with no
 // Thunder/JWKS. A test supplies the feature's real service (with its
