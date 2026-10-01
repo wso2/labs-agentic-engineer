@@ -264,6 +264,9 @@ importers:
       '@aep/collab-doc':
         specifier: workspace:*
         version: link:../../../../../packages/collab-doc
+      '@aep/platform-idp-auth':
+        specifier: workspace:*
+        version: link:../../../../../packages/platform-idp-auth
       '@hocuspocus/server':
         specifier: ^4.3.0
         version: 4.3.0(y-protocols@1.0.7(yjs@13.6.31))(yjs@13.6.31)

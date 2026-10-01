@@ -17,40 +17,62 @@
  */
 
 /**
- * Composition root: load config, wire the BFF client, listen.
+ * Composition root. One mode, chosen by env (`modes.ts`): the AE Studio pod's
+ * listeners (`AE_*`: the `/v1` user gate, the room upgrade path and the
+ * health port), or the legacy collab server of the chart Deployment (load
+ * config, wire the BFF client, listen). Boot fails with neither.
  *
- *   pnpm --filter @aep/ae-collab dev     # watch + reload (dev mode without AEP_API_BASE)
+ *   pnpm --filter @aep/ae-collab dev     # watch + reload (dev mode: COLLAB_DEV=1)
  *   pnpm --filter @aep/ae-collab start   # run once
  */
 
-import { loadConfig } from "./env.js";
+import type { CollabConfig } from "./env.js";
+import { selectModes } from "./modes.js";
 import { createBffClient } from "./bff.js";
 import { createCollabServer, registerGracefulShutdown } from "./server.js";
 import { startMockBff } from "./mockbff.js";
+import { startPodListeners } from "./pod/listeners.js";
 
-const config = loadConfig();
+const modes = selectModes(process.env);
 
-if (config.mockBff) {
-  await startMockBff(config.mockBffPort);
-  console.warn(
-    `[collab] MOCK BFF on http://127.0.0.1:${config.mockBffPort} — real auth/seed paths, mocked backend (#81 stand-in)`,
-  );
+if (modes.pod) {
+  const pod = await startPodListeners(modes.pod);
+  let closing = false;
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    process.once(signal, () => {
+      if (closing) return;
+      closing = true;
+      pod.close().then(
+        () => process.exit(0),
+        () => process.exit(1),
+      );
+    });
+  }
+} else {
+  await startLegacyServer(modes.legacy);
 }
 
-const bff = config.aepApiBase ? createBffClient(config.aepApiBase) : null;
+/** Today's collab server, unchanged: oracle + seeds from the BFF, or fixtures in dev mode. */
+async function startLegacyServer(config: CollabConfig): Promise<void> {
+  if (config.mockBff) {
+    await startMockBff(config.mockBffPort);
+    console.warn(
+      `[collab] MOCK BFF on http://127.0.0.1:${config.mockBffPort} — real auth/seed paths, mocked backend (#81 stand-in)`,
+    );
+  }
 
-if (config.devMode) {
-  console.warn(
-    "[collab] DEV MODE: BFF oracle bypassed, rooms seed from fixtures." +
-      (config.aepApiBase ? "" : " (AEP_API_BASE is unset)"),
-  );
+  const bff = config.aepApiBase ? createBffClient(config.aepApiBase) : null;
+
+  if (config.devMode) {
+    console.warn("[collab] DEV MODE (COLLAB_DEV): BFF oracle bypassed, rooms seed from fixtures.");
+  }
+
+  const log = (m: string) => console.log(`[collab] ${m}`);
+
+  const server = createCollabServer(config, { bff, log });
+
+  registerGracefulShutdown(server, config, { bff, log });
+
+  await server.listen(config.port);
+  console.log(`[collab] listening on ws://localhost:${config.port}`);
 }
-
-const log = (m: string) => console.log(`[collab] ${m}`);
-
-const server = createCollabServer(config, { bff, log });
-
-registerGracefulShutdown(server, config, { bff, log });
-
-await server.listen(config.port);
-console.log(`[collab] listening on ws://localhost:${config.port}`);

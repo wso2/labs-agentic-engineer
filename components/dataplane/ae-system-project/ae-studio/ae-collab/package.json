@@ -9,11 +9,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "test": "tsx --test \"src/**/!(seed-recovery).test.ts\" && tsx --test --test-force-exit src/seed-recovery.test.ts",
-    "dev": "tsx watch src/main.ts",
+    "dev": "COLLAB_DEV=1 tsx watch src/main.ts",
     "start": "tsx src/main.ts"
   },
   "dependencies": {
     "@aep/collab-doc": "workspace:*",
+    "@aep/platform-idp-auth": "workspace:*",
     "@hocuspocus/server": "^4.3.0",
     "yjs": "^13.6.31"
   },

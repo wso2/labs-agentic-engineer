@@ -41,8 +41,10 @@ COPY components/dataplane/ae-system-project/ae-studio/ae-collab ./components/dat
 
 RUN pnpm install --frozen-lockfile --filter @aep/ae-collab...
 
-# @aep/collab-doc resolves through its dist exports — build it before boot.
-RUN pnpm --filter @aep/collab-doc build
+# @aep/collab-doc and @aep/platform-idp-auth (the pod-mode /v1 gate) resolve
+# through their dist exports — build both before boot, in either mode: main.ts
+# imports the pod listeners unconditionally.
+RUN pnpm --filter @aep/collab-doc build && pnpm --filter @aep/platform-idp-auth build
 
 # Readable by the unprivileged runtime user, so corepack resolves pnpm from
 # this cache instead of the network. Without it the ENV above changes only
