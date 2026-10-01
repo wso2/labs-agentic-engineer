@@ -1,4 +1,4 @@
-# AGENTS.md — services/collab (`@aep/collab`)
+# AGENTS.md — components/dataplane/ae-system-project/ae-studio/ae-collab (`@aep/ae-collab`)
 
 Yjs collaboration server for spec files —
 [#86](https://github.com/wso2/labs-agentic-engineer/issues/86). Hocuspocus
@@ -95,4 +95,4 @@ the moment several tabs are reconnecting together.
 | `COLLAB_COMMIT_MAX_DEBOUNCE_MS` | `300000` | max wait during continuous editing |
 
 Commands: uniform verbs via the root `Makefile`; locally
-`pnpm --filter @aep/collab dev|test|lint|typecheck`.
+`pnpm --filter @aep/ae-collab dev|test|lint|typecheck`.

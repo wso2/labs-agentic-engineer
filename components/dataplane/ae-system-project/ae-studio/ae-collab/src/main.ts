@@ -19,8 +19,8 @@
 /**
  * Composition root: load config, wire the BFF client, listen.
  *
- *   pnpm --filter @aep/collab dev     # watch + reload (dev mode without AEP_API_BASE)
- *   pnpm --filter @aep/collab start   # run once
+ *   pnpm --filter @aep/ae-collab dev     # watch + reload (dev mode without AEP_API_BASE)
+ *   pnpm --filter @aep/ae-collab start   # run once
  */
 
 import { loadConfig } from "./env.js";

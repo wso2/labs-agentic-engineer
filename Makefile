@@ -137,8 +137,8 @@ tools:
 
 # TS dead-code gate (knip) — the counterpart of services/aep-api's Go
 # `deadcode-check`. Whole-program unused-export/file/dependency analysis over the
-# agents runtime + the playground that consumes it, run with --production so
-# *.test.ts never count as consumers. Config + rationale live in knip.jsonc.
+# agents runtime, the collab server + the playground that consumes the agents,
+# run with --production so *.test.ts never count as consumers. Config + rationale live in knip.jsonc.
 #   make deadcode-ts        human report (never fails)
 #   make deadcode-ts-check  CI gate (fails on any finding)
 deadcode-ts:

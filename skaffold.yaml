@@ -87,7 +87,7 @@ build:
     - image: ghcr.io/wso2/aep/collab
       context: .
       docker:
-        dockerfile: services/collab/Dockerfile
+        dockerfile: components/dataplane/ae-system-project/ae-studio/ae-collab/Dockerfile
 
     - image: ghcr.io/wso2/aep/aep-mcp-server
       context: .

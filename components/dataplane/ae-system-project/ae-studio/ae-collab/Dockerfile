@@ -14,9 +14,9 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# Collab service (services/collab) — Yjs/Hocuspocus rooms with BFF-oracle auth
+# Collab service (ae-collab) — Yjs/Hocuspocus rooms with BFF-oracle auth
 # and Files-API seeding (#86 / #114). Built from the REPO ROOT context
-# (docker-compose sets `context: ..`) because @aep/collab depends on the
+# (docker-compose sets `context: ..`) because @aep/ae-collab depends on the
 # workspace package @aep/collab-doc (the shared doc model, #86 phase 4).
 # Runs from TypeScript source via tsx, like @aep/ae-design-agent.
 FROM node:22-bookworm-slim
@@ -37,9 +37,9 @@ WORKDIR /repo
 # Workspace manifests first for install-layer caching.
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
 COPY packages ./packages
-COPY services/collab ./services/collab
+COPY components/dataplane/ae-system-project/ae-studio/ae-collab ./components/dataplane/ae-system-project/ae-studio/ae-collab
 
-RUN pnpm install --frozen-lockfile --filter @aep/collab...
+RUN pnpm install --frozen-lockfile --filter @aep/ae-collab...
 
 # @aep/collab-doc resolves through its dist exports — build it before boot.
 RUN pnpm --filter @aep/collab-doc build
@@ -49,7 +49,7 @@ RUN pnpm --filter @aep/collab-doc build
 # where the build writes, not what UID 1000 can read.
 RUN chmod -R a+rX "$COREPACK_HOME"
 
-WORKDIR /repo/services/collab
+WORKDIR /repo/components/dataplane/ae-system-project/ae-studio/ae-collab
 
 USER 1000
 EXPOSE 3400

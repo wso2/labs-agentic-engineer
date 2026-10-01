@@ -41,7 +41,7 @@ import {
 /**
  * The reason the collab server tags an auth failure with when its own upstream
  * was unreachable, rather than when the bearer was refused. Duplicated from
- * `services/collab/src/server.ts` rather than shared, matching how the
+ * `components/dataplane/ae-system-project/ae-studio/ae-collab/src/server.ts` rather than shared, matching how the
  * stateless message types are already spelled on both sides of this socket.
  */
 const UPSTREAM_UNAVAILABLE = "upstream-unavailable";

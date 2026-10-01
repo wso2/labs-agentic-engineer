@@ -85,7 +85,7 @@ jobs:
             dockerfile: components/dataplane/ae-system-project/ae-studio/ae-design-agent/Dockerfile
             context: .
           - name: collab
-            dockerfile: services/collab/Dockerfile
+            dockerfile: components/dataplane/ae-system-project/ae-studio/ae-collab/Dockerfile
             context: .
           - name: aep-mcp-server
             dockerfile: services/aep-mcp-server/Dockerfile

@@ -19,7 +19,7 @@
 // Turn-end freshness (#252 Task 5 — closes the room→git race described in
 // the feature's "Freshness" design note). A resolution edit lands in the Yjs
 // room instantly but only reaches git HEAD on the collab service's debounced
-// committer (services/collab/src/env.ts: `commitDebounceMs`, default 60s
+// committer (components/dataplane/ae-system-project/ae-studio/ae-collab/src/env.ts: `commitDebounceMs`, default 60s
 // quiet period) — the dependencies/preflight reads are git-backed, so they
 // can lag a running chat turn by up to that long.
 //

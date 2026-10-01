@@ -162,7 +162,7 @@ Tear down with `k3d cluster delete openchoreo`, which drops all OpenChoreo state
 | [`apps/tryit`](apps/tryit/AGENTS.md) | the test app: a static SPA the console opens to sign in as a project's test user and talk to a deployed agent; no backend of its own |
 | [`services/aep-api`](services/aep-api/README.md) | the Go BFF — seven domains behind one tenant-gated edge; owns spec git, the milestone run supervisor (Temporal), provisioning, and the GitHub webhook plane |
 | [`components/dataplane/ae-system-project/ae-studio/ae-design-agent`](components/dataplane/ae-system-project/ae-studio/ae-design-agent/AGENTS.md) | design-time agent runtime (Vercel AI SDK). One turn = one POST, streamed as SSE; writes no files itself |
-| [`services/collab`](services/collab/AGENTS.md) | Yjs server hosting the live spec document, one room per project |
+| [`components/dataplane/ae-system-project/ae-studio/ae-collab`](components/dataplane/ae-system-project/ae-studio/ae-collab/AGENTS.md) | Yjs server hosting the live spec document, one room per project |
 | `services/aep-mcp-server` | MCP surface letting external agents (OpenChoreo's SRE/RCA agent) search issues, file one, and dispatch a coding run |
 | [`runners/`](runners/AGENTS.md) | `remote-worker`, the coding agent: a one-shot pod running the Claude Agent SDK. One image serves implementation and validation; its ADRs are in `runners/remote-worker/design/decisions/` |
 | [`skills/`](skills/AGENTS.md) | the one authored skill library, seeded and reconciled into every org's own repo |

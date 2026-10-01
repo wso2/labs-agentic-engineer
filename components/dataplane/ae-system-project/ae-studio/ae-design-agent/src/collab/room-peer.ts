@@ -46,7 +46,7 @@ export const AGENT_ORIGIN = "aep-agent";
 /**
  * The reason the collab server tags a refusal with when ITS upstream was
  * unreachable, rather than when the bearer was refused. Duplicated from
- * `services/collab/src/server.ts` — the console spells it out on its side of
+ * `components/dataplane/ae-system-project/ae-studio/ae-collab/src/server.ts` — the console spells it out on its side of
  * this socket too, the same way the stateless message types are.
  */
 const UPSTREAM_UNAVAILABLE = "upstream-unavailable";

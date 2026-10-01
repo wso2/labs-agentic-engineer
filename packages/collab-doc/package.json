@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Shared collab-document plumbing (#86): the spec-room Y.Doc model (Y.Map path→Y.Text + Y.XmlFragment per md file), headless markdown ↔ ProseMirror conversion, and safe edit application (Y.Text diff-and-patch, fragment reparse). Used by services/collab (seeding/committer) and components/dataplane/ae-system-project/ae-studio/ae-design-agent (agents as live peers).",
+  "description": "Shared collab-document plumbing (#86): the spec-room Y.Doc model (Y.Map path→Y.Text + Y.XmlFragment per md file), headless markdown ↔ ProseMirror conversion, and safe edit application (Y.Text diff-and-patch, fragment reparse). Used by components/dataplane/ae-system-project/ae-studio/ae-collab (seeding/committer) and components/dataplane/ae-system-project/ae-studio/ae-design-agent (agents as live peers).",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
