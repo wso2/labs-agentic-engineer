@@ -15,11 +15,16 @@
 # specific language governing permissions and limitations
 # under the License.
 #
-# Read-only: the four lists that name a platform image must agree, or
-# `make dev-update` rebuilds one image and rolls the pod onto another.
+# Read-only: the four lists that name one of the chart's platform images must
+# agree, or `make dev-update` rebuilds one image and rolls the pod onto another.
+# The ae-studio pod images (ae-collab, ae-studio-tools, ae-design-agent's pod
+# build) are not chart images: skaffold/ae-studio.yaml builds them and the
+# Makefile's `ae-studio-refs-check` verifies each has a built ref in the
+# ae-studio images JSON. ae-design-agent stays below for the agents chart
+# Deployment.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-want=(aep-api ae-design-agent ae-collab aep-mcp-server console tryit)
+want=(aep-api ae-design-agent aep-mcp-server console tryit)
 skaffold=$(grep -oE 'image: ghcr.io/wso2/aep/[a-z-]+' skaffold.yaml | sed 's#.*/##' | sort -u)
 imports=$(sed -n '/^dev-images:/,/--cluster openchoreo/p' Makefile | grep -oE 'ghcr.io/wso2/aep/[a-z-]+:dev-local' | sed 's#.*/##;s#:.*##' | sort -u)
 sets=$(sed -n '/^dev-update:/,/rollout restart/p' Makefile | grep -oE 'repository=ghcr.io/wso2/aep/[a-z-]+' | sed 's#.*/##' | sort -u)
