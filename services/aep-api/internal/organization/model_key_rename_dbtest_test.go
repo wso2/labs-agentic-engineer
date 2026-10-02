@@ -64,6 +64,7 @@ type renameDB struct {
 	cycles openCycles
 	rename *organization.ModelKeyRename
 	conns  *organization.ModelConnectionService
+	writer *organization.SecretRefWriter
 	ouIDs  map[string]string
 }
 
@@ -85,8 +86,9 @@ func newRenameDB(t *testing.T) *renameDB {
 		db: db, store: store, sm: sm, cycles: cycles,
 		rename: organization.NewModelKeyRename(organization.NewModelKeyRenameRepository(db, store),
 			organization.NewOrganizationRepository(db), writer, cycles),
-		conns: organization.NewModelConnectionService(connRepo, anthropicRepo, store, sonnetRates()),
-		ouIDs: map[string]string{},
+		conns:  organization.NewModelConnectionService(connRepo, anthropicRepo, store, sonnetRates()),
+		writer: writer,
+		ouIDs:  map[string]string{},
 	}
 }
 
@@ -334,7 +336,9 @@ func TestModelKeyRename_AKeySavedUnderTheOldNameIsCopiedAgain_DB(t *testing.T) {
 }
 
 // A key saved under `model/key` after the old one is never overwritten by it;
-// the stale old bytes are simply retired.
+// the stale old bytes are retired once the save's write has stamped its
+// reference (until then the ai-agent model access may still read the old
+// copy, and there is no current reference to repoint it onto).
 func TestModelKeyRename_NeverOverwritesANewerKey_DB(t *testing.T) {
 	t.Parallel()
 	r := newRenameDB(t)
@@ -356,6 +360,20 @@ func TestModelKeyRename_NeverOverwritesANewerKey_DB(t *testing.T) {
 	if len(r.sm.createCalls) != 0 {
 		t.Fatal("the rename uploaded over a save's own mirror")
 	}
+	if !r.hasLegacyBytes(t, "acme") {
+		t.Fatal("the old copies went before the save's reference was stamped")
+	}
+	// The save's write stamps its reference.
+	if err := r.db.Exec(`UPDATE org_model_connections SET secret_ref_name = 'acme-default-key-0000cccc',
+		secret_ref_kv_path = 'user-app-secrets/wc-acme/acme-default-key-0000cccc' WHERE oc_org_id = 'acme'`).Error; err != nil {
+		t.Fatalf("stamp: %v", err)
+	}
+	if err := organization.NewOrgSecretRepository(r.db).Upsert(context.Background(), "acme",
+		organization.OrgSecretRef{Secret: organization.OrgSecretDefaultKey, Name: "acme-default-key-0000cccc"}, ""); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	r.pass(t)
+	r.wantKey(t, "acme", saved)
 	if r.hasLegacyBytes(t, "acme") {
 		t.Fatal("stale legacy bytes kept")
 	}
@@ -466,5 +484,26 @@ func TestModelKeyRename_TheBootPassDeletesNothing_DB(t *testing.T) {
 	if len(r.sm.createCalls) != 1 || len(r.sm.deleteCalls) != 1 || r.hasLegacyBytes(t, "acme") {
 		t.Fatalf("periodic pass: %d uploads, %d deletes, legacy bytes %v; want the old copies retired, no second move",
 			len(r.sm.createCalls), len(r.sm.deleteCalls), r.hasLegacyBytes(t, "acme"))
+	}
+}
+
+// The move repoints the key's path consumers (the ai-agent model access) onto
+// the new copy; while that fails, the Anthropic-era copies are kept.
+func TestModelKeyRename_KeepsTheOldCopiesUntilTheModelAccessIsRepointed_DB(t *testing.T) {
+	t.Parallel()
+	r := newRenameDB(t)
+	consumers := &pathConsumers{path: "user-app-secrets/old", err: errors.New("oc down")}
+	r.writer.WithModelKeyConsumers(consumers)
+	r.seedLegacyOrg(t, "acme", "sk-ant-api03-acme-key-bytes-0001", true)
+
+	r.pass(t)
+	if !r.hasLegacyBytes(t, "acme") || len(r.sm.deleteCalls) != 0 {
+		t.Fatalf("repoint failing: legacy bytes %v, deletes %d; want the old copies kept", r.hasLegacyBytes(t, "acme"), len(r.sm.deleteCalls))
+	}
+	consumers.err = nil
+	r.pass(t)
+	if r.hasLegacyBytes(t, "acme") || len(r.sm.deleteCalls) != 1 || !strings.HasSuffix(consumers.current(), "/"+renameNewRef) {
+		t.Fatalf("repointed: legacy bytes %v, deletes %d, model access on %q; want the old copies retired after the move",
+			r.hasLegacyBytes(t, "acme"), len(r.sm.deleteCalls), consumers.current())
 	}
 }

@@ -259,7 +259,11 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// Secret-ref mirror writer. Constructed ahead of the credential / IDP service
 	// constructors so all consumers can attach via WithSecretRefWriter (the no-op
 	// case when smClient is nil is fine).
-	secretRefWriter := organization.NewSecretRefWriter(smClient, orgCredRepo, orgAnthropicRepo, idpRepo, orgModelConnRepo)
+	secretRefWriter := organization.NewSecretRefWriter(smClient, orgCredRepo, orgAnthropicRepo, idpRepo, orgModelConnRepo).
+		// Every Default key save is a new vault path: the deployed direct
+		// ai-agent components' ai-agent-model-access reference moves with it
+		// before the previous path is retired.
+		WithModelKeyConsumers(projects.NewModelAccessRepointer(modelAccessSecretRefClient))
 	// The org secrets (the GitHub PAT, the webhook secret, the two org
 	// clients) are written as a new reference per write, one write per
 	// (org, secret) at a time across replicas. Nil with delivery off.

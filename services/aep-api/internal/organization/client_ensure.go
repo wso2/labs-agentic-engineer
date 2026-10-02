@@ -70,7 +70,8 @@ var errOrgOUMismatch = errors.New("the request's ouId does not match the org's T
 
 // vaultOUOf is the OU every vault path of a request is derived from: the
 // request's ouId claim, because the Secret Manager API derives the vault
-// namespace from the JWT it authenticated (resolveVaultKey). The Thunder OU
+// namespace from the JWT it authenticated (resolveVaultKey), in its
+// canonical UUID form (orgUUIDForSecretLocation). The Thunder OU
 // a client is registered under comes from the org row (lookupOrgOUID);
 // EnsureClient refuses when the two disagree.
 func vaultOUOf(ctx context.Context) (string, error) {

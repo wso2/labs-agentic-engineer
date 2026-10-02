@@ -508,6 +508,10 @@ func (s *AnthropicCredentialService) resyncRole(ctx context.Context, ocOrgID str
 	if err != nil {
 		return false, fmt.Errorf("anthropic resync %s: write: %w", role, err)
 	}
+	if !wrote {
+		slog.InfoContext(ctx, "anthropic resync: skipped, no reference row (the next token save writes one)",
+			"ocOrgId", ocOrgID, "role", role)
+	}
 	return wrote, nil
 }
 

@@ -106,7 +106,9 @@ func (s *Service) ensureWebhookSecret(ctx context.Context, org string) error {
 // AEStudioSetupIncompleteCode is the gitProvider section error code of a
 // submit whose GitHub connection was saved but whose AE Studio setup (the
 // token's reference, the webhook secret, the org clients) did not finish.
-// Saving the token again retries the setup.
+// Saving the token again retries the setup, except after an OU error (the
+// org's Thunder OU missing, or not the caller's), which an operator must
+// fix first; that message says so (submitFailure).
 const AEStudioSetupIncompleteCode = "ae_studio_setup_incomplete"
 
 // submitFailure logs a failed setup step (value-free) and returns the

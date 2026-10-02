@@ -27,6 +27,7 @@ package organization_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -77,6 +78,34 @@ func (c *countingConverger) count() int {
 	return c.triggers
 }
 
+// pathConsumers is the org's ai-agent-model-access reference: it reads the
+// key by the vault path it was last pointed at.
+type pathConsumers struct {
+	mu      sync.Mutex
+	path    string // "" = no reference (no direct agent deployed)
+	err     error
+	repoint int
+}
+
+func (c *pathConsumers) RepointModelKey(_ context.Context, _ string, ref organization.SecretRefTriplet) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.repoint++
+	if c.err != nil {
+		return c.err
+	}
+	if c.path != "" {
+		c.path = ref.KVPath
+	}
+	return nil
+}
+
+func (c *pathConsumers) current() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.path
+}
+
 // cardFixture is the card over one Postgres with references written through
 // the org secret writer and a converger that counts.
 type cardFixture struct {
@@ -85,6 +114,7 @@ type cardFixture struct {
 	vault     *fakeVault
 	refs      organization.OrgSecretRepository
 	converger *countingConverger
+	consumers *pathConsumers
 	ctx       context.Context
 }
 
@@ -94,14 +124,16 @@ func newCardFixture(t *testing.T, existing ...string) *cardFixture {
 	vault := newFakeVault(existing...)
 	sm := mintingSM{fakeSMClient: &fakeSMClient{}, vault: vault}
 	refs := organization.NewOrgSecretRepository(c.db)
+	consumers := &pathConsumers{}
 	writer := organization.NewSecretRefWriter(sm, organization.NewOrgCredentialRepository(c.db, nil), c.repo,
 		organization.NewIDPRepository(c.db, nil), c.connRepo).
-		WithOrgSecretWriter(organization.NewOrgSecretWriter(sm, refs, organization.NewOrgSecretLock(c.db), fixedClock))
+		WithOrgSecretWriter(organization.NewOrgSecretWriter(sm, refs, organization.NewOrgSecretLock(c.db), fixedClock)).
+		WithModelKeyConsumers(consumers)
 	c.conns.WithSecretRefWriter(writer)
 	c.svc.WithSecretRefWriter(writer)
 	converger := &countingConverger{}
 	c.settings.WithStudioConverger(converger)
-	return &cardFixture{t: t, card: c, vault: vault, refs: refs, converger: converger, ctx: claimsCtx(uuid.NewString())}
+	return &cardFixture{t: t, card: c, vault: vault, refs: refs, converger: converger, consumers: consumers, ctx: claimsCtx(uuid.NewString())}
 }
 
 func (f *cardFixture) save(p orgconfig.ConfigPatch) {
@@ -262,4 +294,50 @@ func agentsWithoutSubscription() patch.Field[orgconfig.AgentsWrite] {
 
 func agentsRuntime(r orgconfig.AgentRuntime) patch.Field[orgconfig.AgentsWrite] {
 	return patch.Field[orgconfig.AgentsWrite]{Sent: true, Value: orgconfig.AgentsWrite{Runtime: r}}
+}
+
+// A deployed direct agent's ai-agent-model-access reference reads the key by
+// its vault path: a key save moves it onto the new reference before the
+// previous one is deleted, so ESO's refresh delivers the new key.
+func TestCardSave_RepointsTheModelAccessBeforeRetiring(t *testing.T) {
+	t.Parallel()
+	f := newCardFixture(t)
+	f.save(keyPatch(anthropicUnitKey))
+	r1 := f.ref(organization.OrgSecretDefaultKey)
+	f.consumers.path = derefStr(f.card.row(t, "acme").SecretRefKVPath)
+	var atDelete []string
+	f.vault.onDelete = func(name string) {
+		if name == r1.Name {
+			atDelete = append(atDelete, f.consumers.current())
+		}
+	}
+
+	f.save(keyPatch(anthropicDBKey2))
+	r2 := f.ref(organization.OrgSecretDefaultKey)
+	want := derefStr(f.card.row(t, "acme").SecretRefKVPath)
+	if !strings.HasSuffix(want, "/"+r2.Name) || f.consumers.current() != want {
+		t.Fatalf("model access reads %q, want the new reference's path %q", f.consumers.current(), want)
+	}
+	if f.exists(r1.Name) || len(atDelete) != 1 || atDelete[0] != want {
+		t.Fatalf("r1 deleted while the model access read %v, want it deleted once, after the repoint", atDelete)
+	}
+}
+
+// A failed repoint keeps the previous reference: the model access may still
+// read it. The save itself stands (row, triplet and pod on the new one).
+func TestCardSave_AFailedModelAccessRepointKeepsThePreviousReference(t *testing.T) {
+	t.Parallel()
+	f := newCardFixture(t)
+	f.save(keyPatch(anthropicUnitKey))
+	r1 := f.ref(organization.OrgSecretDefaultKey)
+	f.consumers.err = errors.New("oc down")
+
+	f.save(keyPatch(anthropicDBKey2))
+	r2 := f.ref(organization.OrgSecretDefaultKey)
+	if r2.Name == r1.Name || !f.exists(r1.Name) || !f.exists(r2.Name) {
+		t.Fatalf("r1=%s r2=%s vault %v: the new reference recorded, the previous one kept", r1.Name, r2.Name, f.vault.live())
+	}
+	if derefStr(f.card.row(t, "acme").SecretRefName) != r2.Name || f.converger.count() != 2 {
+		t.Fatal("the save stands: the triplet on the new reference and the pod rolled")
+	}
 }

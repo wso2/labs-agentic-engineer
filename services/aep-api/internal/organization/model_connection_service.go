@@ -428,19 +428,27 @@ func (s *ModelConnectionService) deleteTx(ctx context.Context, tx AgentsCardTx, 
 // next key save and dispatch fails closed naming why; the pod keeps its
 // previous key. No row: a disconnect landed since, and there is nothing to
 // copy.
-func (s *ModelConnectionService) mirrorKey(ctx context.Context, tx AgentsCardTx, ocOrgID, legacy string) (OrgSecretWrite, bool) {
+//
+// After the write the key's path consumers (ModelKeyConsumers) are moved
+// onto the new reference, still under the card's lock so a later save's
+// copies always repoint after this one. retire reports whether the caller may
+// retire the previous reference: not when the repoint failed, since a
+// consumer may still read it.
+func (s *ModelConnectionService) mirrorKey(ctx context.Context, tx AgentsCardTx, ocOrgID, legacy string) (written OrgSecretWrite, retire bool) {
 	if !s.secretRefWriter.Enabled() {
 		return OrgSecretWrite{}, false
 	}
-	written, ok, err := s.mirrorKeyTx(ctx, tx, ocOrgID, legacy)
+	written, retire, err := s.mirrorKeyTx(ctx, tx, ocOrgID, legacy)
 	if err != nil {
 		slog.WarnContext(ctx, "model connection: reference write failed",
 			"ocOrgId", ocOrgID, "retryable", errors.Is(err, ErrOrgSecretConflict), "error", err)
 		return OrgSecretWrite{}, false
 	}
-	return written, ok
+	return written, retire
 }
 
+// mirrorKeyTx is mirrorKey's write; the bool is whether the previous
+// reference may be retired.
 func (s *ModelConnectionService) mirrorKeyTx(ctx context.Context, tx AgentsCardTx, ocOrgID, legacy string) (OrgSecretWrite, bool, error) {
 	row, err := tx.GetConnection(ocOrgID)
 	if err != nil || row == nil {
@@ -453,17 +461,24 @@ func (s *ModelConnectionService) mirrorKeyTx(ctx context.Context, tx AgentsCardT
 	if name := derefOrEmpty(row.SecretRefName); name != "" {
 		legacy = name
 	}
+	var stamped SecretRefTriplet
 	written, err := s.secretRefWriter.WriteModelKey(ctx, ocOrgID, strings.TrimSpace(string(key)), retirableModelKeyRef(legacy),
 		func(ref SecretRefTriplet) error {
 			if err := tx.StampConnectionSecretRef(ocOrgID, ref); err != nil {
 				return fmt.Errorf("stamp the secret reference: %w", err)
 			}
+			stamped = ref
 			return nil
 		})
 	if err != nil {
 		return OrgSecretWrite{}, false, err
 	}
 	slog.InfoContext(ctx, "model connection: key reference written", "ocOrgId", ocOrgID, "secretRefName", written.Name)
+	if err := s.secretRefWriter.repointModelKeyConsumers(ctx, ocOrgID, stamped); err != nil {
+		slog.WarnContext(ctx, "model connection: ai-agent model access repoint failed; the previous reference is kept",
+			"ocOrgId", ocOrgID, "secretRefName", written.Name, "error", err)
+		return written, false, nil
+	}
 	return written, true, nil
 }
 
@@ -523,6 +538,10 @@ func (s *ModelConnectionService) ResyncSecretRef(ctx context.Context, ocOrgID st
 	wrote, err := s.secretRefWriter.RestoreModelKey(ctx, ocOrgID, string(key))
 	if err != nil {
 		return false, fmt.Errorf("model connection resync: write: %w", err)
+	}
+	if !wrote {
+		slog.InfoContext(ctx, "model connection resync: skipped, no default-key reference row (the next key save writes one)",
+			"ocOrgId", ocOrgID)
 	}
 	return wrote, nil
 }

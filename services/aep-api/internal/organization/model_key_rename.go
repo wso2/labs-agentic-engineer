@@ -227,8 +227,9 @@ func (r *ModelKeyRename) copyAndSwitch(ctx context.Context, tx ModelKeyRenameTx,
 	switch name := derefOrEmpty(row.SecretRefName); name {
 	case modelKeyRefName, "":
 		// On the new copy, or on none (a save cleared it and its write stamps
-		// the new name): nothing to switch.
-		return nil, nil
+		// the new name): nothing to switch, but the old copies go only once
+		// the key's path consumers read the current one.
+		return r.consumersOnCurrent(ctx, ocOrgID, row), nil
 	case legacyModelKeyRefName:
 	default:
 		// A save's default-key write names a fresh reference each time: the
@@ -238,7 +239,7 @@ func (r *ModelKeyRename) copyAndSwitch(ctx context.Context, tx ModelKeyRenameTx,
 			return fmt.Errorf("%w: read the default-key row: %w", errLegacyRefKept, err), nil
 		}
 		if recorded == name {
-			return nil, nil
+			return r.consumersOnCurrent(ctx, ocOrgID, row), nil
 		}
 		// A name neither copy has: the old copies may be what it points at, so
 		// they stay until someone looks.
@@ -257,9 +258,13 @@ func (r *ModelKeyRename) copyAndSwitch(ctx context.Context, tx ModelKeyRenameTx,
 	// The new copy is a default-key write whose repoint switches the row onto
 	// it. Its Retire is never run: the Anthropic-era copy goes in step 2, once
 	// no cycle of the org is open.
-	var switchErr error
+	var (
+		switchErr error
+		switched  SecretRefTriplet
+	)
 	written, err := r.writer.WriteModelKey(ctx, ocOrgID, string(key), legacyModelKeyRefName, func(ref SecretRefTriplet) error {
 		switchErr = tx.SwitchSecretRef(ocOrgID, legacyModelKeyRefName, ref)
+		switched = ref
 		return switchErr
 	})
 	if switchErr != nil {
@@ -270,7 +275,28 @@ func (r *ModelKeyRename) copyAndSwitch(ctx context.Context, tx ModelKeyRenameTx,
 	}
 	slog.InfoContext(ctx, "model key rename: connection key moved to its new SM-API copy",
 		"ocOrgId", ocOrgID, "secretRefName", written.Name)
+	if err := r.writer.repointModelKeyConsumers(ctx, ocOrgID, switched); err != nil {
+		return fmt.Errorf("%w: %w", errConsumerNotRepointed, err), nil
+	}
 	return nil, nil
+}
+
+// errConsumerNotRepointed: a path consumer of the key (the ai-agent model
+// access) may still read the Anthropic-era copy, so the old copies stay.
+var errConsumerNotRepointed = errors.New("the ai-agent model access may still read the Anthropic-era copy")
+
+// consumersOnCurrent moves the key's path consumers onto the reference the
+// row names, so retiring the old copies cannot strand one; kept (non-nil)
+// when that is not done.
+func (r *ModelKeyRename) consumersOnCurrent(ctx context.Context, ocOrgID string, row *OrgModelConnection) error {
+	ref, err := tripletOf(row.SecretRefName, row.SecretRefKVPath, row.SecretRefProperty)
+	if err != nil {
+		return fmt.Errorf("%w: the row names no complete reference yet (%w)", errConsumerNotRepointed, err)
+	}
+	if err := r.writer.repointModelKeyConsumers(ctx, ocOrgID, ref); err != nil {
+		return fmt.Errorf("%w: %w", errConsumerNotRepointed, err)
+	}
+	return nil
 }
 
 // retireLegacy is step 2 of the file doc, after commit.

@@ -249,19 +249,7 @@ func (s *componentService) ampTracingEnvVars(ctx context.Context, ocOrgID, compo
 // them is where CRs live.
 func (s *componentService) upsertModelAccessSecretReference(ctx context.Context, ocOrgID string, triplet organization.SecretRefTriplet) error {
 	orgNS := ocOrgID
-	req := secretmanagersvc.CreateSecretReferenceRequest{
-		Namespace: orgNS,
-		Name:      modelAccessSecretRefName,
-		KVPath:    triplet.KVPath,
-		// SecretKeys is deliberately [triplet.Property] rather than
-		// ["MODEL_API_KEY"]: buildSecretReferenceBody sets the resulting
-		// SecretReference's remoteRef.property to the SAME string as its
-		// secretKey, so this must be the real vault property name. The env
-		// var's own name ("MODEL_API_KEY") is decoupled from this — it is
-		// set separately, in directModelEnvVars' WorkflowSecretKeyRef.Key.
-		SecretKeys:      []string{triplet.Property},
-		RefreshInterval: modelAccessSecretRefRefresh,
-	}
+	req := modelAccessSecretReferenceRequest(orgNS, triplet)
 
 	_, getErr := s.secretRefClient.GetSecretReference(ctx, orgNS, modelAccessSecretRefName)
 	if getErr == nil {
@@ -285,6 +273,63 @@ func (s *componentService) upsertModelAccessSecretReference(ctx context.Context,
 		}
 		return fmt.Errorf("create model-access SecretReference: %w", err)
 	}
+	return nil
+}
+
+// modelAccessSecretReferenceRequest is the org's ai-agent-model-access
+// SecretReference pointing at triplet's vault path, in the org's
+// control-plane namespace orgNS.
+func modelAccessSecretReferenceRequest(orgNS string, triplet organization.SecretRefTriplet) secretmanagersvc.CreateSecretReferenceRequest {
+	return secretmanagersvc.CreateSecretReferenceRequest{
+		Namespace: orgNS,
+		Name:      modelAccessSecretRefName,
+		KVPath:    triplet.KVPath,
+		// SecretKeys is deliberately [triplet.Property] rather than
+		// ["MODEL_API_KEY"]: buildSecretReferenceBody sets the resulting
+		// SecretReference's remoteRef.property to the SAME string as its
+		// secretKey, so this must be the real vault property name. The env
+		// var's own name ("MODEL_API_KEY") is decoupled from this — it is
+		// set separately, in directModelEnvVars' WorkflowSecretKeyRef.Key.
+		SecretKeys:      []string{triplet.Property},
+		RefreshInterval: modelAccessSecretRefRefresh,
+	}
+}
+
+// ModelAccessRepointer keeps the org's ai-agent-model-access SecretReference
+// on the connection key's current reference (organization.ModelKeyConsumers).
+// Each Default key save is a new vault path and the previous one is deleted
+// after the save, so the deployed direct agents' reference must move with it;
+// ESO's refresh then delivers the new key without a redeploy. An org with no
+// such reference (no direct agent deployed) is left alone: the next deploy
+// creates it from the current triplet (upsertModelAccessSecretReference).
+type ModelAccessRepointer struct {
+	refs secretmanagersvc.OpenChoreoSecretReferenceClient
+}
+
+var _ organization.ModelKeyConsumers = (*ModelAccessRepointer)(nil)
+
+// NewModelAccessRepointer repoints through refs; a nil refs repoints nothing.
+func NewModelAccessRepointer(refs secretmanagersvc.OpenChoreoSecretReferenceClient) *ModelAccessRepointer {
+	return &ModelAccessRepointer{refs: refs}
+}
+
+// RepointModelKey points the org's reference at ref's vault path, when it
+// exists.
+func (r *ModelAccessRepointer) RepointModelKey(ctx context.Context, ocOrgID string, ref organization.SecretRefTriplet) error {
+	if r == nil || r.refs == nil {
+		return nil
+	}
+	orgNS := ocOrgID
+	if _, err := r.refs.GetSecretReference(ctx, orgNS, modelAccessSecretRefName); err != nil {
+		if errors.Is(err, secretmanagersvc.ErrNotFound) {
+			return nil
+		}
+		return fmt.Errorf("check model-access SecretReference: %w", err)
+	}
+	if _, err := r.refs.UpdateSecretReference(ctx, orgNS, modelAccessSecretRefName, modelAccessSecretReferenceRequest(orgNS, ref)); err != nil {
+		return fmt.Errorf("repoint model-access SecretReference: %w", err)
+	}
+	slog.InfoContext(ctx, "model access: ai-agent model access repointed", "org", ocOrgID, "vaultKey", ref.KVPath)
 	return nil
 }
 

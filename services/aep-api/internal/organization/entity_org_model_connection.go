@@ -27,7 +27,9 @@ const (
 	// modelKeyStoreKey is the `org_secrets` key holding the connection key's
 	// encrypted bytes.
 	modelKeyStoreKey = "model/key"
-	// modelKeySecretEntity is the SM-API EntityName the key mirrors under.
+	// modelKeySecretEntity is the entity of the key's pre-phase-1 SM-API copy:
+	// its deterministic reference name (modelKeyRefName) is how a row still
+	// naming that copy is recognized. New copies are default-key references.
 	modelKeySecretEntity = "model-connection"
 )
 

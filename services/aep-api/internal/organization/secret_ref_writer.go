@@ -25,6 +25,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
@@ -63,6 +65,36 @@ type SecretRefWriter struct {
 	// orgSecrets writes the org secrets (the GitHub PAT, the two org
 	// clients) as a new reference per write; see OrgSecretWriter.
 	orgSecrets *OrgSecretWriter
+	// modelKeyConsumers are what read the connection key by its vault path
+	// (ModelKeyConsumers); nil: none to repoint.
+	modelKeyConsumers ModelKeyConsumers
+}
+
+// ModelKeyConsumers repoints what reads the connection key by a vault path
+// it was handed once, rather than through the triplet at each dispatch: the
+// org's ai-agent-model-access SecretReference behind direct (ungoverned)
+// ai-agent components, which ESO refreshes from that path. Each Default key
+// write is a new reference, so these must move onto it before the previous
+// one is retired. A consumer that does not exist (no direct agent deployed)
+// is a no-op. Implemented by projects.ModelAccessRepointer.
+type ModelKeyConsumers interface {
+	RepointModelKey(ctx context.Context, ocOrgID string, ref SecretRefTriplet) error
+}
+
+// WithModelKeyConsumers attaches the consumers a Default key write repoints;
+// chainable.
+func (w *SecretRefWriter) WithModelKeyConsumers(c ModelKeyConsumers) *SecretRefWriter {
+	w.modelKeyConsumers = c
+	return w
+}
+
+// repointModelKeyConsumers moves the connection key's path consumers onto
+// ref; nothing to do without any.
+func (w *SecretRefWriter) repointModelKeyConsumers(ctx context.Context, ocOrgID string, ref SecretRefTriplet) error {
+	if w.modelKeyConsumers == nil {
+		return nil
+	}
+	return w.modelKeyConsumers.RepointModelKey(ctx, ocOrgID, ref)
 }
 
 // NewSecretRefWriter returns a no-op writer when client is nil (matches the
@@ -585,11 +617,16 @@ func (w *SecretRefWriter) OrgCatalogVaultKey(ctx context.Context, ocOrgID, entit
 // SecretLocation.OrgName. The vault KV path hashes OrgName via
 // tenant.OrgBaseNamespace; SecretReference CRs are authored into
 // ControlPlaneNamespace (the OC org handle, e.g. "default") so
-// ReleaseBinding collect can find them.
+// ReleaseBinding collect can find them. A UUID ouId is returned in its
+// canonical form: the hash is case-sensitive, so one OU must not land under
+// two namespaces depending on how a token spelled it.
 func orgUUIDForSecretLocation(ctx context.Context) (string, error) {
 	claims := jwtassertion.GetTokenClaims(ctx)
 	if claims == nil || strings.TrimSpace(claims.OuId) == "" {
 		return "", errors.New("no ouId claim in JWT context")
+	}
+	if id, err := uuid.Parse(claims.OuId); err == nil {
+		return id.String(), nil
 	}
 	return claims.OuId, nil
 }

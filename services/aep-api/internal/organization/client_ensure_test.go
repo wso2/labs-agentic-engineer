@@ -108,6 +108,7 @@ type ensureVault struct {
 
 type ensureWrite struct {
 	entity string
+	ou     string
 	data   map[string]string
 }
 
@@ -118,7 +119,7 @@ func (v *ensureVault) CreateSecretRef(_ context.Context, loc secretmanagersvc.Se
 	}
 	v.n++
 	name := fmt.Sprintf("%s-%s-%08x", loc.ControlPlaneNamespace, loc.EntityName, v.n)
-	v.writes = append(v.writes, ensureWrite{entity: loc.EntityName, data: maps.Clone(data)})
+	v.writes = append(v.writes, ensureWrite{entity: loc.EntityName, ou: loc.OrgName, data: maps.Clone(data)})
 	v.refs[name] = true
 	return name, nil
 }
@@ -416,6 +417,16 @@ func TestEnsureClient_OUComparedAsUUIDs(t *testing.T) {
 	for _, kind := range []ClientKind{ClientPublisher, ClientStudio} {
 		if err := f.svc.EnsureClient(upper, "default", kind); err != nil {
 			t.Fatalf("%s: %v, want the uppercase ouId to match the org's OU", kind, err)
+		}
+	}
+	// The vault path namespace hashes the OU, so it is derived from the
+	// canonical form, never the claim's case.
+	if len(f.vault.writes) != 2 {
+		t.Fatalf("writes = %+v, want both clients stored", f.vault.writes)
+	}
+	for _, w := range f.vault.writes {
+		if w.ou != ensureOU.String() {
+			t.Fatalf("%s written under OU %q, want the canonical %q", w.entity, w.ou, ensureOU.String())
 		}
 	}
 }

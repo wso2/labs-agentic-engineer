@@ -81,13 +81,6 @@ func (r AnthropicRole) SecretStoreKey() string {
 	return "anthropic/" + string(r) + "-key"
 }
 
-// SecretRefEntity is the SM-API `EntityName` this role mirrors under. Distinct
-// from the connection key's modelKeySecretEntity so the key and the
-// subscription token never share a vault path.
-func (r AnthropicRole) SecretRefEntity() string {
-	return "anthropic-" + string(r)
-}
-
 // OrgAnthropicCredential is the per-org Claude subscription metadata row. The encrypted key bytes themselves live in
 // `org_secrets(oc_org_id, key=Role.SecretStoreKey())` alongside the GitHub PAT
 // — same `dbStore` (Postgres + AES-256-GCM) plumbing, different `key` value.

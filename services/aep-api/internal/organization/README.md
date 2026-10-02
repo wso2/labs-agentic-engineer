@@ -108,7 +108,11 @@ S2S credentials-refresh.*
     two saves' copies land in save order and a stored key never sits beside another host's row. A
     saved connection key is a new `default-key` reference and a saved subscription token a new
     `coding-agent-key` one (`OrgSecretWriter.Write`), each row's triplet stamped inside that
-    transaction; the previous reference is retired only after it commits. A save that writes a key
+    transaction; the previous reference is retired only after it commits. A Default key write
+    also repoints the key's path consumers (`ModelKeyConsumers`: the org's `ai-agent-model-access`
+    SecretReference behind direct ai-agent components, implemented in `projects`) under the card's
+    lock; while that fails the previous reference is kept, and the rename keeps the Anthropic-era
+    copies until the consumers read the row's current reference. A save that writes a key
     clears the row's triplet (a save that keeps the key keeps it), so a failed write fails dispatch
     closed instead of mounting the previous key. A deleted credential's row and reference are removed
     unless a credential saved since replaced them (its own write retires the old one); a pre-phase-1
