@@ -239,3 +239,53 @@ For AI generation, connect a model on the **AI agents** card under **Settings â†
 ```bash
 k3d cluster delete openchoreo       # destroy cluster (loses all OC state)
 ```
+
+## Local OpenBao wipe recovery
+
+The local OpenBao (OpenChoreo's dev-mode instance) is in-memory: a pod restart
+or `colima`/cluster reset wipes it. Everything else survives, including the
+ESO-synced Kubernetes Secrets, which keep their last synced value until ESO
+next syncs (refresh interval 1h). Verify that on your cluster before relying
+on it: if a Secret is already blank, recover the value from another copy. `aectl platform sync-clients` detects the wipe (a
+non-generated `aep/*` path is gone) and refuses.
+
+**Do NOT run `make dev-env`, `aectl platform install` or `--reuse-secrets`.**
+`install` regenerates and overwrites every `aep/*` key (only Postgres is
+rescued), which rotates secrets under the running platform. Never write a value
+with `value=-` over `kubectl exec -i`: it intermittently stores an empty value.
+Never print values; compare lengths or hashes, not key names.
+
+1. **Re-import each `aep/*` key from the Secret it feeds.** Write through the
+   OpenBao HTTP API (port-forward, a token from the Kubernetes-auth login the
+   aectl code uses, `curl -d @file` with a 0600 file you delete afterwards) or
+   inside the pod with `bao kv put secret/<path> value=@file`. Each key is
+   `{"data":{"value": ...}}` at `secret/data/<path>`:
+
+   | Vault path | Secret (namespace `wso2-aep`) | Key |
+   |---|---|---|
+   | `aep/thunder-admin/client-id`, `.../client-secret` | `aep-thunder-admin-creds` | `client-id`, `client-secret` |
+   | `aep/agents-jwt-secret` | `aep-agents-secrets` | `AGENTS_JWT_SECRET` |
+   | `aep/webhook-secret` | `aep-webhook-secrets` | `GITHUB_WEBHOOK_SECRET` |
+   | `aep/openbao-token` | `aep-openbao-secrets` | `OPENBAO_TOKEN` |
+   | `aep/postgres-password` | `postgres-secrets` | `POSTGRES_PASSWORD` |
+   | `aep/task-signing-key` | `aep-task-signing-key` | `task-signing.pem` |
+   | `aep/thunder-clients/<name>` | `aep-thunder-secrets` (and `aep-ae-studio-internal-secrets` for `ae-studio-internal`) | `OC_WORKLOAD_PUBLISHER_SECRET`, `OC_OBSERVER_READER_SECRET`, `AEP_API_CLIENT_SECRET`, `BFF_TO_GIT_SERVICE_SECRET`, `BFF_TO_REMOTE_WORKER_SECRET`, `LOCAL_DEV_SEEDER_SECRET`, `THUNDER_SYSTEM_CLIENT_SECRET`, `OC_RCA_AGENT_SECRET`, `AE_STUDIO_INTERNAL_CLIENT_SECRET` (for `oc-workload-publisher`, `oc-observer-reader`, `aep-api-client`, `bff-git-service`, `bff-remote-worker`, `local-dev-seeder`, `system-client`, `openchoreo-rca-agent`, `ae-studio-internal`, in that order) |
+   | `aep/aep-mcp-token` | `aep-sre-handoff-secrets` | `SRE_HANDOFF_TOKEN` |
+
+   `aep/anthropic-api-key`, `aep/opensearch-username` and `aep/opensearch-password`
+   have no ESO target Secret; re-enter them from where you hold them (the
+   OpenSearch pair is in the observability plane's own Secret, if installed).
+   Thunder client keys may be left out: step 5's `sync-clients` creates them
+   create-only, but only after every non-generated path above is back.
+2. **Verify** each written key by length (or sha256) against the Secret it came
+   from.
+3. **Org publisher secrets.** Restore each org's
+   `user-app-secrets/<org>/publisher-secrets` from a surviving runner or pod
+   Secret, if one exists.
+4. **Vault-only org secrets.** `github-webhook-secret` and `ae-studio-client`
+   have no surviving copy: delete those `org_secrets` rows and re-submit the
+   GitHub token in Settings, which regenerates them. Re-save the model key and
+   the Claude token in Settings.
+5. **Sync.** Force-sync the ExternalSecrets
+   (`kubectl annotate externalsecret <name> -n wso2-aep force-sync=$(date +%s) --overwrite`)
+   and run `aectl platform sync-clients`.

@@ -19,6 +19,8 @@ package cmd
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -158,5 +160,24 @@ func TestAwaitSeededSecretsSynced(t *testing.T) {
 	}
 	if skip := awaitSeededSecretsSynced(context.Background(), fake.NewSimpleClientset(), "ns", seeded, 10*time.Millisecond); len(skip) != 1 {
 		t.Fatalf("missing Secret must be skipped: %v", skip)
+	}
+}
+
+// Only 200 is present and 404 missing; anything else fails closed.
+func TestPathExists_FailsClosed(t *testing.T) {
+	for status, want := range map[int]struct {
+		ok  bool
+		err bool
+	}{200: {true, false}, 404: {false, false}, 403: {false, true}, 500: {false, true}} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(`{"errors":["denied"]}`))
+		}))
+		s := &openBaoSession{baseURL: srv.URL, token: "t"}
+		ok, err := s.pathExists(context.Background(), "aep/x")
+		srv.Close()
+		if ok != want.ok || (err != nil) != want.err {
+			t.Errorf("status %d: ok=%v err=%v", status, ok, err)
+		}
 	}
 }

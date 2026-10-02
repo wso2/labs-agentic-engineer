@@ -926,8 +926,7 @@ func openOpenBaoSession(ctx context.Context) (*openBaoSession, error) {
 // itself refuses to overwrite an existing key.
 func (s *openBaoSession) seedMissingThunderClientSecrets(ctx context.Context) ([]seededSecret, error) {
 	exists := func(path string) (bool, error) {
-		_, status, err := openbao.Req(ctx, "GET", s.baseURL, s.token, "/v1/secret/data/"+path, nil)
-		return status != 404, err
+		return s.pathExists(ctx, path)
 	}
 	put := func(path, value string) error {
 		result, status, err := openbao.Req(ctx, "PUT", s.baseURL, s.token, "/v1/secret/data/"+path, map[string]interface{}{
@@ -937,11 +936,16 @@ func (s *openBaoSession) seedMissingThunderClientSecrets(ctx context.Context) ([
 		if err != nil {
 			return err
 		}
+		// A cas-0 conflict means another writer created the key between our
+		// existence check and this write. We keep theirs and do NOT wait for it
+		// to reach the cluster Secret: it was not seeded by us, so the caller
+		// has no value to verify against.
 		if status == 400 && strings.Contains(fmt.Sprint(result), "check-and-set") {
 			return errSecretExists
 		}
 		if status >= 300 {
-			return fmt.Errorf("OpenBao PUT %s returned %d", path, status)
+			// Status and the store's error field only; never the request body.
+			return fmt.Errorf("OpenBao PUT %s returned %d: %v", path, status, result["errors"])
 		}
 		return nil
 	}
@@ -991,15 +995,32 @@ var requiredOpenBaoPaths = []string{
 func (s *openBaoSession) missingRequiredPaths(ctx context.Context) ([]string, error) {
 	var missing []string
 	for _, path := range requiredOpenBaoPaths {
-		_, status, err := openbao.Req(ctx, "GET", s.baseURL, s.token, "/v1/secret/data/"+path, nil)
+		ok, err := s.pathExists(ctx, path)
 		if err != nil {
-			return nil, fmt.Errorf("check secret %s: %w", path, err)
+			return nil, err
 		}
-		if status == 404 {
+		if !ok {
 			missing = append(missing, path)
 		}
 	}
 	return missing, nil
+}
+
+// pathExists is true on 200 and false on 404. Any other status (403, 5xx,
+// a sealed store) is an error: guessing "missing" would let a seed or a wipe
+// verdict stand on a failed read, so this fails closed.
+func (s *openBaoSession) pathExists(ctx context.Context, path string) (bool, error) {
+	result, status, err := openbao.Req(ctx, "GET", s.baseURL, s.token, "/v1/secret/data/"+path, nil)
+	if err != nil {
+		return false, fmt.Errorf("check secret %s: %w", path, err)
+	}
+	switch status {
+	case 200:
+		return true, nil
+	case 404:
+		return false, nil
+	}
+	return false, fmt.Errorf("check secret %s: OpenBao returned %d: %v", path, status, result["errors"])
 }
 
 // generatedThunderClientNames are the Thunder clients whose secret aectl

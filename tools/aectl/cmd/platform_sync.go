@@ -43,7 +43,8 @@ var syncClientsCmd = &cobra.Command{
 this aectl knows about, without a full install:
 
   0. Refuses, writing nothing, if OpenBao lacks any non-generated platform
-     secret (a wiped store needs a full install, not a top-up).
+     secret (a wiped store needs the manual "Local OpenBao wipe recovery" in
+     deployments/README.md; never a full install, which overwrites every key).
   1. Writes only the MISSING generated aep/thunder-clients/* keys to OpenBao
      (create-only). Existing keys are never rotated, and no database or
      Thunder admin secret is touched.
@@ -83,7 +84,7 @@ type syncClientsSteps struct {
 // seeding fresh generated keys then would rotate every client secret behind
 // the cluster Secrets' back, so nothing is written.
 func errOpenBaoWiped(missing []string) error {
-	return fmt.Errorf("OpenBao is missing %d platform secret(s) (%s): it looks wiped or never installed, so seeding fresh Thunder client secrets would rotate them out from under the running platform.\nNothing was written. Recover with a full 'aectl platform install' (see deployments/README.md), not sync-clients",
+	return fmt.Errorf("OpenBao is missing %d platform secret(s) (%s): it looks wiped or never installed, so seeding fresh Thunder client secrets would rotate them out from under the running platform.\nNothing was written. Do NOT run a full 'aectl platform install' or 'make dev-env': they regenerate and overwrite every aep/* key. Follow the section titled Local OpenBao wipe recovery in deployments/README.md, then re-run sync-clients",
 		len(missing), strings.Join(missing, ", "))
 }
 
