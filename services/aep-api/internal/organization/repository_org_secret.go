@@ -154,3 +154,51 @@ func (r *orgSecretRepository) Delete(ctx context.Context, ocOrgID string, s OrgS
 	}
 	return nil
 }
+
+// OrgSecretLock serializes the writes of one org secret, so a write's whole
+// sequence (read row → new reference → row → repoint → retire) never
+// interleaves with another write or removal of the same (org, secret).
+type OrgSecretLock interface {
+	// Lock blocks until the lock of (ocOrgID, s) is held or ctx is done, and
+	// returns the release. The release is safe to call once, from a defer.
+	Lock(ctx context.Context, ocOrgID string, s OrgSecret) (unlock func(), err error)
+}
+
+type orgSecretLock struct {
+	db *gorm.DB
+}
+
+// NewOrgSecretLock returns the Postgres advisory-lock OrgSecretLock.
+//
+//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
+func NewOrgSecretLock(db *gorm.DB) OrgSecretLock {
+	return &orgSecretLock{db: db}
+}
+
+// orgSecretLockKey names the advisory lock of one org secret. A hash
+// collision with another key only serializes two unrelated writes.
+//
+//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
+func orgSecretLockKey(ocOrgID string, s OrgSecret) string {
+	return "org_secret:" + ocOrgID + "/" + string(s)
+}
+
+// Lock holds pg_advisory_xact_lock in a transaction pinned to one pooled
+// connection; releasing rolls the transaction back, which drops the lock
+// (as does the server if the connection dies). The transaction ignores ctx
+// cancellation once the lock is held, so a cancelled request cannot drop
+// the lock while its write is still running; only the wait is bounded by
+// ctx.
+//
+//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
+func (l *orgSecretLock) Lock(ctx context.Context, ocOrgID string, s OrgSecret) (func(), error) {
+	tx := l.db.WithContext(context.WithoutCancel(ctx)).Begin()
+	if tx.Error != nil {
+		return nil, fmt.Errorf("org secret %s: lock: %w", s, tx.Error)
+	}
+	if err := tx.WithContext(ctx).Exec(`SELECT pg_advisory_xact_lock(hashtextextended(?, 0))`, orgSecretLockKey(ocOrgID, s)).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("org secret %s: lock: %w", s, err)
+	}
+	return func() { tx.Rollback() }, nil
+}

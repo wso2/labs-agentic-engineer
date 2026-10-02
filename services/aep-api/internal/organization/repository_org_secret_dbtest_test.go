@@ -22,6 +22,7 @@ package organization_test
 // writes that make concurrent writers of one secret lose instead of clobber.
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"testing"
@@ -137,4 +138,57 @@ func TestRepository_CompareAndSwap(t *testing.T) {
 	}
 	conflict("delete a value-only row", repo.Delete(ctx, "legacy", dk, "x"))
 	conflict("insert over a value-only row", repo.Upsert(ctx, "legacy", ref("Y"), ""))
+}
+
+// The advisory lock: a second holder of one (org, secret) waits (bounded by
+// its context) until the first releases; other secrets and orgs never wait.
+func TestOrgSecretLock_SerializesOneSecret(t *testing.T) {
+	db := dbtest.New(t)
+	lock := organization.NewOrgSecretLock(db)
+	dk := organization.OrgSecretDefaultKey
+
+	unlock, err := lock.Lock(ctx, "default", dk)
+	if err != nil {
+		t.Fatalf("first lock: %v", err)
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	if _, err := lock.Lock(waitCtx, "default", dk); err == nil {
+		t.Fatal("a second holder of the same secret must wait")
+	}
+	for _, other := range []struct {
+		org string
+		s   organization.OrgSecret
+	}{{"default", organization.OrgSecretGitHubPAT}, {"other", dk}} {
+		u, err := lock.Lock(ctx, other.org, other.s)
+		if err != nil {
+			t.Fatalf("lock %s/%s: %v", other.org, other.s, err)
+		}
+		u()
+	}
+
+	acquired := make(chan func(), 1)
+	go func() {
+		u, err := lock.Lock(ctx, "default", dk)
+		if err != nil {
+			t.Errorf("waiting lock: %v", err)
+			close(acquired)
+			return
+		}
+		acquired <- u
+	}()
+	select {
+	case <-acquired:
+		t.Fatal("acquired while the first holder still held it")
+	case <-time.After(200 * time.Millisecond):
+	}
+	unlock()
+	select {
+	case u, ok := <-acquired:
+		if ok {
+			u()
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the waiter never acquired the lock after the release")
+	}
 }

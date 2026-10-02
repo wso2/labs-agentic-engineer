@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -182,8 +183,45 @@ func (r *fakeRepo) Delete(_ context.Context, org string, s organization.OrgSecre
 	return nil
 }
 
+// fakeLock is a per-key mutex, so concurrent writers really serialize.
+type fakeLock struct {
+	mu   sync.Mutex
+	keys map[string]*sync.Mutex
+	err  error
+	on   func(event string) // "lock" / "unlock", called while held
+}
+
+func newFakeLock() *fakeLock { return &fakeLock{keys: map[string]*sync.Mutex{}} }
+
+func (l *fakeLock) Lock(_ context.Context, org string, s organization.OrgSecret) (func(), error) {
+	if l.err != nil {
+		return nil, l.err
+	}
+	l.mu.Lock()
+	m, ok := l.keys[rowKey(org, s)]
+	if !ok {
+		m = &sync.Mutex{}
+		l.keys[rowKey(org, s)] = m
+	}
+	l.mu.Unlock()
+	m.Lock()
+	if l.on != nil {
+		l.on("lock")
+	}
+	return func() {
+		if l.on != nil {
+			l.on("unlock")
+		}
+		m.Unlock()
+	}, nil
+}
+
+func newWriter(v *fakeVault, repo *fakeRepo) *organization.OrgSecretWriter {
+	return organization.NewOrgSecretWriter(v, repo, newFakeLock(), fixedClock)
+}
+
 func writeAndRetire(v *fakeVault, repo *fakeRepo, s organization.OrgSecret, data map[string]string, legacyOld string, repoint func(string) error) (string, error) {
-	return organization.NewOrgSecretWriter(v, repo, fixedClock).WriteAndRetire(ctx, "default", "ou-1", s, data, legacyOld, repoint)
+	return newWriter(v, repo).WriteAndRetire(ctx, "default", "ou-1", s, data, legacyOld, repoint)
 }
 
 var (
@@ -221,7 +259,7 @@ func TestWriter_OrderAndOldDeletedByName(t *testing.T) {
 func TestWriter_OldSurvivesUntilRetire(t *testing.T) {
 	v, repo := newFakeVault("old"), newFakeRepo()
 	repo.set("default", organization.OrgSecretDefaultKey, "old")
-	written, err := organization.NewOrgSecretWriter(v, repo, fixedClock).Write(ctx, "default", "ou-1", organization.OrgSecretDefaultKey, key, "", noop)
+	written, err := newWriter(v, repo).Write(ctx, "default", "ou-1", organization.OrgSecretDefaultKey, key, "", noop)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +274,7 @@ func TestWriter_OldSurvivesUntilRetire(t *testing.T) {
 
 func TestWriter_LocationIsOrgNamespaceAndOU(t *testing.T) {
 	v, repo := newFakeVault(), newFakeRepo()
-	if _, err := organization.NewOrgSecretWriter(v, repo, fixedClock).WriteAndRetire(ctx, "acme", "ou-1", organization.OrgSecretDefaultKey, key, "", noop); err != nil {
+	if _, err := newWriter(v, repo).WriteAndRetire(ctx, "acme", "ou-1", organization.OrgSecretDefaultKey, key, "", noop); err != nil {
 		t.Fatal(err)
 	}
 	want := secretmanagersvc.SecretLocation{OrgName: "ou-1", ControlPlaneNamespace: "acme", EntityName: "default-key"}
@@ -288,7 +326,10 @@ func TestWriter_FailedStampOnFirstWriteLeavesNoRow(t *testing.T) {
 	}
 }
 
-func TestWriter_FailedUpsertDeletesNewKeepsOld(t *testing.T) {
+// An upsert that failed without telling whether it committed, and whose
+// row restore finds nothing to move: the old row stays and the new
+// reference is kept (an orphan in the log), never repointed to.
+func TestWriter_FailedUpsertKeepsOldRow(t *testing.T) {
 	v, repo := newFakeVault("old"), newFakeRepo()
 	repo.set("default", organization.OrgSecretDefaultKey, "old")
 	repo.upsertErr = errors.New("db down")
@@ -300,8 +341,8 @@ func TestWriter_FailedUpsertDeletesNewKeepsOld(t *testing.T) {
 	if err == nil || repointed {
 		t.Fatalf("err=%v repointed=%v: want error, no repoint", err, repointed)
 	}
-	if repo.name("default", organization.OrgSecretDefaultKey) != "old" || !slices.Equal(v.live(), []string{"old"}) {
-		t.Fatalf("row=%v live=%v", repo.rows, v.live())
+	if repo.name("default", organization.OrgSecretDefaultKey) != "old" || slices.Contains(v.deleted, "old") || len(v.live()) != 2 {
+		t.Fatalf("row=%v deleted=%v live=%v: old row and reference kept, new reference kept", repo.rows, v.deleted, v.live())
 	}
 }
 
@@ -355,13 +396,15 @@ func TestWriter_ConcurrentWriterFirstToTheRowWins(t *testing.T) {
 	}
 }
 
-// This write records N1, then while it repoints another writer replaces N1
-// with N3. When this repoint fails, the rollback must not put P back over
-// N3 (P is the reference the review found re-instated after deletion).
-func TestWriter_RollbackLeavesALaterWritersRow(t *testing.T) {
+// A row moved off the new reference by something outside the lock: the
+// rollback must neither put P back over it nor delete the new reference
+// (whether anything reads it is unknown), so N1 is kept as a logged orphan.
+func TestWriter_ConflictingRestoreKeepsNewReference(t *testing.T) {
 	v, repo := newFakeVault("P"), newFakeRepo()
 	repo.set("default", organization.OrgSecretDefaultKey, "P")
-	_, err := writeAndRetire(v, repo, organization.OrgSecretDefaultKey, key, "", func(string) error {
+	var n1 string
+	_, err := writeAndRetire(v, repo, organization.OrgSecretDefaultKey, key, "", func(n string) error {
+		n1 = n
 		v.refs["N3"] = true
 		repo.set("default", organization.OrgSecretDefaultKey, "N3")
 		return errStamp
@@ -370,10 +413,143 @@ func TestWriter_RollbackLeavesALaterWritersRow(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	if got := repo.name("default", organization.OrgSecretDefaultKey); got != "N3" {
-		t.Fatalf("row names %q, want the later writer's N3", got)
+		t.Fatalf("row names %q, want N3 left alone", got)
 	}
-	if !v.refs["N3"] || slices.Contains(v.deleted, "N3") || slices.Contains(v.deleted, "P") {
-		t.Fatalf("deleted=%v live=%v: only this write's own reference may go", v.deleted, v.live())
+	if want := []string{"N3", "P", n1}; !slices.Equal(v.live(), slices.Sorted(slices.Values(want))) || len(v.deleted) != 0 {
+		t.Fatalf("deleted=%v live=%v: nothing may be deleted when the restore conflicts", v.deleted, v.live())
+	}
+}
+
+// Two writes of one secret: the second waits for the first's whole sequence
+// (row, failed repoint, rollback) before it reads the row, so the row always
+// names a live reference and consumers are never repointed out of order.
+func TestWriter_ConcurrentWritesSerialize(t *testing.T) {
+	v, repo := newFakeVault("P"), newFakeRepo()
+	repo.set("default", organization.OrgSecretDefaultKey, "P")
+	w := organization.NewOrgSecretWriter(v, repo, newFakeLock(), fixedClock)
+	type result struct {
+		name string
+		err  error
+	}
+	second := make(chan result, 1)
+	var repoints []string
+	var n1 string
+	_, err := w.WriteAndRetire(ctx, "default", "ou-1", organization.OrgSecretDefaultKey, key, "", func(n string) error {
+		n1 = n
+		repoints = append(repoints, n)
+		go func() {
+			name, err := w.WriteAndRetire(ctx, "default", "ou-1", organization.OrgSecretDefaultKey, key, "", func(n string) error {
+				repoints = append(repoints, n)
+				return nil
+			})
+			second <- result{name, err}
+		}()
+		select {
+		case <-second:
+			t.Fatal("the second write ran while the first held the lock")
+		case <-time.After(50 * time.Millisecond):
+		}
+		return errStamp
+	})
+	if !errors.Is(err, errStamp) {
+		t.Fatalf("first write: err = %v", err)
+	}
+	r := <-second
+	if r.err != nil {
+		t.Fatalf("second write: %v", r.err)
+	}
+	if !slices.Equal(repoints, []string{n1, r.name}) {
+		t.Fatalf("repoints %v, want the first write's then the second's", repoints)
+	}
+	if repo.name("default", organization.OrgSecretDefaultKey) != r.name || !slices.Equal(v.live(), []string{r.name}) {
+		t.Fatalf("row=%v live=%v: the row must name the one live reference", repo.rows, v.live())
+	}
+}
+
+// A removal racing a write waits for it too, and then removes what the row
+// names after the write's rollback.
+func TestWriter_RemoveWaitsForAWrite(t *testing.T) {
+	v, repo := newFakeVault("P"), newFakeRepo()
+	repo.set("default", organization.OrgSecretDefaultKey, "P")
+	w := organization.NewOrgSecretWriter(v, repo, newFakeLock(), fixedClock)
+	removed := make(chan error, 1)
+	_, err := w.WriteAndRetire(ctx, "default", "ou-1", organization.OrgSecretDefaultKey, key, "", func(string) error {
+		go func() { removed <- w.Remove(ctx, "default", "ou-1", organization.OrgSecretDefaultKey, nil) }()
+		select {
+		case <-removed:
+			t.Fatal("the removal ran while the write held the lock")
+		case <-time.After(50 * time.Millisecond):
+		}
+		return errStamp
+	})
+	if !errors.Is(err, errStamp) {
+		t.Fatalf("write: err = %v", err)
+	}
+	if err := <-removed; err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if len(repo.rows) != 0 || len(v.live()) != 0 {
+		t.Fatalf("rows=%v live=%v, want the secret gone and no reference left", repo.rows, v.live())
+	}
+}
+
+func TestWriter_LockHeldFromReadThroughRetire(t *testing.T) {
+	v, repo := newFakeVault("old"), newFakeRepo()
+	repo.set("default", organization.OrgSecretDefaultKey, "old")
+	lock := newFakeLock()
+	var order []string
+	lock.on = func(e string) { order = append(order, e) }
+	v.onCreate = func(string) { order = append(order, "create") }
+	v.onDelete = func(n string) { order = append(order, "delete:"+n) }
+	repo.onUpsert = func(organization.OrgSecretRef) { order = append(order, "upsert") }
+	w := organization.NewOrgSecretWriter(v, repo, lock, fixedClock)
+	if _, err := w.WriteAndRetire(ctx, "default", "ou-1", organization.OrgSecretDefaultKey, key, "", func(string) error {
+		order = append(order, "repoint")
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"lock", "create", "upsert", "repoint", "delete:old", "unlock"}; !slices.Equal(order, want) {
+		t.Fatalf("order %v, want %v", order, want)
+	}
+	order = nil
+	first := repo.name("default", organization.OrgSecretDefaultKey)
+	written, err := w.Write(ctx, "default", "ou-1", organization.OrgSecretDefaultKey, key, "", noop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	written.Retire(ctx)
+	if want := []string{"lock", "create", "upsert", "unlock", "delete:" + first}; !slices.Equal(order, want) {
+		t.Fatalf("order %v, want %v: Write releases the lock, the caller retires after its commit", order, want)
+	}
+}
+
+func TestWriter_LockFailureWritesNothing(t *testing.T) {
+	v, repo := newFakeVault(), newFakeRepo()
+	lock := newFakeLock()
+	lock.err = errors.New("db down")
+	w := organization.NewOrgSecretWriter(v, repo, lock, fixedClock)
+	if _, err := w.WriteAndRetire(ctx, "default", "ou-1", organization.OrgSecretDefaultKey, key, "", noop); err == nil || v.creates != 0 {
+		t.Fatalf("err=%v creates=%d, want an error before any write", err, v.creates)
+	}
+	if err := w.Remove(ctx, "default", "ou-1", organization.OrgSecretDefaultKey, nil); err == nil {
+		t.Fatal("Remove: want the lock error")
+	}
+}
+
+// The caller's Retire runs after the lock is released; if the row names the
+// previous reference again by then, it must not be deleted.
+func TestWriter_RetireSkipsWhenTheRowNamesTheOldReference(t *testing.T) {
+	v, repo := newFakeVault("old"), newFakeRepo()
+	repo.set("default", organization.OrgSecretDefaultKey, "old")
+	written, err := newWriter(v, repo).Write(ctx, "default", "ou-1", organization.OrgSecretDefaultKey, key, "", noop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo.set("default", organization.OrgSecretDefaultKey, "old")
+	written.Retire(ctx)
+	if len(v.deleted) != 0 {
+		t.Fatalf("deleted %v: the row names old again", v.deleted)
 	}
 }
 
@@ -479,7 +655,7 @@ func TestWriter_RemoveOrdersRowRepointReference(t *testing.T) {
 	var order []string
 	repo.onDelete = func() { order = append(order, "row") }
 	v.onDelete = func(n string) { order = append(order, "delete:"+n) }
-	w := organization.NewOrgSecretWriter(v, repo, fixedClock)
+	w := newWriter(v, repo)
 	if err := w.Remove(ctx, "default", "ou-1", organization.OrgSecretStudioClient, func() error {
 		order = append(order, "repoint")
 		return nil
@@ -497,7 +673,7 @@ func TestWriter_RemoveOrdersRowRepointReference(t *testing.T) {
 func TestWriter_RemoveFailedRepointPutsTheRowBack(t *testing.T) {
 	v, repo := newFakeVault("stored"), newFakeRepo()
 	repo.set("default", organization.OrgSecretStudioClient, "stored")
-	err := organization.NewOrgSecretWriter(v, repo, fixedClock).Remove(ctx, "default", "ou-1", organization.OrgSecretStudioClient, func() error { return errStamp })
+	err := newWriter(v, repo).Remove(ctx, "default", "ou-1", organization.OrgSecretStudioClient, func() error { return errStamp })
 	if !errors.Is(err, errStamp) {
 		t.Fatalf("err = %v", err)
 	}
@@ -510,7 +686,7 @@ func TestWriter_RemoveFailedReferenceDeleteStillUnsets(t *testing.T) {
 	v, repo := newFakeVault("stored"), newFakeRepo()
 	repo.set("default", organization.OrgSecretStudioClient, "stored")
 	v.deleteErr = errors.New("vault down")
-	if err := organization.NewOrgSecretWriter(v, repo, fixedClock).Remove(ctx, "default", "ou-1", organization.OrgSecretStudioClient, nil); err != nil {
+	if err := newWriter(v, repo).Remove(ctx, "default", "ou-1", organization.OrgSecretStudioClient, nil); err != nil {
 		t.Fatalf("a failed reference delete must not fail the removal: %v", err)
 	}
 	if len(repo.rows) != 0 {
