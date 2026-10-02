@@ -51,12 +51,16 @@ type Engine struct {
 	// git invocation's argv + env before it runs. It is the seam for the
 	// credential-hygiene assertions and crash injection.
 	execHook func(args []string, env []string)
-	// diskUsagePct is the last volume used% recorded by the reaper (-1 =
+	// diskUsagePct is the last UsagePct recorded by the reaper (-1 =
 	// unknown). It feeds DiskFullError.UsedPct.
 	diskUsagePct atomic.Int32
-	// onENOSPC, when set (composition root → reaper.ForceSweep), runs on
-	// detected ENOSPC before DiskFullError is returned.
+	// onENOSPC, when set (reaper.New), runs on detected ENOSPC before
+	// DiskFullError is returned. It must not block: it runs on the failing
+	// request's goroutine.
 	onENOSPC func()
+	// usedBytes is the studio-data usage: the reaper's last du of the root
+	// plus every clone since (usage.go).
+	usedBytes atomic.Int64
 }
 
 // Compile-time port compliance.
@@ -113,15 +117,15 @@ func New(root string, cred Credential) (*Engine, RootLayout, error) {
 //deadcode:keep wired in Task 2.7
 func (e *Engine) Root() string { return e.root }
 
-// SetDiskUsagePct records the workspace volume pressure percentage (0–100)
-// from the reaper's last statfs read — max of byte used% and inode used%.
+// SetDiskUsagePct records the reaper's last usage percentage: the higher of
+// the budget share and the node statfs used%.
 //
-//deadcode:keep wired in Task 2.6
+//deadcode:keep wired in Task 2.7
 func (e *Engine) SetDiskUsagePct(pct int) { e.diskUsagePct.Store(int32(pct)) }
 
 // DiskUsagePct returns the last recorded pressure percentage, or 0 when unknown.
 //
-//deadcode:keep wired in Task 2.6
+//deadcode:keep wired in Task 2.7
 func (e *Engine) DiskUsagePct() int {
 	v := e.diskUsagePct.Load()
 	if v < 0 {
@@ -131,15 +135,16 @@ func (e *Engine) DiskUsagePct() int {
 }
 
 // SetOnENOSPC registers the emergency handler invoked when mapDiskErr detects
-// ENOSPC (composition root wires reaper.ForceSweep). Pass nil to clear.
+// ENOSPC (reaper.New wires a non-blocking forced-sweep request). Call it
+// before the engine serves; pass nil to clear.
 //
-//deadcode:keep wired in Task 2.6
+//deadcode:keep wired in Task 2.7
 func (e *Engine) SetOnENOSPC(fn func()) { e.onENOSPC = fn }
 
 // mapDiskErr translates ENOSPC into DiskFullError after invoking onENOSPC.
 // Non-ENOSPC errors (and nil) pass through unchanged.
 //
-//deadcode:keep wired in Task 2.6
+//deadcode:keep wired in Task 2.7
 func (e *Engine) mapDiskErr(err error) error {
 	if err == nil || !isENOSPC(err) {
 		return err
@@ -393,6 +398,7 @@ func (e *Engine) ensureMirror(ctx context.Context, ref RepoRef, p repoPaths) (cl
 		}
 		return false, fmt.Errorf("repo: publish clone: %w", err)
 	}
+	e.AddUsage(DirBytes(p.gitDir))
 	slog.InfoContext(ctx, "repo.clone", "repo", ref.FullName(), "mode", "bare", "ms", time.Since(started).Milliseconds())
 	return true, nil
 }
@@ -537,7 +543,7 @@ const maintainLockTimeout = 2 * time.Second
 // Never git gc. Never git maintenance --task=loose-objects.
 // Lock acquisition is bounded by maintainLockTimeout; git work uses ctx.
 //
-//deadcode:keep wired in Task 2.6
+//deadcode:keep wired in Task 2.7
 func (e *Engine) MaintainMirror(ctx context.Context, ref RepoRef) error {
 	p, err := e.pathsFor(ref)
 	if err != nil {
@@ -567,7 +573,7 @@ func (e *Engine) MaintainMirror(ctx context.Context, ref RepoRef) error {
 
 // CountObjects returns loose-object and pack counts for a mirror (count-objects -v).
 //
-//deadcode:keep wired in Task 2.6
+//deadcode:keep wired in Task 2.7
 func (e *Engine) CountObjects(ctx context.Context, ref RepoRef) (loose, packs int, err error) {
 	p, err := e.pathsFor(ref)
 	if err != nil {
@@ -596,7 +602,7 @@ func (e *Engine) CountObjects(ctx context.Context, ref RepoRef) (loose, packs in
 // fds (POSIX inode semantics); the next engine op on the ref self-heals by
 // re-cloning.
 //
-//deadcode:keep wired in Task 2.6
+//deadcode:keep wired in Task 2.7
 func (e *Engine) TrashRepo(ctx context.Context, ref RepoRef) error {
 	p, err := e.pathsFor(ref)
 	if err != nil {

@@ -1,0 +1,239 @@
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+// Package reaper is the disk-lifecycle authority for the studio-data volume
+// (moved from services/aep-api/internal/platform/gitfs/reaper; ticket 20 §3).
+// The volume is a cache of GitHub: a pod roll wipes it and every repo
+// re-clones on first use. One pod serves one org and runs one reaper, so there
+// is no leader lock. Four passes per sweep, each isolated (one failing never
+// stops the next):
+//
+//  1. tmp reclamation: purge tmp/ entries older than TrashMaxAge, skipping
+//     the engine's askpass shim;
+//  2. trash reclamation: purge trash/<id> entries older than TrashMaxAge;
+//  3. git maintenance: repack/prune/pack-refs on loose- or pack-heavy
+//     mirrors under the repo's EX flock (before the budget, so eviction sees
+//     reclaimed space);
+//  4. budget: du of the root against the one budget; from 85 % purge trash,
+//     then evict mirrors least recently used first down to 70 %.
+//
+// There is no orphan pass: nothing lists the live repos. An orphan (a failed
+// trash on project delete) is unreachable, because every request resolves its
+// project through aep-api; LRU evicts it under pressure and the next roll
+// wipes it.
+package reaper
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/wso2/aep/ae-studio-tools/internal/repo"
+)
+
+// Config is the reaper's knobs. Budget comes from AE_STORAGE_BUDGET_BYTES;
+// zero Interval and TrashMaxAge take the defaults below.
+type Config struct {
+	Budget      int64
+	Interval    time.Duration
+	TrashMaxAge time.Duration
+}
+
+const (
+	defaultInterval    = 5 * time.Minute
+	defaultTrashMaxAge = time.Hour
+)
+
+// Reaper runs the sweep on cfg.Interval, and on demand after an ENOSPC.
+type Reaper struct {
+	engine *repo.Engine
+	cfg    Config
+	// force carries at most one pending forced-sweep request from the
+	// engine's ENOSPC hook to Run.
+	force chan struct{}
+	// statfs is the node filesystem seam: used and total bytes of the
+	// filesystem backing path. On an emptyDir it reports the node's disk,
+	// not the sizeLimit. Defaults to statfsUsage; tests pin it.
+	statfs func(path string) (used, total uint64, err error)
+}
+
+// New builds the reaper over engine's root and registers its forced-sweep
+// request as the engine's ENOSPC handler. Call it before the engine serves.
+// It panics on a non-positive Budget: config.Load guarantees one.
+//
+//deadcode:keep wired in Task 2.7
+func New(engine *repo.Engine, cfg Config) *Reaper {
+	if cfg.Budget <= 0 {
+		panic(fmt.Sprintf("reaper: budget must be positive, got %d", cfg.Budget))
+	}
+	if cfg.Interval <= 0 {
+		cfg.Interval = defaultInterval
+	}
+	if cfg.TrashMaxAge <= 0 {
+		cfg.TrashMaxAge = defaultTrashMaxAge
+	}
+	r := &Reaper{engine: engine, cfg: cfg, force: make(chan struct{}, 1), statfs: statfsUsage}
+	engine.SetOnENOSPC(r.requestForceSweep)
+	return r
+}
+
+// Run sweeps once at start (a pod restarting into a full volume must not wait
+// an interval), then on every tick and on every forced-sweep request, until
+// ctx is canceled. All sweeps run on this goroutine, so they never overlap.
+//
+//deadcode:keep wired in Task 2.7
+func (r *Reaper) Run(ctx context.Context) {
+	r.sweep(ctx)
+	ticker := time.NewTicker(r.cfg.Interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			r.sweep(ctx)
+		case <-r.force:
+			r.ForceSweep(ctx)
+		}
+	}
+}
+
+// ForceSweep is the ENOSPC emergency path: purge every trash/<id> entry
+// regardless of age, then run a full sweep. Run calls it for each request the
+// engine's ENOSPC hook queues.
+//
+//deadcode:keep wired in Task 2.7
+func (r *Reaper) ForceSweep(ctx context.Context) {
+	if err := r.purgeTrashAll(ctx); err != nil {
+		slog.WarnContext(ctx, "reaper.pass_failed", "pass", "force-trash-purge", "error", err)
+	}
+	r.sweep(ctx)
+}
+
+// requestForceSweep queues one forced sweep for Run without blocking: it runs
+// on the request goroutine that hit ENOSPC, and a request already pending
+// covers this one.
+//
+//deadcode:keep wired in Task 2.7
+func (r *Reaper) requestForceSweep() {
+	select {
+	case r.force <- struct{}{}:
+	default:
+	}
+}
+
+// sweep runs sweepOnce and logs each failed pass.
+//
+//deadcode:keep wired in Task 2.7
+func (r *Reaper) sweep(ctx context.Context) {
+	if _, err := r.sweepOnce(ctx); err != nil {
+		slog.WarnContext(ctx, "reaper.pass_failed", "error", err)
+	}
+}
+
+// sweepOnce runs the four passes, publishes UsagePct onto the engine (it
+// feeds DiskFullError) and logs the reaper.sweep line. It returns the evicted
+// repos as "org/project/slug" and the joined errors of the passes that
+// failed; a failed pass never stops the next one.
+//
+//deadcode:keep wired in Task 2.7
+func (r *Reaper) sweepOnce(ctx context.Context) ([]string, error) {
+	var errs []error
+	pass := func(name string, fn func(context.Context) error) {
+		if ctx.Err() != nil {
+			return
+		}
+		if err := fn(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", name, err))
+		}
+	}
+	var evicted []string
+	pass("tmp-reclamation", r.reclaimTmp)
+	pass("trash-reclamation", r.reclaimTrash)
+	pass("git-maintenance", func(ctx context.Context) error {
+		_, err := r.maintainRepos(ctx)
+		return err
+	})
+	pass("budget", func(ctx context.Context) error {
+		var err error
+		evicted, err = r.enforceBudget(ctx)
+		return err
+	})
+	pct := r.UsagePct()
+	r.engine.SetDiskUsagePct(pct)
+	r.logSweep(ctx, pct, len(evicted))
+	return evicted, errors.Join(errs...)
+}
+
+// walkRepoDirs visits every repos/<org>/<project>/<slug> directory. Only real
+// directories are visited (a symlink is never followed), so every visited
+// path lies inside the root. Unreadable levels are skipped: a concurrent trash
+// rename is normal and the next sweep reconverges.
+//
+//deadcode:keep wired in Task 2.7
+func (r *Reaper) walkRepoDirs(ctx context.Context, visit func(ref repo.RepoRef, repoDir string)) error {
+	reposDir := repo.ReposDir(r.engine.Root())
+	orgs, err := os.ReadDir(reposDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, org := range orgs {
+		if !org.IsDir() {
+			continue
+		}
+		orgDir := filepath.Join(reposDir, org.Name())
+		projects, err := os.ReadDir(orgDir)
+		if err != nil {
+			continue
+		}
+		for _, proj := range projects {
+			if !proj.IsDir() {
+				continue
+			}
+			projDir := filepath.Join(orgDir, proj.Name())
+			slugs, err := os.ReadDir(projDir)
+			if err != nil {
+				continue
+			}
+			for _, slug := range slugs {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				if !slug.IsDir() {
+					continue
+				}
+				ref := repo.RepoRef{Org: org.Name(), Project: proj.Name(), RepoSlug: slug.Name()}
+				visit(ref, filepath.Join(projDir, slug.Name()))
+			}
+		}
+	}
+	return nil
+}
+
+// repoName is the "org/project/slug" form a ref takes in eviction results
+// and log lines.
+//
+//deadcode:keep wired in Task 2.7
+func repoName(ref repo.RepoRef) string {
+	return ref.Org + "/" + ref.Project + "/" + ref.RepoSlug
+}

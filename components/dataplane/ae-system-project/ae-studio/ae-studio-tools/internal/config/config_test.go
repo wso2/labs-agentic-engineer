@@ -34,7 +34,8 @@ func base() map[string]string {
 		"GITHUB_PAT":        "x", "GITHUB_WEBHOOK_SECRET": "y",
 		"AE_IDP_TOKEN_URL":       "http://thunder:8090/oauth2/token",
 		"AE_PUBLISHER_CLIENT_ID": "aep-publisher-default", "AE_PUBLISHER_CLIENT_SECRET": "publisher-secret-value",
-		"AEP_API_BASE_URL": "http://aep-api.aep.svc.cluster.local:9090",
+		"AEP_API_BASE_URL":   "http://aep-api.aep.svc.cluster.local:9090",
+		"AE_STUDIO_DATA_DIR": "/studio-data", "AE_STORAGE_BUDGET_BYTES": "2147483648",
 	}
 }
 
@@ -84,7 +85,8 @@ func TestLoad_AudienceListWithOnlySeparatorsIsMissing(t *testing.T) {
 func TestLoad_MissingRequiredNamesEveryKey(t *testing.T) {
 	_, err := Load(env(map[string]string{}))
 	for _, k := range []string{"AE_ORG_ID", "AE_ORG_HANDLE", "AE_IDP_ISSUER", "AE_IDP_JWKS_URL", "AE_USER_AUDIENCES", "AE_M2M_CLIENT_ID", "GITHUB_PAT", "GITHUB_WEBHOOK_SECRET",
-		"AE_IDP_TOKEN_URL", "AE_PUBLISHER_CLIENT_ID", "AE_PUBLISHER_CLIENT_SECRET", "AEP_API_BASE_URL"} {
+		"AE_IDP_TOKEN_URL", "AE_PUBLISHER_CLIENT_ID", "AE_PUBLISHER_CLIENT_SECRET", "AEP_API_BASE_URL",
+		"AE_STUDIO_DATA_DIR", "AE_STORAGE_BUDGET_BYTES"} {
 		if err == nil || !strings.Contains(err.Error(), k) {
 			t.Fatalf("error %v does not name %s", err, k)
 		}
@@ -126,6 +128,42 @@ func TestLoad_URLKeysMustBeAbsoluteHTTP(t *testing.T) {
 			if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), "invalid "+k) {
 				t.Fatalf("%s=%q: err = %v", k, v, err)
 			}
+		}
+	}
+}
+
+func TestLoad_StudioDataKeys(t *testing.T) {
+	c, err := Load(env(base()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.StudioDataDir != "/studio-data" || c.StorageBudgetBytes != 2<<30 {
+		t.Fatalf("studio-data keys not read: dir %q, budget %d", c.StudioDataDir, c.StorageBudgetBytes)
+	}
+}
+
+// Both studio-data keys are required (fail closed at boot): a blank key is
+// missing, a relative dir or a budget that is not a positive int64 is invalid.
+// The error names the key, never the value.
+func TestLoad_StudioDataKeysAreRequiredAndValidated(t *testing.T) {
+	cases := []struct{ key, val, want string }{
+		{"AE_STUDIO_DATA_DIR", " ", "missing AE_STUDIO_DATA_DIR"},
+		{"AE_STUDIO_DATA_DIR", "studio-data", "invalid AE_STUDIO_DATA_DIR"},
+		{"AE_STORAGE_BUDGET_BYTES", "", "missing AE_STORAGE_BUDGET_BYTES"},
+		{"AE_STORAGE_BUDGET_BYTES", "2Gi", "invalid AE_STORAGE_BUDGET_BYTES"},
+		{"AE_STORAGE_BUDGET_BYTES", "0", "invalid AE_STORAGE_BUDGET_BYTES"},
+		{"AE_STORAGE_BUDGET_BYTES", "-5", "invalid AE_STORAGE_BUDGET_BYTES"},
+		{"AE_STORAGE_BUDGET_BYTES", "99999999999999999999", "invalid AE_STORAGE_BUDGET_BYTES"},
+	}
+	for _, c := range cases {
+		m := base()
+		m[c.key] = c.val
+		_, err := Load(env(m))
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Fatalf("%s=%q: err = %v, want %q", c.key, c.val, err, c.want)
+		}
+		if strings.TrimSpace(c.val) != "" && strings.Contains(err.Error(), c.val) {
+			t.Fatalf("%s=%q: error echoes the value", c.key, c.val)
 		}
 	}
 }

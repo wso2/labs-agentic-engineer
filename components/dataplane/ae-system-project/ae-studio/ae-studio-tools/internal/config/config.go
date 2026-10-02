@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -40,6 +41,10 @@ type Config struct {
 	IDPTokenURL                              string
 	PublisherClientID, PublisherClientSecret string
 	AEPAPIBaseURL                            string
+	// StudioDataDir is the studio-data volume root (the git engine's root);
+	// StorageBudgetBytes is the reaper's one budget over it (ticket 20 §2).
+	StudioDataDir      string
+	StorageBudgetBytes int64
 }
 
 // ErrSecretRevMismatch means the mounted Secret is not the revision the pod
@@ -86,6 +91,27 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 		return v
 	}
+	// absDir is a required absolute directory path.
+	absDir := func(k string) string {
+		v := req(k)
+		if v != "" && !filepath.IsAbs(v) {
+			problems = append(problems, "invalid "+k)
+		}
+		return v
+	}
+	// positiveBytes is a required byte count, an int64 above zero.
+	positiveBytes := func(k string) int64 {
+		v := req(k)
+		if v == "" {
+			return 0
+		}
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n <= 0 {
+			problems = append(problems, "invalid "+k)
+			return 0
+		}
+		return n
+	}
 	c := Config{
 		OrgID:         req("AE_ORG_ID"),
 		OrgHandle:     req("AE_ORG_HANDLE"),
@@ -101,6 +127,9 @@ func Load(getenv func(string) string) (Config, error) {
 		PublisherClientID:     req("AE_PUBLISHER_CLIENT_ID"),
 		PublisherClientSecret: req("AE_PUBLISHER_CLIENT_SECRET"),
 		AEPAPIBaseURL:         httpURL("AEP_API_BASE_URL"),
+
+		StudioDataDir:      absDir("AE_STUDIO_DATA_DIR"),
+		StorageBudgetBytes: positiveBytes("AE_STORAGE_BUDGET_BYTES"),
 	}
 	c.UserAudiences = splitList(getenv("AE_USER_AUDIENCES"))
 	if len(c.UserAudiences) == 0 {

@@ -32,6 +32,7 @@ toolchain, run Go make targets with `env -u GOROOT`.
 | `internal/github` | GitHub REST client over the gitpat; `Whoami` = `GET /user`, rate limits map to `ErrRateLimited` |
 | `internal/platform` | AEP platform clients: `ClientCredentials` (client_credentials token, `client_secret_basic`, cached until 60 s before expiry, `Invalidate` on 401; a token-endpoint 400/401 is `ErrClientRejected`) and `NewAEPAPI` (generated aep-api client at `AEP_API_BASE_URL` + `/internal/v1`, bearer from the publisher token, one retry after a 401) |
 | `internal/projects` | `Resolver`: project → GitHub repository through aep-api on every call, no cache; 404 → `ErrUnknown` (denial, `project_unknown`), anything else non-200 or unreachable → `ErrUnavailable` (`aep_api_unavailable`), also `ErrMisconfigured` when the pod's own credentials were refused (aep-api 401/403 after the retry, or `platform.ErrClientRejected` from the token endpoint); `projectstest.Fake` for callers' tests |
+| `internal/repo/reaper` | studio-data lifecycle, one sweep every 5 min (and on ENOSPC, queued without blocking): tmp and trash older than 1 h, git maintenance, then the one budget (`du` of the root; from 85 % purge trash, then evict mirrors LRU down to 70 %, skipping any whose `repo.lock` is held). `UsagePct` = max(budget share incl. clones since the sweep, node `statfs` used%) is published to the engine for `DiskFullError`. Logs `reaper.sweep {usedBytes, budgetBytes, pct, evicted}`. No orphan, recordings or leader pass |
 
 The `/v1` contract (`packages/contracts/api/ae-studio-tools/v1`) has no
 operations yet, so nothing is generated from it; `/v1` answers 404 behind the
@@ -42,7 +43,9 @@ user gate.
 Required: `AE_ORG_ID`, `AE_ORG_HANDLE`, `AE_IDP_ISSUER`, `AE_IDP_JWKS_URL`,
 `AE_USER_AUDIENCES` (comma list), `AE_M2M_CLIENT_ID`, `GITHUB_PAT`,
 `GITHUB_WEBHOOK_SECRET`, `AE_IDP_TOKEN_URL` and `AEP_API_BASE_URL` (absolute
-http(s)), `AE_PUBLISHER_CLIENT_ID`, `AE_PUBLISHER_CLIENT_SECRET`. Optional: `AE_LISTEN_PORT` (default `8082`),
+http(s)), `AE_PUBLISHER_CLIENT_ID`, `AE_PUBLISHER_CLIENT_SECRET`,
+`AE_STUDIO_DATA_DIR` (absolute path, the studio-data root),
+`AE_STORAGE_BUDGET_BYTES` (int64 > 0, the reaper's budget). Optional: `AE_LISTEN_PORT` (default `8082`),
 `AE_HEALTH_PORT` (default `9082`; not in the Service, not routed). Every
 missing or invalid key is named in one error; values are never logged.
 
