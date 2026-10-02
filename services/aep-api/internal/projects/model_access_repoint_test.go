@@ -86,3 +86,23 @@ func TestModelAccessRepointer_ALookupFailureIsAnError(t *testing.T) {
 		t.Fatalf("err=%v updates=%d, want the failure returned and nothing written", err, len(refs.updates))
 	}
 }
+
+// A key reference with no vault path (the connection's stamp lags its
+// default-key row, so KeyRef hands out the row's name alone) is refused: the
+// model access would otherwise point at an empty path and serve no key.
+func TestModelAccessRepointer_RefusesAReferenceWithoutAVaultPath(t *testing.T) {
+	refs := &repointRefs{exists: true}
+	noPath := organization.SecretRefTriplet{Name: repointRef.Name, Property: "api-key"}
+	if err := NewModelAccessRepointer(refs).RepointModelKey(context.Background(), "acme", noPath); err == nil || len(refs.updates) != 0 {
+		t.Fatalf("err=%v updates=%d, want refused and nothing written", err, len(refs.updates))
+	}
+}
+
+func TestUpsertModelAccessSecretReference_RefusesAReferenceWithoutAVaultPath(t *testing.T) {
+	refs := &repointRefs{}
+	svc := &componentService{secretRefClient: refs}
+	noPath := organization.SecretRefTriplet{Name: repointRef.Name, Property: "api-key"}
+	if err := svc.upsertModelAccessSecretReference(context.Background(), "acme", noPath); err == nil || len(refs.ns) != 0 {
+		t.Fatalf("err=%v lookups=%v, want refused before any SecretReference call", err, refs.ns)
+	}
+}

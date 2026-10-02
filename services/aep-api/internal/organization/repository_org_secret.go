@@ -39,8 +39,7 @@ var ErrOrgSecretConflict = errors.New("org secret row changed concurrently")
 // Writes are compare-and-swap on secret_ref_name, so two writers that read
 // the same row cannot both replace it: the loser gets ErrOrgSecretConflict.
 type OrgSecretRepository interface {
-	// Get returns the reference row of s, or nil when s is unset.
-	Get(ctx context.Context, ocOrgID string, s OrgSecret) (*OrgSecretRef, error)
+	OrgSecretRefReader
 	// List returns the org's set secrets, ordered by secret.
 	List(ctx context.Context, ocOrgID string) ([]OrgSecretRef, error)
 	// Upsert writes the row of r.Secret if it still names expectPrev: with
@@ -51,6 +50,13 @@ type OrgSecretRepository interface {
 	// Delete removes the row of s if it names name; a row naming another
 	// reference, or none, is ErrOrgSecretConflict.
 	Delete(ctx context.Context, ocOrgID string, s OrgSecret, name string) error
+}
+
+// OrgSecretRefReader reads one org secret's reference row: what a consumer
+// that mounts the secret by its SecretReference name needs.
+type OrgSecretRefReader interface {
+	// Get returns the reference row of s, or nil when s is unset.
+	Get(ctx context.Context, ocOrgID string, s OrgSecret) (*OrgSecretRef, error)
 }
 
 type orgSecretRepository struct {

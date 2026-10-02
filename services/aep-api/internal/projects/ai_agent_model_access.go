@@ -248,6 +248,9 @@ func (s *componentService) ampTracingEnvVars(ctx context.Context, ocOrgID, compo
 // systems that happen to both be called "the org's namespace"; only one of
 // them is where CRs live.
 func (s *componentService) upsertModelAccessSecretReference(ctx context.Context, ocOrgID string, triplet organization.SecretRefTriplet) error {
+	if err := requireVaultPath(triplet); err != nil {
+		return err
+	}
 	orgNS := ocOrgID
 	req := modelAccessSecretReferenceRequest(orgNS, triplet)
 
@@ -272,6 +275,18 @@ func (s *componentService) upsertModelAccessSecretReference(ctx context.Context,
 			return nil
 		}
 		return fmt.Errorf("create model-access SecretReference: %w", err)
+	}
+	return nil
+}
+
+// requireVaultPath refuses a key reference without a vault path. The model
+// access points its own SecretReference at the key's vault entry, so it needs
+// the path, not just the name a mount needs; KeyRef leaves it empty while the
+// connection row's stamp lags the default-key row, and pointing at an empty or
+// another reference's path would serve the agent no key.
+func requireVaultPath(triplet organization.SecretRefTriplet) error {
+	if triplet.KVPath == "" {
+		return fmt.Errorf("the connection key's reference %q has no vault path recorded yet", triplet.Name)
 	}
 	return nil
 }
@@ -325,6 +340,9 @@ func (r *ModelAccessRepointer) RepointModelKey(ctx context.Context, ocOrgID stri
 			return nil
 		}
 		return fmt.Errorf("check model-access SecretReference: %w", err)
+	}
+	if err := requireVaultPath(ref); err != nil {
+		return err
 	}
 	if _, err := r.refs.UpdateSecretReference(ctx, orgNS, modelAccessSecretRefName, modelAccessSecretReferenceRequest(orgNS, ref)); err != nil {
 		return fmt.Errorf("repoint model-access SecretReference: %w", err)

@@ -67,6 +67,11 @@ type CodingExecutor struct {
 	githubCreds  organization.OrgCredentialRepository
 	idpProfiles  organization.IDPRepository
 
+	// orgSecrets reads the github-pat row, the reference every run mounts
+	// (R7). Nil: every org resolves from its org_credentials triplet, as one
+	// connected before phase 1 does.
+	orgSecrets organization.OrgSecretRefReader
+
 	// codingAgent answers which runtime and model this org's runs use. Nil is
 	// the platform defaults, which is exactly what every dispatch carried before
 	// the setting existed — so an unwired resolver changes nothing rather than
@@ -119,6 +124,13 @@ func NewCodingExecutor(
 // Returns the receiver for chained construction.
 func (e *CodingExecutor) WithOCDispatch(d *OCDispatcher) *CodingExecutor {
 	e.ocJobs = d
+	return e
+}
+
+// WithOrgSecrets attaches the org secret rows dispatch takes the GitHub
+// PAT's reference name from. Returns the receiver for chained construction.
+func (e *CodingExecutor) WithOrgSecrets(r organization.OrgSecretRefReader) *CodingExecutor {
+	e.orgSecrets = r
 	return e
 }
 
@@ -427,28 +439,51 @@ type runnerCredentials struct {
 // modelEnv maps that to the runner's env contract. The resolver fails closed
 // on a configured-but-unusable subscription, so a run never silently bills API
 // credits an org chose to replace with its plan.
+//
+// The GitHub side is the github-pat reference (githubSecretRef).
 func (e *CodingExecutor) resolveRunnerSecretRefs(ctx context.Context, orgID string, runtime orgconfig.AgentRuntime) (runnerCredentials, error) {
 	cred, err := e.anthropicKey.ResolveCodingCredential(ctx, orgID, runtime)
 	if err != nil {
 		return runnerCredentials{}, fmt.Errorf("coding dispatch: %w", err)
 	}
-
-	githubRow, err := e.githubCreds.GetByOrg(ctx, orgID)
+	githubSR, err := e.githubSecretRef(ctx, orgID)
 	if err != nil {
-		return runnerCredentials{}, fmt.Errorf("coding dispatch: github credentials for org %q: %w", orgID, err)
-	}
-	if githubRow == nil {
-		return runnerCredentials{}, fmt.Errorf("coding dispatch: github secret reference missing for org %q: org_credentials row not found", orgID)
-	}
-	githubSR := SecretRef{
-		SecretRefName: derefStr(githubRow.SecretRefName),
-		KVPath:        derefStr(githubRow.SecretRefKVPath),
-		Property:      derefStr(githubRow.SecretRefProperty),
-	}
-	if err := validateSecretRefTriplet("github", orgID, githubSR); err != nil {
 		return runnerCredentials{}, fmt.Errorf("coding dispatch: %w", err)
 	}
 	return runnerCredentials{model: cred, github: githubSR}, nil
+}
+
+// githubSecretRef is the org's GitHub PAT reference: the name its github-pat
+// row records, with the token key (R7), so a rotation never leaves a Job
+// mounting the reference the write already deleted. The Job carries only
+// SecretKeyRef{Name, Key}; OpenChoreo resolves the reference itself (C10).
+//
+// No row: a pre-phase-1 org, resolved from its org_credentials triplet alone,
+// name and key from that one source (its key is api-key there). Removed in
+// phase 6.
+func (e *CodingExecutor) githubSecretRef(ctx context.Context, orgID string) (SecretRef, error) {
+	name, ok, err := organization.RecordedOrgSecretRef(ctx, e.orgSecrets, orgID, organization.OrgSecretGitHubPAT)
+	if err != nil {
+		return SecretRef{}, fmt.Errorf("github secret reference for org %q: %w", orgID, err)
+	}
+	if ok {
+		return SecretRef{SecretRefName: name, Property: organization.OrgSecretGitHubPAT.ValueKey()}, nil
+	}
+	githubRow, err := e.githubCreds.GetByOrg(ctx, orgID)
+	if err != nil {
+		return SecretRef{}, fmt.Errorf("github credentials for org %q: %w", orgID, err)
+	}
+	if githubRow == nil {
+		return SecretRef{}, fmt.Errorf("github secret reference missing for org %q: org_credentials row not found", orgID)
+	}
+	githubSR := SecretRef{
+		SecretRefName: derefStr(githubRow.SecretRefName),
+		Property:      derefStr(githubRow.SecretRefProperty),
+	}
+	if err := validateSecretRefTriplet("github", orgID, githubSR); err != nil {
+		return SecretRef{}, err
+	}
+	return githubSR, nil
 }
 
 // evaluationKeyRef resolves the org's connection key as the build's
@@ -506,12 +541,11 @@ func (e *CodingExecutor) codingAgentEnv(ctx context.Context, orgID string) (orgc
 	return proj, nil
 }
 
+// validateSecretRefTriplet requires what a mounted reference needs: its name
+// and its key (C10).
 func validateSecretRefTriplet(credential, orgID string, ref SecretRef) error {
 	if ref.SecretRefName == "" {
 		return fmt.Errorf("%s secret reference missing for org %q: secret_ref_name not populated", credential, orgID)
-	}
-	if ref.KVPath == "" {
-		return fmt.Errorf("%s secret reference missing for org %q: secret_ref_kv_path not populated", credential, orgID)
 	}
 	if ref.Property == "" {
 		return fmt.Errorf("%s secret reference missing for org %q: secret_ref_property not populated", credential, orgID)

@@ -92,8 +92,10 @@ type CodingCredential struct {
 	Kind CodingCredentialKind
 }
 
-// SecretRefTriplet is a resolved SM-API secret reference: the name plus the
-// vault coordinates an ExternalSecret's remoteRef needs.
+// SecretRefTriplet is a resolved SM-API secret reference: its name and the
+// key a consumer mounts, which is all a SecretKeyRef needs (C10), plus its
+// vault path when known, for a consumer that points another SecretReference
+// at the same vault entry. KVPath may be empty.
 type SecretRefTriplet struct {
 	Name     string
 	KVPath   string
@@ -118,6 +120,11 @@ type ModelConnectionService struct {
 
 	// secretRefWriter mirrors a saved key into SM-API. nil-safe.
 	secretRefWriter *SecretRefWriter
+
+	// orgSecrets reads the default-key and coding-agent-key rows, the
+	// references the readers below hand out (R7). nil: every org resolves
+	// from its triplet columns, as one connected before phase 1 does.
+	orgSecrets OrgSecretRefReader
 }
 
 var (
@@ -142,6 +149,13 @@ func NewModelConnectionService(conns OrgModelConnectionRepository, subs OrgAnthr
 // mirror — org_secrets remains authoritative.
 func (s *ModelConnectionService) WithSecretRefWriter(w *SecretRefWriter) *ModelConnectionService {
 	s.secretRefWriter = w
+	return s
+}
+
+// WithOrgSecrets attaches the org secret rows the key's readers take the
+// reference name from; chainable.
+func (s *ModelConnectionService) WithOrgSecrets(r OrgSecretRefReader) *ModelConnectionService {
+	s.orgSecrets = r
 	return s
 }
 
@@ -199,16 +213,17 @@ func (s *ModelConnectionService) storedKey(ctx context.Context, ocOrgID string) 
 	return "", false
 }
 
-// KeyRef returns the connection and its key's vault coordinates. It never
-// reads the key's bytes, only where they live, for a caller that points an
-// OpenChoreo SecretReference at the path rather than forwarding the value
-// itself (e.g. wiring an ai-agent component's MODEL_API_KEY).
+// KeyRef returns the connection and its key's reference: the default-key
+// row's (R7, see recordedRef). It never reads the key's bytes, only where they
+// live, for a caller that mounts the reference or points an OpenChoreo
+// SecretReference at its vault path rather than forwarding the value itself
+// (e.g. wiring an ai-agent component's MODEL_API_KEY).
 func (s *ModelConnectionService) KeyRef(ctx context.Context, ocOrgID string) (modelconn.Connection, SecretRefTriplet, error) {
 	row, err := s.connectionRow(ctx, ocOrgID)
 	if err != nil {
 		return modelconn.Connection{}, SecretRefTriplet{}, err
 	}
-	ref, err := tripletOf(row.SecretRefName, row.SecretRefKVPath, row.SecretRefProperty)
+	ref, err := s.recordedRef(ctx, ocOrgID, OrgSecretDefaultKey, row.SecretRefName, row.SecretRefKVPath, row.SecretRefProperty)
 	if err != nil {
 		return modelconn.Connection{}, SecretRefTriplet{}, err
 	}
@@ -240,7 +255,7 @@ func (s *ModelConnectionService) connectionRow(ctx context.Context, ocOrgID stri
 // the subscription is not consulted at all (the save rule keeps one from being
 // stored alongside OpenCode; this keeps a stray row from ever reaching a run).
 //
-// Fails closed. A subscription that exists but has no usable triplet is an
+// Fails closed. A subscription that exists but has no usable reference is an
 // error, never a silent fall-through to the connection's key: the org chose to
 // bill its plan, and quietly billing API credits instead defeats that choice
 // while leaving no trace the org can see.
@@ -261,7 +276,7 @@ func (s *ModelConnectionService) ResolveCodingCredential(ctx context.Context, oc
 			return CodingCredential{Conn: row.Connection(), Ref: ref, Kind: CodingCredentialClaudeSubscription}, nil
 		}
 	}
-	ref, err := tripletOf(row.SecretRefName, row.SecretRefKVPath, row.SecretRefProperty)
+	ref, err := s.recordedRef(ctx, ocOrgID, OrgSecretDefaultKey, row.SecretRefName, row.SecretRefKVPath, row.SecretRefProperty)
 	if err != nil {
 		return CodingCredential{}, fmt.Errorf("model connection secret reference for org %q: %w", ocOrgID, err)
 	}
@@ -283,7 +298,7 @@ func (s *ModelConnectionService) subscriptionRef(ctx context.Context, ocOrgID st
 			"the Claude subscription for org %q is %s — replace its token in Settings, "+
 				"or remove the subscription so coding bills the connection's key", ocOrgID, sub.Status)
 	}
-	ref, err := tripletOf(sub.SecretRefName, sub.SecretRefKVPath, sub.SecretRefProperty)
+	ref, err := s.recordedRef(ctx, ocOrgID, OrgSecretCodingAgentKey, sub.SecretRefName, sub.SecretRefKVPath, sub.SecretRefProperty)
 	if err != nil {
 		return SecretRefTriplet{}, false, fmt.Errorf(
 			"the Claude subscription for org %q is configured but %w — save its token again in Settings, "+
@@ -292,15 +307,41 @@ func (s *ModelConnectionService) subscriptionRef(ctx context.Context, ocOrgID st
 	return ref, true, nil
 }
 
-// tripletOf reads a row's resolved secret-ref coordinates, naming whichever
-// one is missing so a half-mirrored row is diagnosable from the error alone.
+// recordedRef is the reference of the org secret sec that a reader hands out:
+// the name its org_secrets row records with sec's fixed key (R7), so a
+// rotation whose triplet stamp lags never hands out the reference the write
+// already deleted. The triplet's vault path is carried only when the triplet
+// names that same reference (the write stamps both): mounting needs only the
+// name and the key (C10), and a consumer that points at the vault path
+// (the ai-agent model access) refuses an empty one rather than follow
+// another reference's.
+//
+// No row: a pre-phase-1 org, resolved from the triplet columns alone, name
+// and key from that one source. Removed in phase 6.
+func (s *ModelConnectionService) recordedRef(ctx context.Context, ocOrgID string, sec OrgSecret, name, kvPath, property *string) (SecretRefTriplet, error) {
+	recorded, ok, err := RecordedOrgSecretRef(ctx, s.orgSecrets, ocOrgID, sec)
+	if err != nil {
+		return SecretRefTriplet{}, err
+	}
+	if !ok {
+		return tripletOf(name, kvPath, property)
+	}
+	ref := SecretRefTriplet{Name: recorded, Property: sec.ValueKey()}
+	if derefOrEmpty(name) == recorded {
+		ref.KVPath = derefOrEmpty(kvPath)
+	}
+	return ref, nil
+}
+
+// tripletOf reads a row's resolved secret-ref name and property, naming
+// whichever is missing so a half-mirrored row is diagnosable from the error
+// alone. The vault path is carried as stored, not required: a mounted
+// reference needs only its name and key (C10).
 func tripletOf(name, kvPath, property *string) (SecretRefTriplet, error) {
 	ref := SecretRefTriplet{Name: derefOrEmpty(name), KVPath: derefOrEmpty(kvPath), Property: derefOrEmpty(property)}
 	switch {
 	case ref.Name == "":
 		return SecretRefTriplet{}, errors.New("secret_ref_name is not populated")
-	case ref.KVPath == "":
-		return SecretRefTriplet{}, errors.New("secret_ref_kv_path is not populated")
 	case ref.Property == "":
 		return SecretRefTriplet{}, errors.New("secret_ref_property is not populated")
 	}

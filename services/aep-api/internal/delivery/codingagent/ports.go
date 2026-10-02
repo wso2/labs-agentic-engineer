@@ -81,10 +81,10 @@ type RunFailureRecorder interface {
 	RecordFailure(ctx context.Context, id string, failure delivery.RunFailure) (*delivery.MilestoneRun, error)
 }
 
-// SecretRef is one org credential's refs-only SM-API triplet.
+// SecretRef is one org credential's SecretReference as a Job mounts it: the
+// reference's name and the key it reads (C10).
 type SecretRef struct {
 	SecretRefName string
-	KVPath        string
 	Property      string
 }
 

@@ -67,7 +67,7 @@ func TestIDPPublisherResolver_SecretRefName_ReadsWithoutEnsure(t *testing.T) {
 	name := "acme-publisher-secrets"
 	r := NewIDPPublisherResolver(fakeIDPRepo{profile: &organization.OrganizationIDPProfile{
 		SecretRefName: &name,
-	}})
+	}}, fakeOrgSecrets{})
 	got, err := r.SecretRefName(context.Background(), "acme")
 	if err != nil {
 		t.Fatalf("SecretRefName: %v", err)
@@ -79,7 +79,7 @@ func TestIDPPublisherResolver_SecretRefName_ReadsWithoutEnsure(t *testing.T) {
 
 func TestIDPPublisherResolver_SecretRefName_NilProfile(t *testing.T) {
 	t.Parallel()
-	r := NewIDPPublisherResolver(fakeIDPRepo{profile: nil})
+	r := NewIDPPublisherResolver(fakeIDPRepo{profile: nil}, fakeOrgSecrets{})
 	_, err := r.SecretRefName(context.Background(), "acme")
 	if err == nil {
 		t.Fatal("expected error")
@@ -91,7 +91,7 @@ func TestIDPPublisherResolver_SecretRefName_NilProfile(t *testing.T) {
 
 func TestIDPPublisherResolver_SecretRefName_EmptySecretRefReturnsEmpty(t *testing.T) {
 	t.Parallel()
-	r := NewIDPPublisherResolver(fakeIDPRepo{profile: &organization.OrganizationIDPProfile{}})
+	r := NewIDPPublisherResolver(fakeIDPRepo{profile: &organization.OrganizationIDPProfile{}}, fakeOrgSecrets{})
 	got, err := r.SecretRefName(context.Background(), "acme")
 	if err != nil {
 		t.Fatalf("empty ref is dispatch's fail-loud, not resolver error: %v", err)

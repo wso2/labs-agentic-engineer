@@ -55,16 +55,28 @@ func (e *CodingExecutor) WithPublisherCredentials(r PublisherCredentialResolver,
 }
 
 type idpPublisherResolver struct {
-	profiles organization.IDPRepository
+	profiles   organization.IDPRepository
+	orgSecrets organization.OrgSecretRefReader
 }
 
-func NewIDPPublisherResolver(profiles organization.IDPRepository) PublisherCredentialResolver {
-	return &idpPublisherResolver{profiles: profiles}
+func NewIDPPublisherResolver(profiles organization.IDPRepository, orgSecrets organization.OrgSecretRefReader) PublisherCredentialResolver {
+	return &idpPublisherResolver{profiles: profiles, orgSecrets: orgSecrets}
 }
 
+// SecretRefName is the name the org's ae-publisher-client row records (R7),
+// so a rotation never leaves a Job mounting the reference the write already
+// deleted. No row: a pre-phase-1 org, resolved from its IDP profile's
+// triplet. Removed in phase 6.
 func (r *idpPublisherResolver) SecretRefName(ctx context.Context, orgID string) (string, error) {
 	if r == nil || r.profiles == nil {
 		return "", fmt.Errorf("publisher resolver not wired")
+	}
+	name, ok, err := organization.RecordedOrgSecretRef(ctx, r.orgSecrets, orgID, organization.OrgSecretPublisherClient)
+	if err != nil {
+		return "", fmt.Errorf("publisher secret reference: %w", err)
+	}
+	if ok {
+		return name, nil
 	}
 	row, err := r.profiles.GetProfileByOrgID(ctx, orgID)
 	if err != nil {

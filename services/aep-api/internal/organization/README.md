@@ -135,13 +135,23 @@ S2S credentials-refresh.*
 - **The model connection is read only through `ModelConnectionService`** (`model_connection_service.go`):
   a `modelconn.Connection` (format, base URL, host, model, auth scheme, limits, image input) beside the
   key's bytes (`Effective`), its vault reference (`KeyRef`) or the coding credential
-  (`ResolveCodingCredential`), all from `org_model_connections`. No consumer outside this domain reads
+  (`ResolveCodingCredential`), from `org_model_connections`. No consumer outside this domain reads
   the rows for a key.
+- **Consumers mount the reference an org secret's row records, not its triplet** (R7,
+  `RecordedOrgSecretRef`): `KeyRef` and `ResolveCodingCredential` take the `default-key` /
+  `coding-agent-key` name, coding dispatch the `github-pat` (key `token`) and `ae-publisher-client`
+  names, so a rotation whose triplet stamp lags never hands out a deleted reference. A mount needs
+  only the name and the key (C10); `KeyRef` carries the triplet's vault path only when the triplet
+  names the same reference, and the ai-agent model access, which points at that path, refuses an
+  empty one. An org with no row yet (connected before phase 1) resolves from its triplet columns,
+  name and key from that one source; phase 6 removes this fallback. Each read logs which source it
+  used (`org secret reference resolved`, value-free).
 - **Publisher SecretReference for coding Jobs is fail-closed on `POST /build`.**
   `ProvisionPublisherForBuild` (actor `build-provision`) ensures the Thunder publisher app and stamps
   `secret_ref_name` while the console JWT is on ctx. A missing or disabled `SecretRefWriter` returns
   an error (Build 503) and does not touch Thunder. `EnsureOrgPublisher` on the deployment path still
-  swallows SM-API errors. Coding dispatch reads `secret_ref_name` only.
+  swallows SM-API errors. Coding dispatch reads the reference name only (the `ae-publisher-client`
+  row's, else `secret_ref_name`).
 - **Thunder org apps are read by their stored entity id.** Thunder has no lookup by clientId, so the
   profile keeps `publisher_thunder_app_id` (and `studio_thunder_app_id` for `ae-studio-<org>`); every
   ensure, rotate and delete passes it to `thundersvc`, which falls back to one full list scan only on a

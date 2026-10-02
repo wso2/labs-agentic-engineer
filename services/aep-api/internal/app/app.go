@@ -335,8 +335,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// ai-agent model access and build evaluation (its key's vault reference),
 	// coding dispatch (which credential a run mounts) and Agent Manager. Its
 	// `priced` reads the same rate card the usage stamps are priced from.
+	// Its key readers take the reference names from the org secret rows (R7).
 	modelConnections := organization.NewModelConnectionService(orgModelConnRepo, orgAnthropicRepo, credStore, in.RateStamper).
-		WithSecretRefWriter(secretRefWriter)
+		WithSecretRefWriter(secretRefWriter).
+		WithOrgSecrets(orgSecretRepo)
 	// Each org's AE Studio (ticket 08): its status reads and its converge go
 	// out as aep-api's own identity wherever the install impersonates orgs
 	// (aeStudioOC).
@@ -779,7 +781,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		componentClient, repoService, identities{cred: credService},
 		executionRepo,
 		cfg.AgentPlatformURL, cfg.AgentPlatformURL,
-		orgRepo, modelConnections, orgCredRepo, idpRepo)
+		orgRepo, modelConnections, orgCredRepo, idpRepo).
+		// The GitHub PAT reference a run mounts is the github-pat row's (R7).
+		WithOrgSecrets(orgSecretRepo)
 	// Dispatch reads secret_ref_name only — it does not call
 	// EnsureOrgPublisher. POST /build provisions the SecretReference while the
 	// console JWT is still on ctx.
@@ -787,7 +791,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// onto each Job's env, so a change applies from the next cycle.
 	codingExecutor.WithCodingAgentSettings(agentSettings)
 	codingExecutor.WithPublisherCredentials(
-		codingagent.NewIDPPublisherResolver(idpRepo),
+		codingagent.NewIDPPublisherResolver(idpRepo, orgSecretRepo),
 		codingagent.PublisherTokenURLFromJWKS(cfg.PlatformIDP.JWKSURL),
 	)
 	// The OpenChoreo Component dispatch path (phase 08): one Component per run

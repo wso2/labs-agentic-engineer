@@ -217,7 +217,7 @@ func TestResolveCodingCredential_BrokenSubscriptionFailsClosed_DB(t *testing.T) 
 	if err == nil {
 		t.Fatalf("a broken subscription triplet must fail closed, got %+v", cred)
 	}
-	if !strings.Contains(err.Error(), "secret_ref_kv_path") {
+	if !strings.Contains(err.Error(), "secret_ref_property") {
 		t.Fatalf("the error must name what is missing, got: %v", err)
 	}
 }

@@ -63,6 +63,18 @@ func (s OrgSecret) Keys() []string {
 	return append([]string(nil), keys...)
 }
 
+// ValueKey is the data key a consumer mounts of a single-value secret (the
+// github-pat token, an api-key, the webhook secret), "" for a client pair or
+// a name that is not one of the six. The github-pat reference also carries
+// password, the build checkout's twin of token; consumers read token.
+func (s OrgSecret) ValueKey() string {
+	keys := orgSecretKeys[s]
+	if len(keys) != 1 {
+		return ""
+	}
+	return keys[0]
+}
+
 // RefData returns what the reference stores for data. github-pat also stores
 // the token as password, because the OpenChoreo build checkout reads password
 // while tools and coding read token (one write, two properties of one value).
