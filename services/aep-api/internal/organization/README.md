@@ -164,6 +164,14 @@ S2S credentials-refresh.*
   a per-(org, secret) advisory lock taken after any caller lock and never inside a repoint. The
   GitHub PAT (`github-pat`, keys `token` + `password`) and the publisher client go through it, with
   their legacy triplet stamped inside the repoint.
+  - Retire timing (ruled in phase 1): the previous reference is retired right after the row and
+    stamp commit, not after the AE Studio pod has moved off it. The pod's converge is only
+    triggered, so its ExternalSecrets (`es-tools`, `es-agent`) still name the retired vault path
+    until that converge repoints them. They set `deletionPolicy: Retain` explicitly
+    (`resourcetype.yaml`, pinned by `TestTemplate_Invariants`), so the pod keeps its last synced
+    Secret, the previous values, until the converge rolls it onto the new reference. Retiring only
+    after a converge confirms the new rev is the later fix, owned by the phase whose pod first
+    uses these secrets.
 - **A gitpat submit is: validate → Connect → `github-pat` reference → `github-webhook-secret` (made
   once, under the lock) → `EnsureClient` publisher, then studio → converge trigger** (`gitpat_submit.go`).
   Connect writes no reference itself, and the setup runs after the patch's other sections (an idp

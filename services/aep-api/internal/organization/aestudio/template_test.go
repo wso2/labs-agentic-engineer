@@ -85,6 +85,23 @@ func TestTemplate_Invariants(t *testing.T) {
 	if !strings.Contains(byID["es-agent"].IncludeWhen, "size(parameters.secrets.designAgent.data) > 0") {
 		t.Error("O-5: es-agent must be conditional")
 	}
+	// I-2: a retired org-secret path must not wipe the pod's Secret before
+	// the converge repoints it.
+	for _, id := range []string{"es-tools", "es-agent", "es-pull"} {
+		var es struct {
+			Spec struct {
+				Target struct {
+					DeletionPolicy string `json:"deletionPolicy"`
+				} `json:"target"`
+			} `json:"spec"`
+		}
+		if err := json.Unmarshal(byID[id].Template, &es); err != nil {
+			t.Fatalf("%s: %v", id, err)
+		}
+		if es.Spec.Target.DeletionPolicy != "Retain" {
+			t.Errorf("%s target.deletionPolicy = %q, want Retain set explicitly", id, es.Spec.Target.DeletionPolicy)
+		}
+	}
 	if strings.Contains(string(byID["route-design"].Template), "Last-Event-ID") {
 		t.Error("07 §14: Last-Event-ID allow-header removed")
 	}

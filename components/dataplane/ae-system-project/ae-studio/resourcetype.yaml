@@ -106,6 +106,12 @@ spec:
           default: []
           items: { type: object, x-kubernetes-preserve-unknown-fields: true }
   resources:
+    # Retire timing: a rotation retires the previous org-secret reference (and
+    # its vault path) right after the row and stamp commit, before the
+    # converge repoints these ExternalSecrets. deletionPolicy: Retain keeps the
+    # last synced Secret while they still name the retired path, so the pod
+    # runs on its previous values until the converge rolls it. Set explicitly:
+    # never rely on the ESO default here.
     - id: es-tools
       template:
         apiVersion: external-secrets.io/v1
@@ -120,6 +126,7 @@ spec:
           target:
             name: ${metadata.name}-tools
             creationPolicy: Owner
+            deletionPolicy: Retain  # see "Retire timing" above
             template:
               mergePolicy: Merge
               data: { AE_SECRET_REV: "${parameters.secrets.studioTools.rev}" }
@@ -139,6 +146,7 @@ spec:
           target:
             name: ${metadata.name}-agent
             creationPolicy: Owner
+            deletionPolicy: Retain  # see "Retire timing" above
             template:
               mergePolicy: Merge
               data: { AE_SECRET_REV: "${parameters.secrets.designAgent.rev}" }
@@ -157,6 +165,7 @@ spec:
           secretStoreRef: { kind: ClusterSecretStore, name: "${dataplane.secretStore}" }
           target:
             name: ${metadata.name}-pull
+            deletionPolicy: Retain
             template: { type: kubernetes.io/dockerconfigjson }
           data:
             - secretKey: .dockerconfigjson
