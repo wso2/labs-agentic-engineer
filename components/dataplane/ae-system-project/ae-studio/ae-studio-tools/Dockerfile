@@ -28,9 +28,16 @@ ARG TARGETARCH
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -trimpath -o /out/ae-studio-tools ./cmd/ae-studio-tools
 
-# Distroless has no shell or git. Phase 2 adds the git engine and switches the
-# base then. UID 10001 matches the AE Studio pod security context.
-FROM gcr.io/distroless/static-debian12:nonroot
+# git at runtime: the engine (internal/repo) shells out to the git CLI and its
+# askpass shim is a #!/bin/sh script, so the runtime needs both git and a shell,
+# which distroless lacks. Same base and pattern as services/aep-api/Dockerfile.
+# UID 10001 matches the AE Studio pod security context; the image is compatible
+# with a read-only root filesystem (every write lands under the mounted
+# /studio-data and /tmp volumes).
+FROM alpine:3.21
+RUN apk add --no-cache git tini
 COPY --from=build /out/ae-studio-tools /ae-studio-tools
 USER 10001:10001
-ENTRYPOINT ["/ae-studio-tools"]
+# tini as PID 1 reaps the helpers git leaves behind (an orphan re-parents to PID
+# 1, and nothing else reaps children it did not spawn) and forwards signals.
+ENTRYPOINT ["/sbin/tini", "--", "/ae-studio-tools"]

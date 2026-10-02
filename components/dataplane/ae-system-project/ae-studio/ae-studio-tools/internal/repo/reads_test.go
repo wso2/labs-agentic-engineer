@@ -1,0 +1,228 @@
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package repo_test
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/wso2/aep/ae-studio-tools/internal/repo"
+)
+
+func TestHeadAtBranchTagAndRawSha(t *testing.T) {
+	fx := New(t, seedFiles())
+	ctx := context.Background()
+
+	sha1 := fx.Origin.HeadSHA(t)
+	if got := mustHead(t, fx, ""); got != sha1 {
+		t.Fatalf("Head(\"\") = %s, want origin tip %s", got, sha1)
+	}
+
+	// Branch addressing stays fresh: advance origin behind the mirror's back.
+	sha2 := fx.Origin.Seed(t, map[string]string{"README.md": "hello v2\n"}, "second")
+	if got := mustHead(t, fx, ""); got != sha2 {
+		t.Fatalf("Head(\"\") after origin advance = %s, want %s", got, sha2)
+	}
+
+	// Annotated tag peels to the commit — both bare and "tags/" forms.
+	fx.Origin.Tag(t, "v1", "release v1")
+	for _, at := range []string{"v1", "tags/v1"} {
+		if got := mustHead(t, fx, at); got != sha2 {
+			t.Fatalf("Head(%q) = %s, want peeled commit %s", at, got, sha2)
+		}
+	}
+
+	// Raw sha accepted verbatim.
+	if got := mustHead(t, fx, sha1); got != sha1 {
+		t.Fatalf("Head(sha1) = %s, want %s", got, sha1)
+	}
+
+	// Missing ref and missing object → ErrRefNotFound.
+	if _, err := fx.Engine.Head(ctx, fx.Ref, "no-such-ref"); !errors.Is(err, repo.ErrRefNotFound) {
+		t.Fatalf("Head(missing ref) err = %v, want ErrRefNotFound", err)
+	}
+	missing := strings.Repeat("deadbeef", 5)
+	if _, err := fx.Engine.Head(ctx, fx.Ref, missing); !errors.Is(err, repo.ErrRefNotFound) {
+		t.Fatalf("Head(missing sha) err = %v, want ErrRefNotFound", err)
+	}
+}
+
+func TestListReadFileReadBundle(t *testing.T) {
+	fx := New(t, seedFiles())
+	ctx := context.Background()
+	head := fx.Origin.HeadSHA(t)
+
+	entries, gotHead, err := fx.Engine.List(ctx, fx.Ref, "")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if gotHead != head {
+		t.Fatalf("List head = %s, want %s", gotHead, head)
+	}
+	byPath := map[string]repo.Entry{}
+	for _, e := range entries {
+		byPath[e.Path] = e
+	}
+	req, ok := byPath["specs/requirements/prd.md"]
+	if !ok || len(entries) != 2 {
+		t.Fatalf("List entries = %+v, want README.md + specs file", entries)
+	}
+	if req.Size != int64(len("req v1\n")) || len(req.SHA) != 40 {
+		t.Fatalf("List entry = %+v, want size %d and a 40-hex blob sha", req, len("req v1\n"))
+	}
+
+	content, blobSHA, err := fx.Engine.ReadFile(ctx, fx.Ref, "", "specs/requirements/prd.md")
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(content) != "req v1\n" || blobSHA != req.SHA {
+		t.Fatalf("ReadFile = (%q, %s), want (%q, %s)", content, blobSHA, "req v1\n", req.SHA)
+	}
+
+	if _, _, err := fx.Engine.ReadFile(ctx, fx.Ref, "", "specs/nope.md"); !errors.Is(err, repo.ErrPathNotFound) {
+		t.Fatalf("ReadFile(missing) err = %v, want ErrPathNotFound", err)
+	}
+	// A directory path is not a file.
+	if _, _, err := fx.Engine.ReadFile(ctx, fx.Ref, "", "specs"); !errors.Is(err, repo.ErrPathNotFound) {
+		t.Fatalf("ReadFile(dir) err = %v, want ErrPathNotFound", err)
+	}
+
+	files, bundleHead, err := fx.Engine.ReadBundle(ctx, fx.Ref, "", func(rel string) bool {
+		return strings.HasPrefix(rel, "specs/")
+	})
+	if err != nil {
+		t.Fatalf("ReadBundle: %v", err)
+	}
+	if bundleHead != head || len(files) != 1 || files["specs/requirements/prd.md"] != "req v1\n" {
+		t.Fatalf("ReadBundle = (%v, %s), want the one specs file at %s", files, bundleHead, head)
+	}
+	// nil keep = keep everything.
+	all, _, err := fx.Engine.ReadBundle(ctx, fx.Ref, "", nil)
+	if err != nil || len(all) != 2 {
+		t.Fatalf("ReadBundle(nil keep) = (%v, %v), want both files", all, err)
+	}
+}
+
+// Tree listings must emit pathnames VERBATIM. The default `ls-tree -l -z`
+// long format is the only one that does: a custom `--format=%(path)` C-quotes
+// non-ASCII paths even under -z, and core.quotepath=off still quotes `"` and
+// `\` — this pins the raw-byte contract for every hostile shape at once.
+func TestListAndReadBundle_HostilePathsVerbatim(t *testing.T) {
+	seed := map[string]string{
+		"specs/仕様-résumé ノート.md": "unicode content\n",
+		`specs/we"ird\path.md`:   "quoted content\n",
+	}
+	fx := New(t, seed)
+	ctx := context.Background()
+
+	entries, _, err := fx.Engine.List(ctx, fx.Ref, "")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	byPath := map[string]repo.Entry{}
+	for _, e := range entries {
+		byPath[e.Path] = e
+	}
+	for path, content := range seed {
+		e, ok := byPath[path]
+		if !ok {
+			t.Fatalf("List missing verbatim path %q; got %+v", path, entries)
+		}
+		if e.Size != int64(len(content)) {
+			t.Errorf("List %q size = %d, want %d", path, e.Size, len(content))
+		}
+		got, blobSHA, rerr := fx.Engine.ReadFile(ctx, fx.Ref, "", path)
+		if rerr != nil {
+			t.Fatalf("ReadFile(%q): %v", path, rerr)
+		}
+		if string(got) != content || blobSHA != e.SHA {
+			t.Errorf("ReadFile(%q) = (%q, %s), want (%q, %s)", path, got, blobSHA, content, e.SHA)
+		}
+	}
+
+	files, _, err := fx.Engine.ReadBundle(ctx, fx.Ref, "", nil)
+	if err != nil {
+		t.Fatalf("ReadBundle: %v", err)
+	}
+	for path, content := range seed {
+		if files[path] != content {
+			t.Errorf("ReadBundle[%q] = %q, want %q (keys must be verbatim)", path, files[path], content)
+		}
+	}
+}
+
+func TestReadsAtTagAndShaSeeOldTree(t *testing.T) {
+	fx := New(t, seedFiles())
+	ctx := context.Background()
+	sha1 := fx.Origin.HeadSHA(t)
+	fx.Origin.Tag(t, "v1", "release v1")
+	fx.Origin.Seed(t, map[string]string{"specs/requirements/prd.md": "req v2\n"}, "update")
+
+	for _, at := range []string{"v1", sha1} {
+		content, _, err := fx.Engine.ReadFile(ctx, fx.Ref, at, "specs/requirements/prd.md")
+		if err != nil {
+			t.Fatalf("ReadFile at %q: %v", at, err)
+		}
+		if string(content) != "req v1\n" {
+			t.Fatalf("ReadFile at %q = %q, want old content", at, content)
+		}
+	}
+	content, _, err := fx.Engine.ReadFile(ctx, fx.Ref, "", "specs/requirements/prd.md")
+	if err != nil || string(content) != "req v2\n" {
+		t.Fatalf("ReadFile at branch = (%q, %v), want new content", content, err)
+	}
+}
+
+func TestRawShaReadsUseLocalObjects(t *testing.T) {
+	fx := New(t, seedFiles())
+	ctx := context.Background()
+	sha1 := mustHead(t, fx, "") // primes the mirror
+
+	rec := recordCommands(t, fx.Engine)
+	if _, _, err := fx.Engine.ReadFile(ctx, fx.Ref, sha1, "README.md"); err != nil {
+		t.Fatalf("ReadFile at raw sha: %v", err)
+	}
+	if n := rec.countSubcommand("fetch"); n != 0 {
+		t.Fatalf("raw-sha read fetched %d times, want 0 (local objects)", n)
+	}
+
+	// A sha the mirror has never seen → exactly one fetch, then it resolves.
+	sha2 := fx.Origin.Seed(t, map[string]string{"README.md": "v2\n"}, "second")
+	rec.reset()
+	if _, _, err := fx.Engine.ReadFile(ctx, fx.Ref, sha2, "README.md"); err != nil {
+		t.Fatalf("ReadFile at unseen sha: %v", err)
+	}
+	if n := rec.countSubcommand("fetch"); n != 1 {
+		t.Fatalf("unseen-sha read fetched %d times, want exactly 1", n)
+	}
+}
+
+func TestInvalidPathSegmentsRejected(t *testing.T) {
+	fx := New(t, seedFiles())
+	bad := fx.Ref
+	bad.Org = "../escape"
+	if _, err := fx.Engine.Head(context.Background(), bad, ""); err == nil {
+		t.Fatal("Head with traversal org segment succeeded, want validation error")
+	}
+	bad = fx.Ref
+	bad.RepoSlug = "a/b"
+	if _, err := fx.Engine.Head(context.Background(), bad, ""); err == nil {
+		t.Fatal("Head with separator slug succeeded, want validation error")
+	}
+}

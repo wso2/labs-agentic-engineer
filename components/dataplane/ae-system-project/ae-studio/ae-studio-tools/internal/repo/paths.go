@@ -1,0 +1,119 @@
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package repo
+
+import (
+	"fmt"
+	"path/filepath"
+	"regexp"
+)
+
+// The mount layout (design §4). All helpers are pure functions of the
+// workspace root and the RepoRef path key — the path is a function of the DB
+// row, never of client input, and every segment is validated defensively
+// anyway (defense in depth against a poisoned row).
+//
+//	<root>/repos/<org>/<project>/<repoSlug>/git/       bare clone (never checked out)
+//	<root>/repos/<org>/<project>/<repoSlug>/repo.lock  flock: SH reads, EX fetch/push/ref-move
+//	<root>/trash/<id>/                                 two-phase delete staging
+//	<root>/tmp/                                        atomic clone staging, askpass shim
+
+// segmentPattern is the allowed shape of one path segment (org, project,
+// slug): dot, dash, underscore, alphanumerics — no separators, no traversal.
+var segmentPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,200}$`)
+
+// sha40Pattern matches a full 40-hex git object name.
+var sha40Pattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+//deadcode:keep wired in Task 2.7
+func isHex40(s string) bool { return sha40Pattern.MatchString(s) }
+
+// validateSegment rejects anything that is not a plain single path segment.
+//
+//deadcode:keep wired in Task 2.7
+func validateSegment(kind, s string) error {
+	if !segmentPattern.MatchString(s) || s == "." || s == ".." {
+		return fmt.Errorf("repo: invalid %s path segment %q", kind, s)
+	}
+	return nil
+}
+
+// validateRef validates the three path-key segments of a RepoRef.
+//
+//deadcode:keep wired in Task 2.7
+func validateRef(ref RepoRef) error {
+	if err := validateSegment("org", ref.Org); err != nil {
+		return err
+	}
+	if err := validateSegment("project", ref.Project); err != nil {
+		return err
+	}
+	return validateSegment("repo slug", ref.RepoSlug)
+}
+
+// ReposDir is <root>/repos.
+//
+//deadcode:keep wired in Task 2.7
+func ReposDir(root string) string { return filepath.Join(root, "repos") }
+
+// TrashDir is <root>/trash — renamed subtrees awaiting async purge.
+//
+//deadcode:keep wired in Task 2.7
+func TrashDir(root string) string { return filepath.Join(root, "trash") }
+
+// TmpDir is <root>/tmp — atomic clone staging and the askpass shim.
+//
+//deadcode:keep wired in Task 2.7
+func TmpDir(root string) string { return filepath.Join(root, "tmp") }
+
+// RepoDir is <root>/repos/<orgId>/<projectId>/<repoSlug> — the renamable
+// parent holding git/ and repo.lock.
+//
+//deadcode:keep wired in Task 2.7
+func RepoDir(root string, ref RepoRef) (string, error) {
+	if err := validateRef(ref); err != nil {
+		return "", err
+	}
+	return filepath.Join(ReposDir(root), ref.Org, ref.Project, ref.RepoSlug), nil
+}
+
+// GitSubdir is the leaf-name helper for callers holding the repo dir.
+//
+//deadcode:keep wired in Task 2.7
+func GitSubdir(slugDir string) string { return filepath.Join(slugDir, "git") }
+
+// repoPaths bundles the derived per-repo paths one engine operation needs.
+type repoPaths struct {
+	repoDir  string
+	gitDir   string
+	lockPath string
+}
+
+// pathsFor derives (and validates) every per-repo path for ref.
+//
+//deadcode:keep wired in Task 2.7
+func (e *Engine) pathsFor(ref RepoRef) (repoPaths, error) {
+	repoDir, err := RepoDir(e.root, ref)
+	if err != nil {
+		return repoPaths{}, err
+	}
+	return repoPaths{
+		repoDir:  repoDir,
+		gitDir:   filepath.Join(repoDir, "git"),
+		lockPath: filepath.Join(repoDir, "repo.lock"),
+	}, nil
+}
