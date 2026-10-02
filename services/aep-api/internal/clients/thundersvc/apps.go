@@ -74,6 +74,15 @@ const thunderListLimit = 1000
 // errAppConflict is a create Thunder refused because the clientId is taken.
 var errAppConflict = errors.New("thunder application clientId already exists")
 
+// errAppIDRejected is a GET /applications/{id} Thunder answered 400: the id
+// is not one it could ever have issued.
+var errAppIDRejected = errors.New("thunder rejected the application id")
+
+// ErrAppInForeignOU means an application with the org app's clientId exists
+// but is registered under another OU than the org's. It is never returned as
+// the org's app, and nothing heals it: an operator must look at who owns it.
+var ErrAppInForeignOU = errors.New("thunder application is registered under another organization unit")
+
 //deadcode:keep wired by Task 1.13 (EnsureClient creates the ae-studio-<org> app)
 func (c *client) EnsureOrgApp(ctx context.Context, spec OrgAppSpec) (OrgApp, error) {
 	if spec.Name == "" || spec.OUID == "" {
@@ -130,19 +139,72 @@ func (c *client) SetAppSecret(ctx context.Context, entityID, secret string) erro
 }
 
 // findOrgApp returns the entity id of the app spec names, "" when absent:
-// the stored id first, then one scan by clientId.
+// the stored id first, then one scan by clientId. When spec.OUID is set, an
+// app with that clientId under any other OU is ErrAppInForeignOU, never the
+// org's app: its tokens would name another org.
 func (c *client) findOrgApp(ctx context.Context, token string, spec OrgAppSpec) (string, error) {
 	if spec.StoredID != "" {
 		app, found, err := c.getApp(ctx, token, spec.StoredID)
+		if errors.Is(err, errAppIDRejected) {
+			found, err = false, nil // a malformed stored id is a miss like a 404
+		}
 		if err != nil {
 			return "", err
 		}
 		if found && appClientID(app) == spec.Name {
+			if err := checkAppOU(spec, spec.StoredID, app); err != nil {
+				return "", err
+			}
 			return spec.StoredID, nil
 		}
 		slog.InfoContext(ctx, "thunder.app_stored_id_miss", "appName", spec.Name, "storedID", spec.StoredID, "found", found)
 	}
-	return c.scanApps(ctx, token, spec.Name)
+	id, err := c.scanApps(ctx, token, spec.Name)
+	if err != nil || id == "" {
+		return id, err
+	}
+	return c.verifyAppOU(ctx, token, spec, id)
+}
+
+// verifyAppOU reads a scanned app by id to check its OU (the list rows carry
+// none). Skipped when spec.OUID is unset; "" when the app vanished meanwhile.
+func (c *client) verifyAppOU(ctx context.Context, token string, spec OrgAppSpec, id string) (string, error) {
+	if spec.OUID == "" {
+		return id, nil
+	}
+	app, found, err := c.getApp(ctx, token, id)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", nil
+	}
+	if err := checkAppOU(spec, id, app); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// checkAppOU is ErrAppInForeignOU when spec.OUID is set and the app is not
+// registered under it (an app body without an OU cannot prove it is).
+func checkAppOU(spec OrgAppSpec, id string, app map[string]any) error {
+	if spec.OUID == "" {
+		return nil
+	}
+	if got := appOUIDOf(app); got != spec.OUID {
+		return fmt.Errorf("thunder app %q (id=%s) is under OU %q, want %q: %w", spec.Name, id, got, spec.OUID, ErrAppInForeignOU)
+	}
+	return nil
+}
+
+// appOUIDOf is the OU id an application body names, "" when it names none.
+func appOUIDOf(app map[string]any) string {
+	for _, k := range []string{"ouId", "ou_id", "organizationUnitId"} {
+		if v, ok := app[k].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // appClientID is the clientId of an application body: its oauth2 config's,
@@ -157,7 +219,8 @@ func appClientID(app map[string]any) string {
 	return id
 }
 
-// getApp reads one application by entity id; found is false on a 404.
+// getApp reads one application by entity id; found is false on a 404, a
+// 400 is errAppIDRejected.
 func (c *client) getApp(ctx context.Context, token, appID string) (map[string]any, bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/applications/"+url.PathEscape(appID), nil)
 	if err != nil {
@@ -173,6 +236,8 @@ func (c *client) getApp(ctx context.Context, token, appID string) (map[string]an
 	case http.StatusOK:
 	case http.StatusNotFound:
 		return nil, false, nil
+	case http.StatusBadRequest:
+		return nil, false, fmt.Errorf("thunder get app %s: %w", appID, errAppIDRejected)
 	default:
 		body, _ := io.ReadAll(resp.Body)
 		return nil, false, fmt.Errorf("thunder get app returned %d: %s", resp.StatusCode, string(body))
@@ -235,11 +300,15 @@ func (c *client) scanApps(ctx context.Context, token, clientID string) (string, 
 }
 
 // createOrgApp registers the app; a 409 (another writer registered the
-// clientId since the lookup) resolves to that app by one more scan.
+// clientId since the lookup) resolves to that app by one more scan, provided
+// it sits under ouID (else ErrAppInForeignOU).
 func (c *client) createOrgApp(ctx context.Context, token, name, ouID string) (OrgApp, error) {
 	id, clientID, secret, err := c.createApp(ctx, token, name, ouID)
 	if errors.Is(err, errAppConflict) {
 		existing, serr := c.scanApps(ctx, token, name)
+		if serr == nil && existing != "" {
+			existing, serr = c.verifyAppOU(ctx, token, OrgAppSpec{Name: name, OUID: ouID}, existing)
+		}
 		if serr != nil {
 			return OrgApp{}, fmt.Errorf("create app %q: conflict, then %w", name, serr)
 		}

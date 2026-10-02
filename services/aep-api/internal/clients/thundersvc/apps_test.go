@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -114,6 +115,10 @@ func (th *fakeThunder) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(rows)
 
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/applications/"):
+		if strings.HasPrefix(id, "malformed") {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		a, ok := th.apps[id]
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
@@ -224,8 +229,6 @@ func captureLogs(t *testing.T) *bytes.Buffer {
 	return &buf
 }
 
-var ctx = context.Background()
-
 func TestStudioAppName(t *testing.T) {
 	if got := StudioAppName("default"); got != "ae-studio-default" {
 		t.Fatalf("StudioAppName = %q", got)
@@ -233,6 +236,7 @@ func TestStudioAppName(t *testing.T) {
 }
 
 func TestEnsureOrgApp_ByStoredIDOneRequest(t *testing.T) {
+	ctx := context.Background()
 	th := newFakeThunder(t)
 	th.app("app-7", "ae-studio-default", "ou-1")
 	c := newFakeClient(t, th)
@@ -246,8 +250,9 @@ func TestEnsureOrgApp_ByStoredIDOneRequest(t *testing.T) {
 }
 
 func TestEnsureOrgApp_MissFallsBackToOneScan(t *testing.T) {
+	ctx := context.Background()
 	th := newFakeThunder(t)
-	for i := 0; i < 150; i++ { // more than one of findApp's pages; Thunder ignores offset/limit
+	for i := 0; i < 150; i++ { // more than one 100-row page; Thunder ignores offset/limit and returns all
 		th.app(fmt.Sprintf("a%d", i), fmt.Sprintf("x-%d", i), "ou-0")
 	}
 	th.app("app-9", "aep-publisher-default", "ou-1")
@@ -265,6 +270,7 @@ func TestEnsureOrgApp_MissFallsBackToOneScan(t *testing.T) {
 // Thunder, but a hand-edited row or a restored database can say anything) is
 // a miss, not a match: the scan by clientId decides.
 func TestEnsureOrgApp_StoredIDOfAnotherAppIsAMiss(t *testing.T) {
+	ctx := context.Background()
 	th := newFakeThunder(t)
 	th.app("app-1", "aep-publisher-default", "ou-1")
 	th.app("app-2", "ae-studio-default", "ou-1")
@@ -275,6 +281,7 @@ func TestEnsureOrgApp_StoredIDOfAnotherAppIsAMiss(t *testing.T) {
 }
 
 func TestEnsureOrgApp_CreatesWithClaimsAndNeverLogsSecret(t *testing.T) {
+	ctx := context.Background()
 	th := newFakeThunder(t)
 	logs := captureLogs(t)
 	got, err := newFakeClient(t, th).EnsureOrgApp(ctx, OrgAppSpec{Name: "ae-studio-default", OUID: "ou-1"})
@@ -295,6 +302,7 @@ func TestEnsureOrgApp_CreatesWithClaimsAndNeverLogsSecret(t *testing.T) {
 // A 409 on create means another writer registered the clientId between the
 // scan and the create: one more scan resolves to that application.
 func TestEnsureOrgApp_CreateConflictResolvesByOneScan(t *testing.T) {
+	ctx := context.Background()
 	th := newFakeThunder(t)
 	th.racer = &fakeApp{id: "won", clientID: "ae-studio-default", ouID: "ou-1"}
 	got, err := newFakeClient(t, th).EnsureOrgApp(ctx, OrgAppSpec{Name: "ae-studio-default", OUID: "ou-1"})
@@ -309,6 +317,7 @@ func TestEnsureOrgApp_CreateConflictResolvesByOneScan(t *testing.T) {
 // The studio app's token must carry the org fence, so it is never registered
 // under a guessed OU.
 func TestEnsureOrgApp_RequiresNameAndOU(t *testing.T) {
+	ctx := context.Background()
 	th := newFakeThunder(t)
 	c := newFakeClient(t, th)
 	for _, spec := range []OrgAppSpec{{OUID: "ou-1"}, {Name: "ae-studio-default"}} {
@@ -322,6 +331,7 @@ func TestEnsureOrgApp_RequiresNameAndOU(t *testing.T) {
 }
 
 func TestAppExists(t *testing.T) {
+	ctx := context.Background()
 	th := newFakeThunder(t)
 	th.app("app-7", "ae-studio-default", "ou-1")
 	c := newFakeClient(t, th)
@@ -341,6 +351,7 @@ func TestAppExists(t *testing.T) {
 }
 
 func TestSetAppSecret_PutsCallerSecret(t *testing.T) {
+	ctx := context.Background()
 	th := newFakeThunder(t)
 	th.app("app-7", "ae-studio-default", "ou-1")
 	logs := captureLogs(t)
@@ -365,6 +376,7 @@ func TestSetAppSecret_PutsCallerSecret(t *testing.T) {
 }
 
 func TestSetAppSecret_MissingAppIsAnError(t *testing.T) {
+	ctx := context.Background()
 	th := newFakeThunder(t)
 	err := newFakeClient(t, th).SetAppSecret(ctx, "gone", "s2-caller-chosen")
 	if err == nil || strings.Contains(err.Error(), "s2-caller-chosen") {
@@ -378,6 +390,7 @@ func TestSetAppSecret_MissingAppIsAnError(t *testing.T) {
 // The publisher path reads its app by the stored id too: no list at all when
 // the id is still good, and the entity id comes back for the caller to keep.
 func TestEnsurePublisherApp_ByStoredIDNoList(t *testing.T) {
+	ctx := context.Background()
 	th := newFakeThunder(t)
 	th.app("pub-1", "aep-publisher-default", "ou-1")
 	got, err := newFakeClient(t, th).EnsurePublisherApp(ctx, "default", "ou-1", "pub-1")
@@ -390,6 +403,7 @@ func TestEnsurePublisherApp_ByStoredIDNoList(t *testing.T) {
 }
 
 func TestEnsurePublisherApp_CreateReturnsEntityID(t *testing.T) {
+	ctx := context.Background()
 	th := newFakeThunder(t)
 	got, err := newFakeClient(t, th).EnsurePublisherApp(ctx, "default", "ou-1", "")
 	if err != nil || !got.Created || got.EntityID != "gen-1" || got.Secret == "" {
@@ -398,6 +412,7 @@ func TestEnsurePublisherApp_CreateReturnsEntityID(t *testing.T) {
 }
 
 func TestDeleteAndRegenerate_UseStoredID(t *testing.T) {
+	ctx := context.Background()
 	th := newFakeThunder(t)
 	th.app("pub-1", "aep-publisher-default", "ou-1")
 	c := newFakeClient(t, th)
@@ -412,5 +427,48 @@ func TestDeleteAndRegenerate_UseStoredID(t *testing.T) {
 	}
 	if deleted, err := c.DeletePublisherApp(ctx, "default", "pub-1"); err != nil || deleted {
 		t.Fatalf("second delete: %v %v", deleted, err)
+	}
+}
+
+// An app with the studio clientId under another OU (squatted, leftover, the
+// org's OU changed) is not the org's: its token would name another org. Both
+// lookups refuse it, nothing is created and nothing is rewritten.
+func TestEnsureOrgApp_ForeignOUIsRefused(t *testing.T) {
+	ctx := context.Background()
+	for _, stored := range []string{"app-9", ""} { // by stored id, by scan
+		th := newFakeThunder(t)
+		th.app("app-9", "ae-studio-default", "ou-9")
+		c := newFakeClient(t, th)
+		spec := OrgAppSpec{Name: "ae-studio-default", OUID: "ou-1", StoredID: stored}
+		if got, err := c.EnsureOrgApp(ctx, spec); !errors.Is(err, ErrAppInForeignOU) || got.EntityID != "" {
+			t.Fatalf("stored=%q EnsureOrgApp = %+v, %v; want ErrAppInForeignOU", stored, got, err)
+		}
+		if id, err := c.AppExists(ctx, spec); !errors.Is(err, ErrAppInForeignOU) || id != "" {
+			t.Fatalf("stored=%q AppExists = %q, %v; want ErrAppInForeignOU", stored, id, err)
+		}
+		if th.count("POST /applications") != 0 || th.count("PUT /applications/app-9") != 0 || th.count("DELETE /applications/app-9") != 0 {
+			t.Fatalf("stored=%q: a foreign-OU app must not be created over, rewritten or deleted: %v", stored, th.calls)
+		}
+	}
+}
+
+// A 409 whose winner sits under another OU is refused the same way.
+func TestEnsureOrgApp_CreateConflictWithForeignOUIsRefused(t *testing.T) {
+	th := newFakeThunder(t)
+	th.racer = &fakeApp{id: "won", clientID: "ae-studio-default", ouID: "ou-9"}
+	_, err := newFakeClient(t, th).EnsureOrgApp(context.Background(), OrgAppSpec{Name: "ae-studio-default", OUID: "ou-1"})
+	if !errors.Is(err, ErrAppInForeignOU) {
+		t.Fatalf("err = %v, want ErrAppInForeignOU", err)
+	}
+}
+
+// A stored id Thunder rejects as malformed (400) is a miss like a 404: the one
+// scan still finds the app.
+func TestEnsureOrgApp_StoredIDRejectedFallsBackToScan(t *testing.T) {
+	th := newFakeThunder(t)
+	th.app("app-7", "ae-studio-default", "ou-1")
+	got, err := newFakeClient(t, th).EnsureOrgApp(context.Background(), OrgAppSpec{Name: "ae-studio-default", OUID: "ou-1", StoredID: "malformed-id"})
+	if err != nil || got.EntityID != "app-7" || got.Created || th.count("GET /applications") != 1 {
+		t.Fatalf("%+v %v calls=%v", got, err, th.calls)
 	}
 }

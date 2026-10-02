@@ -80,11 +80,13 @@ type Client interface {
 	// EnsureOrgApp finds the org application spec names (by spec.StoredID,
 	// else one list scan by clientId) or creates it under spec.OUID as an
 	// m2m client_credentials app whose tokens carry ouId/ouHandle. Secret is
-	// set only when Created. A found app is returned as is.
+	// set only when Created. A found app is returned as is when it sits under
+	// spec.OUID; one under another OU is ErrAppInForeignOU (never healed).
 	EnsureOrgApp(ctx context.Context, spec OrgAppSpec) (OrgApp, error)
 
 	// AppExists returns the entity id of the org application spec names, ""
-	// when there is none. It never creates.
+	// when there is none. It never creates. When spec.OUID is set, an app
+	// under another OU is ErrAppInForeignOU, not the org's.
 	AppExists(ctx context.Context, spec OrgAppSpec) (entityID string, err error)
 
 	// SetAppSecret makes Thunder hold this caller-chosen client secret for
@@ -897,12 +899,7 @@ func (c *client) appOUID(ctx context.Context, token, appID string) (string, erro
 	if err != nil {
 		return "", err
 	}
-	for _, k := range []string{"ouId", "ou_id", "organizationUnitId"} {
-		if v, ok := app[k].(string); ok && v != "" {
-			return v, nil
-		}
-	}
-	return "", nil
+	return appOUIDOf(app), nil
 }
 
 func (c *client) DeletePublisherApp(ctx context.Context, orgHandle, storedID string) (bool, error) {

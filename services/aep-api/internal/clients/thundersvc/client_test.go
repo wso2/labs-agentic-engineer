@@ -201,7 +201,7 @@ func TestEnsurePublisherApp_HealsWrongOU(t *testing.T) {
 	c := newTestClient(srv.URL)
 
 	app, err := c.EnsurePublisherApp(context.Background(), "org1", "org-ou-1", "")
-	id, secret, created := app.ClientID, app.Secret, app.Created
+	clientID, secret, created := app.ClientID, app.Secret, app.Created
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -214,8 +214,11 @@ func TestEnsurePublisherApp_HealsWrongOU(t *testing.T) {
 	if !created || secret != "fresh-secret" {
 		t.Errorf("want created=true with rotated secret, got created=%v secret=%q", created, secret)
 	}
-	if id != "aep-publisher-org1" {
-		t.Errorf("client_id changed: got %q", id)
+	if clientID != "aep-publisher-org1" {
+		t.Errorf("client_id changed: got %q", clientID)
+	}
+	if app.EntityID != "app-new" {
+		t.Errorf("entity id = %q, want the recreated app's app-new", app.EntityID)
 	}
 }
 
@@ -248,7 +251,7 @@ func TestEnsurePublisherApp_PhantomOU_KeepsExistingApp(t *testing.T) {
 	c := newTestClient(srv.URL)
 
 	app, err := c.EnsurePublisherApp(context.Background(), "org1", "phantom-ou", "")
-	id, secret, created := app.ClientID, app.Secret, app.Created
+	clientID, secret, created := app.ClientID, app.Secret, app.Created
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -258,8 +261,8 @@ func TestEnsurePublisherApp_PhantomOU_KeepsExistingApp(t *testing.T) {
 	if created || secret != "" {
 		t.Errorf("expected no recreate (created=false, empty secret), got created=%v secret=%q", created, secret)
 	}
-	if id != "aep-publisher-org1" {
-		t.Errorf("should return the existing client_id, got %q", id)
+	if clientID != "aep-publisher-org1" || app.EntityID != "app-1" {
+		t.Errorf("should return the existing app, got client_id %q entity id %q", clientID, app.EntityID)
 	}
 }
 
@@ -465,12 +468,12 @@ func TestEnsurePublisherApp_HealsMissingTokenClaims(t *testing.T) {
 	defer srv.Close()
 
 	app, err := newTestClient(srv.URL).EnsurePublisherApp(context.Background(), "org1", "org-ou-1", "")
-	id, secret, created := app.ClientID, app.Secret, app.Created
+	clientID, secret, created := app.ClientID, app.Secret, app.Created
 	if err != nil {
 		t.Fatalf("EnsurePublisherApp: %v", err)
 	}
-	if created || secret != "" || id != "aep-publisher-org1" {
-		t.Fatalf("id=%q secret=%q created=%v, want the existing app untouched apart from its token config", id, secret, created)
+	if created || secret != "" || clientID != "aep-publisher-org1" || app.EntityID != "app-1" {
+		t.Fatalf("client_id=%q entity=%q secret=%q created=%v, want the existing app untouched apart from its token config", clientID, app.EntityID, secret, created)
 	}
 	if m.putCount != 1 {
 		t.Fatalf("putCount=%d, want exactly one PUT adding the token claims", m.putCount)
