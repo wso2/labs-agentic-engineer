@@ -20,98 +20,60 @@
  * A room the server could not seed must not open (#586).
  *
  * Observed as a blank PRD on a project whose requirements are 4993 bytes in
- * git, after an `aep-api` restart while `aep-collab` stayed up. The seed threw,
- * the failure was swallowed, and the room opened empty — permanently, because a
- * room stays loaded while any client is connected. The console could not tell
- * that room from an empty project, so it suppressed the committed-git fallback;
- * an agent turn joined it, synced perfectly, and was told the project had no
- * files; and every flush 409ed, because a baseline that was never populated
- * writes with `baseSha: ""`, which the Files API reads as "must not exist".
+ * git, after an `aep-api` restart while the collab server stayed up. The seed
+ * threw, the failure was swallowed, and the room opened empty — permanently,
+ * because a room stays loaded while any client is connected. The console could
+ * not tell that room from an empty project, so it suppressed the committed-git
+ * fallback; an agent turn joined it, synced perfectly, and was told the project
+ * had no files; and every flush 409ed, because a baseline that was never
+ * populated writes with `baseSha: ""`, which the Files socket reads as "must
+ * not exist".
  *
- * These run the REAL server against a REAL provider: the claim is about what a
- * client experiences when a load fails, which neither side can demonstrate on
- * its own.
- *
- * WHY THIS FILE ALONE RUNS WITH `--test-force-exit`: a connection Hocuspocus
- * REFUSES is never registered against a document, so `Server.destroy()` —
- * which closes documents' connections — does not reach it, and the process
- * stops draining its loop even though no active referenced handle is left.
- * That is a teardown gap in the library, reachable only from a test that
- * makes the server refuse; nothing in the service's own lifetime depends on
- * it. The flag is scoped to this file by `package.json` rather than applied
- * package-wide, so every OTHER suite keeps its leak detection — that is what
- * would catch a real `Server.destroy()` or stray-timer regression in the
- * service's own code.
+ * These run the REAL pod Room against a REAL provider and the fake Files
+ * socket: the claim is about what a client experiences when a load fails,
+ * which neither side can demonstrate on its own. The IdP is stood in by a
+ * verifier that admits one user of the pod's org.
  */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import net from "node:net";
 import * as Y from "yjs";
 import { HocuspocusProvider, HocuspocusProviderWebsocket } from "@hocuspocus/provider";
 import WebSocket from "ws";
 import { fragmentToMarkdown } from "@aep/collab-doc";
-import { createCollabServer } from "./server.js";
+import { startFakeFilesSocket, type FakeFilesSocket } from "./fake-files-socket.js";
+import type { Verify } from "./pod/auth.js";
+import type { PodConfig } from "./pod/config.js";
+import type { PodListeners } from "./pod/listeners.js";
+import { startPod } from "./pod/start.js";
 import { dropRoomState, roomState } from "./rooms.js";
-import type { BffClient } from "./bff.js";
-import type { ApplyWrite } from "./files-client.js";
-import type { CollabConfig } from "./env.js";
 
 const ROOM = "spec-acme-shop";
 const PRD_PATH = "specs/requirements/prd.md";
 const PRD = "# PRD\n\nA paragraph of body text.\n";
-const PRD_SHA = "s1";
 
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const srv = net.createServer();
-    srv.once("error", reject);
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
+/** Admits one user of the pod's org: the token check is not what these tests are about. */
+const verify: Verify = () =>
+  Promise.resolve({
+    kind: "user",
+    claims: { sub: "u-jo", ouId: "ou-acme", ouHandle: "acme", name: "Jo", email: "jo@example.com", exp: Math.floor(Date.now() / 1000) + 3600 },
   });
-}
 
-function config(port: number): CollabConfig {
-  return {
-    port,
-    aepApiBase: "http://bff.test/api/v1",
-    devMode: false,
-    mockBff: false,
-    mockBffPort: 0,
-    commitDebounceMs: 60_000,
-    commitMaxDebounceMs: 300_000,
+async function startRoom(files: FakeFilesSocket): Promise<PodListeners> {
+  const cfg: PodConfig = {
+    orgId: "ou-acme",
+    orgHandle: "acme",
+    issuer: "http://thunder.test",
+    jwksUrl: "http://thunder.test/oauth2/jwks",
+    userAudiences: ["aep-console-client"],
+    agentClientId: "ae-studio-acme",
+    allowedOrigins: [],
+    filesSocket: files.path,
+    listenPort: 0,
+    healthPort: 0,
+    localPort: 0,
   };
-}
-
-/**
- * An `aep-api` with two independently failing halves — the two windows a
- * restart opens. `oracleDown` is the likelier one (the validate call is first
- * and cheap); `readDown` is the narrower one the bug was reported from, where
- * the oracle answers and the spec bundle read does not.
- */
-interface Upstream {
-  oracleDown: boolean;
-  readDown: boolean;
-}
-
-function flakyBff(up: Upstream, applied: ApplyWrite[]): BffClient {
-  return {
-    validateAccess: async () => {
-      if (up.oracleDown) throw new Error("oracle unavailable (503)");
-      return { name: "Jo", email: "jo@example.com", projectName: "shop" };
-    },
-    fetchSpecFiles: async () => {
-      if (up.readDown) throw new Error("Failed to read spec files for shop (500)");
-      return [{ path: PRD_PATH, content: PRD, sha: PRD_SHA }];
-    },
-    applyFiles: async (_t, _p, batch) => {
-      applied.push(...batch.writes);
-      return { commitSha: "c1", files: [] };
-    },
-  };
+  return startPod(cfg, { verify, log: () => {} });
 }
 
 interface Attempt {
@@ -127,10 +89,10 @@ interface Attempt {
  * sync, or the server's refusal. A fresh doc per attempt is what the console
  * does when it rebuilds — the refused doc never synced, so it carries nothing.
  */
-async function attemptJoin(port: number): Promise<Attempt> {
+async function attemptJoin(pod: PodListeners): Promise<Attempt> {
   const doc = new Y.Doc();
   const socket = new HocuspocusProviderWebsocket({
-    url: `ws://127.0.0.1:${port}`,
+    url: `${pod.publicUrl.replace(/^http/, "ws")}/v1/rooms`,
     WebSocketPolyfill: WebSocket,
   });
   const provider = new HocuspocusProvider({
@@ -166,16 +128,14 @@ async function leave(attempt: Attempt) {
 
 test("a room whose spec read failed is refused, and the next attempt recovers it", async () => {
   dropRoomState(ROOM);
-  const port = await freePort();
-  const up: Upstream = { oracleDown: true, readDown: true };
-  const applied: ApplyWrite[] = [];
-  const server = createCollabServer(config(port), { bff: flakyBff(up, applied) });
-  await server.listen(port);
+  const files = await startFakeFilesSocket({ files: { [PRD_PATH]: PRD } });
+  const pod = await startRoom(files);
 
   try {
-    // aep-api is down: the oracle itself fails first, which is the likelier of
-    // the two windows during a restart.
-    const refusedAtAuth = await attemptJoin(port);
+    // aep-api is down: the project lookup fails first, which is the likelier
+    // of the two windows during a restart.
+    files.failNext(503, "aep_api_unavailable", "lookup");
+    const refusedAtAuth = await attemptJoin(pod);
     assert.equal(refusedAtAuth.synced, false, "an unseedable room must not sync");
     assert.equal(
       refusedAtAuth.refusedWith,
@@ -184,11 +144,11 @@ test("a room whose spec read failed is refused, and the next attempt recovers it
     );
     await leave(refusedAtAuth);
 
-    // The narrower window the bug was reported from: the oracle answers, the
+    // The narrower window the bug was reported from: the lookup answers, the
     // spec read does not. Same refusal, same tag — a room that cannot be
     // seeded is refused however the seed failed.
-    up.oracleDown = false;
-    const refusedAtSeed = await attemptJoin(port);
+    files.failNext(503, "aep_api_unavailable", "bundle");
+    const refusedAtSeed = await attemptJoin(pod);
     assert.equal(refusedAtSeed.synced, false, "an unseeded room must not sync");
     assert.equal(refusedAtSeed.refusedWith, "upstream-unavailable");
     // Ask the share map, not `getXmlFragment` — that getter CREATES the key it
@@ -201,9 +161,8 @@ test("a room whose spec read failed is refused, and the next attempt recovers it
     );
     await leave(refusedAtSeed);
 
-    // Recovery: aep-api is back, and a fresh attempt seeds from git.
-    up.readDown = false;
-    const recovered = await attemptJoin(port);
+    // Recovery: the socket answers again, and a fresh attempt seeds from git.
+    const recovered = await attemptJoin(pod);
     assert.equal(recovered.synced, true, "the room must open once the read works");
     assert.equal(
       fragmentToMarkdown(recovered.doc.getXmlFragment(PRD_PATH)).trim(),
@@ -213,17 +172,21 @@ test("a room whose spec read failed is refused, and the next attempt recovers it
 
     // The wedge itself: a baseline that was never populated writes with
     // baseSha "" — "must not exist" — and 409s against the real file forever.
-    recovered.doc.getXmlFragment(PRD_PATH).insert(0, [new Y.XmlText("edited ")]);
+    const para = new Y.XmlElement("paragraph");
+    recovered.doc.getXmlFragment(PRD_PATH).push([para]);
+    para.push([new Y.XmlText("edited")]);
     await leave(recovered);
-    const write = applied.find((w) => w.path === PRD_PATH);
-    assert.ok(write, "the recovered room must be able to commit");
+    assert.equal(files.commits().length, 1, "the recovered room must be able to commit");
+    assert.match(files.file(PRD_PATH) ?? "", /edited/);
     assert.equal(
-      write.baseSha,
-      PRD_SHA,
-      "a recovered room commits against the sha it was seeded from",
+      files.requests.filter((r) => r.method === "POST").length,
+      1,
+      "a recovered room commits against the sha it was seeded from: no conflict, no retry",
     );
   } finally {
-    await server.destroy();
+    await pod.close();
+    await files.close();
+    dropRoomState(ROOM);
   }
 });
 
@@ -233,13 +196,11 @@ test("refusing a room leaves no stale baseline behind", async () => {
   // runs for a load that threw. A baseline left here would hand the NEXT load
   // entries it did not seed, and the flush would commit against those shas.
   dropRoomState(ROOM);
-  const port = await freePort();
-  const server = createCollabServer(config(port), {
-    bff: flakyBff({ oracleDown: false, readDown: true }, []),
-  });
-  await server.listen(port);
+  const files = await startFakeFilesSocket({ files: { [PRD_PATH]: PRD } });
+  const pod = await startRoom(files);
   try {
-    const refused = await attemptJoin(port);
+    files.failNext(503, "aep_api_unavailable", "bundle");
+    const refused = await attemptJoin(pod);
     assert.equal(refused.synced, false);
     await leave(refused);
     assert.equal(
@@ -248,6 +209,8 @@ test("refusing a room leaves no stale baseline behind", async () => {
       "a refused room kept a baseline the next load would commit against",
     );
   } finally {
-    await server.destroy();
+    await pod.close();
+    await files.close();
+    dropRoomState(ROOM);
   }
 });

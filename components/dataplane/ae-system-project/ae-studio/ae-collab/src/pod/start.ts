@@ -21,23 +21,39 @@
  * and dev mode (`pnpm dev`: auth bypassed, rooms served from a fake Files
  * socket holding the dev fixtures). Both run the same listeners and the same
  * Room; only who may join and where the files come from differ.
+ *
+ * Close is the SIGTERM path (07 §10, Q-32): the room listeners stop
+ * accepting, every loaded room is force-flushed through the Files socket
+ * (bounded, inside ae-studio-tools' drain window), then the room sockets end
+ * and the health listener closes.
  */
 
+import type { Hocuspocus } from "@hocuspocus/server";
 import { createVerifier } from "@aep/platform-idp-auth";
-import { createFilesClient } from "../files-client.js";
+import { flushAllRooms } from "../committer.js";
+import { createFilesClient, type FilesClient } from "../files-client.js";
 import { startFakeFilesSocket } from "../fake-files-socket.js";
 import { devSpecFiles } from "../fixtures.js";
-import { authenticateFor, devAuthenticate, onTokenSyncFor, type Verify } from "./auth.js";
+import { authenticateFor, devAuthenticate, onTokenSyncFor, type CollabContext, type Verify } from "./auth.js";
 import type { DevConfig, PodConfig } from "./config.js";
 import { createExpiryGuard, systemClock, type Clock } from "./expiry.js";
 import { startPodListeners, userGate, type PodListeners } from "./listeners.js";
 import { stdoutLog, type PodLog } from "./log.js";
-import { createRoomServer } from "./room-server.js";
+import { createRoomServer, type CommitCadence } from "./room-server.js";
 
 export interface PodDeps {
   log?: PodLog;
   /** Drives the token deadlines; the system clock unless a test steps it. */
   clock?: Clock;
+  /** The IdP token check; the cfg's issuer and JWKS unless a test stands one in. */
+  verify?: Verify;
+  /** The committer's cadence; the Room's default unless a test shortens it. */
+  cadence?: CommitCadence;
+}
+
+/** The shutdown flush: every loaded room, forced, up to 8 at once. */
+function shutdownFlush(rooms: Hocuspocus<CollabContext>, files: FilesClient, log: PodLog): () => Promise<void> {
+  return () => flushAllRooms({ files, log }, rooms.documents, { concurrency: 8, force: true });
 }
 
 /** The AE Studio pod: both listeners, the Room, the user gate. */
@@ -45,7 +61,7 @@ export function startPod(cfg: PodConfig, deps: PodDeps = {}): Promise<PodListene
   const log = deps.log ?? stdoutLog;
   // Built before anything binds: a wiring error (empty issuer, JWKS URL or
   // org) fails the start instead of every request.
-  const verify: Verify = createVerifier({ issuer: cfg.issuer, jwksUrl: cfg.jwksUrl });
+  const verify: Verify = deps.verify ?? createVerifier({ issuer: cfg.issuer, jwksUrl: cfg.jwksUrl });
   const files = createFilesClient(cfg.filesSocket);
   const expiry = createExpiryGuard(deps.clock ?? systemClock, (connection) =>
     log({ msg: "room_token_expired", source: "ae-collab", listener: connection.context.listener }),
@@ -56,8 +72,9 @@ export function startPod(cfg: PodConfig, deps: PodDeps = {}): Promise<PodListene
     onTokenSync: onTokenSyncFor(cfg, verify, expiry, log),
     expiry,
     log,
+    ...(deps.cadence ? { cadence: deps.cadence } : {}),
   });
-  return startPodListeners(cfg, { rooms, gate: userGate(cfg, verify), log });
+  return startPodListeners(cfg, { rooms, gate: userGate(cfg, verify), log, drain: shutdownFlush(rooms, files, log) });
 }
 
 /** Dev mode: never in a cluster (a pod env with `COLLAB_DEV` fails the boot). */
@@ -72,7 +89,12 @@ export async function startDev(cfg: DevConfig, deps: Pick<PodDeps, "log"> = {}):
   const rooms = createRoomServer({ files, authenticate: devAuthenticate, expiry, log });
   let listeners: PodListeners;
   try {
-    listeners = await startPodListeners(cfg, { rooms, gate: () => Promise.resolve(null), log });
+    listeners = await startPodListeners(cfg, {
+      rooms,
+      gate: () => Promise.resolve(null),
+      log,
+      drain: shutdownFlush(rooms, files, log),
+    });
   } catch (err) {
     await fake.close();
     throw err;

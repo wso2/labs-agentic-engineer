@@ -58,8 +58,11 @@ const (
 	listenerDrainTimeout = 5 * time.Second
 	// filesSocketDrainWindow is how long after SIGTERM the Files socket keeps
 	// accepting: ae-collab gets SIGTERM at the same moment and flushes every
-	// Room through it (07 §10: about 5 s).
-	filesSocketDrainWindow = 5 * time.Second
+	// Room through it (07 §10). Coupled to ae-collab's shutdown flush budget
+	// (SHUTDOWN_FLUSH_BUDGET_MS, 8 s, ae-collab/src/committer.ts), which must
+	// end inside this window with a margin; raise both together. Window +
+	// filesSocketShutdownTimeout + reaperStopTimeout = 10 + 15 + 2 s < 30 s grace.
+	filesSocketDrainWindow = 10 * time.Second
 	// filesSocketShutdownTimeout bounds the wait for applies still in flight
 	// once the socket stops accepting. Window + timeout + the reaper's stop
 	// stay inside the pod's 30 s grace period.

@@ -30,72 +30,74 @@
  * committer flushes exactly what it sees, and git gets a file twice as long.
  * Repeat per session: 374 → 750 → 1502 → 3006 → … lines.
  *
- * These run the REAL server against a REAL provider, because the bug lives in
- * the interaction between them, not in either alone.
+ * These run the REAL pod Room against a REAL provider (and the fake Files
+ * socket), because the bug lives in the interaction between them, not in
+ * either alone.
  */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import net from "node:net";
 import * as Y from "yjs";
 import { HocuspocusProvider, HocuspocusProviderWebsocket } from "@hocuspocus/provider";
 import WebSocket from "ws";
 import { fragmentToMarkdown } from "@aep/collab-doc";
-import { createCollabServer } from "./server.js";
+import { startFakeFilesSocket, type FakeFilesSocket } from "./fake-files-socket.js";
+import type { Verify } from "./pod/auth.js";
+import type { PodListeners } from "./pod/listeners.js";
+import { startPod } from "./pod/start.js";
 import { dropRoomState } from "./rooms.js";
-import type { BffClient } from "./bff.js";
-import type { CollabConfig } from "./env.js";
 
 const ROOM = "spec-acme-shop";
 const PRD_PATH = "specs/requirements/prd.md";
-const PRD = "# PRD\n\nA paragraph of body text.\n\n## Section\n\nMore text.\n";
+// Without a trailing newline: the room's markdown serializer drops one, so a
+// file ending in "\n" would be rewritten by the first session's final flush,
+// and the rejoins below would reseed different bytes from the ones the client
+// holds (a different seed identity, which no dedupe can collapse).
+const PRD = "# PRD\n\nA paragraph of body text.\n\n## Section\n\nMore text.";
 
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const srv = net.createServer();
-    srv.once("error", reject);
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
+/** Admits one user of the pod's org: the token check is not what these tests are about. */
+const verify: Verify = () =>
+  Promise.resolve({
+    kind: "user",
+    claims: { sub: "u-jo", ouId: "ou-acme", ouHandle: "acme", name: "Jo", email: "jo@example.com", exp: Math.floor(Date.now() / 1000) + 3600 },
   });
-}
 
-function config(port: number): CollabConfig {
+/** The pod Room over a Files socket whose spec bundle is one markdown file. */
+async function startRoom(): Promise<{ pod: PodListeners; files: FakeFilesSocket; close(): Promise<void> }> {
+  dropRoomState(ROOM);
+  const files = await startFakeFilesSocket({ files: { [PRD_PATH]: PRD } });
+  const pod = await startPod(
+    {
+      orgId: "ou-acme",
+      orgHandle: "acme",
+      issuer: "http://thunder.test",
+      jwksUrl: "http://thunder.test/oauth2/jwks",
+      userAudiences: ["aep-console-client"],
+      agentClientId: "ae-studio-acme",
+      allowedOrigins: [],
+      filesSocket: files.path,
+      listenPort: 0,
+      healthPort: 0,
+      localPort: 0,
+    },
+    // The default 60 s debounce: no store fires mid-test; the assertions read the doc.
+    { verify, log: () => {} },
+  );
   return {
-    port,
-    aepApiBase: "http://bff.test/api/v1",
-    devMode: false,
-    mockBff: false,
-    mockBffPort: 0,
-    // Long enough that no debounced store fires mid-test; the assertions read
-    // the doc directly rather than waiting on a commit.
-    commitDebounceMs: 60_000,
-    commitMaxDebounceMs: 300_000,
-  };
-}
-
-/** A BFF whose spec bundle is one markdown file, and which records applies. */
-function fakeBff(applied: { paths: string[] }[]): BffClient {
-  return {
-    validateAccess: async () => ({
-      name: "Jo",
-      email: "jo@example.com",
-      projectName: "shop",
-    }),
-    fetchSpecFiles: async () => [{ path: PRD_PATH, content: PRD, sha: "s1" }],
-    applyFiles: async (_t, _p, batch) => {
-      applied.push({ paths: batch.writes.map((w) => w.path) });
-      return { commitSha: "c1", files: [] };
+    pod,
+    files,
+    async close() {
+      await pod.close();
+      await files.close();
+      dropRoomState(ROOM);
     },
   };
 }
 
 /** Attach `doc` to the room and resolve once synced. */
-async function join(port: number, doc: Y.Doc) {
+async function join(pod: PodListeners, doc: Y.Doc) {
   const socket = new HocuspocusProviderWebsocket({
-    url: `ws://127.0.0.1:${port}`,
+    url: `${pod.publicUrl.replace(/^http/, "ws")}/v1/rooms`,
     WebSocketPolyfill: WebSocket,
   });
   const provider = new HocuspocusProvider({
@@ -133,23 +135,19 @@ function copies(doc: Y.Doc): number {
 }
 
 test("a client that rejoins with its existing doc does not get a second copy seeded in", async () => {
-  dropRoomState(ROOM);
-  const port = await freePort();
-  const applied: { paths: string[] }[] = [];
-  const server = createCollabServer(config(port), { bff: fakeBff(applied) });
-  await server.listen(port);
+  const room = await startRoom();
 
   // The browser's doc: created once when the spec view mounts, and kept for as
   // long as it stays mounted — across every reconnect underneath it.
   const browserDoc = new Y.Doc();
   try {
-    const first = await join(port, browserDoc);
+    const first = await join(room.pod, browserDoc);
     assert.equal(copies(browserDoc), 1, "first join seeds the room once");
     // The socket drops (redeploy / sleep / blip). The server unloads the room;
     // the browser keeps its doc, exactly as useCollabSpec does.
     await first.leave();
 
-    const second = await join(port, browserDoc);
+    const second = await join(room.pod, browserDoc);
     assert.equal(
       copies(browserDoc),
       1,
@@ -157,7 +155,7 @@ test("a client that rejoins with its existing doc does not get a second copy see
     );
     await second.leave();
   } finally {
-    await server.destroy();
+    await room.close();
   }
 });
 
@@ -166,86 +164,76 @@ test("repeated rejoins do not compound — the production failure was exponentia
   // 48126 lines: each session doubled what the last one wrote, so a single
   // surviving rejoin path is not a small leak, it is a doubling per session.
   // Four rounds would have been 16 copies.
-  dropRoomState(ROOM);
-  const port = await freePort();
-  const server = createCollabServer(config(port), { bff: fakeBff([]) });
-  await server.listen(port);
+  const room = await startRoom();
 
   const browserDoc = new Y.Doc();
   try {
     for (let round = 1; round <= 4; round++) {
-      const session = await join(port, browserDoc);
+      const session = await join(room.pod, browserDoc);
       assert.equal(copies(browserDoc), 1, `still one copy after rejoin ${round}`);
       await session.leave();
     }
   } finally {
-    await server.destroy();
+    await room.close();
   }
 });
 
 test("a client's own edits survive a rejoin", async () => {
   // The dedupe must key on the SEED's identity, not on "drop anything that
   // looks like a duplicate" — a client reconnecting with unsynced work has to
-  // keep it, or the fix would trade doubling for data loss.
-  dropRoomState(ROOM);
-  const port = await freePort();
-  const server = createCollabServer(config(port), { bff: fakeBff([]) });
-  await server.listen(port);
+  // keep it, or the fix would trade doubling for data loss. The work is typed
+  // while the socket is down, so git (and the reseed) still holds the bytes
+  // the client was seeded with.
+  const room = await startRoom();
 
   const browserDoc = new Y.Doc();
   try {
-    const first = await join(port, browserDoc);
+    const first = await join(room.pod, browserDoc);
+    await first.leave();
     const fragment = browserDoc.getXmlFragment(PRD_PATH);
     const para = new Y.XmlElement("paragraph");
     fragment.push([para]);
-    para.push([new Y.XmlText("a sentence typed while connected")]);
-    await first.leave();
+    para.push([new Y.XmlText("a sentence typed while disconnected")]);
 
-    const second = await join(port, browserDoc);
+    const second = await join(room.pod, browserDoc);
     const md = fragmentToMarkdown(browserDoc.getXmlFragment(PRD_PATH));
-    assert.match(md, /a sentence typed while connected/, "the edit must not be dropped");
+    assert.match(md, /a sentence typed while disconnected/, "the edit must not be dropped");
     assert.equal(copies(browserDoc), 1, "and the document must still appear once");
     await second.leave();
   } finally {
-    await server.destroy();
+    await room.close();
   }
 });
 
 test("a genuinely new client still gets the room seeded from git", async () => {
   // The guard above must not be so eager that it stops seeding altogether: a
   // first joiner with an empty doc has to receive the committed content.
-  dropRoomState(ROOM);
-  const port = await freePort();
-  const server = createCollabServer(config(port), { bff: fakeBff([]) });
-  await server.listen(port);
+  const room = await startRoom();
 
   const doc = new Y.Doc();
   try {
-    const session = await join(port, doc);
+    const session = await join(room.pod, doc);
     assert.equal(copies(doc), 1);
     assert.match(fragmentToMarkdown(doc.getXmlFragment(PRD_PATH)), /A paragraph of body text/);
     await session.leave();
   } finally {
-    await server.destroy();
+    await room.close();
   }
 });
 
 test("a second, empty client joining a live room sees the room's content once", async () => {
-  dropRoomState(ROOM);
-  const port = await freePort();
-  const server = createCollabServer(config(port), { bff: fakeBff([]) });
-  await server.listen(port);
+  const room = await startRoom();
 
   const first = new Y.Doc();
   const second = new Y.Doc();
   try {
-    const a = await join(port, first);
-    const b = await join(port, second); // joins while A is still connected
+    const a = await join(room.pod, first);
+    const b = await join(room.pod, second); // joins while A is still connected
     assert.equal(copies(first), 1, "the established peer keeps one copy");
     assert.equal(copies(second), 1, "the joining peer receives one copy");
     await b.leave();
     await a.leave();
   } finally {
-    await server.destroy();
+    await room.close();
   }
 });

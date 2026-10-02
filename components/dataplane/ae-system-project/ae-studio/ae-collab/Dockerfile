@@ -14,8 +14,9 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# Collab service (ae-collab) — Yjs/Hocuspocus rooms with BFF-oracle auth
-# and Files-API seeding (#86 / #114). Built from the REPO ROOT context
+# The AE Studio Room (ae-collab) — Yjs/Hocuspocus rooms that verify Platform
+# IdP tokens and seed from / commit through the pod's Files socket (#86).
+# Built from the REPO ROOT context
 # (docker-compose sets `context: ..`) because @aep/ae-collab depends on the
 # workspace package @aep/collab-doc (the shared doc model, #86 phase 4).
 # Runs from TypeScript source via tsx, like @aep/ae-design-agent.
@@ -54,7 +55,7 @@ RUN chmod -R a+rX "$COREPACK_HOME"
 WORKDIR /repo/components/dataplane/ae-system-project/ae-studio/ae-collab
 
 USER 1000
-EXPOSE 3400
-# The server listens on COLLAB_PORT (compose sets 3400, matching the console
-# nginx's default `collab-server:3400` upstream).
+# Pod mode: public room listener 8081, health 9081 (the local listener is
+# 127.0.0.1:8091, inside the pod only).
+EXPOSE 8081 9081
 CMD ["pnpm", "start"]

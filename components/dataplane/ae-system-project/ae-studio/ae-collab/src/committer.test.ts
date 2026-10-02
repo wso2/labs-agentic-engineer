@@ -16,375 +16,400 @@
  * under the License.
  */
 
-import { test, beforeEach } from "node:test";
+/**
+ * The committer over the Files socket (07 §11): a room's live doc lands as
+ * one commit per flush, with no token. Every test runs against the fake Files
+ * socket, so the baseline shas are the real git blob shas a bundle returns.
+ */
+
+import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import * as Y from "yjs";
 import type { Document } from "@hocuspocus/server";
-import { setDocFile, setDocFileAsAgent } from "@aep/collab-doc";
-import { flushRoom, pendingChanges } from "./committer.js";
+import { deleteDocFile, readDocFile, setDocFile, setDocFileAsAgent } from "@aep/collab-doc";
+import { flushAllRooms, flushRoom, pendingChanges, seedBaseline } from "./committer.js";
 import {
-  addParticipant,
-  dropRoomState,
-  ensureRoomState,
-  roomState,
-} from "./rooms.js";
-import { ApplyAuthError, type ApplyOutcome, type BffClient } from "./bff.js";
-import { ApplyConflictError, type SpecFile } from "./files-client.js";
-import type { CollabContext } from "./server.js";
+  ApplyConflictError,
+  createFilesClient,
+  FilesDeniedError,
+  FilesUnavailableError,
+  type ApplyBatch,
+  type ApplyWarning,
+  type FilesClient,
+} from "./files-client.js";
+import { startFakeFilesSocket, type FakeFilesSocket } from "./fake-files-socket.js";
+import type { PodLogLine } from "./pod/log.js";
+import { addParticipant, dropRoomState, ensureRoomState, roomState } from "./rooms.js";
+import { seedDocument } from "./seed.js";
 
-const ROOM = "spec-acme-shop";
+const open: { fake: FakeFilesSocket; rooms: string[] }[] = [];
 
-const ctx: CollabContext = {
-  user: { name: "Mark", email: "mark@x.io", kind: "user" },
-  token: "tok",
-  projectName: "shop",
-};
+afterEach(async () => {
+  for (const { fake, rooms } of open.splice(0)) {
+    for (const room of rooms) dropRoomState(room);
+    await fake.close();
+  }
+});
 
-interface RecordedApply {
-  writes: { path: string; content: string; baseSha: string }[];
-  deletes: { path: string; baseSha: string }[];
-  message: string;
+async function fakeSocket(files: Record<string, string>, warnings?: ApplyWarning[]): Promise<FakeFilesSocket> {
+  const fake = await startFakeFilesSocket({ files, ...(warnings ? { warnings } : {}) });
+  open.push({ fake, rooms: [] });
+  return fake;
 }
 
-function fakeBff(overrides: Partial<BffClient> = {}): {
-  bff: BffClient;
-  applies: RecordedApply[];
-} {
-  const applies: RecordedApply[] = [];
-  const bff: BffClient = {
-    validateAccess: () => {
-      throw new Error("not used");
-    },
-    fetchSpecFiles: async () => [],
-    applyFiles: async (_t, _p, batch) => {
-      applies.push(batch);
-      return {
-        commitSha: "abc123",
-        files: batch.writes.map((w) => ({ path: w.path, sha: `new-${w.path}` })),
-      } satisfies ApplyOutcome;
-    },
-    ...overrides,
-  };
-  return { bff, applies };
+interface SeededRoom {
+  name: string;
+  doc: Document;
+  edit(path: string, content: string): void;
+  text(path: string): string | undefined;
 }
 
-function seededDoc(): Document {
+/** A room seeded from the socket's bundle, as the Room's load hook seeds it. */
+async function seededRoom(files: FilesClient, name: string, project: string): Promise<SeededRoom> {
   const doc = new Y.Doc() as Document;
-  setDocFile(doc, "requirements/prd.md", "# PRD\n\nSeeded.");
-  setDocFile(doc, "design/arch.excalidraw", '{"v":1}');
-  const state = ensureRoomState(ROOM, "shop");
-  state.baseline.set("requirements/prd.md", {
-    content: "# PRD\n\nSeeded.",
-    sha: "sha-prd",
-  });
-  state.baseline.set("design/arch.excalidraw", {
-    content: '{"v":1}',
-    sha: "sha-arch",
-  });
-  addParticipant(ROOM, { name: "Mark", email: "mark@x.io" });
-  addParticipant(ROOM, { name: "John", email: "john@x.io" });
-  return doc;
+  const bundle = await files.bundle(project);
+  seedDocument(doc, bundle);
+  seedBaseline(ensureRoomState(name, project), doc, bundle);
+  open.at(-1)?.rooms.push(name);
+  return {
+    name,
+    doc,
+    edit: (path, content) => setDocFile(doc, path, content),
+    text: (path) => readDocFile(doc, path),
+  };
 }
 
-beforeEach(() => dropRoomState(ROOM));
-
-test("clean room: no apply", async () => {
-  const doc = seededDoc();
-  const { bff, applies } = fakeBff();
-  await flushRoom({ bff }, ROOM, doc, ctx);
-  assert.equal(applies.length, 0);
-});
-
-test("flushes only changed files with baseShas and co-author trailers", async () => {
-  const doc = seededDoc();
-  setDocFile(doc, "design/arch.excalidraw", '{"v":2}');
-  setDocFile(doc, "validation/plan.txt", "check\n"); // new file
-  const { bff, applies } = fakeBff();
-
-  await flushRoom({ bff }, ROOM, doc, ctx);
-
-  assert.equal(applies.length, 1);
-  const batch = applies[0]!;
-  const paths = batch.writes.map((w) => w.path).sort();
-  assert.deepEqual(paths, ["design/arch.excalidraw", "validation/plan.txt"]);
-  const arch = batch.writes.find((w) => w.path === "design/arch.excalidraw")!;
-  assert.equal(arch.baseSha, "sha-arch");
-  const fresh = batch.writes.find((w) => w.path === "validation/plan.txt")!;
-  assert.equal(fresh.baseSha, ""); // must-not-exist arm
-  assert.match(batch.message, /^collab session/);
-  assert.match(batch.message, /Co-authored-by: John <john@x\.io>/);
-  assert.match(batch.message, /Co-authored-by: Mark <mark@x\.io>/);
-});
-
-test("baseline advances after a flush — the next one is a no-op", async () => {
-  const doc = seededDoc();
-  setDocFile(doc, "design/arch.excalidraw", '{"v":2}');
-  const { bff, applies } = fakeBff();
-  await flushRoom({ bff }, ROOM, doc, ctx);
-  await flushRoom({ bff }, ROOM, doc, ctx);
-  assert.equal(applies.length, 1);
-});
-
-// A room that already contains reference-document entries (seeded before the
-// exclusion existed — the live-incident state) must not write them back: the
-// flush is where the corruption landed in git, so the flush filters too.
-test("flush never writes reference documents, even when the doc holds them", async () => {
-  const doc = seededDoc();
-  setDocFile(doc, "specs/requirements/references/rfp.pdf", "JVBERi0xLjQK");
-  setDocFile(doc, "design/arch.excalidraw", '{"v":2}'); // a real change rides along
-  const { bff, applies } = fakeBff();
-
-  await flushRoom({ bff }, ROOM, doc, ctx);
-
-  assert.equal(applies.length, 1);
-  const paths = applies[0]!.writes.map((w) => w.path);
-  assert.ok(paths.includes("design/arch.excalidraw"), "the real change must still flush");
-  assert.ok(
-    !paths.some((p: string) => p.includes("references/")),
-    `reference document leaked into the flush: ${paths.join(", ")}`,
-  );
-});
-
-
-// The delete side of the reference exclusion. References are not seeded, so
-// they are absent from the doc — and anything in the baseline but absent from
-// the doc is a DELETE. A reference that reaches the baseline by any route
-// would therefore be deleted from git, which is exactly what happened live:
-// two uploaded documents were removed from the repo by a flush.
-test("a reference in the baseline is never deleted, even though the doc lacks it", async () => {
-  const doc = seededDoc();
-  const state = ensureRoomState(ROOM, "shop");
-  state.baseline.set("specs/requirements/references/rfp.pdf", {
-    content: "JVBERi0xLjQK",
-    sha: "sha-pdf",
-  });
-  setDocFile(doc, "design/arch.excalidraw", '{"v":2}'); // a real change to flush
-  const { bff, applies } = fakeBff();
-
-  await flushRoom({ bff }, ROOM, doc, ctx);
-
-  assert.equal(applies.length, 1);
-  const deleted = applies[0]!.deletes.map((d) => d.path);
-  assert.ok(
-    !deleted.some((p) => p.includes("references/")),
-    `a reference document was deleted from git: ${deleted.join(", ")}`,
-  );
-});
-
-test("deleted non-md files become DeleteOps", async () => {
-  const doc = seededDoc();
-  doc.getMap("files").delete("design/arch.excalidraw");
-  const { bff, applies } = fakeBff();
-  await flushRoom({ bff }, ROOM, doc, ctx);
-  assert.equal(applies.length, 1);
-  assert.deepEqual(applies[0]!.deletes, [
-    { path: "design/arch.excalidraw", baseSha: "sha-arch" },
-  ]);
-  assert.equal(applies[0]!.writes.length, 0);
-});
-
-test("conflict: doc wins — adopts HEAD shas and re-applies", async () => {
-  const doc = seededDoc();
-  setDocFile(doc, "requirements/prd.md", "# PRD\n\nDoc version.");
-  let first = true;
-  const headFiles: SpecFile[] = [
-    { path: "requirements/prd.md", content: "# PRD\n\nGit moved.", sha: "sha-head" },
-  ];
-  const { bff, applies } = fakeBff({
-    fetchSpecFiles: async () => headFiles,
-    applyFiles: async (_t, _p, batch) => {
-      if (first) {
-        first = false;
-        throw new ApplyConflictError(["requirements/prd.md"]);
-      }
-      return {
-        commitSha: "after-retry",
-        files: batch.writes.map((w) => ({ path: w.path, sha: `new-${w.path}` })),
-      };
+/** The batches the committer sent, in order. */
+function recording(files: FilesClient): { files: FilesClient; batches: ApplyBatch[] } {
+  const batches: ApplyBatch[] = [];
+  return {
+    batches,
+    files: {
+      ...files,
+      apply: (project, batch) => {
+        batches.push(batch);
+        return files.apply(project, batch);
+      },
     },
-  });
-  // record applies manually since we overrode applyFiles
-  const record = bff.applyFiles.bind(bff);
-  bff.applyFiles = async (t, p, batch) => {
-    applies.push(batch);
-    return record(t, p, batch);
   };
+}
 
-  await flushRoom({ bff }, ROOM, doc, ctx);
+const PRD = "specs/requirements/prd.md";
+const ARCH = "specs/design/arch.excalidraw";
+// The PRD ends in a newline, as git files do; the room's serializer drops it.
+const SEED = { [PRD]: "# PRD\n\nSeeded.\n", [ARCH]: '{"v":1}' };
 
-  assert.equal(applies.length, 2);
-  assert.equal(applies[0]!.writes[0]!.baseSha, "sha-prd");
-  // retry preconditioned on HEAD's sha, content still the DOC's version
-  assert.equal(applies[1]!.writes[0]!.baseSha, "sha-head");
-  assert.match(applies[1]!.writes[0]!.content, /Doc version/);
+test("flush commits with no token, broadcasts warnings, and keeps the doc live on 503", async () => {
+  const fake = await startFakeFilesSocket({ files: { "specs/a.md": "a" }, warnings: [{ path: "specs/a.md", message: "soft" }] });
+  open.push({ fake, rooms: [] });
+  const room = await seededRoom(createFilesClient(fake.path), "spec-acme-greeter", "greeter");
+  room.edit("specs/a.md", "b");
+  const sent: string[] = [];
+  await flushRoom({ files: createFilesClient(fake.path), onWarnings: (w) => sent.push(JSON.stringify(w)) }, room.name, room.doc);
+  assert.equal(fake.commits().length, 1);
+  assert.deepEqual(JSON.parse(sent[0]!), [{ path: "specs/a.md", message: "soft" }]);
+
+  room.edit("specs/a.md", "c");
+  fake.failNext(503, "disk_full");
+  await assert.rejects(flushRoom({ files: createFilesClient(fake.path) }, room.name, room.doc), FilesUnavailableError);
+  assert.equal(room.text("specs/a.md"), "c", "doc stays live; the next debounce retries");
+  await flushRoom({ files: createFilesClient(fake.path) }, room.name, room.doc);
+  assert.equal(fake.commits().length, 2);
 });
 
-test("conflict: a file HEAD gained outside the room is not the doc's to delete", async () => {
-  const doc = seededDoc();
-  setDocFile(doc, "requirements/prd.md", "# PRD\n\nDoc version.");
-  let first = true;
-  // The platform committed a dependency's interface beside its definition
-  // while the session was open; the doc never held it.
-  const headFiles: SpecFile[] = [
-    { path: "requirements/prd.md", content: "# PRD\n\nGit moved.", sha: "sha-head" },
-    { path: "design/dependencies/stripe/openapi.yaml", content: "openapi: 3.0.0", sha: "sha-iface" },
-  ];
-  const { bff, applies } = fakeBff({
-    fetchSpecFiles: async () => headFiles,
-    applyFiles: async (_t, _p, batch) => {
-      if (first) {
-        first = false;
-        throw new ApplyConflictError(["requirements/prd.md"]);
-      }
-      return {
-        commitSha: "after-retry",
-        files: batch.writes.map((w) => ({ path: w.path, sha: `new-${w.path}` })),
-      };
-    },
-  });
-  const record = bff.applyFiles.bind(bff);
-  bff.applyFiles = async (t, p, batch) => {
-    applies.push(batch);
-    return record(t, p, batch);
-  };
-
-  await flushRoom({ bff }, ROOM, doc, ctx);
-
-  assert.equal(applies.length, 2);
-  assert.deepEqual(applies[1]!.deletes, []);
-  assert.deepEqual(
-    applies[1]!.writes.map((w) => w.path),
-    ["requirements/prd.md"],
-  );
-  // And it stays out of the baseline, so no later flush deletes it either.
-  const { deletes } = pendingChanges(doc, roomState(ROOM)!, false);
-  assert.deepEqual(deletes, []);
+test("a clean room sends no apply and reports no warnings", async () => {
+  const fake = await fakeSocket(SEED);
+  const files = createFilesClient(fake.path);
+  const room = await seededRoom(files, "spec-acme-shop", "shop");
+  const sent: ApplyWarning[][] = [];
+  await flushRoom({ files, onWarnings: (w) => sent.push(w) }, room.name, room.doc);
+  assert.equal(fake.requests.filter((r) => r.method === "POST").length, 0);
+  assert.deepEqual(sent, []);
 });
 
-test("no token: skips without throwing", async () => {
-  const doc = seededDoc();
-  setDocFile(doc, "requirements/prd.md", "# changed");
-  const { bff, applies } = fakeBff();
-  await flushRoom({ bff }, ROOM, doc, { ...ctx, token: null });
-  assert.equal(applies.length, 0);
+test("every successful apply reports its warnings, an empty list included", async () => {
+  const fake = await fakeSocket(SEED);
+  const files = createFilesClient(fake.path);
+  const room = await seededRoom(files, "spec-acme-shop", "shop");
+  room.edit(ARCH, '{"v":2}');
+  const sent: ApplyWarning[][] = [];
+  await flushRoom({ files, onWarnings: (w) => sent.push(w) }, room.name, room.doc);
+  assert.deepEqual(sent, [[]], "an empty list clears the console's Alert");
+});
+
+test("flushes only the changed files, preconditioned on the seeded shas, with co-author trailers", async () => {
+  const fake = await fakeSocket(SEED);
+  const rec = recording(createFilesClient(fake.path));
+  const room = await seededRoom(rec.files, "spec-acme-shop", "shop");
+  const seeded = new Map((await rec.files.bundle("shop")).map((f) => [f.path, f.sha]));
+  addParticipant(room.name, { name: "Mark", email: "mark@x.io" });
+  addParticipant(room.name, { name: "John", email: "john@x.io" });
+  room.edit(ARCH, '{"v":2}');
+  room.edit("specs/validation/plan.txt", "check\n");
+
+  await flushRoom({ files: rec.files }, room.name, room.doc);
+
+  assert.equal(rec.batches.length, 1);
+  const batch = rec.batches[0]!;
+  assert.deepEqual(batch.writes.map((w) => w.path).sort(), [ARCH, "specs/validation/plan.txt"]);
+  assert.equal(batch.writes.find((w) => w.path === ARCH)!.baseSha, seeded.get(ARCH));
+  assert.equal(batch.writes.find((w) => w.path === "specs/validation/plan.txt")!.baseSha, "", "a new file must not exist yet");
+  assert.match(batch.message, /^collab session\n\nCo-authored-by: John <john@x\.io>\nCo-authored-by: Mark <mark@x\.io>$/);
+  assert.equal(fake.commits()[0]!.message, batch.message, "the trailers reach the commit");
+});
+
+test("the baseline advances after a flush: the next one is a no-op", async () => {
+  const fake = await fakeSocket(SEED);
+  const files = createFilesClient(fake.path);
+  const room = await seededRoom(files, "spec-acme-shop", "shop");
+  room.edit(ARCH, '{"v":2}');
+  await flushRoom({ files }, room.name, room.doc);
+  await flushRoom({ files }, room.name, room.doc);
+  assert.equal(fake.commits().length, 1);
+  // And the advanced sha is the one git holds: the next change applies cleanly.
+  room.edit(ARCH, '{"v":3}');
+  await flushRoom({ files }, room.name, room.doc);
+  assert.equal(fake.commits().length, 2);
+  assert.equal(fake.file(ARCH), '{"v":3}');
+});
+
+// A room that already holds reference-document entries (seeded before the
+// exclusion existed) must not write them back, and a reference in the
+// baseline must never be deleted for being absent from the doc.
+test("reference documents are never written or deleted", async () => {
+  const fake = await fakeSocket(SEED);
+  const rec = recording(createFilesClient(fake.path));
+  const room = await seededRoom(rec.files, "spec-acme-shop", "shop");
+  roomState(room.name)!.baseline.set("specs/requirements/references/old.pdf", { content: "JVBERi0xLjQK", sha: "sha-pdf" });
+  room.edit("specs/requirements/references/rfp.pdf", "JVBERi0xLjQK");
+  room.edit(ARCH, '{"v":2}');
+
+  await flushRoom({ files: rec.files }, room.name, room.doc);
+
+  assert.deepEqual(rec.batches[0]!.writes.map((w) => w.path), [ARCH]);
+  assert.deepEqual(rec.batches[0]!.deletes, []);
+});
+
+test("a non-markdown file removed from the doc is deleted against its seeded sha", async () => {
+  const fake = await fakeSocket(SEED);
+  const rec = recording(createFilesClient(fake.path));
+  const room = await seededRoom(rec.files, "spec-acme-shop", "shop");
+  const archSha = roomState(room.name)!.baseline.get(ARCH)!.sha;
+  deleteDocFile(room.doc, ARCH);
+  await flushRoom({ files: rec.files }, room.name, room.doc);
+  assert.deepEqual(rec.batches[0]!.deletes, [{ path: ARCH, baseSha: archSha }]);
+  assert.equal(fake.file(ARCH), undefined);
 });
 
 test("participants without an email get the noreply trailer address", async () => {
-  const doc = seededDoc();
-  addParticipant(ROOM, { name: "Chris", email: "" });
-  setDocFile(doc, "requirements/prd.md", "# changed again");
-  const { bff, applies } = fakeBff();
-  await flushRoom({ bff }, ROOM, doc, ctx);
-  assert.match(
-    applies[0]!.message,
-    /Co-authored-by: Chris <Chris@users\.noreply\.aep\.dev>/,
-  );
+  const fake = await fakeSocket(SEED);
+  const files = createFilesClient(fake.path);
+  const room = await seededRoom(files, "spec-acme-shop", "shop");
+  addParticipant(room.name, { name: "Chris", email: "" });
+  room.edit(ARCH, '{"v":2}');
+  await flushRoom({ files }, room.name, room.doc);
+  assert.match(fake.commits()[0]!.message, /Co-authored-by: Chris <Chris@users\.noreply\.aep\.dev>/);
 });
 
-test("interim flush holds md files with pending agent marks; forced flush commits them", async () => {
-  const doc = seededDoc();
+test("an interim flush holds markdown with pending agent marks; a forced flush commits it", async () => {
+  const fake = await fakeSocket(SEED);
+  const files = createFilesClient(fake.path);
+  const room = await seededRoom(files, "spec-acme-shop", "shop");
   setDocFileAsAgent(
-    doc as unknown as Parameters<typeof setDocFileAsAgent>[0],
-    "requirements/prd.md",
+    room.doc as unknown as Parameters<typeof setDocFileAsAgent>[0],
+    PRD,
     "# PRD\n\nSeeded. Agent addition.",
     "agent",
     { agent: "Spec Agent", at: "2026-07-08T00:00:00Z" },
   );
-  const { bff, applies } = fakeBff();
 
-  await flushRoom({ bff }, ROOM, doc, ctx); // interim: held
-  assert.equal(applies.length, 0);
+  await flushRoom({ files }, room.name, room.doc);
+  assert.equal(fake.commits().length, 0, "unreviewed agent text never reaches git mid-session");
 
-  await flushRoom({ bff }, ROOM, doc, ctx, true); // forced: commits
-  assert.equal(applies.length, 1);
-  assert.match(applies[0]!.writes[0]!.content, /Agent addition\./);
-  assert.ok(!applies[0]!.writes[0]!.content.includes("agentInsertion"));
+  await flushRoom({ files }, room.name, room.doc, true);
+  assert.equal(fake.commits().length, 1);
+  assert.match(fake.file(PRD)!, /Agent addition\./);
+  assert.ok(!fake.file(PRD)!.includes("agentInsertion"));
 });
 
-test("ApplyAuthError: retries once with tokenRefresh, then succeeds", async () => {
-  const doc = seededDoc();
-  setDocFile(doc, "design/arch.excalidraw", '{"v":2}');
-  const tokens: string[] = [];
-  let first = true;
-  const { bff, applies } = fakeBff({
-    applyFiles: async (t, _p, batch) => {
-      tokens.push(t);
-      if (first) {
-        first = false;
-        throw new ApplyAuthError(401, "expired");
-      }
-      applies.push(batch);
-      return {
-        commitSha: "after-auth",
-        files: batch.writes.map((w) => ({ path: w.path, sha: `new-${w.path}` })),
-      };
-    },
-  });
-  const logs: string[] = [];
-  await flushRoom(
-    {
-      bff,
-      log: (m) => logs.push(m),
-      tokenRefresh: async () => "fresh-tok",
-    },
-    ROOM,
-    doc,
-    ctx,
-  );
-  assert.deepEqual(tokens, ["tok", "fresh-tok"]);
-  assert.equal(applies.length, 1);
-  assert.match(
-    logs.join("\n"),
-    /auth 401 — retrying once with refreshed token.*refreshOutcome=ok/,
-  );
-  const state = ensureRoomState(ROOM, "shop");
-  assert.equal(state.lastToken, "fresh-tok");
+test("a verdict (4xx) is thrown as a denial and the doc keeps its edit", async () => {
+  const fake = await fakeSocket(SEED);
+  const files = createFilesClient(fake.path);
+  const room = await seededRoom(files, "spec-acme-shop", "shop");
+  room.edit(ARCH, '{"v":2}');
+  fake.failNext(400, "path_invalid", "apply");
+  await assert.rejects(flushRoom({ files }, room.name, room.doc), FilesDeniedError);
+  assert.equal(room.text(ARCH), '{"v":2}');
+  assert.equal(pendingChanges(room.doc, roomState(room.name)!, false).writes.length, 1, "the baseline did not move");
 });
 
-test("ApplyAuthError: logs structured failure when refresh returns null", async () => {
-  const doc = seededDoc();
-  setDocFile(doc, "design/arch.excalidraw", '{"v":2}');
-  const { bff } = fakeBff({
-    applyFiles: async () => {
-      throw new ApplyAuthError(403, "nope");
-    },
-  });
-  const logs: string[] = [];
-  await assert.rejects(
-    () =>
-      flushRoom(
-        {
-          bff,
-          log: (m) => logs.push(m),
-          tokenRefresh: async () => null,
-        },
-        ROOM,
-        doc,
-        ctx,
-      ),
-    ApplyAuthError,
+// ---------------------------------------------------------------------------
+// Conflicts: doc wins over the paths it changed, reported; nothing else is touched
+
+test("not_fast_forward is retryable; the retry meets an external commit and doc-wins reports the path", async () => {
+  const fake = await fakeSocket(SEED);
+  const files = createFilesClient(fake.path);
+  const rec = recording(files);
+  const room = await seededRoom(rec.files, "spec-acme-shop", "shop");
+  room.edit(PRD, "# PRD\n\nRoom version.");
+
+  // The branch moved during the save: the pod says re-read and retry later.
+  fake.failNext(409, "not_fast_forward", "apply");
+  await assert.rejects(flushRoom({ files: rec.files }, room.name, room.doc), FilesUnavailableError);
+  assert.equal(fake.commits().length, 0);
+
+  // What moved it: a commit made outside the room, on the file the room edited.
+  fake.pushExternal(PRD, "# PRD\n\nExternal version.");
+  const externalSha = (await files.bundle("shop")).find((f) => f.path === PRD)!.sha;
+  const sent: ApplyWarning[][] = [];
+  await flushRoom({ files: rec.files, onWarnings: (w) => sent.push(w) }, room.name, room.doc);
+
+  // The next debounce: conflict → refetch through the bundle → re-apply on HEAD's sha.
+  assert.equal(rec.batches.length, 3);
+  assert.equal(rec.batches[2]!.writes[0]!.baseSha, externalSha);
+  assert.equal(fake.file(PRD), "# PRD\n\nRoom version.");
+  assert.equal(sent.length, 1);
+  assert.deepEqual(
+    sent[0]!.map((w) => w.path),
+    [PRD],
+    "saving over a commit made outside the room is never silent",
   );
-  assert.match(
-    logs.join("\n"),
-    /project=shop flush failed status=403 writes=1 deletes=0 refreshAttempted=true refreshOutcome=failed/,
+  assert.ok(fake.requests.some((r) => r.url.startsWith("/projects/shop/bundle")));
+});
+
+test("an external commit to a file the room did not edit is not clobbered: it is re-seeded into the room", async () => {
+  const fake = await fakeSocket(SEED);
+  const files = createFilesClient(fake.path);
+  const rec = recording(files);
+  const room = await seededRoom(rec.files, "spec-acme-shop", "shop");
+  room.edit(PRD, "# PRD\n\nRoom version.");
+  // One commit outside the room touches both files; the room edited only PRD.
+  fake.pushExternal(PRD, "# PRD\n\nExternal version.");
+  fake.pushExternal(ARCH, '{"v":"external"}');
+  const sent: ApplyWarning[][] = [];
+
+  await flushRoom({ files: rec.files, onWarnings: (w) => sent.push(w) }, room.name, room.doc);
+
+  assert.deepEqual(rec.batches.at(-1)!.writes.map((w) => w.path), [PRD], "the retry writes only what the room changed");
+  assert.equal(fake.file(ARCH), '{"v":"external"}', "the external change survives");
+  assert.equal(room.text(ARCH), '{"v":"external"}', "and the room now shows it");
+  assert.deepEqual(sent[0]!.map((w) => w.path), [PRD]);
+
+  // Editing the re-seeded file later preconditions on the external commit: no conflict, nothing lost.
+  room.edit(ARCH, '{"v":"external","room":1}');
+  await flushRoom({ files: rec.files, onWarnings: (w) => sent.push(w) }, room.name, room.doc);
+  assert.equal(fake.file(ARCH), '{"v":"external","room":1}');
+  assert.deepEqual(sent.at(-1), []);
+});
+
+test("a file HEAD gained outside the room is not the doc's to delete", async () => {
+  const fake = await fakeSocket(SEED);
+  const rec = recording(createFilesClient(fake.path));
+  const room = await seededRoom(rec.files, "spec-acme-shop", "shop");
+  room.edit(PRD, "# PRD\n\nRoom version.");
+  fake.pushExternal(PRD, "# PRD\n\nExternal version.");
+  // The platform committed a dependency's interface beside its definition.
+  fake.pushExternal("specs/design/dependencies/stripe/openapi.yaml", "openapi: 3.0.0");
+
+  await flushRoom({ files: rec.files }, room.name, room.doc);
+
+  assert.deepEqual(rec.batches.at(-1)!.deletes, []);
+  assert.equal(fake.file("specs/design/dependencies/stripe/openapi.yaml"), "openapi: 3.0.0");
+  assert.deepEqual(pendingChanges(room.doc, roomState(room.name)!, false).deletes, []);
+});
+
+test("a conflict whose content already landed (a lost reply, a racing flush) adopts HEAD silently", async () => {
+  const fake = await fakeSocket(SEED);
+  const files = createFilesClient(fake.path);
+  const room = await seededRoom(files, "spec-acme-shop", "shop");
+  room.edit(ARCH, '{"v":2}');
+  // Git already holds exactly what the room would write.
+  fake.pushExternal(ARCH, '{"v":2}');
+  const sent: ApplyWarning[][] = [];
+  await flushRoom({ files, onWarnings: (w) => sent.push(w) }, room.name, room.doc);
+  assert.deepEqual(sent, [], "nothing was saved over, so nothing to report and nothing to apply");
+  assert.equal(pendingChanges(room.doc, roomState(room.name)!, false).writes.length, 0);
+});
+
+test("conflicts that keep coming give up after the bounded retries", async () => {
+  const fake = await fakeSocket(SEED);
+  const files = createFilesClient(fake.path);
+  const room = await seededRoom(files, "spec-acme-shop", "shop");
+  room.edit(ARCH, '{"v":2}');
+  let n = 0;
+  const racing: FilesClient = {
+    ...files,
+    apply: async (project, batch) => {
+      // Someone commits ARCH again before every apply.
+      fake.pushExternal(ARCH, `{"v":"race-${++n}"}`);
+      return files.apply(project, batch);
+    },
+  };
+  await assert.rejects(flushRoom({ files: racing }, room.name, room.doc), ApplyConflictError);
+  assert.equal(n, 3, "one apply and two doc-wins retries");
+});
+
+test("a room with no committer state is skipped", async () => {
+  const fake = await fakeSocket(SEED);
+  const files = createFilesClient(fake.path);
+  const doc = new Y.Doc() as Document;
+  setDocFile(doc, ARCH, "x");
+  await flushRoom({ files }, "spec-acme-nobody", doc);
+  assert.equal(fake.requests.length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// Shutdown
+
+test("flushAllRooms force-flushes every room, and one failing room does not stop the others", async () => {
+  const fake = await fakeSocket({ ...SEED, "specs/b.txt": "b" });
+  const files = createFilesClient(fake.path);
+  const a = await seededRoom(files, "spec-acme-a", "a");
+  const b = await seededRoom(files, "spec-acme-b", "b");
+  a.edit(ARCH, '{"v":"a"}');
+  b.edit("specs/b.txt", "b2");
+  fake.failNext(503, "disk_full", "apply");
+  const lines: PodLogLine[] = [];
+  await flushAllRooms(
+    { files, log: (l) => lines.push(l) },
+    new Map([
+      [a.name, a.doc],
+      [b.name, b.doc],
+    ]),
+    { concurrency: 1, force: true },
+  );
+  assert.equal(fake.commits().length, 1, "the room after the failed one still committed");
+  assert.deepEqual(
+    lines.filter((l) => l.msg === "room_flush_failed"),
+    [{ msg: "room_flush_failed", source: "ae-collab", cause: "files_unavailable" }],
   );
 });
 
-test("ApplyAuthError without tokenRefresh: logs skipped refresh and rethrows", async () => {
-  const doc = seededDoc();
-  setDocFile(doc, "design/arch.excalidraw", '{"v":2}');
-  const { bff } = fakeBff({
-    applyFiles: async () => {
-      throw new ApplyAuthError(401);
-    },
+test("flushAllRooms returns at its budget when the socket stalls, naming only the count", async () => {
+  const fake = await fakeSocket(SEED);
+  const files = createFilesClient(fake.path);
+  const room = await seededRoom(files, "spec-acme-shop", "shop");
+  room.edit(ARCH, '{"v":2}');
+  fake.stallNext("apply");
+  const lines: PodLogLine[] = [];
+  const started = Date.now();
+  await flushAllRooms({ files, log: (l) => lines.push(l) }, new Map([[room.name, room.doc]]), {
+    concurrency: 8,
+    force: true,
+    budgetMs: 100,
   });
-  const logs: string[] = [];
-  await assert.rejects(
-    () => flushRoom({ bff, log: (m) => logs.push(m) }, ROOM, doc, ctx),
-    ApplyAuthError,
-  );
-  assert.match(
-    logs.join("\n"),
-    /project=shop flush failed status=401 writes=1 deletes=0 refreshAttempted=false refreshOutcome=skipped/,
-  );
+  assert.ok(Date.now() - started < 2_000);
+  assert.deepEqual(lines.at(-1), { msg: "room_shutdown_flush_over_budget", source: "ae-collab", rooms: 1 });
+});
+
+test("no committer log line carries a room name, a path or content", async () => {
+  const fake = await fakeSocket(SEED);
+  const files = createFilesClient(fake.path);
+  const room = await seededRoom(files, "spec-acme-shop", "shop");
+  room.edit(PRD, "# PRD\n\nRoom version.");
+  fake.pushExternal(PRD, "# PRD\n\nExternal version.");
+  const lines: PodLogLine[] = [];
+  await flushRoom({ files, log: (l) => lines.push(l) }, room.name, room.doc);
+  assert.ok(lines.some((l) => l.msg === "room_flush_committed"));
+  assert.doesNotMatch(JSON.stringify(lines), /acme|shop|prd|PRD|specs\//);
 });

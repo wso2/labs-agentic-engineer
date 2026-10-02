@@ -1,8 +1,8 @@
 # AGENTS.md — components/dataplane/ae-system-project/ae-studio/ae-collab (`@aep/ae-collab`)
 
 Yjs collaboration server for spec files —
-[#86](https://github.com/wso2/labs-agentic-engineer/issues/86). Hocuspocus
-(`Server` from `@hocuspocus/server`) hosting one room + one Y.Doc per project
+[#86](https://github.com/wso2/labs-agentic-engineer/issues/86). One
+`Hocuspocus` instance (`@hocuspocus/server`) hosting one room + one Y.Doc per project
 (room `spec-<org>-<project>`, `Y.Map('files')` of file-path → `Y.Text`).
 
 **Read #86 (body + design comments) before changing anything here** — the
@@ -34,9 +34,6 @@ path are all decided there.
   refused room load drops the room state, participants included. Frames are
   capped at 32 MiB on both listeners (1009). No token, claim or room name is
   logged: `room_*` lines name the listener and a fixed cause.
-- **Legacy server** (deleted in Task 2.12) verifies nothing itself: room
-  access is delegated whole to the BFF oracle (`validate-collab-access`), and
-  seeding reads the spec bundle as the first joiner (their token).
 
 ## Modes
 
@@ -44,41 +41,36 @@ One per process, chosen by env in `src/modes.ts` (`selectModes`); boot fails
 with none (`ae-collab: no config`) and a partial pod env fails naming every
 missing key.
 
-- **Pod mode** (`AE_ORG_ID` set, the AE Studio pod; `src/pod/`). Any
-  legacy key below (`COLLAB_DEV`, `COLLAB_MOCK_BFF`, `AEP_API_BASE`) in a pod
-  env fails the boot, naming the keys, so dev mode can never run there. The
+- **Pod mode** (`AE_ORG_ID` set, the AE Studio pod; `src/pod/`). A pod env
+  carrying `COLLAB_DEV`, or a key of the removed legacy server
+  (`COLLAB_MOCK_BFF`, `AEP_API_BASE`), fails the boot, naming the keys, so
+  dev mode can never run there. The
   public port (`AE_LISTEN_PORT`, 8081) gates `/v1` HTTP (any casing) with
   `@aep/platform-idp-auth` (M2M → 401, another org → 403, IdP keys
   unreachable → 503 `idp_unavailable`, all before route matching; no `/v1` operation yet, so an admitted request is a 404 problem).
   A room upgrade there must pass `originAllowed`: a present `Origin` must be
   listed in `AE_ALLOWED_ORIGINS` (403); an absent one is accepted while the
-  phase-2 agents bridge exists (Task 3.22 makes it 403). Rooms seed from the
-  Files socket's bundle (`AE_FILES_SOCKET`). The health port
+  phase-2 agents bridge exists (Task 3.22 makes it 403). Rooms seed from and
+  commit through the Files socket (`AE_FILES_SOCKET`). The health port
   (`AE_HEALTH_PORT`, 9081, not routed) serves `/healthz` and `/readyz` (503
-  until both room listeners are bound and while closing). SIGTERM/SIGINT
-  close all three. The committer moves onto the Files socket in Task 2.12;
-  until then a pod room does not commit.
-- **Dev mode** (`COLLAB_DEV=1`, no BFF; `pnpm dev` sets it): the pod's
-  listeners and Room with auth bypassed (every connection is the dev user,
-  the project is the room name after `spec-`) and a fake Files socket
-  holding `fixtures.ts`. Missing config never implies it.
-- **Legacy server** (the chart Deployment `collab-server`; deleted in Task
-  2.12), one of:
-  - **Real BFF**: set `AEP_API_BASE`.
-  - **Mock BFF** (`COLLAB_MOCK_BFF=1`): an embedded stand-in for the BFF
-    (`mockbff.ts`) serves `validate-collab-access` + `get-project-spec` from
-    the same fixtures, and the service runs its **real** auth and seed paths
-    against it. A configured BFF outranks `COLLAB_DEV`.
+  until both room listeners are bound and while closing). SIGTERM/SIGINT run
+  the close path (see Persistence).
+- **Dev mode** (`COLLAB_DEV=1` and no `AE_ORG_ID`; `pnpm dev` sets it): the
+  pod's listeners and Room with auth bypassed (every connection is the dev
+  user, the project is the room name after `spec-`) and a fake Files socket
+  holding `fixtures.ts`; flushes commit into that fake. Missing config never
+  implies it.
 
-Never enable dev mode or the mock BFF in a cluster.
+Never enable dev mode in a cluster. The chart's `collab-server` Deployment
+(removed in Task 2.16) runs the legacy env and no longer boots.
 
 ## Room lifecycle
 
-**A room exists only if it was seeded.** If the spec read fails — or the oracle
-never resolved a project — the load is REFUSED rather than opening an empty
+**A room exists only if it was seeded.** If the spec read fails — or the
+project lookup does not know the project — the load is REFUSED rather than opening an empty
 document ([#586](https://github.com/wso2/labs-agentic-engineer/issues/586)). An
 unseeded room looks healthy and is not: its committer baseline is empty, so
-every path writes with `baseSha: ""` (the Files API reads that as *must not
+every path writes with `baseSha: ""` (the Files socket reads that as *must not
 exist*) and every flush 409s for as long as the room lives — which is as long as
 any client stays connected. Clients see an empty document with nothing to
 distinguish it from an empty project, and an agent turn joins it, syncs, and is
@@ -90,57 +82,59 @@ LOAD, so the room reloads and reseeds from git on the next attempt.
 **Transient failures are tagged.** Hocuspocus runs the load hook inside the same
 try/catch as authentication, so a refused room reaches the client as a
 permission-denied frame — indistinguishable, by default, from a rejected bearer,
-which clients are right to stop retrying. Anything that is not a verdict the
-oracle actually made (5xx, a refused connection, a DNS failure mid-redeploy) is
-therefore thrown with `reason: "upstream-unavailable"`, which Hocuspocus
-forwards verbatim and the console reads to decide whether to retry or give up.
-Keep that string in step with `useCollabSpec.ts` and `room-peer.ts`, which spell
-it on their own side, as the stateless message types already are.
+which clients are right to stop retrying. Anything that is not a verdict (a
+Files socket 5xx, 408/425/429, an unreachable or stalled socket) is therefore
+thrown with `reason: "upstream-unavailable"`, which Hocuspocus forwards
+verbatim and the console reads to decide whether to retry or give up. Keep that
+string in step with `useCollabSpec.ts` and `room-peer.ts`, which spell it on
+their own side, as the stateless message types already are. A verdict (any
+other 4xx, e.g. `project_unknown`) is NOT tagged: a project that can never be
+seeded must not have every open tab reconnect forever.
 
-The split runs on STATUS, both for the oracle (`BffAccessDeniedError`) and for
-the spec read (`BffReadError`) — which is why both carry one. A permanent answer
-is a verdict and must NOT be tagged: a 404 for a project whose repo row is
-missing would otherwise have every open tab reconnect forever against a room
-that can never be seeded. The retryable 4xx (408, 425, 429) go the other way — a
-BFF shedding load is the same outage wearing a different code.
+A refused load drops the room state (baseline and participants) and destroys
+the document: no other connection holds a room whose load failed.
 
-A refused load clears the room's committer **baseline**, never the room state
-itself. That state is shared by every connection that authenticated into the
-room, and evicting it takes another tab's token with it — a room with no token
-skips its flush, so that tab's edits would be discarded in silence at exactly
-the moment several tabs are reconnecting together.
+## Persistence + ops
 
-## Persistence + ops (shipped)
-
-- **Committer**: quiet-period flush (`COLLAB_COMMIT_DEBOUNCE_MS`, default 60s)
-  commits via the BFF `files/apply`; `COLLAB_COMMIT_MAX_DEBOUNCE_MS` caps
-  continuous editing. Last-leave and shutdown also force a flush.
-- **D6 token freshness**: clients push refreshed JWTs over the stateless
-  channel; on apply 401/403 the server may pull once via `token-please`.
-  Residual: a last-leave forced flush often has no client for pull — exposure
-  stays the ≤60s debounce window.
-- **Health**: `GET /healthz` → 200 `ok`. Helm: replicas **1**, probes on
-  `/healthz`, 512Mi memory, `terminationGracePeriodSeconds: 30`, concurrent
-  shutdown flush (pool 8).
+- **Committer** (`committer.ts`, hooks in `pod/commits.ts`): one commit per
+  flush through the Files socket's `apply`, no token (the socket is
+  pod-local; ae-studio-tools sets the author, the message carries a
+  `Co-authored-by` trailer per room participant). A quiet period of 60 s
+  commits, 300 s caps continuous editing, the last leave forces a flush, and
+  a stateless `{type:"flush", id}` forces one and is acked `flushed` or
+  `flush-error` (the console's flush-before-build). Interim flushes hold
+  markdown with pending agent marks; forced ones commit it. The baseline is
+  the seed as the doc serializes it, so an unedited file never flushes.
+- **Failure classes**: an outage (`FilesUnavailableError`: 5xx incl.
+  `disk_full` and `aep_api_unavailable`, 408/425/429, `not_fast_forward`, an
+  unreachable socket, a request past its 20 s deadline) keeps the doc and the
+  baseline as they were, so the next flush retries; the room hears
+  `flush-error` "AE Studio is restarting — your edits are kept and will save
+  shortly." A last-leave flush that meets an outage keeps the room loaded
+  (no unload, so a rejoin finds the edits and the shutdown flush retries). A
+  verdict (`FilesDeniedError`) is reported with its message.
+- **Conflicts** (a stale `baseSha`): refetch the bundle, then doc wins over
+  the paths the room changed, at most 2 retries, and every path saved over a
+  commit made outside the room is reported. Files changed outside the room and
+  unedited in it are re-seeded into the doc; files git gained outside the room
+  are never deleted.
+- **`flush-warnings`**: after every successful apply the room hears
+  `{type:"flush-warnings", warnings:[{path, message}]}` (the pod's warnings plus
+  the saved-over paths); an empty list clears the console's Alert.
+- **Shutdown** (SIGTERM, 07 §10): both room listeners stop accepting, every
+  loaded room is force-flushed (8 at a time) within an 8 s budget that ends
+  inside ae-studio-tools' 10 s Files socket drain window, then the room
+  sockets end and the health listener closes.
+- **Health**: `/healthz` and `/readyz` on the health port.
 
 ## Env
-
-| Var | Default | Meaning |
-|---|---|---|
-| `COLLAB_PORT` | `8091` | legacy server ws listen port |
-| `AEP_API_BASE` | unset | BFF base incl. prefix, e.g. `http://localhost:9090/api/v1` |
-| `COLLAB_DEV` | off | dev mode (pod listeners, auth bypassed, fake Files socket) when no BFF (real or mock) is set; never implied |
-| `COLLAB_MOCK_BFF` | off | run the embedded mock BFF; overrides `AEP_API_BASE` |
-| `COLLAB_MOCK_BFF_PORT` | `8092` | mock BFF listen port |
-| `COLLAB_COMMIT_DEBOUNCE_MS` | `60000` | quiet period before a flush commits |
-| `COLLAB_COMMIT_MAX_DEBOUNCE_MS` | `300000` | max wait during continuous editing |
 
 Pod mode (all required once `AE_ORG_ID` is set, except the ports):
 `AE_ORG_ID`, `AE_ORG_HANDLE`, `AE_IDP_ISSUER`, `AE_IDP_JWKS_URL`,
 `AE_USER_AUDIENCES` (comma list), `AE_AGENT_CLIENT_ID`, `AE_ALLOWED_ORIGINS`
 (comma list of bare origins), `AE_FILES_SOCKET`, `AE_LISTEN_PORT` (8081),
 `AE_HEALTH_PORT` (9081); ports 1-65535. The local listener is fixed at
-`127.0.0.1:8091`. Dev mode reads only the two ports and an optional
+`127.0.0.1:8091`. Dev mode reads `COLLAB_DEV`, the two ports and an optional
 `AE_ALLOWED_ORIGINS`.
 
 Commands: uniform verbs via the root `Makefile`; locally

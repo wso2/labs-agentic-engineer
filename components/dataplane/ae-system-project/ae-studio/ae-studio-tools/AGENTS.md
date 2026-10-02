@@ -22,7 +22,7 @@ toolchain, run Go make targets with `env -u GOROOT`.
 
 | Package | Purpose |
 |---|---|
-| `cmd/ae-studio-tools` | wiring: secret-rev check, config, git engine (`repo.StaticToken(GITHUB_PAT)`, logs `repo.root {root_layout}` once), reaper (built before any listener, runs for the process lifetime), publisher token + aep-api client + project resolver, the `Applier` (aep-api completer, `CommitAuthor` over the gitpat), public + health listeners and the Files socket (`edge.Readiness`: ready once the public listener and the socket are bound); SIGTERM/SIGINT drain the public and health listeners, keep the Files socket accepting for a 5 s window (ae-collab's final flush, 07 §10), shut it down (15 s for applies in flight), then stop the reaper |
+| `cmd/ae-studio-tools` | wiring: secret-rev check, config, git engine (`repo.StaticToken(GITHUB_PAT)`, logs `repo.root {root_layout}` once), reaper (built before any listener, runs for the process lifetime), publisher token + aep-api client + project resolver, the `Applier` (aep-api completer, `CommitAuthor` over the gitpat), public + health listeners and the Files socket (`edge.Readiness`: ready once the public listener and the socket are bound); SIGTERM/SIGINT drain the public and health listeners, keep the Files socket accepting for a 10 s window (ae-collab's 8 s shutdown flush budget, 07 §10), shut it down (15 s for applies in flight), then stop the reaper |
 | `internal/config` | `Load(getenv)` reads the pod env; `CheckSecretRev(getenv)` refuses to start when `AE_SECRET_REV` ≠ `AE_EXPECTED_SECRET_REV` |
 | `internal/auth` | JWT verifier over the IdP JWKS; `UserGate` (`/v1`) and `M2MGate` (`/internal/v1`) |
 | `internal/problem` | the `application/problem+json` error body (leaf, so gates and edge share it) |

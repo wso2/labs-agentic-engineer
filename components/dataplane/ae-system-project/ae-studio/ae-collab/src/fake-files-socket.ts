@@ -44,17 +44,32 @@ export interface FakeFilesSocketOptions {
 /** The socket's three operations, as `failNext` can target them. */
 export type FilesOp = "lookup" | "bundle" | "apply";
 
+/** A commit the fake landed through `apply`. */
+export interface FakeCommit {
+  commitSha: string;
+  message: string;
+  /** Paths written, then paths deleted, as the batch named them. */
+  writes: string[];
+  deletes: string[];
+}
+
 export interface FakeFilesSocket {
   /** The socket path to hand to `createFilesClient`. */
   readonly path: string;
   /** Every request seen, in order (method + raw URL). */
   readonly requests: { method: string; url: string }[];
+  /** The commits `apply` landed, in order (`pushExternal` commits are not listed). */
+  commits(): FakeCommit[];
+  /** One file of the current tree, or undefined when absent. */
+  file(filePath: string): string | undefined;
   /** A commit landed outside the room: changes one file and moves the head. */
   pushExternal(filePath: string, content: string): void;
-  /** Answer the next request (of `op`, when given) with this problem. */
-  failNext(status: number, code: string, op?: FilesOp): void;
+  /** Answer the next request (of `op`, when given) with this problem; the next `times` such requests, when given. */
+  failNext(status: number, code: string, op?: FilesOp, times?: number): void;
   /** Answer the next request with an arbitrary body (a proxy's error page). */
   failNextRaw(status: number, contentType: string, body: string): void;
+  /** Never answer the next request (of `op`, when given): a stalled sidecar. */
+  stallNext(op?: FilesOp): void;
   /** Stop serving and remove the socket and its directory. */
   close(): Promise<void>;
 }
@@ -154,9 +169,10 @@ export async function startFakeFilesSocket(
   const warnings = options.warnings ?? [];
   const unknown = new Set(options.unknownProjects ?? []);
   const requests: { method: string; url: string }[] = [];
+  const landed: FakeCommit[] = [];
   let commits = 0;
   let headSha = gitBlobSha("commit 0");
-  let nextFailure: { op: FilesOp | undefined; send: (res: http.ServerResponse) => void } | null = null;
+  let nextFailure: { op: FilesOp | undefined; send: (res: http.ServerResponse) => void; times: number } | null = null;
 
   const newCommit = () => {
     commits += 1;
@@ -183,7 +199,15 @@ export async function startFakeFilesSocket(
       request.deletes.length > 0;
     for (const w of request.writes) tree.set(w.path, w.content);
     for (const d of request.deletes) tree.delete(d.path);
-    if (changed) newCommit();
+    if (changed) {
+      newCommit();
+      landed.push({
+        commitSha: headSha,
+        message: request.message,
+        writes: request.writes.map((w) => w.path),
+        deletes: request.deletes.map((d) => d.path),
+      });
+    }
     const result: Schemas["ApplyResult"] = {
       commitSha: headSha,
       changed,
@@ -201,7 +225,8 @@ export async function startFakeFilesSocket(
     const filesOp: FilesOp = op === "/bundle" ? "bundle" : op === "/apply" ? "apply" : "lookup";
     if (nextFailure && (nextFailure.op === undefined || nextFailure.op === filesOp)) {
       const fail = nextFailure.send;
-      nextFailure = null;
+      nextFailure.times -= 1;
+      if (nextFailure.times <= 0) nextFailure = null;
       // Drain any body so the connection stays usable.
       req.resume();
       return fail(res);
@@ -263,15 +288,21 @@ export async function startFakeFilesSocket(
   return {
     path: socketPath,
     requests,
+    commits: () => [...landed],
+    file: (filePath) => tree.get(filePath),
     pushExternal(filePath, content) {
       tree.set(filePath, content);
       newCommit();
     },
-    failNext(status, code, op) {
-      nextFailure = { op, send: (res) => problem(res, status, code) };
+    failNext(status, code, op, times = 1) {
+      nextFailure = { op, send: (res) => problem(res, status, code), times };
     },
     failNextRaw(status, contentType, body) {
-      nextFailure = { op: undefined, send: (res) => send(res, status, contentType, body) };
+      nextFailure = { op: undefined, send: (res) => send(res, status, contentType, body), times: 1 };
+    },
+    stallNext(op) {
+      // The request stays open until the client gives up or close() ends it.
+      nextFailure = { op, send: () => {}, times: 1 };
     },
     async close() {
       await new Promise<void>((resolve) => {

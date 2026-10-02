@@ -199,3 +199,34 @@ test("the client never sends owner or repo, and encodes the project segment", as
     await fake.close();
   }
 });
+
+test("a stalled socket fails the request as an outage at the deadline", async () => {
+  const fake = await startFakeFilesSocket({ files: { "specs/a.md": "a" } });
+  try {
+    const c = createFilesClient(fake.path, { requestTimeoutMs: 100 });
+    fake.stallNext("apply");
+    const started = Date.now();
+    await assert.rejects(
+      c.apply("greeter", EMPTY),
+      (e) => e instanceof FilesUnavailableError && e.code === "timeout" && e.status === 0,
+    );
+    assert.ok(Date.now() - started < 2_000);
+    // The same client serves the next request.
+    assert.equal((await c.bundle("greeter")).length, 1);
+  } finally {
+    await fake.close();
+  }
+});
+
+test("not_fast_forward is an outage (retry later), not a conflict", async () => {
+  const fake = await startFakeFilesSocket({ files: {} });
+  try {
+    fake.failNext(409, "not_fast_forward", "apply");
+    await assert.rejects(
+      createFilesClient(fake.path).apply("greeter", EMPTY),
+      (e) => e instanceof FilesUnavailableError && e.code === "not_fast_forward",
+    );
+  } finally {
+    await fake.close();
+  }
+});

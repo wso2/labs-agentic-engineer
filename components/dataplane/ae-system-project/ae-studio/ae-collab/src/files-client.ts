@@ -26,8 +26,9 @@
 //   ApplyConflictError    a baseSha moved; the committer's doc-wins retry.
 //   FilesDeniedError      a verdict (4xx): retrying the same call cannot help.
 //   FilesUnavailableError an outage (5xx, 408/425/429, a lost push race, an
-//                         unreachable socket): retry later; a refused room
-//                         load is tagged `upstream-unavailable`.
+//                         unreachable or stalled socket): retry later; a
+//                         refused room load is tagged `upstream-unavailable`,
+//                         a failed flush keeps the doc live for the next one.
 
 import { Agent, fetch } from "undici";
 import type { components } from "./generated/files-socket.js";
@@ -72,15 +73,17 @@ export interface ApplyBatch {
   message: string;
 }
 
-/**
- * @knipkeep wired in Task 2.12 (the committer switches to the FilesClient).
- */
+/** A non-fatal note about one file of a commit (e.g. a scaffolded file). */
+export interface ApplyWarning {
+  path: string;
+  message: string;
+}
+
 export interface ApplyOutcome {
   /** New per-file shas on success (full repo paths). */
   files: { path: string; sha: string }[];
   commitSha: string;
-  /** Non-fatal notes from the pod about this commit (e.g. a scaffolded file). */
-  warnings: { path: string; message: string }[];
+  warnings: ApplyWarning[];
 }
 
 export interface ProjectRepository {
@@ -89,7 +92,7 @@ export interface ProjectRepository {
   headSha: string;
 }
 
-/** The Files port: Room seeding and project lookup now, the committer from Task 2.12. */
+/** The Files port: Room seeding, the project lookup and the committer. */
 export interface FilesClient {
   /** The project's repository and current head; throws FilesDeniedError when unknown. */
   lookup(project: string): Promise<ProjectRepository>;
@@ -125,8 +128,9 @@ export class FilesDeniedError extends Error {
 
 /**
  * An outage: a 5xx, a 408/425/429, a `not_fast_forward` 409 (the branch moved
- * during the save; the pod says re-read and retry), a malformed reply, or a
- * socket that cannot be reached (`code` `socket_unreachable`, `status` 0).
+ * during the save; the pod says re-read and retry), a malformed reply, a
+ * socket that cannot be reached (`code` `socket_unreachable`, `status` 0) or
+ * one that does not answer in time (`timeout`, `status` 0).
  */
 export class FilesUnavailableError extends Error {
   constructor(
@@ -147,6 +151,14 @@ export class FilesUnavailableError extends Error {
 const RETRYABLE_4XX = new Set([408, 425, 429]);
 /** Error text kept in a message; problem details are short, bodies may not be. */
 const MAX_DETAIL = 500;
+/**
+ * The longest one request may take, reply body included. A stalled sidecar
+ * must not hold a flush (or a room load) open: the request fails as an
+ * outage and the next debounce retries. Generous enough for a cold clone
+ * behind a bundle and a push behind an apply; the shutdown flush has its own,
+ * shorter budget (`SHUTDOWN_FLUSH_BUDGET_MS` in committer.ts).
+ */
+const REQUEST_TIMEOUT_MS = 20_000;
 
 // The host is a placeholder: the dispatcher connects to the socket, so only
 // the path reaches the server.
@@ -212,26 +224,35 @@ function asConflicts(reply: Reply): string[] | null {
   return body.conflicts.map((c) => c.path);
 }
 
+export interface FilesClientOptions {
+  /** Per-request deadline; `REQUEST_TIMEOUT_MS` unless a test shortens it. */
+  requestTimeoutMs?: number;
+}
+
 /**
  * The FilesClient over the Files socket at `socketPath`. One keep-alive
  * dispatcher per client; a request never leaves the socket.
  */
-export function createFilesClient(socketPath: string): FilesClient {
+export function createFilesClient(socketPath: string, options: FilesClientOptions = {}): FilesClient {
   const dispatcher = new Agent({ connect: { socketPath } });
+  const timeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
 
   async function send(
     method: "GET" | "POST",
     path: string,
     body?: unknown,
   ): Promise<Reply> {
+    // One deadline for the whole exchange: connect, headers and body.
+    const signal = AbortSignal.timeout(timeoutMs);
     try {
       const res = await fetch(
         `${ORIGIN}${path}`,
         body === undefined
-          ? { method, dispatcher }
+          ? { method, dispatcher, signal }
           : {
               method,
               dispatcher,
+              signal,
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(body),
             },
@@ -242,6 +263,9 @@ export function createFilesClient(socketPath: string): FilesClient {
         text: await res.text(),
       };
     } catch (err) {
+      if (signal.aborted) {
+        throw new FilesUnavailableError("timeout", 0, "the Files socket did not answer in time", { cause: err });
+      }
       throw new FilesUnavailableError(
         "socket_unreachable",
         0,

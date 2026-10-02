@@ -214,6 +214,26 @@ test("failNext answers one request with a problem, then serves normally", async 
   }
 });
 
+test("failNext with times answers that many matching requests, and commits() lists only applies", async () => {
+  const fake = await startFakeFilesSocket({ files: {} });
+  try {
+    fake.failNext(503, "disk_full", "apply", 2);
+    const body = { writes: [{ path: "specs/a.md", content: "a", baseSha: "" }], deletes: [], message: "m" };
+    assert.equal((await call(fake.path, "GET", "/projects/greeter")).status, 200, "another op is served");
+    assert.equal((await call(fake.path, "POST", "/projects/greeter/apply", body)).status, 503);
+    assert.equal((await call(fake.path, "POST", "/projects/greeter/apply", body)).status, 503);
+    assert.equal((await call(fake.path, "POST", "/projects/greeter/apply", body)).status, 200);
+    fake.pushExternal("specs/b.md", "b");
+    assert.deepEqual(
+      fake.commits().map((c) => [c.message, c.writes, c.deletes]),
+      [["m", ["specs/a.md"], []]],
+    );
+    assert.equal(fake.file("specs/b.md"), "b");
+  } finally {
+    await fake.close();
+  }
+});
+
 test("an invalid project name or unknown route is a problem", async () => {
   const fake = await startFakeFilesSocket({ files: {} });
   try {

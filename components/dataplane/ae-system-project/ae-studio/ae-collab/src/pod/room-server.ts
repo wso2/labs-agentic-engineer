@@ -25,17 +25,27 @@
  * A ROOM EXISTS ONLY IF IT WAS SEEDED (#586): a bundle read that fails refuses
  * the load, so no client ever sees an empty document that is not an empty
  * project. A Files verdict (4xx) is a plain refusal; an outage is tagged
- * `upstream-unavailable` so the client retries. The committer (onStoreDocument
- * and the `flush` message) moves onto the Files socket in Task 2.12.
+ * `upstream-unavailable` so the client retries. It commits through the same
+ * socket (`commits.ts`): debounced, on the last leave and on a `flush`.
  */
 
 import { Hocuspocus, type Connection, type onAuthenticatePayload, type onTokenSyncPayload } from "@hocuspocus/server";
+import { seedBaseline } from "../committer.js";
 import { FilesDeniedError, type FilesClient } from "../files-client.js";
 import { dropRoomState, ensureRoomState } from "../rooms.js";
 import { isReferenceDocPath, seedDocument } from "../seed.js";
 import { PERMISSION_DENIED, refusal, UPSTREAM_UNAVAILABLE, type CollabContext } from "./auth.js";
+import { commitHooks } from "./commits.js";
 import type { ExpiryGuard } from "./expiry.js";
 import type { PodLog } from "./log.js";
+
+/** The committer's cadence: a quiet period commits, continuous editing commits at least this often. */
+export interface CommitCadence {
+  debounceMs: number;
+  maxDebounceMs: number;
+}
+
+const COMMIT_CADENCE: CommitCadence = { debounceMs: 60_000, maxDebounceMs: 300_000 };
 
 export interface RoomServerDeps {
   files: FilesClient;
@@ -45,14 +55,20 @@ export interface RoomServerDeps {
   onTokenSync?: (data: Pick<onTokenSyncPayload<CollabContext>, "token" | "connection">) => Promise<void>;
   expiry: ExpiryGuard;
   log: PodLog;
+  /** COMMIT_CADENCE unless a test shortens it. */
+  cadence?: CommitCadence;
 }
 
 export function createRoomServer(deps: RoomServerDeps): Hocuspocus<CollabContext> {
+  const cadence = deps.cadence ?? COMMIT_CADENCE;
   return new Hocuspocus<CollabContext>({
     name: "ae-collab",
     // A doc's life is its room's life; git is the durable truth and a rejoin
-    // reseeds from HEAD.
+    // reseeds from HEAD. The last leave runs the pending store, then unloads.
     unloadImmediately: true,
+    debounce: cadence.debounceMs,
+    maxDebounce: cadence.maxDebounceMs,
+    ...commitHooks({ files: deps.files, log: deps.log }),
     onAuthenticate: deps.authenticate,
     ...(deps.onTokenSync ? { onTokenSync: deps.onTokenSync } : {}),
     connected: ({ connection, context }) => {
@@ -70,8 +86,7 @@ export function createRoomServer(deps: RoomServerDeps): Hocuspocus<CollabContext
           deps.log({ msg: "room_seed_anomaly", source: "ae-collab", listener: context.listener }),
         );
         // The committer's baseline: what was seeded, and the shas it preconditions on.
-        const state = ensureRoomState(documentName, context.projectName);
-        for (const f of files) state.baseline.set(f.path, { content: f.content, sha: f.sha });
+        seedBaseline(ensureRoomState(documentName, context.projectName), document, files);
       } catch (err) {
         // No room exists after a refused load: no other connection holds this
         // document, so its state goes too, the participants added at auth

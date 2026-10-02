@@ -36,11 +36,14 @@ import { HocuspocusProvider, HocuspocusProviderWebsocket } from "@hocuspocus/pro
 import { startFakeFilesSocket, type FakeFilesSocket } from "./fake-files-socket.js";
 import { fragmentToMarkdown } from "@aep/collab-doc";
 import { dropRoomState, roomState } from "./rooms.js";
+import { RESTARTING } from "./pod/commits.js";
 import type { PodConfig } from "./pod/config.js";
 import type { Clock } from "./pod/expiry.js";
-import type { PodListeners } from "./pod/listeners.js";
+import { startPodListeners, type PodListeners } from "./pod/listeners.js";
 import type { PodLogLine } from "./pod/log.js";
+import type { CommitCadence } from "./pod/room-server.js";
 import { startDev, startPod } from "./pod/start.js";
+import { Hocuspocus } from "@hocuspocus/server";
 
 const ISSUER = "http://thunder.test";
 const USER_AUDIENCE = "aep-console-client";
@@ -159,6 +162,8 @@ interface Peer {
   provider: HocuspocusProvider;
   doc: Y.Doc;
   readonly closed: boolean;
+  /** Every stateless message the server sent this peer, parsed. */
+  stateless: { type: string; id?: string; message?: string; warnings?: unknown }[];
 }
 
 interface TestCollab {
@@ -205,11 +210,14 @@ function wsUpgrade(url: string, opts: { origin?: string } = {}): Promise<{ statu
   });
 }
 
-async function startTestCollab(o: { unknownProjects?: string[]; allowedOrigins?: string[] } = {}): Promise<TestCollab> {
+async function startTestCollab(
+  o: { unknownProjects?: string[]; allowedOrigins?: string[]; cadence?: CommitCadence; warnings?: { path: string; message: string }[] } = {},
+): Promise<TestCollab> {
   const idp = await startIdp();
   const files = await startFakeFilesSocket({
     files: { [PRD_PATH]: "# PRD\n\nThe greeter says hello.\n" },
     ...(o.unknownProjects ? { unknownProjects: o.unknownProjects } : {}),
+    ...(o.warnings ? { warnings: o.warnings } : {}),
   });
   const clock = testClock();
   const lines: PodLogLine[] = [];
@@ -226,7 +234,7 @@ async function startTestCollab(o: { unknownProjects?: string[]; allowedOrigins?:
     healthPort: 0,
     localPort: 0,
   };
-  const pod = await startPod(cfg, { clock, log: (l) => lines.push(l) });
+  const pod = await startPod(cfg, { clock, log: (l) => lines.push(l), ...(o.cadence ? { cadence: o.cadence } : {}) });
   const peers: { provider: HocuspocusProvider; socket: HocuspocusProviderWebsocket }[] = [];
   const rooms = new Set<string>();
 
@@ -254,6 +262,8 @@ async function startTestCollab(o: { unknownProjects?: string[]; allowedOrigins?:
       provider.on("close", () => {
         closed = true;
       });
+      const stateless: Peer["stateless"] = [];
+      provider.on("stateless", ({ payload }: { payload: string }) => stateless.push(JSON.parse(payload) as Peer["stateless"][number]));
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error("sync timeout")), 10_000);
         provider.on("synced", () => {
@@ -269,6 +279,7 @@ async function startTestCollab(o: { unknownProjects?: string[]; allowedOrigins?:
       return {
         provider,
         doc,
+        stateless,
         get closed() {
           return closed;
         },
@@ -291,6 +302,21 @@ async function startTestCollab(o: { unknownProjects?: string[]; allowedOrigins?:
 
 /** The seeded PRD as markdown. */
 const markdown = (doc: Y.Doc) => fragmentToMarkdown(doc.getXmlFragment(PRD_PATH));
+
+/** Appends a paragraph to the seeded PRD, as an editor does. */
+function typeInto(doc: Y.Doc, text: string): void {
+  const para = new Y.XmlElement("paragraph");
+  doc.getXmlFragment(PRD_PATH).push([para]);
+  para.push([new Y.XmlText(text)]);
+}
+
+/** Sends a `flush` and resolves with the server's answer to it. */
+async function flush(peer: Peer, id: string): Promise<Peer["stateless"][number]> {
+  peer.provider.sendStateless(JSON.stringify({ type: "flush", id }));
+  let answer: Peer["stateless"][number] | undefined;
+  await waitFor(() => (answer = peer.stateless.find((m) => m.id === id)) !== undefined, `the answer to ${id}`);
+  return answer!;
+}
 
 /** The log lines of one event. */
 const events = (s: TestCollab, msg: PodLogLine["msg"]) => s.lines.filter((l) => l.msg === msg);
@@ -687,5 +713,189 @@ test("dev mode: no token, rooms seeded from the dev fixtures", async () => {
     socket.destroy();
     await dev.close();
     dropRoomState("spec-default-demo-shop");
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Commits through the Files socket (no token)
+
+test("a quiet period commits the room and every peer hears the commit's warnings", async () => {
+  const s = await startTestCollab({
+    cadence: { debounceMs: 50, maxDebounceMs: 500 },
+    warnings: [{ path: PRD_PATH, message: "soft" }],
+  });
+  try {
+    const ann = await s.join("public", ROOM, s.idp.userToken({ name: "Ann", email: "ann@x" }));
+    const agent = await s.join("local", ROOM, s.idp.agentToken("ae-studio-acme"), { credit: JSON.stringify({ name: "Bob", email: "bob@x" }) });
+    typeInto(ann.doc, "Typed by Ann.");
+    await waitFor(() => s.files.commits().length === 1, "the debounced commit");
+    assert.match(s.files.file(PRD_PATH)!, /Typed by Ann\./);
+    // One commit for the room, crediting everyone in it; the socket call carried no token.
+    assert.match(s.files.commits()[0]!.message, /Co-authored-by: Ann <ann@x>\nCo-authored-by: Bob <bob@x>$/);
+    for (const peer of [ann, agent]) {
+      await waitFor(() => peer.stateless.some((m) => m.type === "flush-warnings"), "flush-warnings");
+      assert.deepEqual(
+        peer.stateless.find((m) => m.type === "flush-warnings"),
+        { type: "flush-warnings", warnings: [{ path: PRD_PATH, message: "soft" }] },
+      );
+    }
+  } finally {
+    await s.close();
+  }
+});
+
+test("a debounced flush that meets an outage tells the room and keeps the edit for the next one", async () => {
+  const s = await startTestCollab({ cadence: { debounceMs: 50, maxDebounceMs: 500 } });
+  try {
+    const ann = await s.join("public", ROOM, s.idp.userToken());
+    s.files.failNext(503, "disk_full", "apply");
+    typeInto(ann.doc, "Kept through the outage.");
+    await waitFor(() => ann.stateless.some((m) => m.type === "flush-error"), "flush-error");
+    assert.deepEqual(ann.stateless.find((m) => m.type === "flush-error"), { type: "flush-error", message: RESTARTING });
+    assert.equal(s.files.commits().length, 0);
+    assert.equal(ann.closed, false, "a failed flush never closes a connection");
+    // The next debounce retries the same changes.
+    typeInto(ann.doc, "And one more.");
+    await waitFor(() => s.files.commits().length === 1, "the retried commit");
+    assert.match(s.files.file(PRD_PATH)!, /Kept through the outage\.[\s\S]*And one more\./);
+  } finally {
+    await s.close();
+  }
+});
+
+test("flush: acked flushed after the commit; an outage is acked flush-error and the next flush lands", async () => {
+  const s = await startTestCollab();
+  try {
+    const ann = await s.join("public", ROOM, s.idp.userToken());
+    // A clean room acks at once: HEAD is already the truth.
+    assert.deepEqual(await flush(ann, "f0"), { type: "flushed", id: "f0" });
+    assert.equal(s.files.commits().length, 0);
+
+    typeInto(ann.doc, "Before the build.");
+    await new Promise((r) => setTimeout(r, 100)); // the update reaches the server
+    s.files.failNext(503, "aep_api_unavailable", "apply");
+    assert.deepEqual(await flush(ann, "f1"), { type: "flush-error", id: "f1", message: RESTARTING });
+    assert.equal(s.files.commits().length, 0);
+
+    assert.deepEqual(await flush(ann, "f2"), { type: "flushed", id: "f2" });
+    assert.equal(s.files.commits().length, 1);
+    assert.match(s.files.file(PRD_PATH)!, /Before the build\./);
+  } finally {
+    await s.close();
+  }
+});
+
+test("a last leave whose final flush meets an outage keeps the room loaded; the edit survives to a rejoin", async () => {
+  const s = await startTestCollab();
+  try {
+    const ann = await s.join("public", ROOM, s.idp.userToken());
+    typeInto(ann.doc, "Typed before leaving.");
+    await flush(ann, "sync"); // the edit reached the server, and landed
+    typeInto(ann.doc, "Typed last.");
+    await new Promise((r) => setTimeout(r, 100)); // the update reaches the server
+    // Both the pending debounced store and the final flush after it meet the outage.
+    s.files.failNext(503, "disk_full", "apply", 2);
+    ann.provider.destroy();
+    await waitFor(() => events(s, "room_final_flush_deferred").length === 1, "the deferred final flush");
+    assert.equal(s.files.commits().length, 1);
+
+    // The room was not unloaded, so it was not reseeded from git: the edit is still there.
+    const bob = await s.join("public", ROOM, s.idp.userToken({ sub: "u-bob" }));
+    assert.match(markdown(bob.doc), /Typed last\./);
+    assert.deepEqual(await flush(bob, "f"), { type: "flushed", id: "f" });
+    assert.match(s.files.file(PRD_PATH)!, /Typed last\./);
+  } finally {
+    await s.close();
+  }
+});
+
+test("close: listeners stop accepting, the rooms are flushed while their sockets are up, then the sockets end", async () => {
+  const s = await startTestCollab();
+  try {
+    const ann = await s.join("public", ROOM, s.idp.userToken());
+    typeInto(ann.doc, "Saved on SIGTERM.");
+    await new Promise((r) => setTimeout(r, 100)); // the update reaches the server
+    await s.pod.close();
+    assert.equal(s.files.commits().length, 1, "the shutdown flush committed the room");
+    assert.match(s.files.file(PRD_PATH)!, /Saved on SIGTERM\./);
+    assert.equal(events(s, "room_flush_committed").length, 1, "one commit: the later unload found nothing left");
+  } finally {
+    await s.close();
+  }
+});
+
+test("close runs drain after the listeners stop accepting and before the open sockets end", async () => {
+  let atDrain: { socketOpen: boolean; upgradeRefused: boolean; ready: number } | undefined;
+  let localUrl = "";
+  let healthUrl = "";
+  const open: WebSocket[] = [];
+  const pod = await startPodListeners(
+    { allowedOrigins: [], listenPort: 0, healthPort: 0, localPort: 0 },
+    {
+      rooms: new Hocuspocus(),
+      gate: () => Promise.resolve(null),
+      log: () => {},
+      drain: async () => {
+        const upgradeRefused = await wsUpgrade(`${localUrl}/`).then(
+          () => false,
+          () => true,
+        );
+        atDrain = {
+          socketOpen: open[0]?.readyState === WebSocket.OPEN,
+          upgradeRefused,
+          ready: (await fetch(`${healthUrl}/readyz`)).status,
+        };
+      },
+    },
+  );
+  localUrl = pod.localUrl;
+  healthUrl = pod.healthUrl;
+  const ws = new WebSocket(localUrl.replace(/^http/, "ws"));
+  open.push(ws);
+  await new Promise((resolve, reject) => {
+    ws.once("open", resolve);
+    ws.once("error", reject);
+  });
+  const closed = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+  await pod.close();
+  await closed;
+  assert.deepEqual(atDrain, { socketOpen: true, upgradeRefused: true, ready: 503 });
+});
+
+test("dev mode: a flush is acked through the fake Files socket", async () => {
+  const dev = await startDev({ allowedOrigins: [], listenPort: 0, healthPort: 0, localPort: 0 }, { log: () => {} });
+  const socket = new HocuspocusProviderWebsocket({ url: dev.localUrl.replace(/^http/, "ws"), WebSocketPolyfill: WebSocket, ...FAST_RETRY });
+  const doc = new Y.Doc();
+  const provider = new HocuspocusProvider({ websocketProvider: socket, name: "spec-default-demo-shop", document: doc, token: "" });
+  const stateless: Peer["stateless"] = [];
+  provider.on("stateless", ({ payload }: { payload: string }) => stateless.push(JSON.parse(payload) as Peer["stateless"][number]));
+  try {
+    await new Promise<void>((resolve, reject) => {
+      provider.on("synced", () => resolve());
+      provider.on("authenticationFailed", ({ reason }: { reason: string }) => reject(new Error(reason)));
+      provider.attach();
+    });
+    provider.sendStateless(JSON.stringify({ type: "flush", id: "dev-1" }));
+    await waitFor(() => stateless.some((m) => m.id === "dev-1"), "the dev flush ack");
+    assert.deepEqual(stateless.find((m) => m.id === "dev-1"), { type: "flushed", id: "dev-1" });
+  } finally {
+    provider.destroy();
+    socket.destroy();
+    await dev.close();
+    dropRoomState("spec-default-demo-shop");
+  }
+});
+
+test("reference documents are never seeded into a room or its baseline", async () => {
+  const s = await startTestCollab();
+  try {
+    const ref = "specs/requirements/references/rfp.pdf";
+    s.files.pushExternal(ref, "JVBERi0xLjQK");
+    const ann = await s.join("public", ROOM, s.idp.userToken());
+    assert.equal(ann.doc.getMap("files").has(ref), false);
+    assert.equal(roomState(ROOM)?.baseline.has(ref), false);
+    assert.equal(roomState(ROOM)?.baseline.has(PRD_PATH), true);
+  } finally {
+    await s.close();
   }
 });

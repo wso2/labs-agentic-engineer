@@ -25,7 +25,6 @@ import assert from "node:assert/strict";
 import { createServer, request, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { generateKeyPairSync, randomBytes, sign as rsaSign, type KeyObject } from "node:crypto";
-import { loadConfig } from "./env.js";
 import { selectModes } from "./modes.js";
 import { loadDevConfig, loadPodConfig, type PodConfig } from "./pod/config.js";
 import type { PodLogLine } from "./pod/log.js";
@@ -270,11 +269,6 @@ test("pod: a busy public port fails the start and frees the health port", async 
   }
 });
 
-test("missing AEP_API_BASE no longer implies dev mode", () => {
-  assert.equal(loadConfig({}).devMode, false);
-  assert.equal(loadConfig({ COLLAB_DEV: "1" }).devMode, true);
-});
-
 test("pod config: none without AE_ORG_ID", () => {
   assert.equal(loadPodConfig({}), null);
   assert.equal(loadPodConfig({ AE_ORG_ID: " " }), null);
@@ -359,25 +353,14 @@ test("modes: COLLAB_DEV alone is dev mode: the pod's listeners, fixed local port
   );
 });
 
-test("modes: the legacy server needs a BFF, real or mock", () => {
-  const real = selectModes({ AEP_API_BASE: "http://aep-api:9090/api/v1/" });
-  assert.equal(real.mode, "legacy");
-  assert.equal(real.mode === "legacy" && real.config.aepApiBase, "http://aep-api:9090/api/v1");
-  const mock = selectModes({ COLLAB_MOCK_BFF: "1" });
-  assert.equal(mock.mode === "legacy" && mock.config.mockBff, true);
-});
-
-test("modes: a configured BFF outranks COLLAB_DEV (pnpm dev runs the real auth path)", () => {
-  const mock = selectModes({ COLLAB_DEV: "1", COLLAB_MOCK_BFF: "1" });
-  assert.equal(mock.mode, "legacy");
-  assert.equal(mock.mode === "legacy" && mock.config.aepApiBase, "http://127.0.0.1:8092/api/v1");
-  const real = selectModes({ COLLAB_DEV: "1", AEP_API_BASE: "http://localhost:9090/api/v1" });
-  assert.equal(real.mode, "legacy");
-  assert.equal(real.mode === "legacy" && real.config.aepApiBase, "http://localhost:9090/api/v1");
+test("modes: the removed legacy server's keys configure nothing", () => {
+  // The chart Deployment's env (until Task 2.16 deletes it) boots nothing.
+  assert.throws(() => selectModes({ AEP_API_BASE: "http://aep-api:9090/api/v1/" }), /ae-collab: no config/);
+  assert.throws(() => selectModes({ COLLAB_MOCK_BFF: "1" }), /ae-collab: no config/);
 });
 
 test("modes: boot fails with no config, and with a partial pod config", () => {
   assert.throws(() => selectModes({}), /ae-collab: no config/);
-  assert.throws(() => selectModes({ COLLAB_DEV: "0", AEP_API_BASE: "" }), /ae-collab: no config/);
+  assert.throws(() => selectModes({ COLLAB_DEV: "0" }), /ae-collab: no config/);
   assert.throws(() => selectModes({ AE_ORG_ID: "ou-1", COLLAB_DEV: "1" }), /missing AE_ORG_HANDLE/);
 });

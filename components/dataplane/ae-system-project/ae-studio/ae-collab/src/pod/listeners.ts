@@ -30,6 +30,10 @@
  *   health  `/healthz` (liveness) and `/readyz` (200 once both room listeners
  *           are bound, 503 while closing); not in the Service, not routed.
  *
+ * Closing (SIGTERM, 07 §10): both room listeners stop accepting, `drain` runs
+ * while the open room sockets are still up (the Room's shutdown flush), then
+ * those sockets end, and the health listener closes last.
+ *
  * The listener a socket came in on rides in its Hocuspocus context
  * (`{listener}`), which is how `auth.ts` picks the token kind; the client
  * cannot set it.
@@ -61,6 +65,8 @@ export interface PodListenerDeps {
   gate: HttpGate;
   /** Where log lines go; stdout unless a test captures them. */
   log?: PodLog;
+  /** Runs on close, after both room listeners stop accepting and before their sockets end. */
+  drain?: () => Promise<void>;
 }
 
 const BEARER = /^Bearer ([^\s]+)$/i;
@@ -206,7 +212,7 @@ function roomServer(
   return server;
 }
 
-function publicServer(cfg: ListenerConfig, deps: Required<PodListenerDeps>, wss: WebSocketServer): Server {
+function publicServer(cfg: ListenerConfig, deps: Pick<Required<PodListenerDeps>, "rooms" | "gate" | "log">, wss: WebSocketServer): Server {
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     if (V1.test(pathOf(req))) {
       const refusal = await deps.gate(req);
@@ -319,8 +325,12 @@ export async function startPodListeners(cfg: ListenerConfig, deps: PodListenerDe
       ready = false;
       try {
         const stopped = Promise.all([closeServer(pub), closeServer(local)]);
-        // Upgraded sockets left the HTTP servers' books: end them here.
-        for (const ws of [...publicWss.clients, ...localWss.clients]) ws.terminate();
+        try {
+          await deps.drain?.();
+        } finally {
+          // Upgraded sockets left the HTTP servers' books: end them here.
+          for (const ws of [...publicWss.clients, ...localWss.clients]) ws.terminate();
+        }
         await stopped;
       } finally {
         await closeServer(health);

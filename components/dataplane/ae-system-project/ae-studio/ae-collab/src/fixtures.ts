@@ -16,14 +16,12 @@
  * under the License.
  */
 
-import { type SpecFile } from "./files-client.js";
-
 // Dev-mode seed content. Mirrors the console mock layer's demo-shop project
 // (apps/console/src/mocks/fixtures/project.ts) so `make dev` shows the same
 // spec in both the mocked REST reads and the live collab doc.
 
-/** A spec file as the Files API serves it: repo-relative path under specs/. */
-export interface RepoSpecFile {
+/** A spec file as the Files socket serves it: repo-relative path under specs/. */
+interface RepoSpecFile {
   path: string;
   content: string;
 }
@@ -72,10 +70,3 @@ The storefront talks to both services; services share nothing.
 `,
   },
 ];
-
-/** The same files as SpecFile records — full specs/ paths (verbatim doc keys). */
-export const devSeedFiles: SpecFile[] = devSpecFiles.map((f) => ({
-  path: f.path,
-  content: f.content,
-  sha: `dev-${f.path}`,
-}));

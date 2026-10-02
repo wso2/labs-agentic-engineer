@@ -37,12 +37,23 @@ export interface PodLogLine {
     | "room_token_refused"
     | "room_token_expired"
     | "room_token_unverified"
-    | "room_token_subject_changed";
+    | "room_token_subject_changed"
+    | "room_flush_committed"
+    | "room_flush_held"
+    | "room_flush_conflict"
+    | "room_flush_failed"
+    | "room_final_flush_deferred"
+    | "room_shutdown_flush_over_budget";
   source: "ae-collab";
   port?: number;
   listener?: "public" | "local";
-  /** Why a room or a token was refused: a fixed word, never input. */
-  cause?: RefusalCause;
+  /** Why a room, a token or a flush was refused: a fixed word, never input. */
+  cause?: RefusalCause | FlushFailureCause;
+  /** Counts only: how many files a flush wrote, deleted or held, how many rooms a shutdown left. */
+  writes?: number;
+  deletes?: number;
+  held?: number;
+  rooms?: number;
 }
 
 export type RefusalCause =
@@ -54,6 +65,9 @@ export type RefusalCause =
   | "files_unavailable"
   | "files_denied"
   | "idp_unavailable";
+
+/** Why a flush did not land: the FilesClient's failure classes. */
+export type FlushFailureCause = "files_unavailable" | "files_denied" | "conflict" | "internal";
 
 export type PodLog = (line: PodLogLine) => void;
 

@@ -32,9 +32,6 @@ export interface RoomState {
   baseline: Map<string, BaselineEntry>;
   /** Session participants keyed by email — the commit trailers. */
   participants: Map<string, { name: string; email: string }>;
-  /** The most recent participant's bearer — the forced unload flush has no
-   *  connection context left to read a token from. */
-  lastToken: string | null;
 }
 
 const rooms = new Map<string, RoomState>();
@@ -53,7 +50,6 @@ export function ensureRoomState(
     projectName,
     baseline: new Map(),
     participants: new Map(),
-    lastToken: null,
   };
   rooms.set(documentName, fresh);
   return fresh;

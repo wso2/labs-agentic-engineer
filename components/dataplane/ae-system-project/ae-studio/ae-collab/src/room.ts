@@ -17,9 +17,9 @@
  */
 
 // Room IDs are `spec-<org>-<project>` (both DNS-label slugs). Because slugs
-// may themselves contain hyphens the ID is ambiguous to split — only the BFF
-// can, using the org recovered from the caller's token. This module therefore
-// only *shape*-validates; the room is forwarded whole to the oracle.
+// may themselves contain hyphens the ID is ambiguous to split without the
+// org: this module only *shape*-validates, and the pod splits it with its own
+// org handle (pod/auth.ts).
 
 const ROOM_PATTERN = /^spec-[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 const MAX_ROOM_LENGTH = 128;
