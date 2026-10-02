@@ -47,11 +47,12 @@ func registerThunderFlags(cmd *cobra.Command) {
 
 // thunderClientDef describes a Thunder OAuth client to provision.
 type thunderClientDef struct {
-	clientID     string
-	clientType   string   // "confidential" or "public"
-	secretKey    string   // key in aep-thunder-secrets (confidential only)
-	redirectURIs []string // public only
-	noOrgClaims  bool     // token carries no ouId/ouName/ouHandle (AE-only client)
+	clientID         string
+	clientType       string   // "confidential" or "public"
+	secretKey        string   // key in aep-thunder-secrets (confidential only)
+	redirectURIs     []string // public only
+	noUserAttributes bool     // token carries no attributes at all (AE-only client)
+	secretName       string   // K8s Secret holding secretKey; default aep-thunder-secrets
 }
 
 // aepThunderClients is the canonical list of AEP OAuth clients to register in Thunder.
@@ -66,15 +67,40 @@ var aepThunderClients = []thunderClientDef{
 	{clientID: "local-dev-seeder", clientType: "confidential", secretKey: "LOCAL_DEV_SEEDER_SECRET"},
 	{clientID: "aep-system-client", clientType: "confidential", secretKey: "THUNDER_SYSTEM_CLIENT_SECRET"},
 	{clientID: "openchoreo-rca-agent", clientType: "confidential", secretKey: "OC_RCA_AGENT_SECRET"},
-	{clientID: "ae-studio-internal-client", clientType: "confidential", secretKey: "AE_STUDIO_INTERNAL_CLIENT_SECRET", noOrgClaims: true},
+	{clientID: "ae-studio-internal-client", clientType: "confidential", secretKey: "AE_STUDIO_INTERNAL_CLIENT_SECRET", secretName: aeStudioInternalSecretsName, noUserAttributes: true},
 	// Public PKCE clients — redirect URIs are filled in by doThunderSetup.
 	{clientID: "aep-console-client", clientType: "public"},
 	{clientID: "aep-cli-client", clientType: "public", redirectURIs: []string{"http://localhost", "http://127.0.0.1"}},
 }
 
+func (d thunderClientDef) secretNameOrDefault() string {
+	if d.secretName != "" {
+		return d.secretName
+	}
+	return thunderSecretsName
+}
+
+// thunderSecretNames lists the distinct K8s Secrets the confidential clients
+// read their secrets from.
+func thunderSecretNames() []string {
+	var names []string
+	seen := map[string]bool{}
+	for _, d := range aepThunderClients {
+		if d.clientType != "confidential" || seen[d.secretNameOrDefault()] {
+			continue
+		}
+		seen[d.secretNameOrDefault()] = true
+		names = append(names, d.secretNameOrDefault())
+	}
+	return names
+}
+
 const (
-	thunderSecretsName  = "aep-thunder-secrets"
-	thunderSystemClient = "aep-system-client"
+	thunderSecretsName = "aep-thunder-secrets"
+	// aeStudioInternalSecretsName holds only the AE-only client secret, so a
+	// missing vault key degrades nothing else.
+	aeStudioInternalSecretsName = "aep-ae-studio-internal-secrets"
+	thunderSystemClient         = "aep-system-client"
 )
 
 // doThunderSetup registers all AEP OAuth clients in Thunder. It port-forwards
@@ -92,10 +118,14 @@ func doThunderSetup(
 	//    so retry for up to 60s before failing.
 	sp := ui.NewSpinner("Waiting for Thunder client secrets (ESO sync)")
 	sp.Start()
-	clientSecrets, err := waitForThunderSecrets(ctx, k8sClient, platformNamespace, 60*time.Second)
-	if err != nil {
-		sp.Fail("Thunder client secrets not available")
-		return fmt.Errorf("read Thunder client secrets from %s/%s: %w", platformNamespace, thunderSecretsName, err)
+	secretsByName := map[string]map[string]string{}
+	var err error
+	for _, name := range thunderSecretNames() {
+		secretsByName[name], err = waitForSecretData(ctx, k8sClient, platformNamespace, name, 60*time.Second)
+		if err != nil {
+			sp.Fail("Thunder client secrets not available")
+			return fmt.Errorf("read Thunder client secrets from %s/%s: %w", platformNamespace, name, err)
+		}
 	}
 	sp.Success("Thunder client secrets ready")
 
@@ -137,15 +167,16 @@ func doThunderSetup(
 		clientSp.Start()
 
 		app := thunder.DesiredApp{
-			ClientID:    def.clientID,
-			ClientType:  def.clientType,
-			NoOrgClaims: def.noOrgClaims,
+			ClientID:         def.clientID,
+			ClientType:       def.clientType,
+			NoUserAttributes: def.noUserAttributes,
 		}
 		if def.clientType == "confidential" {
-			secret, ok := clientSecrets[def.secretKey]
+			secretName := def.secretNameOrDefault()
+			secret, ok := secretsByName[secretName][def.secretKey]
 			if !ok || secret == "" {
-				clientSp.Fail(fmt.Sprintf("Secret key %q missing from %s", def.secretKey, thunderSecretsName))
-				return fmt.Errorf("secret key %q missing from %s/%s", def.secretKey, platformNamespace, thunderSecretsName)
+				clientSp.Fail(fmt.Sprintf("Secret key %q missing from %s", def.secretKey, secretName))
+				return fmt.Errorf("secret key %q missing from %s/%s", def.secretKey, platformNamespace, secretName)
 			}
 			app.ClientSecret = secret
 		} else {
@@ -185,12 +216,6 @@ func doThunderSetup(
 
 	ui.Detail("Thunder setup complete")
 	return nil
-}
-
-// waitForThunderSecrets retries reading the aep-thunder-secrets K8s Secret until
-// it exists and is non-empty, or until timeout expires.
-func waitForThunderSecrets(ctx context.Context, k8sClient *kubernetes.Clientset, namespace string, timeout time.Duration) (map[string]string, error) {
-	return waitForSecretData(ctx, k8sClient, namespace, thunderSecretsName, timeout)
 }
 
 // waitForSecretData retries reading an ESO-synced K8s Secret until it exists

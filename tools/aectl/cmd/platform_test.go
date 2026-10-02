@@ -86,11 +86,12 @@ func TestAEStudioOverrides(t *testing.T) {
 	viper.Set("gateway.hostname", "openchoreoapis.localhost")
 	viper.Set("thunder.public_url", "http://thunder.openchoreo.localhost:8080")
 	viper.Set("thunder.url", "http://thunder-service.thunder.svc.cluster.local:8090")
+	viper.Set("thunder.namespace", "wso2-thunder")
 	got := strings.Join(aeStudioOverrides(), " ")
 	for _, want := range []string{"aeStudio.publicScheme=http", "aeStudio.listenerName=http", "aeStudio.publicPortSuffix=:19080",
 		"aeStudio.consoleOrigins={http://console.ae.localhost:8080,http://localhost:8090}", "aeStudio.gatewayHost=openchoreoapis.localhost",
 		"aeStudio.idp.issuer=http://thunder.openchoreo.localhost:8080", "aeStudio.idp.jwksUrl=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks",
-		"aeStudio.idp.tokenUrl=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/token", "--set-json aeStudio.extraEgress=["} {
+		"aeStudio.idp.tokenUrl=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/token", "--set-json aeStudio.extraEgress=[", `"kubernetes.io/metadata.name":"wso2-thunder"`, `"port":8090`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %s in %s", want, got)
 		}
@@ -99,5 +100,43 @@ func TestAEStudioOverrides(t *testing.T) {
 	got = strings.Join(aeStudioOverrides(), " ")
 	if !strings.Contains(got, "aeStudio.publicScheme=https") || !strings.Contains(got, "aeStudio.publicPortSuffix=:19443") || !strings.Contains(got, "aeStudio.listenerName=https") {
 		t.Fatal(got)
+	}
+}
+
+func TestAEStudioOverrides_NoThunderURLOmitsIdPURLs(t *testing.T) {
+	t.Cleanup(viper.Reset)
+	viper.Set("thunder.url", "")
+	got := strings.Join(aeStudioOverrides(), " ")
+	for _, bad := range []string{"idp.jwksUrl", "idp.tokenUrl", "idp.issuer"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("%s must be absent when thunder.url is empty: %s", bad, got)
+		}
+	}
+}
+
+// A store seeded before ae-studio-internal existed is topped up with only the
+// missing generated key; existing generated keys are never rewritten.
+func TestSeedMissingGeneratedSecrets_OnlyMissing(t *testing.T) {
+	have := map[string]bool{}
+	for _, n := range generatedThunderClientNames {
+		if n != "ae-studio-internal" {
+			have["aep/thunder-clients/"+n] = true
+		}
+	}
+	var wrote []string
+	seeded, err := seedMissingGeneratedSecrets(
+		func(p string) (bool, error) { return have[p], nil },
+		func(p, v string) error {
+			if v == "" {
+				t.Errorf("empty value for %s", p)
+			}
+			wrote = append(wrote, p)
+			return nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wrote) != 1 || wrote[0] != "aep/thunder-clients/ae-studio-internal" || len(seeded) != 1 {
+		t.Fatalf("wrote %v, seeded %v", wrote, seeded)
 	}
 }

@@ -716,15 +716,21 @@ func TestFindSystemResourceServerID_FallsBackToName(t *testing.T) {
 	}
 }
 
-func TestTokenClaimConfig_NoOrgClaims(t *testing.T) {
+func TestTokenClaimConfig_NoUserAttributes(t *testing.T) {
 	cfg := tokenClaimConfig("confidential", true)
 	attrs := cfg["accessToken"].(map[string]any)["clientConfig"].(map[string]any)["attributes"].([]string)
-	if len(attrs) == 0 {
-		t.Fatal("expected the non-org attributes to remain")
+	if len(attrs) != 0 {
+		t.Fatalf("AE-only client must carry no token attributes: %v", attrs)
 	}
-	for _, a := range attrs {
-		if a == "ouId" || a == "ouHandle" || a == "ouName" {
-			t.Fatalf("AE-only client must carry no org claim: %v", attrs)
-		}
+}
+
+func TestBuildCreatePayload_NoUserAttributes(t *testing.T) {
+	c := &AdminClient{defaultOU: "ou"}
+	p := c.buildCreatePayload(DesiredApp{ClientID: "x", ClientType: "confidential", ClientSecret: "s", NoUserAttributes: true})
+	cfg := p["inboundAuthConfig"].([]map[string]any)[0]["config"].(map[string]any)
+	token := cfg["token"].(map[string]any)
+	attrs := token["accessToken"].(map[string]any)["clientConfig"].(map[string]any)["attributes"].([]string)
+	if len(attrs) != 0 {
+		t.Fatalf("create payload must carry no token attributes: %v", attrs)
 	}
 }

@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
@@ -157,29 +158,60 @@ func tryItOverrides(publicURL, gatewayHostname string) []string {
 // aeStudioOverrides returns the helm pairs for the chart's aeStudio.* values
 // from aectl config. Everything is derived: the public scheme, listener and
 // port come from tls.enabled alone (the dataplane gateway listens on 19080
-// plain or 19443 TLS locally). The image refs are not set here; an empty
+// plain or 19443 TLS locally). tls.enabled and oc.data_plane_gateway_tls
+// describe the same gateway listener and must agree. The image refs are not set here; an empty
 // image keeps aep-api booting and makes the AE Studio Ensure fail loudly.
 func aeStudioOverrides() []string {
 	scheme, listener, port := "http", "http", ":19080"
 	if viper.GetBool("tls.enabled") {
 		scheme, listener, port = "https", "https", ":19443"
 	}
-	thunderURL := viper.GetString("thunder.url")
-	extraEgress := fmt.Sprintf(`[`+
-		`{"to":[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"thunder"}}}],"ports":[{"protocol":"TCP","port":8090}]},`+
-		`{"to":[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":%q}},"podSelector":{"matchLabels":{"app":"aep-api"}}}],"ports":[{"protocol":"TCP","port":9090}]}`+
-		`]`, initPlatformNamespace)
-	return []string{
+	args := []string{
 		"--set", "aeStudio.publicScheme=" + scheme,
 		"--set", "aeStudio.listenerName=" + listener,
 		"--set", "aeStudio.publicPortSuffix=" + port,
 		"--set", "aeStudio.consoleOrigins={" + consolePublicURL() + ",http://localhost:8090}",
 		"--set", "aeStudio.gatewayHost=" + viper.GetString("gateway.hostname"),
-		"--set", "aeStudio.idp.issuer=" + viper.GetString("thunder.public_url"),
-		"--set", "aeStudio.idp.jwksUrl=" + thunderURL + "/oauth2/jwks",
-		"--set", "aeStudio.idp.tokenUrl=" + thunderURL + "/oauth2/token",
-		"--set-json", "aeStudio.extraEgress=" + extraEgress,
 	}
+	if u := viper.GetString("thunder.public_url"); u != "" {
+		args = append(args, "--set", "aeStudio.idp.issuer="+u)
+	}
+	// An unset thunder.url leaves the IdP URLs absent so aep-api's
+	// not-configured check names them, instead of a half-built URL.
+	if thunderURL := viper.GetString("thunder.url"); thunderURL != "" {
+		args = append(args,
+			"--set", "aeStudio.idp.jwksUrl="+thunderURL+"/oauth2/jwks",
+			"--set", "aeStudio.idp.tokenUrl="+thunderURL+"/oauth2/token",
+		)
+	}
+	return append(args, "--set-json", "aeStudio.extraEgress="+aeStudioExtraEgress())
+}
+
+// aeStudioExtraEgress is the pod's egress to the in-cluster IdP (Thunder's
+// namespace and port, from thunder.namespace / thunder.url) and to aep-api.
+func aeStudioExtraEgress() string {
+	thunderNS := viper.GetString("thunder.namespace")
+	thunderPort := 8090
+	if u, err := url.Parse(viper.GetString("thunder.url")); err == nil && u.Port() != "" {
+		if p, err := strconv.Atoi(u.Port()); err == nil {
+			thunderPort = p
+		}
+	}
+	rules := []map[string]any{
+		{
+			"to":    []any{map[string]any{"namespaceSelector": map[string]any{"matchLabels": map[string]string{"kubernetes.io/metadata.name": thunderNS}}}},
+			"ports": []any{map[string]any{"protocol": "TCP", "port": thunderPort}},
+		},
+		{
+			"to": []any{map[string]any{
+				"namespaceSelector": map[string]any{"matchLabels": map[string]string{"kubernetes.io/metadata.name": initPlatformNamespace}},
+				"podSelector":       map[string]any{"matchLabels": map[string]string{"app": "aep-api"}},
+			}},
+			"ports": []any{map[string]any{"protocol": "TCP", "port": 9090}},
+		},
+	}
+	b, _ := json.Marshal(rules)
+	return string(b)
 }
 
 // imageTagOverrides returns the helm --set pairs that re-point every platform
@@ -846,15 +878,6 @@ func verifyOpenBaoSecrets(ctx context.Context) error {
 		"aep/opensearch-password",
 		"aep/thunder-admin/client-id",
 		"aep/thunder-admin/client-secret",
-		"aep/thunder-clients/oc-workload-publisher",
-		"aep/thunder-clients/oc-observer-reader",
-		"aep/thunder-clients/aep-api-client",
-		"aep/thunder-clients/bff-git-service",
-		"aep/thunder-clients/bff-remote-worker",
-		"aep/thunder-clients/local-dev-seeder",
-		"aep/thunder-clients/system-client",
-		"aep/thunder-clients/openchoreo-rca-agent",
-		"aep/thunder-clients/ae-studio-internal",
 	}
 
 	var missing []string
@@ -870,7 +893,75 @@ func verifyOpenBaoSecrets(ctx context.Context) error {
 	if len(missing) > 0 {
 		return fmt.Errorf("the following secrets are not in OpenBao:\n  %s", strings.Join(missing, "\n  "))
 	}
-	return nil
+
+	// Generated Thunder client secrets are aectl's own to create, so a store
+	// seeded before a client existed is topped up rather than refused.
+	exists := func(path string) (bool, error) {
+		_, status, err := openbao.Req(ctx, "GET", baseURL, token, "/v1/secret/data/"+path, nil)
+		return status != 404, err
+	}
+	put := func(path, value string) error {
+		_, err := openbao.Must(ctx, "PUT", baseURL, token, "/v1/secret/data/"+path, map[string]interface{}{
+			"data": map[string]interface{}{"value": value},
+		})
+		return err
+	}
+	_, err = seedMissingGeneratedSecrets(exists, put)
+	return err
+}
+
+// generatedThunderClientNames are the Thunder clients whose secret aectl
+// generates and seeds under aep/thunder-clients/<name>.
+var generatedThunderClientNames = []string{
+	"oc-workload-publisher",
+	"oc-observer-reader",
+	"aep-api-client",
+	"bff-git-service",
+	"bff-remote-worker",
+	"local-dev-seeder",
+	"system-client",
+	"openchoreo-rca-agent",
+	"ae-studio-internal",
+}
+
+// fixedThunderClientSecrets: clients whose secret an OpenChoreo component
+// bakes in as a fixed default and cannot be told a random value.
+var fixedThunderClientSecrets = map[string]string{
+	"oc-workload-publisher": "openchoreo-workload-publisher-secret",
+}
+
+// thunderClientSecretValue returns the fixed secret for name, or a fresh one.
+func thunderClientSecretValue(name string) (string, error) {
+	if fixed, ok := fixedThunderClientSecrets[name]; ok {
+		return fixed, nil
+	}
+	return bootstrap.GeneratePassword(32)
+}
+
+// seedMissingGeneratedSecrets writes every generated aep/thunder-clients/*
+// secret that is absent and leaves existing ones untouched. It returns the
+// paths it wrote.
+func seedMissingGeneratedSecrets(exists func(path string) (bool, error), put func(path, value string) error) ([]string, error) {
+	var seeded []string
+	for _, name := range generatedThunderClientNames {
+		path := "aep/thunder-clients/" + name
+		ok, err := exists(path)
+		if err != nil {
+			return seeded, fmt.Errorf("check secret %s: %w", path, err)
+		}
+		if ok {
+			continue
+		}
+		v, err := thunderClientSecretValue(name)
+		if err != nil {
+			return seeded, fmt.Errorf("generate thunder client secret %s: %w", name, err)
+		}
+		if err := put(path, v); err != nil {
+			return seeded, fmt.Errorf("write %s: %w", path, err)
+		}
+		seeded = append(seeded, path)
+	}
+	return seeded, nil
 }
 
 // provisionOpenBao seeds all platform secrets into OC's built-in OpenBao instance.
@@ -931,34 +1022,14 @@ func provisionOpenBao(ctx context.Context, anthropicKey, thunderAdminClientID, t
 		return fmt.Errorf("generate opensearch password: %w", err)
 	}
 
-	thunderClientNames := []string{
-		"oc-workload-publisher",
-		"oc-observer-reader",
-		"aep-api-client",
-		"bff-git-service",
-		"bff-remote-worker",
-		"local-dev-seeder",
-		"system-client",
-		"openchoreo-rca-agent",
-		"ae-studio-internal",
-	}
-	// fixedClientSecrets: clients whose secret an OpenChoreo component bakes in
-	// as a fixed default and cannot be told a random value.
-	fixedClientSecrets := map[string]string{
-		"oc-workload-publisher": "openchoreo-workload-publisher-secret",
-	}
-	thunderClientSecrets := make(map[string]string, len(thunderClientNames))
-	for _, name := range thunderClientNames {
-		if fixed, ok := fixedClientSecrets[name]; ok {
-			thunderClientSecrets[name] = fixed
-			continue
-		}
-		s, err := bootstrap.GeneratePassword(32)
+	thunderClientSecrets := make(map[string]string, len(generatedThunderClientNames))
+	for _, name := range generatedThunderClientNames {
+		v, err := thunderClientSecretValue(name)
 		if err != nil {
 			sp.Fail("Secret generation failed")
 			return fmt.Errorf("generate thunder client secret %s: %w", name, err)
 		}
-		thunderClientSecrets[name] = s
+		thunderClientSecrets[name] = v
 	}
 
 	secrets := []struct{ path, value string }{
@@ -976,7 +1047,7 @@ func provisionOpenBao(ctx context.Context, anthropicKey, thunderAdminClientID, t
 		// thunder-app-operator can source both credentials from the same ESO Secret.
 		{"aep/thunder-clients/system-client-id", "aep-system-client"},
 	}
-	for _, name := range thunderClientNames {
+	for _, name := range generatedThunderClientNames {
 		secrets = append(secrets, struct{ path, value string }{
 			"aep/thunder-clients/" + name, thunderClientSecrets[name],
 		})

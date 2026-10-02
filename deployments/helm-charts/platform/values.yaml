@@ -145,9 +145,9 @@ aeStudio:
     issuer: ""
     jwksUrl: ""
     tokenUrl: ""
-    # Must include the console client id (== console.thunder.clientId): user
-    # tokens are minted for it.
-    userAudiences: ["aep-console-client"]
+    # Empty falls back to console.thunder.clientId (== JWT_AUDIENCE), the
+    # audience user tokens are minted for.
+    userAudiences: []
   runtimeClassName: ""
   cilium: false
   extraEgress: []

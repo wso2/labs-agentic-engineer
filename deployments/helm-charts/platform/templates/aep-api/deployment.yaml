@@ -193,75 +193,76 @@ spec:
             # The OpenCode runner image, used for orgs whose runtime is OpenCode.
             - name: AGENT_RUNNER_IMAGE_OPENCODE
               value: {{ .Values.codingAgentRunner.opencodeImage | quote }}
+            {{- $ae := default dict .Values.aeStudio }}
             # AE Studio (all optional at boot; see values.yaml aeStudio).
             - name: AE_STUDIO_INTERNAL_CLIENT_ID
-              value: {{ .Values.aeStudio.internalClient.id | quote }}
+              value: {{ (default dict $ae.internalClient).id | default "ae-studio-internal-client" | quote }}
             - name: AE_STUDIO_INTERNAL_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: aep-thunder-secrets
+                  name: aep-ae-studio-internal-secrets
                   key: AE_STUDIO_INTERNAL_CLIENT_SECRET
                   optional: true
             - name: AE_STUDIO_AEP_API_BASE_URL
               value: "http://aep-api.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.aepApi.port }}"
-            {{- with .Values.aeStudio.images.designAgent }}
+            {{- with (default dict $ae.images).designAgent }}
             - name: AE_STUDIO_IMAGE_DESIGN_AGENT
               value: {{ . | quote }}
             {{- end }}
-            {{- with .Values.aeStudio.images.collab }}
+            {{- with (default dict $ae.images).collab }}
             - name: AE_STUDIO_IMAGE_COLLAB
               value: {{ . | quote }}
             {{- end }}
-            {{- with .Values.aeStudio.images.studioTools }}
+            {{- with (default dict $ae.images).studioTools }}
             - name: AE_STUDIO_IMAGE_STUDIO_TOOLS
               value: {{ . | quote }}
             {{- end }}
-            {{- with .Values.aeStudio.gatewayHost }}
+            {{- with $ae.gatewayHost }}
             - name: AE_STUDIO_GATEWAY_HOST
               value: {{ . | quote }}
             {{- end }}
-            {{- with .Values.aeStudio.publicScheme }}
+            {{- with $ae.publicScheme }}
             - name: AE_STUDIO_PUBLIC_SCHEME
               value: {{ . | quote }}
             {{- end }}
-            {{- with .Values.aeStudio.publicPortSuffix }}
+            {{- with $ae.publicPortSuffix }}
             - name: AE_STUDIO_PUBLIC_PORT_SUFFIX
               value: {{ . | quote }}
             {{- end }}
-            {{- with .Values.aeStudio.listenerName }}
+            {{- with $ae.listenerName }}
             - name: AE_STUDIO_LISTENER_NAME
               value: {{ . | quote }}
             {{- end }}
-            {{- with .Values.aeStudio.idp.issuer }}
+            {{- with (default dict $ae.idp).issuer }}
             - name: AE_STUDIO_IDP_ISSUER
               value: {{ . | quote }}
             {{- end }}
-            {{- with .Values.aeStudio.idp.jwksUrl }}
+            {{- with (default dict $ae.idp).jwksUrl }}
             - name: AE_STUDIO_IDP_JWKS_URL
               value: {{ . | quote }}
             {{- end }}
-            {{- with .Values.aeStudio.idp.tokenUrl }}
+            {{- with (default dict $ae.idp).tokenUrl }}
             - name: AE_STUDIO_IDP_TOKEN_URL
               value: {{ . | quote }}
             {{- end }}
-            {{- with .Values.aeStudio.runtimeClassName }}
+            {{- with $ae.runtimeClassName }}
             - name: AE_STUDIO_RUNTIME_CLASS_NAME
               value: {{ . | quote }}
             {{- end }}
             - name: AE_STUDIO_CONSOLE_ORIGINS
-              value: {{ join "," .Values.aeStudio.consoleOrigins | quote }}
+              value: {{ join "," ($ae.consoleOrigins | default list) | quote }}
             - name: AE_STUDIO_IDP_USER_AUDIENCES
-              value: {{ join "," .Values.aeStudio.idp.userAudiences | quote }}
+              value: {{ join "," ((default dict $ae.idp).userAudiences | default (list .Values.console.thunder.clientId)) | quote }}
             - name: AE_STUDIO_CILIUM
-              value: {{ .Values.aeStudio.cilium | quote }}
+              value: {{ $ae.cilium | default false | quote }}
             - name: AE_STUDIO_EXTRA_EGRESS
-              value: {{ toJson .Values.aeStudio.extraEgress | quote }}
+              value: {{ toJson ($ae.extraEgress | default list) | quote }}
             - name: AE_STUDIO_STORAGE_SIZE_LIMIT
-              value: {{ .Values.aeStudio.storage.sizeLimit | quote }}
+              value: {{ (default dict $ae.storage).sizeLimit | default "3Gi" | quote }}
             - name: AE_STUDIO_STORAGE_EPHEMERAL_REQUEST
-              value: {{ .Values.aeStudio.storage.ephemeralRequest | quote }}
+              value: {{ (default dict $ae.storage).ephemeralRequest | default "1Gi" | quote }}
             - name: AE_STUDIO_STORAGE_BUDGET_BYTES
-              value: {{ .Values.aeStudio.storage.budgetBytes | quote }}
+              value: {{ (default dict $ae.storage).budgetBytes | default "2147483648" | quote }}
             # OpenBao-direct secrets delivery (local-only). Cloud injects a
             # different SecretsProvider via the overlay; OPENBAO_* must be
             # absent there. OPENBAO_TOKEN comes from the ESO-synced
