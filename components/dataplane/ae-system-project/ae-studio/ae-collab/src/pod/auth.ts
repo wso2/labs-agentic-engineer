@@ -38,7 +38,7 @@
  */
 
 import type { onAuthenticatePayload, onTokenSyncPayload } from "@hocuspocus/server";
-import { orgRule, UnauthenticatedError, userRule, type TokenKind, type VerifiedToken } from "@aep/platform-idp-auth";
+import { IdpUnavailableError, orgRule, UnauthenticatedError, userRule, type TokenKind, type VerifiedToken } from "@aep/platform-idp-auth";
 import { FilesDeniedError, type FilesClient } from "../files-client.js";
 import { addParticipant, ensureRoomState } from "../rooms.js";
 import { isSpecRoom } from "../room.js";
@@ -61,6 +61,8 @@ export interface CollabContext {
   projectName: string | null;
   /** The verified token's `exp` (seconds); kept current by `onTokenSync`. */
   exp: number;
+  /** The user token's `sub` at connect; null for the agent's client token and dev. */
+  subject: string | null;
 }
 
 /** `verify` from `@aep/platform-idp-auth`'s `createVerifier`. */
@@ -96,30 +98,37 @@ class Refused extends Error {
   }
 }
 
+interface Checked {
+  exp: number;
+  /** The token's user; null for the agent's client token, which names no person. */
+  user: CollabUser | null;
+  subject: string | null;
+}
+
 /**
- * The token check of one listener: the verified `exp` and the token's user
- * (`null` for the agent's client token, which names no person). Throws
- * `Refused` for any token this listener does not take.
+ * The token check of one listener. Throws `Refused` for any token this
+ * listener does not take, and `IdpUnavailableError` when the IdP's keys could
+ * not be fetched (no verdict was reached).
  */
 function checkerFor(cfg: AuthConfig, verify: Verify) {
   const pod = { orgId: cfg.orgId, orgHandle: cfg.orgHandle };
   const userKinds: TokenKind[] = [{ name: "user", audiences: cfg.userAudiences }];
   const agentKinds: TokenKind[] = [{ name: "ae-studio", audiences: [cfg.agentClientId] }];
-  return async (listener: ListenerKind, token: string): Promise<{ exp: number; user: CollabUser | null }> => {
+  return async (listener: ListenerKind, token: string): Promise<Checked> => {
     let verified: VerifiedToken;
     try {
       verified = await verify(token, listener === "public" ? userKinds : agentKinds);
     } catch (err) {
-      // Anything else is a wiring fault, not a verdict on the token.
+      // IdpUnavailableError passes up; anything else is a wiring fault.
       if (!(err instanceof UnauthenticatedError)) throw err;
       throw new Refused("token");
     }
     if (verified.kind === "user") {
       if (!userRule(verified.claims, pod)) throw new Refused("org");
-      return { exp: verified.claims.exp, user: userOf(verified.claims) };
+      return { exp: verified.claims.exp, user: userOf(verified.claims), subject: verified.claims.sub };
     }
     if (!orgRule(verified.claims, pod)) throw new Refused("org");
-    return { exp: verified.claims.exp, user: null };
+    return { exp: verified.claims.exp, user: null, subject: null };
   };
 }
 
@@ -185,6 +194,7 @@ export function authenticateFor(
       user = verified.user ?? creditOf(data.requestParameters);
     } catch (err) {
       if (err instanceof Refused) throw refuse(err.why);
+      if (err instanceof IdpUnavailableError) throw refuse("idp_unavailable", UPSTREAM_UNAVAILABLE);
       throw err;
     }
     const projectName = projectOf(data.documentName, cfg.orgHandle);
@@ -197,14 +207,17 @@ export function authenticateFor(
     }
     ensureRoomState(data.documentName, projectName);
     addParticipant(data.documentName, user);
-    return { listener, user, projectName, exp: verified.exp };
+    return { listener, user, projectName, exp: verified.exp, subject: verified.subject };
   };
 }
 
 /**
  * `onTokenSync`: the client pushed a token. It must pass the same check as at
  * connect (signature, issuer, kind of this listener, the pod's org); then the
- * deadline moves to its `exp`. Anything else closes the connection at once.
+ * deadline moves to its `exp`. A refused token closes the connection at once.
+ * An IdP that cannot be reached decides nothing: the old deadline stands.
+ * A user token for another subject of the org is accepted (it passes the same
+ * rule a fresh connection would) and logged without the subjects.
  */
 export function onTokenSyncFor(
   cfg: AuthConfig,
@@ -217,11 +230,16 @@ export function onTokenSyncFor(
     const context = connection.context;
     const listener = listenerOf(context);
     try {
-      const { exp } = await check(listener, token);
+      const { exp, subject } = await check(listener, token);
+      if (subject !== context.subject) log({ msg: "room_token_subject_changed", source: "ae-collab", listener });
       context.exp = exp;
       expiry.arm(connection, exp);
       log({ msg: "room_token_refreshed", source: "ae-collab", listener });
     } catch (err) {
+      if (err instanceof IdpUnavailableError) {
+        log({ msg: "room_token_unverified", source: "ae-collab", listener, cause: "idp_unavailable" });
+        return;
+      }
       if (!(err instanceof Refused)) throw err;
       // Closed here, not thrown: Hocuspocus would print the error object.
       connection.close(TOKEN_REFUSED);
@@ -241,5 +259,5 @@ export function devAuthenticate(data: Pick<AuthPayload, "documentName" | "contex
   const user: CollabUser = { name: "Dev User", email: "dev@localhost", kind: "dev" };
   ensureRoomState(data.documentName, projectName);
   addParticipant(data.documentName, user);
-  return Promise.resolve({ listener, user, projectName, exp: Number.POSITIVE_INFINITY });
+  return Promise.resolve({ listener, user, projectName, exp: Number.POSITIVE_INFINITY, subject: null });
 }

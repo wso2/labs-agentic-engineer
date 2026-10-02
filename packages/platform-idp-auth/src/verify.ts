@@ -23,7 +23,7 @@
  * twin of ae-studio-tools' `internal/auth/verify.go`.
  */
 
-import { createRemoteJWKSet, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from "jose";
+import { createRemoteJWKSet, errors, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from "jose";
 
 /** A token kind and the audiences that name it. Kinds are wiring, never request input. */
 export interface TokenKind {
@@ -61,6 +61,15 @@ export type VerifiedToken =
  */
 export class UnauthenticatedError extends Error {
   override readonly name = "UnauthenticatedError";
+}
+
+/**
+ * The IdP's key set could not be fetched (unreachable, timed out, a non-200
+ * or a body that is not a key set): no verdict on the token was reached, so
+ * a caller answers "retry", never "denied". The message names no URL.
+ */
+export class IdpUnavailableError extends Error {
+  override readonly name = "IdpUnavailableError";
 }
 
 const ALGORITHMS = ["RS256", "ES256"];
@@ -104,18 +113,31 @@ export function createVerifier(opts: {
       cooldownDuration: JWKS_COOLDOWN_MS,
     });
 
+  // The key lookup is where the IdP is reached. A kid it does not publish
+  // (or publishes twice) is a verdict on the token; anything else that fails
+  // there means the keys could not be had.
+  const keyFor: JWTVerifyGetKey = async (header, token) => {
+    try {
+      return await keys(header, token);
+    } catch (err) {
+      if (err instanceof errors.JWKSNoMatchingKey || err instanceof errors.JWKSMultipleMatchingKeys) throw err;
+      throw new IdpUnavailableError("the IdP key set could not be fetched", { cause: err });
+    }
+  };
+
   return async function verify(token: string, kinds: TokenKind[]): Promise<VerifiedToken> {
     assertKinds(kinds);
     let payload: JWTPayload;
     let kid: unknown;
     try {
-      ({ payload, protectedHeader: { kid } } = await jwtVerify(token, keys, {
+      ({ payload, protectedHeader: { kid } } = await jwtVerify(token, keyFor, {
         issuer: opts.issuer,
         algorithms: ALGORITHMS,
         requiredClaims: ["exp"],
         clockTolerance: CLOCK_TOLERANCE,
       }));
-    } catch {
+    } catch (err) {
+      if (err instanceof IdpUnavailableError) throw err;
       throw new UnauthenticatedError("invalid token");
     }
     if (typeof kid !== "string" || kid === "") throw new UnauthenticatedError("token names no key");

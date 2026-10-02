@@ -35,7 +35,9 @@ export interface PodLogLine {
     | "room_seed_anomaly"
     | "room_token_refreshed"
     | "room_token_refused"
-    | "room_token_expired";
+    | "room_token_expired"
+    | "room_token_unverified"
+    | "room_token_subject_changed";
   source: "ae-collab";
   port?: number;
   listener?: "public" | "local";
@@ -50,7 +52,8 @@ export type RefusalCause =
   | "project_unknown"
   | "credit"
   | "files_unavailable"
-  | "files_denied";
+  | "files_denied"
+  | "idp_unavailable";
 
 export type PodLog = (line: PodLogLine) => void;
 

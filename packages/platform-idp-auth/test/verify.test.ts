@@ -19,7 +19,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { SignJWT, generateKeyPair, exportJWK, createLocalJWKSet } from "jose";
-import { createVerifier, UnauthenticatedError } from "../src/index.js";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { createVerifier, IdpUnavailableError, UnauthenticatedError } from "../src/index.js";
 
 const ISS = "http://thunder.openchoreo.localhost:8080";
 const USER = { name: "user" as const, audiences: ["aep-console-client"] };
@@ -173,5 +175,59 @@ test("no kinds, a kind without audiences or an empty audience is a wiring error,
   const t = await sign({ aud: "aep-console-client", sub: "u1" });
   for (const kinds of [[], [{ name: "user" as const, audiences: [] }], [{ name: "user" as const, audiences: [""] }]]) {
     await assert.rejects(verify(t, kinds), (err: unknown) => err instanceof Error && !(err instanceof UnauthenticatedError));
+  }
+});
+
+/** A JWKS endpoint answering with `answer`; the URL and a close. */
+async function jwksServer(answer: (res: import("node:http").ServerResponse) => void): Promise<{ url: string; close(): Promise<void> }> {
+  const server: Server = createServer((_req, res) => answer(res));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return {
+    url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/oauth2/jwks`,
+    close: () =>
+      new Promise((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
+  };
+}
+
+test("an IdP whose keys cannot be fetched is unavailable, not a verdict on the token", async () => {
+  const { sign } = await setup();
+  const t = await sign({ aud: "aep-console-client", sub: "u1" });
+  // Nothing listens: the fetch is refused.
+  const down = await jwksServer(() => {});
+  await down.close();
+  await assert.rejects(createVerifier({ issuer: ISS, jwksUrl: down.url })(t, [USER]), IdpUnavailableError);
+  // A 5xx and a body that is not a key set.
+  const broken = await jwksServer((res) => res.writeHead(503).end("busy"));
+  await assert.rejects(createVerifier({ issuer: ISS, jwksUrl: broken.url })(t, [USER]), IdpUnavailableError);
+  await broken.close();
+  const junk = await jwksServer((res) => res.writeHead(200, { "content-type": "application/json" }).end("{}"));
+  await assert.rejects(createVerifier({ issuer: ISS, jwksUrl: junk.url })(t, [USER]), IdpUnavailableError);
+  await junk.close();
+});
+
+test("a reachable IdP still refuses a token its keys do not verify", async () => {
+  const { sign } = await setup();
+  const other = await generateKeyPair("RS256");
+  const keys = await jwksServer((res) =>
+    void exportJWK(other.publicKey).then((jwk) =>
+      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ keys: [{ ...jwk, kid: "rs", alg: "RS256" }] })),
+    ),
+  );
+  try {
+    const verify = createVerifier({ issuer: ISS, jwksUrl: keys.url });
+    // Signed by a key the IdP does not publish under that kid: bad signature.
+    await assert.rejects(verify(await sign({ aud: "aep-console-client", sub: "u1" }), [USER]), UnauthenticatedError);
+    // A kid the IdP does not publish at all.
+    const unknownKid = await new SignJWT({ aud: "aep-console-client", sub: "u1" })
+      .setProtectedHeader({ alg: "RS256", kid: "nope" })
+      .setIssuer(ISS)
+      .setExpirationTime("1h")
+      .sign(other.privateKey);
+    await assert.rejects(verify(unknownKid, [USER]), UnauthenticatedError);
+  } finally {
+    await keys.close();
   }
 });

@@ -71,7 +71,8 @@ off the stream. The plan tool contract (inputs, results, error codes, the
   port (`AE_LISTEN_PORT`, 8080) serves `/v1` behind the user gate
   (`@aep/platform-idp-auth`: a Platform IdP user token of `AE_IDP_ISSUER`
   with an `AE_USER_AUDIENCES` aud, and `ouId`/`ouHandle` equal to
-  `AE_ORG_ID`/`AE_ORG_HANDLE`). M2M → 401, another org → 403, both before
+  `AE_ORG_ID`/`AE_ORG_HANDLE`). M2M → 401, another org → 403, IdP keys
+  unreachable → 503 `idp_unavailable` (`Retry-After: 5`), all before
   route matching; no `/v1` operations yet, so an admitted request is a 404
   problem. The health port (`AE_HEALTH_PORT`, 9080, not routed) serves
   `/healthz` and `/readyz`. It refuses to start when `AE_SECRET_REV` ≠

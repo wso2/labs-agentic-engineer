@@ -18,6 +18,7 @@
 
 export {
   createVerifier,
+  IdpUnavailableError,
   UnauthenticatedError,
   type PlatformClaims,
   type TokenKind,

@@ -31,7 +31,7 @@
 
 import { Hocuspocus, type Connection, type onAuthenticatePayload, type onTokenSyncPayload } from "@hocuspocus/server";
 import { FilesDeniedError, type FilesClient } from "../files-client.js";
-import { dropRoomState, ensureRoomState, roomState } from "../rooms.js";
+import { dropRoomState, ensureRoomState } from "../rooms.js";
 import { isReferenceDocPath, seedDocument } from "../seed.js";
 import { PERMISSION_DENIED, refusal, UPSTREAM_UNAVAILABLE, type CollabContext } from "./auth.js";
 import type { ExpiryGuard } from "./expiry.js";
@@ -73,9 +73,10 @@ export function createRoomServer(deps: RoomServerDeps): Hocuspocus<CollabContext
         const state = ensureRoomState(documentName, context.projectName);
         for (const f of files) state.baseline.set(f.path, { content: f.content, sha: f.sha });
       } catch (err) {
-        // Clear the BASELINE, never the room state: that belongs to every
-        // connection authenticated into the room, not to this load.
-        roomState(documentName)?.baseline.clear();
+        // No room exists after a refused load: no other connection holds this
+        // document, so its state goes too, the participants added at auth
+        // included (a refused joiner must never be credited by a later commit).
+        dropRoomState(documentName);
         // Hocuspocus (4.3) never destroys a document whose load failed: it is
         // not in `documents` yet, so its unload returns early and the doc's
         // awareness timer runs for the life of the process, one per refusal.

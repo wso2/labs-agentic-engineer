@@ -27,9 +27,13 @@ path are all decided there.
   is kept only as its `exp`: the connection is closed then (`pod/expiry.ts`,
   reason `token-expired`) unless the client pushed a fresher token
   (`provider.sendToken()`) that `onTokenSync` re-verified with the same
-  check; a refused sync closes it at once (reason `permission-denied`). No
-  token, claim or room name is logged: `room_*` lines name the listener and a
-  fixed cause.
+  check; a refused sync closes it at once (reason `permission-denied`). An
+  IdP whose keys cannot be fetched is never a verdict: a join gets
+  `upstream-unavailable`, a sync keeps the old deadline. A sync for another
+  user of the org is accepted and logged (`room_token_subject_changed`). A
+  refused room load drops the room state, participants included. Frames are
+  capped at 32 MiB on both listeners (1009). No token, claim or room name is
+  logged: `room_*` lines name the listener and a fixed cause.
 - **Legacy server** (deleted in Task 2.12) verifies nothing itself: room
   access is delegated whole to the BFF oracle (`validate-collab-access`), and
   seeding reads the spec bundle as the first joiner (their token).
@@ -44,8 +48,8 @@ missing key.
   legacy key below (`COLLAB_DEV`, `COLLAB_MOCK_BFF`, `AEP_API_BASE`) in a pod
   env fails the boot, naming the keys, so dev mode can never run there. The
   public port (`AE_LISTEN_PORT`, 8081) gates `/v1` HTTP (any casing) with
-  `@aep/platform-idp-auth` (M2M → 401, another org → 403, both before route
-  matching; no `/v1` operation yet, so an admitted request is a 404 problem).
+  `@aep/platform-idp-auth` (M2M → 401, another org → 403, IdP keys
+  unreachable → 503 `idp_unavailable`, all before route matching; no `/v1` operation yet, so an admitted request is a 404 problem).
   A room upgrade there must pass `originAllowed`: a present `Origin` must be
   listed in `AE_ALLOWED_ORIGINS` (403); an absent one is accepted while the
   phase-2 agents bridge exists (Task 3.22 makes it 403). Rooms seed from the

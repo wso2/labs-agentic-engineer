@@ -40,7 +40,7 @@ import type { AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 import type { Hocuspocus } from "@hocuspocus/server";
-import { problem, UnauthenticatedError, userRule } from "@aep/platform-idp-auth";
+import { IdpUnavailableError, problem, UnauthenticatedError, userRule } from "@aep/platform-idp-auth";
 import type { CollabContext, ListenerKind, Verify } from "./auth.js";
 import type { ListenerConfig, PodConfig } from "./config.js";
 import { stdoutLog, type PodLog, type PodLogLine } from "./log.js";
@@ -68,13 +68,19 @@ const BEARER = /^Bearer ([^\s]+)$/i;
 const V1 = /^\/v1(?:\/|$)/i;
 const ROOMS_PATH = "/v1/rooms";
 const LOOPBACK = "127.0.0.1";
+/**
+ * The largest WebSocket frame either listener takes (1009 above it), buffered
+ * before auth: above the 25 MiB Files apply cap, far below ws's 100 MiB.
+ */
+const MAX_FRAME_BYTES = 32 << 20;
 
 /** A refusal, as the gate decides it. Details are fixed sentences: no token or claim value. */
 interface Refusal {
-  status: 401 | 403;
+  status: 401 | 403 | 503;
   code: string;
   detail: string;
   challenge?: string;
+  retryAfter?: string;
 }
 
 /** The raw request path, without the query. Never URL-normalised: a path is matched as sent. */
@@ -82,12 +88,19 @@ function pathOf(req: IncomingMessage): string {
   return (req.url ?? "").split("?", 1)[0] ?? "";
 }
 
-function sendProblem(res: ServerResponse, status: number, code: string, detail: string, challenge?: string): void {
+function sendProblem(
+  res: ServerResponse,
+  status: number,
+  code: string,
+  detail: string,
+  extra: { challenge?: string | undefined; retryAfter?: string | undefined } = {},
+): void {
   const p = problem(status, code, detail);
   res
     .writeHead(p.status, {
       "content-type": "application/problem+json",
-      ...(challenge ? { "www-authenticate": challenge } : {}),
+      ...(extra.challenge ? { "www-authenticate": extra.challenge } : {}),
+      ...(extra.retryAfter ? { "retry-after": extra.retryAfter } : {}),
     })
     .end(JSON.stringify(p.body));
 }
@@ -129,6 +142,10 @@ export function userGate(cfg: Pick<PodConfig, "orgId" | "orgHandle" | "userAudie
     try {
       verified = await verify(token, kinds);
     } catch (err) {
+      if (err instanceof IdpUnavailableError) {
+        // No verdict on the token: the IdP's keys could not be fetched.
+        return { status: 503, code: "idp_unavailable", detail: "the identity provider cannot be reached", retryAfter: "5" };
+      }
       if (!(err instanceof UnauthenticatedError)) throw err;
       return {
         status: 401,
@@ -148,14 +165,25 @@ export function userGate(cfg: Pick<PodConfig, "orgId" | "orgHandle" | "userAudie
 
 /**
  * Hands an accepted socket to Hocuspocus. Only the query of the upgrade URL
- * travels (the connection parameters); no request header does.
+ * travels (the connection parameters); no path and no request header does,
+ * so a malformed request target (the local listener takes any) cannot fail
+ * the URL parse.
  */
 function attach(rooms: Hocuspocus<CollabContext>, ws: WebSocket, req: IncomingMessage, listener: ListenerKind): void {
-  const request = new Request(new URL(req.url ?? "/", "http://ae-collab.invalid"));
+  const url = new URL("http://ae-collab.invalid/");
+  url.search = queryOf(req);
+  const request = new Request(url);
   const conn = rooms.handleConnection(ws, request, { listener } as CollabContext);
   ws.on("message", (data: RawData) => conn.handleMessage(bytes(data)));
   ws.on("close", (code: number, reason: Buffer) => conn.handleClose({ code, reason: reason.toString() }));
   ws.on("error", () => ws.terminate());
+}
+
+/** The raw query of the request target, without the `?`. */
+function queryOf(req: IncomingMessage): string {
+  const target = req.url ?? "";
+  const at = target.indexOf("?");
+  return at === -1 ? "" : target.slice(at + 1);
 }
 
 function bytes(data: RawData): Uint8Array {
@@ -183,7 +211,7 @@ function publicServer(cfg: ListenerConfig, deps: Required<PodListenerDeps>, wss:
     if (V1.test(pathOf(req))) {
       const refusal = await deps.gate(req);
       if (refusal) {
-        sendProblem(res, refusal.status, refusal.code, refusal.detail, refusal.challenge);
+        sendProblem(res, refusal.status, refusal.code, refusal.detail, refusal);
         return;
       }
     }
@@ -267,8 +295,8 @@ export async function startPodListeners(cfg: ListenerConfig, deps: PodListenerDe
   });
   let ready = false;
   // One WebSocket server per listener: its client set is that listener's sockets.
-  const publicWss = new WebSocketServer({ noServer: true });
-  const localWss = new WebSocketServer({ noServer: true });
+  const publicWss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
+  const localWss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
   const pub = publicServer(cfg, { ...deps, log }, publicWss);
   const local = localServer(deps.rooms, localWss);
   const health = await listen(healthServer(() => ready), cfg.healthPort);

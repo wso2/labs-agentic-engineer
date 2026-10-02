@@ -98,6 +98,22 @@ test("pod mode: /v1 is gated before routing, health is separate", async () => {
   );
 });
 
+test("pod mode: an IdP whose keys cannot be fetched is a 503 retry, not a 401", async () => {
+  const keys = await testKeys();
+  const cfg = loadPodConfig(podEnv({ AE_IDP_ISSUER: keys.issuer, AE_LISTEN_PORT: "0", AE_HEALTH_PORT: "0" }));
+  assert.ok(cfg);
+  const unreachable = () => Promise.reject(new Error("connect ECONNREFUSED"));
+  const pod = await startPodListeners(cfg, { jwks: unreachable, log: () => {} });
+  try {
+    const r = await fetch(`${pod.publicUrl}/v1/x`, { headers: { authorization: `Bearer ${await keys.user("default", "ou-1")}` } });
+    assert.equal(r.status, 503);
+    assert.equal(r.headers.get("retry-after"), "5");
+    assert.equal(((await r.json()) as { code: string }).code, "idp_unavailable");
+  } finally {
+    await pod.close();
+  }
+});
+
 test("no pod config without AE_ORG_ID", () => {
   assert.equal(loadPodConfig({}), null);
   assert.equal(loadPodConfig({ AE_ORG_ID: "" }), null);

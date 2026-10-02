@@ -28,7 +28,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, request, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
+import { connect, type AddressInfo } from "node:net";
 import { generateKeyPairSync, randomBytes, sign as rsaSign, type KeyObject } from "node:crypto";
 import * as Y from "yjs";
 import WebSocket from "ws";
@@ -53,6 +53,8 @@ const ROOM = "spec-acme-greeter";
 
 interface Idp {
   jwksUrl: string;
+  /** While down, the JWKS endpoint answers 503. */
+  setDown(down: boolean): void;
   userToken(o?: { ouHandle?: string; name?: string; email?: string; sub?: string; expiresInSec?: number }): string;
   agentToken(clientId: string, o?: { ouHandle?: string; expiresInSec?: number }): string;
   close(): Promise<void>;
@@ -69,20 +71,29 @@ const expIn = (sec: number) => Math.floor(Date.now() / 1000) + sec;
 async function startIdp(): Promise<Idp> {
   const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const jwks = JSON.stringify({ keys: [{ ...publicKey.export({ format: "jwk" }), kid: "k1", alg: "RS256", use: "sig" }] });
-  const server = createServer((_req, res) => res.writeHead(200, { "content-type": "application/json" }).end(jwks));
+  let down = false;
+  const server = createServer((_req, res) =>
+    down ? res.writeHead(503).end() : res.writeHead(200, { "content-type": "application/json" }).end(jwks),
+  );
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   return {
     jwksUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/oauth2/jwks`,
+    setDown: (d) => {
+      down = d;
+    },
     userToken: ({ ouHandle = "acme", name, email, sub = "u-ann", expiresInSec = 600 } = {}) =>
-      signJwt(privateKey, {
-        aud: USER_AUDIENCE,
-        sub,
-        ouId: `ou-${ouHandle}`,
-        ouHandle,
-        exp: expIn(expiresInSec),
-        ...(name ? { name } : {}),
-        ...(email ? { email } : {}),
-      }),
+      signJwt(
+        privateKey,
+        {
+          aud: USER_AUDIENCE,
+          sub,
+          ouId: `ou-${ouHandle}`,
+          ouHandle,
+          exp: expIn(expiresInSec),
+          ...(name ? { name } : {}),
+          ...(email ? { email } : {}),
+        },
+      ),
     agentToken: (clientId, { ouHandle = "acme", expiresInSec = 600 } = {}) =>
       signJwt(privateKey, {
         aud: clientId,
@@ -106,6 +117,13 @@ function closeServer(server: Server): Promise<void> {
 
 interface TestClock extends Clock {
   advance(ms: number): void;
+  /** Steps to `offsetMs` around the token's `exp`: the deadline is test time, whatever real time it is. */
+  advanceToExp(token: string, offsetMs?: number): void;
+}
+
+/** A JWT's `exp`, read without verifying (the test minted it). */
+function expOf(token: string): number {
+  return (JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString()) as { exp: number }).exp;
 }
 
 function testClock(): TestClock {
@@ -119,6 +137,9 @@ function testClock(): TestClock {
       return () => {
         timers = timers.filter((t) => t !== timer);
       };
+    },
+    advanceToExp(token, offsetMs = 0) {
+      this.advance(Math.max(0, expOf(token) * 1000 + offsetMs - now));
     },
     advance(ms) {
       now += ms;
@@ -402,19 +423,22 @@ test("a room whose bundle cannot be read is refused: outage retries, verdict doe
 test("connection closes at exp without a synced token; a synced valid token keeps it; a wrong-org sync closes it", async () => {
   const s = await startTestCollab();
   try {
-    const a = await s.join("public", ROOM, s.idp.userToken({ expiresInSec: 2 }));
-    s.clock.advance(900);
+    const aToken = s.idp.userToken({ expiresInSec: 2 });
+    const a = await s.join("public", ROOM, aToken);
+    s.clock.advanceToExp(aToken, -100);
     assert.equal(events(s, "room_token_expired").length, 0, "still inside the token's lifetime");
-    s.clock.advance(1_600);
+    s.clock.advanceToExp(aToken);
     await waitFor(() => a.closed, "a to close at exp");
     assert.equal(events(s, "room_token_expired").length, 1);
 
-    const b = await s.join("public", ROOM, s.idp.userToken({ expiresInSec: 2 }));
+    const bShort = s.idp.userToken({ expiresInSec: 2 });
+    const b = await s.join("public", ROOM, bShort);
     // The provider's token getter now returns the fresh one.
-    b.provider.configuration.token = s.idp.userToken({ expiresInSec: 600 });
+    const bFresh = s.idp.userToken({ expiresInSec: 600 });
+    b.provider.configuration.token = bFresh;
     await b.provider.sendToken();
     await waitFor(() => events(s, "room_token_refreshed").length === 1, "b's token sync");
-    s.clock.advance(2_500);
+    s.clock.advanceToExp(bShort, 1_000);
     assert.equal(events(s, "room_token_expired").length, 1, "b's old deadline was replaced");
 
     const c = await s.join("public", ROOM, s.idp.userToken({ expiresInSec: 600 }));
@@ -429,7 +453,9 @@ test("connection closes at exp without a synced token; a synced valid token keep
     });
     assert.equal(b.closed, false);
     // b lives until its synced token's exp.
-    s.clock.advance(600_000);
+    s.clock.advanceToExp(bFresh, -100);
+    assert.equal(events(s, "room_token_expired").length, 1);
+    s.clock.advanceToExp(bFresh);
     await waitFor(() => b.closed, "b to close at its synced exp");
   } finally {
     await s.close();
@@ -452,11 +478,12 @@ test("a synced token must be valid and of the listener's kind", async () => {
     await waitFor(() => agent.closed, "a user JWT synced on the local listener to close");
 
     // The agent's own fresh token keeps its connection.
-    const agent2 = await s.join("local", ROOM, s.idp.agentToken("ae-studio-acme", { expiresInSec: 2 }), credit);
+    const agentShort = s.idp.agentToken("ae-studio-acme", { expiresInSec: 2 });
+    const agent2 = await s.join("local", ROOM, agentShort, credit);
     agent2.provider.configuration.token = s.idp.agentToken("ae-studio-acme");
     await agent2.provider.sendToken();
     await waitFor(() => events(s, "room_token_refreshed").length === 1, "the agent's sync");
-    s.clock.advance(2_500);
+    s.clock.advanceToExp(agentShort, 1_000);
     assert.deepEqual(
       events(s, "room_token_refused").map((l) => [l.listener, l.cause]),
       [
@@ -488,6 +515,55 @@ test("no log line carries a token", async () => {
   }
 });
 
+test("an IdP whose keys cannot be fetched means retry, not denied", async () => {
+  const s = await startTestCollab();
+  try {
+    // Nothing fetched the keys yet, and the IdP is down.
+    s.idp.setDown(true);
+    const u = s.idp.userToken();
+    await assert.rejects(s.join("public", ROOM, u), /upstream-unavailable/);
+    assert.equal(events(s, "room_auth_refused").at(-1)?.cause, "idp_unavailable");
+    const http = await fetch(`${s.pod.publicUrl}/v1/rooms`, { headers: { authorization: `Bearer ${u}` } });
+    assert.equal(http.status, 503);
+    assert.equal(http.headers.get("retry-after"), "5");
+    assert.equal(((await http.json()) as { code: string }).code, "idp_unavailable");
+    // Back up: the same token joins.
+    s.idp.setDown(false);
+    await s.join("public", ROOM, u);
+  } finally {
+    await s.close();
+  }
+});
+
+test("a synced token for another user of the org is logged, value-free", async () => {
+  const s = await startTestCollab();
+  try {
+    const peer = await s.join("public", ROOM, s.idp.userToken({ sub: "u-ann" }));
+    peer.provider.configuration.token = s.idp.userToken({ sub: "u-bob" });
+    await peer.provider.sendToken();
+    await waitFor(() => events(s, "room_token_refreshed").length === 1, "the sync");
+    assert.deepEqual(events(s, "room_token_subject_changed"), [
+      { msg: "room_token_subject_changed", source: "ae-collab", listener: "public" },
+    ]);
+    assert.doesNotMatch(JSON.stringify(s.lines), /u-ann|u-bob/);
+  } finally {
+    await s.close();
+  }
+});
+
+test("a refused room load leaves no participant behind", async () => {
+  const s = await startTestCollab();
+  try {
+    s.files.failNext(503, "aep_api_unavailable", "bundle");
+    await assert.rejects(s.join("public", ROOM, s.idp.userToken({ sub: "u-mallory", name: "Mallory" })), /upstream-unavailable/);
+    assert.deepEqual(s.participants(ROOM), []);
+    await s.join("public", ROOM, s.idp.userToken({ name: "Ann", email: "ann@x" }));
+    assert.deepEqual(s.participants(ROOM), [{ name: "Ann", email: "ann@x" }]);
+  } finally {
+    await s.close();
+  }
+});
+
 // ---------------------------------------------------------------------------
 // The public listener's upgrade rules
 
@@ -501,6 +577,57 @@ test("Origin (phase 2 rule): listed origin ok, unlisted origin refused, absent O
     assert.equal((await s.rawUpgrade("/collab", { origin: CONSOLE_ORIGIN })).status, 404);
     // The local listener checks no Origin and takes any path.
     assert.equal((await wsUpgrade(`${s.pod.localUrl}/anything`, { origin: "https://evil.example" })).status, 101);
+  } finally {
+    await s.close();
+  }
+});
+
+test("a frame over 32 MiB closes the socket (1009) before any auth", async () => {
+  const s = await startTestCollab();
+  try {
+    for (const url of [`${s.pod.publicUrl}/v1/rooms`, s.pod.localUrl]) {
+      const ws = new WebSocket(url.replace(/^http/, "ws"));
+      await new Promise((resolve, reject) => {
+        ws.once("open", resolve);
+        ws.once("error", reject);
+      });
+      const closed = new Promise<number>((resolve) => ws.once("close", (code: number) => resolve(code)));
+      // Only the frame header, declaring 32 MiB + 1 (a masked binary frame
+      // with a 64-bit length): the server refuses on the header, so its close
+      // frame is not lost to a reset mid-upload.
+      const header = Buffer.alloc(14);
+      header[0] = 0x82;
+      header[1] = 0x80 | 127;
+      header.writeBigUInt64BE(BigInt((32 << 20) + 1), 2);
+      (ws as unknown as { _socket: NodeJS.WritableStream })._socket.write(header);
+      assert.equal(await closed, 1009);
+    }
+  } finally {
+    await s.close();
+  }
+});
+
+test("a malformed absolute-form upgrade target is refused, not a crash", async () => {
+  const s = await startTestCollab();
+  try {
+    const { port } = new URL(s.pod.localUrl);
+    const reply = await new Promise<string>((resolve, reject) => {
+      const sock = connect(Number(port), "127.0.0.1", () => {
+        sock.write(
+          "GET http://[bad/ HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n" +
+            `Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: ${randomBytes(16).toString("base64")}\r\n\r\n`,
+        );
+      });
+      let data = "";
+      sock.on("data", (d) => (data += d.toString()));
+      sock.on("close", () => resolve(data));
+      sock.on("error", reject);
+      setTimeout(() => sock.destroy(), 1_000);
+    });
+    // Either refused by the HTTP parser or upgraded and then held to auth;
+    // the process survives and the listener still serves.
+    void reply;
+    assert.equal((await wsUpgrade(`${s.pod.localUrl}/`)).status, 101);
   } finally {
     await s.close();
   }

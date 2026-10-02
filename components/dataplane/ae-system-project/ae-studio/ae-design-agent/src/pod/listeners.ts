@@ -29,7 +29,7 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import express, { type ErrorRequestHandler, type RequestHandler, type Response } from "express";
 import type { JWTVerifyGetKey } from "jose";
-import { createVerifier, problem, UnauthenticatedError, userRule } from "@aep/platform-idp-auth";
+import { createVerifier, IdpUnavailableError, problem, UnauthenticatedError, userRule } from "@aep/platform-idp-auth";
 import type { PodConfig } from "./config.js";
 
 export interface PodListeners {
@@ -90,6 +90,12 @@ function userGate(cfg: PodConfig, deps: PodListenerDeps): RequestHandler {
         next();
       },
       (err: unknown) => {
+        if (err instanceof IdpUnavailableError) {
+          // No verdict on the token: the IdP's keys could not be fetched.
+          res.setHeader("retry-after", "5");
+          sendProblem(res, 503, "idp_unavailable", "the identity provider cannot be reached");
+          return;
+        }
         if (!(err instanceof UnauthenticatedError)) return next(err);
         res.setHeader("www-authenticate", 'Bearer error="invalid_token"');
         sendProblem(res, 401, "unauthenticated", "the bearer token is not valid here");
