@@ -29,11 +29,12 @@
 // the paths the room changed, bounded and REPORTED (#86 d6); see adoptHead.
 
 import type { Document } from "@hocuspocus/server";
-import { hasPendingAgentMarks, isMarkdownPath, readDocFile, setDocFile, snapshotDoc } from "@aep/collab-doc";
+import { deleteDocFile, hasPendingAgentMarks, isMarkdownPath, readDocFile, setDocFile, snapshotDoc } from "@aep/collab-doc";
 import { isReferenceDocPath } from "./seed.js";
 import {
   ApplyConflictError,
   FilesDeniedError,
+  type ApplyConflict,
   FilesUnavailableError,
   type ApplyDelete,
   type ApplyWarning,
@@ -175,10 +176,14 @@ function trailers(state: RoomState): string {
  *
  *   conflicted, HEAD already holds the doc's content (a lost reply, a racing
  *     flush): adopt HEAD, nothing to write, nothing to report.
+ *   conflicted, the doc went back to the baseline while the bundle was read
+ *     (an undo): nothing of the room's to write; re-seeded like an unedited
+ *     file below.
  *   conflicted, HEAD differs: doc wins (#86 d6). Adopt HEAD's sha as the
  *     precondition but keep the old content in the baseline, so the diff still
- *     writes the doc's version. Reported: git moved under the room (a stale
- *     baseSha is a commit the room did not make), and the apply saves over it.
+ *     writes the doc's version. Reported, since the apply saves over a commit
+ *     made outside the room, unless git holds a blob this room committed
+ *     itself (its own earlier write, not an outside change).
  *   not conflicted, changed in git, unedited in the room: re-seeded. The doc
  *     and the baseline take HEAD's version, so the change shows in the room
  *     and a later edit preconditions on it instead of silently replacing it.
@@ -190,7 +195,7 @@ function trailers(state: RoomState): string {
 function adoptHead(
   doc: Document,
   state: RoomState,
-  conflicted: readonly string[],
+  conflicts: readonly ApplyConflict[],
   head: readonly SpecFile[],
 ): { overwritten: string[]; landed: string[] } {
   const heads = new Map(head.filter((f) => !isReferenceDocPath(f.path)).map((f) => [f.path, f]));
@@ -198,8 +203,17 @@ function adoptHead(
   const current = snapshotDoc(doc);
   const overwritten: string[] = [];
   const landed: string[] = [];
-  const isConflicted = new Set(conflicted);
-  for (const path of conflicted) {
+  const isConflicted = new Set(conflicts.map((c) => c.path));
+  const reseed = (path: string, at: SpecFile | undefined) => {
+    if (at) {
+      setDocFile(doc, path, at.content);
+      seedBaseline(state, doc, [at]);
+    } else {
+      deleteDocFile(doc, path);
+      state.baseline.delete(path);
+    }
+  };
+  for (const { path, currentSha } of conflicts) {
     const at = heads.get(path);
     const base = state.baseline.get(path);
     if (at?.content === current[path]) {
@@ -208,15 +222,19 @@ function adoptHead(
       landed.push(path);
       continue;
     }
-    overwritten.push(path);
+    if (base && current[path] === base.content) {
+      reseed(path, at);
+      landed.push(path);
+      continue;
+    }
+    if (!state.committed.has(`${path}\0${currentSha}`)) overwritten.push(path);
     state.baseline.set(path, { content: base?.content ?? "", sha: at?.sha ?? "" });
   }
   for (const [path, at] of heads) {
     if (isConflicted.has(path)) continue;
     const base = state.baseline.get(path);
     if (!base || base.sha === at.sha || current[path] !== base.content) continue;
-    setDocFile(doc, path, at.content);
-    seedBaseline(state, doc, [at]);
+    reseed(path, at);
   }
   return { overwritten, landed };
 }
@@ -225,15 +243,26 @@ function adoptHead(
  * Flush a room's pending changes as one commit. No-ops when clean or when the
  * room has no committer state. Throws the FilesClient's error when the flush
  * does not land; the baseline then stays put, so the next flush retries.
+ *
+ * One flush per room at a time: the debounced store, a `flush` message, the
+ * last leave and shutdown can all ask at once, and a second apply racing the
+ * first would conflict on the room's own write. A later caller waits for the
+ * running flush, then diffs against the baseline it left.
  */
-export async function flushRoom(
+export function flushRoom(
   deps: FlushDeps,
   documentName: string,
   doc: Document,
   force = false,
 ): Promise<void> {
   const state = roomState(documentName);
-  if (!state) return;
+  if (!state) return Promise.resolve();
+  const run = state.flushing.then(() => flushOnce(deps, state, doc, force));
+  state.flushing = run.catch(() => {});
+  return run;
+}
+
+async function flushOnce(deps: FlushDeps, state: RoomState, doc: Document, force: boolean): Promise<void> {
   const overwritten = new Set<string>();
   try {
     for (let attempt = 0; ; attempt++) {
@@ -250,14 +279,18 @@ export async function flushRoom(
       } catch (err) {
         if (!(err instanceof ApplyConflictError) || attempt >= MAX_CONFLICT_RETRIES) throw err;
         deps.log?.({ msg: "room_flush_conflict", source: "ae-collab", writes: writes.length, deletes: deletes.length });
-        const adopted = adoptHead(doc, state, err.paths, await deps.files.bundle(state.projectName));
+        const adopted = adoptHead(doc, state, err.conflicts, await deps.files.bundle(state.projectName));
         for (const path of adopted.overwritten) overwritten.add(path);
         for (const path of adopted.landed) overwritten.delete(path);
         continue;
       }
       // The baseline moves to what just landed.
       const shas = new Map(outcome.files.map((f) => [f.path, f.sha]));
-      for (const w of writes) state.baseline.set(w.path, { content: w.content, sha: shas.get(w.path) ?? "" });
+      for (const w of writes) {
+        const sha = shas.get(w.path) ?? "";
+        state.baseline.set(w.path, { content: w.content, sha });
+        state.committed.add(`${w.path}\0${sha}`);
+      }
       for (const d of deletes) state.baseline.delete(d.path);
       deps.log?.({ msg: "room_flush_committed", source: "ae-collab", writes: writes.length, deletes: deletes.length });
       deps.onWarnings?.([...outcome.warnings, ...[...overwritten].map((path) => ({ path, message: OVERWRITTEN }))]);

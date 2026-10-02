@@ -102,11 +102,23 @@ export interface FilesClient {
   apply(project: string, batch: ApplyBatch): Promise<ApplyOutcome>;
 }
 
+export interface ApplyConflict {
+  path: string;
+  baseSha: string;
+  currentSha: string;
+}
+
 /** A stale-baseSha rejection: nothing was applied (#133 doc-wins retry). */
 export class ApplyConflictError extends Error {
-  constructor(readonly paths: string[]) {
+  /** The conflicted paths, in the pod's order. */
+  readonly paths: string[];
+
+  /** One entry per stale write or delete: the sha sent and the sha git holds ("" = absent). */
+  constructor(readonly conflicts: ApplyConflict[]) {
+    const paths = conflicts.map((c) => c.path);
     super(`apply conflict on: ${paths.join(", ")}`);
     this.name = "ApplyConflictError";
+    this.paths = paths;
   }
 }
 
@@ -213,7 +225,7 @@ function malformed(op: string, reply: Reply): FilesUnavailableError {
   );
 }
 
-function asConflicts(reply: Reply): string[] | null {
+function asConflicts(reply: Reply): ApplyConflict[] | null {
   if (reply.status !== 409 || !reply.contentType.startsWith("application/json")) {
     return null;
   }
@@ -221,7 +233,7 @@ function asConflicts(reply: Reply): string[] | null {
   if (!isRecord(body) || body.code !== "conflict" || !Array.isArray(body.conflicts)) {
     return null;
   }
-  return body.conflicts.map((c) => c.path);
+  return body.conflicts.map((c) => ({ path: c.path, baseSha: c.baseSha, currentSha: c.currentSha }));
 }
 
 export interface FilesClientOptions {

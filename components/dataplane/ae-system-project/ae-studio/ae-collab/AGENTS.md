@@ -110,12 +110,18 @@ the document: no other connection holds a room whose load failed.
   unreachable socket, a request past its 20 s deadline) keeps the doc and the
   baseline as they were, so the next flush retries; the room hears
   `flush-error` "AE Studio is restarting — your edits are kept and will save
-  shortly." A last-leave flush that meets an outage keeps the room loaded
-  (no unload, so a rejoin finds the edits and the shutdown flush retries). A
-  verdict (`FilesDeniedError`) is reported with its message.
+  shortly." A last-leave flush that fails with anything but a verdict keeps
+  the room loaded (no unload) and retries it every 5 s doubling to 60 s while
+  nobody is in it, until it lands (then the room unloads), a rejoin or an
+  unload, or shutdown, which flushes it itself. A verdict
+  (`FilesDeniedError`) is reported with its message.
+- **One flush per room at a time**: the debounced store, `flush`, the last
+  leave, a retry and shutdown queue on the room (`RoomState.flushing`), so a
+  later one diffs against the baseline the earlier one left.
 - **Conflicts** (a stale `baseSha`): refetch the bundle, then doc wins over
   the paths the room changed, at most 2 retries, and every path saved over a
-  commit made outside the room is reported. Files changed outside the room and
+  commit made outside the room is reported (not a blob this room committed
+  itself). A path the room undid while the bundle was read is re-seeded. Files changed outside the room and
   unedited in it are re-seeded into the doc; files git gained outside the room
   are never deleted.
 - **`flush-warnings`**: after every successful apply the room hears
@@ -123,8 +129,9 @@ the document: no other connection holds a room whose load failed.
   the saved-over paths); an empty list clears the console's Alert.
 - **Shutdown** (SIGTERM, 07 §10): both room listeners stop accepting, every
   loaded room is force-flushed (8 at a time) within an 8 s budget that ends
-  inside ae-studio-tools' 10 s Files socket drain window, then the room
-  sockets end and the health listener closes.
+  inside ae-studio-tools' 10 s Files socket drain window, empty rooms whose
+  edits landed unload, then the room sockets end and the health listener
+  closes.
 - **Health**: `/healthz` and `/readyz` on the health port.
 
 ## Env

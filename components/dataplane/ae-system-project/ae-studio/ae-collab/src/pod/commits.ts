@@ -31,24 +31,37 @@
  * stateless `flush-error`; an outage (`disk_full`, `aep_api_unavailable`, a
  * lost push race, a sidecar that is restarting) reads as RESTARTING. After
  * every commit the room hears the commit's warnings as `flush-warnings`.
+ *
+ * A last-leave flush that fails for any reason but a verdict keeps the room
+ * loaded with nobody in it, so nothing would ever flush it again: it is
+ * retried on a backoff (`DeferredRetry`) until it lands (then the room
+ * unloads), someone rejoins, the room unloads, or shutdown stops the retries.
  */
 
 import type {
   beforeUnloadDocumentPayload,
   Document,
+  Hocuspocus,
   onStatelessPayload,
   onStoreDocumentPayload,
 } from "@hocuspocus/server";
 import { flushRoom, type FlushDeps } from "../committer.js";
-import { FilesUnavailableError, type FilesClient } from "../files-client.js";
+import { FilesDeniedError, FilesUnavailableError, type FilesClient } from "../files-client.js";
 import type { PodLog } from "./log.js";
 
 /** What the room is told when a flush meets an outage. */
 export const RESTARTING = "AE Studio is restarting — your edits are kept and will save shortly.";
 
+/** The deferred final flush's backoff: `firstMs`, doubling, capped at `maxMs`. */
+export interface DeferredRetry {
+  firstMs: number;
+  maxMs: number;
+}
+
 export interface CommitHookDeps {
   files: FilesClient;
   log: PodLog;
+  retry: DeferredRetry;
 }
 
 function flushErrorMessage(err: unknown): string {
@@ -65,46 +78,97 @@ function flushDepsFor(deps: CommitHookDeps, document: Document): FlushDeps {
 }
 
 export function commitHooks(deps: CommitHookDeps) {
+  const retries = new Map<string, NodeJS.Timeout>();
+  let stopped = false;
+
+  const cancelRetry = (documentName: string): void => {
+    clearTimeout(retries.get(documentName));
+    retries.delete(documentName);
+  };
+
+  /** Retries the forced flush of an empty, still-loaded room after `delayMs`. */
+  const scheduleRetry = (instance: Hocuspocus, document: Document, delayMs: number): void => {
+    cancelRetry(document.name);
+    if (stopped) return;
+    const timer = setTimeout(() => {
+      retries.delete(document.name);
+      // A rejoin or an unload took the room over.
+      if (document.getConnectionsCount() > 0 || instance.documents.get(document.name) !== document) return;
+      flushRoom(flushDepsFor(deps, document), document.name, document, true).then(
+        // Landed: the room may unload now (its final flush finds nothing left).
+        () => void instance.unloadDocument(document),
+        (err: unknown) => {
+          if (err instanceof FilesDeniedError) void instance.unloadDocument(document);
+          else scheduleRetry(instance, document, Math.min(delayMs * 2, deps.retry.maxMs));
+        },
+      );
+    }, delayMs);
+    // Never what keeps the process alive: shutdown flushes loaded rooms itself.
+    timer.unref();
+    retries.set(document.name, timer);
+  };
+
   return {
-    onStoreDocument: async ({ document, documentName }: Pick<onStoreDocumentPayload, "document" | "documentName">) => {
-      try {
-        await flushRoom(flushDepsFor(deps, document), documentName, document);
-      } catch (err) {
-        // Never thrown on: Hocuspocus would print it, and the doc stays live anyway.
-        document.broadcastStateless(JSON.stringify({ type: "flush-error", message: flushErrorMessage(err) }));
-      }
+    /** A rejoin or an unload ends the room's retries. */
+    cancelRetry,
+
+    /** Shutdown: no retry starts after this; the shutdown flush covers every loaded room. */
+    stopRetries(): void {
+      stopped = true;
+      for (const name of [...retries.keys()]) cancelRetry(name);
     },
 
-    beforeUnloadDocument: async ({ document, documentName }: Pick<beforeUnloadDocumentPayload, "document" | "documentName">) => {
-      try {
-        await flushRoom(flushDepsFor(deps, document), documentName, document, true);
-      } catch (err) {
-        // A verdict will not change on a retry: the room unloads. An outage
-        // will: a throw keeps the doc loaded (Hocuspocus skips the unload),
-        // so a rejoin finds the edits and the shutdown flush retries them.
-        // The empty message keeps Hocuspocus from printing it.
-        if (err instanceof FilesUnavailableError) {
+    hooks: {
+      onStoreDocument: async ({ document, documentName }: Pick<onStoreDocumentPayload, "document" | "documentName">) => {
+        try {
+          await flushRoom(flushDepsFor(deps, document), documentName, document);
+        } catch (err) {
+          // Never thrown on: Hocuspocus would print it, and the doc stays live anyway.
+          document.broadcastStateless(JSON.stringify({ type: "flush-error", message: flushErrorMessage(err) }));
+        }
+      },
+
+      beforeUnloadDocument: async ({
+        instance,
+        document,
+        documentName,
+      }: Pick<beforeUnloadDocumentPayload, "instance" | "document" | "documentName">) => {
+        try {
+          await flushRoom(flushDepsFor(deps, document), documentName, document, true);
+        } catch (err) {
+          // Only a verdict lets the room unload with its edits: it will not
+          // change on a retry. Anything else (an outage, conflicts that kept
+          // coming, a fault of ours) keeps the doc loaded: a throw makes
+          // Hocuspocus skip the unload, and the retry takes it from there.
+          // The empty message keeps Hocuspocus from printing it.
+          if (err instanceof FilesDeniedError) return;
           deps.log({ msg: "room_final_flush_deferred", source: "ae-collab" });
+          scheduleRetry(instance, document, deps.retry.firstMs);
           throw new Error("");
         }
-      }
-    },
+      },
 
-    onStateless: async ({ connection, document, documentName, payload }: Pick<onStatelessPayload, "connection" | "document" | "documentName" | "payload">) => {
-      let msg: { type?: unknown; id?: unknown };
-      try {
-        msg = JSON.parse(payload) as typeof msg;
-      } catch {
-        return; // not our protocol
-      }
-      if (msg === null || typeof msg !== "object" || msg.type !== "flush") return;
-      const id = typeof msg.id === "string" ? msg.id : undefined;
-      try {
-        await flushRoom(flushDepsFor(deps, document), documentName, document, true);
-        connection.sendStateless(JSON.stringify({ type: "flushed", id }));
-      } catch (err) {
-        connection.sendStateless(JSON.stringify({ type: "flush-error", id, message: flushErrorMessage(err) }));
-      }
+      onStateless: async ({
+        connection,
+        document,
+        documentName,
+        payload,
+      }: Pick<onStatelessPayload, "connection" | "document" | "documentName" | "payload">) => {
+        let msg: { type?: unknown; id?: unknown };
+        try {
+          msg = JSON.parse(payload) as typeof msg;
+        } catch {
+          return; // not our protocol
+        }
+        if (msg === null || typeof msg !== "object" || msg.type !== "flush") return;
+        const id = typeof msg.id === "string" ? msg.id : undefined;
+        try {
+          await flushRoom(flushDepsFor(deps, document), documentName, document, true);
+          connection.sendStateless(JSON.stringify({ type: "flushed", id }));
+        } catch (err) {
+          connection.sendStateless(JSON.stringify({ type: "flush-error", id, message: flushErrorMessage(err) }));
+        }
+      },
     },
   };
 }

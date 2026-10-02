@@ -358,6 +358,79 @@ test("a room with no committer state is skipped", async () => {
   assert.equal(fake.requests.length, 0);
 });
 
+test("concurrent flushes of one room run one at a time: one commit, and the room's own edit is never reported", async () => {
+  const fake = await fakeSocket(SEED);
+  const rec = recording(createFilesClient(fake.path));
+  const room = await seededRoom(rec.files, "spec-acme-shop", "shop");
+  room.edit(ARCH, '{"v":2}');
+  const sent: ApplyWarning[][] = [];
+  const deps = { files: rec.files, onWarnings: (w: ApplyWarning[]) => sent.push(w) };
+  // The debounced store, a console flush and the shutdown drain, all at once.
+  await Promise.all([
+    flushRoom(deps, room.name, room.doc),
+    flushRoom(deps, room.name, room.doc, true),
+    flushRoom(deps, room.name, room.doc, true),
+  ]);
+  assert.equal(rec.batches.length, 1, "the later flushes found nothing left to write");
+  assert.equal(fake.commits().length, 1);
+  assert.deepEqual(sent, [[]]);
+});
+
+test("a flush after a failed one still runs: the chain survives a rejection", async () => {
+  const fake = await fakeSocket(SEED);
+  const files = createFilesClient(fake.path);
+  const room = await seededRoom(files, "spec-acme-shop", "shop");
+  room.edit(ARCH, '{"v":2}');
+  fake.failNext(503, "disk_full", "apply");
+  const [first, second] = await Promise.allSettled([
+    flushRoom({ files }, room.name, room.doc),
+    flushRoom({ files }, room.name, room.doc),
+  ]);
+  assert.equal(first.status, "rejected");
+  assert.equal(second.status, "fulfilled");
+  assert.equal(fake.commits().length, 1);
+});
+
+test("a conflict on a blob this room committed itself is not reported as an outside change", async () => {
+  const fake = await fakeSocket(SEED);
+  const files = createFilesClient(fake.path);
+  const room = await seededRoom(files, "spec-acme-shop", "shop");
+  const seededSha = roomState(room.name)!.baseline.get(ARCH)!.sha;
+  room.edit(ARCH, '{"v":2}');
+  await flushRoom({ files }, room.name, room.doc);
+  // A stale precondition the room's own commit left behind (e.g. an apply whose
+  // baseline update was lost): git holds the room's v2, the room sends v1's sha.
+  roomState(room.name)!.baseline.set(ARCH, { content: '{"v":2}', sha: seededSha });
+  room.edit(ARCH, '{"v":3}');
+  const sent: ApplyWarning[][] = [];
+  await flushRoom({ files, onWarnings: (w) => sent.push(w) }, room.name, room.doc);
+  assert.equal(fake.file(ARCH), '{"v":3}');
+  assert.deepEqual(sent, [[]]);
+});
+
+test("a path the room undid while the bundle was read is re-seeded, not written by sha alone", async () => {
+  const fake = await fakeSocket(SEED);
+  const files = createFilesClient(fake.path);
+  const room = await seededRoom(files, "spec-acme-shop", "shop");
+  const seeded = room.text(ARCH)!;
+  room.edit(ARCH, '{"v":"room"}');
+  fake.pushExternal(ARCH, '{"v":"external"}');
+  const undoing: FilesClient = {
+    ...files,
+    bundle: async (project) => {
+      const head = await files.bundle(project);
+      room.edit(ARCH, seeded); // the user undoes their edit meanwhile
+      return head;
+    },
+  };
+  const sent: ApplyWarning[][] = [];
+  await flushRoom({ files: undoing, onWarnings: (w) => sent.push(w) }, room.name, room.doc);
+  assert.equal(fake.file(ARCH), '{"v":"external"}', "the outside change survives");
+  assert.equal(room.text(ARCH), '{"v":"external"}', "and the room shows it");
+  assert.deepEqual(sent, [], "nothing was applied, nothing reported");
+  assert.equal(pendingChanges(room.doc, roomState(room.name)!, false).writes.length, 0);
+});
+
 // ---------------------------------------------------------------------------
 // Shutdown
 

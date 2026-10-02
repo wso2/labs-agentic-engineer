@@ -30,22 +30,38 @@
  */
 
 import { Hocuspocus, type Connection, type onAuthenticatePayload, type onTokenSyncPayload } from "@hocuspocus/server";
-import { seedBaseline } from "../committer.js";
+import { flushAllRooms, pendingChanges, seedBaseline } from "../committer.js";
 import { FilesDeniedError, type FilesClient } from "../files-client.js";
-import { dropRoomState, ensureRoomState } from "../rooms.js";
+import { dropRoomState, ensureRoomState, roomState } from "../rooms.js";
 import { isReferenceDocPath, seedDocument } from "../seed.js";
 import { PERMISSION_DENIED, refusal, UPSTREAM_UNAVAILABLE, type CollabContext } from "./auth.js";
 import { commitHooks } from "./commits.js";
 import type { ExpiryGuard } from "./expiry.js";
 import type { PodLog } from "./log.js";
 
-/** The committer's cadence: a quiet period commits, continuous editing commits at least this often. */
+/**
+ * The committer's cadence: a quiet period commits, continuous editing commits
+ * at least every `maxDebounceMs`, and a deferred final flush is retried from
+ * `retryFirstMs`, doubling up to `retryMaxMs`.
+ */
 export interface CommitCadence {
   debounceMs: number;
   maxDebounceMs: number;
+  retryFirstMs: number;
+  retryMaxMs: number;
 }
 
-const COMMIT_CADENCE: CommitCadence = { debounceMs: 60_000, maxDebounceMs: 300_000 };
+const COMMIT_CADENCE: CommitCadence = { debounceMs: 60_000, maxDebounceMs: 300_000, retryFirstMs: 5_000, retryMaxMs: 60_000 };
+
+export interface RoomServer {
+  hocuspocus: Hocuspocus<CollabContext>;
+  /**
+   * SIGTERM: stop the deferred retries, force-flush every loaded room
+   * (bounded), then unload the rooms nobody is in whose edits all landed (a
+   * deferred room has no socket whose close would unload it).
+   */
+  shutdownFlush(): Promise<void>;
+}
 
 export interface RoomServerDeps {
   files: FilesClient;
@@ -55,24 +71,30 @@ export interface RoomServerDeps {
   onTokenSync?: (data: Pick<onTokenSyncPayload<CollabContext>, "token" | "connection">) => Promise<void>;
   expiry: ExpiryGuard;
   log: PodLog;
-  /** COMMIT_CADENCE unless a test shortens it. */
-  cadence?: CommitCadence;
+  /** COMMIT_CADENCE, with whatever a test shortens. */
+  cadence?: Partial<CommitCadence>;
 }
 
-export function createRoomServer(deps: RoomServerDeps): Hocuspocus<CollabContext> {
-  const cadence = deps.cadence ?? COMMIT_CADENCE;
-  return new Hocuspocus<CollabContext>({
+export function createRoomServer(deps: RoomServerDeps): RoomServer {
+  const cadence = { ...COMMIT_CADENCE, ...deps.cadence };
+  const commits = commitHooks({
+    files: deps.files,
+    log: deps.log,
+    retry: { firstMs: cadence.retryFirstMs, maxMs: cadence.retryMaxMs },
+  });
+  const hocuspocus = new Hocuspocus<CollabContext>({
     name: "ae-collab",
     // A doc's life is its room's life; git is the durable truth and a rejoin
     // reseeds from HEAD. The last leave runs the pending store, then unloads.
     unloadImmediately: true,
     debounce: cadence.debounceMs,
     maxDebounce: cadence.maxDebounceMs,
-    ...commitHooks({ files: deps.files, log: deps.log }),
+    ...commits.hooks,
     onAuthenticate: deps.authenticate,
     ...(deps.onTokenSync ? { onTokenSync: deps.onTokenSync } : {}),
-    connected: ({ connection, context }) => {
+    connected: ({ connection, context, documentName }) => {
       deps.expiry.arm(connection as Connection, context.exp);
+      commits.cancelRetry(documentName);
       return Promise.resolve();
     },
     onLoadDocument: async ({ document, documentName, context }) => {
@@ -102,8 +124,23 @@ export function createRoomServer(deps: RoomServerDeps): Hocuspocus<CollabContext
       return document;
     },
     afterUnloadDocument: ({ documentName }) => {
+      commits.cancelRetry(documentName);
       dropRoomState(documentName);
       return Promise.resolve();
     },
   });
+  return {
+    hocuspocus,
+    async shutdownFlush() {
+      commits.stopRetries();
+      await flushAllRooms({ files: deps.files, log: deps.log }, hocuspocus.documents, { concurrency: 8, force: true });
+      const settled = [...hocuspocus.documents.values()].filter((doc) => {
+        const state = roomState(doc.name);
+        if (doc.getConnectionsCount() > 0 || !state) return false;
+        const { writes, deletes } = pendingChanges(doc, state, true);
+        return writes.length === 0 && deletes.length === 0;
+      });
+      await Promise.all(settled.map((doc) => hocuspocus.unloadDocument(doc)));
+    },
+  };
 }

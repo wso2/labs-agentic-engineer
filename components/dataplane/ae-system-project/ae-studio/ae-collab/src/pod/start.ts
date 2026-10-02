@@ -28,13 +28,11 @@
  * and the health listener closes.
  */
 
-import type { Hocuspocus } from "@hocuspocus/server";
 import { createVerifier } from "@aep/platform-idp-auth";
-import { flushAllRooms } from "../committer.js";
-import { createFilesClient, type FilesClient } from "../files-client.js";
+import { createFilesClient } from "../files-client.js";
 import { startFakeFilesSocket } from "../fake-files-socket.js";
 import { devSpecFiles } from "../fixtures.js";
-import { authenticateFor, devAuthenticate, onTokenSyncFor, type CollabContext, type Verify } from "./auth.js";
+import { authenticateFor, devAuthenticate, onTokenSyncFor, type Verify } from "./auth.js";
 import type { DevConfig, PodConfig } from "./config.js";
 import { createExpiryGuard, systemClock, type Clock } from "./expiry.js";
 import { startPodListeners, userGate, type PodListeners } from "./listeners.js";
@@ -48,12 +46,7 @@ export interface PodDeps {
   /** The IdP token check; the cfg's issuer and JWKS unless a test stands one in. */
   verify?: Verify;
   /** The committer's cadence; the Room's default unless a test shortens it. */
-  cadence?: CommitCadence;
-}
-
-/** The shutdown flush: every loaded room, forced, up to 8 at once. */
-function shutdownFlush(rooms: Hocuspocus<CollabContext>, files: FilesClient, log: PodLog): () => Promise<void> {
-  return () => flushAllRooms({ files, log }, rooms.documents, { concurrency: 8, force: true });
+  cadence?: Partial<CommitCadence>;
 }
 
 /** The AE Studio pod: both listeners, the Room, the user gate. */
@@ -66,7 +59,7 @@ export function startPod(cfg: PodConfig, deps: PodDeps = {}): Promise<PodListene
   const expiry = createExpiryGuard(deps.clock ?? systemClock, (connection) =>
     log({ msg: "room_token_expired", source: "ae-collab", listener: connection.context.listener }),
   );
-  const rooms = createRoomServer({
+  const room = createRoomServer({
     files,
     authenticate: authenticateFor(cfg, verify, files, log),
     onTokenSync: onTokenSyncFor(cfg, verify, expiry, log),
@@ -74,7 +67,7 @@ export function startPod(cfg: PodConfig, deps: PodDeps = {}): Promise<PodListene
     log,
     ...(deps.cadence ? { cadence: deps.cadence } : {}),
   });
-  return startPodListeners(cfg, { rooms, gate: userGate(cfg, verify), log, drain: shutdownFlush(rooms, files, log) });
+  return startPodListeners(cfg, { rooms: room.hocuspocus, gate: userGate(cfg, verify), log, drain: room.shutdownFlush });
 }
 
 /** Dev mode: never in a cluster (a pod env with `COLLAB_DEV` fails the boot). */
@@ -86,14 +79,14 @@ export async function startDev(cfg: DevConfig, deps: Pick<PodDeps, "log"> = {}):
   const files = createFilesClient(fake.path);
   // Dev tokens never expire, so the guard never closes a connection.
   const expiry = createExpiryGuard(systemClock, () => {});
-  const rooms = createRoomServer({ files, authenticate: devAuthenticate, expiry, log });
+  const room = createRoomServer({ files, authenticate: devAuthenticate, expiry, log });
   let listeners: PodListeners;
   try {
     listeners = await startPodListeners(cfg, {
-      rooms,
+      rooms: room.hocuspocus,
       gate: () => Promise.resolve(null),
       log,
-      drain: shutdownFlush(rooms, files, log),
+      drain: room.shutdownFlush,
     });
   } catch (err) {
     await fake.close();

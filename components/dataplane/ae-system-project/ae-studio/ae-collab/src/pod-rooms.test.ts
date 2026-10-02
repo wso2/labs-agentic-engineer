@@ -211,7 +211,7 @@ function wsUpgrade(url: string, opts: { origin?: string } = {}): Promise<{ statu
 }
 
 async function startTestCollab(
-  o: { unknownProjects?: string[]; allowedOrigins?: string[]; cadence?: CommitCadence; warnings?: { path: string; message: string }[] } = {},
+  o: { unknownProjects?: string[]; allowedOrigins?: string[]; cadence?: Partial<CommitCadence>; warnings?: { path: string; message: string }[] } = {},
 ): Promise<TestCollab> {
   const idp = await startIdp();
   const files = await startFakeFilesSocket({
@@ -804,6 +804,41 @@ test("a last leave whose final flush meets an outage keeps the room loaded; the 
     assert.match(markdown(bob.doc), /Typed last\./);
     assert.deepEqual(await flush(bob, "f"), { type: "flushed", id: "f" });
     assert.match(s.files.file(PRD_PATH)!, /Typed last\./);
+  } finally {
+    await s.close();
+  }
+});
+
+test("a deferred final flush is retried on a backoff with nobody in the room, lands, and the room unloads", async () => {
+  const s = await startTestCollab({ cadence: { retryFirstMs: 50, retryMaxMs: 200 } });
+  try {
+    const ann = await s.join("public", ROOM, s.idp.userToken());
+    typeInto(ann.doc, "Typed before an outage.");
+    await new Promise((r) => setTimeout(r, 100)); // the update reaches the server
+    // The pending store, the final flush and the first two retries all meet the outage.
+    s.files.failNext(503, "disk_full", "apply", 4);
+    ann.provider.destroy();
+    await waitFor(() => s.files.commits().length === 1, "the retried commit, with no rejoin");
+    assert.match(s.files.file(PRD_PATH)!, /Typed before an outage\./);
+    assert.ok(events(s, "room_final_flush_deferred").length >= 1);
+    await waitFor(() => roomState(ROOM) === undefined, "the room to unload once its edits landed");
+  } finally {
+    await s.close();
+  }
+});
+
+test("a deferred room is flushed by shutdown, and no retry runs after it", async () => {
+  const s = await startTestCollab({ cadence: { retryFirstMs: 60_000 } });
+  try {
+    const ann = await s.join("public", ROOM, s.idp.userToken());
+    typeInto(ann.doc, "Saved by the shutdown flush.");
+    await new Promise((r) => setTimeout(r, 100)); // the update reaches the server
+    s.files.failNext(503, "disk_full", "apply", 2);
+    ann.provider.destroy();
+    await waitFor(() => events(s, "room_final_flush_deferred").length === 1, "the deferral");
+    await s.pod.close();
+    assert.equal(s.files.commits().length, 1);
+    assert.match(s.files.file(PRD_PATH)!, /Saved by the shutdown flush\./);
   } finally {
     await s.close();
   }

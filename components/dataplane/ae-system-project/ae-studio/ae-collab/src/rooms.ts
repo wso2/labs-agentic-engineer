@@ -32,6 +32,10 @@ export interface RoomState {
   baseline: Map<string, BaselineEntry>;
   /** Session participants keyed by email — the commit trailers. */
   participants: Map<string, { name: string; email: string }>;
+  /** The room's flushes, one at a time: each new flush runs after this settles. */
+  flushing: Promise<void>;
+  /** `path\0sha` of every blob this room committed: a conflict on one is the room's own write, not an outside change. */
+  committed: Set<string>;
 }
 
 const rooms = new Map<string, RoomState>();
@@ -50,6 +54,8 @@ export function ensureRoomState(
     projectName,
     baseline: new Map(),
     participants: new Map(),
+    flushing: Promise.resolve(),
+    committed: new Set(),
   };
   rooms.set(documentName, fresh);
   return fresh;

@@ -237,3 +237,10 @@ test("a second, empty client joining a live room sees the room's content once", 
     await room.close();
   }
 });
+
+// Pre-existing and not fixed here: the seed identity is a hash of the bytes in
+// git, so once a session's edit is committed the reseed carries new bytes, a
+// new identity, and nothing collapses it with the copy the client kept.
+test.todo(
+  "client keeps its Y.Doc, its edit is committed, room unloads, client reconnects → document doubles",
+);
