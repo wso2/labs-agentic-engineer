@@ -22,27 +22,46 @@
 # current kube context (local k3d is one cluster). OpenChoreo renders the
 # dataplane objects as r-<resource>-<env>-<hash> in a dp-* namespace, so the
 # Deployment is found by its OC labels and every other name is derived from it.
-# One ok/FAIL line per check; exit 1 on any FAIL. Never reads a Secret value:
-# only key names, and AE_SECRET_REV compared in-shell and never printed.
+# One ok/FAIL line per check; exit 1 on any FAIL. A kubectl read that fails
+# is a FAIL line too, never an abort without a summary. Never reads a Secret
+# value: only key names, and AE_SECRET_REV compared in-shell and never
+# printed. It writes nothing; the one POST is an unsigned GitHub ping, which
+# the tools container refuses (401) before acting on it.
 
 set -euo pipefail
 
 ORG="${ORG:-default}"
-CUR=$(kubectl config current-context)
+CUR=$(kubectl config current-context 2>/dev/null || true)
 kcp() { kubectl --context "${CP_CONTEXT:-$CUR}" "$@"; }
 kdp() { kubectl --context "${DP_CONTEXT:-$CUR}" "$@"; }
 
 FAILS=0
+fail() {
+  echo "FAIL $1"
+  FAILS=$((FAILS + 1))
+}
 check() { # check <description> <command...>
   local desc=$1
   shift
   if "$@" >/dev/null 2>&1; then
     echo "ok   $desc"
   else
-    echo "FAIL $desc"
-    FAILS=$((FAILS + 1))
+    fail "$desc"
   fi
 }
+# read_into <var> <description> <command...>: sets var to the command's
+# stdout; when the command fails, sets it empty and records a FAIL line.
+read_into() {
+  local __var=$1 __desc=$2 __out
+  shift 2
+  if __out=$("$@" 2>/dev/null); then
+    printf -v "$__var" '%s' "$__out"
+  else
+    printf -v "$__var" '%s' ""
+    fail "read $__desc"
+  fi
+}
+lines() { printf '%s' "$1" | grep -c . || true; }
 finish() {
   if [ "$FAILS" -gt 0 ]; then
     echo "ae-studio-check: $FAILS check(s) failed"
@@ -54,65 +73,88 @@ finish() {
 tmp=$(mktemp)
 trap 'rm -f "$tmp"' EXIT
 
-# --- control plane ---------------------------------------------------------
-rt_hash=$(kcp get resourcetype ae-studio -n "$ORG" \
-  -o jsonpath='{.metadata.annotations.aep\.wso2\.com/ae-studio-template-hash}' 2>/dev/null || true)
-check "ResourceType ae-studio has its template-hash annotation" test -n "$rt_hash"
-
-latest=$(kcp get resource ae-studio -n "$ORG" -o jsonpath='{.status.latestRelease.name}' 2>/dev/null || true)
-check "Resource ae-studio has a latestRelease" test -n "$latest"
-
-rrb=$(kcp get resourcereleasebinding -n "$ORG" -o name 2>/dev/null | grep '/ae-studio-' | head -1 || true)
-check "ResourceReleaseBinding ae-studio-* exists" test -n "$rrb"
-if [ -z "$rrb" ]; then
-  echo "     no ae-studio ResourceReleaseBinding in namespace '$ORG' (context ${CP_CONTEXT:-$CUR}): converge has not run for this org"
+if [ -z "${CP_CONTEXT:-$CUR}" ] || [ -z "${DP_CONTEXT:-$CUR}" ]; then
+  fail "a kube context (no current context, and CP_CONTEXT/DP_CONTEXT unset)"
   finish
 fi
-pin=$(kcp get "$rrb" -n "$ORG" -o jsonpath='{.spec.resourceRelease}')
-ready=$(kcp get "$rrb" -n "$ORG" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')
+
+# --- control plane ---------------------------------------------------------
+read_into rt_hash "ResourceType ae-studio" kcp get resourcetype ae-studio -n "$ORG" \
+  -o jsonpath='{.metadata.annotations.aep\.wso2\.com/ae-studio-template-hash}'
+check "ResourceType ae-studio has its template-hash annotation" test -n "$rt_hash"
+
+read_into latest "Resource ae-studio" kcp get resource ae-studio -n "$ORG" -o jsonpath='{.status.latestRelease.name}'
+check "Resource ae-studio has a latestRelease" test -n "$latest"
+
+read_into rrbs "ResourceReleaseBindings in namespace '$ORG'" kcp get resourcereleasebinding -n "$ORG" \
+  -l "openchoreo.dev/resource=ae-studio" -o name
+nrrb=$(lines "$rrbs")
+check "exactly one ae-studio ResourceReleaseBinding (found $nrrb)" test "$nrrb" = 1
+if [ "$nrrb" != 1 ]; then
+  echo "     want one ResourceReleaseBinding labelled openchoreo.dev/resource=ae-studio in namespace '$ORG' (context ${CP_CONTEXT:-$CUR}); none means the converge has not run for this org"
+  finish
+fi
+rrb=$rrbs
+read_into pin "binding $rrb pin" kcp get "$rrb" -n "$ORG" -o jsonpath='{.spec.resourceRelease}'
+read_into ready "binding $rrb Ready" kcp get "$rrb" -n "$ORG" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
 check "binding Ready" test "$ready" = True
 check "binding pinned to latestRelease (${latest:-none})" test -n "$latest" -a "$pin" = "$latest"
 
 # --- dataplane: Deployment by OC labels, names derived from it ------------
-deploys=$(kdp get deploy -A -l "openchoreo.dev/resource=ae-studio,openchoreo.dev/namespace=$ORG" \
-  -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
-ndeploy=$(printf '%s' "$deploys" | grep -c . || true)
+read_into deploys "ae-studio Deployments" kdp get deploy -A -l "openchoreo.dev/resource=ae-studio,openchoreo.dev/namespace=$ORG" \
+  -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}'
+ndeploy=$(lines "$deploys")
 check "exactly one ae-studio Deployment in the cell namespace (found $ndeploy)" test "$ndeploy" = 1
 if [ "$ndeploy" = 1 ]; then
   dpns=${deploys%%/*}
   dname=${deploys##*/}
   want=${AE_STUDIO_EXPECT_CONTAINERS:-3}
-  sel=$(kdp get deploy "$dname" -n "$dpns" \
-    -o go-template='{{range $k, $v := .spec.selector.matchLabels}}{{$k}}={{$v}},{{end}}')
+  read_into sel "Deployment $dpns/$dname selector" kdp get deploy "$dname" -n "$dpns" \
+    -o go-template='{{range $k, $v := .spec.selector.matchLabels}}{{$k}}={{$v}},{{end}}'
   sel=${sel%,}
-  pod_ready=$(kdp get pods -n "$dpns" -l "$sel" \
-    -o jsonpath='{range .items[0].status.containerStatuses[*]}{.ready}{"\n"}{end}' 2>/dev/null | grep -c true || true)
-  check "pod containers ready $pod_ready/$want" test "$pod_ready" = "$want"
+  pods=""
+  if [ -n "$sel" ]; then
+    # One line per pod: its name, then each container's ready flag.
+    read_into pods "pods of $dpns/$dname" kdp get pods -n "$dpns" -l "$sel" \
+      -o jsonpath='{range .items[*]}{.metadata.name}{range .status.containerStatuses[*]}{" "}{.ready}{end}{"\n"}{end}'
+  fi
+  npods=$(lines "$pods")
+  check "Deployment has pods (found $npods)" test "$npods" -gt 0
+  while read -r pod flags; do
+    [ -n "$pod" ] || continue
+    # shellcheck disable=SC2086 # split the flags one per line
+    nready=$(printf '%s\n' $flags | grep -cx true || true)
+    check "pod $pod containers ready $nready/$want" test "$nready" = "$want"
+  done <<<"$pods"
 
   # Secret derived from the tools container's envFrom; key names and the
   # revision match only, never a value.
-  secret=$(kdp get deploy "$dname" -n "$dpns" \
-    -o jsonpath='{.spec.template.spec.containers[?(@.name=="ae-studio-tools")].envFrom[0].secretRef.name}')
-  expect_rev=$(kdp get deploy "$dname" -n "$dpns" \
-    -o jsonpath='{.spec.template.spec.containers[?(@.name=="ae-studio-tools")].env[?(@.name=="AE_EXPECTED_SECRET_REV")].value}')
+  read_into secret "tools container's Secret name" kdp get deploy "$dname" -n "$dpns" \
+    -o jsonpath='{.spec.template.spec.containers[?(@.name=="ae-studio-tools")].envFrom[0].secretRef.name}'
+  read_into expect_rev "tools container's AE_EXPECTED_SECRET_REV" kdp get deploy "$dname" -n "$dpns" \
+    -o jsonpath='{.spec.template.spec.containers[?(@.name=="ae-studio-tools")].env[?(@.name=="AE_EXPECTED_SECRET_REV")].value}'
   check "tools container references a Secret (derived name)" test -n "$secret"
-  keys=$(kdp get secret "$secret" -n "$dpns" -o go-template='{{range $k, $v := .data}}{{$k}}{{"\n"}}{{end}}' 2>/dev/null || true)
-  for k in GITHUB_PAT GITHUB_WEBHOOK_SECRET AE_PUBLISHER_CLIENT_ID AE_PUBLISHER_CLIENT_SECRET \
-    AE_STUDIO_CLIENT_ID AE_STUDIO_CLIENT_SECRET AE_SECRET_REV; do
-    check "Secret has key $k" grep -qx "$k" <<<"$keys"
-  done
-  live_rev=$(kdp get secret "$secret" -n "$dpns" -o jsonpath='{.data.AE_SECRET_REV}' 2>/dev/null | base64 -d 2>/dev/null || true)
-  check "Secret AE_SECRET_REV matches the container's AE_EXPECTED_SECRET_REV" \
-    test -n "$expect_rev" -a "$live_rev" = "$expect_rev"
+  if [ -n "$secret" ]; then
+    read_into keys "Secret $dpns/$secret key names" kdp get secret "$secret" -n "$dpns" \
+      -o go-template='{{range $k, $v := .data}}{{$k}}{{"\n"}}{{end}}'
+    for k in GITHUB_PAT GITHUB_WEBHOOK_SECRET AE_PUBLISHER_CLIENT_ID AE_PUBLISHER_CLIENT_SECRET \
+      AE_STUDIO_CLIENT_ID AE_STUDIO_CLIENT_SECRET AE_SECRET_REV; do
+      check "Secret has key $k" grep -qx "$k" <<<"$keys"
+    done
+    read_into rev_b64 "Secret $dpns/$secret AE_SECRET_REV" kdp get secret "$secret" -n "$dpns" -o jsonpath='{.data.AE_SECRET_REV}'
+    live_rev=$(printf '%s' "$rev_b64" | base64 -d 2>/dev/null || true)
+    check "Secret AE_SECRET_REV matches the container's AE_EXPECTED_SECRET_REV" \
+      test -n "$expect_rev" -a "$live_rev" = "$expect_rev"
+  fi
 else
   echo "     expected one Deployment labelled openchoreo.dev/resource=ae-studio,openchoreo.dev/namespace=$ORG (context ${DP_CONTEXT:-$CUR})"
 fi
 
 # --- public hosts ----------------------------------------------------------
-out() { kcp get "$rrb" -n "$ORG" -o jsonpath="{.status.outputs[?(@.name==\"$1\")].value}"; }
-design=$(out designUrl)
-tools=$(out toolsUrl)
-collab=$(out collabUrl | sed 's#^ws#http#')
+read_into design "binding output designUrl" kcp get "$rrb" -n "$ORG" -o jsonpath='{.status.outputs[?(@.name=="designUrl")].value}'
+read_into tools "binding output toolsUrl" kcp get "$rrb" -n "$ORG" -o jsonpath='{.status.outputs[?(@.name=="toolsUrl")].value}'
+read_into collab "binding output collabUrl" kcp get "$rrb" -n "$ORG" -o jsonpath='{.status.outputs[?(@.name=="collabUrl")].value}'
+collab=${collab/#ws/http}
 check "binding outputs designUrl/toolsUrl/collabUrl present" test -n "$design" -a -n "$tools" -a -n "$collab"
 if [ -n "$design" ] && [ -n "$tools" ] && [ -n "$collab" ]; then
   for u in "$design/v1/projects/x/turns/active" "$tools/v1/projects/x/files" "$collab/v1/rooms"; do
@@ -120,6 +162,7 @@ if [ -n "$design" ] && [ -n "$tools" ] && [ -n "$collab" ]; then
     check "unauthenticated GET $u is 401 problem+json (got ${got:-none})" \
       test "${got%%;*}" = "401 application/problem+json"
   done
+  # Unsigned, so the webhook handler refuses it before acting: benign.
   code=$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' -X POST -H 'X-GitHub-Event: ping' \
     --data '{}' "$tools/webhooks/github" || true)
   check "unsigned POST /webhooks/github is 401 (got ${code:-none})" test "$code" = 401
