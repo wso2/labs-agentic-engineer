@@ -25,6 +25,7 @@ package organization_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -54,37 +55,36 @@ func TestKeyRef_FollowsARotation(t *testing.T) {
 	}
 }
 
-// The model access reads the stamped triplet whole. A card save whose row
-// write succeeded but whose stamp rolled back leaves the default-key row on
-// the new reference B and the triplet on A, which is never retired: KeyPathRef
-// stays on A. A committed save moves it to that save's reference.
+// The model access reads the stamped triplet whole. A save that writes a key
+// clears the triplet in its own transaction and stamps it in the copy that
+// follows; when that copy does not land (here the vault refuses the new
+// reference), the triplet stays empty and KeyPathRef fails closed with a
+// value-free error until the next key save, which ModelAccessEnvVars surfaces
+// as a failed deploy (TestModelAccessEnvVars_UnreadableConnectionFailsTheDeploy).
+// A committed save then resolves to that save's reference, path included.
 func TestKeyPathRef_FollowsTheCommittedStamp(t *testing.T) {
 	t.Parallel()
 	f := newCardFixture(t)
 	f.card.conns.WithOrgSecrets(f.refs)
 	f.save(keyPatch(anthropicUnitKey))
-	a := f.ref(organization.OrgSecretDefaultKey).Name
-	aPath := derefStr(f.card.row(t, "acme").SecretRefKVPath)
 
-	// The state a rolled-back card transaction leaves after a successful row
-	// write: the row names B, the stamp (and A itself) stay.
-	b := "acme-default-key-0000b0b0"
-	if err := f.refs.Upsert(context.Background(), "acme", organization.OrgSecretRef{Secret: organization.OrgSecretDefaultKey, Name: b}, a); err != nil {
-		t.Fatalf("row write: %v", err)
+	f.vault.createErr = errors.New("vault unavailable")
+	f.save(keyPatch(anthropicDBKey2))
+	if row := f.card.row(t, "acme"); row.SecretRefName != nil || row.SecretRefKVPath != nil {
+		t.Fatalf("triplet = %v %v, want cleared by the key-writing save whose copy did not land", row.SecretRefName, row.SecretRefKVPath)
 	}
 	_, ref, err := f.card.conns.KeyPathRef(context.Background(), "acme")
-	if err != nil || ref != (organization.SecretRefTriplet{Name: a, KVPath: aPath, Property: "api-key"}) || !f.exists(a) {
-		t.Fatalf("KeyPathRef = %+v, %v (A exists: %v); want the live stamped A %q at %q", ref, err, f.exists(a), a, aPath)
+	if err == nil || !strings.Contains(err.Error(), "secret_ref_name is not populated") ||
+		strings.Contains(err.Error(), anthropicDBKey2) || strings.Contains(err.Error(), anthropicUnitKey) {
+		t.Fatalf("KeyPathRef = %+v, %v; want a value-free fail-closed error", ref, err)
 	}
 
-	f.save(keyPatch(anthropicDBKey2))
-	committed := derefStr(f.card.row(t, "acme").SecretRefName)
-	if committed == a || committed == "" {
-		t.Fatalf("the committed save stamped %q, want a new reference", committed)
-	}
+	f.vault.createErr = nil
+	f.save(keyPatch(anthropicUnitKey))
+	b := f.ref(organization.OrgSecretDefaultKey).Name
 	_, ref, err = f.card.conns.KeyPathRef(context.Background(), "acme")
-	if err != nil || ref.Name != committed || !strings.HasSuffix(ref.KVPath, "/"+committed) || ref.Property != "api-key" || !f.exists(committed) {
-		t.Fatalf("KeyPathRef = %+v, %v; want the committed save's %q with its path", ref, err, committed)
+	if err != nil || ref.Name != b || !strings.HasSuffix(ref.KVPath, "/"+b) || ref.Property != "api-key" || !f.exists(b) {
+		t.Fatalf("KeyPathRef = %+v, %v; want the committed save's %q with its path", ref, err, b)
 	}
 }
 

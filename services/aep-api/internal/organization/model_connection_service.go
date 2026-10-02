@@ -24,8 +24,11 @@
 // ports:
 //
 //   - ConnectionReader — Effective (the connection and its key's bytes, for the
-//     spec agents, task planning and Agent Manager) and KeyRef (the connection
-//     and its key's vault reference, for a consumer that mounts it).
+//     spec agents, task planning and Agent Manager), KeyRef (the connection
+//     and its key's reference as a mount needs it: the default-key row's name
+//     and key) and KeyPathRef (the connection and the stamped triplet whole,
+//     vault path included, for a consumer that points its own SecretReference
+//     at the key's vault entry).
 //   - CodingCredentialResolver — which credential a coding run on a runtime
 //     mounts: the Claude subscription or the connection's key, stated once
 //     here (ADR-0036).
@@ -236,10 +239,10 @@ func (s *ModelConnectionService) KeyRef(ctx context.Context, ocOrgID string) (mo
 // KeyPathRef returns the connection and the reference its row's triplet
 // stamps, whole (name, vault path and key together), for a caller that points
 // its own SecretReference at the key's vault entry (the ai-agent model
-// access). The stamped triplet is live by construction: the default-key row
-// may already name a newer reference whose stamp has not committed (or never
-// will, when the card's transaction rolls back), but the reference a
+// access). The stamped triplet is live by construction: the reference a
 // committed stamp names is retired only after its successor's stamp commits.
+// A key-writing save clears it until its copy lands; meanwhile this fails
+// closed (secret_ref_name is not populated) rather than fall back.
 // The vault path is not required here; a consumer that needs it refuses an
 // incomplete legacy triplet itself.
 func (s *ModelConnectionService) KeyPathRef(ctx context.Context, ocOrgID string) (modelconn.Connection, SecretRefTriplet, error) {

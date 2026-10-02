@@ -144,7 +144,8 @@ S2S credentials-refresh.*
   only the name and the key (C10), so `KeyRef` carries no vault path. The ai-agent model access,
   which points its own SecretReference at the key's vault path, reads `KeyPathRef` instead: the
   stamped triplet whole, live by construction (a reference a committed stamp names is retired only
-  after its successor's stamp commits; a rolled-back card save never retires it), refusing an
+  after its successor's stamp commits). While a key-writing save's copy has not landed the triplet
+  is empty and `KeyPathRef` fails closed until the next key save; the model access also refuses an
   incomplete legacy triplet. An org with no row yet (connected before phase 1) resolves from its triplet columns,
   name and key from that one source; phase 6 removes this fallback. Each read logs which source it
   used (`org secret reference resolved`, value-free).

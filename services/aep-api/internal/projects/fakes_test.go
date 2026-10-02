@@ -154,16 +154,16 @@ func (s *stubComponentSvc) GetBuildLogs(context.Context, string, string, string,
 // --- ModelKeyResolver (ai-agent model access) ---------------------------------
 
 type stubModelKeyResolver struct {
-	KeyRefFunc func(ctx context.Context, ocOrgID string) (modelconn.Connection, organization.SecretRefTriplet, error)
+	KeyPathRefFunc func(ctx context.Context, ocOrgID string) (modelconn.Connection, organization.SecretRefTriplet, error)
 }
 
 var _ ModelKeyResolver = (*stubModelKeyResolver)(nil)
 
 func (s *stubModelKeyResolver) KeyPathRef(ctx context.Context, ocOrgID string) (modelconn.Connection, organization.SecretRefTriplet, error) {
-	if s.KeyRefFunc == nil {
-		panic("stubModelKeyResolver: KeyRef not set")
+	if s.KeyPathRefFunc == nil {
+		panic("stubModelKeyResolver: KeyPathRef not set")
 	}
-	return s.KeyRefFunc(ctx, ocOrgID)
+	return s.KeyPathRefFunc(ctx, ocOrgID)
 }
 
 // --- secretmanagersvc.OpenChoreoSecretReferenceClient (model access SecretReference) ---
