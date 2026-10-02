@@ -2,17 +2,12 @@ import type { components } from "../../generated/aep-api";
 
 type AgentRuntime = components["schemas"]["AgentRuntime"];
 type ApiError = components["schemas"]["Error"];
-type ApplyRequest = components["schemas"]["ApplyRequest"];
-type ApplyResult = components["schemas"]["ApplyResult"];
 type BuildRunList = components["schemas"]["BuildRunList"];
 type MilestoneRunView = components["schemas"]["MilestoneRunView"];
 import { http, HttpResponse, type JsonBodyType } from "msw";
 import {
   heldRun,
   heldRunForTag,
-  appliedFileContent,
-  appliedFileMetas,
-  applyFilesError,
   uploadReferencesError,
   componentDeployments,
   componentOpenApi,
@@ -31,12 +26,13 @@ import {
   type TrackScenario,
   projectTags,
   projectTasks,
-  recordAppliedFiles,
   specFileContent,
   specFileMetas,
   specFileNotFound,
+  specFilesError,
   type ProjectScenario,
 } from "../fixtures/project";
+import { aeStudioUrls } from "../fixtures/aeStudio";
 import {
   findTask,
   isSettledStatus,
@@ -188,6 +184,9 @@ function criteriaDrifted(): boolean {
 // The project's files with the two validation artifacts swapped for the ones the
 // overridden verdict implies. Dropping them first is what makes `unreported` and
 // `skipped` reachable: those scenarios contribute FEWER files, not different ones.
+// The pod's fake origin: its handlers match it exactly, never `*/v1/...`.
+const AE_STUDIO_TOOLS = aeStudioUrls.tools;
+
 function specFiles(s: Exclude<ProjectScenario, "error">) {
   const v = validationStory();
   if (!v) return projectSpecFiles[s];
@@ -673,37 +672,23 @@ export const projectHandlers = [
   http.get("*/api/v1/projects/:projectName/tags", () =>
     respond((s) => projectTags[s]),
   ),
-  // Files API (#113): list-files metadata + per-file content reads, exactly
-  // as aep-api serves them (repo-relative specs/ paths). Files applied through
-  // the mock files/apply (#383's reference uploads) are merged in per project.
-  http.get("*/api/v1/projects/:projectName/files", ({ params }) =>
-    respond((s) => [
-      ...specFileMetas(specFiles(s)),
-      ...appliedFileMetas(String(params.projectName)),
-    ]),
-  ),
-  http.get(
-    "*/api/v1/projects/:projectName/files/*",
-    ({ request, params }) => {
-      const s = scenario();
-      if (s === "error") {
-        return HttpResponse.json(projectSectionError, {
-          status: 500,
-        });
-      }
-      const pathname = new URL(request.url).pathname;
-      const path = decodeURIComponent(pathname.replace(/^.*\/files\//, ""));
-      const file =
-        specFileContent(specFiles(s), path) ??
-        appliedFileContent(String(params.projectName), path);
-      if (!file) {
-        return HttpResponse.json(specFileNotFound(path), {
-          status: 404,
-        });
-      }
-      return HttpResponse.json(file);
-    },
-  ),
+  // Spec files (#113), from the org's ae-studio-tools pod at the fake origin
+  // GET /ae-studio names: list-files metadata + per-file content reads, as
+  // the pod serves them (repo-relative specs/ paths, problem+json errors).
+  http.get(`${AE_STUDIO_TOOLS}/v1/projects/:projectName/files`, () => {
+    const s = scenario();
+    if (s === "error") return HttpResponse.json(specFilesError, { status: 502 });
+    return HttpResponse.json(specFileMetas(specFiles(s)));
+  }),
+  http.get(`${AE_STUDIO_TOOLS}/v1/projects/:projectName/files/*`, ({ request }) => {
+    const s = scenario();
+    if (s === "error") return HttpResponse.json(specFilesError, { status: 502 });
+    const pathname = new URL(request.url).pathname;
+    const path = decodeURIComponent(pathname.replace(/^.*\/files\//, ""));
+    const file = specFileContent(specFiles(s), path);
+    if (!file) return HttpResponse.json(specFileNotFound(path), { status: 404 });
+    return HttpResponse.json(file);
+  }),
   // The create flow's reference upload (#383), fired right after POST
   // /projects. Nothing is committed and nothing becomes a spec file — the real
   // server stores the bytes off-git (ADR-0017) — so the mock only asserts the
@@ -724,33 +709,4 @@ export const projectHandlers = [
     }
     return new HttpResponse(null, { status: 204 });
   }),
-  // apply-files. Error state via
-  // localStorage.setItem('aep:mock:project:apply', 'error').
-  http.post(
-    "*/api/v1/projects/:projectName/files/apply",
-    async ({ request, params }) => {
-      if (localStorage.getItem("aep:mock:project:apply") === "error") {
-        return HttpResponse.json(applyFilesError, { status: 500 });
-      }
-      const body = (await request.json()) as ApplyRequest;
-      const writes = body.writes ?? [];
-      const invalid =
-        writes.length === 0
-          ? "empty apply (no writes or deletes)"
-          : writes.find((w) => !w.path.startsWith("specs/"))
-            ? "only specs/ paths are accessible via this API"
-            : null;
-      if (invalid) {
-        return HttpResponse.json(
-          { code: "invalid_path", message: invalid } satisfies ApiError,
-          { status: 400 },
-        );
-      }
-      const files = recordAppliedFiles(String(params.projectName), writes);
-      return HttpResponse.json({
-        commitSha: files[0]?.sha ?? "0000000000000000000000000000000000000000",
-        files,
-      } satisfies ApplyResult);
-    },
-  ),
 ];

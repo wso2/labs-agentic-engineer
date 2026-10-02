@@ -20,11 +20,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { client } from "../../../api/client";
 import { apiErrorMessage } from "../../../api/errors";
 import { fetchSpecFileContent } from "../../spec/api/queries";
+import { useAeStudioReady } from "../../ae-studio/api/queries";
 import { validationIsLive } from "../lib/lifecycle";
 import { validationKeys } from "./keys";
 
-// The two files the Validation page joins, read through the Files API
-// (report.json is reachable through the read-only allow-list on read-file).
+// The two files the Validation page joins, read from the org's ae-studio-tools
+// pod (report.json is reachable through its read-only allow-list), once AE
+// Studio is `ready`.
 //
 // The report's path is also carried on the RUN (RunValidation.reportPath), which
 // is authoritative — the runner writes the path it actually committed. This
@@ -49,9 +51,10 @@ function useValidationFile(
   enabled: boolean,
   ref?: string,
 ) {
+  const studioReady = useAeStudioReady();
   return useQuery({
     queryKey: validationKeys.file(projectName, path, ref || version),
-    enabled,
+    enabled: enabled && studioReady,
     retry: false,
     // A pinned read can never change; an unpinned one follows the branch.
     staleTime: ref ? Infinity : 30_000,

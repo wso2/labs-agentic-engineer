@@ -41,6 +41,8 @@ import type { AcceptanceFeatureSource } from "@aep/ui-acceptance-view";
 import { isAcceptanceCriteriaFile, type SpecFileEntry } from "../api/mapping";
 import { specKeys } from "../api/keys";
 import { fetchSpecFileContent } from "../api/queries";
+import { studioToolsRetryDelay } from "../../../api/aeStudio";
+import { useAeStudioReady } from "../../ae-studio/api/queries";
 import type { CollabSpec } from "../collab/useCollabSpec";
 import { useYTextStrings } from "../collab/useYTextStrings";
 
@@ -85,12 +87,14 @@ export function useAcceptanceEntry({
     (live[i] ?? "").trim() === "" && !agentInRoom ? f : null,
   );
 
+  const studioReady = useAeStudioReady();
   const committed = useQueries({
     queries: entries.map((f, i) => ({
       queryKey: specKeys.file(projectName, f.path, f.sha),
-      enabled: fallbacks[i] !== null,
+      enabled: fallbacks[i] !== null && studioReady,
       // Immutable per path+sha, so it never needs refetching.
       staleTime: Infinity,
+      retryDelay: studioToolsRetryDelay,
       queryFn: () => fetchSpecFileContent(projectName, { path: f.path, sha: f.sha }),
     })),
   });

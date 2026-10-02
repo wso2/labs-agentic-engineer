@@ -22,6 +22,8 @@ import { type PrototypeModel } from "@aep/excalidraw-dsl";
 import { deriveWireframeScene } from "../derive/deriveWireframe";
 import { derivePrototypeModel } from "../derive/derivePrototype";
 import { fetchSpecFileContent } from "./queries";
+import { studioToolsRetryDelay } from "../../../api/aeStudio";
+import { useAeStudioReady } from "../../ae-studio/api/queries";
 import { specKeys } from "./keys";
 
 /**
@@ -46,10 +48,12 @@ function useSpecFileQuery(
   dslPath: string,
   sha: string | undefined,
 ) {
+  const studioReady = useAeStudioReady();
   return useQuery({
     queryKey: specKeys.file(projectName, dslPath, sha ?? "head"),
-    enabled: Boolean(dslPath),
+    enabled: Boolean(dslPath) && studioReady,
     staleTime: sha ? Infinity : 0,
+    retryDelay: studioToolsRetryDelay,
     queryFn: () => fetchSpecFileContent(projectName, { path: dslPath, sha: sha ?? "" }),
   });
 }

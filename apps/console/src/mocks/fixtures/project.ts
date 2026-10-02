@@ -1,4 +1,5 @@
 import type { components } from "../../generated/aep-api";
+import type { components as StudioToolsComponents } from "../../generated/ae-studio-tools";
 import { taskUsage } from "./usage";
 import {
   DEFAULT_ACCEPTANCE_FEATURES,
@@ -18,8 +19,9 @@ type DeploymentList = components["schemas"]["DeploymentList"];
 type ComponentDependencies = components["schemas"]["ComponentDependencies"];
 type ProjectDependencyReadiness =
   components["schemas"]["ProjectDependencyReadiness"];
-type FileMeta = components["schemas"]["FileMeta"];
-type FileContent = components["schemas"]["FileContent"];
+type FileMeta = StudioToolsComponents["schemas"]["FileMeta"];
+type FileContent = StudioToolsComponents["schemas"]["FileContent"];
+type StudioToolsProblem = StudioToolsComponents["schemas"]["Problem"];
 type ApiError = components["schemas"]["Error"];
 
 // Scenario switch for the project overview (#77/#183) and spec view (#80).
@@ -1873,6 +1875,13 @@ function mockSha(input: string): string {
   return hash.toString(16).padStart(8, "0").repeat(5);
 }
 
+// The byte count the server would have recorded — measured ENCODED, not by
+// `String.length`, which counts UTF-16 code units and would under-report any
+// non-ASCII spec file.
+function byteLength(content: string): number {
+  return new TextEncoder().encode(content).byteLength;
+}
+
 export function specFileMetas(files: MockSpecFile[]): FileMeta[] {
   return files
     .map((f) => ({
@@ -1896,88 +1905,21 @@ export function specFileContent(
   };
 }
 
-export const specFileNotFound = (path: string): ApiError => ({
-  code: "not_found",
-  message: `no spec file at ${path}`,
+// ae-studio-tools answers problem+json, not aep-api's envelope.
+export const specFileNotFound = (path: string): StudioToolsProblem => ({
+  type: "about:blank",
+  title: "Not Found",
+  status: 404,
+  detail: `no file at ${path}`,
+  code: "path_not_found",
 });
 
-// Files written through the mock files/apply. Persisted per project to
-// localStorage (like created projects) so the Spec view still lists them after
-// a reload. Reference documents no longer come through here at all — they go
-// to the references endpoint and are never committed (ADR-0017).
-const APPLIED_FILES_KEY = "aep:mock:appliedFiles";
-
-interface AppliedFile extends MockSpecFile {
-  size: number;
-  sha: string;
-}
-
-type AppliedFilesByProject = Record<string, AppliedFile[]>;
-
-function loadAppliedFiles(): AppliedFilesByProject {
-  try {
-    const raw = localStorage.getItem(APPLIED_FILES_KEY);
-    return raw ? (JSON.parse(raw) as AppliedFilesByProject) : {};
-  } catch {
-    return {};
-  }
-}
-
-// The byte count the server would have recorded — measured ENCODED, not by
-// `String.length`, which counts UTF-16 code units and would under-report any
-// non-ASCII spec file.
-function byteLength(content: string): number {
-  return new TextEncoder().encode(content).byteLength;
-}
-
-export function recordAppliedFiles(
-  projectName: string,
-  writes: { path: string; content: string }[],
-): FileMeta[] {
-  const all = loadAppliedFiles();
-  const files = all[projectName] ?? [];
-  const applied = writes.map((w) => ({
-    path: w.path,
-    content: w.content,
-    size: byteLength(w.content),
-    sha: mockSha(w.path + w.content),
-  }));
-  for (const file of applied) {
-    const existing = files.findIndex((f) => f.path === file.path);
-    if (existing >= 0) files[existing] = file;
-    else files.push(file);
-  }
-  all[projectName] = files;
-  try {
-    localStorage.setItem(APPLIED_FILES_KEY, JSON.stringify(all));
-  } catch {
-    /* quota — non-fatal in mock mode */
-  }
-  return applied.map(({ path, sha, size }) => ({ path, sha, size }));
-}
-
-export function appliedFileMetas(projectName: string): FileMeta[] {
-  return (loadAppliedFiles()[projectName] ?? []).map((f) => ({
-    path: f.path,
-    sha: f.sha,
-    size: f.size,
-  }));
-}
-
-export function appliedFileContent(
-  projectName: string,
-  path: string,
-): FileContent | null {
-  const file = (loadAppliedFiles()[projectName] ?? []).find(
-    (f) => f.path === path,
-  );
-  if (!file) return null;
-  return { path: file.path, content: file.content, sha: file.sha };
-}
-
-export const applyFilesError: ApiError = {
-  code: "internal_error",
-  message: "Mock error scenario for files/apply",
+export const specFilesError: StudioToolsProblem = {
+  type: "about:blank",
+  title: "Bad Gateway",
+  status: 502,
+  detail: "Mock error scenario for the spec files",
+  code: "github_error",
 };
 
 // The create flow's reference upload (#383) failing — the surface behind the

@@ -26,13 +26,15 @@
 // Files API answers without a commit.
 
 import type * as Y from "yjs";
+import { AeStudioNotReadyError } from "../../../api/aeStudio";
 import { fetchSpecFileContent } from "../api/queries";
 import { applyTextareaValue } from "./textareaBinding";
 
 /**
  * Replace the room's copy of `path` with what git holds at HEAD. Returns
  * false when the room does not carry the path — the pane reads git for
- * those already, so there is nothing to refresh.
+ * those already, so there is nothing to refresh — and when AE Studio is not
+ * ready, so there is no pod to read HEAD from.
  */
 export async function refreshRoomCopy(
   projectName: string,
@@ -41,7 +43,13 @@ export async function refreshRoomCopy(
 ): Promise<boolean> {
   const ytext = getFileText(path);
   if (!ytext) return false;
-  const latest = await fetchSpecFileContent(projectName, { path, sha: "" });
+  let latest;
+  try {
+    latest = await fetchSpecFileContent(projectName, { path, sha: "" });
+  } catch (error) {
+    if (error instanceof AeStudioNotReadyError) return false;
+    throw error;
+  }
   applyTextareaValue(ytext, latest.content);
   return true;
 }

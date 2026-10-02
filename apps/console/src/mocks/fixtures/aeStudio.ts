@@ -36,12 +36,12 @@ export const PROVISIONING_POLLS = 3;
 
 // Fixed fake origins, one per container. Pod handlers match these origins
 // exactly (never `*/v1/...`), so they cannot collide with `*/api/v1/...`.
-const urls: NonNullable<AeStudio["urls"]> = {
+export const aeStudioUrls: NonNullable<AeStudio["urls"]> = {
   designAgent: "http://ae-design-agent.mock",
   collab: "ws://ae-collab.mock",
   tools: "http://ae-studio-tools.mock",
 };
 
 export function aeStudioFor(state: AeStudioScenario): AeStudio {
-  return state === "ready" ? { state, urls } : { state };
+  return state === "ready" ? { state, urls: aeStudioUrls } : { state };
 }

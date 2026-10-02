@@ -58,6 +58,9 @@ vi.mock("@tanstack/react-router", () => ({
 const { AeStudioGate, AE_STUDIO_HOLD_CAP_MS } = await import("./AeStudioGate");
 const { AeStudioBanner } = await import("./AeStudioBanner");
 const { aeStudioKeys } = await import("../api/queries");
+const { AeStudioNotReadyError, StudioToolsError, setAeStudioUrls, studioTools } = await import(
+  "../../../api/aeStudio"
+);
 const { useConnectGitHubPat, useDisconnectGitProvider, useSaveAiSettings } = await import(
   "../../settings/api/queries"
 );
@@ -117,6 +120,7 @@ afterEach(() => {
   cleanup();
   queryClient.clear();
   server.resetHandlers();
+  setAeStudioUrls(null);
 });
 afterAll(() => server.close());
 
@@ -153,20 +157,75 @@ describe("AeStudioGate", () => {
     expect(screen.queryByText("Upgrading AE Studio")).not.toBeInTheDocument();
   });
 
-  it("a hold past its cap gives way to the failed page, and Try again can still land on ready", async () => {
+  it("a hold past its cap gives way to the console and the restarting banner while GET still says provisioning", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     mockAeStudio(["provisioning"]);
-    renderWithProviders(<AeStudioGate><div>console</div></AeStudioGate>, { route: "/projects" });
+    renderWithProviders(
+      <AeStudioGate><AeStudioBanner /><div>console</div></AeStudioGate>,
+      { route: "/projects" },
+    );
     expect(await screen.findByText("Upgrading AE Studio")).toBeInTheDocument();
     await act(() => vi.advanceTimersByTimeAsync(AE_STUDIO_HOLD_CAP_MS - 2000));
     expect(screen.getByText("Upgrading AE Studio")).toBeInTheDocument();
     await act(() => vi.advanceTimersByTimeAsync(2000));
-    expect(await screen.findByText("AE Studio couldn't start")).toBeInTheDocument();
+    expect(await screen.findByText("console")).toBeInTheDocument();
+    expect(screen.getByText("AE Studio is restarting…")).toBeInTheDocument();
+    expect(screen.queryByText("AE Studio couldn't start")).not.toBeInTheDocument();
     expect(screen.queryByText("Upgrading AE Studio")).not.toBeInTheDocument();
-    expect(screen.queryByText("console")).not.toBeInTheDocument();
     mockAeStudio(["ready"]);
+    await pollOnce();
+    await waitFor(() => expect(screen.queryByText("AE Studio is restarting…")).not.toBeInTheDocument());
+    expect(screen.getByText("console")).toBeInTheDocument();
+  });
+
+  it("Try again from failed into provisioning shows the console with the banner, never the failed page again", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    mockAeStudio(["failed"]);
+    renderWithProviders(
+      <AeStudioGate><AeStudioBanner /><div>console</div></AeStudioGate>,
+      { route: "/projects" },
+    );
+    expect(await screen.findByText("AE Studio couldn't start")).toBeInTheDocument();
+    mockAeStudio(["provisioning"]);
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByText("console")).toBeInTheDocument();
+    expect(screen.getByText("AE Studio is restarting…")).toBeInTheDocument();
+    // Every later provisioning poll keeps the console and the banner up.
+    for (let i = 0; i < 3; i++) {
+      await pollOnce();
+      expect(screen.queryByText("AE Studio couldn't start")).not.toBeInTheDocument();
+      expect(screen.getByText("AE Studio is restarting…")).toBeInTheDocument();
+    }
+  });
+
+  it("ready shows the console and no banner", async () => {
+    mockAeStudio(["ready"]);
+    renderWithProviders(<AeStudioGate><AeStudioBanner /><div>console</div></AeStudioGate>);
+    await firstAnswer();
+    expect(screen.getByText("console")).toBeInTheDocument();
+    expect(screen.queryByText("AE Studio is restarting…")).not.toBeInTheDocument();
+    expect(screen.queryByText("AE Studio couldn't start")).not.toBeInTheDocument();
+  });
+
+  it("a failed read shows the console and is retried every 5 s", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let calls = 0;
+    server.use(
+      http.get(`${BASE}/ae-studio`, () => {
+        calls++;
+        return HttpResponse.json({ code: "internal_error", message: "boom" }, { status: 500 });
+      }),
+    );
+    renderWithProviders(<AeStudioGate><div>console</div></AeStudioGate>);
+    expect(await screen.findByText("console")).toBeInTheDocument();
+    await waitFor(() => expect(calls).toBe(1));
+    await act(() => vi.advanceTimersByTimeAsync(4900));
+    expect(calls).toBe(1);
+    await act(() => vi.advanceTimersByTimeAsync(200));
+    await waitFor(() => expect(calls).toBe(2));
+    mockAeStudio(["ready"]);
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    await waitFor(() => expect(queryClient.getQueryData(aeStudioKeys.all)).toMatchObject({ state: "ready" }));
   });
 
   it("a later provisioning shows a banner, not a hold", async () => {
@@ -205,6 +264,66 @@ describe("AeStudioGate", () => {
 
 // Each org config write rolls AE Studio. The write must re-read its state, or
 // the cached `ready` stands for up to 30 s and the restart is never shown.
+// The studio-tools client exists only while the latest answer is `ready`: set
+// from that answer before any consumer sees it, cleared by any other answer.
+describe("the studio-tools accessor", () => {
+  it("is set from a ready answer and cleared by a later provisioning one", async () => {
+    mockAeStudio(["ready", "provisioning"]);
+    renderWithProviders(<AeStudioGate><div>console</div></AeStudioGate>);
+    expect(() => studioTools()).toThrow(AeStudioNotReadyError);
+    await firstAnswer();
+    expect(() => studioTools()).not.toThrow();
+    await act(() => queryClient.refetchQueries({ queryKey: aeStudioKeys.all }));
+    expect(() => studioTools()).toThrow(AeStudioNotReadyError);
+  });
+
+  it("is never set from a failed answer", async () => {
+    mockAeStudio(["failed"]);
+    renderWithProviders(<AeStudioGate><div>console</div></AeStudioGate>, { route: "/projects" });
+    await firstAnswer();
+    expect(() => studioTools()).toThrow(AeStudioNotReadyError);
+  });
+});
+
+// A pod that stops answering is news about AE Studio: the gate re-reads its
+// state, so a restart shows as the banner instead of as broken panes.
+describe("a studio-tools outage", () => {
+  it.each([
+    ["a 503", new StudioToolsError({ code: "disk_full", title: "Service Unavailable" }, "x", { status: 503 })],
+    ["a network failure", new StudioToolsError(undefined, "x", {})],
+  ])("%s from a pod read re-reads AE Studio", async (_, failure) => {
+    mockAeStudio(["ready", "provisioning"]);
+    renderWithProviders(<AeStudioGate><AeStudioBanner /><div>console</div></AeStudioGate>);
+    await firstAnswer();
+    await act(() =>
+      queryClient
+        .fetchQuery({ queryKey: ["pod-read"], queryFn: () => Promise.reject(failure), retry: false })
+        .catch(() => undefined),
+    );
+    expect(await screen.findByText("AE Studio is restarting…")).toBeInTheDocument();
+  });
+
+  it("a 404 from a pod read does not", async () => {
+    let calls = 0;
+    server.use(
+      http.get(`${BASE}/ae-studio`, () => {
+        calls++;
+        return HttpResponse.json({ state: "ready", urls: { designAgent: "d", collab: "c", tools: "http://t" } });
+      }),
+    );
+    renderWithProviders(<AeStudioGate><div>console</div></AeStudioGate>);
+    await firstAnswer();
+    const notFound = new StudioToolsError({ code: "path_not_found", title: "Not Found" }, "x", { status: 404 });
+    await act(() =>
+      queryClient
+        .fetchQuery({ queryKey: ["pod-read"], queryFn: () => Promise.reject(notFound), retry: false })
+        .catch(() => undefined),
+    );
+    expect(queryClient.getQueryState(aeStudioKeys.all)?.isInvalidated).toBe(false);
+    expect(calls).toBe(1);
+  });
+});
+
 describe("after the user's own config write", () => {
   function SaveConnection() {
     const save = useSaveAiSettings();

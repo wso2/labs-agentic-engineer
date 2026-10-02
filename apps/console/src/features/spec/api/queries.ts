@@ -23,49 +23,50 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import type { components } from "../../../generated/aep-api";
+import type { components as StudioToolsComponents } from "../../../generated/ae-studio-tools";
 import { client } from "../../../api/client";
+import { studioToolsRead, studioToolsRetryDelay } from "../../../api/aeStudio";
+import { useAeStudioReady } from "../../ae-studio/api/queries";
 import { specKeys } from "./keys";
 import { toSpecEntries } from "./mapping";
 import { scheduleFreshnessPoll } from "./dependencyFreshness";
 import { ApiRequestError } from "../../../api/errors";
 
-type FileContent = components["schemas"]["FileContent"];
+type FileContent = StudioToolsComponents["schemas"]["FileContent"];
 type ComponentDependencies = components["schemas"]["ComponentDependencies"];
 
 // ApiRequestError, not Error: it keeps the envelope's `code` alongside the same
-// message every existing caller already reads. The Validation page needs it to tell
-// a file that is genuinely ABSENT (`not_found` — a version whose spec authored no
-// criteria) from a read that merely failed, which decides whether the page explains
-// itself or offers a retry. Branching on the code rather than the message, which the
-// BFF owns and may reword.
+// message every existing caller already reads, so a caller can branch on the code
+// rather than the message, which the BFF owns and may reword.
 function toError(error: unknown, fallback: string): Error {
   return new ApiRequestError(error, fallback);
 }
 
 /**
- * Spec file metadata at HEAD (#113): list-files, mapped to the view model.
- * A ONE-SHOT load — the committed snapshot for first paint and the fallback
- * while collab is offline / a room seed failed. Live changes (agent-created
+ * Spec file metadata at HEAD (#113): list-files on the org's ae-studio-tools
+ * pod, mapped to the view model. Waits for AE Studio to be `ready`, like every
+ * file read here. A ONE-SHOT load — the committed snapshot for first paint and
+ * the fallback while collab is offline / a room seed failed. Live changes (agent-created
  * files, edits) arrive through the collab doc, not this query, so there is no
  * poll (SpecView unions this with the live doc list). Out-of-room commits
  * won't reflect until reload — the parked external-merge concern (#86).
  */
 export function useSpecFiles(projectName: string, enabled = true) {
+  const studioReady = useAeStudioReady();
   return useQuery({
     queryKey: specKeys.files(projectName),
     // `enabled` exists for readers that are mounted long before they are
     // looked at — a dialog that is closed, a panel behind an unselected tab.
     // The key is shared, so a caller that does want the list still serves
     // everyone else from the same cached answer.
-    enabled,
-    queryFn: async () => {
-      const { data, error } = await client.GET(
-        "/projects/{projectName}/files",
-        { params: { path: { projectName } } },
-      );
-      if (error) throw toError(error, "Failed to load the spec files");
-      return toSpecEntries(data ?? []);
-    },
+    enabled: enabled && studioReady,
+    queryFn: async () =>
+      toSpecEntries(
+        await studioToolsRead("Failed to load the spec files", (tools) =>
+          tools.GET("/projects/{projectName}/files", { params: { path: { projectName } } }),
+        ),
+      ),
+    retryDelay: studioToolsRetryDelay,
     staleTime: Infinity,
   });
 }
@@ -115,10 +116,12 @@ export function useDesignDependencies(projectName: string) {
 }
 
 /**
- * Fetch one spec file's content. Shared by the lazy selection hook below, the
- * derived wireframe hook (useDerivedWireframe), and the cell-diagram panel's
- * solo/offline design.cell read — reads outside a single "selected file"
- * context.
+ * Fetch one spec file's content from the org's ae-studio-tools pod. Shared by
+ * the lazy selection hook below, the derived wireframe hook
+ * (useDerivedWireframe), and the cell-diagram panel's solo/offline design.cell
+ * read — reads outside a single "selected file" context. Throws
+ * AeStudioNotReadyError before AE Studio is `ready`; a hook that calls it gates
+ * `enabled` on useAeStudioReady().
  */
 export async function fetchSpecFileContent(
   projectName: string,
@@ -137,18 +140,17 @@ export async function fetchSpecFileContent(
     .split("/")
     .map(encodeURIComponent)
     .join("/");
-  const { data, error } = await client.GET(
-    `/projects/${encodeURIComponent(projectName)}/files/${repoPath}` as "/projects/{projectName}/files/{path}",
-    {
-      params: {
-        path: { projectName, path: file.path },
-        ...(file.ref ? { query: { ref: file.ref } } : {}),
+  return studioToolsRead(`Failed to load ${file.path}`, (tools) =>
+    tools.GET(
+      `/projects/${encodeURIComponent(projectName)}/files/${repoPath}` as "/projects/{projectName}/files/{path}",
+      {
+        params: {
+          path: { projectName, path: file.path },
+          ...(file.ref ? { query: { ref: file.ref } } : {}),
+        },
       },
-    },
+    ),
   );
-  if (error || data === undefined)
-    throw toError(error, `Failed to load ${file.path}`);
-  return data;
 }
 
 /**
@@ -159,10 +161,12 @@ export function useSpecFileContent(
   projectName: string,
   file: { path: string; sha: string } | null,
 ) {
+  const studioReady = useAeStudioReady();
   return useQuery({
     queryKey: specKeys.file(projectName, file?.path ?? "", file?.sha ?? ""),
-    enabled: file !== null,
+    enabled: file !== null && studioReady,
     staleTime: Infinity,
+    retryDelay: studioToolsRetryDelay,
     queryFn: () => {
       if (!file) throw new Error("no file selected");
       return fetchSpecFileContent(projectName, file);
@@ -190,10 +194,13 @@ export function useSpecFileContents(
   projectName: string,
   files: { path: string; sha: string }[],
 ): Record<string, string> {
+  const studioReady = useAeStudioReady();
   return useQueries({
     queries: files.map((file) => ({
       queryKey: specKeys.file(projectName, file.path, file.sha),
+      enabled: studioReady,
       staleTime: Infinity,
+      retryDelay: studioToolsRetryDelay,
       queryFn: () => fetchSpecFileContent(projectName, file),
     })),
     // `combine` runs inside react-query's own memo over the results array, so

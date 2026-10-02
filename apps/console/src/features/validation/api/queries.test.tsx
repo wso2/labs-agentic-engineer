@@ -20,16 +20,30 @@
 
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { http, HttpResponse } from "msw";
+import { setupServer } from "msw/node";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
+const TOOLS = "http://ae-studio-tools.mock";
+
+// aep-api answers only GET /ae-studio here: `ready`, naming the pod the
+// report is read from.
 const mockGET = vi.fn();
 vi.mock("../../../api/client", () => ({
   client: { GET: (...args: unknown[]) => mockGET(...args) },
 }));
 
+// No session in a unit test: the pod client's auth wrapper sends no token.
+vi.mock("../../../auth/token", () => ({
+  getAccessToken: () => Promise.resolve(null),
+  renewAccessToken: () => Promise.resolve(null),
+  redirectToSignIn: () => undefined,
+}));
+
 // Imported AFTER the mock so the module under test picks up the stub client.
 const { useValidationReport } = await import("./queries");
+const { setAeStudioUrls } = await import("../../../api/aeStudio");
 
 function wrapper(queryClient: QueryClient) {
   return function Wrapper({ children }: { children: ReactNode }) {
@@ -39,15 +53,28 @@ function wrapper(queryClient: QueryClient) {
   };
 }
 
-function query() {
-  return mockGET.mock.calls[0]?.[1]?.params?.query;
-}
+// Every report read the pod saw, as its `ref` query param (null when absent).
+const refs: (string | null)[] = [];
+const server = setupServer(
+  http.get(`${TOOLS}/v1/projects/proj1/files/tests/acceptance/report.json`, ({ request }) => {
+    refs.push(new URL(request.url).searchParams.get("ref"));
+    return HttpResponse.json({ path: "tests/acceptance/report.json", content: "{}", sha: "blob" });
+  }),
+);
+
+beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
+afterEach(() => setAeStudioUrls(null));
+afterAll(() => server.close());
 
 describe("useValidationReport", () => {
   beforeEach(() => {
+    refs.length = 0;
     mockGET.mockReset();
     mockGET.mockResolvedValue({
-      data: { path: "p", content: "{}", sha: "blob" },
+      data: {
+        state: "ready",
+        urls: { tools: TOOLS, designAgent: "http://ae-design-agent.mock", collab: "ws://ae-collab.mock" },
+      },
       error: undefined,
     });
   });
@@ -63,7 +90,7 @@ describe("useValidationReport", () => {
     );
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(query()).toEqual({ ref: "abc123def456" });
+    expect(refs).toEqual(["abc123def456"]);
   });
 
   // Without a cycle SHA there is nothing to pin to, and sending `ref: undefined`
@@ -75,7 +102,7 @@ describe("useValidationReport", () => {
     );
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(query()).toBeUndefined();
+    expect(refs).toEqual([null]);
   });
 
   // Two runs' reports must not collide in the cache. Keying on the SHA is what
@@ -96,7 +123,6 @@ describe("useValidationReport", () => {
     );
     await waitFor(() => expect(second.result.current.isSuccess).toBe(true));
 
-    expect(mockGET).toHaveBeenCalledTimes(2);
-    expect(mockGET.mock.calls[1]?.[1]?.params?.query).toEqual({ ref: "sha-run-2" });
+    expect(refs).toEqual(["sha-run-1", "sha-run-2"]);
   });
 });

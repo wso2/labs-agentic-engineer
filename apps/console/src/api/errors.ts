@@ -17,23 +17,28 @@
  */
 
 /**
- * Human-readable message for a failed BFF call. Every error response is the
- * flat contract envelope {code, message, details?}; `message` is the
- * user-facing text (fallback covers network failures and non-envelope
- * bodies from intermediaries).
+ * Human-readable message for a failed call. Two error shapes reach the console:
+ * - aep-api's flat contract envelope {code, message, details?}, where
+ *   `message` is the user-facing text;
+ * - problem+json from the org's AE Studio pods {type, title, status, detail?,
+ *   code}, where `detail` is the specific text and `title` the generic one.
+ * The fallback covers network failures and bodies from intermediaries.
  */
 export function apiErrorMessage(error: unknown, fallback: string): string {
   if (error && typeof error === "object") {
-    const v = (error as Record<string, unknown>).message;
-    if (typeof v === "string" && v.length > 0) return v;
+    const body = error as Record<string, unknown>;
+    for (const key of ["message", "detail", "title"]) {
+      const v = body[key];
+      if (typeof v === "string" && v.length > 0) return v;
+    }
   }
   return fallback;
 }
 
 /**
- * The envelope's machine-readable `code`, when the failure carried one. Lets a
- * caller branch on the KIND of failure without string-matching a `message` the
- * BFF owns and may reword.
+ * The machine-readable `code`, when the failure carried one; both shapes name
+ * it `code`. Lets a caller branch on the KIND of failure without
+ * string-matching a message the server owns and may reword.
  */
 export function apiErrorCode(error: unknown): string | undefined {
   if (error && typeof error === "object") {

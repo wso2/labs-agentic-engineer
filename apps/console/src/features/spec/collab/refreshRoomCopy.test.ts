@@ -18,6 +18,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
+import { AeStudioNotReadyError } from "../../../api/aeStudio";
 import { refreshRoomCopy } from "./refreshRoomCopy";
 
 const fetchSpecFileContent = vi.fn();
@@ -44,5 +45,17 @@ describe("refreshRoomCopy", () => {
     const refreshed = await refreshRoomCopy("proj1", () => null, "specs/design/dependencies/dhl/openapi.yaml");
     expect(refreshed).toBe(false);
     expect(fetchSpecFileContent).not.toHaveBeenCalled();
+  });
+
+  it("skips the refresh while AE Studio is not ready — there is no pod to read HEAD from", async () => {
+    const doc = new Y.Doc();
+    const ytext = doc.getText("specs/design/dependencies/dhl/dependency.json");
+    ytext.insert(0, '{"name":"dhl"}');
+    fetchSpecFileContent.mockRejectedValue(new AeStudioNotReadyError());
+
+    const refreshed = await refreshRoomCopy("proj1", () => ytext, "specs/design/dependencies/dhl/dependency.json");
+
+    expect(refreshed).toBe(false);
+    expect(ytext.toString()).toBe('{"name":"dhl"}');
   });
 });
