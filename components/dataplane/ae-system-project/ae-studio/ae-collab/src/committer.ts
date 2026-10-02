@@ -177,8 +177,9 @@ function trailers(state: RoomState): string {
  *   conflicted, HEAD already holds the doc's content (a lost reply, a racing
  *     flush): adopt HEAD, nothing to write, nothing to report.
  *   conflicted, the doc went back to the baseline while the bundle was read
- *     (an undo): nothing of the room's to write; re-seeded like an unedited
- *     file below.
+ *     (an undo; for a file the room created, the file is gone again):
+ *     nothing of the room's to write; re-seeded like an unedited file below,
+ *     so a file created outside the room is adopted, never deleted.
  *   conflicted, HEAD differs: doc wins (#86 d6). Adopt HEAD's sha as the
  *     precondition but keep the old content in the baseline, so the diff still
  *     writes the doc's version. Reported, since the apply saves over a commit
@@ -222,7 +223,12 @@ function adoptHead(
       landed.push(path);
       continue;
     }
-    if (base && current[path] === base.content) {
+    // Undone while the bundle was read: back to the baseline, or, for a file
+    // the room created, gone again (an emptied markdown fragment reads "",
+    // which the diff skips as a new file too). Without a baseline entry the
+    // sha-only adoption below would turn the outside copy into a delete.
+    const undone = base ? current[path] === base.content : current[path] === undefined || current[path] === "";
+    if (undone) {
       reseed(path, at);
       landed.push(path);
       continue;

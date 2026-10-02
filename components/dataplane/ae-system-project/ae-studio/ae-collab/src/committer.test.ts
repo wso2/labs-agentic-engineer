@@ -431,6 +431,31 @@ test("a path the room undid while the bundle was read is re-seeded, not written 
   assert.equal(pendingChanges(room.doc, roomState(room.name)!, false).writes.length, 0);
 });
 
+test("a file the room created and undid during the refetch, also created outside, is adopted and never deleted", async () => {
+  const fake = await fakeSocket(SEED);
+  const rec = recording(createFilesClient(fake.path));
+  const room = await seededRoom(rec.files, "spec-acme-shop", "shop");
+  const X = "specs/validation/plan.txt";
+  room.edit(X, "room's plan");
+  fake.pushExternal(X, "outside plan");
+  const undoing: FilesClient = {
+    ...rec.files,
+    bundle: async (project) => {
+      const head = await rec.files.bundle(project);
+      deleteDocFile(room.doc, X); // the user undoes the create meanwhile
+      return head;
+    },
+  };
+  const sent: ApplyWarning[][] = [];
+  await flushRoom({ files: undoing, onWarnings: (w) => sent.push(w) }, room.name, room.doc);
+  assert.equal(rec.batches.length, 1, "only the conflicted apply: nothing left to write after the undo");
+  assert.ok(rec.batches.every((b) => b.deletes.length === 0), "no delete is ever sent");
+  assert.equal(fake.file(X), "outside plan", "the outside file stays on origin");
+  assert.equal(room.text(X), "outside plan", "and the room gains HEAD's copy");
+  assert.deepEqual(sent, []);
+  assert.deepEqual(pendingChanges(room.doc, roomState(room.name)!, true), { writes: [], deletes: [], held: [] });
+});
+
 // ---------------------------------------------------------------------------
 // Shutdown
 
