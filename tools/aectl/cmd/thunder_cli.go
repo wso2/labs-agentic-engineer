@@ -56,6 +56,9 @@ type thunderClientDef struct {
 	// optional: a missing Secret skips this client with a warning instead of
 	// failing the run, so its absence degrades nothing else.
 	optional bool
+	// vaultName is the generated vault key aep/thunder-clients/<vaultName>
+	// the ExternalSecret syncs into secretKey (empty: not a generated key).
+	vaultName string
 }
 
 // aepThunderClients is the canonical list of AEP OAuth clients to register in Thunder.
@@ -63,15 +66,15 @@ type thunderClientDef struct {
 // shared aep-thunder-secrets unless the client names its own (secretName).
 // Public (PKCE) clients use the redirect URIs supplied at registration time.
 var aepThunderClients = []thunderClientDef{
-	{clientID: "openchoreo-workload-publisher-client", clientType: "confidential", secretKey: "OC_WORKLOAD_PUBLISHER_SECRET"},
-	{clientID: "openchoreo-observer-resource-reader-client", clientType: "confidential", secretKey: "OC_OBSERVER_READER_SECRET"},
-	{clientID: "aep-api-client", clientType: "confidential", secretKey: "AEP_API_CLIENT_SECRET"},
-	{clientID: "bff-git-service", clientType: "confidential", secretKey: "BFF_TO_GIT_SERVICE_SECRET"},
-	{clientID: "bff-remote-worker", clientType: "confidential", secretKey: "BFF_TO_REMOTE_WORKER_SECRET"},
-	{clientID: "local-dev-seeder", clientType: "confidential", secretKey: "LOCAL_DEV_SEEDER_SECRET"},
-	{clientID: "aep-system-client", clientType: "confidential", secretKey: "THUNDER_SYSTEM_CLIENT_SECRET"},
-	{clientID: "openchoreo-rca-agent", clientType: "confidential", secretKey: "OC_RCA_AGENT_SECRET"},
-	{clientID: "ae-studio-internal-client", clientType: "confidential", secretKey: "AE_STUDIO_INTERNAL_CLIENT_SECRET", secretName: aeStudioInternalSecretsName, noUserAttributes: true, optional: true},
+	{clientID: "openchoreo-workload-publisher-client", clientType: "confidential", vaultName: "oc-workload-publisher", secretKey: "OC_WORKLOAD_PUBLISHER_SECRET"},
+	{clientID: "openchoreo-observer-resource-reader-client", clientType: "confidential", vaultName: "oc-observer-reader", secretKey: "OC_OBSERVER_READER_SECRET"},
+	{clientID: "aep-api-client", clientType: "confidential", vaultName: "aep-api-client", secretKey: "AEP_API_CLIENT_SECRET"},
+	{clientID: "bff-git-service", clientType: "confidential", vaultName: "bff-git-service", secretKey: "BFF_TO_GIT_SERVICE_SECRET"},
+	{clientID: "bff-remote-worker", clientType: "confidential", vaultName: "bff-remote-worker", secretKey: "BFF_TO_REMOTE_WORKER_SECRET"},
+	{clientID: "local-dev-seeder", clientType: "confidential", vaultName: "local-dev-seeder", secretKey: "LOCAL_DEV_SEEDER_SECRET"},
+	{clientID: "aep-system-client", clientType: "confidential", vaultName: "system-client", secretKey: "THUNDER_SYSTEM_CLIENT_SECRET"},
+	{clientID: "openchoreo-rca-agent", clientType: "confidential", vaultName: "openchoreo-rca-agent", secretKey: "OC_RCA_AGENT_SECRET"},
+	{clientID: "ae-studio-internal-client", clientType: "confidential", secretKey: "AE_STUDIO_INTERNAL_CLIENT_SECRET", secretName: aeStudioInternalSecretsName, noUserAttributes: true, optional: true, vaultName: "ae-studio-internal"},
 	// Public PKCE clients — redirect URIs are filled in by doThunderSetup.
 	{clientID: "aep-console-client", clientType: "public"},
 	{clientID: "aep-cli-client", clientType: "public", redirectURIs: []string{"http://localhost", "http://127.0.0.1"}},
@@ -93,6 +96,23 @@ func secretOptional(name string) bool {
 		}
 	}
 	return true
+}
+
+// clientsToRegister is the confidential and public clients doThunderSetup
+// registers: every client except those in skip (clientID -> reason) and the
+// optional ones whose K8s Secret is unavailable. The rest still register.
+func clientsToRegister(defs []thunderClientDef, secretsByName map[string]map[string]string, skip map[string]string) []thunderClientDef {
+	var out []thunderClientDef
+	for _, d := range defs {
+		if _, skipped := skip[d.clientID]; skipped {
+			continue
+		}
+		if d.optional && d.clientType == "confidential" && len(secretsByName[d.secretNameOrDefault()]) == 0 {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
 }
 
 // thunderSecretNames lists the distinct K8s Secrets the confidential clients
@@ -122,11 +142,13 @@ const (
 // to Thunder directly rather than waiting for the thunder-app-operator to
 // reconcile ThunderApplication CRs. Thunder's CORS configuration is handled by
 // the aep-platform chart's own TrafficPolicy (templates/thunder/cors-policy.yaml),
-// not by this function.
+// not by this function. skipClients (clientID -> reason) are left untouched with
+// a warning; install passes nil.
 func doThunderSetup(
 	ctx context.Context,
 	k8sClient *kubernetes.Clientset,
 	platformNamespace, thunderNamespace, consoleURL string,
+	skipClients map[string]string,
 ) error {
 	// 1. Read client secrets from the ESO-synced K8s Secrets (aep-thunder-secrets,
 	//    plus the AE-only client's own). ESO may take a few seconds after pod
@@ -187,12 +209,12 @@ func doThunderSetup(
 	sp.Success("Authenticated")
 
 	// 4. Register all OAuth clients — one spinner per client so each resolves to ✓.
-	for i, def := range aepThunderClients {
-		if def.optional && def.clientType == "confidential" && len(secretsByName[def.secretNameOrDefault()]) == 0 {
-			ui.Warn(fmt.Sprintf("Skipped %s: %s is not available", def.clientID, def.secretNameOrDefault()))
-			continue
-		}
-		clientSp := ui.NewSpinner(fmt.Sprintf("Registering OAuth clients (%d/%d) — %s", i+1, len(aepThunderClients), def.clientID))
+	for id, reason := range skipClients {
+		ui.Warn(fmt.Sprintf("Skipped %s: %s", id, reason))
+	}
+	toRegister := clientsToRegister(aepThunderClients, secretsByName, skipClients)
+	for i, def := range toRegister {
+		clientSp := ui.NewSpinner(fmt.Sprintf("Registering OAuth clients (%d/%d) — %s", i+1, len(toRegister), def.clientID))
 		clientSp.Start()
 
 		app := thunder.DesiredApp{

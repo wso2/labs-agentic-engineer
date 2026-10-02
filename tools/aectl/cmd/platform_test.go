@@ -136,7 +136,7 @@ func TestSeedMissingGeneratedSecrets_OnlyMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(wrote) != 1 || wrote[0] != "aep/thunder-clients/ae-studio-internal" || len(seeded) != 1 {
+	if len(wrote) != 1 || wrote[0] != "aep/thunder-clients/ae-studio-internal" || len(seeded) != 1 || seeded[0].value == "" {
 		t.Fatalf("wrote %v, seeded %v", wrote, seeded)
 	}
 }

@@ -265,6 +265,7 @@ dev-env:
 	cd tools/aectl && go build -o aectl-skaffold .
 	AE_DOMAIN=$(AE_DOMAIN) WITH_SKAFFOLD_CLIENT=1 bash deployments/scripts/setup-env-for-aectl.sh
 	$(MAKE) dev-images
+	$(MAKE) ae-studio-refs-check
 	./tools/aectl/aectl-skaffold platform config import --config skaffold/defaults.yaml
 	ANTHROPIC_API_KEY=none AEP_THUNDER_ADMIN_CLIENT_SECRET=ae-install-client-secret \
 		./tools/aectl/aectl-skaffold platform install --addons=all --platform-version=latest --platform-chart=deployments/helm-charts/platform --image-tag=dev-local \
@@ -318,6 +319,14 @@ AE_STUDIO_IMAGE_SET = --set aeStudio.images.designAgent="$(call ae_studio_ref,ae
 	--set aeStudio.images.collab="$(call ae_studio_ref,ae-collab)" \
 	--set aeStudio.images.studioTools="$(call ae_studio_ref,ae-studio-tools)"
 
+# Fails loudly when dev-images' file-output lacks a ref for any of the three
+# images, rather than letting an empty `--set aeStudio.images.<k>=` through.
+ae-studio-refs-check:
+	@for n in ae-design-agent ae-collab ae-studio-tools; do \
+		jq -e --arg n "$$n" '.builds[] | select(.imageName | endswith($$n)) | select(.tag | length > 0)' $(AE_STUDIO_IMAGES_JSON) >/dev/null \
+			|| { echo "❌ no $$n ref in $(AE_STUDIO_IMAGES_JSON): run 'make dev-images'" >&2; exit 1; }; \
+	done
+
 dev-images:
 	skaffold build --kube-context k3d-openchoreo -f skaffold.yaml
 	mkdir -p .skaffold
@@ -367,7 +376,8 @@ obs-status:
 # picks up the new content; without it every dev-update after the first is a
 # no-op as far as the running pods are concerned.
 #
-# The ae-studio pod images get a unique tag per build (dev-images), so the
+# The ae-studio pod images get a unique tag per build (dev-images; the tag is
+# the built image id, stable per content), so the
 # helm upgrade changes aep-api's env and Helm rolls aep-api by itself; the
 # ae-studio pod then rolls at the next console visit, when aep-api's converge
 # sees the new image refs. Never `kubectl rollout restart` it: the Deployment
@@ -386,6 +396,7 @@ obs-status:
 # host-side TS dev servers per package) and already means something else.
 dev-update:
 	$(MAKE) dev-images
+	$(MAKE) ae-studio-refs-check
 	helm upgrade aep-platform deployments/helm-charts/platform -n wso2-aep --reuse-values \
 		--set aepApi.image.repository=ghcr.io/wso2/aep/aep-api --set aepApi.image.tag=dev-local \
 		--set aepAgents.image.repository=ghcr.io/wso2/aep/ae-design-agent --set aepAgents.image.tag=dev-local \

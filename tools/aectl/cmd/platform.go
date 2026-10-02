@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -527,7 +528,7 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 	ui.Step("Registering Thunder OAuth clients")
 	if err := doThunderSetup(ctx, k8sClient, initPlatformNamespace,
 		viper.GetString("thunder.namespace"),
-		consoleURL,
+		consoleURL, nil,
 	); err != nil {
 		return err
 	}
@@ -921,17 +922,28 @@ func openOpenBaoSession(ctx context.Context) (*openBaoSession, error) {
 // seedMissingThunderClientSecrets writes the generated aep/thunder-clients/*
 // keys that are absent and leaves existing ones untouched, so a store seeded
 // before a client existed is topped up rather than refused. It returns the
-// paths it wrote.
-func (s *openBaoSession) seedMissingThunderClientSecrets(ctx context.Context) ([]string, error) {
+// secrets it wrote. The write is a KV v2 create-only (cas 0), so the store
+// itself refuses to overwrite an existing key.
+func (s *openBaoSession) seedMissingThunderClientSecrets(ctx context.Context) ([]seededSecret, error) {
 	exists := func(path string) (bool, error) {
 		_, status, err := openbao.Req(ctx, "GET", s.baseURL, s.token, "/v1/secret/data/"+path, nil)
 		return status != 404, err
 	}
 	put := func(path, value string) error {
-		_, err := openbao.Must(ctx, "PUT", s.baseURL, s.token, "/v1/secret/data/"+path, map[string]interface{}{
-			"data": map[string]interface{}{"value": value},
+		result, status, err := openbao.Req(ctx, "PUT", s.baseURL, s.token, "/v1/secret/data/"+path, map[string]interface{}{
+			"options": map[string]interface{}{"cas": 0},
+			"data":    map[string]interface{}{"value": value},
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		if status == 400 && strings.Contains(fmt.Sprint(result), "check-and-set") {
+			return errSecretExists
+		}
+		if status >= 300 {
+			return fmt.Errorf("OpenBao PUT %s returned %d", path, status)
+		}
+		return nil
 	}
 	return seedMissingGeneratedSecrets(exists, put)
 }
@@ -947,28 +959,9 @@ func reconcileReusedOpenBaoSecrets(ctx context.Context) error {
 	}
 	defer s.stop()
 
-	required := []string{
-		"aep/anthropic-api-key",
-		"aep/openbao-token",
-		"aep/postgres-password",
-		"aep/task-signing-key",
-		"aep/agents-jwt-secret",
-		"aep/webhook-secret",
-		"aep/opensearch-username",
-		"aep/opensearch-password",
-		"aep/thunder-admin/client-id",
-		"aep/thunder-admin/client-secret",
-	}
-
-	var missing []string
-	for _, path := range required {
-		_, status, err := openbao.Req(ctx, "GET", s.baseURL, s.token, "/v1/secret/data/"+path, nil)
-		if err != nil {
-			return fmt.Errorf("check secret %s: %w", path, err)
-		}
-		if status == 404 {
-			missing = append(missing, path)
-		}
+	missing, err := s.missingRequiredPaths(ctx)
+	if err != nil {
+		return err
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("the following secrets are not in OpenBao:\n  %s", strings.Join(missing, "\n  "))
@@ -976,6 +969,37 @@ func reconcileReusedOpenBaoSecrets(ctx context.Context) error {
 
 	_, err = s.seedMissingThunderClientSecrets(ctx)
 	return err
+}
+
+// requiredOpenBaoPaths are the secrets an install seeds that aectl does not
+// generate on top-up. Missing any of them means the store was wiped (or never
+// installed), not that it predates one Thunder client.
+var requiredOpenBaoPaths = []string{
+	"aep/anthropic-api-key",
+	"aep/openbao-token",
+	"aep/postgres-password",
+	"aep/task-signing-key",
+	"aep/agents-jwt-secret",
+	"aep/webhook-secret",
+	"aep/opensearch-username",
+	"aep/opensearch-password",
+	"aep/thunder-admin/client-id",
+	"aep/thunder-admin/client-secret",
+}
+
+// missingRequiredPaths returns the requiredOpenBaoPaths absent from the store.
+func (s *openBaoSession) missingRequiredPaths(ctx context.Context) ([]string, error) {
+	var missing []string
+	for _, path := range requiredOpenBaoPaths {
+		_, status, err := openbao.Req(ctx, "GET", s.baseURL, s.token, "/v1/secret/data/"+path, nil)
+		if err != nil {
+			return nil, fmt.Errorf("check secret %s: %w", path, err)
+		}
+		if status == 404 {
+			missing = append(missing, path)
+		}
+	}
+	return missing, nil
 }
 
 // generatedThunderClientNames are the Thunder clients whose secret aectl
@@ -1006,11 +1030,20 @@ func thunderClientSecretValue(name string) (string, error) {
 	return bootstrap.GeneratePassword(32)
 }
 
+// seededSecret is a vault key seedMissingGeneratedSecrets wrote. value is held
+// only to verify the cluster Secret caught up; it is never logged.
+type seededSecret struct{ path, value string }
+
+// errSecretExists is what a put returns when the store refused to overwrite an
+// existing key (KV v2 check-and-set), which seeding treats as "already there".
+var errSecretExists = errors.New("secret already exists")
+
 // seedMissingGeneratedSecrets writes every generated aep/thunder-clients/*
-// secret that is absent and leaves existing ones untouched. It returns the
-// paths it wrote.
-func seedMissingGeneratedSecrets(exists func(path string) (bool, error), put func(path, value string) error) ([]string, error) {
-	var seeded []string
+// secret that is absent and leaves existing ones untouched: put must refuse to
+// overwrite (errSecretExists), so a key created between the check and the
+// write survives. It returns what it wrote.
+func seedMissingGeneratedSecrets(exists func(path string) (bool, error), put func(path, value string) error) ([]seededSecret, error) {
+	var seeded []seededSecret
 	for _, name := range generatedThunderClientNames {
 		path := "aep/thunder-clients/" + name
 		ok, err := exists(path)
@@ -1025,9 +1058,12 @@ func seedMissingGeneratedSecrets(exists func(path string) (bool, error), put fun
 			return seeded, fmt.Errorf("generate thunder client secret %s: %w", name, err)
 		}
 		if err := put(path, v); err != nil {
+			if errors.Is(err, errSecretExists) {
+				continue
+			}
 			return seeded, fmt.Errorf("write %s: %w", path, err)
 		}
-		seeded = append(seeded, path)
+		seeded = append(seeded, seededSecret{path: path, value: v})
 	}
 	return seeded, nil
 }
@@ -1037,30 +1073,13 @@ func provisionOpenBao(ctx context.Context, anthropicKey, thunderAdminClientID, t
 	sp := ui.NewSpinner("Connecting to OpenBao")
 	sp.Start()
 
-	pfCmd, err := openbao.PortForward(ctx, ocOpenBaoNamespace, ocOpenBaoRelease, kubeconfig)
+	session, err := openOpenBaoSession(ctx)
 	if err != nil {
-		sp.Fail("Port-forward failed")
+		sp.Fail("Connecting to OpenBao failed")
 		return err
 	}
-	defer func() { _ = pfCmd.Process.Kill() }()
-
-	baseURL := "http://localhost:" + openbao.LocalPort
-	if err := openbao.WaitForReachable(ctx, baseURL, 30*time.Second); err != nil {
-		sp.Fail("OpenBao unreachable")
-		return fmt.Errorf("OpenBao not reachable via port-forward: %w", err)
-	}
-
-	sp.Update("Authenticating")
-	saToken, err := openbao.GetSAToken(ctx, ocOpenBaoNamespace, ocOpenBaoSA, kubeconfig)
-	if err != nil {
-		sp.Fail("Authentication failed")
-		return err
-	}
-	token, err := openbao.KubernetesLogin(ctx, baseURL, ocWriteRole, saToken)
-	if err != nil {
-		sp.Fail("Authentication failed")
-		return err
-	}
+	defer session.stop()
+	baseURL, token := session.baseURL, session.token
 
 	sp.Update("Generating secrets")
 

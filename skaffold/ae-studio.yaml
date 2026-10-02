@@ -20,8 +20,10 @@
 # Unlike skaffold.yaml (one fixed dev-local tag, rolled by a restart), these
 # refs are values aep-api writes into the OpenChoreo Resource's parameters.
 # A mutable tag would leave those parameters unchanged, so converge would see
-# no drift and the pod would never roll. An input-digest tag changes exactly
-# when a source file in the artifact's context changes.
+# no drift and the pod would never roll. skaffold names the built image by its
+# image id, so the ref in --file-output is unique per build and stable per
+# content (a rebuild of unchanged sources is a cache hit with the same ref);
+# tagPolicy inputDigest is the pre-build name only.
 #
 # `make dev-images` builds this with --file-output=.skaffold/ae-studio-images.json,
 # imports the resulting refs into k3d and pins them; `make dev-update` and
