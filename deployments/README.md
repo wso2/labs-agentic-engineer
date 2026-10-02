@@ -255,20 +255,42 @@ The local OpenBao (OpenChoreo's dev-mode instance) is in-memory: a pod restart
 or `colima`/cluster reset wipes it. Everything else survives, including the
 ESO-synced Kubernetes Secrets, which keep their last synced value until ESO
 next syncs (refresh interval 1h). Verify that on your cluster before relying
-on it: if a Secret is already blank, recover the value from another copy. `aectl platform sync-clients` detects the wipe (a
-non-generated `aep/*` path is gone) and refuses.
+on it. If a Secret is already blank, recover the value from another copy.
+
+`aectl platform sync-clients` detects the wipe (a non-generated `aep/*` path is
+gone) and refuses.
 
 **Do NOT run `make dev-env`, `aectl platform install` or `--reuse-secrets`.**
 `install` regenerates and overwrites every `aep/*` key (only Postgres is
 rescued), which rotates secrets under the running platform. Never write a value
 with `value=-` over `kubectl exec -i`: it intermittently stores an empty value.
-Never print values; compare lengths or hashes, not key names.
 
-1. **Re-import each `aep/*` key from the Secret it feeds.** Write through the
-   OpenBao HTTP API (port-forward, a token from the Kubernetes-auth login the
-   aectl code uses, `curl -d @file` with a 0600 file you delete afterwards) or
-   inside the pod with `bao kv put secret/<path> value=@file`. Each key is
-   `{"data":{"value": ...}}` at `secret/data/<path>`:
+Never print a value, not even to compare. Compare lengths or sha256 hashes.
+Never put a value on a command line (no `echo`, no `value=<literal>`).
+
+1. **Re-import each `aep/*` key from the Secret it feeds.** Write each value
+   to a 0600 file straight from its Secret. The file then holds the exact
+   bytes, with no trailing newline:
+
+   ```bash
+   umask 077; f=$(mktemp)
+   kubectl get secret <secret> -n wso2-aep -o jsonpath='{.data.<key>}' | base64 -d > "$f"
+   ```
+
+   Then write it to `secret/data/<path>` as `{"data":{"value": ...}}`, in one
+   of two ways:
+
+   - **The OpenBao HTTP API** (preferred). Port-forward OpenBao and get a token
+     from the Kubernetes-auth login the aectl code uses. Build the body with
+     `jq -Rs '{data:{value:.}}' < "$f" > "$body"` (also 0600), then send it with
+     `curl --data-binary @"$body"`. Do not use `-d @file`: it strips newlines.
+   - **Inside the OpenBao pod.** Copy the file in with
+     `kubectl cp "$f" <ns>/<pod>:/tmp/v` (it needs `tar` in the image), so argv
+     carries only its path. Run
+     `bao kv put secret/<path> value=@/tmp/v`, then remove `/tmp/v`.
+
+   Delete `$f` (and `$body`) once the key is verified (step 2). Each key's
+   source:
 
    | Vault path | Secret (namespace `wso2-aep`) | Key |
    |---|---|---|
@@ -284,8 +306,13 @@ Never print values; compare lengths or hashes, not key names.
    `aep/anthropic-api-key`, `aep/opensearch-username` and `aep/opensearch-password`
    have no ESO target Secret; re-enter them from where you hold them (the
    OpenSearch pair is in the observability plane's own Secret, if installed).
-   Thunder client keys may be left out: step 5's `sync-clients` creates them
-   create-only, but only after every non-generated path above is back.
+   Restore the `aep/thunder-clients/*` keys too, from their Secrets. Leaving
+   one out does not preserve it. Step 5's `sync-clients` seeds a **new** random
+   value for each missing key, syncs it into the Secret and updates the Thunder
+   client to match. That is a rotation of that client's secret. Every holder of
+   the old value then fails until it restarts on the new Secret. Do it only if
+   a rotation is what you want. `sync-clients` also refuses until every
+   non-generated path above is back.
 2. **Verify** each written key by length (or sha256) against the Secret it came
    from.
 3. **Org publisher secrets.** Restore each org's
