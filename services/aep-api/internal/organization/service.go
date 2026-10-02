@@ -84,6 +84,8 @@ type Service struct {
 	agentSettings *AgentSettingsService
 	llmTests      *llmTestLimiter
 	platformIDP   PlatformIDPConfig
+	orgSecrets    *OrgSecretWriter
+	converger     StudioConverger
 }
 
 // NewService wires the orchestrator. Any dependency may be nil in narrow test
@@ -265,6 +267,9 @@ func (s *Service) Patch(ctx context.Context, org, actor string, p orgconfig.Conf
 			GitHubLogin: p.GitProvider.Value.GitHubLogin,
 		}); err != nil {
 			return nil, sectionErrorFrom("gitProvider", err)
+		}
+		if err := s.submitGitPAT(ctx, org, p.GitProvider.Value.PAT); err != nil {
+			return nil, err
 		}
 		sections = append(sections, "gitProvider")
 	}

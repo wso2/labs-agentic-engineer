@@ -330,26 +330,6 @@ func TestEnsureOrgApp_RequiresNameAndOU(t *testing.T) {
 	}
 }
 
-func TestAppExists(t *testing.T) {
-	ctx := context.Background()
-	th := newFakeThunder(t)
-	th.app("app-7", "ae-studio-default", "ou-1")
-	c := newFakeClient(t, th)
-
-	if id, err := c.AppExists(ctx, OrgAppSpec{Name: "ae-studio-default", StoredID: "app-7"}); err != nil || id != "app-7" {
-		t.Fatalf("by stored id: %q %v", id, err)
-	}
-	if id, err := c.AppExists(ctx, OrgAppSpec{Name: "ae-studio-default"}); err != nil || id != "app-7" {
-		t.Fatalf("by scan: %q %v", id, err)
-	}
-	if id, err := c.AppExists(ctx, OrgAppSpec{Name: "ae-studio-other", StoredID: "gone"}); err != nil || id != "" {
-		t.Fatalf("absent: %q %v", id, err)
-	}
-	if th.count("POST /applications") != 0 {
-		t.Fatal("AppExists must never create")
-	}
-}
-
 func TestSetAppSecret_PutsCallerSecret(t *testing.T) {
 	ctx := context.Background()
 	th := newFakeThunder(t)
@@ -431,8 +411,8 @@ func TestDeleteAndRegenerate_UseStoredID(t *testing.T) {
 }
 
 // An app with the studio clientId under another OU (squatted, leftover, the
-// org's OU changed) is not the org's: its token would name another org. Both
-// lookups refuse it, nothing is created and nothing is rewritten.
+// org's OU changed) is not the org's: its token would name another org. The
+// lookup refuses it, nothing is created and nothing is rewritten.
 func TestEnsureOrgApp_ForeignOUIsRefused(t *testing.T) {
 	ctx := context.Background()
 	for _, stored := range []string{"app-9", ""} { // by stored id, by scan
@@ -442,9 +422,6 @@ func TestEnsureOrgApp_ForeignOUIsRefused(t *testing.T) {
 		spec := OrgAppSpec{Name: "ae-studio-default", OUID: "ou-1", StoredID: stored}
 		if got, err := c.EnsureOrgApp(ctx, spec); !errors.Is(err, ErrAppInForeignOU) || got.EntityID != "" {
 			t.Fatalf("stored=%q EnsureOrgApp = %+v, %v; want ErrAppInForeignOU", stored, got, err)
-		}
-		if id, err := c.AppExists(ctx, spec); !errors.Is(err, ErrAppInForeignOU) || id != "" {
-			t.Fatalf("stored=%q AppExists = %q, %v; want ErrAppInForeignOU", stored, id, err)
 		}
 		if th.count("POST /applications") != 0 || th.count("PUT /applications/app-9") != 0 || th.count("DELETE /applications/app-9") != 0 {
 			t.Fatalf("stored=%q: a foreign-OU app must not be created over, rewritten or deleted: %v", stored, th.calls)

@@ -132,6 +132,21 @@ S2S credentials-refresh.*
   profile keeps `publisher_thunder_app_id` (and `studio_thunder_app_id` for `ae-studio-<org>`); every
   ensure, rotate and delete passes it to `thundersvc`, which falls back to one full list scan only on a
   miss. A revoke or IDP-kind switch clears it with the rest of the publisher columns.
+- **The org secrets are written as a new reference per write** (`OrgSecretWriter`): new
+  reference → row (compare-and-swap) → repoint → delete the previous one by its stored name, under
+  a per-(org, secret) advisory lock taken after any caller lock and never inside a repoint. The
+  GitHub PAT (`github-pat`, keys `token` + `password`) and the publisher client go through it, with
+  their legacy triplet stamped inside the repoint.
+- **A gitpat submit is: validate → Connect → `github-pat` reference → `github-webhook-secret` (made
+  once, under the lock) → `EnsureClient` publisher, then studio → converge trigger** (`gitpat_submit.go`).
+  Connect writes no reference itself. A failed reference write fails `gitProvider` (502, or 409 for a
+  concurrent write or a foreign-OU client); with no converger or no secrets delivery the submit
+  succeeds and logs `ae_studio_not_configured`. Nothing waits for the pod.
+- **`EnsureClient` keeps Thunder and the vault agreeing** (`client_ensure.go`, 06 §5): a created app is
+  stored with the secret Thunder returns once; a found app with no reference row is healed with a new
+  secret written to the vault before Thunder's `PUT` (inside the repoint, so a failed `PUT` rolls the
+  reference back); a found app with its row is left alone. An `ae-studio-<org>` app under another OU
+  fails the ensure and is never touched.
 - **`OrgCatalogVaultKey` reconstructs a Registered External's org-catalog vault path from the
   request JWT `ouId`** — a read, not a second write. Used after aep-api restart when the
   process-local value plane is empty (ADR-0021). A missing `ouId` cannot invent a path.

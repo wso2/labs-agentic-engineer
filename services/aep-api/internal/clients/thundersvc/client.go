@@ -84,11 +84,6 @@ type Client interface {
 	// spec.OUID; one under another OU is ErrAppInForeignOU (never healed).
 	EnsureOrgApp(ctx context.Context, spec OrgAppSpec) (OrgApp, error)
 
-	// AppExists returns the entity id of the org application spec names, ""
-	// when there is none. It never creates. When spec.OUID is set, an app
-	// under another OU is ErrAppInForeignOU, not the org's.
-	AppExists(ctx context.Context, spec OrgAppSpec) (entityID string, err error)
-
 	// SetAppSecret makes Thunder hold this caller-chosen client secret for
 	// the app (GET + PUT), so the caller can store the secret first and only
 	// then hand it to Thunder.

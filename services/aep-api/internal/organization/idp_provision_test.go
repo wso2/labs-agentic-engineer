@@ -94,6 +94,10 @@ func (r *memIDPRepo) UpdateProfileColumns(_ context.Context, _ *OrganizationIDPP
 			row.PublisherSecretRef = memColStr(v)
 		case "publisher_thunder_app_id":
 			row.PublisherThunderAppID = memColStr(v)
+		case "studio_client_id":
+			row.StudioClientID = memColStr(v)
+		case "studio_thunder_app_id":
+			row.StudioThunderAppID = memColStr(v)
 		case "updated_at":
 			if t, ok := v.(time.Time); ok {
 				row.UpdatedAt = t
@@ -173,14 +177,23 @@ func (stubOrgRepo) SetThunderOrgUUID(context.Context, string, uuid.UUID) error  
 // --- fake secretmanagersvc.SecretManagementClient ----------------------------
 
 // provFakeSM hand-fakes secretmanagersvc.SecretManagementClient for the
-// provisioner tests. WritePublisher only ever calls CreateSecret on this
-// path; DeleteSecret/PatchSecret/GetSecret/GetSecretWithValue are not part of
-// the provision feature — a call to one is a test bug and panics.
+// provisioner tests. WritePublisher writes a new reference (CreateSecretRef)
+// and retires the previous one (DeleteSecretRef); DeleteSecret/PatchSecret/
+// GetSecret/GetSecretWithValue are not part of the provision feature — a
+// call to one is a test bug and panics.
 type provFakeSM struct {
-	ref string // secretRefName returned by CreateSecret on success; defaults to "ref-name"
+	ref string // secretRefName returned by CreateSecretRef on success; defaults to "ref-name"
 	err error
 
 	createCalls []provSMCreateCall
+	deleted     []string
+}
+
+// provWriter is the SecretRefWriter production wires: sm behind both the
+// writer and its org secret writer, the rows and lock in memory.
+func provWriter(sm *provFakeSM, repo *memIDPRepo) *SecretRefWriter {
+	return NewSecretRefWriter(sm, nil, nil, repo, nil).
+		WithOrgSecretWriter(NewOrgSecretWriter(sm, newMemOrgSecretRepo(), memOrgSecretLock{}, time.Now))
 }
 
 type provSMCreateCall struct {
@@ -190,7 +203,15 @@ type provSMCreateCall struct {
 
 var _ secretmanagersvc.SecretManagementClient = (*provFakeSM)(nil)
 
-func (f *provFakeSM) CreateSecret(_ context.Context, loc secretmanagersvc.SecretLocation, data map[string]string) (string, error) {
+func (f *provFakeSM) CreateSecret(context.Context, secretmanagersvc.SecretLocation, map[string]string) (string, error) {
+	panic("provFakeSM: CreateSecret is not part of the provision feature")
+}
+
+func (f *provFakeSM) DeleteSecret(context.Context, secretmanagersvc.SecretLocation, string) error {
+	panic("provFakeSM: DeleteSecret is not part of the provision feature")
+}
+
+func (f *provFakeSM) CreateSecretRef(_ context.Context, loc secretmanagersvc.SecretLocation, data map[string]string) (string, error) {
 	f.createCalls = append(f.createCalls, provSMCreateCall{loc: loc, data: data})
 	if f.err != nil {
 		return "", f.err
@@ -201,16 +222,9 @@ func (f *provFakeSM) CreateSecret(_ context.Context, loc secretmanagersvc.Secret
 	return "ref-name", nil
 }
 
-func (f *provFakeSM) DeleteSecret(context.Context, secretmanagersvc.SecretLocation, string) error {
-	panic("provFakeSM: DeleteSecret is not part of the provision feature")
-}
-
-func (f *provFakeSM) CreateSecretRef(context.Context, secretmanagersvc.SecretLocation, map[string]string) (string, error) {
-	panic("provFakeSM: CreateSecretRef is not part of the provision feature")
-}
-
-func (f *provFakeSM) DeleteSecretRef(context.Context, secretmanagersvc.SecretLocation, string) error {
-	panic("provFakeSM: DeleteSecretRef is not part of the provision feature")
+func (f *provFakeSM) DeleteSecretRef(_ context.Context, _ secretmanagersvc.SecretLocation, name string) error {
+	f.deleted = append(f.deleted, name)
+	return nil
 }
 
 func (f *provFakeSM) PatchSecret(context.Context, secretmanagersvc.SecretLocation, map[string]string, []string) (string, error) {
@@ -235,7 +249,7 @@ func TestProvisionPublisherForBuild_FreshCreateWritesSecretRef(t *testing.T) {
 		return "aep-publisher-acme", "secret-once", true, nil
 	}}
 	svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).
-		WithSecretRefWriter(NewSecretRefWriter(sm, nil, nil, repo, nil))
+		WithSecretRefWriter(provWriter(sm, repo))
 	ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: "ou-acme-uuid"})
 	if err := svc.ProvisionPublisherForBuild(ctx, "acme"); err != nil {
 		t.Fatalf("provision: %v", err)
@@ -264,7 +278,7 @@ func TestProvisionPublisherForBuild_ExistingRefDoesNotRotate(t *testing.T) {
 	}}
 	sm := &provFakeSM{ref: "should-not-write"}
 	svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).
-		WithSecretRefWriter(NewSecretRefWriter(sm, nil, nil, repo, nil))
+		WithSecretRefWriter(provWriter(sm, repo))
 	ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: "ou-acme-uuid"})
 	if err := svc.ProvisionPublisherForBuild(ctx, "acme"); err != nil {
 		t.Fatalf("provision: %v", err)
@@ -288,7 +302,7 @@ func TestProvisionPublisherForBuild_CreatedFalseEmptyRefRotatesOnce(t *testing.T
 	}
 	sm := &provFakeSM{ref: "cred-after-rotate"}
 	svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).
-		WithSecretRefWriter(NewSecretRefWriter(sm, nil, nil, repo, nil))
+		WithSecretRefWriter(provWriter(sm, repo))
 	ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: "ou-acme-uuid"})
 	if err := svc.ProvisionPublisherForBuild(ctx, "acme"); err != nil {
 		t.Fatalf("provision: %v", err)
@@ -310,7 +324,7 @@ func TestProvisionPublisherForBuild_WritePublisherErrorFails(t *testing.T) {
 	}}
 	sm := &provFakeSM{err: errors.New("sm-api: no JWT in context")}
 	svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).
-		WithSecretRefWriter(NewSecretRefWriter(sm, nil, nil, repo, nil))
+		WithSecretRefWriter(provWriter(sm, repo))
 	ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: "ou-acme-uuid"})
 	err := svc.ProvisionPublisherForBuild(ctx, "acme")
 	if err == nil {
@@ -378,7 +392,7 @@ func TestProvisionPublisherForBuild_EnsureErrorPropagates(t *testing.T) {
 	}}
 	sm := &provFakeSM{}
 	svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).
-		WithSecretRefWriter(NewSecretRefWriter(sm, nil, nil, repo, nil))
+		WithSecretRefWriter(provWriter(sm, repo))
 	ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: "ou-acme-uuid"})
 	err := svc.ProvisionPublisherForBuild(ctx, "acme")
 	if err == nil {
@@ -398,7 +412,7 @@ func TestProvisionPublisherForBuild_EmptyOrgID(t *testing.T) {
 	thunder := &fakeThunder{}
 	sm := &provFakeSM{}
 	svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).
-		WithSecretRefWriter(NewSecretRefWriter(sm, nil, nil, repo, nil))
+		WithSecretRefWriter(provWriter(sm, repo))
 	err := svc.ProvisionPublisherForBuild(context.Background(), "")
 	if err == nil {
 		t.Fatal("expected error for empty orgID")
@@ -423,7 +437,7 @@ func TestRegenerateClientSecret_WritePublisherErrorReturned(t *testing.T) {
 	thunder := &fakeThunder{regenFn: func(context.Context, string) (string, error) { return "rotated", nil }}
 	sm := &provFakeSM{err: errors.New("sm-api down")}
 	svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).
-		WithSecretRefWriter(NewSecretRefWriter(sm, nil, nil, repo, nil))
+		WithSecretRefWriter(provWriter(sm, repo))
 	ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: "ou-acme-uuid"})
 	_, err := svc.RegenerateClientSecret(ctx, "acme", "ada@x.io")
 	if err == nil {

@@ -260,6 +260,14 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// constructors so all consumers can attach via WithSecretRefWriter (the no-op
 	// case when smClient is nil is fine).
 	secretRefWriter := organization.NewSecretRefWriter(smClient, orgCredRepo, orgAnthropicRepo, idpRepo, orgModelConnRepo)
+	// The org secrets (the GitHub PAT, the webhook secret, the two org
+	// clients) are written as a new reference per write, one write per
+	// (org, secret) at a time across replicas. Nil with delivery off.
+	var orgSecretWriter *organization.OrgSecretWriter
+	if smClient != nil {
+		orgSecretWriter = organization.NewOrgSecretWriter(smClient, organization.NewOrgSecretRepository(db), organization.NewOrgSecretLock(db), time.Now)
+		secretRefWriter.WithOrgSecretWriter(orgSecretWriter)
+	}
 
 	// Credentials + git-service services and controllers. The credential store,
 	// the App-token minter (post OpenBao key-load / dev seed / bot-identity load),
@@ -950,7 +958,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		disconnectSvc,
 		idpService,
 		organization.PlatformIDPConfig{Issuer: cfg.PlatformIDP.Issuer, JWKSURL: cfg.PlatformIDP.JWKSURL},
-	).WithAgentSettings(agentSettings)
+	).WithAgentSettings(agentSettings).
+		// No converger until the aestudio installer is wired (Task 1.15): the
+		// gitpat submit ensures the clients and logs ae_studio_not_configured.
+		WithAEStudio(orgSecretWriter, nil)
 
 	// Strict-handler feature dependencies — everything the contract-first
 	// /api/v1 edge serves (internal/api/handlers_*.go).

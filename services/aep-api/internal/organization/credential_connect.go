@@ -15,8 +15,8 @@
 // under the License.
 
 // credential_connect.go — the Connect/replace flow: kind dispatch,
-// the PAT path (validate + seal + seed webhook secret + SM-API mirror) and
-// the App-installation path.
+// the PAT path (validate + seal + seed webhook secret), the PAT's reference
+// write the submit runs after it, and the App-installation path.
 
 package organization
 
@@ -39,10 +39,9 @@ import (
 // 400 (ValidationError) for any GitHub-side validation failure — wrapped
 // with a cause code that the UI maps to a specific error message.
 func (s *CredentialService) Connect(ctx context.Context, ocOrgID string, req ConnectRequest) (*Projection, error) {
-	// finalize carries the post-commit work (SM-API mirror, projection
-	// re-fetch, success logging) for the chosen kind. It runs AFTER repo.Tx
-	// commits and releases the advisory lock — exactly the commit-then-mirror
-	// ordering the inline transaction used.
+	// finalize carries the post-commit work (projection re-fetch, success
+	// logging) for the chosen kind. It runs AFTER repo.Tx commits and
+	// releases the advisory lock.
 	var finalize func() (*Projection, error)
 	err := s.repo.Tx(ctx, func(tx OrgCredentialTx) error {
 		// Acquire org-scoped advisory lock for the duration of the txn so the
@@ -89,9 +88,9 @@ func (s *CredentialService) Connect(ctx context.Context, ocOrgID string, req Con
 
 // connectPAT runs inside Connect's transaction (the org advisory lock is held).
 // It does GitHub validation + the credential-store write + the row write, then
-// returns the finalize closure Connect calls AFTER the commit: the SM-API
-// mirror, the post-commit projection re-fetch (REPLACE), and the success log —
-// preserving the original commit-then-mirror ordering.
+// returns the finalize closure Connect calls AFTER the commit: the post-commit
+// projection re-fetch (REPLACE) and the success log. The PAT's vault reference
+// is not written here: the caller writes it once per submit (WritePATRef).
 func (s *CredentialService) connectPAT(ctx context.Context, tx OrgCredentialTx, ocOrgID string, hadRow bool, existing *OrgCredential, req ConnectRequest) (func() (*Projection, error), error) {
 	identity, err := s.validatePAT(ctx, req.PAT, req.GitHubLogin)
 	if err != nil {
@@ -138,7 +137,6 @@ func (s *CredentialService) connectPAT(ctx context.Context, tx OrgCredentialTx, 
 		}
 		return func() (*Projection, error) {
 			slog.InfoContext(ctx, "secrets.connected", "ocOrgId", ocOrgID, "kind", "user-pat", "identityLogin", identity.Login)
-			s.mirrorPATToSMAPI(ctx, ocOrgID, req.PAT)
 			return projectionFromRow(&row), nil
 		}, nil
 	}
@@ -195,7 +193,6 @@ func (s *CredentialService) connectPAT(ctx context.Context, tx OrgCredentialTx, 
 			return nil, err
 		}
 		slog.InfoContext(ctx, "secrets.replaced", "ocOrgId", ocOrgID, "kind", "user-pat", "identityLogin", identity.Login, "drift", identity.Login != existing.IdentityLogin)
-		s.mirrorPATToSMAPI(ctx, ocOrgID, req.PAT)
 		return projectionFromRow(row), nil
 	}, nil
 }
@@ -237,24 +234,28 @@ func (s *CredentialService) ValidatePAT(ctx context.Context, pat, githubLogin st
 	return err
 }
 
-// mirrorPATToSMAPI fires the SM-API write best-effort after a Connect.
-// Logged-and-swallowed on error — the org_secrets path keeps working when
-// SM-API is down, so the user-facing Connect doesn't 5xx. The SM-API row
-// is created/refreshed on the next successful Connect.
-func (s *CredentialService) mirrorPATToSMAPI(ctx context.Context, ocOrgID, pat string) {
+// WritePATRef stores the org's PAT as a new github-pat reference and stamps
+// its triplet (SecretRefWriter.WriteGitHubPAT). The gitpat submit calls it
+// once, after Connect committed and released the org lock, so the org-secret
+// lock is never taken inside the org lock's transaction. An error fails the
+// submit: AE Studio and the build read the token only from that reference.
+// With secrets delivery off (no SecretsProvider) there is no reference to
+// write and it does nothing.
+func (s *CredentialService) WritePATRef(ctx context.Context, ocOrgID, pat string) error {
 	if s.secretRefWriter == nil || !s.secretRefWriter.Enabled() {
-		return
+		return nil
 	}
 	if _, err := s.secretRefWriter.WriteGitHubPAT(ctx, ocOrgID, pat); err != nil {
-		slog.WarnContext(ctx, "credentials: SM-API mirror failed (legacy store still authoritative)",
-			"ocOrgId", ocOrgID, "error", err)
+		return fmt.Errorf("credentials: write PAT reference: %w", err)
 	}
+	return nil
 }
 
-// ResyncSecretRef re-pushes the org's GitHub PAT through the in-process
-// SecretRefWriter (local OpenBao repair). Returns (false, nil) when there is
-// nothing to push (no active PAT row, no triplet, missing cred-store value, or
-// writer disabled). ctx must carry an ouId claim (repair injects thunder_org_uuid).
+// ResyncSecretRef re-pushes the org's GitHub PAT under the github-pat
+// reference its row already names (local OpenBao repair): no new reference,
+// nothing repointed. Returns (false, nil) when there is nothing to push (no
+// active PAT row, no github-pat row, missing cred-store value, or writer
+// disabled). ctx must carry an ouId claim (repair injects thunder_org_uuid).
 //
 // Replaces the old PrepareSMAPISeed path that returned plaintext over HTTP.
 func (s *CredentialService) ResyncSecretRef(ctx context.Context, ocOrgID string) (bool, error) {
@@ -265,25 +266,18 @@ func (s *CredentialService) ResyncSecretRef(ctx context.Context, ocOrgID string)
 	if err != nil {
 		return false, fmt.Errorf("credentials resync: load row: %w", err)
 	}
-	if row == nil {
-		return false, nil
-	}
-	if row.Kind != "user-pat" || row.Status != "active" {
-		return false, nil
-	}
-	kvPath := row.SecretRefKVPath
-	prop := row.SecretRefProperty
-	if kvPath == nil || prop == nil || *kvPath == "" || *prop == "" {
+	if row == nil || row.Kind != "user-pat" || row.Status != "active" {
 		return false, nil
 	}
 	pat, err := s.store.Get(ctx, ocOrgID, "github/pat")
 	if err != nil || len(pat) == 0 {
 		return false, nil
 	}
-	if _, err := s.secretRefWriter.WriteGitHubPAT(ctx, ocOrgID, string(pat)); err != nil {
+	wrote, err := s.secretRefWriter.RestoreGitHubPAT(ctx, ocOrgID, string(pat))
+	if err != nil {
 		return false, fmt.Errorf("credentials resync: write: %w", err)
 	}
-	return true, nil
+	return wrote, nil
 }
 
 // connectApp runs inside Connect's transaction (the org advisory lock is

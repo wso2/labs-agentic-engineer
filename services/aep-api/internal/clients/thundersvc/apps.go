@@ -60,8 +60,6 @@ type OrgAppSpec struct {
 }
 
 // StudioAppName is the AE Studio client of an org.
-//
-//deadcode:keep wired by Task 1.13 (EnsureClient ensures the ae-studio-<org> app)
 func StudioAppName(orgHandle string) string {
 	return "ae-studio-" + orgHandle
 }
@@ -83,7 +81,6 @@ var errAppIDRejected = errors.New("thunder rejected the application id")
 // the org's app, and nothing heals it: an operator must look at who owns it.
 var ErrAppInForeignOU = errors.New("thunder application is registered under another organization unit")
 
-//deadcode:keep wired by Task 1.13 (EnsureClient creates the ae-studio-<org> app)
 func (c *client) EnsureOrgApp(ctx context.Context, spec OrgAppSpec) (OrgApp, error) {
 	if spec.Name == "" || spec.OUID == "" {
 		return OrgApp{}, fmt.Errorf("org app: name and OU required")
@@ -102,23 +99,6 @@ func (c *client) EnsureOrgApp(ctx context.Context, spec OrgAppSpec) (OrgApp, err
 	return c.createOrgApp(ctx, token, spec.Name, spec.OUID)
 }
 
-//deadcode:keep wired by Task 1.13 (EnsureClient checks the app before healing its secret)
-func (c *client) AppExists(ctx context.Context, spec OrgAppSpec) (string, error) {
-	if spec.Name == "" {
-		return "", fmt.Errorf("org app: name required")
-	}
-	token, err := c.getSystemToken(ctx)
-	if err != nil {
-		return "", fmt.Errorf("getSystemToken: %w", err)
-	}
-	id, err := c.findOrgApp(ctx, token, spec)
-	if err != nil {
-		return "", fmt.Errorf("find app %q: %w", spec.Name, err)
-	}
-	return id, nil
-}
-
-//deadcode:keep wired by Task 1.13 (EnsureClient heals a lost secret after the vault write)
 func (c *client) SetAppSecret(ctx context.Context, entityID, secret string) error {
 	if entityID == "" || secret == "" {
 		return fmt.Errorf("set app secret: entity id and secret required")

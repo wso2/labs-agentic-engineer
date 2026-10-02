@@ -46,8 +46,6 @@ var orgSecretKeys = map[OrgSecret][]string{
 }
 
 // OrgSecrets lists the six secrets in a fixed order.
-//
-//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
 func OrgSecrets() []OrgSecret {
 	return []OrgSecret{
 		OrgSecretGitHubPAT, OrgSecretGitHubWebhookSecret, OrgSecretDefaultKey,
@@ -57,8 +55,6 @@ func OrgSecrets() []OrgSecret {
 
 // Keys returns the data keys a write of s must carry, or nil for a name that
 // is not one of the six.
-//
-//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
 func (s OrgSecret) Keys() []string {
 	keys, ok := orgSecretKeys[s]
 	if !ok {
@@ -71,8 +67,6 @@ func (s OrgSecret) Keys() []string {
 // the token as password, because the OpenChoreo build checkout reads password
 // while tools and coding read token (one write, two properties of one value).
 // Every other secret stores data unchanged. data itself is never modified.
-//
-//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
 func (s OrgSecret) RefData(data map[string]string) map[string]string {
 	out := maps.Clone(data)
 	if s == OrgSecretGitHubPAT {

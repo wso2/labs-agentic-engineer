@@ -30,9 +30,12 @@ import (
 
 // OrgSecretVault is the part of secretmanagersvc.SecretManagementClient the
 // writer uses: every write is a new SecretReference, every delete names one.
+// CreateSecret, with location.RefName set, rewrites the value of that
+// existing reference; only Restore (a local repair) uses it.
 type OrgSecretVault interface {
 	CreateSecretRef(ctx context.Context, location secretmanagersvc.SecretLocation, data map[string]string) (string, error)
 	DeleteSecretRef(ctx context.Context, location secretmanagersvc.SecretLocation, name string) error
+	CreateSecret(ctx context.Context, location secretmanagersvc.SecretLocation, data map[string]string) (string, error)
 }
 
 // OrgSecretWriter writes and removes the org secrets. A write never edits a
@@ -55,8 +58,6 @@ type OrgSecretWriter struct {
 
 // NewOrgSecretWriter builds a writer over vault, repo and lock; now stamps
 // written_at.
-//
-//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
 func NewOrgSecretWriter(vault OrgSecretVault, repo OrgSecretRepository, lock OrgSecretLock, now func() time.Time) *OrgSecretWriter {
 	return &OrgSecretWriter{vault: vault, repo: repo, lock: lock, now: now}
 }
@@ -80,8 +81,6 @@ type OrgSecretWrite struct {
 // previous reference again (a later write was rolled back to it). A failed
 // delete is logged with the orphan's name and does not fail the write. Run
 // it after the caller's own transaction commits.
-//
-//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
 func (w OrgSecretWrite) Retire(ctx context.Context) {
 	if w.old == "" || w.old == w.Name {
 		return
@@ -109,12 +108,17 @@ func (w OrgSecretWrite) Retire(ctx context.Context) {
 // Order: new reference → conditional upsert of the row (it must still name
 // the reference read before the write) → repoint(newName). The previous
 // reference is the row's, else legacyOld (a pre-phase-1 deterministic
-// reference with no row). If the upsert or repoint fails (a concurrent
-// write is ErrOrgSecretConflict), the previous row is put back if the row
-// still names the new reference, the new reference is deleted and the error
-// returned. repoint may be nil when nothing consumes the secret yet.
+// reference with no row). repoint may be nil when nothing consumes the
+// secret yet.
 //
-//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
+// On failure the error is returned and the previous reference is never
+// touched. An upsert that definitely wrote nothing (ErrOrgSecretConflict: a
+// concurrent write won) deletes the new reference. After any other upsert
+// or repoint failure the previous row is put back while the row still names
+// the new reference, and the new reference is deleted only once the row has
+// moved off it; when that is uncertain (the restore conflicts or fails) the
+// new reference is kept and logged as an orphan, since a row may still name
+// it.
 func (w *OrgSecretWriter) Write(ctx context.Context, ocOrgID, ouID string, s OrgSecret, data map[string]string, legacyOld string, repoint func(newName string) error) (OrgSecretWrite, error) {
 	loc, err := orgSecretWriteLocation(ocOrgID, ouID, s, data)
 	if err != nil {
@@ -129,8 +133,6 @@ func (w *OrgSecretWriter) Write(ctx context.Context, ocOrgID, ouID string, s Org
 }
 
 // write is Write's sequence; the caller holds the secret's lock.
-//
-//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
 func (w *OrgSecretWriter) write(ctx context.Context, loc secretmanagersvc.SecretLocation, ocOrgID string, s OrgSecret, data map[string]string, legacyOld string, repoint func(newName string) error) (OrgSecretWrite, error) {
 	prev, err := w.repo.Get(ctx, ocOrgID, s)
 	if err != nil {
@@ -167,8 +169,6 @@ func (w *OrgSecretWriter) write(ctx context.Context, loc secretmanagersvc.Secret
 // WriteAndRetire is Write followed by Retire under the same lock, for a
 // caller with no transaction of its own to commit first. It returns the new
 // name.
-//
-//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
 func (w *OrgSecretWriter) WriteAndRetire(ctx context.Context, ocOrgID, ouID string, s OrgSecret, data map[string]string, legacyOld string, repoint func(newName string) error) (string, error) {
 	loc, err := orgSecretWriteLocation(ocOrgID, ouID, s, data)
 	if err != nil {
@@ -187,14 +187,78 @@ func (w *OrgSecretWriter) WriteAndRetire(ctx context.Context, ocOrgID, ouID stri
 	return written.Name, nil
 }
 
+// WriteIfUnset stores data as secret s only when s has no row yet, under
+// the secret's lock, and reports whether it wrote. A secret that is set is
+// left alone, so a value meant to be generated once (the webhook secret) is
+// never replaced by a concurrent or later first write.
+func (w *OrgSecretWriter) WriteIfUnset(ctx context.Context, ocOrgID, ouID string, s OrgSecret, data map[string]string) (bool, error) {
+	loc, err := orgSecretWriteLocation(ocOrgID, ouID, s, data)
+	if err != nil {
+		return false, err
+	}
+	unlock, err := w.lock.Lock(ctx, ocOrgID, s)
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
+	prev, err := w.repo.Get(ctx, ocOrgID, s)
+	if err != nil {
+		return false, fmt.Errorf("org secret %s: read row: %w", s, err)
+	}
+	if prev != nil {
+		return false, nil
+	}
+	if _, err := w.write(ctx, loc, ocOrgID, s, data, "", nil); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// Ref returns the reference row of s, or nil when s is unset.
+func (w *OrgSecretWriter) Ref(ctx context.Context, ocOrgID string, s OrgSecret) (*OrgSecretRef, error) {
+	return w.repo.Get(ctx, ocOrgID, s)
+}
+
+// Restore rewrites data under the reference the row of s already names,
+// for a local repair after the vault lost its values: no new reference, no
+// row change, nothing for a consumer to repoint. It reports false when s is
+// unset. Only the OpenBao-direct install keeps the name on this write; a
+// provider that manages references (Cloud) is not repaired this way.
+func (w *OrgSecretWriter) Restore(ctx context.Context, ocOrgID, ouID string, s OrgSecret, data map[string]string) (bool, error) {
+	loc, err := orgSecretWriteLocation(ocOrgID, ouID, s, data)
+	if err != nil {
+		return false, err
+	}
+	unlock, err := w.lock.Lock(ctx, ocOrgID, s)
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
+	row, err := w.repo.Get(ctx, ocOrgID, s)
+	if err != nil {
+		return false, fmt.Errorf("org secret %s: read row: %w", s, err)
+	}
+	if row == nil {
+		return false, nil
+	}
+	loc.RefName = row.Name
+	name, err := w.vault.CreateSecret(ctx, loc, s.RefData(data))
+	if err != nil {
+		return false, fmt.Errorf("org secret %s: restore: %w", s, err)
+	}
+	if name != row.Name {
+		return false, fmt.Errorf("org secret %s: restore landed under %s, not the stored reference %s", s, name, row.Name)
+	}
+	slog.InfoContext(ctx, "orgsecret.restored", "secret", string(s), "name", row.Name)
+	return true, nil
+}
+
 // undo rolls a write back after its row may name the new reference. The
 // previous row is put back only while the row names the new reference. The
 // new reference is deleted only once the row has been moved off it; if the
 // restore conflicts (the row names something else, so whether anything
 // still reads the new reference is unknown) or fails, it is kept and named
 // in the log. cause is returned, joined with any failure of the rollback.
-//
-//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
 func (w *OrgSecretWriter) undo(ctx context.Context, loc secretmanagersvc.SecretLocation, ocOrgID string, s OrgSecret, prev *OrgSecretRef, name, oldName string, cause error) error {
 	moved, err := w.restoreRow(ctx, ocOrgID, s, prev, name)
 	if err != nil {
@@ -212,8 +276,6 @@ func (w *OrgSecretWriter) undo(ctx context.Context, loc secretmanagersvc.SecretL
 
 // deleteNew deletes a rolled-back write's new reference, unless it is the
 // previous one. cause is returned, joined with a failed delete.
-//
-//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
 func (w *OrgSecretWriter) deleteNew(ctx context.Context, loc secretmanagersvc.SecretLocation, s OrgSecret, name, oldName string, cause error) error {
 	if name == oldName {
 		return cause
@@ -228,8 +290,6 @@ func (w *OrgSecretWriter) deleteNew(ctx context.Context, loc secretmanagersvc.Se
 // restoreRow puts prev back (or removes the row when there was none) only
 // while the row names name, and reports whether it moved the row off name.
 // A row naming anything else is left alone (moved = false, no error).
-//
-//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
 func (w *OrgSecretWriter) restoreRow(ctx context.Context, ocOrgID string, s OrgSecret, prev *OrgSecretRef, name string) (bool, error) {
 	var err error
 	if prev != nil {
@@ -249,8 +309,6 @@ func (w *OrgSecretWriter) restoreRow(ctx context.Context, ocOrgID string, s OrgS
 // returns the error; a failed reference delete is logged with the orphan's
 // name and does not fail the removal. An unset secret is a no-op. repoint
 // may be nil when nothing consumes the secret.
-//
-//deadcode:keep wired by Task 1.14 (the agents card removes the model keys)
 func (w *OrgSecretWriter) Remove(ctx context.Context, ocOrgID, ouID string, s OrgSecret, repoint func() error) error {
 	loc, err := orgSecretLocation(ocOrgID, ouID, s)
 	if err != nil {
@@ -291,8 +349,6 @@ func (w *OrgSecretWriter) Remove(ctx context.Context, ocOrgID, ouID string, s Or
 // orgSecretLocation addresses secret s of the org: the reference lives in
 // the org's OpenChoreo namespace (its name prefix) and the value under the
 // OU's vault path.
-//
-//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
 func orgSecretLocation(ocOrgID, ouID string, s OrgSecret) (secretmanagersvc.SecretLocation, error) {
 	if s.Keys() == nil {
 		return secretmanagersvc.SecretLocation{}, fmt.Errorf("unknown org secret %q", s)
@@ -304,8 +360,6 @@ func orgSecretLocation(ocOrgID, ouID string, s OrgSecret) (secretmanagersvc.Secr
 }
 
 // orgSecretWriteLocation validates a write of data as s and addresses it.
-//
-//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
 func orgSecretWriteLocation(ocOrgID, ouID string, s OrgSecret, data map[string]string) (secretmanagersvc.SecretLocation, error) {
 	if err := validateOrgSecretData(s, data); err != nil {
 		return secretmanagersvc.SecretLocation{}, err
@@ -314,8 +368,6 @@ func orgSecretWriteLocation(ocOrgID, ouID string, s OrgSecret, data map[string]s
 }
 
 // validateOrgSecretData requires exactly s's keys, each with a value.
-//
-//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
 func validateOrgSecretData(s OrgSecret, data map[string]string) error {
 	want := s.Keys()
 	if want == nil {

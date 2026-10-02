@@ -97,6 +97,16 @@ func (v *fakeVault) DeleteSecretRef(_ context.Context, loc secretmanagersvc.Secr
 	return nil
 }
 
+// CreateSecret rewrites the value under loc.RefName (Restore's path).
+func (v *fakeVault) CreateSecret(_ context.Context, loc secretmanagersvc.SecretLocation, data map[string]string) (string, error) {
+	if v.createErr != nil {
+		return "", v.createErr
+	}
+	v.lastLoc, v.lastData = loc, maps.Clone(data)
+	v.refs[loc.RefName] = true
+	return loc.RefName, nil
+}
+
 func (v *fakeVault) live() []string {
 	return slices.Sorted(maps.Keys(v.refs))
 }
@@ -691,5 +701,60 @@ func TestWriter_RemoveFailedReferenceDeleteStillUnsets(t *testing.T) {
 	}
 	if len(repo.rows) != 0 {
 		t.Fatalf("rows=%v, want the secret unset", repo.rows)
+	}
+}
+
+func TestWriter_WriteIfUnsetWritesOnlyTheFirstTime(t *testing.T) {
+	v, repo := newFakeVault(), newFakeRepo()
+	w := newWriter(v, repo)
+	secret := map[string]string{"secret": "s1"}
+	wrote, err := w.WriteIfUnset(ctx, "default", "ou-1", organization.OrgSecretGitHubWebhookSecret, secret)
+	if err != nil || !wrote {
+		t.Fatalf("first write: wrote=%v err=%v", wrote, err)
+	}
+	first := repo.name("default", organization.OrgSecretGitHubWebhookSecret)
+	wrote, err = w.WriteIfUnset(ctx, "default", "ou-1", organization.OrgSecretGitHubWebhookSecret, map[string]string{"secret": "s2"})
+	if err != nil || wrote {
+		t.Fatalf("second write: wrote=%v err=%v", wrote, err)
+	}
+	if v.creates != 1 || repo.name("default", organization.OrgSecretGitHubWebhookSecret) != first || v.deleted != nil {
+		t.Fatalf("a set secret is kept: creates=%d row=%q deleted=%v", v.creates, repo.name("default", organization.OrgSecretGitHubWebhookSecret), v.deleted)
+	}
+}
+
+func TestWriter_ConcurrentWriteIfUnsetWritesOnce(t *testing.T) {
+	v, repo := newFakeVault(), newFakeRepo()
+	w := newWriter(v, repo)
+	var wg sync.WaitGroup
+	results := make([]bool, 2)
+	for i := range results {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i], _ = w.WriteIfUnset(ctx, "default", "ou-1", organization.OrgSecretGitHubWebhookSecret, map[string]string{"secret": fmt.Sprint(i)})
+		}()
+	}
+	wg.Wait()
+	if results[0] == results[1] || v.creates != 1 {
+		t.Fatalf("exactly one first write: results=%v creates=%d", results, v.creates)
+	}
+}
+
+func TestWriter_RestoreRewritesUnderTheStoredName(t *testing.T) {
+	v, repo := newFakeVault("default-github-pat-00000001"), newFakeRepo()
+	w := newWriter(v, repo)
+	if wrote, err := w.Restore(ctx, "default", "ou-1", organization.OrgSecretGitHubPAT, pat); err != nil || wrote {
+		t.Fatalf("unset secret: wrote=%v err=%v", wrote, err)
+	}
+	repo.set("default", organization.OrgSecretGitHubPAT, "default-github-pat-00000001")
+	wrote, err := w.Restore(ctx, "default", "ou-1", organization.OrgSecretGitHubPAT, pat)
+	if err != nil || !wrote {
+		t.Fatalf("restore: wrote=%v err=%v", wrote, err)
+	}
+	if v.creates != 0 || v.lastLoc.RefName != "default-github-pat-00000001" || v.lastData["password"] != "t" {
+		t.Fatalf("no new reference; the stored one rewritten with both keys: creates=%d loc=%+v", v.creates, v.lastLoc)
+	}
+	if repo.name("default", organization.OrgSecretGitHubPAT) != "default-github-pat-00000001" {
+		t.Fatal("the row is unchanged")
 	}
 }

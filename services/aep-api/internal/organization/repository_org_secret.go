@@ -58,8 +58,6 @@ type orgSecretRepository struct {
 }
 
 // NewOrgSecretRepository constructs the gorm-backed OrgSecretRepository.
-//
-//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
 func NewOrgSecretRepository(db *gorm.DB) OrgSecretRepository {
 	return &orgSecretRepository{db: db}
 }
@@ -71,12 +69,10 @@ type orgSecretRefRow struct {
 	WrittenAt     *time.Time
 }
 
-//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
 func (r orgSecretRefRow) ref() OrgSecretRef {
 	return OrgSecretRef{Secret: OrgSecret(r.Key), Name: r.SecretRefName, WrittenAt: r.WrittenAt}
 }
 
-//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
 func (r *orgSecretRepository) Get(ctx context.Context, ocOrgID string, s OrgSecret) (*OrgSecretRef, error) {
 	var row orgSecretRefRow
 	err := r.db.WithContext(ctx).Table("org_secrets").
@@ -110,7 +106,6 @@ func (r *orgSecretRepository) List(ctx context.Context, ocOrgID string) ([]OrgSe
 	return refs, nil
 }
 
-//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
 func (r *orgSecretRepository) Upsert(ctx context.Context, ocOrgID string, ref OrgSecretRef, expectPrev string) error {
 	if ref.Name == "" {
 		return fmt.Errorf("org secret %s: reference name is required", ref.Secret)
@@ -138,7 +133,6 @@ func (r *orgSecretRepository) Upsert(ctx context.Context, ocOrgID string, ref Or
 	return nil
 }
 
-//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
 func (r *orgSecretRepository) Delete(ctx context.Context, ocOrgID string, s OrgSecret, name string) error {
 	if name == "" {
 		return fmt.Errorf("org secret %s: reference name is required", s)
@@ -158,6 +152,12 @@ func (r *orgSecretRepository) Delete(ctx context.Context, ocOrgID string, s OrgS
 // OrgSecretLock serializes the writes of one org secret, so a write's whole
 // sequence (read row → new reference → row → repoint → retire) never
 // interleaves with another write or removal of the same (org, secret).
+//
+// Lock order: a caller that holds a lock of its own (the org credential
+// lock Connect takes, a card's transaction lock) takes the org-secret lock
+// only after it, never before. A repoint runs while the lock is held, so it
+// must not take the org-secret lock itself, nor any lock that a caller
+// writing the same secret could hold while waiting here.
 type OrgSecretLock interface {
 	// Lock blocks until the lock of (ocOrgID, s) is held or ctx is done, and
 	// returns the release. The release is safe to call once, from a defer.
@@ -169,36 +169,49 @@ type orgSecretLock struct {
 }
 
 // NewOrgSecretLock returns the Postgres advisory-lock OrgSecretLock.
-//
-//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
 func NewOrgSecretLock(db *gorm.DB) OrgSecretLock {
 	return &orgSecretLock{db: db}
 }
 
 // orgSecretLockKey names the advisory lock of one org secret. A hash
 // collision with another key only serializes two unrelated writes.
-//
-//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
 func orgSecretLockKey(ocOrgID string, s OrgSecret) string {
 	return "org_secret:" + ocOrgID + "/" + string(s)
 }
 
-// Lock holds pg_advisory_xact_lock in a transaction pinned to one pooled
+// Lock holds pg_advisory_xact_lock in a transaction on one pooled
 // connection; releasing rolls the transaction back, which drops the lock
-// (as does the server if the connection dies). The transaction ignores ctx
-// cancellation once the lock is held, so a cancelled request cannot drop
-// the lock while its write is still running; only the wait is bounded by
-// ctx.
+// (as does the server if the connection dies), and returns the connection
+// to the pool.
 //
-//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
+// Only the wait is bounded by ctx: taking the connection from the pool and
+// waiting for the lock. The transaction ignores ctx cancellation once the
+// lock is held, so a cancelled request cannot drop the lock while its write
+// is still running. A server-side idle_in_transaction_session_timeout would
+// still end the transaction, and with it the lock, in the middle of a long
+// write: the connection sits idle in a transaction during the vault and
+// repoint calls. The compare-and-swap rows are the backstop for that case.
 func (l *orgSecretLock) Lock(ctx context.Context, ocOrgID string, s OrgSecret) (func(), error) {
-	tx := l.db.WithContext(context.WithoutCancel(ctx)).Begin()
-	if tx.Error != nil {
-		return nil, fmt.Errorf("org secret %s: lock: %w", s, tx.Error)
-	}
-	if err := tx.WithContext(ctx).Exec(`SELECT pg_advisory_xact_lock(hashtextextended(?, 0))`, orgSecretLockKey(ocOrgID, s)).Error; err != nil {
-		tx.Rollback()
+	sqlDB, err := l.db.DB()
+	if err != nil {
 		return nil, fmt.Errorf("org secret %s: lock: %w", s, err)
 	}
-	return func() { tx.Rollback() }, nil
+	conn, err := sqlDB.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("org secret %s: lock: %w", s, err)
+	}
+	tx, err := conn.BeginTx(context.WithoutCancel(ctx), nil)
+	if err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("org secret %s: lock: %w", s, err)
+	}
+	release := func() {
+		_ = tx.Rollback()
+		_ = conn.Close()
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, orgSecretLockKey(ocOrgID, s)); err != nil {
+		release()
+		return nil, fmt.Errorf("org secret %s: lock: %w", s, err)
+	}
+	return release, nil
 }
