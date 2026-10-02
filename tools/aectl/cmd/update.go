@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/wso2/aep/aectl/internal/config"
 	"github.com/wso2/aep/aectl/internal/ui"
 )
 
@@ -122,6 +123,15 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 // buildUpdateArgs assembles the `helm upgrade` argv from the update flags and
 // aectl config.
 func buildUpdateArgs() ([]string, error) {
+	// The AE Studio values are derived from aectl config. With the config
+	// ConfigMap absent or partial they would be derived from defaults (plain
+	// http, empty Thunder namespace in the egress rule) and --reuse-values
+	// would write those over a working install, so fail instead.
+	if errs := config.ValidateLoaded(); len(errs) > 0 {
+		return nil, fmt.Errorf("aectl config is missing or invalid, refusing to derive aeStudio.* values from it "+
+			"(run 'aectl platform config import --config <file>' first): %s", strings.Join(errs, "; "))
+	}
+
 	overrides := []serviceImageOverride{
 		{"aepApi", updateAepApiImage},
 		{"aepAgents", updateAgentsImage},

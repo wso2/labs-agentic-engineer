@@ -177,26 +177,38 @@ func TestSecretOptional(t *testing.T) {
 	}
 }
 
-// `platform update` (and so `make dev-update`) must carry every pair install
-// derives, or an install that predates them never converges (checkpoint red-B-1).
-func TestBuildUpdateArgs_CarriesAEStudioValues(t *testing.T) {
+// setValidUpdateConfig loads a config that passes config.ValidateLoaded and
+// restores every update global and viper on cleanup.
+func setValidUpdateConfig(t *testing.T) {
+	t.Helper()
 	t.Cleanup(viper.Reset)
+	prevNS, prevSets, prevReset, prevChart := updateNamespace, updateHelmSets, updateResetValues, updatePlatformChart
+	t.Cleanup(func() {
+		updateNamespace, updateHelmSets, updateResetValues, updatePlatformChart = prevNS, prevSets, prevReset, prevChart
+	})
+	updateNamespace, updateHelmSets, updateResetValues, updatePlatformChart = "wso2-aep", nil, false, ""
 	viper.Set("gateway.hostname", "openchoreoapis.localhost")
 	viper.Set("thunder.public_url", "http://thunder.openchoreo.localhost:8080")
 	viper.Set("thunder.url", "http://thunder-service.thunder.svc.cluster.local:8090")
 	viper.Set("thunder.namespace", "wso2-thunder")
-	prevNS := updateNamespace
-	updateNamespace = "wso2-aep"
-	t.Cleanup(func() { updateNamespace = prevNS })
+	viper.Set("thunder.admin_client_id", "admin")
+	viper.Set("oc.api_url", "http://api.openchoreo.localhost:8080")
+	viper.Set("oc.system_namespace", "openchoreo-control-plane")
+}
+
+// `platform update` (and so `make dev-update`) must carry every pair install
+// derives, or an install that predates them never converges (checkpoint red-B-1).
+func TestBuildUpdateArgs_CarriesAEStudioValues(t *testing.T) {
+	setValidUpdateConfig(t)
 
 	got, err := buildUpdateArgs()
 	if err != nil {
 		t.Fatal(err)
 	}
-	joined := strings.Join(got, "\\x00")
+	joined := strings.Join(got, "\x00")
 	want := aeStudioOverrides("wso2-aep")
 	for i := 0; i+1 < len(want); i += 2 {
-		if !strings.Contains(joined, want[i]+"\\x00"+want[i+1]) {
+		if !strings.Contains(joined, want[i]+"\x00"+want[i+1]) {
 			t.Errorf("update args lack %s %s", want[i], want[i+1])
 		}
 	}
@@ -207,6 +219,42 @@ func TestBuildUpdateArgs_CarriesAEStudioValues(t *testing.T) {
 	}
 	if !strings.Contains(joined, "--reuse-values") {
 		t.Error("update must keep --reuse-values")
+	}
+}
+
+// Missing or partial aectl config must fail loudly, not derive http/empty
+// values that --reuse-values would write over a working install.
+func TestBuildUpdateArgs_RejectsMissingConfig(t *testing.T) {
+	setValidUpdateConfig(t)
+	viper.Reset()
+	if _, err := buildUpdateArgs(); err == nil || !strings.Contains(err.Error(), "thunder.namespace") {
+		t.Fatalf("empty config: want error naming thunder.namespace, got %v", err)
+	}
+	viper.Set("thunder.url", "http://thunder:8090")
+	if _, err := buildUpdateArgs(); err == nil || !strings.Contains(err.Error(), "thunder.namespace") {
+		t.Fatalf("partial config: want error naming thunder.namespace, got %v", err)
+	}
+}
+
+// aeStudioOverrides precede the user's --set, so an explicit override wins.
+func TestBuildUpdateArgs_UserSetOverridesAEStudio(t *testing.T) {
+	setValidUpdateConfig(t)
+	updateHelmSets = []string{"aeStudio.gatewayHost=custom.example.com"}
+	got, err := buildUpdateArgs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	derived, user := -1, -1
+	for i, a := range got {
+		switch a {
+		case "aeStudio.gatewayHost=openchoreoapis.localhost":
+			derived = i
+		case "aeStudio.gatewayHost=custom.example.com":
+			user = i
+		}
+	}
+	if derived < 0 || user < 0 || derived > user {
+		t.Fatalf("want derived before user --set, got derived=%d user=%d: %v", derived, user, got)
 	}
 }
 
