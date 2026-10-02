@@ -20,6 +20,17 @@
 // authority: room access (validate-collab-access) and spec content (the
 // Files API, #114). Git, credentials, and tenancy all stay its monopoly.
 
+// Shared with the FilesClient that replaces this client (Task 2.12 deletes
+// this file): one ApplyConflictError class, so the committer's doc-wins retry
+// recognises a conflict from either.
+import {
+  ApplyConflictError,
+  SPECS_PREFIX,
+  type ApplyDelete,
+  type ApplyWrite,
+  type SpecFile,
+} from "./files-client.js";
+
 export interface CollabIdentity {
   name: string;
   email: string;
@@ -30,50 +41,11 @@ export interface CollabIdentity {
   projectName: string;
 }
 
-/**
- * One spec file ready for seeding. `path` is the FULL repo-relative path
- * (e.g. specs/requirements/prd.md). Doc keys, commits, the console's file
- * model, and the agents' live-peer writes all share this ONE verbatim scheme
- * — no strip/re-add anywhere. (Retires #113 decision 2's stripped room-key
- * scheme, whose only rationale was matching a historical unprefixed console
- * model; the strip-here/re-add-on-commit dance double-prefixed agent-created
- * files into specs/specs/…, so it's gone.)
- */
-export interface SpecFile {
-  path: string;
-  content: string;
-  /** Git blob sha at read time — the committer's baseSha precondition (#133). */
-  sha: string;
-}
-
-/** The Files API is scoped under specs/; the spec room seeds only these. */
-export const SPECS_PREFIX = "specs/";
-
-/** One write in a commit batch: full repo path + full content + baseSha. */
-export interface ApplyWrite {
-  path: string;
-  content: string;
-  /** Blob sha this write supersedes; "" = the file must not exist yet. */
-  baseSha: string;
-}
-
-export interface ApplyDelete {
-  path: string;
-  baseSha: string;
-}
-
+/** The legacy BFF's apply result (the FilesClient's adds `warnings`). */
 export interface ApplyOutcome {
   /** New per-file shas on success (full repo paths). */
   files: { path: string; sha: string }[];
   commitSha: string;
-}
-
-/** A stale-baseSha rejection: nothing was applied (#133 doc-wins retry). */
-export class ApplyConflictError extends Error {
-  constructor(readonly paths: string[]) {
-    super(`apply conflict on: ${paths.join(", ")}`);
-    this.name = "ApplyConflictError";
-  }
 }
 
 /** Apply rejected for auth — the committer may pull a fresh token and retry once (D6). */

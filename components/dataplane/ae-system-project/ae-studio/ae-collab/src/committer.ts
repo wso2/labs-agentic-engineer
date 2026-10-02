@@ -31,13 +31,12 @@ import {
   snapshotDoc,
 } from "@aep/collab-doc";
 import { isReferenceDocPath } from "./seed.js";
+import { ApplyAuthError, type BffClient } from "./bff.js";
 import {
-  ApplyAuthError,
   ApplyConflictError,
   type ApplyDelete,
   type ApplyWrite,
-  type BffClient,
-} from "./bff.js";
+} from "./files-client.js";
 import { roomState, type RoomState } from "./rooms.js";
 import type { CollabContext } from "./server.js";
 

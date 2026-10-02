@@ -18,11 +18,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {
-  ApplyAuthError,
-  ApplyConflictError,
-  createBffClient,
-} from "./bff.js";
+import { ApplyAuthError, createBffClient } from "./bff.js";
+import { ApplyConflictError } from "./files-client.js";
 
 test("applyFiles throws ApplyAuthError on 401", async () => {
   const bff = createBffClient("http://bff", async () =>

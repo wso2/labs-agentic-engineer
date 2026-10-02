@@ -18,7 +18,7 @@
 
 import * as Y from "yjs";
 import { filesMap, isMarkdownPath, markdownToFragment } from "@aep/collab-doc";
-import type { SpecFile } from "./bff.js";
+import type { SpecFile } from "./files-client.js";
 
 // Doc model (#86 decision 2 + phase 6): one Y.Doc per project — the model
 // itself (Y.Map('files') + md fragments) lives in @aep/collab-doc, shared

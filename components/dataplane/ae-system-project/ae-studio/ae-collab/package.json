@@ -17,6 +17,7 @@
     "@aep/collab-doc": "workspace:*",
     "@aep/platform-idp-auth": "workspace:*",
     "@hocuspocus/server": "^4.3.0",
+    "undici": "^7.29.1",
     "yjs": "^13.6.31"
   },
   "devDependencies": {

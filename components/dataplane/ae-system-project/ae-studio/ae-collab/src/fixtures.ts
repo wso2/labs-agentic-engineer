@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { type SpecFile } from "./bff.js";
+import { type SpecFile } from "./files-client.js";
 
 // Dev-mode seed content. Mirrors the console mock layer's demo-shop project
 // (apps/console/src/mocks/fixtures/project.ts) so `make dev` shows the same

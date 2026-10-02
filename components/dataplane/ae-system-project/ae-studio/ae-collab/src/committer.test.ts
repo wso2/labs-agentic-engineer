@@ -28,13 +28,8 @@ import {
   ensureRoomState,
   roomState,
 } from "./rooms.js";
-import {
-  ApplyAuthError,
-  ApplyConflictError,
-  type ApplyOutcome,
-  type BffClient,
-  type SpecFile,
-} from "./bff.js";
+import { ApplyAuthError, type ApplyOutcome, type BffClient } from "./bff.js";
+import { ApplyConflictError, type SpecFile } from "./files-client.js";
 import type { CollabContext } from "./server.js";
 
 const ROOM = "spec-acme-shop";

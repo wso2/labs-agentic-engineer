@@ -53,7 +53,8 @@ import WebSocket from "ws";
 import { fragmentToMarkdown } from "@aep/collab-doc";
 import { createCollabServer } from "./server.js";
 import { dropRoomState, roomState } from "./rooms.js";
-import type { ApplyWrite, BffClient } from "./bff.js";
+import type { BffClient } from "./bff.js";
+import type { ApplyWrite } from "./files-client.js";
 import type { CollabConfig } from "./env.js";
 
 const ROOM = "spec-acme-shop";
