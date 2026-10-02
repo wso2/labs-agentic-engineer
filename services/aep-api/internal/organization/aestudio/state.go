@@ -41,7 +41,9 @@ const templateHashAnnotation = "aep.wso2.com/ae-studio-template-hash"
 
 // live is what is installed for an org. A nil object is not installed.
 type live struct {
-	env      string
+	env string
+	// prb is whether the ProjectReleaseBinding (the cell namespace) exists.
+	prb      bool
 	rt       *openchoreo.ResourceType
 	resource *openchoreo.Resource
 	binding  *openchoreo.ResourceReleaseBinding
@@ -50,11 +52,12 @@ type live struct {
 // errProjectMissing is the Project ae-system not existing yet.
 var errProjectMissing = errors.New("project " + ProjectName + " does not exist")
 
-// Status answers GET /ae-studio for org. It reads through the caller's
-// OpenChoreo clients, starts a converge on drift and never waits for one.
+// Status answers GET /ae-studio for org. It reads through the same clients
+// as the converge (aep-api's own identity where configured), starts a
+// converge on drift and never waits for one.
 // An error is a failure to read, not a state.
 func (s *Service) Status(ctx context.Context, org string) (Status, error) {
-	d, err := s.desired(ctx, s.statusOC, org)
+	d, err := s.desired(ctx, org)
 	var nr *notReadyError
 	if errors.As(err, &nr) {
 		return Status{State: nr.state}, nil
@@ -69,11 +72,15 @@ func (s *Service) Status(ctx context.Context, org string) (Status, error) {
 	if s.recentlyFailed(org, d.fingerprint()) {
 		return Status{State: StateFailed}, nil
 	}
-	l, err := s.observe(ctx, s.statusOC, org)
+	l, err := s.observe(ctx, s.oc, org)
 	var noTarget *openchoreo.ErrNoWriteTarget
 	switch {
 	case errors.As(err, &noTarget):
-		slog.WarnContext(ctx, "ae_studio.status_failed", "org", org, "reason", "no write target", "error", err)
+		level := slog.LevelDebug
+		if s.firstStatusFailure(org, d.fingerprint()) {
+			level = slog.LevelWarn
+		}
+		slog.Log(ctx, level, "ae_studio.status_failed", "org", org, "reason", "no write target", "error", err)
 		return Status{State: StateFailed}, nil
 	case errors.Is(err, errProjectMissing):
 		s.Trigger(ctx, org)
@@ -107,6 +114,13 @@ func (s *Service) observe(ctx context.Context, oc OC, org string) (live, error) 
 		return l, fmt.Errorf("resolve write target: %w", err)
 	}
 	l.env = env
+	_, err = oc.Cells.ProjectReleaseBindingReadiness(ctx, org, ProjectName, env)
+	switch {
+	case err == nil:
+		l.prb = true
+	case !errors.Is(err, openchoreo.ErrNotFound):
+		return l, err
+	}
 	if l.rt, err = oc.Resources.GetResourceType(ctx, org, ResourceName); errors.Is(err, openchoreo.ErrNotFound) {
 		l.rt = nil
 	} else if err != nil {
@@ -126,6 +140,8 @@ func (s *Service) observe(ctx context.Context, oc OC, org string) (live, error) 
 // drift names the first way live differs from d, "" when it does not.
 func drift(d desiredState, l live) string {
 	switch {
+	case !l.prb:
+		return "project-binding"
 	case rtDrifted(l.rt):
 		return "resourcetype"
 	case resourceDrifted(d, l.resource):

@@ -82,6 +82,7 @@ type OC struct {
 	}
 	Cells interface {
 		EnsureProjectReleaseBinding(ctx context.Context, namespace, project, environment string) error
+		ProjectReleaseBindingReadiness(ctx context.Context, namespace, project, environment string) (openchoreo.Readiness, error)
 	}
 	Targets interface {
 		Resolve(ctx context.Context, org, project string) (string, error)
@@ -92,8 +93,8 @@ type OC struct {
 	}
 }
 
-// Deps is what the Service reads the desired state from, and the two
-// OpenChoreo client sets it reaches OpenChoreo through.
+// Deps is what the Service reads the desired state from, and the
+// OpenChoreo clients it reaches OpenChoreo through.
 type Deps struct {
 	Config     config.AEStudioConfig
 	OrgSecrets interface {
@@ -111,13 +112,12 @@ type Deps struct {
 	GitHub interface {
 		Status(ctx context.Context, ocOrgID string) (*organization.Projection, error)
 	}
-	// StatusOC reads the live state for Status, as the caller: on an install
-	// with a user-JWT pass-through, the caller's JWT authorizes the read.
-	StatusOC OC
-	// ConvergeOC is every read and write of a converge, as aep-api's own
-	// identity (M2M + X-Impersonate-Org) wherever one is configured; it never
-	// passes the caller's JWT through.
-	ConvergeOC OC
+	// OC is every OpenChoreo read and write, Status's and the converge's
+	// alike, as aep-api's own identity (M2M + X-Impersonate-Org) wherever
+	// one is configured: it never passes the caller's JWT through. The
+	// org-membership gate in front of GET /ae-studio is the only check on
+	// the caller.
+	OC OC
 }
 
 // Service installs and converges each org's AE Studio (ticket 08 §9, §10).
@@ -128,8 +128,7 @@ type Service struct {
 	profiles    interface{ GetProfileByOrgID(context.Context, string) (*organization.OrganizationIDPProfile, error) }
 	connections interface{ Connection(context.Context, string) (modelconn.Connection, bool, error) }
 	github      interface{ Status(context.Context, string) (*organization.Projection, error) }
-	statusOC    OC
-	convergeOC  OC
+	oc          OC
 	now         func() time.Time
 
 	notConfiguredOnce sync.Once
@@ -141,11 +140,15 @@ type Service struct {
 	flights map[string]*flight
 	// failures are the orgs whose last converge failed.
 	failures map[string]failure
+	// statusFailures is, per org, the desired state Status last logged a
+	// failed answer for, so a polling console logs it once.
+	statusFailures map[string]string
 }
 
 type flight struct{ again bool }
 
-// failure is a failed converge: when, and the desired state it was given.
+// failure is a failed converge: when, and the desired state it was given
+// ("" when the converge failed before it could compute one).
 type failure struct {
 	at          time.Time
 	fingerprint string
@@ -156,8 +159,8 @@ func New(d Deps) *Service {
 	return &Service{
 		cfg: d.Config, orgSecrets: d.OrgSecrets, orgs: d.Orgs, profiles: d.Profiles,
 		connections: d.Connections, github: d.GitHub,
-		statusOC: d.StatusOC, convergeOC: d.ConvergeOC, now: time.Now,
-		flights: map[string]*flight{}, failures: map[string]failure{},
+		oc: d.OC, now: time.Now,
+		flights: map[string]*flight{}, failures: map[string]failure{}, statusFailures: map[string]string{},
 	}
 }
 
@@ -212,10 +215,24 @@ func (s *Service) busy(org string) bool {
 }
 
 // recentlyFailed reports whether org's last converge failed within the
-// back-off on the same desired state.
+// back-off on the same desired state. A converge that failed before it had
+// a desired state (its own read of it failed) matches any: Status, reading
+// as another identity, may compute one the converge could not.
 func (s *Service) recentlyFailed(org, fingerprint string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	f, ok := s.failures[org]
-	return ok && f.fingerprint == fingerprint && s.now().Sub(f.at) < failureBackoff
+	return ok && (f.fingerprint == "" || f.fingerprint == fingerprint) && s.now().Sub(f.at) < failureBackoff
+}
+
+// firstStatusFailure reports whether this is the first failed answer Status
+// gives org for this desired state, and records it.
+func (s *Service) firstStatusFailure(org, fingerprint string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.statusFailures[org] == fingerprint {
+		return false
+	}
+	s.statusFailures[org] = fingerprint
+	return true
 }

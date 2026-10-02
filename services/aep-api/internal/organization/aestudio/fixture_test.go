@@ -73,13 +73,14 @@ type fakeOC struct {
 	rrb         *openchoreo.ResourceReleaseBinding
 	readyOnBind bool
 	refs        map[string]*secretmanagersvc.SecretReference
+	// convergeRefErr fails the reference reads a converge makes (its
+	// context is marked as aep-api's own), not Status's.
+	convergeRefErr error
+	convergeReads  int
 }
 
-func (o *fakeOC) log(view ocView, c context.Context, call string, write bool) {
+func (o *fakeOC) log(c context.Context, call string, write bool) {
 	o.calls = append(o.calls, call)
-	if write && !view.converge {
-		o.violations = append(o.violations, "status client wrote: "+call)
-	}
 	if write && !auth.IsServiceIdentity(c) {
 		o.violations = append(o.violations, "write not as aep-api's own identity: "+call)
 	}
@@ -187,12 +188,10 @@ func clone[T any](v *T) *T {
 	return out
 }
 
-// ocView is one client set over the fake: the status clients (reads only)
-// or the converge clients.
+// ocView is the Service's client set over the fake.
 type ocView struct {
 	openchoreo.ResourceClient // unused methods: a call panics
 	o                         *fakeOC
-	converge                  bool
 }
 
 func (v ocView) do(c context.Context, call string, write bool, fn func() error) error {
@@ -201,7 +200,7 @@ func (v ocView) do(c context.Context, call string, write bool, fn func() error) 
 	}
 	v.o.mu.Lock()
 	defer v.o.mu.Unlock()
-	v.o.log(v, c, call, write)
+	v.o.log(c, call, write)
 	return fn()
 }
 
@@ -259,6 +258,16 @@ func (v ocView) EnsureProjectReleaseBinding(c context.Context, _, project, env s
 		return v.do(c, "GET prb "+project+"-"+env, false, func() error { return nil })
 	}
 	return v.do(c, "PRB "+project+"-"+env, true, func() error { v.o.prb = true; return nil })
+}
+
+func (v ocView) ProjectReleaseBindingReadiness(c context.Context, _, project, env string) (openchoreo.Readiness, error) {
+	err := v.do(c, "GET prb "+project+"-"+env, false, func() error {
+		if !v.o.prb {
+			return notFound("projectreleasebinding")
+		}
+		return nil
+	})
+	return openchoreo.Readiness{Ready: err == nil}, err
 }
 
 func (v ocView) GetResourceType(c context.Context, _, name string) (rt *openchoreo.ResourceType, err error) {
@@ -342,9 +351,15 @@ func (v ocView) EnsureBinding(c context.Context, _ string, b *openchoreo.Resourc
 	return out, err
 }
 
-func (v ocView) GetSecretReference(_ context.Context, _, name string) (*secretmanagersvc.SecretReference, error) {
+func (v ocView) GetSecretReference(c context.Context, _, name string) (*secretmanagersvc.SecretReference, error) {
 	v.o.mu.Lock()
 	defer v.o.mu.Unlock()
+	if auth.IsServiceIdentity(c) {
+		v.o.convergeReads++
+		if v.o.convergeRefErr != nil {
+			return nil, v.o.convergeRefErr
+		}
+	}
 	ref, ok := v.o.refs[name]
 	if !ok {
 		return nil, secretmanagersvc.ErrNotFound
@@ -448,8 +463,7 @@ func newFixture(t *testing.T) *fixture {
 	clock := &fakeClock{t: time.Date(2026, 10, 2, 9, 0, 0, 0, time.UTC)}
 	svc := New(Deps{
 		Config: testConfig(), OrgSecrets: org, Orgs: org, Profiles: org, Connections: org, GitHub: org,
-		StatusOC:   ocView{o: oc}.clients(),
-		ConvergeOC: ocView{o: oc, converge: true}.clients(),
+		OC: ocView{o: oc}.clients(),
 	})
 	svc.now = clock.now
 	f := &fixture{t: t, oc: oc, svc: svc, org: org, clock: clock}

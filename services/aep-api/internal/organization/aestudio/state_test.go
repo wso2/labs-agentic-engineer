@@ -17,8 +17,11 @@
 package aestudio
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"sync"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
@@ -132,5 +135,61 @@ func TestSameOnOurKeys(t *testing.T) {
 		if got := sameOnOurKeys(json.RawMessage(c.want), json.RawMessage(c.got)); got != c.same {
 			t.Errorf("%s: same=%v", c.name, got)
 		}
+	}
+}
+
+// A deleted ProjectReleaseBinding (no cell namespace) is drift even when the
+// RRB still reads Ready.
+func TestStatus_MissingProjectBindingIsDrift(t *testing.T) {
+	f := newFixture(t).withAllRefs().converged()
+	f.oc.mu.Lock()
+	f.oc.prb = false
+	f.oc.mu.Unlock()
+	if st, _ := f.svc.Status(userCtx(), "default"); st.State != StateProvisioning {
+		t.Fatalf("state %s", st.State)
+	}
+	f.waitConverged(t)
+	if f.oc.count("PRB ae-system-development") != 1 {
+		t.Fatalf("the converge must recreate the PRB: %v", f.oc.calls)
+	}
+	if st, _ := f.svc.Status(userCtx(), "default"); st.State != StateReady {
+		t.Fatalf("state %s", st.State)
+	}
+}
+
+// countingHandler counts the records logged at Warn or above, by message.
+type countingHandler struct {
+	mu   sync.Mutex
+	warn map[string]int
+}
+
+func (h *countingHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *countingHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if r.Level >= slog.LevelWarn {
+		h.warn[r.Message]++
+	}
+	return nil
+}
+func (h *countingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *countingHandler) WithGroup(string) slog.Handler      { return h }
+
+// A polling console logs a failed answer once per desired state.
+func TestStatus_FailedAnswerLoggedOncePerDesiredState(t *testing.T) {
+	h := &countingHandler{warn: map[string]int{}}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	f := newFixture(t).withAllRefs().withWriteTargetErr(&openchoreo.ErrNoWriteTarget{})
+	for i := 0; i < 3; i++ {
+		f.svc.Status(userCtx(), "default")
+	}
+	f.withImage("ae-collab:new")
+	f.svc.Status(userCtx(), "default")
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if n := h.warn["ae_studio.status_failed"]; n != 2 {
+		t.Fatalf("status_failed logged at Warn %d times, want once per desired state (2)", n)
 	}
 }

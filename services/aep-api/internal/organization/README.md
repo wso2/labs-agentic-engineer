@@ -49,7 +49,7 @@ S2S credentials-refresh.*
 | `AgentSettingsService` | offers | `delivery` (the run's runtime) |
 | `CredentialsRefreshService` | offers | the S2S runner-refresh op (edge projects it onto `igen.RefreshResponse`) |
 | `StudioConverger` · `AEStudioStatusReader` (+ `AEStudioStatus`) | declared here, implemented by `aestudio` | the gitpat submit and a key or connection save trigger a converge; `GET /ae-studio` reads the state |
-| `aestudio.OC` | needs | OpenChoreo — Project, PRB, ResourceType, Resource, RRB, SecretReference reads; two client sets (status reads as the caller, the converge as aep-api's own identity where the install impersonates orgs) |
+| `aestudio.OC` | needs | OpenChoreo — Project, PRB, ResourceType, Resource, RRB, SecretReference reads; one client set: status reads and the converge alike as aep-api's own identity where the install impersonates orgs (the `/api/v1` org-membership gate is the only check on the caller) |
 
 ## Owns
 - `organizations` (+ `thunder_org_uuid`, `llm_disconnected_at`), `org_credentials`,
@@ -167,13 +167,15 @@ S2S credentials-refresh.*
   deleted) → Resource `ae-studio` → wait for its release → RRB `ae-studio-<env>` pinned to it. Each
   step reads first and writes only what differs. Drift compares the live objects projected onto the
   keys aep-api writes, so OpenChoreo's defaults, labels and status are never drift. A Trigger during a
-  converge makes it run once more. The converge keeps the request's values but not its cancellation,
-  and writes as aep-api's own identity: where the install has an M2M identity and impersonates orgs,
-  its clients never pass the caller's JWT through (`app.convergeOCConfig`). It takes no lock and
+  converge makes it run once more. The converge keeps the request's values but not its cancellation.
+  Status and the converge read and write as aep-api's own identity: where the install has an M2M
+  identity and impersonates orgs, their clients never pass the caller's JWT through
+  (`app.aeStudioOCConfig`). It takes no lock and
   ensures no client: org secrets are read by reference (`spec.data` copied, never recomputed), and a
   container's `rev` hashes the reference names it reads, so a save rolls the pod and a no-op save
   does not. The agent's key entry exists only while the `default-key` row does. A failed converge
-  answers `failed` for 30 s unless the desired state changes.
+  answers `failed` for 30 s unless the desired state changes (one that failed before it had a desired
+  state matches any). A missing ProjectReleaseBinding is drift.
 - **`EnsureClient` keeps Thunder and the vault agreeing** (`client_ensure.go`, 06 §5): a created app is
   stored with the secret Thunder returns once; a found app with no reference row is healed with a new
   secret written to the vault before Thunder's `PUT` (inside the repoint, so a failed `PUT` rolls the

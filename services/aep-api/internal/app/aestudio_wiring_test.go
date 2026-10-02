@@ -55,10 +55,11 @@ func recordingOC(t *testing.T) (*httptest.Server, func() seen) {
 	return srv, func() seen { mu.Lock(); defer mu.Unlock(); return last }
 }
 
-// P-19: where the install has an M2M identity and impersonates orgs, the
-// converge clients never pass the caller's user JWT through, whatever the
-// request strategy decides; the status clients still do.
-func TestConvergeOCConfig_M2MWithImpersonationWhereConfigured(t *testing.T) {
+// P-19 / I-2: where the install has an M2M identity and impersonates orgs,
+// AE Studio's clients (status reads and converge writes alike) never pass the
+// caller's user JWT through, whatever the request strategy decides; the
+// request's own clients still do.
+func TestAEStudioOCConfig_M2MWithImpersonationWhereConfigured(t *testing.T) {
 	srv, last := recordingOC(t)
 	base := openchoreo.Config{
 		BaseURL:             srv.URL,
@@ -69,30 +70,38 @@ func TestConvergeOCConfig_M2MWithImpersonationWhereConfigured(t *testing.T) {
 		},
 	}
 	req := authn.WithAuthToken(context.Background(), "user-jwt")
+	want := seen{authorization: "Bearer m2m-token", impersonate: "ou-of-acme"}
 
-	if _, err := openchoreo.NewResourceClient(convergeOCConfig(base)).GetResourceType(req, "acme", "ae-studio"); err != nil {
+	studio := aeStudioOC(base)
+	if _, err := studio.Resources.GetResourceType(req, "acme", "ae-studio"); err != nil { // a status read
 		t.Fatal(err)
 	}
-	if got := last(); got != (seen{authorization: "Bearer m2m-token", impersonate: "ou-of-acme"}) {
-		t.Fatalf("converge call sent %+v", got)
+	if got := last(); got != want {
+		t.Fatalf("status read sent %+v", got)
+	}
+	if _, err := studio.Resources.UpdateResourceType(req, "acme", &openchoreo.ResourceType{Metadata: openchoreo.OCObjectMeta{Name: "ae-studio"}}); err != nil { // a converge write
+		t.Fatal(err)
+	}
+	if got := last(); got != want {
+		t.Fatalf("converge write sent %+v", got)
 	}
 
 	if _, err := openchoreo.NewResourceClient(base).GetResourceType(req, "acme", "ae-studio"); err != nil {
 		t.Fatal(err)
 	}
 	if got := last(); got != (seen{authorization: "Bearer user-jwt"}) {
-		t.Fatalf("status call sent %+v", got)
+		t.Fatalf("the request's own client sent %+v", got)
 	}
 }
 
-// Locally (one admin identity, no resolver) the converge config is the
+// Locally (one admin identity, no resolver) AE Studio's config is the
 // request's own.
-func TestConvergeOCConfig_UnchangedWithoutImpersonation(t *testing.T) {
+func TestAEStudioOCConfig_UnchangedWithoutImpersonation(t *testing.T) {
 	for name, cfg := range map[string]openchoreo.Config{
 		"no resolver":      {BaseURL: "http://oc", AuthProvider: staticM2M{}, RequestAuthStrategy: passThroughStrategy{}},
 		"no auth provider": {BaseURL: "http://oc", RequestAuthStrategy: passThroughStrategy{}, ImpersonateOrgResolver: func(context.Context, string) (string, error) { return "x", nil }},
 	} {
-		if got := convergeOCConfig(cfg); got.RequestAuthStrategy != cfg.RequestAuthStrategy {
+		if got := aeStudioOCConfig(cfg); got.RequestAuthStrategy != cfg.RequestAuthStrategy {
 			t.Errorf("%s: strategy replaced", name)
 		}
 	}

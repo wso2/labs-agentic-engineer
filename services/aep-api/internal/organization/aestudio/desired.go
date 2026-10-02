@@ -175,9 +175,9 @@ type modelConnectionEnv struct {
 	Model string `json:"model"`
 }
 
-// desired computes the org's desired state, reading the secret references
-// through oc. A *notReadyError is a state answer, anything else a failure.
-func (s *Service) desired(ctx context.Context, oc OC, org string) (desiredState, error) {
+// desired computes the org's desired state. A *notReadyError is a state
+// answer, anything else a failure.
+func (s *Service) desired(ctx context.Context, org string) (desiredState, error) {
 	var d desiredState
 	refs, err := s.orgSecrets.List(ctx, org)
 	if err != nil {
@@ -227,7 +227,7 @@ func (s *Service) desired(ctx context.Context, oc OC, org string) (desiredState,
 	if d.Params.GitHubOwner, err = s.githubOwner(ctx, org); err != nil {
 		return d, err
 	}
-	tools, agent, err := secretSets(ctx, oc, org, set)
+	tools, agent, err := secretSets(ctx, s.oc, org, set)
 	if err != nil {
 		return d, err
 	}

@@ -20,7 +20,7 @@ package aestudio
 // its ProjectReleaseBinding (creates the cell namespace) → ResourceType →
 // Resource → wait for its release → RRB pin. Each step reads what is there
 // first and writes only what differs, so a converge with nothing to do
-// writes nothing. Everything goes through the converge clients (aep-api's
+// writes nothing. Everything goes through the Service's clients (aep-api's
 // own identity where configured) in the org's namespace.
 //
 // The ResourceType is PUT in place and never deleted (Cloud cannot delete
@@ -45,10 +45,10 @@ const projectDisplayName = "AE Studio"
 // converge runs one Ensure of org and returns the fingerprint of the desired
 // state it worked to ("" when that could not be computed).
 func (s *Service) converge(ctx context.Context, org string) (string, error) {
-	oc := s.convergeOC
+	oc := s.oc
 	c := &run{ctx: ctx, org: org}
 	var d desiredState
-	if err := c.step("desired", func() (err error) { d, err = s.desired(ctx, oc, org); return err }); err != nil {
+	if err := c.step("desired", func() (err error) { d, err = s.desired(ctx, org); return err }); err != nil {
 		return "", err
 	}
 	var env, release string

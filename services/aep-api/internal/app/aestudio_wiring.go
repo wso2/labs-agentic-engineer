@@ -21,10 +21,10 @@ import (
 	"github.com/wso2/aep/aep-api/internal/organization/aestudio"
 )
 
-// aeStudioConvergeOC builds the OpenChoreo clients an AE Studio converge
-// reads and writes through (convergeOCConfig).
-func aeStudioConvergeOC(base openchoreo.Config) aestudio.OC {
-	cfg := convergeOCConfig(base)
+// aeStudioOC builds the OpenChoreo clients AE Studio reads and writes
+// through, its status reads and its converge alike (aeStudioOCConfig).
+func aeStudioOC(base openchoreo.Config) aestudio.OC {
+	cfg := aeStudioOCConfig(base)
 	return aestudio.OC{
 		Projects:   openchoreo.NewProjectClient(cfg),
 		Cells:      openchoreo.NewProjectCellClient(cfg),
@@ -34,17 +34,17 @@ func aeStudioConvergeOC(base openchoreo.Config) aestudio.OC {
 	}
 }
 
-// convergeOCConfig is the OpenChoreo client config of an AE Studio
-// converge. Where the install authenticates aep-api's own calls with an M2M
+// aeStudioOCConfig is the OpenChoreo client config of AE Studio's reads and
+// writes. Where the install authenticates aep-api's own calls with an M2M
 // token and impersonates the target org (an AuthProvider and an
-// ImpersonateOrgResolver are both set), the converge always does that:
+// ImpersonateOrgResolver are both set), AE Studio always does that:
 // whatever the request strategy would pick, the request's user JWT is never
-// passed through, so any member's poll converges with one identity and the
-// caller's JWT only ever authorizes reading the status. The strategy is
-// dropped, and a nil strategy is AuthModeServiceM2M (openchoreo.Config).
-// Anywhere else (local: one admin identity, no resolver) the config is the
-// request's own, unchanged.
-func convergeOCConfig(base openchoreo.Config) openchoreo.Config {
+// passed through, so every member's poll reads and converges with one
+// identity; the org-membership gate in front of GET /ae-studio is the only
+// check on the caller. The strategy is dropped, and a nil strategy is
+// AuthModeServiceM2M (openchoreo.Config). Anywhere else (local: one admin
+// identity, no resolver) the config is the request's own, unchanged.
+func aeStudioOCConfig(base openchoreo.Config) openchoreo.Config {
 	if base.AuthProvider == nil || base.ImpersonateOrgResolver == nil {
 		return base
 	}

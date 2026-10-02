@@ -29,7 +29,7 @@ func TestDesired_SecretsFromReferencesAndRev(t *testing.T) {
 		organization.OrgSecretGitHubPAT: "default-github-pat-aaaa0001", organization.OrgSecretGitHubWebhookSecret: "default-github-webhook-secret-aaaa0002",
 		organization.OrgSecretPublisherClient: "default-ae-publisher-client-aaaa0003", organization.OrgSecretStudioClient: "default-ae-studio-client-aaaa0004",
 	})
-	d, err := f.svc.desired(ctx, f.svc.statusOC, "default")
+	d, err := f.svc.desired(ctx, "default")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,11 +49,11 @@ func TestDesired_SecretsFromReferencesAndRev(t *testing.T) {
 	}
 	before := tools.Rev
 	f.withRef(organization.OrgSecretGitHubPAT, "default-github-pat-bbbb0001")
-	d2, _ := f.svc.desired(ctx, f.svc.statusOC, "default")
+	d2, _ := f.svc.desired(ctx, "default")
 	if d2.Params.Secrets.StudioTools.Rev == before {
 		t.Fatal("a new reference name must change the rev")
 	}
-	d3, _ := f.svc.desired(ctx, f.svc.statusOC, "default")
+	d3, _ := f.svc.desired(ctx, "default")
 	if d3.Params.Secrets.StudioTools.Rev != d2.Params.Secrets.StudioTools.Rev {
 		t.Fatal("the same reference names must keep the rev (a no-op save rolls nothing)")
 	}
@@ -63,7 +63,7 @@ func TestDesired_SecretsFromReferencesAndRev(t *testing.T) {
 // Default key's row does.
 func TestDesired_AgentKeyOnlyWhileDefaultKeyIsSet(t *testing.T) {
 	f := newFixture(t).withAllRefs().withRef(organization.OrgSecretDefaultKey, "default-default-key-cccc0005")
-	d, err := f.svc.desired(ctx, f.svc.statusOC, "default")
+	d, err := f.svc.desired(ctx, "default")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestDesired_AgentKeyOnlyWhileDefaultKeyIsSet(t *testing.T) {
 		t.Fatalf("agent secret %+v", agent)
 	}
 	f.withoutRef(organization.OrgSecretDefaultKey) // a disconnect removes the row
-	d2, _ := f.svc.desired(ctx, f.svc.statusOC, "default")
+	d2, _ := f.svc.desired(ctx, "default")
 	if len(d2.Params.Secrets.DesignAgent.Data) != 0 || d2.Params.Secrets.DesignAgent.Rev != "" {
 		t.Fatalf("a removed Default key must drop the entry: %+v", d2.Params.Secrets.DesignAgent)
 	}
@@ -85,7 +85,7 @@ func TestDesired_AgentKeyOnlyWhileDefaultKeyIsSet(t *testing.T) {
 
 func TestDesired_ModelConnectionAndGitHubOwner(t *testing.T) {
 	f := newFixture(t).withAllRefs().withConnection(anthropicConn("claude-x")).withGitHubLogin("acme-gh")
-	d, _ := f.svc.desired(ctx, f.svc.statusOC, "default")
+	d, _ := f.svc.desired(ctx, "default")
 	if d.Params.GitHubOwner != "acme-gh" || strings.Contains(d.Params.ModelConnection, "apiKey") || !strings.Contains(d.Params.ModelConnection, `"capabilities"`) {
 		t.Fatalf("owner %q connection %s", d.Params.GitHubOwner, d.Params.ModelConnection)
 	}
@@ -111,7 +111,7 @@ func TestDesired_ModelConnectionAndGitHubOwner(t *testing.T) {
 
 func TestDesired_NoConnectionNoOwnerAreEmpty(t *testing.T) {
 	f := newFixture(t).withAllRefs()
-	d, err := f.svc.desired(ctx, f.svc.statusOC, "default")
+	d, err := f.svc.desired(ctx, "default")
 	if err != nil || d.Params.ModelConnection != "" || d.Params.GitHubOwner != "" {
 		t.Fatalf("%+v %v", d.Params, err)
 	}
@@ -119,7 +119,7 @@ func TestDesired_NoConnectionNoOwnerAreEmpty(t *testing.T) {
 
 func TestDesired_OrgAndEnvConfigs(t *testing.T) {
 	f := newFixture(t).withAllRefs()
-	d, err := f.svc.desired(ctx, f.svc.statusOC, "default")
+	d, err := f.svc.desired(ctx, "default")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestDesired_OrgAndEnvConfigs(t *testing.T) {
 // Task 1.8: the pod must never be configured into a legacy mode.
 func TestDesired_NoLegacyModeInputs(t *testing.T) {
 	f := newFixture(t).withAllRefs().withConnection(anthropicConn("claude-x"))
-	d, _ := f.svc.desired(ctx, f.svc.statusOC, "default")
+	d, _ := f.svc.desired(ctx, "default")
 	p, _ := json.Marshal(d.Params)
 	e, _ := json.Marshal(d.EnvConfigs)
 	for _, bad := range []string{"COLLAB_DEV", "COLLAB_MOCK_BFF", "AEP_API_BASE", "AGENT_JWT_"} {
@@ -158,7 +158,7 @@ func TestDesired_ExtraEgressMustBeAnArray(t *testing.T) {
 	}
 	f := newFixture(t).withAllRefs()
 	f.svc.cfg.ExtraEgress = json.RawMessage(`[]`)
-	if _, err := f.svc.desired(ctx, f.svc.statusOC, "default"); err != nil {
+	if _, err := f.svc.desired(ctx, "default"); err != nil {
 		t.Fatalf("[] is valid: %v", err)
 	}
 }

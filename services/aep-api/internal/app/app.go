@@ -202,19 +202,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// so every package that writes or reads a project's bindings shares it.
 	writeTargets := openchoreo.NewWriteTargets(ocConfig)
 	// The Resource-model client (ResourceTypes, Resources, their bindings):
-	// AE Studio's converge, the dependency catalogs and provisioners, and the
-	// deploy path all author through this one.
+	// the dependency catalogs and provisioners and the deploy path author
+	// through this one (AE Studio builds its own, aeStudioOC).
 	resourceClient := openchoreo.NewResourceClient(ocConfig)
-	// Cell-namespace provisioning. OpenChoreo 1.2.0 stopped materializing a
-	// project's namespace as a side effect of creating the Project — a
-	// ProjectReleaseBinding per environment does it now, and nothing creates
-	// those for us. Without this the project is created, reports Ready, and
-	// then fails every deploy with "namespace ... not found".
-	//
-	// Shared with provisioningSvc's Pipeline (below): the same client also
-	// resolves the org's own deployment pipeline for /dependencies/environments'
-	// promotion ordering, so it is built once here instead of twice.
-	projectCellClient := openchoreo.NewProjectCellClient(ocConfig)
 	// GitSecret client lands the per-org build git credential on the workflow
 	// plane (via OC → OpenBao → SecretReference). Used by BuildCredentialsService
 	// for both cloud (CP/WP split) and local k3d — one unified path.
@@ -347,9 +337,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// `priced` reads the same rate card the usage stamps are priced from.
 	modelConnections := organization.NewModelConnectionService(orgModelConnRepo, orgAnthropicRepo, credStore, in.RateStamper).
 		WithSecretRefWriter(secretRefWriter)
-	// Each org's AE Studio (ticket 08): its status reads go out as the
-	// caller, its converge as aep-api's own identity wherever the install
-	// impersonates orgs (aeStudioConvergeOC).
+	// Each org's AE Studio (ticket 08): its status reads and its converge go
+	// out as aep-api's own identity wherever the install impersonates orgs
+	// (aeStudioOC).
 	aeStudio := aestudio.New(aestudio.Deps{
 		Config:      cfg.AEStudio,
 		OrgSecrets:  orgSecretRepo,
@@ -357,11 +347,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		Profiles:    idpRepo,
 		Connections: modelConnections,
 		GitHub:      credService,
-		StatusOC: aestudio.OC{
-			Projects: projectClient, Cells: projectCellClient, Targets: writeTargets,
-			Resources: resourceClient, SecretRefs: modelAccessSecretRefClient,
-		},
-		ConvergeOC: aeStudioConvergeOC(ocConfig),
+		OC:          aeStudioOC(ocConfig),
 	})
 	// How the org's agents run: the model connection, the coding runtime and
 	// the Claude subscription. ONE instance, read by two callers: /config
@@ -496,6 +482,16 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// configService can call back into it to mirror env-var edits onto
 	// the OC Component's workflow params.
 	projectService := projects.NewProjectService(projectClient, repoService, webhookRegService, artifactSvcGit, executionRepo)
+	// Cell-namespace provisioning. OpenChoreo 1.2.0 stopped materializing a
+	// project's namespace as a side effect of creating the Project — a
+	// ProjectReleaseBinding per environment does it now, and nothing creates
+	// those for us. Without this the project is created, reports Ready, and
+	// then fails every deploy with "namespace ... not found".
+	//
+	// Shared with provisioningSvc's Pipeline (below): the same client also
+	// resolves the org's own deployment pipeline for /dependencies/environments'
+	// promotion ordering, so it is built once here instead of twice.
+	projectCellClient := openchoreo.NewProjectCellClient(ocConfig)
 	projectService.SetProjectCellProvisioner(projectCellClient)
 	projectService.SetWriteTargets(writeTargets)
 	// Build/deploy stage sources for the status poll (#184): the milestone-run

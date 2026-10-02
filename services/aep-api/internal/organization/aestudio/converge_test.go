@@ -198,3 +198,42 @@ func TestConverge_FailureRetriedAtOnceOnChange(t *testing.T) {
 	}
 	f.waitConverged(t)
 }
+
+// I-1: a converge that fails before it has a desired state (its read of the
+// references fails, Status's succeeds) is still backed off:
+// Status answers failed, and exactly one retry runs after the back-off.
+func TestConverge_FailureBeforeDesiredIsBackedOff(t *testing.T) {
+	f := newFixture(t).withAllRefs()
+	f.oc.mu.Lock()
+	f.oc.convergeRefErr = errFake
+	f.oc.mu.Unlock()
+	reads := func() int { f.oc.mu.Lock(); defer f.oc.mu.Unlock(); return f.oc.convergeReads }
+	f.svc.Trigger(userCtx(), "default")
+	f.waitIdle(t)
+	if reads() != 1 {
+		t.Fatalf("converge reads %d", reads())
+	}
+	for i := 0; i < 3; i++ {
+		if st, err := f.svc.Status(userCtx(), "default"); err != nil || st.State != StateFailed {
+			t.Fatalf("poll %d: state %s err %v", i, st.State, err)
+		}
+	}
+	f.waitIdle(t)
+	if reads() != 1 {
+		t.Fatalf("polls within the back-off converged again: reads %d", reads())
+	}
+	f.clock.advance(failureBackoff + time.Second)
+	if st, _ := f.svc.Status(userCtx(), "default"); st.State != StateProvisioning {
+		t.Fatalf("after the back-off: state %s", st.State)
+	}
+	f.waitIdle(t)
+	for i := 0; i < 3; i++ {
+		if st, _ := f.svc.Status(userCtx(), "default"); st.State != StateFailed {
+			t.Fatalf("after the retry failed: state %s", st.State)
+		}
+	}
+	f.waitIdle(t)
+	if reads() != 2 {
+		t.Fatalf("want exactly one retry after the back-off, converge reads %d", reads())
+	}
+}
