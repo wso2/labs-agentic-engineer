@@ -37,11 +37,13 @@ export interface FakeFilesSocketOptions {
   files: Record<string, string>;
   /** Returned on every apply that changes the tree. */
   warnings?: Schemas["ApplyWarning"][];
+  /** Project names aep-api does not know: every route answers 404 `project_unknown`. */
+  unknownProjects?: string[];
 }
 
-/**
- * @knipkeep wired in Task 2.11 (dev mode serves rooms from the fake).
- */
+/** The socket's three operations, as `failNext` can target them. */
+export type FilesOp = "lookup" | "bundle" | "apply";
+
 export interface FakeFilesSocket {
   /** The socket path to hand to `createFilesClient`. */
   readonly path: string;
@@ -49,8 +51,8 @@ export interface FakeFilesSocket {
   readonly requests: { method: string; url: string }[];
   /** A commit landed outside the room: changes one file and moves the head. */
   pushExternal(filePath: string, content: string): void;
-  /** Answer the next request, whatever it is, with this problem. */
-  failNext(status: number, code: string): void;
+  /** Answer the next request (of `op`, when given) with this problem. */
+  failNext(status: number, code: string, op?: FilesOp): void;
   /** Answer the next request with an arbitrary body (a proxy's error page). */
   failNextRaw(status: number, contentType: string, body: string): void;
   /** Stop serving and remove the socket and its directory. */
@@ -144,20 +146,17 @@ function parseApplyRequest(raw: string): Schemas["ApplyRequest"] | null {
   return body as Schemas["ApplyRequest"];
 }
 
-/**
- * Starts the fake on a fresh temp socket.
- *
- * @knipkeep wired in Task 2.11 (dev mode serves rooms from the fake).
- */
+/** Starts the fake on a fresh temp socket. */
 export async function startFakeFilesSocket(
   options: FakeFilesSocketOptions,
 ): Promise<FakeFilesSocket> {
   const tree = new Map(Object.entries(options.files));
   const warnings = options.warnings ?? [];
+  const unknown = new Set(options.unknownProjects ?? []);
   const requests: { method: string; url: string }[] = [];
   let commits = 0;
   let headSha = gitBlobSha("commit 0");
-  let nextFailure: ((res: http.ServerResponse) => void) | null = null;
+  let nextFailure: { op: FilesOp | undefined; send: (res: http.ServerResponse) => void } | null = null;
 
   const newCommit = () => {
     commits += 1;
@@ -196,19 +195,24 @@ export async function startFakeFilesSocket(
 
   const server = http.createServer((req, res) => {
     requests.push({ method: req.method ?? "", url: req.url ?? "" });
-    if (nextFailure) {
-      const fail = nextFailure;
+    const url = new URL(req.url ?? "/", "http://files.sock");
+    const match = url.pathname.match(ROUTE);
+    const op = match?.[2] ?? "";
+    const filesOp: FilesOp = op === "/bundle" ? "bundle" : op === "/apply" ? "apply" : "lookup";
+    if (nextFailure && (nextFailure.op === undefined || nextFailure.op === filesOp)) {
+      const fail = nextFailure.send;
       nextFailure = null;
       // Drain any body so the connection stays usable.
       req.resume();
       return fail(res);
     }
-    const url = new URL(req.url ?? "/", "http://files.sock");
-    const match = url.pathname.match(ROUTE);
     if (!match) return problem(res, 404, "not_found");
     const project = decodeURIComponent(match[1] ?? "");
-    const op = match[2] ?? "";
     if (!PROJECT_NAME.test(project)) return problem(res, 400, "path_invalid");
+    if (unknown.has(project)) {
+      req.resume();
+      return problem(res, 404, "project_unknown");
+    }
 
     if (req.method === "GET" && op === "") {
       const body: Schemas["ProjectLookup"] = {
@@ -263,11 +267,11 @@ export async function startFakeFilesSocket(
       tree.set(filePath, content);
       newCommit();
     },
-    failNext(status, code) {
-      nextFailure = (res) => problem(res, status, code);
+    failNext(status, code, op) {
+      nextFailure = { op, send: (res) => problem(res, status, code) };
     },
     failNextRaw(status, contentType, body) {
-      nextFailure = (res) => send(res, status, contentType, body);
+      nextFailure = { op: undefined, send: (res) => send(res, status, contentType, body) };
     },
     async close() {
       await new Promise<void>((resolve) => {

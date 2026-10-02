@@ -18,7 +18,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { userRule } from "../src/index.js";
+import { orgRule, userRule } from "../src/index.js";
 
 const pod = { orgId: "ou-1", orgHandle: "default" };
 
@@ -35,4 +35,18 @@ test("userRule: an empty pod org fails closed", () => {
   const claims = { sub: "u", exp: 1, ouId: "", ouHandle: "" };
   assert.throws(() => userRule(claims, { orgId: "", orgHandle: "default" }), /orgId/);
   assert.throws(() => userRule(claims, { orgId: "ou-1", orgHandle: "" }), /orgHandle/);
+});
+
+test("orgRule: the org check alone, for any verified token kind", () => {
+  // An ae-studio client token carries no sub; the org claims still decide.
+  assert.equal(orgRule({ exp: 1, ouId: "ou-1", ouHandle: "default" }, pod), true);
+  assert.equal(orgRule({ exp: 1, ouId: "ou-2", ouHandle: "default" }, pod), false);
+  assert.equal(orgRule({ exp: 1, ouId: "ou-1", ouHandle: "other" }, pod), false);
+  assert.equal(orgRule({ exp: 1 }, pod), false);
+  assert.throws(() => orgRule({ exp: 1, ouId: "", ouHandle: "" }, { orgId: "", orgHandle: "default" }), /orgId/);
+  assert.throws(() => orgRule({ exp: 1, ouId: "", ouHandle: "" }, { orgId: "ou-1", orgHandle: "" }), /orgHandle/);
+});
+
+test("userRule: the org rule plus a subject", () => {
+  assert.equal(userRule({ sub: "", exp: 1, ouId: "ou-1", ouHandle: "default" }, pod), false);
 });

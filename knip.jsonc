@@ -34,14 +34,10 @@
   // $AEP_SKILLS_DIR). Nothing in this repo imports those files, and nothing
   // should — reachability from a package entry is the wrong question to ask of
   // them.
-  // ae-collab's fake Files socket is imported only by tests until Task 2.11
-  // wires dev mode to it (`@knipkeep` cannot tag a whole file); 2.11 removes
-  // this entry.
   "ignore": [
     "deployments/**",
     "scripts/**",
     "components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/shared/mock-model.ts",
-    "components/dataplane/ae-system-project/ae-studio/ae-collab/src/fake-files-socket.ts",
     "skills/**"
   ],
   // An export used within its own file is not dead — this codebase deliberately

@@ -273,6 +273,9 @@ importers:
       undici:
         specifier: ^7.29.1
         version: 7.29.1
+      ws:
+        specifier: ^8.18.0
+        version: 8.21.0
       yjs:
         specifier: ^13.6.31
         version: 13.6.31
@@ -289,9 +292,6 @@ importers:
       tsx:
         specifier: ^4.21.0
         version: 4.22.4
-      ws:
-        specifier: ^8.18.0
-        version: 8.21.0
 
   components/dataplane/ae-system-project/ae-studio/ae-design-agent:
     dependencies:

@@ -11,12 +11,28 @@ path are all decided there.
 
 ## Trust model
 
-This service verifies nothing itself. Room access is delegated whole to the
-BFF oracle (`validate-collab-access`: JWT + tenancy + project ownership) —
-the room ID is *shape-checked only* (`room.ts`) because `spec-<org>-<project>`
-cannot be split without the org from the caller's token. Seeding reads the
-spec bundle **as the first joiner** (their token); the `project` ws request
-parameter names the project for that read.
+- **Pod mode** (`src/pod/`) verifies itself (07 §11). One Hocuspocus instance,
+  two listeners; the listener a socket came in on picks the token kind
+  (`pod/auth.ts`):
+  - public `0.0.0.0:8081`, upgrades only on `/v1/rooms`: a Platform IdP user
+    token of the pod's org (`userRule`). The participant is the token's user
+    (`name`, else given + family name, else `sub`; `email`, else the noreply
+    address). A `credit` connection parameter is ignored.
+  - local `127.0.0.1:8091`, any path, no Origin check: only the pod's
+    `ae-studio-<org>` client token (`orgRule`). The participant is the user
+    the `credit` query parameter names (`{"name","email"}` JSON, name
+    required); the in-pod agent runs the turn for them.
+  Then the room: `spec-<orgHandle>-<project>` with the pod's own handle, and
+  a project the Files socket's lookup knows (once per connection). The token
+  is kept only as its `exp`: the connection is closed then (`pod/expiry.ts`,
+  reason `token-expired`) unless the client pushed a fresher token
+  (`provider.sendToken()`) that `onTokenSync` re-verified with the same
+  check; a refused sync closes it at once (reason `permission-denied`). No
+  token, claim or room name is logged: `room_*` lines name the listener and a
+  fixed cause.
+- **Legacy server** (deleted in Task 2.12) verifies nothing itself: room
+  access is delegated whole to the BFF oracle (`validate-collab-access`), and
+  seeding reads the spec bundle as the first joiner (their token).
 
 ## Modes
 
@@ -26,30 +42,29 @@ missing key.
 
 - **Pod mode** (`AE_ORG_ID` set, the AE Studio pod; `src/pod/`). Any
   legacy key below (`COLLAB_DEV`, `COLLAB_MOCK_BFF`, `AEP_API_BASE`) in a pod
-  env fails the boot, naming the keys, so dev mode can never run there. The public port (`AE_LISTEN_PORT`, 8081) gates `/v1`
-  (any casing) with `@aep/platform-idp-auth`: a Platform IdP user token of
-  `AE_IDP_ISSUER` with an `AE_USER_AUDIENCES` aud and `ouId`/`ouHandle` equal
-  to `AE_ORG_ID`/`AE_ORG_HANDLE`. M2M → 401, another org → 403, both before
-  route matching; no `/v1` operation yet, so an admitted request is a 404
-  problem. A WebSocket upgrade needs an `Origin` listed in
-  `AE_ALLOWED_ORIGINS` (403, a missing one too) and the path `/v1/rooms`
-  (404); until phase 2 hands it to Hocuspocus every upgrade is answered 404
-  and closed. The health port (`AE_HEALTH_PORT`, 9081, not routed) serves
-  `/healthz` and `/readyz` (503 until the public port is bound and while
-  closing). SIGTERM/SIGINT close both. `AE_AGENT_CLIENT_ID` is required
-  now and read by the phase-2 local listener.
-- **Legacy server** (the chart Deployment `collab-server`), one of:
+  env fails the boot, naming the keys, so dev mode can never run there. The
+  public port (`AE_LISTEN_PORT`, 8081) gates `/v1` HTTP (any casing) with
+  `@aep/platform-idp-auth` (M2M → 401, another org → 403, both before route
+  matching; no `/v1` operation yet, so an admitted request is a 404 problem).
+  A room upgrade there must pass `originAllowed`: a present `Origin` must be
+  listed in `AE_ALLOWED_ORIGINS` (403); an absent one is accepted while the
+  phase-2 agents bridge exists (Task 3.22 makes it 403). Rooms seed from the
+  Files socket's bundle (`AE_FILES_SOCKET`). The health port
+  (`AE_HEALTH_PORT`, 9081, not routed) serves `/healthz` and `/readyz` (503
+  until both room listeners are bound and while closing). SIGTERM/SIGINT
+  close all three. The committer moves onto the Files socket in Task 2.12;
+  until then a pod room does not commit.
+- **Dev mode** (`COLLAB_DEV=1`, no BFF; `pnpm dev` sets it): the pod's
+  listeners and Room with auth bypassed (every connection is the dev user,
+  the project is the room name after `spec-`) and a fake Files socket
+  holding `fixtures.ts`. Missing config never implies it.
+- **Legacy server** (the chart Deployment `collab-server`; deleted in Task
+  2.12), one of:
   - **Real BFF**: set `AEP_API_BASE`.
   - **Mock BFF** (`COLLAB_MOCK_BFF=1`): an embedded stand-in for the BFF
     (`mockbff.ts`) serves `validate-collab-access` + `get-project-spec` from
     the same fixtures, and the service runs its **real** auth and seed paths
-    against it. Token `deny` exercises the rejection path; a JWT-shaped
-    token's `name`/`email` claims become the identity.
-  - **Dev mode** (`COLLAB_DEV=1` with no BFF, real or mock; `pnpm dev` sets
-    the flag): oracle bypassed, rooms seed from `fixtures.ts`. The auth/seed
-    code paths are NOT exercised. Missing config never implies it, and a
-    configured BFF outranks the flag (`COLLAB_MOCK_BFF=1 pnpm dev` runs the
-    real paths).
+    against it. A configured BFF outranks `COLLAB_DEV`.
 
 Never enable dev mode or the mock BFF in a cluster.
 
@@ -108,9 +123,9 @@ the moment several tabs are reconnecting together.
 
 | Var | Default | Meaning |
 |---|---|---|
-| `COLLAB_PORT` | `8091` | ws listen port |
+| `COLLAB_PORT` | `8091` | legacy server ws listen port |
 | `AEP_API_BASE` | unset | BFF base incl. prefix, e.g. `http://localhost:9090/api/v1` |
-| `COLLAB_DEV` | off | dev mode when no BFF (real or mock) is set; never implied |
+| `COLLAB_DEV` | off | dev mode (pod listeners, auth bypassed, fake Files socket) when no BFF (real or mock) is set; never implied |
 | `COLLAB_MOCK_BFF` | off | run the embedded mock BFF; overrides `AEP_API_BASE` |
 | `COLLAB_MOCK_BFF_PORT` | `8092` | mock BFF listen port |
 | `COLLAB_COMMIT_DEBOUNCE_MS` | `60000` | quiet period before a flush commits |
@@ -119,8 +134,10 @@ the moment several tabs are reconnecting together.
 Pod mode (all required once `AE_ORG_ID` is set, except the ports):
 `AE_ORG_ID`, `AE_ORG_HANDLE`, `AE_IDP_ISSUER`, `AE_IDP_JWKS_URL`,
 `AE_USER_AUDIENCES` (comma list), `AE_AGENT_CLIENT_ID`, `AE_ALLOWED_ORIGINS`
-(comma list of bare origins), `AE_LISTEN_PORT` (8081), `AE_HEALTH_PORT` (9081);
-ports 1-65535.
+(comma list of bare origins), `AE_FILES_SOCKET`, `AE_LISTEN_PORT` (8081),
+`AE_HEALTH_PORT` (9081); ports 1-65535. The local listener is fixed at
+`127.0.0.1:8091`. Dev mode reads only the two ports and an optional
+`AE_ALLOWED_ORIGINS`.
 
 Commands: uniform verbs via the root `Makefile`; locally
 `pnpm --filter @aep/ae-collab dev|test|lint|typecheck`.

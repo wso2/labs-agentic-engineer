@@ -18,9 +18,10 @@
 
 /**
  * Composition root. One mode, chosen by env (`modes.ts`): the AE Studio pod's
- * listeners (`AE_*`: the `/v1` user gate, the room upgrade path and the
- * health port), or the legacy collab server of the chart Deployment (load
- * config, wire the BFF client, listen). Boot fails with neither.
+ * Room (`AE_*`: the public and local room listeners and the health port), dev
+ * mode (the same Room, auth bypassed, fake Files socket), or the legacy
+ * collab server of the chart Deployment (BFF client, listen). Boot fails with
+ * none.
  *
  *   pnpm --filter @aep/ae-collab dev     # watch + reload (dev mode: COLLAB_DEV=1)
  *   pnpm --filter @aep/ae-collab start   # run once
@@ -31,28 +32,34 @@ import { selectModes } from "./modes.js";
 import { createBffClient } from "./bff.js";
 import { createCollabServer, registerGracefulShutdown } from "./server.js";
 import { startMockBff } from "./mockbff.js";
-import { startPodListeners } from "./pod/listeners.js";
+import type { PodListeners } from "./pod/listeners.js";
+import { startDev, startPod } from "./pod/start.js";
 
-const modes = selectModes(process.env);
+const selected = selectModes(process.env);
 
-if (modes.pod) {
-  const pod = await startPodListeners(modes.pod);
+if (selected.mode === "pod") {
+  closeOnSignal(await startPod(selected.config));
+} else if (selected.mode === "dev") {
+  closeOnSignal(await startDev(selected.config));
+} else {
+  await startLegacyServer(selected.config);
+}
+
+function closeOnSignal(listeners: PodListeners): void {
   let closing = false;
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => {
       if (closing) return;
       closing = true;
-      pod.close().then(
+      listeners.close().then(
         () => process.exit(0),
         () => process.exit(1),
       );
     });
   }
-} else {
-  await startLegacyServer(modes.legacy);
 }
 
-/** Today's collab server, unchanged: oracle + seeds from the BFF, or fixtures in dev mode. */
+/** Today's collab server over the BFF (real or mock); deleted in Task 2.12. */
 async function startLegacyServer(config: CollabConfig): Promise<void> {
   if (config.mockBff) {
     await startMockBff(config.mockBffPort);
@@ -62,10 +69,6 @@ async function startLegacyServer(config: CollabConfig): Promise<void> {
   }
 
   const bff = config.aepApiBase ? createBffClient(config.aepApiBase) : null;
-
-  if (config.devMode) {
-    console.warn("[collab] DEV MODE (COLLAB_DEV): BFF oracle bypassed, rooms seed from fixtures.");
-  }
 
   const log = (m: string) => console.log(`[collab] ${m}`);
 

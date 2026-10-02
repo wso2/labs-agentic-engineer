@@ -24,5 +24,5 @@ export {
   type UserClaims,
   type VerifiedToken,
 } from "./verify.js";
-export { userRule } from "./user-rule.js";
+export { orgRule, userRule, type PodOrg } from "./user-rule.js";
 export { problem, type ProblemBody } from "./problem.js";

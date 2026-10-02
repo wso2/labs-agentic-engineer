@@ -89,9 +89,7 @@ export interface ProjectRepository {
   headSha: string;
 }
 
-/**
- * @knipkeep wired in Task 2.11 (seeding) and Task 2.12 (the committer).
- */
+/** The Files port: Room seeding and project lookup now, the committer from Task 2.12. */
 export interface FilesClient {
   /** The project's repository and current head; throws FilesDeniedError when unknown. */
   lookup(project: string): Promise<ProjectRepository>;
@@ -113,8 +111,6 @@ export class ApplyConflictError extends Error {
  * A verdict: any 4xx except 408/425/429 (and except the 409s above). The
  * same call will get the same answer, so it is never tagged transient.
  * `code` is the problem code, or `http_<status>` when the body had none.
- *
- * @knipkeep wired in Task 2.11 (seed refusal) and Task 2.12 (the committer).
  */
 export class FilesDeniedError extends Error {
   constructor(
@@ -131,8 +127,6 @@ export class FilesDeniedError extends Error {
  * An outage: a 5xx, a 408/425/429, a `not_fast_forward` 409 (the branch moved
  * during the save; the pod says re-read and retry), a malformed reply, or a
  * socket that cannot be reached (`code` `socket_unreachable`, `status` 0).
- *
- * @knipkeep wired in Task 2.11 (seed refusal) and Task 2.12 (the committer).
  */
 export class FilesUnavailableError extends Error {
   constructor(
@@ -221,8 +215,6 @@ function asConflicts(reply: Reply): string[] | null {
 /**
  * The FilesClient over the Files socket at `socketPath`. One keep-alive
  * dispatcher per client; a request never leaves the socket.
- *
- * @knipkeep wired in Task 2.11 (pod and dev boot build the client).
  */
 export function createFilesClient(socketPath: string): FilesClient {
   const dispatcher = new Agent({ connect: { socketPath } });

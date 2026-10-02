@@ -17,50 +17,57 @@
  */
 
 /**
- * The pod-mode listeners (07 §11, 08 §2). The public port serves `/v1` behind
- * the user gate: a Platform IdP user token of the pod's org, never an M2M
- * token. The gate runs before route matching, so an unknown `/v1` path is
- * 401/403 before it is 404; no `/v1` operation exists yet. A WebSocket
- * upgrade needs an `Origin` in `AE_ALLOWED_ORIGINS` (403 otherwise, a missing
- * one included) and the path `/v1/rooms` (404 otherwise); phase 2 hands that
- * socket to Hocuspocus, which authenticates in-protocol. Until then every
- * upgrade is answered and closed. The health port (not in the Service, not
- * routed) serves `/healthz` (liveness) and `/readyz` (200 once the public
- * port is bound, 503 while closing).
+ * The pod's listeners (07 §11, 08 §2): two that hand WebSockets to ONE
+ * Hocuspocus instance, and the health port.
+ *
+ *   public  0.0.0.0:`listenPort`. `/v1` HTTP sits behind the user gate (a
+ *           Platform IdP user token of the pod's org, never M2M; before route
+ *           matching, so an unknown `/v1` path is 401/403 before 404; no `/v1`
+ *           operation yet). A WebSocket upgrade must pass `originAllowed` (403)
+ *           and name exactly `/v1/rooms` (404).
+ *   local   127.0.0.1:`localPort` (8091), for the in-pod agent: any upgrade
+ *           path, no Origin check; plain HTTP is 404.
+ *   health  `/healthz` (liveness) and `/readyz` (200 once both room listeners
+ *           are bound, 503 while closing); not in the Service, not routed.
+ *
+ * The listener a socket came in on rides in its Hocuspocus context
+ * (`{listener}`), which is how `auth.ts` picks the token kind; the client
+ * cannot set it.
  */
 
 import { createServer, STATUS_CODES, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
-import { createVerifier, problem, UnauthenticatedError, userRule } from "@aep/platform-idp-auth";
-import type { PodConfig } from "./config.js";
+import { WebSocketServer, type RawData, type WebSocket } from "ws";
+import type { Hocuspocus } from "@hocuspocus/server";
+import { problem, UnauthenticatedError, userRule } from "@aep/platform-idp-auth";
+import type { CollabContext, ListenerKind, Verify } from "./auth.js";
+import type { ListenerConfig, PodConfig } from "./config.js";
+import { stdoutLog, type PodLog, type PodLogLine } from "./log.js";
 
 export interface PodListeners {
   publicUrl: string;
+  localUrl: string;
   healthUrl: string;
   close(): Promise<void>;
 }
 
-/** One structured, value-free log line. */
-export interface PodLogLine {
-  msg: "pod_health_listening" | "pod_public_listening" | "pod_listeners_stopped" | "pod_request_failed";
-  source: "ae-collab";
-  port?: number;
-}
+/** The `/v1` HTTP gate: `null` admits the request. */
+export type HttpGate = (req: IncomingMessage) => Promise<Refusal | null>;
 
 export interface PodListenerDeps {
+  /** The Room: every accepted upgrade on either listener is handed to it. */
+  rooms: Hocuspocus<CollabContext>;
+  gate: HttpGate;
   /** Where log lines go; stdout unless a test captures them. */
-  log?: (line: PodLogLine) => void;
+  log?: PodLog;
 }
-
-const stdoutLog = (line: PodLogLine): void => {
-  process.stdout.write(`${JSON.stringify(line)}\n`);
-};
 
 const BEARER = /^Bearer ([^\s]+)$/i;
 /** `/v1` and everything under it, any casing (the gate must not be dodged by `/V1`). */
 const V1 = /^\/v1(?:\/|$)/i;
 const ROOMS_PATH = "/v1/rooms";
+const LOOPBACK = "127.0.0.1";
 
 /** A refusal, as the gate decides it. Details are fixed sentences: no token or claim value. */
 interface Refusal {
@@ -99,9 +106,20 @@ function refuseUpgrade(socket: Duplex, status: number, code: string, detail: str
   );
 }
 
-/** The `/v1` user gate: `null` admits the request. Built once per process. */
-function userGate(cfg: PodConfig): (req: IncomingMessage) => Promise<Refusal | null> {
-  const verify = createVerifier({ issuer: cfg.issuer, jwksUrl: cfg.jwksUrl });
+/**
+ * The public listener's Origin rule. A present `Origin` must be listed in
+ * `AE_ALLOWED_ORIGINS`, exactly.
+ */
+export function originAllowed(origin: string | undefined, cfg: Pick<ListenerConfig, "allowedOrigins">): boolean {
+  if (origin === undefined) {
+    // TEMPORARY (phase 3 deletes): absent Origin accepted for the old agents bridge
+    return true;
+  }
+  return cfg.allowedOrigins.includes(origin);
+}
+
+/** The pod's `/v1` user gate over the shared verifier. */
+export function userGate(cfg: Pick<PodConfig, "orgId" | "orgHandle" | "userAudiences">, verify: Verify): HttpGate {
   const kinds = [{ name: "user" as const, audiences: cfg.userAudiences }];
   const pod = { orgId: cfg.orgId, orgHandle: cfg.orgHandle };
   return async (req) => {
@@ -128,12 +146,42 @@ function userGate(cfg: PodConfig): (req: IncomingMessage) => Promise<Refusal | n
   };
 }
 
-function publicServer(cfg: PodConfig, log: (line: PodLogLine) => void): Server {
-  const gate = userGate(cfg);
-  const allowedOrigins = new Set(cfg.allowedOrigins);
+/**
+ * Hands an accepted socket to Hocuspocus. Only the query of the upgrade URL
+ * travels (the connection parameters); no request header does.
+ */
+function attach(rooms: Hocuspocus<CollabContext>, ws: WebSocket, req: IncomingMessage, listener: ListenerKind): void {
+  const request = new Request(new URL(req.url ?? "/", "http://ae-collab.invalid"));
+  const conn = rooms.handleConnection(ws, request, { listener } as CollabContext);
+  ws.on("message", (data: RawData) => conn.handleMessage(bytes(data)));
+  ws.on("close", (code: number, reason: Buffer) => conn.handleClose({ code, reason: reason.toString() }));
+  ws.on("error", () => ws.terminate());
+}
+
+function bytes(data: RawData): Uint8Array {
+  if (Array.isArray(data)) return new Uint8Array(Buffer.concat(data));
+  return new Uint8Array(data);
+}
+
+function roomServer(
+  kind: ListenerKind,
+  wss: WebSocketServer,
+  deps: { rooms: Hocuspocus<CollabContext>; accept: (req: IncomingMessage, socket: Duplex) => boolean },
+  onRequest: (req: IncomingMessage, res: ServerResponse) => void,
+): Server {
+  const server = createServer(onRequest);
+  server.on("upgrade", (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    socket.on("error", () => socket.destroy());
+    if (!deps.accept(req, socket)) return;
+    wss.handleUpgrade(req, socket, head, (ws) => attach(deps.rooms, ws, req, kind));
+  });
+  return server;
+}
+
+function publicServer(cfg: ListenerConfig, deps: Required<PodListenerDeps>, wss: WebSocketServer): Server {
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     if (V1.test(pathOf(req))) {
-      const refusal = await gate(req);
+      const refusal = await deps.gate(req);
       if (refusal) {
         sendProblem(res, refusal.status, refusal.code, refusal.detail, refusal.challenge);
         return;
@@ -142,29 +190,32 @@ function publicServer(cfg: PodConfig, log: (line: PodLogLine) => void): Server {
     // No operation is served yet: every admitted request is 404.
     sendProblem(res, 404, "not_found", "no such route");
   };
-  const server = createServer((req, res) => {
+  const accept = (req: IncomingMessage, socket: Duplex): boolean => {
+    if (!originAllowed(req.headers.origin, cfg)) {
+      refuseUpgrade(socket, 403, "origin_not_allowed", "the request origin is not allowed");
+      return false;
+    }
+    if (pathOf(req) !== ROOMS_PATH) {
+      refuseUpgrade(socket, 404, "not_found", "no such route");
+      return false;
+    }
+    return true;
+  };
+  return roomServer("public", wss, { rooms: deps.rooms, accept }, (req, res) => {
     handle(req, res).catch(() => {
-      log({ msg: "pod_request_failed", source: "ae-collab" });
+      deps.log({ msg: "pod_request_failed", source: "ae-collab" });
       // Never a stack or a message.
       if (res.headersSent) res.destroy();
       else sendProblem(res, 500, "internal", "");
     });
   });
-  server.on("upgrade", (req: IncomingMessage, socket: Duplex) => {
-    socket.on("error", () => socket.destroy());
-    const origin = req.headers.origin;
-    if (!origin || !allowedOrigins.has(origin)) {
-      refuseUpgrade(socket, 403, "origin_not_allowed", "the request origin is not allowed");
-      return;
-    }
-    if (pathOf(req) !== ROOMS_PATH) {
-      refuseUpgrade(socket, 404, "not_found", "no such route");
-      return;
-    }
-    // Phase 2: Hocuspocus takes the socket here.
-    refuseUpgrade(socket, 404, "not_found", "rooms are not served yet");
-  });
-  return server;
+}
+
+/** The agent's listener: every upgrade goes to the Room, which checks the token. */
+function localServer(rooms: Hocuspocus<CollabContext>, wss: WebSocketServer): Server {
+  return roomServer("local", wss, { rooms, accept: () => true }, (_req, res) =>
+    sendProblem(res, 404, "not_found", "no such route"),
+  );
 }
 
 function healthServer(ready: () => boolean): Server {
@@ -181,10 +232,10 @@ function healthServer(ready: () => boolean): Server {
   });
 }
 
-function listen(server: Server, port: number): Promise<Server> {
+function listen(server: Server, port: number, host?: string): Promise<Server> {
   return new Promise((resolve, reject) => {
     server.once("error", reject);
-    server.listen(port, () => {
+    server.listen(port, host, () => {
       server.off("error", reject);
       resolve(server);
     });
@@ -193,6 +244,7 @@ function listen(server: Server, port: number): Promise<Server> {
 
 /** Stops accepting and ends open connections (keep-alive ones included) at once. */
 function closeServer(server: Server): Promise<void> {
+  if (!server.listening) return Promise.resolve();
   const closed = new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
   server.closeAllConnections();
   return closed;
@@ -202,8 +254,11 @@ function urlOf(server: Server): string {
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 }
 
-/** Starts both listeners: health first, so `/readyz` answers 503 until the public port is bound. */
-export async function startPodListeners(cfg: PodConfig, deps: PodListenerDeps = {}): Promise<PodListeners> {
+/**
+ * Starts the listeners: health first, so `/readyz` answers 503 until both
+ * room listeners are bound. A failed bind closes whatever was bound.
+ */
+export async function startPodListeners(cfg: ListenerConfig, deps: PodListenerDeps): Promise<PodListeners> {
   const log = deps.log ?? stdoutLog;
   const line = (msg: PodLogLine["msg"], server?: Server): PodLogLine => ({
     msg,
@@ -211,26 +266,34 @@ export async function startPodListeners(cfg: PodConfig, deps: PodListenerDeps = 
     ...(server ? { port: (server.address() as AddressInfo).port } : {}),
   });
   let ready = false;
-  // Built before anything binds: a wiring error (empty issuer, JWKS URL or
-  // org) fails the start instead of every request.
-  const pub = publicServer(cfg, log);
+  // One WebSocket server per listener: its client set is that listener's sockets.
+  const publicWss = new WebSocketServer({ noServer: true });
+  const localWss = new WebSocketServer({ noServer: true });
+  const pub = publicServer(cfg, { ...deps, log }, publicWss);
+  const local = localServer(deps.rooms, localWss);
   const health = await listen(healthServer(() => ready), cfg.healthPort);
   log(line("pod_health_listening", health));
   try {
     await listen(pub, cfg.listenPort);
+    log(line("pod_public_listening", pub));
+    await listen(local, cfg.localPort, LOOPBACK);
+    log(line("pod_local_listening", local));
   } catch (err) {
-    await closeServer(health);
+    await Promise.all([closeServer(pub), closeServer(local), closeServer(health)]);
     throw err;
   }
-  log(line("pod_public_listening", pub));
   ready = true;
   return {
     publicUrl: urlOf(pub),
+    localUrl: urlOf(local),
     healthUrl: urlOf(health),
     async close() {
       ready = false;
       try {
-        await closeServer(pub);
+        const stopped = Promise.all([closeServer(pub), closeServer(local)]);
+        // Upgraded sockets left the HTTP servers' books: end them here.
+        for (const ws of [...publicWss.clients, ...localWss.clients]) ws.terminate();
+        await stopped;
       } finally {
         await closeServer(health);
         log(line("pod_listeners_stopped"));

@@ -27,8 +27,9 @@ import type { AddressInfo } from "node:net";
 import { generateKeyPairSync, randomBytes, sign as rsaSign, type KeyObject } from "node:crypto";
 import { loadConfig } from "./env.js";
 import { selectModes } from "./modes.js";
-import { loadPodConfig, type PodConfig } from "./pod/config.js";
-import { startPodListeners, type PodLogLine } from "./pod/listeners.js";
+import { loadDevConfig, loadPodConfig, type PodConfig } from "./pod/config.js";
+import type { PodLogLine } from "./pod/log.js";
+import { startPod } from "./pod/start.js";
 
 const ISSUER = "http://thunder.test";
 const USER_AUDIENCE = "aep-console-client";
@@ -92,6 +93,7 @@ function podEnv(over: Record<string, string> = {}): Record<string, string> {
     AE_USER_AUDIENCES: USER_AUDIENCE,
     AE_AGENT_CLIENT_ID: "ae-studio-default",
     AE_ALLOWED_ORIGINS: "http://console.ae.localhost:8080,http://localhost:8090",
+    AE_FILES_SOCKET: "/run/ae/files/files.sock",
     ...over,
   };
 }
@@ -110,7 +112,8 @@ async function podCfg(keys: TestKeys, over: Record<string, string> = {}): Promis
   const ports = { AE_LISTEN_PORT: await freePort(), AE_HEALTH_PORT: await freePort() };
   const cfg = loadPodConfig(podEnv({ AE_IDP_JWKS_URL: keys.jwksUrl, ...ports, ...over }));
   assert.ok(cfg);
-  return cfg;
+  // The local port is fixed (8091) in a pod; a test takes any free one.
+  return { ...cfg, localPort: 0 };
 }
 
 /** A WebSocket opening handshake; resolves with the status the server answered. */
@@ -138,10 +141,10 @@ function wsUpgrade(url: string, opts: { origin?: string } = {}): Promise<{ statu
   });
 }
 
-test("pod: HTTP under /v1 is gated; upgrades are refused for now; origin checked", async () => {
+test("pod: HTTP under /v1 is gated; room upgrades pass the origin rule and the path", async () => {
   const keys = await testKeys();
   const lines: PodLogLine[] = [];
-  const pod = await startPodListeners(await podCfg(keys), { log: (l) => lines.push(l) });
+  const pod = await startPod(await podCfg(keys), { log: (l) => lines.push(l) });
   try {
     const v1 = (p: string, token?: string) =>
       fetch(`${pod.publicUrl}${p}`, { headers: token ? { authorization: `Bearer ${token}` } : {} });
@@ -203,17 +206,25 @@ test("pod: HTTP under /v1 is gated; upgrades are refused for now; origin checked
     assert.equal(other.headers.get("content-type"), "application/problem+json");
     assert.equal((await fetch(`${pod.publicUrl}/readyz`)).status, 404);
 
-    // Upgrades: Origin first (a missing one is refused too), then the path;
-    // /v1/rooms itself is not served by this listener until phase 2.
+    // Upgrades: Origin first, then the path; /v1/rooms goes to the Room,
+    // which authenticates in-protocol. An absent Origin is accepted while the
+    // phase-2 agents bridge exists (U2; phase 3 Task 3.22 makes it 403).
     const evil = await wsUpgrade(`${pod.publicUrl}/v1/rooms`, { origin: "https://evil.example" });
     assert.equal(evil.status, 403);
     assert.equal(evil.contentType, "application/problem+json");
-    assert.equal((await wsUpgrade(`${pod.publicUrl}/v1/rooms`)).status, 403);
+    assert.equal((await wsUpgrade(`${pod.publicUrl}/v1/rooms`)).status, 101);
     assert.equal((await wsUpgrade(`${pod.publicUrl}/other`, { origin: "https://evil.example" })).status, 403);
     assert.equal((await wsUpgrade(`${pod.publicUrl}/other`, { origin: "http://localhost:8090" })).status, 404);
+    assert.equal((await wsUpgrade(`${pod.publicUrl}/other`)).status, 404);
     const ok = await wsUpgrade(`${pod.publicUrl}/v1/rooms`, { origin: "http://localhost:8090" });
-    assert.equal(ok.status, 404); // rooms are not served by this listener yet
-    assert.equal((await wsUpgrade(`${pod.publicUrl}/v1/rooms?x=1`, { origin: "http://console.ae.localhost:8080" })).status, 404);
+    assert.equal(ok.status, 101);
+    assert.equal((await wsUpgrade(`${pod.publicUrl}/v1/rooms?x=1`, { origin: "http://console.ae.localhost:8080" })).status, 101);
+    // The path is matched as sent: no casing or trailing-slash variants.
+    assert.equal((await wsUpgrade(`${pod.publicUrl}/V1/rooms`, { origin: "http://localhost:8090" })).status, 404);
+    assert.equal((await wsUpgrade(`${pod.publicUrl}/v1/rooms/`, { origin: "http://localhost:8090" })).status, 404);
+
+    // The local listener serves upgrades only.
+    assert.equal((await fetch(`${pod.localUrl}/v1/rooms`)).status, 404);
 
     assert.equal((await fetch(`${pod.healthUrl}/healthz`)).status, 200);
     assert.equal((await fetch(`${pod.healthUrl}/readyz`)).status, 200);
@@ -224,13 +235,13 @@ test("pod: HTTP under /v1 is gated; upgrades are refused for now; origin checked
   }
   assert.deepEqual(
     lines.map((l) => l.msg),
-    ["pod_health_listening", "pod_public_listening", "pod_listeners_stopped"],
+    ["pod_health_listening", "pod_public_listening", "pod_local_listening", "pod_listeners_stopped"],
   );
 });
 
 test("pod: close ends open connections and stops both listeners", async () => {
   const keys = await testKeys();
-  const pod = await startPodListeners(await podCfg(keys), { log: () => {} });
+  const pod = await startPod(await podCfg(keys), { log: () => {} });
   // A keep-alive connection left open must not hold close() up.
   await fetch(`${pod.publicUrl}/v1/rooms`, { headers: { connection: "keep-alive" } });
   await pod.close();
@@ -247,7 +258,7 @@ test("pod: a busy public port fails the start and frees the health port", async 
   const lines: PodLogLine[] = [];
   try {
     await assert.rejects(
-      startPodListeners(await podCfg(keys, { AE_LISTEN_PORT: port }), { log: (l) => lines.push(l) }),
+      startPod(await podCfg(keys, { AE_LISTEN_PORT: port }), { log: (l) => lines.push(l) }),
       /EADDRINUSE/,
     );
     assert.deepEqual(lines.map((l) => l.msg), ["pod_health_listening"]);
@@ -281,8 +292,10 @@ test("pod config: defaults and lists", () => {
     userAudiences: ["aep-console-client", "other"],
     agentClientId: "ae-studio-default",
     allowedOrigins: ["http://localhost:8090"],
+    filesSocket: "/run/ae/files/files.sock",
     listenPort: 8081,
     healthPort: 9081,
+    localPort: 8091,
   });
 });
 
@@ -291,7 +304,7 @@ test("pod config: AE_ORG_ID without the rest fails, naming every missing key and
     () => loadPodConfig({ AE_ORG_ID: "ou-1" }),
     new Error(
       "ae-collab pod env: missing AE_ORG_HANDLE, missing AE_IDP_ISSUER, missing AE_IDP_JWKS_URL, " +
-        "missing AE_USER_AUDIENCES, missing AE_AGENT_CLIENT_ID, missing AE_ALLOWED_ORIGINS",
+        "missing AE_USER_AUDIENCES, missing AE_AGENT_CLIENT_ID, missing AE_ALLOWED_ORIGINS, missing AE_FILES_SOCKET",
     ),
   );
   assert.throws(() => loadPodConfig(podEnv({ AE_ALLOWED_ORIGINS: " , " })), /missing AE_ALLOWED_ORIGINS/);
@@ -309,8 +322,8 @@ test("pod config: AE_ORG_ID without the rest fails, naming every missing key and
   );
 });
 
-test("modes: no legacy server without legacy config", () => {
-  assert.deepEqual(selectModes(podEnv()), { pod: loadPodConfig(podEnv()), legacy: null });
+test("modes: a full pod env is pod mode", () => {
+  assert.deepEqual(selectModes(podEnv()), { mode: "pod", config: loadPodConfig(podEnv()) });
 });
 
 test("modes: no dev mode in pod mode: a legacy key in a pod env fails the boot", () => {
@@ -329,23 +342,38 @@ test("modes: no dev mode in pod mode: a legacy key in a pod env fails the boot",
   }
 });
 
-test("modes: the legacy server needs a BFF, the mock BFF or COLLAB_DEV", () => {
+test("modes: COLLAB_DEV alone is dev mode: the pod's listeners, fixed local port", () => {
+  assert.deepEqual(selectModes({ COLLAB_DEV: "1" }), {
+    mode: "dev",
+    config: { allowedOrigins: [], listenPort: 8081, healthPort: 9081, localPort: 8091 },
+  });
+  assert.deepEqual(loadDevConfig({ AE_ALLOWED_ORIGINS: "http://localhost:5173", AE_LISTEN_PORT: "18081" }), {
+    allowedOrigins: ["http://localhost:5173"],
+    listenPort: 18081,
+    healthPort: 9081,
+    localPort: 8091,
+  });
+  assert.throws(
+    () => loadDevConfig({ AE_ALLOWED_ORIGINS: "http://localhost:5173/", AE_HEALTH_PORT: "0" }),
+    (err: Error) => err.message === "ae-collab dev env: invalid AE_ALLOWED_ORIGINS, invalid AE_HEALTH_PORT",
+  );
+});
+
+test("modes: the legacy server needs a BFF, real or mock", () => {
   const real = selectModes({ AEP_API_BASE: "http://aep-api:9090/api/v1/" });
-  assert.equal(real.pod, null);
-  assert.equal(real.legacy?.aepApiBase, "http://aep-api:9090/api/v1");
-  assert.equal(real.legacy?.devMode, false);
-  assert.equal(selectModes({ COLLAB_MOCK_BFF: "1" }).legacy?.mockBff, true);
-  assert.equal(selectModes({ COLLAB_DEV: "1" }).legacy?.devMode, true);
+  assert.equal(real.mode, "legacy");
+  assert.equal(real.mode === "legacy" && real.config.aepApiBase, "http://aep-api:9090/api/v1");
+  const mock = selectModes({ COLLAB_MOCK_BFF: "1" });
+  assert.equal(mock.mode === "legacy" && mock.config.mockBff, true);
 });
 
 test("modes: a configured BFF outranks COLLAB_DEV (pnpm dev runs the real auth path)", () => {
-  const mock = selectModes({ COLLAB_DEV: "1", COLLAB_MOCK_BFF: "1" }).legacy;
-  assert.equal(mock?.devMode, false);
-  assert.equal(mock?.mockBff, true);
-  assert.equal(mock?.aepApiBase, "http://127.0.0.1:8092/api/v1");
-  const real = selectModes({ COLLAB_DEV: "1", AEP_API_BASE: "http://localhost:9090/api/v1" }).legacy;
-  assert.equal(real?.devMode, false);
-  assert.equal(real?.aepApiBase, "http://localhost:9090/api/v1");
+  const mock = selectModes({ COLLAB_DEV: "1", COLLAB_MOCK_BFF: "1" });
+  assert.equal(mock.mode, "legacy");
+  assert.equal(mock.mode === "legacy" && mock.config.aepApiBase, "http://127.0.0.1:8092/api/v1");
+  const real = selectModes({ COLLAB_DEV: "1", AEP_API_BASE: "http://localhost:9090/api/v1" });
+  assert.equal(real.mode, "legacy");
+  assert.equal(real.mode === "legacy" && real.config.aepApiBase, "http://localhost:9090/api/v1");
 });
 
 test("modes: boot fails with no config, and with a partial pod config", () => {
