@@ -39,12 +39,17 @@ type TokenClaims struct {
 	OuName   string `json:"ouName"`
 	OuHandle string `json:"ouHandle"`
 	ClientID string `json:"client_id"`
+	// GrantType is the OAuth grant the token was issued under. Thunder stamps
+	// it on every token it issues; a client_credentials token is a machine's.
+	GrantType string `json:"grant_type"`
 	// Task JWT–specific custom claims. Empty for User and Service JWTs.
 	OcOrgID   string `json:"ocOrgId,omitempty"`
 	TaskID    string `json:"taskId,omitempty"`
 	ProjectID string `json:"projectId,omitempty"`
 	jwt.RegisteredClaims
 }
+
+const grantClientCredentials = "client_credentials"
 
 type tokenClaimsCtxKey struct{}
 type scopesCtxKey struct{}
@@ -66,6 +71,10 @@ type Config struct {
 	// ResourceMetadataURL is included in the WWW-Authenticate challenge per
 	// RFC 9728 (OAuth Protected Resource Metadata). Empty disables the hint.
 	ResourceMetadataURL string
+	// UserTokensOnly refuses a client_credentials token, so the route accepts
+	// only tokens issued to a signed-in user. It keys on grant_type, not on a
+	// missing sub: Thunder sets sub to the client's entity id on M2M tokens.
+	UserTokensOnly bool
 }
 
 // Middleware is the standard http.Handler wrapping signature.
@@ -173,6 +182,9 @@ func validateJWT(tokenString string, cfg Config, issuers compiledIssuers, audien
 	}
 	if err := audiences.match(claims.Audience); err != nil {
 		return nil, err
+	}
+	if cfg.UserTokensOnly && claims.GrantType == grantClientCredentials {
+		return nil, fmt.Errorf("client_credentials token on a user-only route (client %s)", claims.ClientID)
 	}
 	return claims, nil
 }

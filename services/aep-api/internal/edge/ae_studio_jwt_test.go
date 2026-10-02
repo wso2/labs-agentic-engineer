@@ -38,18 +38,24 @@ import (
 // the /api/v1 JWT verifier and tenant gate are the only checks on the read.
 // These tests run that read through the PRODUCTION verifier (no InboundAuth
 // seam): real RS256 tokens against a JWKS server, the configured issuer and
-// the default JWT_AUDIENCE, then the real tenant gate in ENFORCE.
+// the console client's audience (JWT_AUDIENCE), then the real tenant gate in
+// ENFORCE. Tokens carry Thunder's real client ids and grant_type claims.
 
 const (
-	studioIssuer   = "thunder-test"
-	studioAudience = "aep-bff" // the JWT_AUDIENCE default (config_loader.go)
-	studioKID      = "studio-kid"
+	studioIssuer  = "thunder-test"
+	consoleClient = "aep-console-client" // JWT_AUDIENCE: Thunder sets aud = client id
+	publisherAcme = "aep-publisher-acme" // a publisher M2M client and its aud
+	studioKID     = "studio-kid"
+	grantUser     = "authorization_code"
+	grantMachine  = "client_credentials"
+	m2mEntityID   = "01a0f2c3-0000-7000-8000-00000000c11e" // Thunder's sub on an M2M token
 )
 
 type studioTokenClaims struct {
-	Sub      string `json:"sub,omitempty"`
-	ClientID string `json:"client_id,omitempty"`
-	OuHandle string `json:"ouHandle,omitempty"`
+	Sub       string `json:"sub,omitempty"`
+	ClientID  string `json:"client_id,omitempty"`
+	GrantType string `json:"grant_type,omitempty"`
+	OuHandle  string `json:"ouHandle,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -77,7 +83,7 @@ func newVerifiedStudioStack(t *testing.T) (http.Handler, func(studioTokenClaims)
 	h := NewHandler(AppParams{
 		Config: config.Config{
 			JWTAllowedIssuer:   studioIssuer,
-			JWTAllowedAudience: studioAudience,
+			JWTAllowedAudience: consoleClient,
 			TenantGateMode:     "enforce",
 		},
 		Deps:        Deps{Organization: orgs},
@@ -115,23 +121,29 @@ func verifierRejected(w *httptest.ResponseRecorder) bool {
 	return strings.Contains(w.Header().Get("WWW-Authenticate"), `error="invalid_token"`)
 }
 
-// (a) A client_credentials token for aep-bff carries no org claim: it passes
-// the verifier (right issuer, audience and signature) and the tenant gate
-// refuses it.
-func TestGetAeStudio_VerifiedCCTokenWithoutOrgIs401AtTheGate(t *testing.T) {
+// (a) A client_credentials token with the console audience and no org claim
+// is refused by the verifier: /api/v1 takes user tokens only.
+func TestGetAeStudio_CCTokenWithoutOrgIs401AtTheVerifier(t *testing.T) {
 	h, sign := newVerifiedStudioStack(t)
 	w := getAEStudioAs(h, sign(studioTokenClaims{
-		Sub: "some-m2m-client", ClientID: "some-m2m-client",
-		RegisteredClaims: jwt.RegisteredClaims{Audience: jwt.ClaimStrings{studioAudience}},
+		Sub: m2mEntityID, ClientID: consoleClient, GrantType: grantMachine,
+		RegisteredClaims: jwt.RegisteredClaims{Audience: jwt.ClaimStrings{consoleClient}},
 	}))
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401 (%s)", w.Code, w.Body)
+	if w.Code != http.StatusUnauthorized || !verifierRejected(w) {
+		t.Fatalf("status = %d challenge = %q, want the verifier's 401 (%s)", w.Code, w.Header().Get("WWW-Authenticate"), w.Body)
 	}
-	if verifierRejected(w) {
-		t.Fatalf("the verifier refused a well-formed aep-bff token; the gate should be what refuses it: %s", w.Body)
-	}
-	if !strings.Contains(w.Body.String(), "authentication required") {
-		t.Fatalf("want the tenant gate's refusal, got %s", w.Body)
+}
+
+// A verified user token with no org claim passes the verifier and the tenant
+// gate refuses it, so the gate still backs the verifier.
+func TestGetAeStudio_UserTokenWithoutOrgIs401AtTheGate(t *testing.T) {
+	h, sign := newVerifiedStudioStack(t)
+	w := getAEStudioAs(h, sign(studioTokenClaims{
+		Sub: "alice", ClientID: consoleClient, GrantType: grantUser,
+		RegisteredClaims: jwt.RegisteredClaims{Audience: jwt.ClaimStrings{consoleClient}},
+	}))
+	if w.Code != http.StatusUnauthorized || verifierRejected(w) || !strings.Contains(w.Body.String(), "authentication required") {
+		t.Fatalf("status = %d challenge = %q, want the tenant gate's 401 (%s)", w.Code, w.Header().Get("WWW-Authenticate"), w.Body)
 	}
 }
 
@@ -140,8 +152,8 @@ func TestGetAeStudio_VerifiedCCTokenWithoutOrgIs401AtTheGate(t *testing.T) {
 func TestGetAeStudio_PublisherAudienceTokenIs401AtTheVerifier(t *testing.T) {
 	h, sign := newVerifiedStudioStack(t)
 	w := getAEStudioAs(h, sign(studioTokenClaims{
-		Sub: "publisher-client", ClientID: "publisher-client", OuHandle: "acme",
-		RegisteredClaims: jwt.RegisteredClaims{Audience: jwt.ClaimStrings{"aep-publisher-acme"}},
+		Sub: m2mEntityID, ClientID: publisherAcme, GrantType: grantMachine, OuHandle: "acme",
+		RegisteredClaims: jwt.RegisteredClaims{Audience: jwt.ClaimStrings{publisherAcme}},
 	}))
 	if w.Code != http.StatusUnauthorized || !verifierRejected(w) {
 		t.Fatalf("status = %d challenge = %q, want the verifier's 401 (%s)", w.Code, w.Header().Get("WWW-Authenticate"), w.Body)
@@ -156,8 +168,8 @@ func TestGetAeStudio_VerifiedUserTokenReadsOnlyItsOrg(t *testing.T) {
 	h, sign := newVerifiedStudioStack(t)
 	user := func(sub, org string) string {
 		return sign(studioTokenClaims{
-			Sub: sub, ClientID: "aep-console", OuHandle: org,
-			RegisteredClaims: jwt.RegisteredClaims{Audience: jwt.ClaimStrings{studioAudience}},
+			Sub: sub, ClientID: consoleClient, GrantType: grantUser, OuHandle: org,
+			RegisteredClaims: jwt.RegisteredClaims{Audience: jwt.ClaimStrings{consoleClient}},
 		})
 	}
 
@@ -175,21 +187,18 @@ func TestGetAeStudio_VerifiedUserTokenReadsOnlyItsOrg(t *testing.T) {
 	}
 }
 
-// A client_credentials token minted for aep-bff WITH an org claim is
-// indistinguishable from a user token to this edge: the verifier checks
-// signature, issuer and audience only, and the gate checks only the org claim.
-// Whether /api/v1 must refuse it (e.g. on a grant-type or subject-kind claim)
-// is an open verifier-semantics decision, so this pins the desired behaviour
-// without changing the verifier.
+// A client_credentials token with the console audience AND an org claim is
+// refused by the verifier: an org claim never makes a machine an org member.
 func TestGetAeStudio_CCTokenWithOrgForBFFAudienceIsRefused(t *testing.T) {
-	t.Skip("finding (Task 1.16b): the /api/v1 verifier admits a client_credentials token with aud=aep-bff and an ouHandle claim; " +
-		"refusing it needs a verifier-semantics decision (no grant-type/subject-kind check exists today)")
 	h, sign := newVerifiedStudioStack(t)
 	w := getAEStudioAs(h, sign(studioTokenClaims{
-		Sub: "some-m2m-client", ClientID: "some-m2m-client", OuHandle: "acme",
-		RegisteredClaims: jwt.RegisteredClaims{Audience: jwt.ClaimStrings{studioAudience}},
+		Sub: m2mEntityID, ClientID: consoleClient, GrantType: grantMachine, OuHandle: "acme",
+		RegisteredClaims: jwt.RegisteredClaims{Audience: jwt.ClaimStrings{consoleClient}},
 	}))
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401 (%s)", w.Code, w.Body)
+	if w.Code != http.StatusUnauthorized || !verifierRejected(w) {
+		t.Fatalf("status = %d challenge = %q, want the verifier's 401 (%s)", w.Code, w.Header().Get("WWW-Authenticate"), w.Body)
+	}
+	if strings.Contains(w.Body.String(), "acme-d") {
+		t.Fatalf("leaked acme's AE Studio: %s", w.Body)
 	}
 }

@@ -85,6 +85,11 @@ type JWTConfig struct {
 // header against cfg, projects the verified token into a Claims record, and
 // forwards the request with the projection in context.
 //
+// It verifies USER tokens only: a client_credentials token is refused with
+// the same 401 invalid_token challenge as any other verifier refusal, whatever
+// its audience or org claim. Machine callers have their own routes
+// (/internal/v1/*) with their own verifiers.
+//
 // The underlying jwtassertion middleware emits RFC 9728 WWW-Authenticate
 // challenges on failure. The thin projection only exists so the rest of
 // the BFF doesn't have to care about the full TokenClaims shape.
@@ -94,6 +99,7 @@ func JWTMiddleware(cfg JWTConfig) func(http.Handler) http.Handler {
 		AllowedIssuers:      cfg.AllowedIssuers,
 		AllowedAudiences:    cfg.AllowedAudiences,
 		ResourceMetadataURL: cfg.ResourceMetadataURL,
+		UserTokensOnly:      true,
 	})
 	return func(next http.Handler) http.Handler {
 		return verifier(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -19,8 +19,11 @@
 # POST /projects/{project}/builds/{tag}/revalidate.
 #
 # It exists because the revalidation has no console button: the endpoint is the
-# whole interface, and the only friction in calling it is minting a token. This
-# is that curl with the Thunder client_credentials dance folded in.
+# whole interface, and the only friction in calling it is getting a token. This
+# is that curl with a user sign-in folded in: /api/v1 refuses client_credentials
+# tokens, so it signs in as the local admin through the console's Thunder client
+# (AEP_USER / AEP_PASSWORD override the user, CONSOLE_URL names the console the
+# client was registered for; scripts/lib/thunder-user-login.sh).
 #
 # The loop it was written for: change the `validation-task` skill, rebuild and
 # deploy aep-api — the BFF carries the skills mirror a dispatched runner reads,
@@ -54,6 +57,8 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/thunder-user-login.sh
+. "${SCRIPT_DIR}/lib/thunder-user-login.sh"
 
 # A project that exists at the time of writing, for a bare invocation; all three
 # are positional. Project names rot as local stacks are rebuilt — pass your own.
@@ -63,7 +68,6 @@ ATTEMPTS="${3:-1}"
 
 BFF_URL="${BFF_URL:-http://localhost:9090}"
 THUNDER_URL="${THUNDER_URL:-http://thunder.openchoreo.localhost:8080}"
-SEEDER_CLIENT_ID="${SEEDER_CLIENT_ID:-aep-local-dev-seeder}"
 
 # Both budgets are interpolated into hand-built JSON below, so a non-numeric or
 # leading-zero value would ship a malformed body and come back as an opaque 400.
@@ -77,69 +81,17 @@ if [ -n "${CEILING:-}" ] && ! [[ "$CEILING" =~ ^[1-9][0-9]*$ ]]; then
     exit 1
 fi
 
-# The local plane keeps CLUSTER_CONTEXT in one place; source it rather than
-# restating "k3d-openchoreo" here. env.sh is pure assignments, no side effects —
-# but it assigns UNCONDITIONALLY, so an exported override has to be carried
-# across the source by hand or it is silently replaced by the default.
-CLUSTER_CONTEXT_OVERRIDE="${CLUSTER_CONTEXT:-}"
-if [ -f "${SCRIPT_DIR}/../deployments/scripts/env.sh" ]; then
-    # shellcheck source=/dev/null
-    . "${SCRIPT_DIR}/../deployments/scripts/env.sh"
-fi
-CLUSTER_CONTEXT="${CLUSTER_CONTEXT_OVERRIDE:-${CLUSTER_CONTEXT:-k3d-openchoreo}}"
-# Not in env.sh — this one is restated from setup-local.sh, which creates it.
-AEP_NS="${AEP_NS:-wso2-aep}"
-
-# Read a key out of a cluster Secret; empty when kubectl, the cluster or the key
-# is missing. Same read as deployments/scripts/setup-local.sh's existing_secret,
-# because that script is what wrote the value.
-cluster_secret() {
-    kubectl --context "${CLUSTER_CONTEXT}" get secret "$1" \
-        -n "${AEP_NS}" -o jsonpath="{.data.$2}" 2>/dev/null \
-        | base64 -d 2>/dev/null || true
-}
-
-# TWO paths register this client and they disagree about its secret, so the
-# secret is resolved rather than assumed: setup-local.sh generates a random one
-# into the aep-thunder-secrets Secret and registers the app with it, while
-# Thunder's own bootstrap (single-cluster/values-thunder.yaml) registers the
-# literal below. Whichever ran last is the one Thunder will accept — hence the
-# cluster read first, and the literal only as the fallback that path needs.
-SECRET_SOURCE="the exported SEEDER_CLIENT_SECRET"
-if [ -z "${SEEDER_CLIENT_SECRET:-}" ]; then
-    SEEDER_CLIENT_SECRET="$(cluster_secret aep-thunder-secrets LOCAL_DEV_SEEDER_SECRET)"
-    SECRET_SOURCE="the aep-thunder-secrets Secret (${CLUSTER_CONTEXT}/${AEP_NS})"
-fi
-if [ -z "$SEEDER_CLIENT_SECRET" ]; then
-    SEEDER_CLIENT_SECRET="aep-local-dev-seeder-secret"
-    SECRET_SOURCE="the values-thunder.yaml bootstrap default"
-fi
-
 if ! curl -fsS --max-time 3 "$BFF_URL/healthz" > /dev/null 2>&1; then
     echo "❌ BFF not reachable at $BFF_URL"
     echo "   Bring the compose stack up first: cd deployments && bash scripts/start.sh"
     exit 1
 fi
 
-TOKEN=$(curl -sS -X POST "${THUNDER_URL%/}/oauth2/token" \
-    -H "Content-Type: application/x-www-form-urlencoded" \
-    -d "grant_type=client_credentials" \
-    -d "client_id=${SEEDER_CLIENT_ID}" \
-    -d "client_secret=${SEEDER_CLIENT_SECRET}" 2>/dev/null \
-    | sed -n 's/.*"access_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-
-if [ -z "$TOKEN" ]; then
-    echo "❌ Thunder did not return an access_token for '${SEEDER_CLIENT_ID}'." >&2
-    echo "   Tried the secret from ${SECRET_SOURCE}." >&2
-    echo "   Two paths register this client and they disagree on its secret:" >&2
-    echo "     deployments/scripts/setup-local.sh  — a random one, in the Secret" >&2
-    echo "     single-cluster/values-thunder.yaml  — the literal default" >&2
-    echo "   Whichever ran last is the one Thunder honours, so read the live one" >&2
-    echo "   and pass it explicitly:" >&2
-    echo "     SEEDER_CLIENT_SECRET=\$(kubectl --context ${CLUSTER_CONTEXT} get secret \\" >&2
-    echo "       aep-thunder-secrets -n ${AEP_NS} \\" >&2
-    echo "       -o jsonpath='{.data.LOCAL_DEV_SEEDER_SECRET}' | base64 -d) \\" >&2
-    echo "       bash scripts/project-revalidate.sh ${PROJECT} ${TAG}" >&2
+# The token lives in a 0600 header file curl reads with -H @file, so it never
+# reaches an argv.
+AUTH_HEADER="$(mktemp)"
+trap 'rm -f "$AUTH_HEADER"' EXIT
+if ! thunder_user_auth_header "$AUTH_HEADER"; then
     exit 1
 fi
 
@@ -151,7 +103,7 @@ echo "🔁 Revalidating ${PROJECT} ${TAG} (validationAttempts=${ATTEMPTS})"
 # Body and status separately, so a refusal prints its reason instead of being
 # swallowed by a non-2xx exit.
 RESP=$(curl -sS -X POST "${BFF_URL}/api/v1/projects/${PROJECT}/builds/${TAG}/revalidate" \
-    -H "Authorization: Bearer ${TOKEN}" \
+    -H "@${AUTH_HEADER}" \
     -H "Content-Type: application/json" \
     -d "$BODY" -w '\n%{http_code}' 2>&1)
 CODE="${RESP##*$'\n'}"

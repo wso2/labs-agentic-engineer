@@ -28,6 +28,11 @@
 #   scripts/project-rebuild.sh my-project my-component
 #   NO_LOGS=1 scripts/project-rebuild.sh my-project my-component   # trigger + verdict only
 #
+# It signs in as a USER (the local admin by default; AEP_USER / AEP_PASSWORD
+# override it) through the console's Thunder client, because /api/v1 refuses a
+# client_credentials token. CONSOLE_URL names the console that client was
+# registered for (scripts/lib/thunder-user-login.sh).
+#
 # Both arguments are required on purpose. A build costs a pod and a push to the
 # registry, and a mistyped component silently rebuilds the wrong thing — so
 # neither gets a default, unlike project-revalidate.sh's read-only trigger.
@@ -42,6 +47,10 @@
 #
 # Requires jq — the build log is a JSON array, which sed cannot walk honestly.
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/thunder-user-login.sh
+. "${SCRIPT_DIR}/lib/thunder-user-login.sh"
 
 usage() {
     echo "Usage: $(basename "$0") <project> <component>" >&2
@@ -58,8 +67,6 @@ fi
 
 BFF_URL="${BFF_URL:-http://localhost:9090}"
 THUNDER_URL="${THUNDER_URL:-http://thunder.openchoreo.localhost:8080}"
-SEEDER_CLIENT_ID="${SEEDER_CLIENT_ID:-aep-local-dev-seeder}"
-SEEDER_CLIENT_SECRET="${SEEDER_CLIENT_SECRET:-aep-local-dev-seeder-secret}"
 # Two separate budgets because they bound different things: a cold image build
 # is minutes, while AutoDeploy reacting to a posted Workload is seconds.
 BUILD_TIMEOUT="${BUILD_TIMEOUT:-900}"
@@ -92,16 +99,11 @@ if ! curl -fsS --max-time 3 "$BFF_URL/healthz" > /dev/null 2>&1; then
     exit 1
 fi
 
-TOKEN=$(curl -sS -X POST "${THUNDER_URL%/}/oauth2/token" \
-    -H "Content-Type: application/x-www-form-urlencoded" \
-    -d "grant_type=client_credentials" \
-    -d "client_id=${SEEDER_CLIENT_ID}" \
-    -d "client_secret=${SEEDER_CLIENT_SECRET}" 2> /dev/null \
-    | sed -n 's/.*"access_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-
-if [ -z "$TOKEN" ]; then
-    echo "❌ Thunder did not return an access_token for '${SEEDER_CLIENT_ID}'."
-    echo "   The client is registered by deployments/scripts/setup-local.sh / start.sh."
+# The token lives in a 0600 header file curl reads with -H @file, so it never
+# reaches an argv.
+AUTH_HEADER="$(mktemp)"
+trap 'rm -f "$AUTH_HEADER"' EXIT
+if ! thunder_user_auth_header "$AUTH_HEADER"; then
     exit 1
 fi
 
@@ -113,7 +115,7 @@ API="${BFF_URL}/api/v1/projects/${PROJECT}/components/${COMPONENT}"
 # rather than creating a new one — so "a deploy happened" is only visible as a
 # change against what was there beforehand, never as a row appearing.
 deployments_json() {
-    curl -sS -H "Authorization: Bearer ${TOKEN}" "${API}/deployments" 2> /dev/null || true
+    curl -sS -H "@${AUTH_HEADER}" "${API}/deployments" 2> /dev/null || true
 }
 
 # Sorted keys so the comparison is over content, not field order.
@@ -131,7 +133,7 @@ echo "🔨 Building ${PROJECT}/${COMPONENT} from the default branch head"
 # Body and status separately, so a refusal prints its reason instead of being
 # swallowed by a non-2xx exit.
 RESP=$(curl -sS -X POST "${API}/builds" \
-    -H "Authorization: Bearer ${TOKEN}" \
+    -H "@${AUTH_HEADER}" \
     -w '\n%{http_code}' 2>&1)
 CODE="${RESP##*$'\n'}"
 JSON="${RESP%$'\n'*}"
@@ -175,7 +177,7 @@ else
             echo "⏱  Build log still open after ${BUILD_TIMEOUT}s — giving up on the tail."
             break
         fi
-        PAGE=$(curl -sS -H "Authorization: Bearer ${TOKEN}" \
+        PAGE=$(curl -sS -H "@${AUTH_HEADER}" \
             "${API}/builds/${RUN}/logs?since=${CURSOR}" -w '\n%{http_code}' 2>&1)
         PCODE="${PAGE##*$'\n'}"
         PJSON="${PAGE%$'\n'*}"
@@ -203,7 +205,7 @@ fi
 # guarantee — so a run that is not in the page yet counts as still pending rather
 # than as a failure.
 build_row() {
-    curl -sS -H "Authorization: Bearer ${TOKEN}" "${API}/builds" 2> /dev/null \
+    curl -sS -H "@${AUTH_HEADER}" "${API}/builds" 2> /dev/null \
         | jq -r --arg run "$RUN" '.items[]? | select(.name == $run) | "\(.status)\t\(.completed)"' \
         || true
 }
@@ -252,7 +254,7 @@ done
 echo
 if [ "$COMPLETED" != "true" ]; then
     echo "⏱  Build ${RUN} reported no terminal state within ${BUILD_TIMEOUT}s (last status: ${STATUS:-unknown})."
-    echo "   Re-check:  curl -sS -H \"Authorization: Bearer \$TOKEN\" ${API}/builds"
+    echo "   Re-check:  the Builds page for ${PROJECT}/${COMPONENT}, or GET ${API}/builds with a user token"
     exit 1
 fi
 

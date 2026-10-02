@@ -82,12 +82,12 @@ spec:
               value: {{ .Values.workspaces.diskHighPct | default "85" | quote }}
             - name: AEP_WORKSPACE_DISK_LOW_PCT
               value: {{ .Values.workspaces.diskLowPct | default "70" | quote }}
-            # aep-* covers the AEP clients (aud = client id, all aep-*).
-            # openchoreo-rca-agent is added so the SRE/RCA agent's token (aud =
-            # its client id) is accepted for issue-create + report publish —
-            # matches setup.sh's BFF_AUDIENCE default.
+            # /api/v1 takes user tokens only, and the console client is the one
+            # that issues them (Thunder sets aud = client id). Machine clients —
+            # publisher, system, SRE — have their own /internal/v1 routes, and the
+            # verifier refuses a client_credentials token here whatever its aud.
             - name: JWT_AUDIENCE
-              value: "aep-*,openchoreo-rca-agent"
+              value: {{ .Values.console.thunder.clientId | quote }}
             - name: SERVICE_AUTH_CLIENT_ID
               value: {{ .Values.aepApi.serviceAuth.clientId | quote }}
             - name: SERVICE_AUTH_TOKEN_URL

@@ -3536,6 +3536,7 @@ components:
       - failed
       - stopped
       type: string
+      # x-enum-varnames are UNPREFIXED: aep-api codegen sets always-prefix-enum-values, which adds the type name (AgentStatusRunning).
       x-enum-varnames:
       - Running
       - Completed

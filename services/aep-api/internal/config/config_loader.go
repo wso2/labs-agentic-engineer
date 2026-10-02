@@ -91,7 +91,7 @@ func Load() (Config, error) {
 		TaskTokenAudience:      r.readOptionalString("BFF_TASK_TOKEN_AUDIENCE", "git-service"),
 		JWKSURL:                r.readOptionalString("JWKS_URL", ""),
 		JWTAllowedIssuer:       r.readOptionalString("JWT_ISSUER", ""),
-		JWTAllowedAudience:     r.readOptionalString("JWT_AUDIENCE", "aep-bff"),
+		JWTAllowedAudience:     r.readOptionalString("JWT_AUDIENCE", "aep-console-client"),
 		JWTResourceMetadataURL: r.readOptionalString("JWT_RESOURCE_METADATA_URL", ""),
 		Observability: ObservabilityConfig{
 			BaseURL:      r.readOptionalString("OBSERVER_URL", r.readOptionalString("OBSERVABILITY_SERVICE_BASE_URL", "")),

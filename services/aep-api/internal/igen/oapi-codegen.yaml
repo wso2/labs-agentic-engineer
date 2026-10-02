@@ -23,6 +23,10 @@ generate:
   embedded-spec: true
 compatibility:
   preserve-original-operation-id-casing-in-embedded-spec: true
+  # Enum constants are always type-prefixed, as in the public pass
+  # (internal/gen/oapi-codegen-models.yaml): a bare constant is renamed the
+  # moment another enum shares one of its values.
+  always-prefix-enum-values: true
 output: internal/igen/igen_gen.go
 output-options:
   skip-prune: true

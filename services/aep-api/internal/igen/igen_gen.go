@@ -31,19 +31,19 @@ const (
 
 // Defines values for IssueInfoAttentionReason.
 const (
-	Escalated       IssueInfoAttentionReason = "escalated"
-	NoChangeVerdict IssueInfoAttentionReason = "no_change_verdict"
-	UnverifiedFix   IssueInfoAttentionReason = "unverified_fix"
+	IssueInfoAttentionReasonEscalated       IssueInfoAttentionReason = "escalated"
+	IssueInfoAttentionReasonNoChangeVerdict IssueInfoAttentionReason = "no_change_verdict"
+	IssueInfoAttentionReasonUnverifiedFix   IssueInfoAttentionReason = "unverified_fix"
 )
 
 // Valid indicates whether the value is a known member of the IssueInfoAttentionReason enum.
 func (e IssueInfoAttentionReason) Valid() bool {
 	switch e {
-	case Escalated:
+	case IssueInfoAttentionReasonEscalated:
 		return true
-	case NoChangeVerdict:
+	case IssueInfoAttentionReasonNoChangeVerdict:
 		return true
-	case UnverifiedFix:
+	case IssueInfoAttentionReasonUnverifiedFix:
 		return true
 	default:
 		return false

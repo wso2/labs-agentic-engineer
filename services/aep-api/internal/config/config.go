@@ -203,9 +203,10 @@ type Config struct {
 	// AEP_API_INTERNAL_BASE_URL.
 	AEPInternalBaseURL string
 
-	// JWKS settings for inbound JWT verification — Thunder publishes the
-	// User JWT and Service JWT signing key at JWKSURL; verifiers refresh
-	// on kid miss. Issuer and audience configure RFC 7519 claim checks.
+	// JWKS settings for /api/v1's user-JWT verification — Thunder publishes
+	// the signing key at JWKSURL; verifiers refresh on kid miss. Issuer and
+	// audience configure RFC 7519 claim checks; the audience is the console
+	// client's, the one client that issues user tokens for this edge.
 	JWKSURL                string
 	JWTAllowedIssuer       string
 	JWTAllowedAudience     string
