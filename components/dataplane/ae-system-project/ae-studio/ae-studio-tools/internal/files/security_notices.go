@@ -76,8 +76,6 @@ type treeReader interface {
 //
 // It costs those reads, so it runs only when the batch touches specs/design/
 // AND the landed tree has a security.json.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func securityDesignNotices(base treeReader, current, batch map[string]string, deleted map[string]bool) []Warning {
 	touchesDesign := false
 	for path := range batch {
@@ -131,8 +129,6 @@ func securityDesignNotices(base treeReader, current, batch map[string]string, de
 // design bundle (keys relative to specs/design/). Errors are the build
 // gate's business and are excluded here: one defect, one message. A
 // security.json that does not parse yields nothing (softValidate reports it).
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func coverageWarnings(designFiles map[string]string) []Warning {
 	raw, present := designFiles[securityspec.BundleKey]
 	if !present || strings.TrimSpace(raw) == "" {
@@ -156,7 +152,6 @@ func coverageWarnings(designFiles map[string]string) []Warning {
 	return out
 }
 
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func hasAllowedDesignExt(name string) bool {
 	lower := strings.ToLower(name)
 	for _, ext := range allowedDesignExts {

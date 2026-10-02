@@ -40,8 +40,6 @@ var commitSHAPattern = regexp.MustCompile(`^[0-9a-fA-F]{7,64}$`)
 // "blob <len>\x00" + content, exactly what `git hash-object` produces for the
 // blobs Mutate stages. The apply response reports it per written file so the
 // FE's next baseSha matches what a subsequent read (ls-tree) returns.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func blobSHA(content []byte) string {
 	h := sha1.New() //nolint:gosec // git object names are SHA-1 by definition
 	fmt.Fprintf(h, "blob %d\x00", len(content))

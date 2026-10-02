@@ -94,7 +94,6 @@ type ValidationError struct {
 	Message string
 }
 
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func (e *ValidationError) Error() string { return e.Code + ": " + e.Message }
 
 var securitySchema = jsonschema.MustParse(schemaJSON)
@@ -164,8 +163,6 @@ type Role struct {
 }
 
 // RoleKind is the role's kind with the default applied (`user`).
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func (r Role) RoleKind() string {
 	if r.Kind == "" {
 		return KindUser
@@ -175,8 +172,6 @@ func (r Role) RoleKind() string {
 
 // EnrolmentKind is how somebody comes to hold the role, with the default
 // applied (`admin` — somebody puts them in an assignTo group).
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func (r Role) EnrolmentKind() string {
 	if r.Enrolment == "" {
 		return EnrolmentAdmin
@@ -193,8 +188,6 @@ func (r Role) EnrolmentKind() string {
 // How the login HOLDS the role still follows enrolment: an admin role's account
 // joins an assignTo group, a self-service role's binds straight to the role as
 // a user principal (it has no assignTo, and the gate refuses one).
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func (r Role) NeedsTestUser() bool {
 	return r.RoleKind() == KindUser
 }
@@ -210,8 +203,6 @@ type TestUser struct {
 // Parse validates raw security.json bytes against the embedded schema and the
 // referential rules, returning the parsed document. Returns a *ValidationError
 // on any failure.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func Parse(raw []byte) (*Document, error) {
 	var v any
 	if err := json.Unmarshal(raw, &v); err != nil {
@@ -255,8 +246,6 @@ func Parse(raw []byte) (*Document, error) {
 //
 // The message shape copies Zod's (`path: what is wrong`), because that is what
 // the model sees from the write gate for the very same document.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func checkRefinements(doc *Document) string {
 	const segmentHint = `must be lowercase letters, digits or "-", starting with a letter`
 	for i, permission := range doc.Permissions {
@@ -285,8 +274,6 @@ const handleHint = `must be a catalog handle "<resource>:<action>", each half lo
 // IsHandle reports whether value is a full `<resource>:<action>` catalog
 // handle. It is the Go twin of isHandle in the agent's schema module: a handle
 // carries exactly one colon, each half spelled as handleSegmentRE says.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func IsHandle(value string) bool {
 	resource, action, ok := strings.Cut(value, ":")
 	if !ok || strings.Contains(action, ":") {
@@ -327,8 +314,6 @@ func someEntryHas(value any, key string) bool {
 // v1Refusal is the one-line refusal for a version-1 document, or "" when the
 // document is not v1. "Is v1" means it SAYS so, or it still carries a field
 // only v1 had — a half-migrated file is v1 too.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func v1Refusal(parsed any) string {
 	doc, ok := parsed.(map[string]any)
 	if !ok {
@@ -359,8 +344,6 @@ func v1Refusal(parsed any) string {
 // `ownership` — the one field v3 removed. Checked AFTER v1Refusal so a v1
 // document is told about v1, not about a field it never had. The Go twin of
 // v2Refusal in the TS gate.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func v2Refusal(parsed any) string {
 	doc, ok := parsed.(map[string]any)
 	if !ok {
@@ -375,8 +358,6 @@ func v2Refusal(parsed any) string {
 
 // someActionHasOwnership reports whether any permissions[].actions[] entry still
 // carries v2's `ownership`.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func someActionHasOwnership(doc map[string]any) bool {
 	permissions, ok := doc["permissions"].([]any)
 	if !ok {
@@ -394,8 +375,6 @@ func someActionHasOwnership(doc map[string]any) bool {
 // declares, in declaration order. It is the client's scope allowlist (with the
 // OIDC scopes), the set every grant and every operation scope is checked
 // against, and the rows of the console's Security matrix.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func CatalogHandles(doc *Document) []string {
 	var handles []string
 	for _, perm := range doc.Permissions {

@@ -45,6 +45,9 @@ type Config struct {
 	// StorageBudgetBytes is the reaper's one budget over it (ticket 20 §2).
 	StudioDataDir      string
 	StorageBudgetBytes int64
+	// FilesSocket is the Files socket's path (04 §7), on the emptyDir shared
+	// with ae-collab.
+	FilesSocket string
 }
 
 // ErrSecretRevMismatch means the mounted Secret is not the revision the pod
@@ -91,8 +94,8 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 		return v
 	}
-	// absDir is a required absolute directory path.
-	absDir := func(k string) string {
+	// absPath is a required absolute filesystem path.
+	absPath := func(k string) string {
 		v := req(k)
 		if v != "" && !filepath.IsAbs(v) {
 			problems = append(problems, "invalid "+k)
@@ -128,8 +131,10 @@ func Load(getenv func(string) string) (Config, error) {
 		PublisherClientSecret: req("AE_PUBLISHER_CLIENT_SECRET"),
 		AEPAPIBaseURL:         httpURL("AEP_API_BASE_URL"),
 
-		StudioDataDir:      absDir("AE_STUDIO_DATA_DIR"),
+		StudioDataDir:      absPath("AE_STUDIO_DATA_DIR"),
 		StorageBudgetBytes: positiveBytes("AE_STORAGE_BUDGET_BYTES"),
+
+		FilesSocket: absPath("AE_FILES_SOCKET"),
 	}
 	c.UserAudiences = splitList(getenv("AE_USER_AUDIENCES"))
 	if len(c.UserAudiences) == 0 {

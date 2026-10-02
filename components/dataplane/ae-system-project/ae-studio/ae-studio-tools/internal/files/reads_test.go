@@ -226,3 +226,26 @@ func TestReader_InvalidPathCostsNoLookup(t *testing.T) {
 		t.Fatalf("resolver calls = %d, want 0", n)
 	}
 }
+
+// Lookup answers aep-api's owner/repo (never the clone URL's) and the tip,
+// fetched on every call.
+func TestReader_LookupIsAEPAPIsRepositoryAndTheTip(t *testing.T) {
+	r := newRig(t, map[string]string{"specs/a.md": "a"})
+	got, err := r.reader.Lookup(ctx, "greeter")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *got != (files.Lookup{Owner: "Acme", Repo: "Greeter-App", HeadSHA: r.origin.HeadSHA(t)}) {
+		t.Fatalf("lookup = %+v", *got)
+	}
+	next := r.origin.Commit(t, map[string]string{"specs/a.md": "b"}, "external")
+	if got, err = r.reader.Lookup(ctx, "greeter"); err != nil || got.HeadSHA != next {
+		t.Fatalf("lookup after an external commit = %+v %v, want head %s", got, err, next)
+	}
+	if _, err := r.reader.Lookup(ctx, "nope"); !errors.Is(err, projects.ErrUnknown) {
+		t.Fatalf("unknown project = %v", err)
+	}
+	if n := r.projects.CallCount(); n != 3 {
+		t.Fatalf("resolver calls = %d, want 3", n)
+	}
+}

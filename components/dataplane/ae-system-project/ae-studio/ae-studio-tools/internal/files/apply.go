@@ -118,8 +118,6 @@ type Applier struct {
 // call answers 404 for the project), ErrApplyConflict, or a *RepoError from the engine
 // (wrapping repo.ErrDiskFull, repo.ErrRefNotFastForward after the retries, or
 // a git failure).
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func (a Applier) Apply(ctx context.Context, project string, req ApplyRequest) (*ApplyResult, []Conflict, error) {
 	// Path and size validation happens once, before any git operation: a bad
 	// path is a 400, never a partial commit.
@@ -243,8 +241,6 @@ func (a Applier) Apply(ctx context.Context, project string, req ApplyRequest) (*
 // validateApply applies the write rules to the whole request and returns
 // every path it names: specs/-only, canonical, at most maxFileBytes per
 // write, no path twice, never both written and deleted, and not empty.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func validateApply(req ApplyRequest) (map[string]bool, error) {
 	if len(req.Writes) == 0 && len(req.Deletes) == 0 {
 		return nil, fmt.Errorf("%w: empty apply (no writes or deletes)", ErrPathInvalid)
@@ -276,8 +272,6 @@ func validateApply(req ApplyRequest) (map[string]bool, error) {
 
 // applyMessage is the commit message: a fixed subject, then the caller's
 // suffix (which may carry trailers).
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func applyMessage(suffix string) string {
 	const base = "aep: apply file changes"
 	if strings.TrimSpace(suffix) == "" {

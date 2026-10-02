@@ -44,8 +44,8 @@ type Deps struct {
 // route group, each listener → gate → handler. Every gate runs before route
 // matching inside its group, so an unknown path is 401/403 before it is 404.
 // The health probes are on the health listener only. A path not listed here
-// is 404; nothing redirects. Sockets are separate listeners added in later
-// phases.
+// is 404; nothing redirects. The Files socket is a separate listener
+// (FilesSocketRoutes).
 func Routes(d Deps) http.Handler {
 	// /v1: browser, Platform IdP user JWT of the pod's org. Gate → validator
 	// → generated server; the read-only Files operations.
@@ -72,6 +72,14 @@ func Routes(d Deps) http.Handler {
 		{prefix: internalV1 + "/", notFound: internal(nf)},
 		{prefix: "/v1/", notFound: v1(nf)},
 	})
+}
+
+// FilesSocketRoutes is the Files socket's mount table (04 §7): body cap →
+// validator → generated server (files_sock.go). No token gate: the mount is
+// the gate. Reads go through a.Reader, the apply through a. A path ServeMux
+// would redirect is 404, as on the public listener.
+func FilesSocketRoutes(a files.Applier) http.Handler {
+	return capBody(filesSocketBodyBytes, uncleanPathNotFound(filesSocketHandler(a), nil))
 }
 
 // pathGroup is a route group's raw path prefix and its gated 404.

@@ -202,6 +202,7 @@ func TestV1Files_ErrorMapping(t *testing.T) {
 		{"aep-api 401", fmt.Errorf("%w: %w: aep-api answered 401", projects.ErrUnavailable, projects.ErrMisconfigured), 503, "aep_api_unavailable", "", "aep_api.auth_rejected"},
 		{"token endpoint", fmt.Errorf("%w: %w: %w", projects.ErrUnavailable, projects.ErrMisconfigured, fmt.Errorf("%w: %w", platform.ErrClientRejected, urlErr)), 503, "aep_api_unavailable", "", "aep_api.auth_rejected"},
 		{"disk", fmt.Errorf("read: %w", &repo.DiskFullError{Root: "/studio-data", UsedPct: 99}), 503, "disk_full", "", "files.disk_full"},
+		{"not fast-forward", &files.RepoError{Repo: "acme/greeter", Err: fmt.Errorf("apply: push http://aep-api.internal/secret-path: %w", repo.ErrRefNotFastForward)}, 409, "not_fast_forward", "", "files.not_fast_forward"},
 		{"git", &files.RepoError{Repo: "acme/greeter", Err: fmt.Errorf("git fetch http://aep-api.internal/secret-path: %w", &exec.ExitError{})}, 502, "github_error", "", "files.git_failed"},
 	}
 	for _, c := range cases {

@@ -36,6 +36,7 @@ func base() map[string]string {
 		"AE_PUBLISHER_CLIENT_ID": "aep-publisher-default", "AE_PUBLISHER_CLIENT_SECRET": "publisher-secret-value",
 		"AEP_API_BASE_URL":   "http://aep-api.aep.svc.cluster.local:9090",
 		"AE_STUDIO_DATA_DIR": "/studio-data", "AE_STORAGE_BUDGET_BYTES": "2147483648",
+		"AE_FILES_SOCKET": "/run/ae/files/files.sock",
 	}
 }
 
@@ -86,7 +87,7 @@ func TestLoad_MissingRequiredNamesEveryKey(t *testing.T) {
 	_, err := Load(env(map[string]string{}))
 	for _, k := range []string{"AE_ORG_ID", "AE_ORG_HANDLE", "AE_IDP_ISSUER", "AE_IDP_JWKS_URL", "AE_USER_AUDIENCES", "AE_M2M_CLIENT_ID", "GITHUB_PAT", "GITHUB_WEBHOOK_SECRET",
 		"AE_IDP_TOKEN_URL", "AE_PUBLISHER_CLIENT_ID", "AE_PUBLISHER_CLIENT_SECRET", "AEP_API_BASE_URL",
-		"AE_STUDIO_DATA_DIR", "AE_STORAGE_BUDGET_BYTES"} {
+		"AE_STUDIO_DATA_DIR", "AE_STORAGE_BUDGET_BYTES", "AE_FILES_SOCKET"} {
 		if err == nil || !strings.Contains(err.Error(), k) {
 			t.Fatalf("error %v does not name %s", err, k)
 		}
@@ -164,6 +165,32 @@ func TestLoad_StudioDataKeysAreRequiredAndValidated(t *testing.T) {
 		}
 		if strings.TrimSpace(c.val) != "" && strings.Contains(err.Error(), c.val) {
 			t.Fatalf("%s=%q: error echoes the value", c.key, c.val)
+		}
+	}
+}
+
+// The Files socket path is required and absolute; the error names the key,
+// never the value.
+func TestLoad_FilesSocket(t *testing.T) {
+	c, err := Load(env(base()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.FilesSocket != "/run/ae/files/files.sock" {
+		t.Fatalf("AE_FILES_SOCKET not read: %q", c.FilesSocket)
+	}
+	for _, tc := range []struct{ val, want string }{
+		{" ", "missing AE_FILES_SOCKET"},
+		{"run/files.sock", "invalid AE_FILES_SOCKET"},
+	} {
+		m := base()
+		m["AE_FILES_SOCKET"] = tc.val
+		_, err := Load(env(m))
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("AE_FILES_SOCKET=%q: err = %v, want %q", tc.val, err, tc.want)
+		}
+		if strings.TrimSpace(tc.val) != "" && strings.Contains(err.Error(), tc.val) {
+			t.Fatalf("AE_FILES_SOCKET=%q: error echoes the value", tc.val)
 		}
 	}
 }

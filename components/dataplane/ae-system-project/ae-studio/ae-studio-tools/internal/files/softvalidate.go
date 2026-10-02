@@ -34,8 +34,6 @@ import (
 // name==dir rule; security.json is parsed with the platform's own rules; any
 // other .json gets a cheap parseability check. Warnings never block the
 // commit.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func softValidate(path, content string) []Warning {
 	// The security.json document is the ONE spec file the platform later acts
 	// on deterministically (directory roles and test users at build time), so
@@ -76,8 +74,6 @@ func softValidate(path, content string) []Warning {
 
 // componentDesignDir returns the <name> directory of a component design.json
 // path (specs/design/components/<name>/design.json), and whether path is one.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func componentDesignDir(path string) (string, bool) {
 	const prefix = "specs/design/components/"
 	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, "/design.json") {

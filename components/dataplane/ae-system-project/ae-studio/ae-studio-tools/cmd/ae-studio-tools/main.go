@@ -17,9 +17,12 @@
 // Command ae-studio-tools is the AE Studio pod's tools container: wiring only.
 // It builds the git engine over the studio-data volume and its reaper, the
 // per-request project resolver (aep-api, with the org's publisher token), and
-// serves the public listener (edge.Routes) and the health listener, reporting
-// ready once both are bound. SIGTERM (tini forwards it) shuts the listeners
-// down, then stops the reaper.
+// serves the public listener (edge.Routes), the Files socket
+// (edge.FilesSocketRoutes, ae-collab's) and the health listener, reporting
+// ready once the public listener and the Files socket are bound. SIGTERM
+// (tini forwards it) drains the public and health listeners, keeps the Files
+// socket serving for ae-collab's final flush (07 §10), closes it, then stops
+// the reaper.
 package main
 
 import (
@@ -30,7 +33,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -50,6 +52,19 @@ import (
 // canceled (its git children are killed with it), separate from the listener
 // drain's budget.
 const reaperStopTimeout = 2 * time.Second
+
+const (
+	// listenerDrainTimeout bounds the public and health listeners' drain.
+	listenerDrainTimeout = 5 * time.Second
+	// filesSocketDrainWindow is how long after SIGTERM the Files socket keeps
+	// accepting: ae-collab gets SIGTERM at the same moment and flushes every
+	// Room through it (07 §10: about 5 s).
+	filesSocketDrainWindow = 5 * time.Second
+	// filesSocketShutdownTimeout bounds the wait for applies still in flight
+	// once the socket stops accepting. Window + timeout + the reaper's stop
+	// stay inside the pod's 30 s grace period.
+	filesSocketShutdownTimeout = 15 * time.Second
+)
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
@@ -91,6 +106,12 @@ func run() error {
 		return err
 	}
 	reader := files.Reader{Engine: engine, Projects: projects.NewAEPAPIResolver(aepAPI), Org: cfg.OrgHandle}
+	gh := github.NewClient(cfg.GitHubPAT)
+	applier := files.Applier{
+		Reader:    reader,
+		Completer: files.NewAEPAPICompleter(aepAPI),
+		Identity:  github.NewCommitAuthor(gh),
+	}
 
 	reaperCtx, stopReaper := context.WithCancel(context.Background())
 	defer stopReaper()
@@ -100,13 +121,13 @@ func run() error {
 		reap.Run(reaperCtx)
 	}()
 
-	var ready atomic.Bool
+	var ready edge.Readiness
 	public := &http.Server{
 		Addr: fmt.Sprintf(":%d", cfg.ListenPort),
 		Handler: edge.Routes(edge.Deps{
 			Cfg:      cfg,
 			Verifier: auth.NewVerifier(cfg.IDPIssuer, auth.NewJWKSCache(cfg.IDPJWKSURL)),
-			GitHub:   github.NewClient(cfg.GitHubPAT),
+			GitHub:   gh,
 			Webhook:  edge.WebhookHandler(cfg.WebhookSecret, webhook.Unwired()),
 			Files:    reader,
 		}),
@@ -114,8 +135,13 @@ func run() error {
 	}
 	health := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.HealthPort),
-		Handler:           edge.NewHealth(ready.Load),
+		Handler:           edge.NewHealth(ready.Ready),
 		ReadHeaderTimeout: 5 * time.Second,
+	}
+	filesSock := &http.Server{
+		Addr:              cfg.FilesSocket,
+		Handler:           edge.FilesSocketRoutes(applier),
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	healthLn, err := net.Listen("tcp", health.Addr)
@@ -135,28 +161,55 @@ func run() error {
 		return err
 	}
 	slog.Info("public_listening", "port", cfg.ListenPort)
+	filesLn, err := edge.ListenFilesSocket(cfg.FilesSocket)
+	if err != nil {
+		_ = healthLn.Close()
+		_ = publicLn.Close()
+		slog.Error("files_socket_listen_failed", "path", cfg.FilesSocket, "error", err)
+		stopReaper()
+		<-reaperDone
+		return err
+	}
+	slog.Info("files_socket_listening", "path", cfg.FilesSocket)
 
-	serveErr := make(chan error, 2)
+	serveErr := make(chan error, 3)
 	go func() { serveErr <- fmt.Errorf("health listener: %w", health.Serve(healthLn)) }()
 	go func() { serveErr <- fmt.Errorf("public listener: %w", public.Serve(publicLn)) }()
-	// Both sockets are bound, so a probe that sees ready can reach the routes.
-	ready.Store(true)
+	go func() { serveErr <- fmt.Errorf("files socket: %w", filesSock.Serve(filesLn)) }()
+	// Every listener is bound, so a probe that sees ready can reach the routes and
+	// ae-collab can reach the socket.
+	ready.PublicBound()
+	ready.FilesSocketBound()
 
 	var runErr error
+	signaled := false
 	select {
 	case runErr = <-serveErr:
 		slog.Error("listener_failed", "error", runErr)
 	case <-ctx.Done():
+		signaled = true
 	}
-	ready.Store(false)
+	drainStart := time.Now()
+	ready.Draining()
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), listenerDrainTimeout)
 	defer cancel()
 	for _, srv := range []*http.Server{public, health} {
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			slog.Error("shutdown_failed", "addr", srv.Addr, "error", err)
 			runErr = err
 		}
+	}
+	// The Files socket closes last: on SIGTERM it keeps accepting through
+	// ae-collab's final flush, then drains the applies in flight.
+	if signaled {
+		time.Sleep(time.Until(drainStart.Add(filesSocketDrainWindow)))
+	}
+	sockCtx, cancelSock := context.WithTimeout(context.Background(), filesSocketShutdownTimeout)
+	defer cancelSock()
+	if err := filesSock.Shutdown(sockCtx); err != nil {
+		slog.Error("shutdown_failed", "addr", filesSock.Addr, "error", err)
+		runErr = err
 	}
 	// The listeners are drained, so no request can still be reading; the
 	// reaper's git children die with its context.

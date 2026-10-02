@@ -227,8 +227,6 @@ func mustParseMessages(raws ...[]byte) map[string]string {
 // is a defect in THIS package, and a build refused with a mangled sentence is
 // still better than one refused with an empty one. Both are caught by
 // messages_vendor_test.go long before they ship.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func Msg(key string, kv ...string) string {
 	template, ok := messages[key]
 	if !ok {

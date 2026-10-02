@@ -95,8 +95,6 @@ type FileSource interface {
 type DesignBundle map[string]string
 
 // Read implements FileSource for the design bundle.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func (b DesignBundle) Read(path string) (string, bool) {
 	rel, ok := strings.CutPrefix(path, "specs/design/")
 	if !ok {
@@ -108,14 +106,11 @@ func (b DesignBundle) Read(path string) (string, bool) {
 
 const designCellPath = "specs/design/design.cell"
 
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func componentDir(component string) string {
 	return "specs/design/components/" + component
 }
 
 // readOpenAPI returns a component's spec, `.yaml` or `.yml`.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func readOpenAPI(src FileSource, component string) (string, bool) {
 	if content, ok := src.Read(componentDir(component) + "/openapi.yaml"); ok {
 		return content, true
@@ -130,8 +125,6 @@ var cellComponentRE = regexp.MustCompile(`^component\s+(\S+)`)
 
 // cellComponents returns the component ids design.cell declares, or nil when
 // the cell is not in the bundle (the rule is then skipped).
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func cellComponents(src FileSource) map[string]bool {
 	source, ok := src.Read(designCellPath)
 	if !ok || strings.TrimSpace(source) == "" {
@@ -171,8 +164,6 @@ type specOperation struct {
 //
 // Anything else is the openapi.yaml gate's business and is read here as
 // leniently as possible, so a malformed spec produces ONE message from ONE gate.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func operationSecurity(value any) (op specOperation, ok bool) {
 	list, isList := value.([]any)
 	if !isList {
@@ -201,8 +192,6 @@ func operationSecurity(value any) (op specOperation, ok bool) {
 // specOperations returns every operation a component spec declares with its
 // effective security, or nil when the spec does not parse (the openapi gate
 // owns saying so).
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func specOperations(source string) []specOperation {
 	var doc any
 	if err := yaml.Unmarshal([]byte(source), &doc); err != nil {
@@ -252,7 +241,6 @@ func specOperations(source string) []specOperation {
 // findings accumulates rendered findings in rule order.
 type findings struct{ all []Finding }
 
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func (f *findings) add(severity, key string, kv ...string) {
 	params := make(map[string]string, len(kv)/2)
 	for i := 0; i+1 < len(kv); i += 2 {
@@ -269,8 +257,6 @@ func (f *findings) add(severity, key string, kv ...string) {
 // The TS copy is `ROLE_NAME` in
 // `packages/agent-stream/src/security-design-references.ts`; the two gates must
 // refuse the same documents, so a change here is a change there.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func validRoleName(name string) bool {
 	if name == "" {
 		return false
@@ -291,8 +277,6 @@ func validRoleName(name string) bool {
 // src is optional: with none, only the rules that read the document alone run
 // and the rest are skipped in silence — which is what lets the agent's
 // per-write gate and the platform's whole-bundle build gate share one rule set.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func ReferenceFindings(doc *Document, src FileSource) []Finding {
 	found := &findings{}
 	catalog := map[string]bool{}
@@ -453,8 +437,6 @@ func ReferenceFindings(doc *Document, src FileSource) []Finding {
 // merely early.
 //
 // This mirrors coverageWarnings in the agent's security-design-references.ts.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func coverageWarnings(doc *Document, src FileSource, catalog map[string]bool, ownerOf map[string]string, found *findings) {
 	owners := make([]string, 0, len(ownerOf))
 	for _, component := range ownerOf {
@@ -507,8 +489,6 @@ func coverageWarnings(doc *Document, src FileSource, catalog map[string]bool, ow
 // and a list of twenty would be spent re-reading. Callers that want the whole
 // picture (the console's Security page, the build gate's warnings) read
 // ReferenceFindings.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func FirstError(found []Finding) string {
 	for _, finding := range found {
 		if finding.Severity == SeverityError {
@@ -519,8 +499,6 @@ func FirstError(found []Finding) string {
 }
 
 // checkReferences is what Parse applies: the document-only rules, first error.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func checkReferences(doc *Document) string {
 	return FirstError(ReferenceFindings(doc, nil))
 }

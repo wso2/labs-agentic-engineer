@@ -39,8 +39,6 @@ type IdentitySource interface {
 // user, as two distinct values so a caller changing one never aliases the
 // other. A failed lookup does not gate the save (20 §5): both come back nil
 // and the engine commits as its default AEP identity.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func (a Applier) saveIdentities(ctx context.Context) (author, committer *repo.GitIdentity) {
 	name, email, err := a.Identity.Identity(ctx)
 	if err != nil {
@@ -52,8 +50,6 @@ func (a Applier) saveIdentities(ctx context.Context) (author, committer *repo.Gi
 
 // identityErrorAttrs names a failed identity lookup by class (and GitHub's
 // status when it answered), never by the error's text.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func identityErrorAttrs(err error) []any {
 	var rl *github.ErrRateLimited
 	var se *github.StatusError

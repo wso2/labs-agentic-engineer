@@ -60,7 +60,6 @@ type ValidationError struct {
 	Message string
 }
 
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func (e *ValidationError) Error() string { return e.Code + ": " + e.Message }
 
 // componentSchema is the parsed embedded schema, loaded once at init. The schema
@@ -72,8 +71,6 @@ var dependencySchema = jsonschema.MustParse(dependencySchemaJSON)
 
 // ValidateComponentDesign checks raw component design.json bytes against the
 // embedded schema. Returns nil when valid, or a *ValidationError.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func ValidateComponentDesign(raw []byte) error {
 	var v any
 	if err := json.Unmarshal(raw, &v); err != nil {
@@ -89,8 +86,6 @@ func ValidateComponentDesign(raw []byte) error {
 // express: the design.json `name` must equal the component directory name
 // (mirrors the agent's checkComponentDesign). dirName is the <name> segment of
 // specs/design/components/<name>/design.json.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func ValidateComponentDesignInDir(raw []byte, dirName string) error {
 	if err := ValidateComponentDesign(raw); err != nil {
 		return err
@@ -114,8 +109,6 @@ func ValidateComponentDesignInDir(raw []byte, dirName string) error {
 // `name` must equal the dependency directory name (mirrors the agent's
 // checkDependencyDesign). dirName is the <name> segment of
 // specs/design/dependencies/<name>/dependency.json.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func ValidateDependencyDesignInDir(raw []byte, dirName string) error {
 	var v any
 	if err := json.Unmarshal(raw, &v); err != nil {

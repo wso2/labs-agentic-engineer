@@ -22,8 +22,6 @@ package files
 // checkPreconditions compares each op's baseSha against the current tree.
 // baseSha == "" on a write means "must not exist"; on a delete it means
 // "delete whatever is there" but the path must still exist.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func checkPreconditions(req ApplyRequest, current map[string]string) []Conflict {
 	var conflicts []Conflict
 	for _, w := range req.Writes {

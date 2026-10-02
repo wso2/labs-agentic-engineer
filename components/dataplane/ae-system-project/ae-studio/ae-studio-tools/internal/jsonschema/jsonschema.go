@@ -105,11 +105,8 @@ func MustParse(raw []byte) *Schema {
 // Validate returns the schema-violation messages for value (empty on success).
 // It stops at the first, most-specific failure per node so a caller can report
 // one actionable message.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func Validate(value any, s *Schema) []string { return validate(value, s, "") }
 
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func validate(value any, s *Schema, path string) []string {
 	if s == nil {
 		return nil
@@ -157,8 +154,6 @@ func validate(value any, s *Schema, path string) []string {
 
 // validateConst compares the value against the pinned literal. The comparison is
 // on re-encoded JSON so it works for any literal kind without a type switch.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func validateConst(value any, s *Schema, path string) []string {
 	want := string(s.Const)
 	got, err := json.Marshal(value)
@@ -172,8 +167,6 @@ func validateConst(value any, s *Schema, path string) []string {
 // messages are discarded: reporting "failed all of N branches" with every
 // branch's complaint is noise, and the branches of the schemas we publish are
 // alternatives of shape (a string, or null), not of meaning.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func validateAnyOf(value any, s *Schema, path string) []string {
 	for _, branch := range s.AnyOf {
 		if len(validate(value, branch, path)) == 0 {
@@ -183,7 +176,6 @@ func validateAnyOf(value any, s *Schema, path string) []string {
 	return []string{at(path) + "does not match any allowed shape"}
 }
 
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func validateObject(value any, s *Schema, path string) []string {
 	obj, ok := value.(map[string]any)
 	if !ok {
@@ -211,7 +203,6 @@ func validateObject(value any, s *Schema, path string) []string {
 	return nil
 }
 
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func validateArray(value any, s *Schema, path string) []string {
 	arr, ok := value.([]any)
 	if !ok {
@@ -228,7 +219,6 @@ func validateArray(value any, s *Schema, path string) []string {
 	return nil
 }
 
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func validateString(value any, s *Schema, path string) []string {
 	str, ok := value.(string)
 	if !ok {
@@ -246,7 +236,6 @@ func validateString(value any, s *Schema, path string) []string {
 	return nil
 }
 
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func enumContains(enum []any, v string) bool {
 	for _, e := range enum {
 		if es, ok := e.(string); ok && es == v {
@@ -256,7 +245,6 @@ func enumContains(enum []any, v string) bool {
 	return false
 }
 
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func join(path, name string) string {
 	if path == "" {
 		return name
@@ -264,7 +252,6 @@ func join(path, name string) string {
 	return path + "." + name
 }
 
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func at(path string) string {
 	if path == "" {
 		return ""

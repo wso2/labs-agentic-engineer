@@ -56,3 +56,30 @@ func TestHealth_OnlyGETAndKnownPaths(t *testing.T) {
 		}
 	}
 }
+
+// /readyz is 200 only once the public listener and the Files socket are both
+// bound, and 503 again once the container drains.
+func TestReadiness_NeedsPublicListenerAndFilesSocket(t *testing.T) {
+	var r Readiness
+	h := NewHealth(r.Ready)
+	readyz := func() int {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+		return rec.Code
+	}
+	if c := readyz(); c != 503 {
+		t.Fatalf("nothing bound: readyz = %d", c)
+	}
+	r.PublicBound()
+	if c := readyz(); c != 503 {
+		t.Fatalf("Files socket not bound: readyz = %d", c)
+	}
+	r.FilesSocketBound()
+	if c := readyz(); c != 200 {
+		t.Fatalf("both bound: readyz = %d", c)
+	}
+	r.Draining()
+	if c := readyz(); c != 503 {
+		t.Fatalf("draining: readyz = %d", c)
+	}
+}

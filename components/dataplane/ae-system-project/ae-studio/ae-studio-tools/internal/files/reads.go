@@ -74,6 +74,25 @@ type Bundle struct {
 	Files     []Content
 }
 
+// Lookup is a known project: aep-api's repository for it and the branch tip.
+type Lookup struct {
+	Owner, Repo, HeadSHA string
+}
+
+// Lookup resolves project and reads its branch tip (fetching from origin), so
+// a caller learns the project is known and which commit it is at.
+func (r Reader) Lookup(ctx context.Context, project string) (*Lookup, error) {
+	rep, ref, err := r.resolve(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	head, err := r.Engine.Head(ctx, ref, "")
+	if err != nil {
+		return nil, repoError(ref, fmt.Errorf("resolve head: %w", err))
+	}
+	return &Lookup{Owner: rep.Owner, Repo: rep.Repo, HeadSHA: head}, nil
+}
+
 // List returns every readable blob at the branch tip whose path has the given
 // prefix (empty prefix ⇒ all), sorted by path. Like Bundle it filters through
 // the read rules: a path ReadAt would refuse is omitted, so a listing names
@@ -198,23 +217,29 @@ func repoError(ref repo.RepoRef, err error) error {
 	return &RepoError{Repo: ref.FullName(), Err: err}
 }
 
-// repoRef resolves project through aep-api (every call, never cached) and
+// repoRef resolves project and addresses its clone (see resolve).
+func (r Reader) repoRef(ctx context.Context, project string) (repo.RepoRef, error) {
+	_, ref, err := r.resolve(ctx, project)
+	return ref, err
+}
+
+// resolve resolves project through aep-api (every call, never cached) and
 // addresses its clone under the pod's org. The slug is derived from aep-api's
 // owner/repo with the function aep-api uses for its git_repositories column.
-func (r Reader) repoRef(ctx context.Context, project string) (repo.RepoRef, error) {
+func (r Reader) resolve(ctx context.Context, project string) (projects.Repository, repo.RepoRef, error) {
 	rep, err := r.Projects.Resolve(ctx, project)
 	if err != nil {
-		return repo.RepoRef{}, err
+		return projects.Repository{}, repo.RepoRef{}, err
 	}
 	slug := naming.SlugForURL("https://github.com/" + rep.Owner + "/" + rep.Repo)
 	if slug == "" {
-		return repo.RepoRef{}, fmt.Errorf("%w: repository answer is not an owner/repo pair", projects.ErrUnavailable)
+		return projects.Repository{}, repo.RepoRef{}, fmt.Errorf("%w: repository answer is not an owner/repo pair", projects.ErrUnavailable)
 	}
 	cloneURL, err := withoutUserinfo(rep.CloneURL)
 	if err != nil {
-		return repo.RepoRef{}, fmt.Errorf("%w: repository answer has an unusable clone URL", projects.ErrUnavailable)
+		return projects.Repository{}, repo.RepoRef{}, fmt.Errorf("%w: repository answer has an unusable clone URL", projects.ErrUnavailable)
 	}
-	return repo.RepoRef{
+	return rep, repo.RepoRef{
 		Org:           r.Org,
 		Project:       project,
 		RepoSlug:      slug,

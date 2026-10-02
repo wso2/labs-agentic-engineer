@@ -57,8 +57,6 @@ type CommitAuthor struct {
 }
 
 // NewCommitAuthor returns a CommitAuthor that looks the user up through users.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func NewCommitAuthor(users Users) *CommitAuthor {
 	return &CommitAuthor{users: users, now: time.Now}
 }
@@ -66,8 +64,6 @@ func NewCommitAuthor(users Users) *CommitAuthor {
 // Identity returns the commit name and email. Errors are the lookup's
 // (*StatusError, *ErrRateLimited or a transport failure, possibly the cached
 // one), or ctx's when the caller stops waiting; never the token.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func (a *CommitAuthor) Identity(ctx context.Context) (name, email string, err error) {
 	a.mu.Lock()
 	switch {
@@ -102,8 +98,6 @@ func (a *CommitAuthor) Identity(ctx context.Context) (name, email string, err er
 }
 
 // lookup asks GitHub once and records the answer or the failure.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func (a *CommitAuthor) lookup(ctx context.Context) error {
 	u, err := a.users.User(ctx)
 	a.mu.Lock()

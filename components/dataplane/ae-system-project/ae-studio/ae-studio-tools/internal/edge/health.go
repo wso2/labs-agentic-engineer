@@ -17,7 +17,31 @@
 // Package edge holds ae-studio-tools' HTTP surfaces.
 package edge
 
-import "net/http"
+import (
+	"net/http"
+	"sync/atomic"
+)
+
+// Readiness is the container's /readyz state (08 §2): ready once the public
+// listener and the Files socket are both bound, and not ready again from the
+// moment the container starts draining. Safe for concurrent use.
+type Readiness struct {
+	public, filesSocket, draining atomic.Bool
+}
+
+// PublicBound records that the public listener is bound.
+func (r *Readiness) PublicBound() { r.public.Store(true) }
+
+// FilesSocketBound records that the Files socket is bound.
+func (r *Readiness) FilesSocketBound() { r.filesSocket.Store(true) }
+
+// Draining records that shutdown has begun.
+func (r *Readiness) Draining() { r.draining.Store(true) }
+
+// Ready reports whether a probe should see the container ready.
+func (r *Readiness) Ready() bool {
+	return r.public.Load() && r.filesSocket.Load() && !r.draining.Load()
+}
 
 // NewHealth serves the probe endpoints on the health port (08 §2), which is
 // not in the Service and not routed. GET /healthz is liveness and always 200;

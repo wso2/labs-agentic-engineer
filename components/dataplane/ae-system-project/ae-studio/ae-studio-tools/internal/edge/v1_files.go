@@ -18,21 +18,11 @@ package edge
 
 import (
 	"context"
-	"errors"
-	"log/slog"
 	"net/http"
-	"os/exec"
 
 	"github.com/wso2/aep/ae-studio-tools/internal/files"
 	v1gen "github.com/wso2/aep/ae-studio-tools/internal/gen/v1"
-	"github.com/wso2/aep/ae-studio-tools/internal/platform"
-	"github.com/wso2/aep/ae-studio-tools/internal/problem"
-	"github.com/wso2/aep/ae-studio-tools/internal/projects"
-	"github.com/wso2/aep/ae-studio-tools/internal/repo"
 )
-
-// aepAPIRetryAfter is the Retry-After (seconds) on aep_api_unavailable.
-const aepAPIRetryAfter = "5"
 
 // v1Server implements the /v1 Files operations (read-only) over files.Reader.
 type v1Server struct {
@@ -74,81 +64,6 @@ func (s v1Server) ReadFileBundle(ctx context.Context, req v1gen.ReadFileBundleRe
 		out.Files = append(out.Files, v1gen.FileContent{Path: f.Path, Content: f.Content, Sha: f.SHA})
 	}
 	return out, nil
-}
-
-// filesProblem maps a Files error to its problem response and logs what an
-// operator needs. Resolver errors are logged by class only: their text can
-// carry a URL (url.Error), and nothing token-shaped may reach a log line.
-func filesProblem(ctx context.Context, op, project string, err error) problemResponse {
-	switch {
-	case errors.Is(err, files.ErrPathInvalid):
-		return problemResponse{status: http.StatusBadRequest, code: "path_invalid", detail: "the path or ref is not readable through this API"}
-	case errors.Is(err, files.ErrFileNotFound):
-		return problemResponse{status: http.StatusNotFound, code: "path_not_found", detail: "no such file at this commit"}
-	case errors.Is(err, repo.ErrRefNotFound):
-		return problemResponse{status: http.StatusNotFound, code: "ref_not_found", detail: "the ref names no commit in this repository"}
-	case errors.Is(err, projects.ErrUnknown):
-		return problemResponse{status: http.StatusNotFound, code: "project_unknown", detail: "no such project in this org"}
-	case errors.Is(err, projects.ErrMisconfigured):
-		// Retrying will not help, so no Retry-After; the loud event is the
-		// operator's signal that the publisher credentials are wrong.
-		cause := "aep_api"
-		if errors.Is(err, platform.ErrClientRejected) {
-			cause = "token_endpoint"
-		}
-		slog.ErrorContext(ctx, "aep_api.auth_rejected", "op", op, "project", project, "cause", cause)
-		return problemResponse{status: http.StatusServiceUnavailable, code: "aep_api_unavailable", detail: "aep-api could not resolve the project"}
-	case errors.Is(err, projects.ErrUnavailable):
-		slog.WarnContext(ctx, "aep_api.unavailable", "op", op, "project", project)
-		return problemResponse{status: http.StatusServiceUnavailable, code: "aep_api_unavailable", detail: "aep-api could not resolve the project", retryAfter: aepAPIRetryAfter}
-	case errors.Is(err, repo.ErrDiskFull):
-		slog.WarnContext(ctx, "files.disk_full", "op", op, "project", project)
-		return problemResponse{status: http.StatusServiceUnavailable, code: "disk_full", detail: "the studio's disk is full"}
-	default:
-		// A git failure: the clone or fetch from GitHub, or the local mirror.
-		// The engine's text names the git command and the clone URL, so the
-		// line carries the repository and a class only.
-		var re *files.RepoError
-		repoName := ""
-		if errors.As(err, &re) {
-			repoName = re.Repo
-		}
-		slog.WarnContext(ctx, "files.git_failed", "op", op, "project", project, "repo", repoName, "class", gitErrorClass(err))
-		return problemResponse{status: http.StatusBadGateway, code: "github_error", detail: "the repository could not be read"}
-	}
-}
-
-// gitErrorClass names a git failure without its text: the request ended,
-// git exited non-zero, or anything else.
-func gitErrorClass(err error) string {
-	var exitErr *exec.ExitError
-	switch {
-	case errors.Is(err, context.Canceled):
-		return "canceled"
-	case errors.Is(err, context.DeadlineExceeded):
-		return "timeout"
-	case errors.As(err, &exitErr):
-		return "git_exit"
-	default:
-		return "other"
-	}
-}
-
-// problemResponse is a problem+json answer for any /v1 Files operation. It
-// stands in for the generated per-status types, which cannot carry
-// Retry-After.
-type problemResponse struct {
-	status       int
-	code, detail string
-	retryAfter   string
-}
-
-func (p problemResponse) write(w http.ResponseWriter) error {
-	if p.retryAfter != "" {
-		w.Header().Set("Retry-After", p.retryAfter)
-	}
-	problem.Write(w, p.status, p.code, p.detail)
-	return nil
 }
 
 func (p problemResponse) VisitListFilesResponse(w http.ResponseWriter) error { return p.write(w) }

@@ -94,8 +94,6 @@ const (
 // completes it. The one failure that is not degraded is aep-api not knowing
 // the project (projects.ErrUnknown): the save is refused, as the project
 // lookup would refuse it.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func (a Applier) completeDependencies(ctx context.Context, project string, writes []WriteOp) (map[string]Completed, []Warning, error) {
 	stubs, kinds := dependencyStubs(writes)
 	if len(stubs) == 0 {
@@ -124,8 +122,6 @@ func (a Applier) completeDependencies(ctx context.Context, project string, write
 
 // deferredWarnings is the answer for stubs past the per-save limit: not
 // sent, landed as written, completed by a later save that carries them.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func deferredWarnings(stubs []WriteOp, kinds map[string]stubKind) []Warning {
 	out := make([]Warning, 0, len(stubs))
 	for _, s := range stubs {
@@ -141,8 +137,6 @@ func deferredWarnings(stubs []WriteOp, kinds map[string]stubKind) []Warning {
 }
 
 // unavailableWarnings is the degrade answer: each stub's own warning.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func unavailableWarnings(stubs []WriteOp, kinds map[string]stubKind) []Warning {
 	out := make([]Warning, 0, len(stubs))
 	for _, s := range stubs {
@@ -162,8 +156,6 @@ func unavailableWarnings(stubs []WriteOp, kinds map[string]stubKind) []Warning {
 // (defense in depth; aep-api refuses traversal at the producer): a completion
 // for a path that was not sent, a document outside its stub's own dependency
 // directory or not passing the write rules, or an oversized file.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func validateCompletions(got map[string]Completed, sent []WriteOp) error {
 	dirs := make(map[string]string, len(sent))
 	for _, s := range sent {
@@ -193,8 +185,6 @@ func validateCompletions(got map[string]Completed, sent []WriteOp) error {
 // dependencyStubs returns the writes that are dependency stubs, in request
 // order, and each one's kind. A provider stub whose document the same save
 // writes is not one: the agent landed the document itself.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func dependencyStubs(writes []WriteOp) ([]WriteOp, map[string]stubKind) {
 	inBatch := make(map[string]bool, len(writes))
 	for _, w := range writes {
@@ -248,8 +238,6 @@ type dependencyFields struct {
 // identity rules aep-api's parser enforces (name, resource.name and
 // resource.ref equal the directory); aep-api's strict parse stays the
 // authority, so a stub that passes here and fails there completes nothing.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func classifyDependency(name, content string) (stubKind, string) {
 	var probe map[string]json.RawMessage
 	var def dependencyFields
@@ -279,8 +267,6 @@ func classifyDependency(name, content string) (stubKind, string) {
 
 // dependencyFileDir returns the dependency directory name when p is a repo
 // path of the form specs/design/dependencies/<name>/dependency.json.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func dependencyFileDir(p string) (string, bool) {
 	if !strings.HasPrefix(p, dependenciesDir) || !strings.HasSuffix(p, "/"+dependencyDesignFile) {
 		return "", false
@@ -295,8 +281,6 @@ func dependencyFileDir(p string) (string, bool) {
 // dependencyDocumentPath returns the repo path of a dependency's document:
 // file directly in specs/design/dependencies/<name>/, canonical, passing the
 // write rules, and never the definition itself.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func dependencyDocumentPath(name, file string) (string, bool) {
 	dir := dependenciesDir + name
 	p := dir + "/" + file
@@ -311,8 +295,6 @@ func dependencyDocumentPath(name, file string) (string, bool) {
 // publisher token (platform.NewAEPAPI); aep-api answers 404 for a project
 // outside the token's org. It takes the raw-op interface: the decision is
 // the HTTP status, never a parsed error body.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func NewAEPAPICompleter(c aepapi.ClientInterface) Completer {
 	return aepAPICompleter{c: c}
 }
@@ -324,8 +306,6 @@ type aepAPICompleter struct{ c aepapi.ClientInterface }
 // rejected publisher client → projects.ErrUnavailable and ErrMisconfigured,
 // anything else, a transport failure or an unusable body →
 // projects.ErrUnavailable.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func (c aepAPICompleter) Complete(ctx context.Context, project string, writes []WriteOp) (map[string]Completed, []Warning, error) {
 	body := aepapi.AEStudioDependencyCompletionsRequest{Project: project, Writes: make([]aepapi.AEStudioFile, 0, len(writes))}
 	for _, w := range writes {

@@ -65,7 +65,6 @@ var scaffoldExposureByType = map[string]string{
 	"scheduled-task":  "intranet",
 }
 
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func componentDesignPath(id string) string {
 	return "specs/design/components/" + id + "/design.json"
 }
@@ -74,8 +73,6 @@ func componentDesignPath(id string) string {
 // design.cell source. `exists` answers whether a repo path is already present
 // (committed tree or the same batch). A cell that fails fact extraction
 // scaffolds nothing: the TS grammar validator owns surfacing the error.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func scaffoldFromCell(cellSource string, exists func(path string) bool) map[string]string {
 	components, err := cellComponents(cellSource)
 	if err != nil {
@@ -100,8 +97,6 @@ func scaffoldFromCell(cellSource string, exists func(path string) bool) map[stri
 // Key order is stable (marshal of an ordered struct) so scaffolds are
 // byte-deterministic. `stories` is deliberately absent: the agent authors it
 // during enrichment.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func renderScaffold(id, componentType string) string {
 	skeleton := struct {
 		Name         string `json:"name"`
@@ -132,8 +127,6 @@ func renderScaffold(id, componentType string) string {
 
 // sortedPaths returns a path map's keys in stable order (deterministic commit
 // contents and result metas).
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func sortedPaths(m map[string]string) []string {
 	out := make([]string, 0, len(m))
 	for p := range m {
@@ -154,8 +147,6 @@ type cellComponent struct {
 // grammar validator): statements it does not recognize are skipped. A leading
 // `---` frontmatter block is skipped; an unterminated one is an error, never
 // scanned through, so component-looking lines inside it never become facts.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func cellComponents(source string) ([]cellComponent, error) {
 	body, err := cellBody(source)
 	if err != nil {
@@ -180,7 +171,6 @@ func cellComponents(source string) ([]cellComponent, error) {
 	return out, nil
 }
 
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func parseCellComponent(statement string, line int) (cellComponent, error) {
 	tokens := tokenizeCellStatement(statement)
 	if len(tokens) < 2 {
@@ -206,8 +196,6 @@ func parseCellComponent(statement string, line int) (cellComponent, error) {
 // frontmatter block, the same fence rule as the TS grammar's
 // stripFrontmatter. An optional UTF-8 BOM and leading whitespace are allowed
 // before the fence.
-//
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func cellBody(source string) (string, error) {
 	trimmed := strings.TrimPrefix(strings.TrimLeft(source, " \t\r\n"), "\ufeff")
 	if !strings.HasPrefix(trimmed, "---") {
@@ -229,7 +217,6 @@ func cellBody(source string) (string, error) {
 // token (mirrors the TS tokenizer).
 var cellTokenPattern = regexp.MustCompile(`"([^"]*)"|(\S+)`)
 
-//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func tokenizeCellStatement(statement string) []string {
 	matches := cellTokenPattern.FindAllStringSubmatch(statement, -1)
 	tokens := make([]string, 0, len(matches))
