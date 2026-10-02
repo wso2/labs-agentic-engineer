@@ -58,22 +58,62 @@ const ClientEnsureActor = "ae-studio-ensure"
 // clientSecretBytes is the entropy of a client secret AE generates on heal.
 const clientSecretBytes = 32
 
-// errOrgOUUnknown means the org has no Thunder OU recorded yet, so neither
-// its clients nor its vault path can be placed.
+// errOrgOUUnknown means the org has no Thunder OU recorded yet, so its
+// studio client cannot be placed.
 var errOrgOUUnknown = errors.New("org Thunder OU unknown (the org row has no thunder_org_uuid)")
+
+// errOrgOUMismatch means the request's ouId and the org row's Thunder OU
+// disagree, so the vault path and the client's OU would name different orgs.
+var errOrgOUMismatch = errors.New("the request's ouId does not match the org's Thunder OU")
+
+// vaultOUOf is the OU every vault path of a request is derived from: the
+// request's ouId claim, because the Secret Manager API derives the vault
+// namespace from the JWT it authenticated (resolveVaultKey). The Thunder OU
+// a client is registered under comes from the org row (lookupOrgOUID);
+// EnsureClient refuses when the two disagree.
+func vaultOUOf(ctx context.Context) (string, error) {
+	return orgUUIDForSecretLocation(ctx)
+}
 
 // orgClient is one ensured app and how to store a secret for it.
 type orgClient struct {
-	secret OrgSecret
-	app    thundersvc.OrgApp
+	app thundersvc.OrgApp
 	// write stores clientSecret; beforeStamp runs inside the repoint, after
 	// the vault write and before the profile is stamped (nil = nothing).
 	write func(clientSecret string, beforeStamp func() error) error
 }
 
+// clientSecretOf is the org secret holding kind's credentials.
+func clientSecretOf(kind ClientKind) (OrgSecret, error) {
+	switch kind {
+	case ClientPublisher:
+		return OrgSecretPublisherClient, nil
+	case ClientStudio:
+		return OrgSecretStudioClient, nil
+	default:
+		return "", fmt.Errorf("ensure client: unknown kind %q", kind)
+	}
+}
+
 func (s *idpService) EnsureClient(ctx context.Context, orgID string, kind ClientKind) error {
+	return s.ensureClient(ctx, orgID, kind, ClientEnsureActor)
+}
+
+// ensureClient is EnsureClient with the audit actor of the publisher ensure.
+//
+// The whole ensure (the Thunder ensure, the row check, the write and on heal
+// the Thunder PUT) holds the client secret's lock. Otherwise a found-app
+// heal could store and PUT a secret between another caller's create and its
+// write of the created secret, leaving the reference on a secret Thunder no
+// longer holds while the row looks present. Thunder calls and profile
+// updates take no advisory lock, so the lock order holds.
+func (s *idpService) ensureClient(ctx context.Context, orgID string, kind ClientKind, actor string) error {
 	if orgID == "" {
 		return fmt.Errorf("orgID required")
+	}
+	secret, err := clientSecretOf(kind)
+	if err != nil {
+		return err
 	}
 	if s.thunder == nil {
 		return ErrIDPThunderUnavailable
@@ -81,43 +121,50 @@ func (s *idpService) EnsureClient(ctx context.Context, orgID string, kind Client
 	if s.secretRefWriter == nil || !s.secretRefWriter.Enabled() {
 		return fmt.Errorf("ensure %s client: secrets delivery is off (no SecretsProvider)", kind)
 	}
-	ouID := s.lookupOrgOUID(ctx, orgID)
-	if ouID == "" {
+	vaultOU, err := vaultOUOf(ctx)
+	if err != nil {
+		return fmt.Errorf("ensure %s client: %w", kind, err)
+	}
+	thunderOU := s.lookupOrgOUID(ctx, orgID)
+	if thunderOU != "" && thunderOU != vaultOU {
+		return fmt.Errorf("ensure %s client: %w", kind, errOrgOUMismatch)
+	}
+	if thunderOU == "" && kind == ClientStudio {
 		return fmt.Errorf("ensure %s client: %w", kind, errOrgOUUnknown)
 	}
-	var (
-		client orgClient
-		err    error
-	)
-	switch kind {
-	case ClientPublisher:
-		client, err = s.publisherClient(ctx, orgID, ouID)
-	case ClientStudio:
-		client, err = s.studioClient(ctx, orgID, ouID)
-	default:
-		return fmt.Errorf("ensure client: unknown kind %q", kind)
-	}
-	if err != nil {
-		return fmt.Errorf("ensure %s client: %w", kind, err)
-	}
-	action, err := s.storeClientSecret(ctx, orgID, client)
-	if err != nil {
-		return fmt.Errorf("ensure %s client: %w", kind, err)
-	}
-	slog.InfoContext(ctx, "ae_studio.client_ensured", "org", orgID, "kind", string(kind), "action", action)
-	return nil
+	return s.secretRefWriter.withOrgClientLock(ctx, orgID, secret, func(l *OrgSecretLocked) error {
+		var client orgClient
+		var err error
+		if kind == ClientPublisher {
+			client, err = s.publisherClient(ctx, l, orgID, actor, thunderOU, vaultOU)
+		} else {
+			client, err = s.studioClient(ctx, l, orgID, thunderOU, vaultOU)
+		}
+		if err != nil {
+			return fmt.Errorf("ensure %s client: %w", kind, err)
+		}
+		action, err := s.storeClientSecret(ctx, l, client)
+		if err != nil {
+			return fmt.Errorf("ensure %s client: %w", kind, err)
+		}
+		slog.InfoContext(ctx, "ae_studio.client_ensured", "org", orgID, "kind", string(kind), "action", action)
+		return nil
+	})
 }
 
-// storeClientSecret applies the table above to an ensured app and reports
-// what it did: "created", "healed" or "present".
-func (s *idpService) storeClientSecret(ctx context.Context, orgID string, c orgClient) (string, error) {
+// storeClientSecret applies the table above to an ensured app, under the
+// held lock l, and reports what it did: "created", "healed" or "present".
+func (s *idpService) storeClientSecret(ctx context.Context, l *OrgSecretLocked, c orgClient) (string, error) {
 	if c.app.Created {
 		if c.app.Secret == "" {
 			return "", errors.New("thunder created the app without returning its secret")
 		}
 		return "created", c.write(c.app.Secret, nil)
 	}
-	row, err := s.secretRefWriter.orgClientRef(ctx, orgID, c.secret)
+	if l == nil {
+		return "", errors.New("org secret writer not configured")
+	}
+	row, err := l.Ref(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -133,19 +180,20 @@ func (s *idpService) storeClientSecret(ctx context.Context, orgID string, c orgC
 	})
 }
 
-// publisherClient ensures aep-publisher-<org>, recording its ids (and, on
-// create, the sealed secret) on the profile. Its write also keeps the dual
-// path: the sealed publisher_client_secret column and the profile triplet.
-func (s *idpService) publisherClient(ctx context.Context, orgID, ouID string) (orgClient, error) {
-	app, err := s.ensurePublisherApp(ctx, orgID, ClientEnsureActor, ouID)
+// publisherClient ensures aep-publisher-<org> under thunderOU (the default
+// OU when the org row has none, as on every publisher path), recording its
+// ids (and, on create, the sealed secret) on the profile. Its write also
+// keeps the dual path: the sealed publisher_client_secret column and the
+// profile triplet.
+func (s *idpService) publisherClient(ctx context.Context, l *OrgSecretLocked, orgID, actor, thunderOU, vaultOU string) (orgClient, error) {
+	app, err := s.ensurePublisherApp(ctx, orgID, actor, thunderOU)
 	if err != nil {
 		return orgClient{}, err
 	}
 	return orgClient{
-		secret: OrgSecretPublisherClient,
-		app:    app,
+		app: app,
 		write: func(clientSecret string, beforeStamp func() error) error {
-			_, err := s.secretRefWriter.writePublisherClient(ctx, orgID, ouID, app.ClientID, clientSecret, beforeStamp, map[string]any{
+			_, err := s.secretRefWriter.writePublisherClient(ctx, l, orgID, vaultOU, app.ClientID, clientSecret, beforeStamp, map[string]any{
 				"publisher_client_id":      app.ClientID,
 				"publisher_thunder_app_id": app.EntityID,
 				"publisher_client_secret":  clientSecret,
@@ -159,14 +207,14 @@ func (s *idpService) publisherClient(ctx context.Context, orgID, ouID string) (o
 // studioClient ensures ae-studio-<org> under the org's OU (one under another
 // OU is thundersvc.ErrAppInForeignOU and is never touched). Its ids are
 // recorded with the write; the secret lives only in the reference.
-func (s *idpService) studioClient(ctx context.Context, orgID, ouID string) (orgClient, error) {
+func (s *idpService) studioClient(ctx context.Context, l *OrgSecretLocked, orgID, thunderOU, vaultOU string) (orgClient, error) {
 	profile, err := s.GetOrCreateProfile(ctx, orgID)
 	if err != nil {
 		return orgClient{}, err
 	}
 	app, err := s.thunder.EnsureOrgApp(ctx, thundersvc.OrgAppSpec{
 		Name:     thundersvc.StudioAppName(orgID),
-		OUID:     ouID,
+		OUID:     thunderOU,
 		StoredID: profile.StudioThunderAppID,
 	})
 	if err != nil {
@@ -185,21 +233,10 @@ func (s *idpService) studioClient(ctx context.Context, orgID, ouID string) (orgC
 		}
 	}
 	return orgClient{
-		secret: OrgSecretStudioClient,
-		app:    app,
+		app: app,
 		write: func(clientSecret string, beforeStamp func() error) error {
-			_, err := s.secretRefWriter.writeStudioClient(ctx, orgID, ouID, app.ClientID, clientSecret, beforeStamp, ids)
+			_, err := s.secretRefWriter.writeStudioClient(ctx, l, orgID, vaultOU, app.ClientID, clientSecret, beforeStamp, ids)
 			return err
 		},
 	}, nil
-}
-
-// forgetPublisherRef unsets the ae-publisher-client row after a rotation
-// whose vault write failed, so EnsureClient heals the reference instead of
-// finding one that holds an invalidated secret. Best-effort: logged.
-func (s *idpService) forgetPublisherRef(ctx context.Context, orgID string) {
-	if err := s.secretRefWriter.removeOrgClient(ctx, orgID, OrgSecretPublisherClient); err != nil {
-		slog.ErrorContext(ctx, "idp_service: unset publisher reference after failed SM-API rewrite",
-			"orgID", orgID, "error", err)
-	}
 }

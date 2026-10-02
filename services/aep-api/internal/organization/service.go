@@ -268,9 +268,6 @@ func (s *Service) Patch(ctx context.Context, org, actor string, p orgconfig.Conf
 		}); err != nil {
 			return nil, sectionErrorFrom("gitProvider", err)
 		}
-		if err := s.submitGitPAT(ctx, org, p.GitProvider.Value.PAT); err != nil {
-			return nil, err
-		}
 		sections = append(sections, "gitProvider")
 	}
 	if p.IDP.Sent && !p.IDP.Null {
@@ -281,6 +278,14 @@ func (s *Service) Patch(ctx context.Context, org, actor string, p orgconfig.Conf
 			return nil, sectionErrorFrom("idp", err)
 		}
 		sections = append(sections, "idp")
+	}
+	// The gitpat submit's setup runs after every section, so an idp kind
+	// switch in the same patch (which revokes the publisher app) cannot
+	// undo the clients it ensures.
+	if p.GitProvider.Sent && !p.GitProvider.Null {
+		if err := s.submitGitPAT(ctx, org, p.GitProvider.Value.PAT); err != nil {
+			return nil, err
+		}
 	}
 
 	// Audit which sections were carried — never the secret values (Decision:

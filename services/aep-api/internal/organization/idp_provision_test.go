@@ -192,8 +192,13 @@ type provFakeSM struct {
 // provWriter is the SecretRefWriter production wires: sm behind both the
 // writer and its org secret writer, the rows and lock in memory.
 func provWriter(sm *provFakeSM, repo *memIDPRepo) *SecretRefWriter {
+	return provWriterOver(sm, repo, newMemOrgSecretRepo())
+}
+
+// provWriterOver is provWriter over the given org secret rows.
+func provWriterOver(sm *provFakeSM, repo *memIDPRepo, rows *memOrgSecretRepo) *SecretRefWriter {
 	return NewSecretRefWriter(sm, nil, nil, repo, nil).
-		WithOrgSecretWriter(NewOrgSecretWriter(sm, newMemOrgSecretRepo(), memOrgSecretLock{}, time.Now))
+		WithOrgSecretWriter(NewOrgSecretWriter(sm, rows, memOrgSecretLock{}, time.Now))
 }
 
 type provSMCreateCall struct {
@@ -273,46 +278,47 @@ func TestProvisionPublisherForBuild_ExistingRefDoesNotRotate(t *testing.T) {
 	_ = repo.CreateProfile(context.Background(), &OrganizationIDPProfile{
 		OrgID: "acme", PublisherClientID: "aep-publisher-acme", SecretRefName: &name,
 	})
+	rows := newMemOrgSecretRepo()
+	rows.rows[memOrgSecretKey("acme", OrgSecretPublisherClient)] = OrgSecretRef{Secret: OrgSecretPublisherClient, Name: name}
 	thunder := &fakeThunder{ensureFn: func(context.Context, string, string) (string, string, bool, error) {
 		return "aep-publisher-acme", "", false, nil
 	}}
 	sm := &provFakeSM{ref: "should-not-write"}
 	svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).
-		WithSecretRefWriter(provWriter(sm, repo))
+		WithSecretRefWriter(provWriterOver(sm, repo, rows))
 	ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: "ou-acme-uuid"})
 	if err := svc.ProvisionPublisherForBuild(ctx, "acme"); err != nil {
 		t.Fatalf("provision: %v", err)
 	}
-	if len(thunder.regenCalls) != 0 {
-		t.Fatalf("must not rotate when secret_ref_name is set")
+	if len(thunder.regenCalls) != 0 || len(thunder.setSecretCalls) != 0 {
+		t.Fatalf("must not rotate when the reference is recorded")
 	}
 	if len(sm.createCalls) != 0 {
-		t.Fatalf("must not WritePublisher when triplet exists")
+		t.Fatalf("must not WritePublisher when the reference is recorded")
 	}
 }
 
-func TestProvisionPublisherForBuild_CreatedFalseEmptyRefRotatesOnce(t *testing.T) {
+// An app with no recorded reference (a pre-phase-1 org, or a lost write) is
+// healed once: a new secret stored, then given to Thunder.
+func TestProvisionPublisherForBuild_FoundAppWithoutReferenceHealsOnce(t *testing.T) {
 	t.Parallel()
 	repo := newMemIDPRepo()
-	thunder := &fakeThunder{
-		ensureFn: func(context.Context, string, string) (string, string, bool, error) {
-			return "aep-publisher-acme", "", false, nil
-		},
-		regenFn: func(context.Context, string) (string, error) { return "rotated-secret", nil },
-	}
-	sm := &provFakeSM{ref: "cred-after-rotate"}
+	thunder := &fakeThunder{ensureFn: func(context.Context, string, string) (string, string, bool, error) {
+		return "aep-publisher-acme", "", false, nil
+	}}
+	sm := &provFakeSM{ref: "cred-after-heal"}
 	svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).
 		WithSecretRefWriter(provWriter(sm, repo))
 	ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: "ou-acme-uuid"})
 	if err := svc.ProvisionPublisherForBuild(ctx, "acme"); err != nil {
 		t.Fatalf("provision: %v", err)
 	}
-	if len(thunder.regenCalls) != 1 {
-		t.Fatalf("rotate once, got %d", len(thunder.regenCalls))
+	if len(thunder.setSecretCalls) != 1 || len(sm.createCalls) != 1 {
+		t.Fatalf("heal once: puts=%d writes=%d", len(thunder.setSecretCalls), len(sm.createCalls))
 	}
 	row, _ := svc.GetProfile(ctx, "acme")
-	if row.SecretRefName == nil || *row.SecretRefName != "cred-after-rotate" {
-		t.Fatalf("triplet after rotate: %+v", row)
+	if row.SecretRefName == nil || *row.SecretRefName != "cred-after-heal" {
+		t.Fatalf("triplet after heal: %+v", row)
 	}
 }
 

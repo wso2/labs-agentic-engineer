@@ -55,9 +55,10 @@ type fakeThunder struct {
 	deleteFn func(ctx context.Context, orgHandle string) (bool, error)
 	regenFn  func(ctx context.Context, orgHandle string) (string, error)
 
-	ensureCalls []ensureCall
-	deleteCalls []string
-	regenCalls  []string
+	ensureCalls    []ensureCall
+	deleteCalls    []string
+	regenCalls     []string
+	setSecretCalls []string // entity ids SetAppSecret was given a secret for
 	// storedIDs is the stored Thunder entity id each Delete/Regenerate got.
 	storedIDs []string
 }
@@ -96,6 +97,12 @@ func (f *fakeThunder) RegenerateClientSecret(ctx context.Context, orgHandle, sto
 		return "rotated-" + orgHandle, nil
 	}
 	return f.regenFn(ctx, orgHandle)
+}
+
+// SetAppSecret is the heal's PUT: recorded by entity id, always succeeds.
+func (f *fakeThunder) SetAppSecret(_ context.Context, entityID, _ string) error {
+	f.setSecretCalls = append(f.setSecretCalls, entityID)
+	return nil
 }
 
 func (f *fakeThunder) OUExists(context.Context, string) (bool, error) {

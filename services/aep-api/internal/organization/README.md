@@ -139,14 +139,22 @@ S2S credentials-refresh.*
   their legacy triplet stamped inside the repoint.
 - **A gitpat submit is: validate → Connect → `github-pat` reference → `github-webhook-secret` (made
   once, under the lock) → `EnsureClient` publisher, then studio → converge trigger** (`gitpat_submit.go`).
-  Connect writes no reference itself. A failed reference write fails `gitProvider` (502, or 409 for a
-  concurrent write or a foreign-OU client); with no converger or no secrets delivery the submit
-  succeeds and logs `ae_studio_not_configured`. Nothing waits for the pod.
+  Connect writes no reference itself, and the setup runs after the patch's other sections (an idp
+  kind switch's publisher revoke cannot undo it). Every vault path derives from the request's `ouId`
+  (the Secret Manager API derives namespaces from the JWT); a client's Thunder OU is the org row's
+  `thunder_org_uuid`, and `EnsureClient` refuses when they differ. A failed step fails `gitProvider`
+  with code `ae_studio_setup_incomplete` (502, or 409 for a concurrent write or a foreign-OU client):
+  the connection is saved and saving the token again retries. With no converger or no secrets
+  delivery the submit succeeds and logs `ae_studio_not_configured`. Nothing waits for the pod.
 - **`EnsureClient` keeps Thunder and the vault agreeing** (`client_ensure.go`, 06 §5): a created app is
   stored with the secret Thunder returns once; a found app with no reference row is healed with a new
   secret written to the vault before Thunder's `PUT` (inside the repoint, so a failed `PUT` rolls the
   reference back); a found app with its row is left alone. An `ae-studio-<org>` app under another OU
-  fails the ensure and is never touched.
+  fails the ensure and is never touched. The whole ensure (Thunder ensure, row check, write, `PUT`)
+  holds the client secret's lock (`OrgSecretWriter.WithLock`), as do the deployment path's
+  `EnsureOrgPublisher` create-and-write and `RegenerateClientSecret`; `ProvisionPublisherForBuild` is
+  `EnsureClient(publisher)`. Thunder calls and profile updates take no advisory lock, so the lock
+  order holds.
 - **`OrgCatalogVaultKey` reconstructs a Registered External's org-catalog vault path from the
   request JWT `ouId`** — a read, not a second write. Used after aep-api restart when the
   process-local value plane is empty (ADR-0021). A missing `ouId` cannot invent a path.

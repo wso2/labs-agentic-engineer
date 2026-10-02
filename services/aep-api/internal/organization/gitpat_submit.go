@@ -51,20 +51,22 @@ func (s *Service) WithAEStudio(orgSecrets *OrgSecretWriter, converger StudioConv
 	return s
 }
 
-// submitGitPAT runs the gitpat submit after Connect committed. Each step
+// submitGitPAT runs the gitpat submit after Connect committed (and after the
+// patch's other sections). Every vault path here derives from the request's
+// ouId (vaultOUOf); the clients' Thunder OU is the org row's. Each step
 // needs the one before it, so the first failure fails the section; a
 // resubmit repeats the sequence, and every step is idempotent (the webhook
 // secret is kept, present clients are left alone).
 func (s *Service) submitGitPAT(ctx context.Context, org, pat string) error {
 	if err := s.credentialSvc.WritePATRef(ctx, org, pat); err != nil {
-		return submitFailure(ctx, org, "github-pat", err, "couldn't store the token, try again")
+		return submitFailure(ctx, org, "github-pat", err)
 	}
 	if s.orgSecrets == nil || s.idpSvc == nil {
 		slog.ErrorContext(ctx, "ae_studio_not_configured", "org", org, "reason", "secrets delivery is off")
 		return nil
 	}
 	if err := s.ensureWebhookSecret(ctx, org); err != nil {
-		return submitFailure(ctx, org, "github-webhook-secret", err, "couldn't store the webhook secret, try again")
+		return submitFailure(ctx, org, "github-webhook-secret", err)
 	}
 	for _, kind := range []ClientKind{ClientPublisher, ClientStudio} {
 		err := s.idpSvc.EnsureClient(ctx, org, kind)
@@ -73,7 +75,7 @@ func (s *Service) submitGitPAT(ctx context.Context, org, pat string) error {
 			return nil
 		}
 		if err != nil {
-			return submitFailure(ctx, org, "client:"+string(kind), err, "couldn't register the AE Studio clients, try again")
+			return submitFailure(ctx, org, "client:"+string(kind), err)
 		}
 	}
 	if s.converger == nil {
@@ -89,7 +91,7 @@ func (s *Service) submitGitPAT(ctx context.Context, org, pat string) error {
 // "First" is decided under the secret's lock, so two concurrent first
 // submits store one secret.
 func (s *Service) ensureWebhookSecret(ctx context.Context, org string) error {
-	ouID, err := orgUUIDForSecretLocation(ctx)
+	ouID, err := vaultOUOf(ctx)
 	if err != nil {
 		return err
 	}
@@ -101,20 +103,29 @@ func (s *Service) ensureWebhookSecret(ctx context.Context, org string) error {
 	return err
 }
 
-// submitFailure logs a failed submit step (value-free) and returns the
-// gitProvider section error the console shows. A concurrent write of the
-// same secret and a foreign-OU client are 409s with their own message; any
-// other failure is a 502 with retry.
-func submitFailure(ctx context.Context, org, step string, err error, retry string) error {
+// AEStudioSetupIncompleteCode is the gitProvider section error code of a
+// submit whose GitHub connection was saved but whose AE Studio setup (the
+// token's reference, the webhook secret, the org clients) did not finish.
+// Saving the token again retries the setup.
+const AEStudioSetupIncompleteCode = "ae_studio_setup_incomplete"
+
+// submitFailure logs a failed setup step (value-free) and returns the
+// gitProvider section error the console shows. Connect has committed by
+// then, so every message says the connection was saved. A concurrent write
+// of the same secret and a foreign-OU client are 409s with their own
+// message; any other failure is a 502.
+func submitFailure(ctx context.Context, org, step string, err error) error {
 	slog.ErrorContext(ctx, "ae_studio.gitpat_submit_failed", "org", org, "step", step, "error", err)
+	const saved = "The GitHub connection was saved, but AE Studio setup didn't finish: "
 	switch {
 	case errors.Is(err, ErrOrgSecretConflict):
-		return &SectionError{Section: "gitProvider", Status: http.StatusConflict,
-			Message: "another save of this organization's secrets is in progress, try again"}
+		return &SectionError{Section: "gitProvider", Status: http.StatusConflict, Code: AEStudioSetupIncompleteCode,
+			Message: saved + "another save of this organization's secrets was in progress. Save the token again to retry."}
 	case errors.Is(err, thundersvc.ErrAppInForeignOU):
-		return &SectionError{Section: "gitProvider", Status: http.StatusConflict,
-			Message: "an AE Studio client with this organization's name belongs to another organization; an operator must remove it"}
+		return &SectionError{Section: "gitProvider", Status: http.StatusConflict, Code: AEStudioSetupIncompleteCode,
+			Message: saved + "an AE Studio client with this organization's name belongs to another organization; an operator must remove it."}
 	default:
-		return &SectionError{Section: "gitProvider", Status: http.StatusBadGateway, Message: retry}
+		return &SectionError{Section: "gitProvider", Status: http.StatusBadGateway, Code: AEStudioSetupIncompleteCode,
+			Message: saved + "save the token again to retry."}
 	}
 }

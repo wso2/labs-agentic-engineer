@@ -467,87 +467,6 @@ func TestSecretRefWriter_WriteGitHubPAT(t *testing.T) {
 	})
 }
 
-// --- WritePublisher --------------------------------------------------------------
-
-func TestSecretRefWriter_WritePublisher(t *testing.T) {
-	t.Parallel()
-
-	t.Run("disabled (nil client) is a no-op", func(t *testing.T) {
-		t.Parallel()
-		w := organization.NewSecretRefWriter(nil, nil, nil, nil, nil)
-		ref, err := w.WritePublisher(context.Background(), "acme", "cid", "csecret")
-		if err != nil || ref != "" {
-			t.Fatalf("disabled WritePublisher = (%q, %v); want (\"\", nil)", ref, err)
-		}
-	})
-
-	t.Run("empty ocOrgID/clientID/clientSecret are each validation errors", func(t *testing.T) {
-		t.Parallel()
-		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, nil, nil, nil, nil)
-		cases := []struct {
-			name, org, id, secret string
-		}{
-			{"empty ocOrgID", "", "cid", "csecret"},
-			{"empty clientID", "acme", "", "csecret"},
-			{"empty clientSecret", "acme", "cid", ""},
-		}
-		for _, tc := range cases {
-			if _, err := w.WritePublisher(context.Background(), tc.org, tc.id, tc.secret); err == nil {
-				t.Errorf("%s: want a validation error", tc.name)
-			}
-		}
-		if len(fake.createCalls) != 0 {
-			t.Fatalf("CreateSecret must not be called on any validation failure")
-		}
-	})
-
-	t.Run("uploads a new ae-publisher-client reference as a 2-field payload", func(t *testing.T) {
-		t.Parallel()
-		db := dbtest.New(t)
-		seedIDPProfileRow(t, db, "acme", nil, nil)
-		fake := &fakeSMClient{}
-		w := withOrgSecrets(organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil), organization.NewOrgModelConnectionRepository(db)), fake)
-		ref, err := w.WritePublisher(claimsCtx("ou-acme-uuid"), "acme", "cid", "csecret")
-		if err != nil {
-			t.Fatalf("WritePublisher: %v", err)
-		}
-		if ref != "ref-name" {
-			t.Fatalf("secretRefName = %q; want ref-name", ref)
-		}
-		if len(fake.createCalls) != 1 {
-			t.Fatalf("want exactly 1 CreateSecret call, got %d", len(fake.createCalls))
-		}
-		call := fake.createCalls[0]
-		wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", ControlPlaneNamespace: "acme", EntityName: "ae-publisher-client"}
-		if call.loc != wantLoc {
-			t.Fatalf("SecretLocation = %+v; want %+v", call.loc, wantLoc)
-		}
-		wantData := map[string]string{
-			organization.PublisherSecretFieldClientID:     "cid",
-			organization.PublisherSecretFieldClientSecret: "csecret",
-		}
-		if len(call.data) != len(wantData) || call.data[organization.PublisherSecretFieldClientID] != "cid" || call.data[organization.PublisherSecretFieldClientSecret] != "csecret" {
-			t.Fatalf("payload = %v; want %v", call.data, wantData)
-		}
-	})
-
-	t.Run("CreateSecretRef error is wrapped and returned", func(t *testing.T) {
-		t.Parallel()
-		db := dbtest.New(t)
-		seedIDPProfileRow(t, db, "acme", nil, nil)
-		fake := &fakeSMClient{createErr: errors.New("sm-api: 500")}
-		w := withOrgSecrets(organization.NewSecretRefWriter(fake, nil, nil, organization.NewIDPRepository(db, nil), nil), fake)
-		ref, err := w.WritePublisher(claimsCtx("ou-acme-uuid"), "acme", "cid", "csecret")
-		if err == nil || ref != "" {
-			t.Fatalf("WritePublisher = (%q, %v); want (\"\", wrapped error)", ref, err)
-		}
-		if !strings.Contains(err.Error(), "publisher upload") {
-			t.Fatalf("error not wrapped as expected: %v", err)
-		}
-	})
-}
-
 // --- resolveVaultKey (via the exported Write* surface) ----------------------
 
 // TestSecretRefWriter_ResolveVaultKey_NoClaimsInContext pins resolveVaultKey's
@@ -757,8 +676,6 @@ func TestSecretRefWriter_DeletePublisher_DB(t *testing.T) {
 	})
 }
 
-// --- DeleteGitHubPAT (DB) -----------------------------------------------------
-
 // seedUserPATRow inserts a minimal valid org_credentials row of kind
 // user-pat (the CHECK constraints require webhook_secrets to be a non-empty
 // array for this kind, and installation_id/selected_repos to be NULL).
@@ -785,95 +702,6 @@ func seedUserPATRow(t testing.TB, db *gorm.DB, ocOrgID string, refName, kvPath *
 		t.Fatalf("seed user-pat row %s: %v", ocOrgID, err)
 	}
 }
-
-func TestSecretRefWriter_DeleteGitHubPAT_DB(t *testing.T) {
-	t.Run("disabled (nil client) is a no-op", func(t *testing.T) {
-		t.Parallel()
-		w := organization.NewSecretRefWriter(nil, nil, nil, nil, nil)
-		if err := w.DeleteGitHubPAT(context.Background(), "acme"); err != nil {
-			t.Fatalf("disabled DeleteGitHubPAT = %v; want nil", err)
-		}
-	})
-
-	t.Run("no row for org is a no-op (idempotent), SM-API never called", func(t *testing.T) {
-		t.Parallel()
-		db := dbtest.New(t)
-		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil), organization.NewOrgModelConnectionRepository(db))
-		if err := w.DeleteGitHubPAT(context.Background(), "ghost-org"); err != nil {
-			t.Fatalf("DeleteGitHubPAT on a missing row = %v; want nil", err)
-		}
-		if len(fake.deleteCalls) != 0 {
-			t.Fatalf("DeleteSecret must not be called when no row exists")
-		}
-	})
-
-	t.Run("clears the triplet after a successful SM-API delete", func(t *testing.T) {
-		t.Parallel()
-		db := dbtest.New(t)
-		seedUserPATRow(t, db, "acme", strPtr("acme-github-pat-secrets"), strPtr("user-app-secrets/wc-xxx/acme-github-pat-secrets"))
-
-		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil), organization.NewOrgModelConnectionRepository(db))
-		if err := w.DeleteGitHubPAT(claimsCtx("ou-acme-uuid"), "acme"); err != nil {
-			t.Fatalf("DeleteGitHubPAT: %v", err)
-		}
-		if len(fake.deleteCalls) != 1 {
-			t.Fatalf("want 1 DeleteSecret call, got %d", len(fake.deleteCalls))
-		}
-		call := fake.deleteCalls[0]
-		wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", ControlPlaneNamespace: "acme", EntityName: "github-pat", SecretKey: secretmanagersvc.SecretKeyAPIKey}
-		if call.loc != wantLoc || call.secretRefName != "acme-github-pat-secrets" {
-			t.Fatalf("DeleteSecret called with loc=%+v ref=%q; want loc=%+v ref=%q", call.loc, call.secretRefName, wantLoc, "acme-github-pat-secrets")
-		}
-		var got organization.OrgCredential
-		if err := db.Where("oc_org_id = ?", "acme").First(&got).Error; err != nil {
-			t.Fatalf("reload: %v", err)
-		}
-		if got.SecretRefName != nil || got.SecretRefKVPath != nil || got.SecretRefProperty != nil || got.SecretRefWrittenAt != nil {
-			t.Fatalf("triplet not cleared: %+v", got)
-		}
-	})
-
-	t.Run("nil SecretRefName on the row passes an empty refName to DeleteSecret", func(t *testing.T) {
-		t.Parallel()
-		db := dbtest.New(t)
-		seedUserPATRow(t, db, "acme", nil, nil)
-
-		fake := &fakeSMClient{}
-		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil), organization.NewOrgModelConnectionRepository(db))
-		if err := w.DeleteGitHubPAT(claimsCtx("ou-acme-uuid"), "acme"); err != nil {
-			t.Fatalf("DeleteGitHubPAT: %v", err)
-		}
-		if len(fake.deleteCalls) != 1 || fake.deleteCalls[0].secretRefName != "" {
-			t.Fatalf("want DeleteSecret called with empty secretRefName, got %+v", fake.deleteCalls)
-		}
-	})
-
-	t.Run("SM-API delete error propagates and the row is left untouched", func(t *testing.T) {
-		t.Parallel()
-		db := dbtest.New(t)
-		seedUserPATRow(t, db, "acme", strPtr("acme-github-pat-secrets"), strPtr("kv/path"))
-
-		fake := &fakeSMClient{deleteErr: errors.New("sm-api: 500")}
-		w := organization.NewSecretRefWriter(fake, organization.NewOrgCredentialRepository(db, nil), organization.NewOrgAnthropicRepository(db), organization.NewIDPRepository(db, nil), organization.NewOrgModelConnectionRepository(db))
-		if err := w.DeleteGitHubPAT(claimsCtx("ou-acme-uuid"), "acme"); err == nil {
-			t.Fatalf("want the SM-API error to propagate")
-		}
-		var got organization.OrgCredential
-		if err := db.Where("oc_org_id = ?", "acme").First(&got).Error; err != nil {
-			t.Fatalf("reload: %v", err)
-		}
-		if got.SecretRefName == nil || *got.SecretRefName != "acme-github-pat-secrets" {
-			t.Fatalf("row must be untouched on delete error: %+v", got)
-		}
-		if got.SecretRefWrittenAt == nil {
-			t.Fatalf("written_at must be untouched on delete error")
-		}
-	})
-}
-
-// --- Write* stamps secret_ref_* (DB) ------------------------------------------
 
 func claimsCtx(ouID string) context.Context {
 	return jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: ouID})
@@ -1048,18 +876,17 @@ func TestSecretRefWriter_WriteAMPModelKey(t *testing.T) {
 func TestSecretRefWriter_DeletePublisher_RemovesTheRecordedReference_DB(t *testing.T) {
 	t.Parallel()
 	db := dbtest.New(t)
-	seedIDPProfileRow(t, db, "acme", nil, nil)
-	fake := &fakeSMClient{createRef: "acme-ae-publisher-client-0000000a"}
+	const minted = "acme-ae-publisher-client-0000000a"
+	seedIDPProfileRow(t, db, "acme", strPtr(minted), strPtr("user-app-secrets/ns/"+minted))
+	fake := &fakeSMClient{}
 	rows := newFakeRepo()
+	rows.set("acme", organization.OrgSecretPublisherClient, minted)
 	w := organization.NewSecretRefWriter(fake, nil, nil, organization.NewIDPRepository(db, nil), nil).
 		WithOrgSecretWriter(organization.NewOrgSecretWriter(fake, rows, newFakeLock(), fixedClock))
-	if _, err := w.WritePublisher(claimsCtx("ou-acme-uuid"), "acme", "cid", "csecret"); err != nil {
-		t.Fatalf("WritePublisher: %v", err)
-	}
 	if err := w.DeletePublisher(claimsCtx("ou-acme-uuid"), "acme"); err != nil {
 		t.Fatalf("DeletePublisher: %v", err)
 	}
-	if len(fake.deleteCalls) != 1 || fake.deleteCalls[0].secretRefName != "acme-ae-publisher-client-0000000a" || fake.deleteCalls[0].loc.EntityName != "ae-publisher-client" {
+	if len(fake.deleteCalls) != 1 || fake.deleteCalls[0].secretRefName != minted || fake.deleteCalls[0].loc.EntityName != "ae-publisher-client" {
 		t.Fatalf("the minted reference is deleted by its stored name: %+v", fake.deleteCalls)
 	}
 	if rows.name("acme", organization.OrgSecretPublisherClient) != "" {

@@ -34,6 +34,7 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
 	"github.com/wso2/aep/aep-api/internal/clients/thundersvc"
+	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 )
 
 // --- in-memory org secret rows and lock --------------------------------------
@@ -143,9 +144,13 @@ type ensureThunder struct {
 	created, put bool
 	putSecret    string
 	specs        []thundersvc.OrgAppSpec
+	onEnsure     func()
 }
 
 func (t *ensureThunder) app(name string) (thundersvc.OrgApp, error) {
+	if t.onEnsure != nil {
+		t.onEnsure()
+	}
 	if t.foreignOU {
 		return thundersvc.OrgApp{}, thundersvc.ErrAppInForeignOU
 	}
@@ -189,6 +194,11 @@ func (r ouOrgRepo) GetByName(_ context.Context, name string) (*Organization, err
 // --- fixture ------------------------------------------------------------------
 
 var ensureOU = uuid.MustParse("1b4e28ba-2fa1-11d2-883f-0016d3cca427")
+
+// ensureCtx is a request whose ouId is the org's OU.
+func ensureCtx() context.Context {
+	return jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: ensureOU.String()})
+}
 
 type ensureFixture struct {
 	svc     *idpService
@@ -253,7 +263,7 @@ func TestEnsureClient_Table(t *testing.T) {
 		for _, c := range cases {
 			t.Run(string(kind.kind)+": "+c.name, func(t *testing.T) {
 				f := newEnsureFixture(t, c.appExists, c.rowSet)
-				if err := f.svc.EnsureClient(context.Background(), "default", kind.kind); err != nil {
+				if err := f.svc.EnsureClient(ensureCtx(), "default", kind.kind); err != nil {
 					t.Fatal(err)
 				}
 				if f.thunder.created != c.wantCreate || f.thunder.put != c.wantPut || f.vault.wrote(kind.secret) != c.wantWrite {
@@ -287,11 +297,11 @@ func TestEnsureClient_Table(t *testing.T) {
 
 func TestEnsureClient_HealSecretIs32RandomBytes(t *testing.T) {
 	f := newEnsureFixture(t, true, false)
-	if err := f.svc.EnsureClient(context.Background(), "default", ClientStudio); err != nil {
+	if err := f.svc.EnsureClient(ensureCtx(), "default", ClientStudio); err != nil {
 		t.Fatal(err)
 	}
 	g := newEnsureFixture(t, true, false)
-	if err := g.svc.EnsureClient(context.Background(), "default", ClientStudio); err != nil {
+	if err := g.svc.EnsureClient(ensureCtx(), "default", ClientStudio); err != nil {
 		t.Fatal(err)
 	}
 	if len(f.thunder.putSecret) != 64 || f.thunder.putSecret == g.thunder.putSecret {
@@ -301,7 +311,7 @@ func TestEnsureClient_HealSecretIs32RandomBytes(t *testing.T) {
 
 func TestEnsureClient_StudioRecordsIDsAndNoSecretColumn(t *testing.T) {
 	f := newEnsureFixture(t, false, false)
-	if err := f.svc.EnsureClient(context.Background(), "default", ClientStudio); err != nil {
+	if err := f.svc.EnsureClient(ensureCtx(), "default", ClientStudio); err != nil {
 		t.Fatal(err)
 	}
 	p := f.profile(t)
@@ -319,7 +329,7 @@ func TestEnsureClient_StudioRecordsIDsAndNoSecretColumn(t *testing.T) {
 
 func TestEnsureClient_PublisherKeepsTheDualPath(t *testing.T) {
 	f := newEnsureFixture(t, true, false)
-	if err := f.svc.EnsureClient(context.Background(), "default", ClientPublisher); err != nil {
+	if err := f.svc.EnsureClient(ensureCtx(), "default", ClientPublisher); err != nil {
 		t.Fatal(err)
 	}
 	p := f.profile(t)
@@ -337,7 +347,7 @@ func TestEnsureClient_PublisherKeepsTheDualPath(t *testing.T) {
 func TestEnsureClient_HealPutFailureRollsBackTheReference(t *testing.T) {
 	f := newEnsureFixture(t, true, false)
 	f.thunder.putErr = errors.New("thunder: 500")
-	if err := f.svc.EnsureClient(context.Background(), "default", ClientStudio); err == nil {
+	if err := f.svc.EnsureClient(ensureCtx(), "default", ClientStudio); err == nil {
 		t.Fatal("a failed PUT fails the ensure")
 	}
 	if f.row(OrgSecretStudioClient) != "" || len(f.vault.refs) != 0 {
@@ -352,7 +362,7 @@ func TestEnsureClient_HealPutFailureRollsBackTheReference(t *testing.T) {
 func TestEnsureClient_HealVaultFailureNeverReachesThunder(t *testing.T) {
 	f := newEnsureFixture(t, true, false)
 	f.vault.createErr = errors.New("openbao: sealed")
-	if err := f.svc.EnsureClient(context.Background(), "default", ClientPublisher); err == nil {
+	if err := f.svc.EnsureClient(ensureCtx(), "default", ClientPublisher); err == nil {
 		t.Fatal("a vault failure fails the ensure")
 	}
 	if slices.ContainsFunc(f.log, func(e string) bool { return e == "thunder:put:app-1" }) {
@@ -363,7 +373,7 @@ func TestEnsureClient_HealVaultFailureNeverReachesThunder(t *testing.T) {
 func TestEnsureClient_ForeignOUFailsLoudly(t *testing.T) {
 	f := newEnsureFixture(t, true, false)
 	f.thunder.foreignOU = true
-	err := f.svc.EnsureClient(context.Background(), "default", ClientStudio)
+	err := f.svc.EnsureClient(ensureCtx(), "default", ClientStudio)
 	if !errors.Is(err, thundersvc.ErrAppInForeignOU) {
 		t.Fatalf("err = %v, want ErrAppInForeignOU", err)
 	}
@@ -375,10 +385,57 @@ func TestEnsureClient_ForeignOUFailsLoudly(t *testing.T) {
 func TestEnsureClient_UnknownOUTouchesNothing(t *testing.T) {
 	f := newEnsureFixture(t, false, false)
 	f.svc.orgRepo = ouOrgRepo{}
-	if err := f.svc.EnsureClient(context.Background(), "default", ClientStudio); !errors.Is(err, errOrgOUUnknown) {
+	if err := f.svc.EnsureClient(ensureCtx(), "default", ClientStudio); !errors.Is(err, errOrgOUUnknown) {
 		t.Fatalf("err = %v, want errOrgOUUnknown", err)
 	}
 	if len(f.log) != 0 || len(f.thunder.specs) != 0 {
 		t.Fatalf("nothing is created under a guessed OU: %v", f.log)
 	}
+}
+
+func TestEnsureClient_OUMismatchTouchesNothing(t *testing.T) {
+	f := newEnsureFixture(t, false, false)
+	other := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: uuid.NewString()})
+	for _, kind := range []ClientKind{ClientPublisher, ClientStudio} {
+		if err := f.svc.EnsureClient(other, "default", kind); !errors.Is(err, errOrgOUMismatch) {
+			t.Fatalf("%s: err = %v, want errOrgOUMismatch", kind, err)
+		}
+	}
+	if len(f.log) != 0 || len(f.thunder.specs) != 0 {
+		t.Fatalf("the vault path and the client OU must name one org: %v", f.log)
+	}
+}
+
+func TestEnsureClient_HoldsTheSecretLockAcrossTheEnsure(t *testing.T) {
+	f := newEnsureFixture(t, true, false)
+	lock := &recordingLock{log: &f.log}
+	f.svc.secretRefWriter.orgSecrets = NewOrgSecretWriter(f.vault, f.rows, lock, time.Now)
+	f.thunder.onEnsure = func() {
+		if lock.held {
+			lock.ensuresInside++
+		}
+	}
+	if err := f.svc.EnsureClient(ensureCtx(), "default", ClientStudio); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"lock:ae-studio-client", "vault", "thunder:put:app-1", "unlock"}
+	if !slices.Equal(f.log, want) {
+		t.Fatalf("log %v, want %v (the row check, write and PUT under one lock)", f.log, want)
+	}
+	if lock.ensuresInside != 1 {
+		t.Fatal("the Thunder ensure runs under the lock")
+	}
+}
+
+// recordingLock logs lock/unlock into the shared call log.
+type recordingLock struct {
+	log           *[]string
+	held          bool
+	ensuresInside int
+}
+
+func (l *recordingLock) Lock(_ context.Context, _ string, s OrgSecret) (func(), error) {
+	*l.log = append(*l.log, "lock:"+string(s))
+	l.held = true
+	return func() { l.held = false; *l.log = append(*l.log, "unlock") }, nil
 }

@@ -170,21 +170,16 @@ func (w *OrgSecretWriter) write(ctx context.Context, loc secretmanagersvc.Secret
 // caller with no transaction of its own to commit first. It returns the new
 // name.
 func (w *OrgSecretWriter) WriteAndRetire(ctx context.Context, ocOrgID, ouID string, s OrgSecret, data map[string]string, legacyOld string, repoint func(newName string) error) (string, error) {
-	loc, err := orgSecretWriteLocation(ocOrgID, ouID, s, data)
-	if err != nil {
+	if _, err := orgSecretWriteLocation(ocOrgID, ouID, s, data); err != nil {
 		return "", err
 	}
-	unlock, err := w.lock.Lock(ctx, ocOrgID, s)
-	if err != nil {
-		return "", err
-	}
-	defer unlock()
-	written, err := w.write(ctx, loc, ocOrgID, s, data, legacyOld, repoint)
-	if err != nil {
-		return "", err
-	}
-	written.Retire(ctx)
-	return written.Name, nil
+	var name string
+	err := w.WithLock(ctx, ocOrgID, s, func(l *OrgSecretLocked) error {
+		var err error
+		name, err = l.WriteAndRetire(ctx, ouID, data, legacyOld, repoint)
+		return err
+	})
+	return name, err
 }
 
 // WriteIfUnset stores data as secret s only when s has no row yet, under
@@ -192,65 +187,113 @@ func (w *OrgSecretWriter) WriteAndRetire(ctx context.Context, ocOrgID, ouID stri
 // left alone, so a value meant to be generated once (the webhook secret) is
 // never replaced by a concurrent or later first write.
 func (w *OrgSecretWriter) WriteIfUnset(ctx context.Context, ocOrgID, ouID string, s OrgSecret, data map[string]string) (bool, error) {
-	loc, err := orgSecretWriteLocation(ocOrgID, ouID, s, data)
-	if err != nil {
+	if _, err := orgSecretWriteLocation(ocOrgID, ouID, s, data); err != nil {
 		return false, err
 	}
-	unlock, err := w.lock.Lock(ctx, ocOrgID, s)
-	if err != nil {
-		return false, err
-	}
-	defer unlock()
-	prev, err := w.repo.Get(ctx, ocOrgID, s)
-	if err != nil {
-		return false, fmt.Errorf("org secret %s: read row: %w", s, err)
-	}
-	if prev != nil {
-		return false, nil
-	}
-	if _, err := w.write(ctx, loc, ocOrgID, s, data, "", nil); err != nil {
-		return false, err
-	}
-	return true, nil
+	var wrote bool
+	err := w.WithLock(ctx, ocOrgID, s, func(l *OrgSecretLocked) error {
+		prev, err := l.Ref(ctx)
+		if err != nil || prev != nil {
+			return err
+		}
+		if _, err := l.WriteAndRetire(ctx, ouID, data, "", nil); err != nil {
+			return err
+		}
+		wrote = true
+		return nil
+	})
+	return wrote, err
 }
 
-// Ref returns the reference row of s, or nil when s is unset.
-func (w *OrgSecretWriter) Ref(ctx context.Context, ocOrgID string, s OrgSecret) (*OrgSecretRef, error) {
-	return w.repo.Get(ctx, ocOrgID, s)
+// errRestoreUnsupported refuses Restore on a provider that manages the
+// references itself: it mints a new reference per write, so the stored
+// name cannot be rewritten in place.
+var errRestoreUnsupported = errors.New("org secret restore: the secrets provider manages its references; resubmit the secret instead")
+
+// managesRefs reports whether the vault is a provider that manages its
+// SecretReferences (Cloud's Secret Manager API).
+func (w *OrgSecretWriter) managesRefs() bool {
+	m, ok := w.vault.(interface{ ManagesSecretReferences() bool })
+	return ok && m.ManagesSecretReferences()
 }
 
 // Restore rewrites data under the reference the row of s already names,
 // for a local repair after the vault lost its values: no new reference, no
 // row change, nothing for a consumer to repoint. It reports false when s is
-// unset. Only the OpenBao-direct install keeps the name on this write; a
-// provider that manages references (Cloud) is not repaired this way.
+// unset. Only the OpenBao-direct install can keep the name on this write; on
+// a provider that manages references it refuses before writing anything.
 func (w *OrgSecretWriter) Restore(ctx context.Context, ocOrgID, ouID string, s OrgSecret, data map[string]string) (bool, error) {
 	loc, err := orgSecretWriteLocation(ocOrgID, ouID, s, data)
 	if err != nil {
 		return false, err
 	}
+	if w.managesRefs() {
+		return false, errRestoreUnsupported
+	}
+	var restored bool
+	err = w.WithLock(ctx, ocOrgID, s, func(l *OrgSecretLocked) error {
+		row, err := l.Ref(ctx)
+		if err != nil || row == nil {
+			return err
+		}
+		loc.RefName = row.Name
+		name, err := w.vault.CreateSecret(ctx, loc, s.RefData(data))
+		if err != nil {
+			return fmt.Errorf("org secret %s: restore: %w", s, err)
+		}
+		if name != row.Name {
+			return fmt.Errorf("org secret %s: restore landed under %s, not the stored reference %s", s, name, row.Name)
+		}
+		slog.InfoContext(ctx, "orgsecret.restored", "secret", string(s), "name", row.Name)
+		restored = true
+		return nil
+	})
+	return restored, err
+}
+
+// WithLock runs fn holding the lock of (ocOrgID, s), for a caller whose
+// decision what to write depends on state outside the row (an org client's
+// Thunder app): the read, the decision and the write then happen with no
+// other write of the secret in between. fn reaches the secret only through
+// the handle, whose methods never take the lock again. fn must follow the
+// lock order (OrgSecretLock): it may call Thunder and write profile columns,
+// which take no advisory lock, but must not take another org-secret lock.
+func (w *OrgSecretWriter) WithLock(ctx context.Context, ocOrgID string, s OrgSecret, fn func(l *OrgSecretLocked) error) error {
+	if strings.TrimSpace(ocOrgID) == "" {
+		return fmt.Errorf("org secret %s: org is required", s)
+	}
 	unlock, err := w.lock.Lock(ctx, ocOrgID, s)
 	if err != nil {
-		return false, err
+		return err
 	}
 	defer unlock()
-	row, err := w.repo.Get(ctx, ocOrgID, s)
+	return fn(&OrgSecretLocked{w: w, org: ocOrgID, secret: s})
+}
+
+// OrgSecretLocked is one org secret while its lock is held (WithLock).
+type OrgSecretLocked struct {
+	w      *OrgSecretWriter
+	org    string
+	secret OrgSecret
+}
+
+// Ref returns the secret's reference row, or nil when it is unset.
+func (l *OrgSecretLocked) Ref(ctx context.Context) (*OrgSecretRef, error) {
+	return l.w.repo.Get(ctx, l.org, l.secret)
+}
+
+// WriteAndRetire is OrgSecretWriter.WriteAndRetire under the held lock.
+func (l *OrgSecretLocked) WriteAndRetire(ctx context.Context, ouID string, data map[string]string, legacyOld string, repoint func(newName string) error) (string, error) {
+	loc, err := orgSecretWriteLocation(l.org, ouID, l.secret, data)
 	if err != nil {
-		return false, fmt.Errorf("org secret %s: read row: %w", s, err)
+		return "", err
 	}
-	if row == nil {
-		return false, nil
-	}
-	loc.RefName = row.Name
-	name, err := w.vault.CreateSecret(ctx, loc, s.RefData(data))
+	written, err := l.w.write(ctx, loc, l.org, l.secret, data, legacyOld, repoint)
 	if err != nil {
-		return false, fmt.Errorf("org secret %s: restore: %w", s, err)
+		return "", err
 	}
-	if name != row.Name {
-		return false, fmt.Errorf("org secret %s: restore landed under %s, not the stored reference %s", s, name, row.Name)
-	}
-	slog.InfoContext(ctx, "orgsecret.restored", "secret", string(s), "name", row.Name)
-	return true, nil
+	written.Retire(ctx)
+	return written.Name, nil
 }
 
 // undo rolls a write back after its row may name the new reference. The
@@ -303,22 +346,29 @@ func (w *OrgSecretWriter) restoreRow(ctx context.Context, ocOrgID string, s OrgS
 	return err == nil, err
 }
 
-// Remove unsets secret s under the secret's lock. Order: delete the row (only if it still names the
-// reference read) → repoint() so consumers stop reading the secret → delete
-// the reference by its stored name. A repoint failure puts the row back and
-// returns the error; a failed reference delete is logged with the orphan's
-// name and does not fail the removal. An unset secret is a no-op. repoint
-// may be nil when nothing consumes the secret.
+// Remove unsets secret s under the secret's lock. Order: delete the row
+// (only if it still names the reference read) → repoint() so consumers stop
+// reading the secret → delete the reference by its stored name. A repoint
+// failure puts the row back and returns the error; a failed reference
+// delete is logged with the orphan's name and does not fail the removal. An
+// unset secret is a no-op. repoint may be nil when nothing consumes the
+// secret.
 func (w *OrgSecretWriter) Remove(ctx context.Context, ocOrgID, ouID string, s OrgSecret, repoint func() error) error {
+	if _, err := orgSecretLocation(ocOrgID, ouID, s); err != nil {
+		return err
+	}
+	return w.WithLock(ctx, ocOrgID, s, func(l *OrgSecretLocked) error {
+		return l.Remove(ctx, ouID, repoint)
+	})
+}
+
+// Remove is OrgSecretWriter.Remove under the held lock.
+func (l *OrgSecretLocked) Remove(ctx context.Context, ouID string, repoint func() error) error {
+	w, ocOrgID, s := l.w, l.org, l.secret
 	loc, err := orgSecretLocation(ocOrgID, ouID, s)
 	if err != nil {
 		return err
 	}
-	unlock, err := w.lock.Lock(ctx, ocOrgID, s)
-	if err != nil {
-		return err
-	}
-	defer unlock()
 	prev, err := w.repo.Get(ctx, ocOrgID, s)
 	if err != nil {
 		return fmt.Errorf("org secret %s: read row: %w", s, err)

@@ -550,3 +550,10 @@ func (c *secretManagementClient) GetSecretWithValue(ctx context.Context, kvPath 
 	}
 	return out, nil
 }
+
+// ManagesSecretReferences reports whether the provider creates and names the
+// SecretReferences itself (Cloud's Secret Manager API), so a write cannot
+// keep a caller-chosen reference name.
+func (c *secretManagementClient) ManagesSecretReferences() bool {
+	return c.managesRefs()
+}

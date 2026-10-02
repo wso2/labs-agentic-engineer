@@ -22,7 +22,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/clients/thundersvc"
@@ -261,24 +260,53 @@ func (s *idpService) EnsureOrgPublisher(ctx context.Context, orgID, actor string
 	if s.thunder == nil {
 		return "", "", false, ErrIDPThunderUnavailable
 	}
-	app, err := s.ensurePublisherApp(ctx, orgID, actor, s.lookupOrgOUID(ctx, orgID))
+	var app thundersvc.OrgApp
+	// The ensure and the write of a created app's secret run under the
+	// ae-publisher-client lock, so a concurrent EnsureClient heal cannot
+	// store and PUT another secret in between (see client_ensure.go).
+	err := s.withPublisherLock(ctx, orgID, func(l *OrgSecretLocked) error {
+		var err error
+		if app, err = s.ensurePublisherApp(ctx, orgID, actor, s.lookupOrgOUID(ctx, orgID)); err != nil {
+			return err
+		}
+		// Mirror publisher creds to the vault so the dispatcher can mount
+		// them on the runner. Only on fresh create (Thunder doesn't return
+		// the secret on subsequent reads); an app without a reference is
+		// healed by EnsureClient (the gitpat submit, POST /build).
+		// Best-effort here: a vault outage doesn't fail publisher
+		// provisioning on the deployment path.
+		if app.Created && app.Secret != "" && s.secretRefWriter.Enabled() {
+			if smerr := s.storePublisherSecret(ctx, l, orgID, app.ClientID, app.Secret, nil); smerr != nil {
+				slog.WarnContext(ctx, "idp_service: SM-API publisher write failed (continuing)",
+					"orgID", orgID, "error", smerr)
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		return "", "", false, err
 	}
-
-	// Mirror publisher creds to SM-API so the dispatcher can mint a
-	// per-run ExternalSecret for the runner's cc flow. Only on fresh
-	// create (Thunder doesn't return the secret on subsequent reads); pre-
-	// existing apps without SM-API mirroring recover via an explicit
-	// RegenerateClientSecret, or the gitpat submit's EnsureClient. Best-effort:
-	// SM-API outage doesn't fail publisher provisioning.
-	if app.Created && app.Secret != "" && s.secretRefWriter != nil && s.secretRefWriter.Enabled() {
-		if _, smerr := s.secretRefWriter.WritePublisher(ctx, orgID, app.ClientID, app.Secret); smerr != nil {
-			slog.WarnContext(ctx, "idp_service: SM-API publisher write failed (continuing)",
-				"orgID", orgID, "error", smerr)
-		}
-	}
 	return app.ClientID, app.Secret, app.Created, nil
+}
+
+// withPublisherLock runs fn holding the ae-publisher-client lock when the
+// org secret writer is wired, else with a nil handle (nothing to write).
+func (s *idpService) withPublisherLock(ctx context.Context, orgID string, fn func(l *OrgSecretLocked) error) error {
+	if s.secretRefWriter == nil {
+		return fn(nil)
+	}
+	return s.secretRefWriter.withOrgClientLock(ctx, orgID, OrgSecretPublisherClient, fn)
+}
+
+// storePublisherSecret writes the publisher's credentials under the held
+// lock l, the vault path from the request's ouId claim (vaultOUOf).
+func (s *idpService) storePublisherSecret(ctx context.Context, l *OrgSecretLocked, orgID, clientID, clientSecret string, cols map[string]any) error {
+	vaultOU, err := vaultOUOf(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = s.secretRefWriter.writePublisherClient(ctx, l, orgID, vaultOU, clientID, clientSecret, nil, cols)
+	return err
 }
 
 // ensurePublisherApp makes sure the org's Thunder publisher app exists
@@ -341,60 +369,34 @@ func (s *idpService) ensurePublisherApp(ctx context.Context, orgID, actor, orgOU
 }
 
 // ProvisionPublisherForBuild is the fail-closed counterpart to
-// EnsureOrgPublisher's best-effort SM-API mirror, called from the
-// POST /projects/{projectName}/build handler (user JWT in ctx, so
-// WritePublisher can resolve the SM-API vault key). EnsureOrgPublisher
-// itself already attempts the SM-API write on fresh creation; this method
-// only steps in when that attempt didn't leave a usable secret_ref_name —
-// either because Ensure's write failed/was skipped, or because the app
-// already existed without ever having been mirrored (rotate once to
-// recover a usable triplet). Every failure path here fails the Build.
+// EnsureOrgPublisher's best-effort vault write, called from the
+// POST /projects/{projectName}/build handler (user JWT in ctx, so the vault
+// path resolves). It is EnsureClient(publisher): the app is ensured and a
+// created app's secret stored, or an app without its reference healed with
+// a new secret, all under the ae-publisher-client lock. It then requires the
+// profile's secret_ref_name. Every failure path here fails the Build.
 func (s *idpService) ProvisionPublisherForBuild(ctx context.Context, orgID string) error {
 	if orgID == "" {
 		return fmt.Errorf("orgID required")
 	}
 	// Fail closed BEFORE touching Thunder: a disabled writer can never stamp
-	// secret_ref_name, so letting EnsureOrgPublisher/RegenerateClientSecret
-	// run anyway would rotate the Thunder client secret on every single
-	// Build (each call retries the same never-stamped ref) and report
-	// success in the exact state this method exists to prevent.
+	// secret_ref_name, so letting the ensure run anyway would rotate the
+	// Thunder client secret on every single Build and report success in
+	// the exact state this method exists to prevent.
 	if s.secretRefWriter == nil || !s.secretRefWriter.Enabled() {
 		return fmt.Errorf("publisher SecretReference requires a SecretsProvider (secrets delivery is off)")
 	}
-	clientID, clientSecret, _, err := s.EnsureOrgPublisher(ctx, orgID, PublisherBuildActor)
-	if err != nil {
+	if err := s.ensureClient(ctx, orgID, ClientPublisher, PublisherBuildActor); err != nil {
 		return err
 	}
 	row, err := s.GetProfile(ctx, orgID)
 	if err != nil {
 		return err
 	}
-	if HasPublisherSecretRef(row) {
-		return nil
+	if !HasPublisherSecretRef(row) {
+		return fmt.Errorf("publisher SecretReference missing after provision")
 	}
-	if strings.TrimSpace(clientSecret) != "" {
-		if _, werr := s.secretRefWriter.WritePublisher(ctx, orgID, clientID, clientSecret); werr != nil {
-			return fmt.Errorf("idp_service: SM-API publisher write: %w", werr)
-		}
-		return nil
-	}
-	if row != nil && strings.TrimSpace(row.PublisherClientID) != "" {
-		if _, rerr := s.RegenerateClientSecret(ctx, orgID, PublisherBuildActor); rerr != nil {
-			return rerr
-		}
-		// spec P1 step 4: rotate is a one-shot recovery, not a retry loop —
-		// require the rotated secret actually landed a SecretReference
-		// rather than reporting success while the ref stays null.
-		after, aerr := s.GetProfile(ctx, orgID)
-		if aerr != nil {
-			return aerr
-		}
-		if !HasPublisherSecretRef(after) {
-			return fmt.Errorf("publisher SecretReference still missing after rotate")
-		}
-		return nil
-	}
-	return fmt.Errorf("publisher SecretReference missing after provision")
+	return nil
 }
 
 func (s *idpService) RevokeOrgPublisher(ctx context.Context, orgID, actor string) (bool, error) {
@@ -457,6 +459,23 @@ func (s *idpService) RegenerateClientSecret(ctx context.Context, orgID, actor st
 	if s.thunder == nil {
 		return "", ErrIDPThunderUnavailable
 	}
+	var newSecret string
+	// The rotation and its vault write run under the ae-publisher-client
+	// lock, so Thunder and the reference end on the same secret even when an
+	// EnsureClient heal runs at the same time.
+	err := s.withPublisherLock(ctx, orgID, func(l *OrgSecretLocked) error {
+		var err error
+		newSecret, err = s.rotatePublisherSecret(ctx, l, orgID, actor)
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+	return newSecret, nil
+}
+
+// rotatePublisherSecret is RegenerateClientSecret under the held lock l.
+func (s *idpService) rotatePublisherSecret(ctx context.Context, l *OrgSecretLocked, orgID, actor string) (string, error) {
 	profile, err := s.GetProfile(ctx, orgID)
 	if err != nil {
 		return "", err
@@ -481,26 +500,14 @@ func (s *idpService) RegenerateClientSecret(ctx context.Context, orgID, actor st
 		return "", fmt.Errorf("idp_service.RegenerateClientSecret persist: %w", err)
 	}
 
-	// Mirror the rotated secret to SM-API; runner pods picking up from
-	// the next dispatch receive the new secret via ExternalSecret refresh.
-	// Fail-closed: a stale secret_ref_name after rotation would hand a
-	// runner pod credentials Thunder already invalidated, so a write
-	// failure here fails the caller instead of swallowing it.
+	// Store the rotated secret; runner pods picking up from the next
+	// dispatch receive it via ExternalSecret refresh. Fail-closed: a stale
+	// secret_ref_name after rotation would hand a runner pod credentials
+	// Thunder already invalidated, so a write failure fails the caller.
 	if s.secretRefWriter != nil && s.secretRefWriter.Enabled() {
-		if _, smerr := s.secretRefWriter.WritePublisher(ctx, orgID, profile.PublisherClientID, newSecret); smerr != nil {
+		if smerr := s.storePublisherSecret(ctx, l, orgID, profile.PublisherClientID, newSecret, nil); smerr != nil {
 			s.audit(ctx, orgID, IDPAuditRegenerateSecret, actor, beforeJSON, nil, smerr)
-			// Thunder and the DB row already hold the new secret; the vault
-			// still holds the old one. A non-empty secret_ref_name would look
-			// healthy to ProvisionPublisherForBuild. Clear it so the next
-			// Build re-provisions instead of mounting invalidated credentials.
-			if cerr := s.repo.UpdateProfileColumns(ctx, profile, orgID, clearSecretRefTripletWithWrittenAt()); cerr != nil {
-				slog.ErrorContext(ctx, "idp_service: clear secret_ref after failed SM-API rewrite",
-					"orgID", orgID, "error", cerr)
-			}
-			// Likewise the ae-publisher-client row still names the reference
-			// holding the invalidated secret; unset it so EnsureClient heals
-			// it instead of finding it present.
-			s.forgetPublisherRef(ctx, orgID)
+			s.forgetPublisherRef(ctx, l, profile, orgID)
 			return "", fmt.Errorf("idp_service: SM-API publisher rewrite: %w", smerr)
 		}
 	}
@@ -511,6 +518,27 @@ func (s *idpService) RegenerateClientSecret(ctx context.Context, orgID, actor st
 
 	slog.InfoContext(ctx, "idp_service: RegenerateClientSecret", "orgID", orgID)
 	return newSecret, nil
+}
+
+// forgetPublisherRef runs after a rotation whose vault write failed:
+// Thunder and the sealed column hold the new secret, the vault the old one.
+// It clears the triplet so the next Build re-provisions instead of mounting
+// invalidated credentials, and unsets the ae-publisher-client row so
+// EnsureClient heals it instead of finding it present. Best-effort: logged.
+func (s *idpService) forgetPublisherRef(ctx context.Context, l *OrgSecretLocked, profile *OrganizationIDPProfile, orgID string) {
+	if err := s.repo.UpdateProfileColumns(ctx, profile, orgID, clearSecretRefTripletWithWrittenAt()); err != nil {
+		slog.ErrorContext(ctx, "idp_service: clear secret_ref after failed SM-API rewrite", "orgID", orgID, "error", err)
+	}
+	if l == nil {
+		return
+	}
+	vaultOU, err := vaultOUOf(ctx)
+	if err == nil {
+		err = l.Remove(ctx, vaultOU, nil)
+	}
+	if err != nil {
+		slog.ErrorContext(ctx, "idp_service: unset publisher reference after failed SM-API rewrite", "orgID", orgID, "error", err)
+	}
 }
 
 // UpdateProfile changes kind/issuer/JWKS URL for an org. When kind

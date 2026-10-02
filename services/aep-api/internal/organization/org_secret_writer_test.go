@@ -758,3 +758,20 @@ func TestWriter_RestoreRewritesUnderTheStoredName(t *testing.T) {
 		t.Fatal("the row is unchanged")
 	}
 }
+
+// managedVault is a provider that manages its references (Cloud).
+type managedVault struct{ *fakeVault }
+
+func (managedVault) ManagesSecretReferences() bool { return true }
+
+func TestWriter_RestoreRefusesAProviderThatManagesReferences(t *testing.T) {
+	v, repo := newFakeVault("default-github-pat-00000001"), newFakeRepo()
+	repo.set("default", organization.OrgSecretGitHubPAT, "default-github-pat-00000001")
+	w := organization.NewOrgSecretWriter(managedVault{v}, repo, newFakeLock(), fixedClock)
+	if wrote, err := w.Restore(ctx, "default", "ou-1", organization.OrgSecretGitHubPAT, pat); err == nil || wrote {
+		t.Fatalf("want a refusal, got wrote=%v err=%v", wrote, err)
+	}
+	if v.lastLoc.RefName != "" {
+		t.Fatal("nothing is written before the refusal")
+	}
+}
