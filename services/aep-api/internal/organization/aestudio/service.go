@@ -216,8 +216,8 @@ func (s *Service) busy(org string) bool {
 
 // recentlyFailed reports whether org's last converge failed within the
 // back-off on the same desired state. A converge that failed before it had
-// a desired state (its own read of it failed) matches any: Status, reading
-// as another identity, may compute one the converge could not.
+// a desired state (a transient failure reading it) matches any, so the
+// back-off holds even when Status's own read of it then succeeds.
 func (s *Service) recentlyFailed(org, fingerprint string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -226,7 +226,8 @@ func (s *Service) recentlyFailed(org, fingerprint string) bool {
 }
 
 // firstStatusFailure reports whether this is the first failed answer Status
-// gives org for this desired state, and records it.
+// gives org for this desired state in the current failure episode, and
+// records it. statusRecovered ends the episode.
 func (s *Service) firstStatusFailure(org, fingerprint string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -235,4 +236,12 @@ func (s *Service) firstStatusFailure(org, fingerprint string) bool {
 	}
 	s.statusFailures[org] = fingerprint
 	return true
+}
+
+// statusRecovered ends org's failure episode: Status answered other than
+// failed, so the next failed answer is logged again.
+func (s *Service) statusRecovered(org string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.statusFailures, org)
 }

@@ -193,3 +193,27 @@ func TestStatus_FailedAnswerLoggedOncePerDesiredState(t *testing.T) {
 		t.Fatalf("status_failed logged at Warn %d times, want once per desired state (2)", n)
 	}
 }
+
+// A new failure episode (failed, then not, then failed again on the same
+// desired state) is logged again.
+func TestStatus_FailedAnswerLoggedAgainAfterRecovery(t *testing.T) {
+	h := &countingHandler{warn: map[string]int{}}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	f := newFixture(t).withAllRefs().converged()
+	f.withWriteTargetErr(&openchoreo.ErrNoWriteTarget{})
+	f.svc.Status(userCtx(), "default")
+	f.svc.Status(userCtx(), "default")
+	f.withWriteTargetErr(nil)
+	if st, _ := f.svc.Status(userCtx(), "default"); st.State != StateReady {
+		t.Fatalf("state %s", st.State)
+	}
+	f.withWriteTargetErr(&openchoreo.ErrNoWriteTarget{})
+	f.svc.Status(userCtx(), "default")
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if n := h.warn["ae_studio.status_failed"]; n != 2 {
+		t.Fatalf("status_failed logged at Warn %d times, want once per episode (2)", n)
+	}
+}

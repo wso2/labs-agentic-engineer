@@ -57,6 +57,15 @@ var errProjectMissing = errors.New("project " + ProjectName + " does not exist")
 // converge on drift and never waits for one.
 // An error is a failure to read, not a state.
 func (s *Service) Status(ctx context.Context, org string) (Status, error) {
+	st, err := s.status(ctx, org)
+	if err == nil && st.State != StateFailed {
+		s.statusRecovered(org)
+	}
+	return st, err
+}
+
+// status computes Status's answer.
+func (s *Service) status(ctx context.Context, org string) (Status, error) {
 	d, err := s.desired(ctx, org)
 	var nr *notReadyError
 	if errors.As(err, &nr) {

@@ -314,7 +314,12 @@ func (c *projectCellClient) ProjectReleaseBindingReadiness(ctx context.Context, 
 
 func (c *projectCellClient) readiness(ctx context.Context, path string) (Readiness, error) {
 	obj := &conditionedObject{}
-	if _, err := c.do(ctx, http.MethodGet, path, nil, obj); err != nil {
+	if status, err := c.do(ctx, http.MethodGet, path, nil, obj); err != nil {
+		if status == http.StatusNotFound {
+			// do reports non-2xx as a plain error; classify the 404 so callers
+			// can tell a missing resource from a failed read.
+			return Readiness{}, fmt.Errorf("read readiness: %w: %v", ErrNotFound, err)
+		}
 		return Readiness{}, fmt.Errorf("read readiness: %w", err)
 	}
 	return obj.readiness(), nil
