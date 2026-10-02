@@ -1047,6 +1047,11 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	orgResourceDocs := provisioning.NewGitOrgResourceDocs(repoService, gitOpsService)
 	registryReader := registeredResourceReader{catalog: externalResourceRTCatalog, docs: orgResourceDocs}
 	filesSvc.SetRegisteredResourceReader(registryReader)
+	// The AE Studio tools pod has its saves' dependency stubs completed here,
+	// over the same registry and the same guarded fetch Apply uses (04 §4).
+	params.InternalDeps.DependencyCompleter = func(ctx context.Context, org string, writes []spec.WriteOp) (map[string]spec.CompletedFile, []spec.Warning) {
+		return spec.CompleteDependencies(ctx, registryReader, spec.FetchSpecFromURL, org, writes)
+	}
 	// ops — the Incident RCA domain (P1, the first landed domain). Alerts
 	// (console issues #154, #155, BE handshake #156): the org-scoped store for
 	// RCA-agent reports the console's notification bell and Alerts list/stepper

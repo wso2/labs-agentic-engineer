@@ -50,6 +50,32 @@ func (e IssueInfoAttentionReason) Valid() bool {
 	}
 }
 
+// AEStudioCompletedDependency One completed stub. `definition` replaces the stub's dependency.json content; `files` land beside it in the same commit.
+type AEStudioCompletedDependency struct {
+	Definition string         `json:"definition"`
+	Files      []AEStudioFile `json:"files"`
+
+	// Path The stub's dependency.json path, as sent.
+	Path string `json:"path"`
+}
+
+// AEStudioDependencyCompletions The stubs aep-api completed, and the warnings for every stub it touched (completed or not).
+type AEStudioDependencyCompletions struct {
+	Completed []AEStudioCompletedDependency `json:"completed"`
+	Warnings  []AEStudioWarning             `json:"warnings"`
+}
+
+// AEStudioDependencyCompletionsRequest The dependency stub writes of one save.
+type AEStudioDependencyCompletionsRequest struct {
+	Writes []AEStudioFile `json:"writes"`
+}
+
+// AEStudioFile A repo-relative file path and its UTF-8 content.
+type AEStudioFile struct {
+	Content string `json:"content"`
+	Path    string `json:"path"`
+}
+
 // AEStudioProjectRepository A project's GitHub repository, as the AE Studio tools pod clones it.
 type AEStudioProjectRepository struct {
 	CloneURL      string `json:"cloneUrl"`
@@ -60,6 +86,13 @@ type AEStudioProjectRepository struct {
 
 	// Repo GitHub repository name.
 	Repo string `json:"repo"`
+}
+
+// AEStudioWarning A non-fatal note on one path (registry-copied, registry-miss, registry-unreachable, provider-document-fetched, provider-document-unavailable).
+type AEStudioWarning struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Path    string `json:"path"`
 }
 
 // ComponentEndpoint defines model for ComponentEndpoint.
@@ -236,6 +269,9 @@ type SreListIssuesParams struct {
 	Q string `form:"q,omitempty" json:"q,omitempty"`
 }
 
+// CompleteAeStudioDependenciesJSONRequestBody defines body for CompleteAeStudioDependencies for application/json ContentType.
+type CompleteAeStudioDependenciesJSONRequestBody = AEStudioDependencyCompletionsRequest
+
 // SreCreateIssueJSONRequestBody defines body for SreCreateIssue for application/json ContentType.
 type SreCreateIssueJSONRequestBody = CreateIssueRequest
 
@@ -244,6 +280,9 @@ type SreCreateRcaReportJSONRequestBody = CreateRcaAgentReportRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// Complete dependency stubs from a save (AE Studio tools pod)
+	// (POST /ae-studio/dependency-completions)
+	CompleteAeStudioDependencies(w http.ResponseWriter, r *http.Request)
 	// Resolve a project to its GitHub repository (AE Studio tools pod)
 	// (GET /ae-studio/projects/{projectName}/repository)
 	GetAeStudioProjectRepository(w http.ResponseWriter, r *http.Request, projectName string)
@@ -272,6 +311,26 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// CompleteAeStudioDependencies operation middleware
+func (siw *ServerInterfaceWrapper) CompleteAeStudioDependencies(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, PublisherCCScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CompleteAeStudioDependencies(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // GetAeStudioProjectRepository operation middleware
 func (siw *ServerInterfaceWrapper) GetAeStudioProjectRepository(w http.ResponseWriter, r *http.Request) {
@@ -606,6 +665,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/ae-studio/dependency-completions", wrapper.CompleteAeStudioDependencies)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/ae-studio/projects/{projectName}/repository", wrapper.GetAeStudioProjectRepository)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/executions/{executionId}/credentials/refresh", wrapper.RunnerRefreshCredentials)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/sre/projects/{projectName}/issues", wrapper.SreListIssues)
@@ -614,6 +674,45 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/validation/{cycleId}/context", wrapper.RunnerValidationContext)
 
 	return m
+}
+
+type CompleteAeStudioDependenciesRequestObject struct {
+	Body *CompleteAeStudioDependenciesJSONRequestBody
+}
+
+type CompleteAeStudioDependenciesResponseObject interface {
+	VisitCompleteAeStudioDependenciesResponse(w http.ResponseWriter) error
+}
+
+type CompleteAeStudioDependencies200JSONResponse AEStudioDependencyCompletions
+
+func (response CompleteAeStudioDependencies200JSONResponse) VisitCompleteAeStudioDependenciesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteAeStudioDependenciesdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response CompleteAeStudioDependenciesdefaultJSONResponse) VisitCompleteAeStudioDependenciesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
 type GetAeStudioProjectRepositoryRequestObject struct {
@@ -854,6 +953,9 @@ func (response RunnerValidationContextdefaultJSONResponse) VisitRunnerValidation
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+	// Complete dependency stubs from a save (AE Studio tools pod)
+	// (POST /ae-studio/dependency-completions)
+	CompleteAeStudioDependencies(ctx context.Context, request CompleteAeStudioDependenciesRequestObject) (CompleteAeStudioDependenciesResponseObject, error)
 	// Resolve a project to its GitHub repository (AE Studio tools pod)
 	// (GET /ae-studio/projects/{projectName}/repository)
 	GetAeStudioProjectRepository(ctx context.Context, request GetAeStudioProjectRepositoryRequestObject) (GetAeStudioProjectRepositoryResponseObject, error)
@@ -901,6 +1003,37 @@ type strictHandler struct {
 	ssi         StrictServerInterface
 	middlewares []StrictMiddlewareFunc
 	options     StrictHTTPServerOptions
+}
+
+// CompleteAeStudioDependencies operation middleware
+func (sh *strictHandler) CompleteAeStudioDependencies(w http.ResponseWriter, r *http.Request) {
+	var request CompleteAeStudioDependenciesRequestObject
+
+	var body CompleteAeStudioDependenciesJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CompleteAeStudioDependencies(ctx, request.(CompleteAeStudioDependenciesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CompleteAeStudioDependencies")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CompleteAeStudioDependenciesResponseObject); ok {
+		if err := validResponse.VisitCompleteAeStudioDependenciesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
 }
 
 // GetAeStudioProjectRepository operation middleware
@@ -1077,69 +1210,80 @@ func (sh *strictHandler) RunnerValidationContext(w http.ResponseWriter, r *http.
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"3Fr9bhs5kn+VQt8CkW+7pSQ7O8A5OBw8jjLxJuMYsmcHuNgXUM2SxHU32UOybWsNA/cQ94T3JIcqsj8k",
-	"t/wxmLnNLJA/FDc/ilW/qvpVkbdJbsrKaNTeJfu3ictXWAr+eTA99bVU5sSav2HuZ1gZp7yxa/oopFRe",
-	"GS2KE2sqtF6hS/YXonCYJhJdblVF35P95ACqsMILB98r/76eg23XSkE48CuEgymE7cAbUziojIS8MBod",
-	"KD9O0qTq7XOb8KcfbUG//brCZD9x3iq9TO5o/4WoC/+dFTpfDY4w1xotfdkUNYrHX2FUO7Rg6N9SaPV3",
-	"QYP2wCxYXjoCiXVvafqwc+Xu4KBFiQML8Ao/18qiTPY/R0HjqtsnSzs1XLQLmTnpmiQ5bCw71bIySvtH",
-	"Dbel42b+oArrQeVvid8tESYMimlReDxyrsYZ/lyj888EGE8Fb2ChCgSj2T4d5thSIFHWFX7ANZTiEh3k",
-	"tKsyGpTEsjIetYeK7F2hBsUrjgoxxyJDnRuJci+FhbGQG53X1tJwUaD1sBJaFmjdGNrDHosSQWgJIqct",
-	"Tr3wtaM9hbVrlu50NgWlcyVpHVrBLBa0tMcb/4ZGrEEa0MaDxLwQFoNIGUuNYGqfmxLdfb/Y3PE+Dj9Z",
-	"iRYlHTULY8E14i2sKVm6bcnGcAC6LgpA7e0alIMShVZ6uagLPmdl0aG9wuDKYd0X5MOObQjXK1IqredA",
-	"m7gjCa88liwlLS/mBSb73tY44FY7BghrxZq+z41cD+J0wyr3FdI6CYjFAnOPEubrDS0MenkLp8E9GTh8",
-	"rvaAzz6QV77Axz0sDIvn3+1es1wcLFFzFLf+l/nZT1Z5zJySFP14AfYIARqvYXZ4kIll5xaWN4IR43Yg",
-	"fAvn1ELlIqy9bRXyuKzAKyxScouFWjb/K9UNypTCsjYa4X//+3/AoW9s1rgSSzJkt4djmsSqMGtSbPtx",
-	"bkyBQve/HvDkhbGl8Ml+IoXHzKuSTvkwjNPkJluaLP7xX2nO+Iwm0uJKLLVxasBn35HrzQ4PoB0DfwSL",
-	"JUoVQhgHDu1hVAp7Kc213huErHKV8Plq1/HYUtObHG01rB0ecFyX85A6WwUo7b/9Zvfhlfa45CS2cfow",
-	"q1n2bAfa4+ddmT5G+cFvri5LYYcd9InO1Syftm7WLJpuQ7hvwSE3nFpr7DMd7l0hPCBNBNRXWJiKPM/X",
-	"VocohVdIRMLo7PXNDVh0ldEOB8iSkQOR7weRr5TGzKKQZLa4Ew2GkfP8J1fUy70dAdALVQyhVWEhg7dC",
-	"HMRh4koUSga88kab8f8PFhfJfvIvk46OTiIXnbDq3vJSbLutQFmic2I5cMD3dSn09vHi6MeZFyutW32n",
-	"TaNgz6NWC1LSIDJ7p3lYvrDEwwIeUf5S/rmM/XvlicyUyoOKK4yB7cqs1QERksODk6Ozg49H/zl923Cu",
-	"a2URRivlvLEqFwUUJr90HisO0/lK6KXSSxpagkaUDgTkxliptKDEa2tNxNtigcLh3hg+HH/66Ri+PzjZ",
-	"D5ybv79g8iZXWBBfi2SsWAMZ2kFhrtHmwiFc4tql4Awo79pzZNKqBWWna0pmoMmFYKEsujewUDcwx8Lo",
-	"pYtbhWQ3ouUybwq0gliisA73UmZnK7QD/jYtIyLuWfejWSo9+KVhJw8bnUelcYNmuUHLU9Q80gvzTNN/",
-	"0pFqBjZYKOcnDoXNV78MAW4lKuRPTfYEgVVW5lXGjNEGdTpGSKS858lC3ZwncK38ytR+CyQ/HJ40U1ug",
-	"3LPAd7vY4MdfgZk9kAK3Ut5dmhAVH05s/GWGwg0RoBNrrpQkBNZVVShyDh7JoZTZKRuJmDSmgV+LK6FY",
-	"7vGjROQuTXYn3B9nHwf/LjyRDGX0LpkPjXamQGgHBvHG8KlUnkzHYnbChxCgTTeBJEddlwT1Wl+hVQuF",
-	"8stC3dCRzBcOIfjlCq1UnJbR5aIgWPScYJfrBKs1J08DRsJxGzO1+NjpUjN0dfFc4nzKcM0kWnWFcrCU",
-	"awpU+e9kL66vHAjdL0fJHVh7jsrLrp4VBUW+NeCNcqRl8iTNh53UtgCLC7RUHSs/hkNRUK0a4x5jaw2b",
-	"TCblP1t0jv9jkURQepmCkKYKIwz5Xoi8+YPVKM0IfHNTI2d0yBYO0Z3j6M0SVGlvSBF8OsoerIxe+u4x",
-	"2EbAlms9aIboUM0kkEpy+CEGUmDrVlzbhirwUad6rKzZBkJzyM15DxScO6i7NhKP5I5g9oxg1Rn10NSh",
-	"RnrwADmNArMgNBgrWanNCi6GKuU2KuknSUGQezJsmuEgoKT6hkCSF8Y1njaMlQbkT96mm9D1jgZPeH+v",
-	"J7XKdBOfaHRr0qFAtFnLP7cbq7mUjOV52/L5VKE+XBmLBk5n00lXzTcV9SiP0Z116n4vFX2Isg+V7A82",
-	"AbYaICv0K7Sx/0uJgLBGtHElHMwRdcdyRn+l7LWGd+oG/MqiW5lCBtJYosViDSezrES7RLk3CJondBu+",
-	"3u7Cbr3lRpLSGnA1amtntwSnUPqycWEYMZZBxVyYGV2sJ6XQtSiyZi6UVLnW2qsCBKyo+OvWdcNKVnJ3",
-	"z6HXCtkKgityHQyfm/uAKG7s8/MCb0DMKXWEUKJNk8dF7D6jHFLkVpdl8Boh8ice1Ky15TBvQBTO8F/O",
-	"hLukaghGDhEmsanhJrfxFxUVdxMv3KWb3Pa2v9vbPEHfHfkQwY3JFk8I7P/A9s+Q+QjxccibCMwQ37yt",
-	"dS4897KVg0VtGbsES6qGwJprN2S3J7aUlEzSXl+pi0/P7DFteFwvaA0mDFxQAJrFBtFzu1A0twG2N5eo",
-	"4Y/b7YHWa/EG87ohMZsZAm8qqrOfE4pVr3/xUIeo7XOQHYS73MGFWPgntNR5WNoTuCdJu8GQov/a9rgO",
-	"w13OL1T5Wb9exnh750D0m2i21iCJhrkxfI8aLQcB4UAtUY93SgIjbaD1xD1OtzQDytp5KtjWIKBAseDW",
-	"CZtULvEFURyPVouiufBqbthcrO4Lxd1IaUqh9AsH5prqP1vnHgxxePYm7g+EnsCoV8rkpq4KTgsOtsC6",
-	"Nz7XR56vzhRytWisyAuESvjVm15bqK2DLrW5dhSxbGg8xPFqoD5pVbvREHgIaffvVO91JLfQ1O1xHzEU",
-	"pogwK78+pQ2CVFU9L5RboT08pP/OUVi07xqH+ctPZ8l9vNRakknQZsYuoV0B8kKh9lRsMoBF4aCBNx+J",
-	"8yFv0PnfyvuKI6jF9yHcDwRRL7zK2w1PZ9M2NYTlYHQ6m355f3D89tO7d1/OPn2YHu+lW72fpwhB3kZH",
-	"fpoivnv3LnNqqeMNJ02G2enrP38Lf/npDEYRKZWRzAce2ZzMo2ILbXMbOoaoVN8r6EQqx8ybLP4EV9uF",
-	"yHEMR+S7tVRcLSsHZei8u/Rch0K8l3/2uZ/PBszTWKcvhcdrsc6EvCLsOpRjmLK3EZhFuG09114sHbfn",
-	"uOOZc6kPoxmfOe0eWKRkrb3WvV2FeeydCnIbc65pKv0UvY6BqP2KEESpMbQiBOyE3bnehbsUBDxoJC4E",
-	"Rs7iBEzlzjWxi70g6GOQe9PePusl0BDlQBTXYu3OdVOxtgVP01yCTsRG3TymueFUuqr9+Fyf63hpGnqf",
-	"MRBTxF0KpZ0P8Y2VKbSEuZHrLBdVFQ7ZGepcj17BD+o7omvxNccezHFhLILQ6za62lq7sO2Px8fTGXz8",
-	"dPjh9GwaO+E9vWY2BEwipNweo2MTmOqyJYXnOtLu6AAc9L1rDjlpro5gvibiw6mAWyFhwbYRS+vsateP",
-	"WwaznxxMT+Co8YzT16dwcHKUpMkVWhcc6NX45fglP8SpUItKJfvJn8Yvx3+iCC38isPgRGDmGLG7KKvd",
-	"eJK0xAGufsYJYPnCDT8wYqCz5YyO12lRJ29AebhErCjnkEvkKxxDXI5UzI9MtuJswDglv/o923EM7eun",
-	"YAeaLA0nMs8pUmh3Tf71zctv0q67J0ggSl/Cd8O5BUZqbsFEPIfOnbWqyuJuWU83pFMrSvRoXbL/eaDV",
-	"zPJx5Bi9PT7N+PlCuPsj6kODyCpJmmi+pUh6Vkj62S60xUKu5EwmPIEg2U/+67PI/v4y+7eLUfyRXdy+",
-	"TL99ddf8fe8//jBwJXdBqwdsMiZev3wZLjS5JGVWVVVF5MeTv8W2dCfAQ6l89/s2jvxb9yIfeg/LfjUR",
-	"QqNyYLvmQ8cP2HAbzODzBamnLXOSGTpTXCGIDnHh7uv+27PRgDNwgSyWhJCk/ZxckAyTltW7yW37+0je",
-	"TXpxaBLjENvdhMclm0CNd2pxXD83PAbRabMnKNmnfOS/c5Ffkj+63FCw9WYYsj2xH4Ts/ycCt+uyrxZ3",
-	"LQn7fHGXPgrDkI64Zx91/sLBUvl+1mq5WGPCPvwCZYnYK/Mq2b+lX0QKdmSC2JTsssAm8pzFjIr3rGte",
-	"/oMi4r3Kc+A9WikyhySg7xpK4UVZfOTo0cJ83Qjyc40c5KMk8e3Zszb9gOtrYyWEm14wxIJCj4kz+oTY",
-	"TApWcIuLiAvfxeQ+82hLHl6ICkY8GK5RLVckujT1vMC9FCIPEh5e/3kMMySbZ3MlXLytqh07bkOYiVHw",
-	"2YO1Gna0UKFE5OdmRjPhGFLAz8lv6c9PqhK72/dHr5O/VpfvF3/bLv6xexWw0fBkFiW2nt5yIdgw9b6X",
-	"n86mycVduiNZkMuG5ljWPiH8Snz2IgxG55tnBr+KhQbeQd9tNhNIsLvfMB/1b7h/l8AMKgSxgcpfAMom",
-	"29hcZOGmzO2mNT2kduOT3xIjw495nwSWV78eedm8hRww4GG85PjKQTPju+tHnjE/CpeuMzu5zdd5gUyP",
-	"Q+91Jy+JjLibmzUzHol2XXsXeLOn8GJOtXFQnMU1bCH8wtiyfwfHFXFca2FsGtuvvArPMdxpPpiefDk7",
-	"OP3w5ehtbHrUWoYXG1R3xEZg028ciMBRUV8NId/dv/+noObv0Oere7cIL9zQXcPT+DlLY68akPJDh2TS",
-	"NEUnV6+Su4u7/wsAAP//",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

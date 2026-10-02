@@ -216,6 +216,45 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: Error
+  /ae-studio/dependency-completions:
+    post:
+      operationId: complete-ae-studio-dependencies
+      summary: Complete dependency stubs from a save (AE Studio tools pod)
+      description: |-
+        The org's AE Studio tools pod calls this when a save carries a
+        dependency stub: a registry stub (`resource.ref`, no provider) or a
+        provider contract named by `provenance.sourceUrl` with no hash yet.
+        aep-api copies the registered resource from the org registry, or
+        fetches the provider's document (https, public hosts, 5 MiB), so a URL
+        chosen by model output is never fetched by the pod that holds the
+        org's git credential. The org is the publisher client token's
+        ouHandle. A stub that cannot be completed is absent from `completed`
+        and carries a warning; a write that is not a stub is ignored. Every
+        path must be `specs/design/dependencies/<name>/dependency.json`, else
+        400 `path_invalid`.
+      tags:
+      - AE Studio
+      security:
+      - publisherCC: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AEStudioDependencyCompletionsRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AEStudioDependencyCompletions'
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
   /mcp:
     post:
       operationId: call-mcp-tool
@@ -566,6 +605,83 @@ components:
       - repo
       - defaultBranch
       - cloneUrl
+    AEStudioDependencyCompletionsRequest:
+      description: The dependency stub writes of one save.
+      type: object
+      additionalProperties: false
+      properties:
+        writes:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/AEStudioFile'
+      required:
+      - writes
+    AEStudioDependencyCompletions:
+      description: The stubs aep-api completed, and the warnings for every stub
+        it touched (completed or not).
+      type: object
+      additionalProperties: false
+      properties:
+        completed:
+          type: array
+          items:
+            $ref: '#/components/schemas/AEStudioCompletedDependency'
+        warnings:
+          type: array
+          items:
+            $ref: '#/components/schemas/AEStudioWarning'
+      required:
+      - completed
+      - warnings
+    AEStudioCompletedDependency:
+      description: One completed stub. `definition` replaces the stub's
+        dependency.json content; `files` land beside it in the same commit.
+      type: object
+      additionalProperties: false
+      properties:
+        path:
+          description: The stub's dependency.json path, as sent.
+          type: string
+        definition:
+          type: string
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/AEStudioFile'
+      required:
+      - path
+      - definition
+      - files
+    AEStudioFile:
+      description: A repo-relative file path and its UTF-8 content.
+      type: object
+      additionalProperties: false
+      properties:
+        path:
+          type: string
+        content:
+          type: string
+      required:
+      - path
+      - content
+    AEStudioWarning:
+      description: A non-fatal note on one path (registry-copied,
+        registry-miss, registry-unreachable, provider-document-fetched,
+        provider-document-unavailable).
+      type: object
+      additionalProperties: false
+      properties:
+        path:
+          type: string
+        code:
+          type: string
+        message:
+          type: string
+      required:
+      - path
+      - code
+      - message
     Error:
       description: Flat error envelope returned by every non-2xx response.
       type: object

@@ -75,7 +75,11 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   record — block, document, provenance — and a `contract` of origin `provider` with a
   `provenance.sourceUrl` and no hash has its document fetched (https, 5 MiB) and landed beside it.
   Both read the registry / the URL BEFORE `Workspace.Mutate` and never fail the apply: a miss lands the
-  stub with a warning and the dependency reads needs-input / needs-contract. **Promote reuses the
+  stub with a warning and the dependency reads needs-input / needs-contract. Only stubs are completed or
+  warned about. `CompleteDependencies` is the one entry point: `Apply` runs it, and so does the AE
+  Studio tools pod's `POST /internal/v1/ae-studio/dependency-completions` (`edge/internal_aestudio.go`),
+  so the registry read and the fetch of a model-chosen URL stay in aep-api, never in the container that
+  holds the org's git credential. **Promote reuses the
   same renderer** (`promote.go`): `ReadProjectResource` hands the project's own block and document to
   the registry side, and `RewriteAsRegistryCopy` lands `renderRegistryCopy` of a stub over the
   existing files under their CAS tokens — so a promoted dependency and a reused one are the same bytes.

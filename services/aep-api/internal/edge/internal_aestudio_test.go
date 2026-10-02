@@ -30,6 +30,7 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/organization/aestudio"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
+	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
 // fakeProjectRepos answers the ae-studio/ lookup from rows keyed
@@ -186,5 +187,166 @@ func TestInternalRoutes_AEStudioProjectRepository(t *testing.T) {
 	}
 	if len(repos.gotOrg) != 1 || repos.gotOrg[0] != "acme" {
 		t.Fatalf("lookup orgs = %v, want [acme]", repos.gotOrg)
+	}
+}
+
+// fakeCompleter records each call and answers one completion and one warning
+// per call.
+type fakeCompleter struct {
+	orgs   []string
+	writes [][]spec.WriteOp
+}
+
+func (f *fakeCompleter) complete(_ context.Context, org string, writes []spec.WriteOp) (map[string]spec.CompletedFile, []spec.Warning) {
+	f.orgs = append(f.orgs, org)
+	f.writes = append(f.writes, writes)
+	return map[string]spec.CompletedFile{
+			depStubPath: {Definition: `{"name":"payments"}`, Files: map[string]string{
+				"specs/design/dependencies/payments/z.yaml":       "z",
+				"specs/design/dependencies/payments/openapi.yaml": "openapi: 3.0.3\n",
+			}},
+		}, []spec.Warning{
+			{Path: depStubPath, Code: spec.WarningRegistryCopied, Message: "copied"},
+		}
+}
+
+const (
+	depStubPath     = "specs/design/dependencies/payments/dependency.json"
+	completionsPath = "/internal/v1/ae-studio/dependency-completions"
+)
+
+func completionsBody(paths ...string) string {
+	writes := make([]map[string]string, 0, len(paths))
+	for _, p := range paths {
+		writes = append(writes, map[string]string{"path": p, "content": `{"name":"payments","resource":{"ref":"payments","name":"payments"}}`})
+	}
+	b, _ := json.Marshal(map[string]any{"writes": writes})
+	return string(b)
+}
+
+// complete-ae-studio-dependencies rides the same gate as the repository
+// lookup: only the org's publisher client token, the org is its ouHandle.
+// Every write must be a dependency definition path (400 path_invalid).
+func TestInternalGate_AEStudioDependencyCompletions(t *testing.T) {
+	stack := newInternalStack(t)
+	completer := &fakeCompleter{}
+	build := func(mut func(*InternalDeps)) http.Handler {
+		deps := stack.deps
+		deps.DependencyCompleter = completer.complete
+		deps.SREHandoff = auth.NewSREHandoffVerifier("s3cr3t", "acme")
+		if mut != nil {
+			mut(&deps)
+		}
+		return NewHandler(AppParams{InternalDeps: deps})
+	}
+	on := build(nil)
+	noCompleter := build(func(d *InternalDeps) { d.DependencyCompleter = nil })
+	token := func(aud, ouHandle string) string {
+		return "Bearer " + stack.sign(auth.PublisherClaims{
+			RegisteredClaims: jwt.RegisteredClaims{
+				Issuer:    pubIssuer,
+				Audience:  jwt.ClaimStrings{aud},
+				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+			},
+			OuHandle: ouHandle,
+		})
+	}
+	publisher := "Bearer " + stack.mint("acme")
+
+	cases := []struct {
+		name, body, bearer, wantCode string
+		h                            http.Handler
+		want                         int
+	}{
+		{name: "publisher token of the org", bearer: publisher, want: 200},
+		{name: "no bearer", want: 401},
+		{name: "user JWT", bearer: token("aep-console", "acme"), want: 401},
+		{name: "AE-only client token", bearer: token("ae-studio-internal-client", ""), want: 401},
+		{name: "ae-studio-<org> client token", bearer: token("ae-studio-acme", "acme"), want: 401},
+		{name: "SRE handoff bearer", bearer: "Bearer s3cr3t", want: 401},
+		{name: "write outside dependencies/", body: completionsBody("specs/design/components/api/design.json"), bearer: publisher, want: 400, wantCode: codePathInvalid},
+		{name: "a dependency's document, not its definition", body: completionsBody("specs/design/dependencies/payments/openapi.yaml"), bearer: publisher, want: 400, wantCode: codePathInvalid},
+		{name: "traversal", body: completionsBody("specs/design/dependencies/../dependency.json"), bearer: publisher, want: 400, wantCode: codePathInvalid},
+		{name: "same path twice", body: completionsBody(depStubPath, depStubPath), bearer: publisher, want: 400, wantCode: codePathInvalid},
+		{name: "no writes", body: `{"writes":[]}`, bearer: publisher, want: 400},
+		{name: "unknown field", body: `{"writes":[{"path":"` + depStubPath + `","content":"{}","baseSha":"x"}]}`, bearer: publisher, want: 400},
+		{name: "body over the 1 MiB cap", body: completionsBody(depStubPath)[:10] + strings.Repeat(" ", 1<<20), bearer: publisher, want: 413},
+		{name: "no completer configured", h: noCompleter, bearer: publisher, want: 503},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body, h := tc.body, tc.h
+			if body == "" {
+				body = completionsBody(depStubPath)
+			}
+			if h == nil {
+				h = on
+			}
+			calls := len(completer.orgs)
+			req := httptest.NewRequest(http.MethodPost, completionsPath, strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			if tc.bearer != "" {
+				req.Header.Set("Authorization", tc.bearer)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d (body %s)", rec.Code, tc.want, rec.Body)
+			}
+			if tc.wantCode != "" {
+				var e struct{ Code string }
+				if err := json.Unmarshal(rec.Body.Bytes(), &e); err != nil || e.Code != tc.wantCode {
+					t.Fatalf("error code = %q (%v), want %q: %s", e.Code, err, tc.wantCode, rec.Body)
+				}
+			}
+			if tc.want != 200 && len(completer.orgs) != calls {
+				t.Fatalf("a refused request reached the completer")
+			}
+		})
+	}
+	for _, org := range completer.orgs {
+		if org != "acme" {
+			t.Errorf("completer got org %q; the org must come from the verified token", org)
+		}
+	}
+}
+
+// The 200 body is the contract's AEStudioDependencyCompletions, files in path
+// order; the completer gets the writes as sent and the token's org.
+func TestInternalRoutes_AEStudioDependencyCompletions(t *testing.T) {
+	stack := newInternalStack(t)
+	completer := &fakeCompleter{}
+	deps := stack.deps
+	deps.DependencyCompleter = completer.complete
+	h := NewHandler(AppParams{InternalDeps: deps})
+
+	req := httptest.NewRequest(http.MethodPost, completionsPath, strings.NewReader(completionsBody(depStubPath)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+stack.mint("acme"))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+	}
+	want := `{"completed":[{"definition":"{\"name\":\"payments\"}","files":[` +
+		`{"content":"openapi: 3.0.3\n","path":"specs/design/dependencies/payments/openapi.yaml"},` +
+		`{"content":"z","path":"specs/design/dependencies/payments/z.yaml"}],` +
+		`"path":"specs/design/dependencies/payments/dependency.json"}],` +
+		`"warnings":[{"code":"registry-copied","message":"copied","path":"specs/design/dependencies/payments/dependency.json"}]}`
+	var got, exp any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body: %v\n%s", err, rec.Body)
+	}
+	_ = json.Unmarshal([]byte(want), &exp)
+	gotB, _ := json.Marshal(got)
+	expB, _ := json.Marshal(exp)
+	if string(gotB) != string(expB) {
+		t.Fatalf("body =\n%s\nwant\n%s", gotB, expB)
+	}
+	if len(completer.orgs) != 1 || completer.orgs[0] != "acme" {
+		t.Fatalf("completer orgs = %v, want [acme]", completer.orgs)
+	}
+	if w := completer.writes[0]; len(w) != 1 || w[0].Path != depStubPath || !strings.Contains(w[0].Content, `"ref":"payments"`) {
+		t.Fatalf("completer writes = %+v", w)
 	}
 }

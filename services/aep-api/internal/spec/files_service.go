@@ -435,17 +435,12 @@ func (s *service) Apply(ctx context.Context, orgID, projectID string, req ApplyR
 	}
 	author, committer := s.git.ResolveSaveIdentities(ref.Cred)
 
-	// Registry copies (registry_copy.go): a stub dependency file that names a
-	// Registered External resource is completed from the org record — read
-	// here, once, never inside the CAS-retried fn.
-	copies, copyWarnings := completeRegistryCopies(ctx, s.registry, orgID, req.Writes)
-	// Provider documents (same file): a contract the agent pointed at by URL
-	// is fetched by the platform, once, and landed beside the definition.
-	fetched, fetchWarnings := completeProviderDocuments(ctx, s.fetchDocument, req.Writes, copies)
-	for p, c := range fetched {
-		copies[p] = c
-	}
-	copyWarnings = append(copyWarnings, fetchWarnings...)
+	// Dependency completions (registry_copy.go): a stub dependency file that
+	// names a Registered External resource is completed from the org record,
+	// and a contract the agent pointed at by URL is fetched by the platform and
+	// landed beside the definition — read here, once, never inside the
+	// CAS-retried fn.
+	copies, copyWarnings := CompleteDependencies(ctx, s.registry, s.fetchDocument, orgID, req.Writes)
 	// A document the platform lands beside a definition is platform-authored:
 	// the request must not also write or delete it. Deletes are applied after
 	// writes, so a request that deleted one would commit a definition pointing

@@ -77,6 +77,10 @@ type InternalDeps struct {
 	// AEStudioRepositories backs get-ae-studio-project-repository; nil
 	// answers 503.
 	AEStudioRepositories ProjectRepositoryLookup
+	// DependencyCompleter backs complete-ae-studio-dependencies
+	// (spec.CompleteDependencies over the org registry and the guarded URL
+	// fetch); nil answers 503.
+	DependencyCompleter DependencyCompleter
 	// ValidationContext backs the validation-context runner callback; a nil
 	// provider answers 503 for that op. A test user's login is NOT served here —
 	// it is published on the roles gate ticket, which is where the validation
@@ -234,6 +238,7 @@ var internalOpGates = map[string]internalOpGate{
 	"sre-create-issue":                 {credential: sreHandoffCredential},
 	"sre-create-rca-report":            {credential: sreHandoffCredential},
 	"get-ae-studio-project-repository": {credential: aeStudioCredential},
+	"complete-ae-studio-dependencies":  {credential: aeStudioCredential},
 }
 
 // internalGate is /internal/v1's deny-by-default gate (internalOpGates), one

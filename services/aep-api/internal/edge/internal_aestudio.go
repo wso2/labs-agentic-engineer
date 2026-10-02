@@ -20,17 +20,24 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
+	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/igen"
 	"github.com/wso2/aep/aep-api/internal/organization/aestudio"
+	"github.com/wso2/aep/aep-api/internal/platform/apierr"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
+	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
 // The AE Studio route group (/internal/v1/ae-studio/…): an org's AE Studio
 // tools pod resolves a project to its GitHub repository on every request
-// (04 §2). internalGate admits only the org's publisher client token here and
+// (04 §2), and has the dependency stubs of a save completed here (04 §4), so
+// the registry read and the fetch of a model-chosen URL never run in the pod
+// that holds the org's git credential. internalGate admits only the org's publisher client token here and
 // binds its ouHandle as the org; the org is always read from the context,
 // never the request. A project the org does not own is a 404, the same as one
 // that does not exist.
@@ -40,6 +47,15 @@ import (
 type ProjectRepositoryLookup interface {
 	Lookup(ctx context.Context, org, project string) (aestudio.ProjectRepository, error)
 }
+
+// DependencyCompleter completes an org's dependency stub writes
+// (spec.CompleteDependencies bound to the org registry and the guarded URL
+// fetch).
+type DependencyCompleter func(ctx context.Context, org string, writes []spec.WriteOp) (map[string]spec.CompletedFile, []spec.Warning)
+
+// codePathInvalid is the Error code for a completions write whose path is not
+// a dependency definition.
+const codePathInvalid = "path_invalid"
 
 // authenticateAEStudio verifies authHeader as an org's publisher client token
 // (aud aep-publisher-<org>, ouHandle == <org>) and binds that org. A nil
@@ -77,4 +93,49 @@ func (s *internalServer) GetAeStudioProjectRepository(ctx context.Context, reque
 		DefaultBranch: repo.DefaultBranch,
 		CloneURL:      repo.CloneURL,
 	}, nil
+}
+
+func (s *internalServer) CompleteAeStudioDependencies(ctx context.Context, request igen.CompleteAeStudioDependenciesRequestObject) (igen.CompleteAeStudioDependenciesResponseObject, error) {
+	if s.deps.DependencyCompleter == nil {
+		return nil, errServiceUnavailable("dependency completion not configured")
+	}
+	if request.Body == nil {
+		return nil, apierr.BadRequest("request body required")
+	}
+	writes := make([]spec.WriteOp, 0, len(request.Body.Writes))
+	seen := map[string]bool{}
+	for _, w := range request.Body.Writes {
+		if !spec.IsDependencyFilePath(w.Path) {
+			return nil, apierr.New(http.StatusBadRequest, codePathInvalid,
+				"not a dependency definition path (specs/design/dependencies/<name>/dependency.json): "+w.Path, nil)
+		}
+		if seen[w.Path] {
+			return nil, apierr.New(http.StatusBadRequest, codePathInvalid, "path appears more than once: "+w.Path, nil)
+		}
+		seen[w.Path] = true
+		writes = append(writes, spec.WriteOp{Path: w.Path, Content: w.Content})
+	}
+	completed, warnings := s.deps.DependencyCompleter(ctx, tenant.BoundOrgFromContext(ctx), writes)
+	return igen.CompleteAeStudioDependencies200JSONResponse(toIgenCompletions(completed, warnings)), nil
+}
+
+// toIgenCompletions projects the completer's result onto the wire, in path
+// order so the body is deterministic.
+func toIgenCompletions(completed map[string]spec.CompletedFile, warnings []spec.Warning) igen.AEStudioDependencyCompletions {
+	out := igen.AEStudioDependencyCompletions{
+		Completed: make([]igen.AEStudioCompletedDependency, 0, len(completed)),
+		Warnings:  make([]igen.AEStudioWarning, 0, len(warnings)),
+	}
+	for _, p := range slices.Sorted(maps.Keys(completed)) {
+		c := completed[p]
+		files := make([]igen.AEStudioFile, 0, len(c.Files))
+		for _, fp := range slices.Sorted(maps.Keys(c.Files)) {
+			files = append(files, igen.AEStudioFile{Path: fp, Content: c.Files[fp]})
+		}
+		out.Completed = append(out.Completed, igen.AEStudioCompletedDependency{Path: p, Definition: c.Definition, Files: files})
+	}
+	for _, w := range warnings {
+		out.Warnings = append(out.Warnings, igen.AEStudioWarning{Path: w.Path, Code: w.Code, Message: w.Message})
+	}
+	return out
 }
