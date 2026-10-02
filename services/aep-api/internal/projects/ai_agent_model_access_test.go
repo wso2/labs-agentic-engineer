@@ -41,7 +41,7 @@ type fakeKeyResolver struct {
 	conn *modelconn.Connection
 }
 
-func (f fakeKeyResolver) KeyRef(context.Context, string) (modelconn.Connection, organization.SecretRefTriplet, error) {
+func (f fakeKeyResolver) KeyPathRef(context.Context, string) (modelconn.Connection, organization.SecretRefTriplet, error) {
 	if f.conn != nil {
 		return *f.conn, f.triplet, nil
 	}
@@ -240,14 +240,14 @@ func TestModelAccessEnvVars_UnreadableConnectionFailsTheDeploy(t *testing.T) {
 // failingKeyResolver cannot read the org's connection.
 type failingKeyResolver struct{}
 
-func (failingKeyResolver) KeyRef(context.Context, string) (modelconn.Connection, organization.SecretRefTriplet, error) {
+func (failingKeyResolver) KeyPathRef(context.Context, string) (modelconn.Connection, organization.SecretRefTriplet, error) {
 	return modelconn.Connection{}, organization.SecretRefTriplet{}, errors.New("database unavailable")
 }
 
 // noKeyResolver reports the org has no connected default key.
 type noKeyResolver struct{}
 
-func (noKeyResolver) KeyRef(context.Context, string) (modelconn.Connection, organization.SecretRefTriplet, error) {
+func (noKeyResolver) KeyPathRef(context.Context, string) (modelconn.Connection, organization.SecretRefTriplet, error) {
 	return modelconn.Connection{}, organization.SecretRefTriplet{}, &organization.NotFoundError{}
 }
 

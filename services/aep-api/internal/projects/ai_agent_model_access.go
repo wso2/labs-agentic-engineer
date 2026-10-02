@@ -75,7 +75,7 @@ func (s *componentService) ModelAccessEnvVars(ctx context.Context, ocOrgID, comp
 	if s.modelKeyResolver == nil || s.secretRefClient == nil {
 		return nil, fmt.Errorf("model access not configured at the composition root")
 	}
-	conn, triplet, err := s.modelKeyResolver.KeyRef(ctx, ocOrgID)
+	conn, triplet, err := s.modelKeyResolver.KeyPathRef(ctx, ocOrgID)
 	if err != nil {
 		var notFound *organization.NotFoundError
 		if errors.As(err, &notFound) {
@@ -279,11 +279,10 @@ func (s *componentService) upsertModelAccessSecretReference(ctx context.Context,
 	return nil
 }
 
-// requireVaultPath refuses a key reference without a vault path. The model
-// access points its own SecretReference at the key's vault entry, so it needs
-// the path, not just the name a mount needs; KeyRef leaves it empty while the
-// connection row's stamp lags the default-key row, and pointing at an empty or
-// another reference's path would serve the agent no key.
+// requireVaultPath refuses a key reference without a vault path (an
+// incomplete legacy triplet). The model access points its own SecretReference
+// at the key's vault entry, so it needs the path, not just the name a mount
+// needs; pointing at an empty path would serve the agent no key.
 func requireVaultPath(triplet organization.SecretRefTriplet) error {
 	if triplet.KVPath == "" {
 		return fmt.Errorf("the connection key's reference %q has no vault path recorded yet", triplet.Name)

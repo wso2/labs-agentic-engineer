@@ -61,10 +61,14 @@ type ConnectionReader interface {
 	// org has no usable connection, which is "not connected yet", not an
 	// error. There is no platform fallback: orgs bring their own key.
 	Effective(ctx context.Context, ocOrgID string) (conn modelconn.Connection, key string, ok bool, err error)
-	// KeyRef is the connection and where its key lives, for a consumer that
-	// points a SecretReference at the vault path rather than forwarding the
-	// value. A NotFoundError means no connection: "not connected yet".
+	// KeyRef is the connection and its key's reference (name + key), for a
+	// consumer that mounts the reference rather than forwarding the value. A
+	// NotFoundError means no connection: "not connected yet".
 	KeyRef(ctx context.Context, ocOrgID string) (modelconn.Connection, SecretRefTriplet, error)
+	// KeyPathRef is the connection and its key's stamped reference with its
+	// vault path, for a consumer that points its own SecretReference at that
+	// path. A NotFoundError means no connection.
+	KeyPathRef(ctx context.Context, ocOrgID string) (modelconn.Connection, SecretRefTriplet, error)
 }
 
 // CodingCredentialResolver answers which credential a coding run on runtime
@@ -213,17 +217,37 @@ func (s *ModelConnectionService) storedKey(ctx context.Context, ocOrgID string) 
 	return "", false
 }
 
-// KeyRef returns the connection and its key's reference: the default-key
-// row's (R7, see recordedRef). It never reads the key's bytes, only where they
-// live, for a caller that mounts the reference or points an OpenChoreo
-// SecretReference at its vault path rather than forwarding the value itself
-// (e.g. wiring an ai-agent component's MODEL_API_KEY).
+// KeyRef returns the connection and its key's reference as a mount needs it:
+// the default-key row's name and key, no vault path (R7, see recordedRef). It
+// never reads the key's bytes, for a caller that mounts the reference rather
+// than forwarding the value (e.g. the build's evaluation key).
 func (s *ModelConnectionService) KeyRef(ctx context.Context, ocOrgID string) (modelconn.Connection, SecretRefTriplet, error) {
 	row, err := s.connectionRow(ctx, ocOrgID)
 	if err != nil {
 		return modelconn.Connection{}, SecretRefTriplet{}, err
 	}
 	ref, err := s.recordedRef(ctx, ocOrgID, OrgSecretDefaultKey, row.SecretRefName, row.SecretRefKVPath, row.SecretRefProperty)
+	if err != nil {
+		return modelconn.Connection{}, SecretRefTriplet{}, err
+	}
+	return row.Connection(), ref, nil
+}
+
+// KeyPathRef returns the connection and the reference its row's triplet
+// stamps, whole (name, vault path and key together), for a caller that points
+// its own SecretReference at the key's vault entry (the ai-agent model
+// access). The stamped triplet is live by construction: the default-key row
+// may already name a newer reference whose stamp has not committed (or never
+// will, when the card's transaction rolls back), but the reference a
+// committed stamp names is retired only after its successor's stamp commits.
+// The vault path is not required here; a consumer that needs it refuses an
+// incomplete legacy triplet itself.
+func (s *ModelConnectionService) KeyPathRef(ctx context.Context, ocOrgID string) (modelconn.Connection, SecretRefTriplet, error) {
+	row, err := s.connectionRow(ctx, ocOrgID)
+	if err != nil {
+		return modelconn.Connection{}, SecretRefTriplet{}, err
+	}
+	ref, err := tripletOf(row.SecretRefName, row.SecretRefKVPath, row.SecretRefProperty)
 	if err != nil {
 		return modelconn.Connection{}, SecretRefTriplet{}, err
 	}
@@ -307,14 +331,11 @@ func (s *ModelConnectionService) subscriptionRef(ctx context.Context, ocOrgID st
 	return ref, true, nil
 }
 
-// recordedRef is the reference of the org secret sec that a reader hands out:
-// the name its org_secrets row records with sec's fixed key (R7), so a
-// rotation whose triplet stamp lags never hands out the reference the write
-// already deleted. The triplet's vault path is carried only when the triplet
-// names that same reference (the write stamps both): mounting needs only the
-// name and the key (C10), and a consumer that points at the vault path
-// (the ai-agent model access) refuses an empty one rather than follow
-// another reference's.
+// recordedRef is the reference of the org secret sec that a mount reads: the
+// name its org_secrets row records with sec's fixed key (R7), so a rotation
+// whose triplet stamp lags never hands out the reference the write already
+// deleted. A mount needs only the name and the key (C10), so no vault path is
+// carried; a consumer of the path reads KeyPathRef.
 //
 // No row: a pre-phase-1 org, resolved from the triplet columns alone, name
 // and key from that one source. Removed in phase 6.
@@ -326,11 +347,7 @@ func (s *ModelConnectionService) recordedRef(ctx context.Context, ocOrgID string
 	if !ok {
 		return tripletOf(name, kvPath, property)
 	}
-	ref := SecretRefTriplet{Name: recorded, Property: sec.ValueKey()}
-	if derefOrEmpty(name) == recorded {
-		ref.KVPath = derefOrEmpty(kvPath)
-	}
-	return ref, nil
+	return SecretRefTriplet{Name: recorded, Property: sec.ValueKey()}, nil
 }
 
 // tripletOf reads a row's resolved secret-ref name and property, naming

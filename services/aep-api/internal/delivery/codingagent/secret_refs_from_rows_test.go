@@ -102,7 +102,7 @@ func TestPublisherResolver_ReadsTheAePublisherClientRow(t *testing.T) {
 
 func TestPublisherResolver_RowNeedsNoProfile(t *testing.T) {
 	t.Parallel()
-	r := NewIDPPublisherResolver(fakeIDPRepo{}, fakeOrgSecrets{"acme/ae-publisher-client": "acme-ae-publisher-client-1a2b"})
+	r := NewIDPPublisherResolver(nil, fakeOrgSecrets{"acme/ae-publisher-client": "acme-ae-publisher-client-1a2b"})
 	if name, err := r.SecretRefName(context.Background(), "acme"); err != nil || name != "acme-ae-publisher-client-1a2b" {
 		t.Fatalf("%q %v", name, err)
 	}

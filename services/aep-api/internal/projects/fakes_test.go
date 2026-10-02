@@ -159,7 +159,7 @@ type stubModelKeyResolver struct {
 
 var _ ModelKeyResolver = (*stubModelKeyResolver)(nil)
 
-func (s *stubModelKeyResolver) KeyRef(ctx context.Context, ocOrgID string) (modelconn.Connection, organization.SecretRefTriplet, error) {
+func (s *stubModelKeyResolver) KeyPathRef(ctx context.Context, ocOrgID string) (modelconn.Connection, organization.SecretRefTriplet, error) {
 	if s.KeyRefFunc == nil {
 		panic("stubModelKeyResolver: KeyRef not set")
 	}

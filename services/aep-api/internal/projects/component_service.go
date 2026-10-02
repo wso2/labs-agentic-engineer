@@ -93,13 +93,13 @@ type BuildSecretStager interface {
 
 // ModelKeyResolver is the narrow port ModelAccessEnvVars needs from the
 // organization domain's ConnectionReader: the org's model connection and its
-// key's vault coordinates.
+// key's stamped reference with its vault path (KeyPathRef).
 // Declared consumer-side (same pattern as OrgPublisher in trait_sync.go) so
 // this package takes only the one method it needs, not the whole reader.
 // Returns an *organization.NotFoundError when the org has no active
 // connection — see ModelAccessEnvVars.
 type ModelKeyResolver interface {
-	KeyRef(ctx context.Context, ocOrgID string) (modelconn.Connection, organization.SecretRefTriplet, error)
+	KeyPathRef(ctx context.Context, ocOrgID string) (modelconn.Connection, organization.SecretRefTriplet, error)
 }
 
 // -- model access for ai-agent components (see ai_agent_model_access.go) ----

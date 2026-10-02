@@ -528,7 +528,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// nil-safe internally), so the stager is always wired.
 	buildStager := buildSecretStagerAdapter{svc: buildCredService}
 	// modelConnections already satisfies projects.ModelKeyResolver
-	// structurally (KeyRef has the exact same signature) — no adapter
+	// structurally (KeyPathRef has the exact same signature) — no adapter
 	// needed, unlike buildStager above.
 	componentService := projects.NewComponentService(componentClient, observClient, artifactStore, repoService, buildStager, modelConnections, modelAccessSecretRefClient)
 	// deploymentService is built below, so the converger is attached after

@@ -56,6 +56,12 @@ func RecordedOrgSecretRef(ctx context.Context, refs OrgSecretRefReader, ocOrgID 
 	return "", false, nil
 }
 
+// logOrgSecretRefSource logs the source: a row at Debug (the steady state), a
+// legacy fallback at Info (an org phase 6 must migrate).
 func logOrgSecretRefSource(ctx context.Context, ocOrgID string, s OrgSecret, source orgSecretRefSource) {
-	slog.InfoContext(ctx, "org secret reference resolved", "ocOrgId", ocOrgID, "secret", string(s), "source", string(source))
+	level := slog.LevelDebug
+	if source == orgSecretRefFromLegacyTriplet {
+		level = slog.LevelInfo
+	}
+	slog.Log(ctx, level, "org secret reference resolved", "ocOrgId", ocOrgID, "secret", string(s), "source", string(source))
 }

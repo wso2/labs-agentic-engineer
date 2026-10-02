@@ -45,17 +45,46 @@ func TestKeyRef_FollowsARotation(t *testing.T) {
 		t.Fatalf("the second save did not rotate the default-key reference (%q)", row)
 	}
 
+	// The triplet stamp lags (still the pre-rotation name): a mount gets the
+	// row's name and key, never a vault path.
+	stampConnectionTriplet(t, f.card.connRepo, "acme", first, "user-app-secrets/wc-acme/"+first, "api-key")
 	_, ref, err := f.card.conns.KeyRef(context.Background(), "acme")
-	if err != nil || ref.Name != row || ref.Property != "api-key" || !strings.HasSuffix(ref.KVPath, "/"+row) {
-		t.Fatalf("KeyRef = %+v, %v; want the row's %q with its vault path", ref, err, row)
+	if err != nil || ref != (organization.SecretRefTriplet{Name: row, Property: "api-key"}) {
+		t.Fatalf("KeyRef = %+v, %v; want the row's %q, name + key only (R7, C10)", ref, err, row)
+	}
+}
+
+// The model access reads the stamped triplet whole. A card save whose row
+// write succeeded but whose stamp rolled back leaves the default-key row on
+// the new reference B and the triplet on A, which is never retired: KeyPathRef
+// stays on A. A committed save moves it to that save's reference.
+func TestKeyPathRef_FollowsTheCommittedStamp(t *testing.T) {
+	t.Parallel()
+	f := newCardFixture(t)
+	f.card.conns.WithOrgSecrets(f.refs)
+	f.save(keyPatch(anthropicUnitKey))
+	a := f.ref(organization.OrgSecretDefaultKey).Name
+	aPath := derefStr(f.card.row(t, "acme").SecretRefKVPath)
+
+	// The state a rolled-back card transaction leaves after a successful row
+	// write: the row names B, the stamp (and A itself) stay.
+	b := "acme-default-key-0000b0b0"
+	if err := f.refs.Upsert(context.Background(), "acme", organization.OrgSecretRef{Secret: organization.OrgSecretDefaultKey, Name: b}, a); err != nil {
+		t.Fatalf("row write: %v", err)
+	}
+	_, ref, err := f.card.conns.KeyPathRef(context.Background(), "acme")
+	if err != nil || ref != (organization.SecretRefTriplet{Name: a, KVPath: aPath, Property: "api-key"}) || !f.exists(a) {
+		t.Fatalf("KeyPathRef = %+v, %v (A exists: %v); want the live stamped A %q at %q", ref, err, f.exists(a), a, aPath)
 	}
 
-	// The triplet stamp lags (still the pre-rotation name): the row wins, and
-	// no vault path of another reference is handed out with its name.
-	stampConnectionTriplet(t, f.card.connRepo, "acme", first, "user-app-secrets/wc-acme/"+first, "api-key")
-	_, ref, err = f.card.conns.KeyRef(context.Background(), "acme")
-	if err != nil || ref.Name != row || ref.Property != "api-key" || ref.KVPath != "" {
-		t.Fatalf("KeyRef = %+v, %v; want the row's %q, no vault path (R7)", ref, err, row)
+	f.save(keyPatch(anthropicDBKey2))
+	committed := derefStr(f.card.row(t, "acme").SecretRefName)
+	if committed == a || committed == "" {
+		t.Fatalf("the committed save stamped %q, want a new reference", committed)
+	}
+	_, ref, err = f.card.conns.KeyPathRef(context.Background(), "acme")
+	if err != nil || ref.Name != committed || !strings.HasSuffix(ref.KVPath, "/"+committed) || ref.Property != "api-key" || !f.exists(committed) {
+		t.Fatalf("KeyPathRef = %+v, %v; want the committed save's %q with its path", ref, err, committed)
 	}
 }
 

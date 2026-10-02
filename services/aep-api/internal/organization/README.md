@@ -141,9 +141,11 @@ S2S credentials-refresh.*
   `RecordedOrgSecretRef`): `KeyRef` and `ResolveCodingCredential` take the `default-key` /
   `coding-agent-key` name, coding dispatch the `github-pat` (key `token`) and `ae-publisher-client`
   names, so a rotation whose triplet stamp lags never hands out a deleted reference. A mount needs
-  only the name and the key (C10); `KeyRef` carries the triplet's vault path only when the triplet
-  names the same reference, and the ai-agent model access, which points at that path, refuses an
-  empty one. An org with no row yet (connected before phase 1) resolves from its triplet columns,
+  only the name and the key (C10), so `KeyRef` carries no vault path. The ai-agent model access,
+  which points its own SecretReference at the key's vault path, reads `KeyPathRef` instead: the
+  stamped triplet whole, live by construction (a reference a committed stamp names is retired only
+  after its successor's stamp commits; a rolled-back card save never retires it), refusing an
+  incomplete legacy triplet. An org with no row yet (connected before phase 1) resolves from its triplet columns,
   name and key from that one source; phase 6 removes this fallback. Each read logs which source it
   used (`org secret reference resolved`, value-free).
 - **Publisher SecretReference for coding Jobs is fail-closed on `POST /build`.**

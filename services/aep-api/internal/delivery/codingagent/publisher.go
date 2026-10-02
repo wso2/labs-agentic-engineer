@@ -68,7 +68,7 @@ func NewIDPPublisherResolver(profiles organization.IDPRepository, orgSecrets org
 // deleted. No row: a pre-phase-1 org, resolved from its IDP profile's
 // triplet. Removed in phase 6.
 func (r *idpPublisherResolver) SecretRefName(ctx context.Context, orgID string) (string, error) {
-	if r == nil || r.profiles == nil {
+	if r == nil {
 		return "", fmt.Errorf("publisher resolver not wired")
 	}
 	name, ok, err := organization.RecordedOrgSecretRef(ctx, r.orgSecrets, orgID, organization.OrgSecretPublisherClient)
@@ -77,6 +77,9 @@ func (r *idpPublisherResolver) SecretRefName(ctx context.Context, orgID string) 
 	}
 	if ok {
 		return name, nil
+	}
+	if r.profiles == nil {
+		return "", fmt.Errorf("publisher resolver not wired")
 	}
 	row, err := r.profiles.GetProfileByOrgID(ctx, orgID)
 	if err != nil {
