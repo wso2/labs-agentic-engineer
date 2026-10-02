@@ -228,6 +228,33 @@ describe("AeStudioGate", () => {
     await waitFor(() => expect(queryClient.getQueryData(aeStudioKeys.all)).toMatchObject({ state: "ready" }));
   });
 
+  // The console is already up after a failed first read, so a provisioning
+  // answer behind it is a restart to show, not a hold to pull over it.
+  it("a failed first read then provisioning shows the banner, not the hold", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let calls = 0;
+    server.use(
+      http.get(`${BASE}/ae-studio`, () => {
+        calls++;
+        return HttpResponse.json({ code: "internal_error", message: "boom" }, { status: 500 });
+      }),
+    );
+    renderWithProviders(
+      <AeStudioGate><AeStudioBanner /><div>console</div></AeStudioGate>,
+      { route: "/projects" },
+    );
+    expect(await screen.findByText("console")).toBeInTheDocument();
+    await waitFor(() => expect(calls).toBe(1));
+    mockAeStudio(["provisioning"]);
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    await waitFor(() =>
+      expect(queryClient.getQueryData(aeStudioKeys.all)).toMatchObject({ state: "provisioning" }),
+    );
+    expect(screen.getByText("console")).toBeInTheDocument();
+    expect(screen.getByText("AE Studio is restarting…")).toBeInTheDocument();
+    expect(screen.queryByText("Upgrading AE Studio")).not.toBeInTheDocument();
+  });
+
   it("a later provisioning shows a banner, not a hold", async () => {
     mockAeStudio(["ready", "provisioning"]);
     renderWithProviders(<AeStudioGate><AeStudioBanner /><div>console</div></AeStudioGate>);

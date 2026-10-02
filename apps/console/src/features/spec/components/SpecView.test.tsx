@@ -109,6 +109,8 @@ const soloCollab = () => ({
   flush: mockFlush,
   flushError: null as string | null,
   clearFlushError: vi.fn(),
+  flushWarnings: [] as { path: string; message: string }[],
+  dismissFlushWarnings: vi.fn(),
 });
 let mockCollab = soloCollab();
 vi.mock("../collab/useCollabSpec", () => ({
@@ -744,6 +746,30 @@ describe("SpecView while the kickoff is still writing", () => {
     expect(
       screen.queryByRole("button", { name: "Retry" }),
     ).not.toBeInTheDocument();
+  });
+});
+
+// 10 §6: the Room reports each commit's soft warnings; the view shows the
+// latest set beside the flush-error slot, and the user can dismiss it.
+describe("SpecView flush warnings", () => {
+  it("shows the last commit's warnings as a dismissible warning", () => {
+    mockCollab = {
+      ...soloCollab(),
+      flushWarnings: [{ path: "specs/design/overview.md", message: "frontmatter has no title" }],
+    };
+    render(<SpecView projectName="proj1" />);
+
+    const alert = screen.getByText("Saved with warnings").closest("[role=alert]");
+    expect(alert).not.toBeNull();
+    expect(alert).toHaveTextContent("specs/design/overview.md");
+    expect(alert).toHaveTextContent("frontmatter has no title");
+    fireEvent.click(within(alert as HTMLElement).getByRole("button", { name: /close/i }));
+    expect(mockCollab.dismissFlushWarnings).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows nothing when the last commit had no warnings", () => {
+    render(<SpecView projectName="proj1" />);
+    expect(screen.queryByText("Saved with warnings")).not.toBeInTheDocument();
   });
 });
 

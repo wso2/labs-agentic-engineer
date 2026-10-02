@@ -25,8 +25,8 @@ import {
 import type { components } from "../../../generated/aep-api";
 import type { components as StudioToolsComponents } from "../../../generated/ae-studio-tools";
 import { client } from "../../../api/client";
-import { studioToolsRead, studioToolsRetryDelay } from "../../../api/aeStudio";
-import { useAeStudioReady } from "../../ae-studio/api/queries";
+import { studioToolsRead } from "../../../api/aeStudio";
+import { usePodQueryOptions } from "../../ae-studio/api/queries";
 import { specKeys } from "./keys";
 import { toSpecEntries } from "./mapping";
 import { scheduleFreshnessPoll } from "./dependencyFreshness";
@@ -52,21 +52,21 @@ function toError(error: unknown, fallback: string): Error {
  * won't reflect until reload — the parked external-merge concern (#86).
  */
 export function useSpecFiles(projectName: string, enabled = true) {
-  const studioReady = useAeStudioReady();
+  const pod = usePodQueryOptions();
   return useQuery({
+    ...pod,
     queryKey: specKeys.files(projectName),
     // `enabled` exists for readers that are mounted long before they are
     // looked at — a dialog that is closed, a panel behind an unselected tab.
     // The key is shared, so a caller that does want the list still serves
     // everyone else from the same cached answer.
-    enabled: enabled && studioReady,
+    enabled: enabled && pod.enabled,
     queryFn: async () =>
       toSpecEntries(
         await studioToolsRead("Failed to load the spec files", (tools) =>
           tools.GET("/projects/{projectName}/files", { params: { path: { projectName } } }),
         ),
       ),
-    retryDelay: studioToolsRetryDelay,
     staleTime: Infinity,
   });
 }
@@ -120,8 +120,8 @@ export function useDesignDependencies(projectName: string) {
  * the lazy selection hook below, the derived wireframe hook
  * (useDerivedWireframe), and the cell-diagram panel's solo/offline design.cell
  * read — reads outside a single "selected file" context. Throws
- * AeStudioNotReadyError before AE Studio is `ready`; a hook that calls it gates
- * `enabled` on useAeStudioReady().
+ * AeStudioNotReadyError before AE Studio is `ready`; a hook that calls it
+ * spreads usePodQueryOptions().
  */
 export async function fetchSpecFileContent(
   projectName: string,
@@ -161,12 +161,12 @@ export function useSpecFileContent(
   projectName: string,
   file: { path: string; sha: string } | null,
 ) {
-  const studioReady = useAeStudioReady();
+  const pod = usePodQueryOptions();
   return useQuery({
+    ...pod,
     queryKey: specKeys.file(projectName, file?.path ?? "", file?.sha ?? ""),
-    enabled: file !== null && studioReady,
+    enabled: file !== null && pod.enabled,
     staleTime: Infinity,
-    retryDelay: studioToolsRetryDelay,
     queryFn: () => {
       if (!file) throw new Error("no file selected");
       return fetchSpecFileContent(projectName, file);
@@ -194,13 +194,12 @@ export function useSpecFileContents(
   projectName: string,
   files: { path: string; sha: string }[],
 ): Record<string, string> {
-  const studioReady = useAeStudioReady();
+  const pod = usePodQueryOptions();
   return useQueries({
     queries: files.map((file) => ({
+      ...pod,
       queryKey: specKeys.file(projectName, file.path, file.sha),
-      enabled: studioReady,
       staleTime: Infinity,
-      retryDelay: studioToolsRetryDelay,
       queryFn: () => fetchSpecFileContent(projectName, file),
     })),
     // `combine` runs inside react-query's own memo over the results array, so

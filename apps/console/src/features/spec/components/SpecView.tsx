@@ -1403,6 +1403,29 @@ export function SpecView({ projectName }: { projectName: string }) {
           </Alert>
         )}
 
+        {/* The Room's last commit landed with soft warnings (10 §6); the
+            next commit's set replaces these. */}
+        {collab.flushWarnings.length > 0 && (
+          <Alert
+            severity="warning"
+            sx={{ borderRadius: 0 }}
+            onClose={() => collab.dismissFlushWarnings()}
+          >
+            <AlertTitle>Saved with warnings</AlertTitle>
+            <Box component="ul" sx={{ m: 0, pl: 2 }}>
+              {/* Replaced whole per commit, so the position is a stable key. */}
+              {collab.flushWarnings.map((w, i) => (
+                <li key={i}>
+                  <Box component="span" sx={{ fontFamily: "monospace" }}>
+                    {w.path}
+                  </Box>
+                  : {w.message}
+                </li>
+              ))}
+            </Box>
+          </Alert>
+        )}
+
         {/* Body: grouped file list + file content */}
         {spec.isPending ? (
           <Box

@@ -20,7 +20,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { client } from "../../../api/client";
 import { apiErrorMessage } from "../../../api/errors";
 import { fetchSpecFileContent } from "../../spec/api/queries";
-import { useAeStudioReady } from "../../ae-studio/api/queries";
+import { usePodQueryOptions } from "../../ae-studio/api/queries";
 import { validationIsLive } from "../lib/lifecycle";
 import { validationKeys } from "./keys";
 
@@ -51,10 +51,11 @@ function useValidationFile(
   enabled: boolean,
   ref?: string,
 ) {
-  const studioReady = useAeStudioReady();
+  const pod = usePodQueryOptions();
   return useQuery({
+    ...pod,
     queryKey: validationKeys.file(projectName, path, ref || version),
-    enabled: enabled && studioReady,
+    enabled: enabled && pod.enabled,
     retry: false,
     // A pinned read can never change; an unpinned one follows the branch.
     staleTime: ref ? Infinity : 30_000,

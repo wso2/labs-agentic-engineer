@@ -19,7 +19,7 @@
 import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { client } from "../../../api/client";
-import { isStudioToolsUnavailable, setAeStudioUrls } from "../../../api/aeStudio";
+import { isStudioToolsUnavailable, setAeStudioUrls, studioToolsRetryDelay } from "../../../api/aeStudio";
 import { apiErrorMessage } from "../../../api/errors";
 
 export const aeStudioKeys = { all: ["ae-studio"] as const };
@@ -51,12 +51,19 @@ export function useAeStudio() {
 }
 
 /**
- * Whether the pods can be called. Every pod-backed read gates `enabled` on it,
- * so nothing asks a pod that is not there; a read already answered keeps its
- * data while AE Studio restarts.
+ * The options every pod-backed read spreads into its query, so a new one
+ * cannot forget the gate: `enabled` only while AE Studio is `ready` (nothing
+ * asks a pod that is not there; a read already answered keeps its data while
+ * AE Studio restarts), and the pod's retry pacing (a 503 waits Retry-After).
+ * A read with a condition of its own ANDs it in:
+ * `{ ...pod, enabled: pod.enabled && cond }`.
  */
-export function useAeStudioReady(): boolean {
-  return useAeStudio().data?.state === "ready";
+export function usePodQueryOptions(): {
+  enabled: boolean;
+  retryDelay: typeof studioToolsRetryDelay;
+} {
+  const ready = useAeStudio().data?.state === "ready";
+  return { enabled: ready, retryDelay: studioToolsRetryDelay };
 }
 
 /**

@@ -62,7 +62,9 @@ export function useAeStudioRestarting(): boolean {
 // - `absent`, `ready`, the first request in flight, or a failed read: the
 //   console. The read is fast and the config gate already showed a loader, so
 //   waiting on it would only flash; and a read error is not a state the gate
-//   can act on (the query retries it every 5 s).
+//   can act on (the query retries it every 5 s). A console shown on a failed
+//   first read is never pulled back under the hold: a `provisioning` answer
+//   after it is a restart, with the banner.
 // It also re-reads AE Studio whenever a pod read finds the pod not serving.
 export function AeStudioGate({ children }: PropsWithChildren) {
   const studio = useAeStudio();
@@ -71,12 +73,18 @@ export function AeStudioGate({ children }: PropsWithChildren) {
   const state: AeStudioState | undefined = studio.data?.state;
 
   // Session memory, in refs like OnboardingGate's `wizardShown`: whether the
-  // first-visit hold is still on, and whether this page load has seen `ready`
-  // or `failed`. The hold is decided once, by the first answer, and ends for
-  // good the first time the state is anything but `provisioning`.
+  // first-visit hold is still on, and whether this page load has seen `ready`,
+  // `failed`, or a failed first read. The hold is decided once, by the first
+  // settled result, and ends for good the first time the state is anything
+  // but `provisioning`.
   const holding = useRef<boolean | null>(null);
   const seenReady = useRef(false);
   const seenFailed = useRef(false);
+  const seenReadError = useRef(false);
+  if (state === undefined && studio.isError && holding.current === null) {
+    holding.current = false;
+    seenReadError.current = true;
+  }
   if (state !== undefined) {
     if (holding.current === null) holding.current = state === "provisioning";
     if (state !== "provisioning") holding.current = false;
@@ -105,9 +113,11 @@ export function AeStudioGate({ children }: PropsWithChildren) {
   }
 
   // Provisioning behind a visible console reads as a restart, however the
-  // console got in: after ready, past the hold's cap, or out of `failed`.
+  // console got in: after ready, past the hold's cap, out of `failed`, or
+  // past a failed first read.
   const restarting =
-    state === "provisioning" && (seenReady.current || holdCapped || seenFailed.current);
+    state === "provisioning" &&
+    (seenReady.current || holdCapped || seenFailed.current || seenReadError.current);
   return (
     <AeStudioRestartingContext value={restarting}>
       {children}

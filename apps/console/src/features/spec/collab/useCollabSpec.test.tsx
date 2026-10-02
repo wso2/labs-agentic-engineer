@@ -25,24 +25,39 @@
 // merges them with the fresh seed's independent items and the file comes back
 // doubled. These tests pin the rejoin-from-scratch behavior that prevents it.
 
+import type { ReactNode } from "react";
 import { act, renderHook } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import * as Y from "yjs";
 import { markdownToFragment } from "@aep/collab-doc";
+import type { components } from "../../../generated/aep-api";
+import {
+  redirectToSignIn,
+  renewAccessToken,
+  subscribeAccessTokenRefresh,
+} from "../../../auth/token";
+import { aeStudioKeys } from "../../ae-studio/api/queries";
 import { useCollabSpec } from "./useCollabSpec";
 
 const PRD_PATH = "specs/requirements/prd.md";
 
 interface FakeConfig {
+  url: string;
   document: Y.Doc;
   onSynced: () => void;
   onStatus: (data: { status: string }) => void;
   onAuthenticationFailed: (data: { reason: string }) => void;
+  onClose: (data: { event: { code: number; reason: string } }) => void;
 }
 
 /** A recorded room: the hook's callbacks plus what it did to the provider. */
 interface FakeRoom extends FakeConfig {
   disconnectCalls: number;
+  sendToken: Mock<() => void>;
+  sendStateless: Mock<(payload: string) => void>;
+  /** Delivers a stateless message from the server, as the provider would. */
+  emitStateless: (message: unknown) => void;
 }
 
 const instances: FakeRoom[] = [];
@@ -52,9 +67,17 @@ vi.mock("@hocuspocus/provider", () => {
     document: Y.Doc;
     room: FakeRoom;
     awareness = { on: () => {}, off: () => {}, getStates: () => new Map() };
+    private statelessHandlers = new Set<(data: { payload: string }) => void>();
     constructor(config: FakeConfig) {
       this.document = config.document;
-      this.room = { ...config, disconnectCalls: 0 };
+      this.room = {
+        ...config,
+        disconnectCalls: 0,
+        sendToken: vi.fn(),
+        sendStateless: vi.fn(),
+        emitStateless: (message) =>
+          this.statelessHandlers.forEach((h) => h({ payload: JSON.stringify(message) })),
+      };
       instances.push(this.room);
     }
     // The real provider's websocket re-arms its own reconnect on close; the
@@ -63,11 +86,20 @@ vi.mock("@hocuspocus/provider", () => {
       this.room.disconnectCalls += 1;
     }
     setAwarenessField() {}
-    on() {}
-    off() {}
+    on(event: string, handler: (data: { payload: string }) => void) {
+      if (event === "stateless") this.statelessHandlers.add(handler);
+    }
+    off(event: string, handler: (data: { payload: string }) => void) {
+      if (event === "stateless") this.statelessHandlers.delete(handler);
+    }
     attach() {}
     destroy() {}
-    sendStateless() {}
+    sendToken() {
+      this.room.sendToken();
+    }
+    sendStateless(payload: string) {
+      this.room.sendStateless(payload);
+    }
   }
   return { HocuspocusProvider: FakeProvider };
 });
@@ -76,13 +108,262 @@ vi.mock("../../../auth/token", () => ({
   getAccessToken: vi.fn(async () => "token"),
   renewAccessToken: vi.fn(async () => "token"),
   subscribeAccessTokenRefresh: vi.fn(() => () => {}),
+  redirectToSignIn: vi.fn(),
+}));
+
+type AeStudio = components["schemas"]["AeStudio"];
+
+const READY: AeStudio = {
+  state: "ready",
+  urls: {
+    designAgent: "http://ae-design-agent.mock",
+    collab: "ws://ae-collab.mock",
+    tools: "http://ae-studio-tools.mock",
+  },
+};
+
+// The Room's URL comes from AE Studio's answer; each test sets the answer.
+let studio: { data: AeStudio | undefined; isPending: boolean } = { data: READY, isPending: false };
+vi.mock("../../ae-studio/api/queries", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../ae-studio/api/queries")>()),
+  useAeStudio: () => studio,
 }));
 
 const USER = { name: "Ada", email: "ada@example.com" };
 
-function renderCollab() {
-  return renderHook(() => useCollabSpec("proj1", USER, "acme"));
+let queryClient: QueryClient;
+
+/** Renders the hook against AE Studio's `answer`; "pending" is the first read in flight. */
+function renderCollab(answer: AeStudio | "pending" = READY) {
+  studio = answer === "pending" ? { data: undefined, isPending: true } : { data: answer, isPending: false };
+  queryClient = new QueryClient();
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  );
+  return renderHook(() => useCollabSpec("proj1", USER, "acme"), { wrapper });
 }
+
+/** The token-refresh callback the hook subscribed with, called as OIDC would. */
+function emitTokenRefresh(token: string) {
+  const calls = vi.mocked(subscribeAccessTokenRefresh).mock.calls;
+  const cb = calls[calls.length - 1]?.[0];
+  if (!cb) throw new Error("the hook never subscribed to token refresh");
+  cb(token);
+}
+
+beforeEach(() => {
+  instances.length = 0;
+  vi.clearAllMocks();
+  vi.mocked(renewAccessToken).mockResolvedValue("token");
+});
+
+// 10 §6: the Room lives in the org's pod, at the URL AE Studio hands out, and
+// the session's token follows the user through the provider's own token sync.
+describe("useCollabSpec — the Room on AE Studio's ae-collab", () => {
+  it("connects to urls.collab/v1/rooms, sends the renewed token, and shows flush-warnings", () => {
+    const { result } = renderCollab();
+    expect(instances).toHaveLength(1);
+    const room = instances[0]!;
+    expect(room.url).toBe("ws://ae-collab.mock/v1/rooms");
+
+    emitTokenRefresh("t2");
+    expect(room.sendToken).toHaveBeenCalledTimes(1);
+    expect(room.sendStateless).not.toHaveBeenCalledWith(
+      expect.stringContaining('"type":"token"'),
+    );
+
+    act(() =>
+      room.emitStateless({
+        type: "flush-warnings",
+        warnings: [{ path: "specs/a.md", message: "soft" }],
+      }),
+    );
+    expect(result.current.flushWarnings).toEqual([{ path: "specs/a.md", message: "soft" }]);
+    // Each save's set replaces the last; an empty one clears the Alert.
+    act(() => room.emitStateless({ type: "flush-warnings", warnings: [] }));
+    expect(result.current.flushWarnings).toEqual([]);
+  });
+
+  it("each save's warnings replace the last, and dismissing clears them", () => {
+    const { result } = renderCollab();
+    const room = instances[0]!;
+    act(() =>
+      room.emitStateless({
+        type: "flush-warnings",
+        warnings: [{ path: "specs/a.md", message: "one" }, { path: "specs/b.md", message: "two" }],
+      }),
+    );
+    act(() =>
+      room.emitStateless({
+        type: "flush-warnings",
+        warnings: [{ path: "specs/c.md", message: "three" }],
+      }),
+    );
+    expect(result.current.flushWarnings).toEqual([{ path: "specs/c.md", message: "three" }]);
+    act(() => result.current.dismissFlushWarnings());
+    expect(result.current.flushWarnings).toEqual([]);
+  });
+
+  it("keeps only well-formed warnings from a message", () => {
+    const { result } = renderCollab();
+    act(() =>
+      instances[0]!.emitStateless({
+        type: "flush-warnings",
+        warnings: [{ path: "specs/a.md", message: "ok" }, { path: 3 }, "junk", null],
+      }),
+    );
+    expect(result.current.flushWarnings).toEqual([{ path: "specs/a.md", message: "ok" }]);
+  });
+
+  it("puts no token in the Room URL", () => {
+    renderCollab();
+    expect(instances[0]!.url).not.toContain("token");
+  });
+
+  it.each([
+    ["the first AE Studio read is in flight", "pending" as const, "connecting"],
+    ["AE Studio is provisioning", { state: "provisioning" } as AeStudio, "offline"],
+    ["AE Studio failed", { state: "failed" } as AeStudio, "offline"],
+  ])("builds no provider while %s", (_, answer, status) => {
+    const { result } = renderCollab(answer);
+    expect(instances).toHaveLength(0);
+    expect(result.current.status).toBe(status);
+    // The local doc still exists, so the view works solo.
+    expect(result.current.doc).not.toBeNull();
+  });
+
+  it("joins once AE Studio turns ready, and leaves when it stops being ready", () => {
+    const { rerender, result } = renderCollab({ state: "provisioning" });
+    expect(instances).toHaveLength(0);
+    studio = { data: READY, isPending: false };
+    rerender();
+    expect(instances).toHaveLength(1);
+    act(() => instances[0]!.onSynced());
+    expect(result.current.status).toBe("connected");
+    studio = { data: { state: "provisioning" }, isPending: false };
+    rerender();
+    expect(result.current.status).toBe("offline");
+    expect(result.current.provider).toBeNull();
+    expect(instances).toHaveLength(1);
+  });
+
+  it("answers no token-please: the server never asks, and nothing is sent", async () => {
+    renderCollab();
+    act(() => instances[0]!.emitStateless({ type: "token-please", id: "r1" }));
+    await act(async () => {});
+    expect(renewAccessToken).not.toHaveBeenCalled();
+    expect(instances[0]!.sendStateless).not.toHaveBeenCalled();
+  });
+});
+
+// A refused or expired bearer is handled ONCE: renew the session and rejoin;
+// if the session cannot be renewed, the user signs in again. A refusal right
+// after a renewal is a verdict, and the room stays offline.
+describe("useCollabSpec — an auth failure renews once and rebuilds", () => {
+  it("rebuilds once when the renewal returns a token, and does not redirect", async () => {
+    renderCollab();
+    act(() => instances[0]!.onAuthenticationFailed({ reason: "permission-denied" }));
+    await act(async () => {});
+
+    expect(renewAccessToken).toHaveBeenCalledTimes(1);
+    expect(instances).toHaveLength(2);
+    expect(redirectToSignIn).not.toHaveBeenCalled();
+  });
+
+  it("redirects to sign-in once when the renewal fails, and rebuilds nothing", async () => {
+    vi.mocked(renewAccessToken).mockResolvedValue(null);
+    const { result } = renderCollab();
+    act(() => instances[0]!.onAuthenticationFailed({ reason: "permission-denied" }));
+    await act(async () => {});
+
+    expect(redirectToSignIn).toHaveBeenCalledTimes(1);
+    expect(instances).toHaveLength(1);
+    expect(result.current.status).toBe("offline");
+  });
+
+  it("does not renew again on a second failure before the rejoin synced", async () => {
+    vi.useFakeTimers();
+    try {
+      const { result } = renderCollab();
+      act(() => instances[0]!.onAuthenticationFailed({ reason: "permission-denied" }));
+      await act(async () => {});
+      expect(instances).toHaveLength(2);
+
+      act(() => instances[1]!.onAuthenticationFailed({ reason: "permission-denied" }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      expect(renewAccessToken).toHaveBeenCalledTimes(1);
+      expect(redirectToSignIn).not.toHaveBeenCalled();
+      expect(instances).toHaveLength(2);
+      expect(result.current.status).toBe("offline");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("handles a rejection and its close as one failure", async () => {
+    renderCollab();
+    act(() => {
+      instances[0]!.onAuthenticationFailed({ reason: "permission-denied" });
+      instances[0]!.onClose({ event: { code: 1000, reason: "permission-denied" } });
+    });
+    await act(async () => {});
+    expect(renewAccessToken).toHaveBeenCalledTimes(1);
+    expect(instances).toHaveLength(2);
+  });
+
+  // ae-collab closes a connection whose token ran out (`token-expired`) or
+  // whose pushed token it refused (`permission-denied`) with a Close message,
+  // not an auth failure. The socket stays open, so nothing else would rejoin.
+  it.each(["token-expired", "permission-denied"])(
+    "a %s close renews and rebuilds",
+    async (reason) => {
+      renderCollab();
+      act(() => instances[0]!.onSynced());
+      act(() => instances[0]!.onClose({ event: { code: 1000, reason } }));
+      // The synced doc is never rejoined, so its provider is silenced first.
+      expect(instances[0]!.disconnectCalls).toBe(1);
+      await act(async () => {});
+      expect(renewAccessToken).toHaveBeenCalledTimes(1);
+      expect(instances).toHaveLength(2);
+    },
+  );
+
+  it("a plain socket close is a drop, not an auth failure", async () => {
+    renderCollab();
+    act(() => instances[0]!.onClose({ event: { code: 1006, reason: "" } }));
+    await act(async () => {});
+    expect(renewAccessToken).not.toHaveBeenCalled();
+  });
+
+  it("a session that synced again earns the next failure a renewal", async () => {
+    renderCollab();
+    act(() => instances[0]!.onClose({ event: { code: 1000, reason: "token-expired" } }));
+    await act(async () => {});
+    expect(instances).toHaveLength(2);
+    act(() => instances[1]!.onSynced());
+    act(() => instances[1]!.onClose({ event: { code: 1000, reason: "token-expired" } }));
+    await act(async () => {});
+    expect(renewAccessToken).toHaveBeenCalledTimes(2);
+    expect(instances).toHaveLength(3);
+  });
+
+  it("does nothing after unmount when the renewal lands late", async () => {
+    let resolveRenew: (token: string | null) => void = () => {};
+    vi.mocked(renewAccessToken).mockReturnValue(
+      new Promise((resolve) => {
+        resolveRenew = resolve;
+      }),
+    );
+    const { unmount } = renderCollab();
+    act(() => instances[0]!.onAuthenticationFailed({ reason: "permission-denied" }));
+    unmount();
+    await act(async () => resolveRenew(null));
+    expect(redirectToSignIn).not.toHaveBeenCalled();
+    expect(instances).toHaveLength(1);
+  });
+});
 
 describe("useCollabSpec — rejoin from scratch after a post-sync drop", () => {
   beforeEach(() => {
@@ -166,42 +447,53 @@ describe("useCollabSpec — rejoin from scratch after a post-sync drop", () => {
   });
 });
 
-// A rejected bearer is the one drop a rebuild must not answer: the fresh
-// provider would present the same token and be rejected again. The server
-// closes the socket right after rejecting, so the rejection and the close
-// arrive in either order — both must end offline and stay there.
-describe("useCollabSpec — a REJECTION is terminal, an outage is not", () => {
+// A refusal after the renewal was spent is the one drop a rebuild must not
+// answer: the fresh provider would present the same token and be refused
+// again. The server closes the socket right after refusing, so the refusal and
+// the close arrive in either order; both must end offline and stay there.
+describe("useCollabSpec — a refusal after the renewal is terminal", () => {
   beforeEach(() => {
-    instances.length = 0;
     vi.useFakeTimers();
   });
   afterEach(() => vi.useRealTimers());
 
+  /** Spend the renewal: refuse the first room, let it renew and rejoin. */
+  async function spendRenewal() {
+    act(() => instances[0]!.onAuthenticationFailed({ reason: "permission-denied" }));
+    await act(async () => {});
+    expect(instances).toHaveLength(2);
+  }
+
   it("cancels a rebuild the preceding drop already queued", async () => {
     const { result } = renderCollab();
-    act(() => instances[0]!.onSynced());
-    act(() => instances[0]!.onStatus({ status: "disconnected" }));
-    act(() => instances[0]!.onAuthenticationFailed({ reason: "expired" }));
+    await spendRenewal();
+    act(() => instances[1]!.onSynced());
+    // Synced again: this failure may renew once more, so spend it too.
+    act(() => instances[1]!.onAuthenticationFailed({ reason: "permission-denied" }));
+    await act(async () => {});
+    expect(instances).toHaveLength(3);
+    act(() => instances[2]!.onStatus({ status: "disconnected" }));
+    act(() => instances[2]!.onAuthenticationFailed({ reason: "permission-denied" }));
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1_000);
     });
 
-    expect(instances).toHaveLength(1);
+    expect(instances).toHaveLength(3);
     expect(result.current.status).toBe("offline");
   });
 
   it("blocks a rebuild the following drop would have queued", async () => {
     const { result } = renderCollab();
-    act(() => instances[0]!.onSynced());
-    act(() => instances[0]!.onAuthenticationFailed({ reason: "expired" }));
-    act(() => instances[0]!.onStatus({ status: "disconnected" }));
+    await spendRenewal();
+    act(() => instances[1]!.onAuthenticationFailed({ reason: "permission-denied" }));
+    act(() => instances[1]!.onStatus({ status: "disconnected" }));
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10_000);
     });
 
-    expect(instances).toHaveLength(1);
+    expect(instances).toHaveLength(2);
     expect(result.current.status).toBe("offline");
   });
 });
@@ -345,14 +637,25 @@ describe("useCollabSpec — an unreachable upstream retries instead of latching"
     expect(instances).toHaveLength(3);
   });
 
-  it("still latches when the bearer itself was refused", async () => {
-    const { result } = renderCollab();
-    act(() => instances[0]!.onAuthenticationFailed({ reason: "Forbidden" }));
+  it("re-reads AE Studio, so a pod that is restarting shows as the banner", () => {
+    renderCollab();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    act(() =>
+      instances[0]!.onAuthenticationFailed({ reason: "upstream-unavailable" }),
+    );
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: aeStudioKeys.all });
+  });
+
+  it("never renews or redirects: an outage is not about the bearer", async () => {
+    renderCollab();
+    act(() =>
+      instances[0]!.onAuthenticationFailed({ reason: "upstream-unavailable" }),
+    );
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(1_000);
     });
-    expect(instances).toHaveLength(1);
-    expect(result.current.status).toBe("offline");
+    expect(renewAccessToken).not.toHaveBeenCalled();
+    expect(redirectToSignIn).not.toHaveBeenCalled();
   });
 });
 

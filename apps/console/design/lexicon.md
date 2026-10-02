@@ -671,6 +671,7 @@ today's `Repository error` chip discards the message the contract already provid
 | Agent writing requirements | **Writing requirements** |
 | Agent deriving design | **Designing…** |
 | Collab server unreachable | **offline** |
+| The room's last save landed with warnings | **Saved with warnings** |
 | Build gate not satisfied | **Not ready to build yet** |
 | AE Studio upgrading on first visit | **Upgrading AE Studio** |
 | AE Studio rolling after a settings change | **AE Studio is restarting…** |
@@ -680,6 +681,10 @@ today's `Repository error` chip discards the message the contract already provid
 **published**, **draft** and the `v1+` diff suffix are retired — all three imply a
 review-and-release model AEP does not have, and `+` is a convention the user was never taught.
 `solo session` becomes `offline`: shorter, and it does not read like a focus feature.
+**Saved with warnings** heads a dismissible warning beside the save-failure alert. It lists each
+file and the platform's message for it, as given. The title says the save happened, so a warning
+is not read as lost work; the next save's warnings replace these, and a save without any clears
+them.
 
 ## Questions
 

@@ -19,32 +19,40 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as Y from "yjs";
 import { HocuspocusProvider } from "@hocuspocus/provider";
+import { useQueryClient } from "@tanstack/react-query";
 import { listDocPaths } from "@aep/collab-doc";
 import {
   getAccessToken,
+  redirectToSignIn,
   renewAccessToken,
   subscribeAccessTokenRefresh,
 } from "../../../auth/token";
+import { aeStudioKeys, useAeStudio } from "../../ae-studio/api/queries";
 
-// Console side of #86 phase 5: connect the spec view to the collab service.
-// One room + one Y.Doc per project (`spec-<org>-<project>`), Y.Map('files')
-// of path → Y.Text. If no collab server is reachable the view degrades to
-// solo (#86 decision 10) — callers keep their non-collaborative fallback.
+// Console side of #86 phase 5: connect the spec view to the Room, the
+// `ae-collab` container of the org's AE Studio pod (10 §6). One room + one
+// Y.Doc per project (`spec-<org>-<project>`), Y.Map('files') of path → Y.Text.
+// The Room's URL comes from AE Studio's `ready` answer; without one (AE Studio
+// not ready, or the Room unreachable) the view degrades to solo (#86
+// decision 10) — callers keep their non-collaborative fallback.
 //
-// The connection authenticates with the session's access token (#91): a real
-// Thunder JWT in thunder mode (verified by the BFF oracle), the unsigned
-// mock token in mock mode (decoded by the collab mock BFF). The token is a
-// getter so reconnects pick up silently-renewed tokens. Live refresh also
-// pushes `{type:"token"}` over the stateless channel (D6) so long sessions
-// keep flushing after the initial handshake token expires.
+// The connection authenticates with the session's access token (#91), read
+// through a getter, so a reconnect presents the current one. The Room holds a
+// connection only until its token's `exp`, so every OIDC renewal is pushed
+// through the provider's token sync (`sendToken()`), which the Room verifies
+// and moves the deadline on. A connection it closes anyway (expired, or the
+// pushed token refused) is renewed once and rejoined; see `onAuthLost`.
 
-/**
- * The reason the collab server tags an auth failure with when its own upstream
- * was unreachable, rather than when the bearer was refused. Duplicated from
- * `components/dataplane/ae-system-project/ae-studio/ae-collab/src/server.ts` rather than shared, matching how the
- * stateless message types are already spelled on both sides of this socket.
- */
+// The reasons ae-collab gives the client. Duplicated from
+// `components/dataplane/ae-system-project/ae-studio/ae-collab/src/pod/auth.ts`
+// and `pod/expiry.ts` rather than shared, matching how the stateless message
+// types are already spelled on both sides of this socket.
+/** A refusal that is not about the bearer: the Room's own upstream failed. Retry. */
 const UPSTREAM_UNAVAILABLE = "upstream-unavailable";
+/** A refusal verdict, on joining or on a token the client pushed. */
+const PERMISSION_DENIED = "permission-denied";
+/** The Room closed the connection at its token's `exp`. */
+const TOKEN_EXPIRED = "token-expired";
 
 export interface CollabPeer {
   clientId: number;
@@ -54,6 +62,12 @@ export interface CollabPeer {
 }
 
 export type CollabStatus = "connecting" | "connected" | "offline";
+
+/** A soft problem the Room's last commit reported about one file. */
+export interface FlushWarning {
+  path: string;
+  message: string;
+}
 
 export interface CollabSpec {
   status: CollabStatus;
@@ -87,10 +101,15 @@ export interface CollabSpec {
   flushError: string | null;
   /** Dismiss the flush-error banner. */
   clearFlushError: () => void;
+  /** The warnings the Room's last commit reported; each commit's set replaces
+   *  the last, and a commit without warnings clears them. */
+  flushWarnings: FlushWarning[];
+  /** Dismiss the flush-warnings Alert until the next commit reports some. */
+  dismissFlushWarnings: () => void;
 }
 
-// A forced flush is one files/apply commit — quick, but allow slack for the
-// git op before the build is blocked on a hung reply.
+// A forced flush is one commit through the pod's Files socket — quick, but
+// allow slack for the git op before the build is blocked on a hung reply.
 const FLUSH_TIMEOUT_MS = 30_000;
 
 // Settle time before rebuilding the room after a post-sync drop (see
@@ -112,12 +131,13 @@ const PEER_COLORS = [
   "#ba68c8", "#4dd0e1", "#f06292", "#aed581",
 ];
 
-function collabWsUrl(): string {
-  const env = (window as { _env_?: { collabWsUrl?: string } })._env_;
-  if (env?.collabWsUrl) return env.collabWsUrl;
-  if (import.meta.env.DEV) return "ws://localhost:8091";
-  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${proto}//${window.location.host}/collab`;
+/** The well-formed entries of a `flush-warnings` message's `warnings`. */
+function readFlushWarnings(raw: unknown): FlushWarning[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((w: unknown) => {
+    const { path, message } = (w ?? {}) as { path?: unknown; message?: unknown };
+    return typeof path === "string" && typeof message === "string" ? [{ path, message }] : [];
+  });
 }
 
 export function useCollabSpec(
@@ -125,6 +145,12 @@ export function useCollabSpec(
   user: { name: string; email: string },
   orgHandle: string,
 ): CollabSpec {
+  const queryClient = useQueryClient();
+  const studio = useAeStudio();
+  // No provider without a Room URL (10 §2): the Room exists only while AE
+  // Studio is `ready`, and a restart drops the URL until the pod is back.
+  const collabUrl = studio.data?.state === "ready" ? studio.data.urls?.collab : undefined;
+  const roomUrl = collabUrl ? `${collabUrl}/v1/rooms` : null;
   const [status, setStatus] = useState<CollabStatus>("connecting");
   // Flips true once the local Y.Doc is created (mount), so the memoized return
   // re-exposes `doc` even when the room never connects (offline/solo).
@@ -132,6 +158,7 @@ export function useCollabSpec(
   const [peers, setPeers] = useState<CollabPeer[]>([]);
   const [version, setVersion] = useState(0);
   const [flushError, setFlushError] = useState<string | null>(null);
+  const [flushWarnings, setFlushWarnings] = useState<FlushWarning[]>([]);
   // Bumped to rebuild the Y.Doc + provider after a post-sync drop; it is an
   // effect dependency, so a bump tears the old room down and joins fresh.
   const [epoch, setEpoch] = useState(0);
@@ -145,6 +172,9 @@ export function useCollabSpec(
   // live one last synced — together they set the backoff (see `scheduleRebuild`).
   const rebuildAttemptsRef = useRef(0);
   const syncedAtRef = useRef(0);
+  // True once an auth loss renewed the session; a session that syncs again
+  // earns the next loss its own renewal. See `onAuthLost`.
+  const renewalSpentRef = useRef(false);
   // Last-seen file-path set (serialized) so we re-render the list only when a
   // file is added/removed/created — not on every keystroke within a file.
   const pathKeyRef = useRef("");
@@ -160,6 +190,13 @@ export function useCollabSpec(
     syncedRef.current = false;
     pathKeyRef.current = "";
     setDocReady(true);
+    // The local doc exists either way, so the view works solo without a Room.
+    if (!roomUrl) {
+      return () => {
+        doc.destroy();
+        docRef.current = null;
+      };
+    }
     setStatus("connecting");
     // Stable across this effect — captured so the cleanup doesn't read a ref
     // that could have moved (react-hooks/exhaustive-deps).
@@ -180,10 +217,10 @@ export function useCollabSpec(
     // unloaded the room. Before the first sync the doc is still empty and can
     // carry nothing back, so the provider's own retry is left to do its job.
     //
-    // A rejected bearer is the one drop this must NOT answer: the rebuild would
-    // present the same token and be rejected again, so `authFailed` latches for
-    // the life of this provider.
-    let authFailed = false;
+    // A lost bearer is not answered here: `onAuthLost` decides, and
+    // `authLost` keeps any drop that follows from queueing a rebuild of its own
+    // for the life of this provider.
+    let authLost = false;
     // `requireSynced: false` is for the one drop that never synced and never
     // will on its own: a room the server REFUSED (#586, an unseedable room or
     // an unreachable oracle). That arrives as a permission-denied frame, which
@@ -191,7 +228,7 @@ export function useCollabSpec(
     // nothing retries unless this does. The doc is empty in that case, so the
     // doubling this ladder normally guards against cannot happen.
     const scheduleRebuild = ({ requireSynced = true } = {}) => {
-      if (authFailed || rebuildTimerRef.current) return;
+      if (authLost || rebuildTimerRef.current) return;
       if (requireSynced && !syncedRef.current) return;
       syncedRef.current = false;
       // Silence the OLD provider's own retry first. Its websocket re-arms a
@@ -219,13 +256,6 @@ export function useCollabSpec(
       // reads as "just came off a healthy session" and restarts the ladder. The
       // result is the same once-a-second hammer the ladder exists to prevent,
       // reached from the other side. The next successful sync sets it again.
-      // Spend that credit ONCE. The healthy session earns the next attempt a
-      // fast retry, not every attempt: `syncedAtRef` belongs to a provider that
-      // is being thrown away, and leaving it set means each replacement room —
-      // none of which ever syncs, because the server is refusing them — still
-      // reads as "just came off a healthy session" and restarts the ladder. The
-      // result is the same once-a-second hammer the ladder exists to prevent,
-      // reached from the other side. The next successful sync sets it again.
       syncedAtRef.current = 0;
       const attempt = held ? 0 : rebuildAttemptsRef.current;
       rebuildAttemptsRef.current = attempt + 1;
@@ -238,14 +268,49 @@ export function useCollabSpec(
       );
     };
 
+    // The bearer was refused, or the Room closed the connection at its
+    // token's `exp`. Handled ONCE per loss: renew the session and rejoin with
+    // the fresh token; if the session cannot be renewed, the user signs in
+    // again. A loss before the rejoin synced is a verdict a new token did not
+    // change (another org, an unknown project), so it is terminal: a rebuild
+    // would present the same token and be refused again, and the room stays
+    // offline until something else remounts the hook.
+    //
+    // The server closes the socket right after refusing, and the provider
+    // emits the refusal and the close in either order, so this latches
+    // `authLost` and cancels a bump the close already queued.
+    const onAuthLost = () => {
+      if (authLost) return;
+      authLost = true;
+      if (rebuildTimerRef.current) {
+        clearTimeout(rebuildTimerRef.current);
+        rebuildTimerRef.current = null;
+      }
+      syncedRef.current = false;
+      // This doc is not rejoined: silence the provider's own reconnect, which
+      // would present the renewed token and carry the doc's seeded fragments
+      // into a reseeded room (the doubling `scheduleRebuild` also guards).
+      provider.disconnect();
+      setStatus("offline");
+      if (renewalSpentRef.current) return;
+      renewalSpentRef.current = true;
+      void renewAccessToken().then((token) => {
+        // Unmounted, or moved to another room, while renewing: not ours to act on.
+        if (providerRef.current !== provider) return;
+        if (token) setEpoch((e) => e + 1);
+        else redirectToSignIn();
+      });
+    };
+
     const provider = new HocuspocusProvider({
-      url: collabWsUrl(),
+      url: roomUrl,
       name: `spec-${orgHandle}-${projectName}`,
       document: doc,
       token: async () => (await getAccessToken()) ?? "",
       onSynced: () => {
         syncedRef.current = true;
         syncedAtRef.current = Date.now();
+        renewalSpentRef.current = false;
         setStatus("connected");
       },
       onStatus: ({ status: s }) => {
@@ -254,30 +319,26 @@ export function useCollabSpec(
           scheduleRebuild();
         }
       },
-      // Terminal: a rejected bearer will be rejected again on a rebuild. The
-      // server closes the socket right after rejecting, and the provider emits
-      // the rejection and the close in either order, so this both latches the
-      // flag and cancels a bump the close already queued. The room stays
-      // offline until something else remounts the hook.
-      //
-      // Terminal for a VERDICT only (#586). The collab server reaches its
-      // oracle over the same `aep-api` that goes down on every deploy, and it
-      // used to report an unreachable oracle through this same channel — so a
-      // 503 during a redeploy latched the room offline for the life of the
-      // page, when retrying was the whole answer. Those now arrive tagged, and
-      // the provider's own reconnect is left to do its job.
+      // A refusal is about the bearer only when it is a VERDICT (#586). The
+      // Room reaches the IdP's keys and the Files socket on every join, and
+      // reports either one being down as `upstream-unavailable`: retrying is
+      // the whole answer, and the pod may be restarting, so AE Studio is
+      // re-read too (a restart then shows as the banner).
       onAuthenticationFailed: ({ reason }) => {
         if (reason === UPSTREAM_UNAVAILABLE) {
           setStatus("offline");
+          void queryClient.invalidateQueries({ queryKey: aeStudioKeys.all });
           scheduleRebuild({ requireSynced: false });
           return;
         }
-        authFailed = true;
-        if (rebuildTimerRef.current) {
-          clearTimeout(rebuildTimerRef.current);
-          rebuildTimerRef.current = null;
-        }
-        setStatus("offline");
+        onAuthLost();
+      },
+      // The Room ends a connection with a Close message, not an auth failure,
+      // when its token ran out or a pushed token was refused. The socket stays
+      // open, so nothing below would ever rejoin. Any other close is the
+      // socket's own, which `onStatus` answers.
+      onClose: ({ event }) => {
+        if (event.reason === TOKEN_EXPIRED || event.reason === PERMISSION_DENIED) onAuthLost();
       },
     });
     providerRef.current = provider;
@@ -321,13 +382,13 @@ export function useCollabSpec(
     };
     doc.on("afterAllTransactions", onDocChange);
 
-    // Stateless protocol: flush acks (#162), token push/pull (D6), flush-error UI.
+    // Stateless protocol: flush acks (#162), flush-error and flush-warnings UI.
     const onStateless = ({ payload }: { payload: string }) => {
       let msg: {
         type?: string;
         id?: string;
         message?: string;
-        value?: string;
+        warnings?: unknown;
       };
       try {
         msg = JSON.parse(payload) as typeof msg;
@@ -335,21 +396,9 @@ export function useCollabSpec(
         return;
       }
 
-      // D6 pull: server asks for a fresh bearer after apply 401/403.
-      if (msg.type === "token-please" && msg.id) {
-        const requestId = msg.id;
-        void (async () => {
-          const token =
-            (await renewAccessToken()) ?? (await getAccessToken());
-          if (!token || providerRef.current !== provider) return;
-          provider.sendStateless(
-            JSON.stringify({
-              type: "token",
-              value: token,
-              id: requestId,
-            }),
-          );
-        })();
+      // After every commit: that commit's warnings, replacing the last set.
+      if (msg.type === "flush-warnings") {
+        setFlushWarnings(readFlushWarnings(msg.warnings));
         return;
       }
 
@@ -374,12 +423,10 @@ export function useCollabSpec(
     };
     provider.on("stateless", onStateless);
 
-    // D6 push: whenever OIDC silently renews, ship the new JWT to the room.
-    const unsubscribeToken = subscribeAccessTokenRefresh((newToken) => {
-      if (providerRef.current !== provider) return;
-      provider.sendStateless(
-        JSON.stringify({ type: "token", value: newToken }),
-      );
+    // Token sync: whenever OIDC renews, the provider sends the token its
+    // getter now returns, and the Room moves this connection's deadline to it.
+    const unsubscribeToken = subscribeAccessTokenRefresh(() => {
+      void provider.sendToken();
     });
 
     provider.attach();
@@ -404,17 +451,22 @@ export function useCollabSpec(
       docRef.current = null;
       providerRef.current = null;
     };
-  }, [projectName, user.name, user.email, orgHandle, epoch]);
+  }, [projectName, user.name, user.email, orgHandle, epoch, roomUrl, queryClient]);
+
+  // No Room to be in: still finding out (the first AE Studio read), or offline.
+  const roomStatus: CollabStatus = roomUrl ? status : studio.isPending ? "connecting" : "offline";
 
   return useMemo(
     () => ({
-      status,
+      status: roomStatus,
       peers,
       version,
       flushError,
       clearFlushError: () => setFlushError(null),
+      flushWarnings,
+      dismissFlushWarnings: () => setFlushWarnings([]),
       getFileText: (path: string) =>
-        status === "connected"
+        roomStatus === "connected"
           ? (docRef.current?.getMap<Y.Text>("files").get(path) ?? null)
           : null,
       // A READ MUST NOT CREATE (ADR-0020). `Y.Doc.getXmlFragment` registers a
@@ -431,14 +483,14 @@ export function useCollabSpec(
       // generate no update, never replicate its key, and read as absent here.
       getFileFragment: (path: string) => {
         const doc = docRef.current;
-        if (status !== "connected" || !doc?.share.has(path)) return null;
+        if (roomStatus !== "connected" || !doc?.share.has(path)) return null;
         return doc.getXmlFragment(path);
       },
       docPaths:
-        status === "connected" && docRef.current
+        roomStatus === "connected" && docRef.current
           ? listDocPaths(docRef.current)
           : [],
-      provider: status === "connected" ? providerRef.current : null,
+      provider: roomStatus === "connected" ? providerRef.current : null,
       doc: docReady ? docRef.current : null,
       self: {
         name: user.name,
@@ -450,7 +502,7 @@ export function useCollabSpec(
       flush: () =>
         new Promise<void>((resolve, reject) => {
           const provider = providerRef.current;
-          if (status !== "connected" || !provider) {
+          if (roomStatus !== "connected" || !provider) {
             resolve(); // offline / solo — nothing shared to commit
             return;
           }
@@ -475,6 +527,6 @@ export function useCollabSpec(
     // A rebuild always moves `status` (offline → connecting → connected), so
     // the refs are re-read and consumers holding a fragment from the discarded
     // doc are handed the new one. No `epoch` dependency is needed for that.
-    [status, peers, version, user.name, docReady, flushError],
+    [roomStatus, peers, version, user.name, docReady, flushError, flushWarnings],
   );
 }
