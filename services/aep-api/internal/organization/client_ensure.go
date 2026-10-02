@@ -37,6 +37,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/wso2/aep/aep-api/internal/clients/thundersvc"
 )
 
@@ -73,6 +75,18 @@ var errOrgOUMismatch = errors.New("the request's ouId does not match the org's T
 // EnsureClient refuses when the two disagree.
 func vaultOUOf(ctx context.Context) (string, error) {
 	return orgUUIDForSecretLocation(ctx)
+}
+
+// sameOU reports whether two OU ids name one OU. UUIDs compare by value, so
+// a claim in another case or form than the org row's canonical one matches;
+// anything that is not a UUID compares as a string.
+func sameOU(a, b string) bool {
+	ua, errA := uuid.Parse(a)
+	ub, errB := uuid.Parse(b)
+	if errA == nil && errB == nil {
+		return ua == ub
+	}
+	return a == b
 }
 
 // orgClient is one ensured app and how to store a secret for it.
@@ -126,7 +140,7 @@ func (s *idpService) ensureClient(ctx context.Context, orgID string, kind Client
 		return fmt.Errorf("ensure %s client: %w", kind, err)
 	}
 	thunderOU := s.lookupOrgOUID(ctx, orgID)
-	if thunderOU != "" && thunderOU != vaultOU {
+	if thunderOU != "" && !sameOU(thunderOU, vaultOU) {
 		return fmt.Errorf("ensure %s client: %w", kind, errOrgOUMismatch)
 	}
 	if thunderOU == "" && kind == ClientStudio {

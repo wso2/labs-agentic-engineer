@@ -112,8 +112,10 @@ const AEStudioSetupIncompleteCode = "ae_studio_setup_incomplete"
 // submitFailure logs a failed setup step (value-free) and returns the
 // gitProvider section error the console shows. Connect has committed by
 // then, so every message says the connection was saved. A concurrent write
-// of the same secret and a foreign-OU client are 409s with their own
-// message; any other failure is a 502.
+// of the same secret is a retryable 409. A foreign-OU client and an org
+// whose Thunder OU is missing or disagrees with the caller's are 409s that a
+// retry cannot fix, so their messages name the operator action instead. Any
+// other failure is a 502.
 func submitFailure(ctx context.Context, org, step string, err error) error {
 	slog.ErrorContext(ctx, "ae_studio.gitpat_submit_failed", "org", org, "step", step, "error", err)
 	const saved = "The GitHub connection was saved, but AE Studio setup didn't finish: "
@@ -124,6 +126,12 @@ func submitFailure(ctx context.Context, org, step string, err error) error {
 	case errors.Is(err, thundersvc.ErrAppInForeignOU):
 		return &SectionError{Section: "gitProvider", Status: http.StatusConflict, Code: AEStudioSetupIncompleteCode,
 			Message: saved + "an AE Studio client with this organization's name belongs to another organization; an operator must remove it."}
+	case errors.Is(err, errOrgOUUnknown):
+		return &SectionError{Section: "gitProvider", Status: http.StatusConflict, Code: AEStudioSetupIncompleteCode,
+			Message: saved + "this organization has no identity-provider organization unit recorded; an operator must link it before AE Studio can be set up."}
+	case errors.Is(err, errOrgOUMismatch):
+		return &SectionError{Section: "gitProvider", Status: http.StatusConflict, Code: AEStudioSetupIncompleteCode,
+			Message: saved + "your sign-in belongs to a different identity-provider organization unit than this organization's record; an operator must reconcile them."}
 	default:
 		return &SectionError{Section: "gitProvider", Status: http.StatusBadGateway, Code: AEStudioSetupIncompleteCode,
 			Message: saved + "save the token again to retry."}

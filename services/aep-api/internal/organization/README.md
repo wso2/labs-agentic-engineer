@@ -52,9 +52,9 @@ S2S credentials-refresh.*
 - `organizations` (+ `thunder_org_uuid`, `llm_disconnected_at`), `org_credentials`,
   `org_model_connections` (one row per org, absent = no connection: format, base URL, host, model, auth
   scheme, probed limits and image input, key preview; the key's bytes in `org_secrets` `model/key`,
-  mirrored to SM-API under the entity `model-connection`. `ModelKeyRename` moves a key found under the
+  and as the org secret `default-key`. `ModelKeyRename` moves a key found under the
   Anthropic-era names (`anthropic/key`, entity `anthropic`) onto these: `migrate/phase20_model_key_rename`
-  copies a connected org's bytes at boot, the watcher uploads the new mirror and switches the row under
+  copies a connected org's bytes at boot, the watcher writes the `default-key` reference and switches the row under
   the card's lock, and retires the old copies on a periodic pass (never at boot) once the org has no
   open cycle),
   `org_anthropic_credentials` (the optional `coding` Claude subscription only — CHECK
@@ -103,13 +103,20 @@ S2S credentials-refresh.*
     runtimes here run each format.
   - `llm_disconnected_at` is the only trace of a disconnected connection; projected as
     `llmDisconnectedAt` while `llm` is null, cleared by the next connection save.
-  - The copies outside Postgres (the SM-API mirrors, the Agent Manager provider) follow the commit,
+  - The copies outside Postgres (the key references, the Agent Manager provider) follow the commit,
     best-effort, in a second transaction under the same locks, made from the rows as they stand, so
     two saves' copies land in save order and a stored key never sits beside another host's row. A
-    save that writes a key clears the row's `secret_ref_*` triplet (a save that keeps the key keeps
-    it), so a failed mirror fails dispatch closed instead of mounting the previous key; a deleted
-    credential's copy is deleted unless a credential saved since owns its path, and an orphaned copy
-    is accepted.
+    saved connection key is a new `default-key` reference and a saved subscription token a new
+    `coding-agent-key` one (`OrgSecretWriter.Write`), each row's triplet stamped inside that
+    transaction; the previous reference is retired only after it commits. A save that writes a key
+    clears the row's triplet (a save that keeps the key keeps it), so a failed write fails dispatch
+    closed instead of mounting the previous key. A deleted credential's row and reference are removed
+    unless a credential saved since replaced them (its own write retires the old one); a pre-phase-1
+    copy nothing records is deleted by name, and an orphaned copy is accepted.
+  - A save that changes what the AE Studio pod reads triggers its converge after the copies: a
+    written Default key, a disconnect (the pod is re-pinned without the key), or a change to the
+    connection's non-secret fields (`AE_MODEL_CONNECTION`). A subscription token never rolls the
+    pod: the next coding Job reads its row.
   - Exactly one credential reaches a coding run. `ResolveCodingCredential(ctx, org, runtime)` is
     the single statement of which: the subscription only on `claude-code`, else the connection key,
     failing closed on an unusable subscription. It answers with a kind and the connection, never a
@@ -143,8 +150,9 @@ S2S credentials-refresh.*
   kind switch's publisher revoke cannot undo it). Every vault path derives from the request's `ouId`
   (the Secret Manager API derives namespaces from the JWT); a client's Thunder OU is the org row's
   `thunder_org_uuid`, and `EnsureClient` refuses when they differ. A failed step fails `gitProvider`
-  with code `ae_studio_setup_incomplete` (502, or 409 for a concurrent write or a foreign-OU client):
-  the connection is saved and saving the token again retries. With no converger or no secrets
+  with code `ae_studio_setup_incomplete` (502, or 409 for a concurrent write, a foreign-OU client or a
+  missing or disagreeing OU): the connection is saved, and saving the token again retries every failure
+  but the OU ones, whose message names the operator action. OUs compare as UUIDs, whatever their case. With no converger or no secrets
   delivery the submit succeeds and logs `ae_studio_not_configured`. Nothing waits for the pod.
 - **`EnsureClient` keeps Thunder and the vault agreeing** (`client_ensure.go`, 06 §5): a created app is
   stored with the secret Thunder returns once; a found app with no reference row is healed with a new

@@ -522,23 +522,41 @@ func (s *idpService) rotatePublisherSecret(ctx context.Context, l *OrgSecretLock
 
 // forgetPublisherRef runs after a rotation whose vault write failed:
 // Thunder and the sealed column hold the new secret, the vault the old one.
-// It clears the triplet so the next Build re-provisions instead of mounting
-// invalidated credentials, and unsets the ae-publisher-client row so
-// EnsureClient heals it instead of finding it present. Best-effort: logged.
+// It unsets the ae-publisher-client row so EnsureClient heals it instead of
+// finding it present, and clears the triplet as that removal's repoint, so
+// the next Build re-provisions instead of mounting invalidated credentials.
+// The triplet is cleared only once the row is gone, and a failed clear puts
+// the row back: the two never disagree, since a present row with no triplet
+// would fail every build and never heal. With no row (or no org secret
+// writer) only the triplet is cleared. Best-effort: logged.
 func (s *idpService) forgetPublisherRef(ctx context.Context, l *OrgSecretLocked, profile *OrganizationIDPProfile, orgID string) {
-	if err := s.repo.UpdateProfileColumns(ctx, profile, orgID, clearSecretRefTripletWithWrittenAt()); err != nil {
-		slog.ErrorContext(ctx, "idp_service: clear secret_ref after failed SM-API rewrite", "orgID", orgID, "error", err)
+	clearTriplet := func() error {
+		return s.repo.UpdateProfileColumns(ctx, profile, orgID, clearSecretRefTripletWithWrittenAt())
 	}
-	if l == nil {
-		return
-	}
-	vaultOU, err := vaultOUOf(ctx)
-	if err == nil {
-		err = l.Remove(ctx, vaultOU, nil)
-	}
+	err := s.forgetPublisherRow(ctx, l, clearTriplet)
 	if err != nil {
 		slog.ErrorContext(ctx, "idp_service: unset publisher reference after failed SM-API rewrite", "orgID", orgID, "error", err)
 	}
+}
+
+// forgetPublisherRow removes the publisher's org secret row with clearTriplet
+// as the repoint, or runs clearTriplet alone when there is no row to remove.
+func (s *idpService) forgetPublisherRow(ctx context.Context, l *OrgSecretLocked, clearTriplet func() error) error {
+	if l == nil {
+		return clearTriplet()
+	}
+	row, err := l.Ref(ctx)
+	if err != nil {
+		return err
+	}
+	if row == nil {
+		return clearTriplet()
+	}
+	vaultOU, err := vaultOUOf(ctx)
+	if err != nil {
+		return err
+	}
+	return l.Remove(ctx, vaultOU, clearTriplet)
 }
 
 // UpdateProfile changes kind/issuer/JWKS URL for an org. When kind

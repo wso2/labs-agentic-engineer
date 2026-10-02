@@ -62,6 +62,7 @@ type cardDB struct {
 	db       *gorm.DB
 	svc      *organization.AnthropicCredentialService
 	conns    *organization.ModelConnectionService
+	settings *organization.AgentSettingsService
 	config   *organization.Service
 	store    secrets.CredentialStore
 	repo     organization.OrgAnthropicRepository
@@ -88,7 +89,7 @@ func newCardDB(t *testing.T, apiStatus int) *cardDB {
 		organization.NewOrganizationRepository(db), svc, conns, organization.NewAgentsCardRepository(db, store), orgconfig.AgentRuntimes)
 	config := organization.NewService(nil, nil, nil, organization.PlatformIDPConfig{}).
 		WithAgentSettings(settings)
-	return &cardDB{db: db, svc: svc, conns: conns, config: config, store: store, repo: repo, connRepo: connRepo, endpoint: endpoint}
+	return &cardDB{db: db, svc: svc, conns: conns, settings: settings, config: config, store: store, repo: repo, connRepo: connRepo, endpoint: endpoint}
 }
 
 // sonnetRates prices (api.anthropic.com, claude-sonnet-5) only.
@@ -307,7 +308,8 @@ func TestAgentsCardSave_MirrorsAndStampsTheCopies_DB(t *testing.T) {
 	c := newCardDB(t, http.StatusOK)
 	sm := &fakeSMClient{createRef: "model-connection-secrets"}
 	writer := organization.NewSecretRefWriter(sm, organization.NewOrgCredentialRepository(c.db, nil), c.repo,
-		organization.NewIDPRepository(c.db, nil), c.connRepo)
+		organization.NewIDPRepository(c.db, nil), c.connRepo).
+		WithOrgSecretWriter(organization.NewOrgSecretWriter(sm, organization.NewOrgSecretRepository(c.db), organization.NewOrgSecretLock(c.db), fixedClock))
 	c.conns.WithSecretRefWriter(writer)
 	c.svc.WithSecretRefWriter(writer)
 	ctx := claimsCtx(uuid.NewString())

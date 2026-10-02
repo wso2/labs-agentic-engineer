@@ -332,7 +332,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// projects and saves it, and coding dispatch copies the runtime onto the run
 	// it launches.
 	agentSettings := organization.NewAgentSettingsService(orgAgentSettingsRepo, orgRepo, anthropicCredService, modelConnections, agentsCardRepo,
-		runnableAgentRuntimes(cfg))
+		runnableAgentRuntimes(cfg)).
+		// No converger until the aestudio installer is wired (Task 1.15): a
+		// key save writes its reference and rolls nothing.
+		WithStudioConverger(nil)
 
 	// Task JWT manager — RS256. The public key is published on
 	// /auth/external/jwks.json. Used to mint BFF MCP tokens

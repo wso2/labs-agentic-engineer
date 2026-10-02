@@ -191,13 +191,23 @@ func (s *AnthropicCredentialService) ValidateKey(ctx context.Context, apiKey str
 // writeKeyTx stores key as role's credential inside the card's transaction:
 // the encrypted bytes and the metadata row commit or roll back together. key
 // must already have passed ValidateKey — the probe runs before the
-// transaction opens, so no lock is held across a network call.
-func (s *AnthropicCredentialService) writeKeyTx(ctx context.Context, tx AgentsCardTx, ocOrgID string, role AnthropicRole, key string) error {
+// transaction opens, so no lock is held across a network call. It returns the
+// reference the replaced row named ("" for none), which the replace clears:
+// the copies after commit retire it once the new reference is stamped.
+func (s *AnthropicCredentialService) writeKeyTx(ctx context.Context, tx AgentsCardTx, ocOrgID string, role AnthropicRole, key string) (string, error) {
 	key = strings.TrimSpace(key)
 	now := time.Now().UTC()
 	prefix, last4 := anthropicKeyPreview(key)
+	prev, err := tx.GetCredential(ocOrgID, role)
+	if err != nil {
+		return "", fmt.Errorf("anthropic %s: load row: %w", role, err)
+	}
+	prevRef := ""
+	if prev != nil {
+		prevRef = derefOrEmpty(prev.SecretRefName)
+	}
 	if err := tx.Secrets().Put(ctx, ocOrgID, role.SecretStoreKey(), []byte(key)); err != nil {
-		return fmt.Errorf("anthropic %s: store put: %w", role, err)
+		return "", fmt.Errorf("anthropic %s: store put: %w", role, err)
 	}
 	row := OrgAnthropicCredential{
 		OcOrgID:         ocOrgID,
@@ -210,9 +220,9 @@ func (s *AnthropicCredentialService) writeKeyTx(ctx context.Context, tx AgentsCa
 		LastValidatedAt: &now,
 	}
 	if err := tx.UpsertCredential(&row); err != nil {
-		return fmt.Errorf("anthropic %s: upsert: %w", role, err)
+		return "", fmt.Errorf("anthropic %s: upsert: %w", role, err)
 	}
-	return nil
+	return prevRef, nil
 }
 
 // deleteKeyTx removes role's credential — row and bytes — inside the card's
@@ -236,63 +246,80 @@ func (s *AnthropicCredentialService) deleteKeyTx(ctx context.Context, tx AgentsC
 	return derefOrEmpty(row.SecretRefName), true, nil
 }
 
-// mirrorKey copies role's credential as it stands into SM-API and records
-// where on its row, inside the transaction the card's copies run in (under its
-// lock), best-effort: org_secrets stays authoritative. It reads the credential
-// rather than taking the one a save wrote, so an earlier save's copy never
-// lands over a later one's. The save cleared the row's triplet
-// (UpsertCredential), so a failed mirror leaves it NULL until the next save,
-// and dispatch fails closed with a reason naming it rather than mounting the
-// previous credential. No row: removed since, nothing to copy.
-func (s *AnthropicCredentialService) mirrorKey(ctx context.Context, tx AgentsCardTx, ocOrgID string, role AnthropicRole) {
+// mirrorKey writes role's credential as it stands as a new reference (the
+// coding role's coding-agent-key) and stamps its triplet on the row, inside
+// the transaction the card's copies run in (under its lock), best-effort in
+// this phase: org_secrets stays authoritative. It reads the credential rather
+// than taking the one a save wrote, so an earlier save's copy never lands
+// over a later one's. legacy is the reference the row named before the save
+// (a pre-phase-1 copy, retired once no row names the previous one). The
+// returned write's Retire must run only after the copies' transaction
+// commits. The save cleared the row's triplet (UpsertCredential), so a failed
+// write leaves it NULL until the next save, and dispatch fails closed with a
+// reason naming it rather than mounting the previous credential. No row:
+// removed since, nothing to copy. Nothing in AE Studio reads this secret (the
+// next coding Job reads the row), so its write never rolls the pod.
+func (s *AnthropicCredentialService) mirrorKey(ctx context.Context, tx AgentsCardTx, ocOrgID string, role AnthropicRole, legacy string) (OrgSecretWrite, bool) {
 	if !s.secretRefWriter.Enabled() {
-		return
+		return OrgSecretWrite{}, false
 	}
-	if err := s.mirrorKeyTx(ctx, tx, ocOrgID, role); err != nil {
-		slog.WarnContext(ctx, "anthropic: SM-API mirror failed (org_secrets still authoritative)",
-			"ocOrgId", ocOrgID, "role", role, "error", err)
+	written, ok, err := s.mirrorKeyTx(ctx, tx, ocOrgID, role, legacy)
+	if err != nil {
+		slog.WarnContext(ctx, "anthropic: reference write failed",
+			"ocOrgId", ocOrgID, "role", role, "retryable", errors.Is(err, ErrOrgSecretConflict), "error", err)
+		return OrgSecretWrite{}, false
 	}
+	return written, ok
 }
 
-func (s *AnthropicCredentialService) mirrorKeyTx(ctx context.Context, tx AgentsCardTx, ocOrgID string, role AnthropicRole) error {
+func (s *AnthropicCredentialService) mirrorKeyTx(ctx context.Context, tx AgentsCardTx, ocOrgID string, role AnthropicRole, legacy string) (OrgSecretWrite, bool, error) {
 	row, err := tx.GetCredential(ocOrgID, role)
 	if err != nil || row == nil {
-		return err
+		return OrgSecretWrite{}, false, err
 	}
 	key, err := tx.Secrets().Get(ctx, ocOrgID, role.SecretStoreKey())
 	if err != nil {
-		return fmt.Errorf("read the credential: %w", err)
+		return OrgSecretWrite{}, false, fmt.Errorf("read the credential: %w", err)
 	}
-	ref, err := s.secretRefWriter.UploadAnthropic(ctx, ocOrgID, role, strings.TrimSpace(string(key)))
+	if name := derefOrEmpty(row.SecretRefName); name != "" {
+		legacy = name
+	}
+	written, err := s.secretRefWriter.WriteAnthropic(ctx, ocOrgID, role, strings.TrimSpace(string(key)), legacy,
+		func(ref SecretRefTriplet) error {
+			if err := tx.StampCredentialSecretRef(ocOrgID, role, ref); err != nil {
+				return fmt.Errorf("stamp the secret reference: %w", err)
+			}
+			return nil
+		})
 	if err != nil {
-		return err
+		return OrgSecretWrite{}, false, err
 	}
-	if err := tx.StampCredentialSecretRef(ocOrgID, role, ref); err != nil {
-		return fmt.Errorf("stamp the secret reference: %w", err)
-	}
-	slog.InfoContext(ctx, "anthropic: credential mirrored to SM-API",
-		"ocOrgId", ocOrgID, "role", role, "secretRefName", ref.Name, "vaultKey", ref.KVPath)
-	return nil
+	slog.InfoContext(ctx, "anthropic: credential reference written",
+		"ocOrgId", ocOrgID, "role", role, "secretRefName", written.Name)
+	return written, true, nil
 }
 
-// forgetKey deletes a removed credential's SM-API copy, best-effort, by the
-// secret-ref name deleteKeyTx captured before the row went, inside the
-// transaction the card's copies run in. A credential saved since mirrors to the
-// same path, so the copy is left to it. A failure leaves an orphaned vault
-// entry nothing reads; the next save of that role overwrites it.
+// forgetKey removes a deleted credential's references, best-effort, inside
+// the transaction the card's copies run in: the role's row in org_secrets
+// and its reference while the role stays without a credential, and
+// secretRefName, the reference deleteKeyTx captured before the row went,
+// when nothing records it (see SecretRefWriter.ForgetAnthropic). A
+// credential saved since keeps its row; its own write retires the previous
+// reference.
 func (s *AnthropicCredentialService) forgetKey(ctx context.Context, tx AgentsCardTx, ocOrgID string, role AnthropicRole, secretRefName string) {
-	if secretRefName == "" || !s.secretRefWriter.Enabled() {
+	if !s.secretRefWriter.Enabled() {
 		return
 	}
 	row, err := tx.GetCredential(ocOrgID, role)
-	if err == nil && row != nil {
-		return
-	}
 	if err == nil {
-		err = s.secretRefWriter.DeleteAnthropic(ctx, ocOrgID, role, secretRefName)
+		live := ""
+		if row != nil {
+			live = derefOrEmpty(row.SecretRefName)
+		}
+		err = s.secretRefWriter.ForgetAnthropic(ctx, ocOrgID, role, secretRefName, live, row != nil)
 	}
 	if err != nil {
-		slog.WarnContext(ctx, "anthropic: SM-API delete failed (orphaned copy until the next save)",
+		slog.WarnContext(ctx, "anthropic: reference removal failed (orphaned copy until the next save)",
 			"ocOrgId", ocOrgID, "role", role, "error", err)
 	}
 }
@@ -439,8 +466,8 @@ func derefOrEmpty(p *string) string {
 // helpers
 // ----------------------------------------------------------------------------
 
-// ResyncSecretRef re-pushes the org's Claude subscription through the
-// in-process SecretRefWriter (local OpenBao repair); the connection key's
+// ResyncSecretRef rewrites the org's Claude subscription under the
+// coding-agent-key reference its row already names (local OpenBao repair); the connection key's
 // repair is ModelConnectionService.ResyncSecretRef, and the repair route runs
 // both, so a subscription org never dispatches against a vault path that no
 // longer resolves. Returns (true, nil) when the token was pushed, (false, nil)
@@ -477,10 +504,11 @@ func (s *AnthropicCredentialService) resyncRole(ctx context.Context, ocOrgID str
 	if err != nil || len(key) == 0 {
 		return false, nil
 	}
-	if _, err := s.secretRefWriter.WriteAnthropic(ctx, ocOrgID, role, string(key)); err != nil {
+	wrote, err := s.secretRefWriter.RestoreAnthropic(ctx, ocOrgID, role, string(key))
+	if err != nil {
 		return false, fmt.Errorf("anthropic resync %s: write: %w", role, err)
 	}
-	return true, nil
+	return wrote, nil
 }
 
 // fetchAnthropicRow loads (ocOrgID, role)'s row, answering NotFoundError when

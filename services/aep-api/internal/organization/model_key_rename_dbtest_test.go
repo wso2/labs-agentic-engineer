@@ -78,7 +78,8 @@ func newRenameDB(t *testing.T) *renameDB {
 	connRepo := organization.NewOrgModelConnectionRepository(db)
 	anthropicRepo := organization.NewOrgAnthropicRepository(db)
 	writer := organization.NewSecretRefWriter(sm, organization.NewOrgCredentialRepository(db, nil), anthropicRepo,
-		organization.NewIDPRepository(db, nil), connRepo)
+		organization.NewIDPRepository(db, nil), connRepo).
+		WithOrgSecretWriter(organization.NewOrgSecretWriter(sm, organization.NewOrgSecretRepository(db), organization.NewOrgSecretLock(db), fixedClock))
 	cycles := openCycles{}
 	return &renameDB{
 		db: db, store: store, sm: sm, cycles: cycles,
@@ -195,8 +196,11 @@ func TestModelKeyRename_MovesEveryOrgAndASecondPassIsANoOp_DB(t *testing.T) {
 	}
 	for _, call := range r.sm.createCalls {
 		org := call.loc.ControlPlaneNamespace
-		if call.loc.EntityName != "model-connection" || call.loc.OrgName != r.ouIDs[org] || call.data["api-key"] != keys[org] {
-			t.Fatalf("upload %+v, want entity model-connection under the org's ouId with its key", call.loc)
+		if call.loc.EntityName != "default-key" || call.loc.OrgName != r.ouIDs[org] || call.data["api-key"] != keys[org] {
+			t.Fatalf("upload %+v, want a default-key reference under the org's ouId with its key", call.loc)
+		}
+		if ref, err := organization.NewOrgSecretRepository(r.db).Get(context.Background(), org, organization.OrgSecretDefaultKey); err != nil || ref == nil || ref.Name != renameNewRef {
+			t.Fatalf("%s default-key row = %+v (%v), want the new copy recorded", org, ref, err)
 		}
 	}
 	if len(r.sm.deleteCalls) != 2 {
@@ -411,6 +415,32 @@ func TestModelKeyRename_KeepsThePreviousCopiesUnderAnUnrecognizedReference_DB(t 
 		t.Fatalf("unrecognized reference: %d uploads, %d deletes, legacy bytes %v; want nothing touched",
 			len(r.sm.createCalls), len(r.sm.deleteCalls), r.hasLegacyBytes(t, "acme"))
 	}
+}
+
+// A card save that wrote the key's default-key reference before the rename
+// ran leaves the row on a fresh name that row records: that is the new
+// copy, so nothing is uploaded and the Anthropic-era copies are retired.
+func TestModelKeyRename_ARecordedDefaultKeyReferenceIsTheNewCopy_DB(t *testing.T) {
+	t.Parallel()
+	r := newRenameDB(t)
+	const key = "sk-ant-api03-acme-key-bytes-0001"
+	r.seedLegacyOrg(t, "acme", key, true)
+	const minted = "acme-default-key-0000aaaa"
+	if err := r.db.Exec(`UPDATE org_model_connections SET secret_ref_name = ?, secret_ref_kv_path = replace(secret_ref_kv_path, ?, ?) WHERE oc_org_id = 'acme'`, minted, renameLegacyRef, minted).Error; err != nil {
+		t.Fatalf("stamp the save's reference: %v", err)
+	}
+	if err := organization.NewOrgSecretRepository(r.db).Upsert(context.Background(), "acme",
+		organization.OrgSecretRef{Secret: organization.OrgSecretDefaultKey, Name: minted}, ""); err != nil {
+		t.Fatalf("record the save's reference: %v", err)
+	}
+
+	r.pass(t)
+	if len(r.sm.createCalls) != 0 || r.hasLegacyBytes(t, "acme") || len(r.sm.deleteCalls) != 1 ||
+		r.sm.deleteCalls[0].secretRefName != renameLegacyRef {
+		t.Fatalf("recorded reference: %d uploads, deletes %+v, legacy bytes %v; want the old copies retired",
+			len(r.sm.createCalls), r.sm.deleteCalls, r.hasLegacyBytes(t, "acme"))
+	}
+	r.wantDispatchRef(t, "acme", minted)
 }
 
 // The boot pass moves and switches but deletes nothing, so a replica of the

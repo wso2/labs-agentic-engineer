@@ -34,10 +34,10 @@
 //  1. One transaction under the card's lock: copy the bytes again if the old
 //     key is newer (a replica of the previous release saved mid-rollout) and
 //     the org still has a connection (a disconnected key is not brought
-//     back); if the row still names the Anthropic-era reference, upload the
-//     key under the new entity and switch the row's secret-ref columns onto
-//     it. The upload is inside the lock so a card save cannot land between
-//     reading the key and switching to its copy.
+//     back); if the row still names the Anthropic-era reference, write the
+//     key as a new default-key reference and switch the row's secret-ref
+//     columns onto it. The write is inside the lock so a card save cannot
+//     land between reading the key and switching to its copy.
 //  2. After commit, once the row names the new copy (or none, or is gone) and
 //     no cycle of the org is open: delete the old SM-API copy, then the old
 //     bytes, best-effort, like forgetKey. The `anthropic/key` row goes last and
@@ -226,11 +226,20 @@ func (r *ModelKeyRename) copyAndSwitch(ctx context.Context, tx ModelKeyRenameTx,
 	}
 	switch name := derefOrEmpty(row.SecretRefName); name {
 	case modelKeyRefName, "":
-		// On the new copy, or on none (a save cleared it and its mirror stamps
+		// On the new copy, or on none (a save cleared it and its write stamps
 		// the new name): nothing to switch.
 		return nil, nil
 	case legacyModelKeyRefName:
 	default:
+		// A save's default-key write names a fresh reference each time: the
+		// row is on the new copy when the default-key row records the name.
+		recorded, err := r.writer.recordedRef(ctx, ocOrgID, OrgSecretDefaultKey)
+		if err != nil {
+			return fmt.Errorf("%w: read the default-key row: %w", errLegacyRefKept, err), nil
+		}
+		if recorded == name {
+			return nil, nil
+		}
 		// A name neither copy has: the old copies may be what it points at, so
 		// they stay until someone looks.
 		return fmt.Errorf("the row names an unrecognized SM-API reference %q; the previous copies are kept", name), nil
@@ -245,15 +254,22 @@ func (r *ModelKeyRename) copyAndSwitch(ctx context.Context, tx ModelKeyRenameTx,
 	if err != nil {
 		return nil, fmt.Errorf("read key: %w", err)
 	}
-	ref, err := r.writer.UploadModelKey(ctx, ocOrgID, string(key))
+	// The new copy is a default-key write whose repoint switches the row onto
+	// it. Its Retire is never run: the Anthropic-era copy goes in step 2, once
+	// no cycle of the org is open.
+	var switchErr error
+	written, err := r.writer.WriteModelKey(ctx, ocOrgID, string(key), legacyModelKeyRefName, func(ref SecretRefTriplet) error {
+		switchErr = tx.SwitchSecretRef(ocOrgID, legacyModelKeyRefName, ref)
+		return switchErr
+	})
+	if switchErr != nil {
+		return nil, fmt.Errorf("switch secret reference: %w", switchErr)
+	}
 	if err != nil {
 		return fmt.Errorf("%w: upload the new copy: %w", errLegacyRefKept, err), nil
 	}
-	if err := tx.SwitchSecretRef(ocOrgID, legacyModelKeyRefName, ref); err != nil {
-		return nil, fmt.Errorf("switch secret reference: %w", err)
-	}
 	slog.InfoContext(ctx, "model key rename: connection key moved to its new SM-API copy",
-		"ocOrgId", ocOrgID, "secretRefName", ref.Name)
+		"ocOrgId", ocOrgID, "secretRefName", written.Name)
 	return nil, nil
 }
 

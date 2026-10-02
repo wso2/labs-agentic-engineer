@@ -107,98 +107,168 @@ func (w *SecretRefWriter) Enabled() bool {
 	return w != nil && w.client != nil
 }
 
-// WriteAnthropic uploads one role's per-org Anthropic credential (the Claude
-// subscription) to SM-API and stamps the triplet onto that role's
-// `org_anthropic_credentials` row. ctx must carry the inbound user JWT — the
-// card's save runs on that ctx (the SM-API provider reads it via the
-// jwtassertion middleware context helper).
-//
-// Returns the secretRefName for caller convenience; the DB has already
-// been updated when the call returns nil.
-func (w *SecretRefWriter) WriteAnthropic(ctx context.Context, ocOrgID string, role AnthropicRole, apiKey string) (string, error) {
-	return w.writeAPIKey(ctx, ocOrgID, role.SecretRefEntity(), apiKey, func(cols map[string]any) error {
-		return w.anthropicRepo.UpdateColumns(ctx, ocOrgID, role, cols)
-	})
+// apiKeyProperty is the property the default-key and coding-agent-key
+// references store their value under (orgSecretKeys).
+const apiKeyProperty = secretmanagersvc.SecretKeyAPIKey
+
+// WriteModelKey stores the org's model connection key as a new default-key
+// reference and records it in the secret's row; repoint (nil = nothing)
+// receives the new reference's triplet while the secret's lock is held, for
+// the caller to stamp onto the connection row inside its own transaction.
+// The previous reference (the row's, else legacy: a pre-phase-1 copy the
+// triplet named) stays until the caller runs Retire on the returned write,
+// after its transaction commits. ctx must carry the user's ouId claim (the
+// vault path).
+func (w *SecretRefWriter) WriteModelKey(ctx context.Context, ocOrgID, apiKey, legacy string, repoint func(SecretRefTriplet) error) (OrgSecretWrite, error) {
+	return w.writeAPIKey(ctx, ocOrgID, OrgSecretDefaultKey, apiKey, legacy, repoint)
 }
 
-// WriteModelKey uploads the org's model connection key to SM-API and stamps
-// the triplet onto its `org_model_connections` row. Same contract as
-// WriteAnthropic.
-func (w *SecretRefWriter) WriteModelKey(ctx context.Context, ocOrgID, apiKey string) (string, error) {
-	return w.writeAPIKey(ctx, ocOrgID, modelKeySecretEntity, apiKey, func(cols map[string]any) error {
-		return w.modelConnRepo.UpdateColumns(ctx, ocOrgID, cols)
-	})
-}
-
-// UploadModelKey uploads the org's model connection key to SM-API under the
-// connection's entity and returns the reference, stamping nothing: for a
-// caller that records it on the row inside its own transaction (the card's
-// copies, the rename). ctx must carry an ouId claim.
-func (w *SecretRefWriter) UploadModelKey(ctx context.Context, ocOrgID, apiKey string) (SecretRefTriplet, error) {
-	if !w.Enabled() {
-		return SecretRefTriplet{}, errors.New("secret-ref writer: not configured")
-	}
-	return w.uploadAPIKey(ctx, ocOrgID, modelKeySecretEntity, apiKey)
-}
-
-// UploadAnthropic is UploadModelKey for one role's Claude subscription token.
-func (w *SecretRefWriter) UploadAnthropic(ctx context.Context, ocOrgID string, role AnthropicRole, apiKey string) (SecretRefTriplet, error) {
-	if !w.Enabled() {
-		return SecretRefTriplet{}, errors.New("secret-ref writer: not configured")
-	}
-	return w.uploadAPIKey(ctx, ocOrgID, role.SecretRefEntity(), apiKey)
-}
-
-func (w *SecretRefWriter) writeAPIKey(ctx context.Context, ocOrgID, entity, apiKey string, stamp func(map[string]any) error) (string, error) {
-	if !w.Enabled() {
-		return "", nil
-	}
-	ref, err := w.uploadAPIKey(ctx, ocOrgID, entity, apiKey)
+// WriteAnthropic is WriteModelKey for one role's Claude subscription token,
+// as the role's coding-agent-key reference.
+func (w *SecretRefWriter) WriteAnthropic(ctx context.Context, ocOrgID string, role AnthropicRole, token, legacy string, repoint func(SecretRefTriplet) error) (OrgSecretWrite, error) {
+	s, err := role.orgSecret()
 	if err != nil {
-		return ref.Name, err
+		return OrgSecretWrite{}, err
 	}
-	if err := stamp(stampSecretRefTriplet(ref.Name, ref.KVPath, ref.Property)); err != nil {
-		return ref.Name, fmt.Errorf("secret-ref writer: stamp %s triplet: %w", entity, err)
-	}
-	slog.InfoContext(ctx, "secret-ref writer: api key uploaded",
-		"ocOrgId", ocOrgID,
-		"entity", entity,
-		"secretRefName", ref.Name,
-		"vaultKey", ref.KVPath)
-	return ref.Name, nil
+	return w.writeAPIKey(ctx, ocOrgID, s, token, legacy, repoint)
 }
 
-// uploadAPIKey uploads one API-key-shaped secret under entity and resolves
-// where it landed. On a vault-key failure the returned triplet carries the
-// name the upload produced.
-func (w *SecretRefWriter) uploadAPIKey(ctx context.Context, ocOrgID, entity, apiKey string) (SecretRefTriplet, error) {
+func (w *SecretRefWriter) writeAPIKey(ctx context.Context, ocOrgID string, s OrgSecret, apiKey, legacy string, repoint func(SecretRefTriplet) error) (OrgSecretWrite, error) {
+	if !w.Enabled() {
+		return OrgSecretWrite{}, errors.New("secret-ref writer: not configured")
+	}
 	if strings.TrimSpace(ocOrgID) == "" {
-		return SecretRefTriplet{}, errors.New("secret-ref writer: ocOrgID required")
+		return OrgSecretWrite{}, errors.New("secret-ref writer: ocOrgID required")
 	}
 	if strings.TrimSpace(apiKey) == "" {
-		return SecretRefTriplet{}, errors.New("secret-ref writer: apiKey required")
+		return OrgSecretWrite{}, errors.New("secret-ref writer: apiKey required")
 	}
-	orgUUID, err := orgUUIDForSecretLocation(ctx)
+	orgSecrets, err := w.orgSecretWriter()
 	if err != nil {
-		return SecretRefTriplet{}, fmt.Errorf("secret-ref writer: %s upload: %w", entity, err)
+		return OrgSecretWrite{}, err
 	}
-	loc := secretmanagersvc.SecretLocation{
-		OrgName:               orgUUID,
-		ControlPlaneNamespace: ocOrgID,
-		EntityName:            entity,
-		SecretKey:             secretmanagersvc.SecretKeyAPIKey,
+	ouID, err := orgUUIDForSecretLocation(ctx)
+	if err != nil {
+		return OrgSecretWrite{}, fmt.Errorf("secret-ref writer: %s upload: %w", s, err)
 	}
-	secretRefName, err := w.client.CreateSecret(ctx, loc, map[string]string{
-		secretmanagersvc.SecretKeyAPIKey: apiKey,
+	written, err := orgSecrets.Write(ctx, ocOrgID, ouID, s, map[string]string{apiKeyProperty: apiKey}, legacy, func(name string) error {
+		if repoint == nil {
+			return nil
+		}
+		return repoint(SecretRefTriplet{Name: name, KVPath: vaultKeyFor(ouID, name), Property: apiKeyProperty})
 	})
 	if err != nil {
-		return SecretRefTriplet{}, fmt.Errorf("secret-ref writer: %s upload: %w", entity, err)
+		return OrgSecretWrite{}, fmt.Errorf("secret-ref writer: %s upload: %w", s, err)
 	}
-	vaultKey, err := w.resolveVaultKey(ctx, secretRefName)
+	return written, nil
+}
+
+// RestoreModelKey rewrites the connection key under the default-key
+// reference its row already names (local repair after the vault lost its
+// values): no new reference, nothing repointed. It reports false when the
+// secret has no row. ctx must carry an ouId claim.
+func (w *SecretRefWriter) RestoreModelKey(ctx context.Context, ocOrgID, apiKey string) (bool, error) {
+	return w.restore(ctx, ocOrgID, OrgSecretDefaultKey, map[string]string{apiKeyProperty: apiKey})
+}
+
+// RestoreAnthropic is RestoreModelKey for one role's subscription token.
+func (w *SecretRefWriter) RestoreAnthropic(ctx context.Context, ocOrgID string, role AnthropicRole, token string) (bool, error) {
+	s, err := role.orgSecret()
 	if err != nil {
-		return SecretRefTriplet{Name: secretRefName}, fmt.Errorf("secret-ref writer: resolve %s vault key: %w", entity, err)
+		return false, err
 	}
-	return SecretRefTriplet{Name: secretRefName, KVPath: vaultKey, Property: secretmanagersvc.SecretKeyAPIKey}, nil
+	return w.restore(ctx, ocOrgID, s, map[string]string{apiKeyProperty: token})
+}
+
+// restore rewrites data under the reference the row of s names; see
+// OrgSecretWriter.Restore.
+func (w *SecretRefWriter) restore(ctx context.Context, ocOrgID string, s OrgSecret, data map[string]string) (bool, error) {
+	if !w.Enabled() {
+		return false, nil
+	}
+	orgSecrets, err := w.orgSecretWriter()
+	if err != nil {
+		return false, err
+	}
+	ouID, err := orgUUIDForSecretLocation(ctx)
+	if err != nil {
+		return false, fmt.Errorf("secret-ref writer: %s restore: %w", s, err)
+	}
+	return orgSecrets.Restore(ctx, ocOrgID, ouID, s, data)
+}
+
+// ForgetModelKey removes the copies of a deleted connection key, under the
+// default-key lock. connected says the org has a connection again (saved
+// since the delete) and live names the reference its row now carries ("" for
+// none). A default-key row is removed only while the org stays disconnected:
+// a connection saved since retires it through its own write. captured, the
+// reference the deleted row named, is deleted by name when no row records it
+// and the live row does not name it: a pre-phase-1 copy nothing reads.
+func (w *SecretRefWriter) ForgetModelKey(ctx context.Context, ocOrgID, captured, live string, connected bool) error {
+	return w.forgetAPIKey(ctx, ocOrgID, OrgSecretDefaultKey, captured, live, connected)
+}
+
+// ForgetAnthropic is ForgetModelKey for one role's subscription token; held
+// says the role has a credential again.
+func (w *SecretRefWriter) ForgetAnthropic(ctx context.Context, ocOrgID string, role AnthropicRole, captured, live string, held bool) error {
+	s, err := role.orgSecret()
+	if err != nil {
+		return err
+	}
+	return w.forgetAPIKey(ctx, ocOrgID, s, captured, live, held)
+}
+
+func (w *SecretRefWriter) forgetAPIKey(ctx context.Context, ocOrgID string, s OrgSecret, captured, live string, set bool) error {
+	if !w.Enabled() {
+		return nil
+	}
+	orgSecrets, err := w.orgSecretWriter()
+	if err != nil {
+		return err
+	}
+	ouID, err := orgUUIDForSecretLocation(ctx)
+	if err != nil {
+		return fmt.Errorf("secret-ref writer: forget %s: %w", s, err)
+	}
+	return orgSecrets.WithLock(ctx, ocOrgID, s, func(l *OrgSecretLocked) error {
+		row, err := l.Ref(ctx)
+		if err != nil {
+			return fmt.Errorf("secret-ref writer: forget %s: %w", s, err)
+		}
+		if row != nil && !set {
+			if err := l.Remove(ctx, ouID, nil); err != nil {
+				return fmt.Errorf("secret-ref writer: forget %s: %w", s, err)
+			}
+		}
+		if captured == "" || captured == live || (row != nil && captured == row.Name) {
+			return nil
+		}
+		if err := l.DeleteUnrecorded(ctx, ouID, captured); err != nil {
+			return fmt.Errorf("secret-ref writer: forget %s: %w", s, err)
+		}
+		return nil
+	})
+}
+
+// recordedRef is the reference the row of s names, "" when s is unset or
+// the org secrets are not wired.
+func (w *SecretRefWriter) recordedRef(ctx context.Context, ocOrgID string, s OrgSecret) (string, error) {
+	if !w.Enabled() || w.orgSecrets == nil {
+		return "", nil
+	}
+	row, err := w.orgSecrets.repo.Get(ctx, ocOrgID, s)
+	if err != nil || row == nil {
+		return "", err
+	}
+	return row.Name, nil
+}
+
+// orgSecret is the org secret holding role's credential.
+func (r AnthropicRole) orgSecret() (OrgSecret, error) {
+	if r == AnthropicRoleCoding {
+		return OrgSecretCodingAgentKey, nil
+	}
+	return "", fmt.Errorf("secret-ref writer: no org secret for anthropic role %q", r)
 }
 
 // WriteAMPModelKey stores one agent's Agent-Manager-issued model key and
@@ -408,18 +478,7 @@ func (w *SecretRefWriter) WriteGitHubPAT(ctx context.Context, ocOrgID string, pa
 // values): no new reference, nothing repointed. It reports false when the
 // secret has no row. ctx must carry an ouId claim.
 func (w *SecretRefWriter) RestoreGitHubPAT(ctx context.Context, ocOrgID, pat string) (bool, error) {
-	if !w.Enabled() {
-		return false, nil
-	}
-	orgSecrets, err := w.orgSecretWriter()
-	if err != nil {
-		return false, err
-	}
-	ouID, err := orgUUIDForSecretLocation(ctx)
-	if err != nil {
-		return false, fmt.Errorf("secret-ref writer: github-pat restore: %w", err)
-	}
-	return orgSecrets.Restore(ctx, ocOrgID, ouID, OrgSecretGitHubPAT, map[string]string{githubPATProperty: pat})
+	return w.restore(ctx, ocOrgID, OrgSecretGitHubPAT, map[string]string{githubPATProperty: pat})
 }
 
 // WriteExternalResourceSecret uploads the secret fields of an external
@@ -560,19 +619,12 @@ func vaultKeyFor(ouID, secretRefName string) string {
 	return vaultPathPrefix + "/" + tenant.OrgBaseNamespace(ouID) + "/" + secretRefName
 }
 
-// DeleteAnthropic best-effort removes one role's SM-API secret. The caller
-// passes the secret-ref name it captured from the row before deleting it — the
-// credential row is already gone by the time this runs (the delete commits
-// first), so there is no triplet left to read or clear. Tolerates "already
-// gone" responses (the underlying client returns nil on 404).
-func (w *SecretRefWriter) DeleteAnthropic(ctx context.Context, ocOrgID string, role AnthropicRole, secretRefName string) error {
-	return w.deleteAPIKey(ctx, ocOrgID, role.SecretRefEntity(), secretRefName)
-}
-
-// DeleteModelKey best-effort removes a model connection key's SM-API copy,
-// with DeleteAnthropic's contract. The entity is read off the reference name,
-// so a row the rename has not moved yet deletes its Anthropic-era copy rather
-// than the new name's vault path (model_key_rename.go).
+// DeleteModelKey best-effort removes a pre-phase-1 copy of the connection
+// key by its deterministic name (the rename's retire of the Anthropic-era
+// copy, model_key_rename.go); a copy the default-key row records goes
+// through ForgetModelKey. Tolerates "already gone". The entity is read off
+// the reference name, so the Anthropic-era copy's vault path is the one
+// deleted.
 func (w *SecretRefWriter) DeleteModelKey(ctx context.Context, ocOrgID, secretRefName string) error {
 	return w.deleteAPIKey(ctx, ocOrgID, modelKeyEntityOf(secretRefName), secretRefName)
 }

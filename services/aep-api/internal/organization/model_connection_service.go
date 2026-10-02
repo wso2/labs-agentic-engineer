@@ -32,9 +32,9 @@
 //
 // For the card (AgentSettingsService) it probes a draft connection
 // (model_probe.go), writes or deletes the row and the key's bytes inside the
-// card's transaction, mirrors the key to SM-API after commit (under the card's
-// lock, from the row as it stands), and projects the connection for GET
-// /config.
+// card's transaction, writes the key's default-key reference after commit
+// (under the card's lock, from the row as it stands), and projects the
+// connection for GET /config.
 //
 // The connection lives in org_model_connections, one row per org; the key's
 // bytes in org_secrets under modelKeyStoreKey.
@@ -413,70 +413,98 @@ func (s *ModelConnectionService) deleteTx(ctx context.Context, tx AgentsCardTx, 
 	return derefOrEmpty(row.SecretRefName), nil
 }
 
-// mirrorKey copies the connection key as it stands into SM-API and records
-// where on the row, inside the transaction the card's copies run in (under its
-// lock), best-effort: org_secrets stays authoritative. It reads the key rather
-// than taking the one a save wrote, so a save's copy that runs after a later
-// save's leaves the later key in the vault. A save that wrote a key cleared the
-// row's triplet, so a failed mirror leaves it NULL until the next key save, and
-// dispatch fails closed naming why. No row: a disconnect landed since, and
-// there is nothing to copy.
-func (s *ModelConnectionService) mirrorKey(ctx context.Context, tx AgentsCardTx, ocOrgID string) {
+// mirrorKey writes the connection key as it stands as a new default-key
+// reference and stamps its triplet on the row, inside the transaction the
+// card's copies run in (under its lock), best-effort in this phase:
+// org_secrets stays the value the agents read. It reads the key rather than
+// taking the one a save wrote, so a save's copy that runs after a later
+// save's leaves the later key. legacy is the reference the row named before
+// the save (a pre-phase-1 copy, retired once no default-key row exists to
+// name the previous one). The returned write's Retire deletes the previous
+// reference and must run only after the copies' transaction commits; a
+// rolled-back transaction leaves the row on the new reference and the
+// triplet off it, with the previous reference still in place. A save that
+// wrote a key cleared the triplet, so a failed write leaves it NULL until the
+// next key save and dispatch fails closed naming why; the pod keeps its
+// previous key. No row: a disconnect landed since, and there is nothing to
+// copy.
+func (s *ModelConnectionService) mirrorKey(ctx context.Context, tx AgentsCardTx, ocOrgID, legacy string) (OrgSecretWrite, bool) {
 	if !s.secretRefWriter.Enabled() {
-		return
+		return OrgSecretWrite{}, false
 	}
-	if err := s.mirrorKeyTx(ctx, tx, ocOrgID); err != nil {
-		slog.WarnContext(ctx, "model connection: SM-API mirror failed (org_secrets still authoritative)",
-			"ocOrgId", ocOrgID, "error", err)
+	written, ok, err := s.mirrorKeyTx(ctx, tx, ocOrgID, legacy)
+	if err != nil {
+		slog.WarnContext(ctx, "model connection: reference write failed",
+			"ocOrgId", ocOrgID, "retryable", errors.Is(err, ErrOrgSecretConflict), "error", err)
+		return OrgSecretWrite{}, false
 	}
+	return written, ok
 }
 
-func (s *ModelConnectionService) mirrorKeyTx(ctx context.Context, tx AgentsCardTx, ocOrgID string) error {
+func (s *ModelConnectionService) mirrorKeyTx(ctx context.Context, tx AgentsCardTx, ocOrgID, legacy string) (OrgSecretWrite, bool, error) {
 	row, err := tx.GetConnection(ocOrgID)
 	if err != nil || row == nil {
-		return err
+		return OrgSecretWrite{}, false, err
 	}
 	key, err := tx.Secrets().Get(ctx, ocOrgID, modelKeyStoreKey)
 	if err != nil {
-		return fmt.Errorf("read the key: %w", err)
+		return OrgSecretWrite{}, false, fmt.Errorf("read the key: %w", err)
 	}
-	ref, err := s.secretRefWriter.UploadModelKey(ctx, ocOrgID, strings.TrimSpace(string(key)))
+	if name := derefOrEmpty(row.SecretRefName); name != "" {
+		legacy = name
+	}
+	written, err := s.secretRefWriter.WriteModelKey(ctx, ocOrgID, strings.TrimSpace(string(key)), retirableModelKeyRef(legacy),
+		func(ref SecretRefTriplet) error {
+			if err := tx.StampConnectionSecretRef(ocOrgID, ref); err != nil {
+				return fmt.Errorf("stamp the secret reference: %w", err)
+			}
+			return nil
+		})
 	if err != nil {
-		return err
+		return OrgSecretWrite{}, false, err
 	}
-	if err := tx.StampConnectionSecretRef(ocOrgID, ref); err != nil {
-		return fmt.Errorf("stamp the secret reference: %w", err)
-	}
-	slog.InfoContext(ctx, "model connection: key mirrored to SM-API",
-		"ocOrgId", ocOrgID, "secretRefName", ref.Name, "vaultKey", ref.KVPath)
-	return nil
+	slog.InfoContext(ctx, "model connection: key reference written", "ocOrgId", ocOrgID, "secretRefName", written.Name)
+	return written, true, nil
 }
 
-// forgetKey deletes a removed connection key's SM-API copy, best-effort, inside
-// the transaction the card's copies run in. A connection saved since mirrors
-// its key to the same path, so the copy is left to it; the Anthropic-era path
-// no save writes goes either way.
+// retirableModelKeyRef is the pre-phase-1 copy a first default-key write may
+// retire: any but the Anthropic-era copy, which the rename retires once the
+// org's open cycles end (model_key_rename.go).
+func retirableModelKeyRef(name string) string {
+	if name == legacyModelKeyRefName {
+		return ""
+	}
+	return name
+}
+
+// forgetKey removes a deleted connection key's references, best-effort,
+// inside the transaction the card's copies run in: the default-key row and
+// its reference while the org stays disconnected, and secretRefName, the
+// reference the deleted row named, when nothing records it (see
+// SecretRefWriter.ForgetModelKey). A connection saved since keeps its row; its
+// own write retires the previous reference.
 func (s *ModelConnectionService) forgetKey(ctx context.Context, tx AgentsCardTx, ocOrgID, secretRefName string) {
-	if secretRefName == "" || !s.secretRefWriter.Enabled() {
+	if !s.secretRefWriter.Enabled() {
 		return
 	}
 	row, err := tx.GetConnection(ocOrgID)
-	if err == nil && row != nil && secretRefName == modelKeyRefName {
-		return
-	}
 	if err == nil {
-		err = s.secretRefWriter.DeleteModelKey(ctx, ocOrgID, secretRefName)
+		live := ""
+		if row != nil {
+			live = derefOrEmpty(row.SecretRefName)
+		}
+		err = s.secretRefWriter.ForgetModelKey(ctx, ocOrgID, secretRefName, live, row != nil)
 	}
 	if err != nil {
-		slog.WarnContext(ctx, "model connection: SM-API delete failed (orphaned copy until the next save)",
+		slog.WarnContext(ctx, "model connection: reference removal failed (orphaned copy until the next save)",
 			"ocOrgId", ocOrgID, "error", err)
 	}
 }
 
-// ResyncSecretRef re-pushes the connection key through the in-process
-// SecretRefWriter (local OpenBao repair). (false, nil) when there is nothing
-// to repair: no connection, no triplet yet, or no bytes. ctx must carry an
-// ouId claim.
+// ResyncSecretRef rewrites the connection key under the default-key
+// reference its row already names (local OpenBao repair). (false, nil) when
+// there is nothing to repair: no connection, no triplet yet, no default-key
+// row, or no bytes. ctx must carry an ouId claim.
 func (s *ModelConnectionService) ResyncSecretRef(ctx context.Context, ocOrgID string) (bool, error) {
 	if !s.secretRefWriter.Enabled() {
 		return false, nil
@@ -492,8 +520,9 @@ func (s *ModelConnectionService) ResyncSecretRef(ctx context.Context, ocOrgID st
 	if err != nil || len(key) == 0 {
 		return false, nil
 	}
-	if _, err := s.secretRefWriter.WriteModelKey(ctx, ocOrgID, string(key)); err != nil {
+	wrote, err := s.secretRefWriter.RestoreModelKey(ctx, ocOrgID, string(key))
+	if err != nil {
 		return false, fmt.Errorf("model connection resync: write: %w", err)
 	}
-	return true, nil
+	return wrote, nil
 }

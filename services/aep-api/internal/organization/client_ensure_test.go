@@ -26,7 +26,9 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -406,6 +408,18 @@ func TestEnsureClient_OUMismatchTouchesNothing(t *testing.T) {
 	}
 }
 
+// The claim carries the org's OU in another case than the row's canonical
+// form: one OU, so the ensure goes ahead.
+func TestEnsureClient_OUComparedAsUUIDs(t *testing.T) {
+	f := newEnsureFixture(t, false, false)
+	upper := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: strings.ToUpper(ensureOU.String())})
+	for _, kind := range []ClientKind{ClientPublisher, ClientStudio} {
+		if err := f.svc.EnsureClient(upper, "default", kind); err != nil {
+			t.Fatalf("%s: %v, want the uppercase ouId to match the org's OU", kind, err)
+		}
+	}
+}
+
 func TestEnsureClient_HoldsTheSecretLockAcrossTheEnsure(t *testing.T) {
 	f := newEnsureFixture(t, true, false)
 	lock := &recordingLock{log: &f.log}
@@ -438,4 +452,20 @@ func (l *recordingLock) Lock(_ context.Context, _ string, s OrgSecret) (func(), 
 	*l.log = append(*l.log, "lock:"+string(s))
 	l.held = true
 	return func() { l.held = false; *l.log = append(*l.log, "unlock") }, nil
+}
+
+// A missing or disagreeing OU is not fixed by saving the token again, so
+// the submit's error names the operator action, never a retry.
+func TestSubmitFailure_OUErrorsNameTheOperatorAction(t *testing.T) {
+	for _, cause := range []error{errOrgOUUnknown, errOrgOUMismatch} {
+		err := submitFailure(context.Background(), "default", "client:studio", fmt.Errorf("ensure studio client: %w", cause))
+		var se *SectionError
+		if !errors.As(err, &se) {
+			t.Fatalf("%v: want a SectionError, got %#v", cause, err)
+		}
+		if se.Status != http.StatusConflict || strings.Contains(strings.ToLower(se.Message), "again") ||
+			!strings.Contains(se.Message, "an operator must") {
+			t.Fatalf("%v: %d %q, want a 409 naming the operator action, no retry", cause, se.Status, se.Message)
+		}
+	}
 }

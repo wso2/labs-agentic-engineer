@@ -454,3 +454,72 @@ func TestRegenerateClientSecret_WritePublisherErrorReturned(t *testing.T) {
 		t.Fatalf("failed rewrite must clear secret_ref_name, got %+v", row.SecretRefName)
 	}
 }
+
+// failingIDPRepo fails the triplet clear (an update setting
+// secret_ref_name) when failClear is set.
+type failingIDPRepo struct {
+	*memIDPRepo
+	failClear bool
+}
+
+func (r failingIDPRepo) UpdateProfileColumns(ctx context.Context, p *OrganizationIDPProfile, orgID string, updates map[string]interface{}) error {
+	if v, ok := updates["secret_ref_name"]; ok && v == nil && r.failClear {
+		return errors.New("clear failed")
+	}
+	return r.memIDPRepo.UpdateProfileColumns(ctx, p, orgID, updates)
+}
+
+// failingDeleteRows fails every row delete when failDelete is set.
+type failingDeleteRows struct {
+	*memOrgSecretRepo
+	failDelete bool
+}
+
+func (r failingDeleteRows) Delete(ctx context.Context, org string, s OrgSecret, name string) error {
+	if r.failDelete {
+		return errors.New("row delete failed")
+	}
+	return r.memOrgSecretRepo.Delete(ctx, org, s, name)
+}
+
+// A rotation whose vault write failed unsets the publisher's row with the
+// triplet clear as its repoint: whatever step fails, the row and the triplet
+// end up both present or both gone, never a row with a NULL secret_ref_name.
+func TestRegenerateClientSecret_FailedWriteNeverLeavesARowWithoutATriplet(t *testing.T) {
+	for _, tc := range []struct {
+		name                  string
+		failClear, failDelete bool
+		wantGone              bool
+	}{
+		{"both steps succeed", false, false, true},
+		{"the triplet clear fails", true, false, false},
+		{"the row delete fails", false, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mem := newMemIDPRepo()
+			prev := "acme-ae-publisher-client-previous"
+			_ = mem.CreateProfile(context.Background(), &OrganizationIDPProfile{
+				OrgID: "acme", PublisherClientID: "aep-publisher-acme", SecretRefName: &prev,
+			})
+			repo := failingIDPRepo{memIDPRepo: mem, failClear: tc.failClear}
+			rows := failingDeleteRows{memOrgSecretRepo: newMemOrgSecretRepo(), failDelete: tc.failDelete}
+			rows.rows[memOrgSecretKey("acme", OrgSecretPublisherClient)] = OrgSecretRef{Secret: OrgSecretPublisherClient, Name: prev}
+			sm := &provFakeSM{err: errors.New("sm-api down")}
+			writer := NewSecretRefWriter(sm, nil, nil, repo, nil).
+				WithOrgSecretWriter(NewOrgSecretWriter(sm, rows, memOrgSecretLock{}, time.Now))
+			thunder := &fakeThunder{regenFn: func(context.Context, string) (string, error) { return "rotated", nil }}
+			svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).WithSecretRefWriter(writer)
+			ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: "ou-acme-uuid"})
+
+			if _, err := svc.RegenerateClientSecret(ctx, "acme", "ada@x.io"); err == nil {
+				t.Fatal("the failed vault write is returned")
+			}
+			row, _ := rows.Get(context.Background(), "acme", OrgSecretPublisherClient)
+			profile, _ := mem.GetProfileByOrgID(context.Background(), "acme")
+			rowGone, tripletGone := row == nil, !HasPublisherSecretRef(profile)
+			if rowGone != tripletGone || rowGone != tc.wantGone {
+				t.Fatalf("row gone=%v, triplet gone=%v; want both %v", rowGone, tripletGone, tc.wantGone)
+			}
+		})
+	}
+}
