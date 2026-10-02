@@ -128,6 +128,9 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		ctxStep("phase2_pra_schema", RunPhase2PRASchema),
 		ctxStep("phase2_prc", RunPhase2PRC),
 		ctxStep("org_secrets", RunOrgSecretsMigration),
+		// The org secrets' reference rows share org_secrets with the legacy
+		// value rows (nullable value), named 23 by phase but ordered here.
+		ctxStep("phase23_org_secret_refs", RunPhase23OrgSecretRefs),
 		ctxStep("per_org_secret_name", RunPerOrgSecretName),
 		ctxStep("org_anthropic_credentials", RunOrgAnthropicCredentialsMigration),
 		ctxStep("phase3_thunder_org_uuid", RunPhase3ThunderOrgUUID),

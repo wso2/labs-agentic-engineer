@@ -47,6 +47,7 @@ var goldenStepOrder = []string{
 	"phase2_pra_schema",
 	"phase2_prc",
 	"org_secrets",
+	"phase23_org_secret_refs",
 	"per_org_secret_name",
 	"org_anthropic_credentials",
 	"phase3_thunder_org_uuid",
