@@ -67,7 +67,7 @@ func TestAskpassShimAnswersPrompts(t *testing.T) {
 // attached and asserts the token appears in NO git argv and NOWHERE on the
 // mount afterwards (config files, packed refs, anything).
 func TestTokenNeverInArgvOrOnDisk(t *testing.T) {
-	fx := NewWithCred(t, seedFiles(), repo.StaticToken(testToken))
+	fx := NewFixtureWithCred(t, seedFiles(), repo.StaticToken(testToken))
 	ctx := context.Background()
 
 	rec := recordCommands(t, fx.Engine)
@@ -149,7 +149,7 @@ func TestTokenNeverInArgvOrOnDisk(t *testing.T) {
 // TestNilCredentialSkipsAskpass: file:// origins run without any credential
 // plumbing at all.
 func TestNilCredentialSkipsAskpass(t *testing.T) {
-	fx := New(t, seedFiles())
+	fx := NewFixture(t, seedFiles())
 	rec := recordCommands(t, fx.Engine)
 	mustHead(t, fx, "")
 	for _, c := range rec.all() {

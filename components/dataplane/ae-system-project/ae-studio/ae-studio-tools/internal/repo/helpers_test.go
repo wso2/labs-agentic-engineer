@@ -152,14 +152,14 @@ type Fixture struct {
 	Ref    repo.RepoRef
 }
 
-// New builds a Fixture with a credential-less engine (file:// needs none).
-func New(t *testing.T, seed map[string]string) *Fixture {
+// NewFixture builds a Fixture with a credential-less engine (file:// needs none).
+func NewFixture(t *testing.T, seed map[string]string) *Fixture {
 	t.Helper()
-	return NewWithCred(t, seed, nil)
+	return NewFixtureWithCred(t, seed, nil)
 }
 
-// NewWithCred is New with the engine holding cred.
-func NewWithCred(t *testing.T, seed map[string]string, cred repo.Credential) *Fixture {
+// NewFixtureWithCred is NewFixture with the engine holding cred.
+func NewFixtureWithCred(t *testing.T, seed map[string]string, cred repo.Credential) *Fixture {
 	t.Helper()
 	origin := NewRemote(t, WithSeed(seed, "seed"))
 	return &Fixture{

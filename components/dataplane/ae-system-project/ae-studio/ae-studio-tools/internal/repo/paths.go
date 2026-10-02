@@ -80,7 +80,7 @@ func TrashDir(root string) string { return filepath.Join(root, "trash") }
 //deadcode:keep wired in Task 2.7
 func TmpDir(root string) string { return filepath.Join(root, "tmp") }
 
-// RepoDir is <root>/repos/<orgId>/<projectId>/<repoSlug> — the renamable
+// RepoDir is <root>/repos/<org>/<project>/<repoSlug> — the renamable
 // parent holding git/ and repo.lock.
 //
 //deadcode:keep wired in Task 2.7

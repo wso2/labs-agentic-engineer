@@ -26,9 +26,9 @@ package repo
 import (
 	"context"
 	"errors"
-	"net/url"
-	"strings"
 	"time"
+
+	"github.com/wso2/aep/ae-studio-tools/internal/repo/naming"
 )
 
 // Sentinel errors.
@@ -47,7 +47,7 @@ var (
 
 // Workspace is the read and write surface of the engine. All methods
 // are safe for concurrent use; cross-process integrity on the shared bare
-// mirror is arbitrated by a per-repo flock (design D8) and origin push-CAS.
+// mirror is arbitrated by a per-repo flock and origin push-CAS.
 type Workspace interface {
 	// Head resolves `at` to a commit SHA. "" resolves the default-branch tip,
 	// "tags/vN" (or a bare tag/branch name) resolves and peels the ref —
@@ -107,16 +107,16 @@ type RepoRef struct {
 	DefaultBranch string
 }
 
-// Owner is the `<owner>/<repo>` name parsed from CloneURL, for log lines;
-// "" when the URL has no such shape. It never includes userinfo.
+// FullName is the `<owner>/<repo>` name from CloneURL, for log lines; "" when
+// the URL is not a GitHub HTTPS URL. It never includes userinfo.
 //
 //deadcode:keep wired in Task 2.7
-func (r RepoRef) Owner() string {
-	u, err := url.Parse(r.CloneURL)
-	if err != nil {
+func (r RepoRef) FullName() string {
+	owner, name := naming.OwnerRepoFromURL(r.CloneURL)
+	if owner == "" {
 		return ""
 	}
-	return strings.TrimSuffix(strings.Trim(u.Path, "/"), ".git")
+	return owner + "/" + name
 }
 
 // Entry is one blob of a tree listing.
@@ -145,9 +145,7 @@ type CommitResult struct {
 }
 
 // GitIdentity is a git author/committer/tagger identity. Field names and
-// json tags are byte-identical to the historical sourcecontrol.GitIdentity (now an
-// alias of this type) so the GitHub client's wire marshaling is unchanged.
-// Date is optional (git raw or RFC2822/ISO format accepted by git); empty
+// json tags match the GitHub wire shape. Date is optional (git raw or RFC2822/ISO format accepted by git); empty
 // means "now".
 type GitIdentity struct {
 	Name  string `json:"name"`

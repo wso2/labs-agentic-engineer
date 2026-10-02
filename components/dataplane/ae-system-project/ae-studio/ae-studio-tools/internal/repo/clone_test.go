@@ -30,7 +30,7 @@ import (
 // bare clone must be able to push (no leftover remote.origin.mirror), carry no
 // refs/pull/*, and see its own pushed commit on the next fetch.
 func TestBareCloneThenMutatePushes(t *testing.T) {
-	fx := New(t, seedFiles())
+	fx := NewFixtureWithCred(t, seedFiles(), repo.StaticToken(testToken))
 	fx.Origin.mustExec(t, nil, nil, "update-ref", "refs/pull/1/head", fx.Origin.HeadSHA(t))
 	ctx := context.Background()
 
@@ -72,9 +72,12 @@ func TestBareCloneThenMutatePushes(t *testing.T) {
 	}
 
 	line := logs.String()
-	for _, want := range []string{"repo.clone", "mode=bare", "ms="} {
+	for _, want := range []string{"repo.clone", "repo=", "mode=bare", "ms="} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("clone log %q lacks %q", line, want)
 		}
+	}
+	if strings.Contains(line, testToken) {
+		t.Fatalf("clone log leaks the token: %q", line)
 	}
 }

@@ -329,10 +329,10 @@ func (e *Engine) remoteGit(ctx context.Context, ref RepoRef, opts execOpts, args
 
 // ----- mirror lifecycle -----
 
-// ensureMirror guarantees the bare mirror exists, cloning it atomically on
-// demand: `git clone --bare` into tmp/ staging, an explicit
-// refspec fetch, gc.auto=0 + repack.writeBitmaps=false stamped, then os.Rename into the canonical path —
-// a crash mid-clone leaves only tmp/ debris, never a half-populated mirror.
+// ensureMirror guarantees the bare clone exists, cloning it atomically on
+// demand: `git clone --bare` into tmp/ staging, an explicit refspec fetch,
+// gc.auto=0 + repack.writeBitmaps=false stamped, then os.Rename into the
+// canonical path — a crash mid-clone leaves only tmp/ debris, never a half-populated mirror.
 // Returns whether this call cloned (a fresh clone is fresh — callers skip the
 // next fetch).
 //
@@ -393,7 +393,7 @@ func (e *Engine) ensureMirror(ctx context.Context, ref RepoRef, p repoPaths) (cl
 		}
 		return false, fmt.Errorf("repo: publish clone: %w", err)
 	}
-	slog.InfoContext(ctx, "repo.clone", "repo", ref.Owner(), "mode", "bare", "ms", time.Since(started).Milliseconds())
+	slog.InfoContext(ctx, "repo.clone", "repo", ref.FullName(), "mode", "bare", "ms", time.Since(started).Milliseconds())
 	return true, nil
 }
 

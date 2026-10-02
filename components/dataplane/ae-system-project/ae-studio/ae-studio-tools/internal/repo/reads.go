@@ -40,32 +40,6 @@ func (e *Engine) Head(ctx context.Context, ref RepoRef, at string) (string, erro
 	return sha, err
 }
 
-// HeadLocal implements Workspace: Head("") WITHOUT the origin fetch — the
-// default-branch tip the shared mirror already holds. The mirror is
-// authoritative for every commit this platform writes (Mutate pushes AND
-// updates the mirror before returning), so this is correctness-equivalent to
-// Head("") for platform-written content — only out-of-band pushes are missed
-// until the next fetch-bearing op. Intended for hot-path reads (the status
-// poll) that must not pay a per-read network round-trip. ensureMirror still
-// clones on first-ever access (a stat when the mirror is already present).
-//
-//deadcode:keep wired in Task 2.7
-func (e *Engine) HeadLocal(ctx context.Context, ref RepoRef) (string, error) {
-	p, err := e.pathsFor(ref)
-	if err != nil {
-		return "", err
-	}
-	if _, err := e.ensureMirror(ctx, ref, p); err != nil {
-		return "", err
-	}
-	release, err := e.locks.RLock(ctx, p.lockPath)
-	if err != nil {
-		return "", err
-	}
-	defer release()
-	return e.resolveCommit(ctx, ref, p, "")
-}
-
 // List implements Workspace: every blob (recursive) at `at`.
 //
 //deadcode:keep wired in Task 2.7

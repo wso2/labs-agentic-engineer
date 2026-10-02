@@ -26,7 +26,7 @@ import (
 )
 
 func TestHeadAtBranchTagAndRawSha(t *testing.T) {
-	fx := New(t, seedFiles())
+	fx := NewFixture(t, seedFiles())
 	ctx := context.Background()
 
 	sha1 := fx.Origin.HeadSHA(t)
@@ -64,7 +64,7 @@ func TestHeadAtBranchTagAndRawSha(t *testing.T) {
 }
 
 func TestListReadFileReadBundle(t *testing.T) {
-	fx := New(t, seedFiles())
+	fx := NewFixture(t, seedFiles())
 	ctx := context.Background()
 	head := fx.Origin.HeadSHA(t)
 
@@ -128,7 +128,7 @@ func TestListAndReadBundle_HostilePathsVerbatim(t *testing.T) {
 		"specs/仕様-résumé ノート.md": "unicode content\n",
 		`specs/we"ird\path.md`:   "quoted content\n",
 	}
-	fx := New(t, seed)
+	fx := NewFixture(t, seed)
 	ctx := context.Background()
 
 	entries, _, err := fx.Engine.List(ctx, fx.Ref, "")
@@ -168,7 +168,7 @@ func TestListAndReadBundle_HostilePathsVerbatim(t *testing.T) {
 }
 
 func TestReadsAtTagAndShaSeeOldTree(t *testing.T) {
-	fx := New(t, seedFiles())
+	fx := NewFixture(t, seedFiles())
 	ctx := context.Background()
 	sha1 := fx.Origin.HeadSHA(t)
 	fx.Origin.Tag(t, "v1", "release v1")
@@ -190,7 +190,7 @@ func TestReadsAtTagAndShaSeeOldTree(t *testing.T) {
 }
 
 func TestRawShaReadsUseLocalObjects(t *testing.T) {
-	fx := New(t, seedFiles())
+	fx := NewFixture(t, seedFiles())
 	ctx := context.Background()
 	sha1 := mustHead(t, fx, "") // primes the mirror
 
@@ -214,7 +214,7 @@ func TestRawShaReadsUseLocalObjects(t *testing.T) {
 }
 
 func TestInvalidPathSegmentsRejected(t *testing.T) {
-	fx := New(t, seedFiles())
+	fx := NewFixture(t, seedFiles())
 	bad := fx.Ref
 	bad.Org = "../escape"
 	if _, err := fx.Engine.Head(context.Background(), bad, ""); err == nil {

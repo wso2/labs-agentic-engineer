@@ -33,7 +33,7 @@ import (
 )
 
 func TestMutateCrashBetweenCommitTreeAndPush(t *testing.T) {
-	fx := New(t, seedFiles())
+	fx := NewFixture(t, seedFiles())
 	base := fx.Origin.HeadSHA(t)
 	write := func(tx repo.Tx) error {
 		tx.Write("specs/requirements/prd.md", []byte("crashed write\n"))

@@ -29,7 +29,7 @@ import (
 var fastRetry = repo.RetryPolicy{Attempts: 4, Backoff: []time.Duration{time.Millisecond, 2 * time.Millisecond}}
 
 func TestMutateWriteAndDeleteLandOnOrigin(t *testing.T) {
-	fx := New(t, seedFiles())
+	fx := NewFixture(t, seedFiles())
 	ctx := context.Background()
 
 	res, err := fx.Engine.Mutate(ctx, fx.Ref, func(tx repo.Tx) error {
@@ -60,7 +60,7 @@ func TestMutateWriteAndDeleteLandOnOrigin(t *testing.T) {
 }
 
 func TestMutateNoChange(t *testing.T) {
-	fx := New(t, seedFiles())
+	fx := NewFixture(t, seedFiles())
 	ctx := context.Background()
 	base := fx.Origin.HeadSHA(t)
 
@@ -84,7 +84,7 @@ func TestMutateNoChange(t *testing.T) {
 }
 
 func TestMutateFnErrorAbortsWithoutRetry(t *testing.T) {
-	fx := New(t, seedFiles())
+	fx := NewFixture(t, seedFiles())
 	base := fx.Origin.HeadSHA(t)
 	sentinel := errors.New("domain conflict: stale baseSha")
 	calls := 0
@@ -106,7 +106,7 @@ func TestMutateFnErrorAbortsWithoutRetry(t *testing.T) {
 }
 
 func TestMutateBaseSnapshotFeedsPreconditions(t *testing.T) {
-	fx := New(t, seedFiles())
+	fx := NewFixture(t, seedFiles())
 	base := fx.Origin.HeadSHA(t)
 
 	_, err := fx.Engine.Mutate(context.Background(), fx.Ref, func(tx repo.Tx) error {
@@ -138,7 +138,7 @@ func TestMutateBaseSnapshotFeedsPreconditions(t *testing.T) {
 }
 
 func TestMutateCASRetryLandsAfterOriginAdvance(t *testing.T) {
-	fx := New(t, seedFiles())
+	fx := NewFixture(t, seedFiles())
 	ctx := context.Background()
 	calls := 0
 
@@ -172,7 +172,7 @@ func TestMutateCASRetryLandsAfterOriginAdvance(t *testing.T) {
 }
 
 func TestMutateRetryExhaustionSurfacesNonFastForward(t *testing.T) {
-	fx := New(t, seedFiles())
+	fx := NewFixture(t, seedFiles())
 	calls := 0
 
 	_, err := fx.Engine.Mutate(context.Background(), fx.Ref, func(tx repo.Tx) error {
@@ -191,7 +191,7 @@ func TestMutateRetryExhaustionSurfacesNonFastForward(t *testing.T) {
 }
 
 func TestMutateCommitIdentity(t *testing.T) {
-	fx := New(t, seedFiles())
+	fx := NewFixture(t, seedFiles())
 	res, err := fx.Engine.Mutate(context.Background(), fx.Ref, func(tx repo.Tx) error {
 		tx.Write("a.md", []byte("a\n"))
 		return nil
@@ -232,7 +232,7 @@ func TestSleepJitteredZeroBaseNoPanic(t *testing.T) {
 }
 
 func TestMutateRejectsHostilePaths(t *testing.T) {
-	fx := New(t, seedFiles())
+	fx := NewFixture(t, seedFiles())
 	for _, path := range []string{"", "/abs.md", "../escape.md", "a/../../b.md", ".git/hooks/x"} {
 		_, err := fx.Engine.Mutate(context.Background(), fx.Ref, func(tx repo.Tx) error {
 			tx.Write(path, []byte("x"))
