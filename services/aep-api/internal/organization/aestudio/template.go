@@ -36,8 +36,6 @@ import (
 var templateYAML []byte
 
 // Template parses the embedded ae-studio ResourceType.
-//
-//deadcode:keep consumed by the installer in Task 1.15 (the phase that wires organization/aestudio)
 func Template() (*openchoreo.ResourceType, error) {
 	var doc map[string]any
 	if err := yaml.Unmarshal(templateYAML, &doc); err != nil {
@@ -56,8 +54,6 @@ func Template() (*openchoreo.ResourceType, error) {
 
 // TemplateHash is the first 16 hex characters of the sha256 of the embedded
 // bytes; it stamps the installed ResourceType so a changed template is noticed.
-//
-//deadcode:keep consumed by the installer in Task 1.15 (the phase that wires organization/aestudio)
 func TemplateHash() string {
 	s := sha256.Sum256(templateYAML)
 	return hex.EncodeToString(s[:])[:16]

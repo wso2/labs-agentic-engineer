@@ -30,13 +30,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/clients/thundersvc"
 )
 
-// StudioConverger starts a converge of the org's AE Studio (ticket 08) and
-// returns at once; the converge runs detached from the caller's request.
-// Implemented by aestudio.Service.
-type StudioConverger interface {
-	Trigger(ctx context.Context, org string)
-}
-
 // webhookSecretBytes is the entropy of the org's GitHub webhook secret.
 const webhookSecretBytes = 32
 

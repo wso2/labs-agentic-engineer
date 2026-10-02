@@ -387,8 +387,6 @@ type AEStudioConfig struct {
 }
 
 // Missing returns the env names Ensure needs and lacks, in a stable order.
-//
-//deadcode:keep consumed by the AE Studio converger (Task 1.15); unwired until then
 func (c AEStudioConfig) Missing() []string {
 	var missing []string
 	for _, f := range []struct{ env, val string }{

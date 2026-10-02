@@ -63,6 +63,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/ops"
 	opshttpapi "github.com/wso2/aep/aep-api/internal/ops/httpapi"
 	"github.com/wso2/aep/aep-api/internal/organization"
+	"github.com/wso2/aep/aep-api/internal/organization/aestudio"
 	orghttpapi "github.com/wso2/aep/aep-api/internal/organization/httpapi"
 	authn "github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
@@ -200,6 +201,20 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// the root of its own deployment pipeline, resolved at use (never cached),
 	// so every package that writes or reads a project's bindings shares it.
 	writeTargets := openchoreo.NewWriteTargets(ocConfig)
+	// The Resource-model client (ResourceTypes, Resources, their bindings):
+	// AE Studio's converge, the dependency catalogs and provisioners, and the
+	// deploy path all author through this one.
+	resourceClient := openchoreo.NewResourceClient(ocConfig)
+	// Cell-namespace provisioning. OpenChoreo 1.2.0 stopped materializing a
+	// project's namespace as a side effect of creating the Project — a
+	// ProjectReleaseBinding per environment does it now, and nothing creates
+	// those for us. Without this the project is created, reports Ready, and
+	// then fails every deploy with "namespace ... not found".
+	//
+	// Shared with provisioningSvc's Pipeline (below): the same client also
+	// resolves the org's own deployment pipeline for /dependencies/environments'
+	// promotion ordering, so it is built once here instead of twice.
+	projectCellClient := openchoreo.NewProjectCellClient(ocConfig)
 	// GitSecret client lands the per-org build git credential on the workflow
 	// plane (via OC → OpenBao → SecretReference). Used by BuildCredentialsService
 	// for both cloud (CP/WP split) and local k3d — one unified path.
@@ -267,9 +282,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// The org secrets (the GitHub PAT, the webhook secret, the two org
 	// clients) are written as a new reference per write, one write per
 	// (org, secret) at a time across replicas. Nil with delivery off.
+	orgSecretRepo := organization.NewOrgSecretRepository(db)
 	var orgSecretWriter *organization.OrgSecretWriter
 	if smClient != nil {
-		orgSecretWriter = organization.NewOrgSecretWriter(smClient, organization.NewOrgSecretRepository(db), organization.NewOrgSecretLock(db), time.Now)
+		orgSecretWriter = organization.NewOrgSecretWriter(smClient, orgSecretRepo, organization.NewOrgSecretLock(db), time.Now)
 		secretRefWriter.WithOrgSecretWriter(orgSecretWriter)
 	}
 
@@ -331,15 +347,31 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// `priced` reads the same rate card the usage stamps are priced from.
 	modelConnections := organization.NewModelConnectionService(orgModelConnRepo, orgAnthropicRepo, credStore, in.RateStamper).
 		WithSecretRefWriter(secretRefWriter)
+	// Each org's AE Studio (ticket 08): its status reads go out as the
+	// caller, its converge as aep-api's own identity wherever the install
+	// impersonates orgs (aeStudioConvergeOC).
+	aeStudio := aestudio.New(aestudio.Deps{
+		Config:      cfg.AEStudio,
+		OrgSecrets:  orgSecretRepo,
+		Orgs:        orgRepo,
+		Profiles:    idpRepo,
+		Connections: modelConnections,
+		GitHub:      credService,
+		StatusOC: aestudio.OC{
+			Projects: projectClient, Cells: projectCellClient, Targets: writeTargets,
+			Resources: resourceClient, SecretRefs: modelAccessSecretRefClient,
+		},
+		ConvergeOC: aeStudioConvergeOC(ocConfig),
+	})
 	// How the org's agents run: the model connection, the coding runtime and
 	// the Claude subscription. ONE instance, read by two callers: /config
 	// projects and saves it, and coding dispatch copies the runtime onto the run
 	// it launches.
 	agentSettings := organization.NewAgentSettingsService(orgAgentSettingsRepo, orgRepo, anthropicCredService, modelConnections, agentsCardRepo,
 		runnableAgentRuntimes(cfg)).
-		// No converger until the aestudio installer is wired (Task 1.15): a
-		// key save writes its reference and rolls nothing.
-		WithStudioConverger(nil)
+		// A save that changes what the pod reads (the Default key, the
+		// connection) rolls the org's AE Studio.
+		WithStudioConverger(aeStudio)
 
 	// Task JWT manager — RS256. The public key is published on
 	// /auth/external/jwks.json. Used to mint BFF MCP tokens
@@ -464,16 +496,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// configService can call back into it to mirror env-var edits onto
 	// the OC Component's workflow params.
 	projectService := projects.NewProjectService(projectClient, repoService, webhookRegService, artifactSvcGit, executionRepo)
-	// Cell-namespace provisioning. OpenChoreo 1.2.0 stopped materializing a
-	// project's namespace as a side effect of creating the Project — a
-	// ProjectReleaseBinding per environment does it now, and nothing creates
-	// those for us. Without this the project is created, reports Ready, and
-	// then fails every deploy with "namespace ... not found".
-	//
-	// Shared with provisioningSvc's Pipeline (below): the same client also
-	// resolves the org's own deployment pipeline for /dependencies/environments'
-	// promotion ordering, so it is built once here instead of twice.
-	projectCellClient := openchoreo.NewProjectCellClient(ocConfig)
 	projectService.SetProjectCellProvisioner(projectCellClient)
 	projectService.SetWriteTargets(writeTargets)
 	// Build/deploy stage sources for the status poll (#184): the milestone-run
@@ -966,9 +988,8 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		idpService,
 		organization.PlatformIDPConfig{Issuer: cfg.PlatformIDP.Issuer, JWKSURL: cfg.PlatformIDP.JWKSURL},
 	).WithAgentSettings(agentSettings).
-		// No converger until the aestudio installer is wired (Task 1.15): the
-		// gitpat submit ensures the clients and logs ae_studio_not_configured.
-		WithAEStudio(orgSecretWriter, nil)
+		// The gitpat submit writes the org secrets, then converges AE Studio.
+		WithAEStudio(orgSecretWriter, aeStudio)
 
 	// Strict-handler feature dependencies — everything the contract-first
 	// /api/v1 edge serves (internal/api/handlers_*.go).
@@ -996,7 +1017,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// org published endpoints + platform resource types (OC Resource-model
 	// client). The provisioning surface (value/param collection + the
 	// `provision` gate issue funnel) is wired in the Phase-6 block further below.
-	resourceClient := openchoreo.NewResourceClient(ocConfig)
 	// The resolver collaborators (repo locator + design reader) let the endpoint
 	// catalog discover each org-service's real OpenAPI contract + repo coords
 	// (endpoint spec discovery). Wired here so the A3 MCP tool projects them;

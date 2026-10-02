@@ -89,7 +89,6 @@ func (r *orgSecretRepository) Get(ctx context.Context, ocOrgID string, s OrgSecr
 	return &ref, nil
 }
 
-//deadcode:keep wired by Task 1.15 (the converger reads the set secrets)
 func (r *orgSecretRepository) List(ctx context.Context, ocOrgID string) ([]OrgSecretRef, error) {
 	var rows []orgSecretRefRow
 	if err := r.db.WithContext(ctx).Table("org_secrets").

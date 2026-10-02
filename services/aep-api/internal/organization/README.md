@@ -31,6 +31,7 @@ flowchart LR
 | `disconnectgithub` | disconnect cascade for the org's git provider | `POST .../config/git-provider/disconnect` |
 | `rotateidp` `discoveridp` | rotate the publisher client secret / OIDC discovery | `POST .../config:rotate-idp-secret` etc. |
 | `listorgs` | enumerate orgs (tenant-gate carve-out — no org ctx) | `GET /organizations` |
+| `aestudio` | install and converge the org's AE Studio (ticket 08): its desired state, the Ensure over OpenChoreo, the status state machine | `StudioConverger` · `AEStudioStatusReader` |
 
 *Flat in the domain root, outside the slices: the credential / anthropic / agent-settings /
 model-connection / idp services, the model key rename watcher (`ModelKeyRename`), and the
@@ -47,6 +48,8 @@ S2S credentials-refresh.*
 | `RateCard` | needs | `platform/modelcost` (the boot-time `Stamper`) — whether `(host, model)` is priced, for `llm.priced` |
 | `AgentSettingsService` | offers | `delivery` (the run's runtime) |
 | `CredentialsRefreshService` | offers | the S2S runner-refresh op (edge projects it onto `igen.RefreshResponse`) |
+| `StudioConverger` · `AEStudioStatusReader` (+ `AEStudioStatus`) | declared here, implemented by `aestudio` | the gitpat submit and a key or connection save trigger a converge; `GET /ae-studio` reads the state |
+| `aestudio.OC` | needs | OpenChoreo — Project, PRB, ResourceType, Resource, RRB, SecretReference reads; two client sets (status reads as the caller, the converge as aep-api's own identity where the install impersonates orgs) |
 
 ## Owns
 - `organizations` (+ `thunder_org_uuid`, `llm_disconnected_at`), `org_credentials`,
@@ -158,6 +161,19 @@ S2S credentials-refresh.*
   missing or disagreeing OU): the connection is saved, and saving the token again retries every failure
   but the OU ones, whose message names the operator action. OUs compare as UUIDs, whatever their case. With no converger or no secrets
   delivery the submit succeeds and logs `ae_studio_not_configured`. Nothing waits for the pod.
+- **AE Studio converges on drift, single-flight per org** (`aestudio`, ticket 08 §9-§10). The Ensure
+  is Project `ae-system` → PRB in the write target (`WriteTargets.Resolve(org, "ae-system")`) →
+  ResourceType `ae-studio` (PUT in place, annotated `aep.wso2.com/ae-studio-template-hash`, never
+  deleted) → Resource `ae-studio` → wait for its release → RRB `ae-studio-<env>` pinned to it. Each
+  step reads first and writes only what differs. Drift compares the live objects projected onto the
+  keys aep-api writes, so OpenChoreo's defaults, labels and status are never drift. A Trigger during a
+  converge makes it run once more. The converge keeps the request's values but not its cancellation,
+  and writes as aep-api's own identity: where the install has an M2M identity and impersonates orgs,
+  its clients never pass the caller's JWT through (`app.convergeOCConfig`). It takes no lock and
+  ensures no client: org secrets are read by reference (`spec.data` copied, never recomputed), and a
+  container's `rev` hashes the reference names it reads, so a save rolls the pod and a no-op save
+  does not. The agent's key entry exists only while the `default-key` row does. A failed converge
+  answers `failed` for 30 s unless the desired state changes.
 - **`EnsureClient` keeps Thunder and the vault agreeing** (`client_ensure.go`, 06 §5): a created app is
   stored with the secret Thunder returns once; a found app with no reference row is healed with a new
   secret written to the vault before Thunder's `PUT` (inside the repoint, so a failed `PUT` rolls the

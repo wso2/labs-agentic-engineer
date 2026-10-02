@@ -176,6 +176,17 @@ func (s *ModelConnectionService) Effective(ctx context.Context, ocOrgID string) 
 	return row.Connection(), key, true, nil
 }
 
+// Connection returns the org's connection without its key; ok=false when
+// the org has none. It never reads the key's bytes, for a caller that only
+// passes the non-secret fields on (the AE Studio pod's AE_MODEL_CONNECTION).
+func (s *ModelConnectionService) Connection(ctx context.Context, ocOrgID string) (modelconn.Connection, bool, error) {
+	row, err := s.stored(ctx, ocOrgID)
+	if err != nil || row == nil {
+		return modelconn.Connection{}, false, err
+	}
+	return row.Connection(), true, nil
+}
+
 // storedKey reads the connection key's bytes. A read error or missing bytes
 // is "none", not an error: the row says connected, so it is logged loudly.
 func (s *ModelConnectionService) storedKey(ctx context.Context, ocOrgID string) (string, bool) {
