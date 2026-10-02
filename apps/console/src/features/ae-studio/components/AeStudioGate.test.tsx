@@ -19,7 +19,7 @@
 // @vitest-environment jsdom
 
 import type { ReactNode } from "react";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 import { http, HttpResponse } from "msw";
@@ -58,6 +58,9 @@ vi.mock("@tanstack/react-router", () => ({
 const { AeStudioGate } = await import("./AeStudioGate");
 const { AeStudioBanner } = await import("./AeStudioBanner");
 const { aeStudioKeys } = await import("../api/queries");
+const { useConnectGitHubPat, useDisconnectGitProvider, useSaveAiSettings } = await import(
+  "../../settings/api/queries"
+);
 
 const server = setupServer();
 
@@ -97,8 +100,20 @@ function renderWithProviders(ui: ReactNode, { route = "/" }: { route?: string } 
   );
 }
 
+// One provisioning poll interval (2 s) on the fake clock, plus the answer.
+async function pollOnce() {
+  await act(() => vi.advanceTimersByTimeAsync(2000));
+}
+
+// Resolves once the first GET /ae-studio has answered. The console shows while
+// it is in flight, so a refetch before this would cancel the first read.
+async function firstAnswer() {
+  await waitFor(() => expect(queryClient.getQueryData(aeStudioKeys.all)).toBeDefined());
+}
+
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => {
+  vi.useRealTimers();
   cleanup();
   queryClient.clear();
   server.resetHandlers();
@@ -107,21 +122,33 @@ afterAll(() => server.close());
 
 describe("AeStudioGate", () => {
   it("holds the whole console on the session's first provisioning, then shows it at ready", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     mockAeStudio(["provisioning", "provisioning", "ready"]);
     renderWithProviders(<AeStudioGate><div>console</div></AeStudioGate>);
     expect(await screen.findByText("Upgrading AE Studio")).toBeInTheDocument();
     expect(screen.getByText("This takes a minute or two.")).toBeInTheDocument();
     expect(screen.queryByText("console")).not.toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText("console")).toBeInTheDocument(), { timeout: 7000 });
+    await pollOnce();
+    expect(screen.getByText("Upgrading AE Studio")).toBeInTheDocument();
+    await pollOnce();
+    expect(await screen.findByText("console")).toBeInTheDocument();
+  });
+
+  it("a first provisioning that fails ends the hold on the failed page", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    mockAeStudio(["provisioning", "failed"]);
+    renderWithProviders(<AeStudioGate><div>console</div></AeStudioGate>, { route: "/projects" });
+    expect(await screen.findByText("Upgrading AE Studio")).toBeInTheDocument();
+    await pollOnce();
+    expect(await screen.findByText("AE Studio couldn't start")).toBeInTheDocument();
+    expect(screen.queryByText("Upgrading AE Studio")).not.toBeInTheDocument();
   });
 
   it("a later provisioning shows a banner, not a hold", async () => {
     mockAeStudio(["ready", "provisioning"]);
     renderWithProviders(<AeStudioGate><AeStudioBanner /><div>console</div></AeStudioGate>);
     expect(await screen.findByText("console")).toBeInTheDocument();
-    // The console shows while the first read is in flight, so wait for its
-    // answer: a refetch now would cancel it and make `provisioning` the first.
-    await waitFor(() => expect(queryClient.getQueryData(aeStudioKeys.all)).toBeDefined());
+    await firstAnswer();
     expect(screen.queryByText("AE Studio is restarting…")).not.toBeInTheDocument();
     await act(() => queryClient.refetchQueries({ queryKey: aeStudioKeys.all }));
     expect(await screen.findByText("AE Studio is restarting…")).toBeInTheDocument();
@@ -149,4 +176,49 @@ describe("AeStudioGate", () => {
     renderWithProviders(<AeStudioGate><div>settings</div></AeStudioGate>, { route: "/settings/credentials" });
     expect(await screen.findByText("settings")).toBeInTheDocument();
   });
+});
+
+// Each org config write rolls AE Studio. The write must re-read its state, or
+// the cached `ready` stands for up to 30 s and the restart is never shown.
+describe("after the user's own config write", () => {
+  function SaveConnection() {
+    const save = useSaveAiSettings();
+    return <button onClick={() => save.mutate({ agents: { runtime: "claude-code" } })}>write</button>;
+  }
+  function SubmitToken() {
+    const connect = useConnectGitHubPat();
+    return <button onClick={() => connect.mutate({ pat: "test-token" })}>write</button>;
+  }
+  function Disconnect() {
+    const disconnect = useDisconnectGitProvider();
+    return <button onClick={() => disconnect.mutate()}>write</button>;
+  }
+  const writes = {
+    "a model connection save": SaveConnection,
+    "a GitHub token submit": SubmitToken,
+    "a GitHub disconnect": Disconnect,
+  };
+
+  it.each(Object.keys(writes) as (keyof typeof writes)[])(
+    "%s re-reads AE Studio, so a provisioning answer shows the restart banner",
+    async (write) => {
+      mockAeStudio(["ready", "provisioning"]);
+      server.use(
+        http.patch(`${BASE}/config`, () => HttpResponse.json({})),
+        http.post(`${BASE}/config/git-provider/disconnect`, () => new HttpResponse(null, { status: 204 })),
+        http.get(`${BASE}/config`, () => HttpResponse.json({})),
+      );
+      const Writer = writes[write];
+      renderWithProviders(
+        <AeStudioGate>
+          <AeStudioBanner />
+          <Writer />
+        </AeStudioGate>,
+      );
+      await firstAnswer();
+      expect(screen.queryByText("AE Studio is restarting…")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "write" }));
+      expect(await screen.findByText("AE Studio is restarting…")).toBeInTheDocument();
+    },
+  );
 });

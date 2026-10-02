@@ -1575,7 +1575,7 @@ container.
 | First visit while it upgrades | the whole console waits: **Upgrading AE Studio** · *This takes a minute or two.* |
 | Restarting after a settings change | a banner above the page: **AE Studio is restarting…** — the console stays usable |
 | Failed to start | full page: **AE Studio couldn't start** · **Try again** · **Open Settings** — Settings stays reachable |
-| Onboarding's **Set up skills** step | waits inline: **Getting AE Studio ready…**; a failure shows *AE Studio couldn't start* in the step's error area, with **Retry** and **Continue anyway** |
+| Onboarding's **Set up skills** step | waits inline: **Getting AE Studio ready…**; a failure shows **AE Studio couldn't start** in the step's error area, then *Your skills catalogue can't be set up until it does. You can retry now, or continue and run **Sync** from Settings → Skills later — agents won't have skills until it succeeds.*, with **Retry** and **Continue anyway** |
 
 ## Resources
 

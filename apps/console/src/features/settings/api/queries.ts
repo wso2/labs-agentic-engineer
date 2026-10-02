@@ -16,10 +16,11 @@
  * under the License.
  */
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { components } from "../../../generated/aep-api";
 import { client } from "../../../api/client";
 import { configKeys, resourceKeys, skillsKeys } from "./keys";
+import { aeStudioKeys } from "../../ae-studio/api/queries";
 import { ApiRequestError, apiErrorMessage } from "../../../api/errors";
 
 type ConfigProjection = components["schemas"]["ConfigProjection"];
@@ -30,6 +31,14 @@ type UpdateSkillInput = components["schemas"]["UpdateSkillInput"];
 
 function errorMessage(error: unknown, fallback: string): string {
   return apiErrorMessage(error, fallback);
+}
+
+// Every org config write rolls the org's AE Studio (its pod reads the GitHub
+// token and the model connection), so the cached state is stale the moment
+// one succeeds: re-read it, which is what lets the gate show the restart and
+// keeps onboarding's skills step from starting on a `ready` from before.
+function invalidateAeStudio(queryClient: QueryClient) {
+  void queryClient.invalidateQueries({ queryKey: aeStudioKeys.all });
 }
 
 // --- Org config: GitHub + the model connection (+ IDP, read-only here — out of scope
@@ -64,6 +73,7 @@ export function useSaveAiSettings() {
     },
     onSuccess: (data: ConfigProjection) => {
       queryClient.setQueryData(configKeys.all, data);
+      invalidateAeStudio(queryClient);
     },
   });
 }
@@ -102,6 +112,7 @@ export function useConnectGitHubPat() {
     },
     onSuccess: (data: ConfigProjection) => {
       queryClient.setQueryData(configKeys.all, data);
+      invalidateAeStudio(queryClient);
     },
   });
 }
@@ -119,6 +130,7 @@ export function useDisconnectGitProvider() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: configKeys.all });
+      invalidateAeStudio(queryClient);
     },
   });
 }

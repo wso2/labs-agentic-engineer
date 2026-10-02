@@ -29,14 +29,23 @@ import { useSyncSkills } from "../../settings/api/queries";
 import { useAeStudio } from "../../ae-studio/api/queries";
 
 // The model connect just before this step rolls the org's AE Studio, so the
-// step waits inline for it to be ready before bootstrapping. Once released
-// (ready, absent, or a read the step cannot act on), it stays on the bootstrap
-// for the rest of the step: a later restart must not unmount a sync mid-flight.
+// step waits inline for it to be ready before bootstrapping. It releases only
+// on a settled answer: while a read is in flight the cached state may predate
+// the connect (the config write invalidates it, and a `ready` from before a
+// disconnect would otherwise start the sync against a rolling pod). Once
+// released (ready, absent, or a read the step cannot act on), it stays on the
+// bootstrap for the rest of the step: a later restart must not unmount a sync
+// mid-flight.
 export function SkillsBootstrapStep({ onComplete }: { onComplete: () => void }) {
   const studio = useAeStudio();
   const state = studio.data?.state;
   const released = useRef(false);
-  if (!studio.isPending && state !== "provisioning" && state !== "failed") {
+  if (
+    !studio.isPending &&
+    !studio.isFetching &&
+    state !== "provisioning" &&
+    state !== "failed"
+  ) {
     released.current = true;
   }
 
@@ -48,8 +57,11 @@ export function SkillsBootstrapStep({ onComplete }: { onComplete: () => void }) 
       <StepError
         message="AE Studio couldn't start"
         onRetry={() => void studio.refetch()}
+        retrying={studio.isFetching}
         onContinue={onComplete}
-      />
+      >
+        Your skills catalogue can't be set up until it does.
+      </StepError>
     );
   } else {
     content = (
@@ -108,7 +120,9 @@ function SkillsBootstrap({ onComplete }: { onComplete: () => void }) {
         onRetry={() => sync.mutate()}
         retrying={sync.isPending}
         onContinue={onComplete}
-      />
+      >
+        The skills catalogue couldn't be set up.
+      </StepError>
     );
   }
 
@@ -141,18 +155,21 @@ function SkillsBootstrap({ onComplete }: { onComplete: () => void }) {
   );
 }
 
-// The step's error area: what went wrong, then Retry or carry on without
-// skills (Settings → Skills → Sync is the standing fallback).
+// The step's error area: what went wrong, why it matters (children), then
+// Retry or carry on without skills (Settings → Skills → Sync is the standing
+// fallback).
 function StepError({
   message,
   onRetry,
   retrying = false,
   onContinue,
+  children,
 }: {
   message: string;
   onRetry: () => void;
   retrying?: boolean;
   onContinue: () => void;
+  children: ReactNode;
 }) {
   return (
     <>
@@ -160,9 +177,9 @@ function StepError({
         {message}
       </Alert>
       <Typography variant="body2" color="text.secondary">
-        The skills catalogue couldn't be set up. You can retry now, or
-        continue and run <strong>Sync</strong> from Settings → Skills
-        later — agents won't have skills until it succeeds.
+        {children} You can retry now, or continue and run{" "}
+        <strong>Sync</strong> from Settings → Skills later — agents won't
+        have skills until it succeeds.
       </Typography>
       <Box sx={{ display: "flex", gap: 1.5 }}>
         <Button variant="contained" onClick={onRetry} disabled={retrying}>

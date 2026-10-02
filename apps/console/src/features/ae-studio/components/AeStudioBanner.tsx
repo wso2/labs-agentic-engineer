@@ -20,12 +20,14 @@ import { Alert } from "@wso2/oxygen-ui";
 import { useAeStudioRestarting } from "./AeStudioGate";
 
 // The shell's notice while AE Studio restarts after a settings change. The
-// console stays usable; only pod-backed surfaces wait.
+// console stays usable; only pod-backed surfaces wait. A plain Alert, not
+// Oxygen's NotificationBanner: that one always renders a close button, and
+// this notice is not the user's to dismiss — it ends when the restart does.
 export function AeStudioBanner() {
   const restarting = useAeStudioRestarting();
   if (!restarting) return null;
   return (
-    <Alert severity="info" sx={{ borderRadius: 0 }}>
+    <Alert severity="info" sx={{ borderRadius: 0, flexShrink: 0 }}>
       AE Studio is restarting…
     </Alert>
   );

@@ -41,7 +41,7 @@ vi.mock("../../settings/api/queries", () => ({
 
 // The skills step waits on AE Studio; here it is already up.
 vi.mock("../../ae-studio/api/queries", () => ({
-  useAeStudio: () => ({ data: { state: "ready" }, isPending: false, isError: false, refetch: vi.fn() }),
+  useAeStudio: () => ({ data: { state: "ready" }, isPending: false, isFetching: false, isError: false, refetch: vi.fn() }),
 }));
 
 vi.mock("../../../auth/SessionContext", () => ({

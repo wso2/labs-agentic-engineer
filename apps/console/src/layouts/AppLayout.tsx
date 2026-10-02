@@ -438,13 +438,25 @@ export function AppLayout() {
               (nav, header, chat) stays up and the reader can retry in place.
               Navigating to another page clears it. Routes carry no error
               component of their own, so every route's throw reaches this one. */}
-          <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+          <Box
+            sx={{
+              flexGrow: 1,
+              minWidth: 0,
+              minHeight: 0,
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
             {/* Above the page, inside the shell: shown only while AE Studio
-                restarts after a settings change; the page stays usable. */}
+                restarts after a settings change; the page stays usable. The
+                column gives the page what the banner leaves, so a full-height
+                page (the spec workspace) shrinks instead of overflowing. */}
             <AeStudioBanner />
-            <ErrorBoundary label="This page" resetKey={pathname}>
-              <Outlet />
-            </ErrorBoundary>
+            <Box sx={{ flex: 1, minHeight: 0 }}>
+              <ErrorBoundary label="This page" resetKey={pathname}>
+                <Outlet />
+              </ErrorBoundary>
+            </Box>
           </Box>
           {/* Horizontal Collapse gives the sidebar-style slide; unmountOnExit
               keeps the closed panel out of the tree (no idle polling). */}

@@ -31,7 +31,12 @@ vi.mock("../../settings/api/queries", () => ({
 }));
 
 // The step's read of AE Studio, replaced: each test sets what it answers.
-let studio: { data: AeStudio | undefined; isPending: boolean; isError: boolean };
+let studio: {
+  data: AeStudio | undefined;
+  isPending: boolean;
+  isFetching: boolean;
+  isError: boolean;
+};
 const refetch = vi.fn();
 vi.mock("../../ae-studio/api/queries", () => ({
   useAeStudio: () => ({ ...studio, refetch }),
@@ -39,11 +44,16 @@ vi.mock("../../ae-studio/api/queries", () => ({
 
 const { SkillsBootstrapStep } = await import("./SkillsBootstrapStep");
 
-function answer(state: AeStudio["state"] | "pending") {
-  studio =
-    state === "pending"
-      ? { data: undefined, isPending: true, isError: false }
-      : { data: { state }, isPending: false, isError: false };
+// `pending`: no answer yet. `stale-ready`: a cached `ready` from before the
+// connect, its re-read (the config write's invalidation) still in flight.
+function answer(state: AeStudio["state"] | "pending" | "stale-ready") {
+  if (state === "pending") {
+    studio = { data: undefined, isPending: true, isFetching: true, isError: false };
+  } else if (state === "stale-ready") {
+    studio = { data: { state: "ready" }, isPending: false, isFetching: true, isError: false };
+  } else {
+    studio = { data: { state }, isPending: false, isFetching: false, isError: false };
+  }
 }
 
 const onComplete = vi.fn();
@@ -65,7 +75,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("SkillsBootstrapStep while AE Studio starts", () => {
-  it.each(["provisioning", "pending"] as const)(
+  it.each(["provisioning", "pending", "stale-ready"] as const)(
     "waits inline while %s, without starting the bootstrap",
     async (state) => {
       answer(state);
@@ -76,6 +86,26 @@ describe("SkillsBootstrapStep while AE Studio starts", () => {
       expect(mutate).not.toHaveBeenCalled();
     },
   );
+
+  it("does not release on a stale ready after a reconnect: it waits for the re-read", async () => {
+    answer("stale-ready");
+    const view = renderStep();
+    const rerender = () =>
+      view.rerender(
+        <OxygenUIThemeProvider theme={OxygenTheme}>
+          <SkillsBootstrapStep onComplete={onComplete} />
+        </OxygenUIThemeProvider>,
+      );
+    answer("provisioning");
+    rerender();
+    await flushDeferred();
+    expect(screen.getByText("Getting AE Studio ready…")).toBeInTheDocument();
+    expect(mutate).not.toHaveBeenCalled();
+    answer("ready");
+    rerender();
+    await flushDeferred();
+    expect(mutate).toHaveBeenCalledTimes(1);
+  });
 
   it("proceeds as today once AE Studio is ready", async () => {
     answer("provisioning");
@@ -97,6 +127,8 @@ describe("SkillsBootstrapStep while AE Studio starts", () => {
     renderStep();
     await flushDeferred();
     expect(screen.getByText("AE Studio couldn't start")).toBeInTheDocument();
+    expect(screen.getByText(/Your skills catalogue can't be set up until it does\./)).toBeInTheDocument();
+    expect(screen.queryByText(/The skills catalogue couldn't be set up/)).not.toBeInTheDocument();
     expect(mutate).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(refetch).toHaveBeenCalledTimes(1);
