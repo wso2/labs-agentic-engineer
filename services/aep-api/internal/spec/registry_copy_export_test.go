@@ -18,8 +18,10 @@ package spec
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 )
 
 func warningCodes(ws []Warning) map[string]bool {
@@ -94,5 +96,49 @@ func TestIsDependencyFilePath(t *testing.T) {
 		if got := IsDependencyFilePath(p); got != want {
 			t.Errorf("IsDependencyFilePath(%q) = %v, want %v", p, got, want)
 		}
+	}
+}
+
+// contract.path is model output. A document path that leaves the dependency's
+// own directory (traversal, a subdir, the definition itself) is refused with a
+// warning before anything is fetched, and no file is returned for it.
+func TestCompleteDependencies_ProviderDocumentPathStaysInItsDirectory(t *testing.T) {
+	for _, contractPath := range []string{
+		"../../../../.github/workflows/evil.yml",
+		"../other-dep/openapi.yaml",
+		"nested/openapi.yaml",
+		"./openapi.yaml",
+		"/etc/openapi.yaml",
+		"dependency.json",
+	} {
+		t.Run(contractPath, func(t *testing.T) {
+			fetched := 0
+			fetch := func(context.Context, string) ([]byte, error) {
+				fetched++
+				return []byte("openapi: 3.0.3\n"), nil
+			}
+			cp, _ := json.Marshal(contractPath)
+			pending := WriteOp{Path: stubPath, Content: `{"name":"currency-service","resource":{"name":"currency-service","provider":"P","contract":{"type":"openapi","path":` + string(cp) + `,"origin":"provider"}},"provenance":{"sourceUrl":"https://docs.example.com/openapi.yaml"}}`}
+			if _, err := parseDependencyDefinitionJSON("currency-service", pending.Content); err != nil {
+				t.Skipf("the definition parser already refuses this path: %v", err)
+			}
+			got, warns := CompleteDependencies(context.Background(), nil, fetch, "acme", []WriteOp{pending})
+			if fetched != 0 || len(got) != 0 {
+				t.Fatalf("fetched=%d completed=%+v: an escaping document path must not be fetched or returned", fetched, got)
+			}
+			if len(warns) != 1 || warns[0].Code != WarningProviderDocumentUnavailable || warns[0].Path != stubPath {
+				t.Fatalf("warnings = %+v, want one %s on the stub", warns, WarningProviderDocumentUnavailable)
+			}
+		})
+	}
+}
+
+// The registry side gets the same guard: a record whose contract path's file
+// name is a traversal is not rendered.
+func TestRenderRegistryCopy_RefusesAnEscapingDocumentPath(t *testing.T) {
+	rec := registeredCurrency()
+	rec.Resource.Contract.Path = "currency-service/.."
+	if _, _, err := renderRegistryCopy(DependencyDefinition{Name: "currency-service"}, *rec, time.Now()); err == nil {
+		t.Fatal("want an error for a document path that is not a file in the dependency directory")
 	}
 }

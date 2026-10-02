@@ -74,18 +74,27 @@ func authenticateAEStudio(ctx context.Context, verifier *auth.PublisherTokenVeri
 	return tenant.WithBoundOrg(ctx, claims.OrgHandle), nil
 }
 
-func (s *internalServer) GetAeStudioProjectRepository(ctx context.Context, request igen.GetAeStudioProjectRepositoryRequestObject) (igen.GetAeStudioProjectRepositoryResponseObject, error) {
+// lookupAEStudioProject resolves one of org's projects to its repository.
+// A project org does not own is a 404 with no data, the same as an unknown one.
+func (s *internalServer) lookupAEStudioProject(ctx context.Context, org, project string) (aestudio.ProjectRepository, error) {
 	if s.deps.AEStudioRepositories == nil {
-		return nil, errServiceUnavailable("project repository lookup not configured")
+		return aestudio.ProjectRepository{}, errServiceUnavailable("project repository lookup not configured")
 	}
-	org := tenant.BoundOrgFromContext(ctx)
-	repo, err := s.deps.AEStudioRepositories.Lookup(ctx, org, request.ProjectName)
+	repo, err := s.deps.AEStudioRepositories.Lookup(ctx, org, project)
 	if errors.Is(err, aestudio.ErrProjectNotFound) {
-		return nil, errNotFound("project not found")
+		return aestudio.ProjectRepository{}, errNotFound("project not found")
 	}
 	if err != nil {
-		slog.ErrorContext(ctx, "ae-studio project repository lookup failed", "org", org, "project", request.ProjectName, "error", err)
-		return nil, errInternal("failed to resolve project repository")
+		slog.ErrorContext(ctx, "ae-studio project repository lookup failed", "org", org, "project", project, "error", err)
+		return aestudio.ProjectRepository{}, errInternal("failed to resolve project repository")
+	}
+	return repo, nil
+}
+
+func (s *internalServer) GetAeStudioProjectRepository(ctx context.Context, request igen.GetAeStudioProjectRepositoryRequestObject) (igen.GetAeStudioProjectRepositoryResponseObject, error) {
+	repo, err := s.lookupAEStudioProject(ctx, tenant.BoundOrgFromContext(ctx), request.ProjectName)
+	if err != nil {
+		return nil, err
 	}
 	return igen.GetAeStudioProjectRepository200JSONResponse{
 		Owner:         repo.Owner,
@@ -102,6 +111,12 @@ func (s *internalServer) CompleteAeStudioDependencies(ctx context.Context, reque
 	if request.Body == nil {
 		return nil, apierr.BadRequest("request body required")
 	}
+	org := tenant.BoundOrgFromContext(ctx)
+	// The project gates the call: its repository is not needed here, but a
+	// project outside the token's org gets nothing completed.
+	if _, err := s.lookupAEStudioProject(ctx, org, request.Body.Project); err != nil {
+		return nil, err
+	}
 	writes := make([]spec.WriteOp, 0, len(request.Body.Writes))
 	seen := map[string]bool{}
 	for _, w := range request.Body.Writes {
@@ -115,7 +130,7 @@ func (s *internalServer) CompleteAeStudioDependencies(ctx context.Context, reque
 		seen[w.Path] = true
 		writes = append(writes, spec.WriteOp{Path: w.Path, Content: w.Content})
 	}
-	completed, warnings := s.deps.DependencyCompleter(ctx, tenant.BoundOrgFromContext(ctx), writes)
+	completed, warnings := s.deps.DependencyCompleter(ctx, org, writes)
 	return igen.CompleteAeStudioDependencies200JSONResponse(toIgenCompletions(completed, warnings)), nil
 }
 

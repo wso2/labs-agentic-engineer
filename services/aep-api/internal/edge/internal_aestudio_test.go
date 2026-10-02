@@ -22,6 +22,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -138,7 +139,7 @@ func TestInternalGate_AEStudio(t *testing.T) {
 			if rec.Code != tc.want {
 				t.Fatalf("status = %d, want %d (body %s)", rec.Code, tc.want, rec.Body)
 			}
-			if tc.want != 200 && strings.Contains(rec.Body.String(), "acme-gh") {
+			if tc.want != 200 && strings.Contains(rec.Body.String(), "-gh") {
 				t.Fatalf("a refused request leaked the repository: %s", rec.Body)
 			}
 		})
@@ -215,13 +216,26 @@ const (
 	completionsPath = "/internal/v1/ae-studio/dependency-completions"
 )
 
+// completionsBody is a request for project greeter with one stub per path.
 func completionsBody(paths ...string) string {
+	return completionsBodyFor("greeter", paths...)
+}
+
+func completionsBodyFor(project string, paths ...string) string {
 	writes := make([]map[string]string, 0, len(paths))
 	for _, p := range paths {
 		writes = append(writes, map[string]string{"path": p, "content": `{"name":"payments","resource":{"ref":"payments","name":"payments"}}`})
 	}
-	b, _ := json.Marshal(map[string]any{"writes": writes})
+	b, _ := json.Marshal(map[string]any{"project": project, "writes": writes})
 	return string(b)
+}
+
+// aeStudioProjects owns greeter for acme and ledger for evil.
+func aeStudioProjects() *fakeProjectRepos {
+	return &fakeProjectRepos{rows: map[string]aestudio.ProjectRepository{
+		"acme/greeter": {Owner: "acme-gh", Repo: "greeter", DefaultBranch: "main", CloneURL: "https://github.com/acme-gh/greeter.git"},
+		"evil/ledger":  {Owner: "evil-gh", Repo: "ledger", DefaultBranch: "main", CloneURL: "https://github.com/evil-gh/ledger.git"},
+	}}
 }
 
 // complete-ae-studio-dependencies rides the same gate as the repository
@@ -233,6 +247,7 @@ func TestInternalGate_AEStudioDependencyCompletions(t *testing.T) {
 	build := func(mut func(*InternalDeps)) http.Handler {
 		deps := stack.deps
 		deps.DependencyCompleter = completer.complete
+		deps.AEStudioRepositories = aeStudioProjects()
 		deps.SREHandoff = auth.NewSREHandoffVerifier("s3cr3t", "acme")
 		if mut != nil {
 			mut(&deps)
@@ -241,6 +256,11 @@ func TestInternalGate_AEStudioDependencyCompletions(t *testing.T) {
 	}
 	on := build(nil)
 	noCompleter := build(func(d *InternalDeps) { d.DependencyCompleter = nil })
+	noLookup := build(func(d *InternalDeps) { d.AEStudioRepositories = nil })
+	sixtyFive := make([]string, 65)
+	for i := range sixtyFive {
+		sixtyFive[i] = "specs/design/dependencies/d" + strconv.Itoa(i) + "/dependency.json"
+	}
 	token := func(aud, ouHandle string) string {
 		return "Bearer " + stack.sign(auth.PublisherClaims{
 			RegisteredClaims: jwt.RegisteredClaims{
@@ -272,6 +292,14 @@ func TestInternalGate_AEStudioDependencyCompletions(t *testing.T) {
 		{name: "unknown field", body: `{"writes":[{"path":"` + depStubPath + `","content":"{}","baseSha":"x"}]}`, bearer: publisher, want: 400},
 		{name: "body over the 1 MiB cap", body: completionsBody(depStubPath)[:10] + strings.Repeat(" ", 1<<20), bearer: publisher, want: 413},
 		{name: "no completer configured", h: noCompleter, bearer: publisher, want: 503},
+		// The project gates the call (the same answer as the repository lookup).
+		{name: "another org's project", body: completionsBodyFor("ledger", depStubPath), bearer: publisher, want: 404},
+		{name: "unknown project", body: completionsBodyFor("nope", depStubPath), bearer: publisher, want: 404},
+		{name: "project breaks the slug pattern", body: completionsBodyFor("Not_A_Slug", depStubPath), bearer: publisher, want: 400},
+		{name: "no project", body: `{"writes":[{"path":"` + depStubPath + `","content":"{}"}]}`, bearer: publisher, want: 400},
+		{name: "no lookup configured", h: noLookup, bearer: publisher, want: 503},
+		{name: "64 writes", body: completionsBody(sixtyFive[:64]...), bearer: publisher, want: 200},
+		{name: "65 writes", body: completionsBody(sixtyFive...), bearer: publisher, want: 400},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -302,6 +330,9 @@ func TestInternalGate_AEStudioDependencyCompletions(t *testing.T) {
 			if tc.want != 200 && len(completer.orgs) != calls {
 				t.Fatalf("a refused request reached the completer")
 			}
+			if tc.want != 200 && strings.Contains(rec.Body.String(), "-gh") {
+				t.Fatalf("a refused request leaked a repository: %s", rec.Body)
+			}
 		})
 	}
 	for _, org := range completer.orgs {
@@ -318,6 +349,7 @@ func TestInternalRoutes_AEStudioDependencyCompletions(t *testing.T) {
 	completer := &fakeCompleter{}
 	deps := stack.deps
 	deps.DependencyCompleter = completer.complete
+	deps.AEStudioRepositories = aeStudioProjects()
 	h := NewHandler(AppParams{InternalDeps: deps})
 
 	req := httptest.NewRequest(http.MethodPost, completionsPath, strings.NewReader(completionsBody(depStubPath)))

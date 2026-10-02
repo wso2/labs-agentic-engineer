@@ -205,7 +205,11 @@ func renderRegistryCopy(stub DependencyDefinition, rec RegisteredResource, now t
 		def.Resource.Contract = &ResourceContract{Type: rec.Resource.Contract.Type, Path: file, Origin: DependencyContractOriginRegistry}
 		sum := sha256.Sum256([]byte(rec.Document))
 		def.Provenance = &ResourceProvenance{Registry: rec.Resource.Contract.Path, SHA256: fmt.Sprintf("%x", sum), ReadOn: now.Format(time.RFC3339)}
-		files[DesignDir+"/"+dependencyDirPrefix+stub.Name+"/"+file] = rec.Document
+		docPath, ok := dependencyDocumentPath(stub.Name, file)
+		if !ok {
+			return "", nil, fmt.Errorf("registry contract path %q names no file a project can hold", rec.Resource.Contract.Path)
+		}
+		files[docPath] = rec.Document
 	} else {
 		def.Resource.Contract = nil
 	}
@@ -228,6 +232,19 @@ func dependencyFileDir(p string) (string, bool) {
 		return "", false
 	}
 	return rest, true
+}
+
+// dependencyDocumentPath returns the repo path of a dependency's document:
+// file directly in specs/design/dependencies/<name>/, canonical, and never the
+// definition itself. ok is false for anything else (a traversal, a subdir, an
+// absolute path), so a completion never lands a file outside its dependency.
+func dependencyDocumentPath(name, file string) (string, bool) {
+	dir := DesignDir + "/" + dependencyDirPrefix + name
+	p := dir + "/" + file
+	if file == "" || file == DependencyDesignFile || validatePath(p) != nil || path.Dir(p) != dir {
+		return "", false
+	}
+	return p, true
 }
 
 // Warning codes the provider-document fetch attaches.
@@ -268,7 +285,14 @@ func completeProviderDocuments(ctx context.Context, fetch func(context.Context, 
 			continue
 		}
 		c := def.Resource.Contract
-		docPath := DesignDir + "/" + dependencyDirPrefix + def.Name + "/" + c.Path
+		docPath, ok := dependencyDocumentPath(def.Name, c.Path)
+		if !ok {
+			// contract.path is model output: a path that leaves the
+			// dependency's own directory is refused before anything is fetched.
+			warnings = append(warnings, Warning{Path: w.Path, Code: WarningProviderDocumentUnavailable,
+				Message: fmt.Sprintf("contract.path %q must name a file directly in this dependency's directory; the document was not fetched and the dependency reads needs-contract", c.Path)})
+			continue
+		}
 		if inBatch[docPath] {
 			continue // the agent landed the document itself (a small one); nothing to fetch
 		}
