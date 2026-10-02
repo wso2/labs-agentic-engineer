@@ -240,12 +240,9 @@ func TestStatus_StuckBindingFails(t *testing.T) {
 			f.clock.advance(notReadyBound)
 			f.withNotReady("ResourcesProgressing", f.clock.now()).clock.advance(time.Minute)
 		}, StateProvisioning},
-		{"degraded right after a converge is the old release's", func(f *fixture) {
-			f.withNotReady("ResourcesDegraded", f.clock.now()).clock.advance(settleGrace - time.Second)
+		{"rendering failed right after a converge is the old release's", func(f *fixture) {
+			f.withNotReady("RenderingFailed", f.clock.now()).clock.advance(settleGrace - time.Second)
 		}, StateProvisioning},
-		{"degraded once settled", func(f *fixture) {
-			f.withNotReady("ResourcesDegraded", f.clock.now()).clock.advance(settleGrace)
-		}, StateFailed},
 		{"rendering failed once settled", func(f *fixture) {
 			f.withNotReady("RenderingFailed", f.clock.now()).clock.advance(settleGrace)
 		}, StateFailed},
@@ -277,7 +274,7 @@ func TestStatus_StuckWithoutConvergeOnRecord(t *testing.T) {
 	if st, _ := f.svc.Status(userCtx(), "default"); st.State != StateFailed {
 		t.Fatalf("state %s", st.State)
 	}
-	f.withNotReady("ResourcesDegraded", f.clock.now())
+	f.withNotReady("RenderingFailed", f.clock.now())
 	if st, _ := f.svc.Status(userCtx(), "default"); st.State != StateFailed {
 		t.Fatalf("state %s", st.State)
 	}

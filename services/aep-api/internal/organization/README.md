@@ -198,11 +198,10 @@ S2S credentials-refresh.*
   answers `failed` for 30 s unless the desired state changes (one that failed before it had a desired
   state matches any). A missing ProjectReleaseBinding is drift. A binding with no drift that is not
   Ready answers `provisioning` until it is stuck, then `failed` (logged value-free as
-  `ae_studio.status_failed` with an OC reason code): a terminal Ready reason (`ResourcesDegraded`,
-  which covers CrashLoopBackOff, ImagePullBackOff and an unschedulable pod once the Deployment stops
-  progressing, or a release OC cannot render or own) once a minute has passed since this replica's
+  `ae_studio.status_failed` with an OC reason code): a terminal Ready reason (`RenderingFailed`,
+  `InvalidReleaseConfiguration` or `ReleaseOwnershipConflict`: a release OC cannot render or own) once a minute has passed since this replica's
   last successful converge, or not Ready for longer than `notReadyBound` (10 min, above the pod's
-  200 s startup budget) counted from the later of that converge and the Ready condition's last
+  200 s startup budget; this is how a stuck pod, CrashLoopBackOff, ImagePullBackOff or unschedulable, reaches `failed`, as OC reports no distinct reason for it) counted from the later of that converge and the Ready condition's last
   transition. Nothing is converged for it; a save that changes the desired state starts the clock
   again.
 - **`EnsureClient` keeps Thunder and the vault agreeing** (`client_ensure.go`, 06 §5): a created app is

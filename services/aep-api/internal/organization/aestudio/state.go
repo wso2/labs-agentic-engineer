@@ -117,13 +117,12 @@ func (s *Service) status(ctx context.Context, org string) (Status, error) {
 	return provisioning, nil
 }
 
-// terminalReadyReasons are the Ready=False reasons OC gives a binding that
-// waiting will not fix: a degraded data-plane object (a Deployment past its
-// progress deadline, a replica failure, or pods that never became available
-// after the rollout: CrashLoopBackOff, ImagePullBackOff, Unschedulable), or
-// a release OC cannot render or own.
+// terminalReadyReasons are the Ready=False reasons OC gives a binding whose
+// release it cannot render or own, which waiting will not fix. OC never
+// reports a data-plane failure (CrashLoopBackOff, ImagePullBackOff, an
+// unschedulable pod) as a distinct reason: those stay not Ready and reach
+// failed through notReadyBound instead.
 var terminalReadyReasons = map[string]bool{
-	"ResourcesDegraded":           true,
 	"RenderingFailed":             true,
 	"InvalidReleaseConfiguration": true,
 	"ReleaseOwnershipConflict":    true,
