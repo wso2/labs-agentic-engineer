@@ -82,11 +82,29 @@ func newClient(baseURL, pat string) *Client {
 	return &Client{baseURL: baseURL, pat: pat, http: &http.Client{Timeout: requestTimeout}}
 }
 
+// User is the gitpat user as GET /user describes them. Name and Email are
+// empty when the user has not made them public.
+type User struct {
+	Login string
+	ID    int64
+	Name  string
+	Email string
+}
+
 // Whoami answers GET /user: the login and numeric id of the gitpat's user.
 func (c *Client) Whoami(ctx context.Context) (string, int64, error) {
+	u, err := c.User(ctx)
+	if err != nil {
+		return "", 0, err
+	}
+	return u.Login, u.ID, nil
+}
+
+// User answers GET /user: the gitpat's user, with name and email when public.
+func (c *Client) User(ctx context.Context) (User, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/user", nil)
 	if err != nil {
-		return "", 0, fmt.Errorf("github request: %w", err)
+		return User{}, fmt.Errorf("github request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.pat)
 	req.Header.Set("Accept", "application/vnd.github+json")
@@ -94,23 +112,25 @@ func (c *Client) Whoami(ctx context.Context) (string, int64, error) {
 	resp, err := c.http.Do(req)
 	if err != nil {
 		// *url.Error names the method and URL; neither carries the token.
-		return "", 0, fmt.Errorf("github call: %w", err)
+		return User{}, fmt.Errorf("github call: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if err := statusErr(resp, time.Now()); err != nil {
-		return "", 0, err
+		return User{}, err
 	}
 	var user struct {
 		Login string `json:"login"`
 		ID    int64  `json:"id"`
+		Name  string `json:"name"`
+		Email string `json:"email"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxBodyBytes)).Decode(&user); err != nil {
-		return "", 0, fmt.Errorf("github user: %w", err)
+		return User{}, fmt.Errorf("github user: %w", err)
 	}
 	if user.Login == "" || user.ID == 0 {
-		return "", 0, errors.New("github user: login or id missing")
+		return User{}, errors.New("github user: login or id missing")
 	}
-	return user.Login, user.ID, nil
+	return User{Login: user.Login, ID: user.ID, Name: user.Name, Email: user.Email}, nil
 }
 
 // statusErr maps a non-2xx answer: GitHub signals rate limiting with 403 or

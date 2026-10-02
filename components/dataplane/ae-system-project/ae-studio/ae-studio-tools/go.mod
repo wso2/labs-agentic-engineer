@@ -7,6 +7,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/oapi-codegen/runtime v1.4.2
 	golang.org/x/sync v0.22.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

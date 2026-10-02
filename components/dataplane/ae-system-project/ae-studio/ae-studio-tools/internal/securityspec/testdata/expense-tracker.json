@@ -1,0 +1,49 @@
+{
+  "version": 3,
+  "permissions": [
+    {
+      "resource": "claims",
+      "component": "expense-api",
+      "description": "Expense claims and their approval",
+      "actions": [
+        { "handle": "read", "description": "See own claims" },
+        { "handle": "read-all", "description": "See every claim" },
+        { "handle": "submit", "description": "Create and send a claim" },
+        { "handle": "approve", "description": "Approve a submitted claim" },
+        { "handle": "reject", "description": "Reject a submitted claim" }
+      ]
+    },
+    {
+      "resource": "reports",
+      "component": "expense-api",
+      "actions": [
+        { "handle": "read", "description": "Monthly totals" },
+        { "handle": "export", "description": "Download CSV" }
+      ]
+    }
+  ],
+  "groups": [
+    { "name": "Employees", "description": "Everyone on payroll" }
+  ],
+  "roles": [
+    {
+      "name": "Employee",
+      "description": "Submits and follows their own claims.",
+      "stories": [1, 2],
+      "grants": ["claims:read", "claims:submit"],
+      "assignTo": ["Employees"]
+    },
+    {
+      "name": "Approver",
+      "description": "Approves or rejects submitted claims and reads monthly reports.",
+      "stories": [3, 7],
+      "grants": ["claims:read", "claims:read-all", "claims:approve", "claims:reject", "reports:read"],
+      "assignTo": ["Finance"],
+      "assignableBy": ["Approver"]
+    }
+  ],
+  "testUsers": [
+    { "username": "test-employee", "roles": ["Employee"] },
+    { "username": "test-approver", "roles": ["Approver"] }
+  ]
+}
