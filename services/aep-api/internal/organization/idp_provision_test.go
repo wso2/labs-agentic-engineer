@@ -92,6 +92,8 @@ func (r *memIDPRepo) UpdateProfileColumns(_ context.Context, _ *OrganizationIDPP
 			row.PublisherClientSecret = memColStr(v)
 		case "publisher_secret_ref":
 			row.PublisherSecretRef = memColStr(v)
+		case "publisher_thunder_app_id":
+			row.PublisherThunderAppID = memColStr(v)
 		case "updated_at":
 			if t, ok := v.(time.Time); ok {
 				row.UpdatedAt = t

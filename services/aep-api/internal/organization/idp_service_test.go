@@ -58,30 +58,40 @@ type fakeThunder struct {
 	ensureCalls []ensureCall
 	deleteCalls []string
 	regenCalls  []string
+	// storedIDs is the stored Thunder entity id each Delete/Regenerate got.
+	storedIDs []string
 }
 
-type ensureCall struct{ orgHandle, orgOUID string }
+type ensureCall struct{ orgHandle, orgOUID, storedID string }
 
 var _ thundersvc.Client = (*fakeThunder)(nil)
 
-func (f *fakeThunder) EnsurePublisherApp(ctx context.Context, orgHandle, orgOUID string) (string, string, bool, error) {
-	f.ensureCalls = append(f.ensureCalls, ensureCall{orgHandle, orgOUID})
-	if f.ensureFn == nil {
-		return "cid-" + orgHandle, "secret-" + orgHandle, true, nil
+// EnsurePublisherApp answers through ensureFn; the entity id it reports is
+// "app-<org>", so a test can see the id recorded on the profile.
+func (f *fakeThunder) EnsurePublisherApp(ctx context.Context, orgHandle, orgOUID, storedID string) (thundersvc.OrgApp, error) {
+	f.ensureCalls = append(f.ensureCalls, ensureCall{orgHandle, orgOUID, storedID})
+	clientID, secret, created, err := "cid-"+orgHandle, "secret-"+orgHandle, true, error(nil)
+	if f.ensureFn != nil {
+		clientID, secret, created, err = f.ensureFn(ctx, orgHandle, orgOUID)
 	}
-	return f.ensureFn(ctx, orgHandle, orgOUID)
+	if err != nil {
+		return thundersvc.OrgApp{}, err
+	}
+	return thundersvc.OrgApp{EntityID: "app-" + orgHandle, ClientID: clientID, Secret: secret, Created: created}, nil
 }
 
-func (f *fakeThunder) DeletePublisherApp(ctx context.Context, orgHandle string) (bool, error) {
+func (f *fakeThunder) DeletePublisherApp(ctx context.Context, orgHandle, storedID string) (bool, error) {
 	f.deleteCalls = append(f.deleteCalls, orgHandle)
+	f.storedIDs = append(f.storedIDs, storedID)
 	if f.deleteFn == nil {
 		return true, nil
 	}
 	return f.deleteFn(ctx, orgHandle)
 }
 
-func (f *fakeThunder) RegenerateClientSecret(ctx context.Context, orgHandle string) (string, error) {
+func (f *fakeThunder) RegenerateClientSecret(ctx context.Context, orgHandle, storedID string) (string, error) {
 	f.regenCalls = append(f.regenCalls, orgHandle)
+	f.storedIDs = append(f.storedIDs, storedID)
 	if f.regenFn == nil {
 		return "rotated-" + orgHandle, nil
 	}

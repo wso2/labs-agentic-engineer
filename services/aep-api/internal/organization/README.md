@@ -128,6 +128,10 @@ S2S credentials-refresh.*
   `secret_ref_name` while the console JWT is on ctx. A missing or disabled `SecretRefWriter` returns
   an error (Build 503) and does not touch Thunder. `EnsureOrgPublisher` on the deployment path still
   swallows SM-API errors. Coding dispatch reads `secret_ref_name` only.
+- **Thunder org apps are read by their stored entity id.** Thunder has no lookup by clientId, so the
+  profile keeps `publisher_thunder_app_id` (and `studio_thunder_app_id` for `ae-studio-<org>`); every
+  ensure, rotate and delete passes it to `thundersvc`, which falls back to one full list scan only on a
+  miss. A revoke or IDP-kind switch clears it with the rest of the publisher columns.
 - **`OrgCatalogVaultKey` reconstructs a Registered External's org-catalog vault path from the
   request JWT `ouId`** — a read, not a second write. Used after aep-api restart when the
   process-local value plane is empty (ADR-0021). A missing `ouId` cannot invent a path.

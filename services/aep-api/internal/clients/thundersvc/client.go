@@ -26,10 +26,12 @@
 //
 // See docs/design/api-platform-integration.md §6.
 //
-//   - App naming convention: `aep-publisher-<orgHandle>`.
-//   - There is no OU UUID argument — every BFF caller passes the OC org
-//     handle and we look up the matching Thunder OU once at first call
-//     (cached on the client).
+//   - Org app naming: `aep-publisher-<orgHandle>` and `ae-studio-<orgHandle>`
+//     (clientId = name), registered in the org's OU.
+//   - Thunder has no lookup by name or clientId, so callers store each app's
+//     entity id and pass it back; a miss costs one full list scan (apps.go).
+//   - The publisher falls back to the default OU when the caller knows no
+//     org OU (looked up once, cached on the client).
 //
 // The system token has a TTL (Thunder default ~1h); the cache uses a
 // 30 s skew so concurrent callers don't all hit the slow path right
@@ -59,15 +61,13 @@ import (
 // existing client_id without creating a duplicate; repeating Delete
 // returns false when the app is gone.
 type Client interface {
-	// EnsurePublisherApp creates an OAuth2 app named
-	// "aep-publisher-{orgHandle}" if it doesn't already exist.
-	// Returns the clientId and (on creation only) the clientSecret —
-	// Thunder doesn't expose the secret on subsequent reads, so callers
-	// MUST persist it to OpenBao on the `created=true` branch. When
-	// `created=false`, clientSecret is empty — the caller should look
-	// it up in their secret store. When the secret was lost (e.g.
-	// OpenBao was wiped), use RegenerateClientSecret to issue a new
-	// one.
+	// EnsurePublisherApp makes sure the org's publisher app
+	// "aep-publisher-{orgHandle}" exists, looking it up by storedID (the
+	// entity id the caller recorded, "" when none) before one list scan.
+	// The returned OrgApp carries the entity id for the caller to store; its
+	// Secret is set only when Created — Thunder doesn't expose the secret on
+	// later reads, so callers MUST persist it on that branch. When the secret
+	// was lost (e.g. OpenBao was wiped), use RegenerateClientSecret.
 	//
 	// orgOUID is the org's Thunder OU id (the JWT `ouId`). The app is
 	// registered under that OU so its client_credentials token carries
@@ -75,7 +75,22 @@ type Client interface {
 	// check requires this. When orgOUID is empty the default OU is used
 	// (single-org / local dev), which only matches when the default OU
 	// is the org's OU.
-	EnsurePublisherApp(ctx context.Context, orgHandle, orgOUID string) (clientID, clientSecret string, created bool, err error)
+	EnsurePublisherApp(ctx context.Context, orgHandle, orgOUID, storedID string) (OrgApp, error)
+
+	// EnsureOrgApp finds the org application spec names (by spec.StoredID,
+	// else one list scan by clientId) or creates it under spec.OUID as an
+	// m2m client_credentials app whose tokens carry ouId/ouHandle. Secret is
+	// set only when Created. A found app is returned as is.
+	EnsureOrgApp(ctx context.Context, spec OrgAppSpec) (OrgApp, error)
+
+	// AppExists returns the entity id of the org application spec names, ""
+	// when there is none. It never creates.
+	AppExists(ctx context.Context, spec OrgAppSpec) (entityID string, err error)
+
+	// SetAppSecret makes Thunder hold this caller-chosen client secret for
+	// the app (GET + PUT), so the caller can store the secret first and only
+	// then hand it to Thunder.
+	SetAppSecret(ctx context.Context, entityID, secret string) error
 
 	// OUExists reports whether an organization unit with the given id exists
 	// in Thunder (GET /organization-units/{id} → 200 exists / 404 absent). It
@@ -85,16 +100,17 @@ type Client interface {
 	// a non-existent OU (Thunder 400 APP-1018 → runner cc-token invalid_client).
 	OUExists(ctx context.Context, ouID string) (bool, error)
 
-	// DeletePublisherApp deletes the publisher app for the given org.
-	// Returns true when the app existed and was deleted, false when it
-	// didn't exist (idempotent — both states are success).
-	DeletePublisherApp(ctx context.Context, orgHandle string) (bool, error)
+	// DeletePublisherApp deletes the publisher app for the given org, found
+	// by storedID before one list scan. Returns true when the app existed
+	// and was deleted, false when it didn't exist (idempotent — both states
+	// are success).
+	DeletePublisherApp(ctx context.Context, orgHandle, storedID string) (bool, error)
 
 	// RegenerateClientSecret issues a fresh client_secret for the
-	// existing publisher app. Returns the new secret. The caller MUST
-	// rotate it into OpenBao + redeploy any consumer pods that mounted
-	// the old value.
-	RegenerateClientSecret(ctx context.Context, orgHandle string) (string, error)
+	// existing publisher app, found by storedID before one list scan.
+	// Returns the new secret. The caller MUST rotate it into OpenBao +
+	// redeploy any consumer pods that mounted the old value.
+	RegenerateClientSecret(ctx context.Context, orgHandle, storedID string) (string, error)
 
 	// -- directory (groups + users) --------------------------------------
 	//
@@ -672,21 +688,22 @@ func (c *client) ouExists(ctx context.Context, token, ouID string) (bool, error)
 
 // -- EnsurePublisherApp ---------------------------------------------------
 
-func (c *client) EnsurePublisherApp(ctx context.Context, orgHandle, orgOUID string) (string, string, bool, error) {
+func (c *client) EnsurePublisherApp(ctx context.Context, orgHandle, orgOUID, storedID string) (OrgApp, error) {
 	if orgHandle == "" {
-		return "", "", false, fmt.Errorf("orgHandle required")
+		return OrgApp{}, fmt.Errorf("orgHandle required")
 	}
 	token, err := c.getSystemToken(ctx)
 	if err != nil {
-		return "", "", false, fmt.Errorf("getSystemToken: %w", err)
+		return OrgApp{}, fmt.Errorf("getSystemToken: %w", err)
 	}
 	appName := PublisherAppName(orgHandle)
 
-	internalID, existingClientID, err := c.findApp(ctx, token, appName)
+	internalID, err := c.findOrgApp(ctx, token, OrgAppSpec{Name: appName, StoredID: storedID})
 	if err != nil {
-		return "", "", false, fmt.Errorf("findApp %q: %w", appName, err)
+		return OrgApp{}, fmt.Errorf("find app %q: %w", appName, err)
 	}
-	if existingClientID != "" {
+	if internalID != "" {
+		existing := OrgApp{EntityID: internalID, ClientID: appName}
 		// The app exists. Self-heal its token claims first: an app registered
 		// before the token config named ouId/ouHandle mints tokens the
 		// publisher-token verifier refuses ("ouHandle claim missing"), and
@@ -694,7 +711,7 @@ func (c *client) EnsurePublisherApp(ctx context.Context, orgHandle, orgOUID stri
 		// client secret (ThunderID leaves an omitted secret untouched), so
 		// nothing has to be re-mirrored.
 		if err := c.ensurePublisherTokenClaims(ctx, token, internalID); err != nil {
-			return "", "", false, fmt.Errorf("publisher token claims %q: %w", appName, err)
+			return OrgApp{}, fmt.Errorf("publisher token claims %q: %w", appName, err)
 		}
 		// Then its OU: an app created under the wrong
 		// OU (e.g. the default OU, before this code registered under the
@@ -707,7 +724,7 @@ func (c *client) EnsurePublisherApp(ctx context.Context, orgHandle, orgOUID stri
 		if orgOUID == "" {
 			slog.WarnContext(ctx, "publisher app OU not verified — org OU unknown (falling back), token ouHandle may not match",
 				"appName", appName)
-			return existingClientID, "", false, nil
+			return existing, nil
 		}
 		currentOU, ouErr := c.appOUID(ctx, token, internalID)
 		if ouErr != nil {
@@ -715,12 +732,12 @@ func (c *client) EnsurePublisherApp(ctx context.Context, orgHandle, orgOUID stri
 			// keep the existing app so dispatch isn't blocked.
 			slog.WarnContext(ctx, "publisher app OU read failed — skipping OU self-heal",
 				"appName", appName, "appID", internalID, "error", ouErr)
-			return existingClientID, "", false, nil
+			return existing, nil
 		}
 		if currentOU == "" || currentOU == orgOUID {
 			slog.DebugContext(ctx, "publisher app already under correct OU",
 				"appName", appName, "ouID", currentOU)
-			return existingClientID, "", false, nil
+			return existing, nil
 		}
 		// Before a DESTRUCTIVE delete+recreate, confirm the target OU actually
 		// exists in Thunder. A stale/phantom orgOUID (a JWT carrying an OU that
@@ -732,36 +749,36 @@ func (c *client) EnsurePublisherApp(ctx context.Context, orgHandle, orgOUID stri
 		if exists, exErr := c.ouExists(ctx, token, orgOUID); exErr != nil {
 			slog.WarnContext(ctx, "publisher OU self-heal: could not verify the resolved org OU exists — keeping existing app, skipping destructive heal",
 				"appName", appName, "appID", internalID, "currentOU", currentOU, "orgOU", orgOUID, "error", exErr)
-			return existingClientID, "", false, nil
+			return existing, nil
 		} else if !exists {
 			slog.ErrorContext(ctx, "publisher OU self-heal: resolved org OU does NOT exist in Thunder — REFUSING destructive re-registration; keeping existing app under its (valid) current OU. The org's thunder_org_uuid is a stale/phantom ouId — fix the org→OU mapping.",
 				"appName", appName, "appID", internalID, "currentOU", currentOU, "phantomOrgOU", orgOUID)
-			return existingClientID, "", false, nil
+			return existing, nil
 		}
 		slog.InfoContext(ctx, "publisher app under wrong OU — re-registering under org OU",
 			"appName", appName, "appID", internalID, "currentOU", currentOU, "orgOU", orgOUID)
 		if _, derr := c.deleteApp(ctx, token, internalID); derr != nil {
 			// Thunder has been observed to return 5xx (SSE-5000) on delete
 			// even when the app was actually removed server-side. Don't abort
-			// the heal on that — re-check by name and, if the app is gone,
+			// the heal on that — re-read it by id and, if the app is gone,
 			// continue to recreate so the heal completes in a single dispatch
 			// (otherwise the org is left with no publisher app until the next
 			// run). Only a genuinely-still-present app is a hard failure.
-			if _, stillID, ferr := c.findApp(ctx, token, appName); ferr != nil || stillID != "" {
-				return "", "", false, fmt.Errorf("heal publisher OU: delete %q (id=%s): %w", appName, internalID, derr)
+			if _, still, gerr := c.getApp(ctx, token, internalID); gerr != nil || still {
+				return OrgApp{}, fmt.Errorf("heal publisher OU: delete %q (id=%s): %w", appName, internalID, derr)
 			}
 			slog.WarnContext(ctx, "publisher app delete returned an error but the app is gone — continuing to recreate",
 				"appName", appName, "appID", internalID, "deleteErr", derr)
 		}
-		id, secret, cerr := c.createApp(ctx, token, appName, orgOUID)
+		app, cerr := c.createOrgApp(ctx, token, appName, orgOUID)
 		if cerr != nil {
 			// The old app is gone; the next dispatch re-enters the create
 			// path below and provisions fresh. Surface the error loudly.
-			return "", "", false, fmt.Errorf("heal publisher OU: recreate %q under OU %s: %w", appName, orgOUID, cerr)
+			return OrgApp{}, fmt.Errorf("heal publisher OU: %w", cerr)
 		}
 		slog.InfoContext(ctx, "publisher app re-registered under org OU (secret rotated)",
 			"appName", appName, "orgOU", orgOUID)
-		return id, secret, true, nil
+		return app, nil
 	}
 
 	// Register the app under the org's own OU so the cc token's `ouHandle`
@@ -771,18 +788,12 @@ func (c *client) EnsurePublisherApp(ctx context.Context, orgHandle, orgOUID stri
 	if ouID == "" {
 		ouID, err = c.getDefaultOUID(ctx, token)
 		if err != nil {
-			return "", "", false, fmt.Errorf("getDefaultOUID: %w", err)
+			return OrgApp{}, fmt.Errorf("getDefaultOUID: %w", err)
 		}
 		slog.WarnContext(ctx, "creating publisher app under DEFAULT OU — org OU unknown; token ouHandle may not match org",
 			"appName", appName, "defaultOU", ouID)
 	}
-
-	id, secret, err := c.createApp(ctx, token, appName, ouID)
-	if err != nil {
-		return "", "", false, fmt.Errorf("createApp %q under OU %s: %w", appName, ouID, err)
-	}
-	slog.InfoContext(ctx, "publisher app created", "appName", appName, "ouID", ouID, "underOrgOU", orgOUID != "")
-	return id, secret, true, nil
+	return c.createOrgApp(ctx, token, appName, ouID)
 }
 
 // appOUID reads the OU id an existing Thunder application is registered
@@ -894,7 +905,7 @@ func (c *client) appOUID(ctx context.Context, token, appID string) (string, erro
 	return "", nil
 }
 
-func (c *client) DeletePublisherApp(ctx context.Context, orgHandle string) (bool, error) {
+func (c *client) DeletePublisherApp(ctx context.Context, orgHandle, storedID string) (bool, error) {
 	if orgHandle == "" {
 		return false, fmt.Errorf("orgHandle required")
 	}
@@ -902,8 +913,7 @@ func (c *client) DeletePublisherApp(ctx context.Context, orgHandle string) (bool
 	if err != nil {
 		return false, fmt.Errorf("getSystemToken: %w", err)
 	}
-	appName := PublisherAppName(orgHandle)
-	internalID, _, err := c.findApp(ctx, token, appName)
+	internalID, err := c.findOrgApp(ctx, token, OrgAppSpec{Name: PublisherAppName(orgHandle), StoredID: storedID})
 	if err != nil {
 		return false, err
 	}
@@ -913,7 +923,7 @@ func (c *client) DeletePublisherApp(ctx context.Context, orgHandle string) (bool
 	return c.deleteApp(ctx, token, internalID)
 }
 
-func (c *client) RegenerateClientSecret(ctx context.Context, orgHandle string) (string, error) {
+func (c *client) RegenerateClientSecret(ctx context.Context, orgHandle, storedID string) (string, error) {
 	if orgHandle == "" {
 		return "", fmt.Errorf("orgHandle required")
 	}
@@ -922,7 +932,7 @@ func (c *client) RegenerateClientSecret(ctx context.Context, orgHandle string) (
 		return "", fmt.Errorf("getSystemToken: %w", err)
 	}
 	appName := PublisherAppName(orgHandle)
-	internalID, _, err := c.findApp(ctx, token, appName)
+	internalID, err := c.findOrgApp(ctx, token, OrgAppSpec{Name: appName, StoredID: storedID})
 	if err != nil {
 		return "", err
 	}
@@ -932,97 +942,22 @@ func (c *client) RegenerateClientSecret(ctx context.Context, orgHandle string) (
 	return c.regenerateSecret(ctx, token, internalID)
 }
 
+// getAppByID reads an application that must exist (a 404 is an error).
 func (c *client) getAppByID(ctx context.Context, token, appID string) (map[string]any, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/applications/"+appID, nil)
+	app, found, err := c.getApp(ctx, token, appID)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("thunder get app: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("thunder get app returned %d: %s", resp.StatusCode, string(body))
-	}
-	var app map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&app); err != nil {
-		return nil, fmt.Errorf("thunder get app decode: %w", err)
+	if !found {
+		return nil, fmt.Errorf("thunder app %s not found", appID)
 	}
 	return app, nil
 }
 
 // -- low-level HTTP -------------------------------------------------------
 
-type thunderApp struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	ClientID string `json:"clientId"`
-}
-
-func (c *client) findApp(ctx context.Context, token, appName string) (internalID, clientID string, err error) {
-	const pageSize = 100
-	const maxPages = 100
-	for page := 0; page < maxPages; page++ {
-		offset := page * pageSize
-		apps, perr := c.listAppsPage(ctx, token, offset, pageSize)
-		if perr != nil {
-			return "", "", perr
-		}
-		for _, app := range apps {
-			if app.Name == appName {
-				return app.ID, app.ClientID, nil
-			}
-		}
-		if len(apps) < pageSize {
-			return "", "", nil
-		}
-	}
-	return "", "", fmt.Errorf("thunder list apps exceeded %d pages looking for %s", maxPages, appName)
-}
-
-func (c *client) listAppsPage(ctx context.Context, token string, offset, limit int) ([]thunderApp, error) {
-	reqURL := fmt.Sprintf("%s/applications?offset=%d&limit=%d", c.baseURL, offset, limit)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("thunder list apps: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("thunder list apps returned %d: %s", resp.StatusCode, string(body))
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("thunder list apps read body: %w", err)
-	}
-
-	// Thunder can return either a bare array or a wrapped object.
-	var apps []thunderApp
-	if jerr := json.Unmarshal(body, &apps); jerr != nil {
-		var wrapped struct {
-			Applications []thunderApp `json:"applications"`
-		}
-		if werr := json.Unmarshal(body, &wrapped); werr != nil {
-			return nil, fmt.Errorf("thunder list apps decode: %w", jerr)
-		}
-		apps = wrapped.Applications
-	}
-	return apps, nil
-}
-
 func (c *client) deleteApp(ctx context.Context, token, appID string) (bool, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL+"/applications/"+appID, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL+"/applications/"+url.PathEscape(appID), nil)
 	if err != nil {
 		return false, err
 	}
@@ -1073,136 +1008,22 @@ func publisherTokenClientConfig() map[string]any {
 	}
 }
 
-func (c *client) createApp(ctx context.Context, token, appName, ouID string) (string, string, error) {
-	payload := map[string]any{
-		"name": appName,
-		"type": publisherAppType,
-		"ouId": ouID,
-		"inboundAuthConfig": []map[string]any{
-			{
-				"type": "oauth2",
-				"config": map[string]any{
-					"clientId":                appName,
-					"grantTypes":              []string{"client_credentials"},
-					"tokenEndpointAuthMethod": "client_secret_basic",
-					"token": map[string]any{
-						"accessToken": map[string]any{"clientConfig": publisherTokenClientConfig()},
-					},
-				},
-			},
-		},
-	}
-	body, _ := json.Marshal(payload)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/applications", bytes.NewReader(body))
-	if err != nil {
-		return "", "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", "", fmt.Errorf("thunder create app: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return "", "", fmt.Errorf("thunder create app returned %d: %s", resp.StatusCode, string(respBody))
-	}
-	slog.Info("Thunder publisher app created", "appName", appName, "status", resp.StatusCode)
-
-	var result struct {
-		ClientID     string `json:"clientId"`
-		ClientSecret string `json:"clientSecret"`
-		InboundAuth  []struct {
-			Config struct {
-				ClientID     string `json:"clientId"`
-				ClientSecret string `json:"clientSecret"`
-			} `json:"config"`
-		} `json:"inboundAuthConfig"`
-	}
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return "", "", fmt.Errorf("thunder create app decode: %w", err)
-	}
-	cid := result.ClientID
-	cs := result.ClientSecret
-	if len(result.InboundAuth) > 0 {
-		if cid == "" {
-			cid = result.InboundAuth[0].Config.ClientID
-		}
-		if cs == "" {
-			cs = result.InboundAuth[0].Config.ClientSecret
-		}
-	}
-	if cid == "" {
-		return "", "", fmt.Errorf("thunder create app: clientId not found in response: %s", string(respBody))
-	}
-	return cid, cs, nil
-}
-
+// regenerateSecret gives the app a fresh generated secret and returns the
+// one Thunder now holds.
 func (c *client) regenerateSecret(ctx context.Context, token, appID string) (string, error) {
-	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/applications/"+appID, nil)
-	if err != nil {
-		return "", err
-	}
-	getReq.Header.Set("Authorization", "Bearer "+token)
-	getResp, err := c.httpClient.Do(getReq)
-	if err != nil {
-		return "", fmt.Errorf("thunder get app for secret regeneration: %w", err)
-	}
-	defer func() { _ = getResp.Body.Close() }()
-	getBody, _ := io.ReadAll(getResp.Body)
-	if getResp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("thunder get app returned %d: %s", getResp.StatusCode, string(getBody))
-	}
-
-	var app map[string]any
-	if err := json.Unmarshal(getBody, &app); err != nil {
-		return "", fmt.Errorf("thunder get app decode: %w", err)
-	}
 	newSecret, err := generateRandomSecret()
 	if err != nil {
 		return "", fmt.Errorf("generate client secret: %w", err)
 	}
-	if err := setInboundClientSecret(app, newSecret); err != nil {
-		return "", fmt.Errorf("set client secret in app payload: %w", err)
-	}
-	delete(app, "id")
-
-	putBody, _ := json.Marshal(app)
-	putReq, err := http.NewRequestWithContext(ctx, http.MethodPut, c.baseURL+"/applications/"+appID, bytes.NewReader(putBody))
+	kept, err := c.putAppSecret(ctx, token, appID, newSecret)
 	if err != nil {
 		return "", err
 	}
-	putReq.Header.Set("Authorization", "Bearer "+token)
-	putReq.Header.Set("Content-Type", "application/json")
-
-	putResp, err := c.httpClient.Do(putReq)
-	if err != nil {
-		return "", fmt.Errorf("thunder put app for secret regeneration: %w", err)
-	}
-	defer func() { _ = putResp.Body.Close() }()
-	putRespBody, _ := io.ReadAll(putResp.Body)
-	if putResp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("thunder put app returned %d: %s", putResp.StatusCode, string(putRespBody))
-	}
-
-	var out struct {
-		InboundAuth []struct {
-			Config struct {
-				ClientSecret string `json:"clientSecret"`
-			} `json:"config"`
-		} `json:"inboundAuthConfig"`
-	}
-	if err := json.Unmarshal(putRespBody, &out); err != nil {
-		return "", fmt.Errorf("thunder put app response decode: %w", err)
-	}
-	if len(out.InboundAuth) == 0 || out.InboundAuth[0].Config.ClientSecret == "" {
+	if kept == "" {
 		return "", fmt.Errorf("thunder put app response missing clientSecret")
 	}
 	slog.Info("Thunder client secret regenerated", "appID", appID)
-	return out.InboundAuth[0].Config.ClientSecret, nil
+	return kept, nil
 }
 
 func setInboundClientSecret(app map[string]any, secret string) error {

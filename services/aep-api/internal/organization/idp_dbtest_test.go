@@ -42,6 +42,7 @@ package organization_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"sort"
 	"testing"
 
@@ -99,30 +100,40 @@ type idpDBFakeThunder struct {
 	ensureCalls []idpDBEnsureCall
 	deleteCalls []string
 	regenCalls  []string
+	// storedIDs is the stored Thunder entity id each Delete/Regenerate got.
+	storedIDs []string
 }
 
-type idpDBEnsureCall struct{ orgHandle, orgOUID string }
+type idpDBEnsureCall struct{ orgHandle, orgOUID, storedID string }
 
 var _ thundersvc.Client = (*idpDBFakeThunder)(nil)
 
-func (f *idpDBFakeThunder) EnsurePublisherApp(ctx context.Context, orgHandle, orgOUID string) (string, string, bool, error) {
-	f.ensureCalls = append(f.ensureCalls, idpDBEnsureCall{orgHandle, orgOUID})
-	if f.ensureFn == nil {
-		return "cid-" + orgHandle, "secret-" + orgHandle, true, nil
+// EnsurePublisherApp answers through ensureFn; the entity id it reports is
+// "app-<org>", so a test can see the id recorded on the profile.
+func (f *idpDBFakeThunder) EnsurePublisherApp(ctx context.Context, orgHandle, orgOUID, storedID string) (thundersvc.OrgApp, error) {
+	f.ensureCalls = append(f.ensureCalls, idpDBEnsureCall{orgHandle, orgOUID, storedID})
+	clientID, secret, created, err := "cid-"+orgHandle, "secret-"+orgHandle, true, error(nil)
+	if f.ensureFn != nil {
+		clientID, secret, created, err = f.ensureFn(ctx, orgHandle, orgOUID)
 	}
-	return f.ensureFn(ctx, orgHandle, orgOUID)
+	if err != nil {
+		return thundersvc.OrgApp{}, err
+	}
+	return thundersvc.OrgApp{EntityID: "app-" + orgHandle, ClientID: clientID, Secret: secret, Created: created}, nil
 }
 
-func (f *idpDBFakeThunder) DeletePublisherApp(ctx context.Context, orgHandle string) (bool, error) {
+func (f *idpDBFakeThunder) DeletePublisherApp(ctx context.Context, orgHandle, storedID string) (bool, error) {
 	f.deleteCalls = append(f.deleteCalls, orgHandle)
+	f.storedIDs = append(f.storedIDs, storedID)
 	if f.deleteFn == nil {
 		return true, nil
 	}
 	return f.deleteFn(ctx, orgHandle)
 }
 
-func (f *idpDBFakeThunder) RegenerateClientSecret(ctx context.Context, orgHandle string) (string, error) {
+func (f *idpDBFakeThunder) RegenerateClientSecret(ctx context.Context, orgHandle, storedID string) (string, error) {
 	f.regenCalls = append(f.regenCalls, orgHandle)
+	f.storedIDs = append(f.storedIDs, storedID)
 	if f.regenFn == nil {
 		return "rotated-" + orgHandle, nil
 	}
@@ -351,6 +362,52 @@ func TestEnsureOrgPublisher_ResolvesOrgOU_DB(t *testing.T) {
 	}
 	if byOrg["noou"] != "" {
 		t.Fatalf("noou OU: got %q, want empty (default OU fallback)", byOrg["noou"])
+	}
+}
+
+// The publisher's Thunder entity id is recorded on the profile and handed back
+// on every later call, so Thunder is read by id instead of scanned. A row from
+// before the column existed (NULL) reads as "no stored id".
+func TestPublisherThunderAppID_StoredAndPassedBack_DB(t *testing.T) {
+	t.Parallel()
+	thunder := &idpDBFakeThunder{}
+	svc, gormDB := idpDBService(t, thunder)
+	ctx := context.Background()
+
+	if _, _, _, err := svc.EnsureOrgPublisher(ctx, "acme", "ada@x.io"); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	row, err := svc.GetProfile(ctx, "acme")
+	if err != nil || row.PublisherThunderAppID != "app-acme" {
+		t.Fatalf("entity id not stored: %+v err %v", row, err)
+	}
+	if _, _, _, err := svc.EnsureOrgPublisher(ctx, "acme", "ada@x.io"); err != nil {
+		t.Fatalf("second ensure: %v", err)
+	}
+	if got := thunder.ensureCalls[1].storedID; got != "app-acme" {
+		t.Fatalf("second ensure got stored id %q, want app-acme", got)
+	}
+	if _, err := svc.RegenerateClientSecret(ctx, "acme", "ada@x.io"); err != nil {
+		t.Fatalf("regenerate: %v", err)
+	}
+	if _, err := svc.RevokeOrgPublisher(ctx, "acme", "ada@x.io"); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if want := []string{"app-acme", "app-acme"}; !slices.Equal(thunder.storedIDs, want) {
+		t.Fatalf("regenerate/delete stored ids = %v, want %v", thunder.storedIDs, want)
+	}
+	row, err = svc.GetProfile(ctx, "acme")
+	if err != nil || row.PublisherThunderAppID != "" {
+		t.Fatalf("revoke must clear the entity id: %+v err %v", row, err)
+	}
+
+	if err := gormDB.Exec(`UPDATE organization_idp_profiles SET publisher_thunder_app_id = NULL,
+		studio_client_id = NULL, studio_thunder_app_id = NULL WHERE org_id = 'acme'`).Error; err != nil {
+		t.Fatalf("null the id columns: %v", err)
+	}
+	row, err = svc.GetProfile(ctx, "acme")
+	if err != nil || row.PublisherThunderAppID != "" || row.StudioClientID != "" || row.StudioThunderAppID != "" {
+		t.Fatalf("NULL id columns must read as empty: %+v err %v", row, err)
 	}
 }
 

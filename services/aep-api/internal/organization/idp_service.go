@@ -272,18 +272,21 @@ func (s *idpService) EnsureOrgPublisher(ctx context.Context, orgID, actor string
 	} else {
 		slog.DebugContext(ctx, "idp_service: provisioning publisher under org OU", "orgID", orgID, "orgOU", orgOUID)
 	}
-	clientID, clientSecret, created, terr := s.thunder.EnsurePublisherApp(ctx, orgID, orgOUID)
+	app, terr := s.thunder.EnsurePublisherApp(ctx, orgID, orgOUID, profile.PublisherThunderAppID)
 	if terr != nil {
 		s.audit(ctx, orgID, IDPAuditEnsurePublisher, actor, beforeJSON, nil, terr)
 		return "", "", false, fmt.Errorf("idp_service.EnsureOrgPublisher: %w", terr)
 	}
+	clientID, clientSecret, created := app.ClientID, app.Secret, app.Created
 
-	// Persist clientId always; clientSecret only on creation (Thunder
-	// doesn't expose it on subsequent reads).
+	// Persist clientId and the Thunder entity id always (the next lookup
+	// reads by that id); clientSecret only on creation (Thunder doesn't
+	// expose it on subsequent reads).
 	updates := map[string]interface{}{
-		"publisher_client_id":  clientID,
-		"publisher_secret_ref": secretRefPath(orgID), // logical OpenBao path persisted alongside the secret
-		"updated_at":           time.Now().UTC(),
+		"publisher_client_id":      clientID,
+		"publisher_thunder_app_id": app.EntityID,
+		"publisher_secret_ref":     secretRefPath(orgID), // logical OpenBao path persisted alongside the secret
+		"updated_at":               time.Now().UTC(),
 	}
 	if created && clientSecret != "" {
 		updates["publisher_client_secret"] = clientSecret
@@ -393,7 +396,7 @@ func (s *idpService) RevokeOrgPublisher(ctx context.Context, orgID, actor string
 	}
 	beforeJSON, _ := json.Marshal(profileSummary(profile))
 
-	deleted, terr := s.thunder.DeletePublisherApp(ctx, orgID)
+	deleted, terr := s.thunder.DeletePublisherApp(ctx, orgID, profile.PublisherThunderAppID)
 	if terr != nil {
 		s.audit(ctx, orgID, IDPAuditRevokePublisher, actor, beforeJSON, nil, terr)
 		return false, fmt.Errorf("idp_service.RevokeOrgPublisher: %w", terr)
@@ -401,10 +404,11 @@ func (s *idpService) RevokeOrgPublisher(ctx context.Context, orgID, actor string
 
 	if err := s.repo.UpdateProfileColumns(ctx, profile, orgID,
 		map[string]interface{}{
-			"publisher_client_id":     "",
-			"publisher_client_secret": "",
-			"publisher_secret_ref":    "",
-			"updated_at":              time.Now().UTC(),
+			"publisher_client_id":      "",
+			"publisher_client_secret":  "",
+			"publisher_secret_ref":     "",
+			"publisher_thunder_app_id": "",
+			"updated_at":               time.Now().UTC(),
 		}); err != nil {
 		s.audit(ctx, orgID, IDPAuditRevokePublisher, actor, beforeJSON, nil, err)
 		return deleted, fmt.Errorf("idp_service.RevokeOrgPublisher persist: %w", err)
@@ -444,7 +448,7 @@ func (s *idpService) RegenerateClientSecret(ctx context.Context, orgID, actor st
 	}
 	beforeJSON, _ := json.Marshal(profileSummary(profile))
 
-	newSecret, terr := s.thunder.RegenerateClientSecret(ctx, orgID)
+	newSecret, terr := s.thunder.RegenerateClientSecret(ctx, orgID, profile.PublisherThunderAppID)
 	if terr != nil {
 		s.audit(ctx, orgID, IDPAuditRegenerateSecret, actor, beforeJSON, nil, terr)
 		return "", fmt.Errorf("idp_service.RegenerateClientSecret: %w", terr)
@@ -534,7 +538,7 @@ func (s *idpService) UpdateProfile(ctx context.Context, orgID, actor string, req
 		// platform→other transition. We skip the call when thunder
 		// isn't configured (just clear the columns).
 		if existing.Kind == "platform" && existing.PublisherClientID != "" && s.thunder != nil {
-			if _, derr := s.thunder.DeletePublisherApp(ctx, orgID); derr != nil {
+			if _, derr := s.thunder.DeletePublisherApp(ctx, orgID, existing.PublisherThunderAppID); derr != nil {
 				slog.WarnContext(ctx, "idp_service.UpdateProfile: Thunder publisher cleanup failed (ignored)",
 					"orgID", orgID, "error", derr)
 			}
@@ -542,6 +546,7 @@ func (s *idpService) UpdateProfile(ctx context.Context, orgID, actor string, req
 		updates["publisher_client_id"] = ""
 		updates["publisher_client_secret"] = ""
 		updates["publisher_secret_ref"] = ""
+		updates["publisher_thunder_app_id"] = ""
 	}
 
 	if err := s.repo.UpdateProfileColumns(ctx, existing, orgID, updates); err != nil {
@@ -599,7 +604,7 @@ func (s *idpService) SetProfile(ctx context.Context, orgID, actor, kind, issuer,
 	// belongs to the previous IDP (see UpdateProfile).
 	if kindChanged {
 		if existing.Kind == "platform" && existing.PublisherClientID != "" && s.thunder != nil {
-			if _, derr := s.thunder.DeletePublisherApp(ctx, orgID); derr != nil {
+			if _, derr := s.thunder.DeletePublisherApp(ctx, orgID, existing.PublisherThunderAppID); derr != nil {
 				slog.WarnContext(ctx, "idp_service.SetProfile: Thunder publisher cleanup failed (ignored)",
 					"orgID", orgID, "error", derr)
 			}
@@ -607,6 +612,7 @@ func (s *idpService) SetProfile(ctx context.Context, orgID, actor, kind, issuer,
 		updates["publisher_client_id"] = ""
 		updates["publisher_client_secret"] = ""
 		updates["publisher_secret_ref"] = ""
+		updates["publisher_thunder_app_id"] = ""
 	}
 
 	if err := s.repo.UpdateProfileColumns(ctx, existing, orgID, updates); err != nil {

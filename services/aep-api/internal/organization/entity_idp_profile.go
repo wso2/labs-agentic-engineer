@@ -44,6 +44,15 @@ type OrganizationIDPProfile struct {
 	// off the wire — callers must use a purpose-built endpoint to fetch it.
 	PublisherClientSecret string `gorm:"column:publisher_client_secret" json:"-"`
 	PublisherSecretRef    string `gorm:"column:publisher_secret_ref" json:"publisherSecretRef,omitempty"`
+	// PublisherThunderAppID is the Thunder entity id of aep-publisher-<org>,
+	// recorded by EnsureOrgPublisher. Thunder has no lookup by clientId, so
+	// every later read goes by this id and scans the app list only on a miss.
+	PublisherThunderAppID string `gorm:"column:publisher_thunder_app_id" json:"-"`
+	// StudioClientID and StudioThunderAppID are the AE Studio client
+	// (ae-studio-<org>): its clientId and Thunder entity id. Its secret lives
+	// only in the org's ae-studio-client SecretReference, never in a column.
+	StudioClientID     string `gorm:"column:studio_client_id" json:"-"`
+	StudioThunderAppID string `gorm:"column:studio_thunder_app_id" json:"-"`
 	// Secret-ref triplet — populated by SecretRefWriter.WritePublisher after
 	// EnsureOrgPublisher, RegenerateClientSecret, or ProvisionPublisherForBuild
 	// (POST /build, actor build-provision) provisions the Thunder cc app.

@@ -49,14 +49,14 @@ type fakeThunder struct {
 
 var _ thundersvc.Client = (*fakeThunder)(nil)
 
-func (f *fakeThunder) RegenerateClientSecret(_ context.Context, org string) (string, error) {
+func (f *fakeThunder) RegenerateClientSecret(_ context.Context, org, _ string) (string, error) {
 	f.regenCalls = append(f.regenCalls, org)
 	return f.regenSecret, nil
 }
-func (f *fakeThunder) EnsurePublisherApp(context.Context, string, string) (string, string, bool, error) {
+func (f *fakeThunder) EnsurePublisherApp(context.Context, string, string, string) (thundersvc.OrgApp, error) {
 	panic("fakeThunder: EnsurePublisherApp unexpected")
 }
-func (f *fakeThunder) DeletePublisherApp(context.Context, string) (bool, error) {
+func (f *fakeThunder) DeletePublisherApp(context.Context, string, string) (bool, error) {
 	panic("fakeThunder: DeletePublisherApp unexpected")
 }
 func (f *fakeThunder) OUExists(context.Context, string) (bool, error) {
