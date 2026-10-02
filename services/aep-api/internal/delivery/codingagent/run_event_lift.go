@@ -169,7 +169,7 @@ func parseRunEvent(raw string) (gen.RunEvent, bool) {
 	if err := json.Unmarshal([]byte(trimmed), &probe); err != nil {
 		return gen.RunEvent{}, false
 	}
-	if gen.RunEventV(probe.V) != gen.RunEventV2 || !gen.RunEventKind(probe.Kind).Valid() {
+	if gen.RunEventV(probe.V) != gen.RunEventVTwo || !gen.RunEventKind(probe.Kind).Valid() {
 		return gen.RunEvent{}, false
 	}
 	var ev gen.RunEvent
@@ -213,7 +213,7 @@ func (l *lifter) base(ln runnerLine, kind gen.RunEventKind) gen.RunEvent {
 		agent = leadAgentID
 	}
 	return gen.RunEvent{
-		V:       gen.RunEventV2,
+		V:       gen.RunEventVTwo,
 		TS:      parseEventTime(ln.Ts),
 		Kind:    kind,
 		AgentID: agent,

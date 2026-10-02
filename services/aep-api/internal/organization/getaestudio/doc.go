@@ -19,7 +19,8 @@
 // Trigger: GET /ae-studio (get-ae-studio), behind the deny-by-default tenant gate.
 // In→out:  the gate-bound org → the AeStudio state and, once ready, its URLs.
 // Ports:   organization.AEStudioStatusReader.
-// Invariant: the org comes only from the gate-bound context, never the request;
+// Invariant: the org comes only from the gate-bound context, never the request,
 //
-//	an install without AE Studio configuration answers failed, not 500.
+//	and no bound org (the gate in LOG mode) answers 401; an install without
+//	AE Studio configuration answers failed, not 500.
 package getaestudio

@@ -167,7 +167,7 @@ func recordEvents(t *testing.T, store *RecordingStore, cycleID string, attempt i
 
 func recordedEvent(seq int64, summary string) gen.RunEvent {
 	return gen.RunEvent{
-		V: gen.RunEventV2, Seq: seq, Kind: gen.RunEventKindToolUse,
+		V: gen.RunEventVTwo, Seq: seq, Kind: gen.RunEventKindToolUse,
 		AgentID: leadAgentID, Tool: "Read", Summary: summary,
 	}
 }

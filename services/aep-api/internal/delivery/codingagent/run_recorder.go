@@ -294,7 +294,7 @@ func (r *CycleRecorder) CloseCancelled(ctx context.Context, cycle *delivery.RunC
 	cur := r.store.Cursor(cycle.OrgID, cycle.ID)
 	cur.LastSeq++
 	settled := gen.RunEvent{
-		V:       gen.RunEventV2,
+		V:       gen.RunEventVTwo,
 		Seq:     cur.LastSeq,
 		TS:      r.now().UTC(),
 		Kind:    gen.RunEventKindRunSettled,
@@ -952,7 +952,7 @@ func producerSeq(raw string) (int64, bool) {
 	if probe.Seq <= 0 {
 		return 0, false
 	}
-	if probe.V != int(gen.RunEventV2) && probe.SchemaVersion != progressSchemaVersion {
+	if probe.V != int(gen.RunEventVTwo) && probe.SchemaVersion != progressSchemaVersion {
 		return 0, false
 	}
 	return probe.Seq, true

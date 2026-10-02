@@ -3537,10 +3537,10 @@ components:
       - stopped
       type: string
       x-enum-varnames:
-      - AgentStatusRunning
-      - AgentStatusCompleted
-      - AgentStatusFailed
-      - AgentStatusStopped
+      - Running
+      - Completed
+      - Failed
+      - Stopped
     AgentRuntime:
       description: >-
         Which coding-agent runtime an organization's builds run on.
@@ -3563,8 +3563,8 @@ components:
       - opencode
       type: string
       x-enum-varnames:
-      - AgentRuntimeClaudeCode
-      - AgentRuntimeOpencode
+      - ClaudeCode
+      - Opencode
     AgentsProjection:
       x-go-type: orgconfig.AgentsProjection
       x-go-type-import:
@@ -3963,7 +3963,7 @@ components:
           - no_live_run
           type: string
           x-enum-varnames:
-          - BuildProgressEventReasonNoLiveRun
+          - NoLiveRun
         run:
           $ref: '#/components/schemas/BuildProgressRun'
         type:
@@ -3973,9 +3973,9 @@ components:
           - done
           type: string
           x-enum-varnames:
-          - BuildProgressEventTypeCycle
-          - BuildProgressEventTypeLine
-          - BuildProgressEventTypeDone
+          - Cycle
+          - Line
+          - Done
       required:
       - type
       type: object
@@ -5138,11 +5138,11 @@ components:
           - protobuf
           type: string
           x-enum-varnames:
-          - ResourceDocWriteDTOTypeDocumentation
-          - ResourceDocWriteDTOTypeOpenapi
-          - ResourceDocWriteDTOTypeGraphql
-          - ResourceDocWriteDTOTypeAsyncapi
-          - ResourceDocWriteDTOTypeProtobuf
+          - Documentation
+          - Openapi
+          - Graphql
+          - Asyncapi
+          - Protobuf
         url:
           type: string
         path:
@@ -6947,11 +6947,11 @@ components:
           - lost
           type: string
           x-enum-varnames:
-          - RunCycleViewRecordingNone
-          - RunCycleViewRecordingRecording
-          - RunCycleViewRecordingComplete
-          - RunCycleViewRecordingGaps
-          - RunCycleViewRecordingLost
+          - None
+          - Recording
+          - Complete
+          - Gaps
+          - Lost
         resolves:
           description: >-
             The milestone agent-work issues this cycle's pull request claims —
@@ -7110,24 +7110,24 @@ components:
           - provider_limit
           type: string
           x-enum-varnames:
-          - RunEventCodeAPIRetry
-          - RunEventCodeCompaction
-          - RunEventCodeRefusal
-          - RunEventCodeRateLimit
-          - RunEventCodePermissionDenied
-          - RunEventCodeTerminated
-          - RunEventCodeWorkspaceGuard
-          - RunEventCodeGap
-          - RunEventCodeArtifactFailed
-          - RunEventCodeRunnerScheduling
-          - RunEventCodeRunnerUnschedulable
-          - RunEventCodeRunnerPullingImage
-          - RunEventCodeRunnerImagePullBackOff
-          - RunEventCodeRunnerConfigError
-          - RunEventCodeRunnerStarting
-          - RunEventCodeWorkspaceProvisioning
-          - RunEventCodeWorkspaceReady
-          - RunEventCodeProviderLimit
+          - APIRetry
+          - Compaction
+          - Refusal
+          - RateLimit
+          - PermissionDenied
+          - Terminated
+          - WorkspaceGuard
+          - Gap
+          - ArtifactFailed
+          - RunnerScheduling
+          - RunnerUnschedulable
+          - RunnerPullingImage
+          - RunnerImagePullBackOff
+          - RunnerConfigError
+          - RunnerStarting
+          - WorkspaceProvisioning
+          - WorkspaceReady
+          - ProviderLimit
         command:
           description: >-
             `tool_use`, `tool_result` and the `git_*` kinds: the command line
@@ -7227,17 +7227,17 @@ components:
           - deleted
           type: string
           x-enum-varnames:
-          - RunEventItemStatusPlanned
-          - RunEventItemStatusExploring
-          - RunEventItemStatusAuthoring
-          - RunEventItemStatusRunning
-          - RunEventItemStatusHealing
-          - RunEventItemStatusPass
-          - RunEventItemStatusFail
-          - RunEventItemStatusPending
-          - RunEventItemStatusInProgress
-          - RunEventItemStatusCompleted
-          - RunEventItemStatusDeleted
+          - Planned
+          - Exploring
+          - Authoring
+          - Running
+          - Healing
+          - Pass
+          - Fail
+          - Pending
+          - InProgress
+          - Completed
+          - Deleted
         kind:
           allOf:
           - $ref: '#/components/schemas/RunEventKind'
@@ -7271,9 +7271,9 @@ components:
           - error
           type: string
           x-enum-varnames:
-          - RunEventLevelInfo
-          - RunEventLevelWarn
-          - RunEventLevelError
+          - Info
+          - Warn
+          - Error
         linesAdded:
           description: >-
             `agent_settled` only: lines added by that agent's work, off the
@@ -7310,9 +7310,9 @@ components:
           - cancelled
           type: string
           x-enum-varnames:
-          - RunEventOutcomeSuccess
-          - RunEventOutcomeFailure
-          - RunEventOutcomeCancelled
+          - Success
+          - Failure
+          - Cancelled
         outputBytes:
           description: >-
             `task_settled` only: how much the backgrounded command wrote. The
@@ -7398,8 +7398,8 @@ components:
           - opencode
           type: string
           x-enum-varnames:
-          - RunEventRuntimeClaudeCode
-          - RunEventRuntimeOpencode
+          - ClaudeCode
+          - Opencode
         seq:
           description: >-
             Position of this event within its attempt, monotonic from the
@@ -7427,8 +7427,8 @@ components:
           - plan
           type: string
           x-enum-varnames:
-          - RunEventSourceCriterion
-          - RunEventSourcePlan
+          - Criterion
+          - Plan
         status:
           allOf:
           - $ref: '#/components/schemas/AgentStatus'
@@ -7471,8 +7471,8 @@ components:
           - validation
           type: string
           x-enum-varnames:
-          - RunEventTaskKindImplementation
-          - RunEventTaskKindValidation
+          - Implementation
+          - Validation
         title:
           description: >-
             `work_item` with `source: plan` only: the plan entry's own text. A
@@ -7557,7 +7557,7 @@ components:
           - 2
           type: integer
           x-enum-varnames:
-          - RunEventV2
+          - Two
         waitingOn:
           description: >-
             `heartbeat` only: what the run is blocked on while it emits nothing
@@ -7571,9 +7571,9 @@ components:
           - agent
           type: string
           x-enum-varnames:
-          - RunEventWaitingOnTool
-          - RunEventWaitingOnModel
-          - RunEventWaitingOnAgent
+          - Tool
+          - Model
+          - Agent
       required:
       - v
       - seq
@@ -7620,22 +7620,22 @@ components:
       - run_settled
       type: string
       x-enum-varnames:
-      - RunEventKindRunStarted
-      - RunEventKindAgentStarted
-      - RunEventKindAgentProgress
-      - RunEventKindAgentSettled
-      - RunEventKindToolUse
-      - RunEventKindToolResult
-      - RunEventKindTaskStarted
-      - RunEventKindTaskSettled
-      - RunEventKindGitCommit
-      - RunEventKindGitPush
-      - RunEventKindGhAction
-      - RunEventKindWorkItem
-      - RunEventKindHeartbeat
-      - RunEventKindNotice
-      - RunEventKindTurnEnded
-      - RunEventKindRunSettled
+      - RunStarted
+      - AgentStarted
+      - AgentProgress
+      - AgentSettled
+      - ToolUse
+      - ToolResult
+      - TaskStarted
+      - TaskSettled
+      - GitCommit
+      - GitPush
+      - GhAction
+      - WorkItem
+      - Heartbeat
+      - Notice
+      - TurnEnded
+      - RunSettled
     RunProgressEvent:
       additionalProperties: false
       description: >-
@@ -7684,10 +7684,10 @@ components:
           - done
           type: string
           x-enum-varnames:
-          - RunProgressEventTypeCycle
-          - RunProgressEventTypeLine
-          - RunProgressEventTypeEvent
-          - RunProgressEventTypeDone
+          - Cycle
+          - Line
+          - Event
+          - Done
       required:
       - type
       type: object
@@ -7726,8 +7726,8 @@ components:
           - subagent
           type: string
           x-enum-varnames:
-          - RunProgressLineEmitterMain
-          - RunProgressLineEmitterSubagent
+          - Main
+          - Subagent
         emitterId:
           description: Which subagent, for the cycles that fan out to several at once — the id of the
             fan-out tool call, stable for that subagent's whole life. Absent on main-agent lines.
@@ -8362,10 +8362,10 @@ components:
           - done
           type: string
           x-enum-varnames:
-          - TaskStreamEventTypeTask
-          - TaskStreamEventTypeExecution
-          - TaskStreamEventTypeLine
-          - TaskStreamEventTypeDone
+          - Task
+          - Execution
+          - Line
+          - Done
       required:
       - type
       type: object
@@ -8849,8 +8849,8 @@ components:
           - output_truncated
           type: string
           x-enum-varnames:
-          - TurnStatusCodeProviderLimit
-          - TurnStatusCodeOutputTruncated
+          - ProviderLimit
+          - OutputTruncated
         commitSha:
           type: string
         conversationId:
@@ -9263,16 +9263,16 @@ components:
       # a value would collide and break codegen. Inline enums get their parent's
       # name for free; a named schema has to ask.
       x-enum-varnames:
-      - ValidationStateNone
-      - ValidationStateRunning
-      - ValidationStateAwaitingFix
-      - ValidationStateCancelled
-      - ValidationStatePassed
-      - ValidationStatePartial
-      - ValidationStateFailed
-      - ValidationStateInconclusive
-      - ValidationStateUnreported
-      - ValidationStateSkipped
+      - None
+      - Running
+      - AwaitingFix
+      - Cancelled
+      - Passed
+      - Partial
+      - Failed
+      - Inconclusive
+      - Unreported
+      - Skipped
       type: string
     Warning:
       additionalProperties: false

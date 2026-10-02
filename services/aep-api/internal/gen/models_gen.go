@@ -105,19 +105,19 @@ func (e BuildChangeKind) Valid() bool {
 
 // Defines values for BuildChangeState.
 const (
-	Changed BuildChangeState = "changed"
-	New     BuildChangeState = "new"
-	Removed BuildChangeState = "removed"
+	BuildChangeStateChanged BuildChangeState = "changed"
+	BuildChangeStateNew     BuildChangeState = "new"
+	BuildChangeStateRemoved BuildChangeState = "removed"
 )
 
 // Valid indicates whether the value is a known member of the BuildChangeState enum.
 func (e BuildChangeState) Valid() bool {
 	switch e {
-	case Changed:
+	case BuildChangeStateChanged:
 		return true
-	case New:
+	case BuildChangeStateNew:
 		return true
-	case Removed:
+	case BuildChangeStateRemoved:
 		return true
 	default:
 		return false
@@ -267,16 +267,16 @@ func (e EnvValueCellDTOStatus) Valid() bool {
 
 // Defines values for EnvironmentDTOValidation.
 const (
-	Off EnvironmentDTOValidation = "off"
-	On  EnvironmentDTOValidation = "on"
+	EnvironmentDTOValidationOff EnvironmentDTOValidation = "off"
+	EnvironmentDTOValidationOn  EnvironmentDTOValidation = "on"
 )
 
 // Valid indicates whether the value is a known member of the EnvironmentDTOValidation enum.
 func (e EnvironmentDTOValidation) Valid() bool {
 	switch e {
-	case Off:
+	case EnvironmentDTOValidationOff:
 		return true
-	case On:
+	case EnvironmentDTOValidationOn:
 		return true
 	default:
 		return false
@@ -324,19 +324,19 @@ func (e ExternalResourceDTOScope) Valid() bool {
 
 // Defines values for IssueInfoAttentionReason.
 const (
-	Escalated       IssueInfoAttentionReason = "escalated"
-	NoChangeVerdict IssueInfoAttentionReason = "no_change_verdict"
-	UnverifiedFix   IssueInfoAttentionReason = "unverified_fix"
+	IssueInfoAttentionReasonEscalated       IssueInfoAttentionReason = "escalated"
+	IssueInfoAttentionReasonNoChangeVerdict IssueInfoAttentionReason = "no_change_verdict"
+	IssueInfoAttentionReasonUnverifiedFix   IssueInfoAttentionReason = "unverified_fix"
 )
 
 // Valid indicates whether the value is a known member of the IssueInfoAttentionReason enum.
 func (e IssueInfoAttentionReason) Valid() bool {
 	switch e {
-	case Escalated:
+	case IssueInfoAttentionReasonEscalated:
 		return true
-	case NoChangeVerdict:
+	case IssueInfoAttentionReasonNoChangeVerdict:
 		return true
-	case UnverifiedFix:
+	case IssueInfoAttentionReasonUnverifiedFix:
 		return true
 	default:
 		return false
@@ -366,19 +366,19 @@ func (e MilestoneRunViewKind) Valid() bool {
 
 // Defines values for MilestoneRunViewOrigin.
 const (
-	IncidentAdoption MilestoneRunViewOrigin = "incident-adoption"
-	Revalidate       MilestoneRunViewOrigin = "revalidate"
-	SpecBuild        MilestoneRunViewOrigin = "spec-build"
+	MilestoneRunViewOriginIncidentAdoption MilestoneRunViewOrigin = "incident-adoption"
+	MilestoneRunViewOriginRevalidate       MilestoneRunViewOrigin = "revalidate"
+	MilestoneRunViewOriginSpecBuild        MilestoneRunViewOrigin = "spec-build"
 )
 
 // Valid indicates whether the value is a known member of the MilestoneRunViewOrigin enum.
 func (e MilestoneRunViewOrigin) Valid() bool {
 	switch e {
-	case IncidentAdoption:
+	case MilestoneRunViewOriginIncidentAdoption:
 		return true
-	case Revalidate:
+	case MilestoneRunViewOriginRevalidate:
 		return true
-	case SpecBuild:
+	case MilestoneRunViewOriginSpecBuild:
 		return true
 	default:
 		return false
@@ -435,28 +435,28 @@ func (e MilestoneRunViewWaitingReason) Valid() bool {
 
 // Defines values for OrgEndpointDTOType.
 const (
-	GRPC      OrgEndpointDTOType = "gRPC"
-	GraphQL   OrgEndpointDTOType = "GraphQL"
-	HTTP      OrgEndpointDTOType = "HTTP"
-	TCP       OrgEndpointDTOType = "TCP"
-	UDP       OrgEndpointDTOType = "UDP"
-	Websocket OrgEndpointDTOType = "Websocket"
+	OrgEndpointDTOTypeGRPC      OrgEndpointDTOType = "gRPC"
+	OrgEndpointDTOTypeGraphQL   OrgEndpointDTOType = "GraphQL"
+	OrgEndpointDTOTypeHTTP      OrgEndpointDTOType = "HTTP"
+	OrgEndpointDTOTypeTCP       OrgEndpointDTOType = "TCP"
+	OrgEndpointDTOTypeUDP       OrgEndpointDTOType = "UDP"
+	OrgEndpointDTOTypeWebsocket OrgEndpointDTOType = "Websocket"
 )
 
 // Valid indicates whether the value is a known member of the OrgEndpointDTOType enum.
 func (e OrgEndpointDTOType) Valid() bool {
 	switch e {
-	case GRPC:
+	case OrgEndpointDTOTypeGRPC:
 		return true
-	case GraphQL:
+	case OrgEndpointDTOTypeGraphQL:
 		return true
-	case HTTP:
+	case OrgEndpointDTOTypeHTTP:
 		return true
-	case TCP:
+	case OrgEndpointDTOTypeTCP:
 		return true
-	case UDP:
+	case OrgEndpointDTOTypeUDP:
 		return true
-	case Websocket:
+	case OrgEndpointDTOTypeWebsocket:
 		return true
 	default:
 		return false
@@ -618,16 +618,16 @@ func (e RunCycleViewKind) Valid() bool {
 
 // Defines values for RunCycleViewMergeVerdict.
 const (
-	Declined RunCycleViewMergeVerdict = "declined"
-	Refused  RunCycleViewMergeVerdict = "refused"
+	RunCycleViewMergeVerdictDeclined RunCycleViewMergeVerdict = "declined"
+	RunCycleViewMergeVerdictRefused  RunCycleViewMergeVerdict = "refused"
 )
 
 // Valid indicates whether the value is a known member of the RunCycleViewMergeVerdict enum.
 func (e RunCycleViewMergeVerdict) Valid() bool {
 	switch e {
-	case Declined:
+	case RunCycleViewMergeVerdictDeclined:
 		return true
-	case Refused:
+	case RunCycleViewMergeVerdictRefused:
 		return true
 	default:
 		return false
@@ -900,13 +900,13 @@ func (e RunEventTaskKind) Valid() bool {
 
 // Defines values for RunEventV.
 const (
-	RunEventV2 RunEventV = 2
+	RunEventVTwo RunEventV = 2
 )
 
 // Valid indicates whether the value is a known member of the RunEventV enum.
 func (e RunEventV) Valid() bool {
 	switch e {
-	case RunEventV2:
+	case RunEventVTwo:
 		return true
 	default:
 		return false
@@ -1038,28 +1038,28 @@ func (e RunProgressLineEmitter) Valid() bool {
 
 // Defines values for RunValidationVerdict.
 const (
-	Failed       RunValidationVerdict = "failed"
-	Inconclusive RunValidationVerdict = "inconclusive"
-	Partial      RunValidationVerdict = "partial"
-	Passed       RunValidationVerdict = "passed"
-	Skipped      RunValidationVerdict = "skipped"
-	Unreported   RunValidationVerdict = "unreported"
+	RunValidationVerdictFailed       RunValidationVerdict = "failed"
+	RunValidationVerdictInconclusive RunValidationVerdict = "inconclusive"
+	RunValidationVerdictPartial      RunValidationVerdict = "partial"
+	RunValidationVerdictPassed       RunValidationVerdict = "passed"
+	RunValidationVerdictSkipped      RunValidationVerdict = "skipped"
+	RunValidationVerdictUnreported   RunValidationVerdict = "unreported"
 )
 
 // Valid indicates whether the value is a known member of the RunValidationVerdict enum.
 func (e RunValidationVerdict) Valid() bool {
 	switch e {
-	case Failed:
+	case RunValidationVerdictFailed:
 		return true
-	case Inconclusive:
+	case RunValidationVerdictInconclusive:
 		return true
-	case Partial:
+	case RunValidationVerdictPartial:
 		return true
-	case Passed:
+	case RunValidationVerdictPassed:
 		return true
-	case Skipped:
+	case RunValidationVerdictSkipped:
 		return true
-	case Unreported:
+	case RunValidationVerdictUnreported:
 		return true
 	default:
 		return false
@@ -1179,19 +1179,19 @@ func (e TimelineEventEmitter) Valid() bool {
 
 // Defines values for TurnConflictCode.
 const (
-	ConversationRotated TurnConflictCode = "conversation_rotated"
-	RequirementsMissing TurnConflictCode = "requirements_missing"
-	TurnInProgress      TurnConflictCode = "turn_in_progress"
+	TurnConflictCodeConversationRotated TurnConflictCode = "conversation_rotated"
+	TurnConflictCodeRequirementsMissing TurnConflictCode = "requirements_missing"
+	TurnConflictCodeTurnInProgress      TurnConflictCode = "turn_in_progress"
 )
 
 // Valid indicates whether the value is a known member of the TurnConflictCode enum.
 func (e TurnConflictCode) Valid() bool {
 	switch e {
-	case ConversationRotated:
+	case TurnConflictCodeConversationRotated:
 		return true
-	case RequirementsMissing:
+	case TurnConflictCodeRequirementsMissing:
 		return true
-	case TurnInProgress:
+	case TurnConflictCodeTurnInProgress:
 		return true
 	default:
 		return false
@@ -1314,16 +1314,16 @@ func (e WorkloadDependencyDTOKind) Valid() bool {
 
 // Defines values for WorkloadDependencyDTOTag.
 const (
-	External WorkloadDependencyDTOTag = "external"
-	Platform WorkloadDependencyDTOTag = "platform"
+	WorkloadDependencyDTOTagExternal WorkloadDependencyDTOTag = "external"
+	WorkloadDependencyDTOTagPlatform WorkloadDependencyDTOTag = "platform"
 )
 
 // Valid indicates whether the value is a known member of the WorkloadDependencyDTOTag enum.
 func (e WorkloadDependencyDTOTag) Valid() bool {
 	switch e {
-	case External:
+	case WorkloadDependencyDTOTagExternal:
 		return true
-	case Platform:
+	case WorkloadDependencyDTOTagPlatform:
 		return true
 	default:
 		return false
@@ -1332,19 +1332,19 @@ func (e WorkloadDependencyDTOTag) Valid() bool {
 
 // Defines values for ListTasksParamsState.
 const (
-	All    ListTasksParamsState = "all"
-	Closed ListTasksParamsState = "closed"
-	Open   ListTasksParamsState = "open"
+	ListTasksParamsStateAll    ListTasksParamsState = "all"
+	ListTasksParamsStateClosed ListTasksParamsState = "closed"
+	ListTasksParamsStateOpen   ListTasksParamsState = "open"
 )
 
 // Valid indicates whether the value is a known member of the ListTasksParamsState enum.
 func (e ListTasksParamsState) Valid() bool {
 	switch e {
-	case All:
+	case ListTasksParamsStateAll:
 		return true
-	case Closed:
+	case ListTasksParamsStateClosed:
 		return true
-	case Open:
+	case ListTasksParamsStateOpen:
 		return true
 	default:
 		return false

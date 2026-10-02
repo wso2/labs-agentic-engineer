@@ -240,14 +240,14 @@ func turnConflictOf(err error) (gen.CreateTurnResponseObject, bool) {
 	var inProgress *spec.TurnInProgressError
 	if errors.As(err, &inProgress) {
 		return gen.CreateTurn409JSONResponse(gen.TurnConflict{
-			Code: gen.TurnInProgress, ActiveTurnID: inProgress.ActiveTurnID,
+			Code: gen.TurnConflictCodeTurnInProgress, ActiveTurnID: inProgress.ActiveTurnID,
 		}), true
 	}
 	if errors.Is(err, spec.ErrConversationRotated) {
 		// #430 single-era rule: the addressed thread is no longer current —
 		// the console re-resolves via list-conversations and retries.
 		return gen.CreateTurn409JSONResponse(gen.TurnConflict{
-			Code: gen.ConversationRotated,
+			Code: gen.TurnConflictCodeConversationRotated,
 		}), true
 	}
 	return nil, false

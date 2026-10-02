@@ -185,7 +185,7 @@ func line(kind, summary, emitter string) contracts.ProgressEvent {
 // plus whatever the test is about.
 func event(seq int64, kind gen.RunEventKind, agentID string) gen.RunEvent {
 	return gen.RunEvent{
-		V: gen.RunEventV2, Seq: seq, TS: time.Date(2026, 7, 1, 10, 6, 0, 0, time.UTC),
+		V: gen.RunEventVTwo, Seq: seq, TS: time.Date(2026, 7, 1, 10, 6, 0, 0, time.UTC),
 		Kind: kind, AgentID: agentID,
 	}
 }

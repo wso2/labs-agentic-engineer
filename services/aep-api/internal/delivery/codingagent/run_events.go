@@ -220,7 +220,7 @@ func nextAttempt(attempts []int, attempt int) (int, bool) {
 // positive seq and stay where they happened.
 func platformNotice(at time.Time, seq int64, level gen.RunEventLevel, detail string) gen.RunEvent {
 	return gen.RunEvent{
-		V:       gen.RunEventV2,
+		V:       gen.RunEventVTwo,
 		Seq:     seq,
 		TS:      at.UTC(),
 		Kind:    gen.RunEventKindNotice,

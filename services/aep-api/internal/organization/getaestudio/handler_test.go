@@ -17,13 +17,17 @@
 package getaestudio
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"net/http"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/organization"
+	"github.com/wso2/aep/aep-api/internal/platform/apierr"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 )
 
@@ -83,10 +87,55 @@ func TestGetAeStudio_NotConfiguredIsFailed(t *testing.T) {
 	}
 }
 
-func TestGetAeStudio_ReadErrorIs500WithFixedMessage(t *testing.T) {
-	h := New(fakeStatus{err: errors.New("oc down: secret detail")})
+// captureLog routes the default logger into a buffer for the test's duration.
+func captureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return &buf
+}
+
+// A failed read answers a fixed-message 500 and leaves the cause in the log,
+// keyed by event, org and error.
+func TestGetAeStudio_ReadErrorIs500WithFixedMessageAndIsLogged(t *testing.T) {
+	logs := captureLog(t)
+	h := New(fakeStatus{err: errors.New("oc down")})
 	_, err := h.GetAeStudio(tenant.WithBoundOrg(context.Background(), "default"), gen.GetAeStudioRequestObject{})
-	if err == nil || err.Error() != "failed to read AE Studio state" {
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusInternalServerError || apiErr.Message != "failed to read AE Studio state" {
 		t.Fatalf("got %v", err)
 	}
+	var rec map[string]any
+	if jerr := json.Unmarshal(logs.Bytes(), &rec); jerr != nil {
+		t.Fatalf("want one JSON log record, got %q: %v", logs, jerr)
+	}
+	if rec["msg"] != "ae_studio.status_read_failed" || rec["level"] != "ERROR" || rec["org"] != "default" || rec["error"] != "oc down" {
+		t.Fatalf("log record = %v", rec)
+	}
+}
+
+// With the tenant gate in LOG mode a claimless request reaches the handler
+// with no bound org: it fails closed instead of reading an org named "".
+func TestGetAeStudio_NoBoundOrgIs401(t *testing.T) {
+	called := false
+	h := New(statusFunc(func(context.Context, string) (organization.AEStudioStatus, error) {
+		called = true
+		return organization.AEStudioStatus{State: organization.AEStudioReady}, nil
+	}))
+	_, err := h.GetAeStudio(context.Background(), gen.GetAeStudioRequestObject{})
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusUnauthorized {
+		t.Fatalf("got %v, want 401", err)
+	}
+	if called {
+		t.Fatal("read AE Studio state with no bound org")
+	}
+}
+
+type statusFunc func(context.Context, string) (organization.AEStudioStatus, error)
+
+func (f statusFunc) Status(ctx context.Context, org string) (organization.AEStudioStatus, error) {
+	return f(ctx, org)
 }

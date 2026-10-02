@@ -18,6 +18,7 @@ package getaestudio
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/organization"
@@ -35,8 +36,15 @@ type Handler struct {
 func New(s organization.AEStudioStatusReader) *Handler { return &Handler{studio: s} }
 
 func (h *Handler) GetAeStudio(ctx context.Context, _ gen.GetAeStudioRequestObject) (gen.GetAeStudioResponseObject, error) {
-	st, err := h.studio.Status(ctx, tenant.BoundOrgFromContext(ctx))
+	org := tenant.BoundOrgFromContext(ctx)
+	if org == "" {
+		// The gate in LOG mode lets a claimless request through unbound;
+		// this read is org-scoped, so it fails closed.
+		return nil, apierr.Unauthorized("authentication required")
+	}
+	st, err := h.studio.Status(ctx, org)
 	if err != nil {
+		slog.ErrorContext(ctx, "ae_studio.status_read_failed", "org", org, "error", err)
 		return nil, apierr.Internal("failed to read AE Studio state")
 	}
 	out := gen.GetAeStudio200JSONResponse{State: gen.AeStudioState(st.State)}
