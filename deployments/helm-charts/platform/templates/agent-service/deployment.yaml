@@ -42,11 +42,6 @@ spec:
             - name: AGENT_BODY_LIMIT
               value: {{ .Values.aepAgents.bodyLimit | quote }}
 
-            # Collab server the agents join as a live Yjs peer during spec
-            # generation. Unset => /generate-spec answers 503.
-            - name: AGENT_COLLAB_WS_URL
-              value: "ws://collab-server:{{ .Values.collab.port }}"
-
             - name: WORKSPACE_MOUNT_ROOT
               value: "/workspaces"
 

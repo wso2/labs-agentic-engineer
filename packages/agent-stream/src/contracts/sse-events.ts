@@ -392,8 +392,9 @@ export interface McpConfig {
 /**
  * Caller-supplied collab-room reference for a room-scoped turn (#86 phase 4).
  * Mirrors `McpConfig`: the BFF resolves the room and forwards the caller's
- * bearer; the service never reads either from its own env (the ws URL alone
- * comes from service config — the BFF doesn't know the agents-side route).
+ * bearer, and the Room's ws URL (the org's AE Studio pod Room; TEMPORARY,
+ * phase 3 deletes: old agents joins the pod Room); the service reads none of
+ * them from its own env.
  * Present → the agents service joins the room as a live Yjs peer, reads the
  * file bundle FROM the doc, and applies file ops to it; nothing is committed
  * to git (persistence is the #86 phase-3 committer). Omitted → the
@@ -407,14 +408,36 @@ export interface CollabConfig {
    * collab server's BFF oracle validates it exactly like a browser join.
    */
   token: string;
+  /**
+   * The org's pod Room endpoint (ae-collab's public `/v1/rooms`, ws or wss),
+   * resolved by the BFF from the org's AE Studio.
+   */
+  url: string; // TEMPORARY (phase 3 deletes): old agents joins the pod Room
 }
 
 /** Runtime guard for an untrusted `collab` value (the server's pre-stream 400 check). */
 export function isCollabConfig(v: unknown): v is CollabConfig {
   if (typeof v !== "object" || v === null) return false;
   const c = v as Record<string, unknown>;
-  return typeof c.roomId === "string" && c.roomId !== "" && typeof c.token === "string" && c.token !== "";
+  return (
+    typeof c.roomId === "string" &&
+    c.roomId !== "" &&
+    typeof c.token === "string" &&
+    c.token !== "" &&
+    isRoomUrl(c.url) // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+  );
 }
+
+/** A ws or wss URL. */
+function isRoomUrl(v: unknown): boolean { // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+  if (typeof v !== "string") return false; // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+  try { // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+    const { protocol } = new URL(v); // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+    return protocol === "ws:" || protocol === "wss:"; // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+  } catch { // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+    return false; // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+  } // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+} // TEMPORARY (phase 3 deletes): old agents joins the pod Room
 
 // --- The reviewable change (§7) ---------------------------------------------
 

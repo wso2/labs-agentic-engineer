@@ -271,6 +271,9 @@ type ServiceDeps struct {
 	// or a slow hook must never delay or fail the turn. Kept as a plain func so
 	// the genai package does not import devflow.
 	TurnFinishHook func(ctx context.Context, orgID, projectID, turnID, useCase, outcome string)
+	// Rooms finds the org's pod Room a room-scoped turn joins. Nil refuses
+	// every room-scoped turn as ErrAEStudioUnavailable.
+	Rooms RoomLocator // TEMPORARY (phase 3 deletes): old agents joins the pod Room
 }
 
 // Service is the typed entry point behind the turn/status/stream/rehydrate
@@ -293,6 +296,7 @@ type Service struct {
 	mcpTokens      MCPTokenMinter
 	mcpBaseURL     string
 	finishHook     func(ctx context.Context, orgID, projectID, turnID, useCase, outcome string)
+	rooms          RoomLocator // TEMPORARY (phase 3 deletes): old agents joins the pod Room
 }
 
 // NewService wires the genai service.
@@ -311,6 +315,7 @@ func NewService(d ServiceDeps) *Service {
 		mcpTokens:      d.MCPTokens,
 		mcpBaseURL:     d.MCPBaseURL,
 		finishHook:     d.TurnFinishHook,
+		rooms:          d.Rooms, // TEMPORARY (phase 3 deletes): old agents joins the pod Room
 	}
 }
 
@@ -352,13 +357,16 @@ func (s *Service) StartTurn(ctx context.Context, orgID, projectID string, in Tur
 	// like a browser join; no token → the turn cannot join, fail pre-202.
 	// The synthetic Marketplace register project has no spec room (no git
 	// repo; the id is not a DNS label) — ignore collab:true from the panel.
-	collabRoomID, collabToken := "", ""
+	collabRoomID, collabToken, collabURL := "", "", "" // TEMPORARY (phase 3 deletes): old agents joins the pod Room
 	if in.Collab && !isMarketplaceRegisterProject(projectID) {
 		collabToken = auth.GetAuthToken(ctx)
 		if collabToken == "" {
 			return "", ErrCollabNoToken
 		}
 		collabRoomID = "spec-" + orgID + "-" + projectID
+		if collabURL, err = s.roomURL(ctx, orgID); err != nil { // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+			return "", err // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+		} // TEMPORARY (phase 3 deletes): old agents joins the pod Room
 	}
 
 	ws := s.git.Workspace()
@@ -484,6 +492,7 @@ func (s *Service) StartTurn(ctx context.Context, orgID, projectID string, in Tur
 		llm:          llm,
 		collabRoomID: collabRoomID,
 		collabToken:  collabToken,
+		collabURL:    collabURL, // TEMPORARY (phase 3 deletes): old agents joins the pod Room
 	}
 	// Detached: the turn runs to completion (or a terminal failure) server-
 	// side regardless of the client connection (D16). runTurnSafe is the panic

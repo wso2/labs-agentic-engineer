@@ -467,6 +467,8 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		// #430: the project-scoped thread store — resolve/rotate the current
 		// conversation, and the conversation_rotated admission fence on turns.
 		Conversations: spec.NewConversationRepository(db),
+		// A room-scoped turn's Room is the org's AE Studio pod Room.
+		Rooms: aeStudioRooms{status: aeStudio}, // TEMPORARY (phase 3 deletes): old agents joins the pod Room
 	}
 	// MCP discovery on design-generation turns (dependency-management Phase 5):
 	// the BFF mints a short-lived aud:aep-api-mcp token per turn so the agents

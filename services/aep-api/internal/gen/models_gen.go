@@ -1180,6 +1180,7 @@ func (e TimelineEventEmitter) Valid() bool {
 // Defines values for TurnConflictCode.
 const (
 	TurnConflictCodeConversationRotated TurnConflictCode = "conversation_rotated"
+	TurnConflictCodeGithubNotConnected  TurnConflictCode = "github_not_connected"
 	TurnConflictCodeRequirementsMissing TurnConflictCode = "requirements_missing"
 	TurnConflictCodeTurnInProgress      TurnConflictCode = "turn_in_progress"
 )
@@ -1188,6 +1189,8 @@ const (
 func (e TurnConflictCode) Valid() bool {
 	switch e {
 	case TurnConflictCodeConversationRotated:
+		return true
+	case TurnConflictCodeGithubNotConnected:
 		return true
 	case TurnConflictCodeRequirementsMissing:
 		return true
@@ -3395,7 +3398,7 @@ type TurnAnchorNode struct {
 	Name string `json:"name"`
 }
 
-// TurnConflict create-turn 409 body. turn_in_progress carries the active turn's id; requirements_missing means the design use-case has no requirements to work from; conversation_rotated means the addressed thread is no longer the project's current one — re-resolve via list-conversations and retry.
+// TurnConflict create-turn 409 body. turn_in_progress carries the active turn's id; requirements_missing means the design use-case has no requirements to work from; conversation_rotated means the addressed thread is no longer the project's current one — re-resolve via list-conversations and retry. github_not_connected means a room-scoped turn's org has no AE Studio because it has not connected GitHub.
 type TurnConflict struct {
 	ActiveTurnID string           `json:"activeTurnId,omitempty"`
 	Code         TurnConflictCode `json:"code"`

@@ -274,6 +274,8 @@ const SurfaceConsole = "console"
 type CollabBlock struct {
 	RoomID string `json:"roomId"`
 	Token  string `json:"token"`
+	// URL is the org's pod Room endpoint (ae-collab's public `/v1/rooms`).
+	URL string `json:"url"` // TEMPORARY (phase 3 deletes): old agents joins the pod Room
 }
 
 // MCPBlock is the caller-supplied MCP discovery config for a turn. URL is the

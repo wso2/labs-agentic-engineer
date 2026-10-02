@@ -517,6 +517,7 @@ type rigConfig struct {
 	conversations spec.ConversationRepository
 	repos         spec.RepoResolver
 	snapshots     sourcecontrol.SnapshotProvider
+	rooms         spec.RoomLocator // TEMPORARY (phase 3 deletes): old agents joins the pod Room
 }
 
 // withConversations wires the #430 thread store so the resolve/rotate endpoints
@@ -626,6 +627,10 @@ func newGenaiRig(t *testing.T, seed map[string]string, opts ...rigOption) *genai
 	if cfg.snapshots != nil {
 		snapshots = cfg.snapshots
 	}
+	var rooms spec.RoomLocator = staticRoom(testRoomURL) // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+	if cfg.rooms != nil {                                // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+		rooms = cfg.rooms // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+	} // TEMPORARY (phase 3 deletes): old agents joins the pod Room
 	svc := spec.NewService(spec.ServiceDeps{
 		Repos: repos,
 		Git:   sourcecontrol.NewGitOpsService(stubResolver{}, fx.Engine),
@@ -648,6 +653,7 @@ func newGenaiRig(t *testing.T, seed map[string]string, opts ...rigOption) *genai
 		Conversations: cfg.conversations,
 		MCPTokens:     cfg.mcpTokens,
 		MCPBaseURL:    cfg.mcpBaseURL,
+		Rooms:         rooms, // TEMPORARY (phase 3 deletes): old agents joins the pod Room
 	})
 	rig.svc = svc
 	rig.h = componenttest.New(t, componenttest.Options{Deps: edge.Deps{Spec: mustSpecHandlers(t, spec.Deps{GenAI: svc})}})

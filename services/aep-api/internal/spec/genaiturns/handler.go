@@ -231,11 +231,12 @@ func (h *Handler) GetConversation(ctx context.Context, request gen.GetConversati
 
 // ---- responses ---------------------------------------------------------------
 
-// turnConflictOf maps the StartTurn conflict rejections onto the contract's
-// 409 TurnConflict body ({"code":"turn_in_progress","activeTurnId"} /
-// {"code":"requirements_missing"} / {"code":"conversation_rotated"} — declared
-// in the contract, generated type); every other error stays on the envelope
-// path (mapGenAITurnError).
+// turnConflictOf maps the StartTurn rejections with a contract-declared body
+// onto it: the 409 TurnConflict ({"code":"turn_in_progress","activeTurnId"} /
+// {"code":"requirements_missing"} / {"code":"conversation_rotated"} /
+// {"code":"github_not_connected"}) and the 503 ae_studio_unavailable with its
+// Retry-After header — declared in the contract, generated types; every other
+// error stays on the envelope path (mapGenAITurnError).
 func turnConflictOf(err error) (gen.CreateTurnResponseObject, bool) {
 	var inProgress *spec.TurnInProgressError
 	if errors.As(err, &inProgress) {
@@ -250,8 +251,25 @@ func turnConflictOf(err error) (gen.CreateTurnResponseObject, bool) {
 			Code: gen.TurnConflictCodeConversationRotated,
 		}), true
 	}
+	// 05 §5: a room-scoped turn whose org has no AE Studio (no GitHub token)
+	// is a permanent 409; one whose AE Studio is not ready is a transient 503
+	// the client retries after Retry-After.
+	if errors.Is(err, spec.ErrAEStudioAbsent) { // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+		return gen.CreateTurn409JSONResponse(gen.TurnConflict{Code: gen.TurnConflictCodeGithubNotConnected}), true // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+	} // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+	if errors.Is(err, spec.ErrAEStudioUnavailable) { // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+		return gen.CreateTurn503JSONResponse{ // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+			Body:    gen.Error{Code: aeStudioUnavailableCode, Message: spec.ErrAEStudioUnavailable.Error()}, // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+			Headers: gen.CreateTurn503ResponseHeaders{RetryAfter: aeStudioRetryAfterSeconds},                // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+		}, true // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+	} // TEMPORARY (phase 3 deletes): old agents joins the pod Room
 	return nil, false
 }
+
+const (
+	aeStudioUnavailableCode   = "ae_studio_unavailable" // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+	aeStudioRetryAfterSeconds = 5                       // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+)
 
 // turnStreamResponse adapts the SSE loop onto the generated stream-turn
 // response interface: Visit stamps the event-stream preamble (sseStream) and

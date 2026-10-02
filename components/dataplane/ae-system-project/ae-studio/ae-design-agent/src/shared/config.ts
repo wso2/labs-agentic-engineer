@@ -92,10 +92,6 @@ export const config = {
   // mount the volume :ro; nothing in this service ever writes it.
   workspaceMountRoot: process.env.WORKSPACE_MOUNT_ROOT || "/workspaces",
 
-  // Collab server ws URL for room-scoped turns (#86 phase 4). Unset → any
-  // turn carrying a `collab` block is rejected pre-stream (the deployment
-  // doesn't do live rooms). Compose: ws://collab-server:3400.
-  collabWsUrl: process.env.AGENT_COLLAB_WS_URL || undefined,
 
   // M2M gate (§12.3.2): a Bearer JWT with this audience, verified against a JWKS
   // (RS256) OR a shared secret (HS256) — whichever is configured. The gate is

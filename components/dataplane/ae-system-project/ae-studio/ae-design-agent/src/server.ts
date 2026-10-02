@@ -471,20 +471,16 @@ export function createApp(deps: CreateAppDeps): Express {
     // collab (optional, #86 phase 4): a room-scoped turn. The room replaces
     // the snapshot as the FILE source (skills + the org fence still come from
     // the workspace); ops apply live to the doc; nothing commits. Reject a
-    // malformed block, an unsupported toolset combination, or a deployment
-    // with no collab server, pre-stream.
+    // malformed block (one without the Room's url included) or an
+    // unsupported toolset combination, pre-stream.
     let collab: CollabConfig | undefined;
     if (body.collab !== undefined) {
       if (!isCollabConfig(body.collab)) {
-        res.status(400).json({ error: "collab must be { roomId: string, token: string }" });
+        res.status(400).json({ error: "collab must be { roomId: string, token: string, url: ws(s) URL }" }); // TEMPORARY (phase 3 deletes): old agents joins the pod Room
         return;
       }
       if (toolset !== undefined && toolset !== "files") {
         res.status(400).json({ error: "collab turns support only the files toolset" });
-        return;
-      }
-      if (!config.collabWsUrl) {
-        res.status(503).json({ error: "collab is not configured on this deployment (AGENT_COLLAB_WS_URL)" });
         return;
       }
       collab = body.collab;
@@ -562,7 +558,7 @@ export function createApp(deps: CreateAppDeps): Express {
     if (collab) {
       try {
         roomPeer = await joinRoom({
-          url: config.collabWsUrl!,
+          url: collab.url, // TEMPORARY (phase 3 deletes): old agents joins the pod Room
           roomId: collab.roomId,
           token: collab.token,
         });

@@ -731,8 +731,24 @@ paths:
               schema:
                 $ref: '#/components/schemas/TurnConflict'
           description: A turn is already running for this project, the design
-            use-case has no requirements yet, or the addressed conversation is
-            no longer the project's current thread (conversation_rotated).
+            use-case has no requirements yet, the addressed conversation is
+            no longer the project's current thread (conversation_rotated), or a
+            room-scoped turn's org has not connected GitHub (github_not_connected).
+        # TEMPORARY (phase 3 deletes): old agents joins the pod Room
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: A room-scoped turn's org AE Studio is provisioning,
+            failed or unreachable (code ae_studio_unavailable). Retry after
+            Retry-After seconds.
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying.
+              required: true
+              schema:
+                type: integer
         default:
           content:
             application/json:
@@ -9004,13 +9020,16 @@ components:
         turn's id; requirements_missing means the design use-case has no
         requirements to work from; conversation_rotated means the addressed
         thread is no longer the project's current one — re-resolve via
-        list-conversations and retry.
+        list-conversations and retry. github_not_connected means a room-scoped
+        turn's org has no AE Studio because it has not connected GitHub.
       properties:
         code:
           enum:
           - turn_in_progress
           - requirements_missing
           - conversation_rotated
+          # TEMPORARY (phase 3 deletes): old agents joins the pod Room
+          - github_not_connected
           type: string
         activeTurnId:
           type: string

@@ -92,6 +92,7 @@ type turnJob struct {
 	// relays frames but folds nothing and commits nothing.
 	collabRoomID string
 	collabToken  string
+	collabURL    string // TEMPORARY (phase 3 deletes): old agents joins the pod Room
 }
 
 // runTurnSafe is the panic barrier around the detached turn goroutine: a panic
@@ -313,7 +314,7 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 
 	var collab *agentsvc.CollabBlock
 	if job.collabRoomID != "" {
-		collab = &agentsvc.CollabBlock{RoomID: job.collabRoomID, Token: job.collabToken}
+		collab = &agentsvc.CollabBlock{RoomID: job.collabRoomID, Token: job.collabToken, URL: job.collabURL} // TEMPORARY (phase 3 deletes): old agents joins the pod Room
 	}
 	body, err := s.client.Turn(ctx, job.nsConversationID, job.orgID, job.llm.Key, agentsvc.TurnRequest{
 		Turn:       job.turn,

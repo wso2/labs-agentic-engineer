@@ -24,8 +24,8 @@
 //
 // Access is REQUEST-SCOPED (#86 d7): the caller's bearer rides the turn
 // payload and the collab server's BFF oracle validates it exactly like a
-// browser join. The ws URL comes from service config (AGENT_COLLAB_WS_URL);
-// the caller names only the room.
+// browser join. The caller names the room and its ws URL (the org's pod Room;
+// TEMPORARY, phase 3 deletes: old agents joins the pod Room).
 
 import {
   HocuspocusProvider,
@@ -72,7 +72,7 @@ export interface RoomPeer {
 }
 
 export interface JoinRoomInput {
-  /** Collab server ws URL (service config, e.g. ws://collab-server:3400). */
+  /** The Room's ws URL, from the turn's `collab` block. */
   url: string;
   /** Room id (`spec-<org>-<project>`), resolved by the BFF. */
   roomId: string;
