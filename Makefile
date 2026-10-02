@@ -48,7 +48,7 @@ LICENSE_HEADER := .github/license-header.txt
 LICENSE_MATCH = grep -E '\.(go|ts|tsx|sh)$$|(^|/)Dockerfile$$' | \
 	grep -vE '\.gen\.(go|ts)$$|_mock\.go$$|/mocks/|/node_modules/|/dist/|/generated/|(^|/)\.(agents|claude)/'
 
-.PHONY: install gen build dev test lint eval-ui typecheck license license-check tools clean eval cover build-runner workflow-skill deadcode-ts deadcode-ts-check manifests-check dev-env dev-images ae-studio-refs-check dev-update dev-runner obs-park obs-unpark obs-status bal-library-tool
+.PHONY: install gen build dev test lint eval-ui typecheck license license-check tools clean eval cover build-runner workflow-skill deadcode-ts deadcode-ts-check manifests-check dev-env dev-images ae-studio-refs-check dev-update dev-runner ae-studio-check obs-park obs-unpark obs-status bal-library-tool
 
 install:
 	$(PNPM) install
@@ -422,6 +422,13 @@ dev-runner:
 	helm upgrade aep-platform deployments/helm-charts/platform -n wso2-aep --reuse-values \
 		--set codingAgentRunner.image=aep-runner:dev \
 		--set codingAgentRunner.opencodeImage=aep-runner-opencode:dev
+
+# Read-only check of the live ae-studio Resource, pod and public hosts
+# (deployments/scripts/ae-studio-check.sh). CP_CONTEXT/DP_CONTEXT are separate
+# kube contexts for the control plane and the dataplane; both default to the
+# current context. Example: make ae-studio-check ORG=default
+ae-studio-check:
+	ORG="$(ORG)" CP_CONTEXT="$(CP_CONTEXT)" DP_CONTEXT="$(DP_CONTEXT)" bash deployments/scripts/ae-studio-check.sh
 
 clean:
 	$(TURBO) run build --force >/dev/null 2>&1 || true
