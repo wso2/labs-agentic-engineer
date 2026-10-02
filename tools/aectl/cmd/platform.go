@@ -79,6 +79,11 @@ var (
 	initReuseSecrets        bool
 	initAddons              string
 	initImageTag            string
+	// AE Studio data-plane images (the three containers of the ae-studio pod),
+	// full refs: aep-api hands them to the Resource it provisions.
+	initAEStudioImageDesignAgent string
+	initAEStudioImageCollab      string
+	initAEStudioImageStudioTools string
 )
 
 // platformServiceChartKeys are the values.yaml keys of the services whose
@@ -187,16 +192,48 @@ func aeStudioOverrides() []string {
 	return append(args, "--set-json", "aeStudio.extraEgress="+aeStudioExtraEgress())
 }
 
+// portOfURL is the TCP port a URL connects to: the explicit one, else the
+// scheme's default (80/443), else fallback for an unparsable or schemeless URL.
+func portOfURL(raw string, fallback int) int {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fallback
+	}
+	if u.Port() != "" {
+		if p, err := strconv.Atoi(u.Port()); err == nil {
+			return p
+		}
+		return fallback
+	}
+	switch u.Scheme {
+	case "http":
+		return 80
+	case "https":
+		return 443
+	}
+	return fallback
+}
+
+// aeStudioImageOverrides returns the helm pairs for aeStudio.images.*, one
+// per non-empty ref. An empty ref is left to the chart default, which keeps
+// aep-api booting and makes the AE Studio Ensure fail loudly.
+func aeStudioImageOverrides(designAgent, collab, studioTools string) []string {
+	var args []string
+	for _, kv := range []struct{ key, ref string }{
+		{"designAgent", designAgent}, {"collab", collab}, {"studioTools", studioTools},
+	} {
+		if kv.ref != "" {
+			args = append(args, "--set", "aeStudio.images."+kv.key+"="+kv.ref)
+		}
+	}
+	return args
+}
+
 // aeStudioExtraEgress is the pod's egress to the in-cluster IdP (Thunder's
 // namespace and port, from thunder.namespace / thunder.url) and to aep-api.
 func aeStudioExtraEgress() string {
 	thunderNS := viper.GetString("thunder.namespace")
-	thunderPort := 8090
-	if u, err := url.Parse(viper.GetString("thunder.url")); err == nil && u.Port() != "" {
-		if p, err := strconv.Atoi(u.Port()); err == nil {
-			thunderPort = p
-		}
-	}
+	thunderPort := portOfURL(viper.GetString("thunder.url"), 8090)
 	rules := []map[string]any{
 		{
 			"to":    []any{map[string]any{"namespaceSelector": map[string]any{"matchLabels": map[string]string{"kubernetes.io/metadata.name": thunderNS}}}},
@@ -280,6 +317,9 @@ func init() {
 	_ = viper.BindPFlag("openbao.addr", initCmd.Flags().Lookup("openbao-addr"))
 	initCmd.Flags().BoolVar(&initReuseSecrets, "reuse-secrets", false, "Skip secret prompts and reuse secrets already seeded in OpenBao (for reinstall or upgrade)")
 	initCmd.Flags().StringVar(&initAddons, "addons", "", `Comma-separated addon IDs to install without prompting (e.g. "thunder-app,postgres-cnpg"). Use "none" to skip addons, "all" to install everything. Omit for interactive selection.`)
+	initCmd.Flags().StringVar(&initAEStudioImageDesignAgent, "ae-studio-image-design-agent", "", "Full image ref of the ae-studio pod's design-agent container (aeStudio.images.designAgent)")
+	initCmd.Flags().StringVar(&initAEStudioImageCollab, "ae-studio-image-collab", "", "Full image ref of the ae-studio pod's collab container (aeStudio.images.collab)")
+	initCmd.Flags().StringVar(&initAEStudioImageStudioTools, "ae-studio-image-studio-tools", "", "Full image ref of the ae-studio pod's studio-tools container (aeStudio.images.studioTools)")
 	initCmd.Flags().StringVar(&initImageTag, "image-tag", "", "Tag to use for every platform service image instead of the chart's released default. Repositories are unchanged, so the images must already be loaded into the cluster under those names (local dev — see 'make dev-env')")
 	registerThunderFlags(initCmd)
 }
@@ -340,7 +380,7 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 		sp := ui.NewSpinner("Verifying existing OpenBao secrets")
 		sp.Start()
-		if err := verifyOpenBaoSecrets(ctx); err != nil {
+		if err := reconcileReusedOpenBaoSecrets(ctx); err != nil {
 			sp.Fail("Secret verification failed")
 			return fmt.Errorf("reuse-secrets verification failed: %w\nRemove --reuse-secrets to run a fresh install", err)
 		}
@@ -436,6 +476,7 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 	helmArgs = append(helmArgs, tryItOverrides(tryItPublicURL(), viper.GetString("gateway.hostname"))...)
 	helmArgs = append(helmArgs, aeStudioOverrides()...)
 	helmArgs = append(helmArgs, imageTagOverrides(initImageTag)...)
+	helmArgs = append(helmArgs, aeStudioImageOverrides(initAEStudioImageDesignAgent, initAEStudioImageCollab, initAEStudioImageStudioTools)...)
 	if mode := viper.GetString("platform.workspaces.access_mode"); mode != "" {
 		helmArgs = append(helmArgs, "--set", "workspaces.accessMode="+mode)
 	}
@@ -843,29 +884,68 @@ func shortToolVersion(name string, args ...string) string {
 	return strings.TrimSpace(line)
 }
 
-// verifyOpenBaoSecrets confirms all required secret paths exist in OpenBao.
-// Used by --reuse-secrets to ensure a previous install seeded everything before
-// skipping the provisioning step.
-func verifyOpenBaoSecrets(ctx context.Context) error {
+// openBaoSession is an authenticated port-forward to OC's OpenBao. stop
+// tears the port-forward down.
+type openBaoSession struct {
+	baseURL, token string
+	stop           func()
+}
+
+// openOpenBaoSession port-forwards to OpenBao and logs in with the cluster's
+// Kubernetes auth, the same way provisionOpenBao does.
+func openOpenBaoSession(ctx context.Context) (*openBaoSession, error) {
 	pfCmd, err := openbao.PortForward(ctx, ocOpenBaoNamespace, ocOpenBaoRelease, kubeconfig)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer func() { _ = pfCmd.Process.Kill() }()
+	stop := func() { _ = pfCmd.Process.Kill() }
 
 	baseURL := "http://localhost:" + openbao.LocalPort
 	if err := openbao.WaitForReachable(ctx, baseURL, 30*time.Second); err != nil {
-		return fmt.Errorf("OpenBao not reachable: %w", err)
+		stop()
+		return nil, fmt.Errorf("OpenBao not reachable: %w", err)
 	}
-
 	saToken, err := openbao.GetSAToken(ctx, ocOpenBaoNamespace, ocOpenBaoSA, kubeconfig)
 	if err != nil {
-		return err
+		stop()
+		return nil, err
 	}
 	token, err := openbao.KubernetesLogin(ctx, baseURL, ocWriteRole, saToken)
 	if err != nil {
+		stop()
+		return nil, err
+	}
+	return &openBaoSession{baseURL: baseURL, token: token, stop: stop}, nil
+}
+
+// seedMissingThunderClientSecrets writes the generated aep/thunder-clients/*
+// keys that are absent and leaves existing ones untouched, so a store seeded
+// before a client existed is topped up rather than refused. It returns the
+// paths it wrote.
+func (s *openBaoSession) seedMissingThunderClientSecrets(ctx context.Context) ([]string, error) {
+	exists := func(path string) (bool, error) {
+		_, status, err := openbao.Req(ctx, "GET", s.baseURL, s.token, "/v1/secret/data/"+path, nil)
+		return status != 404, err
+	}
+	put := func(path, value string) error {
+		_, err := openbao.Must(ctx, "PUT", s.baseURL, s.token, "/v1/secret/data/"+path, map[string]interface{}{
+			"data": map[string]interface{}{"value": value},
+		})
 		return err
 	}
+	return seedMissingGeneratedSecrets(exists, put)
+}
+
+// reconcileReusedOpenBaoSecrets backs --reuse-secrets: it requires every
+// non-generated secret path to exist in OpenBao (a previous install seeded
+// them) and tops up the generated Thunder client secrets, which is the only
+// thing it writes.
+func reconcileReusedOpenBaoSecrets(ctx context.Context) error {
+	s, err := openOpenBaoSession(ctx)
+	if err != nil {
+		return err
+	}
+	defer s.stop()
 
 	required := []string{
 		"aep/anthropic-api-key",
@@ -882,7 +962,7 @@ func verifyOpenBaoSecrets(ctx context.Context) error {
 
 	var missing []string
 	for _, path := range required {
-		_, status, err := openbao.Req(ctx, "GET", baseURL, token, "/v1/secret/data/"+path, nil)
+		_, status, err := openbao.Req(ctx, "GET", s.baseURL, s.token, "/v1/secret/data/"+path, nil)
 		if err != nil {
 			return fmt.Errorf("check secret %s: %w", path, err)
 		}
@@ -894,19 +974,7 @@ func verifyOpenBaoSecrets(ctx context.Context) error {
 		return fmt.Errorf("the following secrets are not in OpenBao:\n  %s", strings.Join(missing, "\n  "))
 	}
 
-	// Generated Thunder client secrets are aectl's own to create, so a store
-	// seeded before a client existed is topped up rather than refused.
-	exists := func(path string) (bool, error) {
-		_, status, err := openbao.Req(ctx, "GET", baseURL, token, "/v1/secret/data/"+path, nil)
-		return status != 404, err
-	}
-	put := func(path, value string) error {
-		_, err := openbao.Must(ctx, "PUT", baseURL, token, "/v1/secret/data/"+path, map[string]interface{}{
-			"data": map[string]interface{}{"value": value},
-		})
-		return err
-	}
-	_, err = seedMissingGeneratedSecrets(exists, put)
+	_, err = s.seedMissingThunderClientSecrets(ctx)
 	return err
 }
 

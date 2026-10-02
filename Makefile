@@ -267,7 +267,10 @@ dev-env:
 	$(MAKE) dev-images
 	./tools/aectl/aectl-skaffold platform config import --config skaffold/defaults.yaml
 	ANTHROPIC_API_KEY=none AEP_THUNDER_ADMIN_CLIENT_SECRET=ae-install-client-secret \
-		./tools/aectl/aectl-skaffold platform install --addons=all --platform-version=latest --platform-chart=deployments/helm-charts/platform --image-tag=dev-local
+		./tools/aectl/aectl-skaffold platform install --addons=all --platform-version=latest --platform-chart=deployments/helm-charts/platform --image-tag=dev-local \
+		--ae-studio-image-design-agent="$(call ae_studio_ref,ae-design-agent)" \
+		--ae-studio-image-collab="$(call ae_studio_ref,ae-collab)" \
+		--ae-studio-image-studio-tools="$(call ae_studio_ref,ae-studio-tools)"
 	@if [ "$${WITH_AGENT_MANAGER:-1}" != "1" ]; then \
 		echo "⏭️  Skipping Agent Manager (WITH_AGENT_MANAGER=0)"; \
 	elif [ "$${WITH_OBSERVABILITY:-1}" != "1" ]; then \
@@ -294,8 +297,31 @@ dev-env:
 #
 # Needs the cluster to exist: skaffold is given its kube-context, and the
 # import targets it by name.
+#
+# The three ae-studio pod images are a second skaffold config
+# (skaffold/ae-studio.yaml) because they need a UNIQUE tag per build: aep-api
+# writes the refs into the OpenChoreo Resource, and a fixed tag would leave it
+# unchanged so the pod would never roll. Its --file-output is the single
+# source of those refs for dev-env and dev-update. Every ref is imported AND
+# pinned: a local-only tag has no registry to be pulled back from, so kubelet's
+# image GC must not evict it (the pinning build-runner.sh does for the runners).
+AE_STUDIO_IMAGES_JSON := .skaffold/ae-studio-images.json
+
+# The ref skaffold built for one ae-studio image. `sub("@.*";"")` drops a
+# trailing @sha256:<id> if a skaffold version appends one: a local (push:false)
+# build has no registry digest, and the suffix would break the import and the
+# Resource's image ref.
+ae_studio_ref = $$(jq -r '.builds[] | select(.imageName | endswith("$(1)")) | .tag | sub("@.*";"")' $(AE_STUDIO_IMAGES_JSON))
+
+# The `--set aeStudio.images.<k>=<ref>` pairs for the three ae-studio images.
+AE_STUDIO_IMAGE_SET = --set aeStudio.images.designAgent="$(call ae_studio_ref,ae-design-agent)" \
+	--set aeStudio.images.collab="$(call ae_studio_ref,ae-collab)" \
+	--set aeStudio.images.studioTools="$(call ae_studio_ref,ae-studio-tools)"
+
 dev-images:
 	skaffold build --kube-context k3d-openchoreo -f skaffold.yaml
+	mkdir -p .skaffold
+	skaffold build --kube-context k3d-openchoreo -f skaffold/ae-studio.yaml --file-output=$(AE_STUDIO_IMAGES_JSON)
 	# skaffold's own build cache lives in the HOST docker daemon, not the k3d
 	# cluster's containerd — a cache hit ("Found Locally") skips its internal
 	# k3d-import too, so a recreated/fresh cluster silently never receives an
@@ -308,7 +334,11 @@ dev-images:
 		ghcr.io/wso2/aep/aep-mcp-server:dev-local \
 		ghcr.io/wso2/aep/console:dev-local \
 		ghcr.io/wso2/aep/tryit:dev-local \
+		$$(jq -r '.builds[].tag | sub("@.*";"")' $(AE_STUDIO_IMAGES_JSON)) \
 		--cluster openchoreo
+	for ref in $$(jq -r '.builds[].tag | sub("@.*";"")' $(AE_STUDIO_IMAGES_JSON)); do \
+		bash deployments/scripts/lib/pin-image.sh "$$ref" || exit 1; \
+	done
 
 # The observability plane's heavy half (OpenSearch, Prometheus, collectors,
 # adapters): `make dev-env` installs it running and parks it last, unless the
@@ -337,6 +367,18 @@ obs-status:
 # picks up the new content; without it every dev-update after the first is a
 # no-op as far as the running pods are concerned.
 #
+# The ae-studio pod images get a unique tag per build (dev-images), so the
+# helm upgrade changes aep-api's env and Helm rolls aep-api by itself; the
+# ae-studio pod then rolls at the next console visit, when aep-api's converge
+# sees the new image refs. Never `kubectl rollout restart` it: the Deployment
+# is OpenChoreo's, not ours.
+#
+# `aectl platform sync-clients` runs after the upgrade because an update never
+# runs the install's Thunder setup: on an install that predates a Thunder
+# client it seeds that client's missing vault key (never rotating an existing
+# one) and registers it. Idempotent, and it touches no database or Thunder
+# admin secret.
+#
 # One-shot, not a watch loop. Run after `make dev-env`.
 # Console: http://console.ae.localhost:8080
 #
@@ -350,7 +392,10 @@ dev-update:
 		--set collab.image.repository=ghcr.io/wso2/aep/ae-collab --set collab.image.tag=dev-local \
 		--set aepMcpServer.image.repository=ghcr.io/wso2/aep/aep-mcp-server --set aepMcpServer.image.tag=dev-local \
 		--set console.image.repository=ghcr.io/wso2/aep/console --set console.image.tag=dev-local \
-		--set tryIt.image.repository=ghcr.io/wso2/aep/tryit --set tryIt.image.tag=dev-local
+		--set tryIt.image.repository=ghcr.io/wso2/aep/tryit --set tryIt.image.tag=dev-local \
+		$(AE_STUDIO_IMAGE_SET)
+	cd tools/aectl && go build -o aectl-skaffold .
+	./tools/aectl/aectl-skaffold platform sync-clients
 	kubectl -n wso2-aep rollout restart deployment/aep-api deployment/aep-agents deployment/collab-server deployment/aep-mcp-server deployment/aep-console deployment/aep-tryit
 
 # Builds the coding-agent runner images from this checkout (Claude Code and

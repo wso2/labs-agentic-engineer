@@ -140,3 +140,39 @@ func TestSeedMissingGeneratedSecrets_OnlyMissing(t *testing.T) {
 		t.Fatalf("wrote %v, seeded %v", wrote, seeded)
 	}
 }
+
+func TestAEStudioImageOverrides(t *testing.T) {
+	got := strings.Join(aeStudioImageOverrides("a:1", "", "c:3"), " ")
+	if got != "--set aeStudio.images.designAgent=a:1 --set aeStudio.images.studioTools=c:3" {
+		t.Fatal(got)
+	}
+	if aeStudioImageOverrides("", "", "") != nil {
+		t.Fatal("empty refs must add nothing")
+	}
+}
+
+func TestPortOfURL(t *testing.T) {
+	for raw, want := range map[string]int{
+		"http://thunder:8090":  8090,
+		"http://thunder":       80,
+		"https://thunder":      443,
+		"https://thunder:8443": 8443,
+		"":                     8090,
+		"thunder":              8090,
+	} {
+		if got := portOfURL(raw, 8090); got != want {
+			t.Errorf("portOfURL(%q) = %d, want %d", raw, got, want)
+		}
+	}
+}
+
+// The AE-only client is the one optional client: its Secret may be missing
+// without blocking the others, and aep-thunder-secrets never is.
+func TestSecretOptional(t *testing.T) {
+	if !secretOptional(aeStudioInternalSecretsName) {
+		t.Error("the AE-only Secret must be optional")
+	}
+	if secretOptional(thunderSecretsName) {
+		t.Error("aep-thunder-secrets must be required")
+	}
+}

@@ -107,6 +107,27 @@ already-installed `aep-platform` release at them; it does not re-derive any of
 aectl's own settings (Thunder/OpenBao/webhook URLs), which is why its Helm
 step passes `--reuse-values`.
 
+The three images of the `ae-studio` data-plane pod (design agent, collab,
+studio tools) are built by a second config, `skaffold/ae-studio.yaml`, with a
+**unique tag per build** (`.skaffold/ae-studio-images.json`, git-ignored, is its
+`--file-output`). aep-api writes those refs into the OpenChoreo Resource, so a
+fixed tag would leave it unchanged and the pod would never roll. `dev-images`
+imports the refs into k3d and pins them against kubelet image GC;
+`dev-env` passes them to `aectl platform install --ae-studio-image-*` and
+`dev-update` sets `aeStudio.images.*`, which changes aep-api's env so Helm rolls
+aep-api. The `ae-studio` pod itself rolls at the next console visit, when
+aep-api's converge sees the new refs. It is never `kubectl rollout restart`ed:
+its Deployment belongs to OpenChoreo.
+
+`make dev-update` also runs `aectl platform sync-clients` after the upgrade,
+since an update never runs the install's Thunder setup. On an install that
+predates a Thunder client (the AE-only `ae-studio-internal-client`) it seeds
+only the MISSING `aep/thunder-clients/*` vault keys (an existing key is never
+rotated, and no database or Thunder admin secret is touched), nudges the
+ExternalSecrets that sync them, and registers the Thunder clients (idempotent).
+A client whose Secret is still unavailable is skipped with a warning; the
+others register.
+
 Coding-agent runs as an ephemeral OpenChoreo Job Component in the project's
 dataplane (image from `AGENT_RUNNER_IMAGE`); builds use the `dockerfile-builder`
 ClusterWorkflow, whose `generate-workload-cr` step exchanges OAuth tokens at
