@@ -1066,7 +1066,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 
 	// organization — org config + the organizations list (P3). Its handlers are
 	// embedded straight into the edge's composite; the edge holds no org service.
-	orgHandlers, err := orghttpapi.New(organization.Deps{OrgSvc: organizationService, Config: orgConfigSvc})
+	orgHandlers, err := orghttpapi.New(organization.Deps{OrgSvc: organizationService, Config: orgConfigSvc, AEStudio: aeStudio})
 	if err != nil {
 		return nil, fmt.Errorf("assemble organization domain: %w", err)
 	}

@@ -5,6 +5,32 @@ info:
 servers:
 - url: /api/v1
 paths:
+  /ae-studio:
+    get:
+      description: >
+        Returns the org's AE Studio state and, once ready, the public URLs of its
+        three services. Starts an idempotent, single-flight converge when what is
+        installed has drifted from what the org wants, and never waits for it.
+        An install with no AE Studio configuration answers failed, not an error.
+      operationId: get-ae-studio
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AeStudio'
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: The org's AE Studio state and URLs
+      tags:
+      - AE Studio
   /collab/validate:
     get:
       operationId: validate-collab-access
@@ -3372,6 +3398,44 @@ paths:
       - Validation
 components:
   schemas:
+    AeStudio:
+      additionalProperties: false
+      properties:
+        state:
+          description: absent (no GitHub token yet), provisioning, ready, or failed.
+          enum:
+          - absent
+          - provisioning
+          - ready
+          - failed
+          type: string
+        urls:
+          $ref: '#/components/schemas/AeStudioUrls'
+          # A pointer under the global prefer-skip-optional-pointer: absent must
+          # omit the key, which omitempty cannot do for a struct value.
+          x-go-type-skip-optional-pointer: false
+      required:
+      - state
+      type: object
+    AeStudioUrls:
+      additionalProperties: false
+      description: Public URLs of a ready AE Studio's three services; set only when ready.
+      properties:
+        collab:
+          description: The collaboration WebSocket origin (ws or wss).
+          format: uri
+          type: string
+        designAgent:
+          format: uri
+          type: string
+        tools:
+          format: uri
+          type: string
+      required:
+      - designAgent
+      - collab
+      - tools
+      type: object
     ConversationMessage:
       additionalProperties: false
       description: >

@@ -16,6 +16,30 @@ const (
 	UserJWTScopes userJWTContextKey = "userJWT.Scopes"
 )
 
+// Defines values for AeStudioState.
+const (
+	AeStudioStateAbsent       AeStudioState = "absent"
+	AeStudioStateFailed       AeStudioState = "failed"
+	AeStudioStateProvisioning AeStudioState = "provisioning"
+	AeStudioStateReady        AeStudioState = "ready"
+)
+
+// Valid indicates whether the value is a known member of the AeStudioState enum.
+func (e AeStudioState) Valid() bool {
+	switch e {
+	case AeStudioStateAbsent:
+		return true
+	case AeStudioStateFailed:
+		return true
+	case AeStudioStateProvisioning:
+		return true
+	case AeStudioStateReady:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AgentRuntime.
 const (
 	AgentRuntimeClaudeCode AgentRuntime = "claude-code"
@@ -1014,28 +1038,28 @@ func (e RunProgressLineEmitter) Valid() bool {
 
 // Defines values for RunValidationVerdict.
 const (
-	RunValidationVerdictFailed       RunValidationVerdict = "failed"
-	RunValidationVerdictInconclusive RunValidationVerdict = "inconclusive"
-	RunValidationVerdictPartial      RunValidationVerdict = "partial"
-	RunValidationVerdictPassed       RunValidationVerdict = "passed"
-	RunValidationVerdictSkipped      RunValidationVerdict = "skipped"
-	RunValidationVerdictUnreported   RunValidationVerdict = "unreported"
+	Failed       RunValidationVerdict = "failed"
+	Inconclusive RunValidationVerdict = "inconclusive"
+	Partial      RunValidationVerdict = "partial"
+	Passed       RunValidationVerdict = "passed"
+	Skipped      RunValidationVerdict = "skipped"
+	Unreported   RunValidationVerdict = "unreported"
 )
 
 // Valid indicates whether the value is a known member of the RunValidationVerdict enum.
 func (e RunValidationVerdict) Valid() bool {
 	switch e {
-	case RunValidationVerdictFailed:
+	case Failed:
 		return true
-	case RunValidationVerdictInconclusive:
+	case Inconclusive:
 		return true
-	case RunValidationVerdictPartial:
+	case Partial:
 		return true
-	case RunValidationVerdictPassed:
+	case Passed:
 		return true
-	case RunValidationVerdictSkipped:
+	case Skipped:
 		return true
-	case RunValidationVerdictUnreported:
+	case Unreported:
 		return true
 	default:
 		return false
@@ -1356,6 +1380,26 @@ type AccessRequest struct {
 	ProviderTaskID        string    `json:"providerTaskId,omitempty"`
 	Status                string    `json:"status"`
 	UpdatedAt             time.Time `json:"updatedAt"`
+}
+
+// AeStudio defines model for AeStudio.
+type AeStudio struct {
+	// State absent (no GitHub token yet), provisioning, ready, or failed.
+	State AeStudioState `json:"state"`
+
+	// Urls Public URLs of a ready AE Studio's three services; set only when ready.
+	Urls *AeStudioUrls `json:"urls,omitempty"`
+}
+
+// AeStudioState absent (no GitHub token yet), provisioning, ready, or failed.
+type AeStudioState string
+
+// AeStudioUrls Public URLs of a ready AE Studio's three services; set only when ready.
+type AeStudioUrls struct {
+	// Collab The collaboration WebSocket origin (ws or wss).
+	Collab      string `json:"collab"`
+	DesignAgent string `json:"designAgent"`
+	Tools       string `json:"tools"`
 }
 
 // AgentRuntime Which coding-agent runtime an organization's builds run on.

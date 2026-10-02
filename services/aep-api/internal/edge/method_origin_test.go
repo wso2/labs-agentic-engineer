@@ -116,6 +116,7 @@ var opOwner = map[string]string{
 	"ListIssues":                    embedSourceControl,
 	"ListOrgEnvironments":           embedDependencies,
 	"ListOrganizations":             embedOrganization,
+	"GetAeStudio":                   embedOrganization,
 	"ListPlatformResourceTypes":     embedDependencies,
 	"ListBuildRuns":                 embedDelivery,
 	"ListValidations":               embedDelivery,

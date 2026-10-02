@@ -20,6 +20,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/organization/disconnectgithub"
 	"github.com/wso2/aep/aep-api/internal/organization/discoveridp"
+	"github.com/wso2/aep/aep-api/internal/organization/getaestudio"
 	"github.com/wso2/aep/aep-api/internal/organization/getconfig"
 	"github.com/wso2/aep/aep-api/internal/organization/listorgs"
 	"github.com/wso2/aep/aep-api/internal/organization/patchconfig"
@@ -37,6 +38,7 @@ type (
 	rotateidpHandler        = rotateidp.Handler
 	discoveridpHandler      = discoveridp.Handler
 	listorgsHandler         = listorgs.Handler
+	getaestudioHandler      = getaestudio.Handler
 )
 
 // Handlers is the organization domain's slice handlers, embedded so Go promotes
@@ -49,6 +51,7 @@ type Handlers struct {
 	*rotateidpHandler
 	*discoveridpHandler
 	*listorgsHandler
+	*getaestudioHandler
 }
 
 // New assembles the domain: pure wiring, constructor injection only.
@@ -67,5 +70,6 @@ func New(d organization.Deps) (*Handlers, error) {
 		rotateidpHandler:        rotateidp.New(d.Config),
 		discoveridpHandler:      discoveridp.New(d.Config),
 		listorgsHandler:         listorgs.New(d.OrgSvc),
+		getaestudioHandler:      getaestudio.New(d.AEStudio),
 	}, nil
 }
