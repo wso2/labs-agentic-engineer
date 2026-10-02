@@ -27,8 +27,14 @@
 //  3. git maintenance: repack/prune/pack-refs on loose- or pack-heavy
 //     mirrors under the repo's EX flock (before the budget, so eviction sees
 //     reclaimed space);
-//  4. budget: du of the root against the one budget; from 85 % purge trash,
-//     then evict mirrors least recently used first down to 70 %.
+//  4. budget: du (block usage) of the root against the one budget; from 85 %
+//     purge trash, then evict mirrors least recently fetched first down to
+//     70 %.
+//
+// A forced sweep follows an ENOSPC, which the engine only sees when the
+// node's disk fills: the studio-data emptyDir's sizeLimit is enforced by
+// kubelet evicting the pod, never by ENOSPC, which is why the budget sits
+// under it.
 //
 // There is no orphan pass: nothing lists the live repos. An orphan (a failed
 // trash on project delete) is unreachable, because every request resolves its

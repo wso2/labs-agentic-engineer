@@ -19,6 +19,7 @@ package repo
 import (
 	"io/fs"
 	"path/filepath"
+	"syscall"
 )
 
 // Studio-data usage (ticket 20 §2). The reaper owns the measurement: each
@@ -41,11 +42,11 @@ func (e *Engine) AddUsage(n int64) { e.usedBytes.Add(n) }
 //deadcode:keep wired in Task 2.7
 func (e *Engine) UsedBytes() int64 { return e.usedBytes.Load() }
 
-// DirBytes sums the apparent size of the regular files under path. Symlinks
-// are not followed and unreadable entries are skipped (a trash rename mid-walk
-// is normal). Apparent size, not allocated blocks: git keeps its bulk in
-// packfiles, where the two agree, and the budget sits 1 GiB under the
-// volume's sizeLimit to absorb the block rounding of small files.
+// DirBytes sums the allocated blocks (st_blocks*512) of path and every
+// directory and regular file under it: block usage, du-style, which is what
+// the kubelet measures against the emptyDir sizeLimit. Symlinks are not
+// followed and unreadable entries are skipped (a trash rename mid-walk is
+// normal).
 //
 //deadcode:keep wired in Task 2.7
 func DirBytes(path string) int64 {
@@ -54,8 +55,13 @@ func DirBytes(path string) int64 {
 		if err != nil {
 			return nil //nolint:nilerr // skip unreadable entries, keep walking
 		}
-		if d.Type().IsRegular() {
-			if info, err := d.Info(); err == nil {
+		if !d.IsDir() && !d.Type().IsRegular() {
+			return nil
+		}
+		if info, err := d.Info(); err == nil {
+			if st, ok := info.Sys().(*syscall.Stat_t); ok {
+				total += st.Blocks * 512
+			} else {
 				total += info.Size()
 			}
 		}

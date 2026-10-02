@@ -30,10 +30,11 @@ import (
 
 func TestBudget_LRUEvictsDownTo70(t *testing.T) {
 	root := t.TempDir()
-	r := newReaperForTest(t, root, Config{Budget: 1000})
-	writeMirror(t, root, "acme/old/old", 500, time.Now().Add(-2*time.Hour))
-	writeMirror(t, root, "acme/new/new", 400, time.Now())
-	evicted, err := r.sweepOnce(context.Background()) // usage 900/1000 = 90% ≥ 85%
+	r := newReaperForTest(t, root, Config{Budget: 1})
+	writeMirror(t, root, "acme/old/old", 500*kib, time.Now().Add(-2*time.Hour))
+	writeMirror(t, root, "acme/new/new", 400*kib, time.Now())
+	r.cfg.Budget = budgetAt(t, root, 90)
+	evicted, err := r.sweepOnce(context.Background()) // usage 90% ≥ 85%
 	if err != nil {
 		t.Fatalf("sweepOnce: %v", err)
 	}
@@ -68,9 +69,10 @@ func TestNoOrphanPass(t *testing.T) {
 // age-gated pass.
 func TestBudget_UnderHighEvictsNothing(t *testing.T) {
 	root := t.TempDir()
-	r := newReaperForTest(t, root, Config{Budget: 10_000})
-	writeMirror(t, root, "acme/p/r", 500, time.Now().Add(-48*time.Hour))
-	young := trashEntry(t, root, trashName(time.Now(), "young"), 100)
+	r := newReaperForTest(t, root, Config{Budget: 1})
+	writeMirror(t, root, "acme/p/r", 500*kib, time.Now().Add(-48*time.Hour))
+	young := trashEntry(t, root, trashName(time.Now(), "young"), 100*kib)
+	r.cfg.Budget = budgetAt(t, root, 50)
 	evicted, err := r.sweepOnce(context.Background())
 	if err != nil || len(evicted) != 0 {
 		t.Fatalf("sweepOnce = %v, %v; want no eviction", evicted, err)
@@ -82,9 +84,10 @@ func TestBudget_UnderHighEvictsNothing(t *testing.T) {
 // alone brings usage under the mark, every mirror survives.
 func TestBudget_PurgesTrashBeforeEvicting(t *testing.T) {
 	root := t.TempDir()
-	r := newReaperForTest(t, root, Config{Budget: 2000})
-	m := writeMirror(t, root, "acme/p/r", 500, time.Now().Add(-48*time.Hour))
-	young := trashEntry(t, root, trashName(time.Now(), "young"), 1400) // fresh: age-gated pass keeps it
+	r := newReaperForTest(t, root, Config{Budget: 1})
+	m := writeMirror(t, root, "acme/p/r", 500*kib, time.Now().Add(-48*time.Hour))
+	young := trashEntry(t, root, trashName(time.Now(), "young"), 1400*kib) // fresh: age-gated pass keeps it
+	r.cfg.Budget = budgetAt(t, root, 100)                                  // trash purge alone drops it to ~26%
 	evicted, err := r.sweepOnce(context.Background())
 	if err != nil || len(evicted) != 0 {
 		t.Fatalf("sweepOnce = %v, %v; want trash purge only", evicted, err)
@@ -97,9 +100,9 @@ func TestBudget_PurgesTrashBeforeEvicting(t *testing.T) {
 // next LRU candidate goes instead.
 func TestBudget_NeverEvictsLockedMirror(t *testing.T) {
 	root := t.TempDir()
-	r := newReaperForTest(t, root, Config{Budget: 1000})
-	busy := writeMirror(t, root, "acme/p/busy", 500, time.Now().Add(-3*time.Hour))
-	next := writeMirror(t, root, "acme/p/next", 400, time.Now().Add(-1*time.Hour))
+	r := newReaperForTest(t, root, Config{Budget: 1})
+	busy := writeMirror(t, root, "acme/p/busy", 500*kib, time.Now().Add(-3*time.Hour))
+	next := writeMirror(t, root, "acme/p/next", 400*kib, time.Now().Add(-1*time.Hour))
 
 	lock, err := os.OpenFile(filepath.Join(busy, "repo.lock"), os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
@@ -109,6 +112,7 @@ func TestBudget_NeverEvictsLockedMirror(t *testing.T) {
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_SH); err != nil {
 		t.Fatalf("flock: %v", err)
 	}
+	r.cfg.Budget = budgetAt(t, root, 90)
 
 	evicted, err := r.sweepOnce(context.Background())
 	if err != nil {
@@ -126,12 +130,13 @@ func TestBudget_NeverEvictsLockedMirror(t *testing.T) {
 func TestBudget_StaysInsideRoot(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
-	r := newReaperForTest(t, root, Config{Budget: 1000})
-	foreign := writeMirror(t, outside, "evil/p/r", 900, time.Now().Add(-48*time.Hour))
+	r := newReaperForTest(t, root, Config{Budget: 1})
+	foreign := writeMirror(t, outside, "evil/p/r", 900*kib, time.Now().Add(-48*time.Hour))
 	if err := os.Symlink(filepath.Join(repo.ReposDir(outside), "evil"), filepath.Join(repo.ReposDir(root), "evil")); err != nil {
 		t.Fatalf("symlink: %v", err)
 	}
-	writeMirror(t, root, "acme/p/r", 900, time.Now())
+	writeMirror(t, root, "acme/p/r", 900*kib, time.Now())
+	r.cfg.Budget = budgetAt(t, root, 90)
 
 	if _, err := r.sweepOnce(context.Background()); err != nil {
 		t.Fatalf("sweepOnce: %v", err)
@@ -143,14 +148,15 @@ func TestBudget_StaysInsideRoot(t *testing.T) {
 // sweeps, so admission is not blind until the next du.
 func TestUsagePct_CountsClonesSinceSweep(t *testing.T) {
 	root := t.TempDir()
-	r := newReaperForTest(t, root, Config{Budget: 10_000})
+	const budget = 1 << 30
+	r := newReaperForTest(t, root, Config{Budget: budget})
 	if _, err := r.sweepOnce(context.Background()); err != nil {
 		t.Fatalf("sweepOnce: %v", err)
 	}
 	before := r.UsagePct()
-	r.engine.AddUsage(5_000)
+	r.engine.AddUsage(budget / 2)
 	if got := r.UsagePct(); got != before+50 {
-		t.Fatalf("UsagePct = %d after a 5000-byte clone, want %d", got, before+50)
+		t.Fatalf("UsagePct = %d after a half-budget clone, want %d", got, before+50)
 	}
 }
 

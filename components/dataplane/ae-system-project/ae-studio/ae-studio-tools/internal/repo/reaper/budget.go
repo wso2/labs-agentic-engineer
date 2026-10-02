@@ -42,9 +42,9 @@ const (
 const evictLockTimeout = 100 * time.Millisecond
 
 // UsagePct is the studio-data pressure: the higher of the budget share (the
-// last du plus the clones since) and the node filesystem's used%. On an
+// last du plus the clones since) and the node filesystem's byte used%. On an
 // emptyDir statfs reports the node's disk, which can fill for other reasons.
-// The budget share can exceed 100.
+// Inodes are not watched. The budget share can exceed 100.
 //
 //deadcode:keep wired in Task 2.7
 func (r *Reaper) UsagePct() int {
@@ -141,9 +141,11 @@ func (r *Reaper) evictLRU(ctx context.Context, target int64) ([]string, error) {
 	return evicted, nil
 }
 
-// collectMirrors lists every repo dir with its size and last use: the git
-// dir's mtime, or FETCH_HEAD's when newer (every fetch rewrites it); a repo
-// dir with no git dir (a failed clone) falls back to its own mtime.
+// collectMirrors lists every repo dir with its size and last use. Recency is
+// the last fetch, not the last read: the git dir's mtime, or FETCH_HEAD's
+// when newer (every fetch rewrites it), so a mirror read only by sha looks
+// older than it is. A repo dir with no git dir (a failed clone) falls back to
+// its own mtime.
 //
 //deadcode:keep wired in Task 2.7
 func (r *Reaper) collectMirrors(ctx context.Context) ([]mirrorCandidate, error) {

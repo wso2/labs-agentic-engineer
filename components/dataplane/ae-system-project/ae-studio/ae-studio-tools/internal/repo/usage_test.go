@@ -20,6 +20,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -55,8 +56,8 @@ func TestUsageSetAndAdd(t *testing.T) {
 	}
 }
 
-// repoDirBytes is the apparent size of every regular file in the mirror's
-// git dir, measured independently of the engine.
+// repoDirBytes is the block usage (st_blocks*512) of the mirror's git dir
+// and everything under it, measured independently of the engine.
 func repoDirBytes(t *testing.T, fx *Fixture) int64 {
 	t.Helper()
 	var total int64
@@ -64,8 +65,8 @@ func repoDirBytes(t *testing.T, fx *Fixture) int64 {
 		if err != nil {
 			return err
 		}
-		if info.Mode().IsRegular() {
-			total += info.Size()
+		if info.Mode().IsRegular() || info.IsDir() {
+			total += info.Sys().(*syscall.Stat_t).Blocks * 512
 		}
 		return nil
 	})

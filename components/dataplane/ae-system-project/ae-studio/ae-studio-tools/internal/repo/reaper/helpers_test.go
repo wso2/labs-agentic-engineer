@@ -50,8 +50,8 @@ func newReaperForTest(t *testing.T, root string, cfg Config) *Reaper {
 	return r
 }
 
-// writeMirror lays out repos/<slug>/git by hand with one payload file, so
-// the whole repo dir is exactly size bytes, then pins the git dir's mtime
+// writeMirror lays out repos/<slug>/git by hand with one size-byte payload
+// file, then pins the git dir's mtime
 // (the LRU signal) to lastUse. It has no HEAD, so maintenance passes it by.
 // Returns the repo dir.
 func writeMirror(t *testing.T, root, slug string, size int, lastUse time.Time) string {
@@ -61,6 +61,19 @@ func writeMirror(t *testing.T, root, slug string, size int, lastUse time.Time) s
 	mkFile(t, filepath.Join(gitDir, "payload"), bytes.Repeat([]byte("x"), size))
 	chtimes(t, gitDir, lastUse)
 	return dir
+}
+
+const kib = 1024
+
+// budgetAt returns the budget at which the root's current block usage
+// (repo.DirBytes, what the reaper measures) is pct percent.
+func budgetAt(t *testing.T, root string, pct int64) int64 {
+	t.Helper()
+	used := repo.DirBytes(root)
+	if used <= 0 {
+		t.Fatalf("budgetAt: root measures %d bytes", used)
+	}
+	return used * 100 / pct
 }
 
 // mkFile writes body at path (parents created).
