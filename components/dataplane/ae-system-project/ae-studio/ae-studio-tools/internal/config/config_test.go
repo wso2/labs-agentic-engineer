@@ -32,6 +32,9 @@ func base() map[string]string {
 		"AE_USER_AUDIENCES": "aep-console-client, other",
 		"AE_M2M_CLIENT_ID":  "ae-studio-internal-client",
 		"GITHUB_PAT":        "x", "GITHUB_WEBHOOK_SECRET": "y",
+		"AE_IDP_TOKEN_URL":       "http://thunder:8090/oauth2/token",
+		"AE_PUBLISHER_CLIENT_ID": "aep-publisher-default", "AE_PUBLISHER_CLIENT_SECRET": "publisher-secret-value",
+		"AEP_API_BASE_URL": "http://aep-api.aep.svc.cluster.local:9090",
 	}
 }
 
@@ -80,9 +83,49 @@ func TestLoad_AudienceListWithOnlySeparatorsIsMissing(t *testing.T) {
 
 func TestLoad_MissingRequiredNamesEveryKey(t *testing.T) {
 	_, err := Load(env(map[string]string{}))
-	for _, k := range []string{"AE_ORG_ID", "AE_ORG_HANDLE", "AE_IDP_ISSUER", "AE_IDP_JWKS_URL", "AE_USER_AUDIENCES", "AE_M2M_CLIENT_ID", "GITHUB_PAT", "GITHUB_WEBHOOK_SECRET"} {
+	for _, k := range []string{"AE_ORG_ID", "AE_ORG_HANDLE", "AE_IDP_ISSUER", "AE_IDP_JWKS_URL", "AE_USER_AUDIENCES", "AE_M2M_CLIENT_ID", "GITHUB_PAT", "GITHUB_WEBHOOK_SECRET",
+		"AE_IDP_TOKEN_URL", "AE_PUBLISHER_CLIENT_ID", "AE_PUBLISHER_CLIENT_SECRET", "AEP_API_BASE_URL"} {
 		if err == nil || !strings.Contains(err.Error(), k) {
 			t.Fatalf("error %v does not name %s", err, k)
+		}
+	}
+}
+
+func TestLoad_PublisherAndAEPAPIKeys(t *testing.T) {
+	c, err := Load(env(base()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.IDPTokenURL != "http://thunder:8090/oauth2/token" || c.PublisherClientID != "aep-publisher-default" ||
+		c.PublisherClientSecret != "publisher-secret-value" || c.AEPAPIBaseURL != "http://aep-api.aep.svc.cluster.local:9090" {
+		t.Fatalf("publisher/aep-api keys not read")
+	}
+}
+
+// Each key is required on its own (fail closed at boot), and the error names
+// the key, never the value of any other key.
+func TestLoad_EachPublisherKeyIsRequired(t *testing.T) {
+	for _, k := range []string{"AE_IDP_TOKEN_URL", "AE_PUBLISHER_CLIENT_ID", "AE_PUBLISHER_CLIENT_SECRET", "AEP_API_BASE_URL"} {
+		m := base()
+		m[k] = "  "
+		_, err := Load(env(m))
+		if err == nil || !strings.Contains(err.Error(), "missing "+k) {
+			t.Fatalf("%s blank: err = %v", k, err)
+		}
+		if strings.Contains(err.Error(), "publisher-secret-value") {
+			t.Fatalf("%s blank: error leaks the publisher secret", k)
+		}
+	}
+}
+
+func TestLoad_URLKeysMustBeAbsoluteHTTP(t *testing.T) {
+	for _, k := range []string{"AE_IDP_TOKEN_URL", "AEP_API_BASE_URL"} {
+		for _, v := range []string{"aep-api:9090", "/internal", "ftp://x", "http://"} {
+			m := base()
+			m[k] = v
+			if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), "invalid "+k) {
+				t.Fatalf("%s=%q: err = %v", k, v, err)
+			}
 		}
 	}
 }

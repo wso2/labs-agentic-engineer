@@ -20,6 +20,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -34,6 +35,11 @@ type Config struct {
 	GitHubPAT              string
 	WebhookSecret          string
 	ListenPort, HealthPort int
+	// IDPTokenURL and the publisher client mint the org's publisher token,
+	// which authenticates the pod's calls to aep-api at AEPAPIBaseURL.
+	IDPTokenURL                              string
+	PublisherClientID, PublisherClientSecret string
+	AEPAPIBaseURL                            string
 }
 
 // ErrSecretRevMismatch means the mounted Secret is not the revision the pod
@@ -69,6 +75,17 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 		return n
 	}
+	// httpURL is a required absolute http(s) URL.
+	httpURL := func(k string) string {
+		v := req(k)
+		if v == "" {
+			return ""
+		}
+		if u, err := url.Parse(v); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			problems = append(problems, "invalid "+k)
+		}
+		return v
+	}
 	c := Config{
 		OrgID:         req("AE_ORG_ID"),
 		OrgHandle:     req("AE_ORG_HANDLE"),
@@ -79,6 +96,11 @@ func Load(getenv func(string) string) (Config, error) {
 		WebhookSecret: req("GITHUB_WEBHOOK_SECRET"),
 		ListenPort:    port("AE_LISTEN_PORT", defaultListenPort),
 		HealthPort:    port("AE_HEALTH_PORT", defaultHealthPort),
+
+		IDPTokenURL:           httpURL("AE_IDP_TOKEN_URL"),
+		PublisherClientID:     req("AE_PUBLISHER_CLIENT_ID"),
+		PublisherClientSecret: req("AE_PUBLISHER_CLIENT_SECRET"),
+		AEPAPIBaseURL:         httpURL("AEP_API_BASE_URL"),
 	}
 	c.UserAudiences = splitList(getenv("AE_USER_AUDIENCES"))
 	if len(c.UserAudiences) == 0 {
