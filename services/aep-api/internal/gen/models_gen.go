@@ -3000,7 +3000,7 @@ type RunValidation struct {
 	// Issue The validation issue this run worked, so a SETTLED run stays navigable to the criteria behind its verdict. 0 before the validation cycle mints it, and on incident runs.
 	Issue int64 `json:"issue,omitempty"`
 
-	// ReportPath Repository path of the validation runner's committed report. Present when a report can actually be there, and ABSENT for `skipped` and `unreported` — the first never ran a validation cycle and the second is precisely the verdict meaning nothing was committed, so advertising a path for either would send the client to a 404 and make a known-absent report look like a read failure. Fetch it through read-file with `ref` set to the validation cycle's mergeSha (RunCycleView.mergeSha) — the report lives at a fixed path that every run overwrites, so reading it at the branch tip returns the NEWEST run's results whichever run you asked about.
+	// ReportPath Repository path of the validation runner's committed report. Present when a report can actually be there, and ABSENT for `skipped` and `unreported` — the first never ran a validation cycle and the second is precisely the verdict meaning nothing was committed, so advertising a path for either would send the client to a 404 and make a known-absent report look like a read failure. Read it from the AE Studio pod's `/v1` file read with `ref` set to the validation cycle's mergeSha (RunCycleView.mergeSha) — the report lives at a fixed path that every run overwrites, so reading it at the branch tip returns the NEWEST run's results whichever run you asked about.
 	ReportPath string `json:"reportPath,omitempty"`
 
 	// Verdict What the run learned about the deployed system. Empty until the validation cycle settles.

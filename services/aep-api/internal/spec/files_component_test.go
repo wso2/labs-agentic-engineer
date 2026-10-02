@@ -81,6 +81,7 @@ func (filesStubResolver) Resolve(context.Context, string) (secrets.Credential, e
 
 type filesRig struct {
 	h      *componenttest.Harness
+	svc    spec.FilesService
 	remote *gittest.Remote
 	engine *gitfs.Engine
 }
@@ -105,7 +106,7 @@ func newFilesRig(t *testing.T, seed map[string]string) *filesRig {
 	h := componenttest.New(t, componenttest.Options{Deps: edge.Deps{
 		Spec: mustSpecHandlers(t, spec.Deps{Files: svc}),
 	}})
-	return &filesRig{h: h, remote: remote, engine: engine}
+	return &filesRig{h: h, svc: svc, remote: remote, engine: engine}
 }
 
 // mirrorRevParse resolves rev inside the ENGINE's bare mirror (not the origin)

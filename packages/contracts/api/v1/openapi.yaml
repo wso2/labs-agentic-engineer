@@ -1946,8 +1946,8 @@ paths:
         and never reach GitHub. Bytes live in a per-project directory on the shared workspace
         volume for the project's lifetime and are overlaid into each turn's snapshot at
         `specs/requirements/references/`, which is also scaffolded into the repo's `.gitignore`.
-        Deliberately outside the `specs/`-scoped Files API — `files/apply` means "commit to the
-        repo", and this is the opposite. multipart carries raw bytes, so the per-file limit is
+        Deliberately outside the `specs/`-scoped spec files the AE Studio pod serves — those are
+        committed to the repo, and this is the opposite. multipart carries raw bytes, so the per-file limit is
         checked on real bytes with no base64 inflation. Replaces the whole upload for the
         project — a second call overwrites the stored set.
       operationId: put-project-references
@@ -7527,7 +7527,7 @@ components:
             report can actually be there, and ABSENT for `skipped` and `unreported` — the first never
             ran a validation cycle and the second is precisely the verdict meaning nothing was
             committed, so advertising a path for either would send the client to a 404 and make a
-            known-absent report look like a read failure. Fetch it through read-file with `ref` set to
+            known-absent report look like a read failure. Read it from the AE Studio pod's `/v1` file read with `ref` set to
             the validation cycle's mergeSha (RunCycleView.mergeSha) — the report lives at a fixed path
             that every run overwrites, so reading it at the branch tip returns the NEWEST run's
             results whichever run you asked about.

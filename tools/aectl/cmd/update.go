@@ -41,7 +41,6 @@ var (
 	// kind load docker-image), then set --pull-policy Never.
 	updateAepApiImage    string
 	updateAgentsImage    string
-	updateCollabImage    string
 	updateMcpServerImage string
 	updateConsoleImage   string
 )
@@ -85,7 +84,6 @@ func init() {
 
 	f.StringVar(&updateAepApiImage, "aep-api-image", "", "aep-api image as repo:tag  (e.g. ghcr.io/wso2/aep/aep-api:v1.2)")
 	f.StringVar(&updateAgentsImage, "agents-image", "", "agents image as repo:tag")
-	f.StringVar(&updateCollabImage, "collab-image", "", "collab image as repo:tag")
 	f.StringVar(&updateMcpServerImage, "mcp-server-image", "", "aep-mcp-server image as repo:tag")
 	f.StringVar(&updateConsoleImage, "console-image", "", "console image as repo:tag")
 }
@@ -135,7 +133,6 @@ func buildUpdateArgs() ([]string, error) {
 	overrides := []serviceImageOverride{
 		{"aepApi", updateAepApiImage},
 		{"aepAgents", updateAgentsImage},
-		{"collab", updateCollabImage},
 		{"aepMcpServer", updateMcpServerImage},
 		{"console", updateConsoleImage},
 	}

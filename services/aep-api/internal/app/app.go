@@ -1093,7 +1093,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	params.Deps.Organization = orgHandlers
 
 	// spec — the Spec Authoring & Versioning domain (P4): genai turns, files,
-	// tag reads, the org skills library, and the collab oracle/descriptor. Its
+	// tag reads, the org skills library, and the AE Studio descriptor. Its
 	// slice handlers embed straight into the edge's composite.
 	specHandlers, err := spechttpapi.New(spec.Deps{
 		GenAI:       genaiSvc,
