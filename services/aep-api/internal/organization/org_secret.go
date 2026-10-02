@@ -86,5 +86,5 @@ func (s OrgSecret) RefData(data map[string]string) map[string]string {
 type OrgSecretRef struct {
 	Secret    OrgSecret
 	Name      string
-	WrittenAt time.Time
+	WrittenAt *time.Time
 }

@@ -37,10 +37,11 @@ type OrgSecretVault interface {
 
 // OrgSecretWriter writes and removes the org secrets. A write never edits a
 // live reference: it stores the value under a new reference, records it in
-// the secret's row, lets the caller repoint the consumers, and only then
-// deletes the previous reference by the name the row stored. Whatever fails
-// before the old reference is deleted leaves the old reference and its row
-// in place and deletes the new reference.
+// the secret's row (compare-and-swap on the name it read), lets the caller
+// repoint the consumers, and only after that is the previous reference
+// deleted, by the name the row stored. Whatever fails before then leaves
+// the previous reference in place, puts the previous row back if the row
+// still names the new reference, and deletes the new reference.
 type OrgSecretWriter struct {
 	vault OrgSecretVault
 	repo  OrgSecretRepository
@@ -55,99 +56,145 @@ func NewOrgSecretWriter(vault OrgSecretVault, repo OrgSecretRepository, now func
 	return &OrgSecretWriter{vault: vault, repo: repo, now: now}
 }
 
-// Write stores data as secret s of the org (ocOrgID = the org's OpenChoreo
-// namespace, ouID = its Thunder OU) and returns the new reference name.
-//
-// Order: new reference → upsert the row → repoint(newName) → delete the
-// previous reference (the row's, else legacyOld, a pre-phase-1 deterministic
-// reference) by name. The previous reference is never deleted when it is the
-// name just written. If the upsert or repoint fails, the previous row is
-// restored, the new reference is deleted and the error returned. A failed
-// delete of the previous reference does not fail the write: the orphan is
-// logged by name. repoint may be nil when nothing consumes the secret yet.
+// OrgSecretWrite is a recorded write whose previous reference is still in
+// place. The caller runs Retire once its consumers are committed to Name.
+type OrgSecretWrite struct {
+	// Name is the reference the secret's row now names.
+	Name string
+
+	vault  OrgSecretVault
+	loc    secretmanagersvc.SecretLocation
+	secret OrgSecret
+	old    string
+}
+
+// Retire deletes the previous reference by its stored name. It never
+// deletes Name. A failed delete is logged with the orphan's name and does
+// not fail the write. Run it after the caller's own transaction commits.
 //
 //deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
-func (w *OrgSecretWriter) Write(ctx context.Context, ocOrgID, ouID string, s OrgSecret, data map[string]string, legacyOld string, repoint func(newName string) error) (string, error) {
+func (w OrgSecretWrite) Retire(ctx context.Context) {
+	if w.old == "" || w.old == w.Name {
+		return
+	}
+	if err := w.vault.DeleteSecretRef(ctx, w.loc, w.old); err != nil {
+		slog.WarnContext(ctx, "orgsecret.retire_failed", "secret", string(w.secret), "name", w.old, "error", err)
+		return
+	}
+	slog.InfoContext(ctx, "orgsecret.retired", "secret", string(w.secret), "name", w.old)
+}
+
+// Write stores data as secret s of the org (ocOrgID = the org's OpenChoreo
+// namespace, ouID = its Thunder OU) and returns the recorded write; the
+// previous reference stays until the caller runs Retire.
+//
+// Order: new reference → conditional upsert of the row (it must still name
+// the reference read before the write) → repoint(newName). The previous
+// reference is the row's, else legacyOld (a pre-phase-1 deterministic
+// reference with no row). If the upsert or repoint fails (a concurrent
+// write is ErrOrgSecretConflict), the previous row is put back if the row
+// still names the new reference, the new reference is deleted and the error
+// returned. repoint may be nil when nothing consumes the secret yet.
+//
+//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
+func (w *OrgSecretWriter) Write(ctx context.Context, ocOrgID, ouID string, s OrgSecret, data map[string]string, legacyOld string, repoint func(newName string) error) (OrgSecretWrite, error) {
 	if err := validateOrgSecretData(s, data); err != nil {
-		return "", err
+		return OrgSecretWrite{}, err
 	}
 	loc, err := orgSecretLocation(ocOrgID, ouID, s)
 	if err != nil {
-		return "", err
+		return OrgSecretWrite{}, err
 	}
 	prev, err := w.repo.Get(ctx, ocOrgID, s)
 	if err != nil {
-		return "", fmt.Errorf("org secret %s: read row: %w", s, err)
+		return OrgSecretWrite{}, fmt.Errorf("org secret %s: read row: %w", s, err)
 	}
-	oldName := legacyOld
+	prevName, oldName := "", legacyOld
 	if prev != nil {
-		oldName = prev.Name
+		prevName, oldName = prev.Name, prev.Name
 	}
 
 	name, err := w.vault.CreateSecretRef(ctx, loc, s.RefData(data))
 	if err != nil {
-		return "", fmt.Errorf("org secret %s: write: %w", s, err)
+		return OrgSecretWrite{}, fmt.Errorf("org secret %s: write: %w", s, err)
 	}
 
-	if err := w.repo.Upsert(ctx, ocOrgID, OrgSecretRef{Secret: s, Name: name, WrittenAt: w.now()}); err != nil {
-		return "", w.undo(ctx, loc, s, name, oldName, nil, fmt.Errorf("org secret %s: record row: %w", s, err))
+	now := w.now()
+	if err := w.repo.Upsert(ctx, ocOrgID, OrgSecretRef{Secret: s, Name: name, WrittenAt: &now}, prevName); err != nil {
+		return OrgSecretWrite{}, w.undo(ctx, loc, ocOrgID, s, prev, name, oldName, fmt.Errorf("org secret %s: record row: %w", s, err))
 	}
 	if repoint != nil {
 		if err := repoint(name); err != nil {
-			restore := func() error { return w.restoreRow(ctx, ocOrgID, s, prev) }
-			return "", w.undo(ctx, loc, s, name, oldName, restore, fmt.Errorf("org secret %s: repoint: %w", s, err))
-		}
-	}
-
-	if oldName != "" && oldName != name {
-		if err := w.vault.DeleteSecretRef(ctx, loc, oldName); err != nil {
-			slog.WarnContext(ctx, "orgsecret.retire_failed", "secret", string(s), "name", oldName, "error", err)
+			return OrgSecretWrite{}, w.undo(ctx, loc, ocOrgID, s, prev, name, oldName, fmt.Errorf("org secret %s: repoint: %w", s, err))
 		}
 	}
 	slog.InfoContext(ctx, "orgsecret.written", "secret", string(s), "name", name)
-	return name, nil
+	return OrgSecretWrite{Name: name, vault: w.vault, loc: loc, secret: s, old: oldName}, nil
 }
 
-// undo rolls a write back after its new reference exists: restore (when
-// given) puts the previous row back, then the new reference is deleted
-// unless it is the previous one. cause is returned, joined with any failure
-// of the rollback itself.
+// WriteAndRetire is Write followed by Retire, for a caller with no
+// transaction of its own to commit first. It returns the new name.
 //
 //deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
-func (w *OrgSecretWriter) undo(ctx context.Context, loc secretmanagersvc.SecretLocation, s OrgSecret, name, oldName string, restore func() error, cause error) error {
-	errs := []error{cause}
-	if restore != nil {
-		if err := restore(); err != nil {
-			errs = append(errs, fmt.Errorf("restore row: %w", err))
-			// The row may still name the new reference; deleting it would
-			// leave the row pointing at nothing.
-			slog.ErrorContext(ctx, "orgsecret.rollback_failed", "secret", string(s), "name", name)
-			return errors.Join(errs...)
-		}
+func (w *OrgSecretWriter) WriteAndRetire(ctx context.Context, ocOrgID, ouID string, s OrgSecret, data map[string]string, legacyOld string, repoint func(newName string) error) (string, error) {
+	written, err := w.Write(ctx, ocOrgID, ouID, s, data, legacyOld, repoint)
+	if err != nil {
+		return "", err
 	}
-	if name != oldName {
-		if err := w.vault.DeleteSecretRef(ctx, loc, name); err != nil {
-			slog.WarnContext(ctx, "orgsecret.retire_failed", "secret", string(s), "name", name, "error", err)
-			errs = append(errs, fmt.Errorf("delete new reference %s: %w", name, err))
-		}
-	}
-	return errors.Join(errs...)
+	written.Retire(ctx)
+	return written.Name, nil
 }
 
+// undo rolls a write back after its new reference exists. The previous row
+// is put back only if the row still names the new reference (a concurrent
+// writer's row is left alone). If that restore fails, the new reference is
+// kept, since the row may still name it. Otherwise the new reference is
+// deleted unless it is the previous one. cause is returned, joined with any
+// failure of the rollback itself.
+//
 //deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
-func (w *OrgSecretWriter) restoreRow(ctx context.Context, ocOrgID string, s OrgSecret, prev *OrgSecretRef) error {
+func (w *OrgSecretWriter) undo(ctx context.Context, loc secretmanagersvc.SecretLocation, ocOrgID string, s OrgSecret, prev *OrgSecretRef, name, oldName string, cause error) error {
+	if err := w.restoreRow(ctx, ocOrgID, s, prev, name); err != nil {
+		slog.ErrorContext(ctx, "orgsecret.rollback_failed", "secret", string(s), "name", name)
+		return errors.Join(cause, fmt.Errorf("restore row: %w", err))
+	}
+	if name == oldName {
+		return cause
+	}
+	if err := w.vault.DeleteSecretRef(ctx, loc, name); err != nil {
+		slog.WarnContext(ctx, "orgsecret.rollback_delete_failed", "secret", string(s), "name", name, "error", err)
+		return errors.Join(cause, fmt.Errorf("delete new reference %s: %w", name, err))
+	}
+	return cause
+}
+
+// restoreRow puts prev back (or removes the row when there was none) only
+// while the row names name. A row naming anything else is not this write's
+// to touch, which is a successful no-op.
+//
+//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
+func (w *OrgSecretWriter) restoreRow(ctx context.Context, ocOrgID string, s OrgSecret, prev *OrgSecretRef, name string) error {
+	var err error
 	if prev != nil {
-		return w.repo.Upsert(ctx, ocOrgID, *prev)
+		err = w.repo.Upsert(ctx, ocOrgID, *prev, name)
+	} else {
+		err = w.repo.Delete(ctx, ocOrgID, s, name)
 	}
-	return w.repo.Delete(ctx, ocOrgID, s)
+	if errors.Is(err, ErrOrgSecretConflict) {
+		return nil
+	}
+	return err
 }
 
-// Remove unsets secret s: its reference is deleted by the stored name, then
-// its row. A failed reference delete keeps the row, so a retry finds the
-// name again. An unset secret is a no-op.
+// Remove unsets secret s. Order: delete the row (only if it still names the
+// reference read) → repoint() so consumers stop reading the secret → delete
+// the reference by its stored name. A repoint failure puts the row back and
+// returns the error; a failed reference delete is logged with the orphan's
+// name and does not fail the removal. An unset secret is a no-op. repoint
+// may be nil when nothing consumes the secret.
 //
-//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
-func (w *OrgSecretWriter) Remove(ctx context.Context, ocOrgID, ouID string, s OrgSecret) error {
+//deadcode:keep wired by Task 1.14 (the agents card removes the model keys)
+func (w *OrgSecretWriter) Remove(ctx context.Context, ocOrgID, ouID string, s OrgSecret, repoint func() error) error {
 	loc, err := orgSecretLocation(ocOrgID, ouID, s)
 	if err != nil {
 		return err
@@ -159,11 +206,21 @@ func (w *OrgSecretWriter) Remove(ctx context.Context, ocOrgID, ouID string, s Or
 	if prev == nil {
 		return nil
 	}
-	if err := w.vault.DeleteSecretRef(ctx, loc, prev.Name); err != nil {
-		return fmt.Errorf("org secret %s: delete reference %s: %w", s, prev.Name, err)
-	}
-	if err := w.repo.Delete(ctx, ocOrgID, s); err != nil {
+	if err := w.repo.Delete(ctx, ocOrgID, s, prev.Name); err != nil {
 		return fmt.Errorf("org secret %s: delete row: %w", s, err)
+	}
+	if repoint != nil {
+		if err := repoint(); err != nil {
+			if rerr := w.repo.Upsert(ctx, ocOrgID, *prev, ""); rerr != nil && !errors.Is(rerr, ErrOrgSecretConflict) {
+				slog.ErrorContext(ctx, "orgsecret.rollback_failed", "secret", string(s), "name", prev.Name)
+				return errors.Join(fmt.Errorf("org secret %s: repoint: %w", s, err), fmt.Errorf("restore row: %w", rerr))
+			}
+			return fmt.Errorf("org secret %s: repoint: %w", s, err)
+		}
+	}
+	if err := w.vault.DeleteSecretRef(ctx, loc, prev.Name); err != nil {
+		slog.WarnContext(ctx, "orgsecret.retire_failed", "secret", string(s), "name", prev.Name, "error", err)
+		return nil
 	}
 	slog.InfoContext(ctx, "orgsecret.removed", "secret", string(s), "name", prev.Name)
 	return nil

@@ -17,8 +17,9 @@
 package organization_test
 
 // UNIT tier for OrgSecretWriter: the vault and the row repository are faked
-// at the writer's two ports, so the write order and every rollback branch are
-// observable call by call.
+// at the writer's two ports (the fake repository keeps the real one's
+// compare-and-swap semantics), so the write order, every rollback branch and
+// the concurrent interleavings are observable call by call.
 
 import (
 	"context"
@@ -38,6 +39,7 @@ var (
 	writtenAt  = time.Date(2026, 10, 2, 9, 0, 0, 0, time.UTC)
 	fixedClock = func() time.Time { return writtenAt }
 	noop       = func(string) error { return nil }
+	errStamp   = errors.New("stamp failed")
 )
 
 // fakeVault mints new names (or fixedName) and tracks which references exist.
@@ -98,17 +100,30 @@ func (v *fakeVault) live() []string {
 	return slices.Sorted(maps.Keys(v.refs))
 }
 
-// fakeRepo keys rows "org/secret".
+// fakeRepo keys rows "org/secret" and applies the real repository's
+// compare-and-swap rules.
 type fakeRepo struct {
-	rows      map[string]organization.OrgSecretRef
-	upsertErr error // returned by the first Upsert only
-	deleteErr error
-	onUpsert  func(organization.OrgSecretRef)
+	rows map[string]organization.OrgSecretRef
+
+	upsertErr       error  // the next Upsert fails without writing
+	upsertCommitErr error  // the next Upsert writes, then reports this error
+	deleteErr       error  // every Delete fails
+	beforeUpsert    func() // runs once, before the next Upsert
+	onUpsert        func(organization.OrgSecretRef)
+	onDelete        func()
 }
 
 func newFakeRepo() *fakeRepo { return &fakeRepo{rows: map[string]organization.OrgSecretRef{}} }
 
 func rowKey(org string, s organization.OrgSecret) string { return org + "/" + string(s) }
+
+func (r *fakeRepo) set(org string, s organization.OrgSecret, name string) {
+	r.rows[rowKey(org, s)] = organization.OrgSecretRef{Secret: s, Name: name}
+}
+
+func (r *fakeRepo) name(org string, s organization.OrgSecret) string {
+	return r.rows[rowKey(org, s)].Name
+}
 
 func (r *fakeRepo) Get(_ context.Context, org string, s organization.OrgSecret) (*organization.OrgSecretRef, error) {
 	row, ok := r.rows[rowKey(org, s)]
@@ -128,7 +143,11 @@ func (r *fakeRepo) List(_ context.Context, org string) ([]organization.OrgSecret
 	return out, nil
 }
 
-func (r *fakeRepo) Upsert(_ context.Context, org string, ref organization.OrgSecretRef) error {
+func (r *fakeRepo) Upsert(_ context.Context, org string, ref organization.OrgSecretRef, expectPrev string) error {
+	if hook := r.beforeUpsert; hook != nil {
+		r.beforeUpsert = nil
+		hook()
+	}
 	if r.onUpsert != nil {
 		r.onUpsert(ref)
 	}
@@ -136,27 +155,50 @@ func (r *fakeRepo) Upsert(_ context.Context, org string, ref organization.OrgSec
 		r.upsertErr = nil
 		return err
 	}
+	cur, ok := r.rows[rowKey(org, ref.Secret)]
+	if (expectPrev == "" && ok) || (expectPrev != "" && (!ok || cur.Name != expectPrev)) {
+		return organization.ErrOrgSecretConflict
+	}
 	r.rows[rowKey(org, ref.Secret)] = ref
+	if err := r.upsertCommitErr; err != nil {
+		r.upsertCommitErr = nil
+		return err
+	}
 	return nil
 }
 
-func (r *fakeRepo) Delete(_ context.Context, org string, s organization.OrgSecret) error {
+func (r *fakeRepo) Delete(_ context.Context, org string, s organization.OrgSecret, name string) error {
+	if r.onDelete != nil {
+		r.onDelete()
+	}
 	if r.deleteErr != nil {
 		return r.deleteErr
+	}
+	cur, ok := r.rows[rowKey(org, s)]
+	if !ok || cur.Name != name {
+		return organization.ErrOrgSecretConflict
 	}
 	delete(r.rows, rowKey(org, s))
 	return nil
 }
 
+func writeAndRetire(v *fakeVault, repo *fakeRepo, s organization.OrgSecret, data map[string]string, legacyOld string, repoint func(string) error) (string, error) {
+	return organization.NewOrgSecretWriter(v, repo, fixedClock).WriteAndRetire(ctx, "default", "ou-1", s, data, legacyOld, repoint)
+}
+
+var (
+	pat = map[string]string{"token": "t"}
+	key = map[string]string{"api-key": "k"}
+)
+
 func TestWriter_OrderAndOldDeletedByName(t *testing.T) {
 	v, repo := newFakeVault("default-github-pat-00000001"), newFakeRepo()
-	repo.rows["default/github-pat"] = organization.OrgSecretRef{Secret: organization.OrgSecretGitHubPAT, Name: "default-github-pat-00000001"}
-	w := organization.NewOrgSecretWriter(v, repo, fixedClock)
+	repo.set("default", organization.OrgSecretGitHubPAT, "default-github-pat-00000001")
 	var order []string
 	v.onCreate = func(string) { order = append(order, "create") }
 	repo.onUpsert = func(organization.OrgSecretRef) { order = append(order, "upsert") }
 	v.onDelete = func(n string) { order = append(order, "delete:"+n) }
-	name, err := w.Write(ctx, "default", "ou-1", organization.OrgSecretGitHubPAT, map[string]string{"token": "t"}, "", func(n string) error {
+	name, err := writeAndRetire(v, repo, organization.OrgSecretGitHubPAT, pat, "", func(n string) error {
 		order = append(order, "repoint:"+n)
 		return nil
 	})
@@ -167,17 +209,34 @@ func TestWriter_OrderAndOldDeletedByName(t *testing.T) {
 	if !slices.Equal(order, want) {
 		t.Fatalf("order %v, want %v", order, want)
 	}
-	if got := repo.rows["default/github-pat"]; got.Name != name || !got.WrittenAt.Equal(writtenAt) {
-		t.Fatalf("row = %+v, want name %s stamped %v", got, name, writtenAt)
+	row := repo.rows["default/github-pat"]
+	if row.Name != name || row.WrittenAt == nil || !row.WrittenAt.Equal(writtenAt) {
+		t.Fatalf("row = %+v, want name %s stamped %v", row, name, writtenAt)
 	}
 	if got := v.live(); !slices.Equal(got, []string{name}) {
 		t.Fatalf("live = %v, want only the new reference", got)
 	}
 }
 
+func TestWriter_OldSurvivesUntilRetire(t *testing.T) {
+	v, repo := newFakeVault("old"), newFakeRepo()
+	repo.set("default", organization.OrgSecretDefaultKey, "old")
+	written, err := organization.NewOrgSecretWriter(v, repo, fixedClock).Write(ctx, "default", "ou-1", organization.OrgSecretDefaultKey, key, "", noop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v.deleted) != 0 || repo.name("default", organization.OrgSecretDefaultKey) != written.Name {
+		t.Fatalf("deleted=%v row=%v: Write records the new name and deletes nothing", v.deleted, repo.rows)
+	}
+	written.Retire(ctx)
+	if !slices.Equal(v.deleted, []string{"old"}) {
+		t.Fatalf("deleted %v, want the old reference after Retire", v.deleted)
+	}
+}
+
 func TestWriter_LocationIsOrgNamespaceAndOU(t *testing.T) {
 	v, repo := newFakeVault(), newFakeRepo()
-	if _, err := organization.NewOrgSecretWriter(v, repo, fixedClock).Write(ctx, "acme", "ou-1", organization.OrgSecretDefaultKey, map[string]string{"api-key": "k"}, "", noop); err != nil {
+	if _, err := organization.NewOrgSecretWriter(v, repo, fixedClock).WriteAndRetire(ctx, "acme", "ou-1", organization.OrgSecretDefaultKey, key, "", noop); err != nil {
 		t.Fatal(err)
 	}
 	want := secretmanagersvc.SecretLocation{OrgName: "ou-1", ControlPlaneNamespace: "acme", EntityName: "default-key"}
@@ -188,8 +247,7 @@ func TestWriter_LocationIsOrgNamespaceAndOU(t *testing.T) {
 
 func TestWriter_LegacyNameUsedOnFirstWrite(t *testing.T) {
 	v, repo := newFakeVault("github-pat-secrets"), newFakeRepo()
-	w := organization.NewOrgSecretWriter(v, repo, fixedClock)
-	if _, err := w.Write(ctx, "default", "ou-1", organization.OrgSecretGitHubPAT, map[string]string{"token": "t"}, "github-pat-secrets", noop); err != nil {
+	if _, err := writeAndRetire(v, repo, organization.OrgSecretGitHubPAT, pat, "github-pat-secrets", noop); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Contains(v.deleted, "github-pat-secrets") {
@@ -199,8 +257,8 @@ func TestWriter_LegacyNameUsedOnFirstWrite(t *testing.T) {
 
 func TestWriter_StoredNameWinsOverLegacy(t *testing.T) {
 	v, repo := newFakeVault("stored"), newFakeRepo()
-	repo.rows["default/github-pat"] = organization.OrgSecretRef{Secret: organization.OrgSecretGitHubPAT, Name: "stored"}
-	if _, err := organization.NewOrgSecretWriter(v, repo, fixedClock).Write(ctx, "default", "ou-1", organization.OrgSecretGitHubPAT, map[string]string{"token": "t"}, "github-pat-secrets", noop); err != nil {
+	repo.set("default", organization.OrgSecretGitHubPAT, "stored")
+	if _, err := writeAndRetire(v, repo, organization.OrgSecretGitHubPAT, pat, "github-pat-secrets", noop); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(v.deleted, []string{"stored"}) {
@@ -210,21 +268,19 @@ func TestWriter_StoredNameWinsOverLegacy(t *testing.T) {
 
 func TestWriter_FailedStampDeletesNewKeepsOld(t *testing.T) {
 	v, repo := newFakeVault("old"), newFakeRepo()
-	repo.rows["default/default-key"] = organization.OrgSecretRef{Secret: organization.OrgSecretDefaultKey, Name: "old"}
-	w := organization.NewOrgSecretWriter(v, repo, fixedClock)
-	_, err := w.Write(ctx, "default", "ou-1", organization.OrgSecretDefaultKey, map[string]string{"api-key": "k"}, "", func(string) error { return errors.New("stamp failed") })
-	if err == nil {
-		t.Fatal("want error")
+	repo.set("default", organization.OrgSecretDefaultKey, "old")
+	_, err := writeAndRetire(v, repo, organization.OrgSecretDefaultKey, key, "", func(string) error { return errStamp })
+	if !errors.Is(err, errStamp) {
+		t.Fatalf("err = %v, want the stamp failure", err)
 	}
-	if repo.rows["default/default-key"].Name != "old" || slices.Contains(v.deleted, "old") || !slices.Equal(v.live(), []string{"old"}) {
+	if repo.name("default", organization.OrgSecretDefaultKey) != "old" || slices.Contains(v.deleted, "old") || !slices.Equal(v.live(), []string{"old"}) {
 		t.Fatalf("row=%v deleted=%v live=%v", repo.rows, v.deleted, v.live())
 	}
 }
 
 func TestWriter_FailedStampOnFirstWriteLeavesNoRow(t *testing.T) {
 	v, repo := newFakeVault("github-pat-secrets"), newFakeRepo()
-	_, err := organization.NewOrgSecretWriter(v, repo, fixedClock).Write(ctx, "default", "ou-1", organization.OrgSecretGitHubPAT, map[string]string{"token": "t"}, "github-pat-secrets", func(string) error { return errors.New("stamp failed") })
-	if err == nil {
+	if _, err := writeAndRetire(v, repo, organization.OrgSecretGitHubPAT, pat, "github-pat-secrets", func(string) error { return errStamp }); err == nil {
 		t.Fatal("want error")
 	}
 	if len(repo.rows) != 0 || !slices.Equal(v.live(), []string{"github-pat-secrets"}) {
@@ -234,26 +290,39 @@ func TestWriter_FailedStampOnFirstWriteLeavesNoRow(t *testing.T) {
 
 func TestWriter_FailedUpsertDeletesNewKeepsOld(t *testing.T) {
 	v, repo := newFakeVault("old"), newFakeRepo()
-	repo.rows["default/default-key"] = organization.OrgSecretRef{Secret: organization.OrgSecretDefaultKey, Name: "old"}
+	repo.set("default", organization.OrgSecretDefaultKey, "old")
 	repo.upsertErr = errors.New("db down")
 	repointed := false
-	_, err := organization.NewOrgSecretWriter(v, repo, fixedClock).Write(ctx, "default", "ou-1", organization.OrgSecretDefaultKey, map[string]string{"api-key": "k"}, "", func(string) error {
+	_, err := writeAndRetire(v, repo, organization.OrgSecretDefaultKey, key, "", func(string) error {
 		repointed = true
 		return nil
 	})
 	if err == nil || repointed {
 		t.Fatalf("err=%v repointed=%v: want error, no repoint", err, repointed)
 	}
-	if repo.rows["default/default-key"].Name != "old" || !slices.Equal(v.live(), []string{"old"}) {
+	if repo.name("default", organization.OrgSecretDefaultKey) != "old" || !slices.Equal(v.live(), []string{"old"}) {
 		t.Fatalf("row=%v live=%v", repo.rows, v.live())
+	}
+}
+
+// An upsert that committed but reported an error: the row names the new
+// reference, so the rollback must put the old row back before deleting it.
+func TestWriter_AmbiguousUpsertRestoresTheRow(t *testing.T) {
+	v, repo := newFakeVault("old"), newFakeRepo()
+	repo.set("default", organization.OrgSecretDefaultKey, "old")
+	repo.upsertCommitErr = errors.New("connection reset after commit")
+	if _, err := writeAndRetire(v, repo, organization.OrgSecretDefaultKey, key, "", noop); err == nil {
+		t.Fatal("want error")
+	}
+	if repo.name("default", organization.OrgSecretDefaultKey) != "old" || !slices.Equal(v.live(), []string{"old"}) {
+		t.Fatalf("row=%v live=%v: the row must name a live reference", repo.rows, v.live())
 	}
 }
 
 func TestWriter_FailedRestoreKeepsNewReference(t *testing.T) {
 	v, repo := newFakeVault(), newFakeRepo()
 	repo.deleteErr = errors.New("db down")
-	_, err := organization.NewOrgSecretWriter(v, repo, fixedClock).Write(ctx, "default", "ou-1", organization.OrgSecretDefaultKey, map[string]string{"api-key": "k"}, "", func(string) error { return errors.New("stamp failed") })
-	if err == nil {
+	if _, err := writeAndRetire(v, repo, organization.OrgSecretDefaultKey, key, "", func(string) error { return errStamp }); err == nil {
 		t.Fatal("want error")
 	}
 	row, ok := repo.rows["default/default-key"]
@@ -262,18 +331,64 @@ func TestWriter_FailedRestoreKeepsNewReference(t *testing.T) {
 	}
 }
 
+// Both writers read P; the other writer completes (P → N2, P retired)
+// before this one records its row. This write must lose: its CAS fails, it
+// deletes its own reference and leaves N2 alone.
+func TestWriter_ConcurrentWriterFirstToTheRowWins(t *testing.T) {
+	v, repo := newFakeVault("P"), newFakeRepo()
+	repo.set("default", organization.OrgSecretDefaultKey, "P")
+	repo.beforeUpsert = func() {
+		v.refs["N2"] = true
+		repo.set("default", organization.OrgSecretDefaultKey, "N2")
+		delete(v.refs, "P")
+	}
+	repointed := false
+	_, err := writeAndRetire(v, repo, organization.OrgSecretDefaultKey, key, "", func(string) error {
+		repointed = true
+		return nil
+	})
+	if !errors.Is(err, organization.ErrOrgSecretConflict) || repointed {
+		t.Fatalf("err=%v repointed=%v: want ErrOrgSecretConflict before any repoint", err, repointed)
+	}
+	if repo.name("default", organization.OrgSecretDefaultKey) != "N2" || !slices.Equal(v.live(), []string{"N2"}) {
+		t.Fatalf("row=%v live=%v: the winner's row and reference must survive", repo.rows, v.live())
+	}
+}
+
+// This write records N1, then while it repoints another writer replaces N1
+// with N3. When this repoint fails, the rollback must not put P back over
+// N3 (P is the reference the review found re-instated after deletion).
+func TestWriter_RollbackLeavesALaterWritersRow(t *testing.T) {
+	v, repo := newFakeVault("P"), newFakeRepo()
+	repo.set("default", organization.OrgSecretDefaultKey, "P")
+	_, err := writeAndRetire(v, repo, organization.OrgSecretDefaultKey, key, "", func(string) error {
+		v.refs["N3"] = true
+		repo.set("default", organization.OrgSecretDefaultKey, "N3")
+		return errStamp
+	})
+	if !errors.Is(err, errStamp) {
+		t.Fatalf("err = %v", err)
+	}
+	if got := repo.name("default", organization.OrgSecretDefaultKey); got != "N3" {
+		t.Fatalf("row names %q, want the later writer's N3", got)
+	}
+	if !v.refs["N3"] || slices.Contains(v.deleted, "N3") || slices.Contains(v.deleted, "P") {
+		t.Fatalf("deleted=%v live=%v: only this write's own reference may go", v.deleted, v.live())
+	}
+}
+
 func TestWriter_SameNameNeverDeleted(t *testing.T) {
 	v, repo := newFakeVault("cred-x"), newFakeRepo()
 	v.fixedName = "cred-x" // a provider that returned the existing name
-	repo.rows["default/github-pat"] = organization.OrgSecretRef{Secret: organization.OrgSecretGitHubPAT, Name: "cred-x"}
-	if _, err := organization.NewOrgSecretWriter(v, repo, fixedClock).Write(ctx, "default", "ou-1", organization.OrgSecretGitHubPAT, map[string]string{"token": "t"}, "", noop); err != nil {
+	repo.set("default", organization.OrgSecretGitHubPAT, "cred-x")
+	if _, err := writeAndRetire(v, repo, organization.OrgSecretGitHubPAT, pat, "", noop); err != nil {
 		t.Fatal(err)
 	}
 	if len(v.deleted) != 0 {
 		t.Fatal("never delete the reference just written")
 	}
 	// Nor on rollback.
-	if _, err := organization.NewOrgSecretWriter(v, repo, fixedClock).Write(ctx, "default", "ou-1", organization.OrgSecretGitHubPAT, map[string]string{"token": "t"}, "", func(string) error { return errors.New("stamp failed") }); err == nil {
+	if _, err := writeAndRetire(v, repo, organization.OrgSecretGitHubPAT, pat, "", func(string) error { return errStamp }); err == nil {
 		t.Fatal("want error")
 	}
 	if len(v.deleted) != 0 {
@@ -283,26 +398,26 @@ func TestWriter_SameNameNeverDeleted(t *testing.T) {
 
 func TestWriter_FailedRetireDoesNotFailTheWrite(t *testing.T) {
 	v, repo := newFakeVault("old"), newFakeRepo()
-	repo.rows["default/default-key"] = organization.OrgSecretRef{Secret: organization.OrgSecretDefaultKey, Name: "old"}
+	repo.set("default", organization.OrgSecretDefaultKey, "old")
 	v.deleteErr = errors.New("vault down")
-	name, err := organization.NewOrgSecretWriter(v, repo, fixedClock).Write(ctx, "default", "ou-1", organization.OrgSecretDefaultKey, map[string]string{"api-key": "k"}, "", noop)
+	name, err := writeAndRetire(v, repo, organization.OrgSecretDefaultKey, key, "", noop)
 	if err != nil {
 		t.Fatalf("a failed retire must not fail the write: %v", err)
 	}
-	if repo.rows["default/default-key"].Name != name {
+	if repo.name("default", organization.OrgSecretDefaultKey) != name {
 		t.Fatalf("row = %v, want %s", repo.rows, name)
 	}
 }
 
 func TestWriter_CreateFailureTouchesNothing(t *testing.T) {
 	v, repo := newFakeVault("old"), newFakeRepo()
-	repo.rows["default/default-key"] = organization.OrgSecretRef{Secret: organization.OrgSecretDefaultKey, Name: "old"}
+	repo.set("default", organization.OrgSecretDefaultKey, "old")
 	v.createErr = secretmanagersvc.ErrConflict
-	_, err := organization.NewOrgSecretWriter(v, repo, fixedClock).Write(ctx, "default", "ou-1", organization.OrgSecretDefaultKey, map[string]string{"api-key": "k"}, "", noop)
+	_, err := writeAndRetire(v, repo, organization.OrgSecretDefaultKey, key, "", noop)
 	if !errors.Is(err, secretmanagersvc.ErrConflict) {
 		t.Fatalf("err = %v, want ErrConflict", err)
 	}
-	if repo.rows["default/default-key"].Name != "old" || len(v.deleted) != 0 {
+	if repo.name("default", organization.OrgSecretDefaultKey) != "old" || len(v.deleted) != 0 {
 		t.Fatalf("row=%v deleted=%v", repo.rows, v.deleted)
 	}
 }
@@ -310,7 +425,7 @@ func TestWriter_CreateFailureTouchesNothing(t *testing.T) {
 func TestWriter_GitHubPATWritesTokenAndPassword(t *testing.T) {
 	v, repo := newFakeVault(), newFakeRepo()
 	data := map[string]string{"token": "t"}
-	if _, err := organization.NewOrgSecretWriter(v, repo, fixedClock).Write(ctx, "default", "ou-1", organization.OrgSecretGitHubPAT, data, "", noop); err != nil {
+	if _, err := writeAndRetire(v, repo, organization.OrgSecretGitHubPAT, data, "", noop); err != nil {
 		t.Fatal(err)
 	}
 	if got := v.lastData; len(got) != 2 || got["token"] != "t" || got["password"] != "t" || v.creates != 1 {
@@ -333,7 +448,7 @@ func TestWriter_RejectsWrongKeys(t *testing.T) {
 	}
 	for _, c := range cases {
 		v := newFakeVault()
-		if _, err := organization.NewOrgSecretWriter(v, newFakeRepo(), fixedClock).Write(ctx, "default", "ou-1", c.s, c.data, "", noop); err == nil || v.creates != 0 {
+		if _, err := writeAndRetire(v, newFakeRepo(), c.s, c.data, "", noop); err == nil || v.creates != 0 {
 			t.Errorf("%s %v: err=%v creates=%d, want rejected before any write", c.s, slices.Sorted(maps.Keys(c.data)), err, v.creates)
 		}
 	}
@@ -358,29 +473,47 @@ func TestOrgSecret_Keys(t *testing.T) {
 	}
 }
 
-func TestWriter_RemoveDeletesStoredNameThenRow(t *testing.T) {
+func TestWriter_RemoveOrdersRowRepointReference(t *testing.T) {
 	v, repo := newFakeVault("stored"), newFakeRepo()
-	repo.rows["default/ae-studio-client"] = organization.OrgSecretRef{Secret: organization.OrgSecretStudioClient, Name: "stored"}
+	repo.set("default", organization.OrgSecretStudioClient, "stored")
+	var order []string
+	repo.onDelete = func() { order = append(order, "row") }
+	v.onDelete = func(n string) { order = append(order, "delete:"+n) }
 	w := organization.NewOrgSecretWriter(v, repo, fixedClock)
-	if err := w.Remove(ctx, "default", "ou-1", organization.OrgSecretStudioClient); err != nil {
+	if err := w.Remove(ctx, "default", "ou-1", organization.OrgSecretStudioClient, func() error {
+		order = append(order, "repoint")
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(v.deleted, []string{"stored"}) || len(repo.rows) != 0 {
-		t.Fatalf("deleted=%v rows=%v", v.deleted, repo.rows)
+	if want := []string{"row", "repoint", "delete:stored"}; !slices.Equal(order, want) || len(repo.rows) != 0 {
+		t.Fatalf("order=%v rows=%v, want %v and no row", order, repo.rows, want)
 	}
-	if err := w.Remove(ctx, "default", "ou-1", organization.OrgSecretStudioClient); err != nil || len(v.deleted) != 1 {
+	if err := w.Remove(ctx, "default", "ou-1", organization.OrgSecretStudioClient, nil); err != nil || len(v.deleted) != 1 {
 		t.Fatalf("removing an unset secret: err=%v deleted=%v, want a no-op", err, v.deleted)
 	}
 }
 
-func TestWriter_RemoveKeepsRowWhenDeleteFails(t *testing.T) {
+func TestWriter_RemoveFailedRepointPutsTheRowBack(t *testing.T) {
 	v, repo := newFakeVault("stored"), newFakeRepo()
-	repo.rows["default/ae-studio-client"] = organization.OrgSecretRef{Secret: organization.OrgSecretStudioClient, Name: "stored"}
-	v.deleteErr = errors.New("vault down")
-	if err := organization.NewOrgSecretWriter(v, repo, fixedClock).Remove(ctx, "default", "ou-1", organization.OrgSecretStudioClient); err == nil {
-		t.Fatal("want error")
+	repo.set("default", organization.OrgSecretStudioClient, "stored")
+	err := organization.NewOrgSecretWriter(v, repo, fixedClock).Remove(ctx, "default", "ou-1", organization.OrgSecretStudioClient, func() error { return errStamp })
+	if !errors.Is(err, errStamp) {
+		t.Fatalf("err = %v", err)
 	}
-	if repo.rows["default/ae-studio-client"].Name != "stored" {
-		t.Fatalf("rows=%v: the row must survive so a retry finds the name", repo.rows)
+	if repo.name("default", organization.OrgSecretStudioClient) != "stored" || len(v.deleted) != 0 {
+		t.Fatalf("rows=%v deleted=%v: the row and its reference must survive", repo.rows, v.deleted)
+	}
+}
+
+func TestWriter_RemoveFailedReferenceDeleteStillUnsets(t *testing.T) {
+	v, repo := newFakeVault("stored"), newFakeRepo()
+	repo.set("default", organization.OrgSecretStudioClient, "stored")
+	v.deleteErr = errors.New("vault down")
+	if err := organization.NewOrgSecretWriter(v, repo, fixedClock).Remove(ctx, "default", "ou-1", organization.OrgSecretStudioClient, nil); err != nil {
+		t.Fatalf("a failed reference delete must not fail the removal: %v", err)
+	}
+	if len(repo.rows) != 0 {
+		t.Fatalf("rows=%v, want the secret unset", repo.rows)
 	}
 }

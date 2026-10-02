@@ -19,25 +19,38 @@ package organization
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"gorm.io/gorm"
 )
+
+// ErrOrgSecretConflict is returned by a conditional write of an org secret's
+// row when the row no longer names the reference the caller read: another
+// write got there first.
+var ErrOrgSecretConflict = errors.New("org secret row changed concurrently")
 
 // OrgSecretRepository reads and writes the org secrets' reference rows in
 // org_secrets: key = the OrgSecret string, value NULL, secret_ref_name = the
 // SecretReference holding the value. A row means "set". The legacy value rows
 // (keys such as github/pat) share the table but never these keys, so no
 // accessor here reads or writes one. Every accessor is keyed by oc_org_id.
+//
+// Writes are compare-and-swap on secret_ref_name, so two writers that read
+// the same row cannot both replace it: the loser gets ErrOrgSecretConflict.
 type OrgSecretRepository interface {
 	// Get returns the reference row of s, or nil when s is unset.
 	Get(ctx context.Context, ocOrgID string, s OrgSecret) (*OrgSecretRef, error)
 	// List returns the org's set secrets, ordered by secret.
 	List(ctx context.Context, ocOrgID string) ([]OrgSecretRef, error)
-	// Upsert inserts or replaces the reference row of r.Secret.
-	Upsert(ctx context.Context, ocOrgID string, r OrgSecretRef) error
-	// Delete removes the reference row of s; an absent row is not an error.
-	Delete(ctx context.Context, ocOrgID string, s OrgSecret) error
+	// Upsert writes the row of r.Secret if it still names expectPrev: with
+	// expectPrev empty it inserts only when there is no row; otherwise it
+	// updates only the row naming expectPrev. Anything else is
+	// ErrOrgSecretConflict and writes nothing.
+	Upsert(ctx context.Context, ocOrgID string, r OrgSecretRef, expectPrev string) error
+	// Delete removes the row of s if it names name; a row naming another
+	// reference, or none, is ErrOrgSecretConflict.
+	Delete(ctx context.Context, ocOrgID string, s OrgSecret, name string) error
 }
 
 type orgSecretRepository struct {
@@ -55,7 +68,7 @@ func NewOrgSecretRepository(db *gorm.DB) OrgSecretRepository {
 type orgSecretRefRow struct {
 	Key           string
 	SecretRefName string
-	WrittenAt     time.Time
+	WrittenAt     *time.Time
 }
 
 //deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
@@ -80,7 +93,7 @@ func (r *orgSecretRepository) Get(ctx context.Context, ocOrgID string, s OrgSecr
 	return &ref, nil
 }
 
-//deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
+//deadcode:keep wired by Task 1.15 (the converger reads the set secrets)
 func (r *orgSecretRepository) List(ctx context.Context, ocOrgID string) ([]OrgSecretRef, error) {
 	var rows []orgSecretRefRow
 	if err := r.db.WithContext(ctx).Table("org_secrets").
@@ -98,19 +111,46 @@ func (r *orgSecretRepository) List(ctx context.Context, ocOrgID string) ([]OrgSe
 }
 
 //deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
-func (r *orgSecretRepository) Upsert(ctx context.Context, ocOrgID string, ref OrgSecretRef) error {
-	return r.db.WithContext(ctx).Exec(`
-		INSERT INTO org_secrets (oc_org_id, key, value, secret_ref_name, written_at)
-		VALUES (?, ?, NULL, ?, ?)
-		ON CONFLICT (oc_org_id, key) DO UPDATE
-		  SET secret_ref_name = EXCLUDED.secret_ref_name,
-		      written_at = EXCLUDED.written_at,
-		      updated_at = now()`,
-		ocOrgID, string(ref.Secret), ref.Name, ref.WrittenAt).Error
+func (r *orgSecretRepository) Upsert(ctx context.Context, ocOrgID string, ref OrgSecretRef, expectPrev string) error {
+	if ref.Name == "" {
+		return fmt.Errorf("org secret %s: reference name is required", ref.Secret)
+	}
+	var res *gorm.DB
+	if expectPrev == "" {
+		res = r.db.WithContext(ctx).Exec(`
+			INSERT INTO org_secrets (oc_org_id, key, value, secret_ref_name, written_at)
+			VALUES (?, ?, NULL, ?, ?)
+			ON CONFLICT (oc_org_id, key) DO NOTHING`,
+			ocOrgID, string(ref.Secret), ref.Name, ref.WrittenAt)
+	} else {
+		res = r.db.WithContext(ctx).Exec(`
+			UPDATE org_secrets
+			   SET secret_ref_name = ?, written_at = ?, updated_at = now()
+			 WHERE oc_org_id = ? AND key = ? AND secret_ref_name = ?`,
+			ref.Name, ref.WrittenAt, ocOrgID, string(ref.Secret), expectPrev)
+	}
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrOrgSecretConflict
+	}
+	return nil
 }
 
 //deadcode:keep wired by Task 1.13 (the gitpat submit writes the org secrets through OrgSecretWriter)
-func (r *orgSecretRepository) Delete(ctx context.Context, ocOrgID string, s OrgSecret) error {
-	return r.db.WithContext(ctx).Exec(
-		`DELETE FROM org_secrets WHERE oc_org_id = ? AND key = ?`, ocOrgID, string(s)).Error
+func (r *orgSecretRepository) Delete(ctx context.Context, ocOrgID string, s OrgSecret, name string) error {
+	if name == "" {
+		return fmt.Errorf("org secret %s: reference name is required", s)
+	}
+	res := r.db.WithContext(ctx).Exec(
+		`DELETE FROM org_secrets WHERE oc_org_id = ? AND key = ? AND secret_ref_name IS NOT NULL AND secret_ref_name = ?`,
+		ocOrgID, string(s), name)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrOrgSecretConflict
+	}
+	return nil
 }
