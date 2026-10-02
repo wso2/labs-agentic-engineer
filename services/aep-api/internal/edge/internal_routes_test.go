@@ -78,8 +78,11 @@ type internalStack struct {
 	handler http.Handler
 	// deps is what handler was built from, so a test can extend the runner
 	// wiring (e.g. with the SRE handoff deps) and build its own handler.
-	deps    InternalDeps
-	mint    func(org string) string
+	deps InternalDeps
+	mint func(org string) string
+	// sign signs any claims with the Thunder test key, for tokens that are not
+	// a well-formed publisher token (user JWTs, other clients' tokens).
+	sign    func(claims jwt.Claims) string
 	refresh *fakeCredsRefresh
 	context *fakeValidationContext
 	// fenced records every cycle id the runner authorizer looked up, which
@@ -114,22 +117,24 @@ func newInternalStack(t *testing.T) internalStack {
 	if verifier == nil {
 		t.Fatal("NewPublisherTokenVerifier returned nil")
 	}
+	sign := func(claims jwt.Claims) string {
+		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+		tok.Header["kid"] = kid
+		signed, err := tok.SignedString(priv)
+		if err != nil {
+			t.Fatalf("sign token: %v", err)
+		}
+		return signed
+	}
 	mint := func(org string) string {
-		claims := auth.PublisherClaims{
+		return sign(auth.PublisherClaims{
 			RegisteredClaims: jwt.RegisteredClaims{
 				Issuer:    pubIssuer,
 				Audience:  jwt.ClaimStrings{pubAudPrefix + org},
 				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 			},
 			OuHandle: org,
-		}
-		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-		tok.Header["kid"] = kid
-		signed, err := tok.SignedString(priv)
-		if err != nil {
-			t.Fatalf("sign publisher token: %v", err)
-		}
-		return signed
+		})
 	}
 	fenced := &[]string{}
 	lookup := func(_ context.Context, cycleID string) (string, error) {
@@ -141,6 +146,7 @@ func newInternalStack(t *testing.T) internalStack {
 	}
 	stack := internalStack{
 		mint:    mint,
+		sign:    sign,
 		refresh: &fakeCredsRefresh{},
 		context: &fakeValidationContext{},
 		fenced:  fenced,
@@ -149,6 +155,7 @@ func newInternalStack(t *testing.T) internalStack {
 		CredsRefresh:      stack.refresh,
 		RunnerAuth:        auth.NewRunnerAuthorizer(verifier, lookup),
 		ValidationContext: stack.context,
+		PublisherTokens:   verifier,
 	}
 	stack.handler = NewHandler(AppParams{InternalDeps: stack.deps})
 	return stack

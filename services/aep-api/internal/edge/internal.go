@@ -41,9 +41,10 @@ import (
 // (capInternalBody, which finds its route once); every generated operation then
 // passes internalGate, which verifies the caller's credential for the op's
 // route group (a runner's publisher-cc bearer against the cycle named in the
-// path, the INT-6 fence; the SRE handoff bearer for sre/) and binds the verified
-// org into the context; only an authenticated request is validated against the
-// embedded internal spec (internalValidator). The raw MCP routes carry their
+// path, the INT-6 fence; the SRE handoff bearer for sre/; an org's publisher
+// client token for ae-studio/) and binds the verified org into the context;
+// only an authenticated request is validated against the embedded internal
+// spec (internalValidator). The raw MCP routes carry their
 // own verifier. The spec is non-public, never gateway-advertised, but the path
 // is reachable through the console's /aep-api-service/ route, so nothing on it
 // parses a body for an anonymous caller.
@@ -69,6 +70,13 @@ type InternalDeps struct {
 	// A nil one answers 503 for its ops.
 	Issues     sourcecontrol.IssueService
 	RcaReports ops.Repository
+	// PublisherTokens verifies an org's publisher client token for the
+	// ae-studio/ ops (the AE Studio tools pod). nil fails closed: every
+	// ae-studio/ op answers 401.
+	PublisherTokens *auth.PublisherTokenVerifier
+	// AEStudioRepositories backs get-ae-studio-project-repository; nil
+	// answers 503.
+	AEStudioRepositories ProjectRepositoryLookup
 	// ValidationContext backs the validation-context runner callback; a nil
 	// provider answers 503 for that op. A test user's login is NOT served here —
 	// it is published on the roles gate ticket, which is where the validation
@@ -204,6 +212,9 @@ const (
 	runnerCredential internalCredential = iota + 1
 	// sreHandoffCredential: aep-mcp-server's static SRE handoff bearer.
 	sreHandoffCredential
+	// aeStudioCredential: the org's publisher client token, presented by its
+	// AE Studio tools pod; no cycle fence, the org is the token's ouHandle.
+	aeStudioCredential
 )
 
 // internalOpGate is one operation's gate entry.
@@ -217,11 +228,12 @@ type internalOpGate struct {
 // internalOpGates is the gate table, keyed by embedded-spec operation id.
 // TestInternalGate_CoversEverySpecOperation pins it to the spec both ways.
 var internalOpGates = map[string]internalOpGate{
-	"runner-refresh-credentials": {credential: runnerCredential, cycleParam: "executionId"},
-	"runner-validation-context":  {credential: runnerCredential, cycleParam: "cycleId"},
-	"sre-list-issues":            {credential: sreHandoffCredential},
-	"sre-create-issue":           {credential: sreHandoffCredential},
-	"sre-create-rca-report":      {credential: sreHandoffCredential},
+	"runner-refresh-credentials":       {credential: runnerCredential, cycleParam: "executionId"},
+	"runner-validation-context":        {credential: runnerCredential, cycleParam: "cycleId"},
+	"sre-list-issues":                  {credential: sreHandoffCredential},
+	"sre-create-issue":                 {credential: sreHandoffCredential},
+	"sre-create-rca-report":            {credential: sreHandoffCredential},
+	"get-ae-studio-project-repository": {credential: aeStudioCredential},
 }
 
 // internalGate is /internal/v1's deny-by-default gate (internalOpGates), one
@@ -231,6 +243,7 @@ var internalOpGates = map[string]internalOpGate{
 //
 //	executions/, validation/   coding runner   publisher token, cycle fence (cycle id in the path)
 //	sre/                       SRE handoff     SRE handoff bearer, binds its one org + the incident context
+//	ae-studio/                 AE Studio pod   publisher client token, binds its ouHandle org (no cycle)
 //	mcp, mcp/playground-token  runner, agent   route miss here: passed through to their own verifier
 //	any other embedded op      -               denied (401)
 //
@@ -238,8 +251,9 @@ var internalOpGates = map[string]internalOpGate{
 // serves a raw MCP route that verifies its own caller. Each generated operation
 // must present the credential of its route group, and the verified org is bound
 // into the context. A credential opens its own group only: a publisher token
-// never clears sre/, the SRE bearer never clears a runner op. There are
-// deliberately NO carve-outs: an operation absent from internalOpGates is
+// never clears sre/, the SRE bearer never clears a runner op or ae-studio/,
+// and no other token (a user JWT, the AE-only client, an ae-studio-<org>
+// client) clears ae-studio/. There are deliberately NO carve-outs: an operation absent from internalOpGates is
 // denied outright, so adding an internal op means teaching this gate its
 // credential first. The cycle fence checks the decoded path value, the one
 // the handler is served. requireInternalGate denies any generated op that reaches
@@ -278,6 +292,8 @@ func authenticateInternal(ctx context.Context, deps InternalDeps, authHeader str
 		ctx = auth.WithClaims(ctx, claims)
 		ctx = sourcecontrol.WithIncidentContext(ctx, sreHandoffIncidentID)
 		return tenant.WithBoundOrg(ctx, claims.OuHandle), nil
+	case ok && gate.credential == aeStudioCredential:
+		return authenticateAEStudio(ctx, deps.PublisherTokens, authHeader)
 	case ok && gate.credential == runnerCredential:
 		if deps.RunnerAuth == nil {
 			return nil, errServiceUnavailable("runner auth not configured")

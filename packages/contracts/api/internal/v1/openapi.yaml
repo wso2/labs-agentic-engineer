@@ -183,6 +183,39 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: Error
+  /ae-studio/projects/{projectName}/repository:
+    get:
+      operationId: get-ae-studio-project-repository
+      summary: Resolve a project to its GitHub repository (AE Studio tools pod)
+      description: |-
+        The org's AE Studio tools pod calls this on every request; it keeps no
+        cache. The org is the publisher client token's ouHandle. A project the
+        org does not own answers 404, the same as one that does not exist.
+      tags:
+      - AE Studio
+      security:
+      - publisherCC: []
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          type: string
+          pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AEStudioProjectRepository'
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
   /mcp:
     post:
       operationId: call-mcp-tool
@@ -512,6 +545,27 @@ components:
       - dispatched
       - deployed
       type: object
+    AEStudioProjectRepository:
+      description: A project's GitHub repository, as the AE Studio tools pod
+        clones it.
+      type: object
+      additionalProperties: false
+      properties:
+        owner:
+          description: GitHub owner (user or organization) of the repo.
+          type: string
+        repo:
+          description: GitHub repository name.
+          type: string
+        defaultBranch:
+          type: string
+        cloneUrl:
+          type: string
+      required:
+      - owner
+      - repo
+      - defaultBranch
+      - cloneUrl
     Error:
       description: Flat error envelope returned by every non-2xx response.
       type: object

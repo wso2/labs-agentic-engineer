@@ -966,6 +966,11 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 			SREHandoff: sreHandoff,
 			Issues:     issueService,
 			RcaReports: rcaReports,
+			// The AE Studio tools pod presents its org's publisher client
+			// token (the verifier the runner callbacks use) to resolve a
+			// project to its repository on every request.
+			PublisherTokens:      publisherVerifier,
+			AEStudioRepositories: aestudio.NewProjectRepositories(repoService),
 		},
 		WebhookController:   webhookCtrl,
 		ConfigRepo:          configRepo,
