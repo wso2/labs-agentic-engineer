@@ -114,7 +114,8 @@ type Applier struct {
 // notices become Warnings. Commits are not gated by any of them.
 //
 // Errors: ErrPathInvalid for a request the write rules refuse, the
-// projects lookup's errors, ErrApplyConflict, or a *RepoError from the engine
+// projects lookup's errors (projects.ErrUnknown also when the completions
+// call answers 404 for the project), ErrApplyConflict, or a *RepoError from the engine
 // (wrapping repo.ErrDiskFull, repo.ErrRefNotFastForward after the retries, or
 // a git failure).
 //
@@ -132,7 +133,10 @@ func (a Applier) Apply(ctx context.Context, project string, req ApplyRequest) (*
 	}
 	author, committer := a.saveIdentities(ctx)
 
-	completions, completionWarnings := a.completeDependencies(ctx, project, req.Writes)
+	completions, completionWarnings, err := a.completeDependencies(ctx, project, req.Writes)
+	if err != nil {
+		return nil, nil, err
+	}
 	// A document the platform lands beside a definition is platform-authored:
 	// the request must not also write or delete it. Deletes are applied after
 	// writes, so a request that deleted one would commit a definition pointing

@@ -19,6 +19,7 @@ package files_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -386,6 +387,64 @@ func TestApply_CompleterDownWarnsEachStubByKind(t *testing.T) {
 	if got := byPath["specs/design/dependencies/billing/dependency.json"]; len(got) != 0 {
 		t.Errorf("a finished definition got completion warnings: %v", got)
 	}
+}
+
+// One save makes one completions call with at most 64 stubs: aep-api's
+// per-call bound on outbound fetches is then a bound per save. Stubs past the
+// first 64 (request order) are not sent and land as written with a warning.
+func TestApply_AtMost64StubsPerSave(t *testing.T) {
+	c := newFakeCompleter(nil)
+	a, origin := newApplier(t, nil, withCompleter(c))
+	var writes []files.WriteOp
+	for i := range 65 {
+		name := fmt.Sprintf("dep-%02d", i)
+		writes = append(writes, files.WriteOp{
+			Path:    "specs/design/dependencies/" + name + "/dependency.json",
+			Content: fmt.Sprintf(`{"name":%q,"resource":{"ref":%q,"name":%q}}`, name, name, name),
+		})
+	}
+	res, _, err := a.Apply(ctx, "greeter", files.ApplyRequest{Writes: writes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := c.Calls()
+	if len(calls) != 1 || len(calls[0]) != 64 {
+		t.Fatalf("completer calls = %d (first carries %d), want one call with 64", len(calls), len(calls[0]))
+	}
+	for i, p := range calls[0] {
+		if p != writes[i].Path {
+			t.Fatalf("call[%d] = %s, want the first 64 in request order", i, p)
+		}
+	}
+	last := writes[64]
+	if len(res.Warnings) != 1 || res.Warnings[0].Path != last.Path || res.Warnings[0].Code != "registry-unreachable" {
+		t.Fatalf("warnings = %+v, want one for the 65th stub only", res.Warnings)
+	}
+	if got := origin.FileAt(t, res.CommitSHA, last.Path); got != last.Content {
+		t.Fatalf("the 65th stub did not land as written: %q", got)
+	}
+}
+
+// aep-api not knowing the project is not degraded: the save is refused
+// (project_unknown at the edge) and nothing commits.
+func TestApply_CompletionsUnknownProjectRefusesTheSave(t *testing.T) {
+	a, origin := newApplier(t, nil, withCompleter(unknownProjectCompleter{}))
+	head := origin.HeadSHA(t)
+	_, _, err := a.Apply(ctx, "greeter", files.ApplyRequest{Writes: []files.WriteOp{
+		{Path: "specs/design/dependencies/payments/dependency.json", Content: paymentsStub},
+	}})
+	if !errors.Is(err, projects.ErrUnknown) {
+		t.Fatalf("err = %v, want projects.ErrUnknown", err)
+	}
+	if origin.HeadSHA(t) != head {
+		t.Fatal("a save for a project aep-api does not know committed")
+	}
+}
+
+type unknownProjectCompleter struct{}
+
+func (unknownProjectCompleter) Complete(_ context.Context, project string, _ []files.WriteOp) (map[string]files.Completed, []files.Warning, error) {
+	return nil, nil, fmt.Errorf("%w: %q", projects.ErrUnknown, project)
 }
 
 // The completer's warnings ride the apply's warnings.

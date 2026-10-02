@@ -202,9 +202,10 @@ func parseCellComponent(statement string, line int) (cellComponent, error) {
 	return c, nil
 }
 
-// cellBody returns the cell source without a leading `---` YAML frontmatter
-// block (a suffix of source) (the same fence rule as the TS grammar's stripFrontmatter). An
-// optional UTF-8 BOM and leading whitespace are allowed before the fence.
+// cellBody returns the suffix of source after a leading `---` YAML
+// frontmatter block, the same fence rule as the TS grammar's
+// stripFrontmatter. An optional UTF-8 BOM and leading whitespace are allowed
+// before the fence.
 //
 //deadcode:keep wired in Task 2.9 (the Files socket's apply op)
 func cellBody(source string) (string, error) {

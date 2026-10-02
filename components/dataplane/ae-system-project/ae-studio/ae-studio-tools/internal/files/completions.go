@@ -47,7 +47,8 @@ const (
 const (
 	dependenciesDir      = "specs/design/dependencies/"
 	dependencyDesignFile = "dependency.json"
-	// maxStubsPerCall is aep-api's cap on one completions request.
+	// maxStubsPerCall is aep-api's cap on one completions request, and so the
+	// most stubs one save completes.
 	maxStubsPerCall = 64
 	// maxCompletionsBody bounds what is read of aep-api's answer.
 	maxCompletionsBody = 32 << 20
@@ -81,38 +82,62 @@ const (
 
 // completeDependencies completes the save's dependency stubs before the
 // commit (never inside the CAS-retried fn). Only stubs are sent; a save with
-// none makes no call. A stub the completer cannot complete lands as written:
-// on a failed call, or an answer the write rules refuse, each stub of that
-// call gets its kind's warning and the dependency reads needs-input (or
-// needs-contract) until a later save completes it.
+// none makes no call. A save makes at most ONE call carrying at most
+// maxStubsPerCall stubs, which is what keeps aep-api's per-call bound on
+// outbound registry reads and fetches a bound per save: stubs past the first
+// maxStubsPerCall (request order) are not sent and land as written, each with
+// a warning saying so, so a large flush still saves.
+//
+// A stub the completer cannot complete lands as written: on a failed call, or
+// an answer the write rules refuse, each sent stub gets its kind's warning
+// and the dependency reads needs-input (or needs-contract) until a later save
+// completes it. The one failure that is not degraded is aep-api not knowing
+// the project (projects.ErrUnknown): the save is refused, as the project
+// lookup would refuse it.
 //
 //deadcode:keep wired in Task 2.9 (the Files socket's apply op)
-func (a Applier) completeDependencies(ctx context.Context, project string, writes []WriteOp) (map[string]Completed, []Warning) {
+func (a Applier) completeDependencies(ctx context.Context, project string, writes []WriteOp) (map[string]Completed, []Warning, error) {
 	stubs, kinds := dependencyStubs(writes)
 	if len(stubs) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
-	completed := map[string]Completed{}
-	var warnings []Warning
-	for start := 0; start < len(stubs); start += maxStubsPerCall {
-		chunk := stubs[start:min(start+maxStubsPerCall, len(stubs))]
-		got, ws, err := a.Completer.Complete(ctx, project, chunk)
-		if err == nil {
-			err = validateCompletions(got, chunk)
-		}
-		if err != nil {
-			// The error may carry aep-api's answer or a URL; log its class.
-			slog.WarnContext(ctx, "files.completions_unavailable",
-				"project", project, "stubs", len(chunk), "misconfigured", errors.Is(err, projects.ErrMisconfigured))
-			warnings = append(warnings, unavailableWarnings(chunk, kinds)...)
-			continue
-		}
-		for p, c := range got {
-			completed[p] = c
-		}
-		warnings = append(warnings, ws...)
+	sent, deferred := stubs, []WriteOp(nil)
+	if len(stubs) > maxStubsPerCall {
+		sent, deferred = stubs[:maxStubsPerCall], stubs[maxStubsPerCall:]
 	}
-	return completed, warnings
+	warnings := deferredWarnings(deferred, kinds)
+	got, ws, err := a.Completer.Complete(ctx, project, sent)
+	if errors.Is(err, projects.ErrUnknown) {
+		return nil, nil, err
+	}
+	if err == nil {
+		err = validateCompletions(got, sent)
+	}
+	if err != nil {
+		// The error may carry aep-api's answer or a URL; log its class.
+		slog.WarnContext(ctx, "files.completions_unavailable",
+			"project", project, "stubs", len(sent), "misconfigured", errors.Is(err, projects.ErrMisconfigured))
+		return nil, append(unavailableWarnings(sent, kinds), warnings...), nil
+	}
+	return got, append(ws, warnings...), nil
+}
+
+// deferredWarnings is the answer for stubs past the per-save limit: not
+// sent, landed as written, completed by a later save that carries them.
+//
+//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
+func deferredWarnings(stubs []WriteOp, kinds map[string]stubKind) []Warning {
+	out := make([]Warning, 0, len(stubs))
+	for _, s := range stubs {
+		name, _ := dependencyFileDir(s.Path)
+		code, reads := WarningRegistryUnreachable, "needs-input"
+		if kinds[s.Path] == providerStub {
+			code, reads = WarningProviderDocumentUnavailable, "needs-contract"
+		}
+		out = append(out, Warning{Path: s.Path, Code: code,
+			Message: fmt.Sprintf("this save carries more than %d dependency stubs, so %q was not completed; the dependency reads %s until a save that carries it completes it", maxStubsPerCall, name, reads)})
+	}
+	return out
 }
 
 // unavailableWarnings is the degrade answer: each stub's own warning.
@@ -334,6 +359,9 @@ func (c aepAPICompleter) Complete(ctx context.Context, project string, writes []
 		}
 		files := make(map[string]string, len(a.Files))
 		for _, f := range a.Files {
+			if _, dup := files[f.Path]; dup {
+				return nil, nil, fmt.Errorf("%w: completions answer with a repeated file path", projects.ErrUnavailable)
+			}
 			files[f.Path] = f.Content
 		}
 		completed[a.Path] = Completed{Definition: a.Definition, Files: files}

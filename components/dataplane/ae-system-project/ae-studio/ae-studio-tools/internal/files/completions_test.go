@@ -101,6 +101,8 @@ func TestAEPAPICompleter_MapsStatus(t *testing.T) {
 		{http.StatusBadGateway, `{}`, projects.ErrUnavailable, false},
 		{http.StatusOK, `not json`, projects.ErrUnavailable, false},
 		{http.StatusOK, `{"completed":[{"path":"","definition":"{}","files":[]}],"warnings":[]}`, projects.ErrUnavailable, false},
+		{http.StatusOK, `{"completed":[{"path":"a","definition":"{}","files":[]},{"path":"a","definition":"{}","files":[]}],"warnings":[]}`, projects.ErrUnavailable, false},
+		{http.StatusOK, `{"completed":[{"path":"a","definition":"{}","files":[{"path":"f","content":"1"},{"path":"f","content":"2"}]}],"warnings":[]}`, projects.ErrUnavailable, false},
 	}
 	for _, c := range cases {
 		cmp := files.NewAEPAPICompleter(fakeAEPAPI(t, c.status, c.body, nil))

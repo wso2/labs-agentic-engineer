@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestUser_DecodesNameAndEmail(t *testing.T) {
@@ -32,19 +33,33 @@ func TestUser_DecodesNameAndEmail(t *testing.T) {
 	}
 }
 
-// fakeUsers answers User from a fixed value or error and counts calls.
+// fakeUsers answers User from a fixed value or error and counts calls. With
+// gate set, each call blocks until gate is closed.
 type fakeUsers struct {
 	mu    sync.Mutex
 	user  User
 	err   error
 	calls int
+	gate  chan struct{}
 }
 
 func (f *fakeUsers) User(context.Context) (User, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.calls++
+	gate := f.gate
+	f.mu.Unlock()
+	if gate != nil {
+		<-gate
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.user, f.err
+}
+
+func (f *fakeUsers) Calls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
 }
 
 func TestCommitAuthor_UsesNameAndEmail(t *testing.T) {
@@ -65,22 +80,86 @@ func TestCommitAuthor_FallsBackToLoginAndNoreply(t *testing.T) {
 	}
 }
 
-func TestCommitAuthor_CachesSuccessOnly(t *testing.T) {
+// A failure is remembered for identityFailureTTL, then asked again; a
+// success is remembered for good.
+func TestCommitAuthor_CachesFailureBrieflyAndSuccessForGood(t *testing.T) {
 	users := &fakeUsers{err: &StatusError{Status: http.StatusBadGateway}}
 	a := NewCommitAuthor(users)
-	if _, _, err := a.Identity(context.Background()); err == nil {
-		t.Fatal("a failed lookup must surface its error")
+	clock := time.Unix(1_000_000, 0)
+	a.now = func() time.Time { return clock }
+
+	for range 2 {
+		if _, _, err := a.Identity(context.Background()); err == nil {
+			t.Fatal("a failed lookup must surface its error")
+		}
 	}
+	if got := users.Calls(); got != 1 {
+		t.Fatalf("GET /user calls = %d, want 1 (the failure is cached)", got)
+	}
+
 	users.mu.Lock()
 	users.err, users.user = nil, User{Login: "octo-bot", ID: 7}
 	users.mu.Unlock()
+	clock = clock.Add(identityFailureTTL)
 	for range 3 {
 		if name, _, err := a.Identity(context.Background()); err != nil || name != "octo-bot" {
 			t.Fatalf("Identity = %q, %v", name, err)
 		}
 	}
-	if users.calls != 2 {
-		t.Fatalf("GET /user calls = %d, want 2 (the failure is not cached, the success is)", users.calls)
+	if got := users.Calls(); got != 2 {
+		t.Fatalf("GET /user calls = %d, want 2 (asked again after the TTL, then cached)", got)
+	}
+}
+
+// Concurrent first callers share one GET /user.
+func TestCommitAuthor_ConcurrentCallersShareOneLookup(t *testing.T) {
+	gate := make(chan struct{})
+	users := &fakeUsers{user: User{Login: "octo-bot", ID: 7}, gate: gate}
+	a := NewCommitAuthor(users)
+	const callers = 8
+	names := make([]string, callers)
+	errs := make([]error, callers)
+	var wg sync.WaitGroup
+	for i := range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			names[i], _, errs[i] = a.Identity(context.Background())
+		}()
+	}
+	for users.Calls() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	time.Sleep(20 * time.Millisecond) // let the other callers join the flight
+	close(gate)
+	wg.Wait()
+	for i := range callers {
+		if errs[i] != nil || names[i] != "octo-bot" {
+			t.Fatalf("caller %d: %q, %v", i, names[i], errs[i])
+		}
+	}
+	if got := users.Calls(); got != 1 {
+		t.Fatalf("GET /user calls = %d, want 1", got)
+	}
+}
+
+// A caller stops waiting when its ctx ends; the shared lookup carries on and
+// a later caller gets its answer.
+func TestCommitAuthor_WaitHonoursTheCallersContext(t *testing.T) {
+	gate := make(chan struct{})
+	users := &fakeUsers{user: User{Login: "octo-bot", ID: 7}, gate: gate}
+	a := NewCommitAuthor(users)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, _, err := a.Identity(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want the caller's deadline", err)
+	}
+	close(gate)
+	if name, _, err := a.Identity(context.Background()); err != nil || name != "octo-bot" {
+		t.Fatalf("Identity = %q, %v", name, err)
+	}
+	if got := users.Calls(); got != 1 {
+		t.Fatalf("GET /user calls = %d, want 1 (the abandoned lookup's answer is reused)", got)
 	}
 }
 

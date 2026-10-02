@@ -21,8 +21,10 @@ package files
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
+	"github.com/wso2/aep/ae-studio-tools/internal/github"
 	"github.com/wso2/aep/ae-studio-tools/internal/repo"
 )
 
@@ -42,10 +44,27 @@ type IdentitySource interface {
 func (a Applier) saveIdentities(ctx context.Context) (author, committer *repo.GitIdentity) {
 	name, email, err := a.Identity.Identity(ctx)
 	if err != nil {
-		// GitHub client errors name a status or a transport failure, never
-		// the token.
-		slog.WarnContext(ctx, "files.identity_unavailable", "error", err)
+		slog.WarnContext(ctx, "files.identity_unavailable", identityErrorAttrs(err)...)
 		return nil, nil
 	}
 	return &repo.GitIdentity{Name: name, Email: email}, &repo.GitIdentity{Name: name, Email: email}
+}
+
+// identityErrorAttrs names a failed identity lookup by class (and GitHub's
+// status when it answered), never by the error's text.
+//
+//deadcode:keep wired in Task 2.9 (the Files socket's apply op)
+func identityErrorAttrs(err error) []any {
+	var rl *github.ErrRateLimited
+	var se *github.StatusError
+	switch {
+	case errors.As(err, &rl):
+		return []any{"class", "rate_limited"}
+	case errors.As(err, &se):
+		return []any{"class", "status", "status", se.Status}
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return []any{"class", "canceled"}
+	default:
+		return []any{"class", "transport"}
+	}
 }
