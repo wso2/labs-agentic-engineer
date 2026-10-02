@@ -19,8 +19,11 @@ package cmd
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/spf13/viper"
 )
 
 // TestPollAlterPostgresRolePassword_RetriesThroughColdStart covers the race
@@ -73,5 +76,28 @@ func TestPollAlterPostgresRolePassword_TimesOutOnPersistentFailure(t *testing.T)
 	}
 	if calls < 2 {
 		t.Errorf("expected more than one attempt before timing out, got %d", calls)
+	}
+}
+
+func TestAEStudioOverrides(t *testing.T) {
+	t.Cleanup(viper.Reset)
+	viper.Set("tls.enabled", false)
+	viper.Set("console.public_url", "http://console.ae.localhost:8080")
+	viper.Set("gateway.hostname", "openchoreoapis.localhost")
+	viper.Set("thunder.public_url", "http://thunder.openchoreo.localhost:8080")
+	viper.Set("thunder.url", "http://thunder-service.thunder.svc.cluster.local:8090")
+	got := strings.Join(aeStudioOverrides(), " ")
+	for _, want := range []string{"aeStudio.publicScheme=http", "aeStudio.listenerName=http", "aeStudio.publicPortSuffix=:19080",
+		"aeStudio.consoleOrigins={http://console.ae.localhost:8080,http://localhost:8090}", "aeStudio.gatewayHost=openchoreoapis.localhost",
+		"aeStudio.idp.issuer=http://thunder.openchoreo.localhost:8080", "aeStudio.idp.jwksUrl=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks",
+		"aeStudio.idp.tokenUrl=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/token", "--set-json aeStudio.extraEgress=["} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %s in %s", want, got)
+		}
+	}
+	viper.Set("tls.enabled", true)
+	got = strings.Join(aeStudioOverrides(), " ")
+	if !strings.Contains(got, "aeStudio.publicScheme=https") || !strings.Contains(got, "aeStudio.publicPortSuffix=:19443") || !strings.Contains(got, "aeStudio.listenerName=https") {
+		t.Fatal(got)
 	}
 }

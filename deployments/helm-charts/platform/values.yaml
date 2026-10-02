@@ -125,6 +125,37 @@ console:
 #     redirect URI on every project's sign-in client at deploy time
 # Two of the three agreeing is the failure that looks like a working install:
 # the link opens and the sign-in is then refused as an unregistered redirect.
+# AE Studio: the per-org design-agent / collab / studio-tools pod aep-api
+# converges. Every value is optional at boot; an empty image or IdP value makes
+# the AE Studio Ensure report "not configured" instead of failing aep-api.
+# aectl derives the endpoint values from its config (aeStudioOverrides).
+aeStudio:
+  internalClient:
+    id: "ae-studio-internal-client"
+  images:
+    designAgent: ""
+    collab: ""
+    studioTools: ""
+  gatewayHost: ""
+  publicScheme: "https"
+  publicPortSuffix: ""
+  listenerName: "https"
+  consoleOrigins: []
+  idp:
+    issuer: ""
+    jwksUrl: ""
+    tokenUrl: ""
+    # Must include the console client id (== console.thunder.clientId): user
+    # tokens are minted for it.
+    userAudiences: ["aep-console-client"]
+  runtimeClassName: ""
+  cilium: false
+  extraEgress: []
+  storage:
+    sizeLimit: "3Gi"
+    ephemeralRequest: "1Gi"
+    budgetBytes: "2147483648"
+
 tryIt:
   enabled: true
   replicas: 1

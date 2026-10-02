@@ -154,6 +154,34 @@ func tryItOverrides(publicURL, gatewayHostname string) []string {
 	return args
 }
 
+// aeStudioOverrides returns the helm pairs for the chart's aeStudio.* values
+// from aectl config. Everything is derived: the public scheme, listener and
+// port come from tls.enabled alone (the dataplane gateway listens on 19080
+// plain or 19443 TLS locally). The image refs are not set here; an empty
+// image keeps aep-api booting and makes the AE Studio Ensure fail loudly.
+func aeStudioOverrides() []string {
+	scheme, listener, port := "http", "http", ":19080"
+	if viper.GetBool("tls.enabled") {
+		scheme, listener, port = "https", "https", ":19443"
+	}
+	thunderURL := viper.GetString("thunder.url")
+	extraEgress := fmt.Sprintf(`[`+
+		`{"to":[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"thunder"}}}],"ports":[{"protocol":"TCP","port":8090}]},`+
+		`{"to":[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":%q}},"podSelector":{"matchLabels":{"app":"aep-api"}}}],"ports":[{"protocol":"TCP","port":9090}]}`+
+		`]`, initPlatformNamespace)
+	return []string{
+		"--set", "aeStudio.publicScheme=" + scheme,
+		"--set", "aeStudio.listenerName=" + listener,
+		"--set", "aeStudio.publicPortSuffix=" + port,
+		"--set", "aeStudio.consoleOrigins={" + consolePublicURL() + ",http://localhost:8090}",
+		"--set", "aeStudio.gatewayHost=" + viper.GetString("gateway.hostname"),
+		"--set", "aeStudio.idp.issuer=" + viper.GetString("thunder.public_url"),
+		"--set", "aeStudio.idp.jwksUrl=" + thunderURL + "/oauth2/jwks",
+		"--set", "aeStudio.idp.tokenUrl=" + thunderURL + "/oauth2/token",
+		"--set-json", "aeStudio.extraEgress=" + extraEgress,
+	}
+}
+
 // imageTagOverrides returns the helm --set pairs that re-point every platform
 // service at tag, or nil for the empty tag.
 //
@@ -374,6 +402,7 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		}
 	}
 	helmArgs = append(helmArgs, tryItOverrides(tryItPublicURL(), viper.GetString("gateway.hostname"))...)
+	helmArgs = append(helmArgs, aeStudioOverrides()...)
 	helmArgs = append(helmArgs, imageTagOverrides(initImageTag)...)
 	if mode := viper.GetString("platform.workspaces.access_mode"); mode != "" {
 		helmArgs = append(helmArgs, "--set", "workspaces.accessMode="+mode)
@@ -825,6 +854,7 @@ func verifyOpenBaoSecrets(ctx context.Context) error {
 		"aep/thunder-clients/local-dev-seeder",
 		"aep/thunder-clients/system-client",
 		"aep/thunder-clients/openchoreo-rca-agent",
+		"aep/thunder-clients/ae-studio-internal",
 	}
 
 	var missing []string
@@ -910,6 +940,7 @@ func provisionOpenBao(ctx context.Context, anthropicKey, thunderAdminClientID, t
 		"local-dev-seeder",
 		"system-client",
 		"openchoreo-rca-agent",
+		"ae-studio-internal",
 	}
 	// fixedClientSecrets: clients whose secret an OpenChoreo component bakes in
 	// as a fixed default and cannot be told a random value.

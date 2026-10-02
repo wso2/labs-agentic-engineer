@@ -87,6 +87,10 @@ type DesiredApp struct {
 	ClientSecret string
 	// RedirectURIs are required for public (PKCE) clients.
 	RedirectURIs []string
+	// NoOrgClaims drops the org-scoping attributes (ouId, ouName, ouHandle)
+	// from the client's access token. It marks the AE-only internal client:
+	// its token must never carry an org the gate could trust.
+	NoOrgClaims bool
 }
 
 // AdminClient calls Thunder's admin API to create/update OAuth applications.
@@ -367,7 +371,7 @@ func (c *AdminClient) updateApp(ctx context.Context, internalID string, app Desi
 		cfg["redirectUris"] = wireRedirectURIs(app.RedirectURIs)
 		cfg["scopeClaims"] = scopeClaimConfig()
 	}
-	cfg["token"] = tokenClaimConfig(app.ClientType)
+	cfg["token"] = tokenClaimConfig(app.ClientType, app.NoOrgClaims)
 	full["allowedUserTypes"] = []string{"Person"}
 	full["type"] = appType(app.ClientType)
 
@@ -404,7 +408,7 @@ func (c *AdminClient) buildCreatePayload(app DesiredApp) map[string]any {
 					"tokenEndpointAuthMethod": "client_secret_post",
 					"pkceRequired":            false,
 					"publicClient":            false,
-					"token":                   tokenClaimConfig(app.ClientType),
+					"token":                   tokenClaimConfig(app.ClientType, app.NoOrgClaims),
 				},
 			},
 		}
@@ -420,7 +424,7 @@ func (c *AdminClient) buildCreatePayload(app DesiredApp) map[string]any {
 					"tokenEndpointAuthMethod": "none",
 					"pkceRequired":            true,
 					"publicClient":            true,
-					"token":                   tokenClaimConfig(app.ClientType),
+					"token":                   tokenClaimConfig(app.ClientType, app.NoOrgClaims),
 					"scopeClaims":             scopeClaimConfig(),
 				},
 			},
@@ -635,13 +639,17 @@ func wireRedirectURIs(desired []string) []any {
 // idToken keeps the flat {validityPeriod, userAttributes} shape, and is
 // omitted for confidential/m2m apps: they authenticate via client_credentials
 // and never receive an ID token.
-func tokenClaimConfig(clientType string) map[string]any {
+func tokenClaimConfig(clientType string, noOrgClaims bool) map[string]any {
 	if clientType == "confidential" {
+		attrs := identityUserAttributes
+		if noOrgClaims {
+			attrs = withoutOrgAttributes(identityUserAttributes)
+		}
 		return map[string]any{
 			"accessToken": map[string]any{
 				"clientConfig": map[string]any{
 					"validityPeriod": tokenValiditySeconds,
-					"attributes":     identityUserAttributes,
+					"attributes":     attrs,
 				},
 			},
 		}
@@ -655,6 +663,18 @@ func tokenClaimConfig(clientType string) map[string]any {
 		},
 		"idToken": map[string]any{"validityPeriod": tokenValiditySeconds, "userAttributes": identityUserAttributes},
 	}
+}
+
+// withoutOrgAttributes returns attrs minus the org-scoping claims.
+func withoutOrgAttributes(attrs []string) []string {
+	out := make([]string, 0, len(attrs))
+	for _, a := range attrs {
+		if a == "ouId" || a == "ouName" || a == "ouHandle" {
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
 }
 
 func scopeClaimConfig() map[string]any {

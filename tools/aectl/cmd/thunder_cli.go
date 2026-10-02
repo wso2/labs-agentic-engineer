@@ -51,6 +51,7 @@ type thunderClientDef struct {
 	clientType   string   // "confidential" or "public"
 	secretKey    string   // key in aep-thunder-secrets (confidential only)
 	redirectURIs []string // public only
+	noOrgClaims  bool     // token carries no ouId/ouName/ouHandle (AE-only client)
 }
 
 // aepThunderClients is the canonical list of AEP OAuth clients to register in Thunder.
@@ -65,6 +66,7 @@ var aepThunderClients = []thunderClientDef{
 	{clientID: "local-dev-seeder", clientType: "confidential", secretKey: "LOCAL_DEV_SEEDER_SECRET"},
 	{clientID: "aep-system-client", clientType: "confidential", secretKey: "THUNDER_SYSTEM_CLIENT_SECRET"},
 	{clientID: "openchoreo-rca-agent", clientType: "confidential", secretKey: "OC_RCA_AGENT_SECRET"},
+	{clientID: "ae-studio-internal-client", clientType: "confidential", secretKey: "AE_STUDIO_INTERNAL_CLIENT_SECRET", noOrgClaims: true},
 	// Public PKCE clients — redirect URIs are filled in by doThunderSetup.
 	{clientID: "aep-console-client", clientType: "public"},
 	{clientID: "aep-cli-client", clientType: "public", redirectURIs: []string{"http://localhost", "http://127.0.0.1"}},
@@ -135,8 +137,9 @@ func doThunderSetup(
 		clientSp.Start()
 
 		app := thunder.DesiredApp{
-			ClientID:   def.clientID,
-			ClientType: def.clientType,
+			ClientID:    def.clientID,
+			ClientType:  def.clientType,
+			NoOrgClaims: def.noOrgClaims,
 		}
 		if def.clientType == "confidential" {
 			secret, ok := clientSecrets[def.secretKey]

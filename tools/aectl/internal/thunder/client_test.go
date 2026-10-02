@@ -597,7 +597,7 @@ func TestAppType(t *testing.T) {
 // (plus a flat idToken) for a public/browser app's.
 func TestTokenClaimConfig(t *testing.T) {
 	t.Run("confidential nests under clientConfig, omits idToken", func(t *testing.T) {
-		cfg := tokenClaimConfig("confidential")
+		cfg := tokenClaimConfig("confidential", false)
 		at, ok := cfg["accessToken"].(map[string]any)
 		if !ok {
 			t.Fatalf("accessToken missing or not a map: %v", cfg)
@@ -621,7 +621,7 @@ func TestTokenClaimConfig(t *testing.T) {
 	})
 
 	t.Run("public nests under userConfig, keeps a flat idToken", func(t *testing.T) {
-		cfg := tokenClaimConfig("public")
+		cfg := tokenClaimConfig("public", false)
 		at, ok := cfg["accessToken"].(map[string]any)
 		if !ok {
 			t.Fatalf("accessToken missing or not a map: %v", cfg)
@@ -713,5 +713,18 @@ func TestFindSystemResourceServerID_FallsBackToName(t *testing.T) {
 	}
 	if id != "rs-system" {
 		t.Errorf("got id %q, want %q", id, "rs-system")
+	}
+}
+
+func TestTokenClaimConfig_NoOrgClaims(t *testing.T) {
+	cfg := tokenClaimConfig("confidential", true)
+	attrs := cfg["accessToken"].(map[string]any)["clientConfig"].(map[string]any)["attributes"].([]string)
+	if len(attrs) == 0 {
+		t.Fatal("expected the non-org attributes to remain")
+	}
+	for _, a := range attrs {
+		if a == "ouId" || a == "ouHandle" || a == "ouName" {
+			t.Fatalf("AE-only client must carry no org claim: %v", attrs)
+		}
 	}
 }
