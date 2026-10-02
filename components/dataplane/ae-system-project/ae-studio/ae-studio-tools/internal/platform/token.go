@@ -38,6 +38,11 @@ const (
 	maxTokenBody = 64 << 10
 )
 
+// ErrClientRejected means the token endpoint refused the client itself
+// (400/401: invalid_client, a wrong or rotated secret): a configuration
+// fault, not a transient outage.
+var ErrClientRejected = errors.New("token endpoint rejected the client")
+
 // ClientCredentials mints and caches an OAuth2 client_credentials token. It
 // authenticates with client_secret_basic (the IdP's publisher client takes
 // Basic auth): the id and secret go only in the Authorization header, the
@@ -115,6 +120,9 @@ func (c *ClientCredentials) mint(ctx context.Context) (tokenResponse, error) {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxTokenBody))
+		if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnauthorized {
+			return tokenResponse{}, fmt.Errorf("%w: token endpoint answered %d", ErrClientRejected, resp.StatusCode)
+		}
 		return tokenResponse{}, fmt.Errorf("token endpoint answered %d", resp.StatusCode)
 	}
 	var tr tokenResponse

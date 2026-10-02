@@ -29,6 +29,7 @@ import (
 	"net/http"
 
 	"github.com/wso2/aep/ae-studio-tools/internal/gen/aepapi"
+	"github.com/wso2/aep/ae-studio-tools/internal/platform"
 )
 
 // maxBody bounds what is read from aep-api's answer.
@@ -43,9 +44,15 @@ var (
 	// git operation.
 	ErrUnknown = errors.New("project unknown")
 	// ErrUnavailable means aep-api could not answer (unreachable, 5xx, an
-	// auth failure, or an unusable body). It is transient: the caller
-	// answers aep_api_unavailable (503).
+	// auth failure, or an unusable body). The caller answers
+	// aep_api_unavailable (503).
 	ErrUnavailable = errors.New("aep-api unavailable")
+	// ErrMisconfigured marks an ErrUnavailable caused by the pod's own
+	// credentials: the token endpoint rejected the publisher client, or
+	// aep-api still answered 401/403 after a fresh token. The wire answer is
+	// still aep_api_unavailable; callers check this to log one loud,
+	// value-free event, since retrying will not help.
+	ErrMisconfigured = errors.New("publisher credentials rejected")
 )
 
 // Resolver maps a project name to its repository.
@@ -56,23 +63,28 @@ type Resolver interface {
 // NewAEPAPIResolver resolves through aep-api's
 // GET /internal/v1/ae-studio/projects/{projectName}/repository. c carries the
 // org's publisher token (platform.NewAEPAPI), which scopes the answer to the
-// pod's org.
+// pod's org. It takes the raw-op interface: the decision is the HTTP status,
+// never a parsed error body (Q-2).
 //
 //deadcode:keep wired in Task 2.7
-func NewAEPAPIResolver(c *aepapi.ClientWithResponses) Resolver {
+func NewAEPAPIResolver(c aepapi.ClientInterface) Resolver {
 	return &aepAPIResolver{c: c}
 }
 
-type aepAPIResolver struct{ c *aepapi.ClientWithResponses }
+type aepAPIResolver struct{ c aepapi.ClientInterface }
 
 // Resolve maps by HTTP status and never reads an error body for a decision
-// (Q-2): 200 → the repository, 404 → ErrUnknown, anything else or a
-// transport failure → ErrUnavailable.
+// (Q-2): 200 → the repository, 404 → ErrUnknown, 401/403 (after the
+// transport's one retry) or a rejected publisher client → ErrUnavailable and
+// ErrMisconfigured, anything else or a transport failure → ErrUnavailable.
 //
 //deadcode:keep wired in Task 2.7
 func (r *aepAPIResolver) Resolve(ctx context.Context, project string) (Repository, error) {
 	resp, err := r.c.GetAeStudioProjectRepository(ctx, project)
 	if err != nil {
+		if errors.Is(err, platform.ErrClientRejected) {
+			return Repository{}, fmt.Errorf("%w: %w: %w", ErrUnavailable, ErrMisconfigured, err)
+		}
 		return Repository{}, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -80,6 +92,8 @@ func (r *aepAPIResolver) Resolve(ctx context.Context, project string) (Repositor
 	case http.StatusOK:
 	case http.StatusNotFound:
 		return Repository{}, fmt.Errorf("%w: %q", ErrUnknown, project)
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return Repository{}, fmt.Errorf("%w: %w: aep-api answered %d", ErrUnavailable, ErrMisconfigured, resp.StatusCode)
 	default:
 		return Repository{}, fmt.Errorf("%w: aep-api answered %d", ErrUnavailable, resp.StatusCode)
 	}
@@ -87,8 +101,8 @@ func (r *aepAPIResolver) Resolve(ctx context.Context, project string) (Repositor
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxBody)).Decode(&body); err != nil {
 		return Repository{}, fmt.Errorf("%w: unreadable repository answer", ErrUnavailable)
 	}
-	if body.Owner == "" || body.Repo == "" {
-		return Repository{}, fmt.Errorf("%w: repository answer without owner or repo", ErrUnavailable)
+	if body.Owner == "" || body.Repo == "" || body.DefaultBranch == "" || body.CloneURL == "" {
+		return Repository{}, fmt.Errorf("%w: repository answer with an empty field", ErrUnavailable)
 	}
 	return Repository{Owner: body.Owner, Repo: body.Repo, DefaultBranch: body.DefaultBranch, CloneURL: body.CloneURL}, nil
 }

@@ -25,27 +25,57 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/projects"
 )
 
-// Fake resolves from Repos. Err, when set, is returned for every call (use
-// projects.ErrUnavailable to simulate aep-api down); a name not in Repos is
-// projects.ErrUnknown. Calls counts Resolve calls. Safe for concurrent use.
+// Fake resolves from an in-memory map. A name not in it is
+// projects.ErrUnknown; an error set with SetErr is returned for every call
+// (projects.ErrUnavailable simulates aep-api down). Safe for concurrent use.
 type Fake struct {
 	mu    sync.Mutex
-	Repos map[string]projects.Repository
-	Err   error
-	Calls int
+	repos map[string]projects.Repository
+	err   error
+	calls int
 }
 
 var _ projects.Resolver = (*Fake)(nil)
+
+// NewFake returns a Fake that knows repos (copied).
+func NewFake(repos map[string]projects.Repository) *Fake {
+	f := &Fake{repos: make(map[string]projects.Repository, len(repos))}
+	for k, v := range repos {
+		f.repos[k] = v
+	}
+	return f
+}
+
+// Set adds or replaces one project.
+func (f *Fake) Set(project string, repo projects.Repository) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.repos[project] = repo
+}
+
+// SetErr makes every later call return err; nil restores map lookups.
+func (f *Fake) SetErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.err = err
+}
+
+// CallCount is how many times Resolve was called.
+func (f *Fake) CallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
 
 // Resolve implements projects.Resolver.
 func (f *Fake) Resolve(_ context.Context, project string) (projects.Repository, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.Calls++
-	if f.Err != nil {
-		return projects.Repository{}, f.Err
+	f.calls++
+	if f.err != nil {
+		return projects.Repository{}, f.err
 	}
-	repo, ok := f.Repos[project]
+	repo, ok := f.repos[project]
 	if !ok {
 		return projects.Repository{}, projects.ErrUnknown
 	}

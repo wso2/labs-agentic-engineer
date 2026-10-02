@@ -30,8 +30,8 @@ toolchain, run Go make targets with `env -u GOROOT`.
 | `internal/gen` | generated: models, strict server and embedded spec for `/internal/v1` (do not edit) |
 | `internal/webhook` | `Valid`: constant-time `X-Hub-Signature-256` check against the current secret only; `Forwarder` hands a verified delivery to aep-api (`Unwired` answers `ErrUpstreamUnavailable` until phase 4) |
 | `internal/github` | GitHub REST client over the gitpat; `Whoami` = `GET /user`, rate limits map to `ErrRateLimited` |
-| `internal/platform` | AEP platform clients: `ClientCredentials` (client_credentials token, `client_secret_basic`, cached until 60 s before expiry, `Invalidate` on 401) and `NewAEPAPI` (generated aep-api client at `AEP_API_BASE_URL` + `/internal/v1`, bearer from the publisher token, one retry after a 401) |
-| `internal/projects` | `Resolver`: project → GitHub repository through aep-api on every call, no cache; 404 → `ErrUnknown` (denial, `project_unknown`), anything else non-200 or unreachable → `ErrUnavailable` (`aep_api_unavailable`); `projectstest.Fake` for callers' tests |
+| `internal/platform` | AEP platform clients: `ClientCredentials` (client_credentials token, `client_secret_basic`, cached until 60 s before expiry, `Invalidate` on 401; a token-endpoint 400/401 is `ErrClientRejected`) and `NewAEPAPI` (generated aep-api client at `AEP_API_BASE_URL` + `/internal/v1`, bearer from the publisher token, one retry after a 401) |
+| `internal/projects` | `Resolver`: project → GitHub repository through aep-api on every call, no cache; 404 → `ErrUnknown` (denial, `project_unknown`), anything else non-200 or unreachable → `ErrUnavailable` (`aep_api_unavailable`), also `ErrMisconfigured` when the pod's own credentials were refused (aep-api 401/403 after the retry, or `platform.ErrClientRejected` from the token endpoint); `projectstest.Fake` for callers' tests |
 
 The `/v1` contract (`packages/contracts/api/ae-studio-tools/v1`) has no
 operations yet, so nothing is generated from it; `/v1` answers 404 behind the

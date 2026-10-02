@@ -19,10 +19,12 @@ package platform
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -134,11 +136,31 @@ func TestClientCredentials_InvalidateForcesAMint(t *testing.T) {
 }
 
 func TestClientCredentials_EndpointErrorNamesStatusNotSecret(t *testing.T) {
-	ts := &tokenServer{t: t, status: http.StatusUnauthorized}
-	srv := httptest.NewServer(ts)
-	defer srv.Close()
-	_, err := newCC(srv.URL).Token(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "401") || strings.Contains(err.Error(), "s3cr3t") {
+	cases := []struct {
+		status   int
+		rejected bool
+	}{
+		{http.StatusBadRequest, true}, {http.StatusUnauthorized, true},
+		{http.StatusForbidden, false}, {http.StatusInternalServerError, false}, {http.StatusServiceUnavailable, false},
+	}
+	for _, c := range cases {
+		srv := httptest.NewServer(&tokenServer{t: t, status: c.status})
+		_, err := newCC(srv.URL).Token(context.Background())
+		srv.Close()
+		if err == nil || !strings.Contains(err.Error(), strconv.Itoa(c.status)) || strings.Contains(err.Error(), "s3cr3t") {
+			t.Fatalf("%d: err = %v", c.status, err)
+		}
+		if errors.Is(err, ErrClientRejected) != c.rejected {
+			t.Fatalf("%d: errors.Is(ErrClientRejected) = %v, want %v", c.status, !c.rejected, c.rejected)
+		}
+	}
+}
+
+func TestClientCredentials_UnreachableIsNotClientRejected(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	url := srv.URL
+	srv.Close()
+	if _, err := newCC(url).Token(context.Background()); err == nil || errors.Is(err, ErrClientRejected) {
 		t.Fatalf("err = %v", err)
 	}
 }

@@ -19,12 +19,14 @@ package projects
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 
 	"github.com/wso2/aep/ae-studio-tools/internal/gen/aepapi"
+	"github.com/wso2/aep/ae-studio-tools/internal/platform"
 )
 
 // mustClient is an aep-api client at url's /internal/v1 (the prefix
@@ -81,23 +83,27 @@ func TestResolver_NoCacheAndMapping(t *testing.T) {
 	if _, err = r.Resolve(context.Background(), "greeter"); !errors.Is(err, ErrUnknown) {
 		t.Fatalf("404: err = %v, want ErrUnknown", err)
 	}
-	for _, s := range []int{http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusUnauthorized} {
+	for _, s := range []int{http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusTooManyRequests} {
 		status.Store(int32(s))
-		if _, err = r.Resolve(context.Background(), "greeter"); !errors.Is(err, ErrUnavailable) || errors.Is(err, ErrUnknown) {
-			t.Fatalf("%d: err = %v, want ErrUnavailable", s, err)
+		_, err = r.Resolve(context.Background(), "greeter")
+		if !errors.Is(err, ErrUnavailable) || errors.Is(err, ErrUnknown) || errors.Is(err, ErrMisconfigured) {
+			t.Fatalf("%d: err = %v, want ErrUnavailable only", s, err)
 		}
 	}
 	srv.Close()
-	if _, err = r.Resolve(context.Background(), "greeter"); !errors.Is(err, ErrUnavailable) {
-		t.Fatalf("unreachable: err = %v, want ErrUnavailable (transient, not a denial)", err)
+	_, err = r.Resolve(context.Background(), "greeter")
+	if !errors.Is(err, ErrUnavailable) || errors.Is(err, ErrMisconfigured) {
+		t.Fatalf("unreachable: err = %v, want ErrUnavailable only (transient, not a denial)", err)
 	}
 }
 
 func TestResolver_UnusableAnswerIsUnavailable(t *testing.T) {
 	for name, body := range map[string]string{
-		"not json":    `{`,
-		"empty owner": `{"owner":"","repo":"greeter","defaultBranch":"main","cloneUrl":"https://x/y.git"}`,
-		"empty repo":  `{"owner":"acme","repo":"","defaultBranch":"main","cloneUrl":"https://x/y.git"}`,
+		"not json":     `{`,
+		"empty owner":  `{"owner":"","repo":"greeter","defaultBranch":"main","cloneUrl":"https://x/y.git"}`,
+		"empty repo":   `{"owner":"acme","repo":"","defaultBranch":"main","cloneUrl":"https://x/y.git"}`,
+		"empty branch": `{"owner":"acme","repo":"greeter","defaultBranch":"","cloneUrl":"https://x/y.git"}`,
+		"no cloneUrl":  `{"owner":"acme","repo":"greeter","defaultBranch":"main"}`,
 	} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -108,5 +114,62 @@ func TestResolver_UnusableAnswerIsUnavailable(t *testing.T) {
 		if !errors.Is(err, ErrUnavailable) {
 			t.Fatalf("%s: err = %v, want ErrUnavailable", name, err)
 		}
+	}
+}
+
+// tokenEndpoint answers client_credentials mints with tok-N, or status when
+// it is set.
+func tokenEndpoint(status int) *httptest.Server {
+	var n atomic.Int32
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if status != 0 {
+			w.WriteHeader(status)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"access_token":"tok-%d","expires_in":3600}`, n.Add(1))
+	}))
+}
+
+// A credential fault is still a 503 on the wire (ErrUnavailable) but is
+// also ErrMisconfigured, so the caller can log it loudly. The aep-api rows
+// go through platform.NewAEPAPI, so a 401 is the answer after its one retry.
+func TestResolver_CredentialFaultsAreMisconfigured(t *testing.T) {
+	cases := map[string]struct{ idpStatus, apiStatus int }{
+		"aep-api 401 after retry": {0, http.StatusUnauthorized},
+		"aep-api 403":             {0, http.StatusForbidden},
+		"token endpoint 401":      {http.StatusUnauthorized, http.StatusOK},
+		"token endpoint 400":      {http.StatusBadRequest, http.StatusOK},
+	}
+	for name, c := range cases {
+		idp := tokenEndpoint(c.idpStatus)
+		var apiCalls atomic.Int32
+		api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			apiCalls.Add(1)
+			w.WriteHeader(c.apiStatus)
+		}))
+		client, err := platform.NewAEPAPI(api.URL, &platform.ClientCredentials{TokenURL: idp.URL, ClientID: "aep-publisher-acme", ClientSecret: "s"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = NewAEPAPIResolver(client).Resolve(context.Background(), "greeter")
+		idp.Close()
+		api.Close()
+		if !errors.Is(err, ErrUnavailable) || !errors.Is(err, ErrMisconfigured) || errors.Is(err, ErrUnknown) {
+			t.Fatalf("%s: err = %v, want ErrUnavailable and ErrMisconfigured", name, err)
+		}
+		if c.apiStatus == http.StatusUnauthorized && apiCalls.Load() != 2 {
+			t.Fatalf("%s: aep-api calls = %d, want 2 (one retry)", name, apiCalls.Load())
+		}
+	}
+}
+
+func TestResolver_TokenEndpointDownIsUnavailableOnly(t *testing.T) {
+	idp := tokenEndpoint(http.StatusServiceUnavailable)
+	defer idp.Close()
+	client, _ := platform.NewAEPAPI("http://127.0.0.1:1", &platform.ClientCredentials{TokenURL: idp.URL, ClientID: "c", ClientSecret: "s"})
+	_, err := NewAEPAPIResolver(client).Resolve(context.Background(), "greeter")
+	if !errors.Is(err, ErrUnavailable) || errors.Is(err, ErrMisconfigured) {
+		t.Fatalf("err = %v, want ErrUnavailable only", err)
 	}
 }
