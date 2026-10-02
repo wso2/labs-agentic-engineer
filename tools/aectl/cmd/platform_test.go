@@ -87,7 +87,7 @@ func TestAEStudioOverrides(t *testing.T) {
 	viper.Set("thunder.public_url", "http://thunder.openchoreo.localhost:8080")
 	viper.Set("thunder.url", "http://thunder-service.thunder.svc.cluster.local:8090")
 	viper.Set("thunder.namespace", "wso2-thunder")
-	got := strings.Join(aeStudioOverrides(), " ")
+	got := strings.Join(aeStudioOverrides("wso2-aep"), " ")
 	for _, want := range []string{"aeStudio.publicScheme=http", "aeStudio.listenerName=http", "aeStudio.publicPortSuffix=:19080",
 		"aeStudio.consoleOrigins={http://console.ae.localhost:8080,http://localhost:8090}", "aeStudio.gatewayHost=openchoreoapis.localhost",
 		"aeStudio.idp.issuer=http://thunder.openchoreo.localhost:8080", "aeStudio.idp.jwksUrl=http://thunder-service.thunder.svc.cluster.local:8090/oauth2/jwks",
@@ -97,7 +97,7 @@ func TestAEStudioOverrides(t *testing.T) {
 		}
 	}
 	viper.Set("tls.enabled", true)
-	got = strings.Join(aeStudioOverrides(), " ")
+	got = strings.Join(aeStudioOverrides("wso2-aep"), " ")
 	if !strings.Contains(got, "aeStudio.publicScheme=https") || !strings.Contains(got, "aeStudio.publicPortSuffix=:19443") || !strings.Contains(got, "aeStudio.listenerName=https") {
 		t.Fatal(got)
 	}
@@ -106,7 +106,7 @@ func TestAEStudioOverrides(t *testing.T) {
 func TestAEStudioOverrides_NoThunderURLOmitsIdPURLs(t *testing.T) {
 	t.Cleanup(viper.Reset)
 	viper.Set("thunder.url", "")
-	got := strings.Join(aeStudioOverrides(), " ")
+	got := strings.Join(aeStudioOverrides("wso2-aep"), " ")
 	for _, bad := range []string{"idp.jwksUrl", "idp.tokenUrl", "idp.issuer"} {
 		if strings.Contains(got, bad) {
 			t.Errorf("%s must be absent when thunder.url is empty: %s", bad, got)
@@ -174,5 +174,45 @@ func TestSecretOptional(t *testing.T) {
 	}
 	if secretOptional(thunderSecretsName) {
 		t.Error("aep-thunder-secrets must be required")
+	}
+}
+
+// `platform update` (and so `make dev-update`) must carry every pair install
+// derives, or an install that predates them never converges (checkpoint red-B-1).
+func TestBuildUpdateArgs_CarriesAEStudioValues(t *testing.T) {
+	t.Cleanup(viper.Reset)
+	viper.Set("gateway.hostname", "openchoreoapis.localhost")
+	viper.Set("thunder.public_url", "http://thunder.openchoreo.localhost:8080")
+	viper.Set("thunder.url", "http://thunder-service.thunder.svc.cluster.local:8090")
+	viper.Set("thunder.namespace", "wso2-thunder")
+	prevNS := updateNamespace
+	updateNamespace = "wso2-aep"
+	t.Cleanup(func() { updateNamespace = prevNS })
+
+	got, err := buildUpdateArgs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(got, "\\x00")
+	want := aeStudioOverrides("wso2-aep")
+	for i := 0; i+1 < len(want); i += 2 {
+		if !strings.Contains(joined, want[i]+"\\x00"+want[i+1]) {
+			t.Errorf("update args lack %s %s", want[i], want[i+1])
+		}
+	}
+	for _, key := range []string{"aeStudio.gatewayHost=", "aeStudio.idp.issuer=", "aeStudio.idp.jwksUrl=", "aeStudio.idp.tokenUrl=", "aeStudio.consoleOrigins=", "aeStudio.extraEgress="} {
+		if !strings.Contains(joined, key) {
+			t.Errorf("update args lack %s", key)
+		}
+	}
+	if !strings.Contains(joined, "--reuse-values") {
+		t.Error("update must keep --reuse-values")
+	}
+}
+
+func TestAEStudioOverrides_EmptyGatewayHostOmitted(t *testing.T) {
+	t.Cleanup(viper.Reset)
+	if got := strings.Join(aeStudioOverrides("wso2-aep"), " "); strings.Contains(got, "gatewayHost") {
+		t.Errorf("empty gateway.hostname must not be set (would wipe a reused value): %s", got)
 	}
 }

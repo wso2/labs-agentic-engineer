@@ -167,7 +167,11 @@ func tryItOverrides(publicURL, gatewayHostname string) []string {
 // plain or 19443 TLS locally). tls.enabled and oc.data_plane_gateway_tls
 // describe the same gateway listener and must agree. The image refs are not set here; an empty
 // image keeps aep-api booting and makes the AE Studio Ensure fail loudly.
-func aeStudioOverrides() []string {
+//
+// Shared by `platform install` and `platform update` (so `make dev-update`
+// too): an install made before these values existed converges on its next
+// upgrade. It carries config only, never a secret.
+func aeStudioOverrides(platformNamespace string) []string {
 	scheme, listener, port := "http", "http", ":19080"
 	if viper.GetBool("tls.enabled") {
 		scheme, listener, port = "https", "https", ":19443"
@@ -177,7 +181,11 @@ func aeStudioOverrides() []string {
 		"--set", "aeStudio.listenerName=" + listener,
 		"--set", "aeStudio.publicPortSuffix=" + port,
 		"--set", "aeStudio.consoleOrigins={" + consolePublicURL() + ",http://localhost:8090}",
-		"--set", "aeStudio.gatewayHost=" + viper.GetString("gateway.hostname"),
+	}
+	// An unset gateway.hostname is omitted, not set empty: under update's
+	// --reuse-values an empty --set would wipe a value the install made.
+	if h := viper.GetString("gateway.hostname"); h != "" {
+		args = append(args, "--set", "aeStudio.gatewayHost="+h)
 	}
 	if u := viper.GetString("thunder.public_url"); u != "" {
 		args = append(args, "--set", "aeStudio.idp.issuer="+u)
@@ -190,7 +198,7 @@ func aeStudioOverrides() []string {
 			"--set", "aeStudio.idp.tokenUrl="+thunderURL+"/oauth2/token",
 		)
 	}
-	return append(args, "--set-json", "aeStudio.extraEgress="+aeStudioExtraEgress())
+	return append(args, "--set-json", "aeStudio.extraEgress="+aeStudioExtraEgress(platformNamespace))
 }
 
 // portOfURL is the TCP port a URL connects to: the explicit one, else the
@@ -232,7 +240,7 @@ func aeStudioImageOverrides(designAgent, collab, studioTools string) []string {
 
 // aeStudioExtraEgress is the pod's egress to the in-cluster IdP (Thunder's
 // namespace and port, from thunder.namespace / thunder.url) and to aep-api.
-func aeStudioExtraEgress() string {
+func aeStudioExtraEgress(platformNamespace string) string {
 	thunderNS := viper.GetString("thunder.namespace")
 	thunderPort := portOfURL(viper.GetString("thunder.url"), 8090)
 	rules := []map[string]any{
@@ -242,7 +250,7 @@ func aeStudioExtraEgress() string {
 		},
 		{
 			"to": []any{map[string]any{
-				"namespaceSelector": map[string]any{"matchLabels": map[string]string{"kubernetes.io/metadata.name": initPlatformNamespace}},
+				"namespaceSelector": map[string]any{"matchLabels": map[string]string{"kubernetes.io/metadata.name": platformNamespace}},
 				"podSelector":       map[string]any{"matchLabels": map[string]string{"app": "aep-api"}},
 			}},
 			"ports": []any{map[string]any{"protocol": "TCP", "port": 9090}},
@@ -475,7 +483,7 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		}
 	}
 	helmArgs = append(helmArgs, tryItOverrides(tryItPublicURL(), viper.GetString("gateway.hostname"))...)
-	helmArgs = append(helmArgs, aeStudioOverrides()...)
+	helmArgs = append(helmArgs, aeStudioOverrides(initPlatformNamespace)...)
 	helmArgs = append(helmArgs, imageTagOverrides(initImageTag)...)
 	helmArgs = append(helmArgs, aeStudioImageOverrides(initAEStudioImageDesignAgent, initAEStudioImageCollab, initAEStudioImageStudioTools)...)
 	if mode := viper.GetString("platform.workspaces.access_mode"); mode != "" {

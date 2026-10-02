@@ -383,6 +383,11 @@ obs-status:
 # sees the new image refs. Never `kubectl rollout restart` it: the Deployment
 # is OpenChoreo's, not ours.
 #
+# The upgrade is `aectl platform update` (helm upgrade --reuse-values), not bare
+# helm, so it also re-applies the aeStudio.* values aectl derives from its
+# config (gateway host, IdP URLs, console origins, egress): an install that
+# predates them converges here, with no secret touched.
+#
 # `aectl platform sync-clients` runs after the upgrade because an update never
 # runs the install's Thunder setup: on an install that predates a Thunder
 # client it seeds that client's missing vault key (never rotating an existing
@@ -397,7 +402,8 @@ obs-status:
 dev-update:
 	$(MAKE) dev-images
 	$(MAKE) ae-studio-refs-check
-	helm upgrade aep-platform deployments/helm-charts/platform -n wso2-aep --reuse-values \
+	cd tools/aectl && go build -o aectl-skaffold .
+	./tools/aectl/aectl-skaffold platform update --platform-chart deployments/helm-charts/platform \
 		--set aepApi.image.repository=ghcr.io/wso2/aep/aep-api --set aepApi.image.tag=dev-local \
 		--set aepAgents.image.repository=ghcr.io/wso2/aep/ae-design-agent --set aepAgents.image.tag=dev-local \
 		--set collab.image.repository=ghcr.io/wso2/aep/ae-collab --set collab.image.tag=dev-local \
@@ -405,7 +411,6 @@ dev-update:
 		--set console.image.repository=ghcr.io/wso2/aep/console --set console.image.tag=dev-local \
 		--set tryIt.image.repository=ghcr.io/wso2/aep/tryit --set tryIt.image.tag=dev-local \
 		$(AE_STUDIO_IMAGE_SET)
-	cd tools/aectl && go build -o aectl-skaffold .
 	./tools/aectl/aectl-skaffold platform sync-clients
 	kubectl -n wso2-aep rollout restart deployment/aep-api deployment/aep-agents deployment/collab-server deployment/aep-mcp-server deployment/aep-console deployment/aep-tryit
 

@@ -52,7 +52,9 @@ var updateCmd = &cobra.Command{
 
 By default values from the previous release are reused (--reuse-values),
 so only flags you explicitly pass are changed. Use --reset-values to
-start from chart defaults instead.
+start from chart defaults instead. The aeStudio.* values aectl derives from
+its config (gateway host, IdP URLs, console origins, egress) are always
+re-applied, so installs that predate them pick them up; no secret is touched.
 
 Per-service image flags accept "repository:tag". To pin a locally built
 image, load it into the node runtime first, then set --pull-policy:
@@ -100,6 +102,26 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("helm is required but was not found in PATH")
 	}
 
+	helmArgs, err := buildUpdateArgs()
+	if err != nil {
+		return err
+	}
+
+	ui.Step(fmt.Sprintf("Upgrading platform chart %q", updatePlatformRelease))
+	var out bytes.Buffer
+	c := exec.CommandContext(ctx, "helm", helmArgs...)
+	c.Stdout = &out
+	c.Stderr = &out
+	if err := c.Run(); err != nil {
+		return fmt.Errorf("helm upgrade: %w\n%s", err, out.String())
+	}
+	ui.Success("Platform updated")
+	return nil
+}
+
+// buildUpdateArgs assembles the `helm upgrade` argv from the update flags and
+// aectl config.
+func buildUpdateArgs() ([]string, error) {
 	overrides := []serviceImageOverride{
 		{"aepApi", updateAepApiImage},
 		{"aepAgents", updateAgentsImage},
@@ -139,7 +161,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 		repo, tag, err := splitImage(o.image)
 		if err != nil {
-			return fmt.Errorf("--%s-image: %w", strings.ToLower(o.chartKey), err)
+			return nil, fmt.Errorf("--%s-image: %w", strings.ToLower(o.chartKey), err)
 		}
 		helmArgs = append(helmArgs,
 			"--set", fmt.Sprintf("%s.image.repository=%s", o.chartKey, repo),
@@ -152,21 +174,16 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// The aectl-computed AE Studio values, the same set `platform install`
+	// applies, so an install that predates them converges on upgrade. Before
+	// --set so an explicit override still wins.
+	helmArgs = append(helmArgs, aeStudioOverrides(updateNamespace)...)
+
 	// Arbitrary --set overrides.
 	for _, s := range updateHelmSets {
 		helmArgs = append(helmArgs, "--set", s)
 	}
-
-	ui.Step(fmt.Sprintf("Upgrading platform chart %q", updatePlatformRelease))
-	var out bytes.Buffer
-	c := exec.CommandContext(ctx, "helm", helmArgs...)
-	c.Stdout = &out
-	c.Stderr = &out
-	if err := c.Run(); err != nil {
-		return fmt.Errorf("helm upgrade: %w\n%s", err, out.String())
-	}
-	ui.Success("Platform updated")
-	return nil
+	return helmArgs, nil
 }
 
 // splitImage splits "repo:tag" on the last colon. Returns an error if the

@@ -119,6 +119,15 @@ aep-api. The `ae-studio` pod itself rolls at the next console visit, when
 aep-api's converge sees the new refs. It is never `kubectl rollout restart`ed:
 its Deployment belongs to OpenChoreo.
 
+**Upgrading an existing install.** `make dev-update` upgrades through
+`aectl platform update` (`helm upgrade --reuse-values`), which also re-applies
+the `aeStudio.*` values aectl derives from its config (gateway host, IdP
+issuer/JWKS/token URLs, console origins, egress). An install made before AE
+Studio existed therefore picks them up on its next `make dev-update` or
+`aectl platform update`; no secret is read or regenerated. Never run
+`aectl platform install` on an existing install to get them: it regenerates
+vault secrets (unless run with `--reuse-secrets`).
+
 `make dev-update` also runs `aectl platform sync-clients` after the upgrade,
 since an update never runs the install's Thunder setup. On an install that
 predates a Thunder client (the AE-only `ae-studio-internal-client`) it seeds
