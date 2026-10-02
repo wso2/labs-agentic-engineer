@@ -64,6 +64,7 @@ import { AGENT_CHAT_PANEL_WIDTH, AgentChatPanel } from "../features/agent-chat/c
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { useHasPendingSeed } from "../features/agent-chat/useHasPendingSeed";
 import { useChatOpenRequest } from "../features/agent-chat/useChatOpenRequest";
+import { AeStudioBanner } from "../features/ae-studio/components/AeStudioBanner";
 
 // Footer links (grilled 2026-07-12): the repo is the only real destination
 // today — /tree/HEAD/docs follows the default branch.
@@ -438,6 +439,9 @@ export function AppLayout() {
               Navigating to another page clears it. Routes carry no error
               component of their own, so every route's throw reaches this one. */}
           <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+            {/* Above the page, inside the shell: shown only while AE Studio
+                restarts after a settings change; the page stays usable. */}
+            <AeStudioBanner />
             <ErrorBoundary label="This page" resetKey={pathname}>
               <Outlet />
             </ErrorBoundary>

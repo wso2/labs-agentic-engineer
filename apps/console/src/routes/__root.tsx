@@ -20,11 +20,14 @@ import { createRootRoute } from "@tanstack/react-router";
 import { AppLayout } from "../layouts/AppLayout";
 import { AuthGuard } from "../auth/AuthGuard";
 import { OnboardingGate } from "../features/onboarding/components/OnboardingGate";
+import { AeStudioGate } from "../features/ae-studio/components/AeStudioGate";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 
 // Everything renders behind the auth gate (issue #91): routes only ever
 // see a signed-in session. Behind it, the onboarding gate (issue #102,
-// ADR-0009) holds every route until the org's config is complete.
+// ADR-0009) holds every route until the org's config is complete, and the
+// AE Studio gate holds them while the org's design workspace upgrades on a
+// first visit, or has failed to start (Settings excepted).
 //
 // The app-level boundary is the last one the console owns. The shell's page
 // outlet and the chat panel have their own (AppLayout), so what reaches this
@@ -43,7 +46,9 @@ export const Route = createRootRoute({
     >
       <AuthGuard>
         <OnboardingGate>
-          <AppLayout />
+          <AeStudioGate>
+            <AppLayout />
+          </AeStudioGate>
         </OnboardingGate>
       </AuthGuard>
     </ErrorBoundary>

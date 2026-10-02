@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { useEffect } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import {
   Alert,
   Box,
@@ -26,25 +26,41 @@ import {
 } from "@wso2/oxygen-ui";
 import { Check, Sparkles } from "@wso2/oxygen-ui-icons-react";
 import { useSyncSkills } from "../../settings/api/queries";
+import { useAeStudio } from "../../ae-studio/api/queries";
 
-// Auto-runs the skills bootstrap the moment credentials complete (#102
-// decision): POST /skills/sync creates the org's skills repo if missing and
-// pushes the platform's built-in skills. Failure is non-blocking — sync is
-// idempotent (Retry) and Settings' Sync control is the standing fallback
-// (Continue anyway).
+// The model connect just before this step rolls the org's AE Studio, so the
+// step waits inline for it to be ready before bootstrapping. Once released
+// (ready, absent, or a read the step cannot act on), it stays on the bootstrap
+// for the rest of the step: a later restart must not unmount a sync mid-flight.
 export function SkillsBootstrapStep({ onComplete }: { onComplete: () => void }) {
-  const sync = useSyncSkills();
-  // Deferred one-shot, not a bare mutate() in the effect: firing a mutation
-  // synchronously inside the mount effect binds its result delivery to the
-  // StrictMode-doubled subscription React is about to tear down — the
-  // mutation succeeds in the cache but this component never re-renders
-  // (stuck spinner). The cleanup-cancelled timeout fires exactly once,
-  // after the subscription is stable, in both dev and prod.
-  const { mutate } = sync;
-  useEffect(() => {
-    const t = setTimeout(() => mutate(), 0);
-    return () => clearTimeout(t);
-  }, [mutate]);
+  const studio = useAeStudio();
+  const state = studio.data?.state;
+  const released = useRef(false);
+  if (!studio.isPending && state !== "provisioning" && state !== "failed") {
+    released.current = true;
+  }
+
+  let content: ReactNode;
+  if (released.current) {
+    content = <SkillsBootstrap onComplete={onComplete} />;
+  } else if (state === "failed") {
+    content = (
+      <StepError
+        message="AE Studio couldn't start"
+        onRetry={() => void studio.refetch()}
+        onContinue={onComplete}
+      />
+    );
+  } else {
+    content = (
+      <>
+        <CircularProgress size={32} />
+        <Typography variant="body2" color="text.secondary">
+          Getting AE Studio ready…
+        </Typography>
+      </>
+    );
+  }
 
   return (
     <Box
@@ -61,53 +77,101 @@ export function SkillsBootstrapStep({ onComplete }: { onComplete: () => void }) 
         <Sparkles size={22} />
         <Typography variant="h6">Set up skills</Typography>
       </Box>
-
-      {sync.isError ? (
-        <>
-          <Alert severity="error" sx={{ width: "100%", textAlign: "left" }}>
-            {sync.error.message}
-          </Alert>
-          <Typography variant="body2" color="text.secondary">
-            The skills catalogue couldn't be set up. You can retry now, or
-            continue and run <strong>Sync</strong> from Settings → Skills
-            later — agents won't have skills until it succeeds.
-          </Typography>
-          <Box sx={{ display: "flex", gap: 1.5 }}>
-            <Button
-              variant="contained"
-              onClick={() => sync.mutate()}
-              disabled={sync.isPending}
-            >
-              Retry
-            </Button>
-            <Button variant="text" onClick={onComplete}>
-              Continue anyway
-            </Button>
-          </Box>
-        </>
-      ) : sync.isSuccess ? (
-        <>
-          <Check size={32} />
-          <Typography variant="body2" color="text.secondary">
-            Your skills catalogue is ready
-            {sync.data.updated > 0 ? ` — ${sync.data.updated} built-in skill${
-              sync.data.updated === 1 ? "" : "s"
-            } installed` : ""}
-            . Your organization is all set.
-          </Typography>
-          <Button variant="contained" onClick={onComplete}>
-            Go to console
-          </Button>
-        </>
-      ) : (
-        <>
-          <CircularProgress size={32} />
-          <Typography variant="body2" color="text.secondary">
-            Setting up your skills catalogue — creating the repository and
-            installing the platform's built-in skills…
-          </Typography>
-        </>
-      )}
+      {content}
     </Box>
+  );
+}
+
+// Auto-runs the skills bootstrap the moment it mounts (#102 decision):
+// POST /skills/sync creates the org's skills repo if missing and pushes the
+// platform's built-in skills. Failure is non-blocking — sync is idempotent
+// (Retry) and Settings' Sync control is the standing fallback (Continue
+// anyway).
+function SkillsBootstrap({ onComplete }: { onComplete: () => void }) {
+  const sync = useSyncSkills();
+  // Deferred one-shot, not a bare mutate() in the effect: firing a mutation
+  // synchronously inside the mount effect binds its result delivery to the
+  // StrictMode-doubled subscription React is about to tear down — the
+  // mutation succeeds in the cache but this component never re-renders
+  // (stuck spinner). The cleanup-cancelled timeout fires exactly once,
+  // after the subscription is stable, in both dev and prod.
+  const { mutate } = sync;
+  useEffect(() => {
+    const t = setTimeout(() => mutate(), 0);
+    return () => clearTimeout(t);
+  }, [mutate]);
+
+  if (sync.isError) {
+    return (
+      <StepError
+        message={sync.error.message}
+        onRetry={() => sync.mutate()}
+        retrying={sync.isPending}
+        onContinue={onComplete}
+      />
+    );
+  }
+
+  if (sync.isSuccess) {
+    return (
+      <>
+        <Check size={32} />
+        <Typography variant="body2" color="text.secondary">
+          Your skills catalogue is ready
+          {sync.data.updated > 0 ? ` — ${sync.data.updated} built-in skill${
+            sync.data.updated === 1 ? "" : "s"
+          } installed` : ""}
+          . Your organization is all set.
+        </Typography>
+        <Button variant="contained" onClick={onComplete}>
+          Go to console
+        </Button>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <CircularProgress size={32} />
+      <Typography variant="body2" color="text.secondary">
+        Setting up your skills catalogue — creating the repository and
+        installing the platform's built-in skills…
+      </Typography>
+    </>
+  );
+}
+
+// The step's error area: what went wrong, then Retry or carry on without
+// skills (Settings → Skills → Sync is the standing fallback).
+function StepError({
+  message,
+  onRetry,
+  retrying = false,
+  onContinue,
+}: {
+  message: string;
+  onRetry: () => void;
+  retrying?: boolean;
+  onContinue: () => void;
+}) {
+  return (
+    <>
+      <Alert severity="error" sx={{ width: "100%", textAlign: "left" }}>
+        {message}
+      </Alert>
+      <Typography variant="body2" color="text.secondary">
+        The skills catalogue couldn't be set up. You can retry now, or
+        continue and run <strong>Sync</strong> from Settings → Skills
+        later — agents won't have skills until it succeeds.
+      </Typography>
+      <Box sx={{ display: "flex", gap: 1.5 }}>
+        <Button variant="contained" onClick={onRetry} disabled={retrying}>
+          Retry
+        </Button>
+        <Button variant="text" onClick={onContinue}>
+          Continue anyway
+        </Button>
+      </Box>
+    </>
   );
 }

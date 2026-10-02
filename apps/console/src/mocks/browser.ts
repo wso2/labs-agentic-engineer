@@ -12,6 +12,7 @@ import { usageHandlers } from "./handlers/usage";
 import { workloadDependenciesHandlers } from "./handlers/workload-dependencies";
 import { resourcesHandlers } from "./handlers/resources";
 import { rolesHandlers } from "./handlers/roles";
+import { aeStudioHandlers } from "./handlers/aeStudio";
 
 // Order matters: project-scoped routes (/projects/:name/...) are more
 // specific than /projects/:name, so they register first.
@@ -29,4 +30,5 @@ export const worker = setupWorker(
   ...alertsHandlers,
   ...issuesHandlers,
   ...usageHandlers,
+  ...aeStudioHandlers,
 );

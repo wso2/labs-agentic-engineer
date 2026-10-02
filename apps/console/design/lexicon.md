@@ -672,6 +672,10 @@ today's `Repository error` chip discards the message the contract already provid
 | Agent deriving design | **Designing…** |
 | Collab server unreachable | **offline** |
 | Build gate not satisfied | **Not ready to build yet** |
+| AE Studio upgrading on first visit | **Upgrading AE Studio** |
+| AE Studio rolling after a settings change | **AE Studio is restarting…** |
+| AE Studio failed to start | **AE Studio couldn't start** |
+| Onboarding waiting for AE Studio | **Getting AE Studio ready…** |
 
 **published**, **draft** and the `v1+` diff suffix are retired — all three imply a
 review-and-release model AEP does not have, and `+` is a convention the user was never taught.
@@ -1559,6 +1563,19 @@ never reach the copy except as what a connection supports.
 
 "Anthropic key" is retired as a product word: the key belongs to the connection,
 whatever its host.
+
+## AE Studio
+
+The organization's design workspace (chat, live spec, files). Named to the user
+only when it is upgrading, restarting or unavailable; never as a pod, Resource or
+container.
+
+| | |
+|---|---|
+| First visit while it upgrades | the whole console waits: **Upgrading AE Studio** · *This takes a minute or two.* |
+| Restarting after a settings change | a banner above the page: **AE Studio is restarting…** — the console stays usable |
+| Failed to start | full page: **AE Studio couldn't start** · **Try again** · **Open Settings** — Settings stays reachable |
+| Onboarding's **Set up skills** step | waits inline: **Getting AE Studio ready…**; a failure shows *AE Studio couldn't start* in the step's error area, with **Retry** and **Continue anyway** |
 
 ## Resources
 
