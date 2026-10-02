@@ -55,7 +55,7 @@ vi.mock("@tanstack/react-router", () => ({
   ),
 }));
 
-const { AeStudioGate } = await import("./AeStudioGate");
+const { AeStudioGate, AE_STUDIO_HOLD_CAP_MS } = await import("./AeStudioGate");
 const { AeStudioBanner } = await import("./AeStudioBanner");
 const { aeStudioKeys } = await import("../api/queries");
 const { useConnectGitHubPat, useDisconnectGitProvider, useSaveAiSettings } = await import(
@@ -142,6 +142,31 @@ describe("AeStudioGate", () => {
     await pollOnce();
     expect(await screen.findByText("AE Studio couldn't start")).toBeInTheDocument();
     expect(screen.queryByText("Upgrading AE Studio")).not.toBeInTheDocument();
+  });
+
+  it("Settings stays reachable during the first-visit hold", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    mockAeStudio(["provisioning"]);
+    renderWithProviders(<AeStudioGate><div>settings</div></AeStudioGate>, { route: "/settings/credentials" });
+    await firstAnswer();
+    expect(await screen.findByText("settings")).toBeInTheDocument();
+    expect(screen.queryByText("Upgrading AE Studio")).not.toBeInTheDocument();
+  });
+
+  it("a hold past its cap gives way to the failed page, and Try again can still land on ready", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    mockAeStudio(["provisioning"]);
+    renderWithProviders(<AeStudioGate><div>console</div></AeStudioGate>, { route: "/projects" });
+    expect(await screen.findByText("Upgrading AE Studio")).toBeInTheDocument();
+    await act(() => vi.advanceTimersByTimeAsync(AE_STUDIO_HOLD_CAP_MS - 2000));
+    expect(screen.getByText("Upgrading AE Studio")).toBeInTheDocument();
+    await act(() => vi.advanceTimersByTimeAsync(2000));
+    expect(await screen.findByText("AE Studio couldn't start")).toBeInTheDocument();
+    expect(screen.queryByText("Upgrading AE Studio")).not.toBeInTheDocument();
+    expect(screen.queryByText("console")).not.toBeInTheDocument();
+    mockAeStudio(["ready"]);
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("console")).toBeInTheDocument();
   });
 
   it("a later provisioning shows a banner, not a hold", async () => {

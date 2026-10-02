@@ -23,6 +23,7 @@ import (
 	"log/slog"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 )
@@ -215,5 +216,69 @@ func TestStatus_FailedAnswerLoggedAgainAfterRecovery(t *testing.T) {
 	defer h.mu.Unlock()
 	if n := h.warn["ae_studio.status_failed"]; n != 2 {
 		t.Fatalf("status_failed logged at Warn %d times, want once per episode (2)", n)
+	}
+}
+
+// I-1: a binding that will not become Ready answers failed, not
+// provisioning for ever; one that may still come up keeps provisioning.
+func TestStatus_StuckBindingFails(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(*fixture)
+		want  State
+	}{
+		{"progressing, inside the bound", func(f *fixture) {
+			f.withNotReady("ResourcesProgressing", f.clock.now()).clock.advance(notReadyBound - time.Second)
+		}, StateProvisioning},
+		{"progressing, past the bound", func(f *fixture) {
+			f.withNotReady("ResourcesProgressing", f.clock.now()).clock.advance(notReadyBound + time.Second)
+		}, StateFailed},
+		{"bound counts from the last converge, not an older transition", func(f *fixture) {
+			f.withNotReady("ResourcesProgressing", f.clock.now().Add(-time.Hour)).clock.advance(notReadyBound - time.Second)
+		}, StateProvisioning},
+		{"bound counts from a transition after the converge", func(f *fixture) {
+			f.clock.advance(notReadyBound)
+			f.withNotReady("ResourcesProgressing", f.clock.now()).clock.advance(time.Minute)
+		}, StateProvisioning},
+		{"degraded right after a converge is the old release's", func(f *fixture) {
+			f.withNotReady("ResourcesDegraded", f.clock.now()).clock.advance(settleGrace - time.Second)
+		}, StateProvisioning},
+		{"degraded once settled", func(f *fixture) {
+			f.withNotReady("ResourcesDegraded", f.clock.now()).clock.advance(settleGrace)
+		}, StateFailed},
+		{"rendering failed once settled", func(f *fixture) {
+			f.withNotReady("RenderingFailed", f.clock.now()).clock.advance(settleGrace)
+		}, StateFailed},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t).withAllRefs().converged()
+			c.setup(f)
+			f.oc.resetCalls()
+			st, err := f.svc.Status(userCtx(), "default")
+			if err != nil || st.State != c.want {
+				t.Fatalf("state %s err %v", st.State, err)
+			}
+			if f.oc.writes() != 0 || f.svc.busy("default") {
+				t.Fatalf("a stuck binding is reported, not converged: %v", f.oc.calls)
+			}
+		})
+	}
+}
+
+// After a restart (no converge on record) the Ready condition's own
+// transition starts the clock, and a terminal reason counts at once.
+func TestStatus_StuckWithoutConvergeOnRecord(t *testing.T) {
+	f := newFixture(t).withAllRefs().converged()
+	f.svc.mu.Lock()
+	delete(f.svc.converged, "default")
+	f.svc.mu.Unlock()
+	f.withNotReady("ResourcesProgressing", f.clock.now().Add(-notReadyBound-time.Second))
+	if st, _ := f.svc.Status(userCtx(), "default"); st.State != StateFailed {
+		t.Fatalf("state %s", st.State)
+	}
+	f.withNotReady("ResourcesDegraded", f.clock.now())
+	if st, _ := f.svc.Status(userCtx(), "default"); st.State != StateFailed {
+		t.Fatalf("state %s", st.State)
 	}
 }

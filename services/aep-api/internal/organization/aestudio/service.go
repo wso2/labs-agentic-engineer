@@ -72,6 +72,18 @@ const (
 	// console's Try again retries after it) unless what it was asked to
 	// install changes.
 	failureBackoff = 30 * time.Second
+	// notReadyBound is how long a binding may stay not Ready, counted from
+	// the later of its Ready condition's last transition and this replica's
+	// last successful converge, before Status answers failed. It is above
+	// the ResourceType's startup budget (the slowest container's
+	// startupProbe allows 40 x 5 s = 200 s) and equals the Deployment's
+	// default progress deadline, so a pod still pulling or starting is
+	// never called failed.
+	notReadyBound = 10 * time.Minute
+	// settleGrace is how long after a successful converge a terminal Ready
+	// reason is still taken as the previous release's, which OC has not yet
+	// re-evaluated against the new pin.
+	settleGrace = time.Minute
 )
 
 // OC is the OpenChoreo surface the Service reads and writes through.
@@ -140,6 +152,9 @@ type Service struct {
 	flights map[string]*flight
 	// failures are the orgs whose last converge failed.
 	failures map[string]failure
+	// converged is, per org, when this replica's last converge succeeded
+	// (the start of its binding's not-Ready clock).
+	converged map[string]time.Time
 	// statusFailures is, per org, the desired state Status last logged a
 	// failed answer for, so a polling console logs it once.
 	statusFailures map[string]string
@@ -160,7 +175,8 @@ func New(d Deps) *Service {
 		cfg: d.Config, orgSecrets: d.OrgSecrets, orgs: d.Orgs, profiles: d.Profiles,
 		connections: d.Connections, github: d.GitHub,
 		oc: d.OC, now: time.Now,
-		flights: map[string]*flight{}, failures: map[string]failure{}, statusFailures: map[string]string{},
+		flights: map[string]*flight{}, failures: map[string]failure{}, converged: map[string]time.Time{},
+		statusFailures: map[string]string{},
 	}
 }
 
@@ -195,6 +211,7 @@ func (s *Service) fly(ctx context.Context, org string, f *flight) {
 			s.failures[org] = failure{at: s.now(), fingerprint: fingerprint}
 		} else {
 			delete(s.failures, org)
+			s.converged[org] = s.now()
 		}
 		if !f.again {
 			delete(s.flights, org)
@@ -204,6 +221,14 @@ func (s *Service) fly(ctx context.Context, org string, f *flight) {
 		f.again = false
 		s.mu.Unlock()
 	}
+}
+
+// convergedAt is when org's last converge on this replica succeeded; zero
+// when none has since the process started.
+func (s *Service) convergedAt(org string) time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.converged[org]
 }
 
 // busy reports whether a converge of org is running.

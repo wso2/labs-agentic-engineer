@@ -574,6 +574,17 @@ func (f *fixture) withReady(ready bool) *fixture {
 	return f
 }
 
+// withNotReady sets the binding's Ready condition False with reason, last
+// transitioned at since.
+func (f *fixture) withNotReady(reason string, since time.Time) *fixture {
+	f.oc.setReady(false)
+	f.oc.mu.Lock()
+	defer f.oc.mu.Unlock()
+	c := &f.oc.rrb.Status.Conditions[0]
+	c.Reason, c.LastTransitionTime = reason, since
+	return f
+}
+
 func (f *fixture) slowOC(d time.Duration) *fixture {
 	f.oc.delay = d
 	return f

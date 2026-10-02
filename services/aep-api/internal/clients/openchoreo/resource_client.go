@@ -343,6 +343,9 @@ type OCCondition struct {
 	Status  string `json:"status"` // "True" | "False" | "Unknown"
 	Reason  string `json:"reason,omitempty"`
 	Message string `json:"message,omitempty"`
+	// LastTransitionTime is when Status last changed (k8s does not move it
+	// when only Reason or Message change). Zero when OC omits it.
+	LastTransitionTime time.Time `json:"lastTransitionTime,omitempty"`
 }
 
 // ResolvedOutput is one entry of a binding's status.outputs — a
@@ -373,15 +376,23 @@ type ResourceReleaseBinding struct {
 
 // IsReady reports whether the binding's aggregate Ready condition is True.
 func (b *ResourceReleaseBinding) IsReady() bool {
+	c := b.ReadyCondition()
+	return c != nil && c.Status == "True"
+}
+
+// ReadyCondition is the binding's aggregate Ready condition, nil when the
+// binding (or its status) has none yet. When False, OC copies the failing
+// sub-condition's Reason onto it.
+func (b *ResourceReleaseBinding) ReadyCondition() *OCCondition {
 	if b == nil || b.Status == nil {
-		return false
+		return nil
 	}
-	for _, c := range b.Status.Conditions {
-		if c.Type == "Ready" {
-			return c.Status == "True"
+	for i := range b.Status.Conditions {
+		if b.Status.Conditions[i].Type == "Ready" {
+			return &b.Status.Conditions[i]
 		}
 	}
-	return false
+	return nil
 }
 
 // ---- client -----------------------------------------------------------------

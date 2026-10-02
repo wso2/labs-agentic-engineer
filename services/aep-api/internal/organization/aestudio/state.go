@@ -17,7 +17,8 @@
 package aestudio
 
 // state.go — the status state machine (ticket 08 §10): compare desired with
-// live, answer at once, and start a converge on drift.
+// live, answer at once, and start a converge on drift. A binding that will
+// not become Ready by itself (stuck) answers failed.
 //
 // The comparison projects each live object onto the keys aep-api writes
 // before comparing, so what OpenChoreo adds on its own (schema defaults,
@@ -102,11 +103,50 @@ func (s *Service) status(ctx context.Context, org string) (Status, error) {
 		s.Trigger(ctx, org)
 		return provisioning, nil
 	}
-	urls := urlsOf(l.binding)
-	if !l.binding.IsReady() || urls == nil {
-		return provisioning, nil
+	if urls := urlsOf(l.binding); l.binding.IsReady() && urls != nil {
+		return Status{State: StateReady, URLs: urls, OUID: d.Params.Org.ID}, nil
 	}
-	return Status{State: StateReady, URLs: urls, OUID: d.Params.Org.ID}, nil
+	if reason := s.stuck(org, l.binding); reason != "" {
+		level := slog.LevelDebug
+		if s.firstStatusFailure(org, d.fingerprint()) {
+			level = slog.LevelWarn
+		}
+		slog.Log(ctx, level, "ae_studio.status_failed", "org", org, "reason", reason)
+		return Status{State: StateFailed}, nil
+	}
+	return provisioning, nil
+}
+
+// terminalReadyReasons are the Ready=False reasons OC gives a binding that
+// waiting will not fix: a degraded data-plane object (a Deployment past its
+// progress deadline, a replica failure, or pods that never became available
+// after the rollout: CrashLoopBackOff, ImagePullBackOff, Unschedulable), or
+// a release OC cannot render or own.
+var terminalReadyReasons = map[string]bool{
+	"ResourcesDegraded":           true,
+	"RenderingFailed":             true,
+	"InvalidReleaseConfiguration": true,
+	"ReleaseOwnershipConflict":    true,
+}
+
+// stuck names why a binding that is not Ready will not become so by itself
+// ("" while it may): a terminal Ready reason once the last converge has
+// settled, or not Ready for longer than notReadyBound. The reason is an OC
+// reason code or a fixed phrase, never a value.
+func (s *Service) stuck(org string, b *openchoreo.ResourceReleaseBinding) string {
+	now, converged := s.now(), s.convergedAt(org)
+	c := b.ReadyCondition()
+	if c != nil && terminalReadyReasons[c.Reason] && now.Sub(converged) >= settleGrace {
+		return c.Reason
+	}
+	since := converged
+	if c != nil && c.LastTransitionTime.After(since) {
+		since = c.LastTransitionTime
+	}
+	if !since.IsZero() && now.Sub(since) > notReadyBound {
+		return "not ready past bound"
+	}
+	return ""
 }
 
 // observe reads what is installed. errProjectMissing: nothing is.
