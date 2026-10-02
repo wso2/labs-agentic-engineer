@@ -28,6 +28,7 @@ import type { components } from "../../../generated/aep-api";
 import { client } from "../../../api/client";
 import { useConfig } from "../../settings/api/queries";
 import { firstEndpointUrl } from "../lib/deploymentUrl";
+import { withoutSystemProjects } from "../lib/systemProject";
 import { deploymentsAreMoving } from "../lib/deploymentRows";
 import { projectKeys, environmentKeys } from "./keys";
 import { ApiRequestError, apiErrorMessage } from "../../../api/errors";
@@ -51,7 +52,7 @@ export function useProjectsList(search = "", limit?: number) {
       if (error) {
         throw new Error(apiErrorMessage(error, "Failed to load projects"));
       }
-      return data;
+      return withoutSystemProjects(data);
     },
     initialPageParam: "",
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? null,
