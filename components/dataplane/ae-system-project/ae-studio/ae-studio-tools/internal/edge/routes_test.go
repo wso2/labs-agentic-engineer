@@ -35,7 +35,11 @@ import (
 
 	"github.com/wso2/aep/ae-studio-tools/internal/auth"
 	"github.com/wso2/aep/ae-studio-tools/internal/config"
+	"github.com/wso2/aep/ae-studio-tools/internal/files"
 	"github.com/wso2/aep/ae-studio-tools/internal/github"
+	"github.com/wso2/aep/ae-studio-tools/internal/projects"
+	"github.com/wso2/aep/ae-studio-tools/internal/projects/projectstest"
+	"github.com/wso2/aep/ae-studio-tools/internal/repo"
 	"github.com/wso2/aep/ae-studio-tools/internal/webhook"
 )
 
@@ -67,11 +71,25 @@ type harness struct {
 	handler     http.Handler
 	logBuf      *bytes.Buffer
 	githubCalls int
+	// projects is aep-api as the Files reader sees it; empty unless
+	// withProjects seeds it.
+	projects *projectstest.Fake
 }
 
-type harnessOpt func(*fakeGitHub)
+// harnessDeps is what the options adjust before Routes is built.
+type harnessDeps struct {
+	gh       fakeGitHub
+	projects map[string]projects.Repository
+}
 
-func withGitHubErr(err error) harnessOpt { return func(f *fakeGitHub) { f.err = err } }
+type harnessOpt func(*harnessDeps)
+
+func withGitHubErr(err error) harnessOpt { return func(d *harnessDeps) { d.gh.err = err } }
+
+// withProjects is aep-api's project → repository answers.
+func withProjects(repos map[string]projects.Repository) harnessOpt {
+	return func(d *harnessDeps) { d.projects = repos }
+}
 
 func withGitHubStatus(status int) harnessOpt {
 	return withGitHubErr(&github.StatusError{Status: status})
@@ -96,9 +114,14 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 	t.Cleanup(idp.Close)
 
 	h := &harness{t: t, key: key}
-	gh := fakeGitHub{calls: &h.githubCalls}
+	deps := harnessDeps{gh: fakeGitHub{calls: &h.githubCalls}}
 	for _, o := range opts {
-		o(&gh)
+		o(&deps)
+	}
+	h.projects = projectstest.NewFake(deps.projects)
+	engine, _, err := repo.New(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
 	}
 	cfg := config.Config{
 		OrgID: "ou-1", OrgHandle: "default",
@@ -110,8 +133,9 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 	h.handler = Routes(Deps{
 		Cfg:      cfg,
 		Verifier: auth.NewVerifier(cfg.IDPIssuer, auth.NewJWKSCache(cfg.IDPJWKSURL)),
-		GitHub:   gh,
+		GitHub:   deps.gh,
 		Webhook:  WebhookHandler(testWebhookSecret, webhook.Unwired()),
+		Files:    files.Reader{Engine: engine, Projects: h.projects, Org: cfg.OrgHandle},
 	})
 	return h
 }
@@ -178,7 +202,7 @@ func TestRoutes_UnknownV1PathGatedFirst(t *testing.T) {
 		{"GET", "/v1/projects/p/files", "", "", 401},
 		{"GET", "/v1/projects/p/files", h.m2m(), "", 401},
 		{"GET", "/v1/projects/p/files", h.user("e2e-other", "ou-2"), "", 403},
-		{"GET", "/v1/projects/p/files", h.user("default", "ou-1"), "", 404},
+		{"GET", "/v1/projects/p/files", h.user("default", "ou-1"), "", 404}, // project_unknown
 		{"GET", "/internal/v1/github/identity", "", "ou-1", 401},
 		{"GET", "/internal/v1/github/identity", h.user("default", "ou-1"), "ou-1", 401},
 		{"GET", "/internal/v1/github/identity", h.m2m(), "", 403},
@@ -221,6 +245,10 @@ func TestRoutes_UnknownV1PathGatedFirst(t *testing.T) {
 	}
 	if h.githubCalls != 1 {
 		t.Fatalf("the identity handler ran %d times, want 1 (only the one 200 row)", h.githubCalls)
+	}
+	// /v1/projects/p/files is a real route now: the 404 is aep-api not knowing p.
+	if rec := h.do("GET", "/v1/projects/p/files", h.user("default", "ou-1"), "", nil); !strings.Contains(rec.Body.String(), `"code":"project_unknown"`) {
+		t.Fatalf("unknown project body = %s", rec.Body.String())
 	}
 	var body struct {
 		Login string

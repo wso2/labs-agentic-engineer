@@ -60,17 +60,14 @@ type flockLocker struct{}
 // LOCK_NB keeps acquisition cancellable by ctx (a blocking flock(2) is not).
 const lockPollInterval = 5 * time.Millisecond
 
-//deadcode:keep wired in Task 2.7
 func (flockLocker) RLock(ctx context.Context, path string) (func(), error) {
 	return flockAcquire(ctx, path, syscall.LOCK_SH)
 }
 
-//deadcode:keep wired in Task 2.7
 func (flockLocker) Lock(ctx context.Context, path string) (func(), error) {
 	return flockAcquire(ctx, path, syscall.LOCK_EX)
 }
 
-//deadcode:keep wired in Task 2.7
 func flockAcquire(ctx context.Context, path string, how int) (func(), error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {

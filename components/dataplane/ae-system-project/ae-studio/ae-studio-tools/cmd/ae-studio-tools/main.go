@@ -15,8 +15,11 @@
 // under the License.
 
 // Command ae-studio-tools is the AE Studio pod's tools container: wiring only.
-// It serves the public listener (edge.Routes) and the health listener, and
-// reports ready once both are bound.
+// It builds the git engine over the studio-data volume and its reaper, the
+// per-request project resolver (aep-api, with the org's publisher token), and
+// serves the public listener (edge.Routes) and the health listener, reporting
+// ready once both are bound. SIGTERM (tini forwards it) shuts the listeners
+// down, then stops the reaper.
 package main
 
 import (
@@ -34,7 +37,12 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/auth"
 	"github.com/wso2/aep/ae-studio-tools/internal/config"
 	"github.com/wso2/aep/ae-studio-tools/internal/edge"
+	"github.com/wso2/aep/ae-studio-tools/internal/files"
 	"github.com/wso2/aep/ae-studio-tools/internal/github"
+	"github.com/wso2/aep/ae-studio-tools/internal/platform"
+	"github.com/wso2/aep/ae-studio-tools/internal/projects"
+	"github.com/wso2/aep/ae-studio-tools/internal/repo"
+	"github.com/wso2/aep/ae-studio-tools/internal/repo/reaper"
 	"github.com/wso2/aep/ae-studio-tools/internal/webhook"
 )
 
@@ -56,6 +64,37 @@ func run() error {
 		return err
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
+
+	// The git engine and its reaper. reaper.New registers the engine's ENOSPC
+	// hook, so it runs before any listener can serve a read.
+	engine, layout, err := repo.New(cfg.StudioDataDir, repo.StaticToken(cfg.GitHubPAT))
+	if err != nil {
+		slog.Error("repo_init_failed", "error", err)
+		return err
+	}
+	slog.Info("repo.root", "root_layout", string(layout))
+	reap := reaper.New(engine, reaper.Config{Budget: cfg.StorageBudgetBytes})
+
+	// The project resolver: aep-api on every request, as the org's publisher.
+	aepAPI, err := platform.NewAEPAPI(cfg.AEPAPIBaseURL, &platform.ClientCredentials{
+		TokenURL: cfg.IDPTokenURL, ClientID: cfg.PublisherClientID, ClientSecret: cfg.PublisherClientSecret,
+	})
+	if err != nil {
+		slog.Error("aep_api_client_invalid")
+		return err
+	}
+	reader := files.Reader{Engine: engine, Projects: projects.NewAEPAPIResolver(aepAPI), Org: cfg.OrgHandle}
+
+	reaperCtx, stopReaper := context.WithCancel(context.Background())
+	defer stopReaper()
+	reaperDone := make(chan struct{})
+	go func() {
+		defer close(reaperDone)
+		reap.Run(reaperCtx)
+	}()
+
 	var ready atomic.Bool
 	public := &http.Server{
 		Addr: fmt.Sprintf(":%d", cfg.ListenPort),
@@ -64,6 +103,7 @@ func run() error {
 			Verifier: auth.NewVerifier(cfg.IDPIssuer, auth.NewJWKSCache(cfg.IDPJWKSURL)),
 			GitHub:   github.NewClient(cfg.GitHubPAT),
 			Webhook:  edge.WebhookHandler(cfg.WebhookSecret, webhook.Unwired()),
+			Files:    reader,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -76,6 +116,8 @@ func run() error {
 	healthLn, err := net.Listen("tcp", health.Addr)
 	if err != nil {
 		slog.Error("health_listen_failed", "port", cfg.HealthPort, "error", err)
+		stopReaper()
+		<-reaperDone
 		return err
 	}
 	slog.Info("health_listening", "port", cfg.HealthPort)
@@ -83,6 +125,8 @@ func run() error {
 	if err != nil {
 		_ = healthLn.Close()
 		slog.Error("public_listen_failed", "port", cfg.ListenPort, "error", err)
+		stopReaper()
+		<-reaperDone
 		return err
 	}
 	slog.Info("public_listening", "port", cfg.ListenPort)
@@ -93,8 +137,6 @@ func run() error {
 	// Both sockets are bound, so a probe that sees ready can reach the routes.
 	ready.Store(true)
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
-	defer stop()
 	var runErr error
 	select {
 	case runErr = <-serveErr:
@@ -110,6 +152,14 @@ func run() error {
 			slog.Error("shutdown_failed", "addr", srv.Addr, "error", err)
 			runErr = err
 		}
+	}
+	// The listeners are drained, so no request can still be reading; the
+	// reaper's git children die with its context.
+	stopReaper()
+	select {
+	case <-reaperDone:
+	case <-shutdownCtx.Done():
+		slog.Error("reaper_stop_timeout")
 	}
 	if runErr != nil {
 		return runErr

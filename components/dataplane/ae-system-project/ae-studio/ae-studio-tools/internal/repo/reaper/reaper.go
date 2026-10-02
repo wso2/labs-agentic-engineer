@@ -83,8 +83,6 @@ type Reaper struct {
 // New builds the reaper over engine's root and registers its forced-sweep
 // request as the engine's ENOSPC handler. Call it before the engine serves.
 // It panics on a non-positive Budget: config.Load guarantees one.
-//
-//deadcode:keep wired in Task 2.7
 func New(engine *repo.Engine, cfg Config) *Reaper {
 	if cfg.Budget <= 0 {
 		panic(fmt.Sprintf("reaper: budget must be positive, got %d", cfg.Budget))
@@ -103,8 +101,6 @@ func New(engine *repo.Engine, cfg Config) *Reaper {
 // Run sweeps once at start (a pod restarting into a full volume must not wait
 // an interval), then on every tick and on every forced-sweep request, until
 // ctx is canceled. All sweeps run on this goroutine, so they never overlap.
-//
-//deadcode:keep wired in Task 2.7
 func (r *Reaper) Run(ctx context.Context) {
 	r.sweep(ctx)
 	ticker := time.NewTicker(r.cfg.Interval)
@@ -124,8 +120,6 @@ func (r *Reaper) Run(ctx context.Context) {
 // ForceSweep is the ENOSPC emergency path: purge every trash/<id> entry
 // regardless of age, then run a full sweep. Run calls it for each request the
 // engine's ENOSPC hook queues.
-//
-//deadcode:keep wired in Task 2.7
 func (r *Reaper) ForceSweep(ctx context.Context) {
 	if err := r.purgeTrashAll(ctx); err != nil {
 		slog.WarnContext(ctx, "reaper.pass_failed", "pass", "force-trash-purge", "error", err)
@@ -136,8 +130,6 @@ func (r *Reaper) ForceSweep(ctx context.Context) {
 // requestForceSweep queues one forced sweep for Run without blocking: it runs
 // on the request goroutine that hit ENOSPC, and a request already pending
 // covers this one.
-//
-//deadcode:keep wired in Task 2.7
 func (r *Reaper) requestForceSweep() {
 	select {
 	case r.force <- struct{}{}:
@@ -146,8 +138,6 @@ func (r *Reaper) requestForceSweep() {
 }
 
 // sweep runs sweepOnce and logs each failed pass.
-//
-//deadcode:keep wired in Task 2.7
 func (r *Reaper) sweep(ctx context.Context) {
 	if _, err := r.sweepOnce(ctx); err != nil {
 		slog.WarnContext(ctx, "reaper.pass_failed", "error", err)
@@ -158,8 +148,6 @@ func (r *Reaper) sweep(ctx context.Context) {
 // feeds DiskFullError) and logs the reaper.sweep line. It returns the evicted
 // repos as "org/project/slug" and the joined errors of the passes that
 // failed; a failed pass never stops the next one.
-//
-//deadcode:keep wired in Task 2.7
 func (r *Reaper) sweepOnce(ctx context.Context) ([]string, error) {
 	var errs []error
 	pass := func(name string, fn func(context.Context) error) {
@@ -192,8 +180,6 @@ func (r *Reaper) sweepOnce(ctx context.Context) ([]string, error) {
 // directories are visited (a symlink is never followed), so every visited
 // path lies inside the root. Unreadable levels are skipped: a concurrent trash
 // rename is normal and the next sweep reconverges.
-//
-//deadcode:keep wired in Task 2.7
 func (r *Reaper) walkRepoDirs(ctx context.Context, visit func(ref repo.RepoRef, repoDir string)) error {
 	reposDir := repo.ReposDir(r.engine.Root())
 	orgs, err := os.ReadDir(reposDir)
@@ -238,8 +224,6 @@ func (r *Reaper) walkRepoDirs(ctx context.Context, visit func(ref repo.RepoRef, 
 
 // repoName is the "org/project/slug" form a ref takes in eviction results
 // and log lines.
-//
-//deadcode:keep wired in Task 2.7
 func repoName(ref repo.RepoRef) string {
 	return ref.Org + "/" + ref.Project + "/" + ref.RepoSlug
 }

@@ -109,8 +109,6 @@ type RepoRef struct {
 
 // FullName is the `<owner>/<repo>` name from CloneURL, for log lines; "" when
 // the URL is not a GitHub HTTPS URL. It never includes userinfo.
-//
-//deadcode:keep wired in Task 2.7
 func (r RepoRef) FullName() string {
 	owner, name := naming.OwnerRepoFromURL(r.CloneURL)
 	if owner == "" {
@@ -170,8 +168,6 @@ const defaultRetryAttempts = 4
 var defaultRetryBackoff = []time.Duration{50 * time.Millisecond, 200 * time.Millisecond, 800 * time.Millisecond}
 
 // withDefaults returns the policy with zero values replaced by the defaults.
-//
-//deadcode:keep wired in Task 2.7
 func (p RetryPolicy) withDefaults() RetryPolicy {
 	if p.Attempts <= 0 {
 		p.Attempts = defaultRetryAttempts

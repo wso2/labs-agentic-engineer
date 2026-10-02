@@ -24,10 +24,6 @@ import (
 	"math"
 	"net/http"
 
-	"github.com/getkin/kin-openapi/openapi3filter"
-	"github.com/getkin/kin-openapi/routers"
-	legacyrouter "github.com/getkin/kin-openapi/routers/legacy"
-
 	"github.com/wso2/aep/ae-studio-tools/internal/gen"
 	"github.com/wso2/aep/ae-studio-tools/internal/github"
 	"github.com/wso2/aep/ae-studio-tools/internal/problem"
@@ -67,53 +63,7 @@ func internalHandler(gh github.Identity) http.Handler {
 		ErrorHandlerFunc: writeRequestError,
 	})
 	mux.Handle(internalV1+"/", http.HandlerFunc(notFound))
-	return requestValidator(mustInternalRouter(), mux)
-}
-
-// mustInternalRouter builds the kin router over the embedded contract. A
-// decode failure is a build defect, not a runtime condition, so it panics.
-func mustInternalRouter() routers.Router {
-	doc, err := gen.GetSpec()
-	if err != nil {
-		panic(fmt.Sprintf("embedded internal contract failed to load: %v", err))
-	}
-	router, err := legacyrouter.NewRouter(doc)
-	if err != nil {
-		panic(fmt.Sprintf("internal contract router: %v", err))
-	}
-	return router
-}
-
-// requestValidator validates every request that matches a contract operation
-// before it reaches the generated handler. The contract is the route table: a
-// route miss (an unknown path, or a method the operation does not declare,
-// such as HEAD on a GET op that ServeMux would otherwise serve) is 404 here and
-// never reaches next. Security is not checked here: the gate in front already
-// did.
-func requestValidator(router routers.Router, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		route, pathParams, err := router.FindRoute(r)
-		if err != nil {
-			notFound(w, r)
-			return
-		}
-		input := &openapi3filter.RequestValidationInput{
-			Request:    r,
-			PathParams: pathParams,
-			Route:      route,
-			Options:    &openapi3filter.Options{AuthenticationFunc: openapi3filter.NoopAuthenticationFunc},
-		}
-		if err := openapi3filter.ValidateRequest(r.Context(), input); err != nil {
-			var maxErr *http.MaxBytesError
-			if errors.As(err, &maxErr) {
-				writeBodyTooLarge(w)
-				return
-			}
-			problem.Write(w, http.StatusBadRequest, "validation_failed", "the request does not match the contract")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+	return requestValidator(mustRouter("internal", gen.GetSpec).FindRoute, "validation_failed", mux)
 }
 
 // capBody bounds a request body before anything reads it: a declared

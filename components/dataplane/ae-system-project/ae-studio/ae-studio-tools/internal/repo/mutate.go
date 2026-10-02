@@ -42,8 +42,6 @@ import (
 //     caller's conflict/409 path.
 //   - A no-op overlay (nothing staged, or staged content identical to base)
 //     returns CommitResult{Changed: false} without committing or pushing.
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) Mutate(ctx context.Context, ref RepoRef, fn func(Tx) error, opts CommitOpts) (res CommitResult, err error) {
 	defer func() { err = e.mapDiskErr(err) }()
 	p, err := e.pathsFor(ref)
@@ -75,8 +73,6 @@ func (e *Engine) Mutate(ctx context.Context, ref RepoRef, fn func(Tx) error, opt
 }
 
 // mutateOnce is one CAS attempt under the exclusive flock.
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) mutateOnce(ctx context.Context, ref RepoRef, p repoPaths, fn func(Tx) error, opts CommitOpts, freshClone bool) (CommitResult, error) {
 	release, err := e.locks.Lock(ctx, p.lockPath)
 	if err != nil {
@@ -137,8 +133,6 @@ func (e *Engine) mutateOnce(ctx context.Context, ref RepoRef, p repoPaths, fn fu
 // buildTree materializes the op log into a new tree via a throwaway index:
 // read-tree <base> then hash-object + update-index per op, then write-tree.
 // The mirror is never checked out; blobs land straight in the object DB.
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) buildTree(ctx context.Context, p repoPaths, baseSHA string, ops []txOp) (string, error) {
 	idx, err := os.CreateTemp(TmpDir(e.root), "index-*")
 	if err != nil {
@@ -187,8 +181,6 @@ func (e *Engine) buildTree(ctx context.Context, p repoPaths, baseSHA string, ops
 
 // commitTree creates the commit object with author/committer from opts
 // (falling back to the AEP identity) supplied via env, never argv.
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) commitTree(ctx context.Context, p repoPaths, tree, parent string, opts CommitOpts) (string, error) {
 	env := identityEnv(opts.Author, opts.Committer)
 	out, err := e.git(ctx, execOpts{env: env}, "--git-dir", p.gitDir,
@@ -203,8 +195,6 @@ func (e *Engine) commitTree(ctx context.Context, p repoPaths, tree, parent strin
 // observed remote SHA — the exact analog of the retired REST fast-forward-only
 // ref update.
 // A rejected lease maps to ErrRefNotFastForward.
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) pushBranchCAS(ctx context.Context, ref RepoRef, p repoPaths, branch, observedSHA, newSHA string) error {
 	_, err := e.remoteGit(ctx, ref, execOpts{},
 		"--git-dir", p.gitDir, "push",
@@ -223,7 +213,6 @@ func (e *Engine) pushBranchCAS(ctx context.Context, ref RepoRef, p repoPaths, br
 // stale — origin advanced behind our back).
 var nonFFPatterns = []string{"stale info", "non-fast-forward", "fetch first"}
 
-//deadcode:keep wired in Task 2.7
 func isNonFastForward(err error) bool {
 	if err == nil {
 		return false
@@ -239,8 +228,6 @@ func isNonFastForward(err error) bool {
 
 // validateTreePath rejects paths that could escape or corrupt the staged
 // tree: absolute, empty, traversal, or NUL-bearing.
-//
-//deadcode:keep wired in Task 2.7
 func validateTreePath(path string) error {
 	if path == "" || strings.HasPrefix(path, "/") || strings.ContainsRune(path, 0) {
 		return fmt.Errorf("repo: invalid tree path %q", path)
@@ -255,8 +242,6 @@ func validateTreePath(path string) error {
 
 // identityEnv builds the author/committer env for commit-tree / tag, falling
 // back to the AEP default identity (matching ResolveSaveIdentities' fallback).
-//
-//deadcode:keep wired in Task 2.7
 func identityEnv(author, committer *GitIdentity) map[string]string {
 	env := map[string]string{}
 	a := identityOrDefault(author)
@@ -274,7 +259,6 @@ func identityEnv(author, committer *GitIdentity) map[string]string {
 	return env
 }
 
-//deadcode:keep wired in Task 2.7
 func identityOrDefault(id *GitIdentity) GitIdentity {
 	out := GitIdentity{Name: "AEP", Email: "noreply@aep.dev"}
 	if id != nil {
@@ -291,8 +275,6 @@ func identityOrDefault(id *GitIdentity) GitIdentity {
 
 // sleepJittered waits the policy's base delay for retry index i, jittered by
 // ±50%, honouring ctx cancellation.
-//
-//deadcode:keep wired in Task 2.7
 func sleepJittered(ctx context.Context, backoff []time.Duration, i int) error {
 	if i >= len(backoff) {
 		i = len(backoff) - 1

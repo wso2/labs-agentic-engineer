@@ -28,18 +28,12 @@ import (
 // blind for up to one sweep interval while repos are being cloned.
 
 // SetUsedBytes records the reaper's du of the studio-data root.
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) SetUsedBytes(n int64) { e.usedBytes.Store(n) }
 
 // AddUsage adds n bytes written since the last sweep (one cold clone).
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) AddUsage(n int64) { e.usedBytes.Add(n) }
 
 // UsedBytes is the last sweep's du plus the clones recorded since.
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) UsedBytes() int64 { return e.usedBytes.Load() }
 
 // DirBytes sums the allocated blocks (st_blocks*512) of path and every
@@ -47,8 +41,6 @@ func (e *Engine) UsedBytes() int64 { return e.usedBytes.Load() }
 // the kubelet measures against the emptyDir sizeLimit. Symlinks are not
 // followed and unreadable entries are skipped (a trash rename mid-walk is
 // normal).
-//
-//deadcode:keep wired in Task 2.7
 func DirBytes(path string) int64 {
 	var total int64
 	_ = filepath.WalkDir(path, func(_ string, d fs.DirEntry, err error) error {

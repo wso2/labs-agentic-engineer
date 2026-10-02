@@ -39,12 +39,9 @@ var segmentPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,200}$`)
 // sha40Pattern matches a full 40-hex git object name.
 var sha40Pattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
-//deadcode:keep wired in Task 2.7
 func isHex40(s string) bool { return sha40Pattern.MatchString(s) }
 
 // validateSegment rejects anything that is not a plain single path segment.
-//
-//deadcode:keep wired in Task 2.7
 func validateSegment(kind, s string) error {
 	if !segmentPattern.MatchString(s) || s == "." || s == ".." {
 		return fmt.Errorf("repo: invalid %s path segment %q", kind, s)
@@ -53,8 +50,6 @@ func validateSegment(kind, s string) error {
 }
 
 // validateRef validates the three path-key segments of a RepoRef.
-//
-//deadcode:keep wired in Task 2.7
 func validateRef(ref RepoRef) error {
 	if err := validateSegment("org", ref.Org); err != nil {
 		return err
@@ -66,24 +61,16 @@ func validateRef(ref RepoRef) error {
 }
 
 // ReposDir is <root>/repos.
-//
-//deadcode:keep wired in Task 2.7
 func ReposDir(root string) string { return filepath.Join(root, "repos") }
 
 // TrashDir is <root>/trash — renamed subtrees awaiting async purge.
-//
-//deadcode:keep wired in Task 2.7
 func TrashDir(root string) string { return filepath.Join(root, "trash") }
 
 // TmpDir is <root>/tmp — atomic clone staging and the askpass shim.
-//
-//deadcode:keep wired in Task 2.7
 func TmpDir(root string) string { return filepath.Join(root, "tmp") }
 
 // RepoDir is <root>/repos/<org>/<project>/<repoSlug> — the renamable
 // parent holding git/ and repo.lock.
-//
-//deadcode:keep wired in Task 2.7
 func RepoDir(root string, ref RepoRef) (string, error) {
 	if err := validateRef(ref); err != nil {
 		return "", err
@@ -92,8 +79,6 @@ func RepoDir(root string, ref RepoRef) (string, error) {
 }
 
 // GitSubdir is the leaf-name helper for callers holding the repo dir.
-//
-//deadcode:keep wired in Task 2.7
 func GitSubdir(slugDir string) string { return filepath.Join(slugDir, "git") }
 
 // repoPaths bundles the derived per-repo paths one engine operation needs.
@@ -104,8 +89,6 @@ type repoPaths struct {
 }
 
 // pathsFor derives (and validates) every per-repo path for ref.
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) pathsFor(ref RepoRef) (repoPaths, error) {
 	repoDir, err := RepoDir(e.root, ref)
 	if err != nil {

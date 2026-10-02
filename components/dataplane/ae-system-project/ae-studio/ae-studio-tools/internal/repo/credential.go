@@ -30,6 +30,4 @@ type Credential interface {
 type StaticToken string
 
 // Token returns the fixed token.
-//
-//deadcode:keep wired in Task 2.7
 func (t StaticToken) Token(context.Context) (string, error) { return string(t), nil }

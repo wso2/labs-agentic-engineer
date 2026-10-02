@@ -29,8 +29,6 @@ import (
 // the object is missing) → resolve + read under a SHARED flock.
 
 // Head implements Workspace.
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) Head(ctx context.Context, ref RepoRef, at string) (string, error) {
 	var sha string
 	err := e.read(ctx, ref, at, func(p repoPaths, commit string) error {
@@ -41,8 +39,6 @@ func (e *Engine) Head(ctx context.Context, ref RepoRef, at string) (string, erro
 }
 
 // List implements Workspace: every blob (recursive) at `at`.
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) List(ctx context.Context, ref RepoRef, at string) ([]Entry, string, error) {
 	var entries []Entry
 	var head string
@@ -59,8 +55,6 @@ func (e *Engine) List(ctx context.Context, ref RepoRef, at string) ([]Entry, str
 }
 
 // ReadFile implements Workspace: one blob's content + blob sha at `at`.
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) ReadFile(ctx context.Context, ref RepoRef, at, path string) ([]byte, string, error) {
 	var content []byte
 	var blobSHA string
@@ -78,8 +72,6 @@ func (e *Engine) ReadFile(ctx context.Context, ref RepoRef, at, path string) ([]
 // ReadBundle implements Workspace: path→content for every blob at `at`
 // accepted by keep (nil keeps everything). Streams blob-by-blob through
 // cat-file — in-process, no checkout, no temp files.
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) ReadBundle(ctx context.Context, ref RepoRef, at string, keep func(rel string) bool) (map[string]string, string, error) {
 	files := map[string]string{}
 	var head string
@@ -108,10 +100,11 @@ func (e *Engine) ReadBundle(ctx context.Context, ref RepoRef, at string, keep fu
 }
 
 // read is the shared read skeleton: validate → ensure mirror → freshen →
-// resolve `at` and run fn under one SHARED flock.
-//
-//deadcode:keep wired in Task 2.7
-func (e *Engine) read(ctx context.Context, ref RepoRef, at string, fn func(p repoPaths, commit string) error) error {
+// resolve `at` and run fn under one SHARED flock. A read can clone or fetch,
+// so an ENOSPC here is a DiskFullError and requests the reaper's forced sweep,
+// as it does for Mutate.
+func (e *Engine) read(ctx context.Context, ref RepoRef, at string, fn func(p repoPaths, commit string) error) (err error) {
+	defer func() { err = e.mapDiskErr(err) }()
 	p, err := e.pathsFor(ref)
 	if err != nil {
 		return err
@@ -141,8 +134,6 @@ func (e *Engine) read(ctx context.Context, ref RepoRef, at string, fn func(p rep
 // verbatim: a custom `--format=%(path)` C-quotes non-ASCII / special paths
 // even under -z (and core.quotepath=off still quotes `"` and `\`), which would
 // corrupt unicode paths. Caller holds a flock.
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) lsTree(ctx context.Context, p repoPaths, commit string) ([]Entry, error) {
 	out, err := e.git(ctx, execOpts{}, "--git-dir", p.gitDir,
 		"ls-tree", "-r", "-l", "-z", commit)
@@ -177,8 +168,6 @@ func (e *Engine) lsTree(ctx context.Context, p repoPaths, commit string) ([]Entr
 // readBlobAt returns content + blob sha of path at commit. The commit is
 // already verified, so a failed path lookup maps to ErrPathNotFound (the
 // later phases' 404). Caller holds a flock.
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) readBlobAt(ctx context.Context, p repoPaths, commit, path string) ([]byte, string, error) {
 	out, err := e.git(ctx, execOpts{}, "--git-dir", p.gitDir,
 		"rev-parse", "--verify", "--end-of-options", commit+":"+path)
@@ -195,8 +184,6 @@ func (e *Engine) readBlobAt(ctx context.Context, p repoPaths, commit, path strin
 }
 
 // splitNUL splits NUL-separated output, dropping the trailing empty field.
-//
-//deadcode:keep wired in Task 2.7
 func splitNUL(out []byte) []string {
 	s := string(out)
 	s = strings.TrimSuffix(s, "\x00")

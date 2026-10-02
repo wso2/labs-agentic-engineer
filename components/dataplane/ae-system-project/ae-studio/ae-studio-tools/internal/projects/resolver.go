@@ -65,8 +65,6 @@ type Resolver interface {
 // org's publisher token (platform.NewAEPAPI), which scopes the answer to the
 // pod's org. It takes the raw-op interface: the decision is the HTTP status,
 // never a parsed error body (Q-2).
-//
-//deadcode:keep wired in Task 2.7
 func NewAEPAPIResolver(c aepapi.ClientInterface) Resolver {
 	return &aepAPIResolver{c: c}
 }
@@ -77,8 +75,6 @@ type aepAPIResolver struct{ c aepapi.ClientInterface }
 // (Q-2): 200 → the repository, 404 → ErrUnknown, 401/403 (after the
 // transport's one retry) or a rejected publisher client → ErrUnavailable and
 // ErrMisconfigured, anything else or a transport failure → ErrUnavailable.
-//
-//deadcode:keep wired in Task 2.7
 func (r *aepAPIResolver) Resolve(ctx context.Context, project string) (Repository, error) {
 	resp, err := r.c.GetAeStudioProjectRepository(ctx, project)
 	if err != nil {

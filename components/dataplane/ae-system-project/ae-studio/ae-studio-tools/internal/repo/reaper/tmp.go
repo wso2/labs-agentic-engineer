@@ -32,8 +32,6 @@ const askpassFileName = "askpass.sh"
 // reclaimTmp purges <root>/tmp entries older than TrashMaxAge, skipping the
 // askpass shim. A SIGKILL or OOM mid-clone leaves complete bare trees here;
 // nothing else reclaims them.
-//
-//deadcode:keep wired in Task 2.7
 func (r *Reaper) reclaimTmp(ctx context.Context) error {
 	tmpDir := repo.TmpDir(r.engine.Root())
 	entries, err := os.ReadDir(tmpDir)

@@ -23,6 +23,7 @@ import (
 
 	"github.com/wso2/aep/ae-studio-tools/internal/auth"
 	"github.com/wso2/aep/ae-studio-tools/internal/config"
+	"github.com/wso2/aep/ae-studio-tools/internal/files"
 	"github.com/wso2/aep/ae-studio-tools/internal/github"
 	"github.com/wso2/aep/ae-studio-tools/internal/problem"
 )
@@ -35,6 +36,8 @@ type Deps struct {
 	GitHub   github.Identity
 	// Webhook serves POST /webhooks/github (WebhookHandler); it must not be nil.
 	Webhook http.Handler
+	// Files serves the /v1 read-only Files operations.
+	Files files.Reader
 }
 
 // Routes is the public listener's mount table (ticket 04 §1): one row per
@@ -44,8 +47,8 @@ type Deps struct {
 // is 404; nothing redirects. Sockets are separate listeners added in later
 // phases.
 func Routes(d Deps) http.Handler {
-	// /v1: browser, Platform IdP user JWT of the pod's org (operations land
-	// with the git engine).
+	// /v1: browser, Platform IdP user JWT of the pod's org. Gate → validator
+	// → generated server; the read-only Files operations.
 	v1 := auth.UserGate(d.Verifier, d.Cfg.UserAudiences, d.Cfg.OrgID, d.Cfg.OrgHandle)
 	m2mGate := auth.M2MGate(d.Verifier, d.Cfg.M2MClientID, d.Cfg.OrgID)
 	// /internal/v1: aep-api, AE-only M2M + X-Impersonate-Org. Body cap →
@@ -56,7 +59,7 @@ func Routes(d Deps) http.Handler {
 	nf := http.HandlerFunc(notFound)
 
 	mux := http.NewServeMux()
-	mux.Handle("/v1/", v1(v1Handler()))
+	mux.Handle("/v1/", v1(v1Handler(d.Files)))
 	mux.Handle("/internal/v1/", internal(internalHandler(d.GitHub)))
 	// The bare group roots are exact entries so the mux does not redirect
 	// them to the subtree; each is gated, then 404.

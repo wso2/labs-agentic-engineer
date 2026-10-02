@@ -30,8 +30,8 @@
 # DESIGN, not dead:
 #
 #   1. Test-support packages ($EXCLUDE_RE): the edgetest harness the suite
-#      runs on and the projectstest fake resolver. They exist only to be
-#      consumed by tests. Identified by dir name
+#      runs on, the projectstest fake resolver and the repotest git origin.
+#      They exist only to be consumed by tests. Identified by dir name
 #      or the *_fortest.go suffix.
 #   2. Functions carrying a `//deadcode:keep <reason>` marker in their doc
 #      comment: intentional test seams that let tests drive live code, and
@@ -75,7 +75,7 @@ esac
 GO_TOOLCHAIN="go${GO_DIRECTIVE}"
 
 # Test-support packages/files — unreachable by design, never deletion targets.
-EXCLUDE_RE='/edgetest/|/projectstest/|_fortest\.go'
+EXCLUDE_RE='/edgetest/|/projectstest/|/repotest/|_fortest\.go'
 
 mode="${1:-check}"
 

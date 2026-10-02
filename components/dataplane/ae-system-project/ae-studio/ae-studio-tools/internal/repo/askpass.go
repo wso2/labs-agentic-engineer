@@ -53,8 +53,6 @@ esac
 // writeAskpassShim writes the static shim (0700) into <root>/tmp at engine
 // init and returns its path. Re-writing an identical shim is harmless, so
 // concurrent engines on one root need no coordination here.
-//
-//deadcode:keep wired in Task 2.7
 func writeAskpassShim(root string) (string, error) {
 	path := filepath.Join(TmpDir(root), askpassFile)
 	if err := os.WriteFile(path, []byte(askpassScript), 0o700); err != nil {
@@ -66,8 +64,6 @@ func writeAskpassShim(root string) (string, error) {
 // credEnv mints a token for ref and returns the env overlay for one
 // remote git op. A nil credential (file:// origins in tests) yields nil —
 // askpass injection is skipped entirely.
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) credEnv(ctx context.Context, ref RepoRef) (map[string]string, error) {
 	if e.cred == nil {
 		return nil, nil
@@ -93,8 +89,6 @@ var authFailurePatterns = []string{
 
 // isAuthFailure reports whether a remote-op error looks like a credential
 // rejection (token expired/revoked mid-op) — the re-mint-once trigger.
-//
-//deadcode:keep wired in Task 2.7
 func isAuthFailure(err error) bool {
 	if err == nil {
 		return false

@@ -32,8 +32,6 @@ import (
 // entry older than TrashMaxAge. By POSIX inode semantics a still-open fd keeps
 // its content readable through the purge, so a mid-flight reader is never
 // corrupted.
-//
-//deadcode:keep wired in Task 2.7
 func (r *Reaper) reclaimTrash(ctx context.Context) error {
 	return r.purgeTrash(ctx, func(e os.DirEntry, now time.Time) bool {
 		return now.Sub(trashedAt(e)) > r.cfg.TrashMaxAge
@@ -43,15 +41,11 @@ func (r *Reaper) reclaimTrash(ctx context.Context) error {
 // purgeTrashAll removes every trash/<id> entry regardless of age. The budget
 // pass and ForceSweep use it under pressure, so a rename into trash actually
 // frees bytes.
-//
-//deadcode:keep wired in Task 2.7
 func (r *Reaper) purgeTrashAll(ctx context.Context) error {
 	return r.purgeTrash(ctx, func(os.DirEntry, time.Time) bool { return true })
 }
 
 // purgeTrash removes the trash/<id> entries due reports true for.
-//
-//deadcode:keep wired in Task 2.7
 func (r *Reaper) purgeTrash(ctx context.Context, due func(e os.DirEntry, now time.Time) bool) error {
 	trashDir := repo.TrashDir(r.engine.Root())
 	entries, err := os.ReadDir(trashDir)
@@ -82,8 +76,6 @@ func (r *Reaper) purgeTrash(ctx context.Context, due func(e os.DirEntry, now tim
 // repo's subtree can carry an mtime far older than its trash time, which would
 // defeat the TrashMaxAge grace). Unparseable names (foreign debris) fall back
 // to the entry mtime.
-//
-//deadcode:keep wired in Task 2.7
 func trashedAt(e os.DirEntry) time.Time {
 	if hexTS, _, ok := strings.Cut(e.Name(), "-"); ok && len(hexTS) == 16 {
 		if nanos, err := strconv.ParseUint(hexTS, 16, 64); err == nil && nanos <= uint64(1)<<62 {

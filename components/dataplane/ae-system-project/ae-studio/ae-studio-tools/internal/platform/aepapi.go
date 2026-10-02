@@ -37,8 +37,6 @@ const (
 // /internal/v1 prefix is added here), authenticated with tok's
 // bearer token. A 401 invalidates the token, mints a fresh one and retries
 // the request once; a second 401 is returned to the caller.
-//
-//deadcode:keep wired in Task 2.7
 func NewAEPAPI(baseURL string, tok *ClientCredentials) (*aepapi.ClientWithResponses, error) {
 	hc := &http.Client{Timeout: aepAPITimeout, Transport: &bearerTransport{tok: tok, next: http.DefaultTransport}}
 	c, err := aepapi.NewClientWithResponses(strings.TrimRight(baseURL, "/")+internalPrefix, aepapi.WithHTTPClient(hc))
@@ -55,7 +53,6 @@ type bearerTransport struct {
 	next http.RoundTripper
 }
 
-//deadcode:keep wired in Task 2.7
 func (t *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := t.send(req)
 	if err != nil || resp.StatusCode != http.StatusUnauthorized {
@@ -81,8 +78,6 @@ func (t *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 // send clones req (a RoundTripper must not modify its request), adds the
 // bearer token and sends it.
-//
-//deadcode:keep wired in Task 2.7
 func (t *bearerTransport) send(req *http.Request) (*http.Response, error) {
 	token, err := t.tok.Token(req.Context())
 	if err != nil {

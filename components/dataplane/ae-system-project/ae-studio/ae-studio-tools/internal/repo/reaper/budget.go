@@ -45,8 +45,6 @@ const evictLockTimeout = 100 * time.Millisecond
 // last du plus the clones since) and the node filesystem's byte used%. On an
 // emptyDir statfs reports the node's disk, which can fill for other reasons.
 // Inodes are not watched. The budget share can exceed 100.
-//
-//deadcode:keep wired in Task 2.7
 func (r *Reaper) UsagePct() int {
 	pct := int(r.engine.UsedBytes() * 100 / r.cfg.Budget)
 	if used, total, err := r.statfs(r.engine.Root()); err == nil && total > 0 {
@@ -62,8 +60,6 @@ func (r *Reaper) UsagePct() int {
 // until usage is back at lowPct. Evicted mirrors go through trash, which is
 // purged again so the bytes are actually freed. Phase 2 has no snapshots;
 // phase 3 adds them to the front of the eviction order.
-//
-//deadcode:keep wired in Task 2.7
 func (r *Reaper) enforceBudget(ctx context.Context) ([]string, error) {
 	used := r.measure()
 	if !r.atOrAbove(used, highPct) {
@@ -86,15 +82,12 @@ func (r *Reaper) enforceBudget(ctx context.Context) ([]string, error) {
 
 // measure records a fresh du of the root on the engine and returns it. A
 // clone that lands while the walk runs may be missed until the next sweep.
-//
-//deadcode:keep wired in Task 2.7
 func (r *Reaper) measure() int64 {
 	n := repo.DirBytes(r.engine.Root())
 	r.engine.SetUsedBytes(n)
 	return n
 }
 
-//deadcode:keep wired in Task 2.7
 func (r *Reaper) atOrAbove(used int64, pct int64) bool {
 	return used*100 >= pct*r.cfg.Budget
 }
@@ -110,8 +103,6 @@ type mirrorCandidate struct {
 // bytes are freed. TrashRepo takes the repo's EX flock; the bounded lockCtx
 // makes that a try, so a mirror in use (any SH or EX holder) is skipped.
 // Returns the evicted repos as "org/project/slug".
-//
-//deadcode:keep wired in Task 2.7
 func (r *Reaper) evictLRU(ctx context.Context, target int64) ([]string, error) {
 	mirrors, err := r.collectMirrors(ctx)
 	if err != nil {
@@ -146,8 +137,6 @@ func (r *Reaper) evictLRU(ctx context.Context, target int64) ([]string, error) {
 // when newer (every fetch rewrites it), so a mirror read only by sha looks
 // older than it is. A repo dir with no git dir (a failed clone) falls back to
 // its own mtime.
-//
-//deadcode:keep wired in Task 2.7
 func (r *Reaper) collectMirrors(ctx context.Context) ([]mirrorCandidate, error) {
 	var mirrors []mirrorCandidate
 	err := r.walkRepoDirs(ctx, func(ref repo.RepoRef, repoDir string) {
@@ -168,8 +157,6 @@ func (r *Reaper) collectMirrors(ctx context.Context) ([]mirrorCandidate, error) 
 
 // statfsUsage is the default statfs seam: used and total bytes of the
 // filesystem backing path, df-style (used = total - available).
-//
-//deadcode:keep wired in Task 2.7
 func statfsUsage(path string) (used, total uint64, err error) {
 	var st syscall.Statfs_t
 	if err := syscall.Statfs(path, &st); err != nil {

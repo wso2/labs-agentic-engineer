@@ -35,20 +35,15 @@ type mirrorSnapshot struct {
 
 var _ Snapshot = (*mirrorSnapshot)(nil)
 
-//deadcode:keep wired in Task 2.7
 func (s *mirrorSnapshot) CommitSHA() string { return s.commit }
 
 // Read returns content + blob sha of rel in the base tree; ErrPathNotFound
 // when absent — the input to per-file baseSha precondition checks.
-//
-//deadcode:keep wired in Task 2.7
 func (s *mirrorSnapshot) Read(rel string) ([]byte, string, error) {
 	return s.e.readBlobAt(s.ctx, s.p, s.commit, rel)
 }
 
 // Walk visits every blob under prefix ("" = whole tree) with its blob sha.
-//
-//deadcode:keep wired in Task 2.7
 func (s *mirrorSnapshot) Walk(prefix string, fn func(rel, blobSHA string) error) error {
 	entries, err := s.e.lsTree(s.ctx, s.p, s.commit)
 	if err != nil {
@@ -82,10 +77,8 @@ type tx struct {
 
 var _ Tx = (*tx)(nil)
 
-//deadcode:keep wired in Task 2.7
 func (t *tx) Base() Snapshot { return t.base }
 
-//deadcode:keep wired in Task 2.7
 func (t *tx) Write(rel string, content []byte) {
 	// Copy defensively — the commit happens after fn returns, and the caller
 	// may reuse its buffer.
@@ -94,7 +87,6 @@ func (t *tx) Write(rel string, content []byte) {
 	t.ops = append(t.ops, txOp{path: rel, content: c})
 }
 
-//deadcode:keep wired in Task 2.7
 func (t *tx) Delete(rel string) {
 	t.ops = append(t.ops, txOp{path: rel, delete: true})
 }

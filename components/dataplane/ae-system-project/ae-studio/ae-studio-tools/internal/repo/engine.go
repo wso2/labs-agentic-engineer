@@ -82,8 +82,6 @@ const (
 // writes the askpass shim. root is made absolute so git child processes are
 // immune to cwd changes. layout is RootFound when abs already existed as a
 // directory before layout creation, RootCreated when New created it.
-//
-//deadcode:keep wired in Task 2.7
 func New(root string, cred Credential) (*Engine, RootLayout, error) {
 	abs, err := absPath(root)
 	if err != nil {
@@ -113,19 +111,13 @@ func New(root string, cred Credential) (*Engine, RootLayout, error) {
 }
 
 // Root returns the absolute workspace root the engine operates under.
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) Root() string { return e.root }
 
 // SetDiskUsagePct records the reaper's last usage percentage: the higher of
 // the budget share and the node statfs used%.
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) SetDiskUsagePct(pct int) { e.diskUsagePct.Store(int32(pct)) }
 
 // DiskUsagePct returns the last recorded pressure percentage, or 0 when unknown.
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) DiskUsagePct() int {
 	v := e.diskUsagePct.Load()
 	if v < 0 {
@@ -137,14 +129,10 @@ func (e *Engine) DiskUsagePct() int {
 // SetOnENOSPC registers the emergency handler invoked when mapDiskErr detects
 // ENOSPC (reaper.New wires a non-blocking forced-sweep request). Call it
 // before the engine serves; pass nil to clear.
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) SetOnENOSPC(fn func()) { e.onENOSPC = fn }
 
 // mapDiskErr translates ENOSPC into DiskFullError after invoking onENOSPC.
 // Non-ENOSPC errors (and nil) pass through unchanged.
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) mapDiskErr(err error) error {
 	if err == nil || !isENOSPC(err) {
 		return err
@@ -155,7 +143,6 @@ func (e *Engine) mapDiskErr(err error) error {
 	return &DiskFullError{Root: e.root, UsedPct: e.DiskUsagePct()}
 }
 
-//deadcode:keep wired in Task 2.7
 func absPath(p string) (string, error) {
 	if p == "" {
 		return "", fmt.Errorf("empty path")
@@ -166,8 +153,6 @@ func absPath(p string) (string, error) {
 // trashDest derives a fresh unique trash/<id> destination: a sortable
 // nanosecond timestamp prefix plus random suffix (the reaper only needs
 // uniqueness and rough age ordering).
-//
-//deadcode:keep wired in Task 2.7
 func trashDest(root string) string {
 	var b [4]byte
 	_, _ = rand.Read(b[:])
@@ -218,8 +203,6 @@ type gitConfigRule struct{ key, value string }
 // git binary on the box what it RESOLVES for every rule here: on a git too old
 // to read this environment, that test fails rather than the platform quietly
 // losing the rule.
-//
-//deadcode:keep wired in Task 2.7
 func forcedConfigEnv() map[string]string {
 	env := map[string]string{"GIT_CONFIG_COUNT": strconv.Itoa(len(forcedConfig))}
 	for i, c := range forcedConfig {
@@ -234,8 +217,6 @@ func forcedConfigEnv() map[string]string {
 // config, no terminal prompts, C locale for machine-stable output, HOME
 // pointed into tmp/ so nothing ambient leaks in, plus the forcedConfig rules
 // the engine imposes on every mirror.
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) baseEnv() map[string]string {
 	env := map[string]string{
 		"PATH":                os.Getenv("PATH"),
@@ -260,8 +241,6 @@ type execOpts struct {
 // git runs one git command with the hermetic env (+overlay), returning raw
 // stdout. Errors wrap the exit error with the command line and trimmed
 // stderr — tokens never appear in either (askpass keeps them out of argv).
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) git(ctx context.Context, opts execOpts, args ...string) ([]byte, error) {
 	cmd := e.buildCmd(ctx, opts, args...)
 	var stdout, stderr bytes.Buffer
@@ -274,7 +253,6 @@ func (e *Engine) git(ctx context.Context, opts execOpts, args ...string) ([]byte
 	return stdout.Bytes(), nil
 }
 
-//deadcode:keep wired in Task 2.7
 func (e *Engine) buildCmd(ctx context.Context, opts execOpts, args ...string) *exec.Cmd {
 	env := e.baseEnv()
 	for k, v := range opts.env {
@@ -295,7 +273,6 @@ func (e *Engine) buildCmd(ctx context.Context, opts execOpts, args ...string) *e
 	return cmd
 }
 
-//deadcode:keep wired in Task 2.7
 func sortedEnvKeys(m map[string]string) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -308,8 +285,6 @@ func sortedEnvKeys(m map[string]string) []string {
 // remoteGit runs one remote-touching git op (clone/fetch/push) with a token
 // minted immediately before it (design D7). A mid-op auth failure re-mints
 // once and retries the op.
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) remoteGit(ctx context.Context, ref RepoRef, opts execOpts, args ...string) ([]byte, error) {
 	run := func() ([]byte, error) {
 		credEnv, err := e.credEnv(ctx, ref)
@@ -337,11 +312,9 @@ func (e *Engine) remoteGit(ctx context.Context, ref RepoRef, opts execOpts, args
 // ensureMirror guarantees the bare clone exists, cloning it atomically on
 // demand: `git clone --bare` into tmp/ staging, an explicit refspec fetch,
 // gc.auto=0 + repack.writeBitmaps=false stamped, then os.Rename into the
-// canonical path — a crash mid-clone leaves only tmp/ debris, never a half-populated mirror.
-// Returns whether this call cloned (a fresh clone is fresh — callers skip the
-// next fetch).
-//
-//deadcode:keep wired in Task 2.7
+// canonical path — a crash mid-clone leaves only tmp/ debris, never a
+// half-populated mirror. Returns whether this call cloned (a fresh clone is
+// fresh — callers skip the next fetch).
 func (e *Engine) ensureMirror(ctx context.Context, ref RepoRef, p repoPaths) (cloned bool, err error) {
 	if mirrorExists(p.gitDir) {
 		return false, nil
@@ -403,7 +376,6 @@ func (e *Engine) ensureMirror(ctx context.Context, ref RepoRef, p repoPaths) (cl
 	return true, nil
 }
 
-//deadcode:keep wired in Task 2.7
 func mirrorExists(gitDir string) bool {
 	_, err := os.Stat(filepath.Join(gitDir, "HEAD"))
 	return err == nil
@@ -411,8 +383,6 @@ func mirrorExists(gitDir string) bool {
 
 // fetch refreshes all branches and tags from origin.
 // Caller MUST hold the exclusive flock.
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) fetch(ctx context.Context, ref RepoRef, p repoPaths) error {
 	_, err := e.remoteGit(ctx, ref, execOpts{},
 		"--git-dir", p.gitDir, "fetch", "--prune", "origin",
@@ -427,8 +397,6 @@ func (e *Engine) fetch(ctx context.Context, ref RepoRef, p repoPaths) error {
 // by branch/tag name fetch first; reads addressed by raw 40-hex shas use
 // local objects, fetching only when an object is missing. cloned skips the
 // fetch a fresh clone already implies.
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) freshenFor(ctx context.Context, ref RepoRef, p repoPaths, cloned bool, ats ...string) error {
 	if cloned {
 		return nil
@@ -465,8 +433,6 @@ func (e *Engine) freshenFor(ctx context.Context, ref RepoRef, p repoPaths, clone
 
 // objectExists reports whether sha resolves to a commit in the local object
 // DB (a pure object read — shared flock).
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) objectExists(ctx context.Context, ref RepoRef, p repoPaths, sha string) (bool, error) {
 	release, err := e.locks.RLock(ctx, p.lockPath)
 	if err != nil {
@@ -480,8 +446,6 @@ func (e *Engine) objectExists(ctx context.Context, ref RepoRef, p repoPaths, sha
 // ----- ref resolution -----
 
 // defaultBranch applies the "main" fallback.
-//
-//deadcode:keep wired in Task 2.7
 func defaultBranch(ref RepoRef) string {
 	if ref.DefaultBranch == "" {
 		return "main"
@@ -493,8 +457,6 @@ func defaultBranch(ref RepoRef) string {
 // default branch, "tags/X"/"heads/X" → fully qualified, raw shas and bare
 // names pass through (git's refname resolution order handles bare tag /
 // branch names).
-//
-//deadcode:keep wired in Task 2.7
 func atExpr(ref RepoRef, at string) string {
 	switch {
 	case at == "":
@@ -515,8 +477,6 @@ func atExpr(ref RepoRef, at string) string {
 // errors so callers that treat "ref not found" as a valid state (an empty
 // repo, a 404) never mistake an infrastructure failure for one. Caller must
 // hold a flock (shared is enough — this is a pure ref/object read).
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) resolveCommit(ctx context.Context, ref RepoRef, p repoPaths, at string) (string, error) {
 	expr := atExpr(ref, at)
 	out, err := e.git(ctx, execOpts{}, "--git-dir", p.gitDir,
@@ -542,8 +502,6 @@ const maintainLockTimeout = 2 * time.Second
 // flock: repack -ad --quiet, prune --expire=2.hours.ago, pack-refs --all --prune.
 // Never git gc. Never git maintenance --task=loose-objects.
 // Lock acquisition is bounded by maintainLockTimeout; git work uses ctx.
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) MaintainMirror(ctx context.Context, ref RepoRef) error {
 	p, err := e.pathsFor(ref)
 	if err != nil {
@@ -572,8 +530,6 @@ func (e *Engine) MaintainMirror(ctx context.Context, ref RepoRef) error {
 }
 
 // CountObjects returns loose-object and pack counts for a mirror (count-objects -v).
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) CountObjects(ctx context.Context, ref RepoRef) (loose, packs int, err error) {
 	p, err := e.pathsFor(ref)
 	if err != nil {
@@ -601,8 +557,6 @@ func (e *Engine) CountObjects(ctx context.Context, ref RepoRef) (loose, packs in
 // missing subtree is a no-op. Mid-flight readers keep working through open
 // fds (POSIX inode semantics); the next engine op on the ref self-heals by
 // re-cloning.
-//
-//deadcode:keep wired in Task 2.7
 func (e *Engine) TrashRepo(ctx context.Context, ref RepoRef) error {
 	p, err := e.pathsFor(ref)
 	if err != nil {

@@ -36,7 +36,6 @@ const (
 	maintainWorkTimeout = 5 * time.Minute
 )
 
-//deadcode:keep wired in Task 2.7
 func shouldMaintain(loose, packs int) bool {
 	return loose > maintainLooseGate || packs > maintainPackGate
 }
@@ -45,8 +44,6 @@ func shouldMaintain(loose, packs int) bool {
 // Never git gc (gc.pid hostname trap), never `git maintenance
 // --task=loose-objects` (transient growth). A mirror whose lock is busy is
 // skipped until the next sweep. Returns the number of mirrors maintained.
-//
-//deadcode:keep wired in Task 2.7
 func (r *Reaper) maintainRepos(ctx context.Context) (int, error) {
 	done := 0
 	err := r.walkRepoDirs(ctx, func(ref repo.RepoRef, repoDir string) {

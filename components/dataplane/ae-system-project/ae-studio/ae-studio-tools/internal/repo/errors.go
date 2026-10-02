@@ -33,12 +33,10 @@ type DiskFullError struct {
 	UsedPct int
 }
 
-//deadcode:keep wired in Task 2.7
 func (e *DiskFullError) Error() string {
 	return fmt.Sprintf("repo: ENOSPC on workspace %s (usage ~%d%%) — reaper emergency sweep triggered", e.Root, e.UsedPct)
 }
 
-//deadcode:keep wired in Task 2.7
 func (e *DiskFullError) Unwrap() error { return ErrDiskFull }
 
 // enospcMsg is the strerror text git and libc emit for ENOSPC. git()/gitStream
@@ -50,8 +48,6 @@ const enospcMsg = "no space left on device"
 // errors.Is(..., syscall.ENOSPC) (os.PathError / extract / rename) or a
 // git-wrapped ExitError whose stderr / Error() string carries the ENOSPC
 // message (errno is not preserved through fmt.Errorf("%w: %s", exitErr, stderr)).
-//
-//deadcode:keep wired in Task 2.7
 func isENOSPC(err error) bool {
 	if err == nil {
 		return false

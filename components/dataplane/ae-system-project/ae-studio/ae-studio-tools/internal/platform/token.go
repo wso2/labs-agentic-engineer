@@ -70,8 +70,6 @@ type tokenResponse struct {
 
 // Token returns a cached token that is good for more than 60 s, or mints a
 // new one. Concurrent callers share one mint.
-//
-//deadcode:keep wired in Task 2.7
 func (c *ClientCredentials) Token(ctx context.Context) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -91,15 +89,12 @@ func (c *ClientCredentials) Token(ctx context.Context) (string, error) {
 }
 
 // Invalidate drops the cached token, so the next Token call mints.
-//
-//deadcode:keep wired in Task 2.7
 func (c *ClientCredentials) Invalidate() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.token, c.expiry = "", time.Time{}
 }
 
-//deadcode:keep wired in Task 2.7
 func (c *ClientCredentials) mint(ctx context.Context) (tokenResponse, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.TokenURL, strings.NewReader("grant_type=client_credentials"))
 	if err != nil {
@@ -135,7 +130,6 @@ func (c *ClientCredentials) mint(ctx context.Context) (tokenResponse, error) {
 	return tr, nil
 }
 
-//deadcode:keep wired in Task 2.7
 func (c *ClientCredentials) clock() time.Time {
 	if c.now != nil {
 		return c.now()
