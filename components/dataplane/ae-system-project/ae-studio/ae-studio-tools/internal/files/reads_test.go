@@ -67,6 +67,8 @@ func TestReader_ListFiltersByPrefix(t *testing.T) {
 		"specs/requirements/prd.md":    "req",
 		"specs/design/domain-model.md": "des",
 		"README.md":                    "root",
+		"src/x.go":                     "package x",
+		"tests/acceptance/report.json": "{}",
 	})
 	metas, err := r.reader.List(ctx, "greeter", "specs/design/")
 	if err != nil {
@@ -79,8 +81,14 @@ func TestReader_ListFiltersByPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(all) != 3 || all[0].Path != "README.md" || all[2].Path != "specs/requirements/prd.md" {
-		t.Fatalf("list sorted by path = %+v", all)
+	// The read rules filter the listing: README.md and src/x.go are absent.
+	if len(all) != 3 || all[0].Path != "specs/design/domain-model.md" ||
+		all[1].Path != "specs/requirements/prd.md" || all[2].Path != "tests/acceptance/report.json" {
+		t.Fatalf("list = %+v, want the three readable paths sorted", all)
+	}
+	src, err := r.reader.List(ctx, "greeter", "src/")
+	if err != nil || len(src) != 0 {
+		t.Fatalf("list src/ = %+v, %v; want nothing", src, err)
 	}
 }
 
@@ -90,8 +98,8 @@ func TestReader_ReadAtGatesPathsAndRefs(t *testing.T) {
 		"tests/acceptance/report.json": "{}",
 		"src/main.go":                  "package main",
 	})
-	first := r.origin.Commit(t, map[string]string{})
-	r.origin.Commit(t, map[string]string{"specs/requirements/prd.md": "v2"})
+	first := r.origin.Commit(t, map[string]string{}, "commit")
+	r.origin.Commit(t, map[string]string{"specs/requirements/prd.md": "v2"}, "commit")
 
 	got, err := r.reader.ReadAt(ctx, "greeter", "specs/requirements/prd.md", "")
 	if err != nil || got.Content != "v2" || got.Path != "specs/requirements/prd.md" || got.SHA == "" {
@@ -152,7 +160,7 @@ func TestReader_BundleIsOneCommitWithinTheGate(t *testing.T) {
 	}
 
 	before := b.CommitSHA
-	r.origin.Commit(t, map[string]string{"specs/design/domain-model.md": "des v2"})
+	r.origin.Commit(t, map[string]string{"specs/design/domain-model.md": "des v2"}, "commit")
 	pinned, err := r.reader.Bundle(ctx, "greeter", "specs/design/", before)
 	if err != nil || pinned.CommitSHA != before || pinned.Files[0].Content != "des" {
 		t.Fatalf("pinned bundle = %+v, %v", pinned, err)

@@ -82,3 +82,21 @@ func TestReadPaths_BlobSHA(t *testing.T) {
 		t.Fatalf("blobSHA(empty) = %s", got)
 	}
 }
+
+// withoutUserinfo strips user:password@ and keeps everything else.
+func TestWithoutUserinfo(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"https://x-access-token:not-a-real-token@github.com/acme/greeter.git", "https://github.com/acme/greeter.git"},
+		{"https://user@github.com/acme/greeter", "https://github.com/acme/greeter"},
+		{"https://github.com/acme/greeter.git", "https://github.com/acme/greeter.git"},
+		{"file:///tmp/origin.git", "file:///tmp/origin.git"},
+	} {
+		got, err := withoutUserinfo(c.in)
+		if err != nil || got != c.want {
+			t.Errorf("withoutUserinfo(%q) = %q, %v; want %q", c.in, got, err, c.want)
+		}
+	}
+	if _, err := withoutUserinfo("https://github.com/a b\x7f/%zz"); err == nil {
+		t.Error("an unparsable URL was accepted")
+	}
+}

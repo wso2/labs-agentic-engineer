@@ -147,7 +147,7 @@ func TestMutateCASRetryLandsAfterOriginAdvance(t *testing.T) {
 		if calls == 1 {
 			// Advance origin behind the engine's back, between its fetch
 			// and its push — the push lease goes stale.
-			fx.Origin.Seed(t, map[string]string{"concurrent.md": "someone else\n"}, "concurrent write")
+			fx.Origin.Commit(t, map[string]string{"concurrent.md": "someone else\n"}, "concurrent write")
 		}
 		tx.Write("specs/mine.md", []byte("mine\n"))
 		return nil
@@ -178,7 +178,7 @@ func TestMutateRetryExhaustionSurfacesNonFastForward(t *testing.T) {
 	_, err := fx.Engine.Mutate(context.Background(), fx.Ref, func(tx repo.Tx) error {
 		calls++
 		// Every attempt loses the race.
-		fx.Origin.Seed(t, map[string]string{"racer.md": time.Now().String()}, "racer")
+		fx.Origin.Commit(t, map[string]string{"racer.md": time.Now().String()}, "racer")
 		tx.Write("specs/mine.md", []byte("mine\n"))
 		return nil
 	}, repo.CommitOpts{Message: "exhaust", Retry: repo.RetryPolicy{Attempts: 2, Backoff: []time.Duration{time.Millisecond}}})

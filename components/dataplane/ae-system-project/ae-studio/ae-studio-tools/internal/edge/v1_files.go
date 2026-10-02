@@ -21,6 +21,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"os/exec"
 
 	"github.com/wso2/aep/ae-studio-tools/internal/files"
 	v1gen "github.com/wso2/aep/ae-studio-tools/internal/gen/v1"
@@ -105,10 +106,31 @@ func filesProblem(ctx context.Context, op, project string, err error) problemRes
 		return problemResponse{status: http.StatusServiceUnavailable, code: "disk_full", detail: "the studio's disk is full"}
 	default:
 		// A git failure: the clone or fetch from GitHub, or the local mirror.
-		// Engine errors name the git command and its stderr, never a token
-		// (askpass keeps it out of argv).
-		slog.WarnContext(ctx, "files.git_failed", "op", op, "project", project, "error", err)
+		// The engine's text names the git command and the clone URL, so the
+		// line carries the repository and a class only.
+		var re *files.RepoError
+		repoName := ""
+		if errors.As(err, &re) {
+			repoName = re.Repo
+		}
+		slog.WarnContext(ctx, "files.git_failed", "op", op, "project", project, "repo", repoName, "class", gitErrorClass(err))
 		return problemResponse{status: http.StatusBadGateway, code: "github_error", detail: "the repository could not be read"}
+	}
+}
+
+// gitErrorClass names a git failure without its text: the request ended,
+// git exited non-zero, or anything else.
+func gitErrorClass(err error) string {
+	var exitErr *exec.ExitError
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.As(err, &exitErr):
+		return "git_exit"
+	default:
+		return "other"
 	}
 }
 

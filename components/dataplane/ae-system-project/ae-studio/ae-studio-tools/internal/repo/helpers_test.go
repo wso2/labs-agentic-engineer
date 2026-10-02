@@ -26,6 +26,7 @@ import (
 	"testing"
 
 	"github.com/wso2/aep/ae-studio-tools/internal/repo"
+	"github.com/wso2/aep/ae-studio-tools/internal/repo/repotest"
 )
 
 // seedFiles is the default origin content used across tests.
@@ -98,7 +99,7 @@ func subcommand(args []string) string {
 }
 
 // gitOut runs git against a bare repo dir directly (origin or mirror
-// assertions that gittest.Remote does not cover).
+// assertions that repotest.Origin does not cover).
 func gitOut(t *testing.T, gitDir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"--git-dir", gitDir}, args...)...)
@@ -147,7 +148,7 @@ const (
 // Fixture bundles one real bare origin, one engine over a fresh root, and the
 // RepoRef addressing the origin through the engine.
 type Fixture struct {
-	Origin *Remote
+	Origin *repotest.Origin
 	Engine *repo.Engine
 	Ref    repo.RepoRef
 }
@@ -161,7 +162,7 @@ func NewFixture(t *testing.T, seed map[string]string) *Fixture {
 // NewFixtureWithCred is NewFixture with the engine holding cred.
 func NewFixtureWithCred(t *testing.T, seed map[string]string, cred repo.Credential) *Fixture {
 	t.Helper()
-	origin := NewRemote(t, WithSeed(seed, "seed"))
+	origin := repotest.NewOrigin(t, seed)
 	return &Fixture{
 		Origin: origin,
 		Engine: NewEngine(t, cred),
@@ -180,6 +181,6 @@ func NewEngine(t *testing.T, cred repo.Credential) *repo.Engine {
 }
 
 // RefFor addresses origin under the given path-key segments.
-func RefFor(origin *Remote, org, project, slug string) repo.RepoRef {
+func RefFor(origin *repotest.Origin, org, project, slug string) repo.RepoRef {
 	return repo.RepoRef{Org: org, Project: project, RepoSlug: slug, CloneURL: origin.URL(), DefaultBranch: "main"}
 }

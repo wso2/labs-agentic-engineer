@@ -31,7 +31,7 @@ import (
 // refs/pull/*, and see its own pushed commit on the next fetch.
 func TestBareCloneThenMutatePushes(t *testing.T) {
 	fx := NewFixtureWithCred(t, seedFiles(), repo.StaticToken(testToken))
-	fx.Origin.mustExec(t, nil, nil, "update-ref", "refs/pull/1/head", fx.Origin.HeadSHA(t))
+	fx.Origin.Git(t, "update-ref", "refs/pull/1/head", fx.Origin.HeadSHA(t))
 	ctx := context.Background()
 
 	var logs bytes.Buffer
@@ -62,7 +62,7 @@ func TestBareCloneThenMutatePushes(t *testing.T) {
 	}
 
 	// Origin moves out-of-band; Head("") fetches and must see the new tip.
-	next := fx.Origin.Seed(t, map[string]string{"specs/b.md": "b"}, "out of band")
+	next := fx.Origin.Commit(t, map[string]string{"specs/b.md": "b"}, "out of band")
 	sha, err := fx.Engine.Head(ctx, fx.Ref, "")
 	if err != nil {
 		t.Fatalf("Head: %v", err)

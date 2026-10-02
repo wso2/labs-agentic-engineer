@@ -27,6 +27,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -47,8 +48,8 @@ var (
 
 // Reader serves the read-only Files operations for the pod's org. Errors are
 // the sentinels above, projects.ErrUnknown / ErrUnavailable from the lookup,
-// repo.ErrRefNotFound for a ref that names no commit, repo.ErrDiskFull, or
-// a git failure.
+// or a *RepoError from the engine (which wraps repo.ErrRefNotFound for a ref
+// that names no commit, repo.ErrDiskFull, or a git failure).
 type Reader struct {
 	Engine   *repo.Engine
 	Projects projects.Resolver
@@ -73,8 +74,10 @@ type Bundle struct {
 	Files     []Content
 }
 
-// List returns every blob at the branch tip whose path has the given prefix
-// (empty prefix ⇒ all), sorted by path.
+// List returns every readable blob at the branch tip whose path has the given
+// prefix (empty prefix ⇒ all), sorted by path. Like Bundle it filters through
+// the read rules: a path ReadAt would refuse is omitted, so a listing names
+// nothing a caller could not read.
 func (r Reader) List(ctx context.Context, project, prefix string) ([]Meta, error) {
 	ref, err := r.repoRef(ctx, project)
 	if err != nil {
@@ -82,11 +85,11 @@ func (r Reader) List(ctx context.Context, project, prefix string) ([]Meta, error
 	}
 	entries, _, err := r.Engine.List(ctx, ref, "")
 	if err != nil {
-		return nil, fmt.Errorf("list files at head: %w", err)
+		return nil, repoError(ref, fmt.Errorf("list files at head: %w", err))
 	}
 	out := make([]Meta, 0, len(entries))
 	for _, e := range entries {
-		if prefix != "" && !strings.HasPrefix(e.Path, prefix) {
+		if !strings.HasPrefix(e.Path, prefix) || validateReadPath(e.Path) != nil {
 			continue
 		}
 		out = append(out, Meta{Path: e.Path, SHA: e.SHA, Size: e.Size})
@@ -115,7 +118,7 @@ func (r Reader) ReadAt(ctx context.Context, project, path, ref string) (*Content
 		if errors.Is(err, repo.ErrPathNotFound) {
 			return nil, ErrFileNotFound
 		}
-		return nil, fmt.Errorf("read %s at %s: %w", path, commitLabel(ref), err)
+		return nil, repoError(repoRef, fmt.Errorf("read %s at %s: %w", path, commitLabel(ref), err))
 	}
 	return &Content{Path: path, Content: string(content), SHA: blobSHA}, nil
 }
@@ -145,18 +148,18 @@ func (r Reader) Bundle(ctx context.Context, project, prefix, ref string) (*Bundl
 	// the only one that touches the network.
 	commit, err := r.Engine.Head(ctx, repoRef, ref)
 	if err != nil {
-		return nil, fmt.Errorf("resolve %s: %w", commitLabel(ref), err)
+		return nil, repoError(repoRef, fmt.Errorf("resolve %s: %w", commitLabel(ref), err))
 	}
 	keep := func(path string) bool {
 		return strings.HasPrefix(path, prefix) && validateReadPath(path) == nil
 	}
 	entries, _, err := r.Engine.List(ctx, repoRef, commit)
 	if err != nil {
-		return nil, fmt.Errorf("list files at %s: %w", commit, err)
+		return nil, repoError(repoRef, fmt.Errorf("list files at %s: %w", commit, err))
 	}
 	contents, _, err := r.Engine.ReadBundle(ctx, repoRef, commit, keep)
 	if err != nil {
-		return nil, fmt.Errorf("read bundle at %s: %w", commit, err)
+		return nil, repoError(repoRef, fmt.Errorf("read bundle at %s: %w", commit, err))
 	}
 	shaOf := make(map[string]string, len(entries))
 	for _, e := range entries {
@@ -169,12 +172,30 @@ func (r Reader) Bundle(ctx context.Context, project, prefix, ref string) (*Bundl
 			// Both reads addressed the same commit, so content without a tree
 			// entry means the mirror moved mid-bundle. Fail rather than hand
 			// back an empty sha, which the apply gate reads as "must not exist".
-			return nil, fmt.Errorf("bundle at %s: %s has content but no tree entry", commit, path)
+			return nil, repoError(repoRef, fmt.Errorf("bundle at %s: %s has content but no tree entry", commit, path))
 		}
 		out = append(out, Content{Path: path, Content: content, SHA: sha})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return &Bundle{CommitSHA: commit, Files: out}, nil
+}
+
+// RepoError is an engine failure on one repository. Repo is its owner/repo
+// (never userinfo), safe for a log line; Err carries the git command and its
+// stderr, which may name the clone URL, so callers log Repo and a class, not
+// Err's text.
+type RepoError struct {
+	Repo string
+	Err  error
+}
+
+func (e *RepoError) Error() string { return e.Err.Error() }
+
+func (e *RepoError) Unwrap() error { return e.Err }
+
+// repoError wraps an engine error with the repository it concerns.
+func repoError(ref repo.RepoRef, err error) error {
+	return &RepoError{Repo: ref.FullName(), Err: err}
 }
 
 // repoRef resolves project through aep-api (every call, never cached) and
@@ -189,13 +210,29 @@ func (r Reader) repoRef(ctx context.Context, project string) (repo.RepoRef, erro
 	if slug == "" {
 		return repo.RepoRef{}, fmt.Errorf("%w: repository answer is not an owner/repo pair", projects.ErrUnavailable)
 	}
+	cloneURL, err := withoutUserinfo(rep.CloneURL)
+	if err != nil {
+		return repo.RepoRef{}, fmt.Errorf("%w: repository answer has an unusable clone URL", projects.ErrUnavailable)
+	}
 	return repo.RepoRef{
 		Org:           r.Org,
 		Project:       project,
 		RepoSlug:      slug,
-		CloneURL:      rep.CloneURL,
+		CloneURL:      cloneURL,
 		DefaultBranch: rep.DefaultBranch,
 	}, nil
+}
+
+// withoutUserinfo drops any user:password@ from a clone URL: the engine
+// authenticates through askpass only, and a URL is echoed in git's errors and
+// argv, where a credential must never be.
+func withoutUserinfo(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	u.User = nil
+	return u.String(), nil
 }
 
 // commitLabel names the pin for an error message.

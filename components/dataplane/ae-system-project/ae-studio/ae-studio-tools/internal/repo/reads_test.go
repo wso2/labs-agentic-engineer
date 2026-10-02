@@ -35,7 +35,7 @@ func TestHeadAtBranchTagAndRawSha(t *testing.T) {
 	}
 
 	// Branch addressing stays fresh: advance origin behind the mirror's back.
-	sha2 := fx.Origin.Seed(t, map[string]string{"README.md": "hello v2\n"}, "second")
+	sha2 := fx.Origin.Commit(t, map[string]string{"README.md": "hello v2\n"}, "second")
 	if got := mustHead(t, fx, ""); got != sha2 {
 		t.Fatalf("Head(\"\") after origin advance = %s, want %s", got, sha2)
 	}
@@ -172,7 +172,7 @@ func TestReadsAtTagAndShaSeeOldTree(t *testing.T) {
 	ctx := context.Background()
 	sha1 := fx.Origin.HeadSHA(t)
 	fx.Origin.Tag(t, "v1", "release v1")
-	fx.Origin.Seed(t, map[string]string{"specs/requirements/prd.md": "req v2\n"}, "update")
+	fx.Origin.Commit(t, map[string]string{"specs/requirements/prd.md": "req v2\n"}, "update")
 
 	for _, at := range []string{"v1", sha1} {
 		content, _, err := fx.Engine.ReadFile(ctx, fx.Ref, at, "specs/requirements/prd.md")
@@ -203,7 +203,7 @@ func TestRawShaReadsUseLocalObjects(t *testing.T) {
 	}
 
 	// A sha the mirror has never seen → exactly one fetch, then it resolves.
-	sha2 := fx.Origin.Seed(t, map[string]string{"README.md": "v2\n"}, "second")
+	sha2 := fx.Origin.Commit(t, map[string]string{"README.md": "v2\n"}, "second")
 	rec.reset()
 	if _, _, err := fx.Engine.ReadFile(ctx, fx.Ref, sha2, "README.md"); err != nil {
 		t.Fatalf("ReadFile at unseen sha: %v", err)

@@ -25,8 +25,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -124,10 +126,13 @@ func TestV1Files_PathRulesAndOrg(t *testing.T) {
 			t.Errorf("%s %s body = %s, want code %s", c.method, c.path, rec.Body.String(), c.code)
 		}
 	}
-	// The refusals before the lookup cost no aep-api call: only reads that
-	// passed the gate, the path rules and the validator resolved the project.
-	if n := h.projects.CallCount(); n == 0 {
-		t.Fatal("no request resolved its project")
+	// Only requests past the gate, the validator and the path rules resolve
+	// the project: list, the nested and unicode reads, report.json,
+	// workload.yaml, missing.md, the unknown ref and the two "nope" rows. A
+	// 401/403, a refused path or ref, an unclean path and a route miss cost no
+	// aep-api call.
+	if n := h.projects.CallCount(); n != 9 {
+		t.Fatalf("resolver calls = %d, want 9", n)
 	}
 }
 
@@ -144,7 +149,7 @@ func TestV1Files_Bundle(t *testing.T) {
 	if r.Code != 200 || json.Unmarshal(r.Body.Bytes(), &first) != nil || len(first.Files) != 1 || first.Files[0].Path != "specs/requirements/prd.md" {
 		t.Fatalf("bundle = %d %s", r.Code, r.Body.String())
 	}
-	origin.Commit(t, map[string]string{"specs/requirements/prd.md": "v2"})
+	origin.Commit(t, map[string]string{"specs/requirements/prd.md": "v2"}, "commit")
 	r = h.do("GET", "/v1/projects/greeter/files/bundle?prefix=specs/&ref="+first.CommitSha, u, "", nil)
 	if r.Code != 200 || !strings.Contains(r.Body.String(), `"content":"v1"`) {
 		t.Fatalf("pinned bundle = %d %s", r.Code, r.Body.String())
@@ -197,7 +202,7 @@ func TestV1Files_ErrorMapping(t *testing.T) {
 		{"aep-api 401", fmt.Errorf("%w: %w: aep-api answered 401", projects.ErrUnavailable, projects.ErrMisconfigured), 503, "aep_api_unavailable", "", "aep_api.auth_rejected"},
 		{"token endpoint", fmt.Errorf("%w: %w: %w", projects.ErrUnavailable, projects.ErrMisconfigured, fmt.Errorf("%w: %w", platform.ErrClientRejected, urlErr)), 503, "aep_api_unavailable", "", "aep_api.auth_rejected"},
 		{"disk", fmt.Errorf("read: %w", &repo.DiskFullError{Root: "/studio-data", UsedPct: 99}), 503, "disk_full", "", "files.disk_full"},
-		{"git", errors.New("repo: fetch acme-greeter: exit status 128"), 502, "github_error", "", "files.git_failed"},
+		{"git", &files.RepoError{Repo: "acme/greeter", Err: fmt.Errorf("git fetch http://aep-api.internal/secret-path: %w", &exec.ExitError{})}, 502, "github_error", "", "files.git_failed"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -219,6 +224,11 @@ func TestV1Files_ErrorMapping(t *testing.T) {
 		})
 	}
 	logs := captureLogs(t)
+	_ = filesProblem(context.Background(), "read", "greeter", &files.RepoError{Repo: "acme/greeter", Err: &exec.ExitError{}})
+	if !strings.Contains(logs.String(), `"repo":"acme/greeter"`) || !strings.Contains(logs.String(), `"class":"git_exit"`) {
+		t.Fatalf("git_failed line = %s", logs.String())
+	}
+	logs = captureLogs(t)
 	_ = filesProblem(context.Background(), "list", "greeter", fmt.Errorf("%w: %w: %w", projects.ErrUnavailable, projects.ErrMisconfigured, platform.ErrClientRejected))
 	if !strings.Contains(logs.String(), `"cause":"token_endpoint"`) || !strings.Contains(logs.String(), `"level":"ERROR"`) {
 		t.Fatalf("auth_rejected line = %s", logs.String())
@@ -238,5 +248,48 @@ func assertJSONEq(t *testing.T, got, want string) {
 	wb, _ := json.Marshal(w)
 	if !bytes.Equal(gb, wb) {
 		t.Fatalf("JSON = %s, want %s", gb, wb)
+	}
+}
+
+// TestNestedReadFile pins which requests the /v1 route finder treats as a
+// nested read-file address, and the probe and path it derives.
+func TestNestedReadFile(t *testing.T) {
+	req := func(method, rawURL string) *http.Request {
+		return httptest.NewRequest(method, rawURL, nil)
+	}
+	for _, c := range []struct {
+		name      string
+		r         *http.Request
+		ok        bool
+		path      string
+		probePath string
+	}{
+		{"nested", req("GET", "/v1/projects/greeter/files/specs/a.md?ref=abc1234"), true, "specs/a.md", "/v1/projects/greeter/files/_"},
+		{"escaped segments decode", req("GET", "/v1/projects/greeter/files/specs/%E4%BB%95%20x.md"), true, "specs/仕 x.md", "/v1/projects/greeter/files/_"},
+		{"dot-dot escape decodes for the path rules", req("GET", "/v1/projects/greeter/files/specs/%2e%2e/x"), true, "specs/../x", "/v1/projects/greeter/files/_"},
+		{"trailing slash is nested", req("GET", "/v1/projects/greeter/files/specs/"), true, "specs/", "/v1/projects/greeter/files/_"},
+		// EscapedPath re-escapes a Path whose RawPath is not valid, so a stray
+		// '%' arrives as %25 and decodes back to itself.
+		{"literal percent", &http.Request{Method: "GET", URL: &url.URL{Path: "/v1/projects/greeter/files/specs/%zz"}}, true, "specs/%zz", "/v1/projects/greeter/files/_"},
+		{"one segment is the generated route", req("GET", "/v1/projects/greeter/files/workload.yaml"), false, "", ""},
+		{"non-GET", req("POST", "/v1/projects/greeter/files/specs/a.md"), false, "", ""},
+		{"HEAD", req("HEAD", "/v1/projects/greeter/files/specs/a.md"), false, "", ""},
+		{"missing files segment", req("GET", "/v1/projects/greeter/blobs/specs/a.md"), false, "", ""},
+		{"empty project", req("GET", "/v1/projects//files/specs/a.md"), false, "", ""},
+		{"no project", req("GET", "/v1/projects/"), false, "", ""},
+		{"other group", req("GET", "/internal/v1/projects/greeter/files/specs/a.md"), false, "", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			probe, path, ok := nestedReadFile(c.r)
+			if ok != c.ok || path != c.path {
+				t.Fatalf("nestedReadFile = (%q, %v), want (%q, %v)", path, ok, c.path, c.ok)
+			}
+			if !ok {
+				return
+			}
+			if probe.URL.Path != c.probePath || probe.URL.RawQuery != c.r.URL.RawQuery || probe.Method != http.MethodGet {
+				t.Fatalf("probe = %s %s?%s", probe.Method, probe.URL.Path, probe.URL.RawQuery)
+			}
+		})
 	}
 }

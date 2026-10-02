@@ -46,6 +46,11 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/webhook"
 )
 
+// reaperStopTimeout bounds the wait for the reaper after its context is
+// canceled (its git children are killed with it), separate from the listener
+// drain's budget.
+const reaperStopTimeout = 2 * time.Second
+
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	if err := run(); err != nil {
@@ -158,7 +163,7 @@ func run() error {
 	stopReaper()
 	select {
 	case <-reaperDone:
-	case <-shutdownCtx.Done():
+	case <-time.After(reaperStopTimeout):
 		slog.Error("reaper_stop_timeout")
 	}
 	if runErr != nil {
