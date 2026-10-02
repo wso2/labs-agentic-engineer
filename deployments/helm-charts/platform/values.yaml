@@ -52,26 +52,6 @@ aepAgents:
       memory: "512Mi"
 
 
-# Yjs/Hocuspocus collaboration server for the spec workspace. aep-agents joins
-# rooms as a live peer (AGENT_COLLAB_WS_URL) and the console proxies /collab to
-# it; it calls aep-api for room auth + spec seeding. Without it, agents spec
-# generation returns 503 ("collab is not configured on this deployment").
-collab:
-  # mandatory: in-memory rooms Map; 2nd replica silently overwrites commits (doc-wins)
-  replicas: 1
-  image:
-    repository: ghcr.io/wso2/aep/ae-collab
-    tag: latest
-    pullPolicy: IfNotPresent
-  port: 3400
-  resources:
-    requests:
-      cpu: "50m"
-      memory: "128Mi"
-    limits:
-      cpu: "500m"
-      memory: "512Mi"
-
 # Streamable-HTTP MCP server wrapping aep-api's issue-create + coding-agent
 # dispatch endpoints. The OpenChoreo SRE/RCA agent calls it (AE_API_URL) during
 # the alert->RCA->AEP handoff so it can file issues + dispatch without holding

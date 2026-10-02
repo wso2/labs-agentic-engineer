@@ -90,7 +90,6 @@ var _ gen.StrictServerInterface = (*apiServer)(nil)
 //	→ tenant gate                          deny-by-default, tenant_gate.go
 //	→ strict wrapper                       generated; envelope error writers
 //	→ generated std ServeMux router        one pattern per contract operation
-//	→ read-file catch-all                  nested {path} segments (see below)
 //	→ request validator                    kin-openapi against the contract
 //
 // The caller mounts the result under the outer jwt → orgensure → gate-mode
@@ -121,14 +120,6 @@ func newAPIV1Handler(deps Deps) http.Handler {
 		BaseRouter:       mux,
 		ErrorHandlerFunc: writeRequestError,
 	})
-
-	// read-file's {path} is a trailing wildcard (documented in the contract):
-	// the generated single-segment pattern can't match nested spec paths, so
-	// the same wrapped handler is also registered under the ServeMux catch-all.
-	// Single-segment requests keep hitting the generated pattern (more
-	// specific); multi-segment ones land here. PathValue("path") serves both.
-	siw := &gen.ServerInterfaceWrapper{Handler: strict, ErrorHandlerFunc: writeRequestError}
-	mux.HandleFunc("GET "+httpkit.APIV1+"/projects/{projectName}/files/{path...}", siw.ReadFile)
 
 	return capRequestBody(requestValidator(publicRouter(), mux))
 }

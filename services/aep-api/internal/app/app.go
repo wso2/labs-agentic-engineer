@@ -1102,7 +1102,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		Skills:      skillSvc,
 		SkillMut:    skillMutationSvc,
 		SkillImport: skillImportSvc,
-		CollabRepo:  repoService,
 		Design:      designService,
 	})
 	if err != nil {

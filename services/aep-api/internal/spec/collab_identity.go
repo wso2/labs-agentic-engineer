@@ -23,22 +23,14 @@ import (
 )
 
 // collabUserClaims projects the display fields off a verified user JWT. The
-// signature is verified upstream (the gated route's jwt middleware / the
-// validate route's jwt wrap); this only reads display fields.
+// signature is verified upstream (the gated route's jwt middleware); this only
+// reads display fields.
 type collabUserClaims struct {
 	Name       string `json:"name"`
 	Email      string `json:"email"`
 	GivenName  string `json:"given_name"`
 	FamilyName string `json:"family_name"`
 	jwt.RegisteredClaims
-}
-
-// ParseDisplayIdentity is the exported entry point for the strict handlers
-// (api/handlers_collab.go); it is parseDisplayIdentity verbatim. The
-// unexported name stays for the retained Huma registration until its central
-// deletion (issue 003).
-func ParseDisplayIdentity(authHeader string) (name, email string) {
-	return parseDisplayIdentity(authHeader)
 }
 
 // parseDisplayIdentity extracts a display name + email from a Bearer token for

@@ -137,7 +137,7 @@ tools:
 
 # TS dead-code gate (knip) — the counterpart of services/aep-api's Go
 # `deadcode-check`. Whole-program unused-export/file/dependency analysis over the
-# agents runtime, the collab server + the playground that consumes the agents,
+# agents runtime + the playground that consumes the agents,
 # run with --production so *.test.ts never count as consumers. Config + rationale live in knip.jsonc.
 #   make deadcode-ts        human report (never fails)
 #   make deadcode-ts-check  CI gate (fails on any finding)
@@ -339,7 +339,6 @@ dev-images:
 	k3d image import \
 		ghcr.io/wso2/aep/aep-api:dev-local \
 		ghcr.io/wso2/aep/ae-design-agent:dev-local \
-		ghcr.io/wso2/aep/ae-collab:dev-local \
 		ghcr.io/wso2/aep/aep-mcp-server:dev-local \
 		ghcr.io/wso2/aep/console:dev-local \
 		ghcr.io/wso2/aep/tryit:dev-local \
@@ -406,13 +405,12 @@ dev-update:
 	./tools/aectl/aectl-skaffold platform update --platform-chart deployments/helm-charts/platform \
 		--set aepApi.image.repository=ghcr.io/wso2/aep/aep-api --set aepApi.image.tag=dev-local \
 		--set aepAgents.image.repository=ghcr.io/wso2/aep/ae-design-agent --set aepAgents.image.tag=dev-local \
-		--set collab.image.repository=ghcr.io/wso2/aep/ae-collab --set collab.image.tag=dev-local \
 		--set aepMcpServer.image.repository=ghcr.io/wso2/aep/aep-mcp-server --set aepMcpServer.image.tag=dev-local \
 		--set console.image.repository=ghcr.io/wso2/aep/console --set console.image.tag=dev-local \
 		--set tryIt.image.repository=ghcr.io/wso2/aep/tryit --set tryIt.image.tag=dev-local \
 		$(AE_STUDIO_IMAGE_SET)
 	./tools/aectl/aectl-skaffold platform sync-clients
-	kubectl -n wso2-aep rollout restart deployment/aep-api deployment/aep-agents deployment/collab-server deployment/aep-mcp-server deployment/aep-console deployment/aep-tryit
+	kubectl -n wso2-aep rollout restart deployment/aep-api deployment/aep-agents deployment/aep-mcp-server deployment/aep-console deployment/aep-tryit
 
 # Builds the coding-agent runner images from this checkout (Claude Code and
 # OpenCode, deployments/scripts/build-runner.sh), imports them into k3d, and

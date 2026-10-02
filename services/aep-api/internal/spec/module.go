@@ -18,8 +18,6 @@ package spec
 
 import (
 	"context"
-
-	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // Deps is what this domain must be handed to exist: typed ports / services,
@@ -32,7 +30,7 @@ type Deps struct {
 	// GenAI is the committed-truth turn orchestrator behind the five turn ops
 	// (create / get / active / stream / rehydrate).
 	GenAI *Service
-	// Files is the spec-workspace read+apply service (list / read / apply).
+	// Files is the spec-workspace read+apply service (references upload; in-process adapters).
 	Files FilesService
 	// Artifacts is the spec-version tag reader (list-project-tags).
 	Artifacts ArtifactService
@@ -42,8 +40,6 @@ type Deps struct {
 	SkillMut *SkillMutationService
 	// SkillImport is the AgentSkills-tarball import service.
 	SkillImport *SkillImportService
-	// CollabRepo is the project-ownership oracle behind the two collab ops.
-	CollabRepo sourcecontrol.RepoService
 	// Design backs the dependency definition view's two writes (provide a contract,
 	// accept an assumption). *designService satisfies it.
 	Design DependencyContractService

@@ -1423,32 +1423,6 @@ type AgentStatus string
 // A coding run copies the runtime (and the connection) when it is dispatched, so a run in flight keeps what it was launched with.
 type AgentsProjection = orgconfig.AgentsProjection
 
-// ApplyConflict One file whose baseSha no longer matches HEAD.
-type ApplyConflict struct {
-	BaseSha    string `json:"baseSha"`
-	CurrentSha string `json:"currentSha"`
-	Path       string `json:"path"`
-}
-
-// ApplyConflicts apply-files 409 body — the full conflict set; nothing was applied.
-type ApplyConflicts struct {
-	Conflicts []ApplyConflict `json:"conflicts"`
-}
-
-// ApplyRequest defines model for ApplyRequest.
-type ApplyRequest struct {
-	Deletes []DeleteOp `json:"deletes,omitempty"`
-	Message string     `json:"message,omitempty"`
-	Writes  []WriteOp  `json:"writes,omitempty"`
-}
-
-// ApplyResult defines model for ApplyResult.
-type ApplyResult struct {
-	CommitSha string     `json:"commitSha"`
-	Files     []FileMeta `json:"files"`
-	Warnings  []Warning  `json:"warnings,omitempty"`
-}
-
 // BuildChange One thing this version changes, compared with the newest version — the row the Start build dialog lists. Every row names something that EXISTS once the version is built, which is why the requirements are not one of them — they are the input, not the output. `removed` is a statement rather than an action — a build deprovisions nothing, so a removed dependency's resource stays.
 type BuildChange struct {
 	// Kind What the name belongs to, and the group the dialog lists it under. The two dependency kinds carry opposite obligations — an `external` needs a provider and its keys from the user, a `platform-resource` is provisioned by the build — so they are never one group.
@@ -1634,23 +1608,6 @@ type ClientSecretOutputBody struct {
 	ClientSecret string `json:"clientSecret"`
 }
 
-// CollabSessionOutputBody defines model for CollabSessionOutputBody.
-type CollabSessionOutputBody struct {
-	Email    string `json:"email"`
-	RoomID   string `json:"roomId"`
-	UserName string `json:"userName"`
-	WsURL    string `json:"wsUrl"`
-}
-
-// CollabValidateOutputBody defines model for CollabValidateOutputBody.
-type CollabValidateOutputBody struct {
-	Email string `json:"email"`
-	Name  string `json:"name"`
-
-	// ProjectName The room's project, resolved by the oracle from `spec-<org>-<project>`; the collab service uses it for the seed read (#114).
-	ProjectName string `json:"projectName"`
-}
-
 // Component defines model for Component.
 type Component struct {
 	AutoBuild   bool   `json:"autoBuild,omitempty"`
@@ -1818,12 +1775,6 @@ type CycleBuild struct {
 // CycleBuildList defines model for CycleBuildList.
 type CycleBuildList struct {
 	Items []CycleBuild `json:"items"`
-}
-
-// DeleteOp defines model for DeleteOp.
-type DeleteOp struct {
-	BaseSha string `json:"baseSha,omitempty"`
-	Path    string `json:"path"`
 }
 
 // Dependency A component's unified, kind-discriminated dependency entry. status/reason/flags are read-time computed by spec.ComputeDependencyStatus — never authored, never persisted (Design.json write-gate rejects them). An external dependency is HYDRATED from its own file, specs/design/dependencies/<name>/dependency.json — one dependency, one definition, holding a full `resource` block (a copy from the org registry when resourceRef is set, else one the project defined). style, contractAssumed and contractDerived are COMPUTED from the contract's type and origin; nothing here is stored as such.
@@ -2019,26 +1970,6 @@ type ExternalResourceDTO struct {
 
 // ExternalResourceDTOScope org — a Registered External resource, held by the organization; project — a project's own resource, listed with its project so the organization can promote it. Org-only readers (the design agent's catalog, Register's uniqueness check) never see project rows.
 type ExternalResourceDTOScope string
-
-// FileBundle A set of files read at ONE commit. commitSha names that commit; every entry's sha is a blob of that same tree.
-type FileBundle struct {
-	CommitSha string        `json:"commitSha"`
-	Files     []FileContent `json:"files"`
-}
-
-// FileContent defines model for FileContent.
-type FileContent struct {
-	Content string `json:"content"`
-	Path    string `json:"path"`
-	Sha     string `json:"sha"`
-}
-
-// FileMeta defines model for FileMeta.
-type FileMeta struct {
-	Path string `json:"path"`
-	Sha  string `json:"sha"`
-	Size int64  `json:"size,omitempty"`
-}
 
 // GetConversationOutputBody A conversation's history, oldest first. An empty list is a real answer — a known thread with no turns yet — never an error.
 type GetConversationOutputBody struct {
@@ -3632,13 +3563,6 @@ type ValidationSummary struct {
 	Tag   string          `json:"tag"`
 }
 
-// Warning defines model for Warning.
-type Warning struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-	Path    string `json:"path"`
-}
-
 // WorkflowRun defines model for WorkflowRun.
 type WorkflowRun struct {
 	Completed     bool              `json:"completed,omitempty"`
@@ -3685,24 +3609,8 @@ type WorkloadDependencyDTOKind string
 // WorkloadDependencyDTOTag defines model for WorkloadDependencyDTO.Tag.
 type WorkloadDependencyDTOTag string
 
-// WriteOp defines model for WriteOp.
-type WriteOp struct {
-	BaseSha string `json:"baseSha,omitempty"`
-	Content string `json:"content"`
-	Path    string `json:"path"`
-}
-
 // userJWTContextKey is the context key for userJWT security scheme
 type userJWTContextKey string
-
-// ValidateCollabAccessParams defines parameters for ValidateCollabAccess.
-type ValidateCollabAccessParams struct {
-	// XRoomID Collaboration room ID (spec-<org>-<project>)
-	XRoomID string `json:"X-Room-Id,omitempty"`
-
-	// Authorization Bearer token; the display identity is decoded from it
-	Authorization string `json:"Authorization,omitempty"`
-}
 
 // DiscoverIdpParams defines parameters for DiscoverIdp.
 type DiscoverIdpParams struct {
@@ -3740,29 +3648,6 @@ type GetProjectDependencyReadinessParams struct {
 	Environment string `form:"environment,omitempty" json:"environment,omitempty"`
 }
 
-// ListFilesParams defines parameters for ListFiles.
-type ListFilesParams struct {
-	// Prefix Only list paths under this prefix (e.g. specs/design/)
-	Prefix string `form:"prefix,omitempty" json:"prefix,omitempty"`
-}
-
-// ReadFileBundleParams defines parameters for ReadFileBundle.
-type ReadFileBundleParams struct {
-	// Prefix Only include paths under this prefix (e.g. specs/design/). Empty includes everything the read gate admits.
-	Prefix string `form:"prefix,omitempty" json:"prefix,omitempty"`
-
-	// Ref Commit to read at (a hex object name). Empty reads the branch tip. Same gate as read-file's ref: an object name, never a revision expression.
-	Ref string `form:"ref,omitempty" json:"ref,omitempty"`
-}
-
-// ReadFileParams defines parameters for ReadFile.
-type ReadFileParams struct {
-	// Ref Commit to read the file AT. Omitted reads the default-branch tip.
-	// It exists because an artifact at a fixed path is otherwise unaddressable: the validation report is overwritten by every run, so reading the tip returns the newest run's results whichever run you asked about. Pin it to that run's validation-cycle mergeSha (RunCycleView.mergeSha) to get the report that run actually produced.
-	// A hex object name only — deliberately not a revision expression, so this cannot become a browser over the repo's history. The path allow-list still decides what is readable at all.
-	Ref string `form:"ref,omitempty" json:"ref,omitempty"`
-}
-
 // ListIssuesParams defines parameters for ListIssues.
 type ListIssuesParams struct {
 	// Labels Comma-separated GitHub labels to filter by
@@ -3776,12 +3661,6 @@ type ListIssuesParams struct {
 type PutProjectReferencesMultipartBody struct {
 	// Files Reference documents. Two groups, both readable by the models: binary read natively as file parts (`.pdf`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`), and text read as workspace files (`.md`, `.txt`, `.csv`, `.tsv`, `.json`, `.yaml`, `.yml`, `.xml`, `.html`, `.rst`). At most 10 documents, each at most 5 MiB measured on the raw bytes. Office formats are not accepted — the models do not read them natively.
 	Files []openapi_types.File `json:"files"`
-}
-
-// GetSpecCollabSessionParams defines parameters for GetSpecCollabSession.
-type GetSpecCollabSessionParams struct {
-	// Authorization Bearer token; the display identity is decoded from it
-	Authorization string `json:"Authorization,omitempty"`
 }
 
 // ListTasksParams defines parameters for ListTasks.
@@ -3872,9 +3751,6 @@ type AcceptDependencyAssumptionJSONRequestBody = AcceptAssumptionBody
 
 // ProvideDependencyContractJSONRequestBody defines body for ProvideDependencyContract for application/json ContentType.
 type ProvideDependencyContractJSONRequestBody = DependencyContractBody
-
-// ApplyFilesJSONRequestBody defines body for ApplyFiles for application/json ContentType.
-type ApplyFilesJSONRequestBody = ApplyRequest
 
 // CreateIssueJSONRequestBody defines body for CreateIssue for application/json ContentType.
 type CreateIssueJSONRequestBody = CreateIssueRequest

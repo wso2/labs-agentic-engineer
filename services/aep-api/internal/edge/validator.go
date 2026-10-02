@@ -62,10 +62,9 @@ var (
 // contract BEFORE it reaches the generated handler chain: schema-invalid input
 // never reaches a handler and is answered with the flat envelope (400
 // validation_failed + field details). A route miss falls through to next
-// untouched: the generated mux owns 404s, and the read-file catch-all (nested
-// {path} segments, which the single-segment contract template cannot match)
-// stays servable. The internal edge validates through validateRequest with the
-// route capInternalBody already found (internalValidator).
+// untouched: the generated mux owns 404s. The internal edge validates
+// through validateRequest with the route capInternalBody already found
+// (internalValidator).
 func requestValidator(router routers.Router, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		route, pathParams, err := router.FindRoute(r)

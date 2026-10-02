@@ -69,7 +69,6 @@ const (
 // embedded FIELD NAME expected to supply it. P0: every op is still legacy.
 var opOwner = map[string]string{
 	"AcceptDependencyAssumption":    embedSpec,
-	"ApplyFiles":                    embedSpec,
 	"BuildProject":                  embedDelivery,
 	"CancelRun":                     embedDelivery,
 	"RevalidateBuild":               embedDelivery,
@@ -101,7 +100,6 @@ var opOwner = map[string]string{
 	"ProvideDependencyContract":     embedSpec,
 	"GetRcaAgentReport":             embedOps,
 	"GetSkill":                      embedSpec,
-	"GetSpecCollabSession":          embedSpec,
 	"GetTask":                       embedDelivery,
 	"GetTurn":                       embedSpec,
 	"ImportSkill":                   embedSpec,
@@ -112,7 +110,6 @@ var opOwner = map[string]string{
 	"ListDeployments":               embedProjects,
 	"ListExternalResources":         embedDependencies,
 	"ListOrgEndpoints":              embedDependencies,
-	"ListFiles":                     embedSpec,
 	"ListIssues":                    embedSourceControl,
 	"ListOrgEnvironments":           embedDependencies,
 	"ListOrganizations":             embedOrganization,
@@ -135,8 +132,6 @@ var opOwner = map[string]string{
 	"PromoteTaskFromIssue":          embedDelivery,
 	"ProvisionPlatformResource":     embedDependencies,
 	"PutProjectReferences":          embedSpec,
-	"ReadFile":                      embedSpec,
-	"ReadFileBundle":                embedSpec,
 	"PromoteExternalResource":       embedDependencies,
 	"RegisterExternalResource":      embedDependencies,
 	"RequestOrgServiceAccess":       embedDependencies,
@@ -155,7 +150,6 @@ var opOwner = map[string]string{
 	"UpdateExternalResource":        embedDependencies,
 	"UpdateConfig":                  embedOrganization,
 	"UpdateSkill":                   embedSpec,
-	"ValidateCollabAccess":          embedSpec,
 }
 
 // edgeServed names the ops the edge implements DIRECTLY on apiServer rather than

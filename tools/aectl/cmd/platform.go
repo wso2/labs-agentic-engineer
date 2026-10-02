@@ -90,12 +90,10 @@ var (
 // platformServiceChartKeys are the values.yaml keys of the services whose
 // image the platform chart pins — the ones --image-tag re-points. They are
 // chart value keys, not Deployment names (aepAgents is Deployment
-// aep-agents, collab is collab-server), so they follow values.yaml rather
-// than the cluster.
+// aep-agents), so they follow values.yaml rather than the cluster.
 var platformServiceChartKeys = []string{
 	"aepApi",
 	"aepAgents",
-	"collab",
 	"aepMcpServer",
 	"console",
 	"tryIt",
