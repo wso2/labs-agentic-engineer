@@ -1,0 +1,11 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "gen": {
+      "inputs": [
+        "$TURBO_ROOT$/packages/contracts/sockets/ae-studio/files/openapi.yaml"
+      ]
+    }
+  }
+}

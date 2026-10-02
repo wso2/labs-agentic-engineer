@@ -1,0 +1,15 @@
+# Strict server + types + embedded spec for the Files socket, generated from
+# packages/contracts/sockets/ae-studio/files. Run via `make gen-api`.
+package: filessock
+generate:
+  std-http-server: true
+  strict-server: true
+  models: true
+  embedded-spec: true
+compatibility:
+  preserve-original-operation-id-casing-in-embedded-spec: true
+output: internal/gen/filessock/filessock_gen.go
+output-options:
+  skip-prune: true
+  prefer-skip-optional-pointer: true
+  name-normalizer: ToCamelCaseWithInitialisms

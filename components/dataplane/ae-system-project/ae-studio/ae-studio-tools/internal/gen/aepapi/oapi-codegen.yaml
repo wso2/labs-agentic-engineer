@@ -1,0 +1,17 @@
+# Client + models for the two aep-api internal operations ae-studio-tools calls,
+# generated from packages/contracts/api/internal/v1 (which also carries the
+# runner, SRE and MCP ops, so only these are included). Run via `make gen-api`.
+# Callers map by HTTP status and never parse the flat Error body for a decision.
+package: aepapi
+generate:
+  client: true
+  models: true
+compatibility:
+  preserve-original-operation-id-casing-in-embedded-spec: true
+output: internal/gen/aepapi/aepapi_gen.go
+output-options:
+  include-operation-ids:
+  - get-ae-studio-project-repository
+  - complete-ae-studio-dependencies
+  prefer-skip-optional-pointer: true
+  name-normalizer: ToCamelCaseWithInitialisms

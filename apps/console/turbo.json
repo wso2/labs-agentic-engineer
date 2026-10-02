@@ -5,6 +5,7 @@
     "gen": {
       "inputs": [
         "$TURBO_ROOT$/packages/contracts/api/v1/openapi.yaml",
+        "$TURBO_ROOT$/packages/contracts/api/ae-studio-tools/v1/openapi.yaml",
         "src/routes/**",
         "tsr.config.json"
       ]

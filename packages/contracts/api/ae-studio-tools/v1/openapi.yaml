@@ -2,26 +2,177 @@ openapi: 3.0.3
 info:
   title: ae-studio-tools browser API
   description: |-
-    Browser API of an org's AE Studio (git-only reads). Operations land with
-    the git engine. Callers present a Platform IdP user JWT of the pod's org;
+    Browser API of an org's AE Studio (git-only reads). Callers present a Platform IdP user JWT of the pod's org;
     an M2M token is refused with 401 and a user of another org with 403, and
     both checks run before route matching, so an unknown path is 401/403
     before it is 404. Errors are RFC 9457 problems (application/problem+json).
-
-    No server is generated from this spec until it has an operation.
   version: 1.0.0
 servers:
 - url: /v1
+tags:
+- name: Files
+  description: Spec files of a project, read from the studio's git clone.
 security:
 - userJwt: []
-paths: {}
+paths:
+  /projects/{projectName}/files:
+    get:
+      operationId: list-files
+      summary: List spec files at HEAD
+      tags:
+      - Files
+      parameters:
+      - $ref: '#/components/parameters/ProjectName'
+      - name: prefix
+        in: query
+        description: Only list paths under this prefix (e.g. specs/design/)
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FileMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '502':
+          $ref: '#/components/responses/UpstreamError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /projects/{projectName}/files/bundle:
+    get:
+      operationId: read-file-bundle
+      summary: Read every readable file under a prefix at one commit
+      description: |-
+        Every readable file under `prefix`, with content, in ONE response read at
+        ONE commit, so a push landing mid-read cannot yield a mix of two trees and
+        every returned sha is from that one tree.
+
+        Reads are gated exactly like read-file: only paths under specs/ plus the
+        read-only allow-list are included. Anything else in the tree is omitted,
+        never an error.
+
+        `bundle` is a literal segment under a path that is otherwise a trailing
+        wildcard. A readable path always starts with `specs/`, so `files/bundle`
+        is never a reachable file address.
+      tags:
+      - Files
+      parameters:
+      - $ref: '#/components/parameters/ProjectName'
+      - name: prefix
+        in: query
+        description: Only include paths under this prefix (e.g. specs/design/). Empty
+          includes everything the read gate admits.
+        schema:
+          type: string
+      - $ref: '#/components/parameters/Ref'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileBundle'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '502':
+          $ref: '#/components/responses/UpstreamError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /projects/{projectName}/files/{path}:
+    get:
+      operationId: read-file
+      summary: Read a spec file (or an allow-listed read-only artifact)
+      tags:
+      - Files
+      parameters:
+      - $ref: '#/components/parameters/ProjectName'
+      - name: path
+        in: path
+        required: true
+        description: 'Repo-relative file path. A trailing wildcard: it may span
+          multiple segments (contain slashes) and is served by a catch-all. Reads
+          are scoped to specs/ plus a small read-only allow-list, currently the
+          runner-authored validation report at tests/acceptance/report.json.'
+        schema:
+          type: string
+      - $ref: '#/components/parameters/Ref'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileContent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '502':
+          $ref: '#/components/responses/UpstreamError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
 components:
   securitySchemes:
     userJwt:
       type: http
       scheme: bearer
       bearerFormat: JWT
+  parameters:
+    ProjectName:
+      name: projectName
+      in: path
+      required: true
+      description: Project name (DNS-label slug)
+      schema:
+        type: string
+    Ref:
+      name: ref
+      in: query
+      description: Commit to read at, a hex object name (never a revision expression).
+        Omitted reads the default-branch tip.
+      schema:
+        type: string
+        pattern: '^[0-9a-fA-F]{7,64}$'
   responses:
+    BadRequest:
+      description: 'Invalid request (problem code: path_invalid)'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    UpstreamError:
+      description: 'GitHub failed (problem code: github_error)'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Unavailable:
+      description: 'Not serving right now (problem codes: disk_full, aep_api_unavailable)'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
     Unauthorized:
       description: Missing or invalid user JWT, or an M2M token
       content:
@@ -35,7 +186,8 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
     NotFound:
-      description: No such operation or resource
+      description: 'No such operation or resource (problem codes: project_unknown,
+        path_not_found, ref_not_found)'
       content:
         application/problem+json:
           schema:
@@ -59,3 +211,46 @@ components:
           type: string
         code:
           type: string
+    FileMeta:
+      type: object
+      additionalProperties: false
+      required:
+      - path
+      - sha
+      properties:
+        path:
+          type: string
+        sha:
+          type: string
+        size:
+          type: integer
+          format: int64
+    FileContent:
+      type: object
+      additionalProperties: false
+      required:
+      - path
+      - content
+      - sha
+      properties:
+        path:
+          type: string
+        content:
+          type: string
+        sha:
+          type: string
+    FileBundle:
+      type: object
+      additionalProperties: false
+      description: A set of files read at ONE commit. commitSha names that commit;
+        every entry's sha is a blob of that same tree.
+      required:
+      - commitSha
+      - files
+      properties:
+        commitSha:
+          type: string
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileContent'

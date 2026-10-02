@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Yjs collaboration server for spec files (Hocuspocus): rooms, BFF-oracle auth, lazy seeding. Issue #86 phase 1.",
   "scripts": {
+    "gen": "openapi-typescript ../../../../../packages/contracts/sockets/ae-studio/files/openapi.yaml -o src/generated/files-socket.d.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",

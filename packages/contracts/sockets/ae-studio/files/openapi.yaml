@@ -1,0 +1,305 @@
+openapi: 3.0.3
+info:
+  title: ae-studio Files socket
+  description: |-
+    Unix-socket API between ae-collab and ae-studio-tools inside one AE Studio
+    pod (socket path in AE_FILES_SOCKET, mode 0660). The mount is the gate, so
+    there is no security scheme. The project is the only address a request
+    carries: the repository (owner and repo) is resolved server-side and never
+    appears in a request. Errors are RFC 9457 problems (application/problem+json).
+  version: 1.0.0
+servers:
+- url: /
+tags:
+- name: Files
+  description: Project lookup, bundle reads and atomic applies.
+paths:
+  /projects/{projectName}:
+    get:
+      operationId: lookup-project
+      summary: Resolve a project to its repository and current head
+      tags:
+      - Files
+      parameters:
+      - $ref: '#/components/parameters/ProjectName'
+      responses:
+        '200':
+          description: The project is known to this studio
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectLookup'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '502':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /projects/{projectName}/bundle:
+    get:
+      operationId: read-project-bundle
+      summary: Read every readable file under a prefix at one commit
+      tags:
+      - Files
+      parameters:
+      - $ref: '#/components/parameters/ProjectName'
+      - name: prefix
+        in: query
+        description: Only include paths under this prefix (e.g. specs/)
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileBundle'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '502':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /projects/{projectName}/apply:
+    post:
+      operationId: apply-project-files
+      summary: Atomically apply writes and deletes as one commit
+      description: Request body is capped at 25 MiB.
+      tags:
+      - Files
+      parameters:
+      - $ref: '#/components/parameters/ProjectName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplyRequest'
+      responses:
+        '200':
+          description: Applied (changed is false when nothing differed)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplyResult'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '409':
+          description: One or more files moved past their baseSha, nothing applied
+            (code conflict), or the push lost a race (code not_fast_forward, a
+            problem).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplyConflicts'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '502':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
+components:
+  parameters:
+    ProjectName:
+      name: projectName
+      in: path
+      required: true
+      description: Project name (DNS-label slug)
+      schema:
+        type: string
+  responses:
+    Problem:
+      description: 'RFC 9457 problem. Codes: project_unknown, path_invalid, disk_full,
+        aep_api_unavailable, github_error.'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    Problem:
+      type: object
+      required:
+      - type
+      - title
+      - status
+      - code
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        code:
+          type: string
+    ProjectLookup:
+      type: object
+      additionalProperties: false
+      required:
+      - known
+      - owner
+      - repo
+      - headSha
+      properties:
+        known:
+          type: boolean
+          enum:
+          - true
+        owner:
+          type: string
+        repo:
+          type: string
+        headSha:
+          type: string
+    FileContent:
+      type: object
+      additionalProperties: false
+      required:
+      - path
+      - content
+      - sha
+      properties:
+        path:
+          type: string
+        content:
+          type: string
+        sha:
+          type: string
+    FileBundle:
+      type: object
+      additionalProperties: false
+      description: A set of files read at ONE commit.
+      required:
+      - commitSha
+      - files
+      properties:
+        commitSha:
+          type: string
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileContent'
+    FileWrite:
+      type: object
+      additionalProperties: false
+      required:
+      - path
+      - content
+      - baseSha
+      properties:
+        path:
+          type: string
+        content:
+          type: string
+        baseSha:
+          type: string
+          description: Blob sha the caller read; empty for a new file.
+    FileDelete:
+      type: object
+      additionalProperties: false
+      required:
+      - path
+      - baseSha
+      properties:
+        path:
+          type: string
+        baseSha:
+          type: string
+    ApplyRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - writes
+      - deletes
+      - message
+      properties:
+        writes:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileWrite'
+        deletes:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileDelete'
+        message:
+          type: string
+    AppliedFile:
+      type: object
+      additionalProperties: false
+      required:
+      - path
+      - sha
+      properties:
+        path:
+          type: string
+        sha:
+          type: string
+    ApplyWarning:
+      type: object
+      additionalProperties: false
+      required:
+      - path
+      - message
+      properties:
+        path:
+          type: string
+        message:
+          type: string
+    ApplyResult:
+      type: object
+      additionalProperties: false
+      required:
+      - commitSha
+      - changed
+      - files
+      - warnings
+      properties:
+        commitSha:
+          type: string
+        changed:
+          type: boolean
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/AppliedFile'
+        warnings:
+          type: array
+          items:
+            $ref: '#/components/schemas/ApplyWarning'
+    Conflict:
+      type: object
+      additionalProperties: false
+      required:
+      - path
+      - baseSha
+      - currentSha
+      properties:
+        path:
+          type: string
+        baseSha:
+          type: string
+        currentSha:
+          type: string
+    ApplyConflicts:
+      type: object
+      additionalProperties: false
+      required:
+      - code
+      - conflicts
+      properties:
+        code:
+          type: string
+          enum:
+          - conflict
+        conflicts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Conflict'
