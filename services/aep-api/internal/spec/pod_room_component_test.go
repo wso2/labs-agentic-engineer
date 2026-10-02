@@ -165,3 +165,26 @@ func TestStartKickoff_PodUnavailableStartsNoTurn(t *testing.T) {
 		t.Fatalf("dispatched turns = %d, want 0", n)
 	}
 }
+
+// A refused room-scoped turn has no side effects: the Room is looked up
+// before the context-full rotation, so a full thread is not rotated by a send
+// that is then refused.
+func TestStartTurn_PodRoomRefusalDoesNotRotate(t *testing.T) {
+	r := newGenaiRig(t, map[string]string{"specs/requirements/prd.md": "# Reqs\n"},
+		withConversations(&memConversationRepo{}), withRooms(refusingRoom{err: spec.ErrAEStudioUnavailable}))
+	m := manifestPart(map[string]string{}, nil)
+	r.fake.manifest = &m
+	r.contextWindow = window(100_000)
+	current := listConversations(t, r)[0].ConversationID
+	// 85% of the window: the next send would rotate the thread.
+	runMeasuredTurn(t, r, current, [2]int64{83_000, 2_000})
+
+	body, _ := json.Marshal(map[string]any{"instruction": "edit the doc live", "collab": true})
+	res := r.h.AsOrg(testOrg).Post(turnsPath(current), string(body)).Result()
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", res.StatusCode)
+	}
+	if got := listConversations(t, r)[0].ConversationID; got != current {
+		t.Fatalf("a refused collab turn rotated the thread: %q -> %q", current, got)
+	}
+}

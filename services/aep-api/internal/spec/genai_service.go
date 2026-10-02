@@ -347,14 +347,11 @@ func (s *Service) StartTurn(ctx context.Context, orgID, projectID string, in Tur
 	if err != nil {
 		return "", err
 	}
-	if err := s.rotateIfContextFull(ctx, orgID, projectID, in.ConversationID, llm.Connection); err != nil {
-		return "", err
-	}
-
 	// Room-scoped turn (#86 phase 4): capture the room + the prompting user's
 	// bearer NOW (D20 — the runner has no request context). Access is
 	// request-scoped: the collab server's oracle validates this token exactly
 	// like a browser join; no token → the turn cannot join, fail pre-202.
+	// Before the context-full rotation, so a refused turn has no side effects.
 	// The synthetic Marketplace register project has no spec room (no git
 	// repo; the id is not a DNS label) — ignore collab:true from the panel.
 	collabRoomID, collabToken, collabURL := "", "", "" // TEMPORARY (phase 3 deletes): old agents joins the pod Room
@@ -367,6 +364,10 @@ func (s *Service) StartTurn(ctx context.Context, orgID, projectID string, in Tur
 		if collabURL, err = s.roomURL(ctx, orgID); err != nil { // TEMPORARY (phase 3 deletes): old agents joins the pod Room
 			return "", err // TEMPORARY (phase 3 deletes): old agents joins the pod Room
 		} // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+	}
+
+	if err := s.rotateIfContextFull(ctx, orgID, projectID, in.ConversationID, llm.Connection); err != nil {
+		return "", err
 	}
 
 	ws := s.git.Workspace()

@@ -14,14 +14,16 @@
 // specific language governing permissions and limitations
 // under the License.
 
-
 package app
 
 // TEMPORARY (phase 3 deletes): old agents joins the pod Room.
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/config"
@@ -96,4 +98,25 @@ type gitPATOnly struct{}
 
 func (gitPATOnly) List(context.Context, string) ([]organization.OrgSecretRef, error) {
 	return []organization.OrgSecretRef{{Secret: organization.OrgSecretGitHubPAT, Name: "github-pat"}}, nil
+}
+
+// A failed status read is logged once with its cause, keyed by org: the 503
+// the caller sees carries no detail.
+func TestAEStudioRooms_ReadErrorIsLogged(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	_, err := aeStudioRooms{status: fakeStudioStatus{err: errors.New("oc down")}}.RoomURL(t.Context(), "acme")
+	if !errors.Is(err, spec.ErrAEStudioUnavailable) {
+		t.Fatalf("RoomURL = %v, want ErrAEStudioUnavailable", err)
+	}
+	var rec map[string]any
+	if jerr := json.Unmarshal(buf.Bytes(), &rec); jerr != nil {
+		t.Fatalf("want one JSON log record, got %q: %v", buf.String(), jerr)
+	}
+	if rec["msg"] != "spec.room_locator_unavailable" || rec["level"] != "WARN" || rec["org"] != "acme" || rec["error"] != "oc down" {
+		t.Fatalf("log record = %v", rec)
+	}
 }

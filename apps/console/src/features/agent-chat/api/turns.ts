@@ -130,10 +130,16 @@ export async function startCollabTurn(
   if (error || data === undefined) {
     if (response.status === 409) {
       // The 409 body is the pinned TurnConflict: turn_in_progress /
-      // requirements_missing / conversation_rotated (#430).
-      if ((error as { code?: string } | undefined)?.code === "conversation_rotated") {
+      // requirements_missing / conversation_rotated (#430) /
+      // github_not_connected (the org has no AE Studio to host the room).
+      const code = (error as { code?: string } | undefined)?.code;
+      if (code === "conversation_rotated") {
         throw new ConversationRotatedError();
       }
+      // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+      if (code === "github_not_connected") {
+        throw new Error("Connect GitHub to continue — go to Settings → Credentials."); // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+      } // TEMPORARY (phase 3 deletes): old agents joins the pod Room
       throw new Error("An agent turn is already running for this project — wait for it to finish.");
     }
     throw new Error(apiErrorMessage(error, "Failed to start the agent turn"));

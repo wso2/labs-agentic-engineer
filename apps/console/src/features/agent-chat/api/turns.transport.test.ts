@@ -123,6 +123,27 @@ describe("startCollabTurn transport", () => {
   });
 });
 
+// TEMPORARY (phase 3 deletes): old agents joins the pod Room
+describe("startCollabTurn 409 refusals", () => {
+  beforeEach(() => post.mockClear());
+
+  function refuseWith(code: string) {
+    post.mockResolvedValueOnce({ data: undefined, error: { code }, response: { status: 409 } });
+  }
+
+  it("tells the user to connect GitHub when the org has none", async () => {
+    refuseWith("github_not_connected");
+    await expect(startCollabTurn("shop", "conv-1", "hi")).rejects.toThrow(
+      "Connect GitHub to continue — go to Settings → Credentials.",
+    );
+  });
+
+  it("still reports a running turn for turn_in_progress", async () => {
+    refuseWith("turn_in_progress");
+    await expect(startCollabTurn("shop", "conv-1", "hi")).rejects.toThrow(/already running/);
+  });
+});
+
 /** jsdom's Blob here has no `.text()`, so read the part the long way. */
 function readBlob(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {

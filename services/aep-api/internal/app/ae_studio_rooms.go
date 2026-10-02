@@ -23,6 +23,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/spec"
@@ -46,6 +47,7 @@ var _ spec.RoomLocator = aeStudioRooms{} // TEMPORARY (phase 3 deletes): old age
 func (r aeStudioRooms) RoomURL(ctx context.Context, org string) (string, error) { // TEMPORARY (phase 3 deletes): old agents joins the pod Room
 	st, err := r.status.Status(ctx, org) // TEMPORARY (phase 3 deletes): old agents joins the pod Room
 	if err != nil {                      // TEMPORARY (phase 3 deletes): old agents joins the pod Room
+		slog.WarnContext(ctx, "spec.room_locator_unavailable", "org", org, "error", err)         // TEMPORARY (phase 3 deletes): old agents joins the pod Room
 		return "", fmt.Errorf("%w: read AE Studio status: %w", spec.ErrAEStudioUnavailable, err) // TEMPORARY (phase 3 deletes): old agents joins the pod Room
 	} // TEMPORARY (phase 3 deletes): old agents joins the pod Room
 	switch { // TEMPORARY (phase 3 deletes): old agents joins the pod Room
