@@ -34,7 +34,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wso2/aep/aep-api/internal/clients/agentsvc"
 	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
 	"github.com/wso2/aep/aep-api/internal/config"
 	"github.com/wso2/aep/aep-api/internal/organization"
@@ -166,13 +165,6 @@ var secretEnvs = []struct {
 var requiredForTools = []organization.OrgSecret{
 	organization.OrgSecretGitHubPAT, organization.OrgSecretGitHubWebhookSecret,
 	organization.OrgSecretPublisherClient, organization.OrgSecretStudioClient,
-}
-
-// modelConnectionEnv is AE_MODEL_CONNECTION: the turn body's connection
-// (its field names pinned by @aep/agent-stream) plus the model.
-type modelConnectionEnv struct {
-	*agentsvc.TurnConnection
-	Model string `json:"model"`
 }
 
 // desired computes the org's desired state. A *notReadyError is a state
@@ -332,7 +324,7 @@ func (s *Service) modelConnection(ctx context.Context, org string) (string, erro
 	if !ok {
 		return "", nil
 	}
-	raw, err := json.Marshal(modelConnectionEnv{TurnConnection: agentsvc.ConnectionFor(c), Model: c.Model})
+	raw, err := json.Marshal(modelConnectionEnvFor(c))
 	if err != nil {
 		return "", fmt.Errorf("encode model connection: %w", err)
 	}
