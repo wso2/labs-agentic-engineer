@@ -294,3 +294,21 @@ func TestNestedReadFile(t *testing.T) {
 		})
 	}
 }
+
+// A response that fails to encode is logged by class only: a Files error can
+// carry git text (a clone URL), as on the Files socket.
+func TestV1ResponseError_LogsNoErrorText(t *testing.T) {
+	logs := captureLogs(t)
+	rec := httptest.NewRecorder()
+	writeV1ResponseError(rec, httptest.NewRequest(http.MethodGet, "/v1/projects/greeter/files", nil),
+		&files.RepoError{Repo: "acme/greeter", Err: errors.New("git fetch http://aep-api.internal/secret-path")})
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), `"code":"internal_error"`) {
+		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(logs.String(), `"msg":"v1.handler_failed"`) {
+		t.Fatalf("no v1.handler_failed line in %s", logs.String())
+	}
+	if strings.Contains(logs.String(), "secret-path") || strings.Contains(logs.String(), "acme/greeter") {
+		t.Fatalf("error text leaked: %s", logs.String())
+	}
+}

@@ -17,6 +17,7 @@
 package edge
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -128,8 +129,11 @@ func writeV1RequestError(w http.ResponseWriter, _ *http.Request, _ error) {
 	problem.Write(w, http.StatusBadRequest, "path_invalid", "the request does not match the contract")
 }
 
-// writeV1ResponseError answers a handler error no typed response covers.
+// writeV1ResponseError answers a handler error no typed response covers. The
+// handlers return none, so this is a response that failed to encode; its
+// error is logged by class only, as on the Files socket, since a Files error
+// can carry git text.
 func writeV1ResponseError(w http.ResponseWriter, r *http.Request, err error) {
-	slog.Error("v1.handler_failed", "path", r.URL.Path, "error", err)
+	slog.Error("v1.handler_failed", "path", r.URL.Path, "class", fmt.Sprintf("%T", err))
 	problem.Write(w, http.StatusInternalServerError, "internal_error", "the request could not be completed")
 }
