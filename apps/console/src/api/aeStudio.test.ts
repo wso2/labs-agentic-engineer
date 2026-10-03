@@ -30,6 +30,7 @@ vi.mock("../auth/token", () => ({
 const {
   AeStudioNotReadyError,
   StudioToolsError,
+  designAgent,
   isStudioToolsUnavailable,
   setAeStudioUrls,
   studioTools,
@@ -38,6 +39,8 @@ const {
 } = await import("./aeStudio");
 
 const TOOLS = "http://ae-studio-tools.mock";
+const DESIGN = "http://ae-design-agent.mock";
+const URLS = { tools: TOOLS, designAgent: DESIGN };
 const server = setupServer();
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
@@ -55,23 +58,23 @@ const listFiles = (projectName: string) =>
 describe("studioTools()", () => {
   it("throws AeStudioNotReadyError until AE Studio's URLs arrive, and again once they are cleared", () => {
     expect(() => studioTools()).toThrow(AeStudioNotReadyError);
-    setAeStudioUrls({ tools: TOOLS });
+    setAeStudioUrls(URLS);
     expect(() => studioTools()).not.toThrow();
     setAeStudioUrls(null);
     expect(() => studioTools()).toThrow(AeStudioNotReadyError);
   });
 
   it("keeps one client per tools origin and swaps it when the origin changes", () => {
-    setAeStudioUrls({ tools: TOOLS });
+    setAeStudioUrls(URLS);
     const first = studioTools();
-    setAeStudioUrls({ tools: TOOLS });
+    setAeStudioUrls(URLS);
     expect(studioTools()).toBe(first);
-    setAeStudioUrls({ tools: "http://other-tools.mock" });
+    setAeStudioUrls({ ...URLS, tools: "http://other-tools.mock" });
     expect(studioTools()).not.toBe(first);
   });
 
   it("calls the pod's /v1 API", async () => {
-    setAeStudioUrls({ tools: TOOLS });
+    setAeStudioUrls(URLS);
     server.use(
       http.get(`${TOOLS}/v1/projects/p/files`, () => HttpResponse.json([{ path: "specs/a.md", sha: "1", size: 1 }])),
     );
@@ -79,9 +82,37 @@ describe("studioTools()", () => {
   });
 });
 
+describe("designAgent()", () => {
+  it("throws AeStudioNotReadyError until AE Studio's URLs arrive, and again once they are cleared", () => {
+    expect(() => designAgent()).toThrow(AeStudioNotReadyError);
+    setAeStudioUrls(URLS);
+    expect(() => designAgent()).not.toThrow();
+    setAeStudioUrls(null);
+    expect(() => designAgent()).toThrow(AeStudioNotReadyError);
+  });
+
+  it("keeps its client while only the tools origin moves, and swaps it when its own origin does", () => {
+    setAeStudioUrls(URLS);
+    const first = designAgent();
+    setAeStudioUrls({ ...URLS, tools: "http://other-tools.mock" });
+    expect(designAgent()).toBe(first);
+    setAeStudioUrls({ ...URLS, designAgent: "http://other-design.mock" });
+    expect(designAgent()).not.toBe(first);
+  });
+
+  it("calls the design agent's /v1 API", async () => {
+    setAeStudioUrls(URLS);
+    server.use(http.get(`${DESIGN}/v1/projects/p/turns/active`, () => new HttpResponse(null, { status: 204 })));
+    const { response } = await designAgent().GET("/projects/{projectName}/turns/active", {
+      params: { path: { projectName: "p" } },
+    });
+    expect(response.status).toBe(204);
+  });
+});
+
 describe("studioToolsRead failures", () => {
   it("carries the problem's code, detail and status", async () => {
-    setAeStudioUrls({ tools: TOOLS });
+    setAeStudioUrls(URLS);
     server.use(
       http.get(`${TOOLS}/v1/projects/p/files`, () =>
         HttpResponse.json(
@@ -97,7 +128,7 @@ describe("studioToolsRead failures", () => {
   });
 
   it("reads Retry-After from a 503 and calls it unavailable", async () => {
-    setAeStudioUrls({ tools: TOOLS });
+    setAeStudioUrls(URLS);
     server.use(
       http.get(`${TOOLS}/v1/projects/p/files`, () =>
         HttpResponse.json(
@@ -112,7 +143,7 @@ describe("studioToolsRead failures", () => {
   });
 
   it("calls a network failure unavailable", async () => {
-    setAeStudioUrls({ tools: TOOLS });
+    setAeStudioUrls(URLS);
     server.use(http.get(`${TOOLS}/v1/projects/p/files`, () => HttpResponse.error()));
     const err = await listFiles("p").catch((e: unknown) => e);
     expect(err).toBeInstanceOf(StudioToolsError);

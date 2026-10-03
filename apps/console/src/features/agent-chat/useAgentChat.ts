@@ -40,7 +40,7 @@ import {
 import {
   ConversationRotatedError,
   getActiveTurn,
-  startCollabTurn,
+  startTurn,
   type TurnStatus,
 } from "./api/turns.js";
 import {
@@ -64,8 +64,7 @@ import { useCurrentAuthor } from "./currentUser.js";
 // mount re-attaches via replay.
 
 // How often, while the panel is open, to ask whether someone ELSE started a
-// turn. Push-free by design (D6): the activity-feed SSE can become a fifth
-// trigger if idle-panel lag ever matters — push the signal, never the state.
+// turn. Push-free by design (D6): push the signal, never the state.
 const FOREIGN_TURN_POLL_MS = 12_000;
 
 // …except while the panel has NOTHING on screen, where the same lag is the
@@ -167,12 +166,7 @@ export interface AgentChat {
   newConversation: () => void;
 }
 
-export function useAgentChat(
-  org: string,
-  projectName: string,
-  options: { collab?: boolean } = {},
-): AgentChat {
-  const collab = options.collab ?? true;
+export function useAgentChat(org: string, projectName: string): AgentChat {
   const chatKey = chatKeyFor(org, projectName);
   const messages = useSyncExternalStore(
     useCallback((fn: () => void) => subscribe(chatKey, fn), [chatKey]),
@@ -257,12 +251,12 @@ export function useAgentChat(
   });
   const conversationId = conversation.data;
 
-  // A committed turn changed spec files in git; refetch the project cache tree
-  // (spec file list included) so views keyed off committed truth — e.g. the
+  // A completed turn changed spec files; refetch the project cache tree
+  // (spec file list included) so views keyed off the files — e.g. the
   // Architecture tab's "Designing…" state — settle instead of serving the
   // staleTime-Infinity snapshot until a reload.
   //
-  // The THREAD is the same kind of stale, and the commit is the same signal.
+  // The THREAD is the same kind of stale, and the turn's end is the same signal.
   // The fold appends turn rows into `chatStore` live, but the authority that
   // replaces them is the `staleTime: Infinity` history query — refreshed
   // only on a cold mount, a refocus, or a poll that finds a RUNNING turn. None
@@ -279,14 +273,14 @@ export function useAgentChat(
   // next observer synchronously while it refetches behind it — so the spec
   // workspace would still paint one frame of the pre-turn snapshot, wiping the
   // question and flashing "Nothing written yet" before the fresh read restored
-  // it. Reading AT the commit means the cache already holds post-turn truth by
+  // it. Reading AT the turn's end means the cache already holds post-turn truth by
   // the time any surface mounts, and there is no window to paint.
   //
   // Through the shared cache entry (#606), so this is the same request every
   // other surface would have made rather than a second one racing it. Failure
   // is a no-op: `fetchConversationHistory` answers null and the existing
   // triggers (refocus, cold mount) remain the recovery path.
-  const onTurnCommitted = useCallback(() => {
+  const onTurnCompleted = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectName) });
     if (conversationId) {
       void fetchConversationHistory(queryClient, projectName, conversationId);
@@ -355,7 +349,7 @@ export function useAgentChat(
       const startedBy = userMessageForTurn(active);
       if (startedBy) ensureUserMessage(chatKey, startedBy);
       try {
-        await attachAndFoldTurn(chatKey, projectName, turnId, ac.signal, onTurnCommitted);
+        await attachAndFoldTurn(chatKey, projectName, turnId, ac.signal, onTurnCompleted);
       } catch {
         // surfaced by the fold's error handling; the view just settles
       } finally {
@@ -393,7 +387,7 @@ export function useAgentChat(
       setHistoryReady(true);
       const active = await getActiveTurn(projectName);
       if (ac.signal.aborted || !active || active.status !== "running") return;
-      if (active.useCase !== "general") return; // another flow's turn
+      if (active.kind === "plan") return; // the Plan's own turn, on a throwaway thread
       if (!attachableOrReResolve(active)) return;
       // A quiet anchored send (#666) may already be folding this turn; a
       // second fold would interleave the same stream on top of itself.
@@ -432,7 +426,7 @@ export function useAgentChat(
         try {
           const active = await getActiveTurn(projectName);
           if (ac.signal.aborted || attachedRef.current || hasStreamFold(chatKey)) return;
-          if (!active || active.status !== "running" || active.useCase !== "general") return;
+          if (!active || active.status !== "running" || active.kind === "plan") return;
           if (!attachableOrReResolve(active)) return;
           await rehydrate();
           if (!ac.signal.aborted) await attach(active);
@@ -468,7 +462,7 @@ export function useAgentChat(
       setIsSending(false);
       setActiveTurnId(undefined);
     };
-  }, [chatKey, org, projectName, conversationId, onTurnCommitted, queryClient, markAttached, markSending]);
+  }, [chatKey, org, projectName, conversationId, onTurnCompleted, queryClient, markAttached, markSending]);
 
   const send = useCallback(
     async (instruction: string, files: File[] = []): Promise<boolean> => {
@@ -479,9 +473,9 @@ export function useAgentChat(
       // Names only, and only when there are any: a message without attachments
       // must persist exactly the row shape it did before this feature.
       const attachments = files.length > 0 ? files.map((f) => f.name) : undefined;
-      // The row goes up NOW, not after the dispatch answers. `startCollabTurn`
-      // resolves the repo, the workspace ref, the org's model connection key, two git
-      // heads and two snapshot extracts before it returns a turn id — and the
+      // The row goes up NOW, not after the dispatch answers. The design agent
+      // resolves the project's snapshot, the skills and the org's model
+      // connection before it returns a turn id — and the
       // user watching their own message not appear for all of that cannot tell
       // a slow platform from a dropped message. It carries no turnId yet;
       // `buildFeed` links a turn block to the nearest preceding user message
@@ -501,7 +495,7 @@ export function useAgentChat(
       await flushRoomBeforeDispatch(chatKey);
       let turnId: string;
       try {
-        turnId = await startCollabTurn(projectName, conversationId, text, files, collab);
+        ({ turnId } = await startTurn(projectName, conversationId, { instruction: text, files }));
       } catch (err) {
         // The row the user is already looking at becomes the failed one —
         // adding a second copy beside it would read as two sends.
@@ -550,7 +544,7 @@ export function useAgentChat(
         }
         markAttached(true);
         try {
-          await attachAndFoldTurn(chatKey, projectName, turnId, signal, onTurnCommitted);
+          await attachAndFoldTurn(chatKey, projectName, turnId, signal, onTurnCompleted);
         } catch {
           if (!signal.aborted) {
             setTurnStatus(chatKey, turnId, "failed");
@@ -569,7 +563,7 @@ export function useAgentChat(
       })();
       return true;
     },
-    [chatKey, projectName, conversationId, isSending, author, onTurnCommitted, queryClient, collab, markAttached, markSending],
+    [chatKey, projectName, conversationId, isSending, author, onTurnCompleted, queryClient, markAttached, markSending],
   );
 
   // Rotation (D4): a PROJECT-WIDE act — the demoted thread stops being current

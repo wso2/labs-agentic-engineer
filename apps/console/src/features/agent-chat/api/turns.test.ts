@@ -17,41 +17,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { mapConversationMessage, startTurnBody } from "./turns";
-
-describe("startTurnBody", () => {
-  it("includes collab: true for a spec-room turn", () => {
-    expect(startTurnBody("hello", true)).toEqual({ instruction: "hello", collab: true });
-  });
-
-  it("omits collab for Marketplace register chat", () => {
-    expect(startTurnBody("/register-external-resource github", false)).toEqual({
-      instruction: "/register-external-resource github",
-    });
-  });
-
-  // The anchor is metadata BESIDE the user's words, never folded into them
-  // (console ADR-0024): the transcript renders a tag from the field, and it
-  // cannot render one for something it would have to regex back out of prose.
-  it("carries the anchor and intent as fields, leaving the instruction untouched", () => {
-    const anchor = {
-      file: "specs/requirements/PRD.md",
-      nodes: [{ name: "Rounds close automatically.", kind: "paragraph", context: "Solution" }],
-    };
-    expect(startTurnBody("make this shorter", true, { anchor, intent: "change" })).toEqual({
-      instruction: "make this shorter",
-      collab: true,
-      anchor,
-      intent: "change",
-    });
-  });
-
-  it("sends neither field for an ordinary chat turn", () => {
-    const body = startTurnBody("hello", true);
-    expect(body).not.toHaveProperty("anchor");
-    expect(body).not.toHaveProperty("intent");
-  });
-});
+import { mapConversationMessage } from "./turns";
 
 describe("mapConversationMessage anchors", () => {
   const anchor = {

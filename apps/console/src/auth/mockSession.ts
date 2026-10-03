@@ -26,16 +26,16 @@
 // the same browser can exercise owner-vs-teammate flows (e.g. the question
 // form's asker-only submit). A localStorage value works too (whole browser).
 // Read once at module load: identity must stay stable for the session, same
-// as a real login. The email derives from the name.
+// as a real login. The email and the id (the token's `sub`) derive from the name.
 
-function mockUserOverride(): { name: string; email: string } | null {
+function mockUserOverride(): { id: string; name: string; email: string } | null {
   try {
     const name = (
       sessionStorage.getItem("aep:mock:user") ?? localStorage.getItem("aep:mock:user")
     )?.trim();
     if (!name) return null;
     const slug = name.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-    return { name, email: `${slug || "user"}@example.com` };
+    return { id: `mock-sub-${slug || "user"}`, name, email: `${slug || "user"}@example.com` };
   } catch {
     return null;
   }
@@ -43,7 +43,7 @@ function mockUserOverride(): { name: string; email: string } | null {
 
 export const MOCK_USER = {
   role: "Developer",
-  ...(mockUserOverride() ?? { name: "Developer", email: "developer@example.com" }),
+  ...(mockUserOverride() ?? { id: "mock-sub-developer", name: "Developer", email: "developer@example.com" }),
 } as const;
 
 export const MOCK_ORG = "acme";
@@ -58,6 +58,7 @@ export function mockAccessToken(): string {
       .replaceAll("/", "_")
       .replace(/=+$/, "");
   return `${b64({ alg: "none" })}.${b64({
+    sub: MOCK_USER.id,
     name: MOCK_USER.name,
     email: MOCK_USER.email,
     ouHandle: MOCK_ORG,

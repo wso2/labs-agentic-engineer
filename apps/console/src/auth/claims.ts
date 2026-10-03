@@ -51,6 +51,8 @@ export function resolveOrgHandle(claims: TokenClaims): string | null {
 }
 
 export interface SessionIdentity {
+  /** The token's `sub` (`""` when no source carries one). */
+  id: string;
   name: string;
   email: string;
   orgHandle: string | null;
@@ -88,5 +90,7 @@ export function identityFromClaims(...sources: TokenClaims[]): SessionIdentity {
     if (orgHandle) break;
   }
 
-  return { name, email, orgHandle };
+  const id = first((c) => str(c["sub"])) ?? "";
+
+  return { id, name, email, orgHandle };
 }

@@ -16,9 +16,11 @@
  * under the License.
  */
 
-// Agent-chat turn endpoints (#130): start (202), rehydrate (empty), active
-// (204), and a scripted SSE stream — narration, one tool result, terminal —
-// so the panel is fully drivable in mock mode. Error scenarios: instruction
+// Agent-chat turn endpoints (#130) on the org's design agent (ae-design-agent
+// /v1, at the fixed mock origin aeStudioUrls.designAgent): start (202),
+// rehydrate (empty), active (204), and a scripted SSE stream — narration, one
+// tool result, the `turn-completed` terminal — so the panel is fully drivable
+// in mock mode. Error scenarios: instruction
 // containing "fail" streams a turn-failed terminal; containing "usage limit"
 // streams the model provider's usage limit (a coded `provider_limit` failure
 // naming ollama.com and a reset ten minutes out).
@@ -36,6 +38,8 @@
 
 import { http, HttpResponse } from "msw";
 import { ANSWER_PREFIX, ANSWERS_PREFIX } from "@aep/agent-stream";
+import type { components } from "../../generated/ae-design-agent";
+import { aeStudioUrls } from "../fixtures/aeStudio";
 import { designPlanFrames } from "./designPlanFrames";
 import { registerChatFrames } from "./registerChatFrames";
 import {
@@ -50,6 +54,19 @@ import {
   teammateTurnHistory,
   type ChatScenario,
 } from "../fixtures/chat";
+
+type TurnStatus = components["schemas"]["TurnStatus"];
+type ProjectConversationView = components["schemas"]["ProjectConversationView"];
+
+const V1 = `${aeStudioUrls.designAgent}/v1`;
+
+/** An RFC 9457 problem, the pod's error shape. */
+function problem(status: number, code: string, detail: string): Response {
+  return HttpResponse.json(
+    { type: "about:blank", title: code, status, code, detail },
+    { status, headers: { "Content-Type": "application/problem+json" } },
+  );
+}
 
 let turnCounter = 0;
 // Distinguishes this page instance's turns from another client's in the same
@@ -154,7 +171,7 @@ function sse(frames: unknown[]): Response {
 // whole mock-mode chat surface is dead (composer disabled forever).
 //
 // One stable id per project, PERSISTED — rotation mints a fresh one. Persisted
-// because the real BFF owns thread existence in `project_conversations`, so a
+// because the real design agent owns thread existence, so a
 // reload lands on the SAME thread; an id minted per page instance meant the
 // rehydrate path could not be exercised in mock mode AT ALL, since every reload
 // addressed a thread nothing had ever been sent to. (`instanceId` still varies
@@ -187,7 +204,7 @@ function threadFor(projectName: string): string {
   writeThread(projectName, id);
   return id;
 }
-function threadView(id: string) {
+function threadView(id: string): ProjectConversationView {
   return {
     conversationId: id,
     createdAt: new Date().toISOString(),
@@ -197,13 +214,11 @@ function threadView(id: string) {
 }
 
 export const agentChatHandlers = [
-  http.get("*/api/v1/projects/:projectName/agents/conversations", ({ params }) => {
-    return HttpResponse.json({
-      conversations: [threadView(threadFor(params.projectName as string))],
-    });
+  http.get(`${V1}/projects/:projectName/conversations/current`, ({ params }) => {
+    return HttpResponse.json(threadView(threadFor(params.projectName as string)));
   }),
 
-  http.post("*/api/v1/projects/:projectName/agents/conversations", ({ params }) => {
+  http.post(`${V1}/projects/:projectName/conversations`, ({ params }) => {
     const projectName = params.projectName as string;
     threadCounter += 1;
     const fresh = `mock-thread-${instanceId}-${threadCounter}`;
@@ -215,7 +230,7 @@ export const agentChatHandlers = [
     return HttpResponse.json(threadView(fresh), { status: 201 });
   }),
 
-  http.post("*/api/v1/projects/:projectName/agents/:conversationId/messages", async ({ request, params }) => {
+  http.post(`${V1}/projects/:projectName/conversations/:conversationId/turns`, async ({ request, params }) => {
     // Two content types (#428): JSON as before, multipart when the message
     // carries attachments. Reading `request.json()` unconditionally would throw
     // on the multipart body, so the branch is on the header, not a try/catch.
@@ -236,10 +251,7 @@ export const agentChatHandlers = [
       } catch {
         // The real server answers a malformed part with its structured 400; a
         // mock that throws instead fails the request with no response at all.
-        return HttpResponse.json(
-          { code: "invalid_request", message: "anchor must be valid JSON" },
-          { status: 400 },
-        );
+        return problem(400, "invalid_turn", "anchor must be valid JSON");
       }
       const files = form.getAll("files").filter((f): f is File => f instanceof File);
       // The server's own guard, mirrored: the console screens first, so a
@@ -247,7 +259,7 @@ export const agentChatHandlers = [
       // 400 path is exercisable in mock mode rather than only in production.
       const rejection = rejectAttachments(files);
       if (rejection) {
-        return HttpResponse.json({ code: "invalid_request", message: rejection }, { status: 400 });
+        return problem(400, "attachment_rejected", rejection);
       }
       attachments = files.map((f) => f.name);
     } else {
@@ -260,10 +272,7 @@ export const agentChatHandlers = [
     // must too — otherwise an attachment-only send looks supported here and
     // 400s in production.
     if (instruction.trim() === "") {
-      return HttpResponse.json(
-        { code: "invalid_request", message: "instruction is required" },
-        { status: 400 },
-      );
+      return problem(400, "invalid_turn", "instruction is required");
     }
     turnCounter += 1;
     const turnId = `mock-turn-${instanceId}-${turnCounter}`;
@@ -278,31 +287,31 @@ export const agentChatHandlers = [
     return HttpResponse.json({ turnId }, { status: 202 });
   }),
 
-  http.get("*/api/v1/projects/:projectName/agents/:conversationId/messages", ({ params }) => {
+  http.get(`${V1}/projects/:projectName/conversations/:conversationId/messages`, ({ params }) => {
     const scenario = chatScenario();
     if (scenario === "multiuser") {
-      return HttpResponse.json({ status: "done", messages: multiuserHistory });
+      return HttpResponse.json({ messages: multiuserHistory });
     }
     if (scenario === "teammate-turn") {
-      return HttpResponse.json({ status: "done", messages: teammateTurnHistory });
+      return HttpResponse.json({ messages: teammateTurnHistory });
     }
     // Echo this session's own sends, attachment names included — the journal's
     // job in production. Empty for a conversation nothing was sent to, which is
     // the pre-#428 behaviour unchanged.
     return HttpResponse.json({
-      status: "done",
       messages: readJournal()[params.conversationId as string] ?? [],
     });
   }),
 
-  http.get("*/api/v1/projects/:projectName/turns/active", () => {
+  http.get(`${V1}/projects/:projectName/turns/active`, ({ params }) => {
     if (chatScenario() === "teammate-turn") {
-      return HttpResponse.json(activeTeammateTurn());
+      const projectName = params.projectName as string;
+      return HttpResponse.json(activeTeammateTurn(projectName, threadFor(projectName)));
     }
     return new HttpResponse(null, { status: 204 });
   }),
 
-  http.get("*/api/v1/projects/:projectName/turns/:turnId/stream", ({ params }) => {
+  http.get(`${V1}/projects/:projectName/turns/:turnId/stream`, ({ params }) => {
     const turnId = String(params.turnId);
     const instruction = turnInstruction.get(turnId) ?? "";
     const failing = instruction.includes("fail");
@@ -619,7 +628,7 @@ export const agentChatHandlers = [
             input,
             output: { status: "awaiting_user_response" },
           },
-          { type: "turn-committed", noChanges: true },
+          { type: "turn-completed" },
         ]);
       }
       if (grillSingle) {
@@ -657,7 +666,7 @@ export const agentChatHandlers = [
             input,
             output: { status: "awaiting_user_response", question: input.question },
           },
-          { type: "turn-committed", noChanges: true },
+          { type: "turn-completed" },
         ]);
       }
     }
@@ -682,19 +691,26 @@ export const agentChatHandlers = [
         output: { ok: true, op: "add", path: "specs/requirements/prd.md", status: "applied" },
       },
       { type: "text-delta", delta: "\n\nDone — the change is live in the shared doc." },
-      { type: "turn-committed", noChanges: true },
+      { type: "turn-completed" },
     ]);
   }),
 
-  http.get("*/api/v1/projects/:projectName/turns/:turnId", ({ params }) =>
-    HttpResponse.json({
-      turnId: String(params.turnId),
-      conversationId: "mock-conv",
-      useCase: "general",
+  http.get(`${V1}/projects/:projectName/turns/:turnId`, ({ params }) => {
+    const turnId = String(params.turnId);
+    const projectName = String(params.projectName);
+    const now = new Date().toISOString();
+    return HttpResponse.json({
+      turnId,
+      project: projectName,
+      conversationId: threadFor(projectName),
+      kind: "browser",
+      flow: "",
       status: "completed",
-      noChanges: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }),
-  ),
+      instruction: turnInstruction.get(turnId) ?? "",
+      authorId: "",
+      authorDisplayName: "",
+      createdAt: now,
+      finishedAt: now,
+    } satisfies TurnStatus);
+  }),
 ];

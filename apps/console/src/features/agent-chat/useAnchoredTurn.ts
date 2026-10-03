@@ -34,7 +34,7 @@ import { attachAndFoldTurn } from "./runTurn.js";
 import { conversationKeys, fetchCurrentConversationId } from "./api/conversations.js";
 import {
   ConversationRotatedError,
-  startCollabTurn,
+  startTurn,
   type TurnAiming,
 } from "./api/turns.js";
 import { useCurrentAuthor } from "./currentUser.js";
@@ -113,14 +113,10 @@ export function useAnchoredTurn(
       // document the user is editing.
       await flushRoomBeforeDispatch(chatKey);
       try {
-        const turnId = await startCollabTurn(
-          projectName,
-          conversationId,
-          text,
-          [],
-          true,
+        const { turnId } = await startTurn(projectName, conversationId, {
+          instruction: text,
           aiming,
-        );
+        });
         clearFailedSends(chatKey);
         settleUserMessage(chatKey, messageId, { turnId });
         // Fold the turn to its terminal, detached — unless a fold is already

@@ -59,7 +59,7 @@ vi.mock("./api/conversations", async (importOriginal) => {
 const mockStartTurn = vi.fn();
 vi.mock("./api/turns", async (importOriginal) => {
   const real = await importOriginal<typeof import("./api/turns")>();
-  return { ...real, startCollabTurn: (...a: unknown[]) => mockStartTurn(...a) };
+  return { ...real, startTurn: (...a: unknown[]) => mockStartTurn(...a) };
 });
 
 // The detached fold (#666): resolved by the test, so "the turn is running" is
@@ -90,7 +90,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   replaceMessages(KEY, []);
   mockFetchCurrent.mockResolvedValue("conv-1");
-  mockStartTurn.mockResolvedValue("turn-1");
+  mockStartTurn.mockResolvedValue({ turnId: "turn-1" });
   mockFold.mockResolvedValue(undefined);
 });
 
@@ -99,9 +99,9 @@ describe("useAnchoredTurn", () => {
     const { result } = await mountReady();
     await result.current.send("make this shorter", { anchor: ANCHOR, intent: "change" });
 
-    expect(mockStartTurn).toHaveBeenCalledWith(PROJECT, "conv-1", "make this shorter", [], true, {
-      anchor: ANCHOR,
-      intent: "change",
+    expect(mockStartTurn).toHaveBeenCalledWith(PROJECT, "conv-1", {
+      instruction: "make this shorter",
+      aiming: { anchor: ANCHOR, intent: "change" },
     });
   });
 
@@ -136,7 +136,7 @@ describe("useAnchoredTurn", () => {
   it("holds the log against a rehydrate while the dispatch is in flight", async () => {
     let release!: () => void;
     mockStartTurn.mockImplementation(
-      () => new Promise<string>((resolve) => { release = () => resolve("turn-1"); }),
+      () => new Promise<{ turnId: string }>((resolve) => { release = () => resolve({ turnId: "turn-1" }); }),
     );
     const { result } = await mountReady();
     const sending = result.current.send("shorter", { anchor: ANCHOR, intent: "discuss" });

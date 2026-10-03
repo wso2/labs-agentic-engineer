@@ -104,10 +104,25 @@ describe("attachAndFoldTurn — turn-end notification (#252 Task 5)", () => {
     vi.useRealTimers();
   });
 
-  it("notifies turn-end with 'completed' on a turn-committed terminal frame", async () => {
-    queuedParts = [{ type: "turn-committed" } as StreamPart];
+  it("notifies turn-end with 'completed' on a turn-completed terminal frame", async () => {
+    queuedParts = [{ type: "turn-completed" } as StreamPart];
     await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
     expect(notified).toEqual([{ key: KEY, status: "completed" }]);
+  });
+
+  it("calls onCompleted exactly once on a turn-completed terminal frame", async () => {
+    queuedParts = [{ type: "text-delta", delta: "done" }, { type: "turn-completed" } as StreamPart];
+    const onCompleted = vi.fn();
+    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal, onCompleted);
+    expect(onCompleted).toHaveBeenCalledTimes(1);
+    expect(mockGetTurn).not.toHaveBeenCalled(); // the frame is the terminal; no fallback poll
+  });
+
+  it("never calls onCompleted for a failed turn", async () => {
+    queuedParts = [{ type: "turn-failed", reason: "agent-error", message: "boom" } as StreamPart];
+    const onCompleted = vi.fn();
+    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal, onCompleted);
+    expect(onCompleted).not.toHaveBeenCalled();
   });
 
   it("notifies turn-end with 'failed' on a turn-failed terminal frame", async () => {
@@ -158,7 +173,7 @@ describe("attachAndFoldTurn — pre-stream 404 re-attach (#3)", () => {
     mockOpenTurnStream
       .mockRejectedValueOnce(attachErr)
       .mockResolvedValueOnce(new ReadableStream());
-    queuedParts = [{ type: "turn-committed" } as StreamPart];
+    queuedParts = [{ type: "turn-completed" } as StreamPart];
     mockGetTurn.mockResolvedValue({ status: "running" });
 
     const done = attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
@@ -184,6 +199,28 @@ describe("attachAndFoldTurn — pre-stream 404 re-attach (#3)", () => {
     await done;
 
     expect(notified).toEqual([{ key: KEY, status: "completed" }]);
+  });
+
+  // 409 replay_truncated: the running turn overflowed its replay buffer, so a
+  // replay would have a gap. The pod says to attach again after the turn ends;
+  // the status read is what settles it, without folding a gapped stream.
+  it("waits out a truncated replay on the turn's status, then settles from it", async () => {
+    vi.useFakeTimers();
+    mockOpenTurnStream.mockRejectedValue(new TurnStreamAttachError(409, "replay_truncated"));
+    mockGetTurn
+      .mockResolvedValueOnce({ status: "running" })
+      .mockResolvedValueOnce({ status: "running" })
+      .mockResolvedValueOnce({ status: "completed" });
+    const onCompleted = vi.fn();
+
+    const done = attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal, onCompleted);
+    await vi.runAllTimersAsync();
+    await done;
+
+    expect(mockOpenTurnStream).toHaveBeenCalledTimes(1);
+    expect(mockGetTurn).toHaveBeenCalledTimes(3);
+    expect(notified).toEqual([{ key: KEY, status: "completed" }]);
+    expect(onCompleted).toHaveBeenCalledTimes(1);
   });
 
   it("re-throws non-404 attach failures (still surfaces Turn failed upstream)", async () => {
@@ -415,7 +452,7 @@ describe("attachAndFoldTurn — declare_plan folds into the plan store (#576)", 
   it("a committed turn dissolves the plan entirely", async () => {
     queuedParts = [
       { type: "tool-call", toolCallId: "p1", toolName: "declare_plan", input: { paths: [CELL] } },
-      { type: "turn-committed" },
+      { type: "turn-completed" },
     ] as StreamPart[];
     await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
     expect(peekPlan(KEY)).toBe(null);
@@ -439,7 +476,7 @@ describe("attachAndFoldTurn — a question call the schema rejected is not a car
       { type: "tool-call", toolCallId: "q-bad", toolName: "ask_questions", input: { questions: [good] }, invalid: true },
       { type: "tool-error", toolCallId: "q-bad", toolName: "ask_questions", error: "invalid" },
       { type: "tool-call", toolCallId: "q-good", toolName: "ask_question", input: good },
-      { type: "turn-committed" },
+      { type: "turn-completed" },
     ] as StreamPart[];
     await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
     // The prefix DID reach the log as a streaming card before the verdict…
@@ -469,7 +506,7 @@ describe("attachAndFoldTurn — a provider wait is status until the model answer
       { type: "provider-wait", host: "ollama.com" } as StreamPart,
       { type: "start-step" },
       { type: "text-delta", delta: "hi" },
-      { type: "turn-committed" } as StreamPart,
+      { type: "turn-completed" } as StreamPart,
     ];
     await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
     const set = waitOps.indexOf("set:ollama.com");
@@ -480,7 +517,7 @@ describe("attachAndFoldTurn — a provider wait is status until the model answer
   });
 
   it("never sets a wait on a turn without one", async () => {
-    queuedParts = [{ type: "start-step" }, { type: "text-delta", delta: "hi" }, { type: "turn-committed" } as StreamPart];
+    queuedParts = [{ type: "start-step" }, { type: "text-delta", delta: "hi" }, { type: "turn-completed" } as StreamPart];
     await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
     expect(waitOps.some((op) => op.startsWith("set:"))).toBe(false);
   });

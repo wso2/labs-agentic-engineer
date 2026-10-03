@@ -19,11 +19,11 @@
 // Per-project chat log + conversation identity for the AI panel (#130).
 // Simplified from the legacy console's chatStore: localStorage-persisted,
 // capped, transient by design (quota errors drop silently). One conversation
-// uuid per (org, project), minted lazily on first send — the BFF's
+// uuid per (org, project), minted lazily on first send — the design agent's
 // conversation store is the durable history; this log is display state.
 
 import type { AskQuestionInput, QuestionAnswer } from "@aep/agent-stream";
-import type { components } from "../../generated/aep-api";
+import type { components } from "../../generated/ae-design-agent";
 
 type TurnAnchor = components["schemas"]["TurnAnchor"];
 
@@ -218,9 +218,9 @@ export function addMessage(key: string, msg: WithoutId<ChatMessage>): string {
 /**
  * Settle an optimistic user row once the dispatch answers.
  *
- * A send paints its row BEFORE the POST — that request resolves the repo, the
- * workspace ref, the model connection key, two git heads and two snapshot extracts
- * before it returns a turn id, and the user watching their own message not
+ * A send paints its row BEFORE the POST — the design agent resolves the
+ * project's snapshot, the skills and the model connection before it returns a
+ * turn id, and the user watching their own message not
  * appear for all of that has no way to tell a slow platform from a dropped
  * one. So the row goes up first and is settled here: stamped with the turn it
  * became, or marked failed if there wasn't one.
@@ -572,7 +572,7 @@ export function subscribeSeed(key: string, fn: () => void): () => void {
 
 // --- Turn-end bus (#252 Task 5: freshness / turn-end flush) ---------------
 //
-// "A collab turn's terminal frame arrived" (runTurn.ts's `turn-committed` /
+// "A turn's terminal frame arrived" (runTurn.ts's `turn-completed` /
 // `turn-failed`, or its severed-stream poll fallback) is broadcast here so
 // BOTH the chat panel's universal refetch-on-turn-done fallback AND the spec
 // view's deterministic room flush (useTurnEndFlush — only available where the

@@ -20,7 +20,7 @@
 // convention as `aep:mock:projects` (see fixtures/projects.ts): toggle in
 // the browser devtools:
 //   localStorage.setItem('aep:mock:chat', 'multiuser' | 'teammate-turn')
-import type { components } from "../../generated/aep-api";
+import type { components } from "../../generated/ae-design-agent";
 import { MOCK_USER } from "../../auth/mockSession";
 
 type TurnStatus = components["schemas"]["TurnStatus"];
@@ -39,10 +39,10 @@ interface MockConversationMessage {
 }
 
 // Mirrors the identity useCurrentAuthor() derives for the mock session
-// (email doubles as id — see currentUser.ts) so "the signed-in user" in the
+// (the session's sub — see currentUser.ts) so "the signed-in user" in the
 // mock history is literally the same author the send path stamps.
 export const MOCK_CHAT_USER: MockChatAuthor = {
-  id: MOCK_USER.email,
+  id: MOCK_USER.id,
   displayName: MOCK_USER.name,
 };
 
@@ -107,15 +107,22 @@ export const teammateTurnHistory: MockConversationMessage[] = [
   },
 ];
 
-/** The running turn a teammate started, for GET .../turns/active. */
-export function activeTeammateTurn(): TurnStatus {
-  const now = new Date().toISOString();
+/**
+ * The running turn a teammate started, for GET .../turns/active, in the
+ * project's current thread. No `instruction`: its triggering message is
+ * already in the rehydrated history above.
+ */
+export function activeTeammateTurn(projectName: string, conversationId: string): TurnStatus {
   return {
     turnId: MOCK_TEAMMATE_TURN_ID,
-    conversationId: "mock-conv",
-    useCase: "general",
+    project: projectName,
+    conversationId,
+    kind: "browser",
+    flow: "",
     status: "running",
-    createdAt: now,
-    updatedAt: now,
+    instruction: "",
+    authorId: MOCK_TEAMMATE.id,
+    authorDisplayName: MOCK_TEAMMATE.displayName,
+    createdAt: new Date().toISOString(),
   };
 }

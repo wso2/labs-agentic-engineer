@@ -16,9 +16,10 @@
  * under the License.
  */
 
-// Fold a turn's SSE stream into chat-store messages (#130). Collab turns put
-// the FILE changes in the live room doc, so the panel folds only narration
-// (text deltas), tool results (cards), errors, and the one aep-api terminal.
+// Fold a turn's SSE stream into chat-store messages (#130). The agent puts the
+// FILE changes in the live Room doc, so the panel folds only narration (text
+// deltas), tool results (cards), errors, and the design agent's one terminal
+// (`turn-completed` / `turn-failed`).
 
 import {
   DECLARE_PLAN_TOOL,
@@ -52,7 +53,7 @@ import {
 import { extractStreamingQuestions, isQuestionTool, parseQuestionsInput } from "./questionCards.js";
 import { turnFailureText, type TurnFailure } from "./lib/turnFailure.js";
 import { clearProviderWait, setProviderWait } from "./providerWait.js";
-import { getTurn, isTurnStreamNotFound, openTurnStream } from "./api/turns.js";
+import { getTurn, isTurnStreamNotFound, isTurnStreamReplayTruncated, openTurnStream } from "./api/turns.js";
 import {
   DRAFT_EXTERNAL_RESOURCE_TOOL,
   parseRegisterDraft,
@@ -76,6 +77,10 @@ function publishDraftFromInput(chatKey: string, input: unknown): void {
 
 const ATTACH_404_MAX_ATTEMPTS = 8;
 const ATTACH_404_BASE_MS = 250; // 250, 500, 1000, ... capped
+
+// A truncated replay cannot be folded without a gap; the turn's status is
+// read at this pace until it ends (a turn is capped at 30 minutes).
+const TRUNCATED_STATUS_POLL_MS = 5_000;
 
 function attachBackoffMs(attempt: number): number {
   return Math.min(ATTACH_404_BASE_MS * 2 ** attempt, 4000);
@@ -105,14 +110,14 @@ function settleFromTurnStatus(
   chatKey: string,
   turnId: string,
   status: ({ status?: string } & TurnFailure) | null | undefined,
-  onCommitted?: () => void,
+  onCompleted?: () => void,
   askedQuestion = false,
 ): boolean {
   if (status?.status === "completed") {
     setTurnStatus(chatKey, turnId, "completed");
     planTurnEnded(chatKey, turnId, "completed", askedQuestion);
     notifyTurnEnd(chatKey, "completed");
-    onCommitted?.();
+    onCompleted?.();
     return true;
   }
   if (status?.status === "failed") {
@@ -129,16 +134,16 @@ function settleFromTurnStatus(
  * Attach to a running turn's stream and fold it to its terminal. Resolves
  * when the turn reaches a terminal (or the signal aborts — the turn keeps
  * running server-side; a later re-attach replays it). A severed stream falls
- * back to one authoritative status poll. `onCommitted` fires once when the
- * turn completes (turn-committed, or the fallback poll landing on completed)
- * so the caller can refresh caches the commit invalidated.
+ * back to one authoritative status poll. `onCompleted` fires once when the
+ * turn completes (turn-completed, or a status read landing on completed) so
+ * the caller can refresh caches the turn's edits made stale.
  */
 export async function attachAndFoldTurn(
   chatKey: string,
   projectName: string,
   turnId: string,
   signal: AbortSignal,
-  onCommitted?: () => void,
+  onCompleted?: () => void,
 ): Promise<void> {
   let sawTerminal = false;
   // Did this turn put a question to the user? A turn that ends on a question
@@ -380,7 +385,7 @@ export async function attachAndFoldTurn(
           content: typeof part.error === "string" ? part.error : "The agent hit an error.",
         });
         break;
-      case "turn-committed":
+      case "turn-completed":
         sawTerminal = true;
         setTurnStatus(chatKey, turnId, "completed");
         planTurnEnded(chatKey, turnId, "completed", askedQuestion);
@@ -388,7 +393,7 @@ export async function attachAndFoldTurn(
         // chat panel's fallback + the spec view's deterministic room flush
         // both react to (see chatStore's turn-end bus + useTurnEndFlush).
         notifyTurnEnd(chatKey, "completed");
-        onCommitted?.();
+        onCompleted?.();
         break;
       case "turn-failed":
         sawTerminal = true;
@@ -414,12 +419,16 @@ export async function attachAndFoldTurn(
         break; // stream ended cleanly (terminal or severed)
       } catch (err) {
         if (signal.aborted) return; // unmount/navigation — not a failure
+        if (isTurnStreamReplayTruncated(err)) {
+          await settleWhenEnded(chatKey, projectName, turnId, signal, onCompleted, askedQuestion);
+          return;
+        }
         if (!isTurnStreamNotFound(err) || attempt >= ATTACH_404_MAX_ATTEMPTS - 1) {
           throw err;
         }
         // Turn may already be terminal on another replica — settle via getTurn.
         const status = await getTurn(projectName, turnId);
-        if (settleFromTurnStatus(chatKey, turnId, status, onCommitted, askedQuestion)) {
+        if (settleFromTurnStatus(chatKey, turnId, status, onCompleted, askedQuestion)) {
           return;
         }
         await sleep(attachBackoffMs(attempt), signal);
@@ -445,5 +454,26 @@ export async function attachAndFoldTurn(
   // (and is itself a "terminal frame arrived" for turn-end purposes: the
   // fallback poll IS how this turn's end is observed here).
   const status = await getTurn(projectName, turnId);
-  settleFromTurnStatus(chatKey, turnId, status, onCommitted, askedQuestion);
+  settleFromTurnStatus(chatKey, turnId, status, onCompleted, askedQuestion);
+}
+
+/**
+ * Read the turn's status until it ends, then settle the bubble from it: the
+ * path for a replay the pod refused as truncated (409 replay_truncated). A
+ * turn the pod no longer holds (null) ends the wait with nothing to settle.
+ */
+async function settleWhenEnded(
+  chatKey: string,
+  projectName: string,
+  turnId: string,
+  signal: AbortSignal,
+  onCompleted: (() => void) | undefined,
+  askedQuestion: boolean,
+): Promise<void> {
+  for (;;) {
+    const status = await getTurn(projectName, turnId);
+    if (signal.aborted || !status) return;
+    if (settleFromTurnStatus(chatKey, turnId, status, onCompleted, askedQuestion)) return;
+    await sleep(TRUNCATED_STATUS_POLL_MS, signal);
+  }
 }

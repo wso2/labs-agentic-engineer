@@ -130,7 +130,7 @@ const escalatedIssue: IssueInfo = {
 };
 
 function session(email: string, orgHandle: string | null): Session {
-  return { user: { name: email, email }, orgHandle, signOut: () => {} };
+  return { user: { id: email, name: email, email }, orgHandle, signOut: () => {} };
 }
 
 function renderAttention(email: string, reports: RcaAgentReport[] = [report(3)], orgHandle: string | null = "acme") {

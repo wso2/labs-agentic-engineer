@@ -16,13 +16,13 @@
  * under the License.
  */
 
-// The sentence a failed agent turn shows in the chat. A failure the agents
-// service could name (TurnStatus.code — the model provider's usage limit, a
+// The sentence a failed agent turn shows in the chat. A failure the design
+// agent could name (TurnStatus.code — the model provider's usage limit, a
 // write the output limit cut off) is phrased from its fields, so a provider
 // limit says whose plan is spent and when to try again, in the reader's own
 // time zone; anything else shows the message the platform recorded.
 
-import type { components } from "../../../generated/aep-api";
+import type { components } from "../../../generated/ae-design-agent";
 import { resetStamp } from "../../../lib/resetStamp";
 
 type TurnStatus = components["schemas"]["TurnStatus"];

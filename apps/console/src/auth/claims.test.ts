@@ -106,3 +106,19 @@ describe("identityFromClaims", () => {
     expect(identityFromClaims({ name: "N" }).email).toBe("");
   });
 });
+
+describe("identityFromClaims id", () => {
+  // The pods name a turn's author by the verified token's `sub`, so the
+  // console's own id must be the same claim, not the email.
+  it("is the token's sub", () => {
+    expect(identityFromClaims({ sub: "u-123", email: "ada@x.com", name: "Ada" }).id).toBe("u-123");
+  });
+
+  it("takes the first source that carries a sub", () => {
+    expect(identityFromClaims({ email: "ada@x.com" }, { sub: "u-123" }).id).toBe("u-123");
+  });
+
+  it("is empty when no source carries one", () => {
+    expect(identityFromClaims({ email: "ada@x.com" }).id).toBe("");
+  });
+});

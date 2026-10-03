@@ -176,7 +176,7 @@ export function designPlanFrames(turnId: string, failing: boolean): MockFrame[] 
     { type: "text-delta", delta: "Writing the acceptance criteria… " },
     ...addFile(`f-acceptance-${turnId}`, ACCEPTANCE),
     { type: "text-delta", delta: "\n\nThe design is ready — read it at your pace." },
-    { type: "turn-committed", noChanges: true },
+    { type: "turn-completed" },
   );
   return frames;
 }

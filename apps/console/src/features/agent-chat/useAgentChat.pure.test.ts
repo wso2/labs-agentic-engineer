@@ -21,17 +21,21 @@
 
 import { describe, expect, it } from "vitest";
 import { foreignTurnPollDelay, userMessageForTurn } from "./useAgentChat";
-import type { ChatMessage } from "./chatStore";
+import { addMessage, chatKeyFor, ensureUserMessage, getMessages, replaceMessages, type ChatMessage } from "./chatStore";
+import { buildFeed } from "./feed";
 import type { TurnStatus } from "./api/turns";
 
 function turn(over: Partial<TurnStatus> = {}): TurnStatus {
   return {
     turnId: "t1",
     conversationId: "c1",
-    useCase: "general",
+    kind: "browser",
+    flow: "",
     status: "running",
+    instruction: "",
+    authorId: "",
+    authorDisplayName: "",
     createdAt: "2026-08-22T08:00:00.000Z",
-    updatedAt: "2026-08-22T08:00:00.000Z",
     ...over,
   };
 }
@@ -86,11 +90,11 @@ describe("userMessageForTurn", () => {
     const msg = userMessageForTurn(
       turn({
         instruction: "/design",
-        authorId: "them@x.com",
+        authorId: "sub-them",
         authorDisplayName: "Them",
       }),
     );
-    expect(msg?.author).toEqual({ id: "them@x.com", displayName: "Them" });
+    expect(msg?.author).toEqual({ id: "sub-them", displayName: "Them" });
   });
 
   // An M2M token journals no author rather than a bare subject.
@@ -105,7 +109,29 @@ describe("userMessageForTurn", () => {
   });
 
   it("falls back to the id when only the display name is missing", () => {
-    const msg = userMessageForTurn(turn({ instruction: "/design", authorId: "them@x.com" }));
-    expect(msg?.author).toEqual({ id: "them@x.com", displayName: "them@x.com" });
+    const msg = userMessageForTurn(turn({ instruction: "/design", authorId: "sub-them" }));
+    expect(msg?.author).toEqual({ id: "sub-them", displayName: "sub-them" });
+  });
+
+  // The pod names a turn's author by the verified token's `sub`, and the
+  // console's "me" is the session's sub: a turn this user started in another
+  // tab, re-attached here, is theirs.
+  it("reads the user's own re-attached turn as \"You\" and a teammate's by name", () => {
+    const key = chatKeyFor("acme", "you-test");
+    replaceMessages(key, []);
+    const own = userMessageForTurn(
+      turn({ turnId: "t-own", instruction: "/design", authorId: "sub-me", authorDisplayName: "Ada" }),
+    )!;
+    ensureUserMessage(key, own);
+    addMessage(key, { role: "assistant", turnId: "t-own", content: "on it" });
+    const theirs = userMessageForTurn(
+      turn({ turnId: "t-them", instruction: "/start", authorId: "sub-them", authorDisplayName: "Grace" }),
+    )!;
+    ensureUserMessage(key, theirs);
+    const users = buildFeed(getMessages(key), { currentUserId: "sub-me", activeTurnId: undefined }).filter(
+      (b) => b.kind === "user",
+    );
+    expect(users.map((b) => b.attribution.displayName)).toEqual(["You", "Grace"]);
+    replaceMessages(key, []);
   });
 });

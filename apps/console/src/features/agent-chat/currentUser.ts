@@ -27,13 +27,13 @@ export interface ChatAuthor {
 /**
  * The signed-in user's identity for stamping outgoing chat messages (#130
  * multi-user threads), so the send path can attribute a turn and the panel
- * can later tell "You" apart from a teammate. `Session` doesn't carry a
- * separate user id — email is the only stable identifier it has — so it
- * doubles as the author id here.
+ * can later tell "You" apart from a teammate. The id is the session's `sub`,
+ * the same claim the design agent stamps a turn's and a message's author
+ * with, so the user's own turns read as "You".
  */
 export function useCurrentAuthor(): ChatAuthor {
   const { user } = useSession();
   // Stable identity across re-renders (not a fresh object each render) so
   // callers can safely put it in a hook dependency array.
-  return useMemo(() => ({ id: user.email, displayName: user.name }), [user.email, user.name]);
+  return useMemo(() => ({ id: user.id, displayName: user.name }), [user.id, user.name]);
 }

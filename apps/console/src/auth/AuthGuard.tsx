@@ -97,7 +97,7 @@ function OidcGuard({ children }: PropsWithChildren) {
       : {};
     const identity = identityFromClaims(idClaims, accessClaims);
     return {
-      user: { name: identity.name, email: identity.email },
+      user: { id: identity.id, name: identity.name, email: identity.email },
       orgHandle: identity.orgHandle,
       signOut: () => void signOut(),
     };

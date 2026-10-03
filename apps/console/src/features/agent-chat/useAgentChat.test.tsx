@@ -64,7 +64,7 @@ vi.mock("./api/turns", async (importOriginal) => {
     ...real, // ConversationRotatedError stays REAL — the hook instanceof-checks it
     getConversationMessages: (...a: unknown[]) => mockGetHistory(...a),
     getActiveTurn: (...a: unknown[]) => mockGetActive(...a),
-    startCollabTurn: (...a: unknown[]) => mockStartTurn(...a),
+    startTurn: (...a: unknown[]) => mockStartTurn(...a),
   };
 });
 
@@ -152,16 +152,16 @@ describe("useAgentChat — the shared thread (#430)", () => {
     const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.conversationReady).toBe(true));
 
-    mockStartTurn.mockResolvedValue("turn-1");
+    mockStartTurn.mockResolvedValue({ turnId: "turn-1" });
     await act(async () => {
       await result.current.send("hello");
     });
 
-    // The 4th arg is the message's chat attachments (#428) — empty for a plain
+    // `files` is the message's chat attachments (#428) — empty for a plain
     // send, and passed explicitly rather than omitted so the wire shape is one
     // code path.
     await waitFor(() =>
-      expect(mockStartTurn).toHaveBeenCalledWith(PROJECT, "conv-1", "hello", [], true),
+      expect(mockStartTurn).toHaveBeenCalledWith(PROJECT, "conv-1", { instruction: "hello", files: [] }),
     );
   });
 
@@ -180,7 +180,7 @@ describe("useAgentChat — the shared thread (#430)", () => {
 
     mockStartTurn.mockImplementation(async () => {
       order.push("dispatch");
-      return "turn-1";
+      return { turnId: "turn-1" };
     });
     await act(async () => {
       await result.current.send("hello");
@@ -200,31 +200,15 @@ describe("useAgentChat — the shared thread (#430)", () => {
     const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.conversationReady).toBe(true));
 
-    mockStartTurn.mockResolvedValue("turn-1");
+    mockStartTurn.mockResolvedValue({ turnId: "turn-1" });
     await act(async () => {
       await result.current.send("hello");
     });
 
     await waitFor(() =>
-      expect(mockStartTurn).toHaveBeenCalledWith(PROJECT, "conv-1", "hello", [], true),
+      expect(mockStartTurn).toHaveBeenCalledWith(PROJECT, "conv-1", { instruction: "hello", files: [] }),
     );
     unregister();
-  });
-
-  it("omits collab when this chat is not a spec workspace", async () => {
-    const { result } = renderHook(() => useAgentChat(ORG, PROJECT, { collab: false }), {
-      wrapper: createWrapper(),
-    });
-    await waitFor(() => expect(result.current.conversationReady).toBe(true));
-
-    mockStartTurn.mockResolvedValue("turn-1");
-    await act(async () => {
-      await result.current.send("hello");
-    });
-
-    await waitFor(() =>
-      expect(mockStartTurn).toHaveBeenCalledWith(PROJECT, "conv-1", "hello", [], false),
-    );
   });
 
   it("holds sends until the thread id resolves", async () => {
@@ -295,7 +279,7 @@ describe("useAgentChat — the shared thread (#430)", () => {
       turnId: "t-77",
       conversationId: "conv-1",
       status: "running",
-      useCase: "general",
+      kind: "browser",
     });
     // Keep the attachment open so the running state is observable.
     mockAttach.mockReturnValue(new Promise(() => {}));
@@ -316,7 +300,7 @@ describe("useAgentChat — the shared thread (#430)", () => {
       turnId: "t-old",
       conversationId: "conv-DEMOTED",
       status: "running",
-      useCase: "general",
+      kind: "browser",
     });
 
     const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
@@ -359,7 +343,7 @@ describe("useAgentChat — the shared thread (#430)", () => {
 
 // #562 review: the window between "the server has the turn" and "this client
 // knows its id". The turn row exists the moment StartTurn returns 202, but
-// `startCollabTurn` has not resolved yet — so `attachedRef` is still false and
+// `startTurn` has not resolved yet — so `attachedRef` is still false and
 // the foreign-turn poll would happily find that turn, attach it, and fold it,
 // while `send` was about to fold the very same stream. Two concurrent folds,
 // and a second user bubble beside the one the user is already looking at,
@@ -389,7 +373,7 @@ describe("useAgentChat — a local send in flight", () => {
   it("keeps the user's message through a refocus mid-dispatch", async () => {
     let resolveDispatch: (id: string) => void = () => {};
     mockStartTurn.mockImplementation(
-      () => new Promise<string>((res) => { resolveDispatch = res; }),
+      () => new Promise<{ turnId: string }>((res) => { resolveDispatch = (turnId) => res({ turnId }); }),
     );
 
     const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
@@ -420,7 +404,7 @@ describe("useAgentChat — a local send in flight", () => {
     // The dispatch hangs; the turn nonetheless exists server-side.
     let resolveDispatch: (id: string) => void = () => {};
     mockStartTurn.mockImplementation(
-      () => new Promise<string>((res) => { resolveDispatch = res; }),
+      () => new Promise<{ turnId: string }>((res) => { resolveDispatch = (turnId) => res({ turnId }); }),
     );
 
     const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
@@ -437,7 +421,7 @@ describe("useAgentChat — a local send in flight", () => {
     mockGetActive.mockResolvedValue({
       turnId: "t1",
       conversationId: "conv-1",
-      useCase: "general",
+      kind: "browser",
       status: "running",
       createdAt: new Date(0).toISOString(),
       updatedAt: new Date(0).toISOString(),
@@ -510,10 +494,10 @@ describe("useAgentChat — a committed turn refreshes the thread cache", () => {
       turnId: "t-kickoff",
       conversationId: "conv-1",
       status: "running",
-      useCase: "general",
+      kind: "browser",
     });
     mockAttach.mockImplementation(
-      async (chatKey: string, _p: string, turnId: string, _s: unknown, onCommitted: () => void) => {
+      async (chatKey: string, _p: string, turnId: string, _s: unknown, onCompleted: () => void) => {
         // The fold paints the question card live. The pointer in the panel
         // exists because of THIS, never the query — which is what lets the two
         // disagree in the first place.
@@ -527,10 +511,10 @@ describe("useAgentChat — a committed turn refreshes the thread cache", () => {
         // The turn is over: the poll must not find it again and rehydrate on
         // its own, which would mask exactly the staleness under test.
         mockGetActive.mockResolvedValue(null);
-        // The turn is persisted before the commit frame is emitted, so anyone
+        // The turn is persisted before the terminal frame is emitted, so anyone
         // who asks from here on is served it.
         mockGetHistory.mockResolvedValue(POST_TURN_HISTORY);
-        onCommitted();
+        onCompleted();
       },
     );
   });

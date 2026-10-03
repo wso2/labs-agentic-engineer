@@ -19,43 +19,44 @@
 // Project-scoped conversations (#430): the thread id is SERVER-minted and
 // stored against the project — every member resolves the same one, which is
 // what makes the chat a shared thread and `agentEngaged` project-accurate.
-// (The pre-#430 id was a per-browser localStorage mint, so a teammate's
-// interview was structurally invisible.)
+// The org's design agent (ae-design-agent /v1, through designAgent()) owns
+// the threads.
 
 import type { QueryClient } from "@tanstack/react-query";
-import type { components } from "../../../generated/aep-api";
-import { client } from "../../../api/client";
-import { apiErrorMessage } from "../../../api/errors";
+import type { components } from "../../../generated/ae-design-agent";
+import { designAgent } from "../../../api/aeStudio";
+import { apiErrorCode, apiErrorMessage } from "../../../api/errors";
 
 export type ProjectConversationView = components["schemas"]["ProjectConversationView"];
 
 /**
- * Resolve the project's CURRENT thread id — lazily created server-side on the
- * first resolve, so the first visitor mints it and teammates converge on it.
+ * Resolve the project's CURRENT thread id — created on the first read, so the
+ * first visitor mints it and teammates converge on it.
  */
 export async function fetchCurrentConversationId(projectName: string): Promise<string> {
-  const { data, error } = await client.GET("/projects/{projectName}/agents/conversations", {
+  const { data, error } = await designAgent().GET("/projects/{projectName}/conversations/current", {
     params: { path: { projectName } },
   });
-  if (error || data === undefined) {
+  if (error !== undefined || data === undefined) {
     throw new Error(apiErrorMessage(error, "Failed to resolve the project conversation"));
   }
-  const current = data.conversations.find((c) => c.current) ?? data.conversations[0];
-  if (!current) throw new Error("The project has no conversation thread.");
-  return current.conversationId;
+  return data.conversationId;
 }
 
 /**
  * Start a fresh thread for the WHOLE project (D4): the current thread is
  * demoted for every member. Returns the new current id. The caller owns the
- * confirmation — rotation is deliberately ungated server-side, because it is
- * also the escape hatch from an abandoned interview.
+ * confirmation. Refused while a turn runs for the project, whose save would
+ * recreate the demoted thread.
  */
 export async function rotateConversation(projectName: string): Promise<string> {
-  const { data, error } = await client.POST("/projects/{projectName}/agents/conversations", {
+  const { data, error, response } = await designAgent().POST("/projects/{projectName}/conversations", {
     params: { path: { projectName } },
   });
-  if (error || data === undefined) {
+  if (error !== undefined || data === undefined) {
+    if (response.status === 409 && apiErrorCode(error) === "turn_in_progress") {
+      throw new Error("A turn is running for this project — start a new conversation once it finishes.");
+    }
     throw new Error(apiErrorMessage(error, "Failed to start a new conversation"));
   }
   return data.conversationId;

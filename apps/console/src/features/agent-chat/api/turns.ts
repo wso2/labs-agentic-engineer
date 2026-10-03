@@ -16,24 +16,52 @@
  * under the License.
  */
 
-import type { components } from "../../../generated/aep-api";
-import { client } from "../../../api/client";
-import { apiErrorMessage } from "../../../api/errors";
+import type { components } from "../../../generated/ae-design-agent";
+import { designAgent } from "../../../api/aeStudio";
+import { apiErrorCode, apiErrorMessage } from "../../../api/errors";
+
+// The chat's turn calls, on the org's design agent (ae-design-agent /v1 in the
+// AE Studio pod, reached through designAgent()): start a turn in the
+// project's current thread, read its status, attach to its event stream, and
+// rehydrate the thread's messages.
 
 export type TurnStatus = components["schemas"]["TurnStatus"];
 
 /** What the user pointed at, and what they want done with it (#666). */
 export type TurnAnchor = components["schemas"]["TurnAnchor"];
-export type TurnIntent = NonNullable<components["schemas"]["TurnInputBody"]["intent"]>;
+export type TurnIntent = components["schemas"]["TurnIntent"];
 
 /**
  * The aiming half of a send. Both fields travel together or not at all: an
  * intent with nothing to point at says nothing, and an anchor with no intent
- * leaves the service guessing which preamble to render.
+ * leaves the agent guessing which preamble to render.
  */
 export interface TurnAiming {
   anchor: TurnAnchor;
   intent: TurnIntent;
+}
+
+/** One send: the user's words, the files riding along (#428), what it aims at (#666). */
+export interface TurnStartInput {
+  instruction: string;
+  files?: File[] | undefined;
+  aiming?: TurnAiming | undefined;
+}
+
+/**
+ * A refused turn start: the sentence the chat shows, plus the pod's status
+ * (undefined when it did not answer) and code.
+ */
+export class TurnStartError extends Error {
+  readonly status: number | undefined;
+  readonly code: string | undefined;
+
+  constructor(message: string, status: number | undefined, code: string | undefined) {
+    super(message);
+    this.name = "TurnStartError";
+    this.status = status;
+    this.code = code;
+  }
 }
 
 /**
@@ -41,116 +69,117 @@ export interface TurnAiming {
  * teammate rotated while this client held a resolved id. Recovery is
  * re-resolve + rehydrate, not a retry into the demoted thread.
  */
-export class ConversationRotatedError extends Error {
+export class ConversationRotatedError extends TurnStartError {
   constructor() {
-    super("The conversation was replaced with a new one — your message was not sent.");
+    super("The conversation was replaced with a new one — your message was not sent.", 409, "conversation_rotated");
     this.name = "ConversationRotatedError";
   }
 }
 
+/** A turn is already running for the project; `activeTurnId` names it when the pod did. */
+export class TurnInProgressError extends TurnStartError {
+  readonly activeTurnId: string | undefined;
+
+  constructor(activeTurnId: string | undefined) {
+    super("An agent turn is already running for this project — wait for it to finish.", 409, "turn_in_progress");
+    this.name = "TurnInProgressError";
+    this.activeTurnId = activeTurnId;
+  }
+}
+
 /**
- * The multipart body for a send that carries attachments. `collab` goes over the
- * wire as the string "true" because a form field has no other representation —
- * the server parses it, and the JSON path is unaffected.
+ * The chat's sentence for a refused start, by the pod's code. A refusal whose
+ * cure is somewhere else (Settings, a moment's wait) says so; any other one
+ * carries the pod's own sentence.
  */
-function turnFormData(
-  instruction: string,
-  files: File[],
-  collab: boolean,
-  aiming?: TurnAiming | undefined,
-): FormData {
+function refusalMessage(status: number, code: string | undefined, error: unknown): string {
+  switch (code) {
+    case "no_default_key":
+      return "Your organization has no model connection yet — add one in Settings → AI agents.";
+    case "tools_unavailable":
+      return "AE Studio's tools are not answering — try again in a moment.";
+    case "shutting_down":
+      return "AE Studio is restarting — try again in a moment.";
+  }
+  if (status === 503) return "AE Studio is not available right now — try again in a moment.";
+  return apiErrorMessage(error, "Failed to start the agent turn");
+}
+
+function startRefusal(status: number, error: unknown): TurnStartError {
+  const code = apiErrorCode(error);
+  if (status === 409 && code === "conversation_rotated") return new ConversationRotatedError();
+  if (status === 409 && code === "turn_in_progress") {
+    const active = (error as { activeTurnId?: unknown }).activeTurnId;
+    return new TurnInProgressError(typeof active === "string" && active ? active : undefined);
+  }
+  return new TurnStartError(refusalMessage(status, code, error), status, code);
+}
+
+/** JSON body of a turn start: the aiming fields ride beside the words, never inside them. */
+function turnBody(input: TurnStartInput): components["schemas"]["TurnInputBody"] {
+  return {
+    instruction: input.instruction,
+    ...(input.aiming ? { anchor: input.aiming.anchor, intent: input.aiming.intent } : {}),
+  };
+}
+
+/** The multipart body of a send that carries attachments. */
+function turnFormData(input: TurnStartInput, files: File[]): FormData {
   const form = new FormData();
-  form.append("instruction", instruction);
-  if (collab) form.append("collab", "true");
+  form.append("instruction", input.instruction);
   // The anchor is a nested object, which a form field cannot carry as a scalar —
   // the contract declares this part `application/json` for exactly that reason.
-  if (aiming) {
-    form.append("anchor", new Blob([JSON.stringify(aiming.anchor)], { type: "application/json" }));
-    form.append("intent", aiming.intent);
+  if (input.aiming) {
+    form.append("anchor", new Blob([JSON.stringify(input.aiming.anchor)], { type: "application/json" }));
+    form.append("intent", input.aiming.intent);
   }
   for (const file of files) form.append("files", file);
   return form;
 }
 
-/** JSON body for StartTurn. Register chat omits collab — there is no spec room. */
-export function startTurnBody(
-  instruction: string,
-  collab: boolean,
-  aiming?: TurnAiming | undefined,
-): components["schemas"]["TurnInputBody"] {
-  return {
-    instruction,
-    ...(collab ? { collab: true } : {}),
-    ...(aiming ? { anchor: aiming.anchor, intent: aiming.intent } : {}),
-  };
+function isAbort(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 /**
- * Start a room-scoped agent turn (#86 phase 4 / #130): `collab: true` — the
- * agent joins the project's spec room as a live peer and edits the shared
- * doc; the panel only receives narration + tool results.
+ * Start a turn in the project's conversation. The agent edits the project's
+ * spec Room itself; the panel only folds the stream's narration and results.
  *
  * `files` (#428) are chat attachments: conversation-scoped model content that
- * rides THIS message and is never stored server-side or committed (ADR-0019).
- * With none attached the request is the same JSON body as before — the
- * multipart form is built only when there is something to put in it, so the
- * overwhelmingly common send is byte-identical to the pre-feature one.
+ * rides THIS message and is never stored or committed (ADR-0019). With none
+ * the request is plain JSON; the multipart form is built only when there is
+ * something to put in it.
+ *
+ * Throws TurnStartError (ConversationRotatedError, TurnInProgressError) for a
+ * refusal or no answer, AeStudioNotReadyError before AE Studio is `ready`.
  */
-export async function startCollabTurn(
+export async function startTurn(
   projectName: string,
   conversationId: string,
-  instruction: string,
-  files: File[] = [],
-  collab = true,
-  aiming?: TurnAiming | undefined,
-): Promise<string> {
-  const { data, error, response } = await client.POST(
-    "/projects/{projectName}/agents/{conversationId}/messages",
-    {
+  input: TurnStartInput,
+): Promise<{ turnId: string }> {
+  const client = designAgent();
+  const files = input.files ?? [];
+  const result = await client
+    .POST("/projects/{projectName}/conversations/{conversationId}/turns", {
       params: { path: { projectName, conversationId } },
-      ...(files.length > 0
-        ? {
-            // Raw bytes, not base64-in-JSON: base64 inflates ~33% and would
-            // silently shave the real 15 MB budget the composer screens against
-            // (ADR-0017 decision 6 made the same call for references).
-            //
-            // Same cast as useUploadReferences: openapi-fetch passes FormData
-            // through its default bodySerializer untouched (the browser sets the
-            // multipart boundary), but the generated request type describes the
-            // JSON Schema shape, not the wire.
-            body: turnFormData(instruction, files, collab, aiming) as unknown as {
-              instruction: string;
-            },
-          }
-        : {
-            body: startTurnBody(instruction, collab, aiming),
-          }),
-    },
-  );
-  if (error || data === undefined) {
-    if (response.status === 409) {
-      // The 409 body is the pinned TurnConflict: turn_in_progress /
-      // requirements_missing / conversation_rotated (#430) /
-      // github_not_connected (the org has no AE Studio to host the room).
-      const code = (error as { code?: string } | undefined)?.code;
-      if (code === "conversation_rotated") {
-        throw new ConversationRotatedError();
-      }
-      // TEMPORARY (phase 3 deletes): old agents joins the pod Room
-      if (code === "github_not_connected") {
-        throw new Error("Connect GitHub to continue — go to Settings → Credentials."); // TEMPORARY (phase 3 deletes): old agents joins the pod Room
-      } // TEMPORARY (phase 3 deletes): old agents joins the pod Room
-      throw new Error("An agent turn is already running for this project — wait for it to finish.");
-    }
-    throw new Error(apiErrorMessage(error, "Failed to start the agent turn"));
-  }
-  return data.turnId;
+      // Raw bytes, not base64-in-JSON: base64 inflates ~33% and would shave
+      // the real 15 MiB budget the composer screens against. openapi-fetch
+      // passes FormData through untouched (the browser sets the boundary);
+      // the generated request type describes the JSON shape, not the wire.
+      body: files.length > 0 ? (turnFormData(input, files) as unknown as { instruction: string }) : turnBody(input),
+    })
+    .catch((error: unknown) => {
+      if (isAbort(error)) throw error;
+      throw new TurnStartError("Failed to start the agent turn — AE Studio did not answer.", undefined, undefined);
+    });
+  const { data, error, response } = result;
+  if (error !== undefined || data === undefined) throw startRefusal(response.status, error);
+  return { turnId: data.turnId };
 }
 
-export interface ConversationMessageAuthor {
-  id: string;
-  displayName: string;
-}
+/** Who sent a message: `id` is the sender's verified token `sub`, the console's "me" id. */
+export type ConversationMessageAuthor = components["schemas"]["ConversationMessageAuthor"];
 
 export interface ConversationMessage {
   role: string;
@@ -168,11 +197,10 @@ export interface ConversationMessage {
   anchor?: TurnAnchor;
 }
 
-// `author` predates the response schema being typed at all (#666 closed that
-// gap), and the field it arrives under was never pinned: read `author` first,
-// `user` as a fallback name, so history written either way still attributes.
-// A malformed author drops rather than throwing — this is the rehydrate path,
-// and one bad row must not cost the user their whole log.
+// The contract pins `author`; `user` is still read as a fallback name so a
+// history row written either way attributes. A malformed author drops rather
+// than throwing — this is the rehydrate path, and one bad row must not cost
+// the user their whole log.
 function mapAuthor(raw: unknown): ConversationMessageAuthor | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
   const source =
@@ -253,63 +281,74 @@ function mapAnchor(raw: unknown): TurnAnchor | null {
   return mapped.length > 0 ? { file, nodes: mapped } : null;
 }
 
-/** Text-only rehydrate of a conversation's server-side history. */
+/**
+ * Text-only rehydrate of a conversation's history. null means FAILURE — keep
+ * painting the local cache. "This thread is empty" is not a failure: the pod
+ * answers the current thread before its first turn with `[]`, and keeps 404
+ * for unknown ids, where wiping the cache would destroy information.
+ */
 export async function getConversationMessages(
   projectName: string,
   conversationId: string,
 ): Promise<ConversationMessage[] | null> {
-  const { data, error } = await client.GET(
-    "/projects/{projectName}/agents/{conversationId}/messages",
-    { params: { path: { projectName, conversationId } } },
+  const data = await readOrNull(() =>
+    designAgent().GET("/projects/{projectName}/conversations/{conversationId}/messages", {
+      params: { path: { projectName, conversationId } },
+    }),
   );
-  // null means FAILURE — keep painting the local cache. "This thread is
-  // empty" is not a failure and never arrives as one: the BFF answers a
-  // known-but-turn-less thread with 200 {messages: []} (it owns thread
-  // existence via project_conversations), reserving 404-class errors for
-  // genuinely unknown ids, missing repos, and tenant mismatches — all cases
-  // where wiping the cache would destroy information over a transient or
-  // config problem.
-  if (error || data === undefined) return null;
-  const body = data as { messages?: unknown[] };
-  if (!body.messages) return null;
-  return body.messages
+  if (!data) return null;
+  return data.messages
     .map(mapConversationMessage)
     .filter((m): m is ConversationMessage => m !== null);
 }
 
-/** The project's running turn, or null (204 / none). */
-export async function getActiveTurn(
-  projectName: string,
-): Promise<TurnStatus | null> {
-  const { data, error, response } = await client.GET(
-    "/projects/{projectName}/turns/active",
-    { params: { path: { projectName } } },
-  );
-  if (response.status === 204 || error || data === undefined) return null;
-  return data;
+/**
+ * A read whose every failure means "unknown": a refusal, no answer, or AE
+ * Studio not `ready` (its URLs are dropped while it restarts) all answer
+ * null, so the background triggers that make these reads (mount, poll,
+ * refocus) keep what they have instead of rejecting. Aborts pass through.
+ */
+async function readOrNull<T>(
+  call: () => Promise<{ data?: T | undefined; error?: unknown; response: Response }>,
+): Promise<NonNullable<T> | null> {
+  try {
+    const { data, error, response } = await call();
+    if (error !== undefined || data == null || response.status === 204) return null;
+    return data;
+  } catch (err) {
+    if (isAbort(err)) throw err;
+    return null;
+  }
 }
 
-export async function getTurn(
-  projectName: string,
-  turnId: string,
-): Promise<TurnStatus | null> {
-  const { data, error } = await client.GET(
-    "/projects/{projectName}/turns/{turnId}",
-    { params: { path: { projectName, turnId } } },
+/** The project's running turn, or null: none (204), or a failed read (see readOrNull). */
+export function getActiveTurn(projectName: string): Promise<TurnStatus | null> {
+  return readOrNull(() =>
+    designAgent().GET("/projects/{projectName}/turns/active", { params: { path: { projectName } } }),
   );
-  if (error || data === undefined) return null;
-  return data;
 }
 
-/** Thrown when the turn-stream attach HTTP call fails. `status` lets callers
- *  discriminate a pre-stream 404 (buffer not on this replica / not yet minted)
- *  from other failures. */
+/** One turn's status, or null when the pod no longer holds it (404) or the read failed. */
+export function getTurn(projectName: string, turnId: string): Promise<TurnStatus | null> {
+  return readOrNull(() =>
+    designAgent().GET("/projects/{projectName}/turns/{turnId}", { params: { path: { projectName, turnId } } }),
+  );
+}
+
+/**
+ * Thrown when the turn-stream attach fails before a byte of the stream:
+ * `status` (0 when the pod did not answer) and the problem's `code` tell a
+ * turn past its retention (404) from a replay with a gap (409
+ * replay_truncated) and from everything else.
+ */
 export class TurnStreamAttachError extends Error {
   readonly status: number;
-  constructor(status: number, message = "Failed to attach to the turn stream") {
-    super(message);
+  readonly code: string | undefined;
+  constructor(status: number, code?: string | undefined) {
+    super("Failed to attach to the turn stream");
     this.name = "TurnStreamAttachError";
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -318,8 +357,17 @@ export function isTurnStreamNotFound(err: unknown): boolean {
 }
 
 /**
- * Open the turn's SSE stream as a raw byte stream (replay from `from`, then
- * live tail). The caller iterates it with @aep/agent-stream's parseSseStream.
+ * The running turn overflowed its replay buffer, so a replay would have a
+ * gap: the pod says to attach again after the turn ends.
+ */
+export function isTurnStreamReplayTruncated(err: unknown): boolean {
+  return err instanceof TurnStreamAttachError && err.status === 409 && err.code === "replay_truncated";
+}
+
+/**
+ * Open the turn's SSE stream as a raw byte stream (replay from frame `from`,
+ * then live tail). The caller iterates it with @aep/agent-stream's
+ * parseSseStream.
  */
 export async function openTurnStream(
   projectName: string,
@@ -327,16 +375,13 @@ export async function openTurnStream(
   from: number,
   signal: AbortSignal,
 ): Promise<ReadableStream<Uint8Array>> {
-  const { data, error, response } = await client.GET(
-    "/projects/{projectName}/turns/{turnId}/stream",
-    {
-      params: { path: { projectName, turnId }, query: { from } },
-      parseAs: "stream",
-      signal,
-    },
-  );
-  if (error || !data) {
-    throw new TurnStreamAttachError(response?.status ?? 0);
+  const { data, error, response } = await designAgent().GET("/projects/{projectName}/turns/{turnId}/stream", {
+    params: { path: { projectName, turnId }, query: { from } },
+    parseAs: "stream",
+    signal,
+  });
+  if (error !== undefined || !data) {
+    throw new TurnStreamAttachError(response.status, apiErrorCode(error));
   }
   return data as ReadableStream<Uint8Array>;
 }

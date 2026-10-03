@@ -74,7 +74,7 @@ function sureDraftFrames(turnId: string): unknown[] {
       toolName: "draftExternalResource",
       input: SURE_DRAFT_INPUT,
     },
-    { type: "turn-committed", noChanges: true },
+    { type: "turn-completed" },
   ];
 }
 
@@ -93,7 +93,7 @@ function unsureQuestionFrames(turnId: string): unknown[] {
       input: UNSURE_QUESTION,
       output: { status: "awaiting_user_response", question: UNSURE_QUESTION.question },
     },
-    { type: "turn-committed", noChanges: true },
+    { type: "turn-completed" },
   ];
 }
 

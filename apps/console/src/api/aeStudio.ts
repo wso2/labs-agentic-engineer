@@ -18,6 +18,7 @@
 
 import createClient, { type Client } from "openapi-fetch";
 import type { paths } from "../generated/ae-studio-tools";
+import type { paths as DesignAgentPaths } from "../generated/ae-design-agent";
 import { getAccessToken, redirectToSignIn, renewAccessToken } from "../auth/token";
 import { createAuthFetch } from "./authFetch";
 import { ApiRequestError } from "./errors";
@@ -28,7 +29,7 @@ import { ApiRequestError } from "./errors";
 // current whenever a component reads `ready`, and code outside React (which
 // cannot see the query) gets the same answer.
 
-/** Thrown by studioTools() while AE Studio has no ready URLs. */
+/** Thrown by studioTools() and designAgent() while AE Studio has no ready URLs. */
 export class AeStudioNotReadyError extends Error {
   constructor() {
     super("AE Studio is not ready");
@@ -38,22 +39,13 @@ export class AeStudioNotReadyError extends Error {
 
 let tools: Client<paths> | null = null;
 let currentToolsUrl = "";
+let design: Client<DesignAgentPaths> | null = null;
+let currentDesignUrl = "";
 
-/**
- * Point the pod clients at AE Studio's URLs, or drop them (`null`) when the
- * state is anything but `ready`. Same URL, same client.
- */
-export function setAeStudioUrls(urls: { tools: string } | null): void {
-  if (!urls) {
-    tools = null;
-    currentToolsUrl = "";
-    return;
-  }
-  if (urls.tools === currentToolsUrl && tools) return;
-  currentToolsUrl = urls.tools;
-  // Same session as aep-api: the pods take the user's own token.
-  tools = createClient<paths>({
-    baseUrl: `${urls.tools}/v1`,
+// Same session as aep-api: the pods take the user's own token.
+function podClient<P extends object>(origin: string): Client<P> {
+  return createClient<P>({
+    baseUrl: `${origin}/v1`,
     fetch: createAuthFetch({
       getToken: getAccessToken,
       renewToken: renewAccessToken,
@@ -62,10 +54,38 @@ export function setAeStudioUrls(urls: { tools: string } | null): void {
   });
 }
 
+/**
+ * Point the pod clients at AE Studio's URLs, or drop them (`null`) when the
+ * state is anything but `ready`. Same URL, same client.
+ */
+export function setAeStudioUrls(urls: { tools: string; designAgent: string } | null): void {
+  if (!urls) {
+    tools = null;
+    currentToolsUrl = "";
+    design = null;
+    currentDesignUrl = "";
+    return;
+  }
+  if (urls.tools !== currentToolsUrl || !tools) {
+    currentToolsUrl = urls.tools;
+    tools = podClient<paths>(urls.tools);
+  }
+  if (urls.designAgent !== currentDesignUrl || !design) {
+    currentDesignUrl = urls.designAgent;
+    design = podClient<DesignAgentPaths>(urls.designAgent);
+  }
+}
+
 /** The ae-studio-tools `/v1` client. Throws AeStudioNotReadyError before `ready`. */
 export function studioTools(): Client<paths> {
   if (!tools) throw new AeStudioNotReadyError();
   return tools;
+}
+
+/** The ae-design-agent `/v1` client. Throws AeStudioNotReadyError before `ready`. */
+export function designAgent(): Client<DesignAgentPaths> {
+  if (!design) throw new AeStudioNotReadyError();
+  return design;
 }
 
 /**
