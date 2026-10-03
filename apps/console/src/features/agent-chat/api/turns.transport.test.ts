@@ -223,8 +223,28 @@ describe("turn status and stream on the design agent", () => {
     await expect(getActiveTurn("p")).resolves.toBeNull();
   });
 
-  it("knows of no running turn while AE Studio is not ready", async () => {
+  // The active-turn query keeps its last answer through a failed read, so a
+  // pod hiccup must not read as "nothing is running".
+  it("throws on a failed read instead of answering no turn", async () => {
+    server.use(
+      http.get(`${DESIGN}/v1/projects/p/turns/active`, () =>
+        HttpResponse.json(problem(503, "shutting_down", "rolling"), { status: 503 }),
+      ),
+    );
+    await expect(getActiveTurn("p")).rejects.toThrow();
+    server.use(http.get(`${DESIGN}/v1/projects/p/turns/active`, () => HttpResponse.error()));
+    await expect(getActiveTurn("p")).rejects.toThrow();
+  });
+
+  it("throws AeStudioNotReadyError while AE Studio is not ready", async () => {
     setAeStudioUrls(null);
+    await expect(getActiveTurn("p")).rejects.toBeInstanceOf(AeStudioNotReadyError);
+  });
+
+  it("reads a finished turn the pod still answers as none running", async () => {
+    server.use(
+      http.get(`${DESIGN}/v1/projects/p/turns/active`, () => HttpResponse.json({ ...status, status: "completed" })),
+    );
     await expect(getActiveTurn("p")).resolves.toBeNull();
   });
 

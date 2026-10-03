@@ -58,15 +58,23 @@ vi.mock("./api/conversations", async (importOriginal) => {
 const mockGetHistory = vi.fn();
 const mockGetActive = vi.fn();
 const mockStartTurn = vi.fn();
+const mockReadTurnStatus = vi.fn();
 vi.mock("./api/turns", async (importOriginal) => {
   const real = await importOriginal<typeof import("./api/turns")>();
   return {
     ...real, // ConversationRotatedError stays REAL — the hook instanceof-checks it
     getConversationMessages: (...a: unknown[]) => mockGetHistory(...a),
+    // The active-turn query's read (useActiveTurn), the foreign-turn watch.
     getActiveTurn: (...a: unknown[]) => mockGetActive(...a),
     startTurn: (...a: unknown[]) => mockStartTurn(...a),
+    readTurnStatus: (...a: unknown[]) => mockReadTurnStatus(...a),
   };
 });
+
+// AE Studio is `ready`: the active-turn query runs.
+vi.mock("../ae-studio/api/queries", () => ({
+  usePodQueryOptions: () => ({ enabled: true, retryDelay: () => 0 }),
+}));
 
 const mockAttach = vi.fn();
 vi.mock("./runTurn", () => ({
@@ -102,7 +110,7 @@ describe("useAgentChat — the shared thread (#430)", () => {
     mockFetchCurrent.mockResolvedValue("conv-1");
     mockGetHistory.mockResolvedValue(SERVER_HISTORY);
     mockGetActive.mockResolvedValue(null);
-    mockAttach.mockResolvedValue(undefined);
+    mockAttach.mockResolvedValue(true); // the fold saw its turn end
   });
 
   it("REPLACES the stale local cache with server truth on mount (D6)", async () => {
@@ -355,7 +363,7 @@ describe("useAgentChat — a local send in flight", () => {
     mockFetchCurrent.mockResolvedValue("conv-1");
     mockGetHistory.mockResolvedValue([]);
     mockGetActive.mockResolvedValue(null);
-    mockAttach.mockResolvedValue(undefined);
+    mockAttach.mockResolvedValue(true); // the fold saw its turn end
     // The poll is a timeout; `shouldAdvanceTime` keeps waitFor working while
     // letting the test fire that timeout on demand.
     vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -515,6 +523,7 @@ describe("useAgentChat — a committed turn refreshes the thread cache", () => {
         // who asks from here on is served it.
         mockGetHistory.mockResolvedValue(POST_TURN_HISTORY);
         onCompleted();
+        return true;
       },
     );
   });
@@ -547,5 +556,149 @@ describe("useAgentChat — a committed turn refreshes the thread cache", () => {
     await waitFor(() =>
       expect(getMessages(KEY).some((m) => m.role === "question")).toBe(true),
     );
+  });
+});
+
+
+// 409 turn_in_progress (10 §4): the draft goes back into the composer, the
+// console attaches to the running turn so the user watches it, and a note
+// says why the message did not go.
+describe("useAgentChat — a send refused because a turn is running", () => {
+  const blocking = (over: Record<string, unknown> = {}) => ({
+    turnId: "t-9",
+    conversationId: "conv-1",
+    status: "running",
+    kind: "browser",
+    flow: "",
+    instruction: "teammate's request",
+    authorId: "u2",
+    authorDisplayName: "Grace",
+    createdAt: new Date(0).toISOString(),
+    ...over,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    replaceMessages(KEY, []);
+    mockFetchCurrent.mockResolvedValue("conv-1");
+    mockGetHistory.mockResolvedValue([]);
+    mockGetActive.mockResolvedValue(null);
+    mockAttach.mockReturnValue(new Promise(() => {})); // the turn keeps running
+  });
+
+  it("restores the draft, shows the note and attaches to activeTurnId", async () => {
+    const { TurnInProgressError } = await import("./api/turns");
+    mockStartTurn.mockRejectedValue(new TurnInProgressError("t-9"));
+    mockReadTurnStatus.mockResolvedValue({ kind: "status", status: blocking() });
+
+    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.historyReady).toBe(true));
+
+    let sent: boolean | undefined;
+    await act(async () => {
+      sent = await result.current.send("hello");
+    });
+
+    // Refused: the composer keeps the text, and the log neither keeps the row
+    // nor marks it failed — nothing was lost, so nothing reads as an error.
+    expect(sent).toBe(false);
+    expect(getMessages(KEY).some((m) => m.role === "user" && m.content === "hello")).toBe(false);
+    expect(getMessages(KEY).some((m) => m.role === "error")).toBe(false);
+
+    await waitFor(() =>
+      expect(result.current.notice).toBe("Another turn is running — send again when it finishes"),
+    );
+    await waitFor(() => expect(result.current.activeTurnId).toBe("t-9"));
+    expect(mockReadTurnStatus).toHaveBeenCalledWith(PROJECT, "t-9");
+    expect(mockAttach).toHaveBeenCalledWith(KEY, PROJECT, "t-9", expect.anything(), expect.any(Function));
+    expect(mockAttach).toHaveBeenCalledTimes(1);
+  });
+
+  // A Plan turn runs on its own throwaway thread: nothing to watch here.
+  it("says planning is running for a Plan turn, and does not attach", async () => {
+    const { TurnInProgressError } = await import("./api/turns");
+    mockStartTurn.mockRejectedValue(new TurnInProgressError("t-plan"));
+    mockReadTurnStatus.mockResolvedValue({
+      kind: "status",
+      status: blocking({ turnId: "t-plan", kind: "plan", conversationId: "conv-plan" }),
+    });
+
+    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.historyReady).toBe(true));
+
+    await act(async () => {
+      await result.current.send("hello");
+    });
+
+    await waitFor(() => expect(result.current.notice).toBe("Planning is running…"));
+    expect(mockAttach).not.toHaveBeenCalled();
+    expect(result.current.isSending).toBe(false);
+  });
+
+  it("finds the running turn itself when the pod did not name it", async () => {
+    const { TurnInProgressError } = await import("./api/turns");
+    mockStartTurn.mockRejectedValue(new TurnInProgressError(undefined));
+
+    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.historyReady).toBe(true));
+    await waitFor(() => expect(mockGetActive).toHaveBeenCalled());
+
+    mockGetActive.mockResolvedValue(blocking());
+    await act(async () => {
+      await result.current.send("hello");
+    });
+
+    await waitFor(() => expect(result.current.activeTurnId).toBe("t-9"));
+    expect(result.current.notice).toBe("Another turn is running — send again when it finishes");
+    expect(mockReadTurnStatus).not.toHaveBeenCalled();
+  });
+
+  it("clears the note once the running turn is gone", async () => {
+    const { TurnInProgressError } = await import("./api/turns");
+    mockStartTurn.mockRejectedValue(new TurnInProgressError("t-9"));
+    mockReadTurnStatus.mockResolvedValue({ kind: "status", status: blocking() });
+    let finish: (settled: boolean) => void = () => {};
+    mockAttach.mockReturnValue(new Promise<boolean>((r) => { finish = r; }));
+
+    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.historyReady).toBe(true));
+    await act(async () => {
+      await result.current.send("hello");
+    });
+    await waitFor(() => expect(result.current.notice).not.toBeNull());
+
+    mockGetActive.mockResolvedValue(null);
+    await act(async () => {
+      finish(true);
+    });
+    await waitFor(() => expect(result.current.notice).toBeNull());
+  });
+});
+
+// A fold that could not learn how its turn ended (the stream and the status
+// both unreachable) leaves the log as it was; the server's history is the
+// truth to come back to.
+describe("useAgentChat — an unsettled fold", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    replaceMessages(KEY, []);
+    mockFetchCurrent.mockResolvedValue("conv-1");
+    mockGetHistory.mockResolvedValue([]);
+    mockGetActive.mockResolvedValue(null);
+  });
+
+  it("rehydrates the thread instead of reporting a lost stream", async () => {
+    mockAttach.mockResolvedValue(false);
+    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.historyReady).toBe(true));
+    const reads = mockGetHistory.mock.calls.length;
+
+    mockStartTurn.mockResolvedValue({ turnId: "t-1" });
+    await act(async () => {
+      await result.current.send("hello");
+    });
+
+    await waitFor(() => expect(mockGetHistory.mock.calls.length).toBeGreaterThan(reads));
+    expect(getMessages(KEY).some((m) => m.role === "error")).toBe(false);
   });
 });

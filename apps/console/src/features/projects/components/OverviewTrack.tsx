@@ -23,6 +23,7 @@ import type { Theme } from "@wso2/oxygen-ui";
 import type { components } from "../../../generated/aep-api";
 import { useSession } from "../../../auth/SessionContext";
 import { useAgentEngaged } from "../../agent-chat/useAgentEngaged";
+import { useActiveTurn } from "../../agent-chat/api/useActiveTurn";
 import { useConversationLog } from "../../agent-chat/useConversationLog";
 import { WorkingPulse } from "../../agent-chat/components/WorkingIndicator";
 import { trackView, type LegState, type TrackLeg } from "../lib/track";
@@ -361,7 +362,9 @@ export function OverviewTrack({
   const org = useSession().orgHandle ?? "default";
   useConversationLog(org, projectName);
   const engaged = useAgentEngaged(org, projectName);
-  const { legs, summary } = trackView(status, engaged);
+  // Whether an agent is working right now comes from the pod that runs it.
+  const activeTurn = useActiveTurn(projectName).data;
+  const { legs, summary } = trackView(status, engaged, activeTurn);
 
   return (
     <Box>

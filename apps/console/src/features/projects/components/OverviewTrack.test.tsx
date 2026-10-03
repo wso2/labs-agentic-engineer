@@ -57,6 +57,11 @@ const engaged = vi.hoisted(() => ({ current: false }));
 vi.mock("../../agent-chat/useAgentEngaged", () => ({
   useAgentEngaged: () => engaged.current,
 }));
+// The running turn comes from the AE Studio pod's active-turn query.
+const activeTurn = vi.hoisted(() => ({ current: null as { kind: string; flow: string } | null }));
+vi.mock("../../agent-chat/api/useActiveTurn", () => ({
+  useActiveTurn: () => ({ data: activeTurn.current }),
+}));
 
 import { OverviewTrack } from "./OverviewTrack";
 
@@ -118,9 +123,22 @@ function isLit(el: HTMLElement): boolean {
 
 beforeEach(() => {
   engaged.current = false;
+  activeTurn.current = null;
 });
 
 describe("OverviewTrack", () => {
+  it("says the agent is working while the pod runs a turn", () => {
+    activeTurn.current = { kind: "browser", flow: "" };
+    draw(status({}));
+    expect(legFor("Spec")).toHaveTextContent("The agent is working on your spec");
+  });
+
+  it("says planning while the pod runs a Plan turn", () => {
+    activeTurn.current = { kind: "plan", flow: "" };
+    draw(status({}));
+    expect(legFor("Spec")).toHaveTextContent("Planning…");
+  });
+
   it("links each leg to the section that runs it", () => {
     draw(status({}));
     expect(legFor("Spec")).toHaveAttribute("href", "/projects/demo-shop/spec");

@@ -445,6 +445,17 @@ export function clearFailedSends(key: string): void {
   persist(key, kept);
 }
 
+/**
+ * Withdraw one row by message id. For a send the pod refused before it
+ * started because another turn was running: its words went back into the
+ * composer, so the log keeps no copy, failed or otherwise.
+ */
+export function removeMessage(key: string, messageId: string): void {
+  const current = load(key);
+  const kept = current.filter((m) => m.id !== messageId);
+  if (kept.length !== current.length) persist(key, kept);
+}
+
 export function replaceMessages(key: string, messages: ChatMessage[]): void {
   // Rows that arrive with an id KEEP it. The D6 rehydrate replaces the whole
   // log repeatedly (mount, foreign turn, refocus); minting fresh ids each
@@ -773,10 +784,10 @@ function hasLiveClaims(key: string): boolean {
 
 // --- Local turn activity (#635) -------------------------------------------
 //
-// `spec.agent` lags a send by the dispatch round-trip: interview answers leave
-// through the seed slot the instant the question form submits, but the turn
-// carrying them has no `agent_turns` row until StartTurn answers — seconds
-// later, longer under load. In that window the status endpoint reads idle, the
+// The pod's running-turn read lags a send by the dispatch round-trip and a
+// poll: interview answers leave through the seed slot the instant the question
+// form submits, but the turn carrying them does not exist until the turn start
+// answers — seconds later, longer under load. In that window it reads idle, the
 // question form is gone, and an empty project has no files, so every signal
 // the spec workspace checks said "nothing running" and it offered Retry
 // against an interview mid-flight — #629's hazard surviving as a race.
@@ -786,8 +797,8 @@ function hasLiveClaims(key: string): boolean {
 // releases the send claim and takes the fold claim in one synchronous
 // continuation), and every failure path releases its claim — a refused
 // dispatch, a severed stream, a chatKey rotation. So "any of the three is
-// live" is precisely "this browser holds evidence of a turn the status
-// endpoint may not report yet". The CLAIMS need no expiry timer — the signal
+// live" is precisely "this browser holds evidence of a turn the pod may not
+// report yet". The CLAIMS need no expiry timer — the signal
 // collapses the moment a send is refused or a turn dies, letting Retry
 // surface honestly. The SEED is the one stage with no failure path of its
 // own: its sole consumer sits behind gates (the conversation id resolving,
@@ -798,7 +809,7 @@ function hasLiveClaims(key: string): boolean {
 // seed itself stays consumable, exactly as before.
 //
 // Browser-local by nature: a teammate's browser holds no claim for a send
-// made here. Their pane recovers through the status poll as it always did —
+// made here. Their pane recovers through the running-turn poll —
 // this only closes the gap for the member who just submitted.
 
 const localTurnActivityListeners = new Map<string, Set<() => void>>();

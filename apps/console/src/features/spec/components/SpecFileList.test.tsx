@@ -40,7 +40,7 @@ const RAIL_INPUT: RailInput = {
   hasDesign: true,
   hasValidation: true,
   agentWorking: false,
-  agentFlow: "",
+  activeFlow: "",
   designOutdated: false,
   assumptions: 0,
   openQuestions: 0,
@@ -120,7 +120,7 @@ describe("SpecFileList — the rail carries state", () => {
 
   // Work in progress is the app's existing pulse, not a second animation.
   it("pulses the section an agent is working on", () => {
-    renderWith({ hasDesign: false, agentWorking: true, agentFlow: "design" });
+    renderWith({ hasDesign: false, agentWorking: true, activeFlow: "design" });
     expect(screen.getAllByTestId("working-pulse").length).toBeGreaterThan(0);
   });
 
@@ -129,7 +129,7 @@ describe("SpecFileList — the rail carries state", () => {
   // model still CARRIES the reasons here — SpecView reads them for the design
   // warning — so the rail has to gate on the state rather than on their count.
   it("shows no warning chip on the section an agent is working on", () => {
-    renderWith({ designOutdated: true, agentWorking: true, agentFlow: "design" });
+    renderWith({ designOutdated: true, agentWorking: true, activeFlow: "design" });
 
     expect(screen.getAllByTestId("working-pulse").length).toBeGreaterThan(0);
     expect(screen.queryByLabelText(/Design: \d+ to resolve/)).not.toBeInTheDocument();
@@ -138,7 +138,7 @@ describe("SpecFileList — the rail carries state", () => {
   // The same rule on the other section, reached by a different flow: settling
   // an assumption must not leave the requirements looking unattended.
   it("shows no warning chip while the requirements are being settled", () => {
-    renderWith({ assumptions: 3, agentWorking: true, agentFlow: "settle" });
+    renderWith({ assumptions: 3, agentWorking: true, activeFlow: "settle" });
 
     expect(screen.queryByLabelText(/Requirements: \d+ to resolve/)).not.toBeInTheDocument();
   });

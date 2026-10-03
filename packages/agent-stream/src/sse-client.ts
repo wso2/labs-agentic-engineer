@@ -21,10 +21,11 @@
  * streams it, and yields each raw `StreamPart` frame until `[DONE]`, buffered
  * across chunk boundaries. The JSON payload is always a single physical line (`data: <json>`),
  * since the SDK `JSON.stringify`s each part (embedded newlines are escaped), but a
- * frame is a multi-line SSE record: an `id: <index>` line (for `Last-Event-ID`
- * resume) may precede the `data:` line. So a frame is parsed line-by-line — the `data:` line(s)
- * are the payload; `id:`/`event:` metadata and `: keep-alive` comment lines carry
- * no payload and are skipped.
+ * frame is a multi-line SSE record: an `id: <index>` line (the part's index in
+ * the turn's replay buffer, for `?from=` resume) may precede the `data:` line.
+ * So a frame is parsed line-by-line — the `data:` line(s) are the payload, the
+ * `id:` line its resume index; `event:` metadata and `: keep-alive` comment
+ * lines carry neither and are skipped.
  */
 
 import { SSE_DONE, type TurnAim } from "./contracts/sse-events.js";
@@ -46,26 +47,46 @@ export interface TurnStartBody {
 export type SseStreamEnd = "done" | "eof";
 
 /**
+ * One parsed frame: the part, and the frame's `id:` when it carried a valid
+ * one. The design agent's turn stream numbers every part by its index in the
+ * turn's replay buffer, so a reader whose stream dies resumes with
+ * `?from=<last id + 1>` and folds no frame twice.
+ */
+export interface SseFrame {
+  id?: number;
+  part: StreamPart;
+}
+
+/** A frame's `id:` value as a buffer index, or undefined when it is not a non-negative integer. */
+function frameId(lines: string[]): number | undefined {
+  const line = lines.filter((l) => l.startsWith("id:")).pop();
+  if (line === undefined) return undefined;
+  const value = line.slice("id:".length).replace(/^ /, "");
+  return /^\d+$/.test(value) ? Number(value) : undefined;
+}
+
+/**
  * The raw frame parser, extracted so a caller that owns its own `fetch` (e.g. a
  * browser that must add auth headers, a custom request body shape, and its own
  * pre-stream HTTP-status error mapping) folds the SAME wire through ONE
  * definition instead of reimplementing the buffered `data:`/`[DONE]` loop.
- * Yields each `StreamPart` until `[DONE]`; skips keep-alive comment frames.
+ * Yields each frame (its `StreamPart` and `id:`) until `[DONE]`; skips
+ * keep-alive comment frames.
  *
  * The generator's RETURN value reports how the stream ended (`SseStreamEnd`).
  * `for await` consumers ignore it — a caller that must distinguish a complete
  * stream from a mid-turn disconnect iterates manually:
  *
- *   const it = parseSseStream(body)[Symbol.asyncIterator]();
+ *   const it = parseSseFrames(body)[Symbol.asyncIterator]();
  *   while (true) {
  *     const r = await it.next();
  *     if (r.done) { const end = r.value; break; }  // "done" | "eof"
- *     fold(r.value);
+ *     fold(r.value.part);
  *   }
  */
-export async function* parseSseStream(
+export async function* parseSseFrames(
   body: ReadableStream<Uint8Array>,
-): AsyncGenerator<StreamPart, SseStreamEnd> {
+): AsyncGenerator<SseFrame, SseStreamEnd> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -85,35 +106,49 @@ export async function* parseSseStream(
         const frame = buffer.slice(0, sep);
         buffer = buffer.slice(sep + 2);
         // A frame is a multi-line SSE record. Collect its `data:` line(s) —
-        // the BFF prefixes an `id:` line (Last-Event-ID resume) that must not
-        // hide the payload, and `id:`/`event:`/`: comment` lines carry none.
-        // Per the SSE spec, multiple data lines join with "\n" (our payload is
-        // one line, but stay spec-correct). One optional space after the colon
-        // is stripped.
-        const data = frame
-          .split(/\r?\n/)
+        // an `id:` line may precede them, and `id:`/`event:`/`: comment`
+        // lines carry no payload. Per the SSE spec, multiple data lines join
+        // with "\n" (our payload is one line, but stay spec-correct). One
+        // optional space after the colon is stripped.
+        const lines = frame.split(/\r?\n/);
+        const data = lines
           .filter((line) => line.startsWith("data:"))
           .map((line) => line.slice("data:".length).replace(/^ /, ""))
           .join("\n")
           .trim();
         if (data === "") continue; // comment / metadata-only frame — no data line
         if (data === SSE_DONE) return "done";
-        // A frame that doesn't parse is a truncation remnant (the BFF closes a
-        // partial in-flight frame with a blank line before its synthetic error
-        // frame when the upstream dies). Wire frames are single-line JSON, so
-        // nothing legitimate is skipped — and the error/[DONE] frames that
-        // follow (or the "eof" return) carry the failure signal.
+        // A frame that doesn't parse is a truncation remnant (a proxy closes a
+        // partial in-flight frame with a blank line when the upstream dies).
+        // Wire frames are single-line JSON, so nothing legitimate is skipped —
+        // and the missing terminal (or the "eof" return) carries the failure.
         let part: StreamPart;
         try {
           part = JSON.parse(data) as StreamPart;
         } catch {
           continue;
         }
-        yield part;
+        const id = frameId(lines);
+        yield id === undefined ? { part } : { id, part };
       }
     }
   } finally {
     reader.releaseLock();
+  }
+}
+
+/**
+ * `parseSseFrames` without the ids, for a reader that never resumes. The
+ * return value reports how the stream ended, as there.
+ */
+export async function* parseSseStream(
+  body: ReadableStream<Uint8Array>,
+): AsyncGenerator<StreamPart, SseStreamEnd> {
+  const frames = parseSseFrames(body);
+  for (;;) {
+    const next = await frames.next();
+    if (next.done) return next.value;
+    yield next.value.part;
   }
 }
 

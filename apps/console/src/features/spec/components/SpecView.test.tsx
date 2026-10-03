@@ -117,10 +117,18 @@ vi.mock("../collab/useCollabSpec", () => ({
   useCollabSpec: () => mockCollab,
 }));
 
+// Whether an agent is working right now, and on what: the AE Studio pod's
+// running turn. null = none runs; the global beforeEach resets it.
+let mockActiveTurn: { kind: "browser" | "kickoff" | "plan"; flow: string } | null = null;
+const running = (flow: string, kind: "browser" | "kickoff" | "plan" = "browser") => ({ kind, flow });
+vi.mock("../../agent-chat/api/useActiveTurn", () => ({
+  useActiveTurn: () => ({ data: mockActiveTurn }),
+}));
+
 beforeEach(() => {
   mockCollab = soloCollab();
   mockSpecAgent = "";
-  mockSpecFlow = "";
+  mockActiveTurn = null;
   mockSearch.current = {};
 });
 
@@ -237,18 +245,16 @@ vi.mock("@aep/ui-design-view", () => ({
 const mockMutateAsync = vi.fn();
 const mockPreflightRefetch = vi.fn();
 let mockSpecAgent = "";
-let mockSpecFlow = "";
 vi.mock("../../projects/api/queries", () => ({
   useProject: () => ({ data: { displayName: "Test Project" } }),
-  // `spec.agent` (#562) is what tells the workspace whether an agent is working
-  // right now. Mutable so the kickoff block below can drive it; the global
+  // `spec.agent` (#562) says how the last attempt ended (never-started, "",
+  // failed). Mutable so the kickoff block below can drive it; the global
   // beforeEach resets it to idle, which is what every other test wants.
   useProjectStatus: () => ({
     data: {
       specStatus: "approved",
       spec: {
         agent: mockSpecAgent,
-        agentFlow: mockSpecFlow,
         designOutdated: false,
       },
     },
@@ -446,8 +452,7 @@ describe("SpecView while the kickoff is still writing", () => {
     ]);
 
   it("says what is happening instead of offering an empty picker", () => {
-    mockSpecAgent = "working";
-    mockSpecFlow = "start";
+    mockActiveTurn = running("start");
     empty();
     render(<SpecView projectName="proj1" />);
 
@@ -465,7 +470,6 @@ describe("SpecView while the kickoff is still writing", () => {
   // insisted an agent was writing — the two surfaces contradicting each other.
   it("does not claim work the rail is not showing", () => {
     mockSpecAgent = "";
-    mockSpecFlow = "";
     empty();
     render(<SpecView projectName="proj1" />);
 
@@ -494,7 +498,7 @@ describe("SpecView while the kickoff is still writing", () => {
   // on a project whose PRD shipped months ago is an agent working, but not on
   // the requirements, and not on anything this workspace should re-explain.
   it("does not claim requirements work while a later flow runs", () => {
-    mockSpecAgent = "working";
+    mockActiveTurn = running("");
     published();
     render(<SpecView projectName="proj1" />);
 
@@ -594,7 +598,6 @@ describe("SpecView while the kickoff is still writing", () => {
   // nothing to click.
   it("offers a way out when no turn has ever run", () => {
     mockSpecAgent = "never-started";
-    mockSpecFlow = "";
     empty();
     render(<SpecView projectName="proj1" />);
 
@@ -613,8 +616,7 @@ describe("SpecView while the kickoff is still writing", () => {
   // A design run is not requirements work, so the requirements body says
   // nothing about it.
   it("does not claim requirements work during a design run", () => {
-    mockSpecAgent = "working";
-    mockSpecFlow = "design";
+    mockActiveTurn = running("design");
     empty();
     render(<SpecView projectName="proj1" />);
 
@@ -628,8 +630,7 @@ describe("SpecView while the kickoff is still writing", () => {
   // document. The empty state, and the Retry it carries, must be unreachable
   // while that turn runs.
   it("keeps the working spinner through a flowless answer turn", () => {
-    mockSpecAgent = "working";
-    mockSpecFlow = "";
+    mockActiveTurn = running("");
     empty();
     render(<SpecView projectName="proj1" />);
 
@@ -647,8 +648,7 @@ describe("SpecView while the kickoff is still writing", () => {
   // out of it (#629). The pane says an agent works without naming a document
   // it may not be writing.
   it("offers no Retry during a design run on an empty project", () => {
-    mockSpecAgent = "working";
-    mockSpecFlow = "design";
+    mockActiveTurn = running("design");
     empty();
     render(<SpecView projectName="proj1" />);
 
@@ -669,7 +669,6 @@ describe("SpecView while the kickoff is still writing", () => {
   // as agent work until the status catches up.
   it("keeps the working state while this browser's send is still dispatching", () => {
     mockSpecAgent = "";
-    mockSpecFlow = "";
     empty();
     act(() =>
       setPendingSeed(chatKeyFor("acme", "proj1"), "my interview answers"),
@@ -716,7 +715,6 @@ describe("SpecView while the kickoff is still writing", () => {
   // truthful empty state rather than spinning on evidence that died.
   it("surfaces Retry again once a send dies without a turn", () => {
     mockSpecAgent = "";
-    mockSpecFlow = "";
     empty();
     let release: () => void;
     act(() => {
@@ -733,13 +731,44 @@ describe("SpecView while the kickoff is still writing", () => {
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
 
+  // The rail pulses the section the pod's running turn is working on: its
+  // flow names the work (#575), read off the active turn, not the status.
+  it("pulses the design section while the running turn's flow is design", () => {
+    mockActiveTurn = running("design");
+    published();
+    render(<SpecView projectName="proj1" />);
+
+    const pulsing = screen.getAllByTestId("working-pulse").map((p) => p.parentElement?.textContent);
+    expect(pulsing).toEqual(["Design"]);
+  });
+
+  it("pulses nothing when no turn runs", () => {
+    published();
+    render(<SpecView projectName="proj1" />);
+
+    expect(screen.queryByTestId("working-pulse")).not.toBeInTheDocument();
+  });
+
+  // A Plan turn works on a build: the spec workspace does not claim it.
+  it("does not count a Plan turn as spec work", () => {
+    mockActiveTurn = running("", "plan");
+    mockSpecAgent = "never-started";
+    empty();
+    render(<SpecView projectName="proj1" />);
+
+    expect(screen.queryByTestId("working-pulse")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Agent is working on the requirements document"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Nothing written yet")).toBeInTheDocument();
+  });
+
   // An empty workspace offers NOTHING (#562 retest). It used to carry a Start
   // button, which appeared during the kickoff itself — the moment the user must
   // not be invited to restart it — because "the workspace looks empty" is true
   // for a while before the agent's first write lands.
   it("offers no action while an agent is actually writing", () => {
-    mockSpecAgent = "working";
-    mockSpecFlow = "start";
+    mockActiveTurn = running("start");
     empty();
     render(<SpecView projectName="proj1" />);
 
@@ -1488,7 +1517,7 @@ describe("SpecView follows the write (#576, ADR-0026)", () => {
     expect(screen.queryByTestId("cell-diagram-panel")).not.toBeInTheDocument();
 
     // A chat turn: the agent joins, the flow is not design.
-    mockSpecFlow = "";
+    mockActiveTurn = running("");
     mockCollab = {
       ...mockCollab,
       peers: [{ clientId: 1, name: "Agent", color: "#000", kind: "agent" }],
@@ -1506,7 +1535,7 @@ describe("SpecView follows the write (#576, ADR-0026)", () => {
       docPaths: [CELL],
       peers: [{ clientId: 1, name: "Agent", color: "#000", kind: "agent" }],
     };
-    mockSpecFlow = "design";
+    mockActiveTurn = running("design");
 
     render(<SpecView projectName="proj1" />);
 

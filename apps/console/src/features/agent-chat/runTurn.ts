@@ -23,7 +23,7 @@
 
 import {
   DECLARE_PLAN_TOOL,
-  parseSseStream,
+  parseSseFrames,
   toChange,
   opForTool,
   readToolInputPath,
@@ -84,6 +84,12 @@ function publishDraftFromInput(chatKey: string, input: unknown): void {
 const ATTACH_404_MAX_ATTEMPTS = 8;
 const ATTACH_404_BASE_MS = 250; // 250, 500, 1000, ... capped
 
+// How many attaches in a row may deliver nothing — a stream that ends at once,
+// or an attach the pod does not answer (a restart, AE Studio not ready) —
+// before the fold stops and reads the turn's status instead. A running turn
+// left behind is picked up again by the active-turn watch (useAgentChat).
+const RESUME_MAX_STALLS = 4;
+
 // A truncated replay cannot be folded without a gap; the turn's status is
 // read at this pace until it ends (a turn is capped at 30 minutes).
 const TRUNCATED_STATUS_POLL_MS = 5_000;
@@ -139,10 +145,18 @@ function settleFromTurnStatus(
 /**
  * Attach to a running turn's stream and fold it to its terminal. Resolves
  * when the turn reaches a terminal (or the signal aborts — the turn keeps
- * running server-side; a later re-attach replays it). A severed stream falls
- * back to one authoritative status poll. `onCompleted` fires once when the
- * turn completes (turn-completed, or a status read landing on completed) so
- * the caller can refresh caches the turn's edits made stale.
+ * running server-side; a later re-attach replays it). A stream that ends
+ * without the terminal re-attaches with `?from=<last id + 1>`; a turn the pod
+ * no longer streams (404) settles from its status. When the stream stays
+ * unreachable, one authoritative status read settles what it can and a still
+ * running turn is left to the caller's active-turn watch. `onCompleted` fires
+ * once when the turn completes (turn-completed, or a status read landing on
+ * completed) so the caller can refresh caches the turn's edits made stale.
+ *
+ * Resolves true when this view saw the turn end (and settled its bubble),
+ * false when it detached or could not learn the end — the caller's cue that
+ * its log may hold a turn that is not settled. Never rejects for a stream
+ * failure.
  */
 export async function attachAndFoldTurn(
   chatKey: string,
@@ -150,7 +164,7 @@ export async function attachAndFoldTurn(
   turnId: string,
   signal: AbortSignal,
   onCompleted?: () => void,
-): Promise<void> {
+): Promise<boolean> {
   let sawTerminal = false;
   // Did this turn put a question to the user? A turn that ends on a question
   // has not finished its work — the answer's turn carries it on — so the plan
@@ -413,54 +427,82 @@ export async function attachAndFoldTurn(
     }
   };
 
+  // Resume point: the next frame index the pod should send. Frame ids are
+  // indices in the turn's replay buffer, so a stream that dies before its
+  // terminal re-attaches at `last id + 1` and folds no step twice.
+  let from = 0;
+  // A frame without an id cannot be resumed after: re-attaching would either
+  // replay it (a duplicate step) or guess (a skipped one).
+  let resumable = true;
+  // Did the pod already answer "no such turn" to a status read here? Then a
+  // second read cannot learn more.
+  let gone = false;
   try {
-    let attempt = 0;
+    let notFound = 0;
+    let stalls = 0;
     for (;;) {
+      let delivered = 0;
       try {
-        const body = await openTurnStream(projectName, turnId, 0, signal);
-        for await (const part of parseSseStream(body)) {
-          if (signal.aborted) return;
-          fold(part);
+        const body = await openTurnStream(projectName, turnId, from, signal);
+        for await (const frame of parseSseFrames(body)) {
+          if (signal.aborted) return false;
+          if (frame.id === undefined) resumable = false;
+          else if (frame.id < from) continue; // already folded before the drop
+          else from = frame.id + 1;
+          delivered += 1;
+          fold(frame.part);
         }
-        break; // stream ended cleanly (terminal or severed)
       } catch (err) {
-        if (signal.aborted) return; // unmount/navigation — not a failure
+        if (signal.aborted) return false; // unmount/navigation — not a failure
         if (isTurnStreamReplayTruncated(err)) {
-          if (await settleWhenEnded(chatKey, projectName, turnId, signal, onCompleted, askedQuestion)) return;
+          if (await settleWhenEnded(chatKey, projectName, turnId, signal, onCompleted, askedQuestion)) {
+            return !signal.aborted;
+          }
           break; // the pod no longer holds the turn: the severed-stream handling below
         }
-        if (!isTurnStreamNotFound(err) || attempt >= ATTACH_404_MAX_ATTEMPTS - 1) {
-          throw err;
+        if (isTurnStreamNotFound(err)) {
+          // Past the replay retention, or not streamable yet: the turn's
+          // status says how it ended.
+          const read = await readTurnStatus(projectName, turnId);
+          if (read.kind === "status" && settleFromTurnStatus(chatKey, turnId, read.status, onCompleted, askedQuestion)) {
+            return true;
+          }
+          gone = read.kind === "gone";
+          if (gone || ++notFound >= ATTACH_404_MAX_ATTEMPTS) break;
+          await sleep(attachBackoffMs(notFound - 1), signal);
+          continue;
         }
-        // Turn may already be terminal on another replica — settle via getTurn.
-        const status = await getTurn(projectName, turnId);
-        if (settleFromTurnStatus(chatKey, turnId, status, onCompleted, askedQuestion)) {
-          return;
-        }
-        await sleep(attachBackoffMs(attempt), signal);
-        attempt += 1;
+        // Any other refusal or no answer: the pod may be restarting. It
+        // counts as an attach that delivered nothing.
       }
+      if (sawTerminal || !resumable) break;
+      stalls = delivered > 0 ? 0 : stalls + 1;
+      if (stalls >= RESUME_MAX_STALLS) break;
+      // A drop mid-stream re-attaches at once; an attach that brought
+      // nothing waits before the next.
+      if (stalls > 0) await sleep(attachBackoffMs(stalls - 1), signal);
     }
   } catch (err) {
-    // sleep / openTurnStream may reject AbortError after the inner catch's
-    // aborted check — treat detach as success, matching prior semantics.
-    if (signal.aborted) return;
+    // sleep may reject AbortError after the inner catch's aborted check —
+    // treat detach as success, matching prior semantics.
+    if (signal.aborted) return false;
     throw err;
   } finally {
-    // Stream over (terminal, severed, aborted, or settled via pre-stream
-    // getTurn): nothing further can flip a streaming card. Do NOT finalize
+    // Stream over (terminal, severed, aborted, or settled via a status
+    // read): nothing further can flip a streaming card. Do NOT finalize
     // inside the per-attempt catch — that would settle question cards mid-turn.
     finalizeStreamingQuestions();
     // Nor is anything still waiting on the provider through this stream.
     clearProviderWait(chatKey);
   }
 
-  if (sawTerminal || signal.aborted) return;
-  // Severed before the terminal — one authoritative poll settles the bubble
-  // (and is itself a "terminal frame arrived" for turn-end purposes: the
-  // fallback poll IS how this turn's end is observed here).
+  if (sawTerminal) return true;
+  if (signal.aborted || gone) return false;
+  // The stream could not be resumed — one authoritative read settles the
+  // bubble (and is itself a "terminal frame arrived" for turn-end purposes:
+  // the fallback read IS how this turn's end is observed here).
   const status = await getTurn(projectName, turnId);
-  settleFromTurnStatus(chatKey, turnId, status, onCompleted, askedQuestion);
+  return settleFromTurnStatus(chatKey, turnId, status, onCompleted, askedQuestion);
 }
 
 /**

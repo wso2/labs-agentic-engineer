@@ -31,7 +31,7 @@ function input(over: Partial<RailInput> = {}): RailInput {
     hasDesign: true,
     hasValidation: true,
     agentWorking: false,
-    agentFlow: "",
+    activeFlow: "",
     designOutdated: false,
     assumptions: 0,
     openQuestions: 0,
@@ -81,7 +81,7 @@ describe("railSections — the rail is the flow", () => {
         hasDesign: false,
         hasValidation: false,
         agentWorking: true,
-        agentFlow: "start",
+        activeFlow: "start",
       }),
     );
     expect(of(sections, "requirements").state).toBe("active");
@@ -93,7 +93,7 @@ describe("railSections — the rail is the flow", () => {
   // section — though the work was settling an assumption in the requirements.
   it("stays on requirements while an assumption is being settled", () => {
     const sections = railSections(
-      input({ hasDesign: false, hasValidation: false, agentWorking: true, agentFlow: "settle" }),
+      input({ hasDesign: false, hasValidation: false, agentWorking: true, activeFlow: "settle" }),
     );
     expect(of(sections, "requirements").state).toBe("active");
     expect(of(sections, "design").state).toBe("not-started");
@@ -103,7 +103,7 @@ describe("railSections — the rail is the flow", () => {
   // while the rest of the design was still being written.
   it("keeps pulsing the design after its first file lands", () => {
     const sections = railSections(
-      input({ hasValidation: false, agentWorking: true, agentFlow: "design" }),
+      input({ hasValidation: false, agentWorking: true, activeFlow: "design" }),
     );
     expect(of(sections, "design").state).toBe("active");
     expect(of(sections, "validation").state).toBe("not-started");
@@ -111,7 +111,7 @@ describe("railSections — the rail is the flow", () => {
 
   // An agent IS working, but nothing here can say where.
   it("pulses nothing for work it cannot place", () => {
-    const sections = railSections(input({ agentWorking: true, agentFlow: "" }));
+    const sections = railSections(input({ agentWorking: true, activeFlow: "" }));
     for (const s of sections) expect(s.state).not.toBe("active");
   });
 
@@ -128,7 +128,7 @@ describe("railSections — the rail is the flow", () => {
         hasDesign: false,
         hasValidation: false,
         agentWorking: true,
-        agentFlow: "",
+        activeFlow: "",
       }),
     );
     expect(of(sections, "requirements").state).toBe("active");
@@ -145,7 +145,7 @@ describe("railSections — the rail is the flow", () => {
         hasDesign: false,
         hasValidation: false,
         agentWorking: true,
-        agentFlow: "org-kickoff",
+        activeFlow: "org-kickoff",
       }),
     );
     expect(of(sections, "requirements").state).toBe("active");
@@ -162,7 +162,7 @@ describe("railSections — the rail is the flow", () => {
         hasDesign: true,
         hasValidation: false,
         agentWorking: true,
-        agentFlow: "",
+        activeFlow: "",
       }),
     );
     for (const s of sections) expect(s.state).not.toBe("active");
@@ -178,7 +178,7 @@ describe("railSections — the rail is the flow", () => {
         hasDesign: false,
         hasValidation: false,
         agentWorking: true,
-        agentFlow: "",
+        activeFlow: "",
       }),
     );
     for (const s of sections) expect(s.state).not.toBe("active");
@@ -231,7 +231,7 @@ describe("railSections — the rail is the flow", () => {
     // while it is being fixed reads as a fault.
     it("yields to an agent that is working on it", () => {
       const working = railSections(
-        input({ designOutdated: true, agentWorking: true, agentFlow: "design" }),
+        input({ designOutdated: true, agentWorking: true, activeFlow: "design" }),
       );
       expect(of(working, "design").state).toBe("active");
     });
@@ -246,14 +246,14 @@ describe("railSections — the rail is the flow", () => {
     // design against unsettled requirements without saying so.
     it("keeps the reasons on an active section for readers other than the rail", () => {
       const working = railSections(
-        input({ designOutdated: true, agentWorking: true, agentFlow: "design" }),
+        input({ designOutdated: true, agentWorking: true, activeFlow: "design" }),
       );
       expect(of(working, "design").reasons).toHaveLength(1);
     });
 
     it("keeps the requirements' reasons while they are being settled", () => {
       const working = railSections(
-        input({ assumptions: 3, openQuestions: 1, agentWorking: true, agentFlow: "settle" }),
+        input({ assumptions: 3, openQuestions: 1, agentWorking: true, activeFlow: "settle" }),
       );
       expect(of(working, "requirements").state).toBe("active");
       expect(reasonCount(of(working, "requirements").reasons)).toBe(4);
@@ -383,7 +383,7 @@ describe("the declared plan", () => {
     const sections = railSections(
       input({
         agentWorking: true,
-        agentFlow: "design",
+        activeFlow: "design",
         planEntries: [
           entry("specs/validation/acceptance/bought-items.feature", "writing", "validation"),
         ],
@@ -431,7 +431,7 @@ describe("the declared plan", () => {
     const sections = railSections(
       input({
         agentWorking: true,
-        agentFlow: "design",
+        activeFlow: "design",
         planEntries: [entry("specs/design/design.cell", "done")],
       }),
     );

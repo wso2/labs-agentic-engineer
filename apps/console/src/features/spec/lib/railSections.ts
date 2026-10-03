@@ -90,9 +90,10 @@ export interface RailInput {
   hasValidation: boolean;
   /** An agent turn is running somewhere on this project. */
   agentWorking: boolean;
-  /** WHICH work is running — the flow token (`start`, `design`, `settle`, …);
-   *  "" for plain chat or nothing. */
-  agentFlow: string;
+  /** WHICH work is running — the running turn's flow token (`start`,
+   *  `design`, `settle`, …), from the AE Studio pod; "" for plain chat or
+   *  nothing. */
+  activeFlow: string;
   /** The requirements moved since the design was last derived from them. */
   designOutdated: boolean;
   /** Judgments the agent made that the user may want to challenge. */
@@ -260,8 +261,8 @@ export function railSections(input: RailInput): RailSection[] {
   const activeID =
     input.agentWorking && writingSection
       ? writingSection
-      : input.agentWorking && Object.hasOwn(SECTION_FOR_FLOW, input.agentFlow)
-        ? SECTION_FOR_FLOW[input.agentFlow]
+      : input.agentWorking && Object.hasOwn(SECTION_FOR_FLOW, input.activeFlow)
+        ? SECTION_FOR_FLOW[input.activeFlow]
         : input.agentWorking && projectEmpty
           ? "requirements"
           : undefined;

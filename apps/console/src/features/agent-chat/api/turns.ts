@@ -321,11 +321,21 @@ async function readOrNull<T>(
   }
 }
 
-/** The project's running turn, or null: none (204), or a failed read (see readOrNull). */
-export function getActiveTurn(projectName: string): Promise<TurnStatus | null> {
-  return readOrNull(() =>
-    designAgent().GET("/projects/{projectName}/turns/active", { params: { path: { projectName } } }),
-  );
+/**
+ * The project's running turn, or null when none runs (204). A failed read
+ * throws — a refusal, no answer, or AeStudioNotReadyError before AE Studio is
+ * `ready` — so the active-turn query keeps its last answer instead of reading
+ * a pod hiccup as "nothing is running".
+ */
+export async function getActiveTurn(projectName: string): Promise<TurnStatus | null> {
+  const { data, error, response } = await designAgent().GET("/projects/{projectName}/turns/active", {
+    params: { path: { projectName } },
+  });
+  if (response.status === 204) return null;
+  if (error !== undefined || data === undefined) {
+    throw new Error(apiErrorMessage(error, "Failed to read the project's running turn"));
+  }
+  return data.status === "running" ? data : null;
 }
 
 /** One turn's status, or null when the pod no longer holds it (404) or the read failed. */

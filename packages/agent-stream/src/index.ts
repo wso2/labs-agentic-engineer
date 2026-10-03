@@ -239,7 +239,8 @@ export {
 // --- The reference SSE reader ------------------------------------------------
 // `startAndStreamTurn` = start a `/v1` turn + stream it (server-side callers:
 // evals, playground).
-// `parseSseStream` = parse only, for a caller that owns its own fetch (the
-// console adds auth + a `{useCase,...}` body + pre-stream status mapping).
-export { startAndStreamTurn, parseSseStream, TurnRefusedError } from "./sse-client.js";
-export type { SseStreamEnd, TurnStartBody } from "./sse-client.js";
+// `parseSseFrames` = parse only, with each frame's resume id, for a caller that
+// owns its own fetch (the console adds auth + pre-stream status mapping and
+// resumes with `?from=<last id + 1>`); `parseSseStream` = the same, parts only.
+export { startAndStreamTurn, parseSseFrames, parseSseStream, TurnRefusedError } from "./sse-client.js";
+export type { SseFrame, SseStreamEnd, TurnStartBody } from "./sse-client.js";

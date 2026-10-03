@@ -74,11 +74,14 @@ Placeholder for an artifact class with nothing in it: **"Not created yet"** — 
 reserved for when an agent is genuinely working — the old *"Being derived…"* claimed work that
 was not happening.
 
-**"Genuinely working" is `spec.agent`, not "the spec has no version".** The old signal was the flat
+**"Genuinely working" is the running turn, not "the spec has no version".** The old signal was the flat
 `specStatus`, which the platform only ever sets to *draft* or *approved* — so every unversioned project
 on screen was described as being worked on, and the one moment work really is in flight, the kickoff,
-had no files at all and read as idle. It is now read from the turn record
-([#562](https://github.com/wso2/labs-agentic-engineer/issues/562)).
+had no files at all and read as idle. It was then read from the turn record
+([#562](https://github.com/wso2/labs-agentic-engineer/issues/562)), and is now read from the AE Studio
+pod that runs the turn: one query on its running turn serves the chat, the overview and the spec
+workspace alike. A **Plan** turn works on a build, not on the spec, so the spec workspace does not
+count it as writing.
 
 A user who opens the spec **before the interview has asked anything** — reachable from the moment the
 project exists, since the kickoff fires at creation — meets *"Agent is working on the requirements
@@ -523,6 +526,22 @@ attributed to *you*. The turn itself carries the line
 ([#562](https://github.com/wso2/labs-agentic-engineer/issues/562)); the transcript store cannot,
 because it only records a turn once the turn has finished.
 
+**A message sent while another turn runs is not a failure.** It does not go, and nothing was lost:
+the words go back into the composer (not a failed row in the log), the panel shows the running turn so
+you can watch it, and a note under the composer says why:
+
+| the turn that is running | note |
+|---|---|
+| any turn but a Plan | *Another turn is running — send again when it finishes* |
+| a Plan turn | *Planning is running…* |
+
+The note goes away when that turn ends. The same applies to a message the console sends for you (a
+question's answers, the design button): its words land in the composer rather than vanishing.
+
+**A dropped stream is not a lost turn.** The chat picks up where it left off, so no step shows twice
+and none goes missing; if the turn ended in the meantime it settles from the turn's own record. There
+is no "reopen the panel" message any more.
+
 ### Track grammar
 
 The three stages are **one track**, not three cards: one bar, three legs, each carrying a step
@@ -596,6 +615,7 @@ absent and the agent looks idle, and the card fell through to its cold-start wor
 |---|---|
 | the agent is writing the first requirements | *The agent is writing your requirements.* |
 | an agent is working on a spec that already exists | *The agent is working on your spec.* |
+| a Plan turn is running | *Planning…* |
 | the agent asked and is waiting | *The agent has questions for you.* |
 | the kickoff died with nothing written | *The agent couldn't start — open the spec to try again.* |
 | nothing ever started | *Nothing written yet.* |
@@ -890,8 +910,8 @@ Requirements — nothing downstream can be written before that document exists, 
 a member's interview answers (plain prose, no flow) is the very one that writes it (#629). The
 moment anything exists, the silence above resumes.
 
-**"In flight" starts at the submit, not at the server.** `spec.agent` cannot see a turn before its
-row exists, and submitted interview answers take the dispatch round-trip — seconds — to become one;
+**"In flight" starts at the submit, not at the server.** The running-turn read cannot see a turn
+before it starts, and submitted interview answers take the dispatch round-trip — seconds — to become one;
 in that gap every signal above read idle and the empty workspace offered Retry against the very
 interview it could not see ([#635](https://github.com/wso2/labs-agentic-engineer/issues/635)). The
 browser that submitted holds the missing evidence — a seeded message waiting, a dispatch awaiting

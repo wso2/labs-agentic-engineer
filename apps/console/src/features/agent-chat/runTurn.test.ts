@@ -35,16 +35,19 @@ vi.mock("./api/turns.js", async (importOriginal) => {
   };
 });
 
-// --- @aep/agent-stream: parseSseStream is mocked to yield the parts a test
-// queues, bypassing real SSE byte parsing (irrelevant to this unit).
+// --- @aep/agent-stream: parseSseFrames is mocked to yield the parts a test
+// queues, bypassing real SSE byte parsing (irrelevant to this unit). The
+// frames carry no id, so a stream that ends without its terminal cannot be
+// resumed and falls straight to the status read (resume with ids is
+// runTurn.resume.test.ts).
 // `readToolInputPath` is controllable so a test can make a path resolve mid
 // tool-input and exercise the file-card lifecycle; it returns null by default,
 // which is "no path yet" — no card.
 let queuedParts: StreamPart[] = [];
 const mockReadToolInputPath = vi.fn<(buf: string) => string | null>(() => null);
 vi.mock("@aep/agent-stream", () => ({
-  parseSseStream: async function* () {
-    for (const part of queuedParts) yield part;
+  parseSseFrames: async function* () {
+    for (const part of queuedParts) yield { part };
   },
   // `path` is read off the frame when a test supplies one, so a test can settle
   // a SPECIFIC file; the fixed default keeps the older card tests unchanged.
@@ -134,14 +137,14 @@ describe("attachAndFoldTurn — turn-end notification (#252 Task 5)", () => {
   });
 
   it("notifies turn-end via the poll fallback when the stream is severed with no terminal frame", async () => {
-    queuedParts = []; // stream ends with nothing — severed before a terminal
+    queuedParts = [{ type: "text-delta", delta: "partial" } as StreamPart]; // severed before a terminal
     mockGetTurn.mockResolvedValue({ status: "completed" });
     await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
     expect(notified).toEqual([{ key: KEY, status: "completed" }]);
   });
 
   it("notifies turn-end 'failed' via the poll fallback when the authoritative poll says failed", async () => {
-    queuedParts = [];
+    queuedParts = [{ type: "text-delta", delta: "partial" } as StreamPart];
     mockGetTurn.mockResolvedValue({ status: "failed", message: "oops" });
     await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
     expect(notified).toEqual([{ key: KEY, status: "failed" }]);
@@ -176,7 +179,7 @@ describe("attachAndFoldTurn — pre-stream 404 re-attach (#3)", () => {
       .mockRejectedValueOnce(attachErr)
       .mockResolvedValueOnce(new ReadableStream());
     queuedParts = [{ type: "turn-completed" } as StreamPart];
-    mockGetTurn.mockResolvedValue({ status: "running" });
+    mockReadTurnStatus.mockResolvedValue({ kind: "status", status: { status: "running" } });
 
     const done = attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
     await vi.runAllTimersAsync();
@@ -190,11 +193,11 @@ describe("attachAndFoldTurn — pre-stream 404 re-attach (#3)", () => {
     );
   });
 
-  it("falls through to getTurn when a pre-stream 404's turn is already completed", async () => {
+  it("settles from the status read when a pre-stream 404's turn is already completed", async () => {
     vi.useFakeTimers();
     const attachErr = new TurnStreamAttachError(404);
     mockOpenTurnStream.mockRejectedValue(attachErr);
-    mockGetTurn.mockResolvedValue({ status: "completed" });
+    mockReadTurnStatus.mockResolvedValue({ kind: "status", status: { status: "completed" } });
 
     const done = attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
     await vi.runAllTimersAsync();
@@ -286,11 +289,21 @@ describe("attachAndFoldTurn — pre-stream 404 re-attach (#3)", () => {
     });
   });
 
-  it("re-throws non-404 attach failures (still surfaces Turn failed upstream)", async () => {
+  // No answer at all (not a 404): the pod may be restarting. A bounded number
+  // of re-attaches, then one status read; the fold never rejects, and a turn
+  // it could not settle is reported unsettled for the active-turn watch.
+  it("never rejects when the stream cannot be reached; reports the turn unsettled", async () => {
+    vi.useFakeTimers();
     mockOpenTurnStream.mockRejectedValue(new Error("Failed to attach to the turn stream")); // no status
-    await expect(
-      attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal),
-    ).rejects.toThrow(/Failed to attach/);
+    mockGetTurn.mockResolvedValue(null);
+
+    const done = attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    await vi.runAllTimersAsync();
+
+    await expect(done).resolves.toBe(false);
+    expect(mockOpenTurnStream.mock.calls.length).toBeGreaterThan(1);
+    expect(mockGetTurn).toHaveBeenCalledTimes(1);
+    expect(notified).toEqual([]);
   });
 });
 
@@ -615,7 +628,7 @@ describe("attachAndFoldTurn — a failure the agents service named", () => {
 
   it("phrases the code off the status read when the stream severed before the terminal", async () => {
     const message = "The model's output limit (8192 tokens per step) cut off addFile before it finished, so nothing was written.";
-    queuedParts = [];
+    queuedParts = [{ type: "text-delta", delta: "partial" } as StreamPart];
     mockGetTurn.mockResolvedValue({ status: "failed", reason: "agent-error", code: "output_truncated", message });
     await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
     expect(addMessage).toHaveBeenCalledWith(KEY, { role: "error", content: message });

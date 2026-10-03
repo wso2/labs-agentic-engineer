@@ -17,10 +17,14 @@
  */
 
 import type { components } from "../../../generated/aep-api";
+import type { TurnStatus } from "../../agent-chat/api/turns";
 import { failureLabel } from "../../builds/lib/failure";
 import { validationView } from "./pipeline";
 
 type ProjectStatus = components["schemas"]["ProjectStatus"];
+
+/** The project's running agent turn as the track reads it, or null when none runs. */
+type ActiveTurn = Pick<TurnStatus, "kind"> | null | undefined;
 
 /**
  * THE TRACK: spec → build → deploy as one flow.
@@ -98,19 +102,24 @@ export interface TrackView {
   summary: TrackSummary | null;
 }
 
-function specLeg(status: ProjectStatus, engaged: boolean): TrackLeg {
+function specLeg(status: ProjectStatus, engaged: boolean, activeTurn: ActiveTurn): TrackLeg {
   const { exists, version, dirty, agent } = status.spec;
   const leg = { name: "Spec", to: "/projects/$projectName/spec", version } as const;
 
   // A live state overrides the LINE only — the version is a separate fact, so
-  // an amendment interview on v2 still reads as v2.
-  if (agent === "working") {
+  // an amendment interview on v2 still reads as v2. The running turn comes from
+  // the AE Studio pod that runs it; a Plan turn works on a build, so it says so
+  // rather than claiming the spec.
+  if (activeTurn) {
     return {
       ...leg,
       state: "live",
-      line: exists
-        ? "The agent is working on your spec"
-        : "The agent is writing your requirements",
+      line:
+        activeTurn.kind === "plan"
+          ? "Planning…"
+          : exists
+            ? "The agent is working on your spec"
+            : "The agent is writing your requirements",
     };
   }
   // No server field can produce this: `spec.agent` folds a completed turn to
@@ -265,9 +274,9 @@ function trackSummary(status: ProjectStatus): TrackSummary | null {
   return null;
 }
 
-export function trackView(status: ProjectStatus, engaged: boolean): TrackView {
+export function trackView(status: ProjectStatus, engaged: boolean, activeTurn?: ActiveTurn): TrackView {
   return {
-    legs: [specLeg(status, engaged), buildLeg(status), deployLeg(status)],
+    legs: [specLeg(status, engaged, activeTurn), buildLeg(status), deployLeg(status)],
     summary: trackSummary(status),
   };
 }

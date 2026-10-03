@@ -91,18 +91,17 @@ const STATUS_IDLE_POLL_MS = 30_000;
 type ProjectStatus = components["schemas"]["ProjectStatus"];
 type Deployment = components["schemas"]["Deployment"];
 
-function statusIsMoving(status: ProjectStatus): boolean {
+/**
+ * Whether the project's status is moving, so the poll stays on its fast
+ * cadence. A running agent turn is not read here: it comes from the AE Studio
+ * pod (useActiveTurn), and its end refreshes this poll.
+ */
+export function statusIsMoving(status: ProjectStatus): boolean {
   return (
-    // An agent writing the spec is the FIRST thing that moves on a new project
-    // and the longest stretch a first-timer watches (#562): the kickoff fires
-    // at creation, so the overview's opening minutes are exactly this state.
-    // Without it the spec card would sit on the idle interval through the whole
-    // interview and take up to 30s to notice it had finished.
-    status.spec.agent === "working" ||
     // Mid-interview: a turn HAS run (so not "never-started") and written no
-    // spec yet, and `agent` returns to "" in every gap between turns — keying
-    // only on "working" drops the whole interview onto the idle cadence and
-    // leaves every surface up to 30s behind the agent it describes.
+    // spec yet, and `agent` returns to "" in every gap between turns — the
+    // interview's whole stretch would otherwise sit on the idle cadence and
+    // leave every surface up to 30s behind the agent it describes.
     //
     // Scoped to a project that actually has turn history, so an abandoned or
     // never-started one is not parked on the fast cadence forever: this poll

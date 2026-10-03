@@ -22,9 +22,9 @@ import { chatKeyFor, hasLocalTurnActivity, subscribeLocalTurnActivity } from "./
 /**
  * True while THIS browser holds live evidence of a turn for the project — a
  * seeded message waiting to send, a dispatch awaiting its turn id, or a
- * stream being folded (#635). Covers the window where `spec.agent` still
- * reads idle because the turn's row does not exist server-side yet, which is
- * exactly when a surface deciding "is anything running" from status alone
+ * stream being folded (#635). Covers the window where the pod's running-turn
+ * read still answers none because the turn has not started yet, which is
+ * exactly when a surface deciding "is anything running" from that read alone
  * would wrongly offer Retry against work in flight.
  */
 export function useLocalTurnActivity(

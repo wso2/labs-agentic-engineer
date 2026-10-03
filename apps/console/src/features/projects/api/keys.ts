@@ -24,6 +24,9 @@ export const projectKeys = {
   details: () => [...projectKeys.all, "detail"] as const,
   detail: (name: string) => [...projectKeys.details(), name] as const,
   status: (name: string) => [...projectKeys.detail(name), "status"] as const,
+  // The project's running agent turn, read from the AE Studio pod. Under
+  // `detail`, so the turn-end invalidation of a project also re-asks it.
+  activeTurn: (name: string) => [...projectKeys.detail(name), "active-turn"] as const,
   components: (name: string) =>
     [...projectKeys.detail(name), "components"] as const,
   componentOpenapi: (name: string, component: string) =>

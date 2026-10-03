@@ -55,6 +55,7 @@ import {
   subscribeTurnEnd,
   upsertToolMessage,
   clearFailedSends,
+  removeMessage,
   claimSendInFlight,
   claimStreamFold,
   hasLocalTurnActivity,
@@ -497,6 +498,20 @@ describe("chatStore — an optimistic send, and a turn this browser didn't send"
     });
 
     expect(getMessages(key)).toHaveLength(1);
+  });
+});
+
+// A send refused before it started (409 turn_in_progress): its words go back
+// into the composer, so its row leaves the log rather than turning failed.
+describe("removeMessage", () => {
+  it("withdraws exactly the addressed row", () => {
+    const key = "aep.chat.v1.acme.remove-message";
+    const kept = addMessage(key, { role: "user", content: "earlier", status: "completed" });
+    const withdrawn = addMessage(key, { role: "user", content: "hello", status: "in_flight" });
+
+    removeMessage(key, withdrawn);
+
+    expect(getMessages(key).map((m) => m.id)).toEqual([kept]);
   });
 });
 

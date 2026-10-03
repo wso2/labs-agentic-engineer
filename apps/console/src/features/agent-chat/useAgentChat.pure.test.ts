@@ -71,6 +71,14 @@ describe("foreignTurnPollDelay", () => {
     expect(foreignTurnPollDelay([], 7)).toBe(2_000);
     expect(foreignTurnPollDelay([], 8)).toBe(12_000);
   });
+
+  // A running turn is watched at the active-turn cadence, so its end shows
+  // within seconds wherever the panel stands.
+  it("polls every 5 s while a turn runs", () => {
+    expect(foreignTurnPollDelay([], 0, turn())).toBe(5_000);
+    expect(foreignTurnPollDelay([SOME_MESSAGE], 9, turn())).toBe(5_000);
+    expect(foreignTurnPollDelay([SOME_MESSAGE], 0, null)).toBe(12_000);
+  });
 });
 
 describe("userMessageForTurn", () => {

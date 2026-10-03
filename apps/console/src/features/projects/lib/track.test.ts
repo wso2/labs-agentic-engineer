@@ -19,6 +19,7 @@
 import { describe, expect, it } from "vitest";
 import type { components } from "../../../generated/aep-api";
 import { trackView, type LegState } from "./track";
+import type { TurnStatus } from "../../agent-chat/api/turns";
 
 type ProjectStatus = components["schemas"]["ProjectStatus"];
 
@@ -51,8 +52,11 @@ function status(over: {
 const states = (s: ProjectStatus, engaged = false): LegState[] =>
   trackView(s, engaged).legs.map((l) => l.state);
 
-const leg = (s: ProjectStatus, i: number, engaged = false) =>
-  trackView(s, engaged).legs[i]!;
+const leg = (s: ProjectStatus, i: number, engaged = false, activeTurn: Pick<TurnStatus, "kind"> | null = null) =>
+  trackView(s, engaged, activeTurn).legs[i]!;
+
+/** A running turn as the pod reports it (only `kind` matters to the track). */
+const turn = (kind: TurnStatus["kind"] = "browser"): Pick<TurnStatus, "kind"> => ({ kind });
 
 describe("the track is always three legs", () => {
   it("names them in flow order whatever the state", () => {
@@ -79,13 +83,13 @@ describe("the spec leg", () => {
   });
 
   it("names the work while the kickoff runs", () => {
-    const l = leg(status({ spec: { exists: false, agent: "working" } }), 0);
+    const l = leg(status({ spec: { exists: false } }), 0, false, turn("kickoff"));
     expect(l.state).toBe("live");
     expect(l.line).toBe("The agent is writing your requirements");
   });
 
   it("says the agent is on the spec once requirements exist", () => {
-    const l = leg(status({ spec: { exists: true, agent: "working" } }), 0);
+    const l = leg(status({ spec: { exists: true } }), 0, false, turn());
     expect(l.line).toBe("The agent is working on your spec");
   });
 
@@ -98,7 +102,7 @@ describe("the spec leg", () => {
   });
 
   it("keeps the version under a live line", () => {
-    const l = leg(status({ spec: { version: "v2", agent: "working" } }), 0);
+    const l = leg(status({ spec: { version: "v2" } }), 0, false, turn());
     expect(l.version).toBe("v2");
   });
 
@@ -127,11 +131,26 @@ describe("the spec leg", () => {
   // A cta on a leg with nothing to do would make every visit look like a
   // request. Only the two states above carry one.
   it.each([
-    ["published", { version: "v1" }],
-    ["a live agent turn", { agent: "working" }],
-    ["a draft", { version: "" }],
-  ] as const)("leaves %s without a call to action", (_name, spec) => {
-    expect(leg(status({ spec }), 0).cta).toBeUndefined();
+    ["published", { version: "v1" }, null],
+    ["a live agent turn", {}, turn()],
+    ["a draft", { version: "" }, null],
+  ] as const)("leaves %s without a call to action", (_name, spec, active) => {
+    expect(leg(status({ spec }), 0, false, active).cta).toBeUndefined();
+  });
+
+  // Agent activity is read from the pod's running turn, never from the
+  // status aggregate's `spec.agent`.
+  it("reads a live agent from the running turn, not from spec.agent", () => {
+    expect(leg(status({ spec: { version: "v1", agent: "working" } }), 0).state).toBe("done");
+    expect(leg(status({ spec: { version: "v1" } }), 0, false, turn()).state).toBe("live");
+  });
+
+  // A Plan turn works on a build, not on the spec: it shows as planning.
+  it("shows a Plan turn as planning", () => {
+    const l = leg(status({ spec: { version: "v1" } }), 0, false, turn("plan"));
+    expect(l.state).toBe("live");
+    expect(l.line).toBe("Planning…");
+    expect(l.version).toBe("v1");
   });
 
   it("holds a draft nobody published", () => {

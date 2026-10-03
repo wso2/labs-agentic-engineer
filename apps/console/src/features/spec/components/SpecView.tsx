@@ -81,6 +81,7 @@ import {
 } from "../../agent-chat/chatStore";
 import { useConversationLog } from "../../agent-chat/useConversationLog";
 import { useLocalTurnActivity } from "../../agent-chat/useLocalTurnActivity";
+import { useActiveTurn } from "../../agent-chat/api/useActiveTurn";
 import { EmptyState } from "../../../components/EmptyState";
 import { ProblemsDialog } from "./ProblemsDialog";
 import { CommittedFileView } from "./CommittedFileView";
@@ -174,6 +175,10 @@ export function SpecView({ projectName }: { projectName: string }) {
   const navigate = useNavigate();
   const { actions } = useAppShell();
   const status = useProjectStatus(projectName);
+  // The agent turn running on this spec right now, from the AE Studio pod; a
+  // Plan turn works on a build, not on the spec, so it is not one.
+  const activeTurn = useActiveTurn(projectName).data;
+  const specTurn = activeTurn && activeTurn.kind !== "plan" ? activeTurn : null;
   const tags = useProjectTags(projectName);
   const spec = useSpecFiles(projectName);
   // #252 Task 9: every component's read-time dependency status, for the
@@ -401,7 +406,7 @@ export function SpecView({ projectName }: { projectName: string }) {
   // click recorded asked the agent a question, the pane became Architecture
   // for the length of the reply, and came back as a fresh editor at the top.
   // Reported as "the PRD scrolls when the agent says something" (#666). The
-  // flow token comes from the project's status, so a reload mid-design-turn
+  // flow token comes from the pod's running turn, so a reload mid-design-turn
   // still lands on Architecture; a chat, settle or aimed turn leaves the
   // reader where they were.
   const firstRequirements = files.find((f) => f.group === "requirements");
@@ -416,7 +421,7 @@ export function SpecView({ projectName }: { projectName: string }) {
   // What must never reach it is a REFERENCE — `toSpecEntry` drops those, which
   // is what keeps a v1 project's committed PDF out of the editor pane.
   const firstListed = files[0];
-  const designTurnRunning = status.data?.spec.agentFlow === "design" && agentInRoom;
+  const designTurnRunning = specTurn?.flow === "design" && agentInRoom;
   const effectiveSelection: SpecSelection =
     selection ??
     (designTurnRunning && hasDesignCell
@@ -705,20 +710,20 @@ export function SpecView({ projectName }: { projectName: string }) {
       : null,
   );
 
-  // Whether an agent is working on this project's spec RIGHT NOW, and how the
-  // last attempt ended (#562). Read from `spec.agent` — the one status field
-  // that is not derived from committed git, which is what makes it the only one
-  // that can see a turn before it lands.
+  // Whether an agent is working on this project's spec RIGHT NOW — `specTurn`,
+  // the pod's running turn — and how the last attempt ended (#562) —
+  // `spec.agent` (never-started, "" or failed), the one status field that is
+  // not derived from committed git.
   //
-  // It replaces a read of the flat `specStatus`, which never answered this: the
+  // Both replace a read of the flat `specStatus`, which never answered this: the
   // BFF only ever sets that to ""/draft/approved, so `deriving` meant "spec
   // files exist and none is versioned" and claimed an agent was shaping the
   // spec for every unversioned project on screen — while the one moment work
   // really is in flight, the kickoff, has no files at all and read as idle.
   const specAgent = status.data?.spec.agent;
-  const deriving = specAgent === "working";
-  // `agent` is PROJECT-wide — the newest turn of any flow — so it says an agent
-  // is working, never which document. Only the kickoff can be named: with no
+  const deriving = specTurn !== null;
+  // The running turn is PROJECT-wide — any flow — so it says an agent is
+  // working, never which document. Only the kickoff can be named: with no
   // requirements file in the project there is nothing else a turn could be
   // writing, and it is the state this workspace has to explain (#562).
   //
@@ -733,9 +738,9 @@ export function SpecView({ projectName }: { projectName: string }) {
   // requirements, so its CTA needs them first) all share it, so they cannot
   // drift into contradicting each other about the same files.
   const hasRequirementsFiles = files.some((f) => f.group === "requirements");
-  // The status field cannot see a turn before its row exists (#635): submitted
+  // The running-turn read cannot see a turn before it starts (#635): submitted
   // interview answers travel through the chat's seed slot and take the dispatch
-  // round-trip — seconds — to become a turn `spec.agent` reports. This browser
+  // round-trip — seconds — plus a poll to become a turn the pod reports. This browser
   // holds that evidence locally (seed waiting, dispatch in flight, stream being
   // folded), so a send counts as agent work from the moment it leaves the form;
   // otherwise the pane meets the gap with "Nothing written yet" plus a Retry
@@ -745,7 +750,7 @@ export function SpecView({ projectName }: { projectName: string }) {
     projectName,
   );
   // `failed` yields to that same evidence: `spec.agent` keeps reading "failed"
-  // until the retry's own turn has a row, so unguarded the banner would sit
+  // until the retry's own turn has ended, so unguarded the banner would sit
   // through the retry's dispatch offering a SECOND Retry against the send it
   // already fired — while the rail beside it pulses working. If the send dies,
   // its claim releases (or the seed's TTL lapses) and the banner returns.
@@ -832,7 +837,7 @@ export function SpecView({ projectName }: { projectName: string }) {
         hasDesign: files.some((f) => f.group === "designs"),
         hasValidation: files.some((f) => f.group === "validation"),
         agentWorking: deriving || localTurnActivity,
-        agentFlow: status.data?.spec.agentFlow ?? "",
+        activeFlow: specTurn?.flow ?? "",
         designOutdated: status.data?.spec.designOutdated ?? false,
         assumptions: unsettled.assumptions,
         openQuestions: unsettled.openQuestions,
@@ -844,7 +849,7 @@ export function SpecView({ projectName }: { projectName: string }) {
       hasRequirementsFiles,
       deriving,
       localTurnActivity,
-      status.data?.spec.agentFlow,
+      specTurn?.flow,
       status.data?.spec.designOutdated,
       unsettled,
       planEntries,

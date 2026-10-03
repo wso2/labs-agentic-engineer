@@ -20,7 +20,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ComponentProps } from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AskQuestionInput } from "@aep/agent-stream";
 import { DESIGN_COMMAND, START_COMMAND } from "@aep/contracts/commands";
@@ -53,6 +53,7 @@ const mockNewConversation = vi.fn();
 let mockMessages: unknown[] = [];
 let mockConversationReady = true;
 let mockHistoryReady = true;
+let mockNotice: string | null = null;
 vi.mock("../useAgentChat", () => ({
   useAgentChat: () => ({
     messages: mockMessages,
@@ -61,6 +62,7 @@ vi.mock("../useAgentChat", () => ({
     conversationReady: mockConversationReady,
     historyReady: mockHistoryReady,
     conversationError: false,
+    notice: mockNotice,
     send: mockSend,
     newConversation: mockNewConversation,
   }),
@@ -149,6 +151,24 @@ describe("AgentChatPanel — pendingSeed + turn-end wiring (#252 Task 5)", () =>
     act(() => setPendingSeed(KEY, "resolve dependency B"));
     expect(mockSend).toHaveBeenCalledWith("resolve dependency B");
     expect(mockSend).toHaveBeenCalledTimes(1);
+  });
+
+  // 409 turn_in_progress (10 §4): a refused seed has no composer text behind
+  // it, so its words land there rather than being lost.
+  it("puts a refused seed's words into the composer", async () => {
+    mockSend.mockResolvedValueOnce(false);
+    setPendingSeed(KEY, "my interview answers");
+    renderPanel();
+    await waitFor(() => expect(screen.getByRole("textbox")).toHaveValue("my interview answers"));
+  });
+
+  it("says why a send did not go while the turn that refused it runs", () => {
+    mockNotice = "Another turn is running — send again when it finishes";
+    renderPanel();
+    expect(screen.getByTestId("input-hint")).toHaveTextContent(
+      "Another turn is running — send again when it finishes",
+    );
+    mockNotice = null;
   });
 
   it("consumes the seed from the store (so a second mount never resends it)", () => {
