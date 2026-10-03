@@ -24,8 +24,8 @@
 //
 // Access is REQUEST-SCOPED (#86 d7): the caller's bearer rides the turn
 // payload and the collab server's BFF oracle validates it exactly like a
-// browser join. The caller names the room and its ws URL (the org's pod Room;
-// TEMPORARY, phase 3 deletes: old agents joins the pod Room).
+// browser join. The caller names the room and its ws URL (the org's pod Room).
+// TEMPORARY (phase 3 deletes): old agents joins the pod Room
 
 import {
   HocuspocusProvider,

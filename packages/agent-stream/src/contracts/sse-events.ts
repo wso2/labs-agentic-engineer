@@ -392,9 +392,9 @@ export interface McpConfig {
 /**
  * Caller-supplied collab-room reference for a room-scoped turn (#86 phase 4).
  * Mirrors `McpConfig`: the BFF resolves the room and forwards the caller's
- * bearer, and the Room's ws URL (the org's AE Studio pod Room; TEMPORARY,
- * phase 3 deletes: old agents joins the pod Room); the service reads none of
- * them from its own env.
+ * bearer, and the Room's ws URL (the org's AE Studio pod Room); the service
+ * reads none of them from its own env.
+ * TEMPORARY (phase 3 deletes): old agents joins the pod Room
  * Present → the agents service joins the room as a live Yjs peer, reads the
  * file bundle FROM the doc, and applies file ops to it; nothing is committed
  * to git (persistence is the #86 phase-3 committer). Omitted → the
