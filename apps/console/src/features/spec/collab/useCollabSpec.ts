@@ -27,6 +27,7 @@ import {
   renewAccessToken,
   subscribeAccessTokenRefresh,
 } from "../../../auth/token";
+import type { components } from "../../../generated/aep-api";
 import { aeStudioKeys, useAeStudio } from "../../ae-studio/api/queries";
 
 // Console side of #86 phase 5: connect the spec view to the Room, the
@@ -108,9 +109,14 @@ export interface CollabSpec {
   dismissFlushWarnings: () => void;
 }
 
-// A forced flush is one commit through the pod's Files socket — quick, but
-// allow slack for the git op before the build is blocked on a hung reply.
-const FLUSH_TIMEOUT_MS = 30_000;
+// A forced flush is one commit through the pod's Files socket. The deadlines
+// nest, and this one must stay the outermost: the pod answers a Files-socket
+// request within its own budget (`filesSocketRequestBudget`, 40 s, in
+// ae-studio-tools/internal/edge/files_sock.go), and ae-collab gives up on the
+// socket at 45 s (`REQUEST_TIMEOUT_MS` in ae-collab/src/files-client.ts) and
+// reports that as a flush-error. Waiting less than either reports a slow but
+// successful save as a failure and blocks Build on it; raise this with them.
+const FLUSH_TIMEOUT_MS = 50_000;
 
 // Settle time before rebuilding the room after a post-sync drop (see
 // `scheduleRebuild`). The fresh provider retries on its own backoff from
@@ -125,6 +131,27 @@ const REBUILD_MAX_DELAY_MS = 30_000;
 // the backoff over. Without it, a server that syncs before each drop would
 // reset the count every round and never back off at all.
 const REBUILD_RESET_MS = 30_000;
+
+type AeStudio = components["schemas"]["AeStudio"];
+
+/**
+ * The Room URL to hold after AE Studio's latest answer, given the one held now.
+ * `ready` names the Room. A `provisioning` answer after it is most often a
+ * converge that leaves the pod running, so it keeps the held URL and with it
+ * the live provider (a pod that really restarts drops the socket, and the
+ * provider's own drop paths answer that). `failed`, `absent`, or no answer
+ * yet: no Room.
+ */
+function heldRoomUrl(held: string | null, answer: AeStudio | undefined): string | null {
+  switch (answer?.state) {
+    case "ready":
+      return answer.urls?.collab ? `${answer.urls.collab}/v1/rooms` : null;
+    case "provisioning":
+      return held;
+    default:
+      return null;
+  }
+}
 
 const PEER_COLORS = [
   "#e57373", "#64b5f6", "#81c784", "#ffb74d",
@@ -147,10 +174,14 @@ export function useCollabSpec(
 ): CollabSpec {
   const queryClient = useQueryClient();
   const studio = useAeStudio();
-  // No provider without a Room URL (10 §2): the Room exists only while AE
-  // Studio is `ready`, and a restart drops the URL until the pod is back.
-  const collabUrl = studio.data?.state === "ready" ? studio.data.urls?.collab : undefined;
-  const roomUrl = collabUrl ? `${collabUrl}/v1/rooms` : null;
+  // No provider without a Room URL (10 §2): the Room is joined once AE Studio
+  // is `ready`, kept through a transient `provisioning`, and left when AE
+  // Studio fails or is gone (see `heldRoomUrl`). Held as state, adjusted while
+  // rendering, because the URL to hold depends on the one held before.
+  const [roomUrl, setRoomUrl] = useState(() => heldRoomUrl(null, studio.data));
+  const nextRoomUrl = heldRoomUrl(roomUrl, studio.data);
+  if (nextRoomUrl !== roomUrl) setRoomUrl(nextRoomUrl);
+  const roomName = `spec-${orgHandle}-${projectName}`;
   const [status, setStatus] = useState<CollabStatus>("connecting");
   // Flips true once the local Y.Doc is created (mount), so the memoized return
   // re-exposes `doc` even when the room never connects (offline/solo).
@@ -172,9 +203,10 @@ export function useCollabSpec(
   // live one last synced — together they set the backoff (see `scheduleRebuild`).
   const rebuildAttemptsRef = useRef(0);
   const syncedAtRef = useRef(0);
-  // True once an auth loss renewed the session; a session that syncs again
-  // earns the next loss its own renewal. See `onAuthLost`.
-  const renewalSpentRef = useRef(false);
+  // The room whose auth loss renewed the session; a session that syncs again
+  // earns the next loss its own renewal, and joining another room (a project
+  // or org switch) starts with one. See `onAuthLost`.
+  const renewalSpentForRef = useRef<string | null>(null);
   // Last-seen file-path set (serialized) so we re-render the list only when a
   // file is added/removed/created — not on every keystroke within a file.
   const pathKeyRef = useRef("");
@@ -190,6 +222,8 @@ export function useCollabSpec(
     syncedRef.current = false;
     pathKeyRef.current = "";
     setDocReady(true);
+    // The budget is per room: a rebuild of this room keeps it spent.
+    if (renewalSpentForRef.current !== roomName) renewalSpentForRef.current = null;
     // The local doc exists either way, so the view works solo without a Room.
     if (!roomUrl) {
       return () => {
@@ -227,6 +261,9 @@ export function useCollabSpec(
     // leaves the socket open — so the websocket's own reconnect never fires and
     // nothing retries unless this does. The doc is empty in that case, so the
     // doubling this ladder normally guards against cannot happen.
+    //
+    // Every rebuild, this one and the rejoin after a renewal (`onAuthLost`),
+    // is armed through `armRebuild`, so all of them climb the same ladder.
     const scheduleRebuild = ({ requireSynced = true } = {}) => {
       if (authLost || rebuildTimerRef.current) return;
       if (requireSynced && !syncedRef.current) return;
@@ -238,6 +275,12 @@ export function useCollabSpec(
       // exact doubling the rebuild exists to prevent. The doc is being thrown
       // away regardless, so there is nothing to lose by closing it now.
       provider.disconnect();
+      armRebuild();
+    };
+
+    // Bumps `epoch` after the backoff delay, which tears this room down and
+    // joins fresh. The caller has already silenced the provider.
+    const armRebuild = () => {
       // Back off while drops keep coming, and start over once a session has
       // held long enough to count as healthy.
       // `syncedAtRef` is 0 until a session actually syncs, so "has it held long
@@ -292,25 +335,35 @@ export function useCollabSpec(
       // into a reseeded room (the doubling `scheduleRebuild` also guards).
       provider.disconnect();
       setStatus("offline");
-      if (renewalSpentRef.current) return;
-      renewalSpentRef.current = true;
+      if (renewalSpentForRef.current === roomName) return;
+      renewalSpentForRef.current = roomName;
       void renewAccessToken().then((token) => {
         // Unmounted, or moved to another room, while renewing: not ours to act on.
         if (providerRef.current !== provider) return;
-        if (token) setEpoch((e) => e + 1);
+        // A Room that refuses each pushed token right after the rejoin syncs
+        // earns a renewal every round, so the rejoin backs off like any other.
+        if (token) armRebuild();
         else redirectToSignIn();
       });
     };
 
+    // A known gap, left as is: the provider's websocket closes a socket that
+    // has been silent for 30 s (Hocuspocus `messageReconnectTimeout`), while a
+    // first join that makes the pod clone the repo can wait up to the pod's
+    // 40 s Files-socket budget before the Room answers. That join drops before
+    // it syncs, so no rebuild follows; the provider's own retry rejoins, and
+    // the clone, which runs detached in the pod, is reused, so the retry
+    // converges. Nothing else here depends on that timeout, so it stays at the
+    // provider's default.
     const provider = new HocuspocusProvider({
       url: roomUrl,
-      name: `spec-${orgHandle}-${projectName}`,
+      name: roomName,
       document: doc,
       token: async () => (await getAccessToken()) ?? "",
       onSynced: () => {
         syncedRef.current = true;
         syncedAtRef.current = Date.now();
-        renewalSpentRef.current = false;
+        renewalSpentForRef.current = null;
         setStatus("connected");
       },
       onStatus: ({ status: s }) => {
@@ -455,7 +508,7 @@ export function useCollabSpec(
       docRef.current = null;
       providerRef.current = null;
     };
-  }, [projectName, user.name, user.email, orgHandle, epoch, roomUrl, queryClient]);
+  }, [roomName, user.name, user.email, epoch, roomUrl, queryClient]);
 
   // No Room to be in: still finding out (the first AE Studio read), or offline.
   const roomStatus: CollabStatus = roomUrl ? status : studio.isPending ? "connecting" : "offline";
