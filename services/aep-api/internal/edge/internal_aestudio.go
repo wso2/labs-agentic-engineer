@@ -18,9 +18,11 @@ package edge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"maps"
+	"math"
 	"net/http"
 	"slices"
 	"strings"
@@ -56,6 +58,13 @@ type DependencyCompleter func(ctx context.Context, org string, writes []spec.Wri
 // codePathInvalid is the Error code for a completions write whose path is not
 // a dependency definition.
 const codePathInvalid = "path_invalid"
+
+// maxCompletionsAnswerBytes bounds the encoded completions of one answer. The
+// tools pod reads at most 32 MiB of it (maxCompletionsBody,
+// ae-studio-tools/internal/files/completions.go) and fails the whole decode
+// past that, which would degrade every stub, the completed ones included; the
+// margin is the warnings' room. Raise both together.
+const maxCompletionsAnswerBytes = 24 << 20
 
 // authenticateAEStudio verifies authHeader as an org's publisher client token
 // (aud aep-publisher-<org>, ouHandle == <org>) and binds that org. A nil
@@ -131,26 +140,73 @@ func (s *internalServer) CompleteAeStudioDependencies(ctx context.Context, reque
 		writes = append(writes, spec.WriteOp{Path: w.Path, Content: w.Content})
 	}
 	completed, warnings := s.deps.DependencyCompleter(ctx, org, writes)
-	return igen.CompleteAeStudioDependencies200JSONResponse(toIgenCompletions(completed, warnings)), nil
+	out := toIgenCompletions(completed, warnings, maxCompletionsAnswerBytes)
+	if left := len(completed) - len(out.Completed); left > 0 {
+		slog.WarnContext(ctx, "ae-studio completions over budget", "org", org, "left_out", left)
+	}
+	return igen.CompleteAeStudioDependencies200JSONResponse(out), nil
 }
 
 // toIgenCompletions projects the completer's result onto the wire, in path
-// order so the body is deterministic.
-func toIgenCompletions(completed map[string]spec.CompletedFile, warnings []spec.Warning) igen.AEStudioDependencyCompletions {
+// order so the body is deterministic, encoding at most budget bytes of
+// completions. A completion that would go past it is left out, never
+// truncated: its stub lands as written, and its success warning becomes the
+// kind's "not completed" one (the dependency reads needs-input or
+// needs-contract until a later save completes it).
+func toIgenCompletions(completed map[string]spec.CompletedFile, warnings []spec.Warning, budget int) igen.AEStudioDependencyCompletions {
 	out := igen.AEStudioDependencyCompletions{
 		Completed: make([]igen.AEStudioCompletedDependency, 0, len(completed)),
 		Warnings:  make([]igen.AEStudioWarning, 0, len(warnings)),
 	}
+	leftOut := map[string]bool{}
+	used := len("[]")
 	for _, p := range slices.Sorted(maps.Keys(completed)) {
 		c := completed[p]
 		files := make([]igen.AEStudioFile, 0, len(c.Files))
 		for _, fp := range slices.Sorted(maps.Keys(c.Files)) {
 			files = append(files, igen.AEStudioFile{Path: fp, Content: c.Files[fp]})
 		}
-		out.Completed = append(out.Completed, igen.AEStudioCompletedDependency{Path: p, Definition: c.Definition, Files: files})
+		dep := igen.AEStudioCompletedDependency{Path: p, Definition: c.Definition, Files: files}
+		size := encodedSize(dep) + len(",")
+		if used+size > budget {
+			leftOut[p] = true
+			continue
+		}
+		used += size
+		out.Completed = append(out.Completed, dep)
 	}
 	for _, w := range warnings {
+		if leftOut[w.Path] {
+			w = notCompletedWarning(w)
+		}
 		out.Warnings = append(out.Warnings, igen.AEStudioWarning{Path: w.Path, Code: w.Code, Message: w.Message})
 	}
 	return out
+}
+
+// encodedSize is v's length as JSON; a value that does not encode counts as
+// over any budget.
+func encodedSize(v any) int {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return math.MaxInt / 2
+	}
+	return len(b)
+}
+
+// notCompletedWarning turns the success warning of a completion that was
+// left out of the answer into its kind's "not completed" warning; any other
+// warning passes through.
+func notCompletedWarning(w spec.Warning) spec.Warning {
+	const tooLarge = "this completion is too large to return with the others in this save"
+	switch w.Code {
+	case spec.WarningRegistryCopied:
+		return spec.Warning{Path: w.Path, Code: spec.WarningRegistryUnreachable,
+			Message: tooLarge + ", so the registered resource was not copied here; the dependency reads needs-input until a save that carries fewer dependencies completes it"}
+	case spec.WarningProviderDocumentFetched:
+		return spec.Warning{Path: w.Path, Code: spec.WarningProviderDocumentUnavailable,
+			Message: tooLarge + ", so the provider's document did not land; the dependency reads needs-contract until a save that carries fewer dependencies completes it"}
+	default:
+		return w
+	}
 }

@@ -382,3 +382,69 @@ func TestInternalRoutes_AEStudioDependencyCompletions(t *testing.T) {
 		t.Fatalf("completer writes = %+v", w)
 	}
 }
+
+// The completions answer is bounded: a completion that would take the answer
+// past its budget is left out (path order decides), and its success warning
+// becomes the kind's "not completed" warning, so the pod lands that stub as
+// written and still decodes every completion that fit.
+func TestToIgenCompletions_BoundsTheAnswer(t *testing.T) {
+	doc := strings.Repeat("x", 1000)
+	stub := func(name string) string { return "specs/design/dependencies/" + name + "/dependency.json" }
+	completed := map[string]spec.CompletedFile{
+		stub("a"): {Definition: `{"name":"a"}`, Files: map[string]string{"specs/design/dependencies/a/openapi.yaml": doc}},
+		stub("b"): {Definition: `{"name":"b"}`, Files: map[string]string{"specs/design/dependencies/b/openapi.yaml": doc}},
+		stub("c"): {Definition: `{"name":"c"}`, Files: map[string]string{"specs/design/dependencies/c/openapi.yaml": doc}},
+	}
+	warnings := []spec.Warning{
+		{Path: stub("a"), Code: spec.WarningRegistryCopied, Message: "copied"},
+		{Path: stub("b"), Code: spec.WarningRegistryCopied, Message: "copied"},
+		{Path: stub("c"), Code: spec.WarningProviderDocumentFetched, Message: "fetched"},
+		{Path: stub("d"), Code: spec.WarningRegistryMiss, Message: "miss"},
+	}
+
+	out := toIgenCompletions(completed, warnings, 2500)
+
+	var kept []string
+	for _, c := range out.Completed {
+		kept = append(kept, c.Path)
+	}
+	if strings.Join(kept, ",") != stub("a")+","+stub("b") {
+		t.Fatalf("kept %v, want a and b", kept)
+	}
+	if b, _ := json.Marshal(out.Completed); len(b) > 2500 {
+		t.Fatalf("completions encode to %d bytes, over the 2500 budget", len(b))
+	}
+	got := map[string]string{}
+	for _, w := range out.Warnings {
+		got[w.Path] = w.Code
+	}
+	want := map[string]string{
+		stub("a"): spec.WarningRegistryCopied,
+		stub("b"): spec.WarningRegistryCopied,
+		stub("c"): spec.WarningProviderDocumentUnavailable,
+		stub("d"): spec.WarningRegistryMiss,
+	}
+	if len(out.Warnings) != len(want) {
+		t.Fatalf("warnings = %+v", out.Warnings)
+	}
+	for p, code := range want {
+		if got[p] != code {
+			t.Fatalf("warning on %s = %q, want %q (all: %+v)", p, got[p], code, out.Warnings)
+		}
+	}
+
+	// A registry copy left out reads needs-input.
+	out = toIgenCompletions(map[string]spec.CompletedFile{stub("a"): completed[stub("a")]}, warnings[:1], 100)
+	if len(out.Completed) != 0 || len(out.Warnings) != 1 || out.Warnings[0].Code != spec.WarningRegistryUnreachable ||
+		!strings.Contains(out.Warnings[0].Message, "needs-input") {
+		t.Fatalf("over-budget registry copy = %+v", out)
+	}
+}
+
+// The production budget stays inside what the pod reads of the answer
+// (maxCompletionsBody, 32 MiB, ae-studio-tools/internal/files/completions.go).
+func TestCompletionsAnswerBudget_InsideThePodsReadCap(t *testing.T) {
+	if maxCompletionsAnswerBytes >= 32<<20 {
+		t.Fatalf("budget %d is not inside the pod's 32 MiB read cap", maxCompletionsAnswerBytes)
+	}
+}

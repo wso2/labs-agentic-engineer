@@ -80,7 +80,9 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   (`dependencyDocumentPath`; an escaping `contract.path` is refused before any fetch). `CompleteDependencies` is the one entry point: `Apply` runs it, and so does the AE
   Studio tools pod's `POST /internal/v1/ae-studio/dependency-completions` (`edge/internal_aestudio.go`),
   so the registry read and the fetch of a model-chosen URL stay in aep-api, never in the container that
-  holds the org's git credential. **Promote reuses the
+  holds the org's git credential. That answer encodes at most 24 MiB of completions (inside the pod's
+  32 MiB read cap): a completion past it is left out, its stub lands as written, and its success warning
+  becomes the kind's not-completed one. **Promote reuses the
   same renderer** (`promote.go`): `ReadProjectResource` hands the project's own block and document to
   the registry side, and `RewriteAsRegistryCopy` lands `renderRegistryCopy` of a stub over the
   existing files under their CAS tokens — so a promoted dependency and a reused one are the same bytes.
