@@ -41,6 +41,7 @@ const {
   isTurnStreamNotFound,
   isTurnStreamReplayTruncated,
   openTurnStream,
+  readTurnStatus,
   startTurn,
 } = await import("./turns");
 
@@ -236,6 +237,26 @@ describe("turn status and stream on the design agent", () => {
       ),
     );
     await expect(getTurn("p", "t-1")).resolves.toBeNull();
+  });
+
+  // The truncated-replay wait must tell "the turn is gone" from "the pod did
+  // not answer right now": only the first one ends it.
+  it("tells a turn the pod no longer holds (404) from a read that failed for now", async () => {
+    const turnUrl = `${DESIGN}/v1/projects/p/turns/t-1`;
+    server.use(http.get(turnUrl, () => HttpResponse.json({ ...status, status: "completed" })));
+    await expect(readTurnStatus("p", "t-1")).resolves.toEqual({ kind: "status", status: { ...status, status: "completed" } });
+
+    server.use(http.get(turnUrl, () => HttpResponse.json(problem(404, "turn_unknown", "no such turn"), { status: 404 })));
+    await expect(readTurnStatus("p", "t-1")).resolves.toEqual({ kind: "gone" });
+
+    server.use(http.get(turnUrl, () => HttpResponse.json(problem(503, "shutting_down", "rolling"), { status: 503 })));
+    await expect(readTurnStatus("p", "t-1")).resolves.toEqual({ kind: "unavailable" });
+
+    server.use(http.get(turnUrl, () => HttpResponse.error()));
+    await expect(readTurnStatus("p", "t-1")).resolves.toEqual({ kind: "unavailable" });
+
+    setAeStudioUrls(null);
+    await expect(readTurnStatus("p", "t-1")).resolves.toEqual({ kind: "unavailable" });
   });
 
   it("attaches to the stream from the given frame, with the user's token", async () => {

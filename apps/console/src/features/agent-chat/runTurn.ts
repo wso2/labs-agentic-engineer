@@ -53,7 +53,13 @@ import {
 import { extractStreamingQuestions, isQuestionTool, parseQuestionsInput } from "./questionCards.js";
 import { turnFailureText, type TurnFailure } from "./lib/turnFailure.js";
 import { clearProviderWait, setProviderWait } from "./providerWait.js";
-import { getTurn, isTurnStreamNotFound, isTurnStreamReplayTruncated, openTurnStream } from "./api/turns.js";
+import {
+  getTurn,
+  isTurnStreamNotFound,
+  isTurnStreamReplayTruncated,
+  openTurnStream,
+  readTurnStatus,
+} from "./api/turns.js";
 import {
   DRAFT_EXTERNAL_RESOURCE_TOOL,
   parseRegisterDraft,
@@ -420,8 +426,8 @@ export async function attachAndFoldTurn(
       } catch (err) {
         if (signal.aborted) return; // unmount/navigation — not a failure
         if (isTurnStreamReplayTruncated(err)) {
-          await settleWhenEnded(chatKey, projectName, turnId, signal, onCompleted, askedQuestion);
-          return;
+          if (await settleWhenEnded(chatKey, projectName, turnId, signal, onCompleted, askedQuestion)) return;
+          break; // the pod no longer holds the turn: the severed-stream handling below
         }
         if (!isTurnStreamNotFound(err) || attempt >= ATTACH_404_MAX_ATTEMPTS - 1) {
           throw err;
@@ -459,8 +465,12 @@ export async function attachAndFoldTurn(
 
 /**
  * Read the turn's status until it ends, then settle the bubble from it: the
- * path for a replay the pod refused as truncated (409 replay_truncated). A
- * turn the pod no longer holds (null) ends the wait with nothing to settle.
+ * path for a replay the pod refused as truncated (409 replay_truncated).
+ * A failed read (a 503 while the pod rolls, no answer, AE Studio not ready)
+ * says nothing about the turn, so the wait goes on. It ends on a terminal
+ * status (true), on a turn the pod no longer holds (false: the caller falls
+ * to its severed-stream handling), or when the view detaches (the abort
+ * rejects out of the sleep).
  */
 async function settleWhenEnded(
   chatKey: string,
@@ -469,11 +479,14 @@ async function settleWhenEnded(
   signal: AbortSignal,
   onCompleted: (() => void) | undefined,
   askedQuestion: boolean,
-): Promise<void> {
+): Promise<boolean> {
   for (;;) {
-    const status = await getTurn(projectName, turnId);
-    if (signal.aborted || !status) return;
-    if (settleFromTurnStatus(chatKey, turnId, status, onCompleted, askedQuestion)) return;
+    const read = await readTurnStatus(projectName, turnId);
+    if (signal.aborted) return true;
+    if (read.kind === "gone") return false;
+    if (read.kind === "status" && settleFromTurnStatus(chatKey, turnId, read.status, onCompleted, askedQuestion)) {
+      return true;
+    }
     await sleep(TRUNCATED_STATUS_POLL_MS, signal);
   }
 }

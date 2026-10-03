@@ -329,10 +329,33 @@ export function getActiveTurn(projectName: string): Promise<TurnStatus | null> {
 }
 
 /** One turn's status, or null when the pod no longer holds it (404) or the read failed. */
-export function getTurn(projectName: string, turnId: string): Promise<TurnStatus | null> {
-  return readOrNull(() =>
-    designAgent().GET("/projects/{projectName}/turns/{turnId}", { params: { path: { projectName, turnId } } }),
-  );
+export async function getTurn(projectName: string, turnId: string): Promise<TurnStatus | null> {
+  const read = await readTurnStatus(projectName, turnId);
+  return read.kind === "status" ? read.status : null;
+}
+
+/**
+ * One turn's status read, telling its two failures apart: `gone` — the pod
+ * answered 404, it no longer holds the turn and no later read will — from
+ * `unavailable` — any other refusal, no answer, or AE Studio not `ready`,
+ * which a later read may get past. Aborts pass through.
+ */
+export type TurnStatusRead =
+  | { kind: "status"; status: TurnStatus }
+  | { kind: "gone" }
+  | { kind: "unavailable" };
+
+export async function readTurnStatus(projectName: string, turnId: string): Promise<TurnStatusRead> {
+  try {
+    const { data, response } = await designAgent().GET("/projects/{projectName}/turns/{turnId}", {
+      params: { path: { projectName, turnId } },
+    });
+    if (data !== undefined) return { kind: "status", status: data };
+    return response.status === 404 ? { kind: "gone" } : { kind: "unavailable" };
+  } catch (err) {
+    if (isAbort(err)) throw err;
+    return { kind: "unavailable" };
+  }
 }
 
 /**

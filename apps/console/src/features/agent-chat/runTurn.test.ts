@@ -24,12 +24,14 @@ import type { StreamPart } from "@aep/agent-stream";
 // exercise the real discriminator.
 const mockOpenTurnStream = vi.fn();
 const mockGetTurn = vi.fn();
+const mockReadTurnStatus = vi.fn();
 vi.mock("./api/turns.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./api/turns.js")>();
   return {
     ...actual,
     openTurnStream: (...args: unknown[]) => mockOpenTurnStream(...args),
     getTurn: (...args: unknown[]) => mockGetTurn(...args),
+    readTurnStatus: (...args: unknown[]) => mockReadTurnStatus(...args),
   };
 });
 
@@ -204,23 +206,84 @@ describe("attachAndFoldTurn — pre-stream 404 re-attach (#3)", () => {
   // 409 replay_truncated: the running turn overflowed its replay buffer, so a
   // replay would have a gap. The pod says to attach again after the turn ends;
   // the status read is what settles it, without folding a gapped stream.
-  it("waits out a truncated replay on the turn's status, then settles from it", async () => {
-    vi.useFakeTimers();
-    mockOpenTurnStream.mockRejectedValue(new TurnStreamAttachError(409, "replay_truncated"));
-    mockGetTurn
-      .mockResolvedValueOnce({ status: "running" })
-      .mockResolvedValueOnce({ status: "running" })
-      .mockResolvedValueOnce({ status: "completed" });
-    const onCompleted = vi.fn();
+  describe("a truncated replay", () => {
+    const status = (s: string) => ({ kind: "status", status: { status: s } });
+    const truncated = () => mockOpenTurnStream.mockRejectedValue(new TurnStreamAttachError(409, "replay_truncated"));
 
-    const done = attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal, onCompleted);
-    await vi.runAllTimersAsync();
-    await done;
+    it("waits out the turn on its status, then settles from it", async () => {
+      vi.useFakeTimers();
+      truncated();
+      mockReadTurnStatus
+        .mockResolvedValueOnce(status("running"))
+        .mockResolvedValueOnce(status("running"))
+        .mockResolvedValueOnce(status("completed"));
+      const onCompleted = vi.fn();
 
-    expect(mockOpenTurnStream).toHaveBeenCalledTimes(1);
-    expect(mockGetTurn).toHaveBeenCalledTimes(3);
-    expect(notified).toEqual([{ key: KEY, status: "completed" }]);
-    expect(onCompleted).toHaveBeenCalledTimes(1);
+      const done = attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal, onCompleted);
+      await vi.runAllTimersAsync();
+      await done;
+
+      expect(mockOpenTurnStream).toHaveBeenCalledTimes(1);
+      expect(mockReadTurnStatus).toHaveBeenCalledTimes(3);
+      expect(notified).toEqual([{ key: KEY, status: "completed" }]);
+      expect(onCompleted).toHaveBeenCalledTimes(1);
+    });
+
+    // A 503 while the pod rolls, a network blip, AE Studio briefly not ready:
+    // none of them says the turn ended, so none of them ends the wait.
+    it("keeps polling through a failed read and settles once the turn ends", async () => {
+      vi.useFakeTimers();
+      truncated();
+      mockReadTurnStatus
+        .mockResolvedValueOnce({ kind: "unavailable" })
+        .mockResolvedValueOnce({ kind: "unavailable" })
+        .mockResolvedValueOnce(status("completed"));
+      const onCompleted = vi.fn();
+
+      const done = attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal, onCompleted);
+      await vi.runAllTimersAsync();
+      await done;
+
+      expect(mockReadTurnStatus).toHaveBeenCalledTimes(3);
+      expect(notified).toEqual([{ key: KEY, status: "completed" }]);
+      expect(onCompleted).toHaveBeenCalledTimes(1);
+    });
+
+    // A 404: the pod no longer holds the turn, so no later read can answer.
+    // The wait stops and the severed-stream handling takes over.
+    it("stops on a turn the pod no longer holds and falls to the severed-stream handling", async () => {
+      vi.useFakeTimers();
+      truncated();
+      mockReadTurnStatus.mockResolvedValue({ kind: "gone" });
+      mockGetTurn.mockResolvedValue(null);
+
+      const done = attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+      await vi.runAllTimersAsync();
+      await done;
+
+      expect(mockReadTurnStatus).toHaveBeenCalledTimes(1);
+      expect(mockGetTurn).toHaveBeenCalledTimes(1); // the severed-stream poll
+      expect(notified).toEqual([]);
+    });
+
+    it("stops polling when the view detaches", async () => {
+      vi.useFakeTimers();
+      truncated();
+      mockReadTurnStatus.mockResolvedValue(status("running"));
+      const ac = new AbortController();
+
+      const done = attachAndFoldTurn(KEY, "proj1", "t1", ac.signal);
+      await vi.advanceTimersByTimeAsync(5_000);
+      const before = mockReadTurnStatus.mock.calls.length;
+      ac.abort();
+      await vi.runAllTimersAsync();
+      await done;
+
+      expect(before).toBeGreaterThanOrEqual(1);
+      expect(mockReadTurnStatus.mock.calls.length).toBe(before);
+      expect(notified).toEqual([]);
+      expect(mockGetTurn).not.toHaveBeenCalled();
+    });
   });
 
   it("re-throws non-404 attach failures (still surfaces Turn failed upstream)", async () => {
