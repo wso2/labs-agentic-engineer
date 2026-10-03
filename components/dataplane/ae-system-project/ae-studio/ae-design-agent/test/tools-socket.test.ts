@@ -265,7 +265,7 @@ test("a socket that never answers times out as a transient error", async () => {
   }
 });
 
-test("fake: loadMcpTools lists the eleven tools; calls, usage and lookups are recorded", async () => {
+test("fake: loadMcpTools lists the eleven tools; tool calls and usage are recorded", async () => {
   assert.deepEqual([...DESIGN_TOOL_NAMES].sort(), [...ELEVEN].sort());
   const fake = new FakeToolsSocket({
     projects: { greeter: { headSha: "h1", skillsSha: "s1", references: ["a.md"] } },
@@ -283,6 +283,25 @@ test("fake: loadMcpTools lists the eleven tools; calls, usage and lookups are re
 
   await fake.postUsage(RECORD);
   assert.deepEqual(fake.usage, [RECORD]);
+});
+
+test("fake: lookup(project, at?) records each call; a missing ref throws ref_not_found, apart from an unknown project", async () => {
+  const fake = new FakeToolsSocket({
+    projects: { greeter: { headSha: "h1", skillsSha: "s1", references: [] } },
+    missingRefs: ["deadbeef"],
+  });
+  assert.deepEqual(await fake.lookup("greeter", "abc1234"), { headSha: "h1", skillsSha: "s1", references: [] });
+  assert.equal(await fake.lookup("nope"), null);
+  assert.equal(await fake.lookup("nope", "deadbeef"), null, "an unknown project wins over a missing ref");
+  const err = await fake.lookup("greeter", "deadbeef").catch((e: unknown) => e);
+  assert.ok(err instanceof ToolsSocketError);
+  assert.deepEqual([err.status, err.code, err.permanent], [404, "ref_not_found", true]);
+  assert.deepEqual(fake.lookups, [
+    { project: "greeter", at: "abc1234" },
+    { project: "nope" },
+    { project: "nope", at: "deadbeef" },
+    { project: "greeter", at: "deadbeef" },
+  ]);
 });
 
 test("fake: failUsage makes the next postUsage calls fail, transient by default", async () => {

@@ -19,7 +19,8 @@
 // The in-process ToolsSocket: what a test (or the playground) drives a turn
 // with instead of ae-studio-tools. It answers the MCP JSON-RPC surface with
 // the eleven design tools, records every tool call and usage record, serves
-// lookups from a fixed project table, and can be told to fail or hold the
+// lookups from a fixed project table (recording each, and answering
+// ref_not_found for a listed missing `at`), and can be told to fail or hold the
 // next usage hand-overs so the outbox's retry paths are testable.
 
 import type { ProjectSnapshot, SkillsSnapshot, ToolsSocket, TurnRecord } from "./client.js";
@@ -52,6 +53,8 @@ export interface FakeToolCall {
 export interface FakeToolsSocketOptions {
   /** Known projects by name; any other name looks up as `null`. */
   projects?: Record<string, ProjectSnapshot>;
+  /** `at` values that name no commit: `lookup` throws 404 `ref_not_found` for them, as the socket does. */
+  missingRefs?: string[];
   /** The skills snapshot's sha (`skills()`). */
   skillsSha?: string;
   /** The room token `roomToken()` answers. */
@@ -76,10 +79,13 @@ export class FakeToolsSocket implements ToolsSocket {
   readonly usage: TurnRecord[] = [];
   /** Every `tools/call`, in order. */
   readonly toolCalls: FakeToolCall[] = [];
+  /** Every `lookup` call, in order; `at` only when given. */
+  readonly lookups: Array<{ project: string; at?: string }> = [];
   /** Every `postUsage` call, accepted or not. */
   usageAttempts = 0;
 
   private readonly projects: Record<string, ProjectSnapshot>;
+  private readonly missingRefs: ReadonlySet<string>;
   private readonly skillsSha: string;
   private readonly token: string;
   private readonly callTool: (call: FakeToolCall) => string;
@@ -89,6 +95,7 @@ export class FakeToolsSocket implements ToolsSocket {
 
   constructor(opts: FakeToolsSocketOptions = {}) {
     this.projects = opts.projects ?? {};
+    this.missingRefs = new Set(opts.missingRefs ?? []);
     this.skillsSha = opts.skillsSha ?? "skills-fake";
     this.token = opts.roomToken ?? "room-token-fake";
     this.callTool = opts.callTool ?? ((call) => JSON.stringify({ tool: call.name }));
@@ -151,8 +158,13 @@ export class FakeToolsSocket implements ToolsSocket {
     this.usage.push(r);
   }
 
-  async lookup(project: string): Promise<ProjectSnapshot | null> {
+  async lookup(project: string, at?: string): Promise<ProjectSnapshot | null> {
+    this.lookups.push(at === undefined ? { project } : { project, at });
     const known = this.projects[project];
+    // The project resolves first, as on the socket: an unknown project is null whatever `at` says.
+    if (known && at !== undefined && this.missingRefs.has(at)) {
+      throw new ToolsSocketError("ref_not_found", 404, "at names no commit of the repository");
+    }
     return known ? { ...known, references: [...known.references] } : null;
   }
 
