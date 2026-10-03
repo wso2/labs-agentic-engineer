@@ -24,7 +24,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { LanguageModelUsage } from "ai";
-import { toTurnUsage } from "../src/conversation/manifest.js";
+import { toTurnUsage } from "../src/conversation/turn-usage.js";
 
 function usage(input: number, details: LanguageModelUsage["inputTokenDetails"]): LanguageModelUsage {
   return {

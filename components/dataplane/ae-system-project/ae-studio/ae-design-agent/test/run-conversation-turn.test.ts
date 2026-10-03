@@ -20,13 +20,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type ServerResponse } from "node:http";
 import type { FilePart } from "ai";
-import { runConversationTurn, TurnGuard, ConcurrentTurnError } from "../src/conversation/run-conversation-turn.js";
+import { runConversationTurn } from "../src/conversation/run-conversation-turn.js";
 import { InMemoryConversationStore } from "../src/store/memory-store.js";
 import type { Conversation } from "../src/store/conversation-store.js";
 import type { RoomPeer } from "../src/collab/room-peer.js";
 import { SEED_FILES } from "./seed-files.js";
 import { buildAnswerInstruction, buildAnswersInstruction, type StreamPart } from "@aep/agent-stream";
-import { sha256Hex } from "../src/shared/hash.js";
 import { mockModel, type MockStep } from "../src/shared/mock-model.js";
 import { testSkillSource } from "./skill-source.js";
 import { listen0 } from "../src/shared/listen.js";
@@ -75,16 +74,14 @@ function editModel(): ReturnType<typeof mockModel> {
 
 test("lazy-creates, runs server-side execute, persists, status done", async () => {
   const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
   const { events, onEvent } = collector();
 
-  const conv = await runConversationTurn({
+  const { conversation: conv } = await runConversationTurn({
     id: "conv1",
     instruction: "rename the hello message",
     files: SEED_FILES,
     model: editModel(),
     store,
-    guard,
     onEvent,
   });
 
@@ -103,7 +100,6 @@ test("lazy-creates, runs server-side execute, persists, status done", async () =
 // read pairs by.
 test("a journaled turn appends one entry stamped with its user message's index", async () => {
   const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
   const author = { id: "admin@example.com", displayName: "Admin" };
 
   await runConversationTurn({
@@ -113,7 +109,6 @@ test("a journaled turn appends one entry stamped with its user message's index",
     model: textModel("ok"),
     journal: { text: "rename the hello message", author, turnId: "t-1" },
     store,
-    guard,
     onEvent: () => {},
   });
   // A second journaled turn on the same conversation: its entry must point at
@@ -125,7 +120,6 @@ test("a journaled turn appends one entry stamped with its user message's index",
     model: textModel("ok"),
     journal: { text: "now shorten it", author, turnId: "t-2" },
     store,
-    guard,
     onEvent: () => {},
   });
 
@@ -146,8 +140,7 @@ test("a journaled turn appends one entry stamped with its user message's index",
 // Anthropic's own API.
 test("a journaled turn carries the fingerprint of the connection that wrote it", async () => {
   const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
-  const turn = { files: SEED_FILES, store, guard, onEvent: () => {} };
+  const turn = { files: SEED_FILES, store, onEvent: () => {} };
 
   await runConversationTurn({
     ...turn,
@@ -180,14 +173,12 @@ test("a journaled turn carries the fingerprint of the connection that wrote it",
 // falls back to the raw message for it.
 test("a journal-less turn appends no entry", async () => {
   const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
   await runConversationTurn({
     id: "conv-nj",
     instruction: "hello",
     files: SEED_FILES,
     model: textModel("ok"),
     store,
-    guard,
     onEvent: () => {},
   });
   const stored = await store.get("conv-nj");
@@ -196,13 +187,12 @@ test("a journal-less turn appends no entry", async () => {
 
 test("append-only across turns (resume on the same id)", async () => {
   const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
   const { onEvent } = collector();
 
-  await runConversationTurn({ id: "c", instruction: "one", files: SEED_FILES, model: textModel("a"), store, guard, onEvent });
+  await runConversationTurn({ id: "c", instruction: "one", files: SEED_FILES, model: textModel("a"), store, onEvent });
   const afterFirst = (await store.get("c"))!.messages.length;
 
-  await runConversationTurn({ id: "c", instruction: "two", files: SEED_FILES, model: textModel("b"), store, guard, onEvent });
+  await runConversationTurn({ id: "c", instruction: "two", files: SEED_FILES, model: textModel("b"), store, onEvent });
   const stored = (await store.get("c"))!;
 
   assert.ok(stored.messages.length > afterFirst, "history grew");
@@ -211,7 +201,6 @@ test("append-only across turns (resume on the same id)", async () => {
 
 test("prepends the CURRENT-STATE-authoritative note when filesChangedExternally", async () => {
   const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
   const { onEvent } = collector();
 
   await runConversationTurn({
@@ -221,7 +210,6 @@ test("prepends the CURRENT-STATE-authoritative note when filesChangedExternally"
     filesChangedExternally: true,
     model: textModel("ok"),
     store,
-    guard,
     onEvent,
   });
 
@@ -233,10 +221,9 @@ test("prepends the CURRENT-STATE-authoritative note when filesChangedExternally"
 
 test("default turn (no flag) carries no divergence note", async () => {
   const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
   const { onEvent } = collector();
 
-  await runConversationTurn({ id: "c", instruction: "x", files: SEED_FILES, model: textModel("ok"), store, guard, onEvent });
+  await runConversationTurn({ id: "c", instruction: "x", files: SEED_FILES, model: textModel("ok"), store, onEvent });
 
   const firstUser = (await store.get("c"))!.messages.find((m) => m.role === "user");
   const content =
@@ -247,7 +234,6 @@ test("default turn (no flag) carries no divergence note", async () => {
 
 test("an attachment already in history is not attached twice (#383 follow-up)", async () => {
   const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
   const filePart: FilePart = {
     type: "file",
     data: "JVBERi0xLjQ=",
@@ -263,7 +249,6 @@ test("an attachment already in history is not attached twice (#383 follow-up)", 
     referenceAttachments: [filePart],
     model: textModel("ok"),
     store,
-    guard,
     onEvent: collector().onEvent,
   });
 
@@ -276,7 +261,6 @@ test("an attachment already in history is not attached twice (#383 follow-up)", 
     referenceAttachments: [filePart],
     model: textModel("ok"),
     store,
-    guard,
     onEvent: collector().onEvent,
   });
 
@@ -299,7 +283,6 @@ test("a re-attached chat attachment re-enters history — the user meant the new
   // decides; an attachment is a deliberate per-message act. Same mechanism,
   // different intent.
   const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
   const v1 = { type: "file" as const, data: "djE=", mediaType: "application/pdf", filename: "claim-form.pdf" };
   const v2 = { type: "file" as const, data: "djI=", mediaType: "application/pdf", filename: "claim-form.pdf" };
 
@@ -310,7 +293,6 @@ test("a re-attached chat attachment re-enters history — the user meant the new
     chatAttachments: [v1],
     model: textModel("ok"),
     store,
-    guard,
     onEvent: collector().onEvent,
   });
   // Same NAME, revised bytes.
@@ -321,7 +303,6 @@ test("a re-attached chat attachment re-enters history — the user meant the new
     chatAttachments: [v2],
     model: textModel("ok"),
     store,
-    guard,
     onEvent: collector().onEvent,
   });
 
@@ -341,7 +322,6 @@ test("a re-attached chat attachment re-enters history — the user meant the new
 
 test("chat attachments and reference parts share one message, references still deduped", async () => {
   const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
   const ref = {
     type: "file" as const,
     data: "cmVm",
@@ -359,7 +339,6 @@ test("chat attachments and reference parts share one message, references still d
       chatAttachments: [chat],
       model: textModel("ok"),
       store,
-      guard,
       onEvent: collector().onEvent,
     });
   }
@@ -381,7 +360,6 @@ test("chat attachments and reference parts share one message, references still d
 
 test("referenceAttachments ride the turn's user message as native file parts", async () => {
   const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
   const { onEvent } = collector();
   const filePart: FilePart = {
     type: "file",
@@ -397,7 +375,6 @@ test("referenceAttachments ride the turn's user message as native file parts", a
     referenceAttachments: [filePart],
     model: textModel("ok"),
     store,
-    guard,
     onEvent,
   });
 
@@ -413,10 +390,9 @@ test("referenceAttachments ride the turn's user message as native file parts", a
 
 test("no referenceAttachments ⇒ the user message stays a plain string (byte-identical to today)", async () => {
   const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
   const { onEvent } = collector();
 
-  await runConversationTurn({ id: "refs2", instruction: "start", files: SEED_FILES, model: textModel("ok"), store, guard, onEvent });
+  await runConversationTurn({ id: "refs2", instruction: "start", files: SEED_FILES, model: textModel("ok"), store, onEvent });
 
   const stored = (await store.get("refs2"))!;
   const firstUser = stored.messages.find((m) => m.role === "user")!;
@@ -425,7 +401,6 @@ test("no referenceAttachments ⇒ the user message stays a plain string (byte-id
 
 test("skills: loadSkill is registered over the skillSource, executes server-side, and its body reaches history", async () => {
   const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
   const { events, onEvent } = collector();
 
   const model = mockModel([
@@ -439,7 +414,7 @@ test("skills: loadSkill is registered over the skillSource, executes server-side
     { kind: "text", text: "done" },
   ]);
 
-  const conv = await runConversationTurn({
+  const { conversation: conv } = await runConversationTurn({
     id: "skilled",
     instruction: "derive a component using the skill",
     files: SEED_FILES,
@@ -448,7 +423,6 @@ test("skills: loadSkill is registered over the skillSource, executes server-side
     ]),
     model,
     store,
-    guard,
     onEvent,
   });
 
@@ -464,7 +438,6 @@ test("skills: loadSkill is registered over the skillSource, executes server-side
 
 test("toolset task-plan runs planTask over the read-only snapshot (no file mutation)", async () => {
   const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
   const { events, onEvent } = collector();
 
   // hello-api is a known component in SEED_FILES; the accumulator validates it.
@@ -473,14 +446,13 @@ test("toolset task-plan runs planTask over the read-only snapshot (no file mutat
     { kind: "text", text: "planned" },
   ]);
 
-  const conv = await runConversationTurn({
+  const { conversation: conv } = await runConversationTurn({
     id: "plan1",
     instruction: "plan the tasks",
     files: SEED_FILES,
     toolset: "task-plan",
     model,
     store,
-    guard,
     onEvent,
   });
 
@@ -498,7 +470,6 @@ const A_QUESTION = "Who are the primary users?";
 
 test("ask_question: turn ends awaiting-human with a fully-resolved transcript", async () => {
   const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
   const { events, onEvent } = collector();
 
   // ONE scripted step: the tool-call. The paired stop condition ends the turn
@@ -518,13 +489,12 @@ test("ask_question: turn ends awaiting-human with a fully-resolved transcript", 
     },
   ]);
 
-  const conv = await runConversationTurn({
+  const { conversation: conv } = await runConversationTurn({
     id: "q",
     instruction: "grill me about the spec",
     files: SEED_FILES,
     model,
     store,
-    guard,
     onEvent,
   });
 
@@ -542,13 +512,10 @@ test("ask_question: turn ends awaiting-human with a fully-resolved transcript", 
   // The resolved transcript persists (an assistant tool-call AND a tool result).
   const stored = (await store.get("q"))!;
   assert.ok(stored.messages.some((m) => m.role === "tool"), "tool result persisted");
-  // A manifest is still the terminal event (nothing to commit → empty).
-  assert.equal(events.at(-1)?.type, "manifest");
 });
 
 test("ask_question: an option with an empty label is rejected and the model retries", async () => {
   const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
   const { events, onEvent } = collector();
 
   // Step 1: the model appends an unlabeled free-text "Other" (the console cannot
@@ -573,13 +540,12 @@ test("ask_question: an option with an empty label is rejected and the model retr
     },
   ]);
 
-  const conv = await runConversationTurn({
+  const { conversation: conv } = await runConversationTurn({
     id: "q-retry",
     instruction: "grill me about the spec",
     files: SEED_FILES,
     model,
     store,
-    guard,
     onEvent,
   });
 
@@ -595,10 +561,9 @@ test("ask_question: an option with an empty label is rejected and the model retr
 // steps is the same shape) the conversation is done, not awaiting-human.
 test("ask_question: a turn that continues past a rejected call and ends on prose is done, not awaiting-human", async () => {
   const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
   const { onEvent } = collector();
 
-  const conv = await runConversationTurn({
+  const { conversation: conv } = await runConversationTurn({
     id: "q-exhausted",
     instruction: "grill me about the spec",
     files: SEED_FILES,
@@ -612,7 +577,6 @@ test("ask_question: a turn that continues past a rejected call and ends on prose
       { kind: "text", text: "I could not phrase the question." },
     ]),
     store,
-    guard,
     onEvent,
   });
 
@@ -621,7 +585,6 @@ test("ask_question: a turn that continues past a rejected call and ends on prose
 
 test("ask_question: a follow-up turn carries the answer as a plain user message", async () => {
   const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
   const { onEvent } = collector();
 
   await runConversationTurn({
@@ -637,7 +600,6 @@ test("ask_question: a follow-up turn carries the answer as a plain user message"
       },
     ]),
     store,
-    guard,
     onEvent,
   });
   assert.equal((await store.get("q2"))!.status, "awaiting-human");
@@ -649,7 +611,6 @@ test("ask_question: a follow-up turn carries the answer as a plain user message"
     files: SEED_FILES,
     model: textModel("understood"),
     store,
-    guard,
     onEvent,
   });
 
@@ -663,10 +624,9 @@ test("ask_question: a follow-up turn carries the answer as a plain user message"
 
 test("ask_questions: a batch (form) call also ends awaiting-human and resolves", async () => {
   const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
   const { events, onEvent } = collector();
 
-  const conv = await runConversationTurn({
+  const { conversation: conv } = await runConversationTurn({
     id: "qs",
     instruction: "ask me everything at once",
     files: SEED_FILES,
@@ -684,7 +644,6 @@ test("ask_questions: a batch (form) call also ends awaiting-human and resolves",
       },
     ]),
     store,
-    guard,
     onEvent,
   });
 
@@ -702,7 +661,6 @@ test("ask_questions: a batch (form) call also ends awaiting-human and resolves",
     files: SEED_FILES,
     model: textModel("ok"),
     store,
-    guard,
     onEvent,
   });
   const after = (await store.get("qs"))!;
@@ -710,174 +668,41 @@ test("ask_questions: a batch (form) call also ends awaiting-human and resolves",
   assert.match(JSON.stringify(after.messages), /Answers:/);
 });
 
-// --- The terminal manifest (D14) ---------------------------------------------
+// --- The turn's usage (#249), returned, never a wire frame -----------------
 
-/** The manifest frame, asserted to be the LAST emitted event of the turn. */
-function lastManifest(events: StreamPart[]): StreamPart {
-  const last = events.at(-1);
-  assert.ok(last, "turn emitted events");
-  assert.equal(last.type, "manifest", `last event must be the manifest, got ${last.type}`);
-  assert.equal(events.filter((e) => e.type === "manifest").length, 1, "exactly one manifest per turn");
-  return last;
-}
-
-test("manifest: an applied edit yields touched-path → sha256 of the FINAL content", async () => {
+test("usage: the turn's summed token usage and the connection's model id", async () => {
   const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
-  const { events, onEvent } = collector();
-
-  await runConversationTurn({ id: "m1", instruction: "rename", files: SEED_FILES, model: editModel(), store, guard, onEvent });
-
-  const manifest = lastManifest(events);
-  const expected = SEED_FILES[OPENAPI]!.replace('example: "Hello, World!"', 'example: "Hi there!"');
-  assert.deepEqual(manifest.files, { [OPENAPI]: sha256Hex(expected) });
-  assert.deepEqual(manifest.deleted, []);
-});
-
-test("manifest: a removed file lands in deleted; an added file is hashed", async () => {
-  const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
-  const { events, onEvent } = collector();
-
-  const model = mockModel([
-    { kind: "toolCall", toolCallId: "r1", toolName: "removeFile", input: { path: OPENAPI } },
-    { kind: "toolCall", toolCallId: "a1", toolName: "addFile", input: { path: "specs/notes.md", content: "note\n" } },
-    { kind: "text", text: "done" },
-  ]);
-  await runConversationTurn({ id: "m2", instruction: "restructure", files: SEED_FILES, model, store, guard, onEvent });
-
-  const manifest = lastManifest(events);
-  assert.deepEqual(manifest.deleted, [OPENAPI]);
-  assert.deepEqual(manifest.files, { "specs/notes.md": sha256Hex("note\n") });
-});
-
-// #578: the uncapped interview rests on this — `start` writes the PRD as soon
-// as the spine answers land and asks the NEXT round in the same turn. A turn
-// that ends awaiting-human still emits its manifest, so the document the user
-// is about to be asked about is committed rather than held until the interview
-// converges.
-test("manifest: a file written before the question is committed with the awaiting-human turn", async () => {
-  const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
-  const { events, onEvent } = collector();
-
-  const PRD = "specs/requirements/prd.md";
-  const model = mockModel([
-    {
-      kind: "toolCall",
-      toolCallId: "e1",
-      toolName: "editFile",
-      input: { path: PRD, oldString: "- Developer — calls the API", newString: "- Developer *assumed* — calls the API" },
-    },
-    {
-      kind: "toolCall",
-      toolCallId: "q1",
-      toolName: "ask_questions",
-      input: { questions: [{ question: "Which of these did I get wrong?", options: [] }] },
-    },
-  ]);
-  const conv = await runConversationTurn({ id: "m2b", instruction: "/start", files: SEED_FILES, model, store, guard, onEvent });
-
-  assert.equal(conv.status, "awaiting-human");
-  const expected = SEED_FILES[PRD]!.replace("- Developer — calls the API", "- Developer *assumed* — calls the API");
-  const manifest = lastManifest(events);
-  assert.deepEqual(manifest.files, { [PRD]: sha256Hex(expected) });
-});
-
-test("manifest: a chat-only turn emits the EMPTY manifest (files toolset)", async () => {
-  const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
-  const { events, onEvent } = collector();
-
-  await runConversationTurn({ id: "m3", instruction: "just talk", files: SEED_FILES, model: textModel("hi"), store, guard, onEvent });
-
-  const manifest = lastManifest(events);
-  assert.deepEqual(manifest.files, {});
-  assert.deepEqual(manifest.deleted, []);
-});
-
-test("manifest: a task-plan turn emits the EMPTY manifest (nothing mutates)", async () => {
-  const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
-  const { events, onEvent } = collector();
-
-  const model = mockModel([
-    { kind: "toolCall", toolCallId: "p1", toolName: "planTask", input: { component: "hello-api", title: "Build hello-api", dependsOn: [], rationale: "core." } },
-    { kind: "text", text: "planned" },
-  ]);
-  await runConversationTurn({ id: "m4", instruction: "plan", files: SEED_FILES, toolset: "task-plan", model, store, guard, onEvent });
-
-  const manifest = lastManifest(events);
-  assert.deepEqual(manifest.files, {});
-  assert.deepEqual(manifest.deleted, []);
-});
-
-test("manifest: a rejected/noop op does not appear (touched = applied only)", async () => {
-  const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
-  const { events, onEvent } = collector();
-
-  const model = mockModel([
-    // NOT_FOUND edit (rejected) + idempotent remove of an absent path (noop).
-    { kind: "toolCall", toolCallId: "e1", toolName: "editFile", input: { path: OPENAPI, oldString: "no such anchor", newString: "x" } },
-    { kind: "toolCall", toolCallId: "r1", toolName: "removeFile", input: { path: "specs/absent.md" } },
-    { kind: "text", text: "done" },
-  ]);
-  await runConversationTurn({ id: "m5", instruction: "try", files: SEED_FILES, model, store, guard, onEvent });
-
-  const manifest = lastManifest(events);
-  assert.deepEqual(manifest.files, {});
-  assert.deepEqual(manifest.deleted, []);
-});
-
-test("manifest: carries the turn's summed token usage and the connection's model id (#249)", async () => {
-  const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
   const { events, onEvent } = collector();
 
   // editModel makes TWO model calls (tool step + text step); the mock emits
-  // 10 in / 5 out per call, so the whole-turn sum on the manifest is 20/10.
-  await runConversationTurn({
+  // 10 in / 5 out per call, so the whole-turn sum is 20/10.
+  const { usage } = await runConversationTurn({
     id: "u1",
     instruction: "rename",
     files: SEED_FILES,
     model: editModel(),
     connection: anthropicConnection("sk-ant-test", "claude-test-model"),
     store,
-    guard,
     onEvent,
   });
 
-  const manifest = lastManifest(events);
-  assert.deepEqual(manifest.usage, {
+  assert.deepEqual(usage, {
     inputTokens: 20,
     outputTokens: 10,
     cacheReadTokens: 0,
     cacheCreationTokens: 0,
     model: "claude-test-model",
   });
+  assert.equal(events.some((e) => e.type === "manifest"), false, "no manifest frame on the wire (07 §1)");
 });
 
-test("manifest: a chat-only turn still reports usage; no connection ⇒ model is \"\"", async () => {
+test("usage: a chat-only turn still reports usage; no connection ⇒ model is \"\"", async () => {
   const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
-  const { events, onEvent } = collector();
-
-  await runConversationTurn({ id: "u2", instruction: "just talk", files: SEED_FILES, model: textModel("hi"), store, guard, onEvent });
-
-  const manifest = lastManifest(events);
-  assert.deepEqual(manifest.usage, {
-    inputTokens: 10,
-    outputTokens: 5,
-    cacheReadTokens: 0,
-    cacheCreationTokens: 0,
-    model: "",
-  });
+  const { usage } = await runConversationTurn({ id: "u2", instruction: "just talk", files: SEED_FILES, model: textModel("hi"), store, onEvent: () => {} });
+  assert.deepEqual(usage, { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheCreationTokens: 0, model: "" });
 });
 
-test("manifest: NOT emitted when the turn throws (severed/failed stream carries no manifest)", async () => {
-  const guard = new TurnGuard();
-  const { events, onEvent } = collector();
+test("a turn that throws rejects (the caller ends it failed)", async () => {
   const failingStore = {
     get: async (): Promise<Conversation | null> => null,
     save: async (): Promise<void> => {
@@ -885,28 +710,10 @@ test("manifest: NOT emitted when the turn throws (severed/failed stream carries 
     },
     delete: async (): Promise<void> => {},
   };
-
   await assert.rejects(
-    runConversationTurn({ id: "m6", instruction: "x", files: SEED_FILES, model: textModel("ok"), store: failingStore, guard, onEvent }),
+    runConversationTurn({ id: "m6", instruction: "x", files: SEED_FILES, model: textModel("ok"), store: failingStore, onEvent: () => {} }),
     /db down/,
   );
-  assert.equal(events.some((e) => e.type === "manifest"), false, "no manifest on a failed turn");
-});
-
-test("a concurrent turn for the same id rejects with ConcurrentTurnError (409 source)", async () => {
-  const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
-  const { onEvent } = collector();
-
-  const p1 = runConversationTurn({ id: "c", instruction: "a", files: SEED_FILES, model: textModel("a"), store, guard, onEvent });
-  const p2 = runConversationTurn({ id: "c", instruction: "b", files: SEED_FILES, model: textModel("b"), store, guard, onEvent });
-
-  await assert.rejects(p2, (e) => e instanceof ConcurrentTurnError);
-  await p1;
-
-  // After release, a fresh turn on the same id works again.
-  await runConversationTurn({ id: "c", instruction: "c", files: SEED_FILES, model: textModel("c"), store, guard, onEvent });
-  assert.ok((await store.get("c"))!.messages.length >= 4);
 });
 
 // --- MCP discovery (dependency-management migration Phase 5) ----------------
@@ -945,7 +752,6 @@ test("mcp: a discovered tool with no name clash is merged and callable", async (
   ]);
   try {
     const store = new InMemoryConversationStore();
-    const guard = new TurnGuard();
     const { events, onEvent } = collector();
 
     const model = mockModel([
@@ -953,14 +759,13 @@ test("mcp: a discovered tool with no name clash is merged and callable", async (
       { kind: "text", text: "done" },
     ]);
 
-    const conv = await runConversationTurn({
+    const { conversation: conv } = await runConversationTurn({
       id: "mcp1",
       instruction: "discover",
       files: SEED_FILES,
       mcp: mcpAt(baseUrl),
       model,
       store,
-      guard,
       onEvent,
     });
 
@@ -981,17 +786,15 @@ test("mcp shadow-guard: a discovered tool named after a built-in ALWAYS loses to
   const { baseUrl, close } = await fakeMcpServer([{ name: "editFile", description: "an MCP impostor" }]);
   try {
     const store = new InMemoryConversationStore();
-    const guard = new TurnGuard();
     const { events, onEvent } = collector();
 
-    const conv = await runConversationTurn({
+    const { conversation: conv } = await runConversationTurn({
       id: "mcp2",
       instruction: "rename",
       files: SEED_FILES,
       mcp: mcpAt(baseUrl),
       model: editModel(), // calls the real editFile with a legitimate rename
       store,
-      guard,
       onEvent,
     });
 
@@ -1036,7 +839,6 @@ test("mcp + collabPeer coexist: the discovered tool is still merged and callable
   }
   try {
     const store = new InMemoryConversationStore();
-    const guard = new TurnGuard();
     const { events, onEvent } = collector();
 
     const model = mockModel([
@@ -1044,7 +846,7 @@ test("mcp + collabPeer coexist: the discovered tool is still merged and callable
       { kind: "text", text: "done" },
     ]);
 
-    const conv = await runConversationTurn({
+    const { conversation: conv } = await runConversationTurn({
       id: "mcp-collab",
       instruction: "author the design against real providers",
       files: SEED_FILES,
@@ -1052,7 +854,6 @@ test("mcp + collabPeer coexist: the discovered tool is still merged and callable
       collabPeer: new FakePeer(SEED_FILES),
       model,
       store,
-      guard,
       onEvent,
     });
 
@@ -1069,10 +870,9 @@ test("mcp + collabPeer coexist: the discovered tool is still merged and callable
 
 test("mcp absent ⇒ no discovery fetch, no tool-set change (byte-identical to today)", async () => {
   const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
   const { events, onEvent } = collector();
 
-  await runConversationTurn({ id: "mcp3", instruction: "x", files: SEED_FILES, model: textModel("ok"), store, guard, onEvent });
+  await runConversationTurn({ id: "mcp3", instruction: "x", files: SEED_FILES, model: textModel("ok"), store, onEvent });
 
   assert.equal(events.some((e) => e.type === "tool-call" || e.type === "tool-result"), false);
 });
@@ -1087,7 +887,6 @@ function toolNames(model: { doStreamCalls: Array<{ tools?: unknown }> }): string
 
 test("webSearch: true on Anthropic's own API registers Anthropic's web_search provider tool", async () => {
   const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
   const { onEvent } = collector();
   const model = mockModel([{ kind: "text", text: "ok" }], { provider: "anthropic.messages" });
 
@@ -1099,7 +898,6 @@ test("webSearch: true on Anthropic's own API registers Anthropic's web_search pr
     model,
     connection: anthropicConnection("sk-ant-test"),
     store,
-    guard,
     onEvent,
   });
 
@@ -1113,13 +911,12 @@ test("webSearch: true on Anthropic's own API registers Anthropic's web_search pr
 
 test("webSearch absent ⇒ no web_search tool; tool map is byte-identical to a plain turn", async () => {
   const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
   const { onEvent } = collector();
   // Same model config (Anthropic) on both turns — the ONLY difference is the flag.
   const baseline = mockModel([{ kind: "text", text: "ok" }], { provider: "anthropic.messages" });
   const flagFalse = mockModel([{ kind: "text", text: "ok" }], { provider: "anthropic.messages" });
 
-  await runConversationTurn({ id: "ws2a", instruction: "x", files: SEED_FILES, model: baseline, store, guard, onEvent });
+  await runConversationTurn({ id: "ws2a", instruction: "x", files: SEED_FILES, model: baseline, store, onEvent });
   await runConversationTurn({
     id: "ws2b",
     instruction: "x",
@@ -1127,7 +924,6 @@ test("webSearch absent ⇒ no web_search tool; tool map is byte-identical to a p
     webSearch: false,
     model: flagFalse,
     store,
-    guard,
     onEvent,
   });
 
@@ -1138,7 +934,6 @@ test("webSearch absent ⇒ no web_search tool; tool map is byte-identical to a p
 
 test("webSearch: true on a connection whose strategy is none ⇒ no web_search tool", async () => {
   const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
   const { onEvent } = collector();
   const model = mockModel([{ kind: "text", text: "ok" }]);
   const connection = {
@@ -1147,7 +942,7 @@ test("webSearch: true on a connection whose strategy is none ⇒ no web_search t
     capabilities: { ...OLLAMA_ANTHROPIC_FORMAT.capabilities, webSearch: "none" as const },
   };
 
-  await runConversationTurn({ id: "ws3", instruction: "x", files: SEED_FILES, webSearch: true, model, connection, store, guard, onEvent });
+  await runConversationTurn({ id: "ws3", instruction: "x", files: SEED_FILES, webSearch: true, model, connection, store, onEvent });
 
   const names = toolNames(model);
   assert.ok(!names.some((n) => n.includes("web_search")), `web_search must be absent, got: ${names.join(", ")}`);
@@ -1158,7 +953,6 @@ test("webSearch: true on a connection whose strategy is none ⇒ no web_search t
 // there fails the turn. The connection's strategy decides instead.
 test("webSearch: true on Ollama runs a platform-executed web_search over Ollama's API, even on the Anthropic format", async () => {
   const store = new InMemoryConversationStore();
-  const guard = new TurnGuard();
   const { events, onEvent } = collector();
   const model = mockModel(
     [
@@ -1185,7 +979,6 @@ test("webSearch: true on Ollama runs a platform-executed web_search over Ollama'
     connection: OLLAMA_ANTHROPIC_FORMAT,
     toolFetch,
     store,
-    guard,
     onEvent,
   });
 
@@ -1206,7 +999,6 @@ test("webSearch shadow-guard: an MCP-discovered tool named 'web_search' never sh
   const { baseUrl, close } = await fakeMcpServer([{ name: "web_search", description: "an MCP impostor" }]);
   try {
     const store = new InMemoryConversationStore();
-    const guard = new TurnGuard();
     const { onEvent } = collector();
     const model = mockModel([{ kind: "text", text: "ok" }], { provider: "anthropic.messages" });
 
@@ -1218,7 +1010,6 @@ test("webSearch shadow-guard: an MCP-discovered tool named 'web_search' never sh
       webSearch: true,
       model,
       store,
-      guard,
       onEvent,
     });
 

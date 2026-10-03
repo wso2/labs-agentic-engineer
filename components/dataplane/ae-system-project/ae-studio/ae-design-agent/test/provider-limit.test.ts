@@ -20,17 +20,14 @@
  * Provider limits (`shared/provider-limit.ts`): the pure wait-or-limit rule on
  * a fake clock, the headers it reads, the one `model_provider_429` line per
  * 429 (scrubbed, capped), and a stub provider answering `429 retry-after: 600`
- * ending a real turn with ONE `provider_limit` frame and no retry.
+ * ending a real `/v1` turn with ONE `provider_limit` frame, a `turn-failed`
+ * naming it, and no retry.
  */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import type { AddressInfo } from "node:net";
-import { SignJWT } from "jose";
 import { APICallError, RetryError, streamText } from "ai";
 import {
   MODEL_MAX_RETRIES,
@@ -43,10 +40,8 @@ import {
   watchProviderLimits,
   type ProviderLimitLogLine,
 } from "../src/shared/provider-limit.js";
-import { createApp } from "../src/server.js";
-import { createModel } from "../src/shared/model.js";
-import { listen0 } from "../src/shared/listen.js";
-import { InMemoryConversationStore } from "../src/store/memory-store.js";
+import { createModel, type ModelConnection } from "../src/shared/model.js";
+import { ORG_ID, startEdge, startTurn, streamOf } from "./helpers/edge.js";
 
 const KEY = "ollama-test-key-0123456789abcdef";
 const MIN = 60_000;
@@ -224,18 +219,6 @@ test("a short wait is retried by the SDK and the turn goes on, with one wait lin
 
 // --- A real turn against a stub provider ---------------------------------------
 
-const ORG = "org-a1";
-const CONV = `org_${ORG}--proj_proj-b2--requirements-generate--conv1`;
-const REF = "1".repeat(40);
-const SKILLS_REF = "2".repeat(40);
-
-function mountRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), "aep-429-"));
-  mkdirSync(join(root, "repos", ORG, "proj-b2", "spec-repo", "snapshots", REF), { recursive: true });
-  mkdirSync(join(root, "repos", ORG, "_skills", "org-skills", "snapshots", SKILLS_REF), { recursive: true });
-  return root;
-}
-
 /** How the stub provider answers its `n`th request (1-based). */
 type StubAnswer = { status: number; headers: Record<string, string>; body: string };
 
@@ -250,10 +233,20 @@ function okCompletion(): StubAnswer {
   };
 }
 
+/** The org's connection: a public host whose requests the test carries to the stub. */
+const CONN: ModelConnection = {
+  format: "openai-compatible",
+  baseURL: "https://llm.example/v1",
+  authScheme: "bearer",
+  capabilities: { claudeCode: false, claudeSubscription: false, promptCache: false, generatedAgents: false, nativePdf: false, webSearch: "none", imageInput: "unknown" },
+  apiKey: KEY,
+  model: "gpt-oss:20b",
+};
+
 /**
- * One real turn through the SSE route, its model reaching a stub provider that
- * answers each request with `answer(n)`. Returns the stream's frames and raw
- * text, how many requests the provider saw, and the 429 lines logged.
+ * One real turn through the `/v1` edge, its model reaching a stub provider
+ * that answers each request with `answer(n)`. Returns the stream's frames and
+ * raw text, how many requests the provider saw, and the 429 lines logged.
  */
 async function runStubTurn(answer: (n: number) => StubAnswer): Promise<{
   frames: Array<Record<string, unknown>>;
@@ -271,9 +264,8 @@ async function runStubTurn(answer: (n: number) => StubAnswer): Promise<{
   await new Promise<void>((r) => provider.listen(0, "127.0.0.1", r));
   const providerBase = `http://127.0.0.1:${(provider.address() as AddressInfo).port}`;
   const lines: ProviderLimitLogLine[] = [];
-  const root = mountRoot();
-  const app = createApp({
-    store: new InMemoryConversationStore(),
+  const edge = await startEdge({
+    connection: CONN,
     // The connection names a public host; the test's fetch carries its
     // requests to the stub instead, beneath the 429 watch.
     buildModel: (conn, ctx) =>
@@ -282,35 +274,18 @@ async function runStubTurn(answer: (n: number) => StubAnswer): Promise<{
         fetch: (url, init) => globalThis.fetch(String(url).replace("https://llm.example", providerBase), init),
         providerLimitLog: (l) => lines.push(l),
       }),
-    auth: { audience: "agents-service", secret: "s" },
-    workspaceMountRoot: root,
   });
-  const { baseUrl, close } = await listen0(app.listen(0));
   try {
-    const token = await new SignJWT({}).setProtectedHeader({ alg: "HS256" }).setAudience("agents-service").setExpirationTime("1h").sign(new TextEncoder().encode("s"));
-    const res = await fetch(`${baseUrl}/conversations/${CONV}/turns`, {
-      method: "POST",
-      headers: { "content-type": "application/json", Authorization: `Bearer ${token}`, "X-Model-Key": KEY, "X-Org-Id": ORG },
-      body: JSON.stringify({
-        turn: { kind: "chat", text: "hello" },
-        workspace: { conversationId: CONV, turnId: "t-1", repoSlug: "spec-repo", ref: REF, skillsRef: SKILLS_REF },
-        model: "gpt-oss:20b",
-        connection: {
-          format: "openai-compatible",
-          baseURL: "https://llm.example/v1",
-          authScheme: "bearer",
-          capabilities: { claudeCode: false, claudeSubscription: false, promptCache: false, generatedAgents: false, nativePdf: false, webSearch: "none", imageInput: "unknown" },
-        },
-      }),
-    });
-    assert.equal(res.status, 200);
-    const sse = await res.text();
-    const frames = sse.split("\n").filter((l) => l.startsWith("data: {")).map((l) => JSON.parse(l.slice(6)) as Record<string, unknown>);
-    return { frames, sse, requests, lines };
+    const tok = await edge.token();
+    const res = await startTurn(edge, tok, { instruction: "hello" });
+    assert.equal(res.status, 202);
+    const { turnId } = (await res.json()) as { turnId: string };
+    const stream = await streamOf(edge, tok, turnId);
+    const frames = stream.filter((f) => f.raw !== "[DONE]").map((f) => f.data as Record<string, unknown>);
+    return { frames, sse: stream.map((f) => f.raw).join("\n"), requests, lines };
   } finally {
-    await close();
+    await edge.close();
     await new Promise<void>((r) => provider.close(() => r()));
-    rmSync(root, { recursive: true, force: true });
   }
 }
 
@@ -327,13 +302,18 @@ test("a stub provider answering 429 retry-after: 600 ends the turn with one prov
   const resetAt = Date.parse(String(errors[0]!.resetAt));
   assert.ok(Math.abs(resetAt - (Date.now() + 600_000)) < 30_000, "resetAt is the stated wait from now");
   assert.match(String(errors[0]!.error), /^llm\.example's usage limit is reached\. Try again after /);
-  assert.equal(frames.some((f) => f.type === "manifest"), false, "a failed turn carries no manifest");
+  const end = frames.at(-1)!;
+  assert.deepEqual(
+    { type: end.type, reason: end.reason, code: end.code, host: end.host, resetAt: end.resetAt, message: end.message },
+    { type: "turn-failed", reason: "agent-error", code: "provider_limit", host: "llm.example", resetAt: errors[0]!.resetAt, message: errors[0]!.error },
+    "the stream ends turn-failed naming the limit",
+  );
   assert.equal(frames.some((f) => f.type === "provider-wait"), false, "a provider limit is not a wait");
   assert.equal(requests, 1, "a provider limit is not retried");
   assert.equal(lines.length, 1, "exactly one model_provider_429 line");
   assert.equal(lines[0]!.msg, "model_provider_429");
   assert.equal(lines[0]!.source, "agents");
-  assert.equal(lines[0]!.org, ORG);
+  assert.equal(lines[0]!.org, ORG_ID);
   assert.equal(lines[0]!.host, "llm.example");
   assert.equal(lines[0]!.format, "openai-compatible");
   assert.equal(lines[0]!.model, "gpt-oss:20b");
@@ -355,12 +335,12 @@ test("a short 429 wait streams one provider-wait frame, and the model's answer f
   const answered = types.indexOf("text-delta");
   assert.ok(answered > 0, "the model's answer follows");
   assert.ok(types.indexOf("provider-wait") < types.indexOf("start-step"), `the wait is said before the model answers: ${types.join(",")}`);
-  assert.ok(frames.some((f) => f.type === "manifest"), "the turn completes");
+  assert.equal(frames.at(-1)?.type, "turn-completed", "the turn completes");
 });
 
 test("a turn the provider answers first time streams no provider-wait frame", async () => {
   const { frames, requests } = await runStubTurn(() => okCompletion());
   assert.equal(requests, 1);
   assert.equal(frames.some((f) => f.type === "provider-wait"), false);
-  assert.ok(frames.some((f) => f.type === "manifest"));
+  assert.equal(frames.at(-1)?.type, "turn-completed");
 });

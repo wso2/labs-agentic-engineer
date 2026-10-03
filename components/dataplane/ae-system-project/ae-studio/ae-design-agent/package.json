@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Interactive spec agents (Vercel AI SDK). Seeded with the main file-mutation agent.",
   "exports": {
-    "./server": "./src/server.ts",
+    "./server": "./src/edge/routes.ts",
     "./store/conversation-store": "./src/store/conversation-store.ts",
     "./shared/config": "./src/shared/config.ts",
     "./shared/env": "./src/shared/env.ts",

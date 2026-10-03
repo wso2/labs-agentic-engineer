@@ -51,7 +51,6 @@ const SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 /**
  * The project's snapshot at `headSha`. Throws `SnapshotPathError` when the
  * project or sha is malformed, or the dir does not exist.
- * @knipkeep wired in Task 3.12 (the turn start path reads the snapshot)
  */
 export function projectSnapshotDir(root: string, project: string, headSha: string): string {
   if (!PROJECT_RE.test(project)) throw new SnapshotPathError("project is not a project name");
@@ -62,7 +61,6 @@ export function projectSnapshotDir(root: string, project: string, headSha: strin
 /**
  * The org skills snapshot at `skillsSha`. Throws `SnapshotPathError` when the
  * sha is malformed or the dir does not exist.
- * @knipkeep wired in Task 3.12 (the turn start path reads the skills)
  */
 export function skillsSnapshotDir(root: string, skillsSha: string): string {
   checkSha(skillsSha, "skillsSha");

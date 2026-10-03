@@ -83,23 +83,4 @@ export const config = {
   // SSE keep-alive cadence: a `: keep-alive` comment this often while a turn
   // streams, so long generations don't die behind an idle-timeout ingress.
   keepAliveMs: intEnv(process.env.AGENT_KEEPALIVE_MS, 15_000),
-
-  // Shared workspaces mount root — read-only per-SHA snapshots written by
-  // aep-api (services/aep-api/design/shared-workspace-volume.md). Compose/k8s
-  // mount the volume :ro; nothing in this service ever writes it.
-  workspaceMountRoot: process.env.WORKSPACE_MOUNT_ROOT || "/workspaces",
-
-
-  // M2M gate (§12.3.2): a Bearer JWT with this audience, verified against a JWKS
-  // (RS256) OR a shared secret (HS256) — whichever is configured. The gate is
-  // ALWAYS ON; the composition root refuses to start if neither is set. No org
-  // claim in the TOKEN is required (nothing calls back to the BFF); `X-Org-Id`
-  // is load-bearing (the §12 fence asserts the conversation's org segment
-  // equals it).
-  auth: {
-    audience: process.env.AGENT_JWT_AUDIENCE || "agents-service",
-    issuer: process.env.AGENT_JWT_ISSUER || undefined,
-    jwksUrl: process.env.AGENT_JWT_JWKS_URL || undefined,
-    secret: process.env.AGENT_JWT_SECRET || undefined,
-  },
 } as const;

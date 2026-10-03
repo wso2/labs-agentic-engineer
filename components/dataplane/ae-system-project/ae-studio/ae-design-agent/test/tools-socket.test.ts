@@ -32,7 +32,7 @@ import { join } from "node:path";
 import { createToolsSocket, ToolsSocketError } from "../src/tools-socket/client.js";
 import { DESIGN_TOOL_NAMES, FakeToolsSocket } from "../src/tools-socket/fake.js";
 import { loadMcpTools } from "../src/shared/mcp-client.js";
-import type { TurnRecord } from "../src/turns/turn-desk.js";
+import type { TurnRecord } from "../src/tools-socket/client.js";
 
 /** The eleven design tools (phase 3 exact values, `mcp_tools.go:188-312`). */
 const ELEVEN = [

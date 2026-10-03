@@ -17,109 +17,91 @@
  */
 
 /**
- * The composition root. Two modes, chosen by env (`modes.ts`): the AE Studio
- * pod's listeners (`AE_*`: the `/v1` user gate and the health port), and the
- * legacy SSE server of the chart Deployment (`AGENT_JWT_*`). Each starts only
- * with its own config; boot fails with neither. The legacy server keeps
- * conversations in memory, wires the always-on M2M gate and the per-request model factory, mounts the SSE app
- * and listens. The model is built per turn from the request's key and
- * connection, so there is NO boot-time key or model here.
+ * The composition root of the AE Studio pod's design agent (07 §9): the pod
+ * env (`pod/config.ts`), the model connection (`shared/connection-env.ts`),
+ * the tools socket, the usage outbox, the conversation books, the TurnDesk
+ * and the turn start path, then the pod listeners with the `/v1` edge.
+ * Without `AE_ORG_ID` there is nothing to run: a local run goes through the
+ * playground, which drives the same edge in process with its dev verifier.
+ * The model is built per turn from the connection.
  *
- *   pnpm --filter @aep/ae-design-agent dev     # watch + reload
+ *   pnpm --filter @aep/ae-design-agent dev     # watch + reload (pod env)
  *   pnpm --filter @aep/ae-design-agent start   # run once
  */
 
-import type { Server } from "node:http";
 import { registerTelemetry } from "ai";
-import { createApp } from "./server.js";
 import { createModel } from "./shared/model.js";
 import { captureTelemetry } from "./shared/telemetry.js";
 import { pruneDevtoolsFile } from "./shared/devtools-retention.js";
-import { intEnv } from "./shared/env.js";
 import { config } from "./shared/config.js";
-import { selectModes } from "./modes.js";
-import { startPodListeners } from "./pod/listeners.js";
-import type { AgentsAuthConfig } from "./shared/auth.js";
+import { connectionFromEnv } from "./shared/connection-env.js";
+import { loadPodConfig, type PodConfig } from "./pod/config.js";
+import { startPodListeners, type PodListeners } from "./pod/listeners.js";
 import { InMemoryConversationStore } from "./store/memory-store.js";
-
-const port = intEnv(process.env.PORT, 4000);
-
-/** Only include the optional fields that are actually set (exactOptionalPropertyTypes). */
-function buildAuthConfig(): AgentsAuthConfig {
-  const { audience, issuer, jwksUrl, secret } = config.auth;
-  return {
-    audience,
-    ...(issuer ? { issuer } : {}),
-    ...(jwksUrl ? { jwksUrl } : {}),
-    ...(secret ? { secret } : {}),
-  };
-}
+import { ThreadBook } from "./conversations/thread-book.js";
+import { MarketplaceBook } from "./conversations/marketplace-book.js";
+import { createToolsSocket } from "./tools-socket/client.js";
+import { UsageOutbox } from "./usage/outbox.js";
+import { TurnDesk } from "./turns/turn-desk.js";
+import { finishedTurnSink, TurnStarter } from "./turns/start-turn.js";
 
 async function main(): Promise<void> {
-  // First: a process with neither config, or a partial pod env, must not boot.
-  // `config` has loaded .env by now, so a legacy key set only there counts.
-  const modes = selectModes(process.env);
+  // First: a process without the pod env, or with a partial one, must not boot.
+  const cfg = loadPodConfig(process.env);
+  if (!cfg) throw new Error("ae-design-agent: the pod env (AE_ORG_ID, ...) is not set; local runs go through the playground");
+  // A malformed connection is a misrendered pod: fail the boot, value-free.
+  // No key is not a fault: the pod serves and a turn answers no_default_key.
+  const connection = connectionFromEnv(process.env);
 
   // DevTools retention, BEFORE anything can capture. The library lazily loads
   // the whole capture into a process-memory cache on its first write and
   // flushes it back whole on every step, so this is the only moment a prune
   // sticks — and doing it here is also what keeps it off the turn path: the
-  // server is not listening yet, so no turn (`/start` included) ever waits on
-  // it. Best-effort; a null result means nothing to do or something unreadable.
+  // server is not listening yet, so no turn ever waits on it. Best-effort; a
+  // null result means nothing to do or something unreadable.
   if (config.devtools && config.devtoolsRetentionDays > 0) {
     const summary = pruneDevtoolsFile(config.devtoolsRetentionDays);
     if (summary) process.stdout.write(summary);
   }
 
   // Trace capture registers ONCE per process — it is a property of the
-  // deployment, not of a turn. It used to be a middleware wrapped around the
-  // per-turn model, which is what made every turn its own unrelated run: the
-  // capture minted a run id when that short-lived object was constructed.
-  // Registering here leaves model lifetimes alone; each turn stamps its own
-  // functionId instead (shared/telemetry.ts).
+  // deployment, not of a turn. Each turn stamps its own functionId
+  // (shared/telemetry.ts).
   const telemetry = captureTelemetry();
   if (telemetry) registerTelemetry(telemetry);
 
-  const closers: Array<() => Promise<void>> = [];
-  const closeAll = () => Promise.allSettled(closers.map((close) => close()));
-  try {
-    if (modes.pod) closers.push((await startPodListeners(modes.pod)).close);
-    if (modes.legacy) {
-      const server = startLegacyServer();
-      closers.push(() => closeLegacyServer(server));
-    }
-  } catch (err) {
-    // A half-started process would keep a listener (and a ready probe) alive.
-    await closeAll();
-    throw err;
-  }
-
+  const pod = await startPod(cfg, connection);
   process.once("SIGTERM", () => {
-    void closeAll().then((results) => {
-      process.exit(results.some((r) => r.status === "rejected") ? 1 : 0);
-    });
+    void pod.close().then(
+      () => process.exit(0),
+      () => process.exit(1),
+    );
   });
 }
 
-/** Today's SSE server: in-memory store, M2M gate, per-turn model factory. */
-function startLegacyServer(): Server {
-  const app = createApp({
-    store: new InMemoryConversationStore(),
-    // Built PER TURN from the turn's connection (key, format, URL, model).
+/** Wire the pod's services and start its listeners. */
+function startPod(cfg: PodConfig, connection: ReturnType<typeof connectionFromEnv>): Promise<PodListeners> {
+  const store = new InMemoryConversationStore();
+  const threads = new ThreadBook({ store });
+  const tools = createToolsSocket(cfg.mcpSocket);
+  const outbox = new UsageOutbox(tools);
+  outbox.run();
+  const desk = new TurnDesk({ onFinished: finishedTurnSink(threads, outbox) });
+  const turns = new TurnStarter({
+    desk,
+    threads,
+    store,
+    tools,
+    snapshotsDir: cfg.snapshotsDir,
+    connection,
+    // Built PER TURN from the org's connection.
     buildModel: (conn, ctx) => createModel(conn, ctx),
-    auth: buildAuthConfig(), // throws here if neither JWKS nor secret is set (gate is always on)
+    surface: "console",
+    orgId: cfg.orgId,
   });
-
-  return app.listen(port, () => {
-    process.stdout.write(`@aep/ae-design-agent SSE server listening on :${port}\n`);
+  return startPodListeners(cfg, {
+    edge: { turns, desk, threads, marketplace: new MarketplaceBook(store), keepAliveMs: config.keepAliveMs },
   });
-}
-
-/** Stops accepting, then ends open streams: a SIGTERM used to end them too. */
-function closeLegacyServer(server: Server): Promise<void> {
-  const closed = new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
-  server.closeAllConnections();
-  return closed;
 }
 
 main().catch((err: unknown) => {

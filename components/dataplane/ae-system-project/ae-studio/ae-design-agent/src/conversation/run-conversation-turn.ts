@@ -17,11 +17,13 @@
  */
 
 /**
- * The single per-turn orchestration the SSE route calls: load-or-lazy-create →
- * mark active → fresh throwaway WorkingBundle from the passed snapshot →
- * `runTurn` (prepending a one-line CURRENT-STATE-authoritative note ONLY when
- * the FE flagged an external edit) → set status → persist the whole aggregate
- * → emit the terminal manifest part (D14; success only — never after a throw).
+ * The single per-turn orchestration a turn's run calls (`turns/start-turn.ts`):
+ * load-or-lazy-create → mark active → fresh throwaway WorkingBundle from the
+ * passed snapshot → `runTurn` (prepending a one-line CURRENT-STATE-authoritative
+ * note ONLY when the caller flagged an external edit) → set status → persist the
+ * whole aggregate → return the turn's token usage. A turn that throws returns
+ * nothing; the caller ends it failed. The one-running-turn rule is the
+ * TurnDesk's (`turns/turn-desk.ts`), not this function's.
  *
  * Files NEVER touch the store; the passed `files` snapshot is both the inlined
  * CURRENT STATE and (when diverged) the basis of the note. History is
@@ -37,6 +39,7 @@ import {
   type StreamPart,
   type Surface,
   type Toolset,
+  type TurnUsage,
 } from "@aep/agent-stream";
 import { DocFileBundle } from "../collab/doc-bundle.js";
 import { StreamingDocWriter } from "../collab/streaming-add.js";
@@ -51,7 +54,7 @@ import { buildInstructions, buildTaskPlanInstructions, buildPrompt, buildEagerSk
 import type { SkillSource } from "../agents/main/skill-source.js";
 import type { UnreadableReference } from "./attachments.js";
 import { historyFor } from "./history-for.js";
-import { buildManifestPart, toTurnUsage } from "./manifest.js";
+import { toTurnUsage } from "./turn-usage.js";
 import { OutputTruncatedError, TruncationWatch } from "./truncation.js";
 import { attachmentsNote, unreadableReferencesNote } from "../prompts/turn.js";
 import { config } from "../shared/config.js";
@@ -68,32 +71,6 @@ import { MODEL_MAX_RETRIES } from "../shared/provider-limit.js";
 import { loadMcpTools, type McpTransport } from "../shared/mcp-client.js";
 import { turnTelemetry } from "../shared/telemetry.js";
 import type { Conversation, ConversationStore, TurnJournalEntry } from "../store/conversation-store.js";
-
-/** Thrown when a second turn starts for an id whose turn is still in flight (→ HTTP 409). */
-export class ConcurrentTurnError extends Error {
-  readonly code = "CONCURRENT_TURN";
-  constructor(public readonly conversationId: string) {
-    super(`a turn is already in progress for conversation ${conversationId}`);
-    this.name = "ConcurrentTurnError";
-  }
-}
-
-/**
- * Per-id in-flight guard — serializes turns for one conversation. This (not a
- * status read) is what makes 409 real and testable: status is only persisted at
- * turn END and `get()` returns a clone, so a mid-turn second POST would never
- * observe `status === 'active'`. One guard per app (composition root).
- */
-export class TurnGuard {
-  private readonly inflight = new Set<string>();
-  acquire(id: string): void {
-    if (this.inflight.has(id)) throw new ConcurrentTurnError(id);
-    this.inflight.add(id);
-  }
-  release(id: string): void {
-    this.inflight.delete(id);
-  }
-}
 
 const DIVERGENCE_NOTE =
   "NOTE: files were changed outside your last proposals — the \"Existing files:\" " +
@@ -147,7 +124,7 @@ export interface RunConversationTurnInput {
   id: string;
   instruction: string;
   files: Record<string, string>;
-  /** Optional FE flag (default false): prepend the CURRENT-STATE-authoritative note (§10). */
+  /** The caller's flag (default false): prepend the CURRENT-STATE-authoritative note (§10). */
   filesChangedExternally?: boolean;
   /**
    * The turn's skill supply (§12, ADR-0002): a lazy, disk-backed source over the
@@ -219,7 +196,7 @@ export interface RunConversationTurnInput {
   registerDraft?: boolean;
   /**
    * Give this turn a `web_search` tool (external-dependency-discovery #252).
-   * The caller (BFF) sets this true under the same condition as `mcp`. Which
+   * The start path sets this under the web-search gate (`turns/turn-spec.ts`). Which
    * tool follows the connection's `capabilities.webSearch`
    * (`tools/web-search.ts`); with `none`, or omitted/false, the tool map is
    * byte-identical to a turn without it.
@@ -243,10 +220,10 @@ export interface RunConversationTurnInput {
   /**
    * The connection `model` was built on. It decides the provider options, the
    * output ceiling, the cache marker and which `web_search` tool the turn gets;
-   * its model id attributes the turn's token usage on the terminal manifest
+   * its model id attributes the turn's token usage in the result
    * (#249); and its fingerprint is stamped on this turn's journal entry.
    * Absent (mock-model tests, evals) → Anthropic's own API on the service
-   * default model, and the manifest usage carries `model: ""`.
+   * default model, and the result's usage carries `model: ""`.
    */
   connection?: ModelConnection;
   /**
@@ -257,13 +234,18 @@ export interface RunConversationTurnInput {
    */
   journal?: Omit<TurnJournalEntry, "messageIndex" | "connection" | "createdAt">;
   store: ConversationStore;
-  guard: TurnGuard;
   onEvent: (p: StreamPart) => void;
   abortSignal?: AbortSignal;
 }
 
-export async function runConversationTurn(input: RunConversationTurnInput): Promise<Conversation> {
-  input.guard.acquire(input.id); // throws ConcurrentTurnError on a concurrent turn → 409
+/** What a completed turn leaves behind: the saved aggregate and the turn's token usage. */
+export interface ConversationTurnResult {
+  conversation: Conversation;
+  /** The whole turn's usage on the wire shape (#249); `model` is the connection's id, `""` without one. */
+  usage: TurnUsage;
+}
+
+export async function runConversationTurn(input: RunConversationTurnInput): Promise<ConversationTurnResult> {
   // Live-preview writer (flag-gated, room-scoped files turns only): mirrors each
   // addFile body into the doc AS IT STREAMS. Hoisted so the finally can drain +
   // roll back a severed/rejected preview on EVERY exit path (before peer.leave).
@@ -273,7 +255,7 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     // 1. load or lazily create
     const conv = (await input.store.get(input.id)) ?? freshConversation(input.id);
 
-    // 2. mark active (in memory; not saved mid-turn — the guard handles concurrency)
+    // 2. mark active (in memory; not saved mid-turn — the TurnDesk lock handles concurrency)
     conv.status = "active";
 
     // 3. select the tool set from `toolset` (default `files`). Both build a
@@ -281,7 +263,7 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     //    catalog + `loadSkill` are registered identically (only when skills were
     //    supplied, ADR-0002). The `files` set also carries the HITL question
     //    tools (ask_question / ask_questions); `task-plan` does not. The
-    //    FileBundle is held by name: it is the source of the terminal manifest (D14).
+    //    FileBundle is held by name: the live doc writer below needs it.
     const toolset: Toolset = input.toolset ?? "files";
     const skills = input.skillSource;
     let bundle: FileBundle | undefined;
@@ -336,7 +318,7 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     //     preview into, so mirror each applied addFile body onto the doc as it
     //     streams. Wrap onEvent so the writer observes every part; SSE forwarding
     //     is unaffected (observe only enqueues). The bundle's execute() stays the
-    //     authority (validation + D14 manifest); the writer is an optimistic
+    //     authority (validation); the writer is an optimistic
     //     preview that reconciles to the same content.
     if (input.collabPeer && bundle) {
       docWriter = new StreamingDocWriter(input.collabPeer, bundle);
@@ -359,7 +341,7 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
 
     // 4. one generic turn. The instructions append the skill catalog at the END
     //    of the system prompt; buildPrompt inlines CURRENT STATE; prepend a one-line
-    //    divergence note ONLY when the FE flagged an external edit (append-only).
+    //    divergence note ONLY when the caller flagged an external edit (append-only).
     const note = input.filesChangedExternally ? DIVERGENCE_NOTE : "";
     // Eager skills (#335): resolve the requested bodies and inline them ahead
     // of the instruction — the model applies them in its FIRST step instead of
@@ -442,8 +424,7 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     conv.status = endedAwaitingHuman(conv.messages.slice(startLen)) ? "awaiting-human" : "done";
 
     // 6. per-turn spend (#249): project the whole-turn usage onto the pinned
-    //    wire shape; it rides the terminal manifest below so the aep-api fold
-    //    captures it alongside the file shas.
+    //    wire shape; the caller puts it on the turn's usage record.
     const usage = toTurnUsage(res.usage, input.connection?.model ?? "");
     if (config.logLevel === "debug") {
       process.stderr.write(
@@ -473,29 +454,21 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     }
     await input.store.save(conv);
 
-    // 7b. A write the output limit cut off fails the turn — after the save, so
-    //     the transcript keeps what the model did, and before the manifest, so
-    //     the fold never commits a draft missing that file.
+    // 7b. A write the output limit cut off fails the turn, after the save, so
+    //     the transcript keeps what the model did.
     const cutOff = res.finishReason === "length" ? truncation.cutOffCall() : undefined;
     if (cutOff) throw new OutputTruncatedError(cutOff, maxOutputTokens);
 
-    // 8. terminal manifest (D14) — emitted LAST, only on full success (any
-    //    throw above skips it, so a severed/failed stream carries no manifest
-    //    and the aep-api fold refuses to commit). Mutated-paths-only from the
-    //    turn's bundle; empty for chat-only and task-plan turns. Carries the
-    //    turn's token usage (#249) — failed turns report none (v1).
-    input.onEvent(buildManifestPart(bundle, usage));
-    return conv;
+    return { conversation: conv, usage };
   } finally {
     // Drain the live-preview writer and undo any addFile body we streamed but that
-    // never finalized (a severed or rejected op). Runs before the server detaches
-    // the peer (server.ts finally); on a clean turn every preview is already
+    // never finalized (a severed or rejected op). Runs before the turn's run detaches
+    // the peer (turns/start-turn.ts); on a clean turn every preview is already
     // finalized by its tool-result, so this drops nothing.
     if (docWriter) {
       await docWriter.drain();
       docWriter.rollbackDangling();
     }
-    input.guard.release(input.id);
   }
 }
 

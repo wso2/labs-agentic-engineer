@@ -42,7 +42,7 @@
 import { randomUUID } from "node:crypto";
 import type { StreamPart, TurnUsage } from "@aep/agent-stream";
 import type { components as ApiComponents } from "../generated/api.js";
-import type { components as McpSocketComponents } from "../generated/mcp-socket.js";
+import type { TurnRecord } from "../tools-socket/client.js";
 import {
   REPLAY_RETENTION_MS,
   ReplayBuffer,
@@ -52,7 +52,6 @@ import {
 } from "./replay-buffer.js";
 
 export type TurnStatus = ApiComponents["schemas"]["TurnStatus"];
-export type TurnRecord = McpSocketComponents["schemas"]["TurnRecord"];
 
 /** The 30-minute turn cap. */
 export const TURN_CAP_MS = 30 * 60_000;
@@ -79,6 +78,13 @@ export interface TurnMeta {
   /** The resolved model id (the ledger's pricing key, with `modelHost`). */
   model: string;
   modelHost: string;
+  /**
+   * The snapshot shas the starter resolved before the run, when it knows them:
+   * a turn that ends before its run reports any (a throw, the cap, shutdown)
+   * still records what it was started against.
+   */
+  baseRef?: string;
+  skillsRef?: string;
 }
 
 /** How a run ended, as the run reports it. */
@@ -132,7 +138,6 @@ interface BufferEntry {
   buffer: ReplayBuffer;
 }
 
-/** @knipkeep wired in Task 3.12 (the /v1 and Turn socket start path) */
 export class TurnDesk {
   private readonly now: () => number;
   private readonly capMs: number;
@@ -192,7 +197,7 @@ export class TurnDesk {
       },
       controller,
       capTimer: setTimeout(() => {
-        this.finish(turn, { status: "failed", reason: "stream-died", message: "the turn ran past the 30-minute cap", ...noRefs });
+        this.finish(turn, { status: "failed", reason: "stream-died", message: "the turn ran past the 30-minute cap", ...refsOf(meta) });
         controller.abort();
       }, this.capMs),
       settled: Promise.resolve(),
@@ -212,7 +217,7 @@ export class TurnDesk {
     turn.settled = outcome.then(
         (outcome) => this.finish(turn, outcome),
         (err: unknown) =>
-          this.finish(turn, { status: "failed", reason: "internal", message: err instanceof Error ? err.message : String(err), ...noRefs }),
+          this.finish(turn, { status: "failed", reason: "internal", message: err instanceof Error ? err.message : String(err), ...refsOf(meta) }),
       );
     return { turnId: id, reattached: false };
   }
@@ -246,7 +251,7 @@ export class TurnDesk {
   async abortAll(reason: "shutdown"): Promise<void> {
     const turns = [...this.running.values()];
     for (const turn of turns) {
-      this.finish(turn, { status: "failed", reason, ...noRefs });
+      this.finish(turn, { status: "failed", reason, ...refsOf(turn.meta) });
       turn.controller.abort();
     }
     let grace: ReturnType<typeof setTimeout> | undefined;
@@ -341,8 +346,10 @@ export class TurnDesk {
   }
 }
 
-/** A turn that ended before the run could report the snapshots it read. */
-const noRefs = { baseRef: "", skillsRef: "" } as const;
+/** The refs of a turn that ended before its run reported any: the starter's, else none. */
+function refsOf(meta: TurnMeta): { baseRef: string; skillsRef: string } {
+  return { baseRef: meta.baseRef ?? "", skillsRef: meta.skillsRef ?? "" };
+}
 
 function scopeKey(scope: Scope): string {
   return scope.kind === "project" ? `project:${scope.project}` : `marketplace:${scope.conversationId}`;

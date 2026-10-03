@@ -69,7 +69,6 @@ export type {
   TurnAimIntent,
   WorkspaceRef,
   McpConfig,
-  CollabConfig,
   ManifestPart,
   TurnUsage,
   Toolset,
@@ -99,7 +98,6 @@ export {
   isTurnConnection,
   isTurnAim,
   TURN_AIM_LIMITS,
-  isCollabConfig,
 } from "./contracts/sse-events.js";
 export type {
   SecurityDesign,

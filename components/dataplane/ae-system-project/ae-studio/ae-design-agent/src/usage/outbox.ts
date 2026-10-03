@@ -60,7 +60,6 @@ const stdoutLog = (line: OutboxLogLine): void => {
   process.stdout.write(`${JSON.stringify(line)}\n`);
 };
 
-/** @knipkeep wired in Task 3.12 (the desk's onFinished pushes) and Task 3.13 (run at boot, drain at SIGTERM) */
 export class UsageOutbox implements Outbox {
   private readonly queue: TurnRecord[] = [];
   private readonly log: (line: OutboxLogLine) => void;

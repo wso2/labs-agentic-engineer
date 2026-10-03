@@ -61,7 +61,6 @@ export interface ThreadBookDeps {
   now?: () => Date;
 }
 
-/** @knipkeep wired in Task 3.12 */
 export class ThreadBook {
   private readonly threads = new Map<string, Thread>();
   private readonly store: ConversationStore;

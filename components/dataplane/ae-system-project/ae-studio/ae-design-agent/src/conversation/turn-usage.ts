@@ -17,15 +17,12 @@
  */
 
 /**
- * The terminal manifest part (shared-workspace-volume D14): the
- * producer half of the fold-parity gate. Emitted ONCE per successful turn (any
- * request shape), before `[DONE]`; a turn that throws emits none, so a severed
- * stream is unambiguously "do not commit" to the aep-api fold.
+ * A turn's token usage on the pinned cross-runtime wire shape (#249): what the
+ * turn's usage record (07 §7) carries.
  */
 
 import type { LanguageModelUsage } from "ai";
-import type { FileBundle, ManifestPart, TurnUsage } from "@aep/agent-stream";
-import { sha256Hex } from "../shared/hash.js";
+import type { TurnUsage } from "@aep/agent-stream";
 
 /**
  * Project the AI SDK's whole-turn `LanguageModelUsage` onto the pinned
@@ -52,27 +49,4 @@ export function toTurnUsage(usage: LanguageModelUsage, model: string): TurnUsage
     cacheCreationTokens,
     model,
   };
-}
-
-/**
- * Build the manifest from the turn's bundle. Covers ONLY paths mutated THIS
- * turn (`bundle.touched()` — set on APPLIED ops only, so noop/already-applied/
- * rejected ops never appear): still-present paths map to the sha256 of their
- * final (LF-canonical) content, vanished paths land in `deleted`. Paths are
- * sorted for a deterministic wire encoding (cassette/golden friendly). No
- * bundle (chat-only or task-plan turn) → the empty manifest. `usage` (#249)
- * rides the manifest because it is the one frame every successful turn emits;
- * a failed turn emits no manifest and therefore reports no usage (v1).
- */
-export function buildManifestPart(bundle?: FileBundle, usage?: TurnUsage): ManifestPart {
-  const files: Record<string, string> = {};
-  const deleted: string[] = [];
-  if (bundle) {
-    for (const path of [...bundle.touched()].sort()) {
-      const content = bundle.read(path);
-      if (content === undefined) deleted.push(path);
-      else files[path] = sha256Hex(content);
-    }
-  }
-  return { type: "manifest", files, deleted, ...(usage ? { usage } : {}) };
 }

@@ -19,14 +19,13 @@
 /**
  * A write the output limit cuts off (`conversation/truncation.ts`): a step
  * that ends on `max_tokens` inside an `addFile`'s arguments fails the turn
- * with `OutputTruncatedError` naming the file, keeps the transcript, and emits
- * no manifest, so the fold never commits a draft missing that file.
+ * with `OutputTruncatedError` naming the file and keeps the transcript; the
+ * turn ends `agent-error` with code `output_truncated`.
  */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { StreamPart } from "@aep/agent-stream";
-import { runConversationTurn, TurnGuard } from "../src/conversation/run-conversation-turn.js";
+import { runConversationTurn } from "../src/conversation/run-conversation-turn.js";
 import { OutputTruncatedError, TruncationWatch } from "../src/conversation/truncation.js";
 import { codedErrorFrame } from "../src/conversation/turn-error.js";
 import { InMemoryConversationStore } from "../src/store/memory-store.js";
@@ -49,10 +48,9 @@ function cutOffStream(): Response {
   return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
 }
 
-test("an addFile cut off by the output limit fails the turn naming the file, with no manifest", async () => {
+test("an addFile cut off by the output limit fails the turn naming the file", async () => {
   const conn = { ...anthropicConnection("sk-ant-test-0000000000", "claude-sonnet-5"), outputLimit: 32000 };
   const store = new InMemoryConversationStore();
-  const events: StreamPart[] = [];
   await assert.rejects(
     runConversationTurn({
       id: "cut",
@@ -62,8 +60,7 @@ test("an addFile cut off by the output limit fails the turn naming the file, wit
       connection: conn,
       journal: { text: "write the PRD", turnId: "t-1" },
       store,
-      guard: new TurnGuard(),
-      onEvent: (p) => events.push(p),
+      onEvent: () => {},
     }),
     (err: unknown) => {
       assert.ok(err instanceof OutputTruncatedError);
@@ -79,7 +76,6 @@ test("an addFile cut off by the output limit fails the turn naming the file, wit
       return true;
     },
   );
-  assert.equal(events.some((e) => e.type === "manifest"), false);
   const stored = await store.get("cut");
   assert.ok(stored, "the transcript is kept");
   assert.equal(stored.turns.length, 1);

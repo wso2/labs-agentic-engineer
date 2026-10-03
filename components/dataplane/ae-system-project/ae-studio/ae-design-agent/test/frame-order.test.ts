@@ -45,7 +45,7 @@ import type { ModelMessage } from "ai";
 import { FileBundle, type OpResult, type StreamPart } from "@aep/agent-stream";
 import { runTurn } from "../src/agents/main/run-turn.js";
 import { buildFileToolSet } from "../src/agents/main/tools/files.js";
-import { runConversationTurn, TurnGuard } from "../src/conversation/run-conversation-turn.js";
+import { runConversationTurn } from "../src/conversation/run-conversation-turn.js";
 import { InMemoryConversationStore } from "../src/store/memory-store.js";
 
 const FILES: ReadonlyArray<readonly [string, string]> = [
@@ -120,30 +120,23 @@ async function collectFrames(): Promise<StreamPart[]> {
  * not a hand-rolled tap, so this also pins that the ledger IS wired into the
  * turn orchestration (a tap wired only in the test would prove nothing).
  * `messages` comes back holding the turn's transcript, so a caller can check
- * what the MODEL was told each write did; `manifest` reports what actually
- * landed in the bundle.
+ * what the MODEL was told each write did.
  */
 async function collectWire(files: Record<string, string> = {}): Promise<{
   frames: StreamPart[];
   messages: ModelMessage[];
-  manifest: StreamPart | undefined;
 }> {
   const model = new MockLanguageModelV4({ doStream: [batchedStep(), closingStep()] as never });
   const frames: StreamPart[] = [];
-  const conv = await runConversationTurn({
+  const { conversation } = await runConversationTurn({
     id: "batched-turn",
     instruction: "write the files",
     files,
     model: model as never,
     store: new InMemoryConversationStore(),
-    guard: new TurnGuard(),
     onEvent: (p) => frames.push(p),
   });
-  return {
-    frames,
-    messages: conv.messages,
-    manifest: frames.find((f) => f.type === "manifest"),
-  };
+  return { frames, messages: conversation.messages };
 }
 
 /** The verdicts the MODEL read, in transcript order (`{ type: "json", value }`). */
@@ -247,11 +240,7 @@ test("exactly one tool-result per call reaches the wire (the SDK's copy is suppr
 });
 
 test("the op runs ONCE: the model reads the applied verdict, not ALREADY_EXISTS", async () => {
-  const { frames, manifest, messages } = await collectWire();
-
-  for (const [path] of FILES) {
-    assert.ok(manifest?.files?.[path], `${path} must be in the turn's manifest`);
-  }
+  const { frames, messages } = await collectWire();
   // The wire and the transcript must agree — a second apply would answer the
   // model ALREADY_EXISTS for a write that succeeded.
   const onWire = frames.filter((f) => f.type === "tool-result").map((f) => f.output as OpResult);

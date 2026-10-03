@@ -137,8 +137,6 @@ export interface ToolsSocketOptions {
 /**
  * The ToolsSocket over the Unix socket at `socketPath`. One keep-alive
  * dispatcher per client; a request never leaves the socket.
- *
- * @knipkeep wired in Task 3.12 (the turn start path) and Task 3.13 (main.ts on AE_MCP_SOCKET)
  */
 export function createToolsSocket(socketPath: string, options: ToolsSocketOptions = {}): ToolsSocket {
   const dispatcher = new Agent({ connect: { socketPath } });

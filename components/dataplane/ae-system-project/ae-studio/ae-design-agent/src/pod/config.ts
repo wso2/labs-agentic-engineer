@@ -17,10 +17,11 @@
  */
 
 /**
- * The AE Studio pod's env for this container (08 §2/§3): the org the pod
- * serves, the Platform IdP that signs its users' tokens, the user audiences,
- * the public and health ports, and the secret revisions of 08 §7. Only the
- * pod renders `AE_ORG_ID`; the chart Deployment never does.
+ * The AE Studio pod's env for this container (08 §2/§3, 07 §9): the org the
+ * pod serves, the Platform IdP that signs its users' tokens, the user
+ * audiences, the public and health ports, the tools socket and the snapshot
+ * mount, and the secret revisions of 08 §7. The model connection is read
+ * apart (`shared/connection-env.ts`): the pod boots without a key.
  */
 
 export interface PodConfig {
@@ -31,6 +32,10 @@ export interface PodConfig {
   userAudiences: string[];
   listenPort: number;
   healthPort: number;
+  /** `AE_MCP_SOCKET`: ae-studio-tools' MCP socket (`tools-socket/client.ts`). */
+  mcpSocket: string;
+  /** `AE_SNAPSHOTS_DIR`: the read-only snapshot mount. */
+  snapshotsDir: string;
   /** The revision the pod spec was rendered for; `""` when the org has no key. */
   expectedSecretRev: string;
   /** The revision of the mounted Secret; `""` when there is none. */
@@ -72,6 +77,8 @@ export function loadPodConfig(env: Env): PodConfig | null {
     .map((a) => a.trim())
     .filter((a) => a !== "");
   if (userAudiences.length === 0) problems.push("missing AE_USER_AUDIENCES");
+  const mcpSocket = required("AE_MCP_SOCKET");
+  const snapshotsDir = required("AE_SNAPSHOTS_DIR");
   const listenPort = port("AE_LISTEN_PORT", DEFAULT_LISTEN_PORT);
   const healthPort = port("AE_HEALTH_PORT", DEFAULT_HEALTH_PORT);
   if (problems.length > 0) throw new Error(`ae-design-agent pod env: ${problems.join(", ")}`);
@@ -83,6 +90,8 @@ export function loadPodConfig(env: Env): PodConfig | null {
     userAudiences,
     listenPort,
     healthPort,
+    mcpSocket,
+    snapshotsDir,
     expectedSecretRev: env.AE_EXPECTED_SECRET_REV ?? "",
     secretRev: env.AE_SECRET_REV ?? "",
   };

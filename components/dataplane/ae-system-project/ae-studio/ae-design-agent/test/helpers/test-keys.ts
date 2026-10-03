@@ -32,6 +32,8 @@ export interface TestKeys {
   jwks: JWTVerifyGetKey;
   /** A console user's access token in the OU `ouId` / `ouHandle`. */
   user(ouHandle: string, ouId: string): Promise<string>;
+  /** A console user's access token with these claims over the defaults (`sub: user-<ouHandle>`). */
+  userWith(claims: { ouHandle: string; ouId: string } & Record<string, unknown>): Promise<string>;
   /** A client_credentials token: the org's publisher client (default) or the AE-only client. */
   m2m(client?: "publisher" | "ae-internal"): Promise<string>;
   /** A client_credentials token that names the user audience, with org claims. */
@@ -52,6 +54,7 @@ export async function testKeys(): Promise<TestKeys> {
     issuer: ISSUER,
     jwks,
     user: (ouHandle, ouId) => sign({ aud: USER_AUDIENCE, sub: `user-${ouHandle}`, ouId, ouHandle }),
+    userWith: (claims) => sign({ aud: USER_AUDIENCE, sub: `user-${claims.ouHandle}`, ...claims }),
     m2m: (client = "publisher") =>
       client === "publisher"
         ? sign({ ...cc, aud: "aep-publisher-default", client_id: "aep-publisher-default", ouId: "ou-1", ouHandle: "default" })

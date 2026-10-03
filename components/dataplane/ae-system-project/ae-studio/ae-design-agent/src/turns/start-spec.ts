@@ -64,7 +64,6 @@ export interface TurnLookupInputs {
  * artifacts are grounded in what the user attached. `/start` also carries
  * the idea: typed inline wins, else the lookup's; none, and the start skill
  * asks the user.
- * @knipkeep wired in Task 3.12 (the turn start path classifies the instruction)
  */
 export function turnSpecFor(raw: string, lookup: TurnLookupInputs): { spec: TurnSpec; flow: string } {
   const m = SLASH_COMMAND_PATTERN.exec(raw.trim());
@@ -93,7 +92,6 @@ export function turnSpecFor(raw: string, lookup: TurnLookupInputs): { spec: Turn
  * `/start` alone would show the user a command they never issued, so the
  * resolved idea is appended. Only the idea the same turn resolved is
  * appended, so the line never claims something the agent did not receive.
- * @knipkeep wired in Task 3.12 (the turn's TurnMeta instruction)
  */
 export function startTurnSummary(instruction: string, spec: TurnSpec): string {
   if (spec.kind !== "start" || !spec.idea) return instruction;

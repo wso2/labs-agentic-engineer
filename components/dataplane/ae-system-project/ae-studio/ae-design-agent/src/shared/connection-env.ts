@@ -48,7 +48,6 @@ type Env = Readonly<Record<string, string | undefined>>;
  * connection (`no_default_key`). Throws `ConnectionEnvError` when
  * `AE_MODEL_CONNECTION` is set but malformed: a rendering fault, not a
  * missing key.
- * @knipkeep wired in Task 3.12 (the turn start path builds the model from it)
  */
 export function connectionFromEnv(env: Env): ModelConnection | null {
   const apiKey = env.ANTHROPIC_API_KEY?.trim() ?? "";

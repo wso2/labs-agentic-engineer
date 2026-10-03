@@ -28,9 +28,9 @@ import {
   type Scope,
   type TurnMeta,
   type TurnOutcome,
-  type TurnRecord,
   type TurnRun,
 } from "../src/turns/turn-desk.js";
+import type { TurnRecord } from "../src/tools-socket/client.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const KICKOFF_ID = "3f0e8a4c-1d2b-5c6d-8e9f-0a1b2c3d4e5f";
@@ -473,4 +473,25 @@ test("abortAll does not wait for a runner that ignores the abort", async () => {
   mock.timers.tick(2_000);
   await finished;
   assert.equal(desk.active(proj), null);
+});
+
+test("a turn that ends before its run reports refs records the starter's refs, so it does not read as an external change", async () => {
+  const clock = fakeClock();
+  const records: TurnRecord[] = [];
+  const desk = new TurnDesk({ now: clock.now, onFinished: (r) => records.push(r) });
+  desk.start(proj, meta({ baseRef: "head1", skillsRef: "skills1" }), async () => {
+    throw new Error("snapshot read failed");
+  });
+  await settle();
+  desk.start(proj, meta({ baseRef: "head1", skillsRef: "skills1" }), never);
+  clock.advance(TURN_CAP_MS + 1);
+  await settle();
+  assert.deepEqual(
+    records.map((r) => [r.reason, r.baseRef, r.skillsRef]),
+    [
+      ["internal", "head1", "skills1"],
+      ["stream-died", "head1", "skills1"],
+    ],
+  );
+  assert.deepEqual(desk.lastTerminal(proj), { status: "failed", baseRef: "head1" });
 });

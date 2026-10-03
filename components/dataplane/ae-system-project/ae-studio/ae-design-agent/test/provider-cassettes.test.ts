@@ -34,8 +34,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import type { StreamPart } from "@aep/agent-stream";
-import { runConversationTurn, TurnGuard } from "../src/conversation/run-conversation-turn.js";
+import type { StreamPart, TurnUsage } from "@aep/agent-stream";
+import { runConversationTurn } from "../src/conversation/run-conversation-turn.js";
 import { InMemoryConversationStore } from "../src/store/memory-store.js";
 import { anthropicConnection, createModel, type ModelConnection } from "../src/shared/model.js";
 import { replayProvider } from "./provider-cassette.js";
@@ -65,10 +65,10 @@ async function replayTurn(
   conn: ModelConnection,
   cassette: string,
   turnId: string,
-): Promise<{ events: StreamPart[]; requests: ReturnType<typeof replayProvider>["requests"] }> {
+): Promise<{ events: StreamPart[]; usage: TurnUsage; requests: ReturnType<typeof replayProvider>["requests"] }> {
   const provider = replayProvider(cassettes(cassette));
   const events: StreamPart[] = [];
-  await runConversationTurn({
+  const { usage } = await runConversationTurn({
     id: "conv",
     instruction: "Write the PRD for the idea.",
     files: {},
@@ -77,17 +77,21 @@ async function replayTurn(
     connection: conn,
     journal: { text: "start", turnId },
     store,
-    guard: new TurnGuard(),
     onEvent: (p) => events.push(p),
   });
-  return { events, requests: provider.requests };
+  return { events, usage, requests: provider.requests };
 }
 
-const manifestOf = (events: StreamPart[]) => events.find((e) => e.type === "manifest");
+/** The paths the turn's applied writes named, from the wire's tool-results. */
+const writtenPaths = (events: StreamPart[]) =>
+  events.flatMap((e) => {
+    const out = e.output as { ok?: boolean; path?: string } | undefined;
+    return e.type === "tool-result" && out?.ok && typeof out.path === "string" ? [out.path] : [];
+  });
 
 test("Anthropic: a requirements turn with a server web_search replays clean", async () => {
   const store = new InMemoryConversationStore();
-  const { events, requests } = await replayTurn(store, ANTHROPIC, "anthropic-requirements", "t-1");
+  const { events, usage, requests } = await replayTurn(store, ANTHROPIC, "anthropic-requirements", "t-1");
 
   assert.equal(requests.length, 2);
   for (const r of requests) {
@@ -98,16 +102,15 @@ test("Anthropic: a requirements turn with a server web_search replays clean", as
   assert.equal(tools.find((t) => t.name === "web_search")?.type, "web_search_20250305");
   assert.ok(tools.some((t) => t.name === "addFile"));
 
-  const manifest = manifestOf(events);
-  assert.deepEqual(Object.keys(manifest?.files ?? {}), ["specs/requirements/prd.md"]);
-  assert.equal(manifest?.usage?.model, "claude-sonnet-5");
+  assert.deepEqual(writtenPaths(events), ["specs/requirements/prd.md"]);
+  assert.equal(usage.model, "claude-sonnet-5");
   const stored = await store.get("conv");
   assert.deepEqual(stored?.turns.map((t) => t.connection), ["anthropic@api.anthropic.com"]);
 });
 
 test("OpenAI-compatible: a requirements turn recorded on Ollama gpt-oss:20b replays clean", async () => {
   const store = new InMemoryConversationStore();
-  const { events, requests } = await replayTurn(store, OLLAMA, "ollama-requirements", "t-1");
+  const { events, usage, requests } = await replayTurn(store, OLLAMA, "ollama-requirements", "t-1");
 
   assert.equal(requests.length, 2);
   for (const r of requests) {
@@ -123,10 +126,9 @@ test("OpenAI-compatible: a requirements turn recorded on Ollama gpt-oss:20b repl
     "Ollama's search is a client tool",
   );
 
-  const manifest = manifestOf(events);
-  assert.deepEqual(Object.keys(manifest?.files ?? {}), ["specs/requirements/prd.md"]);
-  assert.equal(manifest?.usage?.model, "gpt-oss:20b");
-  assert.ok((manifest?.usage?.inputTokens ?? 0) > 0, "the usage chunk was read");
+  assert.deepEqual(writtenPaths(events), ["specs/requirements/prd.md"]);
+  assert.equal(usage.model, "gpt-oss:20b");
+  assert.ok(usage.inputTokens > 0, "the usage chunk was read");
   assert.equal(events.some((e) => e.type === "error"), false);
 });
 
@@ -137,7 +139,7 @@ test("an Anthropic conversation with a web_search continues on an OpenAI-compati
   const store = new InMemoryConversationStore();
   await replayTurn(store, ANTHROPIC, "anthropic-requirements", "t-1");
   const before = structuredClone((await store.get("conv"))!.messages);
-  const { events, requests } = await replayTurn(store, OLLAMA, "ollama-requirements", "t-2");
+  const { requests } = await replayTurn(store, OLLAMA, "ollama-requirements", "t-2");
 
   const messages = requests[0]!.body.messages as Array<{ role: string; content?: unknown; tool_calls?: Array<{ id: string; function: { name: string } }>; tool_call_id?: string; reasoning_content?: string }>;
   const answered = new Set(messages.filter((m) => m.role === "tool").map((m) => m.tool_call_id));
@@ -151,7 +153,6 @@ test("an Anthropic conversation with a web_search continues on an OpenAI-compati
   assert.ok(JSON.stringify(messages).includes("Stripe's PaymentIntents API exists"), "the prose is kept");
   assert.ok(messages.some((m) => m.tool_calls?.some((c) => c.function.name === "addFile")), "client tool calls are kept");
 
-  assert.ok(manifestOf(events), "the turn completed");
   const stored = (await store.get("conv"))!;
   assert.deepEqual(stored.messages.slice(0, before.length), before, "the stored Anthropic turn is untouched");
   assert.equal(stored.messages.filter((m) => m.role === "user").length, 2, "the new turn landed in the transcript");

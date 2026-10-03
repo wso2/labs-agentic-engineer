@@ -31,7 +31,7 @@ import {
   UsageOutbox,
   type OutboxLogLine,
 } from "../src/usage/outbox.js";
-import type { TurnRecord } from "../src/turns/turn-desk.js";
+import type { TurnRecord } from "../src/tools-socket/client.js";
 
 afterEach(() => mock.timers.reset());
 

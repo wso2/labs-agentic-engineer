@@ -37,7 +37,6 @@ export interface TurnGateInputs {
  * Room, so gating on the design flow alone would starve the architect of
  * `list_org_endpoints` and it would invent cross-project service names that
  * fail exact-name resolution at build.
- * @knipkeep wired in Task 3.12 (the turn start path gates web search)
  */
 export function designOrRoomTurn(turn: TurnGateInputs): boolean {
   return turn.flow === "design" || turn.roomScoped;
@@ -49,7 +48,6 @@ export function designOrRoomTurn(turn: TurnGateInputs): boolean {
  * external resource as a given instead of asking which service to use, so it
  * needs `list_external_resources` even with no Room. Web search stays a
  * design-turn affair.
- * @knipkeep wired in Task 3.12 (the turn start path loads the MCP tools)
  */
 export function catalogTurn(turn: TurnGateInputs): boolean {
   if (designOrRoomTurn(turn)) return true;

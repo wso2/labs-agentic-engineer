@@ -22,10 +22,8 @@
 // @aep/collab-doc (Y.Text diff-and-patch, md fragment reparse), presence as
 // an agent (`kind: "agent"` — the console renders square avatars, #86 d7).
 //
-// Access is REQUEST-SCOPED (#86 d7): the caller's bearer rides the turn
-// payload and the collab server's BFF oracle validates it exactly like a
-// browser join. The caller names the room and its ws URL (the org's pod Room).
-// TEMPORARY (phase 3 deletes): old agents joins the pod Room
+// The pod's turn start path joins through a `JoinRoom` adapter
+// (`turns/start-turn.ts`) that names the Room, its URL and the token.
 
 import {
   HocuspocusProvider,
@@ -86,6 +84,7 @@ export interface JoinRoomInput {
  * Join a room and resolve once the doc has synced (or reject on auth
  * failure / timeout — a room-scoped turn must not run against an empty
  * unsynced replica).
+ * @knipkeep wired in Task 3.13 (the pod's `JoinRoom` adapter over `tools.roomToken`)
  */
 export async function joinRoom(input: JoinRoomInput): Promise<RoomPeer> {
   // Explicit websocket sub-provider so the Node `ws` implementation is pinned

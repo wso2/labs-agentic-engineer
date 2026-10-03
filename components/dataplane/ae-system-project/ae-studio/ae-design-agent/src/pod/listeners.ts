@@ -17,19 +17,20 @@
  */
 
 /**
- * The pod-mode listeners (07 §8, 08 §2). The public port serves `/v1` behind
- * the user gate: a Platform IdP user token of the pod's org, never an M2M
- * token. The gate runs before route matching, so an unknown `/v1` path is
- * 401/403 before it is 404. Nothing else is served there. The health port
- * (not in the Service, not routed) serves `/healthz` (liveness) and
- * `/readyz` (200 once the public port is bound).
+ * The pod's listeners (07 §8/§9, 08 §2). The public port serves the `/v1`
+ * edge (`edge/routes.ts`) behind the Platform IdP adapter of `authenticate`:
+ * a user token of the pod's org, never an M2M token. Nothing else is served
+ * there. The health port (not in the Service, not routed) serves `/healthz`
+ * (liveness) and `/readyz` (200 once the public port is bound).
  */
 
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import express, { type ErrorRequestHandler, type RequestHandler, type Response } from "express";
+import express from "express";
 import type { JWTVerifyGetKey } from "jose";
-import { createVerifier, IdpUnavailableError, problem, UnauthenticatedError, userRule } from "@aep/platform-idp-auth";
+import { idpAuthenticate } from "../edge/authenticate.js";
+import { createApp, type EdgeDeps } from "../edge/routes.js";
+import { notFound } from "../edge/http.js";
 import type { PodConfig } from "./config.js";
 
 export interface PodListeners {
@@ -46,6 +47,8 @@ export interface PodLogLine {
 }
 
 export interface PodListenerDeps {
+  /** The `/v1` edge's services; the pod supplies `authenticate`. */
+  edge: Omit<EdgeDeps, "authenticate" | "log">;
   /** Replaces the IdP's remote JWKS (tests). */
   jwks?: JWTVerifyGetKey;
   /** Where log lines go; stdout unless a test captures them. */
@@ -55,79 +58,6 @@ export interface PodListenerDeps {
 const stdoutLog = (line: PodLogLine): void => {
   process.stdout.write(`${JSON.stringify(line)}\n`);
 };
-
-const BEARER = /^Bearer ([^\s]+)$/i;
-
-function sendProblem(res: Response, status: number, code: string, detail: string): void {
-  const p = problem(status, code, detail);
-  res.writeHead(p.status, { "content-type": "application/problem+json" }).end(JSON.stringify(p.body));
-}
-
-/** The `/v1` user gate. Details are fixed sentences: no token or claim value. */
-function userGate(cfg: PodConfig, deps: PodListenerDeps): RequestHandler {
-  const verify = createVerifier({
-    issuer: cfg.issuer,
-    jwksUrl: cfg.jwksUrl,
-    ...(deps.jwks ? { jwks: deps.jwks } : {}),
-  });
-  const kinds = [{ name: "user" as const, audiences: cfg.userAudiences }];
-  const pod = { orgId: cfg.orgId, orgHandle: cfg.orgHandle };
-  return (req, res, next) => {
-    const token = BEARER.exec(req.headers.authorization ?? "")?.[1];
-    if (!token) {
-      res.setHeader("www-authenticate", "Bearer");
-      sendProblem(res, 401, "unauthenticated", "a bearer token is required");
-      return;
-    }
-    verify(token, kinds).then(
-      (verified) => {
-        // Only the user kind is offered, so anything else is a wiring fault.
-        if (verified.kind !== "user") throw new Error("pod gate: unexpected token kind");
-        if (!userRule(verified.claims, pod)) {
-          sendProblem(res, 403, "org_mismatch", "the token is not for this organization");
-          return;
-        }
-        next();
-      },
-      (err: unknown) => {
-        if (err instanceof IdpUnavailableError) {
-          // No verdict on the token: the IdP's keys could not be fetched.
-          res.setHeader("retry-after", "5");
-          sendProblem(res, 503, "idp_unavailable", "the identity provider cannot be reached");
-          return;
-        }
-        if (!(err instanceof UnauthenticatedError)) return next(err);
-        res.setHeader("www-authenticate", 'Bearer error="invalid_token"');
-        sendProblem(res, 401, "unauthenticated", "the bearer token is not valid here");
-      },
-    ).catch(next);
-  };
-}
-
-const notFound: RequestHandler = (_req, res) => sendProblem(res, 404, "not_found", "no such route");
-
-/** Never express's default page: no stack, no message. */
-function internalError(log: (line: PodLogLine) => void): ErrorRequestHandler {
-  return (err, _req, res, next) => {
-    log({ msg: "pod_request_failed", source: "ae-design-agent" });
-    if (res.headersSent) {
-      next(err); // mid-response: let express tear the connection down
-      return;
-    }
-    sendProblem(res, 500, "internal", "");
-  };
-}
-
-function publicApp(cfg: PodConfig, deps: PodListenerDeps, log: (line: PodLogLine) => void): express.Express {
-  const app = express();
-  app.disable("x-powered-by");
-  app.use("/v1", userGate(cfg, deps));
-  // No /v1 operations yet: every admitted request is 404.
-  app.use("/v1", notFound);
-  app.use(notFound);
-  app.use(internalError(log));
-  return app;
-}
 
 function healthApp(ready: () => boolean): express.Express {
   const app = express();
@@ -139,7 +69,7 @@ function healthApp(ready: () => boolean): express.Express {
     const ok = ready();
     res.status(ok ? 200 : 503).type("text/plain").send(ok ? "OK\n" : "Service Unavailable\n");
   });
-  app.use(notFound);
+  app.use((_req, res) => notFound(res, "not_found"));
   return app;
 }
 
@@ -154,8 +84,14 @@ function listen(app: express.Express, port: number): Promise<Server> {
   });
 }
 
+/**
+ * Stops accepting, then ends open connections: an attached turn stream
+ * would otherwise hold `close` until its turn ends.
+ */
 function closeServer(server: Server): Promise<void> {
-  return new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+  const closed = new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+  server.closeAllConnections();
+  return closed;
 }
 
 function urlOf(server: Server): string {
@@ -167,7 +103,7 @@ function urlOf(server: Server): string {
  * rendered for (08 §7), so kubelet restarts the container until ESO has
  * refreshed it. The revisions are hashes of reference names, not secrets.
  */
-export async function startPodListeners(cfg: PodConfig, deps: PodListenerDeps = {}): Promise<PodListeners> {
+export async function startPodListeners(cfg: PodConfig, deps: PodListenerDeps): Promise<PodListeners> {
   if (cfg.expectedSecretRev !== cfg.secretRev) throw new Error("secret revision mismatch");
   const log = deps.log ?? stdoutLog;
   const line = (msg: PodLogLine["msg"], server?: Server): PodLogLine => ({
@@ -176,7 +112,18 @@ export async function startPodListeners(cfg: PodConfig, deps: PodListenerDeps = 
     ...(server ? { port: (server.address() as AddressInfo).port } : {}),
   });
   let ready = false;
-  const pub = publicApp(cfg, deps, log);
+  const pub = createApp({
+    ...deps.edge,
+    authenticate: idpAuthenticate({
+      issuer: cfg.issuer,
+      jwksUrl: cfg.jwksUrl,
+      userAudiences: cfg.userAudiences,
+      orgId: cfg.orgId,
+      orgHandle: cfg.orgHandle,
+      ...(deps.jwks ? { jwks: deps.jwks } : {}),
+    }),
+    log,
+  });
   const health = await listen(healthApp(() => ready), cfg.healthPort);
   log(line("pod_health_listening", health));
   let publicServer: Server;
@@ -193,8 +140,12 @@ export async function startPodListeners(cfg: PodConfig, deps: PodListenerDeps = 
     healthUrl: urlOf(health),
     async close() {
       ready = false;
-      await closeServer(publicServer);
-      await closeServer(health);
+      try {
+        await closeServer(publicServer);
+      } finally {
+        // The health port goes too, whatever the public close did.
+        await closeServer(health);
+      }
       log(line("pod_listeners_stopped"));
     },
   };
