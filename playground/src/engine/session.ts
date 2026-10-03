@@ -101,6 +101,13 @@ export async function openSession(projectDir: string, opts: OpenOptions = {}): P
       rmSync(socketDir, { recursive: true, force: true });
     },
   };
-  if (opts.fresh) await rotateThread(session);
+  if (opts.fresh) {
+    try {
+      await rotateThread(session);
+    } catch (err) {
+      await session.close();
+      throw err;
+    }
+  }
   return session;
 }

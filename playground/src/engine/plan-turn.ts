@@ -93,7 +93,11 @@ export async function runPlanTurn(session: TurnSession, taskContext: PlanContext
     return { completed: false, taskOps, parts, error: `plan turn refused: HTTP ${res.statusCode} ${text}` };
   }
   // The turn is started: its `/v1` stream is readable beside the socket's.
-  const rendering = streamParts(session, turnId, parts, opts.onPart);
+  // Settled at once, so a socket read that throws leaves no rejection behind.
+  const rendering = streamParts(session, turnId, parts, opts.onPart).then(
+    () => undefined,
+    (err: unknown) => (err instanceof Error ? err.message : String(err)),
+  );
   let result: ResultFrame | undefined;
   for await (const line of createInterface({ input: res, crlfDelay: Infinity })) {
     if (line.trim() === "") continue;
@@ -101,10 +105,7 @@ export async function runPlanTurn(session: TurnSession, taskContext: PlanContext
     if (frame.type === "task-op") taskOps.push({ op: frame.op, output: frame.output });
     if (frame.type === "result") result = frame;
   }
-  const renderError = await rendering.then(
-    () => undefined,
-    (err: unknown) => (err instanceof Error ? err.message : String(err)),
-  );
+  const renderError = await rendering;
   const completed = result?.status === "completed";
   const error = !result
     ? "the Turn socket closed without a result"
