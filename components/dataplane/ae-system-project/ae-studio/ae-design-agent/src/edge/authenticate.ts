@@ -20,7 +20,7 @@
  * Who is calling `/v1` (07 §8). `authenticate(req)` answers the verified
  * user, or throws `AuthError` with the status the gate answers. Two adapters:
  * the Platform IdP's here (`idpAuthenticate`: a user token of the pod's org,
- * never an M2M token) and the playground's dev verifier (Task 3.14).
+ * never an M2M token) and the playground's dev verifier (`playground/src/kit/auth.ts`).
  */
 
 import type { IncomingMessage } from "node:http";

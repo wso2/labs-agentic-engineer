@@ -17,10 +17,10 @@
  */
 
 /**
- * The task-generation driver (#356): the detached one-shot `task-plan` turn,
- * mirroring the playground's `tasksCommand` component-for-component (fresh
- * conversation uuid, `foldToDisk: false`, issues folded via `FsIssueStore`
- * only after the terminal manifest) — but through the eval's tracing capture.
+ * The task-generation driver (#356): the one-shot Plan turn on the Turn
+ * socket, mirroring the playground's `tasksCommand` component-for-component
+ * (issues folded via `FsIssueStore` only when the turn completed) — but
+ * through the eval's tracing capture.
  * No sim user: the section is one-shot by construction.
  */
 

@@ -208,7 +208,7 @@ export function tasksChecks(projectDir: string, run: TaskPlanRunResult): Structu
   }
 
   return report([
-    check("plan produced issues", (run.fold?.created.length ?? 0) + (run.fold?.updated.length ?? 0) > 0, run.error ?? "fold wrote nothing (no terminal manifest?)"),
+    check("plan produced issues", (run.fold?.created.length ?? 0) + (run.fold?.updated.length ?? 0) > 0, run.error ?? "fold wrote nothing (the Plan turn did not complete?)"),
     check("every component covered", components.length > 0 && uncovered.length === 0, uncovered.length ? `uncovered: ${uncovered.join(", ")}` : "no components"),
     check("dependsOn refs resolve", badRefs.length === 0, badRefs.join("; ")),
     check("dependsOn acyclic", isAcyclic(issues), "cycle in the component dependency graph"),

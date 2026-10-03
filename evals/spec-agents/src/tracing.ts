@@ -21,8 +21,8 @@
  *  - evalite traces (serve UI): one trace per turn;
  *  - `<name>.transcript.md`: the readable agent↔sim conversation;
  *  - `<name>.trace.json`: the raw, unabridged StreamPart stream.
- * Per-turn token usage rides the terminal manifest frame (#249) and is summed
- * into the run's cost report.
+ * Per-turn token usage is the sum of the turn's `finish-step` usage (each
+ * step's own), and is summed into the run's cost report.
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -61,8 +61,11 @@ export function collectPart(rec: TurnRecord, part: StreamPart): void {
   const p = part as { type: string; text?: string; toolName?: string; input?: unknown; usage?: { inputTokens?: number; outputTokens?: number } };
   if (p.type === "text-delta" && p.text) rec.agentText += p.text;
   if (p.type === "tool-call") rec.toolCalls.push({ toolName: p.toolName ?? "?", input: p.input });
-  if (p.type === "manifest" && p.usage) {
-    rec.usage = { inputTokens: p.usage.inputTokens ?? 0, outputTokens: p.usage.outputTokens ?? 0 };
+  if (p.type === "finish-step" && p.usage) {
+    rec.usage = {
+      inputTokens: (rec.usage?.inputTokens ?? 0) + (p.usage.inputTokens ?? 0),
+      outputTokens: (rec.usage?.outputTokens ?? 0) + (p.usage.outputTokens ?? 0),
+    };
   }
 }
 

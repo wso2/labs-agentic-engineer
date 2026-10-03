@@ -1,7 +1,8 @@
 # AGENTS.md — @aep/playground
 
 Root-level local-filesystem playground: runs the **real** engineering agent
-(in-process `createApp` boot) and the **real** coding agent (remote-worker
+(the design agent's `/v1` edge and Turn socket, booted in-process with the
+playground's adapters: `engine/agents-app.ts`) and the **real** coding agent (remote-worker
 `local.ts`) against a plain project directory. Purpose: edit a `SKILL.md`, a
 prompt, or a steer copy → rerun one phase → observe. No git, no GitHub, no
 Postgres, no cluster.
@@ -86,10 +87,12 @@ The idea lives in `<project>/specs/.agentic-engineer.toml` — the **project
 descriptor**, identical to what aep-api commits on project create. It marks the
 directory as an Agentic Engineer project and carries the idea `/start` builds
 requirements from. Being dot-prefixed it is stripped from every turn snapshot,
-so the agent can never read it: the idea reaches a turn ONLY as a FACT on the
-turn spec (`engine/turn-spec.ts`'s `startSpec`), exactly as aep-api attaches it
-in production. The wording it becomes is the agents service's
-(`components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/prompts/turn.ts`).
+so the agent can never read it: the idea reaches a turn ONLY through the
+project lookup (`engine/tools-fake.ts` reads it, as ae-studio-tools does in
+production), and the design agent puts it on the `/start` turn. Every line is
+sent verbatim; the design agent parses `/<command>` and composes the wording
+(`components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/turns/start-spec.ts`,
+`src/prompts/turn.ts`).
 
 `code` mirrors prod's milestone cycle (ADR-0011): the CLI never picks an issue
 or an order — the `aep` skill discovers its own working set from
@@ -101,7 +104,7 @@ No review/browse affordances: the playground auto-writes files and the user's
 editor (VS Code) is where browsing, diffs, and hand-edits happen — including
 authoring `issues/<n>.md` by hand (picked up automatically).
 
-Flags: `--idea`, `--target`, `--fresh` (rotate the general conversation),
+Flags: `--idea`, `--target`, `--fresh` (rotate the project's thread),
 `--silent`, `--restore`, `--yes` (headless coding consent), `--host` +
 `--api-key` (coding-run mode and its auth). Every verb exits nonzero on failure
 — the edit-skill → rerun loop is scriptable.
@@ -115,9 +118,10 @@ else inside the repo is refused.
 The **engineering** agent runs on a model connection named by the same
 `AEP_MODEL_*` variables a coding run reads (`AEP_MODEL_FORMAT`,
 `AEP_MODEL_BASE_URL`, `AEP_MODEL_AUTH_SCHEME`, `AEP_MODEL_API_KEY`, model
-`AEP_AGENT_MODEL`), sent on every turn as aep-api sends the organization's
-(`src/kit/model-connection.ts`, whose `capabilitiesOf` mirrors aep-api's
-`modelconn.CapabilitiesOf`); a design turn gets `web_search` as aep-api's does.
+`AEP_AGENT_MODEL`), handed to the in-process design agent as the pod gets the
+organization's (`src/kit/model-connection.ts`, whose `capabilitiesOf` mirrors
+aep-api's `modelconn.CapabilitiesOf`); a design turn gets `web_search` as the
+pod's does.
 With none of them set it requires `ANTHROPIC_API_KEY` (env, or
 `deployments/.env` if you keep one) and runs on Anthropic's own API. The
 **coding** agent is a Claude Code session and authenticates by mode: a docker run
@@ -296,10 +300,11 @@ is not in a playground run until `FORCE=1 make build-runner`.
 ## Fidelity contract
 
 The bytes reaching the model are production-identical: the same server code
-path (auth middleware, TurnGuard, workspace shape, snapshot filter, write
-gates), the same instruction composition (the playground sends a `TurnSpec` and
-the agents service composes it, exactly as it does for aep-api — there is one
-composer, so there is nothing to drift), the same skills materialization,
+path (the `/v1` edge and Turn socket, TurnStarter, TurnDesk, ThreadBook,
+snapshot layout and filter, write gates), the same instruction composition (the
+playground sends the line verbatim and the design agent parses and composes
+it, exactly as for the console — there is one composer, so there is nothing to
+drift), the same skills materialization,
 the same runner session options (`resolveBaseAgentConfig` defaults are
 unit-pinned in remote-worker), and and the same authored workflow skill
 out of the same library (only the GitHub-shaped passages are swapped, by
@@ -350,7 +355,10 @@ What it stands up and why it is shaped this way is
 | Divergence | Why | Parity path |
 |---|---|---|
 | `issues/` excluded from spec-turn snapshots | production spec turns never see tasks (they live in GitHub) | n/a — this IS parity in effect |
-| MCP off by default | no cluster; avoids a localhost mint attempt per turn | run aep-api locally + AEP_MCP_URL (its MCP resolver) |
+| MCP is the catalog stubs: the design tools are listed, every call answers "no platform catalog" | no cluster, no ae-studio-tools (`engine/tools-fake.ts`) | none locally; the pod's tools socket serves the org's catalog |
+| No Room: a turn's edits stream back and the playground folds them to disk | no ae-collab locally; the folder is the source of truth | the pod joins the Room (`collab/local-room.ts`) |
+| `/v1` admits the session's dev bearer secret (`kit/auth.ts`), on loopback | no Platform IdP locally | the pod's `idpAuthenticate` |
+| `filesChangedExternally` follows the pod's rule (the last turn's snapshot differs), so it is set after any writing turn and resets with each session | the design agent keeps the last turn's facts in memory | the pod's behaviour, per pod lifetime |
 | No CRT-annotation append, no lineage diffs in replans | platform resources/tags don't exist locally | manual edit; replan is still files-based |
 | Issue `key` lineage constant `"local"`; no spec/design tags | no builds/tags locally | dedupe across replans still works |
 | Design/tasks gates are playground-side UX | production has no server gate on the console's spec paths | advisory only |
@@ -362,8 +370,10 @@ What it stands up and why it is shaped this way is
 ## Layout
 
 `src/ports/` — the swapped adapters (FsSpecWorkspace, FileConversationStore,
-FsIssueStore). `src/engine/` — session boot, the §5 turn loop, instruction
-composition, coding-run spawn. `src/tui/` — clack screens; every screen is
+FsIssueStore). `src/engine/` — session boot (`agents-app.ts`: the design
+agent with the dev verifier, `tools-fake.ts`, the file store and the Turn
+socket), the §5 turn loop (`turn.ts`, `/v1`), Plan turns (`plan-turn.ts`, the
+Turn socket), the project's thread (`thread.ts`), coding-run spawn. `src/tui/` — clack screens; every screen is
 also a headless verb in `src/commands.ts`. `test/` — mock-model phase tests
 (no tokens) + the parity pins.
 
