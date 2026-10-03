@@ -180,16 +180,19 @@ components:
       name: owner
       in: path
       required: true
-      description: GitHub owner of the repository
+      description: GitHub owner of the repository (one path segment, the
+        store's rule)
       schema:
         type: string
+        pattern: ^[A-Za-z0-9._-]{1,200}$
     Repo:
       name: repo
       in: path
       required: true
-      description: GitHub repository name
+      description: GitHub repository name (one path segment, the store's rule)
       schema:
         type: string
+        pattern: ^[A-Za-z0-9._-]{1,200}$
   responses:
     Problem:
       description: RFC 9457 problem

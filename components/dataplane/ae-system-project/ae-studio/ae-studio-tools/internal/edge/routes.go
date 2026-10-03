@@ -28,6 +28,7 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/files"
 	"github.com/wso2/aep/ae-studio-tools/internal/github"
 	"github.com/wso2/aep/ae-studio-tools/internal/problem"
+	"github.com/wso2/aep/ae-studio-tools/internal/projects"
 )
 
 // Deps is what the public listener's routes need. main.go builds it from a
@@ -43,6 +44,11 @@ type Deps struct {
 	// References stores the reference documents aep-api uploads on
 	// /internal/v1 (the git engine).
 	References ReferenceStore
+	// Projects resolves a project to its repository through aep-api (the
+	// turns op checks the path against it).
+	Projects projects.Resolver
+	// Turns relays the turns aep-api starts to the agent's Turn socket.
+	Turns TurnRelay
 }
 
 // Routes is the public listener's mount table (ticket 04 §1): one row per
@@ -62,7 +68,10 @@ func Routes(d Deps) http.Handler {
 	internal := func(next http.Handler) http.Handler {
 		return accessLog(capOpBody(internalRouteFinder, internalBodyCaps, internalBodyBytes, m2mGate(next)))
 	}
-	internalSrv := internalServer{gh: d.GitHub, refs: d.References, githubOwner: d.Cfg.GitHubOwner}
+	internalSrv := internalServer{
+		gh: d.GitHub, refs: d.References, githubOwner: d.Cfg.GitHubOwner,
+		projects: d.Projects, turns: d.Turns,
+	}
 	nf := http.HandlerFunc(notFound)
 
 	mux := http.NewServeMux()

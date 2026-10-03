@@ -1,0 +1,4 @@
+{"type":"task-op","op":"plan","output":{"tasks":[{"title":"Add the greeting endpoint","story":1}]}}
+{"type":"keep-alive"}
+{"type":"task-op","op":"update","output":{"task":1,"status":"ready"}}
+{"type":"result","status":"completed"}

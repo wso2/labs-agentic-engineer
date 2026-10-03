@@ -27,6 +27,7 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/gen"
 	"github.com/wso2/aep/ae-studio-tools/internal/github"
 	"github.com/wso2/aep/ae-studio-tools/internal/problem"
+	"github.com/wso2/aep/ae-studio-tools/internal/projects"
 )
 
 // The /internal/v1 route group is served contract-first from
@@ -63,13 +64,19 @@ type internalServer struct {
 	// account (AE_GITHUB_OWNER), the only owner whose repos it stores for.
 	refs        ReferenceStore
 	githubOwner string
+	// projects resolves a turn's project to its repository; turns relays
+	// the turn to the agent (internal_turns.go).
+	projects projects.Resolver
+	turns    TurnRelay
 }
 
 var _ gen.StrictServerInterface = internalServer{}
 
 // internalHandler is the gated part of the group: validator → mux holding the
-// generated routes. A path or method the contract does not declare is 404 at
-// the validator; the mux's catch-all keeps any miss behind it a problem body.
+// generated routes, with start-repo-turn on its raw route ahead of them
+// (internal_turns.go). A path or method the contract does not declare is 404
+// at the validator; the mux's catch-all keeps any miss behind it a problem
+// body.
 func internalHandler(find routeFinder, s internalServer) http.Handler {
 	strict := gen.NewStrictHandlerWithOptions(s, nil, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  writeRequestError,
@@ -82,7 +89,10 @@ func internalHandler(find routeFinder, s internalServer) http.Handler {
 		ErrorHandlerFunc: writeRequestError,
 	})
 	mux.Handle(internalV1+"/", http.HandlerFunc(notFound))
-	return requestValidator(find, "validation_failed", mux)
+	routes := http.NewServeMux()
+	routes.HandleFunc(startRepoTurnPattern, s.startRepoTurn)
+	routes.Handle("/", mux)
+	return requestValidator(find, "validation_failed", routes)
 }
 
 // capOpBody bounds a request body before anything reads it, at the matched

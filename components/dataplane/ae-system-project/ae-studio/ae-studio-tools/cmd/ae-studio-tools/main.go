@@ -20,7 +20,9 @@
 // serves the public listener (edge.Routes), the Files socket
 // (edge.FilesSocketRoutes, ae-collab's), the MCP socket
 // (edge.MCPSocketRoutes, ae-design-agent's) and the health listener,
-// reporting ready once the public listener and both sockets are bound.
+// reporting ready once the public listener and both sockets are bound. The
+// turns aep-api starts on the public listener are relayed to
+// ae-design-agent's Turn socket (AE_TURN_SOCKET, turns.Relay).
 // SIGTERM (tini forwards it) drains the public and health listeners, keeps
 // both sockets serving through the drain window for ae-collab's final flush
 // and the agent's outbox drain (07 §10), shuts them down, then stops the
@@ -48,6 +50,7 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/projects"
 	"github.com/wso2/aep/ae-studio-tools/internal/repo"
 	"github.com/wso2/aep/ae-studio-tools/internal/repo/reaper"
+	"github.com/wso2/aep/ae-studio-tools/internal/turns"
 	"github.com/wso2/aep/ae-studio-tools/internal/webhook"
 )
 
@@ -66,7 +69,10 @@ const reaperStopTimeout = 2 * time.Second
 // step that must run beside them (Task 3.7's usage flush, at most 3 s) joins
 // that same concurrent group, inside socketShutdownTimeout.
 const (
-	// listenerDrainTimeout bounds the public and health listeners' drain.
+	// listenerDrainTimeout bounds the public and health listeners' drain. A
+	// relayed turn is a request in flight: the agent gets SIGTERM at the
+	// same moment and ends it with result failed/shutdown, which ends the
+	// relay inside this drain.
 	listenerDrainTimeout = 5 * time.Second
 	// socketDrainWindow is how long after SIGTERM the Files and MCP sockets
 	// keep accepting: ae-collab and ae-design-agent get SIGTERM at the same
@@ -120,7 +126,8 @@ func run() error {
 		slog.Error("aep_api_client_invalid")
 		return err
 	}
-	reader := files.Reader{Engine: engine, Projects: projects.NewAEPAPIResolver(aepAPI), Org: cfg.OrgHandle}
+	resolver := projects.NewAEPAPIResolver(aepAPI)
+	reader := files.Reader{Engine: engine, Projects: resolver, Org: cfg.OrgHandle}
 	// The MCP socket: remote-git in the pod with the gitpat for the org's own
 	// GitHub account, the other tools forwarded to aep-api as the publisher,
 	// the agent's room token minted as ae-studio-<org>, and the project and
@@ -154,12 +161,15 @@ func run() error {
 	public := &http.Server{
 		Addr: fmt.Sprintf(":%d", cfg.ListenPort),
 		Handler: edge.Routes(edge.Deps{
-			Cfg:      cfg,
-			Verifier: auth.NewVerifier(cfg.IDPIssuer, auth.NewJWKSCache(cfg.IDPJWKSURL)),
-			GitHub:   gh,
-			Webhook:  edge.WebhookHandler(cfg.WebhookSecret, webhook.Unwired()),
+			Cfg:        cfg,
+			Verifier:   auth.NewVerifier(cfg.IDPIssuer, auth.NewJWKSCache(cfg.IDPJWKSURL)),
+			GitHub:     gh,
+			Webhook:    edge.WebhookHandler(cfg.WebhookSecret, webhook.Unwired()),
 			Files:      reader,
 			References: engine,
+			Projects:   resolver,
+			// The turns aep-api starts run on the agent's Turn socket.
+			Turns: turns.Relay{Turns: turns.NewClient(cfg.TurnSocket)},
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

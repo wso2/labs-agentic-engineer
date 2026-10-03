@@ -27,6 +27,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -40,6 +41,8 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/projects"
 	"github.com/wso2/aep/ae-studio-tools/internal/projects/projectstest"
 	"github.com/wso2/aep/ae-studio-tools/internal/repo"
+	"github.com/wso2/aep/ae-studio-tools/internal/turns"
+	"github.com/wso2/aep/ae-studio-tools/internal/turns/turnstest"
 	"github.com/wso2/aep/ae-studio-tools/internal/webhook"
 )
 
@@ -69,7 +72,7 @@ type harness struct {
 	t           *testing.T
 	key         *rsa.PrivateKey
 	handler     http.Handler
-	logBuf      *bytes.Buffer
+	logBuf      *syncBuffer
 	githubCalls int
 	// projects is aep-api as the Files reader sees it; empty unless
 	// withProjects seeds it.
@@ -77,12 +80,18 @@ type harness struct {
 	// engine is the studio-data engine behind the Files reader and the
 	// reference store.
 	engine *repo.Engine
+	// server serves handler over real HTTP for the streaming tests
+	// (postStream), started on first use.
+	server *httptest.Server
 }
 
 // harnessDeps is what the options adjust before Routes is built.
 type harnessDeps struct {
 	gh       fakeGitHub
 	projects map[string]projects.Repository
+	// turnSocket is the Turn socket's path; a missing socket unless
+	// withTurnSocket names one.
+	turnSocket string
 }
 
 type harnessOpt func(*harnessDeps)
@@ -92,6 +101,11 @@ func withGitHubErr(err error) harnessOpt { return func(d *harnessDeps) { d.gh.er
 // withProjects is aep-api's project → repository answers.
 func withProjects(repos map[string]projects.Repository) harnessOpt {
 	return func(d *harnessDeps) { d.projects = repos }
+}
+
+// withTurnSocket points the turns relay at a fake Turn socket.
+func withTurnSocket(s *turnstest.Server) harnessOpt {
+	return func(d *harnessDeps) { d.turnSocket = s.Path() }
 }
 
 func withGitHubStatus(status int) harnessOpt {
@@ -117,7 +131,7 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 	t.Cleanup(idp.Close)
 
 	h := &harness{t: t, key: key}
-	deps := harnessDeps{gh: fakeGitHub{calls: &h.githubCalls}}
+	deps := harnessDeps{gh: fakeGitHub{calls: &h.githubCalls}, turnSocket: filepath.Join(t.TempDir(), "absent.sock")}
 	for _, o := range opts {
 		o(&deps)
 	}
@@ -141,6 +155,8 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 		Webhook:    WebhookHandler(testWebhookSecret, webhook.Unwired()),
 		Files:      files.Reader{Engine: engine, Projects: h.projects, Org: cfg.OrgHandle},
 		References: engine,
+		Projects:   h.projects,
+		Turns:      turns.Relay{Turns: turns.NewClient(deps.turnSocket)},
 	})
 	h.engine = engine
 	return h

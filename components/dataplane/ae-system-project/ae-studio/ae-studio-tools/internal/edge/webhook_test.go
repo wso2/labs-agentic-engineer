@@ -33,10 +33,11 @@ import (
 )
 
 // captureLogs points the default slog logger at a buffer of JSON lines for
-// the test's duration.
-func captureLogs(t *testing.T) *bytes.Buffer {
+// the test's duration. The buffer is safe for handlers that log after the
+// response (the turns relay).
+func captureLogs(t *testing.T) *syncBuffer {
 	t.Helper()
-	buf := &bytes.Buffer{}
+	buf := &syncBuffer{}
 	prev := slog.Default()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(buf, nil)))
 	t.Cleanup(func() { slog.SetDefault(prev) })
