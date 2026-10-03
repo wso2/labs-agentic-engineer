@@ -1177,84 +1177,6 @@ func (e TimelineEventEmitter) Valid() bool {
 	}
 }
 
-// Defines values for TurnConflictCode.
-const (
-	TurnConflictCodeConversationRotated TurnConflictCode = "conversation_rotated"
-	TurnConflictCodeGithubNotConnected  TurnConflictCode = "github_not_connected"
-	TurnConflictCodeRequirementsMissing TurnConflictCode = "requirements_missing"
-	TurnConflictCodeTurnInProgress      TurnConflictCode = "turn_in_progress"
-)
-
-// Valid indicates whether the value is a known member of the TurnConflictCode enum.
-func (e TurnConflictCode) Valid() bool {
-	switch e {
-	case TurnConflictCodeConversationRotated:
-		return true
-	case TurnConflictCodeGithubNotConnected:
-		return true
-	case TurnConflictCodeRequirementsMissing:
-		return true
-	case TurnConflictCodeTurnInProgress:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for TurnInputBodyIntent.
-const (
-	TurnInputBodyIntentChange  TurnInputBodyIntent = "change"
-	TurnInputBodyIntentDiscuss TurnInputBodyIntent = "discuss"
-)
-
-// Valid indicates whether the value is a known member of the TurnInputBodyIntent enum.
-func (e TurnInputBodyIntent) Valid() bool {
-	switch e {
-	case TurnInputBodyIntentChange:
-		return true
-	case TurnInputBodyIntentDiscuss:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for TurnInputMultipartIntent.
-const (
-	TurnInputMultipartIntentChange  TurnInputMultipartIntent = "change"
-	TurnInputMultipartIntentDiscuss TurnInputMultipartIntent = "discuss"
-)
-
-// Valid indicates whether the value is a known member of the TurnInputMultipartIntent enum.
-func (e TurnInputMultipartIntent) Valid() bool {
-	switch e {
-	case TurnInputMultipartIntentChange:
-		return true
-	case TurnInputMultipartIntentDiscuss:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for TurnStatusCode.
-const (
-	TurnStatusCodeOutputTruncated TurnStatusCode = "output_truncated"
-	TurnStatusCodeProviderLimit   TurnStatusCode = "provider_limit"
-)
-
-// Valid indicates whether the value is a known member of the TurnStatusCode enum.
-func (e TurnStatusCode) Valid() bool {
-	switch e {
-	case TurnStatusCodeOutputTruncated:
-		return true
-	case TurnStatusCodeProviderLimit:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for ValidationState.
 const (
 	ValidationStateAwaitingFix  ValidationState = "awaiting-fix"
@@ -1692,34 +1614,6 @@ type ConsumerDTO struct {
 	ProjectID     string `json:"projectId"`
 }
 
-// ConversationMessage One rehydrated message from a conversation's server-side history, sourced from the turn journal. The console's local chat log is display state; this is the durable record, and it is what makes a chip survive a reload.
-type ConversationMessage struct {
-	// Anchor What the user pointed at when they aimed this turn at part of a spec document (#666; console ADR-0024). It LOCATES — it never carries the selected content.
-	//
-	// The agent joins the spec collab room as a live peer, so between the selection and the turn starting the user may keep typing and a teammate may edit too: content captured at selection time is a photograph of a document that has since moved. The agent resolves these names against the CURRENT document instead. The same reasoning already reversed an embedded copy once — #252 Task 17 stripped a dependency's full JSON entry back to its name, because the agent reads the live entry in its own turn snapshot.
-	//
-	// Absent for an ordinary chat turn.
-	Anchor TurnAnchor `json:"anchor,omitempty"`
-
-	// Attachments File NAMES that went up with this message (#428) — never bytes, which are conversation-scoped model content the platform does not store (console ADR-0019). Absent for every message without attachments.
-	Attachments []string `json:"attachments,omitempty"`
-
-	// Author Who sent this message (#130 multi-user threads). Absent for the agent, and for history written before attribution existed.
-	Author ConversationMessageAuthor `json:"author,omitempty"`
-
-	// Content The message body as the journal recorded it. Deliberately untyped — a turn's content is model-shaped and varies by role, and this endpoint's job is to replay it, not to interpret it.
-	Content interface{} `json:"content,omitempty"`
-
-	// Role Who the message is from, as the journal recorded it.
-	Role string `json:"role"`
-}
-
-// ConversationMessageAuthor Who sent this message (#130 multi-user threads). Absent for the agent, and for history written before attribution existed.
-type ConversationMessageAuthor struct {
-	DisplayName string `json:"displayName"`
-	ID          string `json:"id"`
-}
-
 // CreateIssueRequest Issue to file on the project's repo. dedupeKey makes creation idempotent per open issue (label-encoded), for concurrent alert handlers. componentName and actionStatuses carry the SRE incident handoff context; they do not declare issue-create outcomes.
 type CreateIssueRequest struct {
 	// ActionStatuses Ordered per-action statuses from the incident handoff. A null entry is meaningful and preserves the action's position when it has no status.
@@ -1970,11 +1864,6 @@ type ExternalResourceDTO struct {
 
 // ExternalResourceDTOScope org — a Registered External resource, held by the organization; project — a project's own resource, listed with its project so the organization can promote it. Org-only readers (the design agent's catalog, Register's uniqueness check) never see project rows.
 type ExternalResourceDTOScope string
-
-// GetConversationOutputBody A conversation's history, oldest first. An empty list is a real answer — a known thread with no turns yet — never an error.
-type GetConversationOutputBody struct {
-	Messages []ConversationMessage `json:"messages"`
-}
 
 // GitProviderProjection defines model for GitProviderProjection.
 type GitProviderProjection = orgconfig.GitProviderProjection
@@ -2272,19 +2161,6 @@ type Project struct {
 	RepoURL string `json:"repoUrl,omitempty"`
 	Status  string `json:"status,omitempty"`
 	UID     string `json:"uid,omitempty"`
-}
-
-// ProjectConversationList The project's chat threads, newest first. One element today — the current thread; the array shape is the multi-conversation future's contract, so it grows without a rename.
-type ProjectConversationList struct {
-	Conversations []ProjectConversationView `json:"conversations"`
-}
-
-// ProjectConversationView One project chat thread (#430). The id is server-minted and stored against the project — the client never chooses it. Exactly one thread per project is current; turns addressed to a demoted id are refused with 409 conversation_rotated.
-type ProjectConversationView struct {
-	ConversationID string    `json:"conversationId"`
-	CreatedAt      time.Time `json:"createdAt"`
-	CreatedBy      string    `json:"createdBy,omitempty"`
-	Current        bool      `json:"current"`
 }
 
 // ProjectDependencyReadiness defines model for ProjectDependencyReadiness.
@@ -3094,13 +2970,8 @@ type SkillUpdateList struct {
 
 // SpecStage Spec-stage aggregate on ProjectStatus (#184). Approved/draft is derived, not stored — version set and not dirty = approved (vN); dirty = draft changes (vN+); no version = unpublished draft; exists false = no spec yet.
 type SpecStage struct {
-	// Agent Whether an agent is working on this project's spec right now, and how the last attempt ended (#562). `never-started` — no turn has EVER run for this project; `""` — a turn has run and the newest one completed; `working` — a turn is in flight; `failed` — the newest turn ended in failure and none has run since. `never-started` is distinct from `""` because the two need opposite treatment: one means the journey has not begun and the user needs a way to begin it, the other means it is under way between turns and offering to restart it would supersede a live interview. Derived from the newest `agent_turns` row for the project, which is what `exists`/`version`/`dirty` cannot say: all three read committed git, and a kickoff writes nothing until it lands. The overview's spec card needs it to say *Writing requirements* while the platform-fired `/start` runs, and the spec view needs it to explain an empty workspace instead of offering a file picker.
+	// Agent How the project's agent history stands (#562), derived from the newest finished `agent_turns` row (the finished-turn ledger). `never-started` — no turn has EVER run for this project; `""` — a turn has run and the newest one completed; `failed` — the newest turn ended in failure and none has finished since. `never-started` is distinct from `""` because the two need opposite treatment: one means the journey has not begun and the user needs a way to begin it, the other means it is under way between turns and offering to restart it would supersede a live interview. Whether a turn is running right now is the org's AE Studio pod's to say (its active-turn read), not this field's.
 	Agent string `json:"agent"`
-
-	// AgentFlow WHICH work the running turn is doing — the `/<skill>` token it runs under (`start`, `design`, `settle`, `amend`, …); `""` for plain chat or when nothing is running (#575). `agent` says an agent is working; this says on what, which the spec rail needs to pulse the right section.
-	// Without it the rail could only guess from which sections were still empty, and guessed wrongly in both directions: settling an assumption lit Design (the first empty section, though the work was requirements), and the moment a design run wrote its first file the pulse jumped to Validation while the rest of the design was still being written.
-	// Reported for the RUNNING turn only. A finished turn's flow says nothing about what is happening now, and the section states are derived from committed files from then on.
-	AgentFlow string `json:"agentFlow,omitempty"`
 
 	// Design Design files exist for the spec (gates the Spec view's design button).
 	Design bool `json:"design"`
@@ -3297,156 +3168,6 @@ type TimelineEvent struct {
 
 // TimelineEventEmitter Who produced the line — `subagent` for work the main agent fanned out with the Task tool, absent for the main agent itself. Absence is a positive fact, not an unknown.
 type TimelineEventEmitter string
-
-// TurnAnchor What the user pointed at when they aimed this turn at part of a spec document (#666; console ADR-0024). It LOCATES — it never carries the selected content.
-//
-// The agent joins the spec collab room as a live peer, so between the selection and the turn starting the user may keep typing and a teammate may edit too: content captured at selection time is a photograph of a document that has since moved. The agent resolves these names against the CURRENT document instead. The same reasoning already reversed an embedded copy once — #252 Task 17 stripped a dependency's full JSON entry back to its name, because the agent reads the live entry in its own turn snapshot.
-//
-// Absent for an ordinary chat turn.
-type TurnAnchor struct {
-	// File The authored spec file the selection resolves to. Always present — one view renders exactly one file, so a selection never spans two.
-	File string `json:"file"`
-
-	// Nodes The selected nodes, in document order. A list because both surfaces multi-select — a drag across three paragraphs, a shift-click across three operations.
-	Nodes []TurnAnchorNode `json:"nodes"`
-}
-
-// TurnAnchorNode One selected node — the name the agent resolves, and the name the transcript shows back to a user who can no longer see what they clicked.
-type TurnAnchorNode struct {
-	// Context Where the node sits, for a name that cannot stand alone. Markdown — the heading path, root-first (`Solution > Slack integration`). A structured view — the parent (`lunch-api`). Optional; a name that stands alone needs none.
-	Context string `json:"context,omitempty"`
-
-	// Kind The node's vocabulary word. It carries the whole difference between a name authored AS a name and a sentence pressed into service as one, which is what lets prose and structured views share this schema.
-	//
-	// Markdown uses structural terms — `paragraph`, `heading`, `list item` — deliberately NOT document-specific readings like `open question`, so an arbitrary `.md` produces the same shape as the PRD. A structured view uses its own terms (`operation`, `external dependency`). Kept as a raw string rather than a closed enum so a view can name its nodes without a contract change.
-	Kind string `json:"kind"`
-
-	// Name What the agent resolves and the transcript shows. A structured view supplies the node's own name (`POST /rounds`, `slack`). Markdown has none, so it supplies a BOUNDED excerpt of the block's RENDERED text — at most 80 characters, cut at a word boundary.
-	//
-	// The bound is the load-bearing part, not the number: an excerpt that grows with the selection is the carried content this schema exists to avoid. It only has to be unique enough to locate — the model receives the full block regardless, because the agent read it from the file.
-	//
-	// RENDERED, not source: the source carries `**bold**`, `*assumed*`, links and hard wraps the reader never saw, so a source-exact excerpt fails to match for most blocks. The agent matches on prose, tolerantly, and asks when a name is genuinely ambiguous rather than guessing. `maxLength` is the contract's ceiling against carry; the 80-character rule is the markdown client's.
-	Name string `json:"name"`
-}
-
-// TurnConflict create-turn 409 body. turn_in_progress carries the active turn's id; requirements_missing means the design use-case has no requirements to work from; conversation_rotated means the addressed thread is no longer the project's current one — re-resolve via list-conversations and retry. github_not_connected means a room-scoped turn's org has no AE Studio because it has not connected GitHub.
-type TurnConflict struct {
-	ActiveTurnID string           `json:"activeTurnId,omitempty"`
-	Code         TurnConflictCode `json:"code"`
-}
-
-// TurnConflictCode defines model for TurnConflict.Code.
-type TurnConflictCode string
-
-// TurnInputBody defines model for TurnInputBody.
-type TurnInputBody struct {
-	// Anchor What the user pointed at when they aimed this turn at part of a spec document (#666; console ADR-0024). It LOCATES — it never carries the selected content.
-	//
-	// The agent joins the spec collab room as a live peer, so between the selection and the turn starting the user may keep typing and a teammate may edit too: content captured at selection time is a photograph of a document that has since moved. The agent resolves these names against the CURRENT document instead. The same reasoning already reversed an embedded copy once — #252 Task 17 stripped a dependency's full JSON entry back to its name, because the agent reads the live entry in its own turn snapshot.
-	//
-	// Absent for an ordinary chat turn.
-	Anchor TurnAnchor `json:"anchor,omitempty"`
-
-	// Collab Room-scoped turn (#86 phase 4): the agent joins the project's spec collab room as a live peer, reads and edits the shared doc, and commits nothing to git.
-	Collab bool `json:"collab,omitempty"`
-
-	// Instruction User message / generation directive. `/<skill>` flow commands (`/start`, `/design`, …) are sent VERBATIM — the server expands them, attaches the flow's eager skills, and enriches `/start` with the captured project idea.
-	Instruction string `json:"instruction"`
-
-	// Intent What the user wants done with `anchor` — `change` rewrites the selected nodes in place, `discuss` opens the same selection as a grilling. Read by the agents service when it renders the anchor into the prompt; the two differ only in how that preamble is phrased.
-	//
-	// Deliberately a field and NOT a `/command` prefix on `instruction`: a command IS the user's message (the console adds nothing to a line they typed), and an anchored turn carries prose they wrote in their own words, so a prefix would put machinery in their voice. Mirrors the console's own resolve/reconsider intent, whose only job is the same. Absent for a turn with no anchor.
-	Intent TurnInputBodyIntent `json:"intent,omitempty"`
-
-	// Target Optional target (e.g. a doc type)
-	Target string `json:"target,omitempty"`
-}
-
-// TurnInputBodyIntent What the user wants done with `anchor` — `change` rewrites the selected nodes in place, `discuss` opens the same selection as a grilling. Read by the agents service when it renders the anchor into the prompt; the two differ only in how that preamble is phrased.
-//
-// Deliberately a field and NOT a `/command` prefix on `instruction`: a command IS the user's message (the console adds nothing to a line they typed), and an anchored turn carries prose they wrote in their own words, so a prefix would put machinery in their voice. Mirrors the console's own resolve/reconsider intent, whose only job is the same. Absent for a turn with no anchor.
-type TurnInputBodyIntent string
-
-// TurnInputMultipart The same turn input as `TurnInputBody`, sent as multipart so it can carry chat attachments (#428). The JSON form stays the canonical one — a message with no attachments MUST use it, and every existing caller is unaffected.
-//
-// Attachments are CONVERSATION-SCOPED MODEL CONTENT (console ADR-0019): the platform never writes them to disk and never commits them. They ride this request into the turn and are durable only as parts of the conversation's history, which is also what makes re-sending one free — the agents service dedupes by file name.
-//
-// Deliberately NOT the reference-document channel: `POST /projects/{name}/references` REPLACES a project's whole stored set, and the create view is the only door to it. A file attached here never becomes a project reference, even when the instruction is `/start`.
-type TurnInputMultipart struct {
-	// Anchor What the user pointed at when they aimed this turn at part of a spec document (#666; console ADR-0024). It LOCATES — it never carries the selected content.
-	//
-	// The agent joins the spec collab room as a live peer, so between the selection and the turn starting the user may keep typing and a teammate may edit too: content captured at selection time is a photograph of a document that has since moved. The agent resolves these names against the CURRENT document instead. The same reasoning already reversed an embedded copy once — #252 Task 17 stripped a dependency's full JSON entry back to its name, because the agent reads the live entry in its own turn snapshot.
-	//
-	// Absent for an ordinary chat turn.
-	Anchor TurnAnchor `json:"anchor,omitempty"`
-
-	// Collab As `TurnInputBody.collab`.
-	Collab bool `json:"collab,omitempty"`
-
-	// Files Chat attachments, two groups and the split matters downstream. Read NATIVELY as file parts: `.pdf`, and the four image media types the Messages API accepts — `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`. Read AS TEXT (sent as `text/plain`, the only text document type the Anthropic provider maps): `.md`, `.txt`, `.csv`, `.tsv`, `.json`, `.yaml`, `.yml`, `.xml`, `.html`, `.rst`. Office formats are not accepted — the models do not read them natively.
-	//
-	// Three caps, and all of them restate ONE number: the agents service already enforces a 20 MiB base64-ENCODED per-turn attachment budget (#384), past which it warns and skips. So at most 10 files, each at most 5 MiB, and at most 15 MiB of raw bytes in TOTAL — 15 MiB raw is 20 MiB encoded. The total is the load- bearing one: a per-file cap alone cannot hold the line, since ten 5 MiB files each pass it and together overrun the budget by 3x.
-	Files []openapi_types.File `json:"files,omitempty"`
-
-	// Instruction As `TurnInputBody.instruction`. Required — an attachment alone cannot start a turn, and the shared TurnSpec validator rejects an empty chat text.
-	Instruction string `json:"instruction"`
-
-	// Intent As `TurnInputBody.intent`. What the user wants done with `anchor` — `change` rewrites the selected nodes in place, `discuss` opens the same selection as a grilling. Read by the agents service when it renders the anchor into the prompt; the two differ only in how that preamble is phrased.
-	//
-	// Deliberately a field and NOT a `/command` prefix on `instruction`: a command IS the user's message (the console adds nothing to a line they typed), and an anchored turn carries prose they wrote in their own words, so a prefix would put machinery in their voice. Mirrors the console's own resolve/reconsider intent, whose only job is the same. Absent for a turn with no anchor.
-	Intent TurnInputMultipartIntent `json:"intent,omitempty"`
-
-	// Target As `TurnInputBody.target`.
-	Target string `json:"target,omitempty"`
-}
-
-// TurnInputMultipartIntent As `TurnInputBody.intent`. What the user wants done with `anchor` — `change` rewrites the selected nodes in place, `discuss` opens the same selection as a grilling. Read by the agents service when it renders the anchor into the prompt; the two differ only in how that preamble is phrased.
-//
-// Deliberately a field and NOT a `/command` prefix on `instruction`: a command IS the user's message (the console adds nothing to a line they typed), and an anchored turn carries prose they wrote in their own words, so a prefix would put machinery in their voice. Mirrors the console's own resolve/reconsider intent, whose only job is the same. Absent for a turn with no anchor.
-type TurnInputMultipartIntent string
-
-// TurnOutputBody defines model for TurnOutputBody.
-type TurnOutputBody struct {
-	// TurnID The started turn's id — poll/attach with it
-	TurnID string `json:"turnId"`
-}
-
-// TurnStatus One turn's lifecycle view (create-turn 202 → poll/attach).
-type TurnStatus struct {
-	// AuthorDisplayName The acting user's display name, paired with authorId.
-	AuthorDisplayName string `json:"authorDisplayName,omitempty"`
-
-	// AuthorID Who started this turn — EMAIL-anchored, matching the console's live author identity, which is what lets a client tell its own turn from a teammate's. Empty when no attributable human sent it (an M2M token, a minimal user token, or a turn dispatched before the display record was stored). Flat rather than a nested object so "absent" is one convention across this schema: the empty string, exactly as `instruction` uses it.
-	AuthorID string `json:"authorId,omitempty"`
-
-	// Code Why a failed turn failed, when the agents service could name it (reason `agent-error`): `provider_limit`, the model provider refused the turn's calls with HTTP 429 for longer than a wait (a `retry-after` of five minutes or more, or five minutes of 429 retries in total); `output_truncated`, the connection's output limit cut a file write off before it finished, so nothing was written. `message` carries the agents service's sentence for it. Absent on every other turn.
-	Code           TurnStatusCode `json:"code,omitempty"`
-	CommitSha      string         `json:"commitSha,omitempty"`
-	ConversationID string         `json:"conversationId"`
-	CreatedAt      time.Time      `json:"createdAt"`
-
-	// Host `code: provider_limit` only: the host of the model endpoint whose limit stopped the turn (`ollama.com`), as the turn's connection named it. Display only — what the reader's sentence names.
-	Host string `json:"host,omitempty"`
-
-	// Instruction What this turn's DISPLAY record says — the transcript line for the message that started it. Present so a client attaching to a turn it did not send can render the sender's message immediately, instead of narration under a blank space: the conversation store persists a turn's transcript only when the turn ENDS, so a history read mid-turn cannot supply it. Empty on turns dispatched before this field existed. Not the model's prompt — the agents service composes that from the turn spec and it never crosses this boundary.
-	Instruction string   `json:"instruction,omitempty"`
-	Message     string   `json:"message,omitempty"`
-	NoChanges   bool     `json:"noChanges,omitempty"`
-	Paths       []string `json:"paths,omitempty"`
-	Reason      string   `json:"reason,omitempty"`
-
-	// ResetAt `code: provider_limit` only: when the provider said its limit resets. Absent when it stated no reset, so a reader is told to try again later rather than given a time nobody promised.
-	ResetAt *time.Time `json:"resetAt,omitempty"`
-
-	// Status running, completed, failed
-	Status    string    `json:"status"`
-	TurnID    string    `json:"turnId"`
-	UpdatedAt time.Time `json:"updatedAt"`
-	UseCase   string    `json:"useCase"`
-}
-
-// TurnStatusCode Why a failed turn failed, when the agents service could name it (reason `agent-error`): `provider_limit`, the model provider refused the turn's calls with HTTP 429 for longer than a wait (a `retry-after` of five minutes or more, or five minutes of 429 retries in total); `output_truncated`, the connection's output limit cut a file write off before it finished, so nothing was written. `message` carries the agents service's sentence for it. Absent on every other turn.
-type TurnStatusCode string
 
 // TurnUsage The token usage RunEvent carries: the folded aggregate every reader already consumes, plus the per-model split the platform prices against its rate table. It is Usage with one field added, rather than Usage itself, because `models` is meaningful only on a producer's own report of what it just spent — the project and cycle roll-ups that Usage serves sum already-stamped rows and have nothing to break down.
 // The split is not a nicety. Cost is stamped per model, from that model's own rate row, so an aggregate whose `model` is "" (see below) cannot be priced at all — and a real coding run regularly touches a second model, both because the runtime reaches for small-model helpers of its own and because a lead is expected to pick the model for the job. Without `models` those runs are simply unpriceable, which is the defect this schema exists to close (#291).
@@ -3678,15 +3399,6 @@ type ListTasksParams struct {
 // ListTasksParamsState defines parameters for ListTasks.
 type ListTasksParamsState string
 
-// StreamTurnParams defines parameters for StreamTurn.
-type StreamTurnParams struct {
-	// From Replay from this absolute event index (wins over Last-Event-ID)
-	From *int `form:"from,omitempty" json:"from,omitempty"`
-
-	// LastEventID SSE auto-reconnect resume cursor: the last frame id the client saw; replay resumes after it. Opaque per the SSE spec — non-numeric values are ignored (full replay). The from query param wins when both are present.
-	LastEventID string `json:"Last-Event-ID,omitempty"`
-}
-
 // ListRcaAgentReportsParams defines parameters for ListRcaAgentReports.
 type ListRcaAgentReportsParams struct {
 	// Cursor Opaque pagination cursor
@@ -3721,12 +3433,6 @@ type UpdateExternalResourceJSONRequestBody = RegisterExternalResourceRequest
 
 // CreateProjectJSONRequestBody defines body for CreateProject for application/json ContentType.
 type CreateProjectJSONRequestBody = CreateProjectRequest
-
-// CreateTurnJSONRequestBody defines body for CreateTurn for application/json ContentType.
-type CreateTurnJSONRequestBody = TurnInputBody
-
-// CreateTurnMultipartRequestBody defines body for CreateTurn for multipart/form-data ContentType.
-type CreateTurnMultipartRequestBody = TurnInputMultipart
 
 // BuildProjectJSONRequestBody defines body for BuildProject for application/json ContentType.
 type BuildProjectJSONRequestBody = BuildRequest

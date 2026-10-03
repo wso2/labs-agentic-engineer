@@ -33,7 +33,7 @@ const (
 	// ComponentTypeAIAgent is the ai-agent component kind: its behaviour is an
 	// `agent.afm.md` document (specs/design/components/<name>/agent.afm.md)
 	// instead of a coding-agent-authored openapi.yaml/workload. Write-time
-	// shape validation lives in internal/platform/agentfold (afmgate.go);
+	// shape validation is the agent's (agent-stream agent-afm-schema.ts);
 	// cross-file resolution of its `x-aep.tools.openapi` allow-lists against
 	// its declared dependencies lives in derive_agent_tools.go.
 	ComponentTypeAIAgent = "ai-agent"
@@ -86,7 +86,7 @@ type DesignComponent struct {
 	// component's behaviour, the same role OpenAPISpec plays for a service.
 	// Filled by AssembleDesign for ai-agent components only, never a
 	// design.json key, and never re-emitted by SplitDesign: the document is
-	// agent-authored (write-gated by agentfold's afmgate.go), not a platform
+	// agent-authored (write-gated by agent-stream's agent-afm-schema.ts), not a platform
 	// derivation, so nothing here ever writes it back. Internal to the spec
 	// domain (no external consumer needs the raw markdown yet), hence json:"-".
 	AgentAFM string `json:"-"`

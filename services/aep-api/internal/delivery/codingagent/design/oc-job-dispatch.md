@@ -93,18 +93,19 @@ flowchart LR
   J -->|local HTTP| API
 ```
 
-The **design agent** is a different caller, not a second environment:
-ClusterIP `AEP_API_INTERNAL_BASE_URL` with a BFF MCP token (`mcpForTurn`,
-`aud=aep-api-mcp`). `AgentsScopedVerifier` dual-accepts that token **or** a
-publisher JWT because those are two actors.
+A BFF MCP token (`aud=aep-api-mcp`) is a different caller, not a second
+environment: today only the local playground mints one
+(`dependencies/mcpdiscovery`; aep-api's own turn orchestration, which minted
+one per design turn, is gone with phase 3). `AgentsScopedVerifier`
+dual-accepts that token **or** a publisher JWT because those are two actors.
 
 ```mermaid
 flowchart TB
   subgraph job [Coding-agent Job]
     J[runner] -->|publisher JWT| R["/internal/v1 refresh + MCP"]
   end
-  subgraph design [Design agent]
-    D[agents service] -->|BFF MCP token| C["ClusterIP /internal/v1/mcp"]
+  subgraph design [Playground]
+    D[playground CLI] -->|BFF MCP token| C["/internal/v1/mcp"]
   end
 ```
 

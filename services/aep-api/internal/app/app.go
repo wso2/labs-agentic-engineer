@@ -34,7 +34,6 @@ import (
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/clients/agentmanager"
-	"github.com/wso2/aep/aep-api/internal/clients/agentsvc"
 	"github.com/wso2/aep/aep-api/internal/clients/observability"
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
@@ -421,69 +420,13 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	skillMutationSvc := spec.NewSkillMutationService(skillSvc)
 	skillImportSvc := spec.NewSkillImportService(skillSvc)
 
-	// File-mutation agents service (components/dataplane/ae-system-project/ae-studio/ae-design-agent) — the requirements/design/
-	// chat generation and task-planning flows. Plain HS256 M2M bearer; the
-	// org's model connection is resolved per turn: the key is forwarded as
-	// X-Model-Key, the connection and model in the turn body.
-	agentsvcClient := agentsvc.New(agentsvc.Config{
-		BaseURL:  cfg.AgentsSvc.BaseURL,
-		Secret:   cfg.AgentsSvc.JWTSecret,
-		Audience: cfg.AgentsSvc.JWTAudience,
-		Issuer:   cfg.AgentsSvc.JWTIssuer,
-	})
-
 	// Files API — generic specs/-scoped, GitHub-at-HEAD reads + atomic apply
 	// (commits straight to main under CAS retry). No local working tree.
 	filesSvc := spec.NewFilesService(repoService, gitOpsService)
 
-	// Unified genai committed-truth turn surface (shared-workspace-volume). It
-	// resolves the org's model connection (no platform fallback), snapshots the
-	// project repo + the org's _skills repo onto the workspace mount, and
-	// runs turns detached behind the durable agent_turns guard. Skills are
-	// NOT pushed inline anymore — agents reads the full catalog (embedded
-	// flow skills seeded into _skills + org skills) from the SkillsRef
-	// snapshot.
-	agentLLMForTurns := func(ctx context.Context, orgID string) (spec.AgentLLM, error) {
-		conn, key, ok, err := modelConnections.Effective(ctx, orgID)
-		if err != nil {
-			return spec.AgentLLM{}, err
-		}
-		if !ok {
-			return spec.AgentLLM{}, nil // no key → a pre-202 4xx
-		}
-		return spec.AgentLLM{Key: key, Connection: conn}, nil
-	}
-	// SkillsRef source for genai + task-plan turns. Reconcile so platform
-	// skills shipped after first provision land before Head/Ensure.
-	skillsRepoForTurns := spec.SkillsRepoForTurns(skillSvc, repoService)
+	// The finished-turn ledger: the org pods record every turn they ran into
+	// it; the status poll, the build gate's design baseline and kickoff read it.
 	turnRepo := spec.NewTurnRepository(db, in.RateStamper)
-	turnBroker := spec.NewTurnBroker()
-	genaiDeps := spec.ServiceDeps{
-		Repos:      repoService,
-		Git:        gitOpsService,
-		LLM:        agentLLMForTurns,
-		Client:     agentsvcClient,
-		Turns:      turnRepo,
-		Broker:     turnBroker,
-		Snapshots:  workspaceEngine,
-		SkillsRepo: skillsRepoForTurns,
-		// #430: the project-scoped thread store — resolve/rotate the current
-		// conversation, and the conversation_rotated admission fence on turns.
-		Conversations: spec.NewConversationRepository(db),
-		// A room-scoped turn's Room is the org's AE Studio pod Room.
-		Rooms: aeStudioRooms{status: aeStudio}, // TEMPORARY (phase 3 deletes): old agents joins the pod Room
-	}
-	// MCP discovery on design-generation turns (dependency-management Phase 5):
-	// the BFF mints a short-lived aud:aep-api-mcp token per turn so the agents
-	// service can call back into /internal/v1/mcp. Wired only when the token
-	// manager exists (a nil *TaskTokenManager would satisfy the interface but
-	// panic on use) AND the internal base URL is configured; otherwise the
-	// additive `mcp` field is simply omitted.
-	if taskTokens != nil && cfg.AEPInternalBaseURL != "" {
-		genaiDeps.MCPTokens = taskTokens
-		genaiDeps.MCPBaseURL = cfg.AEPInternalBaseURL
-	}
-	genaiSvc := spec.NewService(genaiDeps)
 
 	// Services. componentService is constructed before configService so
 	// configService can call back into it to mirror env-var edits onto
@@ -1101,11 +1044,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	}
 	params.Deps.Organization = orgHandlers
 
-	// spec — the Spec Authoring & Versioning domain (P4): genai turns, files,
-	// tag reads, the org skills library, and the AE Studio descriptor. Its
+	// spec — the Spec Authoring & Versioning domain (P4): reference uploads,
+	// tag reads, the org skills library, and the dependency definition writes. Its
 	// slice handlers embed straight into the edge's composite.
 	specHandlers, err := spechttpapi.New(spec.Deps{
-		GenAI:       genaiSvc,
 		References:  studioTools,
 		Repos:       repoService,
 		Kickoff:     kickoff,
@@ -1645,10 +1587,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		// once per cfg.CredentialValidatorInterval (default 24h), probes GitHub,
 		// flags identity drift on confirmed unauthorised secrets.
 		credValidator,
-		// agent_turns crash-safety sweep (design D17): a stale-heartbeat
-		// running turn is failed and the D18 one-active guard released;
-		// locally-buffered streams get the terminal event.
-		spec.NewTurnSweeper(turnRepo, turnBroker, 0, 0),
 		// Moves each org's model connection key off its Anthropic-era storage
 		// names: migrate's phase20 copied the bytes at boot, and this switches
 		// the SM-API mirror at boot; the periodic passes retire the old copies
@@ -1751,9 +1689,6 @@ func computeDegradations(cfg config.Config, secretsDelivery bool) []Degradation 
 	}
 	if !secretsDelivery {
 		off("secrets-delivery", "SecretsProvider not injected — secret writes + external-secret cleanup disabled")
-	}
-	if cfg.AEPInternalBaseURL == "" {
-		off("mcp-discovery", "AEP_API_INTERNAL_BASE_URL not set — design-turn MCP discovery omitted")
 	}
 	thunderBase := cfg.ThunderAdmin.BaseURL
 	if thunderBase == "" {

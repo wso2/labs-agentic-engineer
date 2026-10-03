@@ -161,28 +161,28 @@ func (s *Service) writeTarget(ctx context.Context, orgName, projectName string) 
 	return s.writeTargets.Resolve(ctx, orgName, projectName)
 }
 
-// Spec-stage agent activity (the spec.agent contract enum).
+// Spec-stage agent history (the spec.agent contract enum). Whether a turn is
+// running right now is the org's AE Studio pod's to say (the console reads
+// its active turn); the ledger holds finished turns only.
 const (
 	specAgentIdle         = ""
-	specAgentWorking      = "working"
 	specAgentFailed       = "failed"
 	specAgentNeverStarted = "never-started"
 )
 
-// specAgentState folds the project's newest turn row into the contract enum.
+// specAgentState folds the project's newest finished turn into the contract
+// enum.
 //
 // A COMPLETED turn reads as idle, not as "done": whatever it produced is in
 // git, so exists/version/dirty already describe it, and a second vocabulary
 // for the same fact would let the two disagree. Only the states git cannot see
-// survive — a turn in flight, a turn that died leaving nothing behind, and no
-// turn at all.
+// survive — a turn that died leaving nothing behind, and no turn at all.
 //
 // NO ROW is its own state rather than more idle. The two look identical in git
 // and need opposite handling: a project that has never run a turn needs a way
 // to begin, while one merely between turns is mid-interview and must not be
-// offered a restart that would supersede it. Collapsing them left a project
-// whose dispatch never landed showing a spinner for work that was never
-// coming, with nothing to click.
+// offered a restart that would supersede it.
+//
 // specAgentOf guards the fold on the source being WIRED. Without it an
 // unwired service would report `never-started` — a positive claim about turn
 // history it has no way to make — where the documented degradation is the
@@ -194,27 +194,11 @@ func specAgentOf(source specTurnRows, newest *spec.AgentTurn) string {
 	return specAgentState(newest)
 }
 
-// runningFlowOf reports WHICH work is in flight, for the spec rail to pulse the
-// right section (#575).
-//
-// Only a RUNNING turn has one. A finished turn's flow says nothing about what is
-// happening now, and reporting it would leave the rail pulsing whatever the last
-// run happened to be long after it ended.
-func runningFlowOf(newest *spec.AgentTurn) string {
-	if newest == nil || newest.Status != spec.TurnStatusRunning {
-		return ""
-	}
-	return newest.Flow
-}
-
 func specAgentState(newest *spec.AgentTurn) string {
-	if newest == nil {
+	switch {
+	case newest == nil:
 		return specAgentNeverStarted
-	}
-	switch newest.Status {
-	case spec.TurnStatusRunning:
-		return specAgentWorking
-	case spec.TurnStatusFailed:
+	case newest.Status == spec.TurnStatusFailed:
 		return specAgentFailed
 	default:
 		return specAgentIdle
@@ -325,7 +309,6 @@ func (s *Service) populateStages(ctx context.Context, orgName, projectName strin
 		Dirty:          snap.SpecDirty,
 		Design:         snap.HasDesign,
 		Agent:          specAgentOf(s.specTurns, newestTurn),
-		AgentFlow:      runningFlowOf(newestTurn),
 		DesignOutdated: outdated,
 	}
 	applyFlatArtifactFields(status, snap)

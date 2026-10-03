@@ -100,12 +100,6 @@ func Load() (Config, error) {
 			ClientSecret: r.readOptionalString("OBSERVER_OAUTH_CLIENT_SECRET", ""),
 			HostHeader:   r.readOptionalString("OBSERVER_OAUTH_HOST_HEADER", ""),
 		},
-		AgentsSvc: AgentsSvcConfig{
-			BaseURL:     r.readOptionalString("AGENTS_SVC_BASE_URL", ""),
-			JWTSecret:   r.readOptionalString("AGENTS_SVC_JWT_SECRET", ""),
-			JWTAudience: r.readOptionalString("AGENTS_SVC_JWT_AUDIENCE", "agents-service"),
-			JWTIssuer:   r.readOptionalString("AGENTS_SVC_JWT_ISSUER", "aep-bff"),
-		},
 		Workspace: WorkspaceConfig{
 			Root:           r.readOptionalString("AEP_WORKSPACE_ROOT", "/workspaces"),
 			ReapInterval:   r.readOptionalDuration("AEP_WORKSPACE_REAP_INTERVAL", 5*time.Minute),
@@ -120,8 +114,7 @@ func Load() (Config, error) {
 			DiskHighPct:       r.readOptionalInt("AEP_WORKSPACE_DISK_HIGH_PCT", 85),
 			DiskLowPct:        r.readOptionalInt("AEP_WORKSPACE_DISK_LOW_PCT", 70),
 		},
-		AgentPlatformURL:   r.readOptionalString("AGENT_PLATFORM_URL", ""),
-		AEPInternalBaseURL: r.readOptionalString("AEP_API_INTERNAL_BASE_URL", ""),
+		AgentPlatformURL: r.readOptionalString("AGENT_PLATFORM_URL", ""),
 		ServiceAuth: ServiceAuthConfig{
 			TokenURL:     r.readOptionalString("SERVICE_AUTH_TOKEN_URL", ""),
 			ClientID:     r.readOptionalString("SERVICE_AUTH_CLIENT_ID", ""),

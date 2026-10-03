@@ -31,11 +31,9 @@ import (
 )
 
 // snapshotEvictMinAge is the floor age a snapshot must reach before quota/LRU
-// eviction may trash it. An in-flight turn reads its base/_skills snapshot
-// lazily for the whole run, so anything younger than the turn runner's
-// detached timeout could still be feeding a live turn. It is set to that
-// timeout (turnRunTimeout in internal/spec/turn_runner.go, 30m), or
-// 30m, whichever is larger. The mirror's current-HEAD snapshot is protected
+// eviction may trash it: 30m, the longest a reader of a snapshot was ever
+// allowed to run (the retired in-process turn runner's timeout). The mirror's
+// current-HEAD snapshot is protected
 // unconditionally (isHead) regardless of age; mirrors themselves stay
 // evictable.
 const snapshotEvictMinAge = 30 * time.Minute

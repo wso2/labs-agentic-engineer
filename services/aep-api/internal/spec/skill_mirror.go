@@ -102,9 +102,8 @@ func audienceIncludesCoding(audience []string) bool {
 // resolvePinnedSkills reads every component's `skillsPinned` at the project
 // repo ref's tree and returns their union as a set. This is a plain
 // Workspace read (its own flock), always called BEFORE the SyncProjectSkills
-// Mutate opens — Workspace forbids nested calls (turn_runner.go's
-// no-nested-Workspace-calls rule: a read's flock and Mutate's exclusive lock
-// would self-deadlock on the same repo).
+// Mutate opens — Workspace forbids nested calls (a read's flock and Mutate's
+// exclusive lock would self-deadlock on the same repo).
 //
 // No design yet (a brand-new project repo has no specs/design/ tree at all)
 // reads back as zero files, hence zero pins — not an error. A malformed

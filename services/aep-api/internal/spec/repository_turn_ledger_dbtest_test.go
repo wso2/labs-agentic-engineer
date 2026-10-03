@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 
 	"github.com/wso2/aep/aep-api/internal/contracts"
 	"github.com/wso2/aep/aep-api/internal/platform/dbtest"
@@ -60,38 +61,42 @@ func finishedTurn(project string) spec.TurnRecord {
 	}
 }
 
-func countTurns(t *testing.T, repo spec.TurnRepository, org, project, id string) int {
+// getTurn reads org's ledger row for the turn in project; nil when there is
+// none.
+func getTurn(t *testing.T, db *gorm.DB, org, project, id string) *spec.AgentTurn {
 	t.Helper()
-	row, err := repo.Get(context.Background(), org, project, id)
-	if err != nil {
-		t.Fatalf("Get: %v", err)
+	var rows []spec.AgentTurn
+	if err := db.Where("org_id = ? AND project_id = ? AND id = ?", org, project, id).Find(&rows).Error; err != nil {
+		t.Fatalf("read turn: %v", err)
 	}
-	if row == nil {
-		return 0
+	if len(rows) == 0 {
+		return nil
 	}
-	return 1
+	return &rows[0]
 }
 
 // A record lands as one row whatever the delivery count: the sender retries a
 // batch whose answer it lost, and one POST may carry the same turn twice.
 func TestRecordFinished_IdempotentOnTurnID(t *testing.T) {
 	t.Parallel()
-	repo := spec.NewTurnRepository(dbtest.New(t), nil)
+	db := dbtest.New(t)
+	repo := spec.NewTurnRepository(db, nil)
 	ctx := context.Background()
 	rec := finishedTurn("p1")
 
-	if _, err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{rec, rec}); err != nil {
+	if err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{rec, rec}); err != nil {
 		t.Fatalf("RecordFinished (duplicate in one batch): %v", err)
 	}
 	changed := rec
 	changed.Status = "failed"
-	if _, err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{changed}); err != nil {
+	if err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{changed}); err != nil {
 		t.Fatalf("RecordFinished (resend): %v", err)
 	}
-	if n := countTurns(t, repo, "o1", "p1", rec.TurnID); n != 1 {
-		t.Fatalf("rows for the turn = %d, want 1", n)
+	var n int64
+	if err := db.Model(&spec.AgentTurn{}).Where("org_id = ? AND id = ?", "o1", rec.TurnID).Count(&n).Error; err != nil || n != 1 {
+		t.Fatalf("rows for the turn = (%d, %v), want 1", n, err)
 	}
-	row, _ := repo.Get(ctx, "o1", "p1", rec.TurnID)
+	row := getTurn(t, db, "o1", "p1", rec.TurnID)
 	if row.Status != "completed" {
 		t.Fatalf("status = %q: a resend must keep the stored record, not overwrite it", row.Status)
 	}
@@ -107,7 +112,8 @@ func TestRecordFinished_IdempotentOnTurnID(t *testing.T) {
 // Every field of the record is stored where the ledger's readers look for it.
 func TestRecordFinished_StoresTheRecord(t *testing.T) {
 	t.Parallel()
-	repo := spec.NewTurnRepository(dbtest.New(t), nil)
+	db := dbtest.New(t)
+	repo := spec.NewTurnRepository(db, nil)
 	ctx := context.Background()
 	rec := finishedTurn("p1")
 	rec.Kind = spec.TurnKindPlan
@@ -117,12 +123,12 @@ func TestRecordFinished_StoresTheRecord(t *testing.T) {
 	ctxTokens := int64(42_000)
 	rec.ContextTokens = &ctxTokens
 
-	if _, err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{rec}); err != nil {
+	if err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{rec}); err != nil {
 		t.Fatalf("RecordFinished: %v", err)
 	}
-	row, err := repo.Get(ctx, "o1", "p1", rec.TurnID)
-	if err != nil || row == nil {
-		t.Fatalf("Get = (%+v, %v)", row, err)
+	row := getTurn(t, db, "o1", "p1", rec.TurnID)
+	if row == nil {
+		t.Fatal("the record was not stored")
 	}
 	if row.OrgID != "o1" || row.ProjectID != "p1" || row.ConversationID != rec.ConversationID {
 		t.Errorf("identity = (%q, %q, %q)", row.OrgID, row.ProjectID, row.ConversationID)
@@ -130,10 +136,6 @@ func TestRecordFinished_StoresTheRecord(t *testing.T) {
 	if row.Kind != spec.TurnKindPlan || row.Flow != "design" || row.Status != "failed" ||
 		row.Reason != "agent-error" || row.Code != "provider_limit" {
 		t.Errorf("outcome = kind %q flow %q status %q reason %q code %q", row.Kind, row.Flow, row.Status, row.Reason, row.Code)
-	}
-	// Until Task 3.21 drops use_case (NOT NULL), it is written from the kind.
-	if row.UseCase != "task-plan" {
-		t.Errorf("use_case = %q, want task-plan for a plan turn", row.UseCase)
 	}
 	if row.BaseRef != rec.BaseRef || row.SkillsRef != rec.SkillsRef {
 		t.Errorf("refs = (%q, %q)", row.BaseRef, row.SkillsRef)
@@ -157,28 +159,6 @@ func TestRecordFinished_StoresTheRecord(t *testing.T) {
 	}
 }
 
-// The use_case a kind writes until Task 3.21 drops the column (Q-9).
-func TestRecordFinished_UseCaseFromKind(t *testing.T) {
-	t.Parallel()
-	repo := spec.NewTurnRepository(dbtest.New(t), nil)
-	ctx := context.Background()
-	for kind, want := range map[string]string{
-		spec.TurnKindBrowser: "general",
-		spec.TurnKindKickoff: "general",
-		spec.TurnKindPlan:    "task-plan",
-	} {
-		rec := finishedTurn("p-" + kind)
-		rec.Kind = kind
-		if _, err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{rec}); err != nil {
-			t.Fatalf("RecordFinished(%s): %v", kind, err)
-		}
-		row, _ := repo.Get(ctx, "o1", "p-"+kind, rec.TurnID)
-		if row == nil || row.Kind != kind || row.UseCase != want {
-			t.Errorf("%s: row = %+v, want use_case %q", kind, row, want)
-		}
-	}
-}
-
 // cost_usd is stamped at ingest from the (host, model) rate in force (07 §7);
 // an unpriced host stays null.
 func TestRecordFinished_StampsCost(t *testing.T) {
@@ -186,20 +166,21 @@ func TestRecordFinished_StampsCost(t *testing.T) {
 	stamper := modelcost.NewStamper([]modelcost.ModelRate{
 		{Host: modelconn.AnthropicHost, ModelID: "claude-sonnet-5", InputPerMTok: 2, OutputPerMTok: 10},
 	})
-	repo := spec.NewTurnRepository(dbtest.New(t), stamper)
+	db := dbtest.New(t)
+	repo := spec.NewTurnRepository(db, stamper)
 	ctx := context.Background()
 
 	priced := finishedTurn("p1") // $2 + $1
 	unpriced := finishedTurn("p2")
 	unpriced.ModelHost = modelconn.OllamaHost
-	if _, err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{priced, unpriced}); err != nil {
+	if err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{priced, unpriced}); err != nil {
 		t.Fatalf("RecordFinished: %v", err)
 	}
-	row, _ := repo.Get(ctx, "o1", "p1", priced.TurnID)
+	row := getTurn(t, db, "o1", "p1", priced.TurnID)
 	if row == nil || row.CostUsd == nil || *row.CostUsd != 3.00 {
 		t.Fatalf("priced cost_usd = %+v, want 3.00", row)
 	}
-	row, _ = repo.Get(ctx, "o1", "p2", unpriced.TurnID)
+	row = getTurn(t, db, "o1", "p2", unpriced.TurnID)
 	if row == nil || row.CostUsd != nil {
 		t.Fatalf("unpriced row = %+v, want cost_usd null", row)
 	}
@@ -220,14 +201,15 @@ func TestRecordFinished_StampsCost(t *testing.T) {
 // a failed record reads failed, and a completed design turn is the baseline.
 func TestRecordFinished_ReadersSeeTheLedger(t *testing.T) {
 	t.Parallel()
-	repo := spec.NewTurnRepository(dbtest.New(t), nil)
+	db := dbtest.New(t)
+	repo := spec.NewTurnRepository(db, nil)
 	ctx := context.Background()
 
 	if got, err := repo.Newest(ctx, "o1", "p1"); err != nil || got != nil {
 		t.Fatalf("Newest before any record = (%+v, %v), want (nil, nil)", got, err)
 	}
 	design := finishedTurn("p1")
-	if _, err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{design}); err != nil {
+	if err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{design}); err != nil {
 		t.Fatalf("RecordFinished(design): %v", err)
 	}
 	failed := finishedTurn("p1")
@@ -236,7 +218,7 @@ func TestRecordFinished_ReadersSeeTheLedger(t *testing.T) {
 	failed.Reason = "stream-died"
 	failed.StartedAt = design.FinishedAt.Add(time.Minute)
 	failed.FinishedAt = failed.StartedAt.Add(time.Minute)
-	if _, err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{failed}); err != nil {
+	if err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{failed}); err != nil {
 		t.Fatalf("RecordFinished(failed): %v", err)
 	}
 
@@ -258,7 +240,8 @@ func TestRecordFinished_ReadersSeeTheLedger(t *testing.T) {
 // batch must not make an older turn the newest.
 func TestRecordFinished_NewestIsTheLatestStartedTurn(t *testing.T) {
 	t.Parallel()
-	repo := spec.NewTurnRepository(dbtest.New(t), nil)
+	db := dbtest.New(t)
+	repo := spec.NewTurnRepository(db, nil)
 	ctx := context.Background()
 	earlier := finishedTurn("p1")
 	later := finishedTurn("p1")
@@ -266,7 +249,7 @@ func TestRecordFinished_NewestIsTheLatestStartedTurn(t *testing.T) {
 	later.StartedAt = earlier.FinishedAt.Add(time.Second)
 	later.FinishedAt = later.StartedAt.Add(time.Second)
 
-	if _, err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{later, earlier}); err != nil {
+	if err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{later, earlier}); err != nil {
 		t.Fatalf("RecordFinished: %v", err)
 	}
 	newest, err := repo.Newest(ctx, "o1", "p1")
@@ -278,56 +261,50 @@ func TestRecordFinished_NewestIsTheLatestStartedTurn(t *testing.T) {
 	}
 }
 
-// The ledger's identity is (org, turn id): another org's row with the same id
-// must never pass for this org's record. Until Task 3.21 moves the primary key
-// off id alone, the second org's record cannot be stored; RecordFinished
-// reports its id as foreign (the edge logs ae_studio.turn_id_conflict) rather
-// than counting it as already recorded, and the first org's row is untouched.
-func TestRecordFinished_ForeignTurnIDIsReported(t *testing.T) {
+// The ledger's identity is (org, turn id): the pod chooses turn ids (the
+// kickoff's is uuidv5 of org/project, so anyone can compute it), and another
+// org's row with the same id must never stand in for this org's record. Org B
+// records X first; org A's X is still stored, and org B's row is untouched.
+func TestRecordFinished_AnotherOrgsTurnIDNeverSuppressesThisOrgsRecord(t *testing.T) {
 	t.Parallel()
-	repo := spec.NewTurnRepository(dbtest.New(t), nil)
+	db := dbtest.New(t)
+	repo := spec.NewTurnRepository(db, nil)
 	ctx := context.Background()
 	squatted := finishedTurn("p1")
 	squatted.Status = "failed"
 
-	foreign, err := repo.RecordFinished(ctx, "org-b", []spec.TurnRecord{squatted})
-	if err != nil || len(foreign) != 0 {
-		t.Fatalf("org B RecordFinished = (%v, %v), want (none, nil)", foreign, err)
+	if err := repo.RecordFinished(ctx, "org-b", []spec.TurnRecord{squatted}); err != nil {
+		t.Fatalf("org B RecordFinished: %v", err)
 	}
 	real := squatted
 	real.Status = "completed"
-	other := finishedTurn("p1")
-	foreign, err = repo.RecordFinished(ctx, "org-a", []spec.TurnRecord{real, other})
-	if err != nil {
+	if err := repo.RecordFinished(ctx, "org-a", []spec.TurnRecord{real}); err != nil {
 		t.Fatalf("org A RecordFinished: %v", err)
 	}
-	if len(foreign) != 1 || foreign[0] != squatted.TurnID {
-		t.Fatalf("foreign = %v, want [%s]", foreign, squatted.TurnID)
+	if row := getTurn(t, db, "org-a", "p1", real.TurnID); row == nil || row.Status != "completed" {
+		t.Fatalf("org A's row = %+v, want its own completed record", row)
 	}
-	if row, _ := repo.Get(ctx, "org-a", "p1", other.TurnID); row == nil {
-		t.Fatal("org A's other record was not stored")
-	}
-	if row, _ := repo.Get(ctx, "org-b", "p1", squatted.TurnID); row == nil || row.Status != "failed" {
+	if row := getTurn(t, db, "org-b", "p1", squatted.TurnID); row == nil || row.Status != "failed" {
 		t.Fatalf("org B's row = %+v, want it untouched", row)
 	}
-	// A resend of org A's own stored record is a plain duplicate, not foreign.
-	if foreign, err := repo.RecordFinished(ctx, "org-a", []spec.TurnRecord{other}); err != nil || len(foreign) != 0 {
-		t.Fatalf("own resend = (%v, %v), want (none, nil)", foreign, err)
+	if newest, err := repo.Newest(ctx, "org-a", "p1"); err != nil || newest == nil || newest.Status != "completed" {
+		t.Fatalf("org A's Newest = (%+v, %v), want its own record", newest, err)
 	}
 }
 
-// A marketplace turn has no project (C7): it is stored under project_id ''.
+// A marketplace turn has no project (C7): it is stored under project_id ”.
 func TestRecordFinished_MarketplaceTurnHasNoProject(t *testing.T) {
 	t.Parallel()
-	repo := spec.NewTurnRepository(dbtest.New(t), nil)
+	db := dbtest.New(t)
+	repo := spec.NewTurnRepository(db, nil)
 	ctx := context.Background()
 	rec := finishedTurn("")
 
-	if _, err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{rec}); err != nil {
+	if err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{rec}); err != nil {
 		t.Fatalf("RecordFinished: %v", err)
 	}
-	row, err := repo.Get(ctx, "o1", "", rec.TurnID)
-	if err != nil || row == nil || row.ProjectID != "" {
-		t.Fatalf("marketplace row = (%+v, %v), want project_id ''", row, err)
+	row := getTurn(t, db, "o1", "", rec.TurnID)
+	if row == nil || row.ProjectID != "" {
+		t.Fatalf("marketplace row = %+v, want project_id ''", row)
 	}
 }

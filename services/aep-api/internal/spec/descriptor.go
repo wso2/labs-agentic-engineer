@@ -20,13 +20,13 @@
 // generate requirements from.
 //
 // The descriptor is deliberately invisible to the agent. Every dot-led path
-// segment is skipped by the turn-snapshot walk (agentfold.InTurnSnapshot, and
-// its TS mirror in components/dataplane/ae-system-project/ae-studio/ae-design-agent load-workspace.ts), and `.toml` is not an
-// admitted extension in KeepInTurnSnapshot either — so the model can never
-// read this file even by asking. The idea reaches a turn ONLY through the
-// server-side steering append (ideaSteer, wired in genai_service). That is why
-// there is no "read the descriptor" tool and no instruction telling the agent
-// where the file lives.
+// segment is skipped by the design agent's turn-snapshot walk
+// (components/dataplane/ae-system-project/ae-studio/ae-design-agent
+// load-workspace.ts), and `.toml` is not an admitted extension there either —
+// so the model can never read this file even by asking. The idea reaches a
+// turn ONLY through the `/start` expansion in the org's AE Studio pod. That is
+// why there is no "read the descriptor" tool and no instruction telling the
+// agent where the file lives.
 //
 // It is equally invisible in the console's Spec view: toSpecEntry keeps only
 // `specs/<requirements|design|validation>/<file>`, and this path has too few
@@ -43,13 +43,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
-
-	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // DescriptorPath is the descriptor's fixed repo-relative path. It sits at the
@@ -90,17 +87,6 @@ func MarshalDescriptor(d Descriptor) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// ParseDescriptor reads descriptor TOML. A malformed file is an error, never a
-// silently-empty descriptor — callers that want best-effort behavior (the
-// steering read) decide that for themselves.
-func ParseDescriptor(raw []byte) (Descriptor, error) {
-	var d Descriptor
-	if _, err := toml.Decode(string(raw), &d); err != nil {
-		return Descriptor{}, fmt.Errorf("decode descriptor: %w", err)
-	}
-	return d, nil
-}
-
 // DescriptorWriter stamps the descriptor into a project repo. It writes through
 // the ordinary Files API apply path — the descriptor lives under specs/, so it
 // needs no gate widening (validatePath already admits it, dot-prefix and all).
@@ -123,7 +109,7 @@ func NewDescriptorWriter(files FilesService) *DescriptorWriter {
 // to the agent.
 //
 // What it guards: reference documents are overlaid into the turn's snapshot at
-// specs/requirements/references/ (gitfs.ReferenceOverlayDir) and must never be
+// specs/requirements/references/ (by the org's AE Studio pod) and must never be
 // committed back from there. This is the guard that covers the coding-agent
 // runner, which clones for real and stages with git — a path no server-side
 // predicate sees. The collab committer's own reference predicate is NOT made
@@ -159,36 +145,4 @@ func (w *DescriptorWriter) WriteDescriptor(ctx context.Context, orgID, projectID
 		Message: "chore: initialize the agentic-engineer project descriptor",
 	})
 	return err
-}
-
-// readProjectIdea reads the captured idea at `at`, best-effort: a project with
-// no descriptor, an unreadable one, or a corrupt one yields "" and the turn
-// proceeds without it. Deliberately never an error — losing the idea costs the
-// user one extra question from the start skill, whereas failing the turn costs
-// them their kickoff.
-//
-// The exact-path predicate is what makes this work at all: ReadBundle applies
-// ONLY the caller's filter (gitfs lsTree lists dot-entries like any other), so
-// the descriptor is readable here even though the turn-snapshot walk that
-// builds the agent's view drops it.
-func (s *Service) readProjectIdea(ctx context.Context, ref sourcecontrol.RepoRef, at string) string {
-	files, _, err := s.git.Workspace().ReadBundle(ctx, ref, at, func(rel string) bool {
-		return rel == DescriptorPath
-	})
-	if err != nil {
-		slog.WarnContext(ctx, "descriptor unreadable; turn continues without the captured idea",
-			"path", DescriptorPath, "error", err)
-		return ""
-	}
-	raw := files[DescriptorPath]
-	if strings.TrimSpace(raw) == "" {
-		return "" // no descriptor: an older project, or a best-effort write that failed
-	}
-	d, err := ParseDescriptor([]byte(raw))
-	if err != nil {
-		slog.WarnContext(ctx, "descriptor malformed; turn continues without the captured idea",
-			"path", DescriptorPath, "error", err)
-		return ""
-	}
-	return d.Idea
 }

@@ -17,8 +17,9 @@
 package spec
 
 import (
-	"strings"
 	"testing"
+
+	"github.com/BurntSushi/toml"
 )
 
 // The idea is free text a user typed: newlines, straight quotes, apostrophes
@@ -39,47 +40,16 @@ func TestDescriptorRoundTripsAwkwardIdeaText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MarshalDescriptor: %v", err)
 	}
-	got, err := ParseDescriptor(raw)
-	if err != nil {
-		t.Fatalf("ParseDescriptor(%q): %v", raw, err)
+	// The design agent reads the file; any TOML decoder must get it back.
+	var got Descriptor
+	if _, err := toml.Decode(string(raw), &got); err != nil {
+		t.Fatalf("decode %q: %v", raw, err)
 	}
 	if got.Idea != idea {
 		t.Fatalf("idea round-trip:\n got %q\nwant %q\nencoded as:\n%s", got.Idea, idea, raw)
 	}
 	if got.Name != in.Name || got.APIVersion != in.APIVersion || got.CreatedAt != in.CreatedAt {
 		t.Fatalf("identity round-trip = %+v, want %+v", got, in)
-	}
-}
-
-// A hand-written descriptor (the shape documented for users) parses.
-func TestParseDescriptorHandWritten(t *testing.T) {
-	t.Parallel()
-	const raw = `apiVersion = "agentic-engineer/v1"
-name = "expense-tracker"
-createdAt = "2026-07-29T10:14:00Z"
-
-idea = """
-An expense claim tracker for a 200-person company,
-with manager approval and receipt uploads.
-"""
-`
-	got, err := ParseDescriptor([]byte(raw))
-	if err != nil {
-		t.Fatalf("ParseDescriptor: %v", err)
-	}
-	if got.Name != "expense-tracker" {
-		t.Fatalf("name = %q", got.Name)
-	}
-	if !strings.HasPrefix(got.Idea, "An expense claim tracker") ||
-		!strings.Contains(got.Idea, "receipt uploads.") {
-		t.Fatalf("idea = %q", got.Idea)
-	}
-}
-
-func TestParseDescriptorRejectsGarbage(t *testing.T) {
-	t.Parallel()
-	if _, err := ParseDescriptor([]byte("this is not = = toml [[[")); err == nil {
-		t.Fatal("want a parse error on malformed TOML, got nil")
 	}
 }
 

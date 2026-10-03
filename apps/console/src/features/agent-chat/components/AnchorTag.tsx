@@ -18,7 +18,7 @@
 
 import { Chip, Stack, Tooltip } from "@wso2/oxygen-ui";
 import { Crosshair } from "@wso2/oxygen-ui-icons-react";
-import type { components } from "../../../generated/aep-api";
+import type { components } from "../../../generated/ae-design-agent";
 
 type TurnAnchor = components["schemas"]["TurnAnchor"];
 

@@ -30,7 +30,7 @@ flowchart TB
       OPS["ops"]
       IDN["identity"]
     end
-    PLAT["platform/ — the kernel: auth · secrets · gitfs · tenant · database · agentfold …  (imports no domain)"]
+    PLAT["platform/ — the kernel: auth · secrets · gitfs · tenant · database · designspec …  (imports no domain)"]
     EDGE --> DOMAINS
     DOMAINS --> PLAT
   end
@@ -65,7 +65,7 @@ datastore · `(["/surface"])` = an inbound HTTP surface.
 ## The kernel, the edge, and the rest
 
 - **`platform/`** — the shared **kernel**: `auth`, `secrets`, `gitfs`, `tenant`,
-  `database`, `agentfold`, `orgconfig`, `modelconn`, `netguard`, `patch`, `validate`, `httpkit`, `k8sname`, `obs`,
+  `database`, `designspec`, `orgconfig`, `modelconn`, `netguard`, `patch`, `validate`, `httpkit`, `k8sname`, `obs`,
   plus the test kits (`componenttest`, `dbtest`, …). It carries no business logic and
   **imports no domain** — the dependency arrow only ever points *into* it.
 - **`edge/`** — the **surface composer / composition root**: the single package that

@@ -24,6 +24,8 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/wso2/aep/aep-api/internal/platform/auth"
 )
 
 // ErrSpecNotApproved is the design-domain sentinel surfaced (as 409 by the
@@ -460,11 +462,11 @@ func (s *designService) AcceptDependencyAssumption(ctx context.Context, orgID, p
 	if note == "" && def.Provenance != nil && def.Provenance.SourceURL != "" {
 		note = "Written by the design agent from " + def.Provenance.SourceURL
 	}
-	// The record names the person the way a turn names its author — the
-	// display identity the bearer carries — and falls back to the caller's
-	// subject when the token has none.
-	if a := journalAuthorFrom(ctx); a != nil && a.DisplayName != "" {
-		by = a.DisplayName
+	// The record names the person the way a pod turn credits its author —
+	// the display identity of the caller's verified claims — and keeps the
+	// caller's subject when there are none.
+	if name, _ := displayIdentity(auth.ClaimsFromContext(ctx)); name != "" {
+		by = name
 	}
 	// The acceptance lives on the contract. Accepted before the interface
 	// exists, the record needs a contract object to sit on: the agent's coming

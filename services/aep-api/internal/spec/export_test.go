@@ -33,7 +33,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
-	"time"
 
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
@@ -126,11 +125,4 @@ func EmbeddedLibraryCount(t *testing.T, kind string) int {
 // this write is not re-reconciled away.
 func (c *ComponentStore) DriftOrg(orgID, name, skillMD string) {
 	c.host.writeAtHead(orgID, skillRepoPath(name), skillMD)
-}
-
-// SetHeartbeatEveryForTest drives the agent_turns heartbeat faster than its
-// 15s production cadence so a component test can observe it inside a normal
-// test runtime. Test-only, mirroring the sweeper's injectable staleAfter.
-func (s *Service) SetHeartbeatEveryForTest(d time.Duration) {
-	s.heartbeatEvery = d
 }

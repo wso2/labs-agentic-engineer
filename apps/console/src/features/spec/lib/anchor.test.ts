@@ -26,7 +26,7 @@ import {
 } from "./anchor";
 import type { DocBlock } from "./docBlocks";
 import type { Anchor } from "./anchor";
-import type { components } from "../../../generated/aep-api";
+import type { components } from "../../../generated/ae-design-agent";
 
 // Positions are contiguous and plausible rather than real ProseMirror offsets:
 // every rule here reads `from`/`to` as opaque numbers, which is the point of

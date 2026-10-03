@@ -174,7 +174,6 @@ type Config struct {
 	AEStudio AEStudioConfig
 
 	Observability ObservabilityConfig
-	AgentsSvc     AgentsSvcConfig
 	ServiceAuth   ServiceAuthConfig
 	AgentManager  AgentManagerConfig
 	Workspace     WorkspaceConfig
@@ -192,16 +191,6 @@ type Config struct {
 	// the dataplane and cannot reach the control-plane ClusterIP. Locally it
 	// is typically http://host.k3d.internal:9090.
 	AgentPlatformURL string
-
-	// AEPInternalBaseURL is the BFF's own base URL as reached by peer
-	// cluster-internal services (agents-service) for the internal MCP
-	// discovery surface (/internal/v1/mcp). The BFF hands agents-service an
-	// `mcp: {url, token}` bundle in the architect request; agents-service calls
-	// back to `AEPInternalBaseURL + /internal/v1/mcp` with the BFF-signed MCP
-	// token. Optional — empty disables MCP propagation (the additive `mcp`
-	// field is simply omitted; consumed in the E-phase). Read from
-	// AEP_API_INTERNAL_BASE_URL.
-	AEPInternalBaseURL string
 
 	// JWKS settings for /api/v1's user-JWT verification — Thunder publishes
 	// the signing key at JWKSURL; verifiers refresh on kid miss. Issuer and
@@ -421,19 +410,6 @@ type ServiceAuthConfig struct {
 	ClientID     string
 	ClientSecret string
 	HostHeader   string // Thunder Host header for k3d routing
-}
-
-// AgentsSvcConfig holds connection + M2M settings for the file-mutation agents
-// service (components/dataplane/ae-system-project/ae-studio/ae-design-agent) — the requirements/design/chat generation flows AND
-// the tasks-github-native plan turns (toolset:"task-plan"). The legacy AI-SDK
-// agents service and its config are gone. The BFF mints a per-call HS256 M2M
-// bearer from JWTSecret with aud=JWTAudience (the service's AGENT_JWT_SECRET /
-// AGENT_JWT_AUDIENCE).
-type AgentsSvcConfig struct {
-	BaseURL     string
-	JWTSecret   string
-	JWTAudience string
-	JWTIssuer   string
 }
 
 // WorkspaceConfig holds the shared git-workspaces mount settings: the mount root

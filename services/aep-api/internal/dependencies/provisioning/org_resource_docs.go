@@ -29,8 +29,7 @@ const (
 )
 
 // gitOrgResourceDocs commits resource-docs files into the per-org
-// org-resource-docs repo. It never writes org-skills / _skills and never
-// calls Workspace.PutReferences.
+// org-resource-docs repo. It never writes org-skills / _skills.
 type gitOrgResourceDocs struct {
 	repos sourcecontrol.RepoService
 	git   sourcecontrol.GitOpsService

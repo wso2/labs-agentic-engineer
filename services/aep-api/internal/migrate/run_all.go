@@ -72,7 +72,6 @@ func BaseModels() []any {
 		&delivery.MilestoneRun{},
 		&delivery.RunCycle{},
 		&delivery.AgentUsageLedgerEntry{},
-		&spec.ProjectConversation{},
 		// The platform's record of the SHARED directory objects it created at
 		// build time: the roles a design declares, the test users that exercise
 		// them, and the per-project references that join the two. Plain tables
@@ -144,8 +143,8 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		// Executions table (AutoMigrated from the model) gains its partial
 		// admission-mutex unique index, which AutoMigrate cannot express.
 		ctxStep("executions", RunExecutions),
-		// agent_turns table (AutoMigrated from the model) gains the D18
-		// one-active-turn-per-project partial unique index.
+		// agent_turns table (AutoMigrated from the model) gains its
+		// newest-turn index, which AutoMigrate cannot express.
 		ctxStep("agent_turns", RunAgentTurns),
 		// tasks-github-native cutover: drop component_tasks + the
 		// git_repositories.github_project_id cache column (both AutoMigrate-only,
@@ -204,9 +203,9 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		// Follows phase11, which added the secret_ref_* columns the new row
 		// carries just like the default row does.
 		ctxStep("phase13_anthropic_credential_role", RunPhase13AnthropicCredentialRole),
-		// project_conversations (AutoMigrated from the model) gains the #430
-		// one-current-thread-per-scope partial unique index — the admission
-		// fence lazy create and rotation race against.
+		// project_conversations: RETIRED tombstone. The conversation store went
+		// with aep-api's turn orchestration (phase 3); the step is kept for
+		// frozen order and does nothing. phase24 drops the table.
 		ctxStep("project_conversations", RunProjectConversations),
 		// Drop leftover sm_api_* columns. secret_ref_* stay.
 		ctxStep("phase14_drop_sm_api_columns", RunPhase14DropSMAPIColumns),
@@ -258,6 +257,12 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		// apps/console ADR-0022). AutoMigrate never drops a table, so this is
 		// the explicit drop. Idempotent.
 		dbStep("phase22_drop_activity_events", RunPhase22DropActivityEvents),
+		// agent_turns becomes the finished-turn ledger (07 §12): turns run in
+		// the org's AE Studio pod, so the in-process engine's rows get a kind
+		// and a start time, its running rows, guard index and columns go, the
+		// primary key widens to (org_id, id), and project_conversations is
+		// dropped. Appended last because the list is append-only.
+		ctxStep("phase24_agent_turns_ledger", RunPhase24AgentTurnsLedger),
 	}
 }
 

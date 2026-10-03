@@ -55,8 +55,8 @@ import (
 
 var (
 	// ErrProjectRepoNotFound (the "no git repo for (org, project)" 404) is
-	// declared once for the whole spec domain in genai_service.go's error block;
-	// the files service returns that same shared sentinel.
+	// declared once for the whole spec domain in studio_repo_ref.go; the files
+	// service returns that same shared sentinel.
 	// ErrPathInvalid — a path escapes specs/, is non-canonical, or is oversized;
 	// maps to 400.
 	ErrPathInvalid = errors.New("invalid file path")

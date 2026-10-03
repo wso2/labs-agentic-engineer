@@ -29,9 +29,6 @@ import (
 // that builds the slice handlers) lives in httpapi/ — see httpapi/doc.go for why
 // the domain's composition cannot sit here.
 type Deps struct {
-	// GenAI is the committed-truth turn orchestrator behind the five turn ops
-	// (create / get / active / stream / rehydrate).
-	GenAI *Service
 	// References is the org pods' reference-document store (references upload).
 	References aestudiotools.References
 	// Repos resolves a project to its repository (references upload).

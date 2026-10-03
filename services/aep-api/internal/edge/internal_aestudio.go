@@ -58,11 +58,10 @@ type SkillsRepositoryLookup interface {
 	Lookup(ctx context.Context, org string) (aestudio.ProjectRepository, error)
 }
 
-// TurnLedger stores an org's finished AE Studio turns, each once
-// (spec.TurnRepository.RecordFinished), and names the ids it could not store
-// because another org's row holds them.
+// TurnLedger stores an org's finished AE Studio turns, each once per
+// (org, turn id) (spec.TurnRepository.RecordFinished).
 type TurnLedger interface {
-	RecordFinished(ctx context.Context, org string, recs []spec.TurnRecord) (foreign []string, err error)
+	RecordFinished(ctx context.Context, org string, recs []spec.TurnRecord) error
 }
 
 // DependencyCompleter completes an org's dependency stub writes
@@ -285,15 +284,9 @@ func (s *internalServer) RecordTurnUsage(ctx context.Context, request igen.Recor
 		}
 		recs = append(recs, toTurnRecord(r))
 	}
-	foreign, err := s.deps.TurnLedger.RecordFinished(ctx, org, recs)
-	if err != nil {
+	if err := s.deps.TurnLedger.RecordFinished(ctx, org, recs); err != nil {
 		slog.ErrorContext(ctx, "ae-studio turn usage not recorded", "org", org, "count", len(recs), "error", err)
 		return nil, errInternal("failed to record turn usage")
-	}
-	// Another org's row holds the id (a resend can never store it), so the
-	// batch is still accepted; the event is the only trace.
-	for _, id := range foreign {
-		slog.WarnContext(ctx, "ae_studio.turn_id_conflict", "org", org, "turnId", id)
 	}
 	return igen.RecordTurnUsage202Response{}, nil
 }

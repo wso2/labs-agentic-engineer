@@ -20,7 +20,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/spec"
 	"github.com/wso2/aep/aep-api/internal/spec/designdeps"
 	"github.com/wso2/aep/aep-api/internal/spec/files"
-	"github.com/wso2/aep/aep-api/internal/spec/genaiturns"
 	"github.com/wso2/aep/aep-api/internal/spec/skills"
 	"github.com/wso2/aep/aep-api/internal/spec/tags"
 )
@@ -28,7 +27,6 @@ import (
 // Every slice names its type Handler, so embedding them directly would be
 // "Handler redeclared". Local aliases give distinct field names (§6).
 type (
-	genaiturnsHandler = genaiturns.Handler
 	filesHandler      = files.Handler
 	tagsHandler       = tags.Handler
 	skillsHandler     = skills.Handler
@@ -38,7 +36,6 @@ type (
 // Handlers is the spec domain's slice handlers, embedded so Go promotes each
 // operation exactly once into the edge's composite. It declares nothing.
 type Handlers struct {
-	*genaiturnsHandler
 	*filesHandler
 	*tagsHandler
 	*skillsHandler
@@ -61,10 +58,9 @@ func New(d spec.Deps) (*Handlers, error) {
 		filesHandler = files.NewHandler(d.References, d.Repos, nil)
 	}
 	return &Handlers{
-		genaiturnsHandler: genaiturns.New(d.GenAI),
-		filesHandler:      filesHandler,
-		tagsHandler:       tags.New(d.Artifacts),
-		skillsHandler:     skills.New(d.Skills, d.SkillMut, d.SkillImport),
+		filesHandler:  filesHandler,
+		tagsHandler:   tags.New(d.Artifacts),
+		skillsHandler: skills.New(d.Skills, d.SkillMut, d.SkillImport),
 		// The dependency definition view's two writes (provide a contract, accept an
 		// assumption) — the one slice that touches a dependency's directory
 		// on the user's behalf rather than the agent's.

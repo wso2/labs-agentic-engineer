@@ -28,6 +28,10 @@ import (
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
+// ErrProjectRepoNotFound: the org has no repository row for the project
+// (another org's project reads the same).
+var ErrProjectRepoNotFound = errors.New("project repository not found")
+
 // ProjectRepos reads a project's repository row inside an org.
 // sourcecontrol.RepoService satisfies it (ErrRepoNotFound when absent).
 type ProjectRepos interface {
