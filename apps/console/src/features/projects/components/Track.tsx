@@ -164,6 +164,7 @@ function Leg({ leg, projectName, onOpen }: { leg: TrackLegView; projectName: str
   const to = {
     spec: "/projects/$projectName/spec",
     design: "/projects/$projectName/design",
+    prototype: "/projects/$projectName/prototype",
     builds: "/projects/$projectName/builds",
   } as const;
   return (

@@ -4,7 +4,7 @@ description: Oxygen UI (`@wso2/oxygen-ui`) — this organization's web-app desig
 metadata:
   aep:
     kind: org
-    audience: [coding]
+    audience: [design, coding]
 ---
 
 # Oxygen UI Design System
@@ -19,6 +19,11 @@ You are here because the component you are building pinned this skill, so the
 whole of it is yours — theming included. The organization's colors are settled
 in Brand colors below; nobody is interviewed about them, at design time or any
 other time.
+
+On a `/prototype` turn you are here for one thing: how an Oxygen screen is
+composed (page anatomy, listing pages, forms, status colors), so the prototype
+you write reads as one. The kit draws its components; the setup, packages and
+code below are the build's concern, not that turn's.
 
 `react-webapp` owns the app: layout, config, verify sequence, Dockerfile, nginx.
 This skill owns what goes **inside** `src/` — the UI. Where the two appear to
@@ -348,6 +353,14 @@ specifies. "Install no other library" above is about UI and styling.
 | A chart | `@wso2/oxygen-ui-charts-react` |
 
 ## Implementing a wireframe with Oxygen
+
+For the coding run only: this is what the BUILT application's pages are made
+of. The `/prototype` flow's review renderer draws none of this shell (no
+`Header`, `UserMenu`, `ColorSchemeToggle` or `Footer`): it draws only the
+prototype's own components and the navigation a screen names (the prototype
+skill's **What the reviewer sees**). A design turn reads this skill for how an
+Oxygen screen is composed, and never cites this table as what a reviewer is
+shown.
 
 `wireframes/references/implementing.md` says what each DSL line must become;
 this is what it becomes here. Every row names the exact component and its

@@ -325,7 +325,16 @@ export function createChatStore(options: ChatStoreOptions) {
     const rowId = localId("u");
     update(projectName, (s) => ({
       turn: { phase: "starting", instruction },
-      items: [...s.items, { kind: "user", id: rowId, text: instruction, state: "sending" }],
+      items: [
+        ...s.items,
+        {
+          kind: "user",
+          id: rowId,
+          text: instruction,
+          state: "sending",
+          ...(scope.kind === "prototype" && scope.feedback ? { prototypeFeedback: scope.feedback } : {}),
+        },
+      ],
     }));
     let turnId: string;
     try {

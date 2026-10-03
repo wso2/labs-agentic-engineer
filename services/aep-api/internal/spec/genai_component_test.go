@@ -37,6 +37,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -1757,5 +1758,114 @@ func TestStartTurnJSONCarriesNoAttachments(t *testing.T) {
 	}
 	if sent.req.Journal == nil || sent.req.Journal.Attachments != nil {
 		t.Errorf("journal attachments = %+v, want nil", sent.req.Journal)
+	}
+}
+
+// ---- prototype feedback (#865) ------------------------------------------------
+
+const feedbackTestHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+func prototypeFeedbackBody(instruction string, collab bool, feedback any) string {
+	payload := map[string]any{"instruction": instruction, "collab": collab, "prototypeFeedback": feedback}
+	body, _ := json.Marshal(payload)
+	return string(body)
+}
+
+func prototypeFeedbackFixture() map[string]any {
+	return map[string]any{
+		"prototypeHash": feedbackTestHash,
+		"component":     "approvals-portal",
+		"requests": []map[string]any{
+			{
+				"screenId":   "screen.queue",
+				"flowId":     "flow.approve",
+				"roleId":     "approver",
+				"stateId":    "state.default",
+				"elementIds": []string{"btn.approve"},
+				"text":       "Put the Approve button on the left.",
+			},
+			{"screenId": "screen.detail", "roleId": "employee", "stateId": "state.empty", "elementIds": []string{}, "text": "Say why it is empty"},
+		},
+	}
+}
+
+// A batch rides a collab /prototype turn and reaches the agents service on the
+// flow TurnSpec, field for field.
+func TestPrototypeFeedback_ForwardedUnchanged(t *testing.T) {
+	r := newGenaiRig(t, map[string]string{"specs/requirements/prd.md": "# Reqs\n"})
+	r.fake.parts = []string{textPart("ok")}
+	m := manifestPart(nil, nil)
+	r.fake.manifest = &m
+
+	rec := r.h.AsOrg(testOrg).Post(turnsPath(convUUID), prototypeFeedbackBody("/prototype approvals-portal", true, prototypeFeedbackFixture()))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("POST feedback turn: code %d (%s)", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		TurnID string `json:"turnId"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.TurnID == "" {
+		t.Fatalf("202 body = %s (err %v)", rec.Body.String(), err)
+	}
+	r.waitTerminal(t, out.TurnID)
+	sent := r.fake.sentTurn(t, 0).req.Turn
+	if sent.Kind != agentsvc.TurnKindFlow || sent.Skill != "prototype" {
+		t.Fatalf("turn = %+v, want the prototype flow", sent)
+	}
+	want := &agentsvc.PrototypeFeedbackBlock{
+		PrototypeHash: feedbackTestHash,
+		Component:     "approvals-portal",
+		Requests: []agentsvc.PrototypeFeedbackRequest{
+			{ScreenID: "screen.queue", FlowID: "flow.approve", RoleID: "approver", StateID: "state.default", ElementIDs: []string{"btn.approve"}, Text: "Put the Approve button on the left."},
+			{ScreenID: "screen.detail", RoleID: "employee", StateID: "state.empty", ElementIDs: []string{}, Text: "Say why it is empty"},
+		},
+	}
+	if !reflect.DeepEqual(sent.PrototypeFeedback, want) {
+		t.Fatalf("forwarded batch = %+v, want %+v", sent.PrototypeFeedback, want)
+	}
+}
+
+// Every refusal is a 400 before any turn row exists, and nothing is dispatched.
+func TestPrototypeFeedback_Refused400BeforeATurnOpens(t *testing.T) {
+	over := prototypeFeedbackFixture()
+	over["requests"] = make([]map[string]any, 51)
+	for i := range over["requests"].([]map[string]any) {
+		over["requests"].([]map[string]any)[i] = prototypeFeedbackFixture()["requests"].([]map[string]any)[0]
+	}
+	noRequests := prototypeFeedbackFixture()
+	noRequests["requests"] = []map[string]any{}
+	badHash := prototypeFeedbackFixture()
+	badHash["prototypeHash"] = "abc"
+	longText := prototypeFeedbackFixture()
+	longText["requests"].([]map[string]any)[0]["text"] = strings.Repeat("t", 4001)
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"not a room turn", prototypeFeedbackBody("/prototype", false, prototypeFeedbackFixture())},
+		{"another command", prototypeFeedbackBody("/design", true, prototypeFeedbackFixture())},
+		{"plain chat", prototypeFeedbackBody("tidy it", true, prototypeFeedbackFixture())},
+		{"another component's name", prototypeFeedbackBody("/prototype other-app", true, prototypeFeedbackFixture())},
+		{"with an anchor and intent", `{"instruction":"/prototype","collab":true,"intent":"change","anchor":{"file":"specs/requirements/prd.md","nodes":[{"name":"n","kind":"paragraph"}]},"prototypeFeedback":` + mustJSON(t, prototypeFeedbackFixture()) + `}`},
+		{"over 50 requests", prototypeFeedbackBody("/prototype", true, over)},
+		{"no requests", prototypeFeedbackBody("/prototype", true, noRequests)},
+		{"bad hash", prototypeFeedbackBody("/prototype", true, badHash)},
+		{"over-long text", prototypeFeedbackBody("/prototype", true, longText)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newGenaiRig(t, map[string]string{"specs/requirements/prd.md": "# Reqs\n"})
+			rec := r.h.AsOrg(testOrg).Post(turnsPath(convUUID), tc.body)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("code %d, want 400 (%s)", rec.Code, rec.Body.String())
+			}
+			if n := len(r.turns.rows); n != 0 {
+				t.Fatalf("%d turn row(s) opened, want none", n)
+			}
+			if n := r.fake.turns(t); n != 0 {
+				t.Fatalf("%d turn(s) dispatched, want none", n)
+			}
+		})
 	}
 }

@@ -20,6 +20,7 @@ import type { ReactNode } from "react";
 import { Box, Button, Skeleton, Typography } from "@wso2/oxygen-ui";
 import { EmptyState } from "../../../components/EmptyState";
 import { BuildButton } from "../../builds/components/BuildButton";
+import { MakePrototypeButton } from "../../prototype/components/MakePrototypeButton";
 import { PHONE } from "../../shell/layout";
 import { useSpecWorkspace } from "../../spec/useSpecWorkspace";
 import { useDesignModel } from "../useDesignModel";
@@ -59,7 +60,11 @@ function Note({ children }: { children: ReactNode }) {
   );
 }
 
-/** The design card's header actions: Address comments, the design turn when there is something to design, and Build once something is designed. */
+/**
+ * The design card's header actions: Address comments, the design turn when
+ * there is something to design, Make prototype once the design has a web
+ * application, and Build once something is designed.
+ */
 export function DesignActions({ projectName }: { projectName: string }) {
   const design = useDesignModel(projectName).data;
   const { workspace } = useSpecWorkspace(projectName);
@@ -86,6 +91,7 @@ export function DesignActions({ projectName }: { projectName: string }) {
           {design.running?.kind === "design" ? "Designing…" : label}
         </Button>
       )}
+      <MakePrototypeButton projectName={projectName} />
       <BuildButton projectName={projectName} size="small" />
     </>
   );

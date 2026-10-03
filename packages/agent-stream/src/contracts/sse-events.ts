@@ -38,6 +38,8 @@
  * OpenAPI-representable); the package stays free of any AI-SDK dependency.
  */
 
+import { MAX_FEEDBACK_ID, parseFeedbackSubmission, type FeedbackRequest, type FeedbackSubmission } from "@wso2/prototype-kit/feedback";
+
 // --- Result payloads (the `tool-result.output` value) -----------------------
 
 /** The file-mutation operations the main agent performs. */
@@ -55,6 +57,7 @@ export type ErrCode =
   | "INVALID_JSON"
   | "SCHEMA_VIOLATION"
   | "INVALID_DSL"
+  | "INVALID_PROTOTYPE"
   | "INVALID_OPENAPI"
   | "INVALID_DIAGRAM"
   | "UNKNOWN_PARTICIPANT"
@@ -81,7 +84,19 @@ export interface OpOk {
   status: "applied" | "already-applied" | "noop";
 }
 
-/** A failed op. Keeps the self-correction payload (candidates / count). */
+/**
+ * One finding of the prototype check (`@wso2/prototype-kit`): a stable code, the
+ * file it is in, where in that file, and what to change. Declared here, not
+ * imported, so this wire contract stays free of the kit.
+ */
+export interface PrototypeFinding {
+  code: string;
+  file: "prototype.json" | "prototype.tsx";
+  location: string;
+  message: string;
+}
+
+/** A failed op. Keeps the self-correction payload (candidates / count / findings). */
 export interface OpErr {
   ok: false;
   path: string;
@@ -91,6 +106,8 @@ export interface OpErr {
   /** Populated for NOT_UNIQUE / NOT_FOUND to steer one-step re-anchoring. */
   candidates?: MatchCandidate[];
   count?: number;
+  /** Populated for INVALID_PROTOTYPE: every finding the prototype check reported. */
+  findings?: PrototypeFinding[];
 }
 
 export type OpResult = OpOk | OpErr;
@@ -479,6 +496,9 @@ export interface WorkspaceRef {
  *              attached reference documents exactly as on `start` — a flow
  *              generates artifacts (wireframes above all) that must be
  *              grounded in an attached sketch or spec.
+ *              `prototypeFeedback` rides only the `prototype` flow: a reviewer's
+ *              batch of requests on one prototype, which turns the flow from
+ *              "generate every prototype" into "revise this one".
  *  - `start` — the project kickoff. `idea` is what the user asked for, read by
  *              the BFF from `specs/.agentic-engineer.toml` — a dot-led path
  *              stripped from every turn snapshot, so the agent cannot read it
@@ -493,9 +513,46 @@ export interface WorkspaceRef {
  */
 export type TurnSpec =
   | { kind: "chat"; text: string }
-  | { kind: "flow"; skill: string; text?: string; references?: string[] }
+  | { kind: "flow"; skill: string; text?: string; references?: string[]; prototypeFeedback?: PrototypeFeedback }
   | { kind: "start"; idea?: string; references?: string[] }
   | { kind: "plan"; scope?: PlanScope; taskContext?: PlanContextFile[] };
+
+/** The flow a `prototypeFeedback` batch may ride: the `/prototype` command's token. */
+export const PROTOTYPE_FLOW_SKILL = "prototype";
+
+/**
+ * One reviewer request on a prototype: where it was made (screen, flow, role,
+ * display state), which elements it is about (empty means the whole screen) and
+ * the reviewer's words, verbatim. The kit's request (`@wso2/prototype-kit/feedback`).
+ */
+export type PrototypeFeedbackRequest = FeedbackRequest;
+
+/**
+ * A batch of review requests on ONE web-application prototype, revised in a
+ * single `/prototype` turn: the kit's feedback submission plus the `component`
+ * the batch is about. The caller forwards it as facts; the agents service alone
+ * words it.
+ */
+export interface PrototypeFeedback extends FeedbackSubmission {
+  /** The web-application component, as named under `specs/design/components/`. */
+  component: string;
+}
+
+/** A component name as one path segment of `specs/design/components/<component>/`. */
+const PROTOTYPE_COMPONENT_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+
+/**
+ * Runtime guard for an untrusted feedback batch: the kit's submission rules
+ * (shape, limits, counted in UTF-16 code units) plus the component. Refused
+ * whole, never trimmed: a batch the agent applied only in part would read as
+ * sent and done.
+ */
+export function isPrototypeFeedback(v: unknown): v is PrototypeFeedback {
+  if (v === null || typeof v !== "object") return false;
+  const { component } = v as Record<string, unknown>;
+  if (typeof component !== "string" || component.length > MAX_FEEDBACK_ID || !PROTOTYPE_COMPONENT_RE.test(component)) return false;
+  return "submission" in parseFeedbackSubmission(v);
+}
 
 /** The turn kinds a `TurnSpec` may declare (the server's pre-stream 400 check). */
 export const TURN_KINDS = ["chat", "flow", "start", "plan"] as const;
@@ -603,6 +660,12 @@ export interface TurnJournal {
    * so a reloaded thread can say which feature each message was about.
    */
   scope?: TurnScope;
+  /**
+   * The prototype review this message sent (#860). Journaled because the wire
+   * text is only `/prototype <component>`: without the batch a reloaded thread,
+   * and every teammate's, could not say what was asked for.
+   */
+  prototypeFeedback?: PrototypeFeedback;
 }
 
 /**
@@ -967,7 +1030,16 @@ export function isTurnSpec(v: unknown): v is TurnSpec {
     case "chat":
       return str(t.text) && (t.text as string).trim() !== "";
     case "flow":
-      return str(t.skill) && (t.skill as string).trim() !== "" && optStr(t.text) && optStrArr(t.references);
+      return (
+        str(t.skill) &&
+        (t.skill as string).trim() !== "" &&
+        optStr(t.text) &&
+        optStrArr(t.references) &&
+        // A batch is the prototype flow's alone: on any other skill it would be
+        // instructions the flow's playbook never reads.
+        (t.prototypeFeedback === undefined ||
+          (t.skill === PROTOTYPE_FLOW_SKILL && isPrototypeFeedback(t.prototypeFeedback)))
+      );
     case "start":
       return optStr(t.idea) && optStrArr(t.references);
     case "plan":

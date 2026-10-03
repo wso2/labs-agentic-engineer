@@ -24,7 +24,7 @@
 // router's leaf match, here.
 
 /** The cards drawn over a project's overview, each a route of its own. */
-export type ProjectCard = "spec" | "design" | "builds";
+export type ProjectCard = "spec" | "design" | "prototype" | "builds";
 
 export type ShellScope =
   | { kind: "org"; page: "projects" | "new" | "other" }
@@ -39,6 +39,7 @@ export type ShellScope =
 const CARD_ROUTES: Record<string, ProjectCard> = {
   "/projects/$projectName/spec": "spec",
   "/projects/$projectName/design": "design",
+  "/projects/$projectName/prototype": "prototype",
   "/projects/$projectName/builds/": "builds",
   "/projects/$projectName/builds/$version": "builds",
 };
@@ -68,6 +69,7 @@ export function shellScope(leaf: {
 const CARD_TITLE: Record<ProjectCard, string> = {
   spec: "Spec",
   design: "Design",
+  prototype: "Prototype",
   builds: "Builds",
 };
 
@@ -85,7 +87,7 @@ export function chatTopic(
   card: ProjectCard | null,
   openFeature: string | null,
 ): { topic: string; note: string | null } {
-  if (card === "design") return { topic: "the design review", note: null };
+  if (card === "design" || card === "prototype") return { topic: "the design review", note: null };
   if (card === "spec" && openFeature) {
     return { topic: openFeature, note: "A change that reaches other features is made there too." };
   }

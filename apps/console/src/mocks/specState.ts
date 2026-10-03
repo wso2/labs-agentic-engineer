@@ -17,7 +17,7 @@
  */
 
 import type { MockSpecModel } from "./fixtures/spec";
-import { interviewEffects } from "./chatServer";
+import { interviewEffects, prototypeFileWrites } from "./chatServer";
 import { createdProjects } from "./createdProjects";
 import { designFileWrites, designSummary } from "./designState";
 import { projects } from "./fixtures/projects";
@@ -31,7 +31,8 @@ import { acmeExpensesSpec, freshSpec, triageAgentSpec } from "./fixtures/spec";
 // What the agent's interviews did is laid over it on every read, from the mock agent server
 // (chatServer.ts), which keeps them across a reload with the conversation;
 // so is what the design review did (designState.ts): the designed features'
-// stage, the design summary, and a spec line a design comment rewrote.
+// stage, the design summary, and a spec line a design comment rewrote; and the
+// prototype files a `/prototype` turn wrote.
 
 const seeds: Record<string, MockSpecModel> = {
   "acme-expenses": acmeExpensesSpec,
@@ -70,5 +71,6 @@ export function specView(projectName: string): MockSpecModel {
     return { ...f, stage: stage === "Interviewed" && design.designedFrom[f.id] !== undefined ? "Designed" : stage };
   });
   for (const [path, content] of designFileWrites(projectName)) files[path] = content;
+  for (const [path, content] of prototypeFileWrites(projectName)) files[path] = content;
   return { ...model, features, files, design };
 }

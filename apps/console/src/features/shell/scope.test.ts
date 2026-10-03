@@ -38,6 +38,7 @@ describe("shellScope", () => {
     const routes = [
       ["/projects/$projectName/spec", "spec"],
       ["/projects/$projectName/design", "design"],
+      ["/projects/$projectName/prototype", "prototype"],
       ["/projects/$projectName/builds/", "builds"],
       ["/projects/$projectName/builds/$version", "builds"],
     ] as const;
@@ -71,8 +72,9 @@ describe("shellScope", () => {
 describe("chatTopic", () => {
   const product = { topic: "the whole product", note: null };
 
-  it("talks about the design review on the design card", () => {
+  it("talks about the design review on the design card and the prototypes beside it", () => {
     expect(chatTopic("design", null)).toEqual({ topic: "the design review", note: null });
+    expect(chatTopic("prototype", null)).toEqual({ topic: "the design review", note: null });
   });
 
   it("narrows to the feature open in the spec card, and says where other changes go", () => {

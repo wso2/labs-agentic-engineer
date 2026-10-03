@@ -44,6 +44,17 @@ describe("historyItems", () => {
     ]);
   });
 
+  it("keeps the prototype review a message sent, so a reload reads it as its requests", () => {
+    const prototypeFeedback = {
+      prototypeHash: "a".repeat(64),
+      component: "expense-web",
+      requests: [{ screenId: "screen.pending", roleId: "manager", stateId: "state.default", elementIds: [], text: "Wider" }],
+    };
+    expect(historyItems([{ role: "user", content: "/prototype expense-web", prototypeFeedback }])).toEqual([
+      { kind: "user", id: "h0", text: "/prototype expense-web", state: "sent", prototypeFeedback },
+    ]);
+  });
+
   it("drops tool results and messages with no prose, numbering only what is shown", () => {
     expect(
       historyItems([
@@ -217,6 +228,11 @@ describe("userLineText", () => {
   it("reads the kickoff as the user's idea, or says what it does when bare", () => {
     expect(userLineText("/start A room booking app")).toBe("A room booking app");
     expect(userLineText("/start")).toBe("Start the project from the brief.");
+  });
+
+  it("reads a prototype command as asking for the prototype", () => {
+    expect(userLineText("/prototype expense-web")).toBe("Prototype expense-web.");
+    expect(userLineText("/prototype")).toBe("Make the prototypes.");
   });
 
   it("leaves anything else as typed", () => {

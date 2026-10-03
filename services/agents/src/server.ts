@@ -485,6 +485,9 @@ export function createApp(deps: CreateAppDeps): Express {
         ...(aim ? { anchor: aim.anchor } : {}),
         // Likewise the scope the instruction was composed from (S6).
         ...(scope ? { scope } : {}),
+        // And the review batch the flow carries (#860), already validated with
+        // the turn (isTurnSpec), so the chat can render the requests after a reload.
+        ...(turn.kind === "flow" && turn.prototypeFeedback ? { prototypeFeedback: turn.prototypeFeedback } : {}),
       };
     }
 

@@ -147,6 +147,16 @@ describe("a turn's lifecycle", () => {
     expect(ended).toHaveBeenCalledWith(PROJECT, "completed");
   });
 
+  it("keeps a prototype review's batch on its row, and sends it typed", async () => {
+    const { store, streams, chat, started } = setup();
+    await store.open(PROJECT);
+    streams.set("t1", controlledStream().body);
+    const feedback = { prototypeHash: "a".repeat(64), component: "expense-web", requests: [{ screenId: "s", roleId: "r", stateId: "d", elementIds: [], text: "Wider" }] };
+    await store.send(PROJECT, "/prototype expense-web", { kind: "prototype", feedback });
+    expect(chat().items[0]).toMatchObject({ kind: "user", text: "/prototype expense-web", prototypeFeedback: feedback });
+    expect(started[0]).toMatchObject({ instruction: "/prototype expense-web", collab: true, prototypeFeedback: feedback });
+  });
+
   it("says why a turn failed, and ends it failed", async () => {
     const { store, streams, chat, ended } = setup();
     await store.open(PROJECT);

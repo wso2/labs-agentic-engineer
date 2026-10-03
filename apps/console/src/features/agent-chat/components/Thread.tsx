@@ -19,9 +19,11 @@
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Box, Button, CircularProgress, Typography } from "@wso2/oxygen-ui";
 import { CircleAlert, Sparkles } from "@wso2/oxygen-ui-icons-react";
+import { usePrototypeNotes } from "../../prototype/usePrototypeNotes";
+import { usePrototypeRequestsText } from "../../prototype/usePrototypeRequestsText";
 import { useSpecModel } from "../../spec/useSpecWorkspace";
 import { answerableQuestionId, interviewWriteUp, userLineText, type ChatItem } from "../chatLog";
-import type { TurnScope } from "../turnScope";
+import type { PrototypeFeedback, TurnScope } from "../turnScope";
 import { chatStore, useProjectChat } from "../useProjectChat";
 import { ActivityLine } from "./ActivityLine";
 import { InterviewFollowUp } from "./InterviewFollowUp";
@@ -30,7 +32,8 @@ import { QuestionCard } from "./QuestionCard";
 
 // The conversation, oldest first: what the user said, what the agent said,
 // a compact line for each file it wrote, and its questions as cards. After an
-// interview has written its feature, the walk and the next feature follow.
+// interview has written its feature, the walk and the next feature follow;
+// after a prototype turn has written a valid prototype, Open prototype.
 
 // Read out, not shown: who said a line is otherwise told only by its side and
 // its icon.
@@ -64,7 +67,12 @@ function AgentMark() {
   );
 }
 
-function UserRow({ item }: { item: Extract<ChatItem, { kind: "user" }> }) {
+/** A prototype review's message reads as its requests, not as the `/prototype` line it went over the wire as. */
+function PrototypeRequests({ projectName, feedback }: { projectName: string; feedback: PrototypeFeedback }) {
+  return <>{usePrototypeRequestsText(projectName, feedback)}</>;
+}
+
+function UserRow({ projectName, item }: { projectName: string; item: Extract<ChatItem, { kind: "user" }> }) {
   return (
     <Box sx={{ alignSelf: "flex-end", maxWidth: "88%", display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
       <Box
@@ -77,7 +85,11 @@ function UserRow({ item }: { item: Extract<ChatItem, { kind: "user" }> }) {
         }}
       >
         <Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>
-          {userLineText(item.text)}
+          {item.prototypeFeedback ? (
+            <PrototypeRequests projectName={projectName} feedback={item.prototypeFeedback} />
+          ) : (
+            userLineText(item.text)
+          )}
         </Typography>
       </Box>
       {item.state === "failed" && (
@@ -186,6 +198,7 @@ export function Thread({ projectName, scope }: { projectName: string; scope: Tur
   const answerable = answerableQuestionId(items);
   const featurePaths = useMemo(() => new Set((features ?? []).map((f) => f.path)), [features]);
   const followUp = running ? null : interviewWriteUp(items, featurePaths);
+  const prototypeNotes = usePrototypeNotes(projectName, items, running);
   // Nothing from the agent yet since the last message: say it is working.
   const lastItem = items.at(-1);
   const waitingForOutput = running && (!lastItem || lastItem.kind === "user");
@@ -246,7 +259,7 @@ export function Thread({ projectName, scope }: { projectName: string; scope: Tur
     >
       {items.map((item) => (
         <Fragment key={item.id}>
-          {item.kind === "user" && <UserRow item={item} />}
+          {item.kind === "user" && <UserRow projectName={projectName} item={item} />}
           {(item.kind === "agent" || item.kind === "note") && <AgentRow text={item.text} />}
           {item.kind === "note" && item.actions && <NoteActions projectName={projectName} actions={item.actions} />}
           {item.kind === "activity" && <ActivityLine item={item} features={features ?? []} />}
@@ -262,6 +275,12 @@ export function Thread({ projectName, scope }: { projectName: string; scope: Tur
             </Box>
           )}
           {followUp?.afterId === item.id && <InterviewFollowUp projectName={projectName} path={followUp.path} />}
+          {prototypeNotes.has(item.id) && (
+            <>
+              <AgentRow text={prototypeNotes.get(item.id)!.text} />
+              <NoteActions projectName={projectName} actions={prototypeNotes.get(item.id)!.actions} />
+            </>
+          )}
         </Fragment>
       ))}
       {waitingForOutput && <Working />}

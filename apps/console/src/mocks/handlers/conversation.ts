@@ -17,8 +17,10 @@
  */
 
 import { http, HttpResponse } from "msw";
-import { SSE_DONE } from "@aep/agent-stream";
+import { SSE_DONE, isPrototypeFeedback } from "@aep/agent-stream";
+import { parsePrototypeCommand } from "@aep/contracts/commands";
 import { scopeOfBody, type TurnBody } from "../../features/agent-chat/turnScope";
+import { webApplications } from "../../features/prototype/model/prototypes";
 import { projectSpecDoc } from "../../features/spec/collab/specDoc";
 import { readSpecLines } from "../../features/spec/collab/useSpecLines";
 import type { components } from "../../generated/aep-api";
@@ -35,9 +37,11 @@ import {
   type MockTurn,
 } from "../chatServer";
 import { createdProjects } from "../createdProjects";
+import { liveDesign } from "../designState";
 import { acmeExpensesHistory } from "../fixtures/conversation";
 import { scriptDesignTurn } from "../fixtures/designTurns";
 import { scriptTurn } from "../fixtures/interview";
+import { scriptPrototypeTurn } from "../fixtures/prototype";
 import { specView } from "../specState";
 
 type ProjectConversationList = components["schemas"]["ProjectConversationList"];
@@ -53,8 +57,10 @@ type ApiError = components["schemas"]["Error"];
 // (turns/{id}) and streamed as SSE, replayed from its start and then live, so
 // a reload mid-turn attaches to it again. One turn at a time per project: a
 // second start is the server's 409 `turn_in_progress`. What each turn says
-// and does is scripted in fixtures/interview.ts; the turns themselves live in
-// chatServer.ts.
+// and does is scripted in fixtures/interview.ts (the design review's in
+// fixtures/designTurns.ts, `/prototype` in fixtures/prototype.ts); the turns
+// themselves live in chatServer.ts. A turn's `prototypeFeedback` is refused
+// as aep-api refuses it.
 //
 // Acme Expenses starts with a conversation; a project made through New
 // project starts with the platform's kickoff (handlers/projects.ts); every
@@ -71,7 +77,10 @@ function historyFor(conversationId: string): ConversationMessage[] {
   const turns = finishedTurns(conversationId);
   return [
     ...(seeded[conversationId] ?? []),
-    ...turns.flatMap((t): ConversationMessage[] => [{ role: "user", author: AUTHOR, content: t.instruction }, ...t.reply]),
+    ...turns.flatMap((t): ConversationMessage[] => [
+      { role: "user", author: AUTHOR, content: t.instruction, ...(t.prototypeFeedback ? { prototypeFeedback: t.prototypeFeedback } : {}) },
+      ...t.reply,
+    ]),
   ];
 }
 
@@ -91,10 +100,46 @@ function statusOf(turn: MockTurn): TurnStatus {
   };
 }
 
+/**
+ * Why a turn's `prototypeFeedback` is refused, as aep-api refuses it (400,
+ * before any turn): a malformed batch, or one on anything but a room turn of
+ * `/prototype` (bare, or naming the batch's component) without an anchor.
+ */
+export function prototypeFeedbackProblem(body: TurnBody): string | null {
+  if (body.prototypeFeedback === undefined) return null;
+  if (!isPrototypeFeedback(body.prototypeFeedback)) return "prototypeFeedback is malformed";
+  const command = parsePrototypeCommand(body.instruction);
+  if (!command || (command.component !== null && command.component !== body.prototypeFeedback.component)) {
+    return "prototypeFeedback goes only with /prototype for its component";
+  }
+  if (body.collab !== true || body.anchor || body.intent) return "prototypeFeedback goes only on a room turn without an anchor";
+  return null;
+}
+
 /** Start a turn: what the mock agent does with the message, scheduled from now. */
 export function startMockTurn(projectName: string, body: TurnBody): MockTurn {
   const scope = scopeOfBody(body);
   const turnKey = `t${Date.now().toString(36)}`;
+  const prototypeTurn = parsePrototypeCommand(body.instruction)
+    ? scriptPrototypeTurn({
+        instruction: body.instruction,
+        feedback: body.prototypeFeedback,
+        webApps: webApplications(liveDesign(projectName).artifacts),
+        doc: projectSpecDoc(projectName, specView(projectName)),
+        turnKey,
+      })
+    : null;
+  if (prototypeTurn) {
+    return recordTurn({
+      projectName,
+      conversationId: conversationIdFor(projectName),
+      instruction: prototypeTurn.display,
+      frames: prototypeTurn.frames,
+      reply: prototypeTurn.reply,
+      ...(prototypeTurn.files ? { prototype: prototypeTurn.files } : {}),
+      ...(body.prototypeFeedback ? { prototypeFeedback: body.prototypeFeedback } : {}),
+    });
+  }
   const designTurn =
     scope.kind === "design"
       ? scriptDesignTurn({ projectName, instruction: body.instruction, model: specView(projectName), turnKey })
@@ -181,6 +226,10 @@ export const conversationHandlers = [
     const body = (await request.json()) as TurnBody;
     if (!body.instruction?.trim()) {
       return HttpResponse.json<ApiError>({ code: "invalid_request", message: "instruction is required" }, { status: 400 });
+    }
+    const feedbackProblem = prototypeFeedbackProblem(body);
+    if (feedbackProblem) {
+      return HttpResponse.json<ApiError>({ code: "invalid_request", message: feedbackProblem }, { status: 400 });
     }
     if (String(params.conversationId) !== conversationIdFor(projectName)) {
       return HttpResponse.json<TurnConflict>({ code: "conversation_rotated" }, { status: 409 });

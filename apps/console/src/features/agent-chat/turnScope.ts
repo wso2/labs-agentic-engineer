@@ -22,20 +22,28 @@ import type { ProjectCard } from "../shell/scope";
 
 // A project has one conversation; each turn in it carries a scope, taken from
 // where the user was when they sent it. A feature file open in the spec card
-// scopes the turn to that feature; the design card, to the design review;
-// anywhere else in the project, to the whole product.
+// scopes the turn to that feature; the design card (and the prototypes beside
+// it), to the design review; anywhere else in the project, to the whole
+// product. A prototype turn (Make prototype, a review's Send all) is about one
+// web application, and a review's requests ride it as typed feedback.
 //
 // This module is the one place a scope meets the wire, as the contract's
 // `scope` (TurnScope): a feature by its ID, or the design review; the whole
 // product is the absence of a scope. It focuses the agent and fences nothing.
+// A prototype turn sends no scope (its `/prototype` command says what it is
+// about) and carries the review's batch as `prototypeFeedback`.
 
 type TurnInputBody = components["schemas"]["TurnInputBody"];
+
+/** A prototype review's requests, as the turn carries them. */
+export type PrototypeFeedback = components["schemas"]["PrototypeFeedbackInput"];
 
 /** What one turn is about. */
 export type TurnScope =
   | { kind: "product" }
   | { kind: "feature"; featureId: string; name: string; path: string }
-  | { kind: "design" };
+  | { kind: "design" }
+  | { kind: "prototype"; feedback?: PrototypeFeedback };
 
 /** A turn's request body. */
 export type TurnBody = TurnInputBody;
@@ -45,7 +53,7 @@ export function turnScopeFor(
   card: ProjectCard | null,
   feature: Pick<SpecFeature, "id" | "name" | "path"> | null,
 ): TurnScope {
-  if (card === "design") return { kind: "design" };
+  if (card === "design" || card === "prototype") return { kind: "design" };
   if (card === "spec" && feature) return featureScope(feature);
   return { kind: "product" };
 }
@@ -62,6 +70,7 @@ export function turnBody(instruction: string, scope: TurnScope): TurnBody {
   const body: TurnBody = { instruction, collab: true };
   if (scope.kind === "feature") body.scope = { kind: "feature", feature: scope.featureId };
   if (scope.kind === "design") body.scope = { kind: "design-review" };
+  if (scope.kind === "prototype" && scope.feedback) body.prototypeFeedback = scope.feedback;
   return body;
 }
 

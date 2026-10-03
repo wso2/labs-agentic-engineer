@@ -123,8 +123,15 @@ function readSkillBytes(abs: string, log: SkillReadLog): Buffer | undefined {
 const PRODUCED_SPEC_RE = /^specs\/design\/components\/[^/]*\/openapi\.yaml$/;
 const CONSUMED_SPEC_RE = /^specs\/design\/components\/[^/]*\/dependencies\/[^/]*\.openapi\.yaml$/;
 
+/**
+ * A web-application's prototype, the pair the prototype gate writes together:
+ * the manifest and the source, directly under the component folder. A revision
+ * turn must read the current pair back, so both are admitted by shape.
+ */
+const PROTOTYPE_FILE_RE = /^specs\/design\/components\/[^/]*\/prototype\.(?:json|tsx)$/;
+
 function isAdmittedSpecPath(path: string): boolean {
-  return PRODUCED_SPEC_RE.test(path) || CONSUMED_SPEC_RE.test(path);
+  return PRODUCED_SPEC_RE.test(path) || CONSUMED_SPEC_RE.test(path) || PROTOTYPE_FILE_RE.test(path);
 }
 
 /**
@@ -152,7 +159,8 @@ const SECURITY_DESIGN_PATH = "specs/design/security.json";
  * The turn-snapshot filter — mirrors aep-api `agentfold.KeepInTurnSnapshot`:
  * keep agent-authored sources (`*.md`, `*.dsl`, `*.cell`, `*.feature`,
  * component `design.json`, the project security design
- * `specs/design/security.json`, the two OpenAPI contract shapes above) and drop
+ * `specs/design/security.json`, the two OpenAPI contract shapes above, a
+ * component's `prototype.json` and `prototype.tsx`) and drop
  * everything else (derived `.excalidraw`/`*.gen.json` projections, code,
  * arbitrary `*.yaml` such as `workload.yaml`, …). `*.cell` is the
  * project-level cell-diagram DSL (design.cell) that drives the live

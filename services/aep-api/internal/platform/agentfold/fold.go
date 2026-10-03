@@ -100,12 +100,13 @@ const (
 	ErrInvalidDSL      ErrCode = "INVALID_DSL"
 	ErrProtectedPath   ErrCode = "PROTECTED_PATH"
 	// Gates that live ONLY on the TS side (openapi.yaml, security.json, the
-	// design diagrams). The fold never re-judges them: it applies a write
+	// design diagrams, a web-application's prototype). The fold never re-judges them: it applies a write
 	// only once the stream's own verdict says the TS gate accepted it.
 	ErrInvalidOpenAPI     ErrCode = "INVALID_OPENAPI"
 	ErrInvalidDiagram     ErrCode = "INVALID_DIAGRAM"
 	ErrUnknownParticipant ErrCode = "UNKNOWN_PARTICIPANT"
 	ErrUnknownDependency  ErrCode = "UNKNOWN_DEPENDENCY"
+	ErrInvalidPrototype   ErrCode = "INVALID_PROTOTYPE"
 )
 
 // MatchCandidate echoes a source line for NOT_UNIQUE / NOT_FOUND re-anchoring.

@@ -18,7 +18,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, mkdirSync, symlinkSync, writeFileSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, mkdirSync, symlinkSync, writeFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -180,44 +180,15 @@ test("keepInTurnSnapshot admits the project security design, by exact path only"
 
 /**
  * The FIXED accept/reject table the two implementations of this one rule are
- * pinned to. Its twin lives in aep-api
- * (`internal/platform/agentfold/snapshot_filter_test.go`, `keepParity` /
- * `TestKeepInTurnSnapshot_ParityTable`): the same paths, the same verdicts. A
- * change made on one side only shows up as a failing row here rather than as a
- * turn that can read a file on one side and gets NO_SUCH_FILE on the other.
+ * pinned to. It is ONE file, `fixtures/turn-snapshot-paths.json`, read by this
+ * test and by aep-api's `internal/platform/agentfold/snapshot_filter_test.go`
+ * (`TestKeepInTurnSnapshot_ParityTable`): the same paths, the same verdicts. A
+ * change made on one side only shows up as a failing row rather than as a turn
+ * that can read a file on one side and gets NO_SUCH_FILE on the other.
  */
-const KEEP_PARITY: Record<string, boolean> = {
-  // Agent-authored sources.
-  "specs/requirements/prd.md": true,
-  "specs/design/domain-model.md": true,
-  "specs/design/design.cell": true,
-  "specs/design/system.dsl": true,
-  "specs/design/components/api/design.json": true,
-  "specs/validation/acceptance/checkout.feature": true,
-  "specs/design/components/api/openapi.yaml": true,
-  "specs/design/components/api/dependencies/stripe.openapi.yaml": true,
-  // The project security design: one design-level file, by exact path.
-  "specs/design/security.json": true,
-  // Text references: the folder decides, not the extension.
-  "specs/requirements/references/brief.txt": true,
-  "specs/requirements/references/rows.csv": true,
-
-  // A per-component security.json is NOT a second catalog — nothing reads or
-  // validates one, so it stays out rather than riding along unvalidated.
-  "specs/design/components/api/security.json": false,
-  "security.json": false,
-  "specs/security.json": false,
-  // Derived projections, code, arbitrary yaml, near-miss spec shapes.
-  "specs/design/components/api/workload.yaml": false,
-  "specs/design/components/api/api.gen.json": false,
-  "specs/design/wireframe.excalidraw": false,
-  "src/main.go": false,
-  "specs/design/components/api/openapi.yml": false,
-  "specs/design/components/api/dependencies/nested/stripe.openapi.yaml": false,
-  "specs/requirements/rows.csv": false,
-  // A binary reference rides as a file part, never as text.
-  "specs/requirements/references/doc.pdf": false,
-};
+const KEEP_PARITY: Record<string, boolean> = JSON.parse(
+  readFileSync(new URL("./fixtures/turn-snapshot-paths.json", import.meta.url), "utf8"),
+);
 
 test("keepInTurnSnapshot / KeepInTurnSnapshot agree on one fixed accept/reject table", () => {
   for (const [path, want] of Object.entries(KEEP_PARITY)) {

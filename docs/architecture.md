@@ -18,7 +18,7 @@ compile error, not a runtime surprise.
 | `apps/` | React webapps (Vite + Oxygen UI) | yes |
 | `services/` | long-lived deployables (Go + TS) | yes |
 | `runners/` | one-shot / job images | as jobs |
-| `packages/` | shared libraries: `contracts`, `clients`, `ui`, `agent-stream`, `collab-doc`, `design-projection`, `excalidraw-dsl`, `progress-view`, `sse-cassette` | no |
+| `packages/` | shared libraries: `contracts`, `clients`, `ui`, `agent-stream`, `collab-doc`, `design-projection`, `excalidraw-dsl`, `progress-view`, `sse-cassette`, `prototype-kit`, `prototype-theme-default`, `prototype-theme-oxygen`, `prototype-cli` | no |
 | `skills/` | the authored skill library, seeded and reconciled into each org's own repo | no — delivered as content |
 | `playground/` | local harness that runs the real agents against a plain directory (no cluster, no GitHub, no database) | no |
 | `evals/` | on-demand evaluation suites for the platform's agents (`spec-agents`: per-section + chained evals over the real agents service; see its README) | no — never in CI |
@@ -71,6 +71,31 @@ packages/contracts/**/openapi.yaml ──> openapi-typescript ──> TS client 
 The build graph (`turbo` + `go.work`) wires every consumer's `build`/`typecheck`
 behind `gen`, and CI runs `gen` + `git diff --exit-code` to catch staleness. See
 `docs/decisions/ADR-0001-tooling-and-naming.md`.
+
+## Prototype kit and CLI
+
+Clickable prototypes are React on a fixed kit, run in a sandbox
+([ADR-0042](decisions/ADR-0042-a-prototype-is-react-on-a-fixed-kit-in-a-sandbox.md)).
+Three public packages, usable with no AEP: `@wso2/prototype-kit` (the API a
+`prototype.tsx` imports, the manifest schema, the static and isolated render
+checks, review feedback, the sandboxed frame host and the theme build helper),
+`@wso2/prototype-theme-default` (plain React + CSS) and `@wso2/prototype-cli`
+(`prototype init | check | preview | export`). `@wso2/prototype-theme-oxygen`
+draws the same kit on Oxygen UI's layout kit with the console's own theme
+(`@aep/ui-theme`, `packages/ui/theme`), so AEP's prototypes look like the
+console and other WSO2 products.
+The manifest's JSON Schema is committed at `packages/prototype-kit/schema/prototype-manifest.schema.json`; the
+kit reference an agent writes against is generated to
+`packages/prototype-kit/reference.md`. Each package's `design/README.md` has
+the details.
+
+In AEP the Prototype stage follows Design. The console's Design card offers
+Make prototype, which sends `/prototype`; the `prototype` skill has the agent
+write `specs/design/components/<c>/prototype.{json,tsx}` into the collab room,
+gated on write and again on save. The reviewer opens it full screen in the
+console, annotates, and Send all returns the requests as a typed
+`prototypeFeedback` on the next `/prototype` turn
+([console design note](../apps/console/design/prototype-review.md)).
 
 ## Service map
 

@@ -3604,7 +3604,9 @@ components:
       description: >
         One rehydrated message from a conversation's server-side history, sourced from the
         turn journal. The console's local chat log is display state; this is the durable
-        record, and it is what makes a chip survive a reload.
+        record, and it is what makes a chip survive a reload. A user message that sent a
+        prototype review carries its `prototypeFeedback`, so a reloaded thread, and every
+        teammate's, reads it as the requests it carried.
       properties:
         anchor:
           $ref: '#/components/schemas/TurnAnchor'
@@ -3624,6 +3626,8 @@ components:
         role:
           description: Who the message is from, as the journal recorded it.
           type: string
+        prototypeFeedback:
+          $ref: '#/components/schemas/PrototypeFeedbackInput'
         scope:
           $ref: '#/components/schemas/TurnScope'
       required:
@@ -7010,6 +7014,86 @@ components:
       required:
       - conversations
       type: object
+    PrototypeFeedbackInput:
+      additionalProperties: false
+      description: >
+        A batch of review requests on ONE web-application prototype, sent as a single
+        `/prototype` turn so the agent revises it once rather than once per note. The BFF
+        validates the batch and forwards it unchanged; it never renders it into prose. The
+        shape mirrors the prototype kit's feedback submission (`@wso2/prototype-kit/feedback`)
+        plus `component`, and so do its limits. Lengths are counted in UTF-16 code units, as
+        the kit counts them, so a character outside the Basic Multilingual Plane counts two.
+      properties:
+        component:
+          description: The web-application the batch is about, as named under
+            `specs/design/components/`. Its `prototype.json` and `prototype.tsx` are the only
+            files the turn may change.
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_-]*$
+          type: string
+        prototypeHash:
+          description: The revision of the prototype the reviewer looked at, as the kit's
+            64-character lowercase hex hash.
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        requests:
+          items:
+            $ref: '#/components/schemas/PrototypeFeedbackRequest'
+          maxItems: 50
+          minItems: 1
+          type: array
+      required:
+      - prototypeHash
+      - component
+      - requests
+      type: object
+    PrototypeFeedbackRequest:
+      additionalProperties: false
+      description: One reviewer request, made on one screen in one role and display state.
+      properties:
+        elementIds:
+          description: The ids of the elements the request is about, in selection order. Empty
+            means the whole screen.
+          items:
+            maxLength: 200
+            minLength: 1
+            pattern: \S
+            type: string
+          type: array
+        flowId:
+          description: The flow the reviewer was walking; absent for free navigation.
+          maxLength: 200
+          minLength: 1
+          pattern: \S
+          type: string
+        roleId:
+          maxLength: 200
+          minLength: 1
+          pattern: \S
+          type: string
+        screenId:
+          maxLength: 200
+          minLength: 1
+          pattern: \S
+          type: string
+        stateId:
+          maxLength: 200
+          minLength: 1
+          pattern: \S
+          type: string
+        text:
+          description: The reviewer's words, verbatim.
+          maxLength: 4000
+          minLength: 1
+          pattern: \S
+          type: string
+      required:
+      - screenId
+      - roleId
+      - stateId
+      - elementIds
+      - text
+      type: object
     ProvisionBody:
       additionalProperties: false
       properties:
@@ -9211,6 +9295,18 @@ components:
           - change
           - discuss
           type: string
+        prototypeFeedback:
+          allOf:
+          - $ref: '#/components/schemas/PrototypeFeedbackInput'
+          description: >
+            A prototype review batch. Valid only when `instruction` is the `/prototype` command
+            and `collab` is true, and never together with `anchor`/`intent`: a batch aims at
+            stable prototype ids, not at a selection in a document. Room turns only, because the
+            room's committer is the one path an agent's revision reaches git by. When set,
+            `instruction` is `/prototype` alone or followed by the batch's own `component`.
+            Absent for every other turn. JSON-only: a review batch carries no attachments, so
+            the multipart form has no such part.
+          x-go-type-skip-optional-pointer: false
         scope:
           $ref: '#/components/schemas/TurnScope'
       required:

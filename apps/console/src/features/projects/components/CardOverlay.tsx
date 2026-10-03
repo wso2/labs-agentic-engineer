@@ -24,7 +24,7 @@ import { PHONE } from "../../shell/layout";
 import { cardTitle, type ProjectCard } from "../../shell/scope";
 import { WorkspaceTabs } from "./WorkspaceTabs";
 
-const STEP: Record<ProjectCard, number> = { spec: 1, design: 2, builds: 3 };
+const STEP: Record<ProjectCard, number> = { spec: 1, design: 2, prototype: 2, builds: 3 };
 
 const slideIn = keyframes`
   from { opacity: 0; transform: translateX(12px); }
@@ -43,10 +43,10 @@ const reducedMotion = { "@media (prefers-reduced-motion: reduce)": { animation: 
  * a scrim, and closing (X, Escape, or a click on the scrim) goes back to it.
  * Each card is a route of its own, so this is what the card routes render.
  *
- * Spec and Design are one workspace, so their header is the Spec · Design
- * tabs rather than a title. A card's own actions (the design card's Address
- * comments) sit in the header beside the close button, and wrap under the
- * tabs at phone width. A `fill` body is laid out by its children (the spec
+ * Spec, Design and Prototype are one workspace, so their header is the
+ * Spec · Design · Prototype tabs rather than a title. A card's own actions
+ * (the design card's Address comments) sit in the header beside the close
+ * button, and wrap under the tabs at phone width. A `fill` body is laid out by its children (the spec
  * card's rail and document scroll on their own); otherwise the body is one
  * padded scroll.
  */

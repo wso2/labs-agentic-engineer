@@ -110,6 +110,11 @@ func (h *Handler) CreateTurn(ctx context.Context, request gen.CreateTurnRequestO
 		if in.Scope, err = scopeFromJSON(request.JSONBody.Scope); err != nil {
 			return nil, err
 		}
+		// JSON only: a review batch carries no attachments, so the multipart
+		// form has no such part.
+		if in.PrototypeFeedback, err = prototypeFeedbackFromJSON(in.Instruction, in.Collab, aim != nil, request.JSONBody.PrototypeFeedback); err != nil {
+			return nil, err
+		}
 	default:
 		return nil, apierr.BadRequest("request body is required")
 	}

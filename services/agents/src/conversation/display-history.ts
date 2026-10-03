@@ -46,6 +46,8 @@ export type DisplayMessage =
       anchor?: TurnJournalEntry["anchor"];
       /** What the user was looking at when they sent it (S6). */
       scope?: TurnJournalEntry["scope"];
+      /** The prototype review it sent (#860). */
+      prototypeFeedback?: TurnJournalEntry["prototypeFeedback"];
     };
 
 export function projectDisplayHistory(conv: Conversation): DisplayMessage[] {
@@ -64,6 +66,7 @@ export function projectDisplayHistory(conv: Conversation): DisplayMessage[] {
         : {}),
       ...(entry.anchor ? { anchor: entry.anchor } : {}),
       ...(entry.scope ? { scope: entry.scope } : {}),
+      ...(entry.prototypeFeedback ? { prototypeFeedback: entry.prototypeFeedback } : {}),
     };
   });
 }

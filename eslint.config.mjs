@@ -28,6 +28,8 @@ export default tseslint.config(
       // Playground project homes: generated app source, not repo code.
       "playground/.projects/**",
       "playground/.devtools/**",
+      // Prototype fixtures: some are deliberately broken (a syntax error, a forbidden API) for `prototype check` to report.
+      "packages/prototype-cli/test/fixtures/**",
     ],
   },
   js.configs.recommended,

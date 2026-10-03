@@ -16,6 +16,7 @@
     "./conversation/load-workspace": "./src/conversation/load-workspace.ts"
   },
   "scripts": {
+    "gen": "tsx scripts/generate-prototype-skill.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
@@ -30,6 +31,8 @@
     "@aep/agent-stream": "workspace:*",
     "@aep/collab-doc": "workspace:*",
     "@aep/web-search": "workspace:*",
+    "@wso2/prototype-kit": "workspace:*",
+    "@wso2/prototype-theme-oxygen": "workspace:*",
     "@hocuspocus/provider": "^4.3.0",
     "ai": "^7.0.2",
     "express": "^5.0.0",
@@ -49,6 +52,7 @@
     "@types/node": "^25.6.0",
     "@types/pg": "^8.11.0",
     "@types/ws": "^8.18.0",
+    "@wso2/prototype-theme-default": "workspace:*",
     "tsx": "^4.21.0"
   }
 }

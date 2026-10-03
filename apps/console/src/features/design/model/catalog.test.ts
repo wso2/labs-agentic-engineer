@@ -32,6 +32,10 @@ const files = Object.fromEntries(Object.entries(raw).map(([path, content]) => [p
 describe("the design catalog, from a design's files", () => {
   const catalog = designCatalog(files);
 
+  it("titles the wireframe viewer Wireframes, so it is not mistaken for the Prototype tab", () => {
+    expect(catalog.find((a) => a.source.kind === "prototype")?.title).toBe("Wireframes: expense-webapp");
+  });
+
   it("lists what the design yields, business first, then technical, then the acceptance criteria", () => {
     expect(catalog.map((a) => [a.id, a.depth, a.source.kind])).toEqual([
       ["prototype-expense-webapp", "business", "prototype"],

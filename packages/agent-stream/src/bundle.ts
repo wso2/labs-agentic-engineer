@@ -44,6 +44,7 @@ import { checkSecurityDesign } from "./security-design-schema.js";
 import { checkOpenapiSpec } from "./openapi-spec.js";
 import { checkWireframeLayout } from "./wireframe-layout.js";
 import { checkDesignDiagram } from "./design-diagrams.js";
+import { checkPrototype } from "./prototype-gate.js";
 import { checkComponentDependencies } from "./component-dependencies.js";
 import { checkDependencyDesign, preservePlatformFields } from "./dependency-design-schema.js";
 import type {
@@ -53,6 +54,7 @@ import type {
   OpOk,
   OpErr,
   OpResult,
+  PrototypeFinding,
 } from "./contracts/sse-events.js";
 
 // The op shapes & result types are the WIRE contract — defined once in
@@ -75,6 +77,21 @@ const PROTECTED_PATHS = new Set<string>([
 export const FRONTMATTER_RE = /^---\n([\s\S]*?)\n---\n?/;
 
 const MAX_CANDIDATES = 6;
+
+/**
+ * A write the bundle would accept, not yet made: the path, the op and the
+ * content `addFile`/`editFile` would store (platform fields already carried).
+ * A host with an asynchronous gate (the prototype render check) judges it, then
+ * makes the write with the same op.
+ */
+export interface PlannedWrite {
+  path: string;
+  op: Op;
+  content: string;
+}
+
+/** What a write op would do: the verdict when it stores nothing (a refusal, a no-op), else the write. */
+export type WritePlan = { verdict: OpResult } | { write: PlannedWrite };
 
 export class FileBundle {
   private files = new Map<string, string>();
@@ -113,37 +130,46 @@ export class FileBundle {
   // -- Ops ----------------------------------------------------------------
 
   addFile(path: string, content: string): OpResult {
+    return this.make(this.planAdd(path, content));
+  }
+
+  editFile(path: string, oldString: string, newString: string): OpResult {
+    return this.make(this.planEdit(path, oldString, newString));
+  }
+
+  /** What `addFile` would do, through every gate, without doing it. */
+  planAdd(path: string, content: string): WritePlan {
     const op: Op = "add";
     if (!path.trim()) {
-      return err(path, op, "INVALID_PATH", "path must be a non-empty string.");
+      return verdict(err(path, op, "INVALID_PATH", "path must be a non-empty string."));
     }
     const next = lf(content);
     if (this.files.has(path)) {
       if (this.files.get(path) === next) {
-        return ok(path, op, "noop"); // identical re-add
+        return verdict(ok(path, op, "noop")); // identical re-add
       }
-      return err(
-        path,
-        op,
-        "ALREADY_EXISTS",
-        `${path} already exists — use editFile to change it, or removeFile then addFile to replace it wholesale.`,
+      return verdict(
+        err(
+          path,
+          op,
+          "ALREADY_EXISTS",
+          `${path} already exists — use editFile to change it, or removeFile then addFile to replace it wholesale.`,
+        ),
       );
     }
-    return this.commit(path, op, next, (e) => `${path} would not be valid YAML: ${e}`);
+    return this.gate(path, op, next, (e) => `${path} would not be valid YAML: ${e}`);
   }
 
-  editFile(path: string, oldString: string, newString: string): OpResult {
+  /** What `editFile` would do, through every gate, without doing it. */
+  planEdit(path: string, oldString: string, newString: string): WritePlan {
     const op: Op = "edit";
     if (!this.files.has(path)) {
-      return err(
-        path,
-        op,
-        "NO_SUCH_FILE",
-        `${path} is not in the bundle. Available: ${this.list().join(", ")}.`,
+      return verdict(
+        err(path, op, "NO_SUCH_FILE", `${path} is not in the bundle. Available: ${this.list().join(", ")}.`),
       );
     }
     if (oldString === "") {
-      return err(path, op, "EMPTY_OLD_STRING", "oldString must be non-empty; to create a file use addFile.");
+      return verdict(err(path, op, "EMPTY_OLD_STRING", "oldString must be non-empty; to create a file use addFile."));
     }
     const content = this.files.get(path)!; // already LF
     const oldS = lf(oldString);
@@ -156,24 +182,28 @@ export class FileBundle {
       // (e.g. a short newString that coincidentally occurs inside another word),
       // silently dropping a requested change — worse than a corrective retry.
       if (newS.trim() !== "" && occurrences(content, newS).length === 1) {
-        return ok(path, op, "already-applied");
+        return verdict(ok(path, op, "already-applied"));
       }
-      return err(
-        path,
-        op,
-        "NOT_FOUND",
-        `oldString did not match any text in ${path}. Copy the snippet verbatim, including leading indentation and newlines.`,
-        closestLines(content, oldS),
+      return verdict(
+        err(
+          path,
+          op,
+          "NOT_FOUND",
+          `oldString did not match any text in ${path}. Copy the snippet verbatim, including leading indentation and newlines.`,
+          closestLines(content, oldS),
+        ),
       );
     }
     if (starts.length > 1) {
-      return err(
-        path,
-        op,
-        "NOT_UNIQUE",
-        `oldString matched ${starts.length} locations in ${path}. Broaden it with surrounding lines (e.g. the parent YAML key or the preceding heading) until it is unique.`,
-        starts.slice(0, MAX_CANDIDATES).map((idx) => lineCandidate(content, idx)),
-        starts.length,
+      return verdict(
+        err(
+          path,
+          op,
+          "NOT_UNIQUE",
+          `oldString matched ${starts.length} locations in ${path}. Broaden it with surrounding lines (e.g. the parent YAML key or the preceding heading) until it is unique.`,
+          starts.slice(0, MAX_CANDIDATES).map((idx) => lineCandidate(content, idx)),
+          starts.length,
+        ),
       );
     }
 
@@ -181,7 +211,7 @@ export class FileBundle {
     // slice-based splice avoids String.replace's `$`-pattern interpretation.
     const after = content.slice(0, idx) + newS + content.slice(idx + oldS.length);
 
-    return this.commit(
+    return this.gate(
       path,
       op,
       after,
@@ -208,16 +238,24 @@ export class FileBundle {
   }
 
   /**
-   * Apply `content` to `path` through the write-gate ladder: YAML reparse, then
+   * Judge `content` for `path` through the write-gate ladder: YAML reparse, then
    * each artifact-specific gate that claims the path (component `design.json`
    * schema, `security.json` schema, `wireframes.dsl` syntax, `openapi.yaml`
-   * structure, the design diagrams' shape and participants). The first
+   * structure, a prototype's manifest and screens, the design diagrams' shape
+   * and participants). The first
    * problem aborts with its own code and NO write, leaving the bundle
-   * byte-for-byte unchanged — the safe in-memory contract. Every gate is a pure
+   * byte-for-byte unchanged — the safe in-memory contract; a write that
+   * passes is returned for `make` to store. Every gate is a pure
    * (path, content) => problem | null function, so a new artifact kind is one
    * module and one call here.
    */
-  private commit(path: string, op: Op, content: string, rejectMsg: (yamlErr: string) => string): OpResult {
+  private gate(path: string, op: Op, content: string, rejectMsg: (yamlErr: string) => string): WritePlan {
+    const judged = this.firstProblem(path, op, content, rejectMsg);
+    return typeof judged === "string" ? { write: { path, op, content: judged } } : verdict(judged);
+  }
+
+  /** The first gate's refusal, or the content to store (platform fields carried). */
+  private firstProblem(path: string, op: Op, content: string, rejectMsg: (yamlErr: string) => string): OpErr | string {
     const yamlErr = checkYaml(path, content);
     if (yamlErr) {
       return err(path, op, "INVALID_YAML", rejectMsg(yamlErr));
@@ -265,6 +303,16 @@ export class FileBundle {
     if (layoutProblem) {
       return err(path, op, layoutProblem.code, layoutProblem.message);
     }
+    // A web-application's prototype is gated as a pair: prototype.json on the
+    // manifest's shape, version and references, and against the source beside
+    // it; prototype.tsx, against the manifest this bundle holds, on its static
+    // rules. Drawing every screen is the host's asynchronous stage
+    // (writeWithRenderCheck). One the platform would refuse on save never
+    // reaches the ledger.
+    const prototypeProblem = checkPrototype(path, content, this);
+    if (prototypeProblem) {
+      return err(path, op, prototypeProblem.code, prototypeProblem.message, undefined, undefined, prototypeProblem.findings);
+    }
     // A component's openapi.yaml is structure-gated on the same terms, which is
     // what makes asking a separate tool to validate it unnecessary — that ask
     // cost a round trip plus a full re-emission of the document as tool input.
@@ -283,6 +331,13 @@ export class FileBundle {
     if (diagramProblem) {
       return err(path, op, diagramProblem.code, diagramProblem.message);
     }
+    return content;
+  }
+
+  /** Store a plan's write, or return its verdict. */
+  private make(plan: WritePlan): OpResult {
+    if ("verdict" in plan) return plan.verdict;
+    const { path, op, content } = plan.write;
     this.files.set(path, content);
     this.touchedPaths.add(path);
     return ok(path, op, "applied");
@@ -298,6 +353,10 @@ export function lf(s: string): string {
   return s.replace(/\r\n/g, "\n");
 }
 
+function verdict(result: OpResult): WritePlan {
+  return { verdict: result };
+}
+
 function ok(path: string, op: Op, status: OpOk["status"]): OpOk {
   return { ok: true, path, op, status };
 }
@@ -309,10 +368,12 @@ function err(
   message: string,
   candidates?: MatchCandidate[],
   count?: number,
+  findings?: PrototypeFinding[],
 ): OpErr {
   const e: OpErr = { ok: false, path, op, code, message };
   if (candidates && candidates.length) e.candidates = candidates;
   if (count !== undefined) e.count = count;
+  if (findings) e.findings = findings;
   return e;
 }
 

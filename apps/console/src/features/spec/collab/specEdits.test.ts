@@ -24,7 +24,8 @@ import { buildOffer } from "../../builds/model/picker";
 import { specLeg } from "../../projects/model/track";
 import { deriveWorkspace } from "../model/workspace";
 import { docLines, type DocLine } from "./docLines";
-import { applyAgentToolCall, seedSpecDoc } from "./specDoc";
+import { applyAgentToolCall } from "./agentWrites";
+import { seedSpecDoc } from "./specDoc";
 import {
   answerBlockingQuestion,
   appendToSection,

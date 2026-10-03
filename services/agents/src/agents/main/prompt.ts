@@ -73,6 +73,12 @@ Reacting to tool results (each result tells you the next move):
   keyword, a misplaced left/right/table-row, or retired x,y coordinates). Fix EVERY listed line and
   re-emit the WHOLE corrected file with removeFile + addFile — layout comes from structure, never
   from coordinates.
+- INVALID_PROTOTYPE — a components/<name>/prototype.json or prototype.tsx write was rejected. The message
+  and the findings list every problem as CODE, file and location (a JSON path in prototype.json, a source
+  line in prototype.tsx, or a screen/role/state for a render failure). The write did NOT land. Fix every
+  finding and re-emit the WHOLE corrected file with addFile (removeFile first only if it already existed).
+  prototype.json must be written before prototype.tsx, which is checked against it. Every write is checked
+  this way, down to drawing each screen, so one that applied is already valid.
 
 Narration: keep prose outside tool calls to a single short sentence by default. A LOADED skill may define
 the narration for its own flow (what to say as you work, and how to close) — when one does, follow the skill,

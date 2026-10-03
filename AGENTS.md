@@ -14,7 +14,7 @@ SDLC platform built on OpenChoreo.
 | lint | `make lint` | eslint + golangci-lint |
 | typecheck | `make typecheck` | `tsc` + `go vet` |
 | license-check | `make license-check` | fail if any source lacks the Apache header |
-| deadcode (TS) | `make deadcode-ts-check` | knip over `@aep/agents` + `@aep/playground`; fails on any finding (`make deadcode-ts` reports without failing) |
+| deadcode (TS) | `make deadcode-ts-check` | knip over `@aep/agents`, `@aep/playground` and the `@wso2/prototype-*` packages; fails on any finding (`make deadcode-ts` reports without failing) |
 
 ## Coding Practices
 - Focus on writing maintainable code, clean testable code. 

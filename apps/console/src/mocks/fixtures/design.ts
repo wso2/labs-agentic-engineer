@@ -27,7 +27,8 @@ import { parseLine, type LineBlock } from "../../features/spec/model/ids";
 // the data model, the architecture (a cell), a component and its contract,
 // security, and one acceptance file per feature. The viewers' formats follow
 // the old console's fixtures (apps/console-old/src/mocks/fixtures/project.ts and
-// validation.ts): wireframes DSL, cell DSL, design.json, OpenAPI YAML,
+// validation.ts): wireframes DSL, cell DSL, design.json (the web app's too,
+// which is what Make prototype looks for), OpenAPI YAML,
 // Gherkin with rules tagged `@story-F2.3`. Payroll export is never designed
 // here (it waits on a question), so nothing below draws it; the design turn
 // finds that it needs Xero, which blocks its build and nothing else.
@@ -139,6 +140,20 @@ expense-web -> expense-api
 expense-api -> south expenses-db : postgres
 expense-web -> east company-sso : sign-in
 `;
+
+const EXPENSE_WEB_DESIGN = `{
+  "name": "expense-web",
+  "type": "web-application",
+  "version": "0.1.0",
+  "language": "TypeScript",
+  "buildpack": "docker",
+  "appPath": "expense-web",
+  "exposure": "intranet",
+  "description": "Where staff submit claims and managers approve them.",
+  "dependencies": [
+    { "kind": "component", "name": "expense-api" }
+  ]
+}`;
 
 const EXPENSE_API_DESIGN = `{
   "name": "expense-api",
@@ -362,7 +377,7 @@ function acmeCatalog(designed: ReadonlySet<string>, tweaks: ReadonlySet<DesignTw
   const out: ArtifactDraft[] = [
     {
       id: "prototype",
-      title: "Prototype: the expense web app",
+      title: "Wireframes: the expense web app",
       depth: "business",
       features: all,
       source: { kind: "prototype", path: "specs/design/components/expense-web/wireframes.dsl", dsl: expenseWebDsl(tweaks) },
@@ -441,6 +456,13 @@ function acmeCatalog(designed: ReadonlySet<string>, tweaks: ReadonlySet<DesignTw
       depth: "technical",
       features: all,
       source: { kind: "architecture", cell: ARCHITECTURE },
+    },
+    {
+      id: "expense-web",
+      title: "Component and contract: expense-web",
+      depth: "technical",
+      features: all,
+      source: { kind: "contract", design: EXPENSE_WEB_DESIGN, openapi: null },
     },
     {
       id: "expense-api",

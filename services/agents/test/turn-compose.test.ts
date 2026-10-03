@@ -65,6 +65,83 @@ test("/design names the features this run designs, and bare designs every design
   );
 });
 
+test("/prototype loads its skill and the brief, and trailing component names follow the brief", () => {
+  const bare = composeInstruction({ kind: "flow", skill: "prototype" });
+  assert.ok(bare.startsWith("Load the prototype skill and follow it.\n\nGenerate the prototype of each web-application"));
+  // The brief names what to read and what to write.
+  assert.match(bare, /specs\/design\/design\.cell/);
+  assert.match(bare, /specs\/design\/security\.json/);
+  assert.match(bare, /specs\/design\/components\/<component>\/prototype\.json/);
+  assert.match(bare, /manifest\) first and then prototype\.tsx/);
+  assert.match(bare, /Spec sources live under specs\//);
+
+  const named = composeInstruction({ kind: "flow", skill: "prototype", text: "approvals-portal" });
+  const brief = named.indexOf("Generate the prototype of each web-application");
+  assert.ok(brief > 0 && named.indexOf("\n\napprovals-portal") > brief, "component names come after the brief");
+
+  // A flow with no brief is unchanged.
+  assert.ok(!composeInstruction({ kind: "flow", skill: "design" }).includes("Generate the prototype"));
+});
+
+const FEEDBACK = {
+  prototypeHash: "b".repeat(64),
+  component: "approvals-portal",
+  requests: [
+    {
+      screenId: "screen.queue",
+      flowId: "flow.approve",
+      roleId: "approver",
+      stateId: "state.default",
+      elementIds: ["btn.approve", "tbl.expenses"],
+      text: "Put the Approve button on the left.\nMake it `primary`.",
+    },
+    { screenId: "screen.detail", roleId: "employee", stateId: "state.empty", elementIds: [], text: "Say why it is empty" },
+  ],
+};
+
+test("a /prototype turn with feedback is a revision of that one prototype, not a generation", () => {
+  const out = composeInstruction({ kind: "flow", skill: "prototype", prototypeFeedback: FEEDBACK });
+  assert.ok(out.startsWith('Load the prototype skill and follow it.\n\nRevise the prototype of the web-application "approvals-portal"'));
+  assert.ok(!out.includes("Generate the prototype of each web-application"));
+  // The files it may change, and the revision the reviewer saw.
+  assert.match(out, /specs\/design\/components\/approvals-portal\/prototype\.json/);
+  assert.match(out, /specs\/design\/components\/approvals-portal\/prototype\.tsx/);
+  assert.match(out, /change only those two files/);
+  assert.ok(out.includes("b".repeat(64)));
+  // Stable ids, and an answer per request.
+  assert.match(out, /Keep every manifest key and element id you do not need to change/);
+  assert.match(out, /answering each request by its number, as applied .* or declined/);
+});
+
+test("the revision brief lists each request's place and element ids and quotes its text verbatim", () => {
+  const out = composeInstruction({ kind: "flow", skill: "prototype", prototypeFeedback: FEEDBACK });
+  assert.match(
+    out,
+    /Request 1\nWhere: screen "screen\.queue", flow "flow\.approve", role "approver", display state "state\.default"\nElements \(ids\): btn\.approve, tbl\.expenses\nThe reviewer wrote:\n> Put the Approve button on the left\.\n> Make it `primary`\./,
+  );
+  // No flow, no element: the request is about the whole screen.
+  assert.match(out, /Request 2\nWhere: screen "screen\.detail", role "employee", display state "state\.empty"\nElements: none selected/);
+  assert.match(out, /> Say why it is empty/);
+  assert.match(out, /made 2 requests below/);
+  assert.match(composeInstruction({ kind: "flow", skill: "prototype", prototypeFeedback: { ...FEEDBACK, requests: [FEEDBACK.requests[1]!] } }), /made one request below/);
+});
+
+test("a /prototype turn without feedback is unchanged", () => {
+  const out = composeInstruction({ kind: "flow", skill: "prototype" });
+  assert.match(out, /Generate the prototype of each web-application/);
+  assert.doesNotMatch(out, /Revise the prototype/);
+});
+
+test("/prototype inlines the skills that read the design and say how an Oxygen screen is composed", () => {
+  assert.deepEqual(eagerSkillsFor({ kind: "flow", skill: "prototype" }), [
+    "prototype",
+    "cell-design",
+    "security-design",
+    "openapi-conventions",
+    "oxygen-ui-design-system",
+  ]);
+});
+
 test("the resolve command carries the user's answer after the dependency's name, verbatim", () => {
   // The definition's Service card sends `/resolve-dependency <name> <answer>`;
   // the token IS its skill, so the trailing text rides through untouched for
@@ -380,6 +457,7 @@ test("every eager skill name exists in the platform skill library", () => {
     { kind: "flow", skill: "refine" } as const,
     { kind: "flow", skill: "settle" } as const,
     { kind: "flow", skill: "design" } as const,
+    { kind: "flow", skill: "prototype" } as const,
     // The branch commands resolve to a platform skill, so they are checked too.
     { kind: "flow", skill: "feature" } as const,
     { kind: "flow", skill: "actor" } as const,

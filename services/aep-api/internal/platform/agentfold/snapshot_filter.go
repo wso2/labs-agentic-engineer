@@ -43,12 +43,27 @@ const (
 	consumedSpecPattern = "specs/design/components/*/dependencies/*.openapi.yaml"
 )
 
+// A web-application's prototype: the manifest and the source, directly under
+// the component folder. A revision turn must read the current pair back, so
+// both are admitted by shape.
+var prototypeFilePatterns = []string{
+	"specs/design/components/*/prototype.json",
+	"specs/design/components/*/prototype.tsx",
+}
+
 func isAdmittedSpecPath(p string) bool {
 	if ok, _ := path.Match(producedSpecPattern, p); ok {
 		return true
 	}
-	ok, _ := path.Match(consumedSpecPattern, p)
-	return ok
+	if ok, _ := path.Match(consumedSpecPattern, p); ok {
+		return true
+	}
+	for _, pattern := range prototypeFilePatterns {
+		if ok, _ := path.Match(pattern, p); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // securityDesignPath is the project's security design — ONE design-level file,
@@ -82,8 +97,8 @@ const securityDesignPath = "specs/design/security.json"
 // twice.
 //
 // The two filters are ONE rule implemented twice, and snapshot_filter_test.go
-// pins the same fixed accept/reject table as the agents service's
-// test/load-workspace.test.ts.
+// reads the same fixed accept/reject table as the agents service's
+// test/load-workspace.test.ts (services/agents/test/fixtures/turn-snapshot-paths.json).
 func KeepInTurnSnapshot(path string) bool {
 	if strings.HasSuffix(path, ".md") || strings.HasSuffix(path, ".dsl") ||
 		strings.HasSuffix(path, ".cell") || strings.HasSuffix(path, ".feature") {

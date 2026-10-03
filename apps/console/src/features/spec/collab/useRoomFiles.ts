@@ -26,7 +26,7 @@ import { listDocPaths, readDocFile } from "@aep/collab-doc";
  * while there is no doc.
  */
 export function useRoomFiles(doc: Y.Doc | null, prefixes: readonly string[]): Readonly<Record<string, string>> {
-  const cache = useRef<{ version: number; files: Record<string, string> }>({ version: -1, files: {} });
+  const cache = useRef<{ doc: Y.Doc | null; key: string; version: number; files: Record<string, string> } | null>(null);
   const version = useRef(0);
   const subscribe = useCallback(
     (fn: () => void) => {
@@ -42,7 +42,10 @@ export function useRoomFiles(doc: Y.Doc | null, prefixes: readonly string[]): Re
   );
   const key = prefixes.join("\n");
   const snapshot = useCallback(() => {
-    if (cache.current.version !== version.current) {
+    // Read again when the room changed, and when the doc itself did (a doc that
+    // arrives already seeded fires no transaction to count).
+    let c = cache.current;
+    if (!c || c.doc !== doc || c.key !== key || c.version !== version.current) {
       const files: Record<string, string> = {};
       if (doc) {
         for (const path of listDocPaths(doc)) {
@@ -51,9 +54,10 @@ export function useRoomFiles(doc: Y.Doc | null, prefixes: readonly string[]): Re
           if (text !== undefined) files[path] = text;
         }
       }
-      cache.current = { version: version.current, files };
+      c = { doc, key, version: version.current, files };
+      cache.current = c;
     }
-    return cache.current.files;
+    return c.files;
   }, [doc, key]);
   return useSyncExternalStore(subscribe, snapshot);
 }

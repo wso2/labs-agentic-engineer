@@ -40,6 +40,7 @@ import {
   type Toolset,
 } from "@aep/agent-stream";
 import { DocFileBundle } from "../collab/doc-bundle.js";
+import { checkPrototypeRender } from "../prototype/render-check.js";
 import { StreamingDocWriter } from "../collab/streaming-add.js";
 import type { RoomPeer } from "../collab/room-peer.js";
 import { runTurn, type ProviderOptions } from "../agents/main/run-turn.js";
@@ -299,10 +300,10 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
       tools = buildTaskPlanTools(new TaskPlan(input.files), skills);
       instructions = buildTaskPlanInstructions(skills, input.surface);
     } else {
-      bundle = input.collabPeer
-        ? new DocFileBundle(input.collabPeer, input.files)
-        : new FileBundle(input.files);
-      const fileToolSet = buildFileToolSet(bundle, skills);
+      bundle = input.collabPeer ? new DocFileBundle(input.collabPeer, input.files) : new FileBundle(input.files);
+      // A prototype write is drawn by the isolated render check before it lands
+      // (asynchronously: other conversations keep the event loop meanwhile).
+      const fileToolSet = buildFileToolSet(bundle, skills, { prototypeRender: checkPrototypeRender });
       tools = fileToolSet.tools;
       writes = fileToolSet.writes;
       if (input.registerDraft) {
@@ -349,7 +350,8 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     //     verdicts after the last body. Only the WIRE is re-projected — the doc
     //     writer keeps observing the SDK's own frames, so its optimistic preview
     //     is still finalized (or rolled back) by the authoritative execute().
-    const forward = writes ? tapWrites(writes, input.onEvent) : input.onEvent;
+    const tap = writes ? tapWrites(writes, input.onEvent) : undefined;
+    const forward = tap ? tap.forward : input.onEvent;
     // 3e. A write the output limit cuts off (truncation.ts) is watched on the
     //     SDK's own frames, like the doc writer.
     const truncation = new TruncationWatch();
@@ -437,6 +439,10 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
       onEvent,
       ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
     });
+
+    // Frames held behind an async write verdict reach the wire before anything
+    // that follows the turn (the manifest above all).
+    await tap?.drained();
 
     if (history !== conv.messages) conv.messages.push(...history.slice(historyLen));
 

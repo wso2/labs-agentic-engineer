@@ -41,7 +41,7 @@ An absent kind means `org`, which is a real decision, not a default to lean on:
 - **`platform`** — AE-owned, read-only in the console. The design-flow skills
   (`start`, `interview`, `refine`, `grilling`, `prd-contract`, `design`,
   `cell-design`, `architecture`, `security-design`, `openapi-conventions`,
-  `wireframes`, `acceptance-criteria`, `task-planning`), the `console`
+  `wireframes`, `prototype`, `acceptance-criteria`, `task-planning`), the `console`
   narration policy, the runner's own workflow skills (`aep`,
   `validation-task`, `mock-verification`) and the browser CLI they drive
   (`agent-browser`), and one reference skill both sides read:
@@ -54,6 +54,11 @@ An absent kind means `org`, which is a real decision, not a default to lean on:
 Kind decides console visibility and who may edit a skill, and nothing else. It is
 `audience` that decides who may *read* one, and the two are independent — a skill
 can be the org's to edit while being the coding agent's to read.
+
+The `prototype` skill's kit block (between its `kit:start` and `kit:end` markers)
+is generated from `@wso2/prototype-kit`'s `reference.md`: never edit it by hand;
+run `pnpm --filter @aep/agents gen`. `services/agents/test/prototype-skill.test.ts`
+fails when it is stale.
 
 ## Audience — `metadata.aep.audience` in frontmatter
 

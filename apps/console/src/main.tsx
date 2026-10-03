@@ -22,7 +22,7 @@ import { RouterProvider } from "@tanstack/react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { CssBaseline, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 import { AppAuthProvider } from "./auth/AuthProvider";
-import { aepTheme } from "./theme/aepTheme";
+import { aepTheme } from "@aep/ui-theme";
 import { router } from "./router";
 
 // Retry 3 for queries (TanStack default, made explicit), no automatic retry

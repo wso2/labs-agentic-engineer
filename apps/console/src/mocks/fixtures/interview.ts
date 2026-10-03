@@ -90,16 +90,30 @@ export class Script {
   /** An editFile, its input streamed as the provider streams it, then its verdict. */
   edit(toolCallId: string, path: string, oldString: string, newString: string): this {
     const input = { path, oldString, newString };
-    this.emit({ type: "tool-input-start", id: toolCallId, toolName: "editFile" }, 250);
+    return this.write(toolCallId, "editFile", input);
+  }
+
+  /** An addFile: a new file, whole. */
+  add(toolCallId: string, path: string, content: string): this {
+    const input = { path, content };
+    return this.write(toolCallId, "addFile", input);
+  }
+
+  private write(toolCallId: string, toolName: "editFile" | "addFile", input: { path: string }): this {
+    const { path } = input;
+    const op = toolName === "editFile" ? "edit" : "add";
+    this.emit({ type: "tool-input-start", id: toolCallId, toolName }, 250);
     const json = JSON.stringify(input);
-    // Paced as a model writes: slow enough to watch the line say "Writing".
-    for (let i = 0; i < json.length; i += 24) this.emit({ type: "tool-input-delta", id: toolCallId, delta: json.slice(i, i + 24) }, 90);
+    // Paced as a model writes: slow enough to watch the line say "Writing",
+    // and a whole file (a prototype's source) in a few seconds, not a minute.
+    const chunk = Math.max(24, Math.ceil(json.length / 40));
+    for (let i = 0; i < json.length; i += chunk) this.emit({ type: "tool-input-delta", id: toolCallId, delta: json.slice(i, i + chunk) }, 90);
     this.emit({ type: "tool-input-end", id: toolCallId }, 60);
-    this.emit({ type: "tool-call", toolCallId, toolName: "editFile", input }, 30);
-    const output = { ok: true, op: "edit", path, status: "applied" };
-    this.emit({ type: "tool-result", toolCallId, toolName: "editFile", input, output }, 250);
-    this.parts.push({ type: "tool-call", toolCallId, toolName: "editFile", input });
-    this.results.push({ type: "tool-result", toolCallId, toolName: "editFile", output: { type: "json", value: output } });
+    this.emit({ type: "tool-call", toolCallId, toolName, input }, 30);
+    const output = { ok: true, op, path, status: "applied" };
+    this.emit({ type: "tool-result", toolCallId, toolName, input, output }, 250);
+    this.parts.push({ type: "tool-call", toolCallId, toolName, input });
+    this.results.push({ type: "tool-result", toolCallId, toolName, output: { type: "json", value: output } });
     this.lastWasText = false;
     return this;
   }

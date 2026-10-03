@@ -1754,7 +1754,7 @@ type ConsumerDTO struct {
 	ProjectID     string `json:"projectId"`
 }
 
-// ConversationMessage One rehydrated message from a conversation's server-side history, sourced from the turn journal. The console's local chat log is display state; this is the durable record, and it is what makes a chip survive a reload.
+// ConversationMessage One rehydrated message from a conversation's server-side history, sourced from the turn journal. The console's local chat log is display state; this is the durable record, and it is what makes a chip survive a reload. A user message that sent a prototype review carries its `prototypeFeedback`, so a reloaded thread, and every teammate's, reads it as the requests it carried.
 type ConversationMessage struct {
 	// Anchor What the user pointed at when they aimed this turn at part of a spec document (#666; console ADR-0024). It LOCATES — it never carries the selected content.
 	//
@@ -1771,6 +1771,9 @@ type ConversationMessage struct {
 
 	// Content The message body as the journal recorded it. Deliberately untyped — a turn's content is model-shaped and varies by role, and this endpoint's job is to replay it, not to interpret it.
 	Content interface{} `json:"content,omitempty"`
+
+	// PrototypeFeedback A batch of review requests on ONE web-application prototype, sent as a single `/prototype` turn so the agent revises it once rather than once per note. The BFF validates the batch and forwards it unchanged; it never renders it into prose. The shape mirrors the prototype kit's feedback submission (`@wso2/prototype-kit/feedback`) plus `component`, and so do its limits. Lengths are counted in UTF-16 code units, as the kit counts them, so a character outside the Basic Multilingual Plane counts two.
+	PrototypeFeedback PrototypeFeedbackInput `json:"prototypeFeedback,omitempty"`
 
 	// Role Who the message is from, as the journal recorded it.
 	Role string `json:"role"`
@@ -2578,6 +2581,31 @@ type PromoteExternalResourceRequest struct {
 type PromoteFromIssueRequest struct {
 	// ComponentName Component this issue is about
 	ComponentName string `json:"componentName"`
+}
+
+// PrototypeFeedbackInput A batch of review requests on ONE web-application prototype, sent as a single `/prototype` turn so the agent revises it once rather than once per note. The BFF validates the batch and forwards it unchanged; it never renders it into prose. The shape mirrors the prototype kit's feedback submission (`@wso2/prototype-kit/feedback`) plus `component`, and so do its limits. Lengths are counted in UTF-16 code units, as the kit counts them, so a character outside the Basic Multilingual Plane counts two.
+type PrototypeFeedbackInput struct {
+	// Component The web-application the batch is about, as named under `specs/design/components/`. Its `prototype.json` and `prototype.tsx` are the only files the turn may change.
+	Component string `json:"component"`
+
+	// PrototypeHash The revision of the prototype the reviewer looked at, as the kit's 64-character lowercase hex hash.
+	PrototypeHash string                     `json:"prototypeHash"`
+	Requests      []PrototypeFeedbackRequest `json:"requests"`
+}
+
+// PrototypeFeedbackRequest One reviewer request, made on one screen in one role and display state.
+type PrototypeFeedbackRequest struct {
+	// ElementIds The ids of the elements the request is about, in selection order. Empty means the whole screen.
+	ElementIds []string `json:"elementIds"`
+
+	// FlowID The flow the reviewer was walking; absent for free navigation.
+	FlowID   string `json:"flowId,omitempty"`
+	RoleID   string `json:"roleId"`
+	ScreenID string `json:"screenId"`
+	StateID  string `json:"stateId"`
+
+	// Text The reviewer's words, verbatim.
+	Text string `json:"text"`
 }
 
 // ProvisionBody defines model for ProvisionBody.
@@ -3534,6 +3562,9 @@ type TurnInputBody struct {
 	//
 	// Deliberately a field and NOT a `/command` prefix on `instruction`: a command IS the user's message (the console adds nothing to a line they typed), and an anchored turn carries prose they wrote in their own words, so a prefix would put machinery in their voice. Mirrors the console's own resolve/reconsider intent, whose only job is the same. Absent for a turn with no anchor.
 	Intent TurnInputBodyIntent `json:"intent,omitempty"`
+
+	// PrototypeFeedback A prototype review batch. Valid only when `instruction` is the `/prototype` command and `collab` is true, and never together with `anchor`/`intent`: a batch aims at stable prototype ids, not at a selection in a document. Room turns only, because the room's committer is the one path an agent's revision reaches git by. When set, `instruction` is `/prototype` alone or followed by the batch's own `component`. Absent for every other turn. JSON-only: a review batch carries no attachments, so the multipart form has no such part.
+	PrototypeFeedback *PrototypeFeedbackInput `json:"prototypeFeedback,omitempty"`
 
 	// Scope What the user was looking at when they sent this message, so the agent reads it in that light: a feature's file open in the spec (`feature`, with its ID), or the design review (`design-review`). Absent means the whole product — the product page, any other spec file, or anywhere else in the project — and such a turn reads exactly as it did before scopes existed.
 	//

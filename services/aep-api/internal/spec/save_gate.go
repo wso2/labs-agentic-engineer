@@ -23,6 +23,7 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/platform/agentfold"
 	"github.com/wso2/aep/aep-api/internal/platform/designspec"
+	"github.com/wso2/aep/aep-api/internal/platform/prototypespec"
 	"github.com/wso2/aep/aep-api/internal/platform/securityspec"
 )
 
@@ -80,6 +81,10 @@ const (
 //   - security.json, when present: the security design validates against the
 //     same published schema and referential rules the agent's write gate
 //     applies;
+//   - prototype.json / prototype.tsx, when present: the manifest against the
+//     kit's published schema and reference rules, the source against a static
+//     floor (syntax, allowed imports, size). The render check stays in the
+//     agent's write gate;
 //   - OpenAPI: every present component openapi.yaml/yml must parse.
 //
 // A missing root is ErrArtifactPathInvalid (400). Any other failure aggregates
@@ -170,6 +175,8 @@ func validateDesignBundle(files map[string]string) error {
 		}
 	}
 
+	verrs = append(verrs, prototypeFileErrors(files)...)
+
 	// OpenAPI parseability (component openapi.yaml/.yml).
 	for rel, content := range files {
 		if !strings.HasSuffix(rel, "/openapi.yaml") && !strings.HasSuffix(rel, "/openapi.yml") {
@@ -195,4 +202,34 @@ func validateDesignBundle(files map[string]string) error {
 		return &DesignValidationError{Files: verrs}
 	}
 	return nil
+}
+
+// prototypeFileErrors judges each component's prototype.json and prototype.tsx
+// that the bundle holds. A prototype is optional and the agent writes its two
+// files one after the other, so a missing half is not an error here (nothing is
+// refused for a file that is not written yet); a present file must be sound.
+// The agent's write gate runs the same rules and the render check on top, so
+// this is what stops a hand-pushed file from skipping them.
+func prototypeFileErrors(files map[string]string) []FileValidationError {
+	var verrs []FileValidationError
+	for _, name := range ComponentNamesIn(files) {
+		manifestKey := prototypespec.ManifestPath(name)
+		if raw, ok := files[manifestKey]; ok {
+			_, findings := prototypespec.ParseManifest([]byte(raw))
+			verrs = append(verrs, prototypeFileErrorsFrom(manifestKey, findings)...)
+		}
+		sourceKey := prototypespec.SourcePath(name)
+		if raw, ok := files[sourceKey]; ok {
+			verrs = append(verrs, prototypeFileErrorsFrom(sourceKey, prototypespec.CheckSource(raw))...)
+		}
+	}
+	return verrs
+}
+
+func prototypeFileErrorsFrom(key string, findings []prototypespec.Finding) []FileValidationError {
+	verrs := make([]FileValidationError, 0, len(findings))
+	for _, f := range findings {
+		verrs = append(verrs, FileValidationError{Path: key, Code: f.Code, Message: f.Text()})
+	}
+	return verrs
 }

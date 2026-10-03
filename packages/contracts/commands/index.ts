@@ -144,3 +144,22 @@ export function parseDesignCommand(line: string): { featureIds: string[] } | nul
   if (!m) return null;
   return { featureIds: [...new Set((m[1] ?? "").match(/\bF[0-9]+\b/g) ?? [])] };
 }
+
+/**
+ * `/prototype <component>` — write or revise the clickable prototype of one
+ * web-application component (the `prototype` skill); a bare `/prototype`
+ * covers every web application the design has. A review's feedback rides the
+ * same command, as the turn's typed `prototypeFeedback`.
+ */
+export const PROTOTYPE_COMMAND = "/prototype";
+
+/** The line that makes or revises one component's prototype. */
+export function prototypeCommand(component: string): string {
+  return `${PROTOTYPE_COMMAND} ${component}`;
+}
+
+/** The component a `/prototype` line names (null for a bare one), or null for any other line. */
+export function parsePrototypeCommand(line: string): { component: string | null } | null {
+  const m = /^\/prototype(?:\s+([A-Za-z0-9][A-Za-z0-9_-]*))?\s*$/.exec(line.trim());
+  return m ? { component: m[1] ?? null } : null;
+}

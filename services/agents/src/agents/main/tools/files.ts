@@ -37,6 +37,7 @@ import type { Tool } from "ai";
 import { z } from "zod";
 import {
   FileBundle,
+  writeWithRenderCheck,
   ASK_QUESTION_TOOL,
   ASK_QUESTIONS_TOOL,
   DECLARE_PLAN_TOOL,
@@ -47,6 +48,7 @@ import {
   type EditFileInput,
   type Equal,
   type OpResult,
+  type PrototypeRenderCheck,
   type RemoveFileInput,
 } from "@aep/agent-stream";
 import { buildSkillTools } from "./skill-tools.js";
@@ -245,11 +247,13 @@ export const declarePlanTool: Tool = tool({
 /**
  * The write ops the ledger applies, bound to one bundle: the tool's OWN
  * `inputSchema` is the validator, so a call validated at input-end is validated
- * exactly as the SDK would validate it — no second copy of the rules.
+ * exactly as the SDK would validate it — no second copy of the rules. With a
+ * `render` check, a write that leaves a whole prototype pair is drawn first
+ * (asynchronously; the ledger queues later writes behind it).
  */
-function buildWriteOps(bundle: FileBundle): Record<string, WriteOp> {
+function buildWriteOps(bundle: FileBundle, render?: PrototypeRenderCheck): Record<string, WriteOp> {
   /** Tie a schema to its op, so the validated shape IS the applied shape. */
-  const writeOp = <T>(schema: z.ZodType<T>, apply: (input: T) => OpResult): WriteOp => ({
+  const writeOp = <T>(schema: z.ZodType<T>, apply: (input: T) => OpResult | Promise<OpResult>): WriteOp => ({
     validate: (args) => {
       const parsed = schema.safeParse(args);
       return parsed.success ? parsed.data : undefined;
@@ -257,9 +261,13 @@ function buildWriteOps(bundle: FileBundle): Record<string, WriteOp> {
     apply: (input) => apply(input as T),
   });
   return {
-    [ADD_FILE]: writeOp(addFileInputSchema, ({ path, content }) => bundle.addFile(path, content)),
+    [ADD_FILE]: writeOp(addFileInputSchema, ({ path, content }) =>
+      render ? writeWithRenderCheck(bundle, { op: "add", path, content }, render) : bundle.addFile(path, content),
+    ),
     [EDIT_FILE]: writeOp(editFileInputSchema, ({ path, oldString, newString }) =>
-      bundle.editFile(path, oldString, newString),
+      render
+        ? writeWithRenderCheck(bundle, { op: "edit", path, oldString, newString }, render)
+        : bundle.editFile(path, oldString, newString),
     ),
     [REMOVE_FILE]: writeOp(removeFileInputSchema, ({ path }) => bundle.removeFile(path)),
   };
@@ -276,8 +284,9 @@ function buildWriteOps(bundle: FileBundle): Record<string, WriteOp> {
 export function buildFileToolSet(
   bundle: FileBundle,
   skills?: SkillSource,
+  gates: { prototypeRender?: PrototypeRenderCheck } = {},
 ): { tools: Record<string, Tool>; writes: WriteLedger } {
-  const writes = new WriteLedger(buildWriteOps(bundle));
+  const writes = new WriteLedger(buildWriteOps(bundle, gates.prototypeRender));
   const tools: Record<string, Tool> = {
     [ADD_FILE]: tool({
       description:

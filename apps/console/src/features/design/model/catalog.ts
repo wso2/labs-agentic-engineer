@@ -113,7 +113,7 @@ export function designCatalog(files: Readonly<Record<string, string>>): DesignAr
     const path = `specs/design/components/${c.name}/wireframes.dsl`;
     const dsl = files[path];
     if (c.type === "web-application" && dsl) {
-      out.push({ id: `prototype-${c.name}`, title: `Prototype: ${c.name}`, depth: "business", features: c.features, ...at, source: { kind: "prototype", path, dsl } });
+      out.push({ id: `prototype-${c.name}`, title: `Wireframes: ${c.name}`, depth: "business", features: c.features, ...at, source: { kind: "prototype", path, dsl } });
     }
   }
   for (const path of Object.keys(files).sort()) {

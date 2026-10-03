@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 3,
+  "name": "Leave requests",
+  "entryScreen": "screen.requests",
+  "roles": [
+    { "id": "employee", "name": "Employee" },
+    { "id": "manager", "name": "Manager" }
+  ],
+  "states": [
+    { "id": "state.default", "name": "Default" },
+    { "id": "state.empty", "name": "Nothing to show" }
+  ],
+  "screens": [
+    { "id": "screen.requests", "name": "My requests", "roleIds": ["employee", "manager"] },
+    { "id": "screen.team", "name": "Team requests", "roleIds": ["manager"] },
+    { "id": "screen.account", "name": "Account", "roleIds": ["employee", "manager"] },
+    { "id": "screen.settings", "name": "Settings", "roleIds": ["employee", "manager"] },
+    { "id": "screen.signed-out", "name": "Signed out", "roleIds": ["employee", "manager"] }
+  ],
+  "flows": [
+    { "id": "flow.review", "name": "Review the team's requests", "roleId": "manager", "screenIds": ["screen.requests", "screen.team"] },
+    { "id": "flow.sign-out", "name": "Sign out and back in", "roleId": "employee", "screenIds": ["screen.account", "screen.signed-out", "screen.requests"] }
+  ]
+}

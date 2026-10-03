@@ -48,3 +48,18 @@ canonical `FileBundle` ops to reconstruct file state — no second matcher.
 | **The INSTRUCTED skill is always inlined** (every non-chat instruction opens "Load the `<skill>` skill and follow it") | naming a skill and then waiting to be asked for it spends a whole model step on a body we already hold — measured at 3.8s on `/start`, 3.6s on a plan turn. Covers org-authored flows too, since resolution runs through the `SkillSource`, not this repo. Guidance a flow is CERTAIN to read therefore belongs in a skill rather than a `references/` file: references are not inlinable (ADR-0002) |
 | **A file write settles at its own call** ([ADR-0004](./ADR-0004-a-write-settles-at-its-own-call.md)) | the SDK queues a step's tool calls and runs them all at `model-call-end`, so a batched design turn's first file had no verdict until the last file's body finished streaming — four completed documents shown as pending for minutes. A bundle op is a pure function of the bundle and the args, and the args close at `tool-input-end`, so it runs there and its `tool-result` rides its own `tool-call`; the ledger memoises per `toolCallId`, so the SDK's later `execute()` re-reads that verdict instead of re-applying the op |
 | **SSE event types in `src/contracts/sse-events.ts`** | one shared definition for producer + playground, owned by the service; `OpResult` / tool-input types re-exported from the domain Zod schemas (no parallel copy) |
+
+## Prototype write gate
+
+A turn's file tools are built with `gates.prototypeRender` (`buildFileToolSet`),
+the render check in `src/prototype/render-check.ts`: `@wso2/prototype-kit/check`'s
+`checkPrototypeFiles` on the Oxygen theme's `check-runtime.js`, resolved once at
+import with the kit's `resolveTheme`. A write that leaves a whole prototype pair
+(`prototype.tsx`, or `prototype.json` beside an existing source) goes through
+`agent-stream`'s `writeWithRenderCheck`, which draws it in an isolated Node child
+(permission model, 15 s limit) asynchronously: the event loop serves other
+conversations meanwhile. The write ledger queues the turn's later writes behind
+a pending verdict, and `tapWrites` holds later frames, so call order and wire
+order are unchanged; the turn drains the tap before its manifest. The image therefore builds the kit and the theme (`dist` runtimes) and
+needs Node 22. The static stages and the `INVALID_PROTOTYPE` code with its
+`findings` are in `@aep/agent-stream` (its README, Write gates).

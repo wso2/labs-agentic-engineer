@@ -16,8 +16,8 @@ an area before changing it.
 ## Rules
 
 - **Oxygen UI is the only component library.** Colours come from `aepTheme`
-  (`src/theme/`), the prototype's palette over Oxygen's base. Never add raw MUI
-  or another kit.
+  (`@aep/ui-theme`, shared with the Oxygen prototype theme), the guided-shell
+  design's palette over Oxygen's base. Never add raw MUI or another kit.
 - **Build on MSW, approve, then wire.** Each screen is built against MSW
   handlers and fixtures (`src/mocks/`), approved on the running mock
   (`VITE_API_MODE=mock`), and only then wired to aep-api. The mock cannot show

@@ -1,0 +1,630 @@
+{
+  "base": {
+    "schemaVersion": 3,
+    "name": "Expense approvals",
+    "entryScreen": "home",
+    "roles": [
+      {
+        "id": "admin",
+        "name": "Administrator"
+      },
+      {
+        "id": "user",
+        "name": "Employee"
+      }
+    ],
+    "states": [
+      {
+        "id": "default",
+        "name": "Default"
+      },
+      {
+        "id": "empty",
+        "name": "Empty"
+      }
+    ],
+    "screens": [
+      {
+        "id": "home",
+        "name": "Home",
+        "roleIds": [
+          "admin",
+          "user"
+        ]
+      },
+      {
+        "id": "settings",
+        "name": "Settings",
+        "roleIds": [
+          "admin"
+        ]
+      }
+    ],
+    "flows": [
+      {
+        "id": "review",
+        "name": "Review",
+        "roleId": "admin",
+        "screenIds": [
+          "home",
+          "settings"
+        ]
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "valid base",
+      "patch": [],
+      "findings": []
+    },
+    {
+      "name": "valid with no flows",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "flows"
+          ],
+          "value": []
+        }
+      ],
+      "findings": []
+    },
+    {
+      "name": "valid with a second flow appended",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "flows",
+            1
+          ],
+          "value": {
+            "id": "browse",
+            "name": "Browse",
+            "roleId": "user",
+            "screenIds": [
+              "home"
+            ]
+          }
+        }
+      ],
+      "findings": []
+    },
+    {
+      "name": "duplicate id inside one list",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "screens",
+            1,
+            "id"
+          ],
+          "value": "home"
+        }
+      ],
+      "findings": [
+        {
+          "code": "DUPLICATE_ID",
+          "location": "screens[1].id",
+          "message": "id \"home\" is already used at screens[0].id; role, state, screen and flow ids are unique together"
+        }
+      ]
+    },
+    {
+      "name": "duplicate id across lists",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "states",
+            1,
+            "id"
+          ],
+          "value": "admin"
+        }
+      ],
+      "findings": [
+        {
+          "code": "DUPLICATE_ID",
+          "location": "states[1].id",
+          "message": "id \"admin\" is already used at roles[0].id; role, state, screen and flow ids are unique together"
+        }
+      ]
+    },
+    {
+      "name": "every repeat is reported, in list order",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "states",
+            0,
+            "id"
+          ],
+          "value": "admin"
+        },
+        {
+          "op": "set",
+          "path": [
+            "flows",
+            0,
+            "id"
+          ],
+          "value": "home"
+        }
+      ],
+      "findings": [
+        {
+          "code": "DUPLICATE_ID",
+          "location": "states[0].id",
+          "message": "id \"admin\" is already used at roles[0].id; role, state, screen and flow ids are unique together"
+        },
+        {
+          "code": "DUPLICATE_ID",
+          "location": "flows[0].id",
+          "message": "id \"home\" is already used at screens[0].id; role, state, screen and flow ids are unique together"
+        }
+      ]
+    },
+    {
+      "name": "a duplicate ends validation before the reference rules",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "roles",
+            1,
+            "id"
+          ],
+          "value": "admin"
+        },
+        {
+          "op": "set",
+          "path": [
+            "entryScreen"
+          ],
+          "value": "nowhere"
+        }
+      ],
+      "findings": [
+        {
+          "code": "DUPLICATE_ID",
+          "location": "roles[1].id",
+          "message": "id \"admin\" is already used at roles[0].id; role, state, screen and flow ids are unique together"
+        }
+      ]
+    },
+    {
+      "name": "entry screen is not a screen",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "entryScreen"
+          ],
+          "value": "nowhere"
+        }
+      ],
+      "findings": [
+        {
+          "code": "UNKNOWN_REFERENCE",
+          "location": "entryScreen",
+          "message": "entryScreen \"nowhere\" is not one of the screens"
+        }
+      ]
+    },
+    {
+      "name": "a screen names an undeclared role",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "screens",
+            1,
+            "roleIds",
+            1
+          ],
+          "value": "auditor"
+        }
+      ],
+      "findings": [
+        {
+          "code": "UNKNOWN_REFERENCE",
+          "location": "screens[1].roleIds[1]",
+          "message": "role \"auditor\" is not declared in roles"
+        }
+      ]
+    },
+    {
+      "name": "a flow names an undeclared role and skips the reach check",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "flows",
+            0,
+            "roleId"
+          ],
+          "value": "auditor"
+        }
+      ],
+      "findings": [
+        {
+          "code": "UNKNOWN_REFERENCE",
+          "location": "flows[0].roleId",
+          "message": "role \"auditor\" is not declared in roles"
+        }
+      ]
+    },
+    {
+      "name": "a flow step is not a screen",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "flows",
+            0,
+            "screenIds",
+            1
+          ],
+          "value": "reports"
+        }
+      ],
+      "findings": [
+        {
+          "code": "UNKNOWN_REFERENCE",
+          "location": "flows[0].screenIds[1]",
+          "message": "screen \"reports\" is not one of the screens"
+        }
+      ]
+    },
+    {
+      "name": "a flow step is a screen its role cannot reach",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "flows",
+            0,
+            "roleId"
+          ],
+          "value": "user"
+        }
+      ],
+      "findings": [
+        {
+          "code": "UNKNOWN_REFERENCE",
+          "location": "flows[0].screenIds[1]",
+          "message": "screen \"settings\" is not one role \"user\" reaches; add the role to the screen's roleIds or take the step out of the flow"
+        }
+      ]
+    },
+    {
+      "name": "findings come out in rule order",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "entryScreen"
+          ],
+          "value": "nowhere"
+        },
+        {
+          "op": "set",
+          "path": [
+            "screens",
+            0,
+            "roleIds",
+            2
+          ],
+          "value": "auditor"
+        },
+        {
+          "op": "set",
+          "path": [
+            "flows",
+            0,
+            "screenIds",
+            0
+          ],
+          "value": "ghost"
+        }
+      ],
+      "findings": [
+        {
+          "code": "UNKNOWN_REFERENCE",
+          "location": "entryScreen",
+          "message": "entryScreen \"nowhere\" is not one of the screens"
+        },
+        {
+          "code": "UNKNOWN_REFERENCE",
+          "location": "screens[0].roleIds[2]",
+          "message": "role \"auditor\" is not declared in roles"
+        },
+        {
+          "code": "UNKNOWN_REFERENCE",
+          "location": "flows[0].screenIds[0]",
+          "message": "screen \"ghost\" is not one of the screens"
+        }
+      ]
+    },
+    {
+      "name": "quotes, angle brackets and non-ASCII are spelled as JSON.stringify spells them",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "entryScreen"
+          ],
+          "value": "say \"hi\" <b> & é"
+        }
+      ],
+      "findings": [
+        {
+          "code": "UNKNOWN_REFERENCE",
+          "location": "entryScreen",
+          "message": "entryScreen \"say \\\"hi\\\" <b> & é\" is not one of the screens"
+        }
+      ]
+    },
+    {
+      "name": "another schema version is one finding",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "schemaVersion"
+          ],
+          "value": 2
+        }
+      ],
+      "findings": [
+        {
+          "code": "UNSUPPORTED_VERSION",
+          "location": "schemaVersion",
+          "message": "schemaVersion 2 is not supported; write schemaVersion 3"
+        }
+      ]
+    },
+    {
+      "name": "a version spelled as a string is quoted",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "schemaVersion"
+          ],
+          "value": "3"
+        }
+      ],
+      "findings": [
+        {
+          "code": "UNSUPPORTED_VERSION",
+          "location": "schemaVersion",
+          "message": "schemaVersion \"3\" is not supported; write schemaVersion 3"
+        }
+      ]
+    },
+    {
+      "name": "another version stops before the schema reports what else differs",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "schemaVersion"
+          ],
+          "value": 2
+        },
+        {
+          "op": "remove",
+          "path": [
+            "roles"
+          ]
+        }
+      ],
+      "findings": [
+        {
+          "code": "UNSUPPORTED_VERSION",
+          "location": "schemaVersion",
+          "message": "schemaVersion 2 is not supported; write schemaVersion 3"
+        }
+      ]
+    },
+    {
+      "name": "schema: a missing required key",
+      "schemaOnly": true,
+      "patch": [
+        {
+          "op": "remove",
+          "path": [
+            "roles"
+          ]
+        }
+      ],
+      "findings": [
+        {
+          "code": "SCHEMA_VIOLATION"
+        }
+      ]
+    },
+    {
+      "name": "schema: no roles",
+      "schemaOnly": true,
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "roles"
+          ],
+          "value": []
+        }
+      ],
+      "findings": [
+        {
+          "code": "SCHEMA_VIOLATION"
+        }
+      ]
+    },
+    {
+      "name": "schema: an unknown key (the legacy component field)",
+      "schemaOnly": true,
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "component"
+          ],
+          "value": "web"
+        }
+      ],
+      "findings": [
+        {
+          "code": "SCHEMA_VIOLATION"
+        }
+      ]
+    },
+    {
+      "name": "schema: an empty name",
+      "schemaOnly": true,
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "name"
+          ],
+          "value": ""
+        }
+      ],
+      "findings": [
+        {
+          "code": "SCHEMA_VIOLATION"
+        }
+      ]
+    },
+    {
+      "name": "schema: an empty id",
+      "schemaOnly": true,
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "roles",
+            0,
+            "id"
+          ],
+          "value": ""
+        }
+      ],
+      "findings": [
+        {
+          "code": "SCHEMA_VIOLATION"
+        }
+      ]
+    },
+    {
+      "name": "schema: a screen with no roles",
+      "schemaOnly": true,
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "screens",
+            0,
+            "roleIds"
+          ],
+          "value": []
+        }
+      ],
+      "findings": [
+        {
+          "code": "SCHEMA_VIOLATION"
+        }
+      ]
+    },
+    {
+      "name": "schema: a flow with no steps",
+      "schemaOnly": true,
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "flows",
+            0,
+            "screenIds"
+          ],
+          "value": []
+        }
+      ],
+      "findings": [
+        {
+          "code": "SCHEMA_VIOLATION"
+        }
+      ]
+    },
+    {
+      "name": "schema: a wrong type",
+      "schemaOnly": true,
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "entryScreen"
+          ],
+          "value": 7
+        }
+      ],
+      "findings": [
+        {
+          "code": "SCHEMA_VIOLATION"
+        }
+      ]
+    },
+    {
+      "name": "schema: an unknown key inside a role",
+      "schemaOnly": true,
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "roles",
+            0,
+            "title"
+          ],
+          "value": "x"
+        }
+      ],
+      "findings": [
+        {
+          "code": "SCHEMA_VIOLATION"
+        }
+      ]
+    },
+    {
+      "name": "schema: the document is not an object",
+      "schemaOnly": true,
+      "document": [
+        "not",
+        "a",
+        "manifest"
+      ],
+      "findings": [
+        {
+          "code": "SCHEMA_VIOLATION"
+        }
+      ]
+    },
+    {
+      "name": "schema: the text is not JSON",
+      "schemaOnly": true,
+      "text": "{not json",
+      "findings": [
+        {
+          "code": "SCHEMA_VIOLATION"
+        }
+      ]
+    }
+  ]
+}

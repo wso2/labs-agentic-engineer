@@ -73,6 +73,9 @@ importers:
       '@aep/ui-openapi-view':
         specifier: workspace:*
         version: link:../../packages/ui/openapi-view
+      '@aep/ui-theme':
+        specifier: workspace:*
+        version: link:../../packages/ui/theme
       '@hocuspocus/provider':
         specifier: 4.3.0
         version: 4.3.0(y-protocols@1.0.7(yjs@13.6.31))(yjs@13.6.31)
@@ -103,6 +106,12 @@ importers:
       '@wso2/oxygen-ui-icons-react':
         specifier: 0.14.0
         version: 0.14.0(react@19.2.3)
+      '@wso2/prototype-kit':
+        specifier: workspace:*
+        version: link:../../packages/prototype-kit
+      '@wso2/prototype-theme-oxygen':
+        specifier: workspace:*
+        version: link:../../packages/prototype-theme-oxygen
       mermaid:
         specifier: ^11.16.0
         version: 11.16.0
@@ -321,6 +330,9 @@ importers:
       '@aep/excalidraw-dsl':
         specifier: workspace:*
         version: link:../excalidraw-dsl
+      '@wso2/prototype-kit':
+        specifier: workspace:*
+        version: link:../prototype-kit
       yaml:
         specifier: ^2.8.4
         version: 2.9.0
@@ -387,6 +399,175 @@ importers:
       tsx:
         specifier: ^4.21.0
         version: 4.22.4
+
+  packages/prototype-cli:
+    dependencies:
+      '@wso2/prototype-kit':
+        specifier: workspace:*
+        version: link:../prototype-kit
+      '@wso2/prototype-theme-default':
+        specifier: workspace:*
+        version: link:../prototype-theme-default
+    devDependencies:
+      '@types/node':
+        specifier: ^22
+        version: 22.20.1
+      '@types/react':
+        specifier: 19.1.6
+        version: 19.1.6
+      '@types/react-dom':
+        specifier: 19.0.2
+        version: 19.0.2(@types/react@19.1.6)
+      '@vitest/browser':
+        specifier: 4.1.10
+        version: 4.1.10(msw@2.14.6(@types/node@22.20.1)(typescript@5.9.3))(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.0))(vitest@4.1.10)
+      '@vitest/browser-playwright':
+        specifier: 4.1.10
+        version: 4.1.10(msw@2.14.6(@types/node@22.20.1)(typescript@5.9.3))(playwright@1.61.1)(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.0))(vitest@4.1.10)
+      esbuild:
+        specifier: ^0.28.1
+        version: 0.28.1
+      playwright:
+        specifier: 1.61.1
+        version: 1.61.1
+      react:
+        specifier: 19.2.3
+        version: 19.2.3
+      react-dom:
+        specifier: 19.2.3
+        version: 19.2.3(react@19.2.3)
+      tsx:
+        specifier: ^4.21.0
+        version: 4.23.15
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/browser-playwright@4.1.10)(jsdom@29.1.1)(msw@2.14.6(@types/node@22.20.1)(typescript@5.9.3))(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.0))
+
+  packages/prototype-kit:
+    dependencies:
+      acorn:
+        specifier: ^8.17.0
+        version: 8.17.0
+      acorn-walk:
+        specifier: ^8.3.5
+        version: 8.3.5
+      sucrase:
+        specifier: ^3.35.1
+        version: 3.35.1
+      zod:
+        specifier: ^4.3.6
+        version: 4.6.2
+    devDependencies:
+      '@types/node':
+        specifier: ^22
+        version: 22.20.1
+      '@types/react':
+        specifier: 19.1.6
+        version: 19.1.6
+      '@types/react-dom':
+        specifier: 19.0.2
+        version: 19.0.2(@types/react@19.1.6)
+      esbuild:
+        specifier: ^0.28.1
+        version: 0.28.1
+      react:
+        specifier: 19.2.3
+        version: 19.2.3
+      react-dom:
+        specifier: 19.2.3
+        version: 19.2.3(react@19.2.3)
+      tsx:
+        specifier: ^4.21.0
+        version: 4.23.15
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/browser-playwright@4.1.10)(jsdom@29.1.1)(msw@2.14.6(@types/node@22.20.1)(typescript@5.9.3))(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.0))
+
+  packages/prototype-theme-default:
+    dependencies:
+      '@wso2/prototype-kit':
+        specifier: workspace:*
+        version: link:../prototype-kit
+    devDependencies:
+      '@types/node':
+        specifier: ^22
+        version: 22.20.1
+      '@types/react':
+        specifier: 19.1.6
+        version: 19.1.6
+      '@types/react-dom':
+        specifier: 19.0.2
+        version: 19.0.2(@types/react@19.1.6)
+      esbuild:
+        specifier: ^0.28.1
+        version: 0.28.1
+      react:
+        specifier: 19.2.3
+        version: 19.2.3
+      react-dom:
+        specifier: 19.2.3
+        version: 19.2.3(react@19.2.3)
+      tsx:
+        specifier: ^4.21.0
+        version: 4.23.15
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+
+  packages/prototype-theme-oxygen:
+    dependencies:
+      '@aep/ui-theme':
+        specifier: workspace:*
+        version: link:../ui/theme
+      '@wso2/oxygen-ui':
+        specifier: 0.14.0
+        version: 0.14.0(@mui/system@7.3.11(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(@wso2/oxygen-ui-icons-react@0.14.0(react@19.2.3))(dayjs@1.11.21)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@wso2/oxygen-ui-icons-react':
+        specifier: 0.14.0
+        version: 0.14.0(react@19.2.3)
+      '@wso2/prototype-kit':
+        specifier: workspace:*
+        version: link:../prototype-kit
+    devDependencies:
+      '@types/node':
+        specifier: ^22
+        version: 22.20.1
+      '@types/react':
+        specifier: 19.1.6
+        version: 19.1.6
+      '@types/react-dom':
+        specifier: 19.0.2
+        version: 19.0.2(@types/react@19.1.6)
+      '@wso2/prototype-cli':
+        specifier: workspace:*
+        version: link:../prototype-cli
+      esbuild:
+        specifier: ^0.28.1
+        version: 0.28.1
+      playwright:
+        specifier: 1.61.1
+        version: 1.61.1
+      react:
+        specifier: 19.2.3
+        version: 19.2.3
+      react-dom:
+        specifier: 19.2.3
+        version: 19.2.3(react@19.2.3)
+      tsx:
+        specifier: ^4.21.0
+        version: 4.23.15
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/browser-playwright@4.1.10)(jsdom@29.1.1)(msw@2.14.6(@types/node@22.20.1)(typescript@5.9.3))(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.0))
 
   packages/sse-cassette:
     dependencies:
@@ -684,6 +865,33 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@25.9.4)(@vitest/browser-playwright@4.1.10)(jsdom@26.1.0)(msw@2.14.6(@types/node@25.9.4)(typescript@5.9.3))(vite@7.3.6(@types/node@25.9.4)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.0))
 
+  packages/ui/theme:
+    devDependencies:
+      '@types/node':
+        specifier: ^22
+        version: 22.20.1
+      '@types/react':
+        specifier: 19.1.6
+        version: 19.1.6
+      '@types/react-dom':
+        specifier: 19.0.2
+        version: 19.0.2(@types/react@19.1.6)
+      '@wso2/oxygen-ui':
+        specifier: 0.14.0
+        version: 0.14.0(@mui/system@7.3.11(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(@wso2/oxygen-ui-icons-react@0.14.0(react@19.2.3))(dayjs@1.11.21)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      react:
+        specifier: 19.2.3
+        version: 19.2.3
+      react-dom:
+        specifier: 19.2.3
+        version: 19.2.3(react@19.2.3)
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/browser-playwright@4.1.10)(jsdom@29.1.1)(msw@2.14.6(@types/node@22.20.1)(typescript@5.9.3))(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.0))
+
   packages/web-search:
     devDependencies:
       '@types/node':
@@ -815,6 +1023,12 @@ importers:
       '@hocuspocus/provider':
         specifier: ^4.3.0
         version: 4.3.0(y-protocols@1.0.7(yjs@13.6.31))(yjs@13.6.31)
+      '@wso2/prototype-kit':
+        specifier: workspace:*
+        version: link:../../packages/prototype-kit
+      '@wso2/prototype-theme-oxygen':
+        specifier: workspace:*
+        version: link:../../packages/prototype-theme-oxygen
       ai:
         specifier: ^7.0.2
         version: 7.0.22(zod@4.4.3)
@@ -864,6 +1078,9 @@ importers:
       '@types/ws':
         specifier: ^8.18.0
         version: 8.18.1
+      '@wso2/prototype-theme-default':
+        specifier: workspace:*
+        version: link:../../packages/prototype-theme-default
       tsx:
         specifier: ^4.21.0
         version: 4.22.4
@@ -4588,6 +4805,10 @@ packages:
     peerDependencies:
       acorn: ^6.0.0 || ^7.0.0 || ^8.0.0
 
+  acorn-walk@8.3.5:
+    resolution: {integrity: sha512-HEHNfbars9v4pgpW6SO1KSPkfoS0xVOM/9UzkJltjlsHZmJasxg8aXkuZa7SMf8vKGIBhpUsPluQSqhJFCqebw==}
+    engines: {node: '>=0.4.0'}
+
   acorn@8.17.0:
     resolution: {integrity: sha512-xRQbDb9BnwDafYNn6Vwl839DYVjqXYb1XVGtWAZ1kcDc6iwAL4hg3B1dZlRiuENFeO2H53gFG3in621AdERVAg==}
     engines: {node: '>=0.4.0'}
@@ -4672,6 +4893,9 @@ packages:
   ansis@4.3.1:
     resolution: {integrity: sha512-BJ8/l4R5LRE7hW9WdSuGYrLSHi2ynxeFpDFbH0K/CgNeY/tyhk+vO6TYxXC5r5CpUhNVX310xzPsN/H9lCdfOA==}
     engines: {node: '>=14'}
+
+  any-promise@1.3.0:
+    resolution: {integrity: sha512-7UvmKalWRt1wgjL1RrGxoSJW/0QZFIegpeGvZG9kjp8vrRu55XTHbwnqq2GpXm9uLbcuhxm3IqX9OB4MZR1b2A==}
 
   anymatch@3.1.3:
     resolution: {integrity: sha512-KMReFUr0B4t+D+OBkjR3KYqvocp2XaSzO55UcB6mgQMd3KbcE+mWTyvVV7D/zsdEbNnV6acZUutkiHQXvTr1Rw==}
@@ -5026,6 +5250,10 @@ packages:
   commander@14.0.3:
     resolution: {integrity: sha512-H+y0Jo/T1RZ9qPP4Eh1pkcQcLRglraJaSLoyOtHxu6AapkjWVCy2Sit1QQ4x3Dng8qDlSsZEet7g5Pq06MvTgw==}
     engines: {node: '>=20'}
+
+  commander@4.1.1:
+    resolution: {integrity: sha512-NOKm8xhkzAjzFx8B2v5OAHT+u5pRQc2UCa2Vq9jYL/31o2wi9mxBA7LIFs3sV5VSC49z6pEhfbMULvShKj26WA==}
+    engines: {node: '>= 6'}
 
   commander@5.1.0:
     resolution: {integrity: sha512-P0CysNDQ7rtVw4QIQtm+MRxV66vKFSvlsQvGYXZWR3qFU0jlMKHZZZgw8e+8DSah4UDKMqnknRDQz+xuQXQ/Zg==}
@@ -6931,6 +7159,9 @@ packages:
     resolution: {integrity: sha512-dkEJPVvun4FryqBmZ5KhDo0K9iDXAwn08tMLDinNdRBNPcYEDiWYysLcc6k3mjTMlbP9KyylvRpd4wFtwrT9rw==}
     engines: {node: ^20.17.0 || >=22.9.0}
 
+  mz@2.7.0:
+    resolution: {integrity: sha512-z81GNO7nnYMEhrGh9LeymoE4+Yr0Wn5McHIZMK5cfQCl+NDX08sCZgUc9/6MHni9IWuFLm1Z3HTCXu2z9fN62Q==}
+
   nanoid@3.3.15:
     resolution: {integrity: sha512-y7Wygv/7mEOvxTuEQDB8StXdMRBWf1kR/tlhAzBRUFkB2jfcLOAxO/SHmOO2zgz1pVgK29/kyupn059/bCHdjA==}
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
@@ -7378,6 +7609,10 @@ packages:
   pino@10.3.1:
     resolution: {integrity: sha512-r34yH/GlQpKZbU1BvFFqOjhISRo1MNx1tWYsYvmj6KIRHSPMT2+yHOEb1SG6NMvRoHRF0a07kCOox/9yakl1vg==}
     hasBin: true
+
+  pirates@4.0.7:
+    resolution: {integrity: sha512-TfySrs/5nm8fQJDcBDuUng3VOUKsd7S+zqvbOTiGXHfxX4wK31ard+hoNuvkicM/2YFzlpDgABOevKSsB4G/FA==}
+    engines: {node: '>= 6'}
 
   pkce-challenge@5.0.1:
     resolution: {integrity: sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==}
@@ -8140,6 +8375,11 @@ packages:
   stylis@4.4.0:
     resolution: {integrity: sha512-5Z9ZpRzfuH6l/UAvCPAPUo3665Nk2wLaZU3x+TLHKVzIz33+sbJqbtrYoC3KD4/uVOr2Zp+L0LySezP9OHV9yA==}
 
+  sucrase@3.35.1:
+    resolution: {integrity: sha512-DhuTmvZWux4H1UOnWMB3sk0sbaCVOoQZjv8u1rDoTV0HTdGem9hkAZtl4JZy8P2z4Bg0nT+YMeOFyVr4zcG5Tw==}
+    engines: {node: '>=16 || 14 >=14.17'}
+    hasBin: true
+
   supports-color@10.2.2:
     resolution: {integrity: sha512-SS+jx45GF1QjgEXQx4NJZV9ImqmO2NPz5FNsIHrsDjh2YsHnawpan7SNQ1o8NuhrbHZy9AZhIoCUiCeaW/C80g==}
     engines: {node: '>=18'}
@@ -8188,6 +8428,13 @@ packages:
   textextensions@6.11.0:
     resolution: {integrity: sha512-tXJwSr9355kFJI3lbCkPpUH5cP8/M0GGy2xLO34aZCjMXBaK3SoPnZwr/oWmo1FdCnELcs4npdCIOFtq9W3ruQ==}
     engines: {node: '>=4'}
+
+  thenify-all@1.6.0:
+    resolution: {integrity: sha512-RNxQH/qI8/t3thXJDwcstUO4zeqo64+Uy/+sNVRBx4Xn2OX+OZ9oP+iJnNFqplFra2ZUVeKCSa2oVWi3T4uVmA==}
+    engines: {node: '>=0.8'}
+
+  thenify@3.3.1:
+    resolution: {integrity: sha512-RVZSIV5IG10Hk3enotrhvz0T9em6cyHBLkH/YAZuKqd8hRkKhSfCGIcP2KUY0EPxndzANBmNllzWPwak+bheSw==}
 
   thread-stream@4.2.0:
     resolution: {integrity: sha512-e2zZ96wSChazBsbENf/Pcm/4swHt2cEKQ92rhUjkL9GCKiTDJIaTBenjE/m9DXi0QBmTMDkFDdOomUy20A1tDQ==}
@@ -8299,6 +8546,9 @@ packages:
   ts-dedent@2.3.0:
     resolution: {integrity: sha512-JfJeIHke7y2egdGGgRAvpCwYFUsHlM2gPcrVOxFkznt/4uzQ7HFmvE63iFHVLBJNDuyDOQgijDK/tXH/f6Msjg==}
     engines: {node: '>=6.10'}
+
+  ts-interface-checker@0.1.13:
+    resolution: {integrity: sha512-Y/arvbn+rrz3JCKl9C4kVNfTfSm2/mEp5FSz5EsZSANGPSlQrpRI5M4PKF+mJnE52jOO90PnPSc3Ur3bTQw0gA==}
 
   tslib@1.14.1:
     resolution: {integrity: sha512-Xni35NKzjgMrwevysHTCArtLDpPvye8zV/0E4EyYn43P7/7qvQwPh9BGkHewbMulVntbigmcT7rdX3BNo9wRJg==}
@@ -9740,8 +9990,7 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.1.6
 
-  '@blazediff/core@1.9.1':
-    optional: true
+  '@blazediff/core@1.9.1': {}
 
   '@borewit/text-codec@0.2.2': {}
 
@@ -11534,8 +11783,7 @@ snapshots:
       playwright-core: 1.63.0
     optional: true
 
-  '@polka/url@1.0.0-next.29':
-    optional: true
+  '@polka/url@1.0.0-next.29': {}
 
   '@popperjs/core@2.11.8': {}
 
@@ -12237,7 +12485,7 @@ snapshots:
       jiti: 2.7.0
       magic-string: 0.30.21
       prettier: 3.9.4
-      zod: 4.4.3
+      zod: 4.6.2
     transitivePeerDependencies:
       - supports-color
 
@@ -12938,7 +13186,6 @@ snapshots:
       - msw
       - utf-8-validate
       - vite
-    optional: true
 
   '@vitest/browser-playwright@4.1.10(msw@2.14.6(@types/node@22.20.1)(typescript@6.0.3))(playwright@1.61.1)(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))(vitest@4.1.10)':
     dependencies:
@@ -12977,14 +13224,13 @@ snapshots:
       pngjs: 7.0.0
       sirv: 3.0.2
       tinyrainbow: 3.1.0
-      vitest: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/browser-playwright@4.1.10)(jsdom@26.1.0)(msw@2.14.6(@types/node@22.20.1)(typescript@5.9.3))(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.0))
-      ws: 8.21.0
+      vitest: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/browser-playwright@4.1.10)(jsdom@29.1.1)(msw@2.14.6(@types/node@22.20.1)(typescript@5.9.3))(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.0))
+      ws: 8.21.3
     transitivePeerDependencies:
       - bufferutil
       - msw
       - utf-8-validate
       - vite
-    optional: true
 
   '@vitest/browser@4.1.10(msw@2.14.6(@types/node@22.20.1)(typescript@6.0.3))(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))(vitest@4.1.10)':
     dependencies:
@@ -12996,7 +13242,7 @@ snapshots:
       sirv: 3.0.2
       tinyrainbow: 3.1.0
       vitest: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/browser-playwright@4.1.10)(jsdom@29.1.1)(msw@2.14.6(@types/node@22.20.1)(typescript@6.0.3))(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
-      ws: 8.21.0
+      ws: 8.21.3
     transitivePeerDependencies:
       - bufferutil
       - msw
@@ -13014,7 +13260,7 @@ snapshots:
       sirv: 3.0.2
       tinyrainbow: 3.1.0
       vitest: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@25.9.4)(@vitest/browser-playwright@4.1.10)(jsdom@26.1.0)(msw@2.14.6(@types/node@25.9.4)(typescript@5.9.3))(vite@7.3.6(@types/node@25.9.4)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.0))
-      ws: 8.21.0
+      ws: 8.21.3
     transitivePeerDependencies:
       - bufferutil
       - msw
@@ -13262,6 +13508,10 @@ snapshots:
     dependencies:
       acorn: 8.17.0
 
+  acorn-walk@8.3.5:
+    dependencies:
+      acorn: 8.17.0
+
   acorn@8.17.0: {}
 
   adm-zip@0.6.1:
@@ -13345,6 +13595,8 @@ snapshots:
     optional: true
 
   ansis@4.3.1: {}
+
+  any-promise@1.3.0: {}
 
   anymatch@3.1.3:
     dependencies:
@@ -13712,6 +13964,8 @@ snapshots:
       delayed-stream: 1.0.0
 
   commander@14.0.3: {}
+
+  commander@4.1.1: {}
 
   commander@5.1.0: {}
 
@@ -15737,8 +15991,7 @@ snapshots:
   mquery@6.0.0:
     optional: true
 
-  mrmime@2.0.1:
-    optional: true
+  mrmime@2.0.1: {}
 
   ms@2.0.0: {}
 
@@ -15830,6 +16083,12 @@ snapshots:
     optional: true
 
   mute-stream@3.0.0: {}
+
+  mz@2.7.0:
+    dependencies:
+      any-promise: 1.3.0
+      object-assign: 4.1.1
+      thenify-all: 1.6.0
 
   nanoid@3.3.15: {}
 
@@ -16302,13 +16561,14 @@ snapshots:
       sonic-boom: 4.2.1
       thread-stream: 4.2.0
 
+  pirates@4.0.7: {}
+
   pkce-challenge@5.0.1: {}
 
   platform@1.3.6:
     optional: true
 
-  playwright-core@1.61.1:
-    optional: true
+  playwright-core@1.61.1: {}
 
   playwright-core@1.63.0:
     optional: true
@@ -16328,7 +16588,6 @@ snapshots:
       playwright-core: 1.61.1
     optionalDependencies:
       fsevents: 2.3.2
-    optional: true
 
   pluralize@8.0.0: {}
 
@@ -16343,8 +16602,7 @@ snapshots:
     dependencies:
       crc-32: 0.3.0
 
-  pngjs@7.0.0:
-    optional: true
+  pngjs@7.0.0: {}
 
   points-on-curve@0.2.0: {}
 
@@ -17173,7 +17431,6 @@ snapshots:
       '@polka/url': 1.0.0-next.29
       mrmime: 2.0.1
       totalist: 3.0.1
-    optional: true
 
   sisteransi@1.0.5: {}
 
@@ -17362,6 +17619,16 @@ snapshots:
 
   stylis@4.4.0: {}
 
+  sucrase@3.35.1:
+    dependencies:
+      '@jridgewell/gen-mapping': 0.3.13
+      commander: 4.1.1
+      lines-and-columns: 1.2.4
+      mz: 2.7.0
+      pirates: 4.0.7
+      tinyglobby: 0.2.17
+      ts-interface-checker: 0.1.13
+
   supports-color@10.2.2: {}
 
   supports-color@7.2.0:
@@ -17410,6 +17677,14 @@ snapshots:
   textextensions@6.11.0:
     dependencies:
       editions: 6.22.0
+
+  thenify-all@1.6.0:
+    dependencies:
+      thenify: 3.3.1
+
+  thenify@3.3.1:
+    dependencies:
+      any-promise: 1.3.0
 
   thread-stream@4.2.0:
     dependencies:
@@ -17465,8 +17740,7 @@ snapshots:
   tokenx@1.6.0:
     optional: true
 
-  totalist@3.0.1:
-    optional: true
+  totalist@3.0.1: {}
 
   tough-cookie@4.1.4:
     dependencies:
@@ -17502,6 +17776,8 @@ snapshots:
       typescript: 5.9.3
 
   ts-dedent@2.3.0: {}
+
+  ts-interface-checker@0.1.13: {}
 
   tslib@1.14.1: {}
 
@@ -17830,6 +18106,36 @@ snapshots:
       '@types/node': 22.20.1
       '@vitest/browser-playwright': 4.1.10(msw@2.14.6(@types/node@22.20.1)(typescript@5.9.3))(playwright@1.61.1)(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.0))(vitest@4.1.10)
       jsdom: 26.1.0
+    transitivePeerDependencies:
+      - msw
+
+  vitest@4.1.10(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/browser-playwright@4.1.10)(jsdom@29.1.1)(msw@2.14.6(@types/node@22.20.1)(typescript@5.9.3))(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.0)):
+    dependencies:
+      '@vitest/expect': 4.1.10
+      '@vitest/mocker': 4.1.10(msw@2.14.6(@types/node@22.20.1)(typescript@5.9.3))(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.0))
+      '@vitest/pretty-format': 4.1.10
+      '@vitest/runner': 4.1.10
+      '@vitest/snapshot': 4.1.10
+      '@vitest/spy': 4.1.10
+      '@vitest/utils': 4.1.10
+      es-module-lexer: 2.3.0
+      expect-type: 1.4.0
+      magic-string: 0.30.21
+      obug: 2.1.3
+      pathe: 2.0.3
+      picomatch: 4.0.4
+      std-env: 4.1.0
+      tinybench: 2.9.0
+      tinyexec: 1.2.4
+      tinyglobby: 0.2.17
+      tinyrainbow: 3.1.0
+      vite: 7.3.6(@types/node@22.20.1)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.0)
+      why-is-node-running: 2.3.0
+    optionalDependencies:
+      '@opentelemetry/api': 1.9.1
+      '@types/node': 22.20.1
+      '@vitest/browser-playwright': 4.1.10(msw@2.14.6(@types/node@22.20.1)(typescript@5.9.3))(playwright@1.61.1)(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.0))(vitest@4.1.10)
+      jsdom: 29.1.1
     transitivePeerDependencies:
       - msw
 

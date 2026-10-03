@@ -489,6 +489,38 @@ test("chat turn: an attachment rides the user message and the journal records it
   }
 });
 
+test("prototype turn: the journal records the review batch the flow carried", async () => {
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" });
+  const { baseUrl, close, store } = await boot(mockModel([{ kind: "text", text: "ok" }]), root);
+  const prototypeFeedback = {
+    prototypeHash: "0".repeat(64),
+    component: "expense-web",
+    requests: [{ screenId: "screen.queue", roleId: "approver", stateId: "state.default", elementIds: ["btn.approve"], text: "Make it primary" }],
+  };
+  try {
+    const token = await mintToken();
+    const res = await fetch(
+      `${baseUrl}/conversations/${WS_CONV}/turns`,
+      turnPost(
+        wsBody({
+          turn: { kind: "flow", skill: "prototype", text: "expense-web", prototypeFeedback },
+          journal: { text: "/prototype expense-web" },
+        }),
+        { token, org: WS_ORG },
+      ),
+    );
+    assert.equal(res.status, 200);
+    await res.text();
+
+    const stored = await store.get(WS_CONV);
+    assert.equal(stored!.turns[0]?.text, "/prototype expense-web");
+    assert.deepEqual(stored!.turns[0]?.prototypeFeedback, prototypeFeedback);
+  } finally {
+    await close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("chat turn: a name is journaled ONLY if its bytes actually reached the model", async () => {
   // The failure this pins: the journal used to record whatever names the caller
   // sent. When the shared encoded budget skips an attachment, that puts a chip on
