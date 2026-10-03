@@ -32,10 +32,12 @@ type turnUsageRecorder interface {
 
 // NewAEPAPIPost is the Sender's Post over the aep-api client, which carries
 // the org's publisher token (platform.NewAEPAPI: one retry after a 401);
-// aep-api binds the org from that token. A 2xx is delivered; 404 (a record
-// names a project that is not the org's, the whole batch refused) is a
-// *RejectedError; anything else, or no answer, is a failure to retry, naming
-// the status and never the body.
+// aep-api binds the org from that token. A 2xx is delivered. A permanent
+// refusal is a *RejectedError, so the batch is dropped rather than block the
+// records behind it: 404 (a record names a project that is not the org's,
+// the whole batch refused), 400, 413 and 422 (a batch aep-api will never
+// take). Anything else (401, 403, 409, 429, 5xx) or no answer is a failure to
+// retry, naming the status and never the body.
 func NewAEPAPIPost(c turnUsageRecorder) func(ctx context.Context, records []TurnRecord) error {
 	return func(ctx context.Context, records []TurnRecord) error {
 		resp, err := c.RecordTurnUsageWithResponse(ctx, aepapi.RecordTurnUsageJSONRequestBody{Records: records})
@@ -45,10 +47,20 @@ func NewAEPAPIPost(c turnUsageRecorder) func(ctx context.Context, records []Turn
 		switch status := resp.StatusCode(); {
 		case status >= 200 && status < 300:
 			return nil
-		case status == http.StatusNotFound:
+		case permanentRefusal(status):
 			return &RejectedError{Status: status}
 		default:
 			return fmt.Errorf("record-turn-usage: aep-api answered %d", status)
 		}
 	}
+}
+
+// permanentRefusal reports whether aep-api's answer means resending the same
+// batch can never succeed.
+func permanentRefusal(status int) bool {
+	switch status {
+	case http.StatusNotFound, http.StatusBadRequest, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
+		return true
+	}
+	return false
 }

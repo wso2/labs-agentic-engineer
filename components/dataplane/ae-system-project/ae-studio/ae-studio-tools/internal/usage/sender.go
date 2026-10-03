@@ -52,8 +52,9 @@ const (
 
 // RejectedError is a call aep-api refused for good: a 404 means a record of
 // the batch names a project that is not the org's, and the whole batch was
-// refused (no row written). Resending it can never succeed, so the batch is
-// dropped.
+// refused (no row written); a 400, 413 or 422 means aep-api will never take
+// the batch. Resending it can never succeed, so the batch is dropped and the
+// records behind it are not held up.
 type RejectedError struct {
 	Status int
 }
