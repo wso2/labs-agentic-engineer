@@ -53,7 +53,7 @@ const MAX_CONFLICT_RETRIES = 2;
  * containers get SIGTERM together, and after that window the socket stops
  * accepting.
  */
-const SHUTDOWN_FLUSH_BUDGET_MS = 8_000;
+export const SHUTDOWN_FLUSH_BUDGET_MS = 8_000;
 
 /** Told to every path a flush saved over a commit made outside the room. */
 const OVERWRITTEN =

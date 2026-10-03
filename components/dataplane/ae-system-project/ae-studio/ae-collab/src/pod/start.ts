@@ -23,9 +23,9 @@
  * Room; only who may join and where the files come from differ.
  *
  * Close is the SIGTERM path (07 §10, Q-32): the room listeners stop
- * accepting, every loaded room is force-flushed through the Files socket
- * (bounded, inside ae-studio-tools' drain window), then the room sockets end
- * and the health listener closes.
+ * accepting, the room sockets end, every loaded room is force-flushed through
+ * the Files socket (bounded, inside ae-studio-tools' drain window), and the
+ * health listener closes; the process exits after that.
  */
 
 import { createVerifier } from "@aep/platform-idp-auth";

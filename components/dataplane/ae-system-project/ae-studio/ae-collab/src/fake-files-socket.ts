@@ -70,6 +70,11 @@ export interface FakeFilesSocket {
   failNextRaw(status: number, contentType: string, body: string): void;
   /** Never answer the next request (of `op`, when given): a stalled sidecar. */
   stallNext(op?: FilesOp): void;
+  /**
+   * Hold the next request of `op` until `release()`, then serve it as usual:
+   * `arrived` resolves when it reaches the fake (a slow sidecar the test steps).
+   */
+  holdNext(op: FilesOp): { arrived: Promise<void>; release(): void };
   /** Stop serving and remove the socket and its directory. */
   close(): Promise<void>;
 }
@@ -173,6 +178,7 @@ export async function startFakeFilesSocket(
   let commits = 0;
   let headSha = gitBlobSha("commit 0");
   let nextFailure: { op: FilesOp | undefined; send: (res: http.ServerResponse) => void; times: number } | null = null;
+  let nextHold: { op: FilesOp; arrived: () => void; released: Promise<void> } | null = null;
 
   const newCommit = () => {
     commits += 1;
@@ -223,6 +229,28 @@ export async function startFakeFilesSocket(
     const match = url.pathname.match(ROUTE);
     const op = match?.[2] ?? "";
     const filesOp: FilesOp = op === "/bundle" ? "bundle" : op === "/apply" ? "apply" : "lookup";
+    if (nextHold && nextHold.op === filesOp) {
+      const hold = nextHold;
+      nextHold = null;
+      hold.arrived();
+      req.pause();
+      void hold.released.then(() => {
+        req.resume();
+        serve(req, res, url, match, op, filesOp);
+      });
+      return;
+    }
+    serve(req, res, url, match, op, filesOp);
+  });
+
+  const serve = (
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    url: URL,
+    match: RegExpMatchArray | null,
+    op: string,
+    filesOp: FilesOp,
+  ): void => {
     if (nextFailure && (nextFailure.op === undefined || nextFailure.op === filesOp)) {
       const fail = nextFailure.send;
       nextFailure.times -= 1;
@@ -276,7 +304,7 @@ export async function startFakeFilesSocket(
       return;
     }
     return problem(res, 404, "not_found");
-  });
+  };
 
   const dir = await mkdtemp(path.join(os.tmpdir(), "ae-files-"));
   const socketPath = path.join(dir, "files.sock");
@@ -303,6 +331,14 @@ export async function startFakeFilesSocket(
     stallNext(op) {
       // The request stays open until the client gives up or close() ends it.
       nextFailure = { op, send: () => {}, times: 1 };
+    },
+    holdNext(op) {
+      let arrived!: () => void;
+      let release!: () => void;
+      const arrivedP = new Promise<void>((resolve) => (arrived = resolve));
+      const released = new Promise<void>((resolve) => (release = resolve));
+      nextHold = { op, arrived, released };
+      return { arrived: arrivedP, release };
     },
     async close() {
       await new Promise<void>((resolve) => {

@@ -292,6 +292,12 @@ async function startTestCollab(
         p.provider.destroy();
         p.socket.destroy();
       }
+      // A socket the server closed (pod.close() ends room sockets before it
+      // flushes) schedules its reconnect `delay` ms after the close, and that
+      // timer survives destroy() and turns the socket back on. Destroy again
+      // once it has fired, so no reconnect loop outlives the test.
+      await new Promise((r) => setTimeout(r, FAST_RETRY.maxDelay));
+      for (const p of peers) p.socket.destroy();
       await pod.close();
       await files.close();
       await idp.close();
@@ -844,7 +850,7 @@ test("a deferred room is flushed by shutdown, and no retry runs after it", async
   }
 });
 
-test("close: listeners stop accepting, the rooms are flushed while their sockets are up, then the sockets end", async () => {
+test("close: listeners stop accepting, the room sockets end, then the rooms are flushed", async () => {
   const s = await startTestCollab();
   try {
     const ann = await s.join("public", ROOM, s.idp.userToken());
@@ -853,14 +859,47 @@ test("close: listeners stop accepting, the rooms are flushed while their sockets
     await s.pod.close();
     assert.equal(s.files.commits().length, 1, "the shutdown flush committed the room");
     assert.match(s.files.file(PRD_PATH)!, /Saved on SIGTERM\./);
-    assert.equal(events(s, "room_flush_committed").length, 1, "one commit: the later unload found nothing left");
+    assert.equal(events(s, "room_flush_committed").length, 1, "one commit: the unload and the shutdown flush share it");
   } finally {
     await s.close();
   }
 });
 
-test("close runs drain after the listeners stop accepting and before the open sockets end", async () => {
-  let atDrain: { socketOpen: boolean; upgradeRefused: boolean; ready: number } | undefined;
+test("close: no edit reaches a room after its shutdown flush read it, and close waits for the commit", async () => {
+  const s = await startTestCollab();
+  try {
+    const ann = await s.join("public", ROOM, s.idp.userToken());
+    const bob = await s.join("public", ROOM, s.idp.userToken({ sub: "u-bob" }));
+    typeInto(ann.doc, "Typed before SIGTERM.");
+    await waitFor(() => /Typed before SIGTERM\./.test(markdown(bob.doc)), "the edit to reach the room");
+    const apply = s.files.holdNext("apply");
+    let closed = false;
+    const closing = s.pod.close().then(() => {
+      closed = true;
+    });
+    await apply.arrived; // the shutdown's commit is on its way
+    typeInto(ann.doc, "Typed during the shutdown flush.");
+    await new Promise((r) => setTimeout(r, 150)); // an open socket would deliver it now
+    assert.equal(closed, false, "close waits for the commit");
+    apply.release();
+    await closing;
+
+    const committed = s.files.file(PRD_PATH)!;
+    assert.match(committed, /Typed before SIGTERM\./);
+    // Whatever the room held is committed: an edit the room never took stays
+    // with its author, whose next room takes it.
+    if (/Typed during the shutdown flush\./.test(markdown(bob.doc))) {
+      assert.match(committed, /Typed during the shutdown flush\./, "the room took the edit but never committed it");
+    }
+    assert.match(markdown(ann.doc), /Typed during the shutdown flush\./);
+    assert.equal(s.files.commits().length, 1);
+  } finally {
+    await s.close();
+  }
+});
+
+test("close: drain runs after the listeners stop accepting, and ends the open sockets before it flushes", async () => {
+  let atDrain: { socketOpen: boolean; upgradeRefused: boolean; ready: number; endedBeforeFlush: boolean } | undefined;
   let localUrl = "";
   let healthUrl = "";
   const open: WebSocket[] = [];
@@ -870,16 +909,17 @@ test("close runs drain after the listeners stop accepting and before the open so
       rooms: new Hocuspocus(),
       gate: () => Promise.resolve(null),
       log: () => {},
-      drain: async () => {
+      drain: async (endSockets) => {
         const upgradeRefused = await wsUpgrade(`${localUrl}/`).then(
           () => false,
           () => true,
         );
-        atDrain = {
-          socketOpen: open[0]?.readyState === WebSocket.OPEN,
-          upgradeRefused,
-          ready: (await fetch(`${healthUrl}/readyz`)).status,
-        };
+        const socketOpen = open[0]?.readyState === WebSocket.OPEN;
+        const ready = (await fetch(`${healthUrl}/readyz`)).status;
+        const ended = new Promise<void>((resolve) => open[0]!.once("close", () => resolve()));
+        endSockets();
+        await ended;
+        atDrain = { socketOpen, upgradeRefused, ready, endedBeforeFlush: true };
       },
     },
   );
@@ -891,10 +931,8 @@ test("close runs drain after the listeners stop accepting and before the open so
     ws.once("open", resolve);
     ws.once("error", reject);
   });
-  const closed = new Promise<void>((resolve) => ws.once("close", () => resolve()));
   await pod.close();
-  await closed;
-  assert.deepEqual(atDrain, { socketOpen: true, upgradeRefused: true, ready: 503 });
+  assert.deepEqual(atDrain, { socketOpen: true, upgradeRefused: true, ready: 503, endedBeforeFlush: true });
 });
 
 test("dev mode: a flush is acked through the fake Files socket", async () => {

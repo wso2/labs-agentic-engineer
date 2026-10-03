@@ -20,8 +20,9 @@
  * Composition root. One mode, chosen by env (`modes.ts`): the AE Studio pod's
  * Room (`AE_*`: the public and local room listeners and the health port) or
  * dev mode (the same Room, auth bypassed, fake Files socket). Boot fails with
- * neither. SIGTERM/SIGINT run the close path: the shutdown flush, then the
- * listeners.
+ * neither. SIGTERM/SIGINT run the close path (the room sockets end, then the
+ * bounded shutdown flush, then the health listener); the process exits only
+ * once it settles.
  *
  *   pnpm --filter @aep/ae-collab dev     # watch + reload (dev mode: COLLAB_DEV=1)
  *   pnpm --filter @aep/ae-collab start   # run once

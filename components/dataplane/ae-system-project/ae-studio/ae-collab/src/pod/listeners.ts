@@ -30,9 +30,11 @@
  *   health  `/healthz` (liveness) and `/readyz` (200 once both room listeners
  *           are bound, 503 while closing); not in the Service, not routed.
  *
- * Closing (SIGTERM, 07 §10): both room listeners stop accepting, `drain` runs
- * while the open room sockets are still up (the Room's shutdown flush), then
- * those sockets end, and the health listener closes last.
+ * Closing (SIGTERM, 07 §10): both room listeners stop accepting, then `drain`
+ * runs (the Room's shutdown flush), handed `endSockets`: it ends the open room
+ * sockets first, so no edit reaches a room after its flush read it, then
+ * flushes. The sockets are ended in any case once drain settles, and the
+ * health listener closes last; close resolves only then.
  *
  * The listener a socket came in on rides in its Hocuspocus context
  * (`{listener}`), which is how `auth.ts` picks the token kind; the client
@@ -65,8 +67,12 @@ export interface PodListenerDeps {
   gate: HttpGate;
   /** Where log lines go; stdout unless a test captures them. */
   log?: PodLog;
-  /** Runs on close, after both room listeners stop accepting and before their sockets end. */
-  drain?: () => Promise<void>;
+  /**
+   * Runs on close, after both room listeners stop accepting. `endSockets`
+   * ends every open room socket on both listeners; drain calls it before it
+   * reads the rooms (close calls it again afterwards, a no-op by then).
+   */
+  drain?: (endSockets: () => void) => Promise<void>;
 }
 
 const BEARER = /^Bearer ([^\s]+)$/i;
@@ -323,13 +329,16 @@ export async function startPodListeners(cfg: ListenerConfig, deps: PodListenerDe
     healthUrl: urlOf(health),
     async close() {
       ready = false;
+      // Upgraded sockets left the HTTP servers' books: they are ended here.
+      const endSockets = (): void => {
+        for (const ws of [...publicWss.clients, ...localWss.clients]) ws.terminate();
+      };
       try {
         const stopped = Promise.all([closeServer(pub), closeServer(local)]);
         try {
-          await deps.drain?.();
+          await deps.drain?.(endSockets);
         } finally {
-          // Upgraded sockets left the HTTP servers' books: end them here.
-          for (const ws of [...publicWss.clients, ...localWss.clients]) ws.terminate();
+          endSockets();
         }
         await stopped;
       } finally {

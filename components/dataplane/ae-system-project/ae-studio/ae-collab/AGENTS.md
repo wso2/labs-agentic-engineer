@@ -128,11 +128,14 @@ the document: no other connection holds a room whose load failed.
 - **`flush-warnings`**: after every successful apply the room hears
   `{type:"flush-warnings", warnings:[{path, message}]}` (the pod's warnings plus
   the saved-over paths); an empty list clears the console's Alert.
-- **Shutdown** (SIGTERM, 07 §10): both room listeners stop accepting, every
-  loaded room is force-flushed (8 at a time) within an 8 s budget that ends
-  inside ae-studio-tools' 10 s Files socket drain window, empty rooms whose
-  edits landed unload, then the room sockets end and the health listener
-  closes.
+- **Shutdown** (SIGTERM, 07 §10), inside one 8 s budget that ends inside
+  ae-studio-tools' 10 s Files socket drain window: both room listeners stop
+  accepting, the room sockets end and every update they delivered is applied
+  (so no edit reaches a room after its flush read it; an edit typed later
+  stays in its author's doc and syncs into the next room), every loaded room
+  is force-flushed (8 at a time), and rooms whose edits landed unload (the
+  last-leave unloads the closed sockets started are awaited, not repeated).
+  Then the health listener closes, and only then does the process exit.
 - **Health**: `/healthz` and `/readyz` on the health port.
 
 ## Env

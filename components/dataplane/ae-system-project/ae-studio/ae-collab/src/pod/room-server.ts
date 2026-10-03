@@ -30,7 +30,7 @@
  */
 
 import { Hocuspocus, type Connection, type onAuthenticatePayload, type onTokenSyncPayload } from "@hocuspocus/server";
-import { flushAllRooms, pendingChanges, seedBaseline } from "../committer.js";
+import { flushAllRooms, pendingChanges, seedBaseline, SHUTDOWN_FLUSH_BUDGET_MS } from "../committer.js";
 import { FilesDeniedError, type FilesClient } from "../files-client.js";
 import { dropRoomState, ensureRoomState, roomState } from "../rooms.js";
 import { isReferenceDocPath, seedDocument } from "../seed.js";
@@ -56,11 +56,15 @@ const COMMIT_CADENCE: CommitCadence = { debounceMs: 60_000, maxDebounceMs: 300_0
 export interface RoomServer {
   hocuspocus: Hocuspocus<CollabContext>;
   /**
-   * SIGTERM: stop the deferred retries, force-flush every loaded room
-   * (bounded), then unload the rooms nobody is in whose edits all landed (a
-   * deferred room has no socket whose close would unload it).
+   * SIGTERM, inside one SHUTDOWN_FLUSH_BUDGET_MS budget: stop the deferred
+   * retries, end the room sockets (`endSockets`) and wait for every update
+   * they delivered to be applied, so no edit reaches a room after its flush
+   * read it; force-flush every loaded room (8 at a time); then unload the
+   * rooms whose edits all landed, which also waits for the last-leave
+   * unloads the closed sockets started. Resolves when that is done or the
+   * budget is spent, whichever is first: the process exits after it.
    */
-  shutdownFlush(): Promise<void>;
+  shutdownFlush(endSockets: () => void): Promise<void>;
 }
 
 export interface RoomServerDeps {
@@ -131,16 +135,39 @@ export function createRoomServer(deps: RoomServerDeps): RoomServer {
   });
   return {
     hocuspocus,
-    async shutdownFlush() {
+    async shutdownFlush(endSockets) {
+      const until = Date.now() + SHUTDOWN_FLUSH_BUDGET_MS;
       commits.stopRetries();
-      await flushAllRooms({ files: deps.files, log: deps.log }, hocuspocus.documents, { concurrency: 8, force: true });
+      // Read before the sockets end: a closed connection leaves its document.
+      const open = [...hocuspocus.documents.values()].flatMap((doc) => doc.getConnections());
+      endSockets();
+      await withinBudget(Promise.all(open.map((connection) => connection.waitForPendingMessages())), until);
+      await flushAllRooms({ files: deps.files, log: deps.log }, hocuspocus.documents, {
+        concurrency: 8,
+        force: true,
+        budgetMs: Math.max(0, until - Date.now()),
+      });
       const settled = [...hocuspocus.documents.values()].filter((doc) => {
         const state = roomState(doc.name);
         if (doc.getConnectionsCount() > 0 || !state) return false;
         const { writes, deletes } = pendingChanges(doc, state, true);
         return writes.length === 0 && deletes.length === 0;
       });
-      await Promise.all(settled.map((doc) => hocuspocus.unloadDocument(doc)));
+      // An unload already running (a last leave) is awaited, not repeated.
+      await withinBudget(Promise.all(settled.map((doc) => hocuspocus.unloadDocument(doc))), until);
     },
   };
+}
+
+/** Waits for `work` until the wall clock reaches `until`, whichever is first. */
+async function withinBudget(work: Promise<unknown>, until: number): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  const spent = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, Math.max(0, until - Date.now()));
+  });
+  try {
+    await Promise.race([work.then(() => undefined), spent]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
