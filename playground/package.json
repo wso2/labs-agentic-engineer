@@ -15,7 +15,6 @@
   "dependencies": {
     "@aep/agent-stream": "workspace:*",
     "@aep/ae-design-agent": "workspace:*",
-    "@aep/contracts": "workspace:*",
     "@aep/design-projection": "workspace:*",
     "@aep/excalidraw-dsl": "workspace:*",
     "@aep/progress-view": "workspace:*",

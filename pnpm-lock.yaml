@@ -851,9 +851,6 @@ importers:
       '@aep/agent-stream':
         specifier: workspace:*
         version: link:../packages/agent-stream
-      '@aep/contracts':
-        specifier: workspace:*
-        version: link:../packages/contracts
       '@aep/design-projection':
         specifier: workspace:*
         version: link:../packages/design-projection
