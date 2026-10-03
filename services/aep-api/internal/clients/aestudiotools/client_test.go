@@ -340,3 +340,30 @@ func TestEndpointCache_DoesNotCacheRefusals(t *testing.T) {
 		t.Fatalf("resolve calls = %d, want 2 (an absent studio is not cached)", ep.count())
 	}
 }
+
+// A unary call cut by the Adapter's own call timeout is a pod that did not
+// answer: ErrAEStudioUnavailable, and the Target is dropped. The caller's
+// shorter deadline is the caller's: the Target stays.
+func TestAdapter_CallTimeoutIsUnavailableTheCallersDeadlineIsNot(t *testing.T) {
+	srv := identityServer(t, func(_ http.ResponseWriter, r *http.Request, _ int) { <-r.Context().Done() })
+	ep := fixedTarget(srv.URL, "ou-123")
+	a := New(Config{Endpoints: ep, Tokens: &countingTokens{}, CallTimeout: 200 * time.Millisecond})
+
+	if _, err := a.GitHubIdentity(context.Background(), "default"); !errors.Is(err, ErrAEStudioUnavailable) {
+		t.Fatalf("err = %v, want ErrAEStudioUnavailable at the call timeout", err)
+	}
+	if ep.count() != 1 {
+		t.Fatalf("resolve calls = %d, want 1", ep.count())
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, err := a.GitHubIdentity(ctx, "default")
+	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrAEStudioUnavailable) {
+		t.Fatalf("err = %v, want the caller's deadline", err)
+	}
+	_, _ = a.GitHubIdentity(ctx, "default")
+	if ep.count() != 2 {
+		t.Fatalf("resolve calls = %d, want 2 (dropped once, by the call timeout only)", ep.count())
+	}
+}

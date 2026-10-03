@@ -279,3 +279,38 @@ func TestStartTurn_RejectsABadRequestWithoutACall(t *testing.T) {
 		t.Fatal("want an error for a RepoRef without a repo")
 	}
 }
+
+// The caller's own deadline ending a stream (the kickoff's 20 s budget, an
+// activity's timeout) is the caller's: the pod answered, so its Target stays
+// cached and the error is the context's, never ErrAEStudioUnavailable.
+func TestStartTurn_TheCallersDeadlineIsNotUnavailable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = io.WriteString(w, `{"type":"keep-alive"}`+"\n")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	ep := fixedTarget(srv.URL, "ou-123")
+	a := newAdapter(t, ep, &countingTokens{})
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	seq, err := a.StartTurn(ctx, acmeGreeter, startReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	evs, err := collect(t, seq)
+	if len(evs) != 1 || !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrAEStudioUnavailable) {
+		t.Fatalf("events=%d err=%v, want the keep-alive then the caller's deadline", len(evs), err)
+	}
+	seq, err = a.StartTurn(context.Background(), acmeGreeter, startReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range seq {
+		break
+	}
+	if ep.count() != 1 {
+		t.Fatalf("resolve calls = %d, want 1 (the Target survives the caller's deadline)", ep.count())
+	}
+}

@@ -161,21 +161,27 @@ func (a *Adapter) tokenFailed(ctx context.Context, org string, err error) error 
 	return err
 }
 
-// transportFailed maps a request that got no answer. The caller's
-// cancellation is returned as is; anything else (a dial error, a broken
-// connection, a deadline) is ErrAEStudioUnavailable and drops the org's
-// cached Target, which may be stale.
+// transportFailed maps a request that got no answer. The caller's own
+// context ending it (a cancellation, or the caller's deadline: the kickoff's
+// budget, an activity's timeout) is the caller's and is returned as is.
+// Anything else (a dial error, a broken connection, the Adapter's own call
+// timeout) is ErrAEStudioUnavailable and drops the org's cached Target,
+// which may be stale.
 func (a *Adapter) transportFailed(ctx context.Context, org, op string, err error) error {
-	if errors.Is(ctx.Err(), context.Canceled) {
+	if ctx.Err() != nil && !errors.Is(context.Cause(ctx), errCallTimeout) {
 		return fmt.Errorf("ae studio: %s: %w", op, ctx.Err())
 	}
 	a.endpoints.drop(org)
 	return fmt.Errorf("%w: %s: %w", ErrAEStudioUnavailable, op, err)
 }
 
+// errCallTimeout is the cause of a unary call cut by the call timeout, which
+// tells the Adapter's deadline from the caller's.
+var errCallTimeout = errors.New("ae studio: call timeout")
+
 // unary bounds a unary call by the call timeout.
 func (a *Adapter) unary(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(ctx, a.callTimeout)
+	return context.WithTimeoutCause(ctx, a.callTimeout, errCallTimeout)
 }
 
 // validRef refuses a RepoRef the pod could not route.
