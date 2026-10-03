@@ -119,6 +119,14 @@ off the stream. The plan tool contract (inputs, results, error codes, the
   `mcp: { url, token }` bundle on the turn (aep-api in production; the playground in
   local dev). Absent → no discovery tools (byte-identical to today); malformed → a
   clean pre-stream 400.
+- **Tools socket** (`src/tools-socket/`, pod mode): the one port to
+  ae-studio-tools over the Unix socket in `AE_MCP_SOCKET` — `mcpFetch` (the
+  MCP client's transport, no URL or bearer), `roomToken`, `postUsage`,
+  `lookup` (404 `project_unknown` → `null`) and `skills`. `client.ts` is the
+  undici socket adapter, `fake.ts` the in-process one for tests.
+  `src/usage/outbox.ts` holds finished-turn records (cap 200, oldest dropped,
+  retry every 2 s, in order) and `drain(timeoutMs)` flushes it at shutdown.
+  Not wired yet (Tasks 3.12/3.13).
 - **Turn journal** (optional, #463): the caller pushes
   `journal: { text, author?: { id, displayName } }` — the raw client-sent
   instruction + acting user, stored beside the transcript (never woven into

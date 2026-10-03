@@ -17,13 +17,13 @@
  */
 
 /**
- * Minimal Model Context Protocol client for the aep-api-hosted dependency-
- * discovery server (`aep-api/internal/feature/dependencies/mcp_server.go`). It
- * speaks the JSON-RPC Streamable-HTTP transport in its simplest single-response
- * form (POST a request, read an `application/json` response) — that server is
- * stateless, so no SSE/session handshake is needed, and `initialize` is
- * optional there, so this client skips it and goes straight to `tools/list` (one
- * fewer round trip against a token minted with a short, ~5 min TTL).
+ * Minimal Model Context Protocol client for the design tools ae-studio-tools
+ * serves on the MCP socket (`POST /mcp`, packages/contracts/sockets/ae-studio/
+ * mcp/openapi.yaml). It speaks JSON-RPC in its simplest single-response form
+ * (POST a request, read an `application/json` response) over the socket's
+ * fetch (`ToolsSocket.mcpFetch`): no URL, no bearer, as the socket mount is
+ * the gate. That server is stateless and answers `tools/list` without an
+ * `initialize`, so this client skips it.
  *
  * `loadMcpTools` DISCOVERS the server's tools via `tools/list` and wraps each as
  * an AI SDK `dynamicTool` whose execution proxies to `tools/call`. The turn loop
@@ -32,16 +32,20 @@
  * platform resource types before proposing a `dependencies` entry — reusing an
  * existing name + schema instead of inventing one.
  *
- * Best-effort throughout: the server being unreachable, unauthorized (401 — the
- * token outlived its TTL), or returning a malformed response all degrade to an
- * EMPTY tool set (logged), never a thrown error. Discovery is enrichment, never
- * a hard dependency of the turn.
+ * Best-effort throughout: the socket being unreachable, answering an HTTP
+ * error, or returning a malformed response all degrade to an EMPTY tool set
+ * (logged), never a thrown error. Discovery is enrichment, never a hard
+ * dependency of the turn.
  */
 
 import { dynamicTool, jsonSchema, type ToolSet } from "ai";
-import type { McpConfig } from "@aep/agent-stream";
+import type { ToolsSocket } from "../tools-socket/client.js";
 
-export type { McpConfig };
+/** What the MCP client needs of the tools socket: its fetch. */
+export type McpTransport = Pick<ToolsSocket, "mcpFetch">;
+
+/** The JSON-RPC endpoint on the socket. */
+const MCP_PATH = "/mcp";
 
 interface JsonRpcResponse {
   jsonrpc: string;
@@ -85,17 +89,16 @@ const RPC_TIMEOUT_MS = 10_000;
 
 /** POST one JSON-RPC request; throws on a non-2xx response or an `error` envelope. */
 async function rpc(
-  config: McpConfig,
+  mcpFetch: typeof fetch,
   method: string,
   params: unknown,
   timeoutMs: number,
 ): Promise<unknown> {
-  const res = await fetch(config.url, {
+  const res = await mcpFetch(MCP_PATH, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Accept: "application/json",
-      Authorization: `Bearer ${config.token}`,
     },
     body: JSON.stringify({ jsonrpc: "2.0", id: nextRpcId++, method, params }),
     // A timeout aborts the request, which surfaces as a thrown TimeoutError —
@@ -113,22 +116,22 @@ async function rpc(
 }
 
 /**
- * Connect to the MCP server in `config`, discover its tools, and return them as
- * an AI SDK `ToolSet`. On any failure (unreachable, 401, malformed JSON/shape,
+ * Discover the tools on the socket and return them as an AI SDK `ToolSet`. On
+ * any failure (unreachable, an HTTP error, malformed JSON/shape,
  * unresponsive past `timeoutMs`) it logs a warning and returns `{}` — the caller
  * merges an empty set as a no-op.
  *
- * `options.timeoutMs` overrides `RPC_TIMEOUT_MS` for this server. Callers leave
+ * `options.timeoutMs` overrides `RPC_TIMEOUT_MS`. Callers leave
  * it unset; the tests set it small so the no-response path is assertable without
  * a ten-second wait.
  */
 export async function loadMcpTools(
-  config: McpConfig,
+  socket: McpTransport,
   options: { timeoutMs?: number } = {},
 ): Promise<ToolSet> {
   const timeoutMs = options.timeoutMs ?? RPC_TIMEOUT_MS;
   try {
-    const listed = (await rpc(config, "tools/list", {}, timeoutMs)) as
+    const listed = (await rpc(socket.mcpFetch, "tools/list", {}, timeoutMs)) as
       | { tools?: McpToolDescriptor[] }
       | undefined;
     const descriptors = Array.isArray(listed?.tools) ? listed.tools : [];
@@ -140,7 +143,7 @@ export async function loadMcpTools(
         inputSchema: jsonSchema(d.inputSchema ?? { type: "object", properties: {} }),
         execute: async (args) => {
           const result = (await rpc(
-            config,
+            socket.mcpFetch,
             "tools/call",
             { name: d.name, arguments: args ?? {} },
             timeoutMs,
@@ -164,10 +167,10 @@ export async function loadMcpTools(
         },
       });
     }
-    console.log(`[mcp] loaded ${Object.keys(tools).length} tool(s) from ${config.url}`);
+    console.log(`[mcp] loaded ${Object.keys(tools).length} tool(s) from the tools socket`);
     return tools;
   } catch (err) {
-    console.warn(`[mcp] tool discovery failed (${config.url}): ${err instanceof Error ? err.message : String(err)}`);
+    console.warn(`[mcp] tool discovery failed: ${err instanceof Error ? err.message : String(err)}`);
     return {};
   }
 }

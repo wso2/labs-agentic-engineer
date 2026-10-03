@@ -87,6 +87,7 @@ import { codedErrorFrame, turnErrorFrame } from "./conversation/turn-error.js";
 import { conversationOrgId, resolveWorkspace, WorkspaceRefError } from "./shared/snapshot-path.js";
 import { createAuthMiddleware, type AgentsAuthConfig } from "./shared/auth.js";
 import { startKeepAlive } from "./shared/keepalive.js";
+import type { McpTransport } from "./shared/mcp-client.js";
 import { config } from "./shared/config.js";
 import {
   anthropicConnection,
@@ -131,6 +132,22 @@ function isMcpConfig(v: unknown): v is McpConfig {
   if (typeof v !== "object" || v === null) return false;
   const c = v as Record<string, unknown>;
   return typeof c.url === "string" && c.url !== "" && typeof c.token === "string" && c.token !== "";
+}
+
+/**
+ * The legacy caller's MCP endpoint as the turn's transport: every request goes
+ * to `config.url` with its bearer, whatever path the MCP client names. In the
+ * pod the transport is the tools socket's fetch, which needs neither.
+ * TEMPORARY (phase 3 deletes): Task 3.12 removes the legacy server and the
+ * caller-supplied `mcp`.
+ */
+function bearerMcpTransport(config: McpConfig): McpTransport {
+  const mcpFetch = ((_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    const headers = new Headers(init?.headers);
+    headers.set("Authorization", `Bearer ${config.token}`);
+    return fetch(config.url, { ...init, headers });
+  }) as typeof fetch;
+  return { mcpFetch };
 }
 
 /**
@@ -362,13 +379,13 @@ export function createApp(deps: CreateAppDeps): Express {
     // discovery endpoint + short-lived bearer for this turn. Absent → no MCP
     // discovery (byte-identical to today). Present but malformed → a clean 400
     // rather than a confusing best-effort empty-tools no-op mid-stream.
-    let mcp: McpConfig | undefined;
+    let mcp: McpTransport | undefined;
     if (body.mcp !== undefined) {
       if (!isMcpConfig(body.mcp)) {
         res.status(400).json({ error: "mcp must be { url: string, token: string }" });
         return;
       }
-      mcp = body.mcp;
+      mcp = bearerMcpTransport(body.mcp);
     }
 
     // model (optional): the organization's model for this turn, resolved by the

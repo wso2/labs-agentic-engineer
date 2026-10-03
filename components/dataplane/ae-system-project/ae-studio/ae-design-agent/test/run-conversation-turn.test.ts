@@ -30,6 +30,7 @@ import { sha256Hex } from "../src/shared/hash.js";
 import { mockModel, type MockStep } from "../src/shared/mock-model.js";
 import { testSkillSource } from "./skill-source.js";
 import { listen0 } from "../src/shared/listen.js";
+import type { McpTransport } from "../src/shared/mcp-client.js";
 import { anthropicConnection, type ModelConnection } from "../src/shared/model.js";
 
 /** Anthropic's format on Ollama's host: the SDK reports it as `anthropic.messages`, yet it cannot run Anthropic's server tool. */
@@ -933,6 +934,11 @@ async function fakeMcpServer(descriptors: { name: string; description?: string }
   return listen0(server.listen(0));
 }
 
+/** The turn's MCP transport bound to `baseUrl`, as the tools socket's fetch is bound to the socket. */
+function mcpAt(baseUrl: string): McpTransport {
+  return { mcpFetch: ((input, init) => fetch(new URL(String(input), baseUrl), init)) as typeof fetch };
+}
+
 test("mcp: a discovered tool with no name clash is merged and callable", async () => {
   const { baseUrl, close } = await fakeMcpServer([
     { name: "list_external_resources", description: "list external resources" },
@@ -951,7 +957,7 @@ test("mcp: a discovered tool with no name clash is merged and callable", async (
       id: "mcp1",
       instruction: "discover",
       files: SEED_FILES,
-      mcp: { url: baseUrl, token: "tok" },
+      mcp: mcpAt(baseUrl),
       model,
       store,
       guard,
@@ -982,7 +988,7 @@ test("mcp shadow-guard: a discovered tool named after a built-in ALWAYS loses to
       id: "mcp2",
       instruction: "rename",
       files: SEED_FILES,
-      mcp: { url: baseUrl, token: "tok" },
+      mcp: mcpAt(baseUrl),
       model: editModel(), // calls the real editFile with a legitimate rename
       store,
       guard,
@@ -1042,7 +1048,7 @@ test("mcp + collabPeer coexist: the discovered tool is still merged and callable
       id: "mcp-collab",
       instruction: "author the design against real providers",
       files: SEED_FILES,
-      mcp: { url: baseUrl, token: "tok" },
+      mcp: mcpAt(baseUrl),
       collabPeer: new FakePeer(SEED_FILES),
       model,
       store,
@@ -1208,7 +1214,7 @@ test("webSearch shadow-guard: an MCP-discovered tool named 'web_search' never sh
       id: "ws4",
       instruction: "x",
       files: SEED_FILES,
-      mcp: { url: baseUrl, token: "tok" },
+      mcp: mcpAt(baseUrl),
       webSearch: true,
       model,
       store,

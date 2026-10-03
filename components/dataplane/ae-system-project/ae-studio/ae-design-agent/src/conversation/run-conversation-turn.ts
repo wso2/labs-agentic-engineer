@@ -34,7 +34,6 @@ import {
   FileBundle,
   isErrorToolOutput,
   isQuestionTool,
-  type McpConfig,
   type StreamPart,
   type Surface,
   type Toolset,
@@ -66,7 +65,7 @@ import {
   type ModelConnection,
 } from "../shared/model.js";
 import { MODEL_MAX_RETRIES } from "../shared/provider-limit.js";
-import { loadMcpTools } from "../shared/mcp-client.js";
+import { loadMcpTools, type McpTransport } from "../shared/mcp-client.js";
 import { turnTelemetry } from "../shared/telemetry.js";
 import type { Conversation, ConversationStore, TurnJournalEntry } from "../store/conversation-store.js";
 
@@ -199,13 +198,12 @@ export interface RunConversationTurnInput {
    */
   toolset?: Toolset;
   /**
-   * Caller-supplied MCP discovery endpoint for this turn (dependency-management
-   * migration Phase 5). Present → `tools/list` is fetched (best-effort) and
-   * merged into the tool set as dynamic tools, under a shadow-guard so a
-   * discovered tool can never shadow a built-in one. Omitted → no fetch, no
-   * merge (byte-identical to today).
+   * The MCP transport for this turn (the tools socket's fetch). Present →
+   * `tools/list` is fetched (best-effort) and merged into the tool set as
+   * dynamic tools, under a shadow-guard so a discovered tool can never shadow
+   * a built-in one. Omitted → no fetch, no merge (byte-identical to today).
    */
-  mcp?: McpConfig;
+  mcp?: McpTransport;
   /**
    * Live collab-room peer for a room-scoped turn (#86 phase 4). Present (and
    * toolset `files`) → the bundle mirrors every applied op onto the room's
@@ -312,9 +310,9 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     }
 
     // 3b. MCP discovery (dependency-management migration Phase 5): best-effort —
-    //     a caller-supplied `mcp` merges the org's dependency-discovery tools
+    //     an `mcp` transport merges the org's dependency-discovery tools
     //     (list_external_resources, etc.) into the tool set for this turn.
-    //     `loadMcpTools` never throws (server down/401/malformed → `{}`, logged),
+    //     `loadMcpTools` never throws (socket down/HTTP error/malformed → `{}`, logged),
     //     so a turn with `mcp` never fails ON ITS ACCOUNT. Omitted `mcp`, or a
     //     failed/empty load, means `tools` IS the base set (no wrapping object)
     //     — byte-identical to an mcp-free turn. `baseTools` (the `tools` set

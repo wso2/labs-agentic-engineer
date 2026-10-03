@@ -19,8 +19,9 @@
 /**
  * Unit tests for the MCP client shim against a FAKE JSON-RPC http server (not
  * a fixture for the eval tree — this one is a minimal stand-in so `src/` stays
- * filesystem/eval-free). Covers the failure modes the turn loop relies on being
- * best-effort: a clean list/call round-trip, 401 (expired/short-TTL token), a
+ * filesystem/eval-free), reached through a transport whose fetch is bound to
+ * it, as the tools socket's is. Covers the failure modes the turn loop relies
+ * on being best-effort: a clean list/call round-trip, an HTTP error, a
  * malformed response, a malformed descriptor, and an `isError:true` result —
  * none of them may throw the turn.
  */
@@ -28,7 +29,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { loadMcpTools } from "../src/shared/mcp-client.js";
+import { loadMcpTools, type McpTransport } from "../src/shared/mcp-client.js";
 import { listen0 } from "../src/shared/listen.js";
 
 type Handler = (req: IncomingMessage, res: ServerResponse, body: unknown) => void;
@@ -51,16 +52,23 @@ async function fakeServer(handle: Handler) {
   return listen0(server.listen(0));
 }
 
+/** A transport whose fetch is bound to `baseUrl`, as `ToolsSocket.mcpFetch` is to the socket. */
+function boundTo(baseUrl: string): McpTransport {
+  return { mcpFetch: ((input, init) => fetch(new URL(String(input), baseUrl), init)) as typeof fetch };
+}
+
 function jsonRpcOk(res: ServerResponse, id: unknown, result: unknown): void {
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ jsonrpc: "2.0", id, result }));
 }
 
-test("list/call round-trip: discovers tools/list and proxies tools/call, carrying the bearer token", async () => {
+test("list/call round-trip: discovers tools/list and proxies tools/call on /mcp, no bearer", async () => {
+  const seenPaths: (string | undefined)[] = [];
   const seenAuth: (string | undefined)[] = [];
   const seenCallArgs: unknown[] = [];
   const { baseUrl, close } = await fakeServer((req, res, body) => {
     seenAuth.push(req.headers.authorization);
+    seenPaths.push(req.url);
     const { id, method, params } = body as { id: unknown; method: string; params: unknown };
     if (method === "tools/list") {
       jsonRpcOk(res, id, {
@@ -81,30 +89,31 @@ test("list/call round-trip: discovers tools/list and proxies tools/call, carryin
     }
   });
   try {
-    const tools = await loadMcpTools({ url: baseUrl, token: "tok-123" });
+    const tools = await loadMcpTools(boundTo(baseUrl));
     assert.deepEqual(Object.keys(tools), ["list_external_resources"]);
-    assert.ok(seenAuth.every((a) => a === "Bearer tok-123"), "Authorization header carried the token");
 
     const result = await tools.list_external_resources!.execute!({}, {} as never);
     assert.match(String(result), /openweather/);
     assert.deepEqual(seenCallArgs, [{ name: "list_external_resources", arguments: {} }]);
+    assert.ok(seenAuth.every((a) => a === undefined), "the socket is the gate: no Authorization header");
+    assert.ok(seenPaths.every((p) => p === "/mcp"), seenPaths.join(","));
   } finally {
     await close();
   }
 });
 
-test("401 (expired token) degrades to an empty tool set + a warning, never throws", async () => {
+test("an HTTP error (502 from the socket) degrades to an empty tool set + a warning, never throws", async () => {
   const { baseUrl, close } = await fakeServer((_req, res) => {
-    res.writeHead(401, { "content-type": "application/json" });
-    res.end(JSON.stringify({ error: "unauthorized" }));
+    res.writeHead(502, { "content-type": "application/problem+json" });
+    res.end(JSON.stringify({ code: "aep_api_unavailable" }));
   });
   const warnings: string[] = [];
   const origWarn = console.warn;
   console.warn = (msg?: unknown) => warnings.push(String(msg));
   try {
-    const tools = await loadMcpTools({ url: baseUrl, token: "expired" });
+    const tools = await loadMcpTools(boundTo(baseUrl));
     assert.deepEqual(tools, {});
-    assert.ok(warnings.some((w) => /tool discovery failed/.test(w) && /401/.test(w)), warnings.join("\n"));
+    assert.ok(warnings.some((w) => /tool discovery failed/.test(w) && /502/.test(w)), warnings.join("\n"));
   } finally {
     console.warn = origWarn;
     await close();
@@ -120,7 +129,7 @@ test("malformed tools/list response (not valid JSON) degrades to an empty tool s
   const origWarn = console.warn;
   console.warn = (msg?: unknown) => warnings.push(String(msg));
   try {
-    const tools = await loadMcpTools({ url: baseUrl, token: "tok" });
+    const tools = await loadMcpTools(boundTo(baseUrl));
     assert.deepEqual(tools, {});
     assert.ok(warnings.some((w) => /tool discovery failed/.test(w)), warnings.join("\n"));
   } finally {
@@ -141,7 +150,7 @@ test("malformed tool descriptor (missing name) is skipped, valid siblings still 
     }
   });
   try {
-    const tools = await loadMcpTools({ url: baseUrl, token: "tok" });
+    const tools = await loadMcpTools(boundTo(baseUrl));
     assert.deepEqual(Object.keys(tools), ["list_org_endpoints"]);
   } finally {
     await close();
@@ -168,7 +177,7 @@ test("isError:true from tools/call throws (surfaces as a tool-error, not a swall
     }
   });
   try {
-    const tools = await loadMcpTools({ url: baseUrl, token: "tok" });
+    const tools = await loadMcpTools(boundTo(baseUrl));
     await assert.rejects(
       tools.get_external_resource_schema!.execute!({}, {} as never),
       /missing required argument: name/,
@@ -181,7 +190,7 @@ test("isError:true from tools/call throws (surfaces as a tool-error, not a swall
 
 test("server unreachable degrades to an empty tool set, never throws", async () => {
   // Port 1 is never listening — fetch rejects (ECONNREFUSED-equivalent).
-  const tools = await loadMcpTools({ url: "http://127.0.0.1:1/mcp", token: "tok" });
+  const tools = await loadMcpTools(boundTo("http://127.0.0.1:1"));
   assert.deepEqual(tools, {});
 });
 
@@ -195,7 +204,7 @@ test("a server that accepts the request but never answers times out, never hangs
   });
   try {
     const started = Date.now();
-    const tools = await loadMcpTools({ url: baseUrl, token: "tok" }, { timeoutMs: 150 });
+    const tools = await loadMcpTools(boundTo(baseUrl), { timeoutMs: 150 });
     assert.deepEqual(tools, {}, "a timed-out discovery must degrade to no tools");
     assert.ok(Date.now() - started < 5_000, "must abort at the timeout, not wait on the server");
   } finally {

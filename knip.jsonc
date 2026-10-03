@@ -28,7 +28,9 @@
   // under --production — so test-only code is excluded with no carve-out here.
   // Root stray files are out of scope. mock-model is a published test seam
   // (`@aep/ae-design-agent` package.json exports); only *.test.ts / playground tests
-  // import it, which --production strips — retain deliberately. `skills/` is the
+  // import it, which --production strips — retain deliberately. So is
+  // ae-design-agent's `tools-socket/fake.ts` (the in-process ToolsSocket the
+  // tests drive turns with). `skills/` is the
   // authored skill library: prose plus payload the AGENT consumes at run time
   // (templates it copies into a project, a report generator it invokes through
   // $AEP_SKILLS_DIR). Nothing in this repo imports those files, and nothing
@@ -36,13 +38,16 @@
   // them. ae-design-agent's `turns/` (TurnDesk, replay buffer) and
   // `conversations/` (ThreadBook) are imported only by tests until Task 3.12
   // wires the start path to them (`@knipkeep` cannot tag a whole file); 3.12
-  // removes these entries.
+  // removes these entries. Its `usage/` (the usage outbox) is the same until
+  // Task 3.12 pushes the desk's records into it.
   "ignore": [
     "deployments/**",
     "scripts/**",
     "components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/shared/mock-model.ts",
+    "components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/tools-socket/fake.ts",
     "components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/turns/**",
     "components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/conversations/**",
+    "components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/usage/**",
     "skills/**"
   ],
   // An export used within its own file is not dead — this codebase deliberately
