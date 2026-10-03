@@ -49,6 +49,17 @@ import { startPod } from "./pod/start.js";
 import { dropRoomState, roomState } from "./rooms.js";
 
 const ROOM = "spec-acme-shop";
+const CONSOLE_ORIGIN = "http://console.ae.localhost:8080";
+
+/**
+ * A browser's socket: `ws` sends no Origin unless told, and the public
+ * listener refuses an upgrade without a listed one.
+ */
+class ConsoleWebSocket extends WebSocket {
+  constructor(address: string | URL, protocols?: string | string[]) {
+    super(address, protocols, { origin: CONSOLE_ORIGIN });
+  }
+}
 const PRD_PATH = "specs/requirements/prd.md";
 const PRD = "# PRD\n\nA paragraph of body text.\n";
 
@@ -67,7 +78,7 @@ async function startRoom(files: FakeFilesSocket): Promise<PodListeners> {
     jwksUrl: "http://thunder.test/oauth2/jwks",
     userAudiences: ["aep-console-client"],
     agentClientId: "ae-studio-acme",
-    allowedOrigins: [],
+    allowedOrigins: [CONSOLE_ORIGIN],
     filesSocket: files.path,
     listenPort: 0,
     healthPort: 0,
@@ -93,7 +104,7 @@ async function attemptJoin(pod: PodListeners): Promise<Attempt> {
   const doc = new Y.Doc();
   const socket = new HocuspocusProviderWebsocket({
     url: `${pod.publicUrl.replace(/^http/, "ws")}/v1/rooms`,
-    WebSocketPolyfill: WebSocket,
+    WebSocketPolyfill: ConsoleWebSocket,
   });
   const provider = new HocuspocusProvider({
     websocketProvider: socket,

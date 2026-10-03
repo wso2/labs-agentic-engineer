@@ -48,9 +48,9 @@ missing key.
   public port (`AE_LISTEN_PORT`, 8081) gates `/v1` HTTP (any casing) with
   `@aep/platform-idp-auth` (M2M → 401, another org → 403, IdP keys
   unreachable → 503 `idp_unavailable`, all before route matching; no `/v1` operation yet, so an admitted request is a 404 problem).
-  A room upgrade there must pass `originAllowed`: a present `Origin` must be
-  listed in `AE_ALLOWED_ORIGINS` (403); an absent one is accepted while the
-  phase-2 agents bridge exists (Task 3.22 makes it 403). Rooms seed from and
+  A room upgrade there must pass `originAllowed`: the `Origin` must be
+  present and listed in `AE_ALLOWED_ORIGINS` (403 otherwise); the in-pod
+  agent joins on the local listener, which has no Origin check. Rooms seed from and
   commit through the Files socket (`AE_FILES_SOCKET`). The health port
   (`AE_HEALTH_PORT`, 9081, not routed) serves `/healthz` and `/readyz` (503
   until both room listeners are bound and while closing). SIGTERM/SIGINT run
@@ -120,7 +120,8 @@ the document: no other connection holds a room whose load failed.
   `specs/`, over 5 MiB): that change is set aside (not resent until the file
   changes), the rest of the flush is saved, and every `flush-warnings` restates
   the path as unsaved while it stays so. A room whose only unsaved changes are
-  refused ones may unload.
+  refused ones may unload; it logs how many it unloaded with
+  (`room_unloaded_with_refused {count}`), never which.
 - **One flush per room at a time**: the debounced store, `flush`, the last
   leave, a retry and shutdown queue on the room (`RoomState.flushing`), so a
   later one diffs against the baseline the earlier one left.

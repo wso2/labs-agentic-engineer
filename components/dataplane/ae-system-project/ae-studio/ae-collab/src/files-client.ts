@@ -173,7 +173,9 @@ const MAX_DETAIL = 500;
  * per-request budget (`filesSocketRequestBudget`, 40 s,
  * ae-studio-tools/internal/edge/files_sock.go), which nests every aep-api
  * call and the git work, so the pod answers first and this deadline only
- * ever fires on a sidecar that stopped answering; raise both together. A
+ * ever fires on a sidecar that stopped answering; raise both together, and
+ * keep the console's flush wait (`FLUSH_TIMEOUT_MS`, 50 s, in
+ * apps/console/src/features/spec/collab/useCollabSpec.ts) above this one. A
  * cold clone runs detached in the pod: a join that times out waiting on one
  * leaves it running, and the client's retry reuses it. The shutdown flush has
  * its own, shorter budget (`SHUTDOWN_FLUSH_BUDGET_MS` in committer.ts); the

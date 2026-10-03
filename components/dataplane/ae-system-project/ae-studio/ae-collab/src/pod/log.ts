@@ -44,17 +44,22 @@ export interface PodLogLine {
     | "room_flush_path_refused"
     | "room_flush_failed"
     | "room_final_flush_deferred"
+    | "room_unloaded_with_refused"
     | "room_shutdown_flush_over_budget";
   source: "ae-collab";
   port?: number;
   listener?: "public" | "local";
   /** Why a room, a token or a flush was refused: a fixed word, never input. */
   cause?: RefusalCause | FlushFailureCause;
-  /** Counts only: how many files a flush wrote, deleted or held, how many rooms a shutdown left. */
+  /**
+   * Counts only: how many files a flush wrote, deleted or held, how many rooms
+   * a shutdown left, how many refused paths a room unloaded with (`count`).
+   */
   writes?: number;
   deletes?: number;
   held?: number;
   rooms?: number;
+  count?: number;
 }
 
 export type RefusalCause =

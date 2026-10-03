@@ -206,15 +206,16 @@ test("pod: HTTP under /v1 is gated; room upgrades pass the origin rule and the p
     assert.equal((await fetch(`${pod.publicUrl}/readyz`)).status, 404);
 
     // Upgrades: Origin first, then the path; /v1/rooms goes to the Room,
-    // which authenticates in-protocol. An absent Origin is accepted while the
-    // phase-2 agents bridge exists (U2; phase 3 Task 3.22 makes it 403).
+    // which authenticates in-protocol. An Origin must be present and listed.
     const evil = await wsUpgrade(`${pod.publicUrl}/v1/rooms`, { origin: "https://evil.example" });
     assert.equal(evil.status, 403);
     assert.equal(evil.contentType, "application/problem+json");
-    assert.equal((await wsUpgrade(`${pod.publicUrl}/v1/rooms`)).status, 101);
+    const absent = await wsUpgrade(`${pod.publicUrl}/v1/rooms`);
+    assert.equal(absent.status, 403);
+    assert.equal(absent.contentType, "application/problem+json");
     assert.equal((await wsUpgrade(`${pod.publicUrl}/other`, { origin: "https://evil.example" })).status, 403);
     assert.equal((await wsUpgrade(`${pod.publicUrl}/other`, { origin: "http://localhost:8090" })).status, 404);
-    assert.equal((await wsUpgrade(`${pod.publicUrl}/other`)).status, 404);
+    assert.equal((await wsUpgrade(`${pod.publicUrl}/other`)).status, 403);
     const ok = await wsUpgrade(`${pod.publicUrl}/v1/rooms`, { origin: "http://localhost:8090" });
     assert.equal(ok.status, 101);
     assert.equal((await wsUpgrade(`${pod.publicUrl}/v1/rooms?x=1`, { origin: "http://console.ae.localhost:8080" })).status, 101);
@@ -222,8 +223,10 @@ test("pod: HTTP under /v1 is gated; room upgrades pass the origin rule and the p
     assert.equal((await wsUpgrade(`${pod.publicUrl}/V1/rooms`, { origin: "http://localhost:8090" })).status, 404);
     assert.equal((await wsUpgrade(`${pod.publicUrl}/v1/rooms/`, { origin: "http://localhost:8090" })).status, 404);
 
-    // The local listener serves upgrades only.
+    // The local listener serves upgrades only, and checks no Origin: the
+    // in-pod agent joins there without one.
     assert.equal((await fetch(`${pod.localUrl}/v1/rooms`)).status, 404);
+    assert.equal((await wsUpgrade(pod.localUrl)).status, 101);
 
     assert.equal((await fetch(`${pod.healthUrl}/healthz`)).status, 200);
     assert.equal((await fetch(`${pod.healthUrl}/readyz`)).status, 200);

@@ -51,6 +51,16 @@ const CONSOLE_ORIGIN = "http://console.ae.localhost:8080";
 const PRD_PATH = "specs/requirements/prd.md";
 const ROOM = "spec-acme-greeter";
 
+/**
+ * A browser's socket: `ws` sends no Origin unless told, and the public
+ * listener refuses an upgrade without a listed one.
+ */
+class ConsoleWebSocket extends WebSocket {
+  constructor(address: string | URL, protocols?: string | string[]) {
+    super(address, protocols, { origin: CONSOLE_ORIGIN });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // The Platform IdP stand-in
 
@@ -253,7 +263,7 @@ async function startTestCollab(
       const query = new URLSearchParams(params).toString();
       const socket = new HocuspocusProviderWebsocket({
         url: `${base.replace(/^http/, "ws")}${query ? `?${query}` : ""}`,
-        WebSocketPolyfill: WebSocket,
+        WebSocketPolyfill: listener === "public" ? ConsoleWebSocket : WebSocket,
         // Short reconnect sleeps: a pending one outlives destroy() and holds the process open.
         ...FAST_RETRY,
       });
@@ -621,15 +631,16 @@ test("a refused room load leaves no participant behind", async () => {
 // ---------------------------------------------------------------------------
 // The public listener's upgrade rules
 
-// U2: the absent-Origin case is the phase-2 rule while the old agents bridge exists; phase 3 Task 3.22 flips it to 403.
-test("Origin (phase 2 rule): listed origin ok, unlisted origin refused, absent Origin (non-browser client) allowed", async () => {
+test("Origin: listed origin ok; unlisted or absent Origin refused on the public listener; local listener has no Origin check", async () => {
   const s = await startTestCollab({ allowedOrigins: [CONSOLE_ORIGIN] });
   try {
     assert.equal((await s.rawUpgrade("/v1/rooms", { origin: CONSOLE_ORIGIN })).status, 101);
     assert.equal((await s.rawUpgrade("/v1/rooms", { origin: "https://evil.example" })).status, 403);
-    assert.equal((await s.rawUpgrade("/v1/rooms", {})).status, 101);
+    assert.equal((await s.rawUpgrade("/v1/rooms", {})).status, 403);
     assert.equal((await s.rawUpgrade("/collab", { origin: CONSOLE_ORIGIN })).status, 404);
-    // The local listener checks no Origin and takes any path.
+    // The local listener checks no Origin and takes any path: the in-pod
+    // agent joins there without one.
+    assert.equal((await wsUpgrade(`${s.pod.localUrl}/`)).status, 101);
     assert.equal((await wsUpgrade(`${s.pod.localUrl}/anything`, { origin: "https://evil.example" })).status, 101);
   } finally {
     await s.close();
@@ -640,7 +651,7 @@ test("a frame over 32 MiB closes the socket (1009) before any auth", async () =>
   const s = await startTestCollab();
   try {
     for (const url of [`${s.pod.publicUrl}/v1/rooms`, s.pod.localUrl]) {
-      const ws = new WebSocket(url.replace(/^http/, "ws"));
+      const ws = new ConsoleWebSocket(url.replace(/^http/, "ws"));
       await new Promise((resolve, reject) => {
         ws.once("open", resolve);
         ws.once("error", reject);
@@ -693,7 +704,7 @@ test("close ends open room sockets on both listeners", async () => {
     // Raw sockets, not providers: a provider would reconnect into the close.
     const open = (url: string) =>
       new Promise<WebSocket>((resolve, reject) => {
-        const ws = new WebSocket(url.replace(/^http/, "ws"));
+        const ws = new ConsoleWebSocket(url.replace(/^http/, "ws"));
         ws.once("open", () => resolve(ws));
         ws.once("error", reject);
       });
@@ -849,6 +860,42 @@ test("a last leave with one refused path commits the room's other edits, then un
     assert.match(s.files.file(PRD_PATH)!, /Saved at the last leave\./);
     assert.equal(s.files.file("notes/scratch.json"), undefined);
     assert.equal(events(s, "room_final_flush_deferred").length, 0);
+  } finally {
+    await s.close();
+  }
+});
+
+test("a room that unloads at the last leave with refused paths logs how many, value-free", async () => {
+  const s = await startTestCollab();
+  try {
+    const ann = await s.join("public", ROOM, s.idp.userToken());
+    typeInto(ann.doc, "Saved at the last leave.");
+    setDocFile(ann.doc, "notes/scratch.json", '{"not":"a spec"}');
+    await new Promise((r) => setTimeout(r, 100)); // the updates reach the server
+    ann.provider.destroy();
+    await waitFor(() => roomState(ROOM) === undefined, "the room to unload");
+    assert.deepEqual(events(s, "room_unloaded_with_refused"), [
+      { msg: "room_unloaded_with_refused", source: "ae-collab", count: 1 },
+    ]);
+    // No line names the refused path, its content or the room.
+    const logged = JSON.stringify(s.lines);
+    for (const value of ["notes/scratch.json", "scratch", "a spec", '\\"not\\"', ROOM]) {
+      assert.equal(logged.includes(value), false, value);
+    }
+  } finally {
+    await s.close();
+  }
+});
+
+test("a room that unloads with nothing refused logs no refused count", async () => {
+  const s = await startTestCollab();
+  try {
+    const ann = await s.join("public", ROOM, s.idp.userToken());
+    typeInto(ann.doc, "Saved at the last leave.");
+    await new Promise((r) => setTimeout(r, 100)); // the update reaches the server
+    ann.provider.destroy();
+    await waitFor(() => roomState(ROOM) === undefined, "the room to unload");
+    assert.equal(events(s, "room_unloaded_with_refused").length, 0);
   } finally {
     await s.close();
   }

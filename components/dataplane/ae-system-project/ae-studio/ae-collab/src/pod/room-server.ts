@@ -129,6 +129,9 @@ export function createRoomServer(deps: RoomServerDeps): RoomServer {
     },
     afterUnloadDocument: ({ documentName }) => {
       commits.cancelRetry(documentName);
+      // The refused changes go with the room: say how many, never which.
+      const refused = roomState(documentName)?.refused.size ?? 0;
+      if (refused > 0) deps.log({ msg: "room_unloaded_with_refused", source: "ae-collab", count: refused });
       dropRoomState(documentName);
       return Promise.resolve();
     },
