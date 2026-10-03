@@ -59,9 +59,10 @@ type SkillsRepositoryLookup interface {
 }
 
 // TurnLedger stores an org's finished AE Studio turns, each once
-// (spec.TurnRepository.RecordFinished).
+// (spec.TurnRepository.RecordFinished), and names the ids it could not store
+// because another org's row holds them.
 type TurnLedger interface {
-	RecordFinished(ctx context.Context, org string, recs []spec.TurnRecord) error
+	RecordFinished(ctx context.Context, org string, recs []spec.TurnRecord) (foreign []string, err error)
 }
 
 // DependencyCompleter completes an org's dependency stub writes
@@ -277,18 +278,44 @@ func (s *internalServer) RecordTurnUsage(ctx context.Context, request igen.Recor
 			return nil, apierr.BadRequest("records[" + strconv.Itoa(i) + "]: " + err.Error())
 		}
 		if r.Project != "" && !checked[r.Project] {
-			if _, err := s.lookupAEStudioProject(ctx, org, r.Project); err != nil {
+			if err := s.requireAEStudioProject(ctx, org, r.Project); err != nil {
 				return nil, err
 			}
 			checked[r.Project] = true
 		}
 		recs = append(recs, toTurnRecord(r))
 	}
-	if err := s.deps.TurnLedger.RecordFinished(ctx, org, recs); err != nil {
+	foreign, err := s.deps.TurnLedger.RecordFinished(ctx, org, recs)
+	if err != nil {
 		slog.ErrorContext(ctx, "ae-studio turn usage not recorded", "org", org, "count", len(recs), "error", err)
 		return nil, errInternal("failed to record turn usage")
 	}
+	// Another org's row holds the id (a resend can never store it), so the
+	// batch is still accepted; the event is the only trace.
+	for _, id := range foreign {
+		slog.WarnContext(ctx, "ae_studio.turn_id_conflict", "org", org, "turnId", id)
+	}
 	return igen.RecordTurnUsage202Response{}, nil
+}
+
+// requireAEStudioProject checks that project is one of org's: unknown or
+// foreign is a 404. Only existence counts here, so a project whose stored
+// repository URL is not a GitHub one is the org's all the same; that state is
+// permanent and a 5xx would have the sender resend the batch forever.
+func (s *internalServer) requireAEStudioProject(ctx context.Context, org, project string) error {
+	if s.deps.AEStudioRepositories == nil {
+		return errServiceUnavailable("project repository lookup not configured")
+	}
+	_, err := s.deps.AEStudioRepositories.Lookup(ctx, org, project)
+	switch {
+	case err == nil, errors.Is(err, aestudio.ErrRepositoryURLInvalid):
+		return nil
+	case errors.Is(err, aestudio.ErrProjectNotFound):
+		return errNotFound("project not found")
+	default:
+		slog.ErrorContext(ctx, "ae-studio project lookup failed", "org", org, "project", project, "error", err)
+		return errInternal("failed to resolve project")
+	}
 }
 
 // storableTurnRecord refuses what the contract admits but the ledger can never

@@ -42,6 +42,11 @@ type ProjectRepository struct {
 // org, so a caller learns nothing about other orgs.
 var ErrProjectNotFound = errors.New("project not found")
 
+// ErrRepositoryURLInvalid means the org's project exists but its stored
+// repository URL is not a GitHub repository: a permanent data fault, not a
+// missing project.
+var ErrRepositoryURLInvalid = errors.New("repository url is not a GitHub repository")
+
 // RepoReader reads a project's repository row, scoped to the org
 // (sourcecontrol.RepoService satisfies it).
 type RepoReader interface {
@@ -59,8 +64,8 @@ func NewProjectRepositories(repos RepoReader) *ProjectRepositories {
 }
 
 // Lookup returns org's repository for project, or ErrProjectNotFound when org
-// has none. A store failure or a stored URL that is not a GitHub repo is an
-// error, never ErrProjectNotFound.
+// has none. A store failure, or a stored URL that is not a GitHub repo
+// (ErrRepositoryURLInvalid), is an error, never ErrProjectNotFound.
 func (p *ProjectRepositories) Lookup(ctx context.Context, org, project string) (ProjectRepository, error) {
 	row, err := p.repos.GetRepo(ctx, org, project)
 	if errors.Is(err, sourcecontrol.ErrRepoNotFound) {
@@ -71,7 +76,7 @@ func (p *ProjectRepositories) Lookup(ctx context.Context, org, project string) (
 	}
 	owner, repo, err := sourcecontrol.ParseOwnerRepo(row.RepoURL)
 	if err != nil {
-		return ProjectRepository{}, fmt.Errorf("project %s: repo url: %w", project, err)
+		return ProjectRepository{}, fmt.Errorf("project %s: %w: %w", project, ErrRepositoryURLInvalid, err)
 	}
 	return ProjectRepository{Owner: owner, Repo: repo, DefaultBranch: row.DefaultBranch, CloneURL: row.RepoURL}, nil
 }

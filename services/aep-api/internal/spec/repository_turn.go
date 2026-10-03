@@ -212,11 +212,16 @@ type TurnRepository interface {
 	SweepStale(ctx context.Context, olderThan time.Time) ([]AgentTurn, error)
 
 	// RecordFinished stores org's finished turns, each exactly once: a record
-	// whose turn id is already stored is skipped, never rewritten, so a
+	// whose turn id org already stored is skipped, never rewritten, so a
 	// resent batch changes nothing. cost_usd is stamped here from the rates
 	// in force (07 §7). The caller has checked each record's project belongs
 	// to org.
-	RecordFinished(ctx context.Context, org string, recs []TurnRecord) error
+	//
+	// The ledger's identity is (org, turn id), but the primary key is still id
+	// alone until Task 3.21 widens it. A record whose id another org's row
+	// already holds cannot be stored meanwhile; its id is returned in foreign
+	// so the caller can say so, never counted as recorded.
+	RecordFinished(ctx context.Context, org string, recs []TurnRecord) (foreign []string, err error)
 
 	// SumUsageByProject rolls up captured spec/design turn usage per project
 	// across an org (#291), keyed by project id — one half of the Settings →
@@ -321,17 +326,31 @@ func (r *turnRepository) Finish(ctx context.Context, id string, terminal TurnTer
 	return res.RowsAffected > 0, nil
 }
 
-func (r *turnRepository) RecordFinished(ctx context.Context, org string, recs []TurnRecord) error {
+func (r *turnRepository) RecordFinished(ctx context.Context, org string, recs []TurnRecord) ([]string, error) {
 	if len(recs) == 0 {
-		return nil
+		return nil, nil
 	}
 	rows := make([]AgentTurn, 0, len(recs))
+	ids := make([]string, 0, len(recs))
 	for _, rec := range recs {
 		rows = append(rows, r.ledgerRow(org, rec))
+		ids = append(ids, rec.TurnID)
 	}
-	return r.db.WithContext(ctx).
+	if err := r.db.WithContext(ctx).
 		Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "id"}}, DoNothing: true}).
-		Create(&rows).Error
+		Create(&rows).Error; err != nil {
+		return nil, err
+	}
+	// A skipped record is a duplicate of org's own row, or an id another org
+	// holds: the second is not recorded and must not read as if it were.
+	var foreign []string
+	if err := r.db.WithContext(ctx).
+		Model(&AgentTurn{}).
+		Where("id IN ? AND org_id <> ?", ids, org).
+		Pluck("id", &foreign).Error; err != nil {
+		return nil, err
+	}
+	return foreign, nil
 }
 
 // ledgerRow is rec as org's agent_turns row, its cost stamped at the rate in

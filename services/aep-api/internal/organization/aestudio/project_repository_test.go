@@ -74,7 +74,7 @@ func TestProjectRepositories_Lookup(t *testing.T) {
 
 	t.Run("unparseable repo url is an error, not a 404", func(t *testing.T) {
 		_, err := lookup.Lookup(ctx, "acme", "broken")
-		require.Error(t, err)
+		require.ErrorIs(t, err, ErrRepositoryURLInvalid)
 		require.NotErrorIs(t, err, ErrProjectNotFound)
 	})
 

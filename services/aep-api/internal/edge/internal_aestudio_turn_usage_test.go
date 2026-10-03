@@ -17,9 +17,12 @@
 package edge
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -30,6 +33,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/wso2/aep/aep-api/internal/contracts"
+	"github.com/wso2/aep/aep-api/internal/organization/aestudio"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
@@ -38,16 +42,17 @@ import (
 type fakeTurnLedger struct {
 	orgs    []string
 	batches [][]spec.TurnRecord
+	foreign []string
 	err     error
 }
 
-func (f *fakeTurnLedger) RecordFinished(_ context.Context, org string, recs []spec.TurnRecord) error {
+func (f *fakeTurnLedger) RecordFinished(_ context.Context, org string, recs []spec.TurnRecord) ([]string, error) {
 	if f.err != nil {
-		return f.err
+		return nil, f.err
 	}
 	f.orgs = append(f.orgs, org)
 	f.batches = append(f.batches, recs)
-	return nil
+	return f.foreign, nil
 }
 
 const turnUsagePath = "/internal/v1/ae-studio/turn-usage"
@@ -300,5 +305,66 @@ func TestTurnUsage_Statuses(t *testing.T) {
 				t.Fatalf("status = %d, want %d (body %s)", rec.Code, tc.want, rec.Body)
 			}
 		})
+	}
+}
+
+// A turn id another org already holds cannot be stored for this org until the
+// ledger's key is (org, id) (Task 3.21). The batch is still a 202 (a resend
+// can never succeed), and each such id is logged value-free as
+// ae_studio.turn_id_conflict {org, turnId}. Not parallel: it swaps the default
+// logger.
+func TestTurnUsage_ForeignTurnIDIsLogged(t *testing.T) {
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	stack := newInternalStack(t)
+	deps := stack.deps
+	deps.AEStudioRepositories = aeStudioProjects()
+	deps.TurnLedger = &fakeTurnLedger{foreign: []string{"6f1a2c1e-6c39-4f0e-9a51-7a1d0e5a6b10"}}
+	h := NewHandler(AppParams{InternalDeps: deps})
+
+	rec := postTurnUsage(t, h, "Bearer "+stack.mint("acme"), turnUsageBody(t, turnRecordJSON(t, nil)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202 (body %s)", rec.Code, rec.Body)
+	}
+	var event map[string]any
+	for _, line := range bytes.Split(bytes.TrimSpace(logs.Bytes()), []byte("\n")) {
+		var e map[string]any
+		if json.Unmarshal(line, &e) == nil && e["msg"] == "ae_studio.turn_id_conflict" {
+			event = e
+		}
+	}
+	if event == nil {
+		t.Fatalf("no ae_studio.turn_id_conflict event in %s", logs.String())
+	}
+	if event["org"] != "acme" || event["turnId"] != "6f1a2c1e-6c39-4f0e-9a51-7a1d0e5a6b10" {
+		t.Fatalf("event = %v, want org acme and the turn id", event)
+	}
+	for _, leak := range []string{"greeter", "ada@example.com", "claude-sonnet-5"} {
+		if bytes.Contains(logs.Bytes(), []byte(leak)) {
+			t.Fatalf("log carries a record value %q: %s", leak, logs.String())
+		}
+	}
+}
+
+// A project the org owns whose stored repository URL is not a GitHub one is
+// still the org's project: its usage is accepted, never a 5xx the sender
+// would retry forever (the state is permanent).
+func TestTurnUsage_ProjectWithAnUnparseableRepoURL(t *testing.T) {
+	stack := newInternalStack(t)
+	ledger := &fakeTurnLedger{}
+	deps := stack.deps
+	deps.AEStudioRepositories = &fakeProjectRepos{err: fmt.Errorf("project greeter: repo url: %w", aestudio.ErrRepositoryURLInvalid)}
+	deps.TurnLedger = ledger
+	h := NewHandler(AppParams{InternalDeps: deps})
+
+	rec := postTurnUsage(t, h, "Bearer "+stack.mint("acme"), turnUsageBody(t, turnRecordJSON(t, nil)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202 (body %s)", rec.Code, rec.Body)
+	}
+	if len(ledger.batches) != 1 {
+		t.Fatalf("ledger batches = %d, want 1", len(ledger.batches))
 	}
 }

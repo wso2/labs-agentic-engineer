@@ -80,12 +80,12 @@ func TestRecordFinished_IdempotentOnTurnID(t *testing.T) {
 	ctx := context.Background()
 	rec := finishedTurn("p1")
 
-	if err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{rec, rec}); err != nil {
+	if _, err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{rec, rec}); err != nil {
 		t.Fatalf("RecordFinished (duplicate in one batch): %v", err)
 	}
 	changed := rec
 	changed.Status = "failed"
-	if err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{changed}); err != nil {
+	if _, err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{changed}); err != nil {
 		t.Fatalf("RecordFinished (resend): %v", err)
 	}
 	if n := countTurns(t, repo, "o1", "p1", rec.TurnID); n != 1 {
@@ -117,7 +117,7 @@ func TestRecordFinished_StoresTheRecord(t *testing.T) {
 	ctxTokens := int64(42_000)
 	rec.ContextTokens = &ctxTokens
 
-	if err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{rec}); err != nil {
+	if _, err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{rec}); err != nil {
 		t.Fatalf("RecordFinished: %v", err)
 	}
 	row, err := repo.Get(ctx, "o1", "p1", rec.TurnID)
@@ -169,7 +169,7 @@ func TestRecordFinished_UseCaseFromKind(t *testing.T) {
 	} {
 		rec := finishedTurn("p-" + kind)
 		rec.Kind = kind
-		if err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{rec}); err != nil {
+		if _, err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{rec}); err != nil {
 			t.Fatalf("RecordFinished(%s): %v", kind, err)
 		}
 		row, _ := repo.Get(ctx, "o1", "p-"+kind, rec.TurnID)
@@ -192,7 +192,7 @@ func TestRecordFinished_StampsCost(t *testing.T) {
 	priced := finishedTurn("p1") // $2 + $1
 	unpriced := finishedTurn("p2")
 	unpriced.ModelHost = modelconn.OllamaHost
-	if err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{priced, unpriced}); err != nil {
+	if _, err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{priced, unpriced}); err != nil {
 		t.Fatalf("RecordFinished: %v", err)
 	}
 	row, _ := repo.Get(ctx, "o1", "p1", priced.TurnID)
@@ -227,7 +227,7 @@ func TestRecordFinished_ReadersSeeTheLedger(t *testing.T) {
 		t.Fatalf("Newest before any record = (%+v, %v), want (nil, nil)", got, err)
 	}
 	design := finishedTurn("p1")
-	if err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{design}); err != nil {
+	if _, err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{design}); err != nil {
 		t.Fatalf("RecordFinished(design): %v", err)
 	}
 	failed := finishedTurn("p1")
@@ -236,7 +236,7 @@ func TestRecordFinished_ReadersSeeTheLedger(t *testing.T) {
 	failed.Reason = "stream-died"
 	failed.StartedAt = design.FinishedAt.Add(time.Minute)
 	failed.FinishedAt = failed.StartedAt.Add(time.Minute)
-	if err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{failed}); err != nil {
+	if _, err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{failed}); err != nil {
 		t.Fatalf("RecordFinished(failed): %v", err)
 	}
 
@@ -266,7 +266,7 @@ func TestRecordFinished_NewestIsTheLatestStartedTurn(t *testing.T) {
 	later.StartedAt = earlier.FinishedAt.Add(time.Second)
 	later.FinishedAt = later.StartedAt.Add(time.Second)
 
-	if err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{later, earlier}); err != nil {
+	if _, err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{later, earlier}); err != nil {
 		t.Fatalf("RecordFinished: %v", err)
 	}
 	newest, err := repo.Newest(ctx, "o1", "p1")
@@ -278,6 +278,44 @@ func TestRecordFinished_NewestIsTheLatestStartedTurn(t *testing.T) {
 	}
 }
 
+// The ledger's identity is (org, turn id): another org's row with the same id
+// must never pass for this org's record. Until Task 3.21 moves the primary key
+// off id alone, the second org's record cannot be stored; RecordFinished
+// reports its id as foreign (the edge logs ae_studio.turn_id_conflict) rather
+// than counting it as already recorded, and the first org's row is untouched.
+func TestRecordFinished_ForeignTurnIDIsReported(t *testing.T) {
+	t.Parallel()
+	repo := spec.NewTurnRepository(dbtest.New(t), nil)
+	ctx := context.Background()
+	squatted := finishedTurn("p1")
+	squatted.Status = "failed"
+
+	foreign, err := repo.RecordFinished(ctx, "org-b", []spec.TurnRecord{squatted})
+	if err != nil || len(foreign) != 0 {
+		t.Fatalf("org B RecordFinished = (%v, %v), want (none, nil)", foreign, err)
+	}
+	real := squatted
+	real.Status = "completed"
+	other := finishedTurn("p1")
+	foreign, err = repo.RecordFinished(ctx, "org-a", []spec.TurnRecord{real, other})
+	if err != nil {
+		t.Fatalf("org A RecordFinished: %v", err)
+	}
+	if len(foreign) != 1 || foreign[0] != squatted.TurnID {
+		t.Fatalf("foreign = %v, want [%s]", foreign, squatted.TurnID)
+	}
+	if row, _ := repo.Get(ctx, "org-a", "p1", other.TurnID); row == nil {
+		t.Fatal("org A's other record was not stored")
+	}
+	if row, _ := repo.Get(ctx, "org-b", "p1", squatted.TurnID); row == nil || row.Status != "failed" {
+		t.Fatalf("org B's row = %+v, want it untouched", row)
+	}
+	// A resend of org A's own stored record is a plain duplicate, not foreign.
+	if foreign, err := repo.RecordFinished(ctx, "org-a", []spec.TurnRecord{other}); err != nil || len(foreign) != 0 {
+		t.Fatalf("own resend = (%v, %v), want (none, nil)", foreign, err)
+	}
+}
+
 // A marketplace turn has no project (C7): it is stored under project_id ''.
 func TestRecordFinished_MarketplaceTurnHasNoProject(t *testing.T) {
 	t.Parallel()
@@ -285,7 +323,7 @@ func TestRecordFinished_MarketplaceTurnHasNoProject(t *testing.T) {
 	ctx := context.Background()
 	rec := finishedTurn("")
 
-	if err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{rec}); err != nil {
+	if _, err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{rec}); err != nil {
 		t.Fatalf("RecordFinished: %v", err)
 	}
 	row, err := repo.Get(ctx, "o1", "", rec.TurnID)

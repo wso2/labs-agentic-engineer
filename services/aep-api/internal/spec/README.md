@@ -173,7 +173,9 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   `Newest`/`NewestCompletedFlow` order ledger rows by when the turn ran, whatever order they
   arrive in. The edge refuses the whole batch with 404 when any record names a project outside
   the token's org; a record with no project (a marketplace turn) is stored under
-  `project_id = ''`.
+  `project_id = ''`. The ledger's identity is `(org_id, id)`, but the primary key is still `id`
+  alone: a record whose id another org's row holds cannot be stored, so `RecordFinished` returns it
+  as foreign and the edge logs `ae_studio.turn_id_conflict {org, turnId}` (still a 202).
 - **A conversation rotates near a smaller context window** (`context_rotation.go`). The spec agents
   have no compaction. When the org's model connection states a `ContextWindow`, StartTurn reads the
   conversation's last measured context (`agent_turns.context_tokens`: the final `finish-step`
