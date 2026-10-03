@@ -17,9 +17,24 @@
 package app
 
 import (
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools"
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
+	"github.com/wso2/aep/aep-api/internal/config"
+	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/organization/aestudio"
 )
+
+// aeStudioTools is aep-api's one adapter to each org's ae-studio-tools: the
+// org's Target from its AE Studio status, the AE-only client's token
+// (AE_STUDIO_INTERNAL_CLIENT_ID/SECRET at AE_STUDIO_IDP_TOKEN_URL). Boot
+// never needs those; without them every call is ErrAEStudioMisconfigured
+// (the ae-studio-tools degradation names them at boot).
+func aeStudioTools(cfg config.AEStudioConfig, status organization.AEStudioStatusReader) *aestudiotools.Adapter {
+	return aestudiotools.New(aestudiotools.Config{
+		Endpoints: aeStudioEndpoints{status: status},
+		Tokens:    aestudiotools.NewClientCredentials(cfg.IDP.TokenURL, cfg.InternalClientID, cfg.InternalClientSecret, nil),
+	})
+}
 
 // aeStudioOC builds the OpenChoreo clients AE Studio reads and writes
 // through, its status reads and its converge alike (aeStudioOCConfig).

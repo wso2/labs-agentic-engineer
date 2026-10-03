@@ -187,7 +187,7 @@ func TestAssemble_Degradations(t *testing.T) {
 		for _, want := range []string{
 			"m2m-service-auth", "build-logs", "secrets-delivery",
 			"mcp-discovery", "idp-mutations",
-			"coding-dispatch-oc", "run-temporal",
+			"coding-dispatch-oc", "run-temporal", "ae-studio-tools",
 		} {
 			if !hasCapability(degs, want) {
 				t.Errorf("minimal config: expected degradation %q, missing from %+v", want, degs)
@@ -217,6 +217,20 @@ func TestAssemble_Degradations(t *testing.T) {
 		}
 		if hasCapability(app.Degradations(), "run-temporal") {
 			t.Errorf("with TEMPORAL_HOSTPORT set, run-temporal must not be degraded")
+		}
+	})
+
+	t.Run("the AE-only client clears the ae-studio-tools degradation", func(t *testing.T) {
+		cfg := baseCfg()
+		cfg.AEStudio.IDP.TokenURL = "http://thunder/oauth2/token"
+		cfg.AEStudio.InternalClientID = "ae-studio-internal-client"
+		cfg.AEStudio.InternalClientSecret = "test-secret"
+		app, err := Assemble(cfg, Fake(), Seam{})
+		if err != nil {
+			t.Fatalf("Assemble = %v", err)
+		}
+		if hasCapability(app.Degradations(), "ae-studio-tools") {
+			t.Errorf("with the AE-only client configured, ae-studio-tools must not be degraded")
 		}
 	})
 

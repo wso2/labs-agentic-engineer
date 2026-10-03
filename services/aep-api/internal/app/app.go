@@ -351,6 +351,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		GitHub:      credService,
 		OC:          aeStudioOC(ocConfig),
 	})
+	// The org pods' machine API (/internal/v1), as aep-api's AE-only client.
+	studioTools := aeStudioTools(cfg.AEStudio, aeStudio)
+	_ = studioTools // TEMPORARY: first consumers (kickoff, Plan, reference uploads) arrive in Task 3.17
 	// How the org's agents run: the model connection, the coding runtime and
 	// the Claude subscription. ONE instance, read by two callers: /config
 	// projects and saves it, and coding dispatch copies the runtime onto the run
@@ -1760,6 +1763,9 @@ func computeDegradations(cfg config.Config, secretsDelivery bool) []Degradation 
 	// against the org's secret store — the BFF writes no secret material itself.
 	if !secretsDelivery {
 		off("coding-dispatch-oc", "secrets delivery not configured — the OpenChoreo coding-agent dispatch path cannot resolve its cycle secret refs")
+	}
+	if a := cfg.AEStudio; a.IDP.TokenURL == "" || a.InternalClientID == "" || a.InternalClientSecret == "" {
+		off("ae-studio-tools", "AE_STUDIO_IDP_TOKEN_URL / AE_STUDIO_INTERNAL_CLIENT_ID / AE_STUDIO_INTERNAL_CLIENT_SECRET not set — calls to an org's ae-studio-tools fail ae_studio_misconfigured")
 	}
 	if !cfg.Temporal.Enabled() {
 		off("run-temporal", "TEMPORAL_HOSTPORT not set — milestone run worker watcher not registered")

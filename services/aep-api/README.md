@@ -74,6 +74,9 @@ datastore · `(["/surface"])` = an inbound HTTP surface.
 - **`clients/`** — outbound adapters to external systems (`openchoreo`, `thundersvc`,
   `thunderapp`, `secretmanagersvc`, `oauth`, `oidc`, `observability`).
   `thunderapp` — Kubernetes GET of ThunderApplication CRs for the web-app deploy wait.
+  `aestudiotools` — each org's ae-studio-tools `/internal/v1` (turns, references,
+  GitHub identity) as aep-api's AE-only M2M client with `X-Impersonate-Org` = the
+  pod's OU id; `aestudiotest` is its in-memory fake.
 - **supporting:** `app` (public composition **seam** — `Run(Options)`), `config`,
   `migrate` (ordered schema steps), `gen`/`igen` (generated contract types),
   `arch` (the executable rules), `seed`.

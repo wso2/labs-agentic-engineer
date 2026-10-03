@@ -166,13 +166,13 @@ type PlanStory struct {
 	// Covered The story already has Tasks, the planner leaves it alone.
 	Covered bool   `json:"covered"`
 	Number  int    `json:"number"`
-	Title   string `json:"title,omitempty"`
+	Title   string `json:"title,omitempty,omitzero"`
 }
 
 // Problem defines model for Problem.
 type Problem struct {
 	Code   string `json:"code"`
-	Detail string `json:"detail,omitempty"`
+	Detail string `json:"detail,omitempty,omitzero"`
 	Status int    `json:"status"`
 	Title  string `json:"title"`
 	Type   string `json:"type"`
@@ -186,8 +186,8 @@ type ReferenceUpload struct {
 
 // ResultFrame The last line of the turn stream. A shutdown ends a running turn with status failed and code shutdown.
 type ResultFrame struct {
-	Code    string            `json:"code,omitempty"`
-	Message string            `json:"message,omitempty"`
+	Code    string            `json:"code,omitempty,omitzero"`
+	Message string            `json:"message,omitempty,omitzero"`
 	Status  ResultFrameStatus `json:"status"`
 	Type    ResultFrameType   `json:"type"`
 }
@@ -239,13 +239,13 @@ type TurnRequest struct {
 	Project string `json:"project"`
 
 	// Scope The milestone a plan turn covers and which of its stories already have Tasks.
-	Scope PlanScope `json:"scope,omitempty"`
+	Scope PlanScope `json:"scope,omitempty,omitzero"`
 
 	// TaskContext The existing-Task renders of a plan turn. Platform state, not repository files.
-	TaskContext []PlanContextFile `json:"taskContext,omitempty"`
+	TaskContext []PlanContextFile `json:"taskContext,omitempty,omitzero"`
 
 	// Text The free text of the turn (the project idea of a start turn).
-	Text   string             `json:"text,omitempty"`
+	Text   string             `json:"text,omitempty,omitzero"`
 	TurnID openapi_types.UUID `json:"turnId"`
 }
 
