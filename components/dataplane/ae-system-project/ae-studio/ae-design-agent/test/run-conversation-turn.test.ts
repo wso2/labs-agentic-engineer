@@ -835,7 +835,9 @@ test("mcp + collabPeer coexist: the discovered tool is still merged and callable
     delete(path: string): void {
       delete this.doc[path];
     }
-    leave(): void {}
+    leave(): Promise<number> {
+      return Promise.resolve(0);
+    }
   }
   try {
     const store = new InMemoryConversationStore();

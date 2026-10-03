@@ -297,7 +297,10 @@ test("a project turn joins the Room as the credited user, gets the MCP tools, an
       files: () => ({ "specs/requirements/prd.md": "# PRD from the Room\n" }),
       set: (path, content) => void (written[path] = content),
       delete: () => {},
-      leave: () => void left++,
+      leave: async () => {
+        left++;
+        return 0;
+      },
     };
   };
   const model = mockModel([

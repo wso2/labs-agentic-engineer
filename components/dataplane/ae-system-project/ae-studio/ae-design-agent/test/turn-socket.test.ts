@@ -243,6 +243,40 @@ test("a kickoff joins spec-acme-greeter on the local listener as the credited us
   }
 });
 
+test("a turn whose Room writes did not all land ends failed room_unavailable, not completed", () =>
+  withEdge(
+    {
+      models: [
+        mockModel([
+          { kind: "toolCall", toolCallId: "a1", toolName: "addFile", input: { path: "specs/requirements/notes.md", content: "n\n" } },
+          { kind: "text", text: "done" },
+        ]),
+      ],
+      // The Room dropped mid-turn and the rejoin gave up: one write is not in it.
+      room: async () => ({
+        files: () => ({ "specs/requirements/prd.md": "# PRD\n" }),
+        set: () => {},
+        delete: () => {},
+        leave: async () => 1,
+      }),
+    },
+    async (edge) => {
+      const turnId = randomUUID();
+      const res = await postTurnSocket(edge.turnSocket, { turnId, project: PROJECT, kind: "start", credit: ANN });
+      const end = withoutKeepAlives(await res.rest()).at(-1)!;
+      assert.equal(end.status, "failed");
+      assert.equal(end.code, "room_unavailable");
+      assert.match(String(end.message), /1 file\(s\) written this turn are not in it/);
+      const frames = await streamOf(edge, await edge.token(), turnId);
+      assert.deepEqual(
+        { type: frames.at(-2)?.data.type, reason: frames.at(-2)?.data.reason, code: frames.at(-2)?.data.code },
+        { type: "turn-failed", reason: "agent-error", code: "room_unavailable" },
+      );
+      await until(() => edge.tools.usage.length === 1, "the usage record");
+      assert.deepEqual([edge.tools.usage[0]!.status, edge.tools.usage[0]!.reason, edge.tools.usage[0]!.code], ["failed", "agent-error", "room_unavailable"]);
+    },
+  ));
+
 test("the credit parameter names the user id when the credit has no name (the local listener needs a name)", () => {
   assert.equal(creditParameter({ userId: "u-ann", name: "", email: "" }), '{"name":"u-ann","email":""}');
   assert.equal(creditParameter({ userId: "u-ann", name: "  ", email: "a@x" }), '{"name":"u-ann","email":"a@x"}');

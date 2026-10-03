@@ -39,7 +39,9 @@ class FakePeer implements RoomPeer {
   delete(path: string): void {
     this.deletes.push(path);
   }
-  leave(): void {}
+  leave(): Promise<number> {
+    return Promise.resolve(0);
+  }
 }
 
 /** Chunk an addFile's JSON args into `tool-input-delta`s (start..deltas..end). */

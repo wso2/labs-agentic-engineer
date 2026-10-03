@@ -32,6 +32,11 @@
 // and the document doubles. A dropped connection is replaced by a new one
 // (new doc, new token), and the files this peer wrote are written again where
 // the new doc differs.
+//
+// The rejoin is bounded (`REJOIN_POLICY`): a refused or silent attempt backs
+// off, and the peer gives up after the last attempt. Writes the Room never
+// confirmed are not hidden: `leave()` resolves to their count (logged as
+// `room_writes_dropped`), and the turn ends failed on it.
 
 import {
   HocuspocusProvider,
@@ -59,8 +64,45 @@ export const AGENT_ORIGIN = "aep-agent";
 const UPSTREAM_UNAVAILABLE = "upstream-unavailable";
 
 const SYNC_TIMEOUT_MS = 10_000;
-/** The wait before a refused replacement connection is tried again. */
-const REJOIN_RETRY_MS = 1_000;
+/**
+ * How a dropped connection is replaced. The first attempt goes at once; after
+ * a failed one the wait starts at 1 s and doubles to a 15 s cap; an attempt
+ * that has not synced in 10 s has failed. After 10 attempts the peer gives up:
+ * 0 + 1 + 2 + 4 + 8 + 15 × 5 = 90 s of waits, plus at most 10 s per attempt,
+ * so about 2 minutes at worst, well inside the 30-minute turn cap.
+ */
+export interface RejoinPolicy {
+  firstDelayMs: number;
+  maxDelayMs: number;
+  attemptTimeoutMs: number;
+  maxAttempts: number;
+  /** How long `leave()` waits for a rejoin in flight to sync before it counts the writes as dropped. */
+  leaveWaitMs: number;
+}
+
+const REJOIN_POLICY: RejoinPolicy = {
+  firstDelayMs: 1_000,
+  maxDelayMs: 15_000,
+  attemptTimeoutMs: 10_000,
+  maxAttempts: 10,
+  leaveWaitMs: 3_000,
+};
+
+/** One structured, value-free log line (no token, no content). */
+export interface RoomLogLine {
+  msg: "room_rejoin" | "room_rejoin_failed" | "room_writes_dropped";
+  source: "ae-design-agent";
+  /** The rejoin attempt (1-based). */
+  attempt?: number;
+  /** With `room_rejoin_failed`: the last attempt, the peer gave up. */
+  gaveUp?: boolean;
+  /** With `room_writes_dropped`: files written this turn the Room never confirmed. */
+  count?: number;
+}
+
+const stdoutLog = (line: RoomLogLine): void => {
+  process.stdout.write(`${JSON.stringify(line)}\n`);
+};
 
 export interface RoomPeer {
   /** The synced doc's files (path → content) — the turn's initial bundle. */
@@ -76,8 +118,13 @@ export interface RoomPeer {
   set(path: string, content: string, mark: boolean): void;
   /** Remove one file from the live doc. */
   delete(path: string): void;
-  /** Clear presence and close the connection. Safe to call twice. */
-  leave(): void;
+  /**
+   * Clear presence and close the connection. Resolves to the number of files
+   * this peer wrote that the Room never confirmed (a rejoin that failed or
+   * had not synced): non-zero means the turn's edits did not all land.
+   * Waits at most `leaveWaitMs` for a rejoin in flight. Safe to call twice.
+   */
+  leave(): Promise<number>;
 }
 
 export interface JoinRoomInput {
@@ -94,6 +141,10 @@ export interface JoinRoomInput {
   parameters?: Record<string, string>;
   /** Presence label (defaults to "Spec Agent"). */
   agentName?: string;
+  /** Overrides of `REJOIN_POLICY` (tests shorten it). */
+  rejoin?: Partial<RejoinPolicy>;
+  /** Where log lines go; stdout unless a test captures them. */
+  log?: (line: RoomLogLine) => void;
 }
 
 /** One connection to the Room: its own socket, provider and doc. */
@@ -183,9 +234,24 @@ export async function joinRoom(input: JoinRoomInput): Promise<RoomPeer> {
     throw err;
   }
 
+  const policy: RejoinPolicy = { ...REJOIN_POLICY, ...input.rejoin };
+  const log = input.log ?? stdoutLog;
   const written = new Map<string, Written>();
   let left = false;
+  /** The rejoin gave up: what was written is not in the Room. */
+  let lost = false;
+  /** Writes already reported as dropped (at the give-up). */
+  let reported = 0;
+  /** Failed attempts of the current rejoin. */
+  let attempt = 0;
   let retry: ReturnType<typeof setTimeout> | undefined;
+  /** Told when the current connection syncs or the peer gives up. */
+  let settled: Array<() => void> = [];
+  const notify = (): void => {
+    const waiters = settled;
+    settled = [];
+    for (const w of waiters) w();
+  };
 
   const write = (c: Connection, path: string, w: Written): void => {
     if (w === null) {
@@ -216,23 +282,54 @@ export async function joinRoom(input: JoinRoomInput): Promise<RoomPeer> {
     }
   };
 
-  /** After a synced connection dropped: a new connection with a fresh doc and a fresh token. */
+  /** The wait before attempt `n` (1-based): none for the first, then doubling to the cap. */
+  const delayBefore = (n: number): number =>
+    n <= 1 ? 0 : Math.min(policy.firstDelayMs * 2 ** (n - 2), policy.maxDelayMs);
+
+  /** Give up: the writes of this turn are not confirmed in the Room. */
+  const giveUp = (): void => {
+    lost = true;
+    reported = written.size;
+    if (reported > 0) log({ msg: "room_writes_dropped", source: "ae-design-agent", count: reported });
+    notify();
+  };
+
+  /** The next attempt to replace a dropped connection, after its backoff. */
+  const scheduleRejoin = (): void => {
+    if (left || lost) return;
+    attempt++;
+    retry = setTimeout(rejoin, delayBefore(attempt));
+    retry.unref?.();
+  };
+
+  /** One attempt: a new connection with a fresh doc and a fresh token. */
   const rejoin = (): void => {
     retry = undefined;
-    if (left) return;
+    if (left || lost) return;
+    log({ msg: "room_rejoin", source: "ae-design-agent", attempt });
     const next = open();
     conn = next;
+    const fail = (): void => {
+      if (left || conn !== next || next.synced) return;
+      clearTimeout(deadline);
+      close(next);
+      const gaveUp = attempt >= policy.maxAttempts;
+      log({ msg: "room_rejoin_failed", source: "ae-design-agent", attempt, ...(gaveUp ? { gaveUp } : {}) });
+      if (gaveUp) giveUp();
+      else scheduleRejoin();
+    };
+    // A silent Room (no sync, no refusal) fails the attempt too.
+    const deadline = setTimeout(fail, policy.attemptTimeoutMs);
+    deadline.unref?.();
     next.provider.on("synced", () => {
       if (left || conn !== next || next.synced) return;
+      clearTimeout(deadline);
       next.synced = true;
+      attempt = 0;
       restore(next);
+      notify();
     });
-    next.provider.on("authenticationFailed", () => {
-      if (left || conn !== next) return;
-      close(next);
-      retry = setTimeout(rejoin, REJOIN_RETRY_MS);
-      retry.unref?.();
-    });
+    next.provider.on("authenticationFailed", fail);
     watch(next);
     next.provider.attach();
   };
@@ -243,10 +340,35 @@ export async function joinRoom(input: JoinRoomInput): Promise<RoomPeer> {
       if (left || conn !== c || !c.synced) return;
       c.synced = false;
       close(c);
-      rejoin();
+      scheduleRejoin();
     });
   };
   watch(conn);
+
+  /** The writes the Room has not confirmed, after a bounded wait for a rejoin in flight. */
+  const unconfirmed = async (): Promise<number> => {
+    if (conn.synced) return 0;
+    if (!lost && written.size > 0) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await new Promise<void>((resolve) => {
+        settled.push(resolve);
+        timer = setTimeout(resolve, policy.leaveWaitMs);
+      });
+      clearTimeout(timer);
+    }
+    return conn.synced ? 0 : written.size;
+  };
+
+  let leaving: Promise<number> | undefined;
+  const leave = async (): Promise<number> => {
+    const dropped = await unconfirmed();
+    left = true;
+    if (retry) clearTimeout(retry);
+    close(conn);
+    // What the give-up reported is not counted twice in the log.
+    if (dropped > reported) log({ msg: "room_writes_dropped", source: "ae-design-agent", count: dropped - reported });
+    return dropped;
+  };
 
   return {
     files: () => snapshotDoc(conn.doc),
@@ -260,11 +382,6 @@ export async function joinRoom(input: JoinRoomInput): Promise<RoomPeer> {
       written.set(path, null);
       if (conn.synced) write(conn, path, null);
     },
-    leave: () => {
-      if (left) return;
-      left = true;
-      if (retry) clearTimeout(retry);
-      close(conn);
-    },
+    leave: () => (leaving ??= leave()),
   };
 }

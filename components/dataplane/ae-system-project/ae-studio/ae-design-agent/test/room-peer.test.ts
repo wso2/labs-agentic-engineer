@@ -24,7 +24,7 @@ import { HocuspocusProvider, HocuspocusProviderWebsocket } from "@hocuspocus/pro
 import WebSocket from "ws";
 import * as Y from "yjs";
 import { readDocFile, setDocFile } from "@aep/collab-doc";
-import { joinRoom, type RoomPeer } from "../src/collab/room-peer.js";
+import { joinRoom, type RoomLogLine, type RoomPeer } from "../src/collab/room-peer.js";
 import { DocFileBundle } from "../src/collab/doc-bundle.js";
 
 // A real Hocuspocus server (no auth hooks — auth is the collab service's
@@ -167,7 +167,8 @@ test("a dropped Room is rejoined with a fresh doc: a new token, no doubled seed,
   };
   let srv = await start();
   let n = 0;
-  const peer = await joinRoom({ url: `ws://127.0.0.1:${port}`, roomId: "spec-acme-rejoin", token: async () => `t${++n}` });
+  const logs: RoomLogLine[] = [];
+  const peer = await joinRoom({ url: `ws://127.0.0.1:${port}`, roomId: "spec-acme-rejoin", token: async () => `t${++n}`, log: (l) => logs.push(l) });
   try {
     peer.set("specs/design/notes.txt", "agent wrote this\n", false);
     await until(() => serverDoc !== undefined && readDocFile(serverDoc, "specs/design/notes.txt") !== undefined, "the first write");
@@ -186,6 +187,11 @@ test("a dropped Room is rejoined with a fresh doc: a new token, no doubled seed,
     // Writes after the rejoin go to the new connection.
     peer.set("specs/design/more.txt", "later\n", false);
     await until(() => readDocFile(serverDoc!, "specs/design/more.txt") === "later\n", "a write after the rejoin");
+
+    // Every write is in the Room: nothing dropped, the turn may complete.
+    assert.equal(await peer.leave(), 0);
+    assert.equal(logs.some((l) => l.msg === "room_writes_dropped"), false);
+    assert.deepEqual(logs.filter((l) => l.msg === "room_rejoin").map((l) => l.attempt), [1]);
   } finally {
     peer.leave();
     await srv.destroy();
@@ -208,5 +214,94 @@ test("leave clears the agent's presence for the other peers at once (C21)", asyn
     peer.leave();
     observer.destroy();
     socket.destroy();
+  }
+});
+
+/** A collab server that admits the first connection and refuses every later one. */
+async function refusingAfterFirst(port: number): Promise<{ srv: Server; doc: () => Document | undefined }> {
+  let admitted = 0;
+  let loaded: Document | undefined;
+  const srv = new Server({
+    quiet: true,
+    onAuthenticate: () => (admitted++ === 0 ? Promise.resolve() : Promise.reject(new Error(""))),
+    onLoadDocument: ({ document }) => {
+      loaded = document;
+      return Promise.resolve(document);
+    },
+  });
+  await srv.listen(port);
+  return { srv, doc: () => loaded };
+}
+
+test("refused rejoins back off exponentially to the cap, stop at the bound, and report the writes dropped", async () => {
+  const port = randomPort();
+  const { srv, doc } = await refusingAfterFirst(port);
+  const logs: Array<RoomLogLine & { at: number }> = [];
+  const peer = await joinRoom({
+    url: `ws://127.0.0.1:${port}`,
+    roomId: "spec-acme-refused",
+    token: async () => "t",
+    rejoin: { firstDelayMs: 40, maxDelayMs: 100, attemptTimeoutMs: 2_000, maxAttempts: 4, leaveWaitMs: 50 },
+    log: (l) => logs.push({ ...l, at: Date.now() }),
+  });
+  try {
+    peer.set("specs/design/a.txt", "a\n", false);
+    await until(() => doc() !== undefined && readDocFile(doc()!, "specs/design/a.txt") === "a\n", "the first write");
+    srv.hocuspocus.closeConnections();
+    await until(() => logs.some((l) => l.gaveUp), "the give-up");
+
+    const rejoins = logs.filter((l) => l.msg === "room_rejoin");
+    assert.deepEqual(rejoins.map((l) => l.attempt), [1, 2, 3, 4]);
+    assert.deepEqual(
+      logs.filter((l) => l.msg === "room_rejoin_failed").map((l) => [l.attempt, l.gaveUp ?? false]),
+      [[1, false], [2, false], [3, false], [4, true]],
+    );
+    // Waits before attempts 2, 3, 4: 40 ms, 80 ms, then the 100 ms cap.
+    const gaps = rejoins.slice(1).map((l, i) => l.at - rejoins[i]!.at);
+    for (const [gap, floor] of gaps.map((g, i) => [g, [40, 80, 100][i]!] as const)) assert.ok(gap >= floor - 5, `gap ${gap} ≥ ${floor}`);
+    assert.ok(gaps[2]! < 400, "capped");
+    assert.deepEqual(
+      logs.filter((l) => l.msg === "room_writes_dropped").map((l) => l.count),
+      [1],
+      "the give-up reports the write the Room never confirmed",
+    );
+    assert.ok(logs.every((l) => !JSON.stringify(l).includes('"t"')), "no token in a log line");
+
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(logs.filter((l) => l.msg === "room_rejoin").length, 4, "nothing after the bound");
+    assert.equal(await peer.leave(), 1, "leave reports the dropped write");
+    assert.equal(logs.filter((l) => l.msg === "room_writes_dropped").length, 1, "and does not log it twice");
+  } finally {
+    await peer.leave();
+    await srv.destroy();
+  }
+});
+
+test("writes pending when the turn leaves during a rejoin are counted and logged", async () => {
+  const port = randomPort();
+  const { srv, doc } = await refusingAfterFirst(port);
+  const logs: RoomLogLine[] = [];
+  const peer = await joinRoom({
+    url: `ws://127.0.0.1:${port}`,
+    roomId: "spec-acme-pending",
+    token: async () => "t",
+    // The second attempt is far off: the turn ends while the peer waits for it.
+    rejoin: { firstDelayMs: 60_000, maxAttempts: 10, leaveWaitMs: 100 },
+    log: (l) => logs.push(l),
+  });
+  try {
+    peer.set("specs/design/a.txt", "a\n", false);
+    await until(() => doc() !== undefined && readDocFile(doc()!, "specs/design/a.txt") === "a\n", "the first write");
+    srv.hocuspocus.closeConnections();
+    await until(() => logs.some((l) => l.msg === "room_rejoin_failed"), "the first refused rejoin");
+    peer.set("specs/design/b.txt", "b\n", false);
+    const started = Date.now();
+    assert.equal(await peer.leave(), 2);
+    assert.ok(Date.now() - started < 1_000, "the wait is bounded");
+    assert.deepEqual(logs.filter((l) => l.msg === "room_writes_dropped").map((l) => l.count), [2]);
+    assert.equal(readDocFile(doc()!, "specs/design/b.txt"), undefined);
+  } finally {
+    await peer.leave();
+    await srv.destroy();
   }
 });

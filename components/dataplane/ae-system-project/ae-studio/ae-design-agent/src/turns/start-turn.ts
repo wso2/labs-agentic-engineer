@@ -100,6 +100,9 @@ export interface ServerTurnRequest {
   text?: string;
 }
 
+/** The code of a turn whose Room edits did not all land (`room-peer.ts` gave up or never resynced). */
+export const ROOM_UNAVAILABLE = "room_unavailable";
+
 /** The display line of a Plan turn (no one typed it). */
 const PLAN_SUMMARY = "Plan the implementation Tasks";
 /** The command a kickoff runs (`start-spec.ts` resolves the idea). */
@@ -496,6 +499,9 @@ export class TurnStarter {
         emit(part.type === "error" ? (codedErrorFrame(part.error, host) ?? part) : part);
       };
       let peer: RoomPeer | undefined;
+      // Left once: the outcome reads the count, the `finally` makes sure it happens.
+      let leaving: Promise<number> | undefined;
+      const leaveRoom = (): Promise<number> => (leaving ??= peer ? peer.leave() : Promise.resolve(0));
       try {
         let files = m.files;
         if (l.roomProject !== undefined && deps.room) {
@@ -541,7 +547,21 @@ export class TurnStarter {
             onEvent,
             abortSignal: signal,
           });
-          return { status: "completed", usage: res.usage, ...(contextTokens !== undefined ? { contextTokens } : {}), ...refs };
+          const usage = { usage: res.usage, ...(contextTokens !== undefined ? { contextTokens } : {}) };
+          // A turn whose edits did not all reach the Room has not completed:
+          // its Room connection dropped and the rejoin failed or never synced.
+          const dropped = await leaveRoom();
+          if (dropped > 0) {
+            return {
+              status: "failed",
+              reason: "agent-error",
+              code: ROOM_UNAVAILABLE,
+              message: `the Room could not be reached: ${dropped} file(s) written this turn are not in it`,
+              ...usage,
+              ...refs,
+            };
+          }
+          return { status: "completed", ...usage, ...refs };
         } catch (err) {
           if (signal.aborted) throw err; // the desk already ended the turn (cap or shutdown)
           const frame = turnErrorFrame(err, host);
@@ -558,7 +578,7 @@ export class TurnStarter {
         }
       } finally {
         // The agent never lingers in the Room past its turn (presence honesty).
-        peer?.leave();
+        await leaveRoom();
         if (l.throwaway) await deps.store.delete(l.conversationId);
       }
     };

@@ -41,7 +41,9 @@ class SpyPeer implements RoomPeer {
   delete(path: string): void {
     this.deletes.push(path);
   }
-  leave(): void {}
+  leave(): Promise<number> {
+    return Promise.resolve(0);
+  }
 }
 
 const MD = "specs/requirements/prd.md";
