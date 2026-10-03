@@ -231,7 +231,72 @@ func (s *RuntimeConfigService) buildEnvValues(ctx context.Context, orgID, projec
 		}
 	}
 
+	// And every sibling component this web app calls. OpenChoreo already injects
+	// the endpoint's address into the CONTAINER, which is enough for a backend and
+	// useless here: a web app is static files, and the consumer is a browser
+	// outside the cluster that never reads the container's environment. So the
+	// address has to cross into the one file the browser does read, and it has to
+	// be the browser-reachable URL rather than the in-cluster one the container
+	// was given.
+	if deps := componentEndpointDeps(webapp); len(deps) > 0 {
+		if ok := s.layerComponentEndpoints(ctx, orgID, projectID, webapp, deps, out); !ok {
+			ready = false
+		}
+	}
+
 	return out, ready
+}
+
+// componentEndpointDeps selects the web app's sibling-component dependencies
+// that bound the endpoint's address to a name.
+//
+// A dependency with no `envBindings.address` is not an omission to repair: the
+// component depends on the sibling without the SPA needing to call it, and
+// inventing a key for it would put a URL in `window._env_` that nothing reads.
+func componentEndpointDeps(c *spec.DesignComponent) []spec.Dependency {
+	if c == nil || c.ComponentType != spec.ComponentTypeWebApplication {
+		return nil
+	}
+	var out []spec.Dependency
+	for i := range c.Dependencies {
+		d := c.Dependencies[i]
+		if d.Kind != spec.DependencyKindComponent || d.Wiring == nil || d.Wiring.Endpoint == nil {
+			continue
+		}
+		if d.Wiring.Endpoint.EnvBindings[spec.EndpointAddressOutput] == "" {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
+// layerComponentEndpoints puts each bound sibling's public base URL under the
+// name the DESIGN chose for it — the same name the component's workload.yaml
+// carries, so the SPA and OpenChoreo cannot disagree about what the key is
+// called.
+//
+// An address OC has not resolved yet DEFERS the whole file, exactly as an
+// unresolved platform-resource output does. The SPA's typed env shim throws at
+// module load on a missing key, so a window._env_ that is missing the one URL
+// the app fetches everything from is a blank page — strictly worse than the
+// previous file, or than no file and a retry on the next converge pass.
+func (s *RuntimeConfigService) layerComponentEndpoints(ctx context.Context, orgID, projectID string, webapp *spec.DesignComponent, deps []spec.Dependency, out map[string]interface{}) bool {
+	ready := true
+	for i := range deps {
+		dep := deps[i]
+		key := dep.Wiring.Endpoint.EnvBindings[spec.EndpointAddressOutput]
+		url := strings.TrimRight(s.componentExternalURL(ctx, orgID, projectID, dep.Name), "/")
+		if url == "" {
+			slog.InfoContext(ctx, "runtime_config: sibling endpoint has no external URL yet; deferring env-config.js",
+				"orgID", orgID, "projectID", projectID, "component", webapp.Name,
+				"dependency", dep.Name, "key", key)
+			ready = false
+			continue
+		}
+		out[key] = url
+	}
+	return ready
 }
 
 // platformResourceDeps returns every `kind: platform-resource` dependency a
