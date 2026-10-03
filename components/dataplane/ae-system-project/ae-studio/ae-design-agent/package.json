@@ -20,6 +20,7 @@
     "./shared/hash": "./src/shared/hash.ts",
     "./shared/listen": "./src/shared/listen.ts",
     "./shared/model": "./src/shared/model.ts",
+    "./shared/snapshot-path": "./src/shared/snapshot-path.ts",
     "./shared/mock-model": "./src/shared/mock-model.ts",
     "./conversation/load-workspace": "./src/conversation/load-workspace.ts"
   },

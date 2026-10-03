@@ -17,57 +17,50 @@
  */
 
 /**
- * `FsSpecWorkspace` — the project-dir side of a workspace-shaped turn
- * (docs/design/playground.md §3/§5). Turns are workspace-shaped ONLY, so the
- * project folder is materialized per turn into a fake immutable snapshot on a
- * temp mount in the EXACT layout the service derives (the EvalWorkspace
- * pattern, org "play"):
+ * `FsSpecWorkspace` — the project-dir side of a turn (docs/design/playground.md
+ * §3/§5). The project folder is materialized into a fake immutable snapshot
+ * on a temp mount, in the layout the design agent reads under
+ * `AE_SNAPSHOTS_DIR` (`shared/snapshot-path.ts`), as ae-studio-tools writes it
+ * in the pod:
  *
- *   <mount>/repos/play/<slug>/<slug>/snapshots/<sha>/…
- *   <mount>/repos/play/_skills/org-skills/snapshots/<sha>/skills/<name>/SKILL.md
+ *   <mount>/projects/<slug>/<sha>/…
+ *   <mount>/skills/<sha>/skills/<name>/SKILL.md
  *
  * Snapshot "shas" are fake but content-addressed (40 hex), so identical states
  * share a dir and an EDITED skills library gets a fresh snapshot on the very
  * next turn (§8 hot-reload). `issues/` is excluded from SPEC-turn reads:
  * production spec turns never see tasks (they live in GitHub); issues enter
- * only the plan turn's INSTRUCTION (§5 phase 3).
+ * only the plan turn's task context (§5 phase 3). The in-process tools socket
+ * (`engine/tools-fake.ts`) materializes on every project lookup.
  */
 
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { randomUUID } from "node:crypto";
-import type { WorkspaceRef } from "@aep/agent-stream";
 import { readProjectFiles, resolveWithin } from "../kit/project-fs.js";
 import { filesSnapshotSha, renderSkillFiles, skillsSnapshotSha } from "../kit/snapshot.js";
 import type { RepoSkill } from "../kit/skills.js";
 import { disabledSkillNames } from "../kit/skills.js";
 
-/** The playground's fixed tenant — fence values only; they never reach the model. */
-export const PLAY_ORG = "play";
+/** The longest project name: a DNS label. */
+const MAX_PROJECT_NAME = 63;
 
-/** A fence-valid project slug from the project directory name. */
+/**
+ * The project's name on the design agent's `/v1` edge, from the directory
+ * name: a DNS label, as the platform names projects (`isProjectName`).
+ */
 export function projectSlug(projectDir: string): string {
-  const raw = basename(projectDir).toLowerCase();
-  const slug = raw
-    .replace(/[^a-z0-9._-]/g, "-")
-    .replace(/-{2,}/g, "-") // "--" is the conversation-id segment delimiter
-    .replace(/^[.-]+/, "");
-  return slug === "" ? "project" : slug.slice(0, 64);
-}
-
-/** The fence-valid namespaced conversation id for this project + use case. */
-export function playConversationId(slug: string, useCase: string, uuid: string): string {
-  return `org_${PLAY_ORG}--proj_${slug}--${useCase}--${uuid}`;
-}
-
-/** Stable content hash of a files map (drives D20 `filesChangedExternally`) — the snapshot sha itself. */
-export function hashFiles(files: Record<string, string>): string {
-  return filesSnapshotSha(files);
+  const slug = basename(projectDir)
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-{2,}/g, "-")
+    .slice(0, MAX_PROJECT_NAME)
+    .replace(/^-+|-+$/g, "");
+  return slug === "" ? "project" : slug;
 }
 
 export class FsSpecWorkspace {
-  /** The temp fixture mount the in-process server reads. */
+  /** The temp snapshots mount the in-process design agent reads (its `snapshotsDir`). */
   readonly mountRoot: string;
   readonly slug: string;
 
@@ -94,8 +87,8 @@ export class FsSpecWorkspace {
 
   /** Materialize one turn's files into a fake immutable `snapshots/<sha>/` dir. */
   materializeFiles(files: Record<string, string>): string {
-    const sha = hashFiles(files);
-    this.mirror(join(this.mountRoot, "repos", PLAY_ORG, this.slug, this.slug, "snapshots", sha), files);
+    const sha = filesSnapshotSha(files);
+    this.mirror(join(this.mountRoot, "projects", this.slug, sha), files);
     return sha;
   }
 
@@ -112,7 +105,7 @@ export class FsSpecWorkspace {
     const disabled = disabledSkillNames();
     const sha = skillsSnapshotSha(skills, disabled);
     this.mirror(
-      join(this.mountRoot, "repos", PLAY_ORG, "_skills", "org-skills", "snapshots", sha),
+      join(this.mountRoot, "skills", sha),
       renderSkillFiles(skills, disabled),
     );
     return sha;
@@ -122,17 +115,6 @@ export class FsSpecWorkspace {
     if (existsSync(dir)) return;
     mkdirSync(dir, { recursive: true });
     for (const [path, content] of Object.entries(files)) this.write(dir, path, content);
-  }
-
-  /** Build one turn's `WorkspaceRef` (materializing files + skills as needed). */
-  workspaceRef(conversationId: string, files: Record<string, string>, skills: readonly RepoSkill[]): WorkspaceRef {
-    return {
-      conversationId,
-      turnId: randomUUID(),
-      repoSlug: this.slug,
-      ref: this.materializeFiles(files),
-      skillsRef: this.materializeSkills(skills),
-    };
   }
 
   private write(root: string, rel: string, content: string): void {

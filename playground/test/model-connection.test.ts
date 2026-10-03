@@ -18,13 +18,14 @@
 
 /**
  * A local run's engineering-agent connection (`kit/model-connection.ts`): the
- * `AEP_MODEL_*` variables become the turn body's `connection`, and with none
- * set a turn names no connection. The capabilities mirror aep-api's
+ * `AEP_MODEL_*` variables become the in-process design agent's connection,
+ * and with none set it is Anthropic's own API. The capabilities mirror aep-api's
  * `modelconn.CapabilitiesOf`; the table is `modelconn_test.go`'s.
  */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { anthropicConnection } from "@aep/ae-design-agent/shared/model";
 import { capabilitiesOf, playgroundModel } from "../src/kit/model-connection.js";
 
 test("capabilitiesOf mirrors modelconn.CapabilitiesOf's table", () => {
@@ -62,15 +63,13 @@ test("AEP_MODEL_* names the connection, its key and its model", () => {
     AEP_AGENT_MODEL: "gpt-oss:20b",
   });
   assert.deepEqual(got, {
+    format: "openai-compatible",
+    baseURL: "https://ollama.com/v1",
+    authScheme: "bearer",
+    contextWindow: 131072,
+    capabilities: capabilitiesOf("openai-compatible", "ollama.com"),
     apiKey: "ollama-test-key-0000000000",
     model: "gpt-oss:20b",
-    connection: {
-      format: "openai-compatible",
-      baseURL: "https://ollama.com/v1",
-      authScheme: "bearer",
-      contextWindow: 131072,
-      capabilities: capabilitiesOf("openai-compatible", "ollama.com"),
-    },
   });
 });
 
@@ -79,6 +78,6 @@ test("a connection named without its key is refused", () => {
 });
 
 test("no AEP_MODEL_* names no connection: Anthropic's own API on ANTHROPIC_API_KEY", () => {
-  assert.deepEqual(playgroundModel({ ANTHROPIC_API_KEY: "sk-ant-test" }), { apiKey: "sk-ant-test" });
+  assert.deepEqual(playgroundModel({ ANTHROPIC_API_KEY: "sk-ant-test" }), anthropicConnection("sk-ant-test"));
   assert.throws(() => playgroundModel({}), /ANTHROPIC_API_KEY is not set/);
 });

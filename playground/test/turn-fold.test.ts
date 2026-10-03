@@ -38,7 +38,6 @@ import { tmpdir } from "node:os";
 import { mockModel } from "@aep/ae-design-agent/shared/mock-model";
 import { openSession } from "../src/engine/session.js";
 import { runSpecTurn } from "../src/engine/turn.js";
-import { chatSpec } from "../src/engine/turn-spec.js";
 
 /**
  * A path the turn filter hides: arbitrary `*.yaml` under specs/ is not one of
@@ -88,7 +87,7 @@ test("a file the turn filter hides survives a turn that never touched it", async
   ]);
   const session = await openSession(projectDir, { model, skillsDir });
   try {
-    const result = await runSpecTurn(session, chatSpec("change the workload"));
+    const result = await runSpecTurn(session, "change the workload");
 
     assert.ok(existsSync(join(projectDir, HIDDEN_PATH)), "a filtered-out file must not be deleted by a turn");
     assert.equal(readFileSync(join(projectDir, HIDDEN_PATH), "utf8"), HIDDEN_BODY, "its bytes are untouched");
@@ -118,7 +117,7 @@ test("a visible file still takes its edit and its removal", async () => {
   ]);
   const session = await openSession(projectDir, { model, skillsDir });
   try {
-    const result = await runSpecTurn(session, chatSpec("rewrite the notes"));
+    const result = await runSpecTurn(session, "rewrite the notes");
 
     assert.deepEqual(
       result.changes.map((c) => `${c.kind} ${c.path}`),

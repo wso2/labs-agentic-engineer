@@ -17,41 +17,49 @@
  */
 
 /**
- * The M2M gate is always on (§12.3.2). The evals and playground boot the real
- * app in-process, so — like any caller — they must present a Bearer token and
- * the per-request model key. This is the CLIENT half: a shared-secret HS256
- * token (fine for a local in-process server) plus the header pair `streamTurn`
- * sends. The service half (verification) lives in `src/shared/auth.ts`.
+ * The playground's dev verifier: the second `Authenticate` adapter of the
+ * design agent's `/v1` edge (07 §9; the pod's is `idpAuthenticate`). There is
+ * no IdP in a local run, so a session mints one random bearer secret, hands
+ * the client its headers, and the verifier admits that secret alone as the
+ * local user. Nothing is signed and nothing outlives the session; the app
+ * listens on loopback only (`agents-app.ts`).
  */
 
-import { SignJWT } from "jose";
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import { AuthError, type Authenticate, type AuthenticatedUser } from "@aep/ae-design-agent/edge/authenticate";
 
-/** The shared-secret auth config the in-process eval/playground server uses. */
-export const EVAL_AUTH = {
-  audience: "agents-service",
-  secret: "local-eval-secret",
-} as const;
+/** Who every playground turn is credited to. */
+export const PLAYGROUND_USER = { sub: "playground", name: "Playground", email: "" } as const;
 
-/** Mint a short-lived HS256 M2M token for `audience`, signed with `secret`. */
-export async function signM2mToken(secret: string, audience: string): Promise<string> {
-  return new SignJWT({})
-    .setProtectedHeader({ alg: "HS256" })
-    .setAudience(audience)
-    .setIssuedAt()
-    .setExpirationTime("1h")
-    .sign(new TextEncoder().encode(secret));
+export interface DevAuth {
+  /** The `/v1` gate: the session's bearer secret, or 401. */
+  authenticate: Authenticate;
+  /** What every `/v1` request carries. */
+  headers: Record<string, string>;
 }
 
-/**
- * The headers a turn POST needs: the M2M token + the per-request model key
- * (`X-Model-Key`, for whichever connection the turn names), plus `X-Org-Id`
- * (load-bearing for the §12 fence on every turn).
- */
-export async function evalTurnHeaders(apiKey: string, orgId?: string): Promise<Record<string, string>> {
-  const token = await signM2mToken(EVAL_AUTH.secret, EVAL_AUTH.audience);
+const BEARER = /^Bearer ([^\s]+)$/i;
+
+function unauthenticated(): AuthError {
+  return new AuthError(401, "unauthenticated", "the playground session's bearer token is required", {
+    "www-authenticate": "Bearer",
+  });
+}
+
+/** A fresh dev credential and its verifier, for one session. */
+export function devAuth(): DevAuth {
+  const secret = randomBytes(32).toString("base64url");
+  const expected = Buffer.from(secret);
+  const user: AuthenticatedUser = {
+    ...PLAYGROUND_USER,
+    claims: { sub: PLAYGROUND_USER.sub, name: PLAYGROUND_USER.name, exp: Number.MAX_SAFE_INTEGER },
+  };
   return {
-    Authorization: `Bearer ${token}`,
-    "X-Model-Key": apiKey,
-    ...(orgId !== undefined ? { "X-Org-Id": orgId } : {}),
+    authenticate: async (req) => {
+      const presented = Buffer.from(BEARER.exec(req.headers.authorization ?? "")?.[1] ?? "");
+      if (presented.length !== expected.length || !timingSafeEqual(presented, expected)) throw unauthenticated();
+      return user;
+    },
+    headers: { Authorization: `Bearer ${secret}` },
   };
 }

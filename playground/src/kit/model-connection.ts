@@ -17,8 +17,8 @@
  */
 
 /**
- * The engineering agent's model connection in a local run. In production aep-api
- * resolves the organization's connection and sends it with every turn; here the
+ * The engineering agent's model connection in a local run. In production the
+ * pod reads the organization's connection from `AE_MODEL_CONNECTION`; here the
  * developer states it with the same `AEP_MODEL_*` variables a coding run reads
  * (`remote-worker/src/lib/model_connection.ts` parses them), so one set of
  * variables points both agents at one connection, as an organization's one
@@ -27,23 +27,15 @@
  *   AEP_MODEL_FORMAT=openai-compatible AEP_MODEL_BASE_URL=https://ollama.com/v1 \
  *   AEP_MODEL_AUTH_SCHEME=bearer AEP_MODEL_API_KEY=… AEP_AGENT_MODEL=gpt-oss:20b pnpm play …
  *
- * With neither `AEP_MODEL_FORMAT` nor `AEP_MODEL_BASE_URL` set, a turn names no
- * connection and runs on Anthropic's own API with `ANTHROPIC_API_KEY`.
+ * With neither `AEP_MODEL_FORMAT` nor `AEP_MODEL_BASE_URL` set, turns run on
+ * Anthropic's own API with `ANTHROPIC_API_KEY`.
  */
 
 import type { ModelCapabilities, TurnConnection } from "@aep/agent-stream";
 import { loadDotenv } from "@aep/ae-design-agent/shared/env";
 import { config } from "@aep/ae-design-agent/shared/config";
+import { anthropicConnection, connectionFromWire, type ModelConnection } from "@aep/ae-design-agent/shared/model";
 import { readModelConnection, type ModelConnection as RunnerConnection } from "remote-worker/src/lib/model_connection.js";
-
-/** What every turn of a local session is sent with. */
-export interface PlaygroundModel {
-  /** Sent as `X-Model-Key`. */
-  apiKey: string;
-  /** The turn body's `connection` and `model`; absent → Anthropic's own API on `AGENT_MODEL`. */
-  connection?: TurnConnection;
-  model?: string;
-}
 
 /** Hosts whose features are bound to them, as `modelconn` names them. */
 const ANTHROPIC_HOST = "api.anthropic.com";
@@ -71,30 +63,27 @@ export function capabilitiesOf(format: TurnConnection["format"], host: string): 
 }
 
 /** The session's model connection, from the environment (and `deployments/.env`). */
-export function playgroundModel(env: NodeJS.ProcessEnv = process.env): PlaygroundModel {
+export function playgroundModel(env: NodeJS.ProcessEnv = process.env): ModelConnection {
   loadDotenv();
   if (!(env.AEP_MODEL_FORMAT ?? "").trim() && !(env.AEP_MODEL_BASE_URL ?? "").trim()) {
     const anthropicKey = (env.ANTHROPIC_API_KEY ?? "").trim();
     if (anthropicKey === "") {
       throw new Error("ANTHROPIC_API_KEY is not set: export it or add it to deployments/.env, or name a connection with AEP_MODEL_*.");
     }
-    return { apiKey: anthropicKey };
+    return anthropicConnection(anthropicKey);
   }
   const conn: RunnerConnection = readModelConnection(config.model, env);
   const apiKey = (env.AEP_MODEL_API_KEY ?? "").trim();
   if (apiKey === "") throw new Error("AEP_MODEL_API_KEY is not set: a connection named by AEP_MODEL_* needs its key.");
-  return {
-    apiKey,
-    model: conn.model,
-    connection: {
-      format: conn.format,
-      baseURL: conn.baseURL,
-      authScheme: conn.authScheme,
-      ...(conn.contextWindow !== undefined ? { contextWindow: conn.contextWindow } : {}),
-      ...(conn.outputLimit !== undefined ? { outputLimit: conn.outputLimit } : {}),
-      capabilities: capabilitiesOf(conn.format, conn.host),
-    },
+  const wire: TurnConnection = {
+    format: conn.format,
+    baseURL: conn.baseURL,
+    authScheme: conn.authScheme,
+    ...(conn.contextWindow !== undefined ? { contextWindow: conn.contextWindow } : {}),
+    ...(conn.outputLimit !== undefined ? { outputLimit: conn.outputLimit } : {}),
+    capabilities: capabilitiesOf(conn.format, conn.host),
   };
+  return connectionFromWire(wire, apiKey, conn.model);
 }
 
 /** The plain `AEP_MODEL_*` variables a coding run's connection rides on, as a dispatch stamps them. */

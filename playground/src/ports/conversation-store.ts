@@ -18,10 +18,11 @@
 
 /**
  * `FileConversationStore` — the playground's `ConversationStore` adapter
- * (docs/design/playground.md §3): one JSON file per conversation under
- * `<project>/.aep-playground/conversations/`. The `general` conversation is
- * `general.json` (ONE spec conversation per project — console parity); plan
- * turns are one-shot `task-plan-<uuid>.json` files.
+ * (docs/design/playground.md §3; the pod's is in memory): one JSON file per
+ * conversation, `<project>/.aep-playground/conversations/<id>.json`. The
+ * project's current thread is one of them (its id kept in the project state,
+ * so the next session resumes it); a Plan turn's throwaway conversation is
+ * deleted by the design agent when the turn ends.
  *
  * - Writes are atomic (tmp + rename) so a crash mid-save never corrupts the
  *   history.
@@ -44,16 +45,9 @@ interface StoredConversation {
   updatedAt: string;
 }
 
-/**
- * File name for a namespaced conversation id
- * (`org_<o>--proj_<p>--<useCase>--<uuid>`): the `general` conversation is a
- * per-project singleton; anything else keys on useCase + uuid (one-shots).
- */
-export function conversationFileName(id: string): string {
-  const segments = id.split("--");
-  if (segments.length !== 4) return `${sanitize(id)}.json`;
-  const [, , useCase, uuid] = segments as [string, string, string, string];
-  return useCase === "general" ? "general.json" : `${sanitize(useCase)}-${sanitize(uuid)}.json`;
+/** The file of a conversation id (ids are uuids; anything else is made a safe name). */
+function conversationFileName(id: string): string {
+  return `${sanitize(id)}.json`;
 }
 
 function sanitize(v: string): string {
@@ -101,11 +95,6 @@ export class FileConversationStore implements ConversationStore {
   }
 
   async delete(id: string): Promise<void> {
-    this.reset(id);
-  }
-
-  /** `--fresh`: drop a conversation's history (next turn starts clean). */
-  reset(id: string): void {
     rmSync(this.fileFor(id), { force: true });
   }
 }

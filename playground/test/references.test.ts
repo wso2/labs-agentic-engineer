@@ -17,11 +17,11 @@
  */
 
 /**
- * Reference documents on a `/start` turn — the playground's half of what
- * aep-api lists server-side (`listReferenceDocs`, #384). The playground plays
- * the server role offline, so a kickoff here must carry the same facts a
- * production kickoff does, or the start skill's reference behaviour cannot be
- * exercised without the platform.
+ * Reference documents on a `/start` turn — the playground's half of what the
+ * project lookup answers (#384). The playground plays the tools socket
+ * offline, so a kickoff here must carry the same facts a production kickoff
+ * does, or the start skill's reference behaviour cannot be exercised without
+ * the platform.
  */
 
 import { test } from "node:test";
@@ -30,7 +30,6 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { REFERENCES_DIR, readReferences } from "../src/state/references.js";
-import { startSpec } from "../src/engine/turn-spec.js";
 
 function tempProject(): string {
   return mkdtempSync(join(tmpdir(), "aep-refs-test-"));
@@ -41,15 +40,12 @@ function writeRef(dir: string, name: string, body = "x"): void {
   writeFileSync(join(dir, REFERENCES_DIR, name), body);
 }
 
-test("readReferences lists the folder's files as repo-relative paths, sorted", () => {
+test("readReferences lists the folder's files by name, sorted (the lookup's `references`)", () => {
   const dir = tempProject();
   try {
     writeRef(dir, "rfp.pdf");
     writeRef(dir, "glossary.md");
-    assert.deepEqual(readReferences(dir), [
-      "specs/requirements/references/glossary.md",
-      "specs/requirements/references/rfp.pdf",
-    ]);
+    assert.deepEqual(readReferences(dir), ["glossary.md", "rfp.pdf"]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -62,19 +58,4 @@ test("no references folder is not an error — it is the ordinary case", () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-});
-
-test("startSpec carries the references, and omits the field when there are none", () => {
-  const withRefs = startSpec("an expense tracker", ["specs/requirements/references/rfp.pdf"]);
-  assert.deepEqual(withRefs, {
-    kind: "start",
-    idea: "an expense tracker",
-    references: ["specs/requirements/references/rfp.pdf"],
-  });
-
-  // Absent and empty are the same turn as before this channel existed — the
-  // key must not appear at all, matching Go's `omitempty`.
-  assert.deepEqual(startSpec("an expense tracker", []), { kind: "start", idea: "an expense tracker" });
-  assert.deepEqual(startSpec("an expense tracker"), { kind: "start", idea: "an expense tracker" });
-  assert.deepEqual(startSpec(null, []), { kind: "start" });
 });

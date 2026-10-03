@@ -29,12 +29,16 @@
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { openSession } from "@aep/playground/src/engine/session.js";
-import { flowSpec, startSpec } from "@aep/playground/src/engine/turn-spec.js";
+import { DESIGN_COMMAND, START_COMMAND } from "@aep/contracts/commands";
 
-// The design flow, as a fact. In production aep-api classifies the /design
-// token; the evals run without aep-api, so they state the same thing directly —
-// and the agents service composes identical wording for both.
-const designTurn = flowSpec("design");
+// The design flow, sent verbatim as the console sends it: the design agent
+// parses the command and composes the wording.
+const designTurn = DESIGN_COMMAND;
+
+/** The kickoff, with the scenario's idea inline (an inline idea wins over the descriptor's). */
+function startTurn(idea: string): string {
+  return `${START_COMMAND} ${idea.trim()}`;
+}
 import { PROJECTS_HOME } from "./config.js";
 import { prepareProject, readProjectFile } from "./project.js";
 import type { ChainScenario, DesignScenario, RequirementsScenario, Rubric, TasksScenario } from "./scenario.js";
@@ -207,7 +211,7 @@ export async function runRequirementsScenario(sc: RequirementsScenario, runName:
   const session = await openSession(projectDir, {});
   let run: SectionRunResult;
   try {
-    run = await runConversationalSection(session, "requirements", startSpec(sc.brief.idea), sc.brief);
+    run = await runConversationalSection(session, "requirements", startTurn(sc.brief.idea), sc.brief);
   } finally {
     await session.close();
   }
@@ -252,7 +256,7 @@ export async function runChainScenario(sc: ChainScenario, runName: string): Prom
   let designSkipped = false;
   let requirementsAnswers: SimAnswer[] = [];
   try {
-    const req = await runConversationalSection(session, "requirements", startSpec(sc.brief.idea), sc.brief);
+    const req = await runConversationalSection(session, "requirements", startTurn(sc.brief.idea), sc.brief);
     records.push(...req.records);
     requirementsAnswers = req.answers;
     const reqOutcome = await scoreConversational(projectDir, req, sc.rubrics.requirements, []);

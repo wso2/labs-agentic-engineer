@@ -41,9 +41,6 @@ import { collectAnswers } from "./questions.js";
 import { buildChatBanner, commandGuide } from "./banner.js";
 import { classifyChatInput, type ChatIntent } from "./chat-commands.js";
 import { confirmCodingDir, confirmWireDir } from "./consent.js";
-import { chatSpec, startSpec } from "../engine/turn-spec.js";
-import { readReferences } from "../state/references.js";
-import { readIdea } from "../state/descriptor.js";
 import type { PlaygroundSession } from "../engine/session.js";
 
 /** Run one phase-runner (`/task`, `/code`, `/wire`, `/validate`, `/undo`) to completion. */
@@ -133,29 +130,20 @@ export async function chatLoop(session: PlaygroundSession, opts: PhaseOptions): 
         continue;
       }
 
-      // `/start` — the kickoff. The idea typed inline wins; otherwise it comes
-      // from the descriptor written when the project was created. Neither is
-      // something the agent could read for itself, so the turn spec is the only
-      // channel it travels by. No idea at all is fine: the start skill opens by
-      // asking for one.
-      const turn =
-        intent.kind === "start"
-          ? startSpec(intent.inlineIdea ?? readIdea(session.projectDir), readReferences(session.projectDir))
-          : intent.turn;
-
-      // A skill-load (`/spec`, `/design`, `/<skill>`) or a plain chat turn.
+      // A flow (`/start`, `/design`, `/<skill>`, parsed by the design agent;
+      // `/start` takes the captured idea from the project lookup) or chat.
       // HITL loop (console ADR-0012 / #270): while the agent ends a turn on a
       // question card, prompt for the answer and continue with it as the next
       // turn — an answer is ordinary chat, whatever the turn that asked was.
       // `/skip` (or Ctrl-D at the prompt) drops back to free chat.
-      let outcome = await chatTurn(session, turn, opts);
+      let outcome = await chatTurn(session, intent.instruction, opts);
       while (outcome.ok && outcome.pending) {
         const answer = await collectAnswers(rl, outcome.pending);
         if (answer === null) {
           output.write("  (question skipped)\n");
           break;
         }
-        outcome = await chatTurn(session, chatSpec(answer), opts);
+        outcome = await chatTurn(session, answer, opts);
       }
       if (!outcome.ok) output.write(`\n[turn failed] ${outcome.detail ?? "unknown error"}\n`);
     }

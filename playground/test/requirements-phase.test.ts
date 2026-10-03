@@ -32,7 +32,14 @@ import { mockModel } from "@aep/ae-design-agent/shared/mock-model";
 import { requirementsCommand, chatTurn } from "../src/commands.js";
 import { openSession } from "../src/engine/session.js";
 import { readIdea } from "../src/state/descriptor.js";
-import { chatSpec } from "../src/engine/turn-spec.js";
+
+/** The project's current thread file (its id is kept in the project state). */
+function threadFile(projectDir: string): string {
+  const { conversationUuid } = JSON.parse(readFileSync(join(projectDir, ".aep-playground/project.json"), "utf8")) as {
+    conversationUuid: string;
+  };
+  return join(projectDir, ".aep-playground/conversations", `${conversationUuid}.json`);
+}
 
 function tempProject(): string {
   return mkdtempSync(join(tmpdir(), "aep-play-test-"));
@@ -64,7 +71,7 @@ test("requirements phase: idea → folded requirements.md + captured descriptor 
     assert.match(readFileSync(join(projectDir, "specs/requirements/prd.md"), "utf8"), /ceramics catalog/);
     // --idea is CAPTURED into the descriptor, so a later /start carries the same idea.
     assert.equal(readIdea(projectDir), "An online ceramics store");
-    assert.ok(existsSync(join(projectDir, ".aep-playground/conversations/general.json")), "general conversation persisted");
+    assert.ok(existsSync(threadFile(projectDir)), "the project's thread persisted");
     assert.ok(existsSync(join(projectDir, ".aep-playground/project.json")), "project state persisted");
   } finally {
     rmSync(projectDir, { recursive: true, force: true });
@@ -72,7 +79,7 @@ test("requirements phase: idea → folded requirements.md + captured descriptor 
   }
 });
 
-test("chat resumes the SAME general conversation across sessions (console parity)", async () => {
+test("chat resumes the SAME thread across sessions (console parity)", async () => {
   const projectDir = tempProject();
   const skillsDir = tempSkills();
   try {
@@ -86,7 +93,7 @@ test("chat resumes the SAME general conversation across sessions (console parity
       { kind: "text", text: "done" },
     ]);
     assert.equal((await requirementsCommand(projectDir, { model: first, skillsDir, silent: true, idea: "idea" })).ok, true);
-    const afterFirst = JSON.parse(readFileSync(join(projectDir, ".aep-playground/conversations/general.json"), "utf8")) as {
+    const afterFirst = JSON.parse(readFileSync(threadFile(projectDir), "utf8")) as {
       id: string;
       messages: unknown[];
     };
@@ -96,16 +103,16 @@ test("chat resumes the SAME general conversation across sessions (console parity
     const second = mockModel([{ kind: "text", text: "sure — noted." }]);
     const session = await openSession(projectDir, { model: second, skillsDir });
     try {
-      const outcome = await chatTurn(session, chatSpec("add a wishlist requirement"), { silent: true });
+      const outcome = await chatTurn(session, "add a wishlist requirement", { silent: true });
       assert.equal(outcome.ok, true, outcome.detail);
     } finally {
       await session.close();
     }
-    const afterSecond = JSON.parse(readFileSync(join(projectDir, ".aep-playground/conversations/general.json"), "utf8")) as {
+    const afterSecond = JSON.parse(readFileSync(threadFile(projectDir), "utf8")) as {
       id: string;
       messages: unknown[];
     };
-    assert.equal(afterSecond.id, afterFirst.id, "one general conversation per project");
+    assert.equal(afterSecond.id, afterFirst.id, "one thread per project, resumed by the next session");
     assert.ok(afterSecond.messages.length > afterFirst.messages.length, "history grew across sessions");
   } finally {
     rmSync(projectDir, { recursive: true, force: true });

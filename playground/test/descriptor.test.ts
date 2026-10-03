@@ -27,7 +27,6 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DESCRIPTOR_PATH, descriptorFile, readIdea, writeDescriptor } from "../src/state/descriptor.js";
-import { startSpec } from "../src/engine/turn-spec.js";
 import { classifyChatInput } from "../src/tui/chat-commands.js";
 import { readProjectFiles } from "../src/kit/project-fs.js";
 import { renderPart } from "../src/kit/render.js";
@@ -91,19 +90,11 @@ test("the descriptor never enters a turn snapshot", () => {
   }
 });
 
-// --- /start classification + expansion ---------------------------------------
+// --- /start goes to the design agent verbatim ---------------------------------
 
-test("/start classifies as the kickoff, with or without an inline idea", () => {
-  assert.deepEqual(classifyChatInput("/start"), { kind: "start" });
-  assert.deepEqual(classifyChatInput("/start a rota planner"), { kind: "start", inlineIdea: "a rota planner" });
-  // Trailing whitespace only is still a bare kickoff, not an empty idea.
-  assert.deepEqual(classifyChatInput("/start   "), { kind: "start" });
-});
-
-// The grammar is narrow so real chat is never eaten.
-test("prose mentioning /start is an ordinary turn", () => {
-  const intent = classifyChatInput("where do I /start with the design?");
-  assert.equal(intent.kind, "turn");
+test("/start is sent verbatim, with or without an inline idea (the design agent parses it)", () => {
+  assert.deepEqual(classifyChatInput("/start"), { kind: "turn", instruction: "/start" });
+  assert.deepEqual(classifyChatInput("/start a rota planner  "), { kind: "turn", instruction: "/start a rota planner" });
 });
 
 // A `/start` interview ends its turn on a question card, whose tool result is a
@@ -129,14 +120,4 @@ test("a pending question card renders as awaiting, not as an error", () => {
   const out = written.join("");
   assert.match(out, /awaiting your answer/);
   assert.doesNotMatch(out, /error/);
-});
-
-// The playground plays the server's role: it carries the captured idea as a
-// FACT on the turn. What that becomes in the prompt is the agents service's
-// business (components/dataplane/ae-system-project/ae-studio/ae-design-agent/test/turn-compose.test.ts covers the wording).
-test("startSpec carries the idea, or nothing when there is none", () => {
-  assert.deepEqual(startSpec("an expense tracker"), { kind: "start", idea: "an expense tracker" });
-  assert.deepEqual(startSpec("  an expense tracker  "), { kind: "start", idea: "an expense tracker" });
-  assert.deepEqual(startSpec(null), { kind: "start" });
-  assert.deepEqual(startSpec("   "), { kind: "start" });
 });
