@@ -310,6 +310,7 @@ func TestTrashSnapshotOnlyTakesShaLeaves(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := fx.Engine.Root()
+	future := time.Now().Add(time.Hour)
 	for _, bad := range []string{
 		repo.SnapshotsDir(root),
 		repo.ProjectSnapshotsDir(root),
@@ -320,13 +321,13 @@ func TestTrashSnapshotOnlyTakesShaLeaves(t *testing.T) {
 		filepath.Join(root, "snapshots", "projects", "..", "..", "repos"),
 		"relative/" + sha,
 	} {
-		if err := fx.Engine.TrashSnapshot(bad); err == nil {
+		if _, err := fx.Engine.TrashSnapshot(bad, future); err == nil {
 			t.Errorf("TrashSnapshot(%s) succeeded, want refused", bad)
 		}
 	}
 	for _, leaf := range []string{dir, skills} {
-		if err := fx.Engine.TrashSnapshot(leaf); err != nil {
-			t.Fatalf("TrashSnapshot(%s): %v", leaf, err)
+		if trashed, err := fx.Engine.TrashSnapshot(leaf, future); err != nil || !trashed {
+			t.Fatalf("TrashSnapshot(%s) = %v, %v", leaf, trashed, err)
 		}
 		if _, err := os.Stat(leaf); !os.IsNotExist(err) {
 			t.Fatalf("%s still present (err=%v)", leaf, err)
@@ -337,4 +338,52 @@ func TestTrashSnapshotOnlyTakesShaLeaves(t *testing.T) {
 			t.Fatalf("snapshot root %s gone: %v", d, err)
 		}
 	}
+}
+
+// A lookup racing the reaper: the leaf it found is trashed before it marks
+// the use. EnsureSnapshot must materialize it again, never answer a path that
+// no longer exists.
+func TestEnsureSnapshotRematerializesATrashedLeaf(t *testing.T) {
+	fx := NewFixture(t, seedFiles())
+	ctx := context.Background()
+	sha := mustHead(t, fx, "")
+	dir, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if trashed, err := fx.Engine.TrashSnapshot(dir, time.Now().Add(time.Hour)); err != nil || !trashed {
+		t.Fatalf("TrashSnapshot = %v, %v", trashed, err)
+	}
+	again, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, sha)
+	if err != nil || again != dir {
+		t.Fatalf("EnsureSnapshot(after trash) = %q, %v", again, err)
+	}
+	assertSnapshotContent(t, dir)
+}
+
+// TrashSnapshot decides on the leaf's mtime read under the same lock a
+// lookup marks its use under: a leaf used after the cutoff (a lookup that
+// came after the reaper listed it) is kept.
+func TestTrashSnapshotKeepsALeafUsedAfterTheCutoff(t *testing.T) {
+	fx := NewFixture(t, seedFiles())
+	ctx := context.Background()
+	sha := mustHead(t, fx, "")
+	dir, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cutoff := time.Now().Add(-time.Hour)
+	old := cutoff.Add(-time.Hour)
+	if err := os.Chtimes(dir, old, old); err != nil {
+		t.Fatal(err)
+	}
+	// The reaper listed it as unused; a lookup now reuses it.
+	if _, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, sha); err != nil {
+		t.Fatal(err)
+	}
+	trashed, err := fx.Engine.TrashSnapshot(dir, cutoff)
+	if err != nil || trashed {
+		t.Fatalf("TrashSnapshot = %v, %v; want kept", trashed, err)
+	}
+	assertSnapshotContent(t, dir)
 }

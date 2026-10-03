@@ -61,15 +61,23 @@ func (r *Reaper) reapSnapshots(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	now := time.Now()
+	return r.reapLeaves(ctx, leaves, time.Now())
+}
+
+// reapLeaves trashes the listed leaves unused for longer than SnapshotMaxAge
+// at now, HEAD ones excepted. The listing's mtime only preselects:
+// TrashSnapshot re-reads it under the engine's use lock, so a leaf a lookup
+// reused since the listing is kept.
+func (r *Reaper) reapLeaves(ctx context.Context, leaves []snapshotLeaf, now time.Time) error {
+	cutoff := now.Add(-r.cfg.SnapshotMaxAge)
 	for _, l := range leaves {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if l.isHead || now.Sub(l.lastUse) <= r.cfg.SnapshotMaxAge {
+		if l.isHead || !l.lastUse.Before(cutoff) {
 			continue
 		}
-		if err := r.engine.TrashSnapshot(l.path); err != nil {
+		if _, err := r.engine.TrashSnapshot(l.path, cutoff); err != nil {
 			slog.WarnContext(ctx, "reaper.snapshot_trash_failed", "project", l.project, "error", err)
 		}
 	}

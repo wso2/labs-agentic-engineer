@@ -61,17 +61,18 @@ func (e *Engine) EnsureSkillsSnapshot(ctx context.Context, ref RepoRef, sha stri
 // one rename wins, the loser finds dest and cleans up, so a torn dir is never
 // observable at dest.
 //
-// An existing dest is reused and its mtime set to now: the snapshot-age pass
-// and eviction then measure the time since a turn last asked for it, not
-// since it was made, so a snapshot a running turn reads is not reaped under
-// it. A new one passes admission first (DiskAdmissionRefusePct).
+// An existing dest is reused and its mtime set to now (markUsed): the
+// snapshot-age pass and eviction then measure the time since a turn last
+// asked for it, not since it was made, so a snapshot a running turn reads is
+// not reaped under it. A dest the reaper trashed first is made again. A new
+// one passes admission first (DiskAdmissionRefusePct).
 func (e *Engine) ensureTree(ctx context.Context, ref RepoRef, sha, dest string) (err error) {
 	defer func() { err = e.mapDiskErr(err) }()
-	if dirExists(dest) {
-		now := time.Now()
-		if err := os.Chtimes(dest, now, now); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("repo: touch snapshot %s: %w", sha, err)
-		}
+	reused, err := e.markUsed(dest)
+	if err != nil {
+		return fmt.Errorf("repo: touch snapshot %s: %w", sha, err)
+	}
+	if reused {
 		return nil
 	}
 	if err := e.admit(); err != nil {
@@ -132,19 +133,53 @@ func (e *Engine) ensureTree(ctx context.Context, ref RepoRef, sha, dest string) 
 	return nil
 }
 
+// markUsed sets an existing snapshot's mtime to now and reports whether it
+// existed. It runs under snapshotUse, the lock TrashSnapshot decides under,
+// so a reuse and a trash of one leaf never interleave: either the trash comes
+// first and the caller makes the leaf again, or the touch comes first and the
+// trash sees a leaf used after its cutoff.
+func (e *Engine) markUsed(dest string) (bool, error) {
+	e.snapshotUse.Lock()
+	defer e.snapshotUse.Unlock()
+	now := time.Now()
+	err := os.Chtimes(dest, now, now)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // TrashSnapshot renames one snapshot leaf (snapshots/projects/<p>/<sha> or
-// snapshots/skills/<sha>) into trash/<id>, for the reaper. Anything else is
-// refused: the agent's subPath mount pins the snapshots dir's inode, so
-// snapshots/, snapshots/projects/, snapshots/skills/ (and a project's dir)
-// are never moved. A missing leaf is a no-op.
-func (e *Engine) TrashSnapshot(dir string) error {
+// snapshots/skills/<sha>) into trash/<id>, for the reaper, iff it was last
+// used before cutoff. The mtime is read under snapshotUse, at the rename, not
+// from the reaper's earlier listing: a lookup that reused the leaf since
+// keeps it (trashed false). Anything but a leaf is refused: the agent's
+// subPath mount pins the snapshots dir's inode, so snapshots/,
+// snapshots/projects/, snapshots/skills/ (and a project's dir) are never
+// moved. A missing leaf is a no-op.
+func (e *Engine) TrashSnapshot(dir string, cutoff time.Time) (trashed bool, err error) {
 	if !e.isSnapshotLeaf(dir) {
-		return fmt.Errorf("repo: %q is not a snapshot", dir)
+		return false, fmt.Errorf("repo: %q is not a snapshot", dir)
 	}
-	if err := os.Rename(dir, trashDest(e.root)); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("repo: trash snapshot: %w", err)
+	e.snapshotUse.Lock()
+	defer e.snapshotUse.Unlock()
+	st, err := os.Stat(dir)
+	if os.IsNotExist(err) {
+		return false, nil
 	}
-	return nil
+	if err != nil {
+		return false, fmt.Errorf("repo: stat snapshot: %w", err)
+	}
+	if !st.ModTime().Before(cutoff) {
+		return false, nil
+	}
+	if err := os.Rename(dir, trashDest(e.root)); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("repo: trash snapshot: %w", err)
+	}
+	return true, nil
 }
 
 // isSnapshotLeaf reports whether dir is exactly a <sha> leaf under the

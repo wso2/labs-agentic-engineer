@@ -201,3 +201,39 @@ func TestMirrorHeadResolvesLooseAndPackedRefs(t *testing.T) {
 		t.Fatalf("missing mirror = %q, want empty", got)
 	}
 }
+
+// A lookup that reuses a leaf after the age pass listed it (and so refreshed
+// its mtime) keeps it: the pass decides on the mtime at the rename, not at
+// the listing.
+func TestSnapshotTouchedAfterListingIsNotReaped(t *testing.T) {
+	root := t.TempDir()
+	r := newReaperForTest(t, root, Config{Budget: 1 << 30})
+	leaf := writeSnapshot(t, projectSnap(root, "greeter", fakeSha(3)), 10, time.Now().Add(-25*time.Hour))
+	leaves, err := r.snapshotLeaves(context.Background())
+	if err != nil || len(leaves) != 1 {
+		t.Fatalf("snapshotLeaves = %v, %v", leaves, err)
+	}
+	chtimes(t, leaf, time.Now()) // the lookup's touch
+	if err := r.reapLeaves(context.Background(), leaves, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	mustExist(t, leaf)
+}
+
+// The same holds for eviction: a leaf reused after the listing is skipped
+// and its bytes are not counted as freed.
+func TestEvictionSkipsALeafTouchedAfterListing(t *testing.T) {
+	root := t.TempDir()
+	r := newReaperForTest(t, root, Config{Budget: 1})
+	leaf := writeSnapshot(t, projectSnap(root, "greeter", fakeSha(3)), 10*kib, time.Now().Add(-3*time.Hour))
+	leaves, err := r.snapshotLeaves(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	chtimes(t, leaf, time.Now())
+	evicted, freed := r.evictLeaves(context.Background(), leaves, 1<<30, time.Now())
+	if len(evicted) != 0 || freed != 0 {
+		t.Fatalf("evicted = %v, freed = %d; want none", evicted, freed)
+	}
+	mustExist(t, leaf)
+}

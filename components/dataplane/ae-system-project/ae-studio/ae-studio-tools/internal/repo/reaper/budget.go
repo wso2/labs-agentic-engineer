@@ -114,27 +114,39 @@ func (r *Reaper) evictSnapshots(ctx context.Context, target int64) ([]string, in
 	if err != nil {
 		return nil, 0, err
 	}
+	evicted, freed := r.evictLeaves(ctx, leaves, target, time.Now())
+	return evicted, freed, nil
+}
+
+// evictLeaves is evictSnapshots over a listing taken at now. As in the age
+// pass, TrashSnapshot re-reads the mtime at the rename, so a leaf a lookup
+// reused since the listing is kept and its bytes are not counted.
+func (r *Reaper) evictLeaves(ctx context.Context, leaves []snapshotLeaf, target int64, now time.Time) ([]string, int64) {
 	sort.Slice(leaves, func(i, j int) bool { return leaves[i].lastUse.Before(leaves[j].lastUse) })
-	now := time.Now()
+	cutoff := now.Add(-snapshotEvictMinAge)
 	var evicted []string
 	freed := int64(0)
 	for _, l := range leaves {
 		if freed >= target || ctx.Err() != nil {
 			break
 		}
-		if l.isHead || now.Sub(l.lastUse) < snapshotEvictMinAge {
+		if l.isHead || !l.lastUse.Before(cutoff) {
 			continue
 		}
 		size := repo.DirBytes(l.path)
-		if err := r.engine.TrashSnapshot(l.path); err != nil {
+		trashed, err := r.engine.TrashSnapshot(l.path, cutoff)
+		if err != nil {
 			slog.WarnContext(ctx, "reaper.snapshot_trash_failed", "project", l.project, "error", err)
+			continue
+		}
+		if !trashed {
 			continue
 		}
 		freed += size
 		evicted = append(evicted, l.rel(r.engine.Root()))
 		slog.InfoContext(ctx, "reaper.snapshot_evicted", "project", l.project, "bytes", size)
 	}
-	return evicted, freed, nil
+	return evicted, freed
 }
 
 // mirrorCandidate is one eviction unit: a whole repos/<org>/<project>/<slug>.

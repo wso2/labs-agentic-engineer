@@ -31,6 +31,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -57,6 +58,9 @@ type Engine struct {
 	// diskUsagePct is the last UsagePct recorded by the reaper (-1 =
 	// unknown). It feeds DiskFullError.UsedPct.
 	diskUsagePct atomic.Int32
+	// snapshotUse serializes a lookup's reuse of a snapshot (markUsed) with
+	// the reaper's trash of one (TrashSnapshot); one process does both.
+	snapshotUse sync.Mutex
 	// usageGauge, when set (reaper.New), answers the live studio-data
 	// pressure for admission (DiskAdmissionRefusePct). Without it admission
 	// reads diskUsagePct.
