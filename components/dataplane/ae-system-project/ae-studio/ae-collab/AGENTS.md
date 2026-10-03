@@ -107,7 +107,8 @@ the document: no other connection holds a room whose load failed.
   the seed as the doc serializes it, so an unedited file never flushes.
 - **Failure classes**: an outage (`FilesUnavailableError`: 5xx incl.
   `disk_full` and `aep_api_unavailable`, 408/425/429, `not_fast_forward`, an
-  unreachable socket, a request past its 20 s deadline) keeps the doc and the
+  unreachable socket, a request past its 45 s deadline, which is longer
+  than the pod's own 40 s per-request budget so the pod answers first) keeps the doc and the
   baseline as they were, so the next flush retries; the room hears
   `flush-error` "AE Studio is restarting — your edits are kept and will save
   shortly." A last-leave flush that fails with anything but a verdict keeps

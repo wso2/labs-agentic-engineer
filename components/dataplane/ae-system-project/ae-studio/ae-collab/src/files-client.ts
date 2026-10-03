@@ -166,11 +166,17 @@ const MAX_DETAIL = 500;
 /**
  * The longest one request may take, reply body included. A stalled sidecar
  * must not hold a flush (or a room load) open: the request fails as an
- * outage and the next debounce retries. Generous enough for a cold clone
- * behind a bundle and a push behind an apply; the shutdown flush has its own,
- * shorter budget (`SHUTDOWN_FLUSH_BUDGET_MS` in committer.ts).
+ * outage and the next debounce retries. It is longer than the pod's own
+ * per-request budget (`filesSocketRequestBudget`, 40 s,
+ * ae-studio-tools/internal/edge/files_sock.go), which nests every aep-api
+ * call and the git work, so the pod answers first and this deadline only
+ * ever fires on a sidecar that stopped answering; raise both together. A
+ * cold clone runs detached in the pod: a join that times out waiting on one
+ * leaves it running, and the client's retry reuses it. The shutdown flush has
+ * its own, shorter budget (`SHUTDOWN_FLUSH_BUDGET_MS` in committer.ts); the
+ * process exits when that ends, whatever is still in flight.
  */
-const REQUEST_TIMEOUT_MS = 20_000;
+const REQUEST_TIMEOUT_MS = 45_000;
 
 // The host is a placeholder: the dispatcher connects to the socket, so only
 // the path reaches the server.

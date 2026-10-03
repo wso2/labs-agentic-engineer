@@ -17,9 +17,11 @@
 package edge
 
 import (
+	"context"
 	"net/http"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/wso2/aep/ae-studio-tools/internal/auth"
 	"github.com/wso2/aep/ae-studio-tools/internal/config"
@@ -74,12 +76,22 @@ func Routes(d Deps) http.Handler {
 	})
 }
 
-// FilesSocketRoutes is the Files socket's mount table (04 §7): body cap →
-// validator → generated server (files_sock.go). No token gate: the mount is
-// the gate. Reads go through a.Reader, the apply through a. A path ServeMux
-// would redirect is 404, as on the public listener.
+// FilesSocketRoutes is the Files socket's mount table (04 §7): request
+// budget → body cap → validator → generated server (files_sock.go). No token
+// gate: the mount is the gate. Reads go through a.Reader, the apply through
+// a. A path ServeMux would redirect is 404, as on the public listener.
 func FilesSocketRoutes(a files.Applier) http.Handler {
-	return capBody(filesSocketBodyBytes, uncleanPathNotFound(filesSocketHandler(a), nil))
+	return withBudget(filesSocketRequestBudget, capBody(filesSocketBodyBytes, uncleanPathNotFound(filesSocketHandler(a), nil)))
+}
+
+// withBudget runs next under a deadline d from now (or the request's own,
+// when sooner).
+func withBudget(d time.Duration, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), d)
+		defer cancel()
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
 
 // pathGroup is a route group's raw path prefix and its gated 404.

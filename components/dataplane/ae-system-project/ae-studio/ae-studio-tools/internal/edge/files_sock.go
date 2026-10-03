@@ -25,6 +25,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/wso2/aep/ae-studio-tools/internal/files"
 	"github.com/wso2/aep/ae-studio-tools/internal/gen/filessock"
@@ -45,6 +46,15 @@ const (
 	filesSocketMode fs.FileMode = 0o660
 	// filesSocketBodyBytes caps a request body; only apply has one (04 §7).
 	filesSocketBodyBytes int64 = 25 << 20
+	// filesSocketRequestBudget bounds one Files socket request, so the pod
+	// always answers before its caller gives up: it nests every aep-api call
+	// (15 s each, platform.aepAPITimeout; an apply makes at most two: the
+	// resolve and the completions) and the git work after them, and ends
+	// inside ae-collab's per-call deadline (REQUEST_TIMEOUT_MS, 45 s,
+	// ae-collab/src/files-client.ts); raise both together. A cold clone runs
+	// detached from the request (repo.Engine.ensureMirror), so a request that
+	// spends its budget waiting on one leaves the clone running for the next.
+	filesSocketRequestBudget = 40 * time.Second
 )
 
 // ListenFilesSocket binds the Files socket at path. A socket file left by a

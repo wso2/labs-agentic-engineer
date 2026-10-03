@@ -32,6 +32,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // Engine is the disk-backed implementation of Workspace: git plumbing over
@@ -61,7 +63,15 @@ type Engine struct {
 	// usedBytes is the studio-data usage: the reaper's last du of the root
 	// plus every clone since (usage.go).
 	usedBytes atomic.Int64
+	// clones coalesces this process's cold clones of one repository (keyed
+	// by its git dir): concurrent first readers share one clone.
+	clones singleflight.Group
 }
+
+// cloneTimeout bounds one cold clone. The clone runs detached from the
+// request that started it (ensureMirror), so this, not the request, is what
+// ends a clone that never finishes.
+const cloneTimeout = 5 * time.Minute
 
 // Compile-time port compliance.
 var (
@@ -309,16 +319,45 @@ func (e *Engine) remoteGit(ctx context.Context, ref RepoRef, opts execOpts, args
 
 // ----- mirror lifecycle -----
 
-// ensureMirror guarantees the bare clone exists, cloning it atomically on
-// demand: `git clone --bare` into tmp/ staging, an explicit refspec fetch,
-// gc.auto=0 + repack.writeBitmaps=false stamped, then os.Rename into the
-// canonical path — a crash mid-clone leaves only tmp/ debris, never a
-// half-populated mirror. Returns whether this call cloned (a fresh clone is
+// ensureMirror guarantees the bare clone exists, cloning it on demand
+// (cloneMirror). Returns whether the mirror was just cloned (a fresh clone is
 // fresh — callers skip the next fetch).
+//
+// The clone is detached from ctx: studio-data is emptied on every pod roll,
+// so the first request per repository after one pays for a full clone, and a
+// caller that gives up first (ae-collab's per-call deadline, a closed
+// browser tab) must not kill git and throw the staging dir away, or a repo
+// whose clone outlasts every caller could never be cloned. The clone keeps
+// ctx's values, runs under its own cloneTimeout, and is shared by every
+// concurrent caller for the same repository; a cancelled caller just stops
+// waiting, and the next one finds the mirror (or joins the clone still
+// running).
 func (e *Engine) ensureMirror(ctx context.Context, ref RepoRef, p repoPaths) (cloned bool, err error) {
 	if mirrorExists(p.gitDir) {
 		return false, nil
 	}
+	done := e.clones.DoChan(p.gitDir, func() (any, error) {
+		cloneCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cloneTimeout)
+		defer cancel()
+		return e.cloneMirror(cloneCtx, ref, p)
+	})
+	select {
+	case res := <-done:
+		if res.Err != nil {
+			return false, res.Err
+		}
+		return res.Val.(bool), nil
+	case <-ctx.Done():
+		return false, ctx.Err()
+	}
+}
+
+// cloneMirror clones the bare mirror atomically: `git clone --bare` into tmp/
+// staging, an explicit refspec fetch, gc.auto=0 + repack.writeBitmaps=false
+// stamped, then os.Rename into the canonical path — a crash mid-clone leaves
+// only tmp/ debris, never a half-populated mirror. It runs under the per-repo
+// flock, so another process's clone of the same repository wins cleanly.
+func (e *Engine) cloneMirror(ctx context.Context, ref RepoRef, p repoPaths) (cloned bool, err error) {
 	if err := os.MkdirAll(p.repoDir, 0o755); err != nil {
 		return false, fmt.Errorf("repo: create repo dir: %w", err)
 	}

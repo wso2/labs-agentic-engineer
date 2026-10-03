@@ -24,6 +24,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -419,4 +420,40 @@ func TestListenFilesSocket(t *testing.T) {
 			t.Fatalf("socket left after close: %v", err)
 		}
 	})
+}
+
+// deadlineResolver records the deadline of the context it is called with and
+// answers unknown.
+type deadlineResolver struct{ got chan time.Time }
+
+func (r deadlineResolver) Resolve(ctx context.Context, project string) (projects.Repository, error) {
+	d, ok := ctx.Deadline()
+	if !ok {
+		d = time.Time{}
+	}
+	r.got <- d
+	return projects.Repository{}, fmt.Errorf("%w: %q", projects.ErrUnknown, project)
+}
+
+// Every socket request runs under the pod's own budget, so the pod always
+// answers before ae-collab's per-call deadline (REQUEST_TIMEOUT_MS) gives up.
+func TestFilesSocket_RequestsRunUnderTheBudget(t *testing.T) {
+	res := deadlineResolver{got: make(chan time.Time, 1)}
+	h := FilesSocketRoutes(files.Applier{Reader: files.Reader{Projects: res, Org: "default"}})
+	start := time.Now()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/projects/greeter", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status %d", rec.Code)
+	}
+	d := <-res.got
+	if d.IsZero() {
+		t.Fatal("the request ran with no deadline")
+	}
+	if left := d.Sub(start); left > filesSocketRequestBudget+time.Second || left < filesSocketRequestBudget-5*time.Second {
+		t.Fatalf("deadline in %s, want about %s", left, filesSocketRequestBudget)
+	}
+	if filesSocketRequestBudget >= 45*time.Second {
+		t.Fatalf("budget %s must end before ae-collab's 45 s per-call deadline", filesSocketRequestBudget)
+	}
 }
