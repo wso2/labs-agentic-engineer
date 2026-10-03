@@ -16,23 +16,32 @@
  * under the License.
  */
 
-// The agents service's side of #86 phase 4: join a spec room as a live Yjs
-// peer for the duration of one turn. The LLM only ever sees plain text — this
-// module owns the doc: snapshot for the turn's file bundle, per-op writes via
+// The design agent's side of a spec Room: join it as a live Yjs peer for the
+// duration of one turn. The LLM only ever sees plain text; this module owns
+// the doc: snapshot for the turn's file bundle, per-op writes via
 // @aep/collab-doc (Y.Text diff-and-patch, md fragment reparse), presence as
-// an agent (`kind: "agent"` — the console renders square avatars, #86 d7).
+// an agent (`kind: "agent"`, the console renders square avatars, #86 d7).
 //
-// The pod's turn start path joins through a `JoinRoom` adapter
-// (`turns/start-turn.ts`) that names the Room, its URL and the token.
+// The pod joins through `local-room.ts` (07 §9): ae-collab's local listener,
+// a room token from the tools socket asked at every connect, and the
+// credited user as a connection parameter.
+//
+// Every connection gets a FRESH Y.Doc, and a dropped connection is never
+// resumed with the doc it had (C13): a client that reconnects with a kept doc
+// merges its old copy of the seed into a Room that re-seeded after a restart,
+// and the document doubles. A dropped connection is replaced by a new one
+// (new doc, new token), and the files this peer wrote are written again where
+// the new doc differs.
 
 import {
   HocuspocusProvider,
   HocuspocusProviderWebsocket,
 } from "@hocuspocus/provider";
 import WebSocket from "ws";
-import type * as Y from "yjs";
+import * as Y from "yjs";
 import {
   deleteDocFile,
+  readDocFile,
   setDocFile,
   setDocFileAsAgent,
   snapshotDoc,
@@ -43,13 +52,15 @@ export const AGENT_ORIGIN = "aep-agent";
 
 /**
  * The reason the collab server tags a refusal with when ITS upstream was
- * unreachable, rather than when the bearer was refused. Duplicated from
- * `components/dataplane/ae-system-project/ae-studio/ae-collab/src/server.ts` — the console spells it out on its side of
- * this socket too, the same way the stateless message types are.
+ * unreachable, rather than when the token was refused. Duplicated from
+ * `components/dataplane/ae-system-project/ae-studio/ae-collab/src/pod/auth.ts`
+ * (the console spells it out on its side of this socket too).
  */
 const UPSTREAM_UNAVAILABLE = "upstream-unavailable";
 
 const SYNC_TIMEOUT_MS = 10_000;
+/** The wait before a refused replacement connection is tried again. */
+const REJOIN_RETRY_MS = 1_000;
 
 export interface RoomPeer {
   /** The synced doc's files (path → content) — the turn's initial bundle. */
@@ -65,46 +76,79 @@ export interface RoomPeer {
   set(path: string, content: string, mark: boolean): void;
   /** Remove one file from the live doc. */
   delete(path: string): void;
-  /** Detach presence and close the connection. Safe to call twice. */
+  /** Clear presence and close the connection. Safe to call twice. */
   leave(): void;
 }
 
 export interface JoinRoomInput {
-  /** The Room's ws URL, from the turn's `collab` block. */
+  /** The collab listener's ws URL (`AE_COLLAB_LOCAL_URL` in the pod). */
   url: string;
-  /** Room id (`spec-<org>-<project>`), resolved by the BFF. */
+  /** Room id: `spec-<orgHandle>-<project>`. */
   roomId: string;
-  /** The caller's bearer, validated by the collab server's oracle. */
-  token: string;
+  /**
+   * The room token, asked at every connect: a reconnect presents a fresh
+   * one, and a token is held for its connection only.
+   */
+  token: () => Promise<string>;
+  /** Connection parameters, sent in the upgrade URL's query (the local listener's `credit`). */
+  parameters?: Record<string, string>;
   /** Presence label (defaults to "Spec Agent"). */
   agentName?: string;
+}
+
+/** One connection to the Room: its own socket, provider and doc. */
+interface Connection {
+  socket: HocuspocusProviderWebsocket;
+  provider: HocuspocusProvider;
+  doc: Y.Doc;
+  synced: boolean;
+}
+
+/** What the peer wrote this turn: content, or `null` for a removed file. */
+type Written = { content: string; mark: boolean } | null;
+
+function withParameters(url: string, parameters: Record<string, string> | undefined): string {
+  if (!parameters || Object.keys(parameters).length === 0) return url;
+  const u = new URL(url);
+  for (const [key, value] of Object.entries(parameters)) u.searchParams.set(key, value);
+  return u.toString();
+}
+
+function refusalError(roomId: string, reason: string | undefined): Error {
+  return new Error(
+    reason === UPSTREAM_UNAVAILABLE
+      ? `collab: room ${roomId} is unavailable — the collab server could not reach its upstream (${reason})`
+      : `collab: room ${roomId} rejected the room token`,
+  );
 }
 
 /**
  * Join a room and resolve once the doc has synced (or reject on auth
  * failure / timeout — a room-scoped turn must not run against an empty
  * unsynced replica).
- * @knipkeep wired in Task 3.13 (the pod's `JoinRoom` adapter over `tools.roomToken`)
  */
 export async function joinRoom(input: JoinRoomInput): Promise<RoomPeer> {
-  // Explicit websocket sub-provider so the Node `ws` implementation is pinned
-  // (the polyfill knob lives on the websocket configuration, not the provider).
-  const socket = new HocuspocusProviderWebsocket({
-    url: input.url,
-    WebSocketPolyfill: WebSocket,
-  });
-  const provider = new HocuspocusProvider({
-    websocketProvider: socket,
-    name: input.roomId,
-    token: input.token,
-  });
+  const agentName = input.agentName ?? "Spec Agent";
+  const url = withParameters(input.url, input.parameters);
 
-  provider.setAwarenessField("user", {
-    name: input.agentName ?? "Spec Agent",
-    color: "#b57edc",
-    kind: "agent",
-  });
+  /** A new connection, not yet attached: a fresh doc every time (C13). */
+  const open = (): Connection => {
+    // Explicit websocket sub-provider so the Node `ws` implementation is
+    // pinned (the polyfill knob lives on the websocket configuration).
+    const socket = new HocuspocusProviderWebsocket({ url, WebSocketPolyfill: WebSocket });
+    const doc = new Y.Doc();
+    const provider = new HocuspocusProvider({ websocketProvider: socket, name: input.roomId, document: doc, token: input.token });
+    provider.setAwarenessField("user", { name: agentName, color: "#b57edc", kind: "agent" });
+    return { socket, provider, doc, synced: false };
+  };
+  const close = (c: Connection): void => {
+    // Presence goes first, so every other peer drops the agent at once.
+    c.provider.awareness?.setLocalState(null);
+    c.provider.destroy();
+    c.socket.destroy(); // we created the sub-provider, we close it
+  };
 
+  let conn = open();
   try {
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -113,74 +157,114 @@ export async function joinRoom(input: JoinRoomInput): Promise<RoomPeer> {
         // is answered with a permission-denied frame rather than a closed
         // socket. This branch is the genuinely slow or silent room: a seed
         // still running, or a socket that never came up at all.
-        reject(
-          new Error(
-            `collab: room ${input.roomId} could not be loaded — no sync within ${SYNC_TIMEOUT_MS}ms`,
-          ),
-        );
+        reject(new Error(`collab: room ${input.roomId} could not be loaded — no sync within ${SYNC_TIMEOUT_MS}ms`));
       }, SYNC_TIMEOUT_MS);
-      provider.on("synced", () => {
+      conn.provider.on("synced", () => {
         clearTimeout(timer);
+        conn.synced = true;
         resolve();
       });
-      // A refused room and a refused bearer arrive through the SAME event
+      // A refused room and a refused token arrive through the SAME event
       // (#586): the collab server answers an unseedable room with a
       // permission-denied frame too, tagging it so the two can be told apart.
       // Both are terminal for this turn — an agent has no committed copy to
       // fall back on the way the console does, and writing into a room that
       // was never seeded is what corrupted the spec in the first place — but
-      // they must not be REPORTED alike, or an `aep-api` restart shows up in
+      // they must not be REPORTED alike, or a restart upstream shows up in
       // the turn log as a credentials problem.
-      provider.on("authenticationFailed", ({ reason }: { reason?: string }) => {
+      conn.provider.on("authenticationFailed", ({ reason }: { reason?: string }) => {
         clearTimeout(timer);
-        reject(
-          new Error(
-            reason === UPSTREAM_UNAVAILABLE
-              ? `collab: room ${input.roomId} is unavailable — the collab server could not reach its upstream (${reason})`
-              : `collab: room ${input.roomId} rejected the forwarded bearer`,
-          ),
-        );
+        reject(refusalError(input.roomId, reason));
       });
-      provider.attach();
+      conn.provider.attach();
     });
   } catch (err) {
-    provider.destroy();
-    socket.destroy();
+    close(conn);
     throw err;
   }
 
-  const doc: Y.Doc = provider.document;
-  const agentName = input.agentName ?? "Spec Agent";
+  const written = new Map<string, Written>();
   let left = false;
-  return {
-    files: () => snapshotDoc(doc),
-    set: (path, content, mark) => {
-      if (!mark) {
-        // A brand-new file (addFile) is accept-by-default — there is nothing to
-        // review on content the agent is creating. Write it PLAINLY so chunked
-        // streaming doesn't paint it as reviewable edits, which would re-render
-        // the highlighted tail on every line flush (visible flicker).
-        setDocFile(doc, path, content, AGENT_ORIGIN);
-        return;
-      }
+  let retry: ReturnType<typeof setTimeout> | undefined;
+
+  const write = (c: Connection, path: string, w: Written): void => {
+    if (w === null) {
+      deleteDocFile(c.doc, path, AGENT_ORIGIN);
+    } else if (!w.mark) {
+      // A brand-new file (addFile) is accept-by-default — there is nothing to
+      // review on content the agent is creating. Write it PLAINLY so chunked
+      // streaming doesn't paint it as reviewable edits, which would re-render
+      // the highlighted tail on every line flush (visible flicker).
+      setDocFile(c.doc, path, w.content, AGENT_ORIGIN);
+    } else {
       // Reviewable, character-exact write (#86 phase 6): inserted ranges get
       // the agentInsertion mark; the caret rides awareness so every browser
       // renders the agent's cursor at its last insertion.
-      const { caret } = setDocFileAsAgent(doc, path, content, AGENT_ORIGIN, {
+      const { caret } = setDocFileAsAgent(c.doc, path, w.content, AGENT_ORIGIN, {
         agent: agentName,
         at: new Date().toISOString(),
       });
-      if (caret) {
-        provider.setAwarenessField("cursor", { anchor: caret, head: caret });
-      }
+      if (caret) c.provider.setAwarenessField("cursor", { anchor: caret, head: caret });
+    }
+  };
+
+  /** Write again what this peer wrote, where the new doc differs. */
+  const restore = (c: Connection): void => {
+    for (const [path, w] of written) {
+      const current = readDocFile(c.doc, path);
+      if (w === null ? current !== undefined : current !== w.content) write(c, path, w);
+    }
+  };
+
+  /** After a synced connection dropped: a new connection with a fresh doc and a fresh token. */
+  const rejoin = (): void => {
+    retry = undefined;
+    if (left) return;
+    const next = open();
+    conn = next;
+    next.provider.on("synced", () => {
+      if (left || conn !== next || next.synced) return;
+      next.synced = true;
+      restore(next);
+    });
+    next.provider.on("authenticationFailed", () => {
+      if (left || conn !== next) return;
+      close(next);
+      retry = setTimeout(rejoin, REJOIN_RETRY_MS);
+      retry.unref?.();
+    });
+    watch(next);
+    next.provider.attach();
+  };
+
+  /** Never resume a synced connection with its kept doc: replace it. */
+  const watch = (c: Connection): void => {
+    c.provider.on("close", () => {
+      if (left || conn !== c || !c.synced) return;
+      c.synced = false;
+      close(c);
+      rejoin();
+    });
+  };
+  watch(conn);
+
+  return {
+    files: () => snapshotDoc(conn.doc),
+    set: (path, content, mark) => {
+      const w = { content, mark };
+      written.set(path, w);
+      // Unsynced (rejoining), the write waits for the new doc's `restore`.
+      if (conn.synced) write(conn, path, w);
     },
-    delete: (path) => deleteDocFile(doc, path, AGENT_ORIGIN),
+    delete: (path) => {
+      written.set(path, null);
+      if (conn.synced) write(conn, path, null);
+    },
     leave: () => {
       if (left) return;
       left = true;
-      provider.setAwarenessField("cursor", null);
-      provider.destroy();
-      socket.destroy(); // we created the sub-provider, we close it
+      if (retry) clearTimeout(retry);
+      close(conn);
     },
   };
 }

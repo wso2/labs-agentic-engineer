@@ -18,9 +18,10 @@
 
 /**
  * The pod as the tests drive it: the real pod listeners and `/v1` edge on
- * free ports, a local IdP (`test-keys.ts`), the in-process tools socket
- * (`FakeToolsSocket`), a temp snapshot mount with one project, and a model
- * the test chooses. Nothing is mocked between the HTTP request and the turn.
+ * free ports, the Turn socket in a temp dir, a local IdP (`test-keys.ts`),
+ * the in-process tools socket (`FakeToolsSocket`), a temp snapshot mount
+ * with one project, and a model the test chooses. Nothing is mocked between
+ * the HTTP request and the turn.
  */
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -28,8 +29,10 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import type { LanguageModel } from "ai";
 import type { JWTVerifyGetKey } from "jose";
+import { Agent, fetch as undiciFetch } from "undici";
+import { localRoomJoiner } from "../../src/collab/local-room.js";
 import { loadPodConfig } from "../../src/pod/config.js";
-import { startPodListeners, type PodLogLine } from "../../src/pod/listeners.js";
+import { startPodListeners, type PodListeners, type PodLogLine } from "../../src/pod/listeners.js";
 import { InMemoryConversationStore } from "../../src/store/memory-store.js";
 import { ThreadBook } from "../../src/conversations/thread-book.js";
 import { MarketplaceBook } from "../../src/conversations/marketplace-book.js";
@@ -56,6 +59,10 @@ export interface EdgeOptions {
   /** `null`: the org has no key. */
   connection?: ModelConnection | null;
   room?: JoinRoom;
+  /** Where the Turn socket listens (a temp dir unless named). */
+  turnSocket?: string;
+  /** Join Rooms as the pod does (`localRoomJoiner` over the fake tools socket) on this collab URL. */
+  collabLocalUrl?: string;
   /** The project snapshot's files (path → content). */
   files?: Record<string, string>;
   /** Reference documents stored for the project (name → bytes). */
@@ -69,7 +76,12 @@ export interface EdgeOptions {
 
 export interface Edge {
   base: string;
+  /** The Turn socket's path. */
+  turnSocket: string;
   tools: FakeToolsSocket;
+  outbox: UsageOutbox;
+  /** The pod's listeners (a shutdown test closes them itself). */
+  pod: PodListeners;
   desk: TurnDesk;
   threads: ThreadBook;
   store: InMemoryConversationStore;
@@ -130,6 +142,7 @@ export async function startEdge(opts: EdgeOptions = {}): Promise<Edge> {
         return model;
       }),
     ...(opts.room ? { room: opts.room } : {}),
+    ...(opts.collabLocalUrl ? { room: localRoomJoiner({ url: opts.collabLocalUrl, orgHandle: ORG_HANDLE, tools }) } : {}),
     surface: "console",
     orgId: ORG_ID,
   });
@@ -140,6 +153,8 @@ export async function startEdge(opts: EdgeOptions = {}): Promise<Edge> {
     AE_IDP_JWKS_URL: "http://unused",
     AE_USER_AUDIENCES: "aep-console-client",
     AE_MCP_SOCKET: "/unused/mcp.sock",
+    AE_TURN_SOCKET: opts.turnSocket ?? join(root, "turn.sock"),
+    AE_COLLAB_LOCAL_URL: opts.collabLocalUrl ?? "ws://127.0.0.1:1",
     AE_SNAPSHOTS_DIR: root,
     AE_LISTEN_PORT: "0",
     AE_HEALTH_PORT: "0",
@@ -160,6 +175,9 @@ export async function startEdge(opts: EdgeOptions = {}): Promise<Edge> {
   return {
     base: pod.publicUrl,
     healthUrl: pod.healthUrl,
+    turnSocket: cfg.turnSocket,
+    pod,
+    outbox,
     tools,
     desk,
     threads,
@@ -225,4 +243,63 @@ export async function streamOf(edge: Edge, token: string, turnId: string, from =
   const res = await call(edge, `/v1/projects/${project}/turns/${turnId}/stream?from=${from}`, token);
   if (res.status !== 200) throw new Error(`stream: ${res.status}`);
   return (await readSse(res)).frames;
+}
+
+/** A Turn socket answer: its status, and its body read line by line. */
+export interface SocketAnswer {
+  status: number;
+  contentType: string | null;
+  /** The next NDJSON line, parsed; `undefined` at the end. */
+  next(): Promise<Record<string, unknown> | undefined>;
+  /** Every remaining line, raw. */
+  rest(): Promise<string[]>;
+  /** The whole body as JSON (a refusal). */
+  json(): Promise<Record<string, unknown>>;
+}
+
+/** POST a body to the Turn socket at `path`. */
+export async function postTurnSocket(path: string, body: unknown): Promise<SocketAnswer> {
+  const dispatcher = new Agent({ connect: { socketPath: path } });
+  const res = await undiciFetch("http://turn.sock/turns", {
+    method: "POST",
+    dispatcher,
+    headers: { "content-type": "application/json" },
+    body: typeof body === "string" ? body : JSON.stringify(body),
+  });
+  const reader = res.body?.getReader();
+  const decoder = new TextDecoder();
+  let buffered = "";
+  let done = false;
+  const nextRaw = async (): Promise<string | undefined> => {
+    for (;;) {
+      const nl = buffered.indexOf("\n");
+      if (nl >= 0) {
+        const line = buffered.slice(0, nl);
+        buffered = buffered.slice(nl + 1);
+        return line;
+      }
+      if (done || !reader) return undefined;
+      const chunk = await reader.read();
+      if (chunk.done) done = true;
+      else buffered += decoder.decode(chunk.value, { stream: true });
+    }
+  };
+  return {
+    status: res.status,
+    contentType: res.headers.get("content-type"),
+    async next() {
+      const line = await nextRaw();
+      return line === undefined ? undefined : (JSON.parse(line) as Record<string, unknown>);
+    },
+    async rest() {
+      const lines: string[] = [];
+      for (let line = await nextRaw(); line !== undefined; line = await nextRaw()) lines.push(line);
+      return lines;
+    },
+    async json() {
+      const lines: string[] = [];
+      for (let line = await nextRaw(); line !== undefined; line = await nextRaw()) lines.push(line);
+      return JSON.parse(lines.join("\n") + buffered) as Record<string, unknown>;
+    },
+  };
 }

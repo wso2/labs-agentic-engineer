@@ -18,13 +18,19 @@
 
 /**
  * The turn start path (07 §1, §5): one place that turns a request into a
- * running turn, for the `/v1` edge and (Task 3.13) the Turn socket. Before
+ * running turn, for the `/v1` edge and the Turn socket. Before
  * a turn is accepted it checks, in order: the pod is not shutting down, the
  * org has a model key, the instruction is usable, the project resolves (the
  * tools socket lookup, which also writes the snapshots), the snapshots and
  * attachments can be read, no turn runs on the scope, and the thread admits
  * the send (P-7: lookup → admit → desk.start, so a refused send takes no
  * lock). Every refusal is a `TurnStartError` the edge maps to a status.
+ *
+ * Server-started turns (07 §5, the Turn socket) take the same path with the
+ * caller's `turnId`: a turn id the desk still knows reattaches instead.
+ * **Kickoff** (`start`) is `/start` on the project's current thread, in the
+ * Room, credited to the named user. **Plan** runs the task-plan toolset on a
+ * throwaway conversation (no Room, no thread), dropped when the turn ends.
  *
  * The accepted turn runs detached from the request, inside the TurnDesk: its
  * `run` joins the Room for a file-writing project turn, loads the MCP tools
@@ -36,7 +42,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { FilePart, LanguageModel } from "ai";
-import type { StreamPart, Surface, TurnAim, TurnAttachment, TurnSpec } from "@aep/agent-stream";
+import type { PlanContextFile, PlanScope, StreamPart, Surface, TurnAim, TurnAttachment, TurnSpec } from "@aep/agent-stream";
 import type { RoomPeer } from "../collab/room-peer.js";
 import type { SkillSource } from "../agents/main/skill-source.js";
 import { AttachmentRefusedError, fitAttachments, fitReferences, type UnreadableReference } from "../conversation/attachments.js";
@@ -71,13 +77,33 @@ export function isProjectName(name: string): boolean {
   return PROJECT_RE.test(name);
 }
 
-/** Who a turn is credited to: the verified user (07 §1 "Credit"). */
+/** Who a turn is credited to: the verified user (07 §1 "Credit"), or the user a server-started turn names. */
 export interface Credit {
-  /** The JWT `sub`. */
+  /** The JWT `sub`; `""` when a server-started turn names no one. */
   userId: string;
   name: string;
   email: string;
 }
+
+/** A server-started turn, as the Turn socket's `TurnRequest` carries it (07 §5). */
+export interface ServerTurnRequest {
+  /** The caller's id: a retry with the same id reattaches. */
+  turnId: string;
+  project: string;
+  kind: "start" | "plan";
+  credit: Credit;
+  /** Plan: the milestone and its stories' coverage. */
+  scope?: PlanScope;
+  /** Plan: the existing-Task renders. */
+  taskContext?: PlanContextFile[];
+  /** Start: the project idea (else the lookup's). */
+  text?: string;
+}
+
+/** The display line of a Plan turn (no one typed it). */
+const PLAN_SUMMARY = "Plan the implementation Tasks";
+/** The command a kickoff runs (`start-spec.ts` resolves the idea). */
+const START_COMMAND = "/start";
 
 /** What a browser sent for one turn. */
 export interface TurnInput {
@@ -115,15 +141,19 @@ export interface TurnStarterDeps {
   connection: ModelConnection | null;
   buildModel: BuildModel;
   /**
-   * Joins the Room for a file-writing project turn. Absent, a project turn
-   * writes to a throwaway bundle over the snapshot (nothing persists).
-   * The pod's adapter over `tools.roomToken` is Task 3.13's.
+   * Joins the Room for a file-writing project turn (the pod's is
+   * `collab/local-room.ts`). Absent, a project turn writes to a throwaway
+   * bundle over the snapshot (nothing persists).
    */
   room?: JoinRoom;
   /** Who reads the turns' prose (`console` in the pod; absent in a local run). */
   surface?: Surface;
   /** The pod's org, named on provider log lines. */
   orgId?: string;
+}
+
+function shuttingDown(): TurnStartError {
+  return new TurnStartError(503, "shutting_down", "the design agent is shutting down");
 }
 
 /** Why a turn was not started. `code` is the problem (or TurnConflict) code. */
@@ -154,6 +184,9 @@ interface TurnMaterial {
 /** Everything a run needs, settled before the turn is accepted. */
 interface Launch {
   scope: Scope;
+  kind: TurnMeta["kind"];
+  /** The caller's turn id (server-started turns); a uuid is minted otherwise. */
+  turnId?: string;
   conversationId: string;
   input: TurnInput;
   credit: Credit;
@@ -161,9 +194,11 @@ interface Launch {
   flow: string;
   material: TurnMaterial;
   conn: ModelConnection;
-  /** The project turn joins the Room (`undefined` for marketplace turns). */
+  /** The project turn joins the Room (`undefined` for marketplace and Plan turns). */
   roomProject?: string;
   route: "project" | "marketplace";
+  /** A one-shot conversation (Plan): no earlier turn's facts, dropped from the store at the end. */
+  throwaway?: boolean;
 }
 
 export class TurnStarter {
@@ -173,8 +208,8 @@ export class TurnStarter {
 
   /**
    * Refuse every later start with `503 shutting_down` (07 §10). Flipped at
-   * SIGTERM before `desk.abortAll` (Task 3.13), since the desk itself does not
-   * stop a later start.
+   * SIGTERM before `desk.abortAll` (`pod/shutdown.ts`), since the desk itself
+   * does not stop a later start.
    */
   refuse(): void {
     this.refusing = true;
@@ -185,12 +220,7 @@ export class TurnStarter {
     const conn = this.admissible(req.input);
     const lookup = await this.lookup(req.project);
     const { spec, flow } = turnSpecFor(req.input.instruction, lookup);
-    const material = await this.material(req.input, spec, () => ({
-      snapshotDir: projectSnapshotDir(this.deps.snapshotsDir, req.project, lookup.headSha),
-      skillsDir: skillsSnapshotDir(this.deps.snapshotsDir, lookup.skillsSha),
-      baseRef: lookup.headSha,
-      skillsRef: lookup.skillsSha,
-    }), conn);
+    const material = await this.material(req.input, spec, () => this.projectDirs(req.project, lookup), conn);
     const scope: Scope = { kind: "project", project: req.project };
     this.refuseBusy(scope);
     // A full or demoted thread is refused before anything holds the lock.
@@ -199,6 +229,7 @@ export class TurnStarter {
     }
     return this.launch({
       scope,
+      kind: "browser",
       conversationId: req.conversationId,
       input: req.input,
       credit: req.credit,
@@ -208,7 +239,92 @@ export class TurnStarter {
       conn,
       ...(this.deps.room ? { roomProject: req.project } : {}),
       route: "project",
+    }).turnId;
+  }
+
+  /**
+   * Start a server-started turn (the Turn socket): a kickoff or a Plan, under
+   * the caller's `turnId`. A turn id the desk still knows (running, or
+   * finished and retained) reattaches and starts nothing.
+   */
+  async startServerTurn(req: ServerTurnRequest): Promise<{ turnId: string; reattached: boolean }> {
+    if (this.refusing) throw shuttingDown();
+    const known = this.deps.desk.status(req.turnId);
+    if (known) {
+      if (known.project !== req.project) throw new TurnStartError(400, "invalid_turn", "the turn id names a turn of another project");
+      return { turnId: req.turnId, reattached: true };
+    }
+    return req.kind === "start" ? this.startKickoff(req) : this.startPlan(req);
+  }
+
+  /** `/start` on the project's current thread, in the Room (07 §5). */
+  private async startKickoff(req: ServerTurnRequest): Promise<{ turnId: string; reattached: boolean }> {
+    const text = req.text?.trim() ?? "";
+    const input: TurnInput = { instruction: text ? `${START_COMMAND} ${text}` : START_COMMAND, attachments: [] };
+    const conn = this.admissible(input);
+    const lookup = await this.lookup(req.project);
+    const { spec, flow } = turnSpecFor(input.instruction, lookup);
+    const material = await this.material(input, spec, () => this.projectDirs(req.project, lookup), conn);
+    const scope: Scope = { kind: "project", project: req.project };
+    this.refuseBusy(scope, req.turnId);
+    const by = req.credit.name.trim() || undefined;
+    let conversationId = this.deps.threads.current(req.project, by).conversationId;
+    // A full thread rotates away: the kickoff opens the fresh one.
+    if ((await this.deps.threads.admit(req.project, conversationId, conn.contextWindow)) === "rotated") {
+      conversationId = this.deps.threads.current(req.project, by).conversationId;
+    }
+    return this.launch({
+      scope,
+      kind: "kickoff",
+      turnId: req.turnId,
+      conversationId,
+      input,
+      credit: req.credit,
+      spec,
+      flow,
+      material,
+      conn,
+      ...(this.deps.room ? { roomProject: req.project } : {}),
+      route: "project",
     });
+  }
+
+  /** The task-plan toolset on a throwaway conversation, no Room (07 §5). */
+  private async startPlan(req: ServerTurnRequest): Promise<{ turnId: string; reattached: boolean }> {
+    const spec: TurnSpec = {
+      kind: "plan",
+      ...(req.scope ? { scope: req.scope } : {}),
+      ...(req.taskContext ? { taskContext: req.taskContext } : {}),
+    };
+    const input: TurnInput = { instruction: req.scope ? `${PLAN_SUMMARY} (${req.scope.tag})` : PLAN_SUMMARY, attachments: [] };
+    const conn = this.admissible(input);
+    const lookup = await this.lookup(req.project);
+    const material = await this.material(input, spec, () => this.projectDirs(req.project, lookup), conn);
+    const scope: Scope = { kind: "project", project: req.project };
+    this.refuseBusy(scope, req.turnId);
+    return this.launch({
+      scope,
+      kind: "plan",
+      turnId: req.turnId,
+      conversationId: randomUUID(),
+      input,
+      credit: req.credit,
+      spec,
+      flow: "",
+      material,
+      conn,
+      route: "project",
+      throwaway: true,
+    });
+  }
+
+  private projectDirs(project: string, lookup: ProjectSnapshot): { snapshotDir: string; skillsDir: string; baseRef: string; skillsRef: string } {
+    return {
+      snapshotDir: projectSnapshotDir(this.deps.snapshotsDir, project, lookup.headSha),
+      skillsDir: skillsSnapshotDir(this.deps.snapshotsDir, lookup.skillsSha),
+      baseRef: lookup.headSha,
+      skillsRef: lookup.skillsSha,
+    };
   }
 
   /** Start a turn in a marketplace conversation (no project, no Room); the caller checked ownership. */
@@ -226,6 +342,7 @@ export class TurnStarter {
     this.refuseBusy(scope);
     return this.launch({
       scope,
+      kind: "browser",
       conversationId: req.conversationId,
       input: req.input,
       credit: req.credit,
@@ -234,12 +351,12 @@ export class TurnStarter {
       material,
       conn,
       route: "marketplace",
-    });
+    }).turnId;
   }
 
   /** The checks that need nothing but the request: shutdown, key, instruction. */
   private admissible(input: TurnInput): ModelConnection {
-    if (this.refusing) throw new TurnStartError(503, "shutting_down", "the design agent is shutting down");
+    if (this.refusing) throw shuttingDown();
     const conn = this.deps.connection;
     if (!conn) throw new TurnStartError(409, "no_default_key", "the organization has no default model key");
     if (input.instruction.trim() === "") throw new TurnStartError(400, "invalid_turn", "instruction is required");
@@ -268,9 +385,10 @@ export class TurnStarter {
     }
   }
 
-  private refuseBusy(scope: Scope): void {
+  /** A turn runs on the scope: 409, unless it is the turn `turnId` names (the desk reattaches it). */
+  private refuseBusy(scope: Scope, turnId?: string): void {
     const active = this.deps.desk.active(scope);
-    if (active) throw new TurnStartError(409, "turn_in_progress", "a turn is already running", active.turnId);
+    if (active && active.turnId !== turnId) throw new TurnStartError(409, "turn_in_progress", "a turn is already running", active.turnId);
   }
 
   /**
@@ -321,18 +439,20 @@ export class TurnStarter {
     };
   }
 
-  /** Hand the turn to the desk; resolves to its id. */
-  private launch(l: Launch): string {
+  /** Hand the turn to the desk: its id, and whether a turn of that id was already there. */
+  private launch(l: Launch): { turnId: string; reattached: boolean } {
     const { desk } = this.deps;
-    const turnId = randomUUID();
-    const last = desk.lastTerminal(l.scope);
+    const turnId = l.turnId ?? randomUUID();
+    // A one-shot conversation has no earlier turn of its own to report on.
+    const last = l.throwaway ? null : desk.lastTerminal(l.scope);
     const summary = startTurnSummary(l.input.instruction, l.spec);
+    const author = authorOf(l.credit);
     const meta: TurnMeta = {
       conversationId: l.conversationId,
-      kind: "browser",
+      kind: l.kind,
       flow: l.flow,
       instruction: summary,
-      author: { id: l.credit.userId, name: l.credit.name },
+      ...(author ? { author } : {}),
       model: l.conn.model,
       modelHost: connectionHost(l.conn),
       baseRef: l.material.baseRef,
@@ -347,14 +467,13 @@ export class TurnStarter {
     });
     const filesChangedExternally = last !== null && last.baseRef !== l.material.baseRef;
     try {
-      desk.start(l.scope, meta, this.run(l, { turnId, summary, instruction, filesChangedExternally }), turnId);
+      return desk.start(l.scope, meta, this.run(l, { turnId, summary, instruction, filesChangedExternally }), turnId);
     } catch (err) {
       if (err instanceof TurnInProgressError) {
         throw new TurnStartError(409, "turn_in_progress", "a turn is already running", err.activeTurnId);
       }
       throw err;
     }
-    return turnId;
   }
 
   private run(
@@ -368,6 +487,7 @@ export class TurnStarter {
     const toolset = toolsetFor(l.spec);
     const eager = eagerSkillsFor(l.spec);
     const m = l.material;
+    const author = authorOf(l.credit);
     return async (emit, signal): Promise<TurnOutcome> => {
       let contextTokens: number | undefined;
       const onEvent = (part: StreamPart): void => {
@@ -410,7 +530,7 @@ export class TurnStarter {
             journal: {
               turnId: t.turnId,
               text: t.summary,
-              author: { id: l.credit.userId, displayName: l.credit.name },
+              ...(author ? { author: { id: author.id, displayName: author.name } } : {}),
               // The names that reached the model, not the ones that were sent.
               ...(m.chatAttachments.length ? { attachments: m.chatAttachments.flatMap((p) => (p.filename ? [p.filename] : [])) } : {}),
               ...(l.input.aim ? { anchor: l.input.aim.anchor } : {}),
@@ -439,9 +559,16 @@ export class TurnStarter {
       } finally {
         // The agent never lingers in the Room past its turn (presence honesty).
         peer?.leave();
+        if (l.throwaway) await deps.store.delete(l.conversationId);
       }
     };
   }
+}
+
+/** The turn's author: the credited user, named by `name` or else the id; none when the credit names no one. */
+function authorOf(credit: Credit): { id: string; name: string } | undefined {
+  if (credit.userId === "") return undefined;
+  return { id: credit.userId, name: credit.name.trim() || credit.userId };
 }
 
 /**

@@ -31,6 +31,8 @@ function podEnv(over: Record<string, string> = {}): Record<string, string> {
     AE_IDP_JWKS_URL: "http://unused",
     AE_USER_AUDIENCES: "aep-console-client",
     AE_MCP_SOCKET: "/run/ae/mcp/mcp.sock",
+    AE_TURN_SOCKET: "/run/ae/mcp/turn.sock",
+    AE_COLLAB_LOCAL_URL: "ws://127.0.0.1:8091",
     AE_SNAPSHOTS_DIR: "/snapshots",
     ...over,
   };
@@ -91,7 +93,7 @@ test("pod mode: /v1 is gated before routing, health is separate", async () => {
   }
   assert.deepEqual(
     edge.logs.map((l) => l.msg),
-    ["pod_health_listening", "pod_public_listening", "pod_listeners_stopped"],
+    ["pod_health_listening", "pod_public_listening", "pod_turn_socket_listening", "pod_listeners_stopped"],
   );
 });
 
@@ -123,6 +125,8 @@ test("pod config: defaults, lists, and the secret revisions", () => {
     listenPort: 8080,
     healthPort: 9080,
     mcpSocket: "/run/ae/mcp/mcp.sock",
+    turnSocket: "/run/ae/mcp/turn.sock",
+    collabLocalUrl: "ws://127.0.0.1:8091",
     snapshotsDir: "/snapshots",
     expectedSecretRev: "",
     secretRev: "r1",
@@ -132,11 +136,12 @@ test("pod config: defaults, lists, and the secret revisions", () => {
 test("pod config: AE_ORG_ID without the rest of the pod env fails, naming every missing key", () => {
   assert.throws(
     () => loadPodConfig({ AE_ORG_ID: "ou-1" }),
-    /missing AE_ORG_HANDLE, missing AE_IDP_ISSUER, missing AE_IDP_JWKS_URL, missing AE_USER_AUDIENCES, missing AE_MCP_SOCKET, missing AE_SNAPSHOTS_DIR/,
+    /missing AE_ORG_HANDLE, missing AE_IDP_ISSUER, missing AE_IDP_JWKS_URL, missing AE_USER_AUDIENCES, missing AE_MCP_SOCKET, missing AE_TURN_SOCKET, missing AE_COLLAB_LOCAL_URL, missing AE_SNAPSHOTS_DIR/,
   );
   assert.throws(() => loadPodConfig(podEnv({ AE_USER_AUDIENCES: " , " })), /missing AE_USER_AUDIENCES/);
   assert.throws(() => loadPodConfig(podEnv({ AE_LISTEN_PORT: "http" })), /invalid AE_LISTEN_PORT/);
   assert.throws(() => loadPodConfig(podEnv({ AE_HEALTH_PORT: "70000" })), /invalid AE_HEALTH_PORT/);
+  assert.throws(() => loadPodConfig(podEnv({ AE_COLLAB_LOCAL_URL: "http://127.0.0.1:8091" })), /invalid AE_COLLAB_LOCAL_URL/);
 });
 
 test("pod mode refuses to start on a stale secret rev", async () => {

@@ -24,7 +24,7 @@
 // record the socket refuses for good (a 4xx verdict) is dropped too, or it
 // would block every later one. Both drops log `usage.dropped`, value-free.
 // At shutdown `drain(timeoutMs)` pushes what is left within a bound
-// (Task 3.13: ≤ 8 s, inside ae-studio-tools' 10 s socketDrainWindow).
+// (`pod/shutdown.ts`: ≤ 8 s, inside ae-studio-tools' 10 s socketDrainWindow).
 
 import { ToolsSocketError, type ToolsSocket, type TurnRecord } from "../tools-socket/client.js";
 

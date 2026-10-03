@@ -20,7 +20,9 @@
  * The composition root of the AE Studio pod's design agent (07 §9): the pod
  * env (`pod/config.ts`), the model connection (`shared/connection-env.ts`),
  * the tools socket, the usage outbox, the conversation books, the TurnDesk
- * and the turn start path, then the pod listeners with the `/v1` edge.
+ * and the turn start path with its Room join (`collab/local-room.ts`), then
+ * the pod listeners with the `/v1` edge and the Turn socket. SIGTERM runs
+ * `pod/shutdown.ts`.
  * Without `AE_ORG_ID` there is nothing to run: a local run goes through the
  * playground, which drives the same edge in process with its dev verifier.
  * The model is built per turn from the connection.
@@ -41,6 +43,8 @@ import { InMemoryConversationStore } from "./store/memory-store.js";
 import { ThreadBook } from "./conversations/thread-book.js";
 import { MarketplaceBook } from "./conversations/marketplace-book.js";
 import { createToolsSocket } from "./tools-socket/client.js";
+import { localRoomJoiner } from "./collab/local-room.js";
+import { shutdown } from "./pod/shutdown.js";
 import { UsageOutbox } from "./usage/outbox.js";
 import { TurnDesk } from "./turns/turn-desk.js";
 import { finishedTurnSink, TurnStarter } from "./turns/start-turn.js";
@@ -72,19 +76,28 @@ async function main(): Promise<void> {
 
   const pod = await startPod(cfg, connection);
   process.once("SIGTERM", () => {
-    void pod.close().then(
+    void shutdown(pod).then(
       () => process.exit(0),
       () => process.exit(1),
     );
   });
 }
 
+/** The running pod: what its shutdown stops. */
+interface Pod {
+  turns: TurnStarter;
+  desk: TurnDesk;
+  outbox: UsageOutbox;
+  listeners: PodListeners;
+}
+
 /** Wire the pod's services and start its listeners. */
-function startPod(cfg: PodConfig, connection: ReturnType<typeof connectionFromEnv>): Promise<PodListeners> {
+async function startPod(cfg: PodConfig, connection: ReturnType<typeof connectionFromEnv>): Promise<Pod> {
   const store = new InMemoryConversationStore();
   const threads = new ThreadBook({ store });
   const tools = createToolsSocket(cfg.mcpSocket);
   const outbox = new UsageOutbox(tools);
+  // Delivering from boot: a record reaches ae-studio-tools as its turn ends.
   outbox.run();
   const desk = new TurnDesk({ onFinished: finishedTurnSink(threads, outbox) });
   const turns = new TurnStarter({
@@ -96,12 +109,14 @@ function startPod(cfg: PodConfig, connection: ReturnType<typeof connectionFromEn
     connection,
     // Built PER TURN from the org's connection.
     buildModel: (conn, ctx) => createModel(conn, ctx),
+    room: localRoomJoiner({ url: cfg.collabLocalUrl, orgHandle: cfg.orgHandle, tools }),
     surface: "console",
     orgId: cfg.orgId,
   });
-  return startPodListeners(cfg, {
+  const listeners = await startPodListeners(cfg, {
     edge: { turns, desk, threads, marketplace: new MarketplaceBook(store), keepAliveMs: config.keepAliveMs },
   });
+  return { turns, desk, outbox, listeners };
 }
 
 main().catch((err: unknown) => {

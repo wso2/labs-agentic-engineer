@@ -59,7 +59,8 @@ interface Idp {
   /** While down, the JWKS endpoint answers 503. */
   setDown(down: boolean): void;
   userToken(o?: { ouHandle?: string; name?: string; email?: string; sub?: string; expiresInSec?: number }): string;
-  agentToken(clientId: string, o?: { ouHandle?: string; expiresInSec?: number }): string;
+  /** `extra` adds (or overrides) claims, to shape the token like a live one. */
+  agentToken(clientId: string, o?: { ouHandle?: string; expiresInSec?: number; extra?: Record<string, unknown> }): string;
   close(): Promise<void>;
 }
 
@@ -97,7 +98,7 @@ async function startIdp(): Promise<Idp> {
           ...(email ? { email } : {}),
         },
       ),
-    agentToken: (clientId, { ouHandle = "acme", expiresInSec = 600 } = {}) =>
+    agentToken: (clientId, { ouHandle = "acme", expiresInSec = 600, extra = {} } = {}) =>
       signJwt(privateKey, {
         aud: clientId,
         client_id: clientId,
@@ -105,6 +106,7 @@ async function startIdp(): Promise<Idp> {
         ouId: `ou-${ouHandle}`,
         ouHandle,
         exp: expIn(expiresInSec),
+        ...extra,
       }),
     close: () => closeServer(server),
   };
@@ -369,6 +371,27 @@ test("local listener: agent token ok and credits the named user, user JWT refuse
       /permission-denied/,
     );
     assert.deepEqual(s.participants(ROOM), [{ name: "Ann", email: "ann@x" }]);
+  } finally {
+    await s.close();
+  }
+});
+
+test("local listener: a token shaped like Thunder's live client_credentials token is accepted (D-7)", async () => {
+  const s = await startTestCollab();
+  try {
+    // The claim set of a Thunder client_credentials access token for the
+    // ae-studio-<org> client (research/03 §3; claim names of the phase-1
+    // mints, no values): `sub` is the application's entity id, not the client
+    // id; `aud` defaults to the client id; iat/nbf/jti/scope and the OU's name
+    // ride along. Only aud, client_id, grant_type, ouId and ouHandle decide.
+    const now = Math.floor(Date.now() / 1000);
+    const live = s.idp.agentToken("ae-studio-acme", {
+      extra: { sub: "0f9c6a52-3c1e-4d8e-9a4b-2b7f1d0c5e11", iat: now, nbf: now, jti: "7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f", scope: "", ouName: "Acme" },
+    });
+    // The design agent's credit when the turn's credit has no name: the user id (local-room.ts).
+    await s.join("local", ROOM, live, { credit: JSON.stringify({ name: "u-ann", email: "" }) });
+    assert.deepEqual(s.participants(ROOM), [{ name: "u-ann", email: "u-ann@users.noreply.aep.dev" }]);
+    assert.deepEqual(events(s, "room_auth_refused"), []);
   } finally {
     await s.close();
   }

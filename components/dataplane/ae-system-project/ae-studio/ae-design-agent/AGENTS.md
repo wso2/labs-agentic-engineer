@@ -77,10 +77,27 @@ writes off the stream. The plan tool contract (inputs, results, error codes, the
   user token of `AE_IDP_ISSUER` with an `AE_USER_AUDIENCES` aud and
   `ouId`/`ouHandle` equal to `AE_ORG_ID`/`AE_ORG_HANDLE`. M2M → 401, another
   org → 403, IdP keys unreachable → 503 `idp_unavailable` (`Retry-After: 5`),
-  all before route matching. The health port (`AE_HEALTH_PORT`, 9080, not
-  routed) serves `/healthz` and `/readyz`. Start refuses when
-  `AE_SECRET_REV` ≠ `AE_EXPECTED_SECRET_REV`. `close()` ends open
-  connections (attached streams) and always closes health.
+  all before route matching. The Turn socket (`AE_TURN_SOCKET`, mode 0660;
+  a stale socket file is replaced, any other file refuses the start) serves
+  `edge/turn-socket.ts`. The health port (`AE_HEALTH_PORT`, 9080, not
+  routed) serves `/healthz` and `/readyz` (ready once the public port and
+  the Turn socket are bound). Start refuses when `AE_SECRET_REV` ≠
+  `AE_EXPECTED_SECRET_REV`. `close()` (once) stops accepting, gives ended
+  responses 1 s, then ends open connections (attached streams), and always
+  closes health.
+- **Turn socket** (07 §5, `packages/contracts/sockets/ae-studio/turn/`):
+  ae-studio-tools relays aep-api's kickoff (`start`) and Plan turns.
+  `POST /turns` runs `TurnStarter.startServerTurn` (a known `turnId`
+  reattaches, a retry after the end gets the final result) and answers
+  NDJSON: `task-op` lines for ok `planTask`/`updateTask` results
+  (`taskOpOf`, aep-api's plan tap filter), `keep-alive` every
+  `AGENT_KEEPALIVE_MS`, then one `result {status, code?, message?}` (a failed
+  turn's code is its own, else its reason). The lines match the golden
+  streams beside the contract. A caller that leaves only detaches.
+- **Shutdown** (`pod/shutdown.ts`, SIGTERM): refuse new turns (503 on `/v1`
+  and the Turn socket), `desk.abortAll("shutdown")` (≤ 2 s; inside
+  ae-studio-tools' 5 s public drain), `outbox.drain(8 s)` (inside its 10 s
+  socket window), close the listeners, exit.
 - **`/v1`** (07 §1, `packages/contracts/api/ae-design-agent/v1/openapi.yaml`):
   `edge/project-routes.ts` (current conversation, rotate, messages, turn
   start, active turn, turn status, stream) and `edge/marketplace-routes.ts`
@@ -103,12 +120,24 @@ writes off the stream. The plan tool contract (inputs, results, error codes, the
   (writes the snapshots) → `turnSpecFor` → snapshot reads and document
   fitting → no running turn on the scope → `ThreadBook.admit` →
   `TurnDesk.start`. The run joins the Room for a project turn when a
-  `room` adapter is wired (Task 3.13 supplies it), loads the MCP tools and
+  `room` adapter is wired, loads the MCP tools and
   web search by the gates of `turns/turn-spec.ts`, and calls
   `runConversationTurn` with the desk's signal. A failure the agent can name
   ends `agent-error` with its code (`provider_limit`, `output_truncated`).
   Credit is the verified user: `sub` as the author id, the name by
-  `displayIdentity`'s rule.
+  `displayIdentity`'s rule; a server-started turn is credited to the user
+  its request names. A kickoff is `/start [text]` on the project's current
+  thread, in the Room; a Plan turn runs the task-plan toolset on a
+  throwaway conversation (no Room, dropped when it ends).
+- **Room join** (`collab/local-room.ts`, `collab/room-peer.ts`, 07 §9):
+  ae-collab's local listener (`AE_COLLAB_LOCAL_URL`), Room
+  `spec-<AE_ORG_HANDLE>-<project>`, a room token from `tools.roomToken()`
+  asked at every connect, and the `credit` parameter `{name, email}` (name
+  falls back to the user id). Every connection has a fresh Y.Doc: a dropped
+  connection is replaced, never resumed with its kept doc (a kept doc
+  doubles a re-seeded Room), and the peer's writes are applied again where
+  the new doc differs; writes still pending when the turn ends are lost.
+  Leaving clears the agent's presence at once.
 - **TurnDesk** (`turns/turn-desk.ts`): the only turn lock (one running turn
   per project, per marketplace conversation), the replay buffer, the 30-min
   cap, retention, and each finished turn's record. `finishedTurnSink` pushes
@@ -150,7 +179,7 @@ writes off the stream. The plan tool contract (inputs, results, error codes, the
   `null`) and `skills`. `client.ts` is the undici socket adapter, `fake.ts`
   the in-process one for tests. `src/usage/outbox.ts` holds finished-turn
   records (cap 200, oldest dropped, retry every 2 s, in order);
-  `drain(timeoutMs)` flushes it at shutdown (Task 3.13).
+  `drain(timeoutMs)` flushes it at shutdown (`pod/shutdown.ts`).
 - The wire has no `manifest` frame: a turn's usage is the run's result and
   rides its usage record (07 §7).
 
