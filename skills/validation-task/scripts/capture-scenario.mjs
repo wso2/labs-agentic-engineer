@@ -94,7 +94,13 @@ const dir = capturesDir();
 const name = `${scenarioFileName(entry)}.json`;
 try {
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, name), `${JSON.stringify(entry, null, 2)}\n`);
+  // Stamped here, not by the agent: this is the one moment that can honestly
+  // answer "when was this written down". The assembler reports the window the
+  // stamps fall in, which is what makes capture-as-you-go checkable rather than
+  // merely asked for — a run whose every capture lands in the same second
+  // reconstructed them at the end.
+  const stamped = { ...entry, capturedAt: new Date().toISOString() };
+  writeFileSync(join(dir, name), `${JSON.stringify(stamped, null, 2)}\n`);
 } catch (e) {
   console.error(`error: could not write the capture — ${e.message}`);
   process.exit(1);

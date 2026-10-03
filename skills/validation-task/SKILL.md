@@ -253,7 +253,7 @@ Two fields nothing else holds, required on every non-passed outcome:
 | `note` | One sentence on what you saw that no other field holds — *"a refresh made it correct"*, *"only failed once the list held three items"*. Write `nothing further` when there is none. **Observation only**, never a cause: you have not read the implementation |
 
 Hand it over on stdin — one call per scenario, pass or not, the moment it
-finishes:
+finishes, **before you touch the browser again**:
 
 ```bash
 node "$AEP_SKILLS_DIR/validation-task/scripts/capture-scenario.mjs" \
@@ -266,6 +266,18 @@ It names the file it writes, so you never choose one, and it applies the same
 rules the end-of-run check applies — so a problem surfaces while the page can
 still answer it. If it exits 2, it prints what is missing: fix the entry and send
 it again. Never write something you did not read.
+
+**Do not collect entries and feed them in at the end.** Writing them to a file as
+you go, or generating them in one pass once the run is over, puts you back where
+a single end-of-run report left you: every entry reconstructed from memory, and a
+rejection arriving when no page is left to re-read. A scenario is not finished
+when its `Then` is settled — it is finished when its entry is captured. The cost
+of one call is a few hundred tokens; the cost of the batch is the whole reason
+this step exists.
+
+The run records when each capture landed, and the assembler reports the window
+they fell in. A run whose fourteen captures all arrive in the same second did not
+capture as it went.
 
 ## Outcomes — one per scenario
 

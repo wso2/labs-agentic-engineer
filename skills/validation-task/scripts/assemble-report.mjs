@@ -109,8 +109,11 @@ const snapshotDir = join(projectDir, SNAPSHOT_DIR);
 rmSync(snapshotDir, { recursive: true, force: true });
 
 const scenarios = [];
+const stamps = [];
 for (const key of expected.keys()) {
   const entry = captures.get(key);
+  if (typeof entry.capturedAt === "string") stamps.push(entry.capturedAt);
+  delete entry.capturedAt; // reported once, below — not per scenario
   const snapshot = entry.evidence?.snapshot;
   if (typeof snapshot === "string" && snapshot.trim() !== "") {
     const rel = join(SNAPSHOT_DIR, `${scenarioFileName(entry)}.txt`);
@@ -129,12 +132,25 @@ try {
   fail(`could not read the commit under test — ${e.message}`);
 }
 
+// When the captures were written, not when the report was built.
+//
+// It is the only evidence that the entries were recorded as each scenario
+// finished rather than reconstructed in one pass at the end — and the end is
+// where no page is left to re-read, which is the failure this whole shape
+// exists to prevent. Kept at run level: it is one fact about the run, not a
+// property of any scenario.
+stamps.sort();
+const captureWindow = stamps.length
+  ? { first: stamps[0], last: stamps[stamps.length - 1] }
+  : undefined;
+
 const report = {
   schemaVersion: SCHEMA_VERSION,
   generatedAt: new Date().toISOString(),
   commit,
   ...(run.baseUrl ? { baseUrl: run.baseUrl } : {}),
   isolation: run.isolation,
+  ...(captureWindow ? { captureWindow } : {}),
   scenarios,
 };
 
@@ -144,6 +160,14 @@ writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
 
 const tally = scenarios.reduce((acc, s) => ({ ...acc, [s.outcome]: (acc[s.outcome] ?? 0) + 1 }), {});
 console.log(`assembled ${REPORT_PATH} — ${scenarios.length} scenarios at ${commit.slice(0, 8)}`);
+if (captureWindow) {
+  const spanMs = Date.parse(captureWindow.last) - Date.parse(captureWindow.first);
+  const span = Number.isFinite(spanMs) ? Math.round(spanMs / 1000) : 0;
+  console.log(`  captured over ${span}s (${captureWindow.first} → ${captureWindow.last})`);
+  if (scenarios.length > 2 && span < 5) {
+    console.log(`  NOTE: ${scenarios.length} captures inside ${span}s — these were written at the end, not as each scenario finished.`);
+  }
+}
 console.log(
   `  passed ${tally.passed ?? 0} · failed ${tally.failed ?? 0} · blocked ${tally.blocked ?? 0} · unjudgeable ${tally.unjudgeable ?? 0}`,
 );
